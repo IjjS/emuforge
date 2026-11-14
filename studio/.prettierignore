@@ -1,0 +1,13 @@
+# Build output, dependencies and the lock file
+dist/
+coverage/
+node_modules/
+bun.lock
+
+# Agent guides and references are maintained by the harness, not formatted by Prettier
+AGENTS.md
+CLAUDE.md
+references/
+
+# Design critique snapshots
+.impeccable/
