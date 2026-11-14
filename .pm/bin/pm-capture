@@ -1,0 +1,152 @@
+#!/usr/bin/env -S python3 -I
+"""Capture screens into the worktree's output/captures/<phase>/ and build one contact sheet.
+
+  pm-capture <worktree> <phase> (--url URL... | --file HTML...) [--serve DIR] [--port N]
+             [--viewports 1280x800,390x844] [--themes light,dark] [--storage-state FILE]
+             [--name PREFIX] [--wait MS] [--full]
+
+Phases: baseline, mock, revised, impl, final (any word works).
+Headless Chromium from @playwright/test installed in <worktree>/studio. One PNG per URL x viewport x theme, named
+<name>-<viewport>-<theme>.png. --serve DIR starts a static server with SPA fallback on --port (default: the studio
+port in output/ports.json) for the capture and stops it afterwards; URLs may then be paths like /s3/buckets. Without
+a ports file (main checkout) the server takes the first free port from 8090. Phases in the shared main checkout
+carry the issue number (baseline-<n>, mock-<n>) so parallel issues never overwrite each other.
+Result: output/captures/<phase>/contact-sheet.png with every capture labelled, and index.json. The pane that
+captures does not look at the images; the critic or reviewer reads the contact sheet once.
+"""
+import argparse
+import json
+import os
+import pathlib
+import subprocess
+import sys
+import time
+
+NODE = r'''
+import { chromium } from "@playwright/test";
+import fs from "node:fs";
+import path from "node:path";
+const job = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+const browser = await chromium.launch();
+const shots = [];
+for (const s of job.shots) {
+  const ctx = await browser.newContext({ viewport: s.viewport, colorScheme: s.theme, deviceScaleFactor: 2,
+    storageState: job.storageState || undefined });
+  const page = await ctx.newPage();
+  try {
+    await page.goto(s.url, { waitUntil: "networkidle", timeout: 60000 });
+    if (job.wait) await page.waitForTimeout(job.wait);
+    await page.screenshot({ path: s.out, fullPage: !!job.full });
+    shots.push({ ...s, ok: true });
+  } catch (e) { shots.push({ ...s, ok: false, error: String(e).slice(0, 300) }); }
+  await ctx.close();
+}
+const all = [...shots, ...job.extra];
+const cells = all.map(s => `<figure><img src="file://${s.out}"><figcaption>${s.label}${s.ok === false ? " (FAILED)" : ""}</figcaption></figure>`).join("");
+const html = `<!doctype html><meta charset=utf-8><style>body{margin:16px;background:#f3f3f3;font:12px -apple-system,sans-serif}
+.g{display:grid;grid-template-columns:repeat(${job.cols},1fr);gap:16px}figure{margin:0;background:#fff;padding:8px;border:1px solid #ddd}
+img{width:100%;height:auto;display:block}figcaption{margin-top:6px;color:#333}</style><div class=g>${cells}</div>`;
+const sheetHtml = path.join(path.dirname(job.sheet), "contact-sheet.html");
+fs.writeFileSync(sheetHtml, html);
+const ctx = await browser.newContext({ viewport: { width: job.cols * 420, height: 800 }, deviceScaleFactor: 1 });
+const page = await ctx.newPage();
+await page.goto("file://" + sheetHtml);
+await page.waitForTimeout(500);
+await page.screenshot({ path: job.sheet, fullPage: true });
+await browser.close();
+fs.writeFileSync(job.index, JSON.stringify(all, null, 1));
+console.log(JSON.stringify({ ok: all.filter(s => s.ok !== false).length, failed: all.filter(s => s.ok === false).length, sheet: job.sheet }));
+'''
+
+SERVER = r'''
+import http from "node:http"; import fs from "node:fs"; import path from "node:path";
+const [root, port] = [process.argv[2], Number(process.argv[3])];
+const types = {".html":"text/html",".js":"text/javascript",".css":"text/css",".png":"image/png",".svg":"image/svg+xml",".json":"application/json",".woff2":"font/woff2",".ttf":"font/ttf",".jpg":"image/jpeg",".ico":"image/x-icon",".map":"application/json"};
+http.createServer((req, res) => {
+  let p = decodeURIComponent(req.url.split("?")[0]);
+  let f = path.join(root, p);
+  if (!fs.existsSync(f) || fs.statSync(f).isDirectory()) { const i = path.join(f, "index.html"); f = fs.existsSync(i) ? i : path.join(root, "index.html"); }
+  if (!fs.existsSync(f)) { res.writeHead(404); return res.end(); }
+  res.writeHead(200, { "content-type": types[path.extname(f)] || "application/octet-stream" }); fs.createReadStream(f).pipe(res);
+}).listen(port, "127.0.0.1", () => console.log("serving", root, "on", port));
+'''
+
+
+def free_port(start):
+    import socket
+    for port in range(start, start + 100):
+        with socket.socket() as s:
+            try:
+                s.bind(("127.0.0.1", port))
+                return port
+            except OSError:
+                continue
+    sys.exit(f"no free port in {start}-{start + 99}")
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("worktree"); p.add_argument("phase")
+    p.add_argument("--url", action="append", default=[]); p.add_argument("--file", action="append", default=[])
+    p.add_argument("--serve"); p.add_argument("--port", type=int)
+    p.add_argument("--viewports", default="1280x800,390x844"); p.add_argument("--themes", default="light,dark")
+    p.add_argument("--storage-state")
+    p.add_argument("--name", default="shot"); p.add_argument("--wait", type=int, default=800); p.add_argument("--full", action="store_true")
+    a = p.parse_args()
+    wt = pathlib.Path(a.worktree).resolve()
+    out = wt / "output" / "captures" / a.phase
+    out.mkdir(parents=True, exist_ok=True)
+    if a.port:
+        port = a.port
+    elif (wt / "output" / "ports.json").exists():
+        port = int(json.loads((wt / "output" / "ports.json").read_text())["studio"])
+    else:  # main checkout: any free port from 8090, so two issues never share one
+        port = free_port(8090)
+    server = None
+    if a.serve:
+        srv = out / ".static-server.mjs"; srv.write_text(SERVER)
+        logdir = wt / "output" / "logs"; logdir.mkdir(parents=True, exist_ok=True)
+        slog = open(logdir / f"static-server-{a.phase}.log", "w")
+        server = subprocess.Popen(["node", str(srv), str(pathlib.Path(a.serve).resolve()), str(port)], stdout=slog, stderr=subprocess.STDOUT)
+        (out / "server.pid").write_text(str(server.pid))
+        time.sleep(1.0)
+        if server.poll() is not None:
+            sys.exit(f"static server did not start on port {port} (in use?); see {slog.name}")
+    shots = []
+    targets = [(u if u.startswith("http") else f"http://127.0.0.1:{port}{u}") for u in a.url] + [pathlib.Path(f).resolve().as_uri() for f in a.file]
+    for ti, url in enumerate(targets):
+        base = a.name if len(targets) == 1 else f"{a.name}{ti + 1}"
+        for vp in a.viewports.split(","):
+            w, h = [int(x) for x in vp.lower().split("x")]
+            for theme in a.themes.split(","):
+                fn = out / f"{base}-{w}-{theme}.png"
+                shots.append(dict(url=url, viewport=dict(width=w, height=h), theme=theme, out=str(fn), label=f"{base} {w}px {theme}"))
+    extra = []
+    cols = max(2, min(4, len(a.viewports.split(",")) * len(a.themes.split(","))))
+    job = dict(shots=shots, extra=extra, sheet=str(out / "contact-sheet.png"), index=str(out / "index.json"),
+               storageState=(str(pathlib.Path(a.storage_state).resolve()) if a.storage_state else None), wait=a.wait, full=a.full, cols=cols)
+    (out / ".job.json").write_text(json.dumps(job))
+    # the script must sit under studio/ so that node resolves @playwright/test from studio/node_modules
+    studio_out = wt / "studio" / "output"
+    if not (wt / "studio" / "node_modules" / "@playwright" / "test").exists():
+        sys.exit(f"@playwright/test is not installed in {wt / 'studio'}; run bun install there first")
+    studio_out.mkdir(parents=True, exist_ok=True)
+    script = studio_out / f".capture-{a.phase}.mjs"; script.write_text(NODE)
+    try:
+        r = subprocess.run(["node", str(script), str(out / ".job.json")], cwd=str(wt / "studio"), capture_output=True, text=True)
+        print(r.stdout.strip() or r.stderr.strip()[-800:])
+        code = r.returncode
+    finally:
+        if server:
+            server.terminate()
+            try:
+                server.wait(5)
+            except subprocess.TimeoutExpired:
+                server.kill()
+            (out / "server.pid").unlink(missing_ok=True)
+    print(f"contact sheet: {out / 'contact-sheet.png'}")
+    sys.exit(code)
+
+
+if __name__ == "__main__":
+    main()

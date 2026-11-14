@@ -1,0 +1,94 @@
+#!/usr/bin/env -S python3 -I
+"""Record impeccable critique scores per issue and print the score table.
+
+  pm-critique record <issue> <phase> <snapshot.md> [--label A]   phase: baseline | candidate | revised | final
+  pm-critique table <issue>                                       markdown table for the issue report
+  pm-critique check <issue>                                       exit 1 when final < revised - 2 or final has P0/P1
+
+The critic pane runs the impeccable critique skill itself (two sub-agents, same viewports every time); the snapshot
+it persists under <worktree>/studio/.impeccable/critique/<ts>__<slug>.md carries the score in its frontmatter. This
+script only copies that frontmatter into .pm/issue-<n>/critique-scores.json so the four points are comparable.
+"""
+import argparse
+import json
+import os
+import re
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _pmlib import issue_dir, load, now, save
+
+
+def frontmatter(path):
+    txt = open(path, encoding="utf-8").read()
+    m = re.match(r"---\n(.*?)\n---", txt, re.S)
+    if not m:
+        sys.exit(f"no frontmatter in {path}")
+    fm = {}
+    for line in m.group(1).splitlines():
+        if ":" in line:
+            k, v = line.split(":", 1)
+            fm[k.strip()] = v.strip().strip('"')
+    return fm
+
+
+def num(v, default=0):
+    """'32', '32/40', '32.0' -> 32; anything else -> default."""
+    try:
+        return int(float(str(v).split("/")[0].strip()))
+    except (ValueError, TypeError):
+        return default
+
+
+def scores_path(issue):
+    return issue_dir(issue) / "critique-scores.json"
+
+
+def cmd_record(a):
+    fm = frontmatter(a.snapshot)
+    rows = load(scores_path(a.issue), [])
+    rows.append(dict(phase=a.phase, label=a.label, total=num(fm.get("total_score")), max=num(fm.get("max_score"), 40) or 40,
+                     na=fm.get("na_heuristics", ""), p0=num(fm.get("p0_count")), p1=num(fm.get("p1_count")),
+                     target=fm.get("target", ""), snapshot=os.path.abspath(a.snapshot), at=fm.get("timestamp") or now()))
+    save(scores_path(a.issue), rows)
+    print(f"recorded {a.phase}{'-' + a.label if a.label else ''}: {rows[-1]['total']}/{rows[-1]['max']} p0={rows[-1]['p0']} p1={rows[-1]['p1']}")
+
+
+def table(issue):
+    rows = load(scores_path(issue), [])
+    out = ["| Point | Score | P0 | P1 | Target |", "|---|---|---|---|---|"]
+    for r in rows:
+        name = r["phase"] + (f"-{r['label']}" if r.get("label") else "")
+        out.append(f"| {name} | {r['total']}/{r['max']} | {r['p0']} | {r['p1']} | {r['target'][:60]} |")
+    return "\n".join(out), rows
+
+
+def cmd_table(a):
+    print(table(a.issue)[0])
+
+
+def cmd_check(a):
+    t, rows = table(a.issue)
+    fin = [r for r in rows if r["phase"] == "final"]
+    rev = [r for r in rows if r["phase"] == "revised"] or [r for r in rows if r["phase"] == "baseline"]
+    if not fin:
+        sys.exit("no final score yet")
+    f = fin[-1]
+    ok = True
+    if f["p0"] or f["p1"]:
+        print(f"final has P0={f['p0']} P1={f['p1']}: rework before PR"); ok = False
+    if rev:
+        ref = rev[-1]
+        if f["total"] / f["max"] < ref["total"] / ref["max"] - 2 / 40:
+            print(f"final {f['total']}/{f['max']} dropped more than 2 points below {ref['phase']} {ref['total']}/{ref['max']}: rework before PR"); ok = False
+    print(t)
+    sys.exit(0 if ok else 1)
+
+
+p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+sp = p.add_subparsers(dest="cmd", required=True)
+r = sp.add_parser("record"); r.add_argument("issue"); r.add_argument("phase"); r.add_argument("snapshot"); r.add_argument("--label"); r.set_defaults(f=cmd_record)
+t = sp.add_parser("table"); t.add_argument("issue"); t.set_defaults(f=cmd_table)
+c = sp.add_parser("check"); c.add_argument("issue"); c.set_defaults(f=cmd_check)
+a = p.parse_args()
+a.f(a)

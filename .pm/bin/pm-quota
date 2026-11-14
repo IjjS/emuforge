@@ -1,0 +1,43 @@
+#!/usr/bin/env -S python3 -I
+"""pm-quota status | arm <task> | resume <task> --user-signal
+
+Watchd checks the 300-minute Codex quota every tick. At 90% used it latches a
+pause, interrupts this task's panes and asks only for checkpoint notes. Resetting
+the quota window does not resume work. Resume is allowed only after the user asks.
+"""
+import argparse
+import json
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _pmlib import load, save
+from _pmquota import CONFIG, observation, fresh
+
+p = argparse.ArgumentParser(description=__doc__)
+p.add_argument("command", choices=["status", "arm", "resume"])
+p.add_argument("issue", nargs="?")
+p.add_argument("--user-signal", action="store_true")
+a = p.parse_args()
+config = load(CONFIG, {"issues": {}})
+sample = observation()
+if a.command == "status":
+    print(json.dumps({"observation": sample, "fresh": fresh(sample), "issues": config.get("issues", {})}, ensure_ascii=False, indent=2))
+elif not a.issue:
+    p.error("task identifier required")
+elif a.command == "arm":
+    config.setdefault("issues", {}).setdefault(a.issue, {"stop_used_percent": 90, "paused": False})
+    save(CONFIG, config)
+    print(f"armed {a.issue}: pause at 10% remaining; user-only resume")
+else:
+    if not a.user_signal:
+        p.error("--user-signal is required; use only after an explicit user request")
+    if not fresh(sample) or sample["used_percent"] >= 90:
+        sys.exit("cannot resume: a fresh observation below 90% used is required")
+    policy = config.get("issues", {}).get(a.issue)
+    if policy is None:
+        sys.exit("task is not armed")
+    policy.update(paused=False, checkpoint_sent=[])
+    policy.pop("reason", None)
+    save(CONFIG, config)
+    print(f"resumed guard for {a.issue}; PM must explicitly resume each saved pane")

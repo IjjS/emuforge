@@ -1,0 +1,285 @@
+#!/usr/bin/env -S python3 -I
+"""Open, list, reset and close agent panes inside the issue's herdr tab.
+
+  pm-pane new <issue> <role> [--unit U] [--kind claude|codex] [--model opus|fable|sonnet|<id>]
+                              [--cwd PATH] [--brief FILE] [--text TEXT] [--no-limit]
+  pm-pane reset <name>            state file -> /clear -> brief again (run on EVENT ctx <name>)
+  pm-pane close <name> | --issue <issue>
+  pm-pane list
+
+Roles: plan, worker, rev, crit. Name = i<issue>-<role>[-<unit>], e.g. i12-plan, i12-worker-s1, i12-rev (herdr names must start with a letter).
+A unit name starts with its side: s<n> studio, e<n> engine, t<n> tests, h<n> harness.
+Tab: "#<issue>" in the PM's workspace; created when missing. New agents are panes inside that tab.
+Limits (enforced unless --no-limit): studio workers 2, engine workers 3, total live panes 8, memory 22.5 GB, swap free 256 MB,
+and the Claude token rate of the last hour under today's target when one is set (pm-tokens).
+Default: claude on opus. Any pane takes --kind/--model (the PM passes what the owner chose at session start). The brief is sent as: "Read <FILE> and follow it. Your pane name is <name>."
+To talk to a pane use herdr directly: herdr agent prompt <name> "<text>" (it refuses a pane blocked at a dialog).
+"""
+import argparse
+import json
+import os
+import re
+import sys
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _pmlib import (LIMITS, MODEL_IDS, PANES, PANES_HISTORY, PMINFO, ROOT, agent_by_name, find_key, herdr, load, log,
+                    mem_gb, now, panes, save, side_of, tabs)
+
+
+def registry():
+    """Registry with entries whose pane disappeared marked gone (the daemon reports them; close removes them)."""
+    reg = load(PANES, [])
+    plist = panes()
+    if plist is None:  # herdr did not answer: judge nothing
+        return reg
+    existing = {p["pane_id"] for p in plist}
+    changed = False
+    for r in reg:
+        gone = r["pane_id"] not in existing
+        if gone != bool(r.get("gone")):
+            r["gone"] = gone
+            changed = True
+    if changed:
+        save(PANES, reg)
+    return reg
+
+
+def live(reg):
+    return [r for r in reg if not r.get("gone")]
+
+
+def issue_tab(issue, workspace):
+    label = f"#{issue}"
+    for t in tabs():
+        if t.get("label") == label and (not workspace or t.get("workspace_id") == workspace):
+            return t["tab_id"], False
+    args = ["tab", "create", "--cwd", str(ROOT), "--label", label, "--no-focus"]
+    if workspace:
+        args += ["--workspace", workspace]
+    r = herdr(*args)
+    tab_id = find_key(r, "tab_id")
+    if not tab_id:
+        sys.exit(f"tab create returned no tab_id: {r}")
+    time.sleep(0.5)
+    return tab_id, True
+
+
+def shell_pane_in(tab_id, cwd, fresh):
+    """Return a pane id at a shell prompt inside the tab: the fresh tab's own pane, or a new split."""
+    in_tab = [p for p in (panes() or []) if p.get("tab_id") == tab_id]
+    if fresh and len(in_tab) == 1 and not in_tab[0].get("agent"):
+        pid = in_tab[0]["pane_id"]
+        if cwd != str(ROOT):
+            herdr("pane", "run", pid, f"cd {cwd}", check=False)
+            time.sleep(0.5)
+        return pid
+    if not in_tab:
+        sys.exit(f"tab {tab_id} has no panes")
+    anchor = sorted(in_tab, key=lambda p: p["pane_id"])[-1]["pane_id"]
+    direction = "right" if len(in_tab) % 2 == 1 else "down"
+    r = herdr("pane", "split", "--pane", anchor, "--direction", direction, "--cwd", cwd, "--no-focus")
+    pid = find_key(r, "pane_id")
+    if not pid:
+        sys.exit(f"pane split returned no pane_id: {r}")
+    time.sleep(0.7)
+    return pid
+
+
+def session_of(name, tries=10):
+    for _ in range(tries):
+        ag = agent_by_name(name) or {}
+        s = (ag.get("agent_session") or {}).get("value")
+        if s:
+            return s
+        time.sleep(1)
+    return None
+
+
+def record_history(entry):
+    with open(PANES_HISTORY, "a") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
+def brief_text(entry, resumed=False):
+    t = f"Read {entry['brief']} and follow it. Your pane name is {entry['name']}."
+    if resumed:
+        t += " You were reset for context size: resume from the state file your brief names; do not redo finished work."
+    return t
+
+
+def cmd_new(a):
+    from _pmquota import start_allowed
+    quota_reason = start_allowed(a.issue)
+    if quota_reason:
+        sys.exit(f"QUEUE: {quota_reason}")
+    reg = registry()
+    name = f"i{a.issue}-{a.role}" + (f"-{a.unit}" if a.unit else "")
+    existing = agent_by_name(name)
+    if existing and not a.adopt:
+        sys.exit(f"agent {name} already exists")
+    if a.adopt and not existing:
+        sys.exit(f"no launched agent {name} to adopt")
+    old = next((r for r in reg if r["name"] == name), None)
+    reg = [r for r in reg if r["name"] != name]  # a gone entry of the same name is replaced
+    cwd = os.path.abspath(a.cwd or str(ROOT))
+    if a.adopt and (os.path.abspath(existing.get("cwd", "")) != cwd or existing.get("agent") != a.kind):
+        sys.exit("adoption requires the exact expected cwd and agent kind")
+    # the agent exited but its shell pane is still there: reuse that pane instead of splitting another
+    reuse = None
+    if old:
+        p_old = next((p for p in (panes() or []) if p["pane_id"] == old["pane_id"]), None)
+        if p_old and not p_old.get("agent"):
+            reuse = old["pane_id"]
+    side = side_of(a.unit)
+    if not a.no_limit:
+        used, su, st = mem_gb()
+        if used > LIMITS["mem_gb"]:
+            sys.exit(f"QUEUE: memory {used:.1f}GB > {LIMITS['mem_gb']}GB; close or wait, then retry")
+        if st and st - su < 0.25:
+            sys.exit(f"QUEUE: swap free {(st - su) * 1024:.0f}MB < 256MB; close or wait, then retry")
+        from _pmtokens import fmt, status as token_status
+        rate, tgt, over = token_status()
+        if over:
+            sys.exit(f"QUEUE: token rate {fmt(tgt, rate)} is over today's target {fmt(tgt, tgt['per_hour'])}; wait for EVENT tokens ok")
+        alive = live(reg)
+        if len(alive) >= LIMITS["total"]:
+            sys.exit(f"QUEUE: {len(alive)} live panes >= {LIMITS['total']}")
+        if a.role == "worker":
+            n = sum(1 for r in alive if r["role"] == "worker" and r.get("side") == side)
+            cap = LIMITS["studio_worker"] if side == "studio" else LIMITS["engine_worker"]
+            if n >= cap:
+                sys.exit(f"QUEUE: {n} {side} worker panes >= {cap}")
+    info = load(PMINFO, {})
+    workspace = info.get("workspace") or os.environ.get("HERDR_WORKSPACE_ID")
+    if a.adopt:
+        tab_id, pane_id = existing["tab_id"], existing["pane_id"]
+    elif reuse:
+        tab_id, pane_id = old["tab_id"], reuse
+        herdr("pane", "run", pane_id, f"cd {cwd}", check=False)
+        time.sleep(0.5)
+    else:
+        tab_id, fresh = issue_tab(a.issue, workspace)
+        pane_id = shell_pane_in(tab_id, cwd, fresh)
+    model = MODEL_IDS.get(a.model, a.model) if a.model else (MODEL_IDS["opus"] if a.kind == "claude" else None)
+    args = ["agent", "start", name, "--kind", a.kind, "--pane", pane_id, "--timeout", "90000"]
+    extra = []
+    if a.kind == "claude" and model:
+        extra += ["--model", model]
+    if a.kind == "codex" and model:
+        extra += ["-m", model]
+    if extra:
+        args += ["--", *extra]
+    r = existing if a.adopt else herdr(*args, check=False)
+    if r is None:
+        sys.exit(f"agent start failed for {name} in {pane_id}; the pane is left open for inspection")
+    entry = dict(name=name, issue=str(a.issue), role=a.role, unit=a.unit, kind=a.kind, model=model, side=side,
+                 pane_id=pane_id, tab_id=tab_id, cwd=cwd, brief=(os.path.abspath(a.brief) if a.brief else None),
+                 started=now(), session=session_of(name, tries=3), gone=False, resets=0)
+    reg.append(entry)
+    save(PANES, reg)
+    record_history(entry)
+    # remember that the current PM session worked on this issue (pm-cost shares the PM's cost between them)
+    pinfo = load(PMINFO, {})
+    if pinfo.get("pm_session"):
+        lst = pinfo.setdefault("session_issues", {}).setdefault(pinfo["pm_session"], [])
+        if str(a.issue) not in lst:
+            lst.append(str(a.issue))
+            save(PMINFO, pinfo)
+    log(f"pane new {name} {pane_id} {a.kind} {model} cwd={cwd}")
+    text = a.text
+    if a.brief:
+        text = brief_text(entry) + (f" {a.text}" if a.text else "")
+    print(f"{name} {pane_id} tab={tab_id} kind={a.kind} model={model} session={entry['session']}")
+    if text:
+        herdr("agent", "wait", name, "--until", "idle", "--until", "done", "--timeout", "60000", check=False)
+        if herdr("agent", "prompt", name, text, check=False) is None:
+            ag = agent_by_name(name) or {}
+            sys.exit(f"BRIEF NOT SENT: {name} is {ag.get('agent_status')} (a trust or setup dialog?); "
+                     f"inspect with herdr agent read {name}, then herdr agent prompt {name} \"{text}\"")
+
+
+def cmd_reset(a):
+    reg = registry()
+    entry = next((r for r in live(reg) if r["name"] == a.name), None)
+    if not entry:
+        sys.exit(f"no live pane {a.name}")
+    if not entry.get("brief"):
+        sys.exit(f"{a.name} was opened without --brief; reset by hand")
+    ag = agent_by_name(a.name) or {}
+    if ag.get("agent_status") == "blocked":
+        sys.exit(f"{a.name} is blocked at a dialog; inspect with herdr agent read {a.name}")
+    nonce = now()[11:19].replace(":", "")
+    marker = f"RESET READY {a.name} {nonce}"
+    state_hint = "output/state.md" if entry["role"] == "worker" else f"{ROOT}/.pm/issue-{entry['issue']}/state-{entry['role']}.md"
+    herdr("agent", "prompt", a.name,
+          f"Context reset requested. Write your resume note now to {state_hint}: what is done, what is next, open P1s, "
+          f"paths. Then print exactly this line and stop: {marker}")
+    # Whole command stays under the Bash tool's 10-minute cap: 7 min for the note, 1 min to settle, ~30 s to re-brief.
+    # The prompt echo (❯ …) also contains the marker, so match only a row that starts with it (after Claude's ⏺ bullet).
+    r = herdr("pane", "wait-output", entry["pane_id"], "--regex", rf"(?m)^[^A-Za-z❯\n]*{re.escape(marker)}\s*$",
+              "--source", "recent-unwrapped", "--timeout", "420000", check=False)
+    if r is None:
+        sys.exit(f"{a.name} did not print the reset marker within 7 min; inspect with herdr agent read {a.name}, then rerun reset")
+    herdr("agent", "wait", a.name, "--until", "idle", "--until", "done", "--timeout", "60000", check=False)
+    old = entry.get("session")
+    herdr("agent", "prompt", a.name, "/clear")
+    time.sleep(2)
+    herdr("agent", "wait", a.name, "--until", "idle", "--until", "done", "--timeout", "30000", check=False)
+    new = None
+    for _ in range(10):
+        s = session_of(a.name, tries=1)
+        if s and s != old:
+            new = s
+            break
+        time.sleep(1)
+    # other pm-pane calls may have changed the registry meanwhile: reload and patch only this entry
+    reg = load(PANES, [])
+    entry = next((r for r in reg if r["name"] == a.name), entry)
+    entry["session"] = new or entry.get("session")
+    entry["resets"] = entry.get("resets", 0) + 1
+    entry["reset_at"] = now()
+    if entry not in reg:
+        reg.append(entry)
+    save(PANES, reg)
+    record_history({**entry, "event": "reset"})
+    herdr("agent", "prompt", a.name, brief_text(entry, resumed=True))
+    log(f"pane reset {a.name} session {old} -> {new}")
+    print(f"reset {a.name}: session {old} -> {new or '(unchanged?)'}")
+
+
+def cmd_close(a):
+    reg = registry()
+    targets = [r for r in reg if (a.name and r["name"] == a.name) or (a.issue and r["issue"] == str(a.issue))]
+    if not targets:
+        sys.exit("nothing to close")
+    save(PANES, [r for r in reg if r not in targets])  # first, so the daemon never reports a deliberate close as gone
+    for r in targets:
+        if not r.get("gone"):
+            herdr("pane", "close", r["pane_id"], check=False)
+        log(f"pane close {r['name']} {r['pane_id']}")
+        print(f"closed {r['name']} {r['pane_id']}")
+
+
+def cmd_list(a):
+    reg = registry()
+    ags = {x.get("name"): x for x in (herdr("agent", "list", check=False) or {}).get("agents", [])}
+    used, su, st = mem_gb()
+    print(f"mem used {used:.1f}GB swap {su:.1f}/{st:.1f}GB; live panes {len(live(reg))}/{LIMITS['total']}")
+    for r in reg:
+        st_ = "gone" if r.get("gone") else (ags.get(r["name"]) or {}).get("agent_status", "?")
+        print(f"  {r['name']:16} {r['pane_id']:8} {st_:8} {r['kind']:6} {str(r.get('model') or ''):18} resets={r.get('resets', 0)} {r['cwd']}")
+
+
+p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+sp = p.add_subparsers(dest="cmd", required=True)
+n = sp.add_parser("new"); n.add_argument("issue"); n.add_argument("role", choices=["plan", "worker", "rev", "crit"])
+n.add_argument("--unit"); n.add_argument("--kind", default="claude", choices=["claude", "codex"]); n.add_argument("--model")
+n.add_argument("--cwd"); n.add_argument("--brief"); n.add_argument("--text"); n.add_argument("--no-limit", action="store_true")
+n.add_argument("--adopt", action="store_true", help="register an exact-name/cwd/kind agent left after a startup trust dialog")
+n.set_defaults(f=cmd_new)
+rs = sp.add_parser("reset"); rs.add_argument("name"); rs.set_defaults(f=cmd_reset)
+c = sp.add_parser("close"); c.add_argument("name", nargs="?"); c.add_argument("--issue"); c.set_defaults(f=cmd_close)
+l = sp.add_parser("list"); l.set_defaults(f=cmd_list)
+a = p.parse_args()
+a.f(a)

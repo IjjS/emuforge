@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: The emulator itself behaves differently from AWS
+    url: https://github.com/aws/aws-emulator/issues
+    about: EmuForge sits on top of aws-emulator. If the same request sent straight to aws-emulator is also wrong, report it there.

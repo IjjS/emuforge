@@ -1,0 +1,447 @@
+#!/usr/bin/env -S python3 -I
+"""Event daemon: watches herdr panes and pushes EVENT lines into the PM pane. Runs outside Claude Code.
+
+  pm-watchd start [--pm <pane-id|agent-name>] [--interval 20] [--mem 22.5] [--ctx 300000] [--pm-ctx 400000] [--stale-hours 3]
+  pm-watchd stop | status | tail [N] | whoami
+
+Start it at the beginning of every PM session from the PM pane. The PM pane is found from the process tree (Claude)
+or as the one working unregistered agent in this folder (Codex, whose shell commands run in an app-server with a
+frozen HERDR_PANE_ID); `whoami` shows the result without starting. A running daemon is restarted so it follows this
+PM pane and this PM session id; pm.json records them for pm-archive. Events, each
+delivered as one prompt line to the PM:
+  EVENT ready <pane> <STAGE READY|UNIT READY|BLOCKED|DONE line> a registered pane finished a turn with a line for the PM
+  EVENT go github#<n>                                           the owner commented READY on a GitHub issue (pm-ready poll)
+  EVENT blocked <pane>                                          a pane waits at a permission/question dialog
+  EVENT gone <pane>                                             a registered pane disappeared
+  EVENT stale <pane> <hours>                                    working with no state change for --stale-hours
+  EVENT ctx <pane> <tokens>                                     a pane's context passed --ctx (again every +50K)
+  EVENT ctx pm <tokens>                                         the PM's own context passed --pm-ctx
+  EVENT mem <used>GB swap <used>/<total>GB top=<pane> <GB>,…    memory over --mem (at most once per 10 min)
+  EVENT mem ok <used>GB                                         back under budget after a mem event (once)
+  EVENT tokens over <rate> target <rate>                        the last hour's Claude token rate passed today's target (pm-tokens)
+  EVENT tokens ok <rate>                                        back under the target (once)
+Panes report with `pm-report "<line>"` (file channel .pm/run/reports.jsonl, exact and agent-independent); the
+terminal is scraped only as a fallback, where a reporting line counts only when it is the pane's last reply (no
+newer prompt echo below it). REVIEWED and turns without a line are logged only. Lines that cannot be delivered (PM blocked, PM pane missing, herdr down) are queued
+and retried every tick. If the PM stays idle 10 min after a delivery without a state change the line is sent again
+once, then a herdr notification is shown. Log: .pm/run/events.log (stderr crashes: .pm/run/watchd.log).
+"""
+import argparse
+import json
+import os
+import re
+import signal
+import subprocess
+import sys
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _pmlib import (EVENTS, PANES, PMINFO, ROOT, RUN, agents, find_key, herdr, load, log, mem_gb, notify, now, pane_rss_gb, save,
+                    transcript_ctx)
+
+PID = RUN / "watchd.pid"
+LOG = RUN / "watchd.log"
+STATE = RUN / "watchd-state.json"
+PM_LINES = ("STAGE READY", "UNIT READY", "BLOCKED", "DONE")
+INBOX = RUN / "inbox.jsonl"  # lines other scripts want delivered to the PM (pm-ready)
+LOGGED_LINES = ("REVIEWED", "RESET READY")
+CTX_REARM = 50_000
+
+
+def alive():
+    try:
+        pid = int(PID.read_text())
+        os.kill(pid, 0)
+        return pid
+    except (FileNotFoundError, ValueError, ProcessLookupError, PermissionError):
+        return None
+
+
+def find_pm(ags, pm):
+    return next((x for x in ags if x.get("pane_id") == pm or x.get("name") == pm), None)
+
+
+def deliver(pm_a, lines, st):
+    """Send the lines as one prompt; on failure keep them in st['queue'] for the next tick."""
+    text = " | ".join(lines)
+    if not pm_a:
+        # log once per episode, notify every 10 min while the queue waits (a single notification was missed on 11-10)
+        if st.get("queue") != lines:
+            log("queued (no PM) " + text)
+        st["queue"] = lines
+        if time.time() - st.get("notified_no_pm_at", 0) > 600:
+            notify("pm-watchd", f"PM pane {st.get('pm_target', '')} not found; {len(lines)} event(s) queued. Run pm-watchd start --pm <pane-id>")
+            st["notified_no_pm_at"] = time.time()
+        return
+    st["notified_no_pm_at"] = 0
+    if pm_a.get("agent_status") == "blocked":
+        st["queue"] = lines
+        log("queued (PM blocked) " + text)
+        return
+    r = herdr("agent", "prompt", pm_a.get("name") or pm_a.get("pane_id"), text, check=False)
+    if r is None:
+        st["queue"] = lines
+        log("queued (prompt failed) " + text)
+        return
+    st["queue"] = []
+    log("deliver " + text)
+    st["pending"] = dict(text=text, at=time.time(), pm_seq=pm_a.get("state_change_seq"), resent=0)
+
+
+# Terminal grammar of the two agents (fallback path; the primary channel is pm-report -> reports.jsonl):
+#   Claude Code: reply rows start with ⏺ at column 0 and continue indented; prompt echo ❯ text; tool results ⎿ …
+#   Codex:       reply rows start with • at column 0 and continue indented; prompt echo › text (the empty box reads
+#                "› Ask Codex to do anything"); tool calls are • Ran/Explored/… rows whose results start with └
+REPLY_BULLETS = ("⏺", "•")
+ECHO_BULLETS = ("❯", "›")
+TOOL_RESULT = ("⎿", "└")
+CODEX_TOOL_WORDS = ("Ran ", "Explored", "Read ", "Edited", "Searched", "Worked for", "Thinking")
+ECHO_PLACEHOLDER = "Ask Codex to do anything"
+
+
+def report_line(raw, allow_indented=False):
+    """The reporting line in one terminal row, or None. Indented rows count only when the caller has confirmed they
+    belong to a reply, so a file printed by a tool that contains a reporting line is not a report."""
+    if raw[:1].isspace() and not allow_indented:
+        return None
+    s = raw.strip()
+    if not s or s.startswith(ECHO_BULLETS + TOOL_RESULT):
+        return None
+    s = re.sub(r"^[^A-Za-z]+", "", s)
+    return s if s.startswith(PM_LINES + LOGGED_LINES) else None
+
+
+def last_report_line(name):
+    """The reporting line of the pane's latest reply. Scanning upward from the input box, a prompt echo means
+    everything above it belongs to an earlier turn, so the result is '' then. An indented candidate row is kept
+    until the block it belongs to is known: a reply bullet above it adopts it, a tool row drops it."""
+    tail = herdr("agent", "read", name, "--source", "recent-unwrapped", "--lines", "200", check=False) or {}
+    txt = tail.get("text") or tail.get("output") or tail.get("raw") or ""
+    if isinstance(txt, list):
+        txt = "\n".join(map(str, txt))
+    pending = None
+    for row in reversed(str(txt).splitlines()):
+        s = row.strip()
+        if s.startswith(ECHO_BULLETS):
+            body = s[1:].strip()
+            if body and body != ECHO_PLACEHOLDER:
+                return ""
+            continue
+        if s.startswith(REPLY_BULLETS) and not row[:1].isspace():
+            body = s[1:].strip()
+            if body.startswith(CODEX_TOOL_WORDS):  # a Codex tool call row, not a reply
+                pending = None
+                continue
+            r = report_line(row)
+            return r or pending or ""
+        if s.startswith(TOOL_RESULT):
+            pending = None
+            continue
+        if row[:1].isspace():
+            if pending is None:
+                pending = report_line(row, allow_indented=True)
+            continue
+        r = report_line(row)
+        if r:
+            return r
+    return pending or ""
+
+
+REPORTS = RUN / "reports.jsonl"
+
+
+def file_reports(st):
+    """New lines panes wrote with pm-report since the last tick: [(pane, line)]. Offset kept in st['reports_pos']."""
+    if not REPORTS.exists():
+        return []
+    pos = st.get("reports_pos", 0)
+    size = REPORTS.stat().st_size
+    if size < pos:  # rotated or truncated
+        pos = 0
+    out = []
+    with REPORTS.open("rb") as f:
+        f.seek(pos)
+        chunk = f.read()
+    for line in chunk.decode(errors="replace").splitlines():
+        try:
+            o = json.loads(line)
+            out.append((o["pane"], o["line"]))
+        except (ValueError, KeyError):
+            continue
+    st["reports_pos"] = pos + len(chunk)
+    return out
+
+
+def inbox_lines(st):
+    """New EVENT lines appended to inbox.jsonl since the last tick. Offset kept in st['inbox_pos']."""
+    if not INBOX.exists():
+        return []
+    pos = st.get("inbox_pos", 0)
+    if INBOX.stat().st_size < pos:
+        pos = 0
+    with INBOX.open("rb") as f:
+        f.seek(pos)
+        chunk = f.read()
+    out = []
+    for line in chunk.decode(errors="replace").splitlines():
+        try:
+            out.append(json.loads(line)["line"])
+        except (ValueError, KeyError):
+            continue
+    st["inbox_pos"] = pos + len(chunk)
+    return out
+
+
+def top_panes(reg, n=2):
+    rows = []
+    for r in reg:
+        try:
+            rows.append((pane_rss_gb(r["pane_id"]), r["name"]))
+        except Exception:
+            pass
+    rows.sort(reverse=True)
+    return ",".join(f"{name} {gb:.1f}GB" for gb, name in rows[:n])
+
+
+def check_ctx(prev, session, limit, label):
+    """Append an EVENT ctx when the session's transcript context passed the limit; re-arms every CTX_REARM tokens."""
+    if not session:
+        return None
+    if session != prev.get("ctx_session"):
+        prev.update(ctx_session=session, ctx_reported_at=0, ctx_mtime=None, ctx_checked=0)
+    if time.time() - prev.get("ctx_checked", 0) < 60:
+        return None
+    prev["ctx_checked"] = time.time()
+    ctx, mtime = transcript_ctx(session)
+    if not mtime or mtime == prev.get("ctx_mtime"):
+        return None
+    prev["ctx_mtime"] = mtime
+    if ctx and ctx > limit and ctx >= prev.get("ctx_reported_at", 0) + CTX_REARM:
+        prev["ctx_reported_at"] = ctx
+        return f"EVENT ctx {label} {ctx // 1000}K"
+    return None
+
+
+def run(a):
+    pm = a.pm
+    st = load(STATE, {"seen": {}, "last_mem": 0, "pending": None, "queue": [], "pm": {}})
+    st.setdefault("queue", []); st.setdefault("pm", {}); st["pm_target"] = pm
+    while True:
+        try:
+            ags_list = agents()
+            if ags_list is None:  # herdr did not answer: no judgement this tick
+                log("herdr agent list failed; tick skipped")
+                time.sleep(a.interval)
+                continue
+            ags = {x.get("pane_id"): x for x in ags_list}
+            pm_a = find_pm(ags_list, pm)
+            events = list(st.get("queue") or [])
+            reg = [r for r in load(PANES, []) if not r.get("gone")]
+            from _pmquota import tick as quota_tick
+            events.extend(quota_tick(ags_list))
+            seen = st["seen"]
+            # primary channel: lines the panes reported through pm-report (exact, agent-independent)
+            events.extend(inbox_lines(st))
+            for pane, line in file_reports(st):
+                seen.setdefault(pane, {})["reported_at"] = time.time()
+                if line.startswith(PM_LINES):
+                    events.append(f"EVENT ready {pane} {line}")
+                else:
+                    log(f"report {pane} {line}")
+            for r in reg:
+                name, pid = r["name"], r["pane_id"]
+                prev = seen.get(name, {})
+                if prev.get("pane_id") not in (None, pid):  # reopened in another pane: forget the old history
+                    prev = {}
+                a_ = ags.get(pid)
+                if not a_:
+                    if not prev.get("gone"):
+                        events.append(f"EVENT gone {name}")
+                    seen[name] = {**prev, "pane_id": pid, "gone": True}
+                    continue
+                status, seq, cseq = a_.get("agent_status"), a_.get("state_change_seq"), a_.get("completion_seq") or 0
+                finished = status in ("idle", "done") and (prev.get("status") == "working" or (prev and cseq > (prev.get("cseq") or 0)))
+                if finished:
+                    last = last_report_line(name)
+                    if time.time() - prev.get("reported_at", 0) < 180:  # the pane used pm-report for this turn
+                        log(f"turn-end {name} (reported via file)")
+                    elif last.startswith(PM_LINES):
+                        events.append(f"EVENT ready {name} {last}")
+                    else:
+                        log(f"turn-end {name} {last or '(no report line)'}")
+                if status == "blocked" and prev.get("status") != "blocked":
+                    events.append(f"EVENT blocked {name}")
+                if status == "working":
+                    if prev.get("status") == "working" and prev.get("seq") == seq:
+                        if time.time() - prev.get("since", time.time()) > a.stale_hours * 3600 and not prev.get("stale"):
+                            events.append(f"EVENT stale {name} {a.stale_hours}h")
+                            prev["stale"] = True
+                    else:
+                        prev = {**prev, "since": time.time(), "stale": False}
+                e = check_ctx(prev, (a_.get("agent_session") or {}).get("value") or r.get("session"), a.ctx, name)
+                if e:
+                    events.append(e)
+                seen[name] = {**prev, "pane_id": pid, "status": status, "seq": seq, "cseq": cseq, "gone": False}
+            if pm_a:
+                e = check_ctx(st["pm"], (pm_a.get("agent_session") or {}).get("value"), a.pm_ctx, "pm")
+                if e:
+                    events.append(e)
+            used, su, stot = mem_gb()
+            if used > a.mem:
+                if time.time() - st.get("last_mem", 0) > 600:
+                    events.append(f"EVENT mem {used:.1f}GB swap {su:.1f}/{stot:.1f}GB top={top_panes(reg)}")
+                    st["last_mem"] = time.time()
+                    st["mem_over"] = True
+            elif st.get("mem_over") and used < a.mem - 1.0:  # back under budget with 1 GB to spare: tell the PM once
+                events.append(f"EVENT mem ok {used:.1f}GB")
+                st["mem_over"] = False
+            if time.time() - st.get("tokens_checked", 0) > 300:  # transcripts are large: look every 5 minutes
+                st["tokens_checked"] = time.time()
+                from _pmtokens import fmt, status as token_status
+                rate, tgt, over = token_status()
+                if over and not st.get("tokens_over"):
+                    events.append(f"EVENT tokens over {fmt(tgt, rate)} target {fmt(tgt, tgt['per_hour'])}")
+                    st["tokens_over"] = True
+                elif st.get("tokens_over") and not over:
+                    events.append(f"EVENT tokens ok {fmt(tgt, rate)}" if tgt else "EVENT tokens ok (no target)")
+                    st["tokens_over"] = False
+            if events:
+                for e in events:
+                    if e not in (st.get("queue") or []):
+                        log(e)
+                deliver(pm_a, events, st)
+            # PM responsiveness: a working PM consumes queued prompts inside its turn; only an idle PM with no
+            # state change since the delivery gets the line again.
+            pend = st.get("pending")
+            if pend:
+                if pm_a and (pm_a.get("agent_status") == "working" or pm_a.get("state_change_seq") != pend.get("pm_seq")):
+                    st["pending"] = None
+                elif time.time() - pend["at"] > 600:
+                    if pend["resent"] == 0 and pm_a:
+                        herdr("agent", "prompt", pm_a.get("name") or pm_a.get("pane_id"), pend["text"], check=False)
+                        pend.update(at=time.time(), resent=1)
+                        log("re-deliver " + pend["text"])
+                    else:
+                        notify("EmuForge PM unresponsive", pend["text"][:120])
+                        log("PM unresponsive; notified user")
+                        st["pending"] = None
+            save(STATE, st)
+        except Exception as e:  # keep the daemon alive
+            log(f"watchd error {e!r}")
+        time.sleep(a.interval)
+
+
+def ancestors():
+    pids, pid = set(), os.getpid()
+    for _ in range(40):
+        out = subprocess.run(["ps", "-o", "ppid=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+        if not out or not out.isdigit() or int(out) <= 1:
+            break
+        pid = int(out)
+        pids.add(pid)
+    return pids
+
+
+def detect_pm_pane(ags, env_pane):
+    """The pane this command runs in, without trusting the environment: Codex runs shell commands inside a long-lived
+    app-server whose HERDR_PANE_ID froze when it started (on 2026-11-10 it pointed at a pane closed a week before).
+    1) a live pane whose shell is an ancestor of this process (Claude PM);
+    2) the only unregistered agent in this folder that is working right now (Codex PM: it is running this command);
+    3) the environment's pane if it exists. Returns (pane_id, how) or (None, candidates)."""
+    plist = (herdr("pane", "list", check=False) or {}).get("panes", [])
+    live = {p["pane_id"] for p in plist}
+    anc = ancestors()
+    for p in plist:
+        info = herdr("pane", "process-info", "--pane", p["pane_id"], check=False) or {}
+        shell = (find_key(info, "process_info") or {}).get("shell_pid") if isinstance(find_key(info, "process_info"), dict) else None
+        if shell and shell in anc:
+            return p["pane_id"], "process tree"
+    registered = {r["name"] for r in load(PANES, [])}
+    working = [x for x in ags if x.get("agent_status") == "working" and x.get("name") not in registered
+               and str(x.get("cwd", "")).rstrip("/") == str(ROOT)]
+    if len(working) == 1:
+        return working[0]["pane_id"], "the one working agent here"
+    if env_pane in live:
+        return env_pane, "environment"
+    cands = [f"{x.get('pane_id')} ({x.get('name') or x.get('agent')}, {x.get('agent_status')})" for x in ags if str(x.get("cwd", "")).rstrip("/") == str(ROOT)]
+    return None, cands
+
+
+def stop():
+    pid = alive()
+    if pid:
+        os.kill(pid, signal.SIGTERM)
+        PID.unlink(missing_ok=True)
+    return pid
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("cmd", choices=["start", "stop", "status", "tail", "run", "whoami"])
+    p.add_argument("n", nargs="?", default="30")
+    p.add_argument("--pm"); p.add_argument("--interval", type=int, default=20); p.add_argument("--mem", type=float, default=22.5)
+    p.add_argument("--ctx", type=int, default=300000); p.add_argument("--pm-ctx", type=int, default=1000000); p.add_argument("--stale-hours", type=float, default=3)
+    a = p.parse_args()
+    if a.cmd == "status":
+        pid = alive()
+        print(f"running pid {pid}" if pid else "not running", load(PMINFO, {}))
+        return
+    if a.cmd == "tail":
+        n = int(a.n)
+        lines = EVENTS.read_text().splitlines()[-n:] if EVENTS.exists() else []
+        print("\n".join(lines))
+        err = LOG.read_text()[-1500:] if LOG.exists() else ""
+        if err.strip():
+            print("--- watchd.log (stderr) ---\n" + err)
+        return
+    if a.cmd == "stop":
+        pid = stop()
+        print(f"stopped {pid}" if pid else "not running")
+        return
+    if a.cmd == "run":
+        PID.write_text(str(os.getpid()))
+        log(f"watchd run pid={os.getpid()} pm={a.pm}")
+        run(a)
+        return
+    # start / whoami: find the PM pane without trusting HERDR_PANE_ID (see detect_pm_pane)
+    ags_now = agents() or []
+    if a.pm:
+        pm_pane, how = (find_pm(ags_now, a.pm) or {}).get("pane_id", a.pm), "--pm"
+        if pm_pane not in {p["pane_id"] for p in (herdr("pane", "list", check=False) or {}).get("panes", [])}:
+            sys.exit(f"pane {pm_pane} does not exist (herdr pane list)")
+    else:
+        pm_pane, how = detect_pm_pane(ags_now, os.environ.get("HERDR_PANE_ID"))
+        if not pm_pane:
+            sys.exit(f"cannot tell which pane is the PM (env HERDR_PANE_ID={os.environ.get('HERDR_PANE_ID')} is not a live pane and no single "
+                     f"working agent runs in this folder). Run: pm-watchd start --pm <pane-id>. Candidates: {', '.join(how) or 'none'}")
+    if a.cmd == "whoami":
+        print(f"{pm_pane} (by {how})")
+        return
+    pm_a = find_pm(ags_now, pm_pane) or {}
+    if not pm_a:
+        print(f"note: no agent is detected in {pm_pane} yet; events will be delivered to the pane id once an agent runs there")
+    pm_session = (pm_a.get("agent_session") or {}).get("value")
+    info = load(PMINFO, {})
+    sessions = [s for s in info.get("pm_sessions", []) if s] if info.get("pm_pane") == pm_pane else []
+    if pm_session and pm_session not in sessions:
+        sessions.append(pm_session)
+    pid = alive()
+    if pid:
+        stop()
+        print(f"restarting: pid {pid} watched {info.get('pm_pane')}/{info.get('pm_name')}, now {pm_pane}/{pm_a.get('name')}")
+        time.sleep(0.5)
+    # issues per PM session (pm-pane new appends): pm-cost shares a PM session's cost between the issues it ran
+    session_issues = info.get("session_issues", {}) if info.get("pm_pane") == pm_pane else {}
+    if pm_session:
+        session_issues.setdefault(pm_session, [])
+    save(PMINFO, dict(pm_pane=pm_pane, pm_name=pm_a.get("name"), pm_session=pm_session, pm_sessions=sessions, session_issues=session_issues,
+                      workspace=pm_a.get("workspace_id") or os.environ.get("HERDR_WORKSPACE_ID"), started=now()))
+    args = [sys.executable, "-I", os.path.abspath(__file__), "run", "--pm", pm_pane, "--interval", str(a.interval),
+            "--mem", str(a.mem), "--ctx", str(a.ctx), "--pm-ctx", str(a.pm_ctx), "--stale-hours", str(a.stale_hours)]
+    with open(LOG, "a") as out:
+        proc = subprocess.Popen(args, stdout=out, stderr=out, stdin=subprocess.DEVNULL, start_new_session=True, close_fds=True)
+    time.sleep(0.5)
+    print(f"started pid {proc.pid} pm={pm_a.get('name') or pm_pane} ({pm_pane}) session={pm_session} interval={a.interval}s mem>{a.mem}GB ctx>{a.ctx} pm-ctx>{a.pm_ctx}")
+
+
+main()

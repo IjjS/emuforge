@@ -1,0 +1,20 @@
+# Usage: docker compose -f infra/aws-emulator/docker-compose.yml up -d --build
+# Change the port with EMULATOR_PORT=9300. The host port, the container port and the emulator's -p must match,
+# because the emulator writes its port into the files it creates.
+name: emuforge
+services:
+  aws-emulator:
+    build: .
+    image: aws-emulator
+    container_name: emuforge-aws-emulator
+    command: ["-p", "${EMULATOR_PORT:-9297}"]
+    ports:
+      # Published on 127.0.0.1 only, never on the whole network.
+      - "127.0.0.1:${EMULATOR_PORT:-9297}:${EMULATOR_PORT:-9297}"
+    environment:
+      # Same HOME inside and outside the container, so the paths the emulator writes into its config are valid on the host.
+      HOME: ${HOME}
+    volumes:
+      - ${HOME}/.aws/emulator:${HOME}/.aws/emulator
+    mem_limit: 2g
+    memswap_limit: 2g

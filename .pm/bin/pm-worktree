@@ -1,0 +1,115 @@
+#!/usr/bin/env -S python3 -I
+"""Create and remove sibling worktrees for worker panes.
+
+  pm-worktree new <issue> <unit> [--type feat|refactor|fix] [--branch NAME] [--base main]
+  pm-worktree rm <path|name> [--keep-branch | --delete-branch]
+  pm-worktree list
+
+Path: <parent of the main checkout>/emuforge-<issue>-<unit>, a sibling of the main checkout, never inside it.
+The base is local main (or a parent unit's branch for a stacked unit); nothing is fetched, because local main is
+the line the PM maintains. Every worktree gets output/{captures,logs} and three ports in output/ports.json:
+studio (8100+), engine (8300+) and emulator (9300+), so parallel units never share a server or an emulator.
+When studio/package.json exists, `bun install` runs there (log in output/logs/install.log).
+rm removes the worktree, frees its ports and deletes the branch only when it is merged into local main.
+"""
+import argparse
+import json
+import os
+import subprocess
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _pmlib import PORTS, ROOT, WORKTREES, load, log, now, save
+
+BRANCH_TYPES = ("feat", "refactor", "fix")
+PORT_BASES = {"studio": 8100, "engine": 8300, "emulator": 9300}
+
+
+def run(cmd, cwd=None, out=None):
+    print("$", " ".join(cmd))
+    if out:
+        with open(out, "a") as f:
+            return subprocess.run(cmd, cwd=cwd, stdout=f, stderr=subprocess.STDOUT).returncode
+    return subprocess.run(cmd, cwd=cwd).returncode
+
+
+def alloc_slot(path):
+    """One slot number per worktree; each port is its base plus the slot."""
+    slots = load(PORTS, {})
+    for slot in range(0, 100):
+        if str(slot) not in slots:
+            slots[str(slot)] = str(path)
+            save(PORTS, slots)
+            return slot
+    sys.exit("no free port slot (100 worktrees registered?)")
+
+
+def cmd_new(a):
+    name = f"{ROOT.name}-{a.issue}-{a.unit}"
+    path = ROOT.parent / name
+    if path.exists():
+        sys.exit(f"{path} exists")
+    branch = a.branch or f"{a.type}/{a.issue}-{a.unit}"
+    head, _, tail = branch.partition("/")
+    if head not in BRANCH_TYPES or not tail:
+        sys.exit(f"branch {branch} must be <feat|refactor|fix>/<name>")
+    if subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--verify", "--quiet", a.base], capture_output=True).returncode != 0:
+        sys.exit(f"base {a.base} does not exist; the repository needs at least one commit on main")
+    exists = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"], capture_output=True).returncode == 0
+    add = ["git", "-C", str(ROOT), "worktree", "add", str(path), branch] if exists else ["git", "-C", str(ROOT), "worktree", "add", "-b", branch, str(path), a.base]
+    if exists:
+        print(f"branch {branch} exists; reopening it (post-processing)")
+    if run(add) != 0:
+        sys.exit("worktree add failed")
+    for d in ("output/captures", "output/logs"):
+        (path / d).mkdir(parents=True, exist_ok=True)
+    slot = alloc_slot(path)
+    ports = {k: base + slot for k, base in PORT_BASES.items()}
+    (path / "output" / "ports.json").write_text(json.dumps(ports))
+    if (path / "studio" / "package.json").exists():
+        print("bun install in studio (log: output/logs/install.log) ...")
+        if run(["bun", "install"], cwd=str(path / "studio"), out=str(path / "output/logs/install.log")) != 0:
+            print("WARN bun install failed; see output/logs/install.log")
+    wts = load(WORKTREES, [])
+    wts.append(dict(name=name, path=str(path), issue=str(a.issue), unit=a.unit, branch=branch, base=a.base, slot=slot, ports=ports, created=now()))
+    save(WORKTREES, wts)
+    log(f"worktree new {name} {branch} slot={slot}")
+    print(f"{path} branch={branch} base={a.base} ports={ports}")
+
+
+def cmd_rm(a):
+    wts = load(WORKTREES, [])
+    key = os.path.basename(os.path.abspath(a.target)) if "/" in a.target else a.target
+    wt = next((w for w in wts if w["name"] == key), None)
+    if not wt:
+        sys.exit(f"{key} not in registry; remove it by hand with git worktree remove")
+    run(["git", "-C", str(ROOT), "worktree", "remove", "--force", wt["path"]])
+    run(["git", "-C", str(ROOT), "worktree", "prune"])
+    merged = subprocess.run(["git", "-C", str(ROOT), "merge-base", "--is-ancestor", wt["branch"], "main"], capture_output=True).returncode == 0
+    if a.delete_branch or (merged and not a.keep_branch):
+        run(["git", "-C", str(ROOT), "branch", "-D", wt["branch"]])
+    elif not merged:
+        print(f"branch {wt['branch']} is not merged into main; kept")
+    slots = load(PORTS, {})
+    slots.pop(str(wt.get("slot")), None)
+    save(PORTS, slots)
+    save(WORKTREES, [w for w in wts if w is not wt])
+    log(f"worktree rm {wt['name']}")
+    print(f"removed {wt['path']}")
+
+
+def cmd_list(a):
+    for w in load(WORKTREES, []):
+        print(f"  {w['name']:24} {w['branch']:24} ports={w.get('ports')} {'ok' if os.path.isdir(w['path']) else 'MISSING'}")
+
+
+p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+sp = p.add_subparsers(dest="cmd", required=True)
+n = sp.add_parser("new"); n.add_argument("issue"); n.add_argument("unit")
+n.add_argument("--type", choices=BRANCH_TYPES, default="feat"); n.add_argument("--branch"); n.add_argument("--base", default="main")
+n.set_defaults(f=cmd_new)
+r = sp.add_parser("rm"); r.add_argument("target"); r.add_argument("--keep-branch", action="store_true")
+r.add_argument("--delete-branch", action="store_true", help="delete the local branch even when it is not merged"); r.set_defaults(f=cmd_rm)
+l = sp.add_parser("list"); l.set_defaults(f=cmd_list)
+a = p.parse_args()
+a.f(a)

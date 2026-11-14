@@ -1,0 +1,106 @@
+#!/usr/bin/env -S python3 -I
+"""Run the checks of a checkout and record the result. The record, not an agent's word, is the evidence.
+
+  pm-check <worktree|.> [--only engine|studio|integration]... [--list]
+
+Runs, for each module that exists in the checkout:
+  engine       cargo fmt --all --check; cargo clippy --workspace --all-targets -- -D warnings; cargo test --workspace
+  studio       bun run typecheck; lint; format:check; test:unit; build
+  integration  tests/integration/run (the suite's own entry point), given the worktree's engine and emulator ports
+A module whose manifest is missing (engine/Cargo.toml, studio/package.json, tests/integration/run) is reported as
+"absent" and does not count as a failure. A checkout where every module is absent passes on a clean tree.
+Each step's output goes to <checkout>/output/logs/check-<step>.log. The summary goes to
+<checkout>/output/checks/last.json: {commit, dirty, passed, failed: [steps], steps: [{name, status, seconds, log}]}.
+pm-merge refuses a unit whose last.json is not a pass on the branch's current commit.
+Exit code 0 only when every step that ran passed and the tree was clean.
+"""
+import argparse
+import json
+import os
+import pathlib
+import subprocess
+import sys
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _pmlib import now
+
+STEPS = {
+    "engine": ("engine", "Cargo.toml", [
+        ("engine-fmt", ["cargo", "fmt", "--all", "--check"]),
+        ("engine-clippy", ["cargo", "clippy", "--workspace", "--all-targets", "--", "-D", "warnings"]),
+        ("engine-test", ["cargo", "test", "--workspace"]),
+    ]),
+    "studio": ("studio", "package.json", [
+        ("studio-typecheck", ["bun", "run", "typecheck"]),
+        ("studio-lint", ["bun", "run", "lint"]),
+        ("studio-format", ["bun", "run", "format:check"]),
+        ("studio-unit", ["bun", "run", "test:unit"]),
+        ("studio-build", ["bun", "run", "build"]),
+    ]),
+    "integration": ("tests/integration", "run", [
+        ("integration", ["./run"]),
+    ]),
+}
+# real AWS credentials and profiles never reach a check
+SCRUB = ("AWS_PROFILE", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_CONFIG_FILE",
+         "AWS_SHARED_CREDENTIALS_FILE", "AWS_ENDPOINT_URL", "AWS_DEFAULT_PROFILE", "AWS_ROLE_ARN", "AWS_WEB_IDENTITY_TOKEN_FILE")
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("checkout"); p.add_argument("--only", action="append", choices=list(STEPS)); p.add_argument("--list", action="store_true")
+    a = p.parse_args()
+    co = pathlib.Path(a.checkout).resolve()
+    if a.list:
+        for mod, (sub, manifest, steps) in STEPS.items():
+            print(f"{mod:12} {'present' if (co / sub / manifest).exists() else 'absent ':7} {', '.join(n for n, _ in steps)}")
+        return
+    logs = co / "output" / "logs"; logs.mkdir(parents=True, exist_ok=True)
+    out = co / "output" / "checks"; out.mkdir(parents=True, exist_ok=True)
+    env = {k: v for k, v in os.environ.items() if k not in SCRUB}
+    env["AWS_EC2_METADATA_DISABLED"] = "true"
+    ports = {}
+    if (co / "output" / "ports.json").exists():
+        ports = json.loads((co / "output" / "ports.json").read_text())
+        env.update(EMUFORGE_STUDIO_PORT=str(ports["studio"]), EMUFORGE_ENGINE_PORT=str(ports["engine"]), EMULATOR_PORT=str(ports["emulator"]))
+    commit = subprocess.run(["git", "-C", str(co), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+    dirty = bool(subprocess.run(["git", "-C", str(co), "status", "--porcelain"], capture_output=True, text=True).stdout.strip())
+    results = []
+    for mod in (a.only or list(STEPS)):
+        sub, manifest, steps = STEPS[mod]
+        if not (co / sub / manifest).exists():
+            results.append(dict(name=mod, status="absent", seconds=0, log=None))
+            print(f"  {mod:18} absent")
+            continue
+        for name, cmd in steps:
+            log = logs / f"check-{name}.log"
+            t = time.time()
+            with open(log, "w") as f:
+                try:
+                    code = subprocess.run(cmd, cwd=str(co / sub), stdout=f, stderr=subprocess.STDOUT, env=env).returncode
+                except FileNotFoundError as e:
+                    f.write(f"{e}\n")
+                    code = 127
+            status = "passed" if code == 0 else ("error" if code == 127 else "failed")
+            results.append(dict(name=name, status=status, seconds=round(time.time() - t, 1), log=str(log)))
+            print(f"  {name:18} {status:7} {results[-1]['seconds']:>7}s  {log}")
+    failed = [r["name"] for r in results if r["status"] in ("failed", "error")]
+    ran = [r for r in results if r["status"] != "absent"]
+    full = not a.only
+    passed = not failed and not dirty and full  # a checkout with no module to check (harness-only work) passes on a clean tree
+    summary = dict(at=now(), commit=commit, dirty=dirty, full=full, passed=passed, failed=failed, ports=ports, steps=results)
+    (out / "last.json").write_text(json.dumps(summary, indent=1))
+    (out / f"{now()[:19].replace(':', '')}.json").write_text(json.dumps(summary, indent=1))
+    notes = []
+    if dirty:
+        notes.append("uncommitted changes: commit, then run again")
+    if not full:
+        notes.append("partial run (--only): not accepted by pm-merge")
+    if not ran:
+        notes.append("nothing to run in this checkout")
+    print(f"{'PASSED' if passed else 'NOT PASSED'} commit={commit[:9]} failed={failed or '-'} {'; '.join(notes)}")
+    sys.exit(0 if passed else 1)
+
+
+main()

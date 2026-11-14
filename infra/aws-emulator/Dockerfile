@@ -1,0 +1,18 @@
+# AWS Emulator, per https://docs.aws.amazon.com/emulator/latest/userguide/getting-started-docker.html
+# AWS publishes no prebuilt image, so this installs the Linux package.
+# TARGETARCH (amd64/arm64) picks the x86_64 or aarch64 RPM.
+FROM public.ecr.aws/amazonlinux/amazonlinux:2023-minimal
+ARG TARGETARCH
+RUN case "$TARGETARCH" in \
+      arm64) ARCH=aarch64 ;; \
+      amd64) ARCH=x86_64 ;; \
+      *) echo "unsupported arch: $TARGETARCH" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSL -o /tmp/aws-emulator.rpm \
+       "https://downloads.aws.com/aws-emulator/packages/aws-emulator/LTS/latest/aws-emulator-${ARCH}.rpm" \
+    && rpm -i /tmp/aws-emulator.rpm && rm /tmp/aws-emulator.rpm \
+    && mkdir -p /home/emulator && chown 1000 /home/emulator
+USER 1000
+ENV HOME=/home/emulator
+EXPOSE 9297
+ENTRYPOINT ["aws-emulator", "-b", "0.0.0.0"]

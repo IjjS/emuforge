@@ -1,0 +1,71 @@
+#!/usr/bin/env -S python3 -I
+"""Merge a unit's branch into local main. Only the PM runs this; there are no pull requests.
+
+  pm-merge <issue> <unit> [--dry-run]
+
+Refuses unless: the main checkout is on main with a clean tree; the unit's worktree has nothing uncommitted; the
+unit's last pm-check run passed on the commit being merged; and rev passed impl-<unit> (the newest
+review-impl-<unit>-r<k>.md in .pm/issue-<n>/ says verdict: pass).
+Merges with --no-ff so every unit is one merge commit on main. On a conflict the merge is aborted and main is left
+as it was: send the unit back to its worker to merge main into its branch, check again, then rerun.
+Never pushes.
+"""
+import argparse
+import json
+import os
+import pathlib
+import re
+import subprocess
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _pmlib import PM, ROOT, WORKTREES, load, log
+
+
+def git(*args, cwd=ROOT):
+    return subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True)
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("issue"); p.add_argument("unit"); p.add_argument("--dry-run", action="store_true")
+    a = p.parse_args()
+    wt = next((w for w in load(WORKTREES, []) if w["issue"] == str(a.issue) and w["unit"] == a.unit), None)
+    if not wt:
+        sys.exit(f"no registered worktree for issue {a.issue} unit {a.unit}")
+    branch, path = wt["branch"], pathlib.Path(wt["path"])
+    problems = []
+    if git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip() != "main":
+        problems.append("the main checkout is not on main")
+    if git("status", "--porcelain").stdout.strip():
+        problems.append("the main checkout has uncommitted changes")
+    if git("status", "--porcelain", cwd=path).stdout.strip():
+        problems.append(f"{path.name} has uncommitted changes")
+    head = git("rev-parse", branch).stdout.strip()
+    last = load(path / "output" / "checks" / "last.json", {})
+    if not last:
+        problems.append("no pm-check run recorded for this worktree")
+    elif last.get("commit") != head:
+        problems.append(f"pm-check ran on {str(last.get('commit'))[:9]}, the branch is at {head[:9]}; run pm-check again")
+    elif not last.get("passed"):
+        problems.append(f"pm-check failed: {', '.join(last.get('failed', []))}")
+    reviews = sorted((PM / f"issue-{a.issue}").glob(f"review-impl-{a.unit}-r*.md"), key=lambda f: int(re.search(r"-r(\d+)\.md$", f.name).group(1)))
+    if not reviews:
+        problems.append(f"no review-impl-{a.unit}-r<k>.md; rev has not reviewed the implementation")
+    elif not re.search(r"^verdict:\s*pass\s*$", reviews[-1].read_text(errors="replace")[:400], re.M):
+        problems.append(f"{reviews[-1].name} is not verdict: pass")
+    if problems:
+        sys.exit("cannot merge:\n- " + "\n- ".join(problems))
+    if a.dry_run:
+        print(f"ok to merge {branch} ({head[:9]}) into main")
+        return
+    r = git("merge", "--no-ff", "-m", f"merge: #{a.issue} {a.unit} ({branch})", branch)
+    if r.returncode != 0:
+        git("merge", "--abort")
+        sys.exit(f"merge conflict; main left unchanged. Have the worker merge main into {branch}, rerun pm-check, then retry.\n{r.stdout.strip()[-600:]}")
+    new = git("rev-parse", "HEAD").stdout.strip()
+    log(f"merge {a.issue} {a.unit} {branch} -> main {new[:9]}")
+    print(f"merged {branch} into main at {new[:9]}; units stacked on it must merge main into their branch")
+
+
+main()

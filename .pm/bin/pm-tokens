@@ -1,0 +1,68 @@
+#!/usr/bin/env -S python3 -I
+"""Claude token use of this project (main checkout and worktrees), from the local transcripts.
+
+  pm-tokens                     use in the last hour, the last 5 hours and today, per pane, against today's target
+  pm-tokens target <rate>       set today's target rate: tokens per hour (3M, 800k) or dollars per hour ($40)
+  pm-tokens target clear
+  pm-tokens check               exit 1 when the last hour is over the target (exit 0 without a target)
+
+"tok" counts input, output and cache-write tokens: what was processed fresh. Cache reads are shown apart because
+they are large in number and small in cost. Dollar figures are API list-price estimates for comparing runs, not a
+bill. The target lasts for the day it was set: the owner names it per session, and without one nothing is limited.
+While the last hour is over the target, pm-pane refuses to open panes (QUEUE) and pm-watchd tells the PM
+(EVENT tokens over …, then EVENT tokens ok …). Sessions of agents that keep no Claude transcript are not counted.
+"""
+import argparse
+import datetime as dt
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _pmtokens import fmt, parse_target, set_target, status, target, total, usage
+
+
+def line(label, rows, hours):
+    t = total(rows)
+    return (f"{label:9} tok={t['tok'] / 1e6:7.2f}M (in {t['inp'] / 1e6:.2f} out {t['out'] / 1e6:.2f} cache-write {t['cw'] / 1e6:.2f}) "
+            f"cache-read={t['cr'] / 1e6:8.1f}M  est=${t['usd']:8.2f}  per hour: {t['tok'] / 1e6 / hours:.2f}M tok, ${t['usd'] / hours:.2f}")
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("cmd", nargs="?", default="status", choices=["status", "target", "check"]); p.add_argument("value", nargs="?")
+    a = p.parse_args()
+    if a.cmd == "target":
+        if not a.value:
+            t = target()
+            print(f"target {fmt(t, t['per_hour'])} (set today)" if t else "no target today")
+            return
+        if a.value == "clear":
+            set_target(None)
+            print("target cleared")
+            return
+        try:
+            t = parse_target(a.value)
+        except ValueError as e:
+            sys.exit(str(e))
+        set_target(t)
+        print(f"target {fmt(t, t['per_hour'])} for today")
+        return
+    rate, t, over = status()
+    if a.cmd == "check":
+        if not t:
+            print("no target today")
+            return
+        print(f"{'OVER' if over else 'ok'}: last hour {fmt(t, rate)}, target {fmt(t, t['per_hour'])}")
+        sys.exit(1 if over else 0)
+    now = dt.datetime.now()
+    since_midnight = max((now - now.replace(hour=0, minute=0, second=0, microsecond=0)).total_seconds() / 3600, 0.01)
+    hour = usage(1)
+    print(line("last 1h", hour, 1))
+    print(line("last 5h", usage(5), 5))
+    print(line("today", usage(since_midnight), since_midnight))
+    print(f"target    {fmt(t, t['per_hour'])}: last hour {fmt(t, rate)} -> {'OVER' if over else 'ok'}" if t else "target    none set today")
+    for r in hour:
+        print(f"  {r['name']:18} calls={r['calls']:4} tok={(r['inp'] + r['out'] + r['cw']) / 1e6:6.2f}M cache-read={r['cr'] / 1e6:7.1f}M est=${r['usd']:7.2f}")
+
+
+main()

@@ -1,0 +1,46 @@
+name: Behavior differs
+description: EmuForge shows or does something different from the AWS console, the AWS CLI, or a direct call to aws-emulator.
+title: "<area>: <what differs>"
+body:
+  - type: markdown
+    attributes:
+      value: Remove credentials, account IDs and anything else sensitive from what you paste.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Studio (web console)
+        - CLI
+        - Engine (request relay)
+        - IAM evaluation
+        - Verify (IaC)
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Start from a fresh emulator. Include the exact command or the screen and the action.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What EmuForge did
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What the reference does
+      description: Name the reference - the AWS console screen, the AWS CLI command, or the same request sent straight to aws-emulator.
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: EmuForge version or commit, and the aws-emulator version (aws-emulator --version).
+    validations:
+      required: true

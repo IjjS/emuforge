@@ -1,0 +1,25 @@
+name: Feature request
+description: A capability EmuForge does not have yet.
+title: "<area>: <capability>"
+body:
+  - type: markdown
+    attributes:
+      value: Remove credentials, account IDs and anything else sensitive from what you paste.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do
+      description: The task you could not do, not the solution.
+    validations:
+      required: true
+  - type: textarea
+    id: today
+    attributes:
+      label: What you do today instead
+  - type: textarea
+    id: done
+    attributes:
+      label: How you would know it works
+      description: The observable result you expect.
+    validations:
+      required: true

@@ -1,0 +1,17 @@
+#!/bin/zsh
+# pm-mem            -> "used 14.4GB swap 6.8/8.0GB"
+# pm-mem --check [GB]  exit 1 when used > GB (default 22.5) or swap free < 256 MB; prints the same line
+# pm-mem --json
+used=$(vm_stat | awk '/Pages active/{a=$3}/Pages wired/{w=$4}/occupied by compressor/{c=$5}END{printf "%.1f", (a+w+c)*16384/1073741824}')
+sw=$(sysctl -n vm.swapusage)
+st=$(echo "$sw" | sed -E 's/.*total = ([0-9.]+)M.*/\1/'); su=$(echo "$sw" | sed -E 's/.*used = ([0-9.]+)M.*/\1/'); sf=$(echo "$sw" | sed -E 's/.*free = ([0-9.]+)M.*/\1/')
+stg=$(printf "%.1f" $(( st / 1024 ))); sug=$(printf "%.1f" $(( su / 1024 )))
+case "$1" in
+  --json) printf '{"used_gb":%s,"swap_used_gb":%s,"swap_total_gb":%s,"swap_free_mb":%s}\n' "$used" "$sug" "$stg" "$sf"; exit 0;;
+  --check)
+    lim=${2:-22.5}
+    echo "used ${used}GB swap ${sug}/${stg}GB"
+    if (( used > lim )) || (( sf < 256 )); then echo "OVER limit ${lim}GB (or swap free ${sf}MB < 256MB)"; exit 1; fi
+    exit 0;;
+  *) echo "used ${used}GB swap ${sug}/${stg}GB";;
+esac

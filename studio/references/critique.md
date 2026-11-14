@@ -1,0 +1,74 @@
+# Critique
+
+How Studio screens are scored and what score lets a screen through. No person picks or approves a design; the
+scores and the rules below decide, and where a rule leaves room the `pm` decides and records why.
+
+## Two scores
+
+| Score | Measures | Applies to | How |
+|---|---|---|---|
+| Structure | The screen has the same parts as the AWS console screen | `console` screens | `references/console-reference.md`, computed, `/100` |
+| Design health | The screen is a good screen: Nielsen heuristics | `console` and `native` screens | the `impeccable` critique, `/40` or its renormalized maximum |
+
+Both are recorded per issue with the commit, so the points below can be compared on one scale.
+
+## Captures
+
+Same every time, so scores are comparable:
+
+- Viewports 1280x800 and 390x844, light and dark.
+- Against a seeded emulator, so tables have rows; and once against an empty emulator, for the empty states.
+- From the built app, never from the dev server.
+
+Only `crit` and `rev` look at captures, once per round.
+
+## `console` screens
+
+There are no candidates; the reference spec is the design.
+
+| Point | Target | When |
+|---|---|---|
+| `baseline` | the current screen on `main`, if it exists | before implementation |
+| `final` | the implemented screen | after implementation |
+
+A `final` passes when all of these hold:
+
+- structure score is 90 or more, and no unmatched item is the title, the primary action or a table column
+- design health has no P0 or P1 finding
+- design health is not more than 2 points below `baseline`, when there is a baseline
+
+A finding that the screen would be "better" arranged differently from the AWS console is not a finding on a
+`console` screen. The reference wins; the critique judges what the reference leaves open.
+
+## `native` screens
+
+EmuForge's own screens have no reference, so design health decides and the `pm` has the last word.
+
+| Point | Target | When |
+|---|---|---|
+| `baseline` | the current screen on `main`, if it exists | before the mock |
+| `mock` | an HTML mock built from Cloudscape components and tokens | Screen stage |
+| `revised` | the mock after fixing its findings | each revision round, three at most |
+| `final` | the implemented screen | after implementation |
+
+- The mock shows the states the requirement names: at least loading, empty and error, not only the filled one.
+- One mock, revised. Alternative candidates are made only when the first mock still has a P1 after three
+  rounds; then the `pm` picks by score and records the pick in `decisions.md`.
+- The Screen stage passes when `revised` has no P0 or P1.
+- A `final` passes when it has no P0 or P1 and is not more than 2 points below `revised`.
+
+A native screen still follows the AWS console's conventions wherever one applies: the same layout shell, the
+same table, form and flash patterns. It is new content in a familiar frame, not a new visual language.
+
+## Below the pass line
+
+One rework by the owning worker, then one more critique. If it still fails, the `pm` decides between a second
+rework, splitting the failing part into its own issue, or taking the screen as it is with the reason in
+`decisions.md`. A structure failure on the title, the primary action or a table column is never taken as it is.
+
+## Records
+
+- Scores go into the issue's `critique-scores.json` through the harness script, never by hand.
+- The issue's report carries the score table.
+- Scores are a working measure of this project's own screens. They are never published as a measure of
+  compatibility with AWS.

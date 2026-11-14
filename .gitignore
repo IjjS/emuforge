@@ -1,0 +1,40 @@
+.DS_Store
+
+# Internal working documents (not published)
+docs/
+.initial-refs/
+
+# Agent tooling: only the shared skills link is tracked
+.claude/*
+!.claude/skills
+
+# Harness working files and per-worktree evidence
+.pm/*
+!.pm/bin/
+!.pm/archive/
+output/
+.env
+.env.*
+!.env.example
+
+# Rust
+target/
+
+# JS
+node_modules/
+dist/
+coverage/
+playwright-report/
+test-results/
+
+# Keys and certificates the emulator writes must never be committed
+emulator_credentials
+*.pem
+*.p12
+
+# Python
+__pycache__/
+
+# Design critique: engine binary is downloaded per machine, critique snapshots are evidence
+.agents/skills/impeccable/scripts/bin/
+.impeccable/

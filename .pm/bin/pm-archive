@@ -1,0 +1,99 @@
+#!/usr/bin/env -S python3 -I
+"""Close an issue's panes, remove its worktrees, prune .pm/issue-<n>/ and write .pm/archive/<n>.md.
+
+  pm-archive <issue> --yes [--force] [--pm-session UUID]
+
+Run after every unit of the issue is merged into local main (pm-merge). Refuses unless every branch of the issue's
+registered worktrees is an ancestor of main (--force overrides). Moves requirement.md, decisions.md,
+test-criteria.md, critique-scores.json, cost.json and state.md to .pm/archive/<n>/ and deletes the rest of
+.pm/issue-<n>/ (drafts, review rounds, briefs) after their gist is written into .pm/archive/<n>.md. Worktrees and
+their output/ are removed with their local branches.
+"""
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _pmlib import BIN, PM, PMINFO, ROOT, WORKTREES, issue_dir, load, log, now, tabs, herdr
+
+KEEP = {"requirement.md", "decisions.md", "test-criteria.md", "critique-scores.json", "cost.json", "state.md"}
+
+
+def merged(branch):
+    """True when the branch is an ancestor of local main."""
+    return subprocess.run(["git", "-C", str(ROOT), "merge-base", "--is-ancestor", branch, "main"], capture_output=True).returncode == 0
+
+
+def review_summary(d):
+    rows = []
+    for f in sorted(d.glob("review-*.md")):
+        head = f.read_text(errors="replace")[:600]
+        verdict = re.search(r"verdict:\s*(\w+)", head)
+        p1 = re.search(r"p1:\s*(\d+)", head)
+        rows.append(f"- {f.stem}: {verdict.group(1) if verdict else '?'}" + (f", P1 {p1.group(1)}" if p1 else ""))
+    return rows
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("issue"); p.add_argument("--yes", action="store_true"); p.add_argument("--force", action="store_true")
+    p.add_argument("--pm-session", help="PM session id; default: the one pm-watchd start recorded in .pm/run/pm.json")
+    a = p.parse_args()
+    if not a.yes:
+        sys.exit("add --yes once every unit is merged into main")
+    d = issue_dir(a.issue)
+    wts = [w for w in load(WORKTREES, []) if w["issue"] == str(a.issue)]
+    states = {w["branch"]: ("merged" if merged(w["branch"]) else "NOT MERGED") for w in wts}
+    not_merged = [br for br, st in states.items() if st != "merged"]
+    if not wts and not a.force:
+        sys.exit(f"no registered worktree for issue {a.issue}; nothing to verify. Use --force only when the owner says the issue is finished")
+    if not_merged and not a.force:
+        sys.exit("not merged into main: " + ", ".join(not_merged))
+    # cost (the PM's sessions come from pm.json unless given; PM sessions span issues, so their share is indicative)
+    info = load(PMINFO, {})
+    pm_sessions = [a.pm_session] if a.pm_session else (info.get("pm_sessions") or [info.get("pm_session")])
+    cmd = [str(BIN / "pm-cost"), a.issue, "--write"]
+    for s in pm_sessions:
+        if s:
+            cmd += ["--session", s]
+    cost_out = subprocess.run(cmd, capture_output=True, text=True).stdout.strip().splitlines()
+    # panes
+    subprocess.run([str(BIN / "pm-pane"), "close", "--issue", a.issue], capture_output=True, text=True)
+    # worktrees; a merged branch is deleted with its worktree, an unmerged one (--force) is kept
+    for w in wts:
+        subprocess.run([str(BIN / "pm-worktree"), "rm", w["name"]], capture_output=True, text=True)
+    # summary
+    state = (d / "state.md").read_text(errors="replace") if (d / "state.md").exists() else ""
+    decisions = (d / "decisions.md").read_text(errors="replace") if (d / "decisions.md").exists() else ""
+    scores = subprocess.run([str(BIN / "pm-critique"), "table", a.issue], capture_output=True, text=True).stdout.strip()
+    reviews = review_summary(d)
+    arch = PM / "archive"; arch.mkdir(exist_ok=True)
+    lines = [f"# #{a.issue} archive ({now()[:10]})", "", "## Branches"]
+    lines += [f"- {br} ({st})" for br, st in states.items()] or ["- (none registered)"]
+    lines += ["", "## State", state.strip() or "(no state.md)", "", "## Decisions", decisions.strip() or "(none)", "", "## Critique scores", scores or "(none)",
+              "", "## Review rounds", *(reviews or ["(none)"]), "", "## Cost", *(cost_out or ["(no transcripts)"]), ""]
+    (arch / f"{a.issue}.md").write_text("\n".join(lines))
+    # move the keep list to .pm/archive/<n>/ and drop the issue folder, so no archived issue looks like open work
+    keep_dir = arch / str(a.issue)
+    keep_dir.mkdir(exist_ok=True)
+    kept, removed = [], []
+    for f in d.iterdir():
+        if f.name in KEEP:
+            shutil.move(str(f), str(keep_dir / f.name))
+            kept.append(f.name)
+        else:
+            removed.append(f.name)
+    shutil.rmtree(d)
+    # tab
+    for t in tabs():
+        if t.get("label") == f"#{a.issue}":
+            herdr("tab", "close", t["tab_id"], check=False)
+    log(f"archive {a.issue}: branches={len(states)} kept={len(kept)} removed={len(removed)}")
+    print(f"archived -> {arch / f'{a.issue}.md'}; kept {sorted(kept)} in {keep_dir}; removed {len(removed)} files and {d}")
+
+
+main()

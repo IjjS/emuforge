@@ -1,0 +1,104 @@
+#!/usr/bin/env -S python3 -I
+"""Sum tokens and estimated cost for an issue from the Claude transcripts of its panes.
+
+  pm-cost <issue> [--write] [--session UUID]...     sessions come from .pm/run/panes-history.jsonl (pm-pane records
+                                                    each pane's Claude session id); add the PM's own session with --session
+  pm-cost --all-since YYYY-MM-DD                     every transcript of this project since that day (weekly trend)
+
+Prices ($/MTok): Opus 5.5 4/20, cache read 0.20, cache write 5; Fable 5.1 10/50/0.25/12.5; Sonnet 5.5 2/10/0.20/2.5.
+Codex panes have no transcript here and are not counted. A PM session that ran N issues (pm.json session_issues) is
+counted at 1/N per issue, shown as "pm (1/N)".
+"""
+import argparse
+import datetime as dt
+import glob
+import json
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _pmlib import PANES_HISTORY, PMINFO, ROOT, issue_dir, load, now, save
+
+PRICE = {"claude-opus-5-5": (4, 20, 0.20, 5.0), "claude-fable-5-1": (10, 50, 0.25, 12.5), "claude-sonnet-5-5": (2, 10, 0.20, 2.5), "claude-haiku-5-5": (1, 5, 0.10, 1.25)}
+PROJ = os.path.expanduser("~/.claude/projects")
+
+
+def session_files(uuid):
+    return glob.glob(os.path.join(PROJ, f"*{ROOT.name}*", f"{uuid}.jsonl"))
+
+
+def summarize(path, since=None):
+    s = dict(calls=0, out=0, cr=0, cw=0, inp=0, cost=0.0, ctx_max=0, images=0, models={})
+    for line in open(path, errors="replace"):
+        if '"usage"' not in line and '"image"' not in line:
+            continue
+        try:
+            o = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if since and o.get("timestamp", "") < since:
+            continue
+        m = o.get("message") or {}
+        if o.get("type") == "assistant":
+            u = m.get("usage") or {}
+            model = m.get("model") or "?"
+            p = PRICE.get(model, PRICE["claude-opus-5-5"])
+            s["calls"] += 1; s["models"][model] = s["models"].get(model, 0) + 1
+            inp, out, cr, cw = u.get("input_tokens", 0), u.get("output_tokens", 0), u.get("cache_read_input_tokens", 0), u.get("cache_creation_input_tokens", 0)
+            s["inp"] += inp; s["out"] += out; s["cr"] += cr; s["cw"] += cw; s["ctx_max"] = max(s["ctx_max"], inp + cr + cw)
+            s["cost"] += (inp * p[0] + out * p[1] + cr * p[2] + cw * p[3]) / 1e6
+        elif o.get("type") == "user" and '"image"' in line:
+            s["images"] += line.count('"type": "image"') + line.count('"type":"image"')
+    return s
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("issue", nargs="?"); p.add_argument("--write", action="store_true"); p.add_argument("--session", action="append", default=[])
+    p.add_argument("--all-since")
+    a = p.parse_args()
+    rows = []
+    if a.all_since:
+        # transcripts stamp UTC ("...Z"); compare in UTC with the same text shape
+        since = dt.datetime.fromisoformat(a.all_since).astimezone().astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+        for f in glob.glob(os.path.join(PROJ, f"*{ROOT.name}*", "*.jsonl")):
+            s = summarize(f, since)
+            if s["calls"]:
+                rows.append(dict(name=os.path.basename(f)[:8], **s))
+    else:
+        if not a.issue:
+            sys.exit("issue required")
+        sessions = {}
+        if os.path.exists(PANES_HISTORY):
+            for line in open(PANES_HISTORY):
+                try:
+                    e = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if str(e.get("issue")) == str(a.issue) and e.get("session"):
+                    sessions[e["session"]] = e["name"]
+        for u in a.session:
+            sessions[u] = "pm"
+        # a PM session that ran several issues is shared equally between them (pm.json session_issues, kept by pm-pane new)
+        session_issues = load(PMINFO, {}).get("session_issues", {})
+        for uuid, name in sessions.items():
+            for f in session_files(uuid):
+                s = summarize(f)
+                if name == "pm":
+                    issues = session_issues.get(uuid) or [str(a.issue)]
+                    n = max(1, len(issues)) if str(a.issue) in issues else 1
+                    if n > 1:
+                        s["cost"] = s["cost"] / n
+                        name = f"pm (1/{n})"
+                rows.append(dict(name=name, session=uuid, **s))
+    tot = dict(calls=sum(r["calls"] for r in rows), out=sum(r["out"] for r in rows), cr=sum(r["cr"] for r in rows), cw=sum(r["cw"] for r in rows),
+               cost=round(sum(r["cost"] for r in rows), 2), images=sum(r["images"] for r in rows), panes=len(rows))
+    print(f"panes={tot['panes']} calls={tot['calls']:,} out={tot['out'] / 1e6:.2f}M cache_read={tot['cr'] / 1e9:.2f}B cache_write={tot['cw'] / 1e6:.0f}M images={tot['images']} est=${tot['cost']:,.0f}")
+    for r in sorted(rows, key=lambda r: -r["cost"]):
+        print(f"  {r['name']:16} calls={r['calls']:5} ctx_max={r['ctx_max']:>8,} out={r['out'] / 1e6:5.2f}M img={r['images']:4} ${r['cost']:6,.1f}")
+    if a.write and a.issue:
+        save(issue_dir(a.issue) / "cost.json", dict(at=now(), total=tot, panes=rows))
+        print(f"written {issue_dir(a.issue) / 'cost.json'}")
+
+
+main()

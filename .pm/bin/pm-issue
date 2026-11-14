@@ -1,0 +1,138 @@
+#!/usr/bin/env -S python3 -I
+"""Create, list and close issue files under issues/ (format: issues/README.md).
+
+  pm-issue new --module M --kind K --severity S --source SRC --key KEY --title "Imperative title" [--in CHECKOUT]
+  pm-issue list [--all]
+  pm-issue show <id>
+  pm-issue close <id> --checks "<check id> ..." [--in CHECKOUT]
+
+new    writes issues/things-that-do-not-work/<UTC timestamp>-<slug>.md with the header filled in and the body
+       sections empty, assigns the next Issue-Id, and refuses a duplicate Issue-Key. Prints the id and the path.
+       The PM and a plan pane file in the main checkout; a worker files with --in <its worktree> and commits the
+       file on its branch, so it reaches main when the unit merges.
+close  moves the file to issues/things-that-now-work/ with `git mv` and sets Issue-Check-Ids. It changes nothing
+       else in the file and does not commit: the move belongs in the commit that fixes the issue, so run it with
+       --in <worktree> inside the unit that closes the issue.
+Ids are assigned from the main checkout so two worktrees never pick the same one.
+"""
+import argparse
+import datetime as dt
+import os
+import pathlib
+import re
+import subprocess
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _pmlib import ROOT, RUN
+
+OPEN, DONE = "issues/things-that-do-not-work", "issues/things-that-now-work"
+MODULES = ("studio", "engine", "cli", "iam", "verify", "harness")
+KINDS = ("gap", "bug", "feature")
+SEVERITIES = ("CRITICAL", "HIGH", "MEDIUM", "LOW")
+BODY = """
+# {title}
+
+> Identified against commit `{commit}`. The code may have drifted since; trace the issue to the current code before fixing.
+
+## Description
+
+## Evidence
+
+## Steps to Reproduce
+
+## Expected
+
+## Out of scope
+"""
+
+
+def header(path):
+    h = {}
+    for line in path.read_text(errors="replace").splitlines():
+        m = re.match(r"^(Issue-[A-Za-z-]+):\s*(.*)$", line)
+        if not m:
+            break
+        h[m.group(1)] = m.group(2).strip()
+    return h
+
+
+def files(base, which=(OPEN, DONE)):
+    for d in which:
+        for f in sorted((base / d).glob("*.md")):
+            yield d, f, header(f)
+
+
+def find(base, issue_id):
+    for d, f, h in files(base):
+        if h.get("Issue-Id") == str(issue_id):
+            return d, f, h
+    sys.exit(f"no issue file with Issue-Id {issue_id} in {base}")
+
+
+def cmd_new(a):
+    base = pathlib.Path(a.checkout).resolve() if a.checkout else ROOT
+    if not re.fullmatch(r"[a-z]+\|[^|\s]+\|[^|\s]+", a.key):
+        sys.exit("--key must be <module>|<subject>|<class> without spaces")
+    known = list(files(ROOT)) + (list(files(base)) if base != ROOT else [])
+    dup = next((f for _, f, h in known if h.get("Issue-Key") == a.key), None)
+    if dup:
+        sys.exit(f"duplicate Issue-Key {a.key}: {dup}")
+    # ids come from one counter in the main checkout, so two worktrees filing at the same time never collide
+    seq = RUN / "issue-seq"
+    last = int(seq.read_text().strip() or 0) if seq.exists() else 0
+    next_id = max([int(h["Issue-Id"]) for _, _, h in known if h.get("Issue-Id", "").isdigit()] + [last]) + 1
+    seq.write_text(str(next_id))
+    commit = subprocess.run(["git", "-C", str(base), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip() or "(no commit yet)"
+    slug = re.sub(r"[^a-z0-9]+", "-", a.title.lower()).strip("-")[:80]
+    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    path = base / OPEN / f"{stamp}-{a.module}-{slug}.md"
+    head = (f"Issue-Id: {next_id}\nIssue-Severity: {a.severity}\nIssue-Module: {a.module}\nIssue-Kind: {a.kind}\n"
+            f"Issue-Source: {a.source}\nIssue-Key: {a.key}\nIssue-Check-Ids:\nIssue-Commit: {commit}\n")
+    path.write_text(head + BODY.format(title=a.title, commit=commit))
+    print(f"{next_id} {path}")
+
+
+def cmd_list(a):
+    for d, f, h in files(ROOT, (OPEN, DONE) if a.all else (OPEN,)):
+        state = "open" if d == OPEN else "done"
+        print(f"  #{h.get('Issue-Id', '?'):>3} {state:4} {h.get('Issue-Severity', ''):8} {h.get('Issue-Module', ''):7} {h.get('Issue-Kind', ''):7} {h.get('Issue-Source', ''):10} {f.name}")
+
+
+def cmd_show(a):
+    _, f, _ = find(ROOT, a.id)
+    print(f)
+    print(f.read_text(errors="replace"))
+
+
+def cmd_close(a):
+    base = pathlib.Path(a.checkout).resolve() if a.checkout else ROOT
+    d, f, h = find(base, a.id)
+    if d == DONE:
+        sys.exit(f"#{a.id} is already in {DONE}")
+    checks = " ".join(a.checks.split())
+    if not checks:
+        sys.exit("--checks must name at least one check id: an issue is closed by its checks, not by a statement")
+    text = f.read_text()
+    text, n = re.subn(r"(?m)^Issue-Check-Ids:.*$", f"Issue-Check-Ids: {checks}", text, count=1)
+    if n != 1:
+        sys.exit(f"{f} has no Issue-Check-Ids header line")
+    f.write_text(text)
+    target = base / DONE / f.name
+    r = subprocess.run(["git", "-C", str(base), "mv", str(f), str(target)], capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.exit(f"git mv failed: {r.stderr.strip()}")
+    subprocess.run(["git", "-C", str(base), "add", str(target)], capture_output=True)
+    print(f"closed #{a.id}: {target} (staged; commit it with the fix)")
+
+
+p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+sp = p.add_subparsers(dest="cmd", required=True)
+x = sp.add_parser("new"); x.add_argument("--module", required=True, choices=MODULES); x.add_argument("--kind", required=True, choices=KINDS)
+x.add_argument("--severity", required=True, choices=SEVERITIES); x.add_argument("--source", required=True, help="github#<n> | owner | finder | plan | worker")
+x.add_argument("--key", required=True); x.add_argument("--title", required=True); x.add_argument("--in", dest="checkout"); x.set_defaults(f=cmd_new)
+x = sp.add_parser("list"); x.add_argument("--all", action="store_true"); x.set_defaults(f=cmd_list)
+x = sp.add_parser("show"); x.add_argument("id"); x.set_defaults(f=cmd_show)
+x = sp.add_parser("close"); x.add_argument("id"); x.add_argument("--checks", required=True); x.add_argument("--in", dest="checkout"); x.set_defaults(f=cmd_close)
+a = p.parse_args()
+a.f(a)
