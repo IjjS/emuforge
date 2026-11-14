@@ -233,6 +233,8 @@ def health_probe(svc):
                            timeout=TIMEOUT["exec"])
     except subprocess.TimeoutExpired:
         return None, f"docker exec did not finish within {TIMEOUT['exec']} s"
+    except FileNotFoundError as e:
+        raise CheckError(f"docker is not installed or not on PATH: {e}") from e
     return p.returncode, p.stdout + p.stderr
 
 

@@ -1,1 +1,1 @@
-docker run -t --network none aws-emulator -p 9301
+docker run -t aws-emulator -p 9301
