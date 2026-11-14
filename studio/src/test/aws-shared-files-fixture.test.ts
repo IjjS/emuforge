@@ -1,10 +1,11 @@
-// The test file that studio.unit-tests-read-no-aws-shared-files starts in its nested Vitest runs. It also runs in the
-// normal suite as one more file that sets neither AWS_CONFIG_FILE nor AWS_SHARED_CREDENTIALS_FILE.
+// The fixture the check in aws-shared-files.test.ts starts in its nested Vitest runs. It also runs in the normal
+// suite as one more file that sets neither AWS_CONFIG_FILE nor AWS_SHARED_CREDENTIALS_FILE.
 /// <reference types="node" />
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir, userInfo } from 'node:os';
-import { isAbsolute, join, normalize, sep } from 'node:path';
+import { userInfo } from 'node:os';
+import { dirname, isAbsolute, join, normalize, sep } from 'node:path';
 import process from 'node:process';
+import { fileURLToPath } from 'node:url';
 import { ListStateMachinesCommand, type SFNClient } from '@aws-sdk/client-sfn';
 import { expect, it, onTestFinished, vi } from 'vitest';
 import { createSfnClient, engineEndpoint } from '../lib/aws/client-factory';
@@ -54,11 +55,16 @@ const OWN_MARKERS = { config: 'ef11-fixture-config', credentials: 'ef11-fixture-
 // The HOME this process started with, from the environment and from the user database.
 const STARTING_HOMES = [process.env['HOME'], userInfo().homedir].filter((home): home is string => Boolean(home));
 
+// Scratch directories live in the checkout's ignored output/, never in a shared system directory. import.meta.url
+// is taken as a string: jsdom replaces the global URL, which node:url does not accept.
+const SCRATCH = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'output', 'tests', 'aws-shared-files');
+
 const ini = (marker: string) => `[default]\nsdk_ua_app_id = ${marker}\nmax_attempts = 7\n`;
 
 // A scratch HOME for this test, removed when the test ends, pass or fail.
 function scratchHome(markers?: { config: string; credentials: string }): string {
-  const root = mkdtempSync(join(tmpdir(), 'emuforge-studio-aws-shared-files-fixture-'));
+  mkdirSync(SCRATCH, { recursive: true });
+  const root = mkdtempSync(join(SCRATCH, 'fixture-'));
   onTestFinished(() => rmSync(root, { recursive: true, force: true }));
   const home = join(root, 'home');
   mkdirSync(home);

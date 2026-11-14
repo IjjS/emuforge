@@ -2,7 +2,7 @@
 /// <reference types="node" />
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir, userInfo } from 'node:os';
+import { userInfo } from 'node:os';
 import { dirname, isAbsolute, join, normalize, sep } from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -69,8 +69,15 @@ const markersOf = (name: string): Required<Markers> => ({
   credentials: `ef11-${name}-credentials`,
 });
 
+// import.meta.url as a string: jsdom replaces the global URL, which node:url does not accept.
+const HERE = dirname(fileURLToPath(import.meta.url));
+const STUDIO = join(HERE, '..', '..');
+// Scratch directories live in the checkout's ignored output/, never in a shared system directory.
+const SCRATCH = join(STUDIO, '..', 'output', 'tests', 'aws-shared-files');
+
 function newScratch(): string {
-  return mkdtempSync(join(tmpdir(), 'emuforge-studio-aws-shared-files-'));
+  mkdirSync(SCRATCH, { recursive: true });
+  return mkdtempSync(join(SCRATCH, 'check-'));
 }
 
 // A scratch directory for this test, removed when the test ends, pass or fail.
@@ -249,9 +256,6 @@ it('redirects the next test again after a test set AWS_CONFIG_FILE itself', asyn
 
 // Nested runs: a fresh `vitest run` of the fixture alone, with Studio's own config, from a chosen environment.
 
-// import.meta.url as a string: jsdom replaces the global URL, which node:url does not accept.
-const HERE = dirname(fileURLToPath(import.meta.url));
-const STUDIO = join(HERE, '..', '..');
 const FIXTURE = join(HERE, 'aws-shared-files-fixture.test.ts');
 const VITEST = join(STUDIO, 'node_modules', 'vitest', 'vitest.mjs');
 const FIXTURE_CASES = [
