@@ -1,3 +1,5 @@
+#![cfg(test)]
+
 use std::net::{Ipv4Addr, SocketAddr};
 use std::num::NonZeroU16;
 use std::path::Path;

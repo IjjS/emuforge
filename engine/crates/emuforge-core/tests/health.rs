@@ -1,3 +1,5 @@
+#![cfg(test)]
+
 use std::fs;
 use std::num::NonZeroU16;
 use std::path::Path;
