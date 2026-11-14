@@ -50,6 +50,13 @@ const MS: Duration = Duration::from_millis(1);
 const DUPLEX: usize = 64 * 1024;
 const FRAME: usize = 64 * 1024;
 const LARGE: usize = 64 * 1024 * 1024;
+/// hyper's default HTTP/1 write buffer limit (`DEFAULT_MAX_BUFFER_SIZE` in hyper 1.12.0 `proto/h1/io.rs`).
+const HYPER_WRITE_BUFFER: usize = 8192 + 4096 * 100;
+/// rustls' default send buffer limit (`DEFAULT_BUFFER_LIMIT` in rustls 0.23.46 `common_state.rs`).
+const RUSTLS_SEND_BUFFER: usize = 64 * 1024;
+/// Most bytes of an upload handed over but not yet received by the stand-in: hyper's write buffer, the TLS send
+/// buffer and the duplex, plus the one frame hyper takes before it checks its limit. Never the body.
+const UPLOAD_AHEAD_BOUND: usize = HYPER_WRITE_BUFFER + RUSTLS_SEND_BUFFER + DUPLEX + FRAME;
 
 // ---------------------------------------------------------------------------------------------- vectors
 
@@ -1158,11 +1165,9 @@ async fn forward_streams_a_64_mib_upload_holding_one_frame() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(peer.await.unwrap(), (LARGE, true), "64 MiB received, equal");
-    // What was handed over and not yet received sits in hyper's write buffer, TLS and the duplex: a fixed
-    // amount, never the body.
     let ahead = most_ahead.load(Ordering::Acquire);
     assert!(
-        ahead < 1024 * 1024,
+        ahead <= UPLOAD_AHEAD_BOUND,
         "at most {ahead} bytes handed over ahead of the stand-in"
     );
 }
