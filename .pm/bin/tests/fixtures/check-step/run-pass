@@ -1,0 +1,4 @@
+#!/bin/sh
+# Stand-in for .pm/bin/tests/run in a fixture checkout: prints a marker line and passes.
+echo "check-step fixture marker line"
+exit 0
