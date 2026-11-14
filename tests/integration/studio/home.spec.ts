@@ -10,7 +10,7 @@ import createWrapper from '@cloudscape-design/components/test-utils/selectors';
 import type { Locator, Page } from '@playwright/test';
 import fs from 'node:fs';
 
-import { directHealth, expect, freePortExcept, startStack, test } from './support';
+import { directHealth, EnvError, expect, freePortExcept, startStack, test } from './support';
 import {
   connectionView,
   engineCommandLines,
@@ -112,13 +112,14 @@ test('studio.home-reconnects-after-emulator-kill-and-start', async ({ ctx, page,
   // Start the emulator again on the same port, without reloading the page → within 10 seconds both rows show
   // "Connected", and a direct call to the emulator's `/__admin/health` with its new `ca.pem` answers `ok`.
   await emulator.startAgain();
+  // The Given: the emulator started again with a new certificate (requirement 5). That is the emulator's doing, not
+  // Studio's, so a run where it did not is an environment error.
+  const after = emulator.files();
+  if (before === null || after === null || after.caLines.join('') === before.caLines.join('')) {
+    throw new EnvError(`emulator ${emulator.name} did not write a new ca.pem when it started again`);
+  }
   await expectBothConnected(page, emulator.port, CHANGE_BOUND_MS);
   expect(await stillSamePage(page), 'the page was not reloaded').toBe(true);
-  const after = emulator.files();
-  expect(
-    before !== null && after !== null && after.caLines.join('') !== before.caLines.join(''),
-    'the emulator wrote a new ca.pem',
-  ).toBe(true);
   expect(await directHealth(ctx.home, emulator.port)).toEqual({ status: 200, body: 'ok' });
 });
 
