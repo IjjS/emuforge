@@ -278,11 +278,12 @@ class Pages(CaptureCase):
             self.assertEqual(used_port(), port)
             ports.unlink()
         with self.subTest(case="first free from 8090"):
-            held = holding(FIRST_FREE)  # None: something else holds 8090 already, which is the same condition
-            if held:
-                self.addCleanup(held.close)
+            # hold the first port this process can bind from 8090 up (8090 itself unless another process has it),
+            # so another worktree releasing 8090 meanwhile cannot hand the run a port at or below the held one
+            held_port, held = next((n, h) for n in range(FIRST_FREE, FIRST_FREE + 200) if (h := holding(n)))
+            self.addCleanup(held.close)
             self.assertExit(self.structure("--serve", PAGES / "full"), 0)
-            self.assertGreaterEqual(used_port(), FIRST_FREE + 1)
+            self.assertGreater(used_port(), held_port)
 
     def test_url_nothing_listening(self):
         port = free_port()
@@ -321,6 +322,9 @@ class Pages(CaptureCase):
                 self.assertRegex(record["browser"], r"\d+\.\d+")
 
     def test_storage_state(self):
+        """The job file named by the criteria line is deleted when the run ends (test_browse requires it), so the
+        scan of <wt>/output/ cannot see it; that it holds the storage state's path and never its content is kept
+        by code read (design 2.4) and recorded in decisions.md, Review decisions."""
         marker = "cookie-value-6f1d2c9a-never-in-output"
         state = self.root / "storage-state.json"
         state.write_text(json.dumps({"cookies": [{

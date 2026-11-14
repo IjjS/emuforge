@@ -10,6 +10,10 @@ The pm-structure cases run this checkout's `.pm/bin/pm-structure` on a fixture w
 <checkout>/output/tests/browse-<case>-<pid>/wt, whose `studio/node_modules` is a symlink to this checkout's (unless
 the case is about it being missing) and whose `.git` file points nowhere, so git never finds this checkout. The
 directory is removed when the case ends. Requests go to 127.0.0.1 only.
+
+"No browser" (the criteria heading) holds for `check_url` and `serve`. Of the `Structure` cases, the stale lock
+(`cannot open`) and the files-left-behind case (`browser did not start`, `cannot open`, two scored `--serve` runs)
+start the capture child, node with Playwright, so they need the checkout's Chromium like `test_capture.py`.
 """
 import http.client
 import json
@@ -32,6 +36,7 @@ CHECKOUT = BIN.parents[1]
 FIXTURES = HERE / "fixtures" / "structure"
 BUCKET_LIST = FIXTURES / "specs" / "bucket-list.yaml"
 SNAPS = FIXTURES / "snapshots"
+PAGES = FIXTURES / "pages"
 NODE_MODULES = CHECKOUT / "studio" / "node_modules"
 MIB = 1024 * 1024
 
@@ -279,6 +284,9 @@ class Structure(BrowseCase):
             "browser did not start": (["--url", f"http://127.0.0.1:{port}"],
                                       clean_env(PLAYWRIGHT_BROWSERS_PATH=str(empty_browsers)), 2,
                                       "browser did not start: "),
+            "cannot open": (["--url", f"http://127.0.0.1:{port}"], None, 2, f"cannot open http://127.0.0.1:{port}"),
+            "browser run scored pass": (["--serve", PAGES / "full", "--port", free_port()], None, 0, None),
+            "browser run scored fail": (["--serve", PAGES / "no-region", "--port", free_port()], None, 1, None),
             "scored pass": (["--snapshot", SNAPS / "full-seeded.json"], None, 0, None),
             "scored fail": (["--snapshot", SNAPS / "missing-aws-region.json"], None, 1, None),
         }

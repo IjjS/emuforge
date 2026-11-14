@@ -27,6 +27,21 @@ def section(text, heading):
     return "\n".join(body)
 
 
+def blocks(text):
+    """Paragraphs and list items: a blank line or a line starting a list item (`1.`, `-`) starts a new block."""
+    out, cur = [], []
+    for line in text.splitlines():
+        if not line.strip() or re.match(r"(\d+\.|-) ", line):
+            if cur:
+                out.append("\n".join(cur))
+            cur = [line] if line.strip() else []
+        else:
+            cur.append(line)
+    if cur:
+        out.append("\n".join(cur))
+    return out
+
+
 class Guides(unittest.TestCase):
     def test_pm_skill(self):
         text = SKILL.read_text()
@@ -38,10 +53,13 @@ class Guides(unittest.TestCase):
         self.assertNotIn("structure score", not_built.lower())
 
     def test_crit_brief(self):
-        text = CRIT.read_text()
-        self.assertTrue(any("pm-structure" in ln and "--record" in ln for ln in text.splitlines()), text)
-        self.assertIn("console", text)
-        self.assertIn("--state empty", text)
+        """The step (list item or paragraph) that runs pm-structure with --record is about `console` screens and
+        names both states: `seeded` (the default) and `--state empty`."""
+        step = next((s for s in blocks(CRIT.read_text()) if "pm-structure" in s and "--record" in s), None)
+        self.assertIsNotNone(step, "no step of crit.md names pm-structure with --record")
+        self.assertIn("console", step)
+        self.assertIn("seeded", step)
+        self.assertIn("--state empty", step)
 
     def test_critique_records(self):
         records = section(CRITIQUE.read_text(), "## Records")
