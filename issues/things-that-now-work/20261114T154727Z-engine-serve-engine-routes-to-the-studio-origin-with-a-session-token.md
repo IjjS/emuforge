@@ -4,7 +4,7 @@ Issue-Module: engine
 Issue-Kind: feature
 Issue-Source: plan
 Issue-Key: engine|browser-access|missing
-Issue-Check-Ids:
+Issue-Check-Ids: engine.studio-session-serves-health engine.studio-port-from-environment engine.studio-session-changes-on-restart engine.studio-session-not-in-output
 Issue-Commit: b6826962168941938001393417fa6f23f2acc5ce
 
 # Serve engine routes to the Studio origin with a session token

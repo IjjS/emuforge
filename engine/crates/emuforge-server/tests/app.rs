@@ -14,7 +14,7 @@ use axum::body::Body;
 use axum::http::header::{ALLOW, CONTENT_TYPE, HOST, ORIGIN};
 use axum::http::{HeaderMap, Method, Request, StatusCode};
 use emuforge_core::{Emulator, Health, Reason};
-use emuforge_server::{AppState, ProbeFn, app};
+use emuforge_server::{AppState, ProbeFn, SessionToken, StudioOrigin, app};
 use hyper::body::{Bytes, Frame};
 use serde_json::{Value, json};
 use tokio::sync::{Notify, mpsc};
@@ -33,6 +33,8 @@ fn app_with(probe: ProbeFn) -> Router {
         emulator: emulator(),
         probe,
         max_in_flight: 2,
+        studio_origin: StudioOrigin::new(NonZeroU16::new(8296).unwrap()),
+        session: Arc::new(SessionToken::generate().unwrap()),
     })
 }
 
