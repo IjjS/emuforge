@@ -30,7 +30,8 @@ export default defineConfig({
     colorScheme: 'light',
     trace: 'off',
     video: 'off',
-    screenshot: 'only-on-failure',
+    // A screenshot is not redacted: a defective page showing a key or a token would keep it in an image.
+    screenshot: 'off',
     serviceWorkers: 'block',
   },
 });

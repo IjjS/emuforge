@@ -157,7 +157,18 @@ cleanup() {
   local left
   left="$(docker ps -aq --filter "label=emuforge-it-run=$run_id" 2>/dev/null || true)"
   if [[ -n "$left" ]]; then
+    # A killed container leaves its keys and ca.pem behind. Each one's directory did not exist when its check took
+    # the port (the name is emuforge-it-<port>-<run id>), so it is removed with the container.
+    local names name port
+    names="$(docker inspect -f '{{.Name}}' $left 2>/dev/null || true)"
     docker rm -f $left >/dev/null 2>&1 || true
+    for name in $names; do
+      port="${name#/emuforge-it-}"
+      port="${port%%-*}"
+      if [[ "$port" =~ ^[0-9]+$ && -e "$HOME/.aws/emulator/$port" ]]; then
+        rm -rf "$HOME/.aws/emulator/$port"
+      fi
+    done
   fi
   # A clean stop deletes the files; a kill would leave them. The directory did not exist before this run.
   if [[ -e "$emulator_dir" ]]; then
