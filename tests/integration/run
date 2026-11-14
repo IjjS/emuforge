@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+# Entry point of the integration suite; pm-check runs it as the `integration` step.
+#
+# Builds the engine, starts the run's own aws-emulator (telemetry off) on a loopback port, runs the engine
+# checks of tests/integration/engine one at a time, stops everything it started and writes
+# <checkout>/output/integration/report.json: emulator version and commit, the checkout's commit and the verdict
+# of every manifest check (passed, failed, error).
+#
+# Ports: EMULATOR_PORT and EMUFORGE_ENGINE_PORT when set (EMULATOR_PORT=9297, the owner's emulator, is refused),
+# else a free loopback port each.
+#
+# Exit: 0 when every check passed; 1 when any failed; 127 when there are only errors (the environment failed:
+# Docker, the image, cargo; pm-check records 127 as `error`). The engine is the subject, not the environment:
+# when engine/ does not exist or does not build, every check still runs and fails at its first engine step.
+set -euo pipefail
+
+# Real AWS credentials, profiles and proxy settings never reach a check.
+for name in $(compgen -e); do
+  case "$name" in
+    AWS_* | http_proxy | https_proxy | HTTP_PROXY | HTTPS_PROXY | all_proxy | ALL_PROXY | no_proxy | NO_PROXY)
+      unset "$name" ;;
+  esac
+done
+unset EMUFORGE_IT_ENGINE_BIN EMUFORGE_IT_ENGINE_BUILD EMUFORGE_IT_VERDICTS EMUFORGE_IT_RUN_ID
+export AWS_EC2_METADATA_DISABLED=true
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$here"
+checkout="$(cd ../.. && pwd)"
+out="$checkout/output/integration"
+logs="$checkout/output/logs"
+rm -rf "$out/verdicts" "$out/logs" "$out/tmp" "$out/report.json"
+mkdir -p "$out/verdicts" "$logs"
+run_id="$(date +%s)-$$"
+commit="$(git -C "$checkout" rev-parse HEAD 2>/dev/null || echo unknown)"
+emulator_version=unknown
+emulator_commit=unknown
+
+# report <reason>: writes report.json from the manifest and the verdict files and prints the exit code. With a
+# reason, the run did not get to its checks and every check is `error` with that reason.
+report() {
+  python3 -I - "$here/manifest.jsonl" "$out/verdicts" "$out/report.json" \
+    "$emulator_version" "$emulator_commit" "$commit" "${1:-}" <<'PY'
+import json, pathlib, sys
+manifest, verdicts, report, version, emulator_commit, commit, reason = sys.argv[1:]
+checks = []
+for line in pathlib.Path(manifest).read_text().splitlines():
+    if not line.strip():
+        continue
+    check_id = json.loads(line)["check_id"]
+    record = pathlib.Path(verdicts) / f"{check_id}.json"
+    if reason:
+        entry = dict(check_id=check_id, verdict="error", seconds=0, log=None, message=reason)
+    elif record.exists():
+        v = json.loads(record.read_text())
+        entry = dict(check_id=check_id, verdict=v["verdict"], seconds=v["seconds"], log=v["log"], message=v.get("message", ""))
+    else:
+        entry = dict(check_id=check_id, verdict="error", seconds=0, log=None, message="the check wrote no verdict")
+    checks.append(entry)
+pathlib.Path(report).write_text(json.dumps(dict(
+    emulator_version=version, emulator_commit=emulator_commit, commit=commit, checks=checks), indent=1) + "\n")
+for c in checks:
+    print(f"  {c['verdict']:7} {c['check_id']}  {c['message'].splitlines()[0][:160] if c['message'] else ''}", file=sys.stderr)
+verdicts = {c["verdict"] for c in checks}
+print(0 if verdicts == {"passed"} else 1 if "failed" in verdicts else 127)
+PY
+}
+
+preflight_error() {
+  echo "integration: $1" >&2
+  report "$1" >/dev/null
+  echo "integration: report $out/report.json" >&2
+  exit 127
+}
+
+free_port() {
+  python3 -I -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])'
+}
+
+# Ports.
+if [[ "${EMULATOR_PORT:-}" == "9297" ]]; then
+  echo "integration: EMULATOR_PORT=9297 is the owner's emulator; use another port or leave it unset" >&2
+  exit 1
+fi
+EMULATOR_PORT="${EMULATOR_PORT:-$(free_port)}"
+EMUFORGE_ENGINE_PORT="${EMUFORGE_ENGINE_PORT:-$(free_port)}"
+export EMULATOR_PORT EMUFORGE_ENGINE_PORT
+echo "integration: run $run_id, emulator port $EMULATOR_PORT, engine port $EMUFORGE_ENGINE_PORT" >&2
+
+# Preflight: the environment, not the subject.
+docker info >/dev/null 2>&1 || preflight_error "docker does not answer"
+docker image inspect aws-emulator >/dev/null 2>&1 \
+  || preflight_error "image aws-emulator is missing: docker compose -f infra/aws-emulator/docker-compose.yml build"
+for tool in cargo curl shasum; do
+  command -v "$tool" >/dev/null 2>&1 || preflight_error "$tool is not on PATH"
+done
+
+# The engine under test.
+engine_manifest="$checkout/engine/Cargo.toml"
+target_dir="$checkout/engine/target"
+if [[ -f "$engine_manifest" ]]; then
+  if metadata="$(cargo metadata --manifest-path "$engine_manifest" --format-version 1 --no-deps 2>/dev/null)"; then
+    target_dir="$(python3 -I -c 'import json, sys; print(json.load(sys.stdin)["target_directory"])' <<<"$metadata")"
+  fi
+  if cargo build --manifest-path "$engine_manifest" --bin emuforge-server >"$logs/integration-engine-build.log" 2>&1; then
+    engine_build=ok
+  else
+    engine_build=failed
+    echo "integration: engine build failed, see $logs/integration-engine-build.log" >&2
+  fi
+else
+  engine_build=absent
+  echo "integration: $engine_manifest does not exist; every check will fail at its first engine step" >&2
+fi
+engine_bin="$target_dir/debug/emuforge-server"
+
+# The emulator version, pinned for the run.
+version_text="$(docker run --rm --entrypoint aws-emulator aws-emulator --version 2>&1)" \
+  || preflight_error "aws-emulator --version failed"
+emulator_version="$(sed -n 's/^Version: *//p' <<<"$version_text")"
+emulator_commit="$(sed -n 's/^Commit: *//p' <<<"$version_text")"
+
+# The run's emulator.
+emulator_dir="$HOME/.aws/emulator/$EMULATOR_PORT"
+[[ -e "$emulator_dir" ]] \
+  && preflight_error "$emulator_dir already exists; a leftover would be mistaken for this run's files"
+container="emuforge-it-$EMULATOR_PORT-$run_id"
+cleanup() {
+  docker stop -t 10 "$container" >/dev/null 2>&1 || true
+  docker rm -f "$container" >/dev/null 2>&1 || true
+  # Containers a check started and could not remove (the test process was killed).
+  local left
+  left="$(docker ps -aq --filter "label=emuforge-it-run=$run_id" 2>/dev/null || true)"
+  if [[ -n "$left" ]]; then
+    docker rm -f $left >/dev/null 2>&1 || true
+  fi
+  # A clean stop deletes the files; a kill would leave them. The directory did not exist before this run.
+  if [[ -e "$emulator_dir" ]]; then
+    rm -rf "$emulator_dir"
+  fi
+  rm -rf "$out/tmp"
+}
+trap cleanup EXIT
+docker run -d --name "$container" --label "emuforge-it-run=$run_id" --memory 2g \
+  -p "127.0.0.1:$EMULATOR_PORT:$EMULATOR_PORT" -e "HOME=$HOME" -v "$HOME/.aws/emulator:$HOME/.aws/emulator" \
+  aws-emulator -p "$EMULATOR_PORT" -t off >/dev/null \
+  || preflight_error "the run's emulator would not start"
+health="$(curl -q -fsS --noproxy '*' --retry-all-errors --retry 60 --retry-delay 1 --retry-max-time 30 \
+  --max-time 5 --cacert "$emulator_dir/ca.pem" "https://127.0.0.1:$EMULATOR_PORT/__admin/health" 2>/dev/null || true)"
+[[ "$health" == "ok" ]] || preflight_error "the run's emulator did not answer 200 ok within 30 s"
+echo "integration: emulator $emulator_version ($emulator_commit) answers on 127.0.0.1:$EMULATOR_PORT" >&2
+
+# The checks, one at a time.
+EMUFORGE_IT_ENGINE_BIN="$engine_bin" EMUFORGE_IT_ENGINE_BUILD="$engine_build" \
+  EMUFORGE_IT_VERDICTS="$out/verdicts" EMUFORGE_IT_RUN_ID="$run_id" \
+  cargo test --manifest-path engine/Cargo.toml -- --test-threads=1 2>&1 | tee "$logs/integration-cargo-test.log" \
+  || true
+
+code="$(report)"
+echo "integration: report $out/report.json, exit $code" >&2
+exit "$code"
