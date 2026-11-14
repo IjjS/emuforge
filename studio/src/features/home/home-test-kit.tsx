@@ -91,7 +91,7 @@ export class FakeEngine {
   }
 
   readonly fetch = (input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> => {
-    const url = new URL(String(input), 'http://127.0.0.1:8296');
+    const url = new URL(String(input), window.location.href);
     const headers: Record<string, string> = {};
     new Headers(init.headers).forEach((value, name) => (headers[name] = value));
     const signal = init.signal ?? undefined;
@@ -103,7 +103,7 @@ export class FakeEngine {
       init,
       aborted: () => signal?.aborted === true,
     });
-    if (url.pathname === '/config.json' && !String(input).startsWith('http')) {
+    if (url.origin === window.location.origin && url.pathname === '/config.json') {
       return Promise.resolve(
         this.configPort === undefined
           ? new Response('not found', { status: 404 })
