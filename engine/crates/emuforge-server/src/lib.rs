@@ -2,8 +2,10 @@
 
 #![forbid(unsafe_code)]
 
+mod browser;
 mod config;
 mod routes;
+mod session;
 
 use std::io;
 use std::net::SocketAddr;
@@ -13,10 +15,13 @@ use std::sync::Arc;
 use emuforge_core::{Emulator, PROBE_DEADLINE, probe};
 use tokio::net::TcpListener;
 
+pub use browser::{PREFLIGHT_MAX_AGE_SECS, SESSION_HEADER, StudioOrigin, is_engine_path};
 pub use config::{
-    Config, DEFAULT_EMULATOR_PORT, DEFAULT_ENGINE_PORT, LISTEN_IP, MAX_IN_FLIGHT, listen_addr,
+    Config, DEFAULT_EMULATOR_PORT, DEFAULT_ENGINE_PORT, DEFAULT_STUDIO_PORT, LISTEN_IP,
+    MAX_IN_FLIGHT, listen_addr,
 };
-pub use routes::{AppState, HEALTH_PATH, ProbeFn, ProbeFuture, app};
+pub use routes::{AppState, HEALTH_PATH, ProbeFn, ProbeFuture, SESSION_PATH, app};
+pub use session::SessionToken;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -29,12 +34,18 @@ pub enum Error {
     Bind { addr: SocketAddr, error: io::Error },
     #[error("the engine stopped serving: {0}")]
     Serve(io::Error),
+    #[error("--studio-port {port} equals {other}; choose another --studio-port")]
+    StudioPortCollides { port: u16, other: &'static str },
+    #[error("cannot create a session token: the operating system's random source failed ({kind})")]
+    SessionToken { kind: String },
 }
 
-/// Binds `127.0.0.1:<port>` and serves until the process ends. The emulator's files are read from
-/// `<home>/.aws/emulator/<emulator port>/` on every health request.
+/// Creates the session token, binds `127.0.0.1:<port>` and serves until the process ends. The emulator's files
+/// are read from `<home>/.aws/emulator/<emulator port>/` on every health request.
 pub async fn serve(config: Config, home: PathBuf) -> Result<(), Error> {
     config.validate()?;
+    let session = Arc::new(SessionToken::generate()?);
+    let studio_origin = StudioOrigin::new(config.studio_port);
     let addr = listen_addr(&config);
     let listener = TcpListener::bind(addr)
         .await
@@ -42,6 +53,7 @@ pub async fn serve(config: Config, home: PathBuf) -> Result<(), Error> {
     tracing::info!(
         listen = %addr,
         emulator_port = config.emulator_port.get(),
+        studio_origin = studio_origin.as_str(),
         "engine listening"
     );
     let emulator = Emulator::new(&home, config.emulator_port);
@@ -55,6 +67,8 @@ pub async fn serve(config: Config, home: PathBuf) -> Result<(), Error> {
         emulator,
         probe,
         max_in_flight: MAX_IN_FLIGHT,
+        studio_origin,
+        session,
     };
     axum::serve(listener, app(state))
         .await
