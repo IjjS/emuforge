@@ -8,7 +8,7 @@ use axum::extract::{Request, State};
 use axum::http::header::{
     ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN,
     ACCESS_CONTROL_EXPOSE_HEADERS, ACCESS_CONTROL_MAX_AGE, ACCESS_CONTROL_REQUEST_HEADERS,
-    ACCESS_CONTROL_REQUEST_METHOD, ORIGIN, VARY, WWW_AUTHENTICATE,
+    ACCESS_CONTROL_REQUEST_METHOD, CONTENT_LENGTH, ORIGIN, VARY, WWW_AUTHENTICATE,
 };
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode};
 use axum::middleware::Next;
@@ -283,6 +283,7 @@ pub(crate) async fn cors(
         .extensions_mut()
         .remove::<PreflightAnswer>()
         .is_some();
+    let status = response.status();
     let headers = response.headers_mut();
     if from_studio && !engine_path && !preflight {
         let upstream: Vec<HeaderName> = headers
@@ -293,7 +294,7 @@ pub(crate) async fn cors(
         for name in upstream {
             headers.remove(name);
         }
-        if let Some(names) = exposed(headers) {
+        if let Some(names) = exposed(headers, status) {
             headers.insert(ACCESS_CONTROL_EXPOSE_HEADERS, names);
         }
     }
@@ -306,11 +307,15 @@ pub(crate) async fn cors(
     response
 }
 
-/// The name of every header of `headers` but `Access-Control-*` and `Vary`, lower-case, each once, sorted by
-/// byte value and joined by `, `; `None` when there is none.
-fn exposed(headers: &HeaderMap) -> Option<HeaderValue> {
+/// The name of every header of `headers` the answer carries on the wire but `Access-Control-*` and `Vary`,
+/// lower-case, each once, sorted by byte value and joined by `, `; `None` when there is none. A status that
+/// cannot carry `Content-Length` (1xx, `204`, `304`) is written without it, though the router has set one.
+fn exposed(headers: &HeaderMap, status: StatusCode) -> Option<HeaderValue> {
+    let length_written = !(status.is_informational()
+        || matches!(status, StatusCode::NO_CONTENT | StatusCode::NOT_MODIFIED));
     let mut names: Vec<&str> = headers
         .keys()
+        .filter(|name| length_written || *name != CONTENT_LENGTH)
         .map(HeaderName::as_str)
         .filter(|name| !name.starts_with(CORS_PREFIX) && *name != VARY.as_str())
         .collect();
