@@ -7,7 +7,8 @@ services:
     build: .
     image: aws-emulator
     container_name: emuforge-aws-emulator
-    command: ["-p", "${EMULATOR_PORT:-9297}"]
+    # Telemetry off: nothing in this repository may send anything off the machine.
+    command: ["-p", "${EMULATOR_PORT:-9297}", "-t", "off"]
     ports:
       # Published on 127.0.0.1 only, never on the whole network.
       - "127.0.0.1:${EMULATOR_PORT:-9297}:${EMULATOR_PORT:-9297}"
