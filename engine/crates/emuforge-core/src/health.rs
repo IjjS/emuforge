@@ -2,6 +2,7 @@
 
 use std::io;
 use std::net::{IpAddr, Ipv4Addr};
+use std::sync::Arc;
 use std::time::Duration;
 
 use http_body_util::{BodyExt, Empty, LengthLimitError, Limited};
@@ -9,6 +10,7 @@ use hyper::body::Bytes;
 use hyper::header::HOST;
 use hyper::{Request, StatusCode};
 use hyper_util::rt::TokioIo;
+use rustls::ClientConfig;
 use rustls::pki_types::ServerName;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
@@ -99,6 +101,7 @@ impl Reason {
 pub async fn probe(emulator: &Emulator, deadline: Duration) -> Health {
     let attempt = async {
         let files = EmulatorFiles::read(emulator).await.map_err(from_files)?;
+        let config = client_config(&files).map_err(from_files)?;
         let stream =
             TcpStream::connect(emulator.socket_addr())
                 .await
@@ -108,7 +111,7 @@ pub async fn probe(emulator: &Emulator, deadline: Duration) -> Health {
                         kind: kind.to_string(),
                     },
                 })?;
-        exchange(stream, emulator, &files).await
+        exchange(stream, emulator, config).await
     };
     into_health(tokio::time::timeout(deadline, attempt).await)
 }
@@ -123,7 +126,11 @@ pub async fn probe_on<S>(
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
-    into_health(tokio::time::timeout(deadline, exchange(stream, emulator, files)).await)
+    let attempt = async {
+        let config = client_config(files).map_err(from_files)?;
+        exchange(stream, emulator, config).await
+    };
+    into_health(tokio::time::timeout(deadline, attempt).await)
 }
 
 fn into_health(result: Result<Result<(), Reason>, tokio::time::error::Elapsed>) -> Health {
@@ -156,11 +163,14 @@ fn http_failed() -> Reason {
 }
 
 /// One request, never a second: a redirect is an unexpected answer, not a place to go.
-async fn exchange<S>(stream: S, emulator: &Emulator, files: &EmulatorFiles) -> Result<(), Reason>
+async fn exchange<S>(
+    stream: S,
+    emulator: &Emulator,
+    config: Arc<ClientConfig>,
+) -> Result<(), Reason>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
-    let config = client_config(files).map_err(from_files)?;
     let server_name = ServerName::IpAddress(IpAddr::V4(Ipv4Addr::LOCALHOST).into());
     let tls = TlsConnector::from(config)
         .connect(server_name, stream)
