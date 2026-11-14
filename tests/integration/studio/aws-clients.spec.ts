@@ -226,7 +226,8 @@ test('studio.aws-clients-renew-session-after-engine-restart', async ({ ctx, cont
     `HeadBucket ${bucket}`,
     at.from,
     at.newToken,
-    (r) => r.method === 'HEAD' && r.path === `/${bucket}`,
+    // The bucket resource, with or without a trailing slash (D5).
+    (r) => r.method === 'HEAD' && (r.path === `/${bucket}` || r.path === `/${bucket}/`),
   );
 
   // Restart 2: ListBuckets.
