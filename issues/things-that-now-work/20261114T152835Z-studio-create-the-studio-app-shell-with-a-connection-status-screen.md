@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: studio|app-shell|missing
-Issue-Check-Ids:
+Issue-Check-Ids: studio.app-talks-only-to-engine-and-own-origin studio.home-reconnects-after-emulator-kill-and-start studio.home-shows-connected studio.home-shows-emulator-not-started-after-stop studio.home-shows-engine-unreachable-and-recovers studio.home-shows-engine-unreachable-for-another-studio-origin studio.serve-binds-loopback-with-spa-fallback studio.service-routes-say-no-screen-yet studio.shell-finish studio.unknown-route-shows-page-not-found
 Issue-Commit: e55940995ba32d732a9dbc77a3796d54bd3a1ef7
 
 # Create the Studio app shell with a connection status screen
