@@ -6,6 +6,8 @@
 mod emulator;
 mod files;
 pub mod health;
+pub mod idle;
+pub mod sigv4;
 pub mod tls;
 
 use std::io;
@@ -13,6 +15,7 @@ use std::io;
 pub use emulator::Emulator;
 pub use files::{CA_FILE, CREDENTIALS_FILE, Credentials, EmulatorFiles, FILE_CAP, Secret};
 pub use health::{Health, PROBE_DEADLINE, Reason, probe, probe_on};
+pub use idle::IdleWrite;
 pub use tls::client_config;
 
 /// What can go wrong while reading the emulator's files and building trust from them.

@@ -1,0 +1,47 @@
+# Source: Amazon S3 API Reference, "Signature Calculations for the Authorization Header: Transferring Payload
+# in a Single Chunk (AWS Signature Version 4)",
+# https://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-header-based-auth.html,
+# example "Example: PUT Object" (test$file.text, body "Welcome to Amazon S3.").
+# Request headers as the example lists them; Authorization is left out (it carries the result).
+# Credentials of the example: AKIAIOSFODNN7EXAMPLE / wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY.
+# The example's request line shows the key unencoded (PUT test$file.text); a client sends it URI-encoded, which
+# is the canonical URI the example gives, so the raw path below is that encoded form.
+== request-line ==
+PUT /test%24file.text
+== headers ==
+Host: examplebucket.s3.amazonaws.com
+Date: Fri, 24 May 2013 00:00:00 GMT
+x-amz-date: 20130524T000000Z
+x-amz-storage-class: REDUCED_REDUNDANCY
+x-amz-content-sha256: 44ce7dd67c959e0d3524ffac1771dfbba87d2b6b4b4e99e42034a8b803f8b072
+== signed-headers ==
+date;host;x-amz-content-sha256;x-amz-date;x-amz-storage-class
+== payload-hash ==
+44ce7dd67c959e0d3524ffac1771dfbba87d2b6b4b4e99e42034a8b803f8b072
+== uri-mode ==
+as-sent
+== secret ==
+wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+== amz-date ==
+20130524T000000Z
+== scope ==
+20130524/us-east-1/s3/aws4_request
+== canonical-request ==
+PUT
+/test%24file.text
+
+date:Fri, 24 May 2013 00:00:00 GMT
+host:examplebucket.s3.amazonaws.com
+x-amz-content-sha256:44ce7dd67c959e0d3524ffac1771dfbba87d2b6b4b4e99e42034a8b803f8b072
+x-amz-date:20130524T000000Z
+x-amz-storage-class:REDUCED_REDUNDANCY
+
+date;host;x-amz-content-sha256;x-amz-date;x-amz-storage-class
+44ce7dd67c959e0d3524ffac1771dfbba87d2b6b4b4e99e42034a8b803f8b072
+== string-to-sign ==
+AWS4-HMAC-SHA256
+20130524T000000Z
+20130524/us-east-1/s3/aws4_request
+9e0e90d9c76de8fa5b200d8c849cd5b8dc7a3be3951ddb7f6a76b4158342019d
+== signature ==
+98ad721746da40c64f1a55b78f14c238d841ea1380cd77a1b5971af0ece108bd
