@@ -24,8 +24,9 @@ pub enum Error {
         "--port and --emulator-port are both {port}; the engine port must differ from the emulator port"
     )]
     SamePort { port: u16 },
-    #[error("cannot listen on {addr}: {source}; choose another --port")]
-    Bind { addr: SocketAddr, source: io::Error },
+    // `error` is part of the message, not a `source`, so a chained print shows the OS error once.
+    #[error("cannot listen on {addr}: {error}; choose another --port")]
+    Bind { addr: SocketAddr, error: io::Error },
     #[error("the engine stopped serving: {0}")]
     Serve(io::Error),
 }
@@ -37,7 +38,7 @@ pub async fn serve(config: Config, home: PathBuf) -> Result<(), Error> {
     let addr = listen_addr(&config);
     let listener = TcpListener::bind(addr)
         .await
-        .map_err(|source| Error::Bind { addr, source })?;
+        .map_err(|error| Error::Bind { addr, error })?;
     tracing::info!(
         listen = %addr,
         emulator_port = config.emulator_port.get(),
