@@ -24,6 +24,8 @@
 {"check_id": "engine.studio-port-from-environment", "path": "tests/integration/engine/tests/browser.rs", "module": "engine", "operations": [], "labels": [], "issue": 7}
 {"check_id": "engine.studio-session-changes-on-restart", "path": "tests/integration/engine/tests/browser.rs", "module": "engine", "operations": [], "labels": ["lifecycle"], "issue": 7}
 {"check_id": "engine.studio-session-not-in-output", "path": "tests/integration/engine/tests/browser.rs", "module": "engine", "operations": [], "labels": ["safety"], "issue": 7}
+{"check_id": "studio.service-routes-say-no-screen-yet", "path": "tests/integration/studio/shell.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 3}
+{"check_id": "studio.unknown-route-shows-page-not-found", "path": "tests/integration/studio/shell.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 3}
 {"check_id": "engine.relay-signs-with-emulator-key", "path": "tests/integration/engine/tests/relay_safety.rs", "module": "engine", "operations": ["s3:ListBuckets", "sts:GetCallerIdentity"], "labels": ["safety"], "issue": 2}
 {"check_id": "engine.relay-refuses-signed-chunk-upload", "path": "tests/integration/engine/tests/relay_safety.rs", "module": "engine", "operations": ["s3:CreateBucket", "s3:PutObject", "s3:HeadObject", "s3:GetObject", "s3:DeleteObject", "s3:DeleteBucket"], "labels": [], "issue": 2}
 {"check_id": "engine.relay-stays-on-loopback", "path": "tests/integration/engine/tests/relay_safety.rs", "module": "engine", "operations": ["dynamodb:DescribeEndpoints", "s3:ListBuckets", "s3:GetObject", "s3:CreateBucket", "s3:PutObject", "s3:DeleteObject", "s3:DeleteBucket"], "labels": ["safety"], "issue": 2}
