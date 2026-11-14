@@ -20,6 +20,8 @@ calls one that is already running. It is not an AWS project.
 docker compose -f infra/aws-emulator/docker-compose.yml up -d --build
 source infra/aws-emulator/env.sh      # point this shell's AWS CLI and SDKs at the emulator
 aws sts get-caller-identity           # Account 000000000000 means you reached the emulator
+EMULATOR_PORT=9298 docker compose -f infra/aws-emulator/docker-compose.yml up -d   # a second emulator beside it
+EMULATOR_PORT=9298 docker compose -f infra/aws-emulator/docker-compose.yml down    # stops only that one
 docker compose -f infra/aws-emulator/docker-compose.yml down
 ```
 
