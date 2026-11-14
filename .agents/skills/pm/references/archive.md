@@ -31,5 +31,4 @@ reviews are summarized in the archive.
 precedent (decisions taken, scores reached, what was postponed). The files under `.pm/archive/<id>/` are for the
 owner and for an order that arrives after archiving.
 
-`.pm/archive/` is tracked in git; committing it is the owner's call, like every commit on `main` that is not an
-issue file or a merge.
+`.pm/archive/` is local: it is ignored by git and never committed.

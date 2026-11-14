@@ -21,7 +21,8 @@ folder that holds its stages and rules.
 
 A session in the main checkout starts by invoking the `pm` skill (`.agents/skills/pm`) and follows it. A pane
 opened by the PM follows `.agents/skills/pm/references/pane-mode.md` and its brief instead. The scripts every PM
-and pane uses are in `.pm/bin/`; working files are in `.pm/issue-<id>/`, summaries in `.pm/archive/`.
+and pane uses are in `.pm/bin/`; working files are in `.pm/issue-<id>/`, summaries in `.pm/archive/`. Of `.pm/`,
+only `bin/` is tracked.
 
 ## Agents
 
@@ -73,8 +74,8 @@ token rate for the day; over it, no new pane is opened.
 - There are no pull requests. When an issue's checks pass and `rev` has passed it, the `pm` merges its branch
   into local `main`; with several worktrees open, the `pm` decides the order.
 - On `main` the `pm` commits only issue files it created and merges made by `.pm/bin/pm-merge`.
-- The `pm` pushes `main` to `origin` at the end of each cycle: every worktree of the issues in flight is merged and
-  removed, and the checks pass on `main`. Only `main`, never forced, never an issue branch.
+- The `pm` pushes `main` to `origin` after each merge of a worktree's branch. Only `main`, never forced, never
+  an issue branch.
 - Any other push, releases and deleting remote branches need the owner's explicit word.
 
 ## Checks decide, not agents

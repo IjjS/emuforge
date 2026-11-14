@@ -1,40 +1,56 @@
+# --- OS and editors
 .DS_Store
+.idea/
+.vscode/
+*.swp
 
-# Internal working documents (not published)
+# --- Internal working documents (not published)
 docs/
 .initial-refs/
 
-# Agent tooling: only the shared skills link is tracked
+# --- Agent tooling: per-user settings stay local; only the shared skills are tracked
+# (.agents/skills/ is tracked; .claude/skills is a link to it)
 .claude/*
 !.claude/skills
+**/.claude/settings.json
+**/.claude/settings.local.json
 
-# Harness working files and per-worktree evidence
+# --- Harness: only the scripts are tracked; working files, run state and archives are local
 .pm/*
 !.pm/bin/
-!.pm/archive/
+
+# --- Evidence and test results: check records, logs, captures, Playwright output
 output/
+*.log
+playwright-report/
+blob-report/
+test-results/
+playwright/.cache/
+coverage/
+
+# --- Build output
+target/
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+__pycache__/
+*.pyc
+
+# --- Environment files
 .env
 .env.*
 !.env.example
 
-# Rust
-target/
-
-# JS
-node_modules/
-dist/
-coverage/
-playwright-report/
-test-results/
-
-# Keys and certificates the emulator writes must never be committed
+# --- Keys and certificates (the emulator writes these; never commit them)
 emulator_credentials
+credentials
 *.pem
 *.p12
+*.key
+*.crt
+*.jks
 
-# Python
-__pycache__/
-
-# Design critique: engine binary is downloaded per machine, critique snapshots are evidence
+# --- Design critique: the engine binary is downloaded per machine; snapshots are evidence
 .agents/skills/impeccable/scripts/bin/
 .impeccable/

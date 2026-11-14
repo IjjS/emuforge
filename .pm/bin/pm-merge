@@ -8,7 +8,7 @@ unit's last pm-check run passed on the commit being merged; and rev passed impl-
 review-impl-<unit>-r<k>.md in .pm/issue-<n>/ says verdict: pass).
 Merges with --no-ff so every unit is one merge commit on main. On a conflict the merge is aborted and main is left
 as it was: send the unit back to its worker to merge main into its branch, check again, then rerun.
-Never pushes; the PM pushes main once a whole cycle is merged (pm skill, Next issue).
+Never pushes; the PM pushes main after each successful merge (pm skill, flow step 5).
 """
 import argparse
 import json
