@@ -126,10 +126,17 @@ pub struct Prepared {
 /// and every header value stay out.
 impl fmt::Debug for Prepared {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let names: Vec<&str> = self.head.headers.keys().map(HeaderName::as_str).collect();
+        struct Names<'a>(&'a HeaderMap);
+        impl fmt::Debug for Names<'_> {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.debug_list()
+                    .entries(self.0.keys().map(HeaderName::as_str))
+                    .finish()
+            }
+        }
         f.debug_struct("Prepared")
             .field("method", &self.head.method.as_str())
-            .field("headers", &names)
+            .field("headers", &Names(&self.head.headers))
             .finish()
     }
 }
@@ -218,13 +225,15 @@ fn prepare_classified(
 
 /// `Connection` and every header it names, then the fixed hop-by-hop list.
 fn remove_hop_by_hop(headers: &mut HeaderMap) {
-    let named: Vec<HeaderName> = headers
-        .get_all(CONNECTION)
-        .iter()
-        .filter_map(|value| value.to_str().ok())
-        .flat_map(|value| value.split(','))
-        .filter_map(|name| HeaderName::from_bytes(name.trim().as_bytes()).ok())
-        .collect();
+    let mut named: Vec<HeaderName> = Vec::new();
+    named.extend(
+        headers
+            .get_all(CONNECTION)
+            .iter()
+            .filter_map(|value| value.to_str().ok())
+            .flat_map(|value| value.split(','))
+            .filter_map(|name| HeaderName::from_bytes(name.trim().as_bytes()).ok()),
+    );
     headers.remove(CONNECTION);
     for name in named {
         headers.remove(name);
@@ -236,28 +245,34 @@ fn remove_hop_by_hop(headers: &mut HeaderMap) {
 
 /// The client's signed headers still present, plus `required`, sorted and without duplicates.
 fn signed_headers(client: &ClientAuth, headers: &HeaderMap, required: &[&str]) -> Vec<HeaderName> {
-    let mut names: Vec<HeaderName> = client
-        .signed_headers
-        .iter()
-        .filter(|name| headers.contains_key(*name))
-        .cloned()
-        .chain(
-            required
-                .iter()
-                .filter_map(|name| HeaderName::from_bytes(name.as_bytes()).ok()),
-        )
-        .collect();
+    let mut names: Vec<HeaderName> = Vec::new();
+    names.extend(
+        client
+            .signed_headers
+            .iter()
+            .filter(|name| headers.contains_key(*name))
+            .cloned(),
+    );
+    names.extend(
+        required
+            .iter()
+            .filter_map(|name| HeaderName::from_bytes(name.as_bytes()).ok()),
+    );
     names.sort_unstable_by(|a, b| a.as_str().cmp(b.as_str()));
     names.dedup();
     names
 }
 
+/// The names joined with `;`, as `SignedHeaders` lists them.
 fn joined(names: &[HeaderName]) -> String {
-    names
-        .iter()
-        .map(HeaderName::as_str)
-        .collect::<Vec<_>>()
-        .join(";")
+    let mut list = String::new();
+    for name in names {
+        if !list.is_empty() {
+            list.push(';');
+        }
+        list.push_str(name.as_str());
+    }
+    list
 }
 
 fn uri_mode(client: &ClientAuth) -> UriMode {
