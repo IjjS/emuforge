@@ -1,22 +1,24 @@
 #!/usr/bin/env bash
 # Entry point of the integration suite; pm-check runs it as the `integration` step.
 #
-# Builds the engine, starts the run's own aws-emulator (telemetry off) on a loopback port, runs the engine
-# checks of tests/integration/engine one at a time, stops everything it started and writes
-# <checkout>/output/integration/report.json: emulator version and commit, the checkout's commit, the verdict
-# of every manifest check (passed, failed, error) and the relay fidelity figure.
+# Builds the engine and Studio, starts the run's own aws-emulator (telemetry off) on a loopback port, runs the
+# engine checks of tests/integration/engine one at a time, then the Studio flow checks of tests/integration/studio
+# one at a time, stops everything it started and writes <checkout>/output/integration/report.json: emulator
+# version and commit, the checkout's commit, the verdict of every manifest check (passed, failed, error) and the
+# relay fidelity figure.
 #
 # Relay fidelity (engine/references/relay-fidelity.md): passed / total over the manifest rows labelled
 # `transparency` whose verdict is passed or failed (`error` counts in neither). It is written into report.json as
 # relay_fidelity {passed, total} and printed as the last line of the output:
 #   relay fidelity <passed>/<total> emulator <version> commit <sha>
 #
-# Ports: EMULATOR_PORT and EMUFORGE_ENGINE_PORT when set (EMULATOR_PORT=9297, the owner's emulator, is refused),
-# else a free loopback port each.
+# Ports: EMULATOR_PORT, EMUFORGE_ENGINE_PORT and EMUFORGE_STUDIO_PORT when set (EMULATOR_PORT=9297, the owner's
+# emulator, is refused), else a free loopback port each.
 #
 # Exit: 0 when every check passed; 1 when any failed; 127 when there are only errors (the environment failed:
-# Docker, the image, cargo; pm-check records 127 as `error`). The engine is the subject, not the environment:
-# when engine/ does not exist or does not build, every check still runs and fails at its first engine step.
+# Docker, the image, cargo, bun; pm-check records 127 as `error`). The engine and Studio are the subject, not the
+# environment: when engine/ or studio/ does not exist or does not build, every check still runs and fails at its
+# first engine or Studio step.
 set -euo pipefail
 
 # Real AWS credentials, profiles and proxy settings never reach a check.
@@ -26,7 +28,8 @@ for name in $(compgen -e); do
       unset "$name" ;;
   esac
 done
-unset EMUFORGE_IT_ENGINE_BIN EMUFORGE_IT_ENGINE_BUILD EMUFORGE_IT_VERDICTS EMUFORGE_IT_RUN_ID
+unset EMUFORGE_IT_ENGINE_BIN EMUFORGE_IT_ENGINE_BUILD EMUFORGE_IT_STUDIO_BUILD EMUFORGE_IT_VERDICTS EMUFORGE_IT_RUN_ID
+unset NODE_OPTIONS NODE_PATH
 export AWS_EC2_METADATA_DISABLED=true
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -34,7 +37,7 @@ cd "$here"
 checkout="$(cd ../.. && pwd)"
 out="$checkout/output/integration"
 logs="$checkout/output/logs"
-rm -rf "$out/verdicts" "$out/logs" "$out/tmp" "$out/report.json"
+rm -rf "$out/verdicts" "$out/logs" "$out/tmp" "$out/playwright" "$out/report.json"
 mkdir -p "$out/verdicts" "$logs"
 run_id="$(date +%s)-$$"
 commit="$(git -C "$checkout" rev-parse HEAD 2>/dev/null || echo unknown)"
@@ -107,8 +110,10 @@ if [[ "${EMULATOR_PORT:-}" == "9297" ]]; then
 fi
 EMULATOR_PORT="${EMULATOR_PORT:-$(free_port)}"
 EMUFORGE_ENGINE_PORT="${EMUFORGE_ENGINE_PORT:-$(free_port)}"
-export EMULATOR_PORT EMUFORGE_ENGINE_PORT
-echo "integration: run $run_id, emulator port $EMULATOR_PORT, engine port $EMUFORGE_ENGINE_PORT" >&2
+EMUFORGE_STUDIO_PORT="${EMUFORGE_STUDIO_PORT:-$(free_port)}"
+export EMULATOR_PORT EMUFORGE_ENGINE_PORT EMUFORGE_STUDIO_PORT
+echo "integration: run $run_id, emulator port $EMULATOR_PORT, engine port $EMUFORGE_ENGINE_PORT," \
+  "studio port $EMUFORGE_STUDIO_PORT" >&2
 
 # Preflight: the environment, not the subject.
 docker info >/dev/null 2>&1 || preflight_error "docker does not answer"
@@ -117,6 +122,12 @@ docker image inspect aws-emulator >/dev/null 2>&1 \
 for tool in cargo curl shasum; do
   command -v "$tool" >/dev/null 2>&1 || preflight_error "$tool is not on PATH"
 done
+studio_manifest="$checkout/studio/package.json"
+if [[ -f "$studio_manifest" ]]; then
+  for tool in bun node; do
+    command -v "$tool" >/dev/null 2>&1 || preflight_error "$tool is not on PATH"
+  done
+fi
 
 # The engine under test.
 engine_manifest="$checkout/engine/Cargo.toml"
@@ -137,6 +148,21 @@ else
 fi
 engine_bin="$target_dir/debug/emuforge-server"
 
+# Studio under test: its locked dependencies and its production build, which the flow checks serve with
+# `bun run serve`. Install and build write one log.
+studio_log="$logs/integration-studio-build.log"
+if [[ -f "$studio_manifest" ]]; then
+  if (cd "$checkout/studio" && bun install --frozen-lockfile && bun run build) >"$studio_log" 2>&1; then
+    studio_build=ok
+  else
+    studio_build=failed
+    echo "integration: studio install or build failed, see $studio_log" >&2
+  fi
+else
+  studio_build=absent
+  echo "integration: $studio_manifest does not exist; every Studio check will fail at its first Studio step" >&2
+fi
+
 # The emulator version, pinned for the run.
 version_text="$(docker run --rm --entrypoint aws-emulator aws-emulator --version 2>&1)" \
   || preflight_error "aws-emulator --version failed"
@@ -155,7 +181,18 @@ cleanup() {
   local left
   left="$(docker ps -aq --filter "label=emuforge-it-run=$run_id" 2>/dev/null || true)"
   if [[ -n "$left" ]]; then
+    # A killed container leaves its keys and ca.pem behind. Each one's directory did not exist when its check took
+    # the port (the name is emuforge-it-<port>-<run id>), so it is removed with the container.
+    local names name port
+    names="$(docker inspect -f '{{.Name}}' $left 2>/dev/null || true)"
     docker rm -f $left >/dev/null 2>&1 || true
+    for name in $names; do
+      port="${name#/emuforge-it-}"
+      port="${port%%-*}"
+      if [[ "$port" =~ ^[0-9]+$ && -e "$HOME/.aws/emulator/$port" ]]; then
+        rm -rf "$HOME/.aws/emulator/$port"
+      fi
+    done
   fi
   # A clean stop deletes the files; a kill would leave them. The directory did not exist before this run.
   if [[ -e "$emulator_dir" ]]; then
@@ -178,6 +215,34 @@ EMUFORGE_IT_ENGINE_BIN="$engine_bin" EMUFORGE_IT_ENGINE_BUILD="$engine_build" \
   EMUFORGE_IT_VERDICTS="$out/verdicts" EMUFORGE_IT_RUN_ID="$run_id" \
   cargo test --manifest-path engine/Cargo.toml --no-fail-fast -- --test-threads=1 2>&1 | tee "$logs/integration-cargo-test.log" \
   || true
+
+# The Studio flow checks, one at a time, with Studio's own pinned Playwright (no second package). Without it
+# (no studio/ package, or its install failed) there is nothing to run them with, and each Studio check is
+# `failed` with that reason, as an engine check is without an engine.
+playwright="$checkout/studio/node_modules/.bin/playwright"
+if [[ -x "$playwright" && "$studio_build" != absent ]]; then
+  EMUFORGE_IT_ENGINE_BIN="$engine_bin" EMUFORGE_IT_ENGINE_BUILD="$engine_build" \
+    EMUFORGE_IT_STUDIO_BUILD="$studio_build" EMUFORGE_IT_VERDICTS="$out/verdicts" EMUFORGE_IT_RUN_ID="$run_id" \
+    NODE_PATH="$checkout/studio/node_modules" \
+    "$playwright" test --config "$here/studio/playwright.config.ts" 2>&1 | tee "$logs/integration-playwright.log" \
+    || true
+else
+  if [[ "$studio_build" == absent ]]; then
+    reason="studio/package.json does not exist"
+  else
+    reason="no Playwright at $playwright (studio build $studio_build, see $studio_log)"
+  fi
+  python3 -I - "$here/manifest.jsonl" "$out/verdicts" "$reason" <<'PY'
+import json, pathlib, sys
+manifest, verdicts, reason = sys.argv[1:]
+for line in pathlib.Path(manifest).read_text().splitlines():
+    if line.strip() and json.loads(line)["module"] == "studio":
+        check_id = json.loads(line)["check_id"]
+        record = dict(check_id=check_id, verdict="failed", seconds=0, log=None, message=reason)
+        (pathlib.Path(verdicts) / f"{check_id}.json").write_text(json.dumps(record))
+PY
+  echo "integration: $reason; every Studio check failed" >&2
+fi
 
 code="$(report)"
 echo "integration: report $out/report.json, exit $code" >&2
