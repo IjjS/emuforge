@@ -6,6 +6,7 @@
 mod emulator;
 mod files;
 pub mod health;
+pub mod sigv4;
 pub mod tls;
 
 use std::io;

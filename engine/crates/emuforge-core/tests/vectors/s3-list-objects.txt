@@ -1,0 +1,41 @@
+# Source: Amazon S3 API Reference, "Signature Calculations for the Authorization Header: Transferring Payload
+# in a Single Chunk (AWS Signature Version 4)",
+# https://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-header-based-auth.html,
+# example "Example: Get Bucket (List Objects)" (GET /?max-keys=2&prefix=J on examplebucket).
+# Request headers as the example lists them; Authorization is left out (it carries the result).
+# Credentials of the example: AKIAIOSFODNN7EXAMPLE / wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY.
+== request-line ==
+GET /?max-keys=2&prefix=J
+== headers ==
+Host: examplebucket.s3.amazonaws.com
+x-amz-date: 20130524T000000Z
+x-amz-content-sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+== signed-headers ==
+host;x-amz-content-sha256;x-amz-date
+== payload-hash ==
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+== uri-mode ==
+as-sent
+== secret ==
+wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+== amz-date ==
+20130524T000000Z
+== scope ==
+20130524/us-east-1/s3/aws4_request
+== canonical-request ==
+GET
+/
+max-keys=2&prefix=J
+host:examplebucket.s3.amazonaws.com
+x-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+x-amz-date:20130524T000000Z
+
+host;x-amz-content-sha256;x-amz-date
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+== string-to-sign ==
+AWS4-HMAC-SHA256
+20130524T000000Z
+20130524/us-east-1/s3/aws4_request
+df57d21db20da04d7fa30298dd4488ba3a2b47ca3a489c74750e0f1e7df1b9b7
+== signature ==
+34b48302e7b5fa45bde8084f4b7868a86f0a534bc59db6670ed5711ef69dc6f7

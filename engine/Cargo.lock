@@ -244,10 +244,12 @@ dependencies = [
 name = "emuforge-core"
 version = "0.1.0"
 dependencies = [
+ "http",
  "http-body-util",
  "hyper",
  "hyper-util",
  "rcgen",
+ "ring",
  "rustls",
  "tempfile",
  "thiserror",
