@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use axum::body::Body;
 use axum::extract::{Request, State};
-use axum::http::header::{ALLOW, CACHE_CONTROL, CONNECTION, HOST, ORIGIN};
+use axum::http::header::{ALLOW, CACHE_CONTROL, CONNECTION, HOST, ORIGIN, WWW_AUTHENTICATE};
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
 use axum::middleware::{self, Next};
@@ -235,7 +235,8 @@ impl Shape {
     }
 
     /// `response` again in the caller's protocol when it is an engine refusal on a relayed path, with its
-    /// status and extensions (the `EngineRefusal` marker among them); any other response unchanged.
+    /// status, its extensions (the `EngineRefusal` marker among them) and its `WWW-Authenticate`; any other
+    /// response unchanged.
     pub(crate) fn apply(self, mut response: Response) -> Response {
         let Some(protocol) = self.relayed else {
             return response;
@@ -253,6 +254,9 @@ impl Shape {
             self.head_only,
         );
         *shaped.extensions_mut() = std::mem::take(response.extensions_mut());
+        if let Some(challenge) = response.headers_mut().remove(WWW_AUTHENTICATE) {
+            shaped.headers_mut().insert(WWW_AUTHENTICATE, challenge);
+        }
         shaped
     }
 }
