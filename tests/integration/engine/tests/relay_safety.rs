@@ -21,6 +21,9 @@ const ANSWER: Duration = Duration::from_secs(5);
 /// sockets' buffers while the check reads none of it, and within the emulator's 16 MiB `PutObject` limit.
 const HELD_OBJECT: usize = 16 * 1024 * 1024;
 
+/// The endpoint address emulator v1.0.364 answers to DynamoDB `DescribeEndpoints` (requirement §E-H).
+const DESCRIBE_ENDPOINTS_ADDRESS: &str = "dynamodb.us-east-1.localhost:9297";
+
 fn through_engine(ctx: &Ctx, what: &str, call: &Call, key: &Key) -> Response {
     call.send(ctx, &Endpoint::engine(ctx), key)
         .unwrap_or_else(|e| panic!("{what}: the engine gave no answer: {e}"))
@@ -304,6 +307,11 @@ fn relay_stays_on_loopback() {
             .and_then(|b| b["Endpoints"][0]["Address"].as_str().map(str::to_owned))
             .ok_or_else(|| Env::new("DescribeEndpoints sent directly names no endpoint address"))?;
         ctx.log(format!("DescribeEndpoints sent directly names {address}"));
+        if address != DESCRIBE_ENDPOINTS_ADDRESS {
+            return Err(Env::new(format!(
+                "DescribeEndpoints sent directly names {address}, not {DESCRIBE_ENDPOINTS_ADDRESS} (§E-H); the Given does not hold"
+            )));
+        }
 
         // The held download's head, recorded before the engine takes the port.
         let held_get = {
@@ -365,7 +373,9 @@ fn relay_stays_on_loopback() {
         let upstream = format!("127.0.0.1:{}", ctx.emulator_port);
         if !remotes.contains(&upstream) {
             return Err(Env::new(format!(
-                "lsof lists no connection of the engine to {upstream} while the download is held; the Given does not hold"
+                "lsof lists no connection of the engine to {upstream} while the download is held; the Given does not hold \
+                 (an engine that buffers the whole object and closes upstream before the client reads, against L2, \
+                 also ends here)"
             )));
         }
         let foreign: Vec<&String> = remotes
