@@ -3,7 +3,7 @@
 //
 //   node .structure-capture-<pid>.mjs <job.json>
 //
-// job: {url, out, storageState?, viewport, settleMs, settleMax, navTimeout}. Opens `url` in headless Chromium,
+// job: {url, out, storageState?, viewport, settleMs, settleMax, navTimeout, refuse}. Opens `url` in headless Chromium,
 // aborts every request whose host is not a loopback IP address and lists it, waits until two accessibility trees
 // taken `settleMs` apart are equal, and writes the snapshot (design 2.2) to `out`.
 // Exit 0 written; 10 the browser did not start; 11 the page could not be opened (error or status >= 400);
@@ -63,7 +63,13 @@ function flatten(axNodes) {
 async function main() {
   const job = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
   try {
-    browser = await chromium.launch({ headless: true, timeout: 30000 });
+    // Requests reached through an HTTP redirect are not seen by context.route, so the browser also goes through a
+    // proxy at job.refuse, a loopback port that refuses every connection, bypassed only for loopback addresses:
+    // a request to any other host fails on this machine and nothing leaves it (design 6, N3 and T1)
+    browser = await chromium.launch({
+      headless: true, timeout: 30000,
+      proxy: { server: `http://127.0.0.1:${job.refuse}`, bypass: "127.0.0.0/8,[::1]" },
+    });
   } catch (e) {
     return fail(LAUNCH, e);
   }
@@ -77,6 +83,9 @@ async function main() {
     if (loopback(url)) return route.continue();
     blocked.add(url);
     return route.abort("aborted"); // ERR_ABORTED: a blocked navigation leaves the page on its document
+  });
+  context.on("request", (request) => { // redirect hops, which the route above never sees
+    if (!loopback(request.url())) blocked.add(request.url());
   });
   await context.routeWebSocket(/.*/, (ws) => {
     if (loopback(ws.url())) return ws.connectToServer();

@@ -16,6 +16,7 @@ import ipaddress
 import json
 import os
 import shutil
+import socket
 import stat
 import subprocess
 import threading
@@ -316,7 +317,12 @@ def capture(wt, url, out, job, storage_state=None, log=None):
             "settleMax": SETTLE_MAX, "navTimeout": NAV_TIMEOUT}
     if storage_state is not None:
         spec["storageState"] = os.path.abspath(storage_state)
+    # a loopback port bound and never listened on: every connection to it is refused, and while the socket is held
+    # no other process can listen there; the browser's proxy (see the capture script)
+    refuse = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
+        refuse.bind(("127.0.0.1", 0))
+        spec["refuse"] = refuse.getsockname()[1]
         shutil.copyfile(SCRIPT, script)
         with open(job, "w", encoding="utf-8") as f:
             json.dump(spec, f)
@@ -327,6 +333,7 @@ def capture(wt, url, out, job, storage_state=None, log=None):
         except OSError as e:
             raise BrowseError(f"browser run failed: node: {e.strerror or e}") from None
     finally:
+        refuse.close()
         for path in (job, script):
             with contextlib.suppress(FileNotFoundError):
                 os.unlink(path)
