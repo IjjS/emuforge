@@ -1,4 +1,4 @@
-//! Browser access: the Studio origin, the browser guard (orders 3a-7 of the request path), the CORS preflight
+//! Browser access: the Studio origin, the browser guard (orders 3a-6b of the request path), the CORS preflight
 //! answers and the CORS layer.
 
 use std::num::NonZeroU16;
@@ -156,7 +156,7 @@ pub(crate) async fn guard(
     next.run(request).await
 }
 
-/// Order 7: what only the browser channel adds, removed from a Studio request before it is relayed, every copy
+/// Requirement §3.3 (D4): what only the browser channel adds, removed from a Studio request before it is relayed, every copy
 /// of each: `Origin`, every `Sec-Fetch-*` and the session token.
 fn strip_browser_headers(headers: &mut HeaderMap) {
     headers.remove(ORIGIN);
