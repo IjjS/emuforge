@@ -24,7 +24,9 @@ function redirectSharedFiles(): void {
 // Before the file's own hooks, its beforeAll included.
 redirectSharedFiles();
 
-// A test that sets either variable itself keeps its value for that test; the next test is redirected again.
+// A test that sets either variable itself keeps its value for that test; the next test is redirected again. A file
+// that needs its own value sets it in its own beforeEach (as client-factory.test.ts does) or in the test; a value set
+// in beforeAll or at module level is replaced before each test.
 beforeEach(() => {
   redirectSharedFiles();
 });
