@@ -307,6 +307,12 @@ describe('Connection: every state', () => {
     ]);
   });
 
+  it('says in its own words, not as the engine message, that the engine sent no message', async () => {
+    await openHomeAnswered(emulatorDown('unexpected_response', 9297, ''));
+    expect(alertText()).toContain(`The engine gave no message for ${EMULATOR}.`);
+    expect(alertText()).not.toContain('Engine message:');
+  });
+
   it('shows an engine message that looks like HTML as those characters, creating no element from it', async () => {
     await openHomeAnswered(emulatorDown('unexpected_response', 9297, '<b>x</b><script>'));
     expect(alertText()).toContain('Engine message: <b>x</b><script>');

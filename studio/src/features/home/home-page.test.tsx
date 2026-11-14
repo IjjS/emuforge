@@ -153,6 +153,17 @@ describe('Home: Refresh', () => {
     expect(document.activeElement).toBe(headerRefresh());
   });
 
+  it('leaves focus alone when the user had left the alert before an answer removed it', async () => {
+    await openHome(engineRefusal(503, 'Busy'), { ...connected(), delayMs: 500 });
+    const inAlert = present(alertRefresh(), 'the alert’s Refresh');
+    inAlert.focus();
+    await click(inAlert);
+    inAlert.blur();
+    await advance(500);
+    expect(connectionAlerts()).toHaveLength(0);
+    expect(document.activeElement).not.toBe(headerRefresh());
+  });
+
   it.each<[string, FakeAnswer]>([
     ['an engine-error state', engineRefusal(503, 'Busy')],
     ['an unknown-reason state', emulatorDown('a_reason_studio_does_not_know')],

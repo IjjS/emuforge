@@ -85,6 +85,14 @@ function EngineSaid({ label, children }: { label: string; children: ReactNode })
   );
 }
 
+/** The engine's message about the emulator; Studio's own words, unlabelled, when the engine sent none. */
+function EmulatorMessage({ message, endpoint }: { message: string; endpoint: string }) {
+  if (message === '') {
+    return <Box variant="p">{`The engine gave no message for ${endpoint}.`}</Box>;
+  }
+  return <EngineSaid label="Engine message:">{message}</EngineSaid>;
+}
+
 function BuildOnce() {
   return (
     <ExpandableSection
@@ -188,18 +196,17 @@ export function ConnectionAlert({
         );
       }
       const recovery = recoveryFor(result.reason);
-      const message = result.message !== '' ? result.message : `The engine gave no message for ${endpoint}.`;
       if (recovery === undefined) {
         return (
           <StatusAlert type="error" header="The engine reports a problem with the emulator" refresh={refresh}>
-            <EngineSaid label="Engine message:">{message}</EngineSaid>
+            <EmulatorMessage message={result.message} endpoint={endpoint} />
           </StatusAlert>
         );
       }
       return (
         <StatusAlert type="error" header="The engine cannot reach the emulator">
           <SpaceBetween size="xs">
-            <EngineSaid label="Engine message:">{message}</EngineSaid>
+            <EmulatorMessage message={result.message} endpoint={endpoint} />
             <Box variant="p">{recovery.explanation(port)}</Box>
           </SpaceBetween>
           <EmulatorSteps port={port} stopLabel={recovery.stopLabel(port)} />

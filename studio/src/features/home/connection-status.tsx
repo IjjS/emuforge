@@ -124,9 +124,20 @@ export function ConnectionStatus(props: ConnectionStatusProps) {
     focusedInAlert.current = event.target;
   };
   const handleBlur = (event: FocusEvent<HTMLDivElement>) => {
-    if (event.relatedTarget instanceof Node && !event.currentTarget.contains(event.relatedTarget)) {
-      focusedInAlert.current = null;
+    const left = event.target;
+    if (event.relatedTarget instanceof Node) {
+      if (!event.currentTarget.contains(event.relatedTarget)) {
+        focusedInAlert.current = null;
+      }
+      return;
     }
+    // Focus went nowhere: the user left the alert, unless the element is being removed, which is known once the
+    // removal is done.
+    queueMicrotask(() => {
+      if (left.isConnected && focusedInAlert.current === left) {
+        focusedInAlert.current = null;
+      }
+    });
   };
   useEffect(() => {
     const focused = focusedInAlert.current;
