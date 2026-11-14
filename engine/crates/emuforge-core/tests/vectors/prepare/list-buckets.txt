@@ -1,0 +1,16 @@
+# Source: .pm/issue-2/evidence/prepare-vectors.txt in the EmuForge main checkout, "Fixed vectors for
+# emuforge_core::relay::prepare, captured 2026-11-14 by i2-plan": AWS CLI 2.34.53 (botocore, Python 3.14.5)
+# signing for endpoint http://127.0.0.1:9391 with the made-up stand-in emulator key
+# EMUKEYID000000000001 / emuforgeUnitTestSecretKey000000000000001, region us-east-1, received by a loopback
+# recording listener. Copied as received; no real or emulator key appears here.
+# Capture: s3api list-buckets
+== head ==
+GET / HTTP/1.1
+Host: 127.0.0.1:9391
+Accept-Encoding: identity
+User-Agent: aws-cli/2.34.53 md/awscrt#0.32.2 ua/2.1 os/macos#25.6.0 md/arch#arm64 lang/python#3.14.5 md/pyimpl#CPython m/n,Z,E,C,N,b cfg/retry-mode#standard md/installer#exe md/prompt#off md/command#s3api.list-buckets
+X-Amz-Date: 20261114T162914Z
+X-Amz-Content-SHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+Authorization: AWS4-HMAC-SHA256 Credential=EMUKEYID000000000001/20261114/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=a03938cdbb59902ab110389bba2f7d5c9543826788014d37f2a798129c8f1ad2
+== body ==
+[body 0 bytes, starts b'']
