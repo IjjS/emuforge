@@ -1,5 +1,5 @@
-//! Browser access: the Studio origin, the browser guard (orders 3a-6 of the request path), the CORS preflight
-//! answer and the CORS layer.
+//! Browser access: the Studio origin, the browser guard (orders 3a-6b of the request path), the CORS preflight
+//! answers and the CORS layer.
 
 use std::num::NonZeroU16;
 use std::sync::Arc;
@@ -7,7 +7,8 @@ use std::sync::Arc;
 use axum::extract::{Request, State};
 use axum::http::header::{
     ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN,
-    ACCESS_CONTROL_MAX_AGE, ACCESS_CONTROL_REQUEST_METHOD, ORIGIN, VARY, WWW_AUTHENTICATE,
+    ACCESS_CONTROL_EXPOSE_HEADERS, ACCESS_CONTROL_MAX_AGE, ACCESS_CONTROL_REQUEST_HEADERS,
+    ACCESS_CONTROL_REQUEST_METHOD, CONTENT_LENGTH, ORIGIN, VARY, WWW_AUTHENTICATE,
 };
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode};
 use axum::middleware::Next;
@@ -22,6 +23,13 @@ pub const PREFLIGHT_MAX_AGE_SECS: u32 = 600;
 
 /// Every path under this prefix, and the prefix itself, is an engine path; every other path is a relayed path.
 const ENGINE_PREFIX: &str = "/__emuforge";
+/// The methods a preflight on a relayed path allows: the methods AWS APIs use (D2).
+const RELAYED_PREFLIGHT_METHODS: &str = "GET, HEAD, PUT, POST, DELETE, PATCH";
+/// Name prefix of the browser's Fetch Metadata headers: order 3c, and removed before a Studio request is relayed
+/// (D4).
+const FETCH_METADATA_PREFIX: &str = "sec-fetch-";
+/// Name prefix of every CORS response header; on a relayed Studio answer each one is the engine's (D5).
+const CORS_PREFIX: &str = "access-control-";
 
 /// The one origin whose browser requests the engine serves: `http://127.0.0.1:<studio port>`, always.
 #[derive(Debug, Clone)]
@@ -67,6 +75,11 @@ pub(crate) fn engine_refusal(mut response: Response) -> Response {
     response
 }
 
+/// Put into the extensions of a relayed-path preflight answer so the CORS layer leaves its headers as they are.
+/// The CORS layer removes it.
+#[derive(Debug, Clone, Copy)]
+struct PreflightAnswer;
+
 /// Where a request comes from, by its `Origin` headers.
 enum Caller {
     /// No `Origin` header.
@@ -89,13 +102,13 @@ fn caller(headers: &HeaderMap, studio: &StudioOrigin) -> Caller {
 fn has_fetch_metadata(headers: &HeaderMap) -> bool {
     headers
         .keys()
-        .any(|name| name.as_str().starts_with("sec-fetch-"))
+        .any(|name| name.as_str().starts_with(FETCH_METADATA_PREFIX))
 }
 
 /// The browser guard, inside the `Host` guard and around every route and the fallback.
 pub(crate) async fn guard(
     State(state): State<Arc<AppState>>,
-    request: Request,
+    mut request: Request,
     next: Next,
 ) -> Response {
     let studio = &state.studio_origin;
@@ -103,22 +116,19 @@ pub(crate) async fn guard(
     let path = request.uri().path();
     match caller(headers, studio) {
         Caller::Foreign => return engine_refusal(browser_not_served(studio)),
-        Caller::Studio if !is_engine_path(path) => {
-            return engine_refusal(refusal(
-                StatusCode::FORBIDDEN,
-                "OriginNotAllowed",
-                "the engine serves the Studio origin only on its own /__emuforge/ routes"
-                    .to_owned(),
-            ));
-        }
         Caller::NoOrigin if has_fetch_metadata(headers) => {
             return engine_refusal(browser_not_served(studio));
         }
         Caller::NoOrigin => return next.run(request).await,
         Caller::Studio => {}
     }
+    let engine_path = is_engine_path(path);
     if request.method() == Method::OPTIONS && headers.contains_key(ACCESS_CONTROL_REQUEST_METHOD) {
-        return preflight();
+        return if engine_path {
+            preflight()
+        } else {
+            relayed_preflight(headers)
+        };
     }
     let session_route =
         path == SESSION_PATH && matches!(*request.method(), Method::GET | Method::HEAD);
@@ -140,7 +150,25 @@ pub(crate) async fn guard(
             }
         }
     }
+    if !engine_path {
+        strip_browser_headers(request.headers_mut());
+    }
     next.run(request).await
+}
+
+/// Requirement §3.3 (D4): what only the browser channel adds, removed from a Studio request before it is relayed, every copy
+/// of each: `Origin`, every `Sec-Fetch-*` and the session token.
+fn strip_browser_headers(headers: &mut HeaderMap) {
+    headers.remove(ORIGIN);
+    headers.remove(&SESSION_HEADER);
+    let fetch_metadata: Vec<HeaderName> = headers
+        .keys()
+        .filter(|name| name.as_str().starts_with(FETCH_METADATA_PREFIX))
+        .cloned()
+        .collect();
+    for name in fetch_metadata {
+        headers.remove(name);
+    }
 }
 
 /// Orders 3a and 3c: a browser request from anywhere but the Studio origin.
@@ -184,9 +212,61 @@ fn preflight() -> Response {
     response
 }
 
+/// The same answer to every preflight from the Studio origin on a relayed path, whatever method it asks for;
+/// the headers it asks for are allowed when they are a list of header names. Nothing is forwarded.
+fn relayed_preflight(headers: &HeaderMap) -> Response {
+    let mut response = StatusCode::NO_CONTENT.into_response();
+    response.extensions_mut().insert(PreflightAnswer);
+    let answer = response.headers_mut();
+    answer.insert(
+        ACCESS_CONTROL_ALLOW_METHODS,
+        HeaderValue::from_static(RELAYED_PREFLIGHT_METHODS),
+    );
+    if let Some(requested) = requested_headers(headers) {
+        answer.insert(ACCESS_CONTROL_ALLOW_HEADERS, requested);
+    }
+    answer.insert(
+        ACCESS_CONTROL_MAX_AGE,
+        HeaderValue::from(PREFLIGHT_MAX_AGE_SECS),
+    );
+    response
+}
+
+/// The one `Access-Control-Request-Headers` value, unchanged, when it is a list of header names: elements
+/// separated by `,`, each, without the spaces and tabs around it, a non-empty run of RFC 9110 `tchar`.
+fn requested_headers(headers: &HeaderMap) -> Option<HeaderValue> {
+    let mut values = headers.get_all(ACCESS_CONTROL_REQUEST_HEADERS).iter();
+    let (Some(value), None) = (values.next(), values.next()) else {
+        return None;
+    };
+    let names = value
+        .as_bytes()
+        .split(|&b| b == b',')
+        .map(trim_space_and_tab)
+        .all(|name| !name.is_empty() && name.iter().all(|&b| is_tchar(b)));
+    names.then(|| value.clone())
+}
+
+/// `bytes` without the spaces and tabs at either end.
+fn trim_space_and_tab(bytes: &[u8]) -> &[u8] {
+    let blank = |b: &u8| *b == b' ' || *b == b'\t';
+    let start = bytes.iter().position(|b| !blank(b)).unwrap_or(bytes.len());
+    let end = bytes
+        .iter()
+        .rposition(|b| !blank(b))
+        .map_or(start, |end| end + 1);
+    &bytes[start..end]
+}
+
+/// RFC 9110 `tchar`: `ALPHA / DIGIT / "!#$%&'*+-.^_`|~"`.
+fn is_tchar(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b)
+}
+
 /// The CORS layer, outermost: on the way out, whatever answered, `Access-Control-Allow-Origin: <studio origin>`
-/// when the request's one `Origin` is the Studio origin, and `Vary: Origin` on an engine path or an answer of
-/// orders 1-3c.
+/// when the request's one `Origin` is the Studio origin, and `Vary: Origin` on an engine path, an answer of
+/// orders 1-3c, or any answer to the Studio origin. On a relayed path every other answer to the Studio origin
+/// than the preflight loses the `Access-Control-*` headers it came with and exposes its own headers.
 pub(crate) async fn cors(
     State(studio): State<StudioOrigin>,
     request: Request,
@@ -199,14 +279,54 @@ pub(crate) async fn cors(
         .extensions_mut()
         .remove::<EngineRefusal>()
         .is_some();
+    let preflight = response
+        .extensions_mut()
+        .remove::<PreflightAnswer>()
+        .is_some();
+    let status = response.status();
     let headers = response.headers_mut();
+    if from_studio && !engine_path && !preflight {
+        let upstream: Vec<HeaderName> = headers
+            .keys()
+            .filter(|name| name.as_str().starts_with(CORS_PREFIX))
+            .cloned()
+            .collect();
+        for name in upstream {
+            headers.remove(name);
+        }
+        if let Some(names) = exposed(headers, status) {
+            headers.insert(ACCESS_CONTROL_EXPOSE_HEADERS, names);
+        }
+    }
     if from_studio && let Some(value) = studio.header {
         headers.insert(ACCESS_CONTROL_ALLOW_ORIGIN, value);
     }
-    if engine_path || refused {
+    if engine_path || refused || from_studio {
         headers.append(VARY, HeaderValue::from_static("Origin"));
     }
     response
+}
+
+/// The name of every header of `headers` the answer carries on the wire but `Access-Control-*` and `Vary`,
+/// lower-case, each once, sorted by byte value and joined by `, `; `None` when there is none. A status that
+/// cannot carry `Content-Length` (1xx, `204`, `304`) is written without it, though the router has set one.
+fn exposed(headers: &HeaderMap, status: StatusCode) -> Option<HeaderValue> {
+    let length_written = !(status.is_informational()
+        || matches!(status, StatusCode::NO_CONTENT | StatusCode::NOT_MODIFIED));
+    let mut names: Vec<&str> = headers
+        .keys()
+        .filter(|name| length_written || *name != CONTENT_LENGTH)
+        .map(HeaderName::as_str)
+        .filter(|name| !name.starts_with(CORS_PREFIX) && *name != VARY.as_str())
+        .collect();
+    names.sort_unstable();
+    names.dedup();
+    if names.is_empty() {
+        return None;
+    }
+    // Header names are tokens, so the list is always a valid header value; were it not, the answer would only
+    // expose nothing, which hides headers from the page and widens nothing.
+    HeaderValue::try_from(names.join(", ")).ok()
 }
 
 #[cfg(test)]
