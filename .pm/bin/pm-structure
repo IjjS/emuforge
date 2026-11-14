@@ -17,6 +17,7 @@ of the checkout that holds this script. --table ISSUE prints those rows as a mar
 and screen saying whether every state it requires passed.
 """
 import argparse
+import fcntl
 import json
 import os
 import re
@@ -61,7 +62,7 @@ def git_state(wt):
 
 
 def write_json(path, obj):
-    tmp = f"{path}.tmp"
+    tmp = f"{path}.{os.getpid()}.tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         f.write(_pmscore.dumps(obj))
     os.replace(tmp, path)
@@ -87,10 +88,15 @@ def read_rows(path):
 
 
 def append_row(issue, row):
-    path = issue_folder(issue) / "structure-scores.json"
-    rows = read_rows(path)
-    rows.append(row)
-    write_json(path, rows)
+    """Append one row; the seeded and empty runs of a screen may record at once, so the read and replace hold an
+    exclusive lock on structure-scores.json.lock (released when the file is closed, also on a crash)."""
+    folder = issue_folder(issue)
+    path = folder / "structure-scores.json"
+    with open(folder / "structure-scores.json.lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        rows = read_rows(path)
+        rows.append(row)
+        write_json(path, rows)
 
 
 def score_run(a, wt):

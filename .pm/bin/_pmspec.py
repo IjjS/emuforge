@@ -595,7 +595,7 @@ def load(path):
         text = data.decode("utf-8")
     except UnicodeDecodeError:
         raise SpecError(f"cannot read spec {path}: not UTF-8 text") from None
-    if text.startswith("﻿"):
+    if text.startswith("\ufeff"):
         text = text[1:]
     try:
         doc = parse(text)

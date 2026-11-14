@@ -5,7 +5,7 @@ command.
   result = score(spec, snap, state)        requirement 5.2 to 5.6; SpecError("... nothing to score")
   render_text(result[, result_path])       the standard output of requirement 3
   result_json(result, extra)               the result file's content
-  record_row(result, ...), table(rows)     the rows of structure-scores.json and the --table text
+  table(rows)                              the --table text of structure-scores.json rows
 
 Names are compared trimmed and case-folded (`norm`); the snapshot keeps the browser's own roles and names, and
 the report prints them as found.

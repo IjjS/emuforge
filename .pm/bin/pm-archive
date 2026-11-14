@@ -74,7 +74,11 @@ def main():
     scores = subprocess.run([str(BIN / "pm-critique"), "table", a.issue], capture_output=True, text=True).stdout.strip()
     structure = ""
     if (d / "structure-scores.json").exists():
-        structure = subprocess.run([str(BIN / "pm-structure"), "--table", a.issue], capture_output=True, text=True).stdout.strip()
+        try:
+            t = subprocess.run([str(BIN / "pm-structure"), "--table", a.issue], capture_output=True, text=True, timeout=120)
+            structure = t.stdout.strip() if t.returncode == 0 else f"(error: {(t.stderr.strip().splitlines() or ['exit ' + str(t.returncode)])[-1]})"
+        except subprocess.TimeoutExpired:
+            structure = "(error: pm-structure --table timed out after 120 s)"
     reviews = review_summary(d)
     arch = PM / "archive"; arch.mkdir(exist_ok=True)
     lines = [f"# #{a.issue} archive ({now()[:10]})", "", "## Branches"]
