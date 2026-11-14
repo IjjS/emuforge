@@ -1,0 +1,133 @@
+// `studio.app-talks-only-to-engine-and-own-origin` (test-criteria.md, issue 3, Flow): in one run through Home,
+// "Refresh", a service route and the not-found route, the page talks only to its own origin and the engine, never
+// holds an emulator key or a line of its certificate, and keeps the session token out of URLs, the console and
+// everything but the `X-EmuForge-Session` request header (requirement 3.1, 4).
+
+import fs from 'node:fs';
+import path from 'node:path';
+
+import { emulatorDir, EnvError, expect, readEmulatorFiles, startStack, test } from './support';
+import { connectionView } from './support/home';
+import { HEALTH_PATH, Traffic } from './support/traffic';
+
+/** Every file under `dir`, recursively. */
+function filesUnder(dir: string): string[] {
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const full = path.join(dir, entry.name);
+    return entry.isDirectory() ? filesUnder(full) : [full];
+  });
+}
+
+test('studio.app-talks-only-to-engine-and-own-origin', async ({ ctx, page, context }) => {
+  const stack = await startStack(ctx);
+  const files = readEmulatorFiles(emulatorDir(ctx.home, stack.emulatorPort));
+  if (!files)
+    throw new EnvError(`the emulator files under ${emulatorDir(ctx.home, stack.emulatorPort)} are incomplete`);
+  const traffic = Traffic.attach(ctx, context, page, { bodies: true });
+
+  // Open `/`, wait for "Connected", choose "Refresh", open `/s3` and `/does-not-exist`.
+  await page.goto('/');
+  await expect
+    .poll(() => connectionView(page), { timeout: 10_000 })
+    .toMatchObject({ engine: { status: 'Connected' }, emulator: { status: 'Connected' } });
+  const answered = page.waitForResponse((r) => new URL(r.url()).pathname === HEALTH_PATH, { timeout: 10_000 });
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await answered;
+  await page.goto('/s3');
+  await expect(
+    page.getByRole('heading', { level: 1, name: 'Amazon Simple Storage Service', exact: true }),
+  ).toBeVisible();
+  await page.goto('/does-not-exist');
+  await expect(page.getByRole('heading', { level: 1, name: 'Page not found', exact: true })).toBeVisible();
+  await traffic.settle();
+  ctx.log(
+    `the page made ${String(traffic.requests.length)} requests; ${String(traffic.tokens.length)} session token(s)`,
+  );
+
+  // → every request the page made went to the Studio origin or to `http://127.0.0.1:<engine port>`; none to another
+  // host or port. (`data:` and `blob:` URLs name no host; the browser serves them itself.)
+  const allowed = [stack.studio.origin, stack.engine.url];
+  const elsewhere = traffic.requests
+    .map((r) => new URL(r.url))
+    .filter((url) => url.protocol !== 'data:' && url.protocol !== 'blob:' && !allowed.includes(url.origin))
+    .map((url) => url.origin + url.pathname);
+  expect(elsewhere, `requests to anything but ${allowed.join(' and ')}`).toEqual([]);
+  expect(traffic.to(stack.engine.url, HEALTH_PATH).length, 'health requests to the engine').toBeGreaterThan(0);
+
+  // → no response body the browser received, no file of the built app and no browser storage contains the
+  // emulator's access key id, its secret access key, or any line of its `ca.pem`. Only which secret and where is
+  // reported, never the value.
+  const secrets: [string, string][] = [
+    ['access key id', files.accessKeyId],
+    ['secret access key', files.secretAccessKey],
+    ...files.caLines.map((line, i): [string, string] => [`ca.pem base64 line ${String(i + 1)}`, line]),
+  ];
+  const leaks: string[] = [];
+  const search = (where: string, text: string) => {
+    for (const [name, value] of secrets) if (text.includes(value)) leaks.push(`${name} in ${where}`);
+  };
+  for (const { url, body } of traffic.bodies) search(`the response body of ${url}`, body.toString('latin1'));
+  const dist = path.join(ctx.studioDir, 'dist');
+  const built = filesUnder(dist);
+  expect(built.length, `files of the built app under ${dist}`).toBeGreaterThan(0);
+  for (const file of built) search(path.relative(ctx.checkout, file), fs.readFileSync(file).toString('latin1'));
+  const storage = await page.evaluate(async () => {
+    const dump = (s: Storage) => JSON.stringify(Object.entries(s));
+    const databases: string[] = [];
+    for (const info of await indexedDB.databases()) {
+      if (!info.name) continue;
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open(info.name!);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      for (const store of db.objectStoreNames) {
+        const rows = await new Promise<unknown[]>((resolve, reject) => {
+          const request = db.transaction(store, 'readonly').objectStore(store).getAll();
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
+        databases.push(`${info.name}/${store}: ${JSON.stringify(rows)}`);
+      }
+      db.close();
+    }
+    return { local: dump(localStorage), session: dump(sessionStorage), indexedDB: databases.join('\n') };
+  });
+  search('localStorage', storage.local);
+  search('sessionStorage', storage.session);
+  search('IndexedDB', storage.indexedDB);
+  search('cookies', JSON.stringify(await context.cookies()));
+  expect(leaks, 'emulator secrets found').toEqual([]);
+
+  // → no browser console message contains the session token.
+  expect(traffic.tokens.length, 'session tokens the engine handed the page').toBeGreaterThan(0);
+  const tokenIn = (text: string) => traffic.tokens.some((token) => text.includes(token));
+  expect(
+    traffic.console.filter(tokenIn).length,
+    `console messages carrying the session token (of ${String(traffic.console.length)})`,
+  ).toBe(0);
+
+  // → no request URL and no page URL carries the session token or a query string Studio added; the token appears
+  // only in the `X-EmuForge-Session` request header. The check itself opens no address with a query string.
+  const urlFindings: string[] = [];
+  for (const url of [...traffic.requests.map((r) => r.url), ...traffic.pageUrls]) {
+    const parsed = new URL(url);
+    if (tokenIn(url)) urlFindings.push(`session token in the URL ${parsed.origin}${parsed.pathname}`);
+    else if (parsed.search !== '') urlFindings.push(`query string in ${url}`);
+  }
+  expect(urlFindings).toEqual([]);
+  const elsewhereInRequest: string[] = [];
+  let carried = 0;
+  for (const request of traffic.requests) {
+    const where = `${request.method} ${new URL(request.url).pathname}`;
+    for (const [name, value] of Object.entries(request.headers)) {
+      if (!tokenIn(value)) continue;
+      if (name.toLowerCase() === 'x-emuforge-session') carried++;
+      else elsewhereInRequest.push(`header ${name} of ${where}`);
+    }
+    if (request.postData !== null && tokenIn(request.postData)) elsewhereInRequest.push(`body of ${where}`);
+  }
+  expect(elsewhereInRequest, 'the session token outside X-EmuForge-Session').toEqual([]);
+  expect(carried, 'requests carrying the token in X-EmuForge-Session').toBeGreaterThan(0);
+});
