@@ -20,7 +20,7 @@ PMINFO = RUN / "pm.json"              # {"pm_pane":..., "pm_name":..., "workspac
 EVENTS = RUN / "events.log"
 
 MODEL_IDS = {"opus": "claude-opus-5-5", "fable": "claude-fable-5-2", "sonnet": "claude-sonnet-5-5", "haiku": "claude-haiku-5-5"}
-LIMITS = {"studio_worker": 2, "engine_worker": 3, "total": 8, "mem_gb": 22.5}
+LIMITS = {"studio_worker": 2, "engine_worker": 3, "total": 16, "mem_gb": 22.5}
 SIDES = {"s": "studio", "e": "engine", "t": "tests", "h": "harness"}  # first letter of a unit name: s1, e2, t1, h1
 
 

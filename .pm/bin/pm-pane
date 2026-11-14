@@ -10,7 +10,7 @@
 Roles: plan, worker, rev, crit. Name = i<issue>-<role>[-<unit>], e.g. i12-plan, i12-worker-s1, i12-rev (herdr names must start with a letter).
 A unit name starts with its side: s<n> studio, e<n> engine, t<n> tests, h<n> harness.
 Tab: "#<issue>" in the PM's workspace; created when missing. New agents are panes inside that tab.
-Limits (enforced unless --no-limit): studio workers 2, engine workers 3, total live panes 8, memory 22.5 GB, swap free 256 MB,
+Limits (enforced unless --no-limit): studio workers 2, engine workers 3, total live panes 16, memory 22.5 GB, swap free 256 MB,
 and the Claude token rate of the last hour under today's target when one is set (pm-tokens).
 Default: claude on opus. Any pane takes --kind/--model (the PM passes what the owner chose at session start). The brief is sent as: "Read <FILE> and follow it. Your pane name is <name>."
 To talk to a pane use herdr directly: herdr agent prompt <name> "<text>" (it refuses a pane blocked at a dialog).
