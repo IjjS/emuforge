@@ -1,0 +1,200 @@
+#!/usr/bin/env -S python3 -I
+"""Score a console screen against its reference spec (studio/references/console-reference.md, "Structure score").
+
+  pm-structure <worktree> <spec.yaml> --snapshot FILE [--state seeded|empty] [--record ISSUE POINT]
+  pm-structure --table ISSUE
+
+--snapshot scores an accessibility snapshot pm-structure saved earlier; no browser is started. --state is the
+data state of the emulator behind the app (default seeded): table.empty.* apply only to `empty`, a single or multi
+table.selection only to `seeded`. A spec that has either needs both runs; each run says `requires also: state=…`.
+
+Prints the score, the unmatched, matched, omitted, not-applicable, not-scored and extra items, and the verdict.
+Exit 0 pass (score >= 90 and no critical item unmatched: header.title, header.primary_action, table.columns),
+1 fail, 2 error (usage, invalid spec, unreadable snapshot); an error is never a pass or a fail.
+Result: <worktree>/output/structure/<screen>-<state>.json, overwritten by the next run of the same screen and
+state. --record ISSUE POINT (POINT: baseline | final) also appends a row to .pm/issue-<ISSUE>/structure-scores.json
+of the checkout that holds this script. --table ISSUE prints those rows as a markdown table and one line per point
+and screen saying whether every state it requires passed.
+"""
+import argparse
+import fcntl
+import json
+import os
+import re
+import subprocess
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _pmproc
+import _pmscore
+import _pmspec
+from _pmlib import PM, now
+
+USAGE = ("pm-structure <worktree> <spec.yaml> --snapshot FILE [--state seeded|empty] [--record ISSUE POINT]\n"
+         "       pm-structure --table ISSUE")
+POINTS = ("baseline", "final")
+GIT_TIMEOUT = 10
+
+
+class Failure(Exception):
+    """An error the run reports on one stderr line and exits 2 with."""
+
+
+def say_error(message):
+    sys.stderr.write(f"pm-structure: {message}\n")
+
+
+def positive(s):
+    return s if re.fullmatch(r"[1-9][0-9]*", s) else None
+
+
+def git_state(wt):
+    """(commit, dirty) of the worktree, or (None, None) when git cannot tell (design 2.6a)."""
+    try:
+        head = _pmproc.run(["git", "-C", wt, "rev-parse", "HEAD"], timeout=GIT_TIMEOUT, cwd=wt)
+        status = _pmproc.run(["git", "-C", wt, "status", "--porcelain"], timeout=GIT_TIMEOUT, cwd=wt)
+    except (OSError, subprocess.SubprocessError):
+        return None, None
+    commit = head.stdout.strip()
+    if head.returncode != 0 or status.returncode != 0 or not re.fullmatch(r"[0-9a-f]{40,64}", commit):
+        return None, None
+    return commit, bool(status.stdout.strip())
+
+
+def write_json(path, obj):
+    tmp = f"{path}.{os.getpid()}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(_pmscore.dumps(obj))
+    os.replace(tmp, path)
+
+
+def issue_folder(issue):
+    d = PM / f"issue-{issue}"
+    if not d.is_dir():
+        raise Failure(f"no issue folder .pm/issue-{issue}")
+    return d
+
+
+def read_rows(path):
+    if not path.exists():
+        return []
+    try:
+        rows = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError) as e:
+        raise Failure(f"cannot read {path}: {e}") from None
+    if not isinstance(rows, list) or not all(isinstance(r, dict) for r in rows):
+        raise Failure(f"cannot read {path}: not a list of rows")
+    return rows
+
+
+def append_row(issue, row):
+    """Append one row; the seeded and empty runs of a screen may record at once, so the read and replace hold an
+    exclusive lock on structure-scores.json.lock (released when the file is closed, also on a crash)."""
+    folder = issue_folder(issue)
+    path = folder / "structure-scores.json"
+    with open(folder / "structure-scores.json.lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        rows = read_rows(path)
+        rows.append(row)
+        write_json(path, rows)
+
+
+def score_run(a, wt):
+    """One --snapshot run; returns the exit status."""
+    out_dir = os.path.join(wt, "output", "structure")
+    record = a.record
+    spec = None
+    try:
+        spec = _pmspec.load(a.spec)
+        snap = _pmscore.load_snapshot(a.snapshot)
+        result = _pmscore.score(spec, snap, a.state)
+    except (_pmspec.SpecError, _pmscore.SnapshotError) as e:
+        screen = spec.screen if spec is not None else getattr(e, "screen", None)
+        if screen is None:  # nothing to file the error under: no result file, no row
+            say_error(str(e))
+            return 2
+        commit, dirty = git_state(wt)
+        path = os.path.join(out_dir, f"{screen}-{a.state}.json")
+        requires = list(spec.needs_states) if spec is not None else [a.state]
+        at = now()
+        os.makedirs(out_dir, exist_ok=True)
+        write_json(path, {"screen": screen, "state": a.state, "verdict": "error", "error": str(e),
+                          "spec": os.path.abspath(a.spec), "spec_sha256": spec.sha256 if spec else None,
+                          "snapshot": os.path.abspath(a.snapshot), "requires": requires, "commit": commit,
+                          "dirty": dirty, "at": at})
+        sys.stdout.write(f"result: {path}\n")
+        say_error(str(e))
+        if record:
+            try:
+                append_row(record[0], {"point": record[1], "screen": screen, "state": a.state, "score": None,
+                                       "matched": None, "total": None, "verdict": "error", "critical_unmatched": [],
+                                       "requires": requires, "commit": commit, "dirty": dirty,
+                                       "spec_sha256": spec.sha256 if spec else None, "result": path, "at": at})
+            except Failure:
+                pass  # the run's own error is the one line on stderr
+        return 2
+    commit, dirty = git_state(wt)
+    at = now()
+    path = os.path.join(out_dir, f"{spec.screen}-{a.state}.json")
+    os.makedirs(out_dir, exist_ok=True)
+    write_json(path, _pmscore.result_json(result, {"commit": commit, "dirty": dirty, "at": at,
+                                                   "snapshot": os.path.abspath(a.snapshot)}))
+    if record:
+        try:
+            append_row(record[0], {"point": record[1], "screen": spec.screen, "state": a.state,
+                                   "score": result.score, "matched": result.matched, "total": result.total,
+                                   "verdict": result.verdict, "critical_unmatched": result.critical_unmatched,
+                                   "requires": result.requires, "commit": commit, "dirty": dirty,
+                                   "spec_sha256": spec.sha256, "result": path, "at": at})
+        except Failure as e:
+            sys.stdout.write(f"result: {path}\n")
+            say_error(str(e))
+            return 2
+    sys.stdout.write(_pmscore.render_text(result, path))
+    return 0 if result.verdict == "pass" else 1
+
+
+def table_run(argv):
+    p = argparse.ArgumentParser(prog="pm-structure", usage=USAGE)
+    p.add_argument("--table", required=True, metavar="ISSUE")
+    a = p.parse_args(argv)
+    if positive(a.table) is None:
+        p.error(f"ISSUE must be a positive integer, not {a.table!r}")
+    rows = read_rows(issue_folder(a.table) / "structure-scores.json")
+    sys.stdout.write(_pmscore.table(rows))
+    return 0
+
+
+def main(argv):
+    if argv[:1] == ["--table"]:
+        return table_run(argv)
+    p = argparse.ArgumentParser(prog="pm-structure", usage=USAGE, description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("worktree")
+    p.add_argument("spec")
+    source = p.add_mutually_exclusive_group(required=True)
+    source.add_argument("--snapshot", metavar="FILE")
+    p.add_argument("--state", choices=_pmspec.STATES, default="seeded")
+    p.add_argument("--record", nargs=2, metavar=("ISSUE", "POINT"))
+    a = p.parse_args(argv)
+    if a.record:
+        if positive(a.record[0]) is None:
+            p.error(f"--record ISSUE must be a positive integer, not {a.record[0]!r}")
+        if a.record[1] not in POINTS:
+            p.error(f"--record POINT must be one of {', '.join(POINTS)}, not {a.record[1]!r}")
+    wt = os.path.abspath(a.worktree)
+    if not os.path.isdir(wt):
+        p.error(f"worktree {a.worktree} is not a directory")
+    return score_run(a, wt)
+
+
+if __name__ == "__main__":
+    try:
+        code = main(sys.argv[1:])
+    except Failure as e:
+        say_error(str(e))
+        code = 2
+    except Exception as e:  # never exit 0 or 1 on a bug
+        say_error(f"internal error: {type(e).__name__}: {e}")
+        code = 2
+    sys.exit(code)
