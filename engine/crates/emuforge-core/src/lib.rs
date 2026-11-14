@@ -1,21 +1,25 @@
-//! The emulator connection: where the local aws-emulator for a port is, what its files hold, and whether it
-//! answers its health route over TLS verified against its own `ca.pem`.
+//! The emulator connection: where the local aws-emulator for a port is, what its files hold, whether it
+//! answers its health route over TLS verified against its own `ca.pem`, and the relay of AWS requests to it.
 
 #![forbid(unsafe_code)]
 
+pub mod connect;
 mod emulator;
 mod files;
 pub mod health;
 pub mod idle;
+pub mod relay;
 pub mod sigv4;
 pub mod tls;
 
 use std::io;
 
+pub use connect::{CONNECT_DEADLINE, EmulatorStream, Upstream, connect, connect_on};
 pub use emulator::Emulator;
 pub use files::{CA_FILE, CREDENTIALS_FILE, Credentials, EmulatorFiles, FILE_CAP, Secret};
 pub use health::{Health, PROBE_DEADLINE, Reason, probe, probe_on};
 pub use idle::IdleWrite;
+pub use relay::{Limits, Prepared, RelayBody, RelayError, forward, prepare, relay};
 pub use tls::client_config;
 
 /// What can go wrong while reading the emulator's files and building trust from them.

@@ -244,7 +244,9 @@ dependencies = [
 name = "emuforge-core"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "http",
+ "http-body",
  "http-body-util",
  "hyper",
  "hyper-util",
