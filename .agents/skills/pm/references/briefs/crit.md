@@ -14,11 +14,19 @@ You are prompted once per point with `SCORE <point> <paths or routes>`; points a
 1. Capture with `{{root}}/.pm/bin/pm-capture {{capture_wt}} <point> …`: 1280x800 and 390x844, light and dark,
    from the built app or the mock file, against a seeded emulator and once against an empty one. Same viewports
    at every point.
-2. Run the impeccable critique on the contact sheet with its two sub-agents; the snapshot lands under the
+2. For a `console` screen, at `baseline` (when the screen exists on `main`) and at `final`, score its structure
+   against its reference spec under `{{root}}/studio/references/console/`:
+   `{{root}}/.pm/bin/pm-structure {{capture_wt}} <spec> --serve <built app dir> --record {{issue}} <point>`
+   with the emulator seeded (state `seeded`, the default), and when the spec needs both states (the run prints
+   `requires also: state=empty`) once more with the emulator empty and `--state empty`. The point's structure
+   passes only when every run it requires passes (`{{root}}/.pm/bin/pm-structure --table {{issue}}`). Exit 2 is
+   an error, not a score: report its message; never edit the spec to get past it.
+3. Run the impeccable critique on the contact sheet with its two sub-agents; the snapshot lands under the
    worktree's `studio/.impeccable/critique/`.
-3. `{{root}}/.pm/bin/pm-critique record {{issue}} <point> <snapshot>`; at `final` also
+4. `{{root}}/.pm/bin/pm-critique record {{issue}} <point> <snapshot>`; at `final` also
    `pm-critique check {{issue}}`. For a `console` screen, do not raise a finding that only asks the screen to
    differ from its reference spec.
-4. Put the result and the P0 and P1 list (file, line, fix) into `.pm/issue-{{issue}}/review-<point>.md` using the
+5. Put the result (for a `console` screen also each structure result file under
+   `{{capture_wt}}/output/structure/`) and the P0 and P1 list (file, line, fix) into `.pm/issue-{{issue}}/review-<point>.md` using the
    review-protocol header, update `.pm/issue-{{issue}}/state-crit.md`, then
    `{{root}}/.pm/bin/pm-report "STAGE READY i{{issue}}-crit"`, print the same line and stop.

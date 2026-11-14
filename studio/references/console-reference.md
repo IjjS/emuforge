@@ -63,19 +63,24 @@ Region pickers). "Not built yet" is not a reason; that is a failing item.
 
 ## Structure score
 
-Computed from the running app, not from the code.
+Computed from the running app, not from the code, by `.pm/bin/pm-structure`.
 
 1. Open the spec's `route` in the built app at 1280x800 against a seeded emulator, and take the accessibility
-   tree (roles and accessible names) of the page.
+   tree (roles and accessible names) of the page. A spec with items that exist in only one data state
+   (`table.empty`, which needs an empty table, or a `single` or `multi` `table.selection`, which needs rows) is
+   scored in two runs of the same build: one against a seeded emulator and one against an empty one.
 2. Every leaf of the spec is one **item**: a breadcrumb, the title, each action, each column, each tab, each
    field label, each step. Each ordered list adds one more item for its order.
 3. An item **matches** when an element with the expected role and the same accessible name (trimmed, case
    insensitive) is present; an order item matches when the matched elements appear in the spec's order.
-4. Items under `omitted` are removed from the total.
+4. Items under `omitted` are removed from the total, and so are the items that do not apply to the run's state
+   (`table.empty` in the seeded run, a `single` or `multi` `table.selection` in the empty run).
 
 ```
-structure score = matched items / (all items - omitted items) x 100
+structure score = matched items / (all items - omitted items - not-applicable items) x 100
 ```
+
+- With two runs, each run has its own score, and the screen passes only when both runs pass.
 
 - The report lists every unmatched item, and separately every action, column, tab or field found on the screen
   that the spec does not have.

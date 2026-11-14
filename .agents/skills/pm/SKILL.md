@@ -149,7 +149,7 @@ When every unit is in: `pm-check .` on `main`. It must pass.
 ### 6. Report and archive
 
 Touchpoint ②, in this order: what merged (branches, `main` sha), the check result with the log path, the score
-table (`pm-critique table <id>`), where each owner decision landed, review rounds per unit, what was not done,
+tables (`pm-critique table <id>`, and `pm-structure --table <id>` for `console` screens), where each owner decision landed, review rounds per unit, what was not done,
 and what is waiting for the owner's word (a reply on the GitHub issue, closing it). Then
 `pm-archive <id> --yes` per `references/archive.md`.
 
@@ -227,6 +227,7 @@ reporting line are logged in `.pm/run/events.log` and never delivered. Talk to a
 | `pm-check` | the checks of a checkout, recorded |
 | `pm-capture` | screen captures and contact sheets |
 | `pm-critique` | impeccable scores: `record`, `table`, `check` |
+| `pm-structure` | the structure score of a `console` screen against its reference spec: `--serve`, `--url` or `--snapshot`, `--record`, `--table` |
 | `pm-merge` | a unit's branch into local `main` |
 | `pm-archive`, `pm-cost` | clean-up and cost |
 | `pm-tokens` | Claude token use against today's target: status, `target <rate>`, `check` |
@@ -237,7 +238,6 @@ reporting line are logged in `.pm/run/events.log` and never delivered. Talk to a
 Each has, or gets, its own issue file. When another issue needs one that is still missing, do not improvise a
 replacement: build the missing piece first, or stop and tell the owner.
 
-- The structure score tool for `console` screens (`studio/references/console-reference.md` defines the method).
 - `tests/integration/run`, the suite's entry point that `pm-check` calls; it arrives with the first integration check.
 
 The `impeccable` skill that `crit` uses is vendored at `.agents/skills/impeccable/` (source and license in its
