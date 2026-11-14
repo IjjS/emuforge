@@ -2,8 +2,11 @@
 
 #![forbid(unsafe_code)]
 
+mod aws_error;
 mod browser;
 mod config;
+mod limit;
+mod listener;
 mod routes;
 mod session;
 
@@ -12,15 +15,20 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use emuforge_core::{Emulator, PROBE_DEADLINE, probe};
+use axum::body::Body;
+use emuforge_core::{Emulator, Limits, PROBE_DEADLINE, probe, relay};
 use tokio::net::TcpListener;
 
+pub use aws_error::{ErrorType, Protocol, render};
 pub use browser::{PREFLIGHT_MAX_AGE_SECS, SESSION_HEADER, StudioOrigin, is_engine_path};
 pub use config::{
     Config, DEFAULT_EMULATOR_PORT, DEFAULT_ENGINE_PORT, DEFAULT_STUDIO_PORT, LISTEN_IP,
     MAX_IN_FLIGHT, listen_addr,
 };
-pub use routes::{AppState, HEALTH_PATH, ProbeFn, ProbeFuture, SESSION_PATH, app};
+pub use listener::{CLIENT_WRITE_IDLE, IdleListener};
+pub use routes::{
+    AppState, HEALTH_PATH, ProbeFn, ProbeFuture, RelayFn, RelayFuture, SESSION_PATH, app,
+};
 pub use session::SessionToken;
 
 #[derive(Debug, thiserror::Error)]
@@ -41,7 +49,7 @@ pub enum Error {
 }
 
 /// Creates the session token, binds `127.0.0.1:<port>` and serves until the process ends. The emulator's files
-/// are read from `<home>/.aws/emulator/<emulator port>/` on every health request.
+/// are read from `<home>/.aws/emulator/<emulator port>/` on every health and every relayed request.
 pub async fn serve(config: Config, home: PathBuf) -> Result<(), Error> {
     config.validate()?;
     let session = Arc::new(SessionToken::generate()?);
@@ -62,15 +70,25 @@ pub async fn serve(config: Config, home: PathBuf) -> Result<(), Error> {
         let emulator = probed.clone();
         Box::pin(async move { probe(&emulator, PROBE_DEADLINE).await })
     });
+    let relayed = emulator.clone();
+    let relay: RelayFn = Arc::new(move |request| {
+        let emulator = relayed.clone();
+        Box::pin(async move {
+            relay(&emulator, request, &Limits::DEFAULT)
+                .await
+                .map(|response| response.map(Body::new))
+        })
+    });
     let state = AppState {
         engine_port: config.port,
         emulator,
         probe,
+        relay,
         max_in_flight: MAX_IN_FLIGHT,
         studio_origin,
         session,
     };
-    axum::serve(listener, app(state))
+    axum::serve(IdleListener::new(listener, CLIENT_WRITE_IDLE), app(state))
         .await
         .map_err(Error::Serve)
 }
