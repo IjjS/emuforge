@@ -4,7 +4,7 @@ Issue-Module: engine
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: engine|workspace|missing
-Issue-Check-Ids:
+Issue-Check-Ids: engine.health-reports-emulator-reachable engine.health-reports-emulator-not-started engine.health-reports-emulator-stopped engine.health-reports-emulator-killed engine.health-survives-emulator-restart engine.binds-loopback-only engine.no-secret-in-output engine.ignores-aws-environment engine.start-refuses-port-in-use engine.start-refuses-bad-configuration
 Issue-Commit: e55940995ba32d732a9dbc77a3796d54bd3a1ef7
 
 # Create the engine workspace with emulator connection and a health endpoint
