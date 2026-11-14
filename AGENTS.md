@@ -73,7 +73,9 @@ token rate for the day; over it, no new pane is opened.
 - There are no pull requests. When an issue's checks pass and `rev` has passed it, the `pm` merges its branch
   into local `main`; with several worktrees open, the `pm` decides the order.
 - On `main` the `pm` commits only issue files it created and merges made by `.pm/bin/pm-merge`.
-- Pushing to `origin`, releases and deleting remote branches need the owner's explicit word.
+- The `pm` pushes `main` to `origin` at the end of each cycle: every worktree of the issues in flight is merged and
+  removed, and the checks pass on `main`. Only `main`, never forced, never an issue branch.
+- Any other push, releases and deleting remote branches need the owner's explicit word.
 
 ## Checks decide, not agents
 

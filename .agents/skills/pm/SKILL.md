@@ -33,8 +33,9 @@ archive. Never write a one-off script for any of those.
 
 - **Go signal.** Work from outside starts only on the owner's direct instruction or `EVENT go github#<n>` (the
   owner's `READY` comment, collected by `pm-ready`). Issue files the harness filed itself (`Issue-Source` `finder`,
-  `plan`, `worker`) need no new signal: see `Next issue`. A go signal authorizes commits on that issue's branches. Pushing,
-  releases, anything written to GitHub and deleting remote branches need the owner's explicit word.
+  `plan`, `worker`) need no new signal: see `Next issue`. A go signal authorizes commits on that issue's branches. `main` is
+  pushed only as `Next issue` says; any other push, releases, anything written to GitHub and deleting remote
+  branches need the owner's explicit word.
 - **Touchpoints.** The owner is asked at most twice per issue: ① requirement decisions, one bundled list, and
   only when a question exists that the repository, the references and the reference behavior cannot answer;
   ② the final report. Nothing else goes to the owner. Designs are never put to the owner: scores decide, and
@@ -149,7 +150,7 @@ When every unit is in: `pm-check .` on `main`. It must pass.
 
 Touchpoint ②, in this order: what merged (branches, `main` sha), the check result with the log path, the score
 table (`pm-critique table <id>`), where each owner decision landed, review rounds per unit, what was not done,
-and what is waiting for the owner's word (pushing `main`, a reply on the GitHub issue, closing it). Then
+and what is waiting for the owner's word (a reply on the GitHub issue, closing it). Then
 `pm-archive <id> --yes` per `references/archive.md`.
 
 ### Next issue
@@ -159,8 +160,13 @@ something outside its own issue and filed it instead of fixing it in passing; `p
 check that no open issue lists in `Issue-Check-Ids`, which you file with `--source finder` and the failing log as
 evidence (run it after every merge and when the pinned emulator version changes); and the owner.
 
-When every worktree of the issues in flight is merged and archived, run `pm-issue list` and start the next one at
-flow step 1:
+When every worktree of the issues in flight is merged and archived, the cycle is complete. Push it before
+anything else: `git worktree list` shows only the main checkout, `git status` is clean and the last `pm-check .`
+on this `main` commit passed; then `git push origin main`. Never force, never push an issue branch, and never
+push while a worktree is still open. A rejected push (the remote moved) is not yours to resolve: leave `main` as
+it is and tell the owner. After a push, tell the owner the pushed sha in one line.
+
+Then run `pm-issue list` and start the next one at flow step 1:
 
 - Take `finder`, `plan`, `worker` and `owner` issues without asking, highest severity first, oldest first within
   a severity. Skip `github#<n>` issues until their `EVENT go` arrives.
