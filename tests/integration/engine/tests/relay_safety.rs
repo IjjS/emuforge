@@ -457,7 +457,13 @@ fn relay_no_secret_in_output() {
                 &check_key,
             ),
         ];
+        // The engine's own error answers; every other request is relayed, and is answered as the emulator answers
+        // it, or the When of the criteria line has not happened.
         let own_errors = ["PutObject with signed chunks"];
+        let relayed_status = |what: &str| match what {
+            "unsigned GetObject" => 403,
+            _ => 200,
+        };
         bucket.track("refused");
 
         // The exact heads the engines will receive, recorded before they take the port.
@@ -492,7 +498,16 @@ fn relay_no_secret_in_output() {
         let mut first = Engine::start(ctx, EngineCmd::new(ctx).env("RUST_LOG", "trace"))?;
         for (what, call, key) in &calls {
             let answer = through_engine(ctx, what, call, key);
-            bodies.push(((*what).to_owned(), answer.body, own_errors.contains(what)));
+            let own = own_errors.contains(what);
+            if !own {
+                assert_eq!(
+                    answer.status,
+                    relayed_status(what),
+                    "{what}: not relayed to the emulator; status through the engine, body {}",
+                    snippet(&answer)
+                );
+            }
+            bodies.push(((*what).to_owned(), answer.body, own));
         }
         let first = first.stop(ctx);
 
