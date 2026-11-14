@@ -158,10 +158,11 @@ class Started:
 
 
 @contextlib.contextmanager
-def started(compose_file=COMPOSE, env=None):
-    """Starts service aws-emulator of `compose_file` with the override above under a project of its own, and
+def started(compose_file=None, env=None):
+    """Starts service aws-emulator of `compose_file` (default: the repository's) with the override above under a project of its own, and
     removes the project and the override file when the block ends, passed or failed. Raises CheckError when
     Docker is not reachable or the image is not present locally; it never builds or pulls one."""
+    compose_file = COMPOSE if compose_file is None else compose_file
     env = child_env(port=worktree_port()) if env is None else env
     docker_reachable(env)
     service = render(compose_file, env)["services"][SERVICE]
@@ -571,7 +572,7 @@ class StartCleanup(unittest.TestCase):
 
 class OwnerContainer(unittest.TestCase):
     def test_owner_container_untouched(self):
-        """Exists: the same Id and StartedAt before and after. None: still none afterwards."""
+        # Exists: the same Id and StartedAt before and after. None: still none afterwards.
         env = child_env()
         before = owner_state(env)
         with started():
