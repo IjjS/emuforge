@@ -70,12 +70,21 @@ pub fn listen_addr(config: &Config) -> SocketAddr {
 #[cfg(test)]
 mod tests {
     use clap::error::ErrorKind;
-    use clap::{CommandFactory, Parser};
+    use clap::{CommandFactory, FromArgMatches};
 
     use super::*;
 
+    /// `Config::try_parse_from` with every environment binding removed, so the process environment (a check
+    /// run sets the engine's variables) plays no part.
     fn parse(args: &[&str]) -> Result<Config, clap::Error> {
-        Config::try_parse_from(std::iter::once("emuforge-server").chain(args.iter().copied()))
+        let command = ["port", "emulator_port", "studio_port"]
+            .into_iter()
+            .fold(Config::command(), |command, id| {
+                command.mut_arg(id, |arg| arg.env(None))
+            });
+        let matches = command
+            .try_get_matches_from(std::iter::once("emuforge-server").chain(args.iter().copied()))?;
+        Config::from_arg_matches(&matches)
     }
 
     fn port(value: u16) -> NonZeroU16 {
