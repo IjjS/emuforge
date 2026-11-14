@@ -34,7 +34,11 @@ impl InFlight {
 }
 
 /// Outside the `Host` guard and inside the CORS layer. Never waits for a permit.
-pub(crate) async fn limit(State(in_flight): State<InFlight>, request: Request, next: Next) -> Response {
+pub(crate) async fn limit(
+    State(in_flight): State<InFlight>,
+    request: Request,
+    next: Next,
+) -> Response {
     let Ok(permit) = in_flight.permits.clone().try_acquire_owned() else {
         let (parts, _body) = request.into_parts();
         let busy = refusal(

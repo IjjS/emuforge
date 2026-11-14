@@ -15,7 +15,6 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use axum::body::Body;
 use emuforge_core::{Emulator, Limits, PROBE_DEADLINE, probe, relay};
 use tokio::net::TcpListener;
 
@@ -73,11 +72,7 @@ pub async fn serve(config: Config, home: PathBuf) -> Result<(), Error> {
     let relayed = emulator.clone();
     let relay: RelayFn = Arc::new(move |request| {
         let emulator = relayed.clone();
-        Box::pin(async move {
-            relay(&emulator, request, &Limits::DEFAULT)
-                .await
-                .map(|response| response.map(Body::new))
-        })
+        Box::pin(async move { relay(&emulator, request, &Limits::DEFAULT).await })
     });
     let state = AppState {
         engine_port: config.port,

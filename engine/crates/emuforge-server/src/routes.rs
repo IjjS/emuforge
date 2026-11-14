@@ -14,7 +14,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
 use emuforge_core::sigv4::{Auth, classify};
-use emuforge_core::{Emulator, Health, Limits, Reason, RelayError};
+use emuforge_core::{Emulator, Health, Limits, Reason, RelayBody, RelayError};
 use serde::Serialize;
 use tower::ServiceBuilder;
 
@@ -32,7 +32,8 @@ pub type ProbeFuture = Pin<Box<dyn Future<Output = Health> + Send>>;
 /// Asks the emulator whether it is up. Called once per health request; nothing is cached.
 pub type ProbeFn = Arc<dyn Fn() -> ProbeFuture + Send + Sync>;
 
-pub type RelayFuture = Pin<Box<dyn Future<Output = Result<Response<Body>, RelayError>> + Send>>;
+pub type RelayFuture =
+    Pin<Box<dyn Future<Output = Result<Response<RelayBody>, RelayError>> + Send>>;
 /// Relays one request to the emulator. Called once per request on a relayed path; production holds
 /// `emuforge_core::relay` with the emulator's files read per call.
 pub type RelayFn = Arc<dyn Fn(Request<Body>) -> RelayFuture + Send + Sync>;
@@ -87,8 +88,11 @@ pub fn app(state: AppState) -> Router {
 async fn host_guard(State(state): State<Arc<AppState>>, request: Request, next: Next) -> Response {
     let expected = format!("127.0.0.1:{}", state.engine_port);
     let uri = request.uri();
-    let origin_form = uri.scheme().is_none() && uri.authority().is_none() && uri.path().starts_with('/');
-    if !has_only_host(request.headers(), &expected) || !origin_form || request.method() == Method::CONNECT
+    let origin_form =
+        uri.scheme().is_none() && uri.authority().is_none() && uri.path().starts_with('/');
+    if !has_only_host(request.headers(), &expected)
+        || !origin_form
+        || request.method() == Method::CONNECT
     {
         let (parts, _body) = request.into_parts();
         let misdirected = refusal(
@@ -277,7 +281,7 @@ async fn relay(state: &AppState, request: Request) -> Response {
     let method = parts.method.clone();
     let service = logged_service(&parts);
     let (response, outcome) = match (state.relay)(Request::from_parts(parts, body)).await {
-        Ok(response) => (response, "relayed"),
+        Ok(response) => (response.map(Body::new), "relayed"),
         Err(error) => relay_error(&state.emulator, protocol, head_only, &error),
     };
     tracing::debug!(
