@@ -5,7 +5,8 @@
 
 Run after every unit of the issue is merged into local main (pm-merge). Refuses unless every branch of the issue's
 registered worktrees is an ancestor of main (--force overrides). Moves requirement.md, decisions.md,
-test-criteria.md, critique-scores.json, cost.json and state.md to .pm/archive/<n>/ and deletes the rest of
+test-criteria.md, critique-scores.json, structure-scores.json, cost.json and state.md to .pm/archive/<n>/ and
+deletes the rest of
 .pm/issue-<n>/ (drafts, review rounds, briefs) after their gist is written into .pm/archive/<n>.md. Worktrees and
 their output/ are removed with their local branches.
 """
@@ -20,7 +21,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _pmlib import BIN, PM, PMINFO, ROOT, WORKTREES, issue_dir, load, log, now, tabs, herdr
 
-KEEP = {"requirement.md", "decisions.md", "test-criteria.md", "critique-scores.json", "cost.json", "state.md"}
+KEEP = {"requirement.md", "decisions.md", "test-criteria.md", "critique-scores.json", "structure-scores.json", "cost.json",
+        "state.md"}
 
 
 def merged(branch):
@@ -70,11 +72,15 @@ def main():
     state = (d / "state.md").read_text(errors="replace") if (d / "state.md").exists() else ""
     decisions = (d / "decisions.md").read_text(errors="replace") if (d / "decisions.md").exists() else ""
     scores = subprocess.run([str(BIN / "pm-critique"), "table", a.issue], capture_output=True, text=True).stdout.strip()
+    structure = ""
+    if (d / "structure-scores.json").exists():
+        structure = subprocess.run([str(BIN / "pm-structure"), "--table", a.issue], capture_output=True, text=True).stdout.strip()
     reviews = review_summary(d)
     arch = PM / "archive"; arch.mkdir(exist_ok=True)
     lines = [f"# #{a.issue} archive ({now()[:10]})", "", "## Branches"]
     lines += [f"- {br} ({st})" for br, st in states.items()] or ["- (none registered)"]
     lines += ["", "## State", state.strip() or "(no state.md)", "", "## Decisions", decisions.strip() or "(none)", "", "## Critique scores", scores or "(none)",
+              "", "## Structure scores", structure or "(none)",
               "", "## Review rounds", *(reviews or ["(none)"]), "", "## Cost", *(cost_out or ["(no transcripts)"]), ""]
     (arch / f"{a.issue}.md").write_text("\n".join(lines))
     # move the keep list to .pm/archive/<n>/ and drop the issue folder, so no archived issue looks like open work
