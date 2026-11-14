@@ -164,11 +164,6 @@ impl Answer {
         self.json()["error"]["message"].as_str().unwrap().to_owned()
     }
 
-    /// The message of a refusal in the REST-JSON protocol shape (requirement §6).
-    fn aws_message(&self) -> String {
-        self.json()["message"].as_str().unwrap().to_owned()
-    }
-
     fn values(&self, name: impl axum::http::header::AsHeaderName) -> Vec<&str> {
         self.headers
             .get_all(name)
@@ -720,45 +715,58 @@ async fn health_from_a_local_tool_ignores_any_session_header() {
 }
 
 #[tokio::test]
-async fn relayed_path_from_studio_with_token_is_403_not_the_fallback() {
-    let (app, _) = reachable();
-    let token = token(&app).await;
+async fn relayed_path_from_studio_with_token_is_relayed_with_cors() {
     let cases = [
         ("GET /", Method::GET, "/"),
         ("GET /bucket/key", Method::GET, "/bucket/key"),
         ("POST /bucket/key", Method::POST, "/bucket/key"),
     ];
     for (case, method, path) in cases {
+        let (probe, _) = answering(vec![Health::Reachable]);
+        let (relay, relayed) = test_relay();
+        let app = app_relaying(probe, relay);
+        let token = token(&app).await;
         let answer = send(&app, studio_with(method, path, &token)).await;
-        answer.assert_aws_error(StatusCode::FORBIDDEN, "OriginNotAllowed", case);
-        assert!(
-            answer.aws_message().contains("/__emuforge/"),
-            "case {case}: {}",
-            answer.aws_message()
-        );
+        assert_eq!(answer.status, StatusCode::OK, "case {case}: status");
+        assert_eq!(answer.body, RELAYED.as_bytes(), "case {case}: body");
         answer.assert_cors(case);
         answer.assert_vary_origin(case);
+        assert_eq!(
+            relayed.load(Ordering::SeqCst),
+            1,
+            "case {case}: relay calls"
+        );
     }
 }
 
 #[tokio::test]
-async fn encoded_slash_path_from_studio_is_a_relayed_path() {
-    let (app, _) = reachable();
+async fn encoded_slash_path_from_studio_is_relayed_without_probe() {
+    let (probe, probed) = answering(vec![Health::Reachable]);
+    let (relay, relayed) = test_relay();
+    let app = app_relaying(probe, relay);
     let token = token(&app).await;
     let answer = send(
         &app,
         studio_with(Method::GET, "/__emuforge%2Fhealth", &token),
     )
     .await;
-    answer.assert_aws_error(StatusCode::FORBIDDEN, "OriginNotAllowed", "%2F");
+    assert_eq!(answer.status, StatusCode::OK, "%2F: status");
+    assert_eq!(answer.body, RELAYED.as_bytes(), "%2F: body");
+    assert_eq!(relayed.load(Ordering::SeqCst), 1, "%2F: relay calls");
+    assert_eq!(probed.load(Ordering::SeqCst), 0, "%2F: probe calls");
 }
 
 #[tokio::test]
-async fn preflight_from_studio_on_a_relayed_path_is_403_with_cors() {
+async fn preflight_from_studio_on_a_relayed_path_is_204_with_cors() {
     let (app, _) = reachable();
     let answer = send(&app, preflight("/", S, "GET")).await;
-    answer.assert_aws_error(StatusCode::FORBIDDEN, "OriginNotAllowed", "preflight /");
+    assert_eq!(answer.status, StatusCode::NO_CONTENT, "preflight /: status");
     answer.assert_cors("preflight /");
+    assert_eq!(
+        answer.values(ACCESS_CONTROL_ALLOW_METHODS),
+        ["GET, HEAD, PUT, POST, DELETE, PATCH"],
+        "preflight /: Access-Control-Allow-Methods"
+    );
 }
 
 #[tokio::test]
