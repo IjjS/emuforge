@@ -8,3 +8,7 @@
 {"check_id": "engine.ignores-aws-environment", "path": "tests/integration/engine/tests/safety.rs", "module": "engine", "operations": [], "labels": ["safety"], "issue": 1}
 {"check_id": "engine.start-refuses-port-in-use", "path": "tests/integration/engine/tests/process.rs", "module": "engine", "operations": [], "labels": [], "issue": 1}
 {"check_id": "engine.start-refuses-bad-configuration", "path": "tests/integration/engine/tests/process.rs", "module": "engine", "operations": [], "labels": [], "issue": 1}
+{"check_id": "engine.studio-session-serves-health", "path": "tests/integration/engine/tests/browser.rs", "module": "engine", "operations": [], "labels": [], "issue": 7}
+{"check_id": "engine.studio-port-from-environment", "path": "tests/integration/engine/tests/browser.rs", "module": "engine", "operations": [], "labels": [], "issue": 7}
+{"check_id": "engine.studio-session-changes-on-restart", "path": "tests/integration/engine/tests/browser.rs", "module": "engine", "operations": [], "labels": ["lifecycle"], "issue": 7}
+{"check_id": "engine.studio-session-not-in-output", "path": "tests/integration/engine/tests/browser.rs", "module": "engine", "operations": [], "labels": ["safety"], "issue": 7}
