@@ -12,3 +12,5 @@
 {"check_id": "engine.studio-port-from-environment", "path": "tests/integration/engine/tests/browser.rs", "module": "engine", "operations": [], "labels": [], "issue": 7}
 {"check_id": "engine.studio-session-changes-on-restart", "path": "tests/integration/engine/tests/browser.rs", "module": "engine", "operations": [], "labels": ["lifecycle"], "issue": 7}
 {"check_id": "engine.studio-session-not-in-output", "path": "tests/integration/engine/tests/browser.rs", "module": "engine", "operations": [], "labels": ["safety"], "issue": 7}
+{"check_id": "studio.service-routes-say-no-screen-yet", "path": "tests/integration/studio/shell.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 3}
+{"check_id": "studio.unknown-route-shows-page-not-found", "path": "tests/integration/studio/shell.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 3}
