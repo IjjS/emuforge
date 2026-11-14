@@ -4,6 +4,9 @@ coverage/
 node_modules/
 bun.lock
 
+# Harness capture scripts and evidence (git-ignored)
+output/
+
 # Agent guides and references are maintained by the harness, not formatted by Prettier
 AGENTS.md
 CLAUDE.md
