@@ -1,19 +1,21 @@
 [package]
 name = "emuforge-core"
-description = "Finds the local aws-emulator for a port, reads its files and probes its health over verified TLS"
+description = "Finds the local aws-emulator for a port, reads its files, probes its health and relays requests to it over verified TLS"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
 [dependencies]
+bytes.workspace = true
 http.workspace = true
+http-body.workspace = true
 http-body-util.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
 ring.workspace = true
 rustls.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "time"] }
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "rt", "sync", "time"] }
 tokio-rustls.workspace = true
 
 [dev-dependencies]

@@ -1,0 +1,23 @@
+{
+  "format": "pm-structure-snapshot/1",
+  "url": "http://127.0.0.1:8103/s3/ten-items",
+  "viewport": {"width": 1280, "height": 800},
+  "browser": "chromium 140.0.7339.16",
+  "blocked": [],
+  "nodes": [
+    {"role": "RootWebArea", "name": "Things | EmuForge", "parent": null},
+    {"role": "navigation", "name": "Breadcrumbs", "parent": 0},
+    {"role": "main", "name": "", "parent": 0},
+    {"role": "heading", "name": "Things", "parent": 2},
+    {"role": "StaticText", "name": "Things", "parent": 3},
+    {"role": "button", "name": "Create thing", "parent": 2},
+    {"role": "StaticText", "name": "Create thing", "parent": 5},
+    {"role": "table", "name": "Things", "parent": 2},
+    {"role": "rowgroup", "name": "", "parent": 7},
+    {"role": "row", "name": "", "parent": 8},
+    {"role": "columnheader", "name": "Name", "parent": 9},
+    {"role": "StaticText", "name": "Name", "parent": 10},
+    {"role": "columnheader", "name": "Status", "parent": 9},
+    {"role": "StaticText", "name": "Status", "parent": 12}
+  ]
+}

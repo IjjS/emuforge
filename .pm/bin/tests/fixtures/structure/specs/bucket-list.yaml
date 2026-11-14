@@ -1,0 +1,23 @@
+screen: s3.bucket-list            # <service>.<screen>, unique
+service: s3
+kind: table                       # table | detail | form | wizard | dashboard
+route: /s3/buckets                # the Studio route that renders it
+
+breadcrumbs: [Amazon S3, Buckets]
+header:
+  title: General purpose buckets
+  counter: true
+  actions: [Copy ARN, Empty, Delete, Create bucket]   # in order
+  primary_action: Create bucket
+table:
+  selection: single
+  filter: text
+  pagination: true
+  columns: [Name, AWS Region, Creation date]          # in order
+  empty:
+    title: No buckets
+    action: Create bucket
+
+omitted:                          # on the AWS screen, deliberately not in Studio
+  - item: header.actions[Copy ARN]
+    reason: emulator returns 501 for the operation behind it

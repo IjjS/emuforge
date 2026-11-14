@@ -12,9 +12,11 @@ emuforge-core = { path = "crates/emuforge-core" }
 
 anyhow = "=1.0.104"
 axum = { version = "=0.8.9", default-features = false, features = ["http1", "tokio", "json"] }
+bytes = "=1.12.1"
 clap = { version = "=4.6.7", default-features = false, features = ["std", "derive", "env", "help", "usage", "error-context"] }
 getrandom = "=0.2.17"
 http = "=1.5.0"
+http-body = "=1.1.0"
 http-body-util = "=0.1.5"
 hyper = { version = "=1.12.0", default-features = false, features = ["client", "http1"] }
 hyper-util = { version = "=0.1.21", default-features = false, features = ["tokio"] }

@@ -1,8 +1,5 @@
 //! Whether the emulator answers `GET /__admin/health` with `200 ok` over TLS verified against its `ca.pem`.
 
-use std::io;
-use std::net::{IpAddr, Ipv4Addr};
-use std::sync::Arc;
 use std::time::Duration;
 
 use http_body_util::{BodyExt, Empty, LengthLimitError, Limited};
@@ -10,13 +7,10 @@ use hyper::body::Bytes;
 use hyper::header::HOST;
 use hyper::{Request, StatusCode};
 use hyper_util::rt::TokioIo;
-use rustls::ClientConfig;
-use rustls::pki_types::ServerName;
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::net::TcpStream;
-use tokio_rustls::TlsConnector;
 
-use crate::{CA_FILE, Emulator, EmulatorFiles, Error, client_config};
+use crate::connect::{connect, from_files, handshake};
+use crate::{CA_FILE, Emulator, EmulatorFiles, client_config};
 
 /// The probe's whole budget: connect, TLS handshake and response.
 pub const PROBE_DEADLINE: Duration = Duration::from_secs(2);
@@ -101,17 +95,8 @@ impl Reason {
 pub async fn probe(emulator: &Emulator, deadline: Duration) -> Health {
     let attempt = async {
         let files = EmulatorFiles::read(emulator).await.map_err(from_files)?;
-        let config = client_config(&files).map_err(from_files)?;
-        let stream =
-            TcpStream::connect(emulator.socket_addr())
-                .await
-                .map_err(|error| match error.kind() {
-                    io::ErrorKind::ConnectionRefused => Reason::ConnectionRefused,
-                    kind => Reason::ConnectionFailed {
-                        kind: kind.to_string(),
-                    },
-                })?;
-        exchange(stream, emulator, config).await
+        let upstream = connect(emulator, &files, deadline, deadline).await?;
+        exchange(upstream.stream, emulator).await
     };
     into_health(tokio::time::timeout(deadline, attempt).await)
 }
@@ -128,7 +113,8 @@ where
 {
     let attempt = async {
         let config = client_config(files).map_err(from_files)?;
-        exchange(stream, emulator, config).await
+        let tls = handshake(stream, config).await?;
+        exchange(tls, emulator).await
     };
     into_health(tokio::time::timeout(deadline, attempt).await)
 }
@@ -141,42 +127,18 @@ fn into_health(result: Result<Result<(), Reason>, tokio::time::error::Elapsed>) 
     }
 }
 
-fn from_files(error: Error) -> Reason {
-    match error {
-        Error::FilesMissing { .. } => Reason::NotStarted,
-        Error::FileUnreadable { file, .. } | Error::FileMalformed { file } => {
-            Reason::FilesUnreadable { file }
-        }
-        Error::TrustStore => Reason::FilesUnreadable { file: CA_FILE },
-        Error::TlsConfig => tls_failed(),
-    }
-}
-
-fn tls_failed() -> Reason {
-    Reason::ConnectionFailed { kind: "tls".into() }
-}
-
 fn http_failed() -> Reason {
     Reason::ConnectionFailed {
         kind: "http".into(),
     }
 }
 
-/// One request, never a second: a redirect is an unexpected answer, not a place to go.
-async fn exchange<S>(
-    stream: S,
-    emulator: &Emulator,
-    config: Arc<ClientConfig>,
-) -> Result<(), Reason>
+/// One request, never a second, over a verified TLS stream: a redirect is an unexpected answer, not a place to
+/// go.
+async fn exchange<S>(tls: S, emulator: &Emulator) -> Result<(), Reason>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
-    let server_name = ServerName::IpAddress(IpAddr::V4(Ipv4Addr::LOCALHOST).into());
-    let tls = TlsConnector::from(config)
-        .connect(server_name, stream)
-        .await
-        .map_err(from_handshake)?;
-
     let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(tls))
         .await
         .map_err(|_| http_failed())?;
@@ -223,18 +185,5 @@ where
         result = &mut answer => result,
         // The connection ended first: whatever answer it delivered is buffered, or the request fails.
         _ = &mut connection => answer.await,
-    }
-}
-
-fn from_handshake(error: io::Error) -> Reason {
-    let rustls_error = error
-        .get_ref()
-        .and_then(|inner| inner.downcast_ref::<rustls::Error>());
-    match rustls_error {
-        Some(rustls::Error::InvalidCertificate(_)) => Reason::TlsUntrusted,
-        Some(_) => tls_failed(),
-        None => Reason::ConnectionFailed {
-            kind: error.kind().to_string(),
-        },
     }
 }
