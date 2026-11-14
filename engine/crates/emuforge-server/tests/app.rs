@@ -214,7 +214,7 @@ async fn health_other_method_is_405_allowing_get_and_head_without_probe() {
 
 #[tokio::test]
 async fn other_path_is_404_not_found() {
-    for path in ["/", "/other", "/__emuforge", "/__emuforge/health/x"] {
+    for path in ["/__emuforge/other", "/__emuforge", "/__emuforge/health/x"] {
         let (probe, calls) = answering(vec![Health::Reachable]);
         let answer = get(&app_with(probe), path).await;
         assert_eq!(answer.status, StatusCode::NOT_FOUND, "case {path}");
@@ -280,7 +280,7 @@ async fn guards_apply_in_order_host_origin_path_method() {
         send(&app, foreign_host_and_origin).await.status,
         StatusCode::MISDIRECTED_REQUEST
     );
-    let other_with_origin = request(Method::GET, "/other")
+    let other_with_origin = request(Method::GET, "/__emuforge/other")
         .header(ORIGIN, "https://example.com")
         .body(Body::empty())
         .unwrap();
@@ -288,7 +288,9 @@ async fn guards_apply_in_order_host_origin_path_method() {
         send(&app, other_with_origin).await.status,
         StatusCode::FORBIDDEN
     );
-    let post_other = request(Method::POST, "/other").body(Body::empty()).unwrap();
+    let post_other = request(Method::POST, "/__emuforge/other")
+        .body(Body::empty())
+        .unwrap();
     assert_eq!(send(&app, post_other).await.status, StatusCode::NOT_FOUND);
 }
 
@@ -298,8 +300,10 @@ async fn refusals_are_json_error_bodies() {
     let app = app_with(probe);
     let cases = [
         (
-            "GET /other",
-            request(Method::GET, "/other").body(Body::empty()).unwrap(),
+            "GET /__emuforge/other",
+            request(Method::GET, "/__emuforge/other")
+                .body(Body::empty())
+                .unwrap(),
         ),
         (
             "POST health",
@@ -484,8 +488,10 @@ async fn limit_is_shared_by_every_route_and_refusal() {
     held.wait_entered(2).await;
     let cases = [
         (
-            "GET /other",
-            request(Method::GET, "/other").body(Body::empty()).unwrap(),
+            "GET /__emuforge/other",
+            request(Method::GET, "/__emuforge/other")
+                .body(Body::empty())
+                .unwrap(),
         ),
         (
             "foreign Host",
