@@ -20,10 +20,11 @@ use axum::http::header::{
     ORIGIN, VARY, WWW_AUTHENTICATE,
 };
 use axum::http::{HeaderMap, HeaderValue, Method, Request, StatusCode};
-use emuforge_core::{Emulator, Health, Reason};
-use emuforge_server::{AppState, ProbeFn, SessionToken, StudioOrigin, app};
+use emuforge_core::{Emulator, Health, Limits, Prepared, Reason, forward};
+use emuforge_server::{AppState, ProbeFn, RelayFn, SessionToken, StudioOrigin, app};
 use hyper::body::{Bytes, Frame};
 use serde_json::{Value, json};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{Notify, mpsc};
 use tower::ServiceExt;
 
@@ -33,6 +34,8 @@ const ENGINE_HOST: &str = "127.0.0.1:8297";
 const HEALTH: &str = "/__emuforge/health";
 const SESSION: &str = "/__emuforge/session";
 const SESSION_HEADER: &str = "x-emuforge-session";
+/// The body the test relay answers every request with.
+const RELAYED: &str = "the test relay's answer";
 
 fn port(value: u16) -> NonZeroU16 {
     NonZeroU16::new(value).unwrap()
@@ -43,10 +46,15 @@ fn emulator() -> Emulator {
 }
 
 fn app_with(probe: ProbeFn) -> Router {
+    app_relaying(probe, test_relay().0)
+}
+
+fn app_relaying(probe: ProbeFn, relay: RelayFn) -> Router {
     app(AppState {
         engine_port: port(8297),
         emulator: emulator(),
         probe,
+        relay,
         max_in_flight: 2,
         studio_origin: StudioOrigin::new(port(8296)),
         session: Arc::new(SessionToken::generate().unwrap()),
@@ -63,6 +71,44 @@ fn answering(healths: Vec<Health>) -> (ProbeFn, Arc<AtomicUsize>) {
         Box::pin(async move { health })
     });
     (probe, calls)
+}
+
+/// A relay that answers every request `200` with [`RELAYED`] from a stand-in on the other side of a duplex
+/// stream, and counts its calls.
+fn test_relay() -> (RelayFn, Arc<AtomicUsize>) {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counter = calls.clone();
+    let relay: RelayFn = Arc::new(move |request: Request<Body>| {
+        counter.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async move {
+            let (engine, mut emulator) = tokio::io::duplex(64 * 1024);
+            tokio::spawn(async move {
+                let mut head = Vec::new();
+                let mut byte = [0; 1];
+                while !head.ends_with(b"\r\n\r\n") {
+                    if emulator.read(&mut byte).await.unwrap_or(0) == 0 {
+                        return;
+                    }
+                    head.push(byte[0]);
+                }
+                let answer = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{RELAYED}",
+                    RELAYED.len()
+                );
+                let _ = emulator.write_all(answer.as_bytes()).await;
+            });
+            let (parts, body) = request.into_parts();
+            forward(
+                engine,
+                Arc::new(AtomicBool::new(false)),
+                Prepared { head: parts },
+                body,
+                &Limits::DEFAULT,
+            )
+            .await
+        })
+    });
+    (relay, calls)
 }
 
 fn reachable() -> (Router, Arc<AtomicUsize>) {
@@ -118,6 +164,11 @@ impl Answer {
         self.json()["error"]["message"].as_str().unwrap().to_owned()
     }
 
+    /// The message of a refusal in the REST-JSON protocol shape (requirement §6).
+    fn aws_message(&self) -> String {
+        self.json()["message"].as_str().unwrap().to_owned()
+    }
+
     fn values(&self, name: impl axum::http::header::AsHeaderName) -> Vec<&str> {
         self.headers
             .get_all(name)
@@ -161,6 +212,22 @@ impl Answer {
             "case {case}"
         );
         assert_eq!(self.code(), code, "case {case}: code");
+    }
+
+    /// A refusal on a relayed path, in the caller's protocol: REST-JSON for these requests (no `X-Amz-Target`, no
+    /// `s3` credential, no form body or `Action=` query), so the code is read from `x-amzn-ErrorType` and `__type`.
+    fn assert_aws_error(&self, status: StatusCode, code: &str, case: &str) {
+        assert_eq!(self.status, status, "case {case}: status");
+        assert_eq!(
+            self.headers[CONTENT_TYPE], "application/json",
+            "case {case}"
+        );
+        assert_eq!(
+            self.values("x-amzn-errortype"),
+            [code],
+            "case {case}: x-amzn-ErrorType"
+        );
+        assert_eq!(self.json()["__type"], code, "case {case}: __type");
     }
 
     fn assert_www_authenticate(&self, case: &str) {
@@ -663,11 +730,11 @@ async fn relayed_path_from_studio_with_token_is_403_not_the_fallback() {
     ];
     for (case, method, path) in cases {
         let answer = send(&app, studio_with(method, path, &token)).await;
-        answer.assert_error(StatusCode::FORBIDDEN, "OriginNotAllowed", case);
+        answer.assert_aws_error(StatusCode::FORBIDDEN, "OriginNotAllowed", case);
         assert!(
-            answer.message().contains("/__emuforge/"),
+            answer.aws_message().contains("/__emuforge/"),
             "case {case}: {}",
-            answer.message()
+            answer.aws_message()
         );
         answer.assert_cors(case);
         answer.assert_vary_origin(case);
@@ -683,14 +750,14 @@ async fn encoded_slash_path_from_studio_is_a_relayed_path() {
         studio_with(Method::GET, "/__emuforge%2Fhealth", &token),
     )
     .await;
-    answer.assert_error(StatusCode::FORBIDDEN, "OriginNotAllowed", "%2F");
+    answer.assert_aws_error(StatusCode::FORBIDDEN, "OriginNotAllowed", "%2F");
 }
 
 #[tokio::test]
 async fn preflight_from_studio_on_a_relayed_path_is_403_with_cors() {
     let (app, _) = reachable();
     let answer = send(&app, preflight("/", S, "GET")).await;
-    answer.assert_error(StatusCode::FORBIDDEN, "OriginNotAllowed", "preflight /");
+    answer.assert_aws_error(StatusCode::FORBIDDEN, "OriginNotAllowed", "preflight /");
     answer.assert_cors("preflight /");
 }
 
@@ -705,16 +772,20 @@ async fn relayed_path_with_fetch_metadata_and_no_origin_is_403_without_cors() {
             .unwrap(),
     )
     .await;
-    answer.assert_error(StatusCode::FORBIDDEN, "OriginNotAllowed", "Sec-Fetch /");
+    answer.assert_aws_error(StatusCode::FORBIDDEN, "OriginNotAllowed", "Sec-Fetch /");
     answer.assert_no_cors("Sec-Fetch /");
     answer.assert_vary_origin("Sec-Fetch /");
 }
 
 #[tokio::test]
-async fn relayed_path_from_a_local_tool_is_1s_404_without_cors_or_vary() {
-    let (app, _) = reachable();
+async fn relayed_path_from_a_local_tool_is_relayed_without_cors_or_vary() {
+    let (probe, _) = answering(vec![Health::Reachable]);
+    let (relay, relayed) = test_relay();
+    let app = app_relaying(probe, relay);
     let answer = send(&app, request(Method::GET, "/").body(Body::empty()).unwrap()).await;
-    answer.assert_error(StatusCode::NOT_FOUND, "NotFound", "GET /");
+    assert_eq!(relayed.load(Ordering::SeqCst), 1, "GET /: relay calls");
+    assert_eq!(answer.status, StatusCode::OK, "GET /: status");
+    assert_eq!(answer.body, RELAYED.as_bytes(), "GET /: body");
     answer.assert_no_cors("GET /");
     assert!(!answer.headers.contains_key(VARY), "Vary on GET /");
 }
@@ -962,7 +1033,7 @@ async fn foreign_request_past_the_limit_is_busy_without_cors_with_vary() {
             .unwrap(),
     )
     .await;
-    answer.assert_error(StatusCode::SERVICE_UNAVAILABLE, "Busy", "foreign /");
+    answer.assert_aws_error(StatusCode::SERVICE_UNAVAILABLE, "Busy", "foreign /");
     answer.assert_no_cors("foreign /");
     answer.assert_vary_origin("foreign /");
 }
