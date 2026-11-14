@@ -9,15 +9,21 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
+use std::sync::Mutex;
+
 use axum::Router;
 use axum::body::Body;
-use axum::http::header::{ALLOW, CONTENT_TYPE, HOST, ORIGIN};
+use axum::http::header::{ALLOW, CONNECTION, CONTENT_TYPE, HOST, ORIGIN};
 use axum::http::{HeaderMap, Method, Request, StatusCode};
-use emuforge_core::{Emulator, Health, Reason};
-use emuforge_server::{AppState, ProbeFn, SessionToken, StudioOrigin, app};
+use emuforge_core::sigv4::SIGNED_CHUNK_MODES;
+use emuforge_core::{Emulator, Health, Limits, Prepared, Reason, RelayError, forward};
+use emuforge_server::{
+    AppState, CLIENT_WRITE_IDLE, IdleListener, ProbeFn, RelayFn, SessionToken, StudioOrigin, app,
+};
 use hyper::body::{Bytes, Frame};
 use serde_json::{Value, json};
-use tokio::sync::{Notify, mpsc};
+use tokio::io::{AsyncReadExt, AsyncWriteExt, DuplexStream};
+use tokio::sync::{Notify, mpsc, oneshot};
 use tower::ServiceExt;
 
 const ENGINE_HOST: &str = "127.0.0.1:8297";
@@ -28,10 +34,15 @@ fn emulator() -> Emulator {
 }
 
 fn app_with(probe: ProbeFn) -> Router {
+    app_relaying(probe, TestRelay::answering(Script::ok()).relay)
+}
+
+fn app_relaying(probe: ProbeFn, relay: RelayFn) -> Router {
     app(AppState {
         engine_port: NonZeroU16::new(8297).unwrap(),
         emulator: emulator(),
         probe,
+        relay,
         max_in_flight: 2,
         studio_origin: StudioOrigin::new(NonZeroU16::new(8296).unwrap()),
         session: Arc::new(SessionToken::generate().unwrap()),
@@ -216,7 +227,7 @@ async fn health_other_method_is_405_allowing_get_and_head_without_probe() {
 
 #[tokio::test]
 async fn other_path_is_404_not_found() {
-    for path in ["/", "/other", "/__emuforge", "/__emuforge/health/x"] {
+    for path in ["/__emuforge/other", "/__emuforge", "/__emuforge/health/x"] {
         let (probe, calls) = answering(vec![Health::Reachable]);
         let answer = get(&app_with(probe), path).await;
         assert_eq!(answer.status, StatusCode::NOT_FOUND, "case {path}");
@@ -282,7 +293,7 @@ async fn guards_apply_in_order_host_origin_path_method() {
         send(&app, foreign_host_and_origin).await.status,
         StatusCode::MISDIRECTED_REQUEST
     );
-    let other_with_origin = request(Method::GET, "/other")
+    let other_with_origin = request(Method::GET, "/__emuforge/other")
         .header(ORIGIN, "https://example.com")
         .body(Body::empty())
         .unwrap();
@@ -290,7 +301,9 @@ async fn guards_apply_in_order_host_origin_path_method() {
         send(&app, other_with_origin).await.status,
         StatusCode::FORBIDDEN
     );
-    let post_other = request(Method::POST, "/other").body(Body::empty()).unwrap();
+    let post_other = request(Method::POST, "/__emuforge/other")
+        .body(Body::empty())
+        .unwrap();
     assert_eq!(send(&app, post_other).await.status, StatusCode::NOT_FOUND);
 }
 
@@ -300,8 +313,10 @@ async fn refusals_are_json_error_bodies() {
     let app = app_with(probe);
     let cases = [
         (
-            "GET /other",
-            request(Method::GET, "/other").body(Body::empty()).unwrap(),
+            "GET /__emuforge/other",
+            request(Method::GET, "/__emuforge/other")
+                .body(Body::empty())
+                .unwrap(),
         ),
         (
             "POST health",
@@ -486,8 +501,10 @@ async fn limit_is_shared_by_every_route_and_refusal() {
     held.wait_entered(2).await;
     let cases = [
         (
-            "GET /other",
-            request(Method::GET, "/other").body(Body::empty()).unwrap(),
+            "GET /__emuforge/other",
+            request(Method::GET, "/__emuforge/other")
+                .body(Body::empty())
+                .unwrap(),
         ),
         (
             "foreign Host",
@@ -539,4 +556,787 @@ async fn dropped_request_drops_its_probe_and_frees_its_place() {
         send_at_once(&app, health_request()).await.status,
         StatusCode::OK
     );
+}
+
+// ---- Relayed paths (issue 2) ----
+
+const SIGNATURE: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+const CLIENT_KEY: &str = "AKIACLIENTKEY0000001";
+const AMZ_DATE: &str = "20261115T000000Z";
+const FORM: &str = "application/x-www-form-urlencoded; charset=utf-8";
+
+/// What the stand-in emulator behind the test relay does, or the error the test relay returns.
+#[derive(Clone)]
+enum Script {
+    /// One answer with `Content-Length` (no body for `HEAD`).
+    Fixed {
+        status: u16,
+        headers: Vec<(&'static str, &'static str)>,
+        body: &'static [u8],
+    },
+    /// A chunked answer whose head and first chunk are sent at once; the stand-in sends its release sender
+    /// before the head, and ends the body when it is released.
+    Held {
+        releases: mpsc::UnboundedSender<oneshot::Sender<()>>,
+    },
+    /// `size` bytes with `Content-Length`, written as fast as the engine reads; reports the (paused) clock's
+    /// time when the engine side of the connection is gone.
+    Large {
+        size: usize,
+        closed: mpsc::UnboundedSender<tokio::time::Instant>,
+    },
+    Error(RelayError),
+}
+
+impl Script {
+    fn ok() -> Script {
+        Script::Fixed {
+            status: 200,
+            headers: vec![
+                ("content-type", "application/xml"),
+                ("x-amz-request-id", "test-request-1"),
+            ],
+            body: b"<ListAllMyBucketsResult/>",
+        }
+    }
+}
+
+/// A relay seam that records each request it is called with (method and target) and answers by `script`,
+/// through `emuforge_core::forward` over a duplex stream to a scripted stand-in.
+struct TestRelay {
+    relay: RelayFn,
+    seen: Arc<Mutex<Vec<(Method, String)>>>,
+}
+
+impl TestRelay {
+    fn answering(script: Script) -> TestRelay {
+        TestRelay::with_limits(script, Limits::DEFAULT)
+    }
+
+    fn with_limits(script: Script, limits: Limits) -> TestRelay {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let record = seen.clone();
+        let relay: RelayFn = Arc::new(move |request: Request<Body>| {
+            record
+                .lock()
+                .unwrap()
+                .push((request.method().clone(), request.uri().to_string()));
+            let script = script.clone();
+            Box::pin(async move {
+                if let Script::Error(error) = script {
+                    return Err(error);
+                }
+                let (engine, emulator) = tokio::io::duplex(64 * 1024);
+                let head_only = request.method() == Method::HEAD;
+                tokio::spawn(stand_in(emulator, script, head_only));
+                let (parts, body) = request.into_parts();
+                forward(
+                    engine,
+                    Arc::new(AtomicBool::new(false)),
+                    Prepared { head: parts },
+                    body,
+                    &limits,
+                )
+                .await
+            })
+        });
+        TestRelay { relay, seen }
+    }
+
+    fn seen(&self) -> Vec<(Method, String)> {
+        self.seen.lock().unwrap().clone()
+    }
+}
+
+async fn stand_in(mut stream: DuplexStream, script: Script, head_only: bool) {
+    let mut head = Vec::new();
+    let mut byte = [0; 1];
+    while !head.ends_with(b"\r\n\r\n") {
+        if stream.read(&mut byte).await.unwrap_or(0) == 0 {
+            return;
+        }
+        head.push(byte[0]);
+    }
+    match script {
+        Script::Fixed {
+            status,
+            headers,
+            body,
+        } => {
+            let mut answer = format!("HTTP/1.1 {status} X\r\n");
+            for (name, value) in headers {
+                answer.push_str(&format!("{name}: {value}\r\n"));
+            }
+            answer.push_str(&format!("content-length: {}\r\n\r\n", body.len()));
+            let mut bytes = answer.into_bytes();
+            if !head_only {
+                bytes.extend_from_slice(body);
+            }
+            let _ = stream.write_all(&bytes).await;
+        }
+        Script::Held { releases } => {
+            let (release, released) = oneshot::channel();
+            let _ = releases.send(release);
+            let head = "HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n5\r\nfirst\r\n";
+            if stream.write_all(head.as_bytes()).await.is_err() {
+                return;
+            }
+            if released.await.is_ok() {
+                let _ = stream.write_all(b"0\r\n\r\n").await;
+            }
+            // Keep the connection until the engine closes it.
+            let _ = stream.read(&mut byte).await;
+        }
+        Script::Large { size, closed } => {
+            let head = format!("HTTP/1.1 200 OK\r\ncontent-length: {size}\r\n\r\n");
+            let mut failed = stream.write_all(head.as_bytes()).await.is_err();
+            let chunk = vec![b'x'; 16 * 1024];
+            let mut sent = 0;
+            while !failed && sent < size {
+                let n = chunk.len().min(size - sent);
+                failed = stream.write_all(&chunk[..n]).await.is_err();
+                sent += n;
+            }
+            if !failed {
+                // Everything written: wait for the engine to close its side.
+                let _ = stream.read(&mut byte).await;
+            }
+            let _ = closed.send(tokio::time::Instant::now());
+        }
+        Script::Error(_) => {}
+    }
+}
+
+impl Answer {
+    /// The code of an error in the JSON or REST-JSON protocol shape: `x-amzn-ErrorType`, equal to `__type`.
+    fn aws_code(&self) -> String {
+        let header = self.headers["x-amzn-errortype"]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        assert_eq!(
+            self.json()["__type"],
+            header.as_str(),
+            "__type and x-amzn-ErrorType"
+        );
+        header
+    }
+
+    fn text(&self) -> String {
+        String::from_utf8(self.body.to_vec()).unwrap()
+    }
+}
+
+fn reachable_probe() -> ProbeFn {
+    answering(vec![Health::Reachable]).0
+}
+
+fn header_signed(method: Method, path: &str, service: &str) -> axum::http::request::Builder {
+    request(method, path)
+        .header(
+            "authorization",
+            format!(
+                "AWS4-HMAC-SHA256 Credential={CLIENT_KEY}/20261115/us-east-1/{service}/aws4_request, SignedHeaders=host;x-amz-date, Signature={SIGNATURE}"
+            ),
+        )
+        .header("x-amz-date", AMZ_DATE)
+}
+
+fn empty(builder: axum::http::request::Builder) -> Request<Body> {
+    builder.body(Body::empty()).unwrap()
+}
+
+#[tokio::test]
+async fn relayed_methods_pass_the_relay_answer_and_call_it_once() {
+    let cases = [
+        (Method::GET, "/"),
+        (Method::POST, "/"),
+        (Method::PUT, "/b/k"),
+        (Method::DELETE, "/b/k"),
+        (Method::PATCH, "/x"),
+        (Method::HEAD, "/b/k"),
+        (Method::OPTIONS, "/x"),
+        (Method::GET, "/2015-03-31/functions/"),
+        (Method::GET, "/b?list-type=2&max-keys=1"),
+    ];
+    for (method, path) in cases {
+        let case = format!("{method} {path}");
+        let relay = TestRelay::answering(Script::ok());
+        let app = app_relaying(reachable_probe(), relay.relay.clone());
+        let answer = send(&app, empty(request(method.clone(), path))).await;
+        assert_eq!(answer.status, StatusCode::OK, "case {case}");
+        assert_eq!(
+            answer.headers[CONTENT_TYPE], "application/xml",
+            "case {case}"
+        );
+        assert_eq!(
+            answer.headers["x-amz-request-id"], "test-request-1",
+            "case {case}"
+        );
+        let expected: &[u8] = if method == Method::HEAD {
+            b""
+        } else {
+            b"<ListAllMyBucketsResult/>"
+        };
+        assert_eq!(answer.body, expected, "case {case}");
+        assert_eq!(relay.seen(), [(method, path.to_owned())], "case {case}");
+    }
+}
+
+#[tokio::test]
+async fn emulator_admin_path_is_relayed() {
+    let relay = TestRelay::answering(Script::ok());
+    let app = app_relaying(reachable_probe(), relay.relay.clone());
+    let answer = get(&app, "/__admin/health").await;
+    assert_eq!(answer.status, StatusCode::OK);
+    assert_eq!(relay.seen(), [(Method::GET, "/__admin/health".to_owned())]);
+}
+
+#[tokio::test]
+async fn engine_paths_without_a_route_are_404_and_not_relayed() {
+    let cases = [
+        (Method::GET, "/__emuforge"),
+        (Method::GET, "/__emuforge/other"),
+        (Method::POST, "/__emuforge/other"),
+        (Method::GET, "/__emuforge/health/x"),
+    ];
+    for (method, path) in cases {
+        let case = format!("{method} {path}");
+        let relay = TestRelay::answering(Script::ok());
+        let app = app_relaying(reachable_probe(), relay.relay.clone());
+        let answer = send(&app, empty(request(method, path))).await;
+        assert_eq!(answer.status, StatusCode::NOT_FOUND, "case {case}");
+        assert_eq!(
+            answer.headers[CONTENT_TYPE], "application/json",
+            "case {case}"
+        );
+        assert_eq!(answer.code(), "NotFound", "case {case}");
+        assert!(relay.seen().is_empty(), "case {case}: relayed");
+    }
+}
+
+#[tokio::test]
+async fn relayed_path_with_origin_is_403_in_the_callers_protocol_and_not_relayed() {
+    for origin in ["http://127.0.0.1:8100", "https://example.com", "null"] {
+        let relay = TestRelay::answering(Script::ok());
+        let app = app_relaying(reachable_probe(), relay.relay.clone());
+        let answer = send(
+            &app,
+            empty(request(Method::GET, "/b/k").header(ORIGIN, origin)),
+        )
+        .await;
+        assert_eq!(answer.status, StatusCode::FORBIDDEN, "case {origin}");
+        assert_eq!(
+            answer.headers[CONTENT_TYPE], "application/json",
+            "case {origin}"
+        );
+        assert_eq!(answer.aws_code(), "OriginNotAllowed", "case {origin}");
+        assert!(relay.seen().is_empty(), "case {origin}: relayed");
+    }
+}
+
+#[tokio::test]
+async fn relayed_path_with_foreign_host_is_421_in_the_callers_protocol_and_not_relayed() {
+    let cases = [
+        ("absent", None),
+        ("localhost", Some("localhost:8297")),
+        ("other port", Some("127.0.0.1:8298")),
+        ("foreign name", Some("example.com:8297")),
+        ("virtual-hosted bucket", Some("bucket.127.0.0.1:8297")),
+    ];
+    for (name, host) in cases {
+        let relay = TestRelay::answering(Script::ok());
+        let app = app_relaying(reachable_probe(), relay.relay.clone());
+        let mut builder = Request::builder().method(Method::GET).uri("/b/k");
+        if let Some(host) = host {
+            builder = builder.header(HOST, host);
+        }
+        let answer = send(&app, empty(builder)).await;
+        assert_eq!(
+            answer.status,
+            StatusCode::MISDIRECTED_REQUEST,
+            "case {name}"
+        );
+        assert_eq!(answer.aws_code(), "MisdirectedRequest", "case {name}");
+        assert!(relay.seen().is_empty(), "case {name}: relayed");
+    }
+}
+
+#[tokio::test]
+async fn s3_request_with_foreign_host_and_origin_is_421_in_s3_xml() {
+    let relay = TestRelay::answering(Script::ok());
+    let app = app_relaying(reachable_probe(), relay.relay.clone());
+    let answer = send(
+        &app,
+        empty(
+            header_signed(Method::GET, "/b/k", "s3")
+                .header(HOST, "example.com:8297")
+                .header(ORIGIN, "https://example.com"),
+        ),
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::MISDIRECTED_REQUEST);
+    assert_eq!(answer.headers[CONTENT_TYPE], "application/xml");
+    let body = answer.text();
+    assert!(
+        body.starts_with("<Error><Code>MisdirectedRequest</Code><Message>"),
+        "{body}"
+    );
+    assert!(relay.seen().is_empty(), "relayed");
+}
+
+#[tokio::test]
+async fn absolute_form_target_and_connect_are_421_and_not_relayed() {
+    let cases = [
+        (
+            "absolute-form",
+            Request::builder()
+                .method(Method::GET)
+                .uri("http://s3.amazonaws.com/")
+                .header(HOST, ENGINE_HOST),
+        ),
+        (
+            "CONNECT",
+            Request::builder()
+                .method(Method::CONNECT)
+                .uri("s3.amazonaws.com:443")
+                .header(HOST, ENGINE_HOST),
+        ),
+    ];
+    for (name, builder) in cases {
+        let relay = TestRelay::answering(Script::ok());
+        let app = app_relaying(reachable_probe(), relay.relay.clone());
+        let answer = send(&app, empty(builder)).await;
+        assert_eq!(
+            answer.status,
+            StatusCode::MISDIRECTED_REQUEST,
+            "case {name}"
+        );
+        assert_eq!(answer.aws_code(), "MisdirectedRequest", "case {name}");
+        assert!(relay.seen().is_empty(), "case {name}: relayed");
+    }
+}
+
+#[tokio::test]
+async fn origin_refusal_takes_each_protocols_shape() {
+    let relay = TestRelay::answering(Script::ok());
+    let app = app_relaying(reachable_probe(), relay.relay.clone());
+    let origin = "https://example.com";
+
+    let dynamodb = send(
+        &app,
+        empty(
+            header_signed(Method::POST, "/", "dynamodb")
+                .header("x-amz-target", "DynamoDB_20120810.ListTables")
+                .header(CONTENT_TYPE, "application/x-amz-json-1.0")
+                .header(ORIGIN, origin),
+        ),
+    )
+    .await;
+    assert_eq!(dynamodb.status, StatusCode::FORBIDDEN, "case dynamodb");
+    assert_eq!(
+        dynamodb.headers[CONTENT_TYPE], "application/x-amz-json-1.0",
+        "case dynamodb"
+    );
+    assert_eq!(dynamodb.aws_code(), "OriginNotAllowed", "case dynamodb");
+
+    let s3 = send(
+        &app,
+        empty(header_signed(Method::GET, "/b/k", "s3").header(ORIGIN, origin)),
+    )
+    .await;
+    assert_eq!(s3.status, StatusCode::FORBIDDEN, "case s3");
+    assert_eq!(s3.headers[CONTENT_TYPE], "application/xml", "case s3");
+    assert!(
+        s3.text()
+            .starts_with("<Error><Code>OriginNotAllowed</Code><Message>"),
+        "case s3: {}",
+        s3.text()
+    );
+
+    let iam = send(
+        &app,
+        empty(
+            header_signed(Method::POST, "/", "iam")
+                .header(CONTENT_TYPE, FORM)
+                .header(ORIGIN, origin),
+        ),
+    )
+    .await;
+    assert_eq!(iam.status, StatusCode::FORBIDDEN, "case iam");
+    assert_eq!(iam.headers[CONTENT_TYPE], "text/xml", "case iam");
+    assert!(
+        iam.text().starts_with(
+            "<?xml version=\"1.0\"?><ErrorResponse><Error><Type>Sender</Type><Code>OriginNotAllowed</Code><Message>"
+        ),
+        "case iam: {}",
+        iam.text()
+    );
+
+    let lambda = send(
+        &app,
+        empty(
+            header_signed(Method::GET, "/2015-03-31/functions/", "lambda").header(ORIGIN, origin),
+        ),
+    )
+    .await;
+    assert_eq!(lambda.status, StatusCode::FORBIDDEN, "case lambda");
+    assert_eq!(
+        lambda.headers[CONTENT_TYPE], "application/json",
+        "case lambda"
+    );
+    assert_eq!(lambda.aws_code(), "OriginNotAllowed", "case lambda");
+
+    assert!(relay.seen().is_empty(), "relayed");
+}
+
+/// `(<Type>, <Code>, <Message>)` of a query-protocol error body.
+fn query_error(body: &str) -> (String, String, String) {
+    let element = |name: &str| {
+        let open = format!("<{name}>");
+        let close = format!("</{name}>");
+        let start = body.find(&open).unwrap() + open.len();
+        let end = body[start..].find(&close).unwrap() + start;
+        body[start..end].to_owned()
+    };
+    (element("Type"), element("Code"), element("Message"))
+}
+
+/// An IAM form `POST`, answered in the query protocol, whose relay returns `error`.
+async fn relay_failing(error: RelayError) -> Answer {
+    let relay = TestRelay::answering(Script::Error(error));
+    let app = app_relaying(reachable_probe(), relay.relay.clone());
+    let answer = send(
+        &app,
+        empty(header_signed(Method::POST, "/", "iam").header(CONTENT_TYPE, FORM)),
+    )
+    .await;
+    assert_eq!(relay.seen().len(), 1, "the relay was not called once");
+    answer
+}
+
+#[tokio::test]
+async fn relay_errors_are_the_engines_answers_in_the_callers_protocol() {
+    let mut cases = vec![
+        (
+            "PayloadSigningNotSupported",
+            RelayError::PayloadSigningNotSupported {
+                mode: SIGNED_CHUNK_MODES[0],
+            },
+            StatusCode::BAD_REQUEST,
+            "PayloadSigningNotSupported",
+            "Sender",
+        ),
+        (
+            "ClientStalled",
+            RelayError::ClientStalled,
+            StatusCode::REQUEST_TIMEOUT,
+            "RequestTimeout",
+            "Sender",
+        ),
+        (
+            "EmulatorStalled",
+            RelayError::EmulatorStalled,
+            StatusCode::GATEWAY_TIMEOUT,
+            "EmulatorTimeout",
+            "Receiver",
+        ),
+        (
+            "HeadTimeout",
+            RelayError::HeadTimeout,
+            StatusCode::GATEWAY_TIMEOUT,
+            "EmulatorTimeout",
+            "Receiver",
+        ),
+        (
+            "ClientBodyFailed",
+            RelayError::ClientBodyFailed,
+            StatusCode::BAD_REQUEST,
+            "IncompleteBody",
+            "Sender",
+        ),
+    ];
+    for reason in every_reason() {
+        cases.push((
+            reason.code(),
+            RelayError::Unavailable(reason),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "EmulatorUnavailable",
+            "Receiver",
+        ));
+    }
+    for (name, error, status, code, kind) in cases {
+        let unavailable = matches!(error, RelayError::Unavailable(_));
+        let answer = relay_failing(error).await;
+        assert_eq!(answer.status, status, "case {name}");
+        assert_eq!(answer.headers[CONTENT_TYPE], "text/xml", "case {name}");
+        let (error_type, error_code, message) = query_error(&answer.text());
+        assert_eq!(error_type, kind, "case {name}");
+        assert_eq!(error_code, code, "case {name}");
+        if unavailable {
+            assert!(
+                message.contains("https://127.0.0.1:9391")
+                    && message.contains(&format!("({name})")),
+                "case {name}: {message}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn relay_errors_before_the_head_close_the_client_connection() {
+    let cases = [
+        ("ClientStalled", RelayError::ClientStalled),
+        ("EmulatorStalled", RelayError::EmulatorStalled),
+        ("HeadTimeout", RelayError::HeadTimeout),
+        ("ClientBodyFailed", RelayError::ClientBodyFailed),
+        (
+            "Unavailable(ConnectionFailed)",
+            RelayError::Unavailable(Reason::ConnectionFailed {
+                kind: "connection reset".to_owned(),
+            }),
+        ),
+    ];
+    for (name, error) in cases {
+        let answer = relay_failing(error).await;
+        assert_eq!(answer.headers[CONNECTION], "close", "case {name}");
+    }
+}
+
+#[tokio::test]
+async fn head_request_with_emulator_unavailable_is_503_with_headers_and_no_body() {
+    let relay = TestRelay::answering(Script::Error(RelayError::Unavailable(Reason::NotStarted)));
+    let app = app_relaying(reachable_probe(), relay.relay.clone());
+    let answer = send(&app, empty(request(Method::HEAD, "/b/k"))).await;
+    assert_eq!(answer.status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(answer.headers[CONTENT_TYPE], "application/json");
+    assert_eq!(answer.headers["x-amzn-errortype"], "EmulatorUnavailable");
+    assert!(answer.body.is_empty());
+}
+
+#[tokio::test]
+async fn payload_signing_refusal_names_the_mode_and_no_request_header_value() {
+    for mode in SIGNED_CHUNK_MODES {
+        let relay = TestRelay::answering(Script::Error(RelayError::PayloadSigningNotSupported {
+            mode,
+        }));
+        let app = app_relaying(reachable_probe(), relay.relay.clone());
+        let request = empty(
+            header_signed(Method::PUT, "/b/k", "s3")
+                .header("user-agent", "canary-agent-5e1d")
+                .header("x-amz-meta-note", "canary-meta-77ab")
+                .header("content-encoding", "aws-chunked"),
+        );
+        let values: Vec<String> = request
+            .headers()
+            .values()
+            .map(|value| value.to_str().unwrap().to_owned())
+            .collect();
+        let answer = send(&app, request).await;
+        assert_eq!(answer.status, StatusCode::BAD_REQUEST, "case {mode}");
+        let body = answer.text();
+        assert!(
+            body.starts_with("<Error><Code>PayloadSigningNotSupported</Code><Message>"),
+            "case {mode}: {body}"
+        );
+        assert!(body.contains(mode), "case {mode}: {body}");
+        for value in values {
+            assert!(!body.contains(&value), "case {mode}: {value} in {body}");
+        }
+        assert!(!body.contains(CLIENT_KEY), "case {mode}: key id in {body}");
+    }
+}
+
+// ---- In-flight bound across relayed bodies (issue 2, D11) ----
+
+struct HeldBodies {
+    app: Router,
+    relay: TestRelay,
+    releases: mpsc::UnboundedReceiver<oneshot::Sender<()>>,
+}
+
+impl HeldBodies {
+    fn new() -> HeldBodies {
+        let (releases_tx, releases) = mpsc::unbounded_channel();
+        let relay = TestRelay::answering(Script::Held {
+            releases: releases_tx,
+        });
+        let app = app_relaying(reachable_probe(), relay.relay.clone());
+        HeldBodies {
+            app,
+            relay,
+            releases,
+        }
+    }
+
+    /// A relayed `GET` whose head has returned and whose body is still open, with the sender that ends it.
+    async fn hold(&mut self, path: &str) -> (axum::response::Response, oneshot::Sender<()>) {
+        let response = self
+            .app
+            .clone()
+            .oneshot(empty(request(Method::GET, path)))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "held {path}");
+        (response, self.releases.recv().await.unwrap())
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn open_relayed_bodies_at_the_limit_make_every_request_busy_at_once() {
+    let mut held = HeldBodies::new();
+    let _first = held.hold("/b/1").await;
+    let _second = held.hold("/b/2").await;
+
+    let relayed = send_at_once(&held.app, empty(request(Method::GET, "/b/3"))).await;
+    assert_eq!(
+        relayed.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "case relayed"
+    );
+    assert_eq!(
+        relayed.headers[CONTENT_TYPE], "application/json",
+        "case relayed"
+    );
+    assert_eq!(relayed.aws_code(), "Busy", "case relayed");
+
+    let health = send_at_once(&held.app, health_request()).await;
+    assert_eq!(
+        health.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "case health"
+    );
+    assert_eq!(health.code(), "Busy", "case health");
+
+    assert_eq!(held.relay.seen().len(), 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn held_relayed_body_that_ends_frees_its_place() {
+    let mut held = HeldBodies::new();
+    let (first, release) = held.hold("/b/1").await;
+    let _second = held.hold("/b/2").await;
+    release.send(()).unwrap();
+    let body = axum::body::to_bytes(first.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(body, "first");
+    assert_eq!(
+        send_at_once(&held.app, health_request()).await.status,
+        StatusCode::OK
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn held_relayed_body_dropped_unfinished_frees_its_place() {
+    let mut held = HeldBodies::new();
+    let (first, _release) = held.hold("/b/1").await;
+    let _second = held.hold("/b/2").await;
+    drop(first);
+    assert_eq!(
+        send_at_once(&held.app, health_request()).await.status,
+        StatusCode::OK
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn held_health_requests_make_a_relayed_request_busy_without_relaying() {
+    let mut held = Held::new(2);
+    let relay = TestRelay::answering(Script::ok());
+    let app = app_relaying(held.probe.clone(), relay.relay.clone());
+    let _first = spawn_get(&app, health_request());
+    let _second = spawn_get(&app, health_request());
+    held.wait_entered(2).await;
+    let answer = send_at_once(&app, empty(request(Method::GET, "/b/k"))).await;
+    assert_eq!(answer.status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(answer.aws_code(), "Busy");
+    assert!(relay.seen().is_empty(), "relayed");
+}
+
+// ---- Listener (issue 2, L1) ----
+
+/// A listener that accepts one in-memory connection, then none.
+struct OneConnection(Option<DuplexStream>);
+
+impl axum::serve::Listener for OneConnection {
+    type Io = DuplexStream;
+    type Addr = std::net::SocketAddr;
+
+    async fn accept(&mut self) -> (DuplexStream, std::net::SocketAddr) {
+        match self.0.take() {
+            Some(stream) => (stream, ([127, 0, 0, 1], 50000).into()),
+            None => std::future::pending().await,
+        }
+    }
+
+    fn local_addr(&self) -> io::Result<std::net::SocketAddr> {
+        Ok(([127, 0, 0, 1], 8297).into())
+    }
+}
+
+const LARGE: usize = 1024 * 1024;
+
+/// Serves `app` relaying a [`LARGE`] body over [`IdleListener`] on one in-memory connection whose client end,
+/// with a `client_buffer`-byte buffer, is returned with the stand-in's report of its connection closing. The
+/// test relay's download idle is an hour, so only the listener can end a stalled answer within it.
+fn serve_large(
+    client_buffer: usize,
+) -> (DuplexStream, mpsc::UnboundedReceiver<tokio::time::Instant>) {
+    let (closed_tx, closed) = mpsc::unbounded_channel();
+    let limits = Limits {
+        download_idle: Duration::from_secs(3600),
+        ..Limits::DEFAULT
+    };
+    let relay = TestRelay::with_limits(
+        Script::Large {
+            size: LARGE,
+            closed: closed_tx,
+        },
+        limits,
+    );
+    let app = app_relaying(reachable_probe(), relay.relay);
+    let (client, server) = tokio::io::duplex(client_buffer);
+    let listener = IdleListener::new(OneConnection(Some(server)), CLIENT_WRITE_IDLE);
+    tokio::spawn(async move { axum::serve(listener, app).await });
+    (client, closed)
+}
+
+const LARGE_REQUEST: &[u8] =
+    b"GET /b/large HTTP/1.1\r\nHost: 127.0.0.1:8297\r\nConnection: close\r\n\r\n";
+
+#[tokio::test(start_paused = true)]
+async fn listener_client_that_reads_gets_the_whole_response() {
+    let (mut client, _closed) = serve_large(64 * 1024);
+    client.write_all(LARGE_REQUEST).await.unwrap();
+    let mut received = Vec::new();
+    client.read_to_end(&mut received).await.unwrap();
+    let split = received.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
+    assert!(received.starts_with(b"HTTP/1.1 200 OK\r\n"));
+    assert_eq!(received.len() - split, LARGE);
+}
+
+#[tokio::test(start_paused = true)]
+async fn listener_client_that_stops_reading_is_closed_at_the_idle_bound() {
+    let (mut client, mut closed) = serve_large(4 * 1024);
+    let started = tokio::time::Instant::now();
+    client.write_all(LARGE_REQUEST).await.unwrap();
+
+    tokio::time::sleep(CLIENT_WRITE_IDLE - Duration::from_millis(1)).await;
+    assert!(closed.try_recv().is_err(), "closed before the idle bound");
+
+    let closed_at = tokio::time::timeout(Duration::from_secs(1), closed.recv())
+        .await
+        .expect("the response body was not dropped at the idle bound")
+        .unwrap();
+    let elapsed = closed_at - started;
+    assert!(
+        elapsed >= CLIENT_WRITE_IDLE && elapsed <= CLIENT_WRITE_IDLE + Duration::from_millis(1),
+        "closed after {elapsed:?}, not at the idle bound"
+    );
+    let mut received = Vec::new();
+    tokio::time::timeout(Duration::from_secs(1), client.read_to_end(&mut received))
+        .await
+        .expect("the client connection was not closed")
+        .unwrap();
+    assert!(received.len() < LARGE, "the whole body arrived");
 }
