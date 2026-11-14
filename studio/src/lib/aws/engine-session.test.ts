@@ -274,18 +274,14 @@ function sfn(at = endpoint): SFNClient {
   return engine.attach(createSfnClient({ endpoint: at }));
 }
 
+// The shared AWS files are redirected for every unit test by src/test/setup.ts.
 beforeEach(() => {
-  // In Vitest the SDK runs its Node configuration, which falls back to the shared AWS files for settings the
-  // factory leaves to their defaults. Point those lookups at files that do not exist.
-  vi.stubEnv('AWS_CONFIG_FILE', '/nonexistent/emuforge-studio-test/config');
-  vi.stubEnv('AWS_SHARED_CREDENTIALS_FILE', '/nonexistent/emuforge-studio-test/credentials');
   engine = new FakeEngine();
   vi.stubGlobal('fetch', engine.fetch);
   endpoint = freshEndpoint();
 });
 
 afterEach(() => {
-  vi.unstubAllEnvs();
   vi.unstubAllGlobals();
 });
 
