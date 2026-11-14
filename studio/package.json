@@ -1,0 +1,47 @@
+{
+  "name": "emuforge-studio",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -b --noEmit",
+    "lint": "eslint --max-warnings 0 .",
+    "format:check": "prettier --check .",
+    "test:unit": "vitest run",
+    "build": "tsc -b --noEmit && vite build",
+    "serve": "bun scripts/serve.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "3.1161.0",
+    "@aws-sdk/client-sfn": "3.1161.0",
+    "@cloudscape-design/code-view": "3.0.191",
+    "@cloudscape-design/components": "3.0.1407",
+    "@cloudscape-design/global-styles": "1.0.71",
+    "@tanstack/react-query": "5.105.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "react-router": "8.5.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@playwright/test": "1.65.0",
+    "@testing-library/dom": "10.4.2",
+    "@testing-library/jest-dom": "7.0.1",
+    "@testing-library/react": "16.3.3",
+    "@testing-library/user-event": "14.6.8",
+    "@types/node": "26.6.6",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "eslint": "10.14.0",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "eslint-plugin-react-refresh": "0.5.7",
+    "globals": "17.13.0",
+    "jsdom": "30.1.3",
+    "prettier": "3.9.10",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.1",
+    "vite": "8.3.5",
+    "vitest": "5.0.5"
+  }
+}
