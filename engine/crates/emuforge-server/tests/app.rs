@@ -579,11 +579,11 @@ enum Script {
     Held {
         releases: mpsc::UnboundedSender<oneshot::Sender<()>>,
     },
-    /// `size` bytes with `Content-Length`, written as fast as the engine reads; reports when the engine side
-    /// of the connection is gone.
+    /// `size` bytes with `Content-Length`, written as fast as the engine reads; reports the (paused) clock's
+    /// time when the engine side of the connection is gone.
     Large {
         size: usize,
-        closed: mpsc::UnboundedSender<()>,
+        closed: mpsc::UnboundedSender<tokio::time::Instant>,
     },
     Error(RelayError),
 }
@@ -701,7 +701,7 @@ async fn stand_in(mut stream: DuplexStream, script: Script, head_only: bool) {
                 // Everything written: wait for the engine to close its side.
                 let _ = stream.read(&mut byte).await;
             }
-            let _ = closed.send(());
+            let _ = closed.send(tokio::time::Instant::now());
         }
         Script::Error(_) => {}
     }
@@ -1279,7 +1279,9 @@ const LARGE: usize = 1024 * 1024;
 /// Serves `app` relaying a [`LARGE`] body over [`IdleListener`] on one in-memory connection whose client end,
 /// with a `client_buffer`-byte buffer, is returned with the stand-in's report of its connection closing. The
 /// test relay's download idle is an hour, so only the listener can end a stalled answer within it.
-fn serve_large(client_buffer: usize) -> (DuplexStream, mpsc::UnboundedReceiver<()>) {
+fn serve_large(
+    client_buffer: usize,
+) -> (DuplexStream, mpsc::UnboundedReceiver<tokio::time::Instant>) {
     let (closed_tx, closed) = mpsc::unbounded_channel();
     let limits = Limits {
         download_idle: Duration::from_secs(3600),
@@ -1316,16 +1318,21 @@ async fn listener_client_that_reads_gets_the_whole_response() {
 #[tokio::test(start_paused = true)]
 async fn listener_client_that_stops_reading_is_closed_at_the_idle_bound() {
     let (mut client, mut closed) = serve_large(4 * 1024);
+    let started = tokio::time::Instant::now();
     client.write_all(LARGE_REQUEST).await.unwrap();
 
     tokio::time::sleep(CLIENT_WRITE_IDLE - Duration::from_millis(1)).await;
     assert!(closed.try_recv().is_err(), "closed before the idle bound");
 
-    tokio::time::sleep(Duration::from_millis(2)).await;
-    tokio::time::timeout(Duration::from_secs(1), closed.recv())
+    let closed_at = tokio::time::timeout(Duration::from_secs(1), closed.recv())
         .await
         .expect("the response body was not dropped at the idle bound")
         .unwrap();
+    let elapsed = closed_at - started;
+    assert!(
+        elapsed >= CLIENT_WRITE_IDLE && elapsed <= CLIENT_WRITE_IDLE + Duration::from_millis(1),
+        "closed after {elapsed:?}, not at the idle bound"
+    );
     let mut received = Vec::new();
     tokio::time::timeout(Duration::from_secs(1), client.read_to_end(&mut received))
         .await
