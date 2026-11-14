@@ -4,6 +4,10 @@ Each case copies this checkout's .pm/bin (without tests/) into <checkout>/output
 whose copied _pmlib.py takes that directory as its ROOT, so --record, --table and pm-archive write there and never
 to the real .pm/. A fixture worktree with one git commit sits beside it as wt/. The directory is removed when the
 case ends. Rows written directly by a case (for --table) have the fields of design 2.6.
+
+The detail of a matched item that rests on more than one node (`table.pagination`: two buttons) is its first node
+in document order, so text A shows `button "Previous page"`; `header.counter` shows the node `header.title`
+matched.
 """
 import hashlib
 import json
@@ -437,7 +441,9 @@ class Archive(RecordsCase):
         (d / "structure-scores.json").write_text(json.dumps(rows, indent=1))
         stub = self.root / "stub-bin"
         stub.mkdir()
-        (stub / "herdr").write_text('#!/bin/sh\necho \'{"result": {"agents": [], "panes": [], "tabs": []}}\'\n')
+        calls = self.root / "herdr-calls.log"
+        (stub / "herdr").write_text(f'#!/bin/sh\necho "$*" >> "{calls}"\n'
+                                    'echo \'{"result": {"agents": [], "panes": [], "tabs": []}}\'\n')
         (stub / "herdr").chmod(0o755)
         env = clean_env(stub)
         table = self.structure("--table", "99999", env=env)
@@ -451,6 +457,8 @@ class Archive(RecordsCase):
         self.assertIn("## Structure scores\n", summary)
         section = summary.split("## Structure scores\n", 1)[1].split("\n## ", 1)[0]
         self.assertEqual(section.strip(), table.stdout.strip())
+        seen = calls.read_text().splitlines() if calls.exists() else []
+        self.assertEqual([c for c in seen if c.startswith(("pane close", "tab close", "agent prompt"))], [], seen)
 
 
 class ArchiveGuide(unittest.TestCase):
