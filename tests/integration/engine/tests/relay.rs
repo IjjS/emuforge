@@ -15,9 +15,9 @@ use support::*;
 /// The size of the streamed download (test-criteria.md).
 const LARGE: usize = 32 * 1024 * 1024;
 
-/// The size of the streamed upload. The criteria name 32 MiB, but emulator v1.0.364 answers `413` to a
-/// `PutObject` over 16 MiB, sent directly too, so 16 MiB is the largest upload that can be compared
-/// (provisional, `.pm/issue-2/decisions-needed.md`, worker-t2).
+/// The size of the streamed upload: 16 MiB, since emulator v1.0.364 answers `413` to a `PutObject` over
+/// 16 MiB, sent directly too (`.pm/issue-2/decisions.md`, PM decisions, criteria correction; the manifest row
+/// notes it as `emulator_gap`).
 const LARGE_UPLOAD: usize = 16 * 1024 * 1024;
 
 /// Part size of the multipart upload that creates the 32 MiB object directly.
