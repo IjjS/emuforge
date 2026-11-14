@@ -2,6 +2,8 @@
 //! a direct health call that bypasses the engine, and own emulators for checks labelled `own-emulator`.
 
 use std::fs;
+use std::io::ErrorKind;
+use std::net::{Ipv4Addr, SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
@@ -13,6 +15,9 @@ use crate::support::wait::wait_for;
 
 /// How long an emulator may take to answer its own health route after `docker run` or `docker restart`.
 const EMULATOR_READY_BOUND: Duration = Duration::from_secs(30);
+
+/// How long a killed emulator's container may take to exit and release its published port.
+const KILLED_BOUND: Duration = Duration::from_secs(10);
 
 /// `$HOME/.aws/emulator/<port>`.
 pub fn emulator_dir(home: &Path, port: u16) -> PathBuf {
@@ -215,10 +220,34 @@ impl OwnEmulator {
             .map_err(Env::new)
     }
 
-    /// `docker kill`: SIGKILL; the files stay behind with the dead run's keys and certificate.
+    /// `docker kill`: SIGKILL; the files stay behind with the dead run's keys and certificate. `docker kill`
+    /// returns once the signal is sent, so this then waits, with a bound, until the container no longer runs
+    /// and `127.0.0.1:<port>` refuses connections (Docker's port forwarder may still accept for a moment).
+    /// `Env` when that state is not reached: the check's Given would not hold.
     pub fn kill(&self, ctx: &Ctx) -> Result<(), Env> {
         ctx.log(format!("docker kill {}", self.name));
-        docker(&["kill", &self.name]).map(|_| ()).map_err(Env::new)
+        docker(&["kill", &self.name]).map_err(Env::new)?;
+        let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, self.port));
+        let gone = wait_for(KILLED_BOUND, || {
+            let running = docker(&["inspect", "-f", "{{.State.Running}}", &self.name]);
+            let refused = matches!(
+                TcpStream::connect_timeout(&addr, Duration::from_millis(500)),
+                Err(e) if e.kind() == ErrorKind::ConnectionRefused
+            );
+            (running.as_deref() == Ok("false") && refused).then_some(())
+        });
+        gone.ok_or_else(|| {
+            Env::new(format!(
+                "after docker kill, {} still runs or {addr} does not refuse connections within {}s",
+                self.name,
+                KILLED_BOUND.as_secs()
+            ))
+        })?;
+        ctx.log(format!(
+            "{} no longer runs and {addr} refuses connections",
+            self.name
+        ));
+        Ok(())
     }
 
     /// `docker restart`: a clean stop, then a start that writes a new `ca.pem` and new credentials.
