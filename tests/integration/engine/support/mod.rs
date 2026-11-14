@@ -11,7 +11,7 @@ mod engine;
 mod health;
 mod http;
 mod net;
-mod secrets;
+pub mod secrets;
 mod wait;
 
 pub use check::{Ctx, Env, TempDir, check};
