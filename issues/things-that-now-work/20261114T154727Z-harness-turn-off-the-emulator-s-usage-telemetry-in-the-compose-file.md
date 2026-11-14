@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: bug
 Issue-Source: plan
 Issue-Key: harness|emulator.telemetry|on-by-default
-Issue-Check-Ids:
+Issue-Check-Ids: harness.emulator-telemetry
 Issue-Commit: b6826962168941938001393417fa6f23f2acc5ce
 
 # Turn off the emulator's usage telemetry in the Compose file

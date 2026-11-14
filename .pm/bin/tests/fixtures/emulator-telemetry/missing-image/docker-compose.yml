@@ -1,0 +1,6 @@
+# An image that is never built or pulled: starting this file must fail before anything runs.
+name: emuforge-test-missing-image
+services:
+  aws-emulator:
+    image: emuforge-test-telemetry-absent-image:never
+    command: ["-p", "9304", "-t", "off"]
