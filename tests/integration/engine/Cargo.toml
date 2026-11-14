@@ -1,0 +1,18 @@
+# Integration checks for the engine, run by tests/integration/run against a real aws-emulator.
+# Its own workspace and lock file, so these dependencies never enter the engine's.
+[package]
+name = "emuforge-integration-engine"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dev-dependencies]
+# Parse the engine's health and error bodies and write verdict files.
+serde_json = "=1.0.154"
+# Find this host's non-loopback IPv4 address for engine.binds-loopback-only.
+if-addrs = "=0.15.0"
+
+[lints.rust]
+unsafe_code = "forbid"
