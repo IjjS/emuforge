@@ -2,21 +2,25 @@ use std::future::Future;
 use std::num::NonZeroU16;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::Instant;
 
-use axum::error_handling::HandleErrorLayer;
+use axum::body::Body;
 use axum::extract::{Request, State};
-use axum::http::header::{ALLOW, CACHE_CONTROL, HOST, ORIGIN};
-use axum::http::{HeaderMap, HeaderValue, StatusCode};
+use axum::http::header::{ALLOW, CACHE_CONTROL, CONNECTION, HOST, ORIGIN};
+use axum::http::request::Parts;
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use axum::{BoxError, Json, Router};
-use emuforge_core::{Emulator, Health};
+use axum::{Json, Router};
+use emuforge_core::sigv4::{Auth, classify};
+use emuforge_core::{Emulator, Health, Limits, Reason, RelayBody, RelayError};
 use serde::Serialize;
 use tower::ServiceBuilder;
-use tower::limit::GlobalConcurrencyLimitLayer;
 
-use crate::browser::{self, StudioOrigin, engine_refusal};
+use crate::aws_error::{ErrorType, Protocol, render};
+use crate::browser::{self, StudioOrigin, engine_refusal, is_engine_path};
+use crate::limit::{InFlight, limit};
 use crate::session::SessionToken;
 
 /// The engine's health route.
@@ -28,19 +32,26 @@ pub type ProbeFuture = Pin<Box<dyn Future<Output = Health> + Send>>;
 /// Asks the emulator whether it is up. Called once per health request; nothing is cached.
 pub type ProbeFn = Arc<dyn Fn() -> ProbeFuture + Send + Sync>;
 
+pub type RelayFuture =
+    Pin<Box<dyn Future<Output = Result<Response<RelayBody>, RelayError>> + Send>>;
+/// Relays one request to the emulator. Called once per request on a relayed path; production holds
+/// `emuforge_core::relay` with the emulator's files read per call.
+pub type RelayFn = Arc<dyn Fn(Request<Body>) -> RelayFuture + Send + Sync>;
+
 pub struct AppState {
     pub engine_port: NonZeroU16,
     pub emulator: Emulator,
     pub probe: ProbeFn,
+    pub relay: RelayFn,
     pub max_in_flight: usize,
     pub studio_origin: StudioOrigin,
     pub session: Arc<SessionToken>,
 }
 
 /// The engine's service. Outermost is the CORS layer, then one in-flight bound shared by every route, fallback
-/// and refusal, then the `Host` guard, then the browser guard around the routes.
+/// and refusal, then the `Host` guard, then the browser guard around the routes and the relay.
 pub fn app(state: AppState) -> Router {
-    let max_in_flight = state.max_in_flight;
+    let in_flight = InFlight::new(state.max_in_flight);
     let studio_origin = state.studio_origin.clone();
     let state = Arc::new(state);
     // The browser guard wraps every route and the fallback, method fallbacks included, so the token is checked
@@ -54,35 +65,42 @@ pub fn app(state: AppState) -> Router {
             SESSION_PATH,
             get(session).fallback(|| method_not_allowed(SESSION_PATH)),
         )
-        .fallback(not_found)
+        .fallback(fallback)
         .layer(middleware::from_fn_with_state(
             state.clone(),
             browser::guard,
         ))
+        .layer(middleware::from_fn(shape_refusals))
         .with_state(state.clone());
     // The other layers wrap the router as one service, not through `Router::layer`, which wraps each route on
     // its own: the bound is global (every clone shares the one semaphore), the `Host` guard runs before routing,
     // and the CORS layer sees every answer, `Busy` included.
     let service = ServiceBuilder::new()
         .layer(middleware::from_fn_with_state(studio_origin, browser::cors))
-        .layer(HandleErrorLayer::new(move |_: BoxError| async move {
-            engine_refusal(busy(max_in_flight))
-        }))
-        .load_shed()
-        .layer(GlobalConcurrencyLimitLayer::new(max_in_flight))
+        .layer(middleware::from_fn_with_state(in_flight, limit))
         .layer(middleware::from_fn_with_state(state, host_guard))
         .service(routes);
     Router::new().fallback_service(service)
 }
 
+/// Order 2: exactly one `Host` equal to the engine's address, a request target in origin form, and not
+/// `CONNECT`; the engine is never a proxy.
 async fn host_guard(State(state): State<Arc<AppState>>, request: Request, next: Next) -> Response {
     let expected = format!("127.0.0.1:{}", state.engine_port);
-    if !has_only_host(request.headers(), &expected) {
-        return engine_refusal(refusal(
+    let uri = request.uri();
+    let origin_form =
+        uri.scheme().is_none() && uri.authority().is_none() && uri.path().starts_with('/');
+    if !has_only_host(request.headers(), &expected)
+        || !origin_form
+        || request.method() == Method::CONNECT
+    {
+        let (parts, _body) = request.into_parts();
+        let misdirected = refusal(
             StatusCode::MISDIRECTED_REQUEST,
             "MisdirectedRequest",
             format!("the Host header must be {expected}; the engine answers only on that address"),
-        ));
+        );
+        return engine_refusal(Shape::of(&parts).apply(misdirected));
     }
     next.run(request).await
 }
@@ -178,19 +196,199 @@ struct ErrorDetail {
     message: String,
 }
 
-pub(crate) fn refusal(status: StatusCode, code: &'static str, message: String) -> Response {
-    let body = ErrorBody {
-        error: ErrorDetail { code, message },
-    };
-    (status, Json(body)).into_response()
+/// The code and message of an engine refusal, kept in its extensions so that on a relayed path it can be
+/// answered again in the caller's protocol. It never reaches the wire.
+#[derive(Debug, Clone)]
+struct Refused {
+    code: &'static str,
+    message: String,
 }
 
-fn busy(max_in_flight: usize) -> Response {
-    refusal(
-        StatusCode::SERVICE_UNAVAILABLE,
-        "Busy",
-        format!("the engine is already serving {max_in_flight} requests; retry shortly"),
-    )
+/// An engine refusal in #1's JSON shape.
+pub(crate) fn refusal(status: StatusCode, code: &'static str, message: String) -> Response {
+    let body = ErrorBody {
+        error: ErrorDetail {
+            code,
+            message: message.clone(),
+        },
+    };
+    let mut response = (status, Json(body)).into_response();
+    response.extensions_mut().insert(Refused { code, message });
+    response
+}
+
+/// The shape of an engine refusal for one request: #1's JSON on an engine path, the caller's protocol on a
+/// relayed path (requirement §6, D7). The guard that refuses decides the status and the code; this decides only
+/// the shape.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Shape {
+    relayed: Option<Protocol>,
+    head_only: bool,
+}
+
+impl Shape {
+    pub(crate) fn of(parts: &Parts) -> Shape {
+        Shape {
+            relayed: (!is_engine_path(parts.uri.path())).then(|| Protocol::detect(parts)),
+            head_only: parts.method == Method::HEAD,
+        }
+    }
+
+    /// `response` again in the caller's protocol when it is an engine refusal on a relayed path, with its
+    /// status and extensions (the `EngineRefusal` marker among them); any other response unchanged.
+    pub(crate) fn apply(self, mut response: Response) -> Response {
+        let Some(protocol) = self.relayed else {
+            return response;
+        };
+        let Some(refused) = response.extensions_mut().remove::<Refused>() else {
+            return response;
+        };
+        let status = response.status();
+        let mut shaped = render(
+            protocol,
+            status,
+            refused.code,
+            ErrorType::for_status(status),
+            &refused.message,
+            self.head_only,
+        );
+        *shaped.extensions_mut() = std::mem::take(response.extensions_mut());
+        shaped
+    }
+}
+
+/// Around the browser guard: its refusals on a relayed path take the caller's protocol.
+async fn shape_refusals(request: Request, next: Next) -> Response {
+    let (parts, body) = request.into_parts();
+    let shape = Shape::of(&parts);
+    shape.apply(next.run(Request::from_parts(parts, body)).await)
+}
+
+/// `/__emuforge` and every path under it that has no route is the engine's `404`; every other path is relayed.
+async fn fallback(State(state): State<Arc<AppState>>, request: Request) -> Response {
+    if is_engine_path(request.uri().path()) {
+        return not_found().await;
+    }
+    relay(&state, request).await
+}
+
+/// One relayed request: the emulator's answer as it came, or the engine's own error in the caller's protocol.
+async fn relay(state: &AppState, request: Request) -> Response {
+    let started = Instant::now();
+    let (parts, body) = request.into_parts();
+    let protocol = Protocol::detect(&parts);
+    let head_only = parts.method == Method::HEAD;
+    let method = parts.method.clone();
+    let service = logged_service(&parts);
+    let (response, outcome) = match (state.relay)(Request::from_parts(parts, body)).await {
+        Ok(response) => (response.map(Body::new), "relayed"),
+        Err(error) => relay_error(&state.emulator, protocol, head_only, &error),
+    };
+    tracing::debug!(
+        method = method.as_str(),
+        service,
+        status = response.status().as_u16(),
+        outcome,
+        elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+        "relayed request"
+    );
+    response
+}
+
+/// The credential scope's service when it is a plain service name, `-` when the request is not signed, `?`
+/// for anything else; nothing else from the request is logged.
+fn logged_service(parts: &Parts) -> String {
+    match classify(parts) {
+        Auth::Header(client) | Auth::Query(client) => {
+            let service = client.scope.service;
+            let plain = !service.is_empty()
+                && service.len() <= 32
+                && service
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
+            if plain { service } else { "?".to_owned() }
+        }
+        Auth::Other => "-".to_owned(),
+    }
+}
+
+/// The engine's own answer to a relay that failed before the emulator's response head (requirement §6 rows
+/// 4-9). Rows 6-9 and a failed client body close the client connection after the answer.
+fn relay_error(
+    emulator: &Emulator,
+    protocol: Protocol,
+    head_only: bool,
+    error: &RelayError,
+) -> (Response, &'static str) {
+    let endpoint = emulator.endpoint();
+    let limits = Limits::DEFAULT;
+    let (status, code, message, close) = match error {
+        RelayError::PayloadSigningNotSupported { mode } => (
+            StatusCode::BAD_REQUEST,
+            "PayloadSigningNotSupported",
+            format!(
+                "the engine does not relay uploads with x-amz-content-sha256 {mode} yet; send the body with a payload hash or UNSIGNED-PAYLOAD"
+            ),
+            false,
+        ),
+        RelayError::Unavailable(reason) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "EmulatorUnavailable",
+            format!(
+                "the emulator at {endpoint} is not reachable ({}): {}",
+                reason.code(),
+                reason.message(emulator)
+            ),
+            matches!(reason, Reason::ConnectionFailed { .. }),
+        ),
+        RelayError::ClientStalled => (
+            StatusCode::REQUEST_TIMEOUT,
+            "RequestTimeout",
+            format!(
+                "no request body byte arrived for {} s",
+                limits.upload_idle.as_secs()
+            ),
+            true,
+        ),
+        RelayError::EmulatorStalled => (
+            StatusCode::GATEWAY_TIMEOUT,
+            "EmulatorTimeout",
+            format!(
+                "the emulator at {endpoint} did not answer within {} s",
+                limits.upload_idle.as_secs()
+            ),
+            true,
+        ),
+        RelayError::HeadTimeout => (
+            StatusCode::GATEWAY_TIMEOUT,
+            "EmulatorTimeout",
+            format!(
+                "the emulator at {endpoint} did not answer within {} s",
+                limits.head.as_secs()
+            ),
+            true,
+        ),
+        RelayError::ClientBodyFailed => (
+            StatusCode::BAD_REQUEST,
+            "IncompleteBody",
+            "the request body ended in an error before it was complete".to_owned(),
+            true,
+        ),
+    };
+    let mut response = render(
+        protocol,
+        status,
+        code,
+        ErrorType::for_status(status),
+        &message,
+        head_only,
+    );
+    if close {
+        response
+            .headers_mut()
+            .insert(CONNECTION, HeaderValue::from_static("close"));
+    }
+    (response, code)
 }
 
 async fn not_found() -> Response {

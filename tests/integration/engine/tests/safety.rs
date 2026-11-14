@@ -75,10 +75,10 @@ fn no_secret_in_output() {
         let reachable = get_health(ctx, ctx.engine_port);
         assert_reachable(&reachable, ctx.emulator_port);
         bodies.push(("GET /__emuforge/health (reachable)".into(), reachable.body));
-        let other = Request::get("/other")
+        let other = Request::get("/__emuforge/other")
             .send(ctx, ctx.engine_port)
-            .unwrap_or_else(|e| panic!("GET /other got no answer: {e}"));
-        bodies.push(("GET /other".into(), other.body));
+            .unwrap_or_else(|e| panic!("GET /__emuforge/other got no answer: {e}"));
+        bodies.push(("GET /__emuforge/other".into(), other.body));
         let foreign = Request::get("/__emuforge/health")
             .host(&format!("example.com:{}", ctx.engine_port))
             .send(ctx, ctx.engine_port)
