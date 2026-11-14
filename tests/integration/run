@@ -153,7 +153,7 @@ echo "integration: emulator $emulator_version ($emulator_commit) answers on 127.
 # The checks, one at a time.
 EMUFORGE_IT_ENGINE_BIN="$engine_bin" EMUFORGE_IT_ENGINE_BUILD="$engine_build" \
   EMUFORGE_IT_VERDICTS="$out/verdicts" EMUFORGE_IT_RUN_ID="$run_id" \
-  cargo test --manifest-path engine/Cargo.toml -- --test-threads=1 2>&1 | tee "$logs/integration-cargo-test.log" \
+  cargo test --manifest-path engine/Cargo.toml --no-fail-fast -- --test-threads=1 2>&1 | tee "$logs/integration-cargo-test.log" \
   || true
 
 code="$(report)"
