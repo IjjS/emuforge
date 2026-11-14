@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: gap
 Issue-Source: plan
 Issue-Key: studio|aws-client-factory|no-scope-no-session
-Issue-Check-Ids:
+Issue-Check-Ids: studio.aws-clients-list-matches-direct studio.aws-clients-renew-session-after-engine-restart
 Issue-Commit: ac5eaf37236757711779063bc2b4c75738773d88
 
 # Send Studio's AWS requests in SigV4 form with the session token
