@@ -33,7 +33,8 @@ There are no candidates; the reference spec is the design.
 
 A `final` passes when all of these hold:
 
-- structure score is 90 or more, and no unmatched item is the title, the primary action or a table column
+- structure score is 90 or more, and no unmatched item is the title, the primary action or a table column, in
+  every run the spec requires (seeded, and empty when the spec has empty-state items; `console-reference.md`)
 - design health has no P0 or P1 finding
 - design health is not more than 2 points below `baseline`, when there is a baseline
 
@@ -68,7 +69,9 @@ rework, splitting the failing part into its own issue, or taking the screen as i
 
 ## Records
 
-- Scores go into the issue's `critique-scores.json` through the harness script, never by hand.
-- The issue's report carries the score table.
+- Scores go in through the harness scripts, never by hand: design health into the issue's `critique-scores.json`
+  with `pm-critique record`, structure scores into the issue's `structure-scores.json` with
+  `pm-structure --record`, one row per run.
+- The issue's report carries both score tables (`pm-critique table`, `pm-structure --table`).
 - Scores are a working measure of this project's own screens. They are never published as a measure of
   compatibility with AWS.

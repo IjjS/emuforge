@@ -250,6 +250,24 @@ sections:
             "sections[General configuration].fields[AWS Region]": "matched",
             "sections[General configuration].fields[Created]": "unmatched"})
 
+    def test_empty_name_label_text_matches_by_its_static_text(self):
+        # Requirement correction R5.2 (decisions.md, PM decisions): real Chromium gives a form label an empty-name
+        # LabelText whose text sits in its StaticText child; that text is matched when the name is empty.
+        spec = self.spec("""\
+screen: s3.bucket-create
+service: s3
+kind: form
+route: /s3/buckets/create
+header:
+  title: Create bucket
+sections:
+  - title: General configuration
+    fields: [Bucket name, Bucket type]
+""")
+        self.assertStatus(self.run_score("labeltext-empty-name", spec), {
+            "sections[General configuration].fields[Bucket name]": "matched",
+            "sections[General configuration].fields[Bucket type]": "unmatched"})
+
 
 class OrderItems(ScoreCase):
     def test_in_order_with_an_earlier_duplicate(self):

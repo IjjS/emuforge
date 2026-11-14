@@ -1,39 +1,55 @@
 #!/usr/bin/env -S python3 -I
 """Score a console screen against its reference spec (studio/references/console-reference.md, "Structure score").
 
-  pm-structure <worktree> <spec.yaml> --snapshot FILE [--state seeded|empty] [--record ISSUE POINT]
+  pm-structure <worktree> <spec.yaml> (--url BASE | --serve DIR [--port N] | --snapshot FILE)
+               [--state seeded|empty] [--storage-state FILE] [--record ISSUE POINT]
   pm-structure --table ISSUE
 
---snapshot scores an accessibility snapshot pm-structure saved earlier; no browser is started. --state is the
-data state of the emulator behind the app (default seeded): table.empty.* apply only to `empty`, a single or multi
-table.selection only to `seeded`. A spec that has either needs both runs; each run says `requires also: state=…`.
+--url BASE opens BASE + the spec's route; BASE must be a loopback IP address (127.0.0.0/8 or [::1]; `localhost`
+and every other name are refused). --serve DIR serves the built app in DIR on 127.0.0.1 with the single-page
+fallback, on --port, else the studio port of <worktree>/output/ports.json, else the first free port from 8090, and
+stops it before exiting. The page is opened in headless Chromium from @playwright/test in <worktree>/studio
+(1280x800, light), every request to a host that is not loopback is aborted and listed, and the accessibility tree
+is taken every 250 ms until two in a row are equal (10 s bound). --storage-state FILE gives the browser context a
+Playwright storage state; only the browser reads it. --snapshot scores an accessibility snapshot pm-structure
+saved earlier; no browser is started. --state is the data state of the emulator behind the app (default seeded):
+table.empty.* apply only to `empty`, a single or multi table.selection only to `seeded`. A spec that has either
+needs both runs; each run says `requires also: state=…`.
 
-Prints the score, the unmatched, matched, omitted, not-applicable, not-scored and extra items, and the verdict.
-Exit 0 pass (score >= 90 and no critical item unmatched: header.title, header.primary_action, table.columns),
-1 fail, 2 error (usage, invalid spec, unreadable snapshot); an error is never a pass or a fail.
-Result: <worktree>/output/structure/<screen>-<state>.json, overwritten by the next run of the same screen and
-state. --record ISSUE POINT (POINT: baseline | final) also appends a row to .pm/issue-<ISSUE>/structure-scores.json
-of the checkout that holds this script. --table ISSUE prints those rows as a markdown table and one line per point
-and screen saying whether every state it requires passed.
+Prints the score, the unmatched, matched, omitted, not-applicable, not-scored and extra items, the blocked
+requests, and the verdict. Exit 0 pass (score >= 90 and no critical item unmatched: header.title,
+header.primary_action, table.columns), 1 fail, 2 error (usage, invalid spec, refused URL, page not reachable or not
+settled, toolchain missing, unreadable snapshot, another run of the same screen and state in progress); an error is
+never a pass or a fail.
+Result: <worktree>/output/structure/<screen>-<state>.json and the scored snapshot <screen>-<state>.ax.json,
+overwritten by the next run of the same screen and state. --record ISSUE POINT (POINT: baseline | final) also
+appends a row to .pm/issue-<ISSUE>/structure-scores.json of the checkout that holds this script. --table ISSUE
+prints those rows as a markdown table and one line per point and screen saying whether every state it requires
+passed.
 """
 import argparse
+import contextlib
 import fcntl
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _pmbrowse
 import _pmproc
 import _pmscore
 import _pmspec
 from _pmlib import PM, now
 
-USAGE = ("pm-structure <worktree> <spec.yaml> --snapshot FILE [--state seeded|empty] [--record ISSUE POINT]\n"
+USAGE = ("pm-structure <worktree> <spec.yaml> (--url BASE | --serve DIR [--port N] | --snapshot FILE)\n"
+         "                    [--state seeded|empty] [--storage-state FILE] [--record ISSUE POINT]\n"
          "       pm-structure --table ISSUE")
 POINTS = ("baseline", "final")
 GIT_TIMEOUT = 10
+FIRST_FREE = 8090
 
 
 class Failure(Exception):
@@ -42,6 +58,12 @@ class Failure(Exception):
 
 def say_error(message):
     sys.stderr.write(f"pm-structure: {message}\n")
+
+
+def port_number(s):
+    if not re.fullmatch(r"[1-9][0-9]{0,4}", s) or int(s) > 65535:
+        raise argparse.ArgumentTypeError(f"not a port: {s!r}")
+    return int(s)
 
 
 def positive(s):
@@ -99,53 +121,122 @@ def append_row(issue, row):
         write_json(path, rows)
 
 
+def serve_port(a, wt):
+    """(port, how many ports to try): --port, else the studio port of <wt>/output/ports.json, else the first free
+    port from 8090."""
+    if a.port is not None:
+        return a.port, 1
+    ports = os.path.join(wt, "output", "ports.json")
+    if os.path.exists(ports):
+        try:
+            with open(ports, encoding="utf-8") as f:
+                port = json.load(f)["studio"]
+            if isinstance(port, bool) or not isinstance(port, int) or not 0 < port < 65536:
+                raise ValueError("studio is not a port")
+        except (OSError, UnicodeDecodeError, ValueError, KeyError, TypeError) as e:
+            raise _pmbrowse.BrowseError(f"cannot read {ports}: {e}") from None
+        return port, 1
+    return FIRST_FREE, 100
+
+
+def take_snapshot(a, wt, spec, out_dir):
+    """Run the browser and return the path of the settled snapshot (requirement 4)."""
+    ax = os.path.join(out_dir, f"{spec.screen}-{a.state}.ax.json")
+    with contextlib.suppress(FileNotFoundError):  # an error run leaves no snapshot of an earlier run behind
+        os.unlink(ax)
+    _pmbrowse.check_toolchain(wt)
+    if a.storage_state is not None:
+        _pmbrowse.check_storage_state(a.storage_state)
+    job = os.path.join(out_dir, f"{spec.screen}-{a.state}-{os.getpid()}.job.json")
+    logs = os.path.join(wt, "output", "logs")
+    capture_log = os.path.join(logs, f"structure-capture-{spec.screen}-{a.state}.log")
+    if a.url is not None:
+        _pmbrowse.capture(wt, _pmbrowse.page_url(a.url, spec.route), ax, job, a.storage_state, capture_log)
+        return ax
+    port, tries = serve_port(a, wt)
+    with _pmbrowse.serve(a.serve, port, log=os.path.join(logs, "structure-server.log"), tries=tries) as server:
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        _pmbrowse.capture(wt, _pmbrowse.page_url(base, spec.route), ax, job, a.storage_state, capture_log)
+    return ax
+
+
 def score_run(a, wt):
-    """One --snapshot run; returns the exit status."""
+    """One scored run; returns the exit status."""
     out_dir = os.path.join(wt, "output", "structure")
-    record = a.record
     spec = None
+    url = None
     try:
         spec = _pmspec.load(a.spec)
-        snap = _pmscore.load_snapshot(a.snapshot)
-        result = _pmscore.score(spec, snap, a.state)
-    except (_pmspec.SpecError, _pmscore.SnapshotError) as e:
-        screen = spec.screen if spec is not None else getattr(e, "screen", None)
-        if screen is None:  # nothing to file the error under: no result file, no row
-            say_error(str(e))
-            return 2
-        commit, dirty = git_state(wt)
-        path = os.path.join(out_dir, f"{screen}-{a.state}.json")
-        requires = list(spec.needs_states) if spec is not None else [a.state]
-        at = now()
-        os.makedirs(out_dir, exist_ok=True)
-        write_json(path, {"screen": screen, "state": a.state, "verdict": "error", "error": str(e),
-                          "spec": os.path.abspath(a.spec), "spec_sha256": spec.sha256 if spec else None,
-                          "snapshot": os.path.abspath(a.snapshot), "requires": requires, "commit": commit,
-                          "dirty": dirty, "at": at})
-        sys.stdout.write(f"result: {path}\n")
+        if a.url is not None:
+            _pmbrowse.check_url(a.url)
+            url = _pmbrowse.page_url(a.url, spec.route)
+    except (_pmspec.SpecError, _pmbrowse.BrowseError) as e:
+        return error_result(a, wt, spec, e, url)
+    try:
+        held = _pmbrowse.lock(out_dir, spec.screen, a.state)
+        held.__enter__()
+    except _pmbrowse.Busy as e:  # the other run owns the result file; nothing is written
         say_error(str(e))
-        if record:
-            try:
-                append_row(record[0], {"point": record[1], "screen": screen, "state": a.state, "score": None,
-                                       "matched": None, "total": None, "verdict": "error", "critical_unmatched": [],
-                                       "requires": requires, "commit": commit, "dirty": dirty,
-                                       "spec_sha256": spec.sha256 if spec else None, "result": path, "at": at})
-            except Failure:
-                pass  # the run's own error is the one line on stderr
         return 2
+    try:
+        snapshot = a.snapshot if a.snapshot is not None else take_snapshot(a, wt, spec, out_dir)
+        try:
+            snap = _pmscore.load_snapshot(snapshot)
+            result = _pmscore.score(spec, snap, a.state)
+        except (_pmspec.SpecError, _pmscore.SnapshotError) as e:
+            return error_result(a, wt, spec, e, url, snapshot)
+        return scored_result(a, wt, spec, result, snapshot)
+    except _pmbrowse.BrowseError as e:
+        return error_result(a, wt, spec, e, url)
+    finally:
+        held.__exit__(None, None, None)
+
+
+def error_result(a, wt, spec, e, url=None, snapshot=None):
+    """Report an error: one stderr line; once the screen is known also the error result file and, with --record,
+    an error row (design 2.6)."""
+    screen = spec.screen if spec is not None else getattr(e, "screen", None)
+    if screen is None:  # nothing to file the error under: no result file, no row
+        say_error(str(e))
+        return 2
+    out_dir = os.path.join(wt, "output", "structure")
+    commit, dirty = git_state(wt)
+    path = os.path.join(out_dir, f"{screen}-{a.state}.json")
+    requires = list(spec.needs_states) if spec is not None else [a.state]
+    at = now()
+    os.makedirs(out_dir, exist_ok=True)
+    write_json(path, {"screen": screen, "state": a.state, "verdict": "error", "error": str(e),
+                      "spec": os.path.abspath(a.spec), "spec_sha256": spec.sha256 if spec else None,
+                      "snapshot": os.path.abspath(snapshot) if snapshot else None, "url": url,
+                      "requires": requires, "commit": commit, "dirty": dirty, "at": at})
+    sys.stdout.write(f"result: {path}\n")
+    say_error(str(e))
+    if a.record:
+        try:
+            append_row(a.record[0], {"point": a.record[1], "screen": screen, "state": a.state, "score": None,
+                                     "matched": None, "total": None, "verdict": "error", "critical_unmatched": [],
+                                     "requires": requires, "commit": commit, "dirty": dirty,
+                                     "spec_sha256": spec.sha256 if spec else None, "result": path, "at": at})
+        except Failure:
+            pass  # the run's own error is the one line on stderr
+    return 2
+
+
+def scored_result(a, wt, spec, result, snapshot):
+    out_dir = os.path.join(wt, "output", "structure")
     commit, dirty = git_state(wt)
     at = now()
     path = os.path.join(out_dir, f"{spec.screen}-{a.state}.json")
     os.makedirs(out_dir, exist_ok=True)
     write_json(path, _pmscore.result_json(result, {"commit": commit, "dirty": dirty, "at": at,
-                                                   "snapshot": os.path.abspath(a.snapshot)}))
-    if record:
+                                                   "snapshot": os.path.abspath(snapshot)}))
+    if a.record:
         try:
-            append_row(record[0], {"point": record[1], "screen": spec.screen, "state": a.state,
-                                   "score": result.score, "matched": result.matched, "total": result.total,
-                                   "verdict": result.verdict, "critical_unmatched": result.critical_unmatched,
-                                   "requires": result.requires, "commit": commit, "dirty": dirty,
-                                   "spec_sha256": spec.sha256, "result": path, "at": at})
+            append_row(a.record[0], {"point": a.record[1], "screen": spec.screen, "state": a.state,
+                                     "score": result.score, "matched": result.matched, "total": result.total,
+                                     "verdict": result.verdict, "critical_unmatched": result.critical_unmatched,
+                                     "requires": result.requires, "commit": commit, "dirty": dirty,
+                                     "spec_sha256": spec.sha256, "result": path, "at": at})
         except Failure as e:
             sys.stdout.write(f"result: {path}\n")
             say_error(str(e))
@@ -173,7 +264,11 @@ def main(argv):
     p.add_argument("worktree")
     p.add_argument("spec")
     source = p.add_mutually_exclusive_group(required=True)
+    source.add_argument("--url", metavar="BASE")
+    source.add_argument("--serve", metavar="DIR")
     source.add_argument("--snapshot", metavar="FILE")
+    p.add_argument("--port", type=port_number, metavar="N")
+    p.add_argument("--storage-state", metavar="FILE")
     p.add_argument("--state", choices=_pmspec.STATES, default="seeded")
     p.add_argument("--record", nargs=2, metavar=("ISSUE", "POINT"))
     a = p.parse_args(argv)
@@ -182,6 +277,10 @@ def main(argv):
             p.error(f"--record ISSUE must be a positive integer, not {a.record[0]!r}")
         if a.record[1] not in POINTS:
             p.error(f"--record POINT must be one of {', '.join(POINTS)}, not {a.record[1]!r}")
+    if a.port is not None and a.serve is None:
+        p.error("--port needs --serve")
+    if a.storage_state is not None and a.snapshot is not None:
+        p.error("--storage-state needs --url or --serve")
     wt = os.path.abspath(a.worktree)
     if not os.path.isdir(wt):
         p.error(f"worktree {a.worktree} is not a directory")
@@ -189,6 +288,8 @@ def main(argv):
 
 
 if __name__ == "__main__":
+    for sig in (signal.SIGTERM, signal.SIGHUP):  # unwind through the finally blocks: no lock, job or server left
+        signal.signal(sig, lambda *_: sys.exit(2))
     try:
         code = main(sys.argv[1:])
     except Failure as e:

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Buckets | EmuForge</title>
+<!-- the heading and the columns appear 1 s after load -->
+</head>
+<body>
+<nav aria-label="Breadcrumbs">
+  <ol>
+    <li><a href="/s3">Amazon S3</a></li>
+    <li><a href="/s3/buckets">Buckets</a></li>
+  </ol>
+</nav>
+<main>
+  <h1>General purpose buckets <span>(3)</span></h1>
+  <button type="button">Empty</button>
+  <button type="button">Delete</button>
+  <button type="button">Create bucket</button>
+  <input type="search" aria-label="Find buckets by name">
+  <ul>
+    <li><button type="button" aria-label="Previous page">&lt;</button></li>
+    <li><button type="button">1</button></li>
+    <li><button type="button" aria-label="Next page">&gt;</button></li>
+  </ul>
+  <table aria-label="General purpose buckets">
+    <thead><tr><th></th><th>Name</th><th>AWS Region</th><th>Creation date</th></tr></thead>
+    <tbody>
+      <tr><td><input type="radio" name="sel" aria-label="Select bucket-a"></td><td><a href="/s3/buckets/bucket-a">bucket-a</a></td><td>us-east-1</td><td>November 14, 2026</td></tr>
+      <tr><td><input type="radio" name="sel" aria-label="Select bucket-b"></td><td><a href="/s3/buckets/bucket-b">bucket-b</a></td><td>eu-west-1</td><td>November 13, 2026</td></tr>
+      <tr><td><input type="radio" name="sel" aria-label="Select bucket-c"></td><td><a href="/s3/buckets/bucket-c">bucket-c</a></td><td>ap-northeast-2</td><td>November 12, 2026</td></tr>
+    </tbody>
+  </table>
+</main>
+<script>
+  // the heading and the columns appear 1 s after load; until then a loading text changes every 100 ms,
+  // so the page has not settled before they appear
+  const main = document.querySelector("main");
+  const content = main.innerHTML;
+  main.innerHTML = '<p id="loading">Loading 0</p>';
+  let ticks = 0;
+  const timer = setInterval(() => { ticks += 1; document.getElementById("loading").textContent = "Loading " + ticks; }, 100);
+  setTimeout(() => { clearInterval(timer); main.innerHTML = content; }, 1000);
+</script>
+</body>
+</html>

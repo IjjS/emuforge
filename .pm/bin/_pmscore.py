@@ -38,6 +38,7 @@ class Node:
     in_table: bool = False         # inside a table or grid
     in_main: bool = False
     in_navigation: bool = False
+    text: str = ""                 # a LabelText with an empty name: the joined names of its StaticText descendants
 
 
 @dataclasses.dataclass
@@ -101,8 +102,27 @@ def load_snapshot(path):
         else:
             bad(f"node {i} has a parent that is not an earlier node")
         nodes.append(node)
+    _label_texts(nodes)
     return Snapshot(path=path, url=d["url"], viewport={"width": vp["width"], "height": vp["height"]},
                     browser=d["browser"], blocked=list(blocked), nodes=nodes)
+
+
+def _label_texts(nodes):
+    """Requirement 5.2 as corrected (decisions.md, "Requirement correction R5.2"): Chromium gives a form label an
+    empty-name LabelText whose text sits in its StaticText children. For each such node, `text` is the names of
+    its StaticText descendants joined in document order. Descendants follow their ancestor without a gap (the
+    nodes are a pre-order walk), so the scan stops at the first node outside the subtree."""
+    for node in nodes:
+        if node.role != "LabelText" or node.name.strip():
+            continue
+        inside, parts = {node.index}, []
+        for n in nodes[node.index + 1:]:
+            if n.parent not in inside:
+                break
+            inside.add(n.index)
+            if n.role == "StaticText":
+                parts.append(n.name)
+        node.text = "".join(parts)
 
 
 # ---------------------------------------------------------------------------------------------------- matching
@@ -152,7 +172,9 @@ def _predicate(item):
     if k == "section_title":
         return _named(("heading",), item.name)
     if k == "field":
-        return _named(("LabelText", "term"), item.name)
+        want = norm(item.name)
+        return lambda n: (n.role in ("LabelText", "term") and norm(n.name) == want) or (
+            n.role == "LabelText" and not n.name.strip() and norm(n.text) == want)
     return None
 
 
