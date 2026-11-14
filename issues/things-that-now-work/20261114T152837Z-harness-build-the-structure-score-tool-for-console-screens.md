@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: harness|structure-score|missing
-Issue-Check-Ids:
+Issue-Check-Ids: harness.check-step harness.spec harness.score harness.proc harness.records harness.browse harness.capture harness.docs
 Issue-Commit: e55940995ba32d732a9dbc77a3796d54bd3a1ef7
 
 # Build the structure score tool for console screens
