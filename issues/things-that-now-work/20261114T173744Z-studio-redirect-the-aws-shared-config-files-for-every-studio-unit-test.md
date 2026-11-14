@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: gap
 Issue-Source: worker
 Issue-Key: studio|unit-test-aws-shared-files|gap
-Issue-Check-Ids:
+Issue-Check-Ids: studio.unit-tests-read-no-aws-shared-files
 Issue-Commit: 0c6d672431ff042e655e4415e54c5def81d7390a
 
 # Redirect the AWS shared config files for every Studio unit test
