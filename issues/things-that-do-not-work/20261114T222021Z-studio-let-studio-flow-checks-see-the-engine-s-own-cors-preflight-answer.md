@@ -53,6 +53,10 @@ received the preflight).
 - A Studio flow check's page sends its CORS preflights to the engine: the engine receives the `OPTIONS` request, and
   a `fetch` whose preflight the engine answers `403` rejects.
 - Requests to anything but a loopback address are still refused before they leave, and logged.
+- The check that shows it (none exists yet, so `Issue-Check-Ids` is empty until #15's plan writes it): a Studio flow
+  check whose page `fetch`es, with a non-safelisted header, a loopback test server that answers the preflight `403`;
+  the promise must reject and the server must record the `OPTIONS` request. It fails today (Playwright answers the
+  preflight `204`, the promise resolves) and passes once the fix lands.
 
 ## Out of scope
 
