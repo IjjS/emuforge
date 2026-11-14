@@ -3,6 +3,8 @@
 // screen yet" page, which sends nothing to the engine, so every engine request the page makes is the factory's. The
 // factory runs bundled for the browser against Studio's installed SDK (`support/aws-clients.ts`).
 
+import type { BrowserContext, Page } from '@playwright/test';
+
 import { expect, startStack, test, type Ctx } from './support';
 import {
   awsRequests,
@@ -19,7 +21,6 @@ import {
   type Outcome,
   type StateMachineEntry,
 } from './support/aws-clients';
-import { Traffic } from './support/traffic';
 
 /** Every resource name of this run starts with this. */
 function runPrefix(ctx: Ctx): string {
@@ -47,18 +48,17 @@ function answered(answer: DirectAnswer, status: number, what: string): string {
  */
 async function openWithClients(
   ctx: Ctx,
-  context: Parameters<typeof Traffic.attach>[1],
-  page: Parameters<typeof Traffic.attach>[2],
+  context: BrowserContext,
+  page: Page,
   studioOrigin: string,
   engineOrigin: string,
   enginePort: number,
 ): Promise<{ clients: PageClients; requests: EngineRequests }> {
-  const traffic = Traffic.attach(ctx, context, page);
-  const requests = new EngineRequests(traffic, engineOrigin);
+  const requests = EngineRequests.attach(ctx, context, page, engineOrigin);
   await page.goto('/s3');
   expect(new URL(page.url()).origin, 'the page origin').toBe(studioOrigin);
   expect(new URL(page.url()).pathname, 'the page path').toBe('/s3');
-  const clients = await PageClients.load(ctx, page, enginePort);
+  const clients = await PageClients.load(ctx, page, enginePort, requests);
   const before = await requests.all();
   ctx.log(`engine requests before the first command: ${describe(before)}`);
   expect(before.length, `engine requests of the page before the first command: ${describe(before)}`).toBe(0);

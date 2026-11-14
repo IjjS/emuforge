@@ -13,7 +13,7 @@
 // - `directS3` and `directSfn` send an operation straight to the emulator, SigV4-signed with its key, TLS verified
 //   against its `ca.pem`.
 
-import type { Page } from '@playwright/test';
+import type { BrowserContext, Page } from '@playwright/test';
 import { execFile } from 'node:child_process';
 import { createHash, createHmac } from 'node:crypto';
 import fs from 'node:fs';
@@ -22,7 +22,7 @@ import path from 'node:path';
 
 import { type Ctx } from './check';
 import { emulatorDir, readEmulatorFiles } from './emulator';
-import { SESSION_PATH, type SeenRequest, type Traffic } from './traffic';
+import { SESSION_PATH, Traffic, type SeenRequest } from './traffic';
 
 const REGION = 'us-east-1';
 
@@ -125,13 +125,14 @@ export class PageClients {
   private constructor(
     private readonly ctx: Ctx,
     private readonly page: Page,
+    private readonly requests: EngineRequests,
   ) {}
 
   /**
    * Bundles the factory, adds it to the page and creates the two clients. Throws when the bundle does not build, or
    * the page does not expose the calls afterwards.
    */
-  static async load(ctx: Ctx, page: Page, enginePort: number): Promise<PageClients> {
+  static async load(ctx: Ctx, page: Page, enginePort: number, requests: EngineRequests): Promise<PageClients> {
     const bundle = await buildBundle(ctx);
     await page.addScriptTag({ path: bundle });
     const exposed = await page.evaluate((name) => {
@@ -148,7 +149,7 @@ export class PageClients {
       { name: GLOBAL, port: enginePort },
     );
     ctx.log(`page clients created for ${endpoint}`);
-    return new PageClients(ctx, page);
+    return new PageClients(ctx, page, requests);
   }
 
   listBuckets(): Promise<Outcome<string[]>> {
@@ -172,6 +173,8 @@ export class PageClients {
       { name: GLOBAL, method, args },
     );
     const result = outcome as Outcome<T>;
+    // The engine's answers to this command are logged first.
+    await this.requests.settle();
     this.ctx.log(
       `page ${what}: ${result.resolved ? 'resolved' : `rejected ${result.name} status ${String(result.status)}: ${result.message}`}`,
     );
@@ -199,9 +202,51 @@ export class EngineRequests {
     private readonly engineOrigin: string,
   ) {}
 
+  /**
+   * Starts recording `page`'s requests (a `Traffic` of `context`). Each engine answer that is not a success is logged
+   * with its status, the error code its body names and whether it has `WWW-Authenticate`: an SDK that cannot read the
+   * answer hides that code.
+   */
+  static attach(ctx: Ctx, context: BrowserContext, page: Page, engineOrigin: string): EngineRequests {
+    const requests = new EngineRequests(Traffic.attach(ctx, context, page), engineOrigin);
+    context.on('response', (response) => {
+      const url = new URL(response.url());
+      if (url.origin !== engineOrigin || response.status() < 400) return;
+      const request = response.request();
+      const www = response.headers()['www-authenticate'] !== undefined;
+      const read = response
+        .text()
+        .catch(() => '')
+        .then((body) => {
+          const code =
+            /<Code>([^<]*)<\/Code>/.exec(body)?.[1] ??
+            /"(?:code|__type)"\s*:\s*"([^"]*)"/.exec(body)?.[1] ??
+            (body === '' ? '(no body)' : '(no code in the body)');
+          ctx.log(
+            `engine answered ${request.method()} ${url.pathname}: ${String(response.status())} ${code}, WWW-Authenticate ${www ? 'present' : 'absent'}`,
+          );
+        })
+        .catch(() => undefined);
+      requests.answers.push(read);
+    });
+    return requests;
+  }
+
+  private readonly answers: Promise<unknown>[] = [];
+
+  /** Waits until every engine answer and header seen so far has been recorded and logged. */
+  async settle(): Promise<void> {
+    for (;;) {
+      const now = this.answers.splice(0);
+      await this.traffic.settle();
+      if (now.length === 0) return;
+      await Promise.allSettled(now);
+    }
+  }
+
   /** Every recorded engine request so far, preflights (`OPTIONS`) excepted, once their headers are recorded. */
   async all(): Promise<EngineRequest[]> {
-    await this.traffic.settle();
+    await this.settle();
     return this.traffic.requests
       .filter((r) => new URL(r.url).origin === this.engineOrigin && r.method !== 'OPTIONS')
       .map((r) => this.reduce(r));
