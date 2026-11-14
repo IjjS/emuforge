@@ -140,6 +140,7 @@ fn listen_addr_is_loopback_with_the_engine_port() {
         let config = Config {
             port: port(value),
             emulator_port: port(9400),
+            studio_port: port(8296),
         };
         assert_eq!(
             listen_addr(&config),
