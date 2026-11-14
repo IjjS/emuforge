@@ -1,14 +1,16 @@
 #!/usr/bin/env -S python3 -I
 """Run the checks of a checkout and record the result. The record, not an agent's word, is the evidence.
 
-  pm-check <worktree|.> [--only engine|studio|integration]... [--list]
+  pm-check <worktree|.> [--only engine|studio|integration|harness]... [--list]
 
 Runs, for each module that exists in the checkout:
   engine       cargo fmt --all --check; cargo clippy --workspace --all-targets -- -D warnings; cargo test --workspace
   studio       bun run typecheck; lint; format:check; test:unit; build
   integration  tests/integration/run (the suite's own entry point), given the worktree's engine and emulator ports
-A module whose manifest is missing (engine/Cargo.toml, studio/package.json, tests/integration/run) is reported as
-"absent" and does not count as a failure. A checkout where every module is absent passes on a clean tree.
+  harness      .pm/bin/tests/run (unittest discovery of the .pm/bin tools' tests)
+A module whose manifest is missing (engine/Cargo.toml, studio/package.json, tests/integration/run,
+.pm/bin/tests/run) is reported as "absent" and does not count as a failure. A checkout where every module is
+absent passes on a clean tree.
 Each step's output goes to <checkout>/output/logs/check-<step>.log. The summary goes to
 <checkout>/output/checks/last.json: {commit, dirty, passed, failed: [steps], steps: [{name, status, seconds, log}]}.
 pm-merge refuses a unit whose last.json is not a pass on the branch's current commit.
@@ -40,6 +42,9 @@ STEPS = {
     ]),
     "integration": ("tests/integration", "run", [
         ("integration", ["./run"]),
+    ]),
+    "harness": (".pm/bin/tests", "run", [
+        ("harness-test", ["./run"]),
     ]),
 }
 # real AWS credentials and profiles never reach a check
