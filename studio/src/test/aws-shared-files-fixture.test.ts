@@ -7,7 +7,7 @@ import { dirname, isAbsolute, join, normalize, sep } from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { ListStateMachinesCommand, type SFNClient } from '@aws-sdk/client-sfn';
-import { expect, it, onTestFinished, vi } from 'vitest';
+import { beforeAll, expect, it, onTestFinished, vi } from 'vitest';
 import { createSfnClient, engineEndpoint } from '../lib/aws/client-factory';
 
 type Headers = Record<string, string>;
@@ -22,10 +22,36 @@ class RequestCaptured extends Error {
   }
 }
 
+const endpoint = engineEndpoint(8314);
+
+// The engine's session route, answered in this file's setup (issue #13 D4): the factory asks it before it builds a
+// request. Any other fetch rejects as a network failure, so nothing goes on the network.
+const SESSION_URL = `${endpoint}/__emuforge/session`;
+const SESSION_TOKEN = '0123456789abcdef'.repeat(4);
+
+function answerSessionRoute(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+  const request = typeof input === 'object' && 'url' in input ? input : undefined;
+  const url = request?.url ?? String(input);
+  const method = (init.method ?? request?.method ?? 'GET').toUpperCase();
+  if (url === SESSION_URL && method === 'GET') {
+    return Promise.resolve(
+      new Response(JSON.stringify({ token: SESSION_TOKEN }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+  }
+  return Promise.reject(new TypeError('Failed to fetch'));
+}
+
+beforeAll(() => {
+  vi.stubGlobal('fetch', answerSessionRoute);
+});
+
 // Builds the ListStateMachines request a factory client would send and stops it at the last step, so nothing goes on
 // the network.
 async function buildSfnRequest(): Promise<Headers> {
-  const client: SFNClient = createSfnClient({ endpoint: engineEndpoint(8314) });
+  const client: SFNClient = createSfnClient({ endpoint });
   client.middlewareStack.add(
     () => (args) => {
       throw new RequestCaptured((args.request as { headers: Headers }).headers);
