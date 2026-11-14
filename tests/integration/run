@@ -4,7 +4,13 @@
 # Builds the engine and Studio, starts the run's own aws-emulator (telemetry off) on a loopback port, runs the
 # engine checks of tests/integration/engine one at a time, then the Studio flow checks of tests/integration/studio
 # one at a time, stops everything it started and writes <checkout>/output/integration/report.json: emulator
-# version and commit, the checkout's commit and the verdict of every manifest check (passed, failed, error).
+# version and commit, the checkout's commit, the verdict of every manifest check (passed, failed, error) and the
+# relay fidelity figure.
+#
+# Relay fidelity (engine/references/relay-fidelity.md): passed / total over the manifest rows labelled
+# `transparency` whose verdict is passed or failed (`error` counts in neither). It is written into report.json as
+# relay_fidelity {passed, total} and printed as the last line of the output:
+#   relay fidelity <passed>/<total> emulator <version> commit <sha>
 #
 # Ports: EMULATOR_PORT, EMUFORGE_ENGINE_PORT and EMUFORGE_STUDIO_PORT when set (EMULATOR_PORT=9297, the owner's
 # emulator, is refused), else a free loopback port each.
@@ -46,10 +52,14 @@ report() {
 import json, pathlib, sys
 manifest, verdicts, report, version, emulator_commit, commit, reason = sys.argv[1:]
 checks = []
+transparency = set()
 for line in pathlib.Path(manifest).read_text().splitlines():
     if not line.strip():
         continue
-    check_id = json.loads(line)["check_id"]
+    row = json.loads(line)
+    check_id = row["check_id"]
+    if "transparency" in row.get("labels", []):
+        transparency.add(check_id)
     record = pathlib.Path(verdicts) / f"{check_id}.json"
     if reason:
         entry = dict(check_id=check_id, verdict="error", seconds=0, log=None, message=reason)
@@ -59,8 +69,11 @@ for line in pathlib.Path(manifest).read_text().splitlines():
     else:
         entry = dict(check_id=check_id, verdict="error", seconds=0, log=None, message="the check wrote no verdict")
     checks.append(entry)
+counted = [c for c in checks if c["check_id"] in transparency and c["verdict"] in ("passed", "failed")]
+fidelity = dict(passed=sum(c["verdict"] == "passed" for c in counted), total=len(counted))
 pathlib.Path(report).write_text(json.dumps(dict(
-    emulator_version=version, emulator_commit=emulator_commit, commit=commit, checks=checks), indent=1) + "\n")
+    emulator_version=version, emulator_commit=emulator_commit, commit=commit, relay_fidelity=fidelity,
+    checks=checks), indent=1) + "\n")
 for c in checks:
     print(f"  {c['verdict']:7} {c['check_id']}  {c['message'].splitlines()[0][:160] if c['message'] else ''}", file=sys.stderr)
 verdicts = {c["verdict"] for c in checks}
@@ -68,10 +81,21 @@ print(0 if verdicts == {"passed"} else 1 if "failed" in verdicts else 127)
 PY
 }
 
+# fidelity_line: the last line of every run, from report.json.
+fidelity_line() {
+  python3 -I - "$out/report.json" <<'PY' >&2
+import json, sys
+r = json.load(open(sys.argv[1]))
+f = r["relay_fidelity"]
+print(f"relay fidelity {f['passed']}/{f['total']} emulator {r['emulator_version']} commit {r['commit']}")
+PY
+}
+
 preflight_error() {
   echo "integration: $1" >&2
   report "$1" >/dev/null
   echo "integration: report $out/report.json" >&2
+  fidelity_line
   exit 127
 }
 
@@ -222,4 +246,5 @@ fi
 
 code="$(report)"
 echo "integration: report $out/report.json, exit $code" >&2
+fidelity_line
 exit "$code"
