@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use axum::error_handling::HandleErrorLayer;
 use axum::extract::{Request, State};
-use axum::http::header::{ALLOW, HOST, ORIGIN};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::header::{ALLOW, CACHE_CONTROL, HOST, ORIGIN};
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
@@ -16,8 +16,13 @@ use serde::Serialize;
 use tower::ServiceBuilder;
 use tower::limit::GlobalConcurrencyLimitLayer;
 
+use crate::browser::{self, StudioOrigin, engine_refusal};
+use crate::session::SessionToken;
+
 /// The engine's health route.
 pub const HEALTH_PATH: &str = "/__emuforge/health";
+/// The route that gives the session token to the Studio origin.
+pub const SESSION_PATH: &str = "/__emuforge/session";
 
 pub type ProbeFuture = Pin<Box<dyn Future<Output = Health> + Send>>;
 /// Asks the emulator whether it is up. Called once per health request; nothing is cached.
@@ -28,45 +33,56 @@ pub struct AppState {
     pub emulator: Emulator,
     pub probe: ProbeFn,
     pub max_in_flight: usize,
+    pub studio_origin: StudioOrigin,
+    pub session: Arc<SessionToken>,
 }
 
-/// The engine's service. Outermost is one in-flight bound shared by every route, fallback and refusal, then
-/// the `Host` and `Origin` guards, then the routes.
+/// The engine's service. Outermost is the CORS layer, then one in-flight bound shared by every route, fallback
+/// and refusal, then the `Host` guard, then the browser guard around the routes.
 pub fn app(state: AppState) -> Router {
     let max_in_flight = state.max_in_flight;
+    let studio_origin = state.studio_origin.clone();
     let state = Arc::new(state);
+    // The browser guard wraps every route and the fallback, method fallbacks included, so the token is checked
+    // before a method is refused.
     let routes = Router::new()
-        .route(HEALTH_PATH, get(health).fallback(method_not_allowed))
+        .route(
+            HEALTH_PATH,
+            get(health).fallback(|| method_not_allowed(HEALTH_PATH)),
+        )
+        .route(
+            SESSION_PATH,
+            get(session).fallback(|| method_not_allowed(SESSION_PATH)),
+        )
         .fallback(not_found)
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            browser::guard,
+        ))
         .with_state(state.clone());
-    // The layers wrap the router as one service, not through `Router::layer`, which wraps each route on its
-    // own: the bound is global (every clone shares the one semaphore) and the guards run before routing.
+    // The other layers wrap the router as one service, not through `Router::layer`, which wraps each route on
+    // its own: the bound is global (every clone shares the one semaphore), the `Host` guard runs before routing,
+    // and the CORS layer sees every answer, `Busy` included.
     let service = ServiceBuilder::new()
+        .layer(middleware::from_fn_with_state(studio_origin, browser::cors))
         .layer(HandleErrorLayer::new(move |_: BoxError| async move {
-            busy(max_in_flight)
+            engine_refusal(busy(max_in_flight))
         }))
         .load_shed()
         .layer(GlobalConcurrencyLimitLayer::new(max_in_flight))
-        .layer(middleware::from_fn_with_state(state, guard))
+        .layer(middleware::from_fn_with_state(state, host_guard))
         .service(routes);
     Router::new().fallback_service(service)
 }
 
-async fn guard(State(state): State<Arc<AppState>>, request: Request, next: Next) -> Response {
+async fn host_guard(State(state): State<Arc<AppState>>, request: Request, next: Next) -> Response {
     let expected = format!("127.0.0.1:{}", state.engine_port);
     if !has_only_host(request.headers(), &expected) {
-        return refusal(
+        return engine_refusal(refusal(
             StatusCode::MISDIRECTED_REQUEST,
             "MisdirectedRequest",
             format!("the Host header must be {expected}; the engine answers only on that address"),
-        );
-    }
-    if request.headers().contains_key(ORIGIN) {
-        return refusal(
-            StatusCode::FORBIDDEN,
-            "OriginNotAllowed",
-            "requests from a browser origin are not served".to_owned(),
-        );
+        ));
     }
     next.run(request).await
 }
@@ -124,6 +140,34 @@ async fn health(State(state): State<Arc<AppState>>) -> Response {
 }
 
 #[derive(Serialize)]
+struct SessionBody<'a> {
+    token: &'a str,
+}
+
+/// `GET` and `HEAD`. The browser guard has let through only the Studio origin or a request without `Origin`
+/// and without `Sec-Fetch-*`; the latter is order 5.
+async fn session(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    if !headers.contains_key(ORIGIN) {
+        return refusal(
+            StatusCode::FORBIDDEN,
+            "OriginNotAllowed",
+            format!(
+                "the session is given only to the Studio origin {}",
+                state.studio_origin.as_str()
+            ),
+        );
+    }
+    let body = SessionBody {
+        token: state.session.expose(),
+    };
+    let mut response = (StatusCode::OK, Json(body)).into_response();
+    response
+        .headers_mut()
+        .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+}
+
+#[derive(Serialize)]
 struct ErrorBody {
     error: ErrorDetail,
 }
@@ -134,7 +178,7 @@ struct ErrorDetail {
     message: String,
 }
 
-fn refusal(status: StatusCode, code: &'static str, message: String) -> Response {
+pub(crate) fn refusal(status: StatusCode, code: &'static str, message: String) -> Response {
     let body = ErrorBody {
         error: ErrorDetail { code, message },
     };
@@ -157,14 +201,14 @@ async fn not_found() -> Response {
     )
 }
 
-async fn method_not_allowed() -> Response {
+async fn method_not_allowed(path: &'static str) -> Response {
     let mut response = refusal(
         StatusCode::METHOD_NOT_ALLOWED,
         "MethodNotAllowed",
-        format!("{HEALTH_PATH} accepts GET and HEAD"),
+        format!("{path} accepts GET and HEAD"),
     );
     response
         .headers_mut()
-        .insert(ALLOW, axum::http::HeaderValue::from_static("GET, HEAD"));
+        .insert(ALLOW, HeaderValue::from_static("GET, HEAD"));
     response
 }
