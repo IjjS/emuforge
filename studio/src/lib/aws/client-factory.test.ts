@@ -1,4 +1,3 @@
-import { createHash, createHmac } from 'node:crypto';
 import { GetObjectCommand, ListBucketsCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { ListStateMachinesCommand, SFNClient, StartSyncExecutionCommand } from '@aws-sdk/client-sfn';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -119,12 +118,24 @@ function expectSigV4Form(request: BuiltRequest, service: string): Authorization 
   return authorization;
 }
 
-function sha256Hex(data: string | Uint8Array): string {
-  return createHash('sha256').update(data).digest('hex');
+const encoder = new TextEncoder();
+
+function hex(bytes: ArrayBuffer): string {
+  return Array.from(new Uint8Array(bytes), (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-function hmac(key: string | Buffer, data: string): Buffer {
-  return createHmac('sha256', key).update(data).digest();
+async function sha256Hex(data: string | Uint8Array<ArrayBuffer>): Promise<string> {
+  return hex(await crypto.subtle.digest('SHA-256', typeof data === 'string' ? encoder.encode(data) : data));
+}
+
+async function hmac(key: string | ArrayBuffer, data: string): Promise<ArrayBuffer> {
+  const raw = typeof key === 'string' ? encoder.encode(key) : key;
+  const imported = await crypto.subtle.importKey('raw', raw, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  return crypto.subtle.sign('HMAC', imported, encoder.encode(data));
+}
+
+async function signingKey(secret: string, date: string, region: string, service: string): Promise<ArrayBuffer> {
+  return hmac(await hmac(await hmac(await hmac(`AWS4${secret}`, date), region), service), 'aws4_request');
 }
 
 function rfc3986(value: string): string {
@@ -132,8 +143,8 @@ function rfc3986(value: string): string {
 }
 
 // SigV4 of the request, computed here from the specification over the names the request says it signed: canonical
-// request, string to sign, HMAC-SHA256 key derivation. Independent of the SDK's signer.
-function expectedSignature(request: BuiltRequest, secret: string): string {
+// request, string to sign, HMAC-SHA256 key derivation with Web Crypto. Independent of the SDK's signer.
+async function expectedSignature(request: BuiltRequest, secret: string): Promise<string> {
   const { date, region, service, signedNames } = authorizationOf(request);
   const canonicalQuery = Object.keys(request.query)
     .map(rfc3986)
@@ -156,23 +167,25 @@ function expectedSignature(request: BuiltRequest, secret: string): string {
     oneHeader(request, 'x-amz-content-sha256'),
   ].join('\n');
   const scope = `${date}/${region}/${service}/aws4_request`;
-  const stringToSign = ['AWS4-HMAC-SHA256', oneHeader(request, 'x-amz-date'), scope, sha256Hex(canonicalRequest)].join(
-    '\n',
-  );
-  const key = hmac(hmac(hmac(hmac(`AWS4${secret}`, date), region), service), 'aws4_request');
-  return createHmac('sha256', key).update(stringToSign).digest('hex');
+  const stringToSign = [
+    'AWS4-HMAC-SHA256',
+    oneHeader(request, 'x-amz-date'),
+    scope,
+    await sha256Hex(canonicalRequest),
+  ].join('\n');
+  return hex(await hmac(await signingKey(secret, date, region, service), stringToSign));
 }
 
-function bodyBytes(body: unknown): string | Uint8Array {
+function bodyBytes(body: unknown): string | Uint8Array<ArrayBuffer> {
   if (body === undefined || body === null) {
     return '';
   }
   if (typeof body === 'string') {
     return body;
   }
-  // A typed array may come from the test environment's realm, where `instanceof Uint8Array` does not hold.
+  // A typed array may come from another realm than the test's, where `instanceof Uint8Array` does not hold: copy it.
   if (ArrayBuffer.isView(body)) {
-    return new Uint8Array(body.buffer, body.byteOffset, body.byteLength);
+    return Uint8Array.from(new Uint8Array(body.buffer, body.byteOffset, body.byteLength));
   }
   throw new Error(`unexpected request body ${typeof body}`);
 }
@@ -355,7 +368,7 @@ describe('signing', () => {
     const request = await putHello();
 
     expect(oneHeader(request, 'x-amz-content-sha256')).toBe(helloSha256);
-    expect(sha256Hex(bodyBytes(request.body))).toBe(helloSha256);
+    expect(await sha256Hex(bodyBytes(request.body))).toBe(helloSha256);
     for (const value of headerValues(request, 'x-amz-content-sha256')) {
       expect(value.startsWith('STREAMING-')).toBe(false);
     }
@@ -365,8 +378,8 @@ describe('signing', () => {
     const requests = [...(await s3Requests()), ...(await sfnRequests()), await putHello()];
 
     for (const request of requests) {
-      expect(authorizationOf(request).signature).toBe(expectedSignature(request, secret));
-      expect(oneHeader(request, 'x-amz-content-sha256')).toBe(sha256Hex(bodyBytes(request.body)));
+      expect(authorizationOf(request).signature).toBe(await expectedSignature(request, secret));
+      expect(oneHeader(request, 'x-amz-content-sha256')).toBe(await sha256Hex(bodyBytes(request.body)));
       expect(Object.keys(request.query).filter((name) => name.toLowerCase().startsWith('x-amz-'))).toEqual([]);
       expect(headerValues(request, 'x-amz-security-token')).toEqual([]);
     }
