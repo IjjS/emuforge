@@ -58,7 +58,7 @@ function verdictOf(info: TestInfo): { verdict: 'passed' | 'failed' | 'error'; me
   return { verdict: 'error', message: `the check did not run to an end (${info.status})` };
 }
 
-// Playwright colours its error messages for a terminal; the verdict file and log hold plain text.
+// Playwright colours its error messages for a terminal; the verdict file and the log hold plain text.
 // eslint-disable-next-line no-control-regex
 const ANSI = /\u001b\[[0-9;]*m/g;
 
@@ -78,7 +78,7 @@ export const test = base.extend<{ ctx: Ctx }>({
         id,
         log(line) {
           const elapsed = ((Date.now() - started) / 1000).toFixed(3).padStart(8);
-          fs.appendFileSync(logPath, `[${elapsed}s] ${redact(line)}\n`);
+          fs.appendFileSync(logPath, `[${elapsed}s] ${redact(line.replace(ANSI, ''))}\n`);
         },
         own(thing) {
           owned.push(thing);
