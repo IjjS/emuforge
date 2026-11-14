@@ -1,0 +1,41 @@
+# Source: Amazon S3 API Reference, "Signature Calculations for the Authorization Header: Transferring Payload
+# in a Single Chunk (AWS Signature Version 4)",
+# https://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-header-based-auth.html,
+# example "Example: GET Bucket Lifecycle" (GET /?lifecycle on examplebucket).
+# Request headers as the example lists them; Authorization is left out (it carries the result).
+# Credentials of the example: AKIAIOSFODNN7EXAMPLE / wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY.
+== request-line ==
+GET /?lifecycle
+== headers ==
+Host: examplebucket.s3.amazonaws.com
+x-amz-date: 20130524T000000Z
+x-amz-content-sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+== signed-headers ==
+host;x-amz-content-sha256;x-amz-date
+== payload-hash ==
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+== uri-mode ==
+as-sent
+== secret ==
+wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+== amz-date ==
+20130524T000000Z
+== scope ==
+20130524/us-east-1/s3/aws4_request
+== canonical-request ==
+GET
+/
+lifecycle=
+host:examplebucket.s3.amazonaws.com
+x-amz-content-sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+x-amz-date:20130524T000000Z
+
+host;x-amz-content-sha256;x-amz-date
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+== string-to-sign ==
+AWS4-HMAC-SHA256
+20130524T000000Z
+20130524/us-east-1/s3/aws4_request
+9766c798316ff2757b517bc739a67f6213b4ab36dd5da2f94eaebf79c77395ca
+== signature ==
+fea454ca298b7da1c68078a5d1bdbfbbe0d65c699e0f91ac7a200a0136783543

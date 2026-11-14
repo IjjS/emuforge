@@ -1,0 +1,42 @@
+# Source: AWS General Reference, Signature Version 4 signing process, the IAM ListUsers GET example of
+# "Task 1: Create a canonical request for Signature Version 4", "Task 2: Create a string to sign for Signature
+# Version 4" and "Task 3: Calculate the signature for AWS Signature Version 4"
+# (https://docs.aws.amazon.com/general/latest/gr/sigv4-create-canonical-request.html and the two pages after it;
+# the series is now "Create a signed AWS API request" in the IAM User Guide).
+# Request: GET https://iam.amazonaws.com/?Action=ListUsers&Version=2010-05-08 HTTP/1.1, no body.
+# Credentials of the example: AKIDEXAMPLE / wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY.
+== request-line ==
+GET /?Action=ListUsers&Version=2010-05-08
+== headers ==
+Host: iam.amazonaws.com
+Content-Type: application/x-www-form-urlencoded; charset=utf-8
+X-Amz-Date: 20150830T123600Z
+== signed-headers ==
+content-type;host;x-amz-date
+== payload-hash ==
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+== uri-mode ==
+encode-segments
+== secret ==
+wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY
+== amz-date ==
+20150830T123600Z
+== scope ==
+20150830/us-east-1/iam/aws4_request
+== canonical-request ==
+GET
+/
+Action=ListUsers&Version=2010-05-08
+content-type:application/x-www-form-urlencoded; charset=utf-8
+host:iam.amazonaws.com
+x-amz-date:20150830T123600Z
+
+content-type;host;x-amz-date
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+== string-to-sign ==
+AWS4-HMAC-SHA256
+20150830T123600Z
+20150830/us-east-1/iam/aws4_request
+f536975d06c0309214f805bb90ccff089219ecd68b2577efef23edd43b7e1a59
+== signature ==
+5d672d79c15b13162d9279b0855cfba6789a8edb4c82c400e06b5924a6f2b5d7

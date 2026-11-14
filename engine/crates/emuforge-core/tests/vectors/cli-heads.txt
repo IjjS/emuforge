@@ -1,0 +1,68 @@
+# Request heads of AWS CLI 2.34.53 (botocore, Python 3.14.5), the inputs of the classify cases.
+# Sources, both in .pm/issue-2/ of the EmuForge main checkout:
+# - "s3 list-buckets", "s3 put-object", "s3 get-object" and "s3 presign": copied as received from
+#   evidence/prepare-vectors.txt (captured 2026-11-14 by a loopback recording listener; a made-up key, no real or
+#   emulator key). The presign head is its output URL as a request line with its Host.
+# - "dynamodb list-tables", "sqs list-queues", "iam list-users", "lambda list-functions": written from
+#   evidence/emulator-calls.txt section I, which lists for each the method, path, the headers named here and the
+#   SignedHeaders. Not in that section, and stand-ins: the key id AKIACLIENTKEY0000001, the dates and the
+#   signature (the engine never verifies a client signature, so any 64 hex will do).
+# Bodies are not part of a head and are left out.
+== s3 list-buckets ==
+GET / HTTP/1.1
+Host: 127.0.0.1:9391
+Accept-Encoding: identity
+User-Agent: aws-cli/2.34.53 md/awscrt#0.32.2 ua/2.1 os/macos#25.6.0 md/arch#arm64 lang/python#3.14.5 md/pyimpl#CPython m/n,Z,E,C,N,b cfg/retry-mode#standard md/installer#exe md/prompt#off md/command#s3api.list-buckets
+X-Amz-Date: 20261114T162914Z
+X-Amz-Content-SHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+Authorization: AWS4-HMAC-SHA256 Credential=EMUKEYID000000000001/20261114/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=a03938cdbb59902ab110389bba2f7d5c9543826788014d37f2a798129c8f1ad2
+== s3 put-object ==
+PUT /b1/k1 HTTP/1.1
+Host: 127.0.0.1:9391
+Accept-Encoding: identity
+User-Agent: aws-cli/2.34.53 md/awscrt#0.32.2 ua/2.1 os/macos#25.6.0 md/arch#arm64 lang/python#3.14.5 md/pyimpl#CPython m/n,W,Z,E,N,b cfg/retry-mode#standard md/installer#exe md/prompt#off md/command#s3api.put-object
+Expect: 100-continue
+x-amz-checksum-crc64nvme: jSnVw/bqjr4=
+x-amz-sdk-checksum-algorithm: CRC64NVME
+X-Amz-Date: 20261114T162915Z
+X-Amz-Content-SHA256: b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9
+Authorization: AWS4-HMAC-SHA256 Credential=EMUKEYID000000000001/20261114/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-checksum-crc64nvme;x-amz-content-sha256;x-amz-date;x-amz-sdk-checksum-algorithm, Signature=843d909531f08647a48b8623ce331010fda8b6c455eb905c48bad8ceb2dbbdb4
+Content-Length: 11
+== s3 get-object ==
+GET /b1/k1 HTTP/1.1
+Host: 127.0.0.1:9391
+Accept-Encoding: identity
+x-amz-checksum-mode: ENABLED
+User-Agent: aws-cli/2.34.53 md/awscrt#0.32.2 ua/2.1 os/macos#25.6.0 md/arch#arm64 lang/python#3.14.5 md/pyimpl#CPython m/n,Z,E,N,b cfg/retry-mode#standard md/installer#exe md/prompt#off md/command#s3api.get-object
+X-Amz-Date: 20261114T162915Z
+X-Amz-Content-SHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+Authorization: AWS4-HMAC-SHA256 Credential=EMUKEYID000000000001/20261114/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-checksum-mode;x-amz-content-sha256;x-amz-date, Signature=17c0d47e08de660ff04b1b6c983bf4323d9a33f906a188cb55b42041a5860b80
+== dynamodb list-tables ==
+POST / HTTP/1.1
+Host: 127.0.0.1:9391
+Content-Type: application/x-amz-json-1.0
+X-Amz-Target: DynamoDB_20120810.ListTables
+X-Amz-Date: 20261114T162917Z
+Authorization: AWS4-HMAC-SHA256 Credential=AKIACLIENTKEY0000001/20261114/us-east-1/dynamodb/aws4_request, SignedHeaders=content-type;host;x-amz-date;x-amz-target, Signature=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+== sqs list-queues ==
+POST / HTTP/1.1
+Host: 127.0.0.1:9391
+Content-Type: application/x-amz-json-1.0
+X-Amz-Target: AmazonSQS.ListQueues
+x-amzn-query-mode: true
+X-Amz-Date: 20261114T162917Z
+Authorization: AWS4-HMAC-SHA256 Credential=AKIACLIENTKEY0000001/20261114/us-east-1/sqs/aws4_request, SignedHeaders=content-type;host;x-amz-date;x-amz-target;x-amzn-query-mode, Signature=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+== iam list-users ==
+POST / HTTP/1.1
+Host: 127.0.0.1:9391
+Content-Type: application/x-www-form-urlencoded; charset=utf-8
+X-Amz-Date: 20261114T162918Z
+Authorization: AWS4-HMAC-SHA256 Credential=AKIACLIENTKEY0000001/20261114/us-east-1/iam/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+== lambda list-functions ==
+GET /2015-03-31/functions HTTP/1.1
+Host: 127.0.0.1:9391
+X-Amz-Date: 20261114T162918Z
+Authorization: AWS4-HMAC-SHA256 Credential=AKIACLIENTKEY0000001/20261114/us-east-1/lambda/aws4_request, SignedHeaders=host;x-amz-date, Signature=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+== s3 presign ==
+GET /b1/k1?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=EMUKEYID000000000001%2F20261114%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20261114T162916Z&X-Amz-Expires=300&X-Amz-SignedHeaders=host&X-Amz-Signature=6ce52625577fcf7de71aeaf974ebaec9c32d3f87fffec565dbb292df6737beb7 HTTP/1.1
+Host: 127.0.0.1:9391
