@@ -74,12 +74,21 @@ function flatten(axNodes) {
 }
 
 // the backendNodeIds of the page's elements with class `areaClass`, in document order; the lookup does not pierce
-// shadow roots
+// shadow roots. null when an element the query found is gone before it is described: the page changed during the
+// lookup, so the take is not one to settle on
 async function areaRoots(cdp, areaClass) {
   const { root } = await cdp.send("DOM.getDocument", { depth: 0 });
   const { nodeIds } = await cdp.send("DOM.querySelectorAll", { nodeId: root.nodeId, selector: "." + areaClass });
   const roots = [];
-  for (const nodeId of nodeIds) roots.push((await cdp.send("DOM.describeNode", { nodeId })).node.backendNodeId);
+  for (const nodeId of nodeIds) {
+    let described;
+    try {
+      described = await cdp.send("DOM.describeNode", { nodeId });
+    } catch {
+      return null;
+    }
+    roots.push(described.node.backendNodeId);
+  }
   return roots;
 }
 
@@ -135,8 +144,8 @@ async function main() {
     // a take: the area roots, then the tree; it settles when the roots and the whole page's tree are both unchanged
     roots = await areaRoots(cdp, job.areaClass);
     axNodes = (await cdp.send("Accessibility.getFullAXTree")).nodes;
-    const text = JSON.stringify({ roots, nodes: flatten(axNodes) });
-    if (text === previous) break;
+    const text = roots === null ? null : JSON.stringify({ roots, nodes: flatten(axNodes) });
+    if (text !== null && text === previous) break;
     previous = text;
     if (Date.now() - start >= job.settleMax) return fail(SETTLE, "did not settle");
     await new Promise((resolve) => setTimeout(resolve, job.settleMs));
