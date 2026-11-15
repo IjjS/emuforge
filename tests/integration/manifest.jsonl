@@ -75,3 +75,4 @@
 {"check_id": "studio.language-layout-in-every-language", "path": "tests/integration/studio/languages.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 17}
 {"check_id": "studio.language-faces-per-script", "path": "tests/integration/studio/languages.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 17}
 {"check_id": "studio.language-control-keyboard-and-contrast", "path": "tests/integration/studio/languages.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 17}
+{"check_id": "studio.home-kill-notice-stop-step-names-container", "path": "tests/integration/studio/home-kill-notice.spec.ts", "module": "studio", "operations": [], "labels": ["own-emulator", "lifecycle", "regression"], "issue": 18}

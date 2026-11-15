@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: bug
 Issue-Source: plan
 Issue-Key: studio|home.emulator-recovery-step-1|ambiguous-label
-Issue-Check-Ids:
+Issue-Check-Ids: studio.home-kill-notice-stop-step-names-container
 Issue-Commit: 6d3a1703d66bd51d5643757d8e3f4eff6e8670f2
 
 # Make the stop step's label on Home say which container it stops
