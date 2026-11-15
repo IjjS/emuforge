@@ -18,7 +18,10 @@ import tseslint from 'typescript-eslint';
 //   `import()`;
 // - `lib/` imports nothing from `app/`, `ui/`, `features/` or `providers/` (a test of `lib/` may drive it through
 //   the app, as `engine-client.test.ts` does with Home's test kit; no built file is a test);
-// - no `expandToViewport` under `providers/aws/area/`: a Cloudscape overlay stays inside the area.
+// - no `expandToViewport` under `providers/aws/area/`: a Cloudscape overlay stays inside the area;
+// - `i18n/`, Studio's own layer's only source of text (issue #17, requirement R4.10), imports nothing from `app/`,
+//   `ui/`, `features/` or `providers/` (a test of `i18n/` may render what reads it, as a test of `lib/` may), and
+//   `providers/<id>/area/` and `lib/` import nothing from it.
 
 const SRC = path.join(import.meta.dirname, 'src');
 const CLOUDSCAPE = '@cloudscape-design/';
@@ -64,6 +67,22 @@ function brokenBoundary(from, target, source, dynamic, isTest) {
     if (from.kind === 'area' && from.provider === 'aws') return undefined;
     if (isTest && source.startsWith(CLOUDSCAPE_TEST_UTILS)) return undefined;
     return `${source}: Cloudscape is imported only under providers/aws/area/.`;
+  }
+  if (target.kind === 'i18n') {
+    if (from.kind === 'area') {
+      return `${source}: a provider's area imports nothing from Studio's own i18n/; it is English as its console.`;
+    }
+    if (from.kind === 'lib' && !isTest) {
+      return `${source}: lib/ imports nothing from i18n/.`;
+    }
+    return undefined;
+  }
+  if (
+    from.kind === 'i18n' &&
+    !isTest &&
+    (UI_FOLDERS.has(target.kind) || target.kind === 'area' || target.kind === 'provider')
+  ) {
+    return `${source}: i18n/ imports nothing from app/, ui/, features/ or providers/.`;
   }
   if (from.kind === 'area') {
     if (UI_FOLDERS.has(target.kind)) {
