@@ -476,8 +476,11 @@ describe('the frame in each of the twelve languages (R5.2, R2.7)', () => {
       await act(() => router.navigate('/'));
       await expectFocusOnTarget(messageIn(tag, 'home.title'), messageIn(tag, 'home.refresh'));
       await act(() => router.navigate(AREA_PATH));
-      await screen.findByRole('heading', { level: 1, name: AREA_TITLE }, { timeout: AREA_LOAD_MS });
+      const areaTitle = await screen.findByRole('heading', { level: 1, name: AREA_TITLE }, { timeout: AREA_LOAD_MS });
       await expectFocusOnTarget(AREA_TITLE, 'Go to Home');
+      // The area page title the announcement reads, and the target it names, are in an element with lang="en".
+      expect(areaTitle.closest('[lang]')).toHaveAttribute('lang', 'en');
+      expect(document.activeElement?.closest('[lang]')).toHaveAttribute('lang', 'en');
     },
     20_000,
   );
