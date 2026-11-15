@@ -1,0 +1,77 @@
+/* Studio's command blocks (DESIGN.md, Command blocks): the step label and its control on one line, the command in a
+   `pre` that never wraps and scrolls within itself; every step of a notice one width. */
+
+@layer studio {
+  .st-steps {
+    display: grid;
+    grid-template-columns: minmax(0, max-content);
+    gap: 16px;
+    margin-top: 4px;
+  }
+
+  .st-cmd {
+    min-width: 0;
+  }
+
+  .st-cmd-label {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 6px;
+    font-size: 14px;
+    font-weight: 560;
+  }
+
+  .st-cmd-label > span {
+    padding-top: 4px;
+  }
+
+  .st-cmd pre {
+    width: 100%;
+    margin: 0;
+    padding: 12px 14px;
+    overflow-x: auto;
+    font-family: var(--st-font-code);
+    font-size: 13px;
+    line-height: 1.55;
+    white-space: pre;
+    color: var(--st-text);
+    background: var(--st-surface);
+    border: 1px solid var(--st-line);
+    border-radius: var(--st-radius-m);
+  }
+
+  .st-code {
+    padding: 1px 5px;
+    font-family: var(--st-font-code);
+    font-size: 13px;
+    white-space: nowrap;
+    background: var(--st-sunk);
+    border-radius: 4px;
+  }
+
+  /* A copy control: the outcome's words beside the button at 640px and wider; below, the button alone carries it. */
+  .st-copy {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .st-copy-said {
+    font-size: 14px;
+    font-weight: 560;
+    color: var(--st-ok);
+  }
+
+  .st-copy-said.failed {
+    color: var(--st-err);
+  }
+
+  @media (max-width: 640px) {
+    .st-copy-said {
+      display: none;
+    }
+  }
+}

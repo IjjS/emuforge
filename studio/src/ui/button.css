@@ -47,4 +47,37 @@
     gap: 6px;
     border-radius: var(--st-radius-s);
   }
+
+  .st-btn svg {
+    flex: none;
+  }
+
+  .st-btn.done,
+  .st-btn.done:hover {
+    color: var(--st-ok);
+    border-color: var(--st-ok);
+  }
+
+  .st-btn.failed,
+  .st-btn.failed:hover {
+    color: var(--st-err);
+    border-color: var(--st-err);
+  }
+
+  .st-spin {
+    animation: st-spin 0.9s linear infinite;
+    transform-origin: center;
+  }
+
+  @keyframes st-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .st-spin {
+      animation: none;
+    }
+  }
 }

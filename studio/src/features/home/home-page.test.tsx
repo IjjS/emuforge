@@ -1,43 +1,44 @@
-import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   advance,
-  alertRefresh,
+  cloudscapeElements,
   connected,
-  connectionAlerts,
+  connectionNotices,
+  connectionSection,
   emulatorDown,
   engineRefusal,
   FakeEngine,
   headerRefresh,
+  noticeRefresh,
   present,
   renderApp,
   row,
   type FakeAnswer,
 } from './home-test-kit';
 
-// Requirement 2.2, in label order.
+// Requirement R9.2: the AWS services, in label order, under the AWS area's segment.
 const SERVICES: [string, string][] = [
-  ['Amazon API Gateway', '/apigateway'],
-  ['Amazon CloudWatch', '/cloudwatch'],
-  ['Amazon CloudWatch Logs', '/logs'],
-  ['Amazon DynamoDB', '/dynamodb'],
-  ['Amazon Elastic Compute Cloud', '/ec2'],
-  ['Amazon Elastic Container Registry', '/ecr'],
-  ['Amazon EventBridge', '/events'],
-  ['Amazon Kinesis', '/kinesis'],
-  ['Amazon Route 53', '/route53'],
-  ['Amazon Simple Notification Service', '/sns'],
-  ['Amazon Simple Queue Service', '/sqs'],
-  ['Amazon Simple Storage Service', '/s3'],
-  ['Amazon Simple Systems Manager (SSM)', '/ssm'],
-  ['AWS CloudFormation', '/cloudformation'],
-  ['AWS Identity and Access Management', '/iam'],
-  ['AWS Key Management Service', '/kms'],
-  ['AWS Lambda', '/lambda'],
-  ['AWS Secrets Manager', '/secretsmanager'],
-  ['AWS Step Functions', '/states'],
+  ['Amazon API Gateway', '/aws/apigateway'],
+  ['Amazon CloudWatch', '/aws/cloudwatch'],
+  ['Amazon CloudWatch Logs', '/aws/logs'],
+  ['Amazon DynamoDB', '/aws/dynamodb'],
+  ['Amazon Elastic Compute Cloud', '/aws/ec2'],
+  ['Amazon Elastic Container Registry', '/aws/ecr'],
+  ['Amazon EventBridge', '/aws/events'],
+  ['Amazon Kinesis', '/aws/kinesis'],
+  ['Amazon Route 53', '/aws/route53'],
+  ['Amazon Simple Notification Service', '/aws/sns'],
+  ['Amazon Simple Queue Service', '/aws/sqs'],
+  ['Amazon Simple Storage Service', '/aws/s3'],
+  ['Amazon Simple Systems Manager (SSM)', '/aws/ssm'],
+  ['AWS CloudFormation', '/aws/cloudformation'],
+  ['AWS Identity and Access Management', '/aws/iam'],
+  ['AWS Key Management Service', '/aws/kms'],
+  ['AWS Lambda', '/aws/lambda'],
+  ['AWS Secrets Manager', '/aws/secretsmanager'],
+  ['AWS Step Functions', '/aws/states'],
 ];
 
 let engine: FakeEngine;
@@ -75,15 +76,25 @@ function bothConnected(): boolean {
   return row('Engine').status === 'Connected' && row('Emulator').status === 'Connected';
 }
 
-/** Records every text the polite announcers of Cloudscape's live regions take, in order. */
+/**
+ * Records every text a polite region of the "Connection" section takes, in order, from before Home is rendered: each
+ * change of a region's content is one announcement. A region React leaves untouched says nothing.
+ */
 function recordAnnouncements(): string[] {
   const said: string[] = [];
   const observer = new MutationObserver((records) => {
+    const changed = new Set<Element>();
     for (const record of records) {
       const target = record.target instanceof Element ? record.target : record.target.parentElement;
-      const announcer = target?.closest('[aria-live="polite"][aria-atomic="true"]');
-      if (announcer && announcer.parentElement === document.body) {
-        said.push((announcer.textContent ?? '').trim());
+      const region = target?.closest('[aria-live="polite"]');
+      if (region && region.closest('section')?.getAttribute('aria-labelledby') !== null) {
+        changed.add(region);
+      }
+    }
+    for (const region of changed) {
+      const text = (region.textContent ?? '').trim();
+      if (text !== '') {
+        said.push(text);
       }
     }
   });
@@ -131,43 +142,43 @@ describe('Home: Refresh', () => {
     expect(document.activeElement).toBe(refresh);
   });
 
-  it('sends a check at once from an engine-error alert; the alert’s and the header’s "Refresh" both show loading', async () => {
+  it('sends a check at once from an engine-error notice; the notice’s and the header’s "Refresh" both show loading', async () => {
     await openHome(engineRefusal(503, 'Busy'), { ...engineRefusal(503, 'Busy'), delayMs: 1_000 });
-    await click(present(alertRefresh(), 'the alert’s Refresh'));
+    await click(present(noticeRefresh(), 'the notice’s Refresh'));
     expect(engine.healths).toHaveLength(2);
-    expect(isLoading(present(alertRefresh(), 'the alert’s Refresh'))).toBe(true);
+    expect(isLoading(present(noticeRefresh(), 'the notice’s Refresh'))).toBe(true);
     expect(isLoading(headerRefresh())).toBe(true);
     await advance(1_000);
-    expect(isLoading(present(alertRefresh(), 'the alert’s Refresh'))).toBe(false);
+    expect(isLoading(present(noticeRefresh(), 'the notice’s Refresh'))).toBe(false);
     expect(isLoading(headerRefresh())).toBe(false);
   });
 
-  it('removes the alert on a reachable answer to its "Refresh", and moves focus to the header "Refresh"', async () => {
+  it('removes the notice on a reachable answer to its "Refresh", and moves focus to the header "Refresh"', async () => {
     await openHome(engineRefusal(503, 'Busy'), { ...connected(), delayMs: 500 });
-    const inAlert = present(alertRefresh(), 'the alert’s Refresh');
-    inAlert.focus();
-    await click(inAlert);
+    const inNotice = present(noticeRefresh(), 'the notice’s Refresh');
+    inNotice.focus();
+    await click(inNotice);
     await advance(500);
-    expect(connectionAlerts()).toHaveLength(0);
+    expect(connectionNotices()).toHaveLength(0);
     expect(bothConnected()).toBe(true);
     expect(document.activeElement).toBe(headerRefresh());
   });
 
-  it('leaves focus alone when the user had left the alert before an answer removed it', async () => {
+  it('leaves focus alone when the user had left the notice before an answer removed it', async () => {
     await openHome(engineRefusal(503, 'Busy'), { ...connected(), delayMs: 500 });
-    const inAlert = present(alertRefresh(), 'the alert’s Refresh');
-    inAlert.focus();
-    await click(inAlert);
-    inAlert.blur();
+    const inNotice = present(noticeRefresh(), 'the notice’s Refresh');
+    inNotice.focus();
+    await click(inNotice);
+    inNotice.blur();
     await advance(500);
-    expect(connectionAlerts()).toHaveLength(0);
+    expect(connectionNotices()).toHaveLength(0);
     expect(document.activeElement).not.toBe(headerRefresh());
   });
 
   it.each<[string, FakeAnswer]>([
     ['an engine-error state', engineRefusal(503, 'Busy')],
     ['an unknown-reason state', emulatorDown('a_reason_studio_does_not_know')],
-  ])('in %s, Tab reaches the alert’s "Refresh" and Enter on it sends a new check', async (_name, answer) => {
+  ])('in %s, Tab reaches the notice’s "Refresh" and Enter on it sends a new check', async (_name, answer) => {
     // Real timers: user-event and Testing Library wait on real ones. No check is timed within this case.
     vi.useRealTimers();
     const user = userEvent.setup();
@@ -224,13 +235,13 @@ describe('Home: reconnects without a reload', () => {
   it.each<[string, FakeAnswer]>([
     ['Engine unreachable', { network: true }],
     ['connection_refused', emulatorDown('connection_refused')],
-  ])('a check answers %s, the next 200 reachable: "Connected" and no alert', async (_name, answer) => {
+  ])('a check answers %s, the next 200 reachable: "Connected" and no notice', async (_name, answer) => {
     await openHome(answer, connected());
-    expect(connectionAlerts()).toHaveLength(1);
+    expect(connectionNotices()).toHaveLength(1);
     const heading = screen.getByRole('heading', { level: 1, name: 'Home' });
     await advance(5_000);
     expect(bothConnected()).toBe(true);
-    expect(connectionAlerts()).toHaveLength(0);
+    expect(connectionNotices()).toHaveLength(0);
     // The same page: nothing was mounted afresh.
     expect(screen.getByRole('heading', { level: 1, name: 'Home' })).toBe(heading);
   });
@@ -245,13 +256,16 @@ describe('Home: leaving and returning', () => {
       addEventListener: () => undefined,
       removeEventListener: () => undefined,
     }));
-    const { wrapper } = await openHome(connected());
-    await click(screen.getByRole('link', { name: 'AWS' }));
+    await openHome(connected());
+    await click(within(screen.getByRole('navigation', { name: 'Studio' })).getByRole('link', { name: 'AWS' }));
     // The AWS area loads on its first opening; the import is real work, not a timer.
     const s3 = await vi.waitFor(
       async () => {
         await advance();
-        return present(wrapper.findSideNavigation()?.findLinkByHref('/aws/s3'), 'the S3 link').getElement();
+        return present(
+          screen.queryAllByRole('link', { name: 'Amazon Simple Storage Service' })[0],
+          'an S3 link in the AWS area',
+        );
       },
       { timeout: 10_000, interval: 20 },
     );
@@ -269,6 +283,7 @@ describe('Home: leaving and returning', () => {
 
 describe('Home: announcements', () => {
   it('announces a changed state once, an engine error with its code, and nothing when the state stays', async () => {
+    const said = recordAnnouncements();
     await openHome(
       connected(),
       connected(),
@@ -276,40 +291,64 @@ describe('Home: announcements', () => {
       emulatorDown('not_started'),
       engineRefusal(503, 'Busy'),
     );
-    const said = recordAnnouncements();
     const C = 'Engine connected. Emulator connected.';
-    // Answers at 0, 5, 10, 15 and 20 seconds; a live region speaks 1 second after its text changes.
-    await advance(1_000);
+    // Answers at 0, 5, 10, 15 and 20 seconds.
     expect(said).toEqual([C]);
-    await advance(9_000);
+    await advance(5_000);
     expect(said).toEqual([C]);
-    await advance(1_000);
+    await advance(5_000);
     expect(said).toEqual([C, 'Emulator not started.']);
-    await advance(9_000);
+    await advance(5_000);
     expect(said).toEqual([C, 'Emulator not started.']);
-    await advance(1_000);
+    await advance(5_000);
     expect(said).toEqual([C, 'Emulator not started.', 'Engine error: Busy.']);
   });
 });
 
 describe('Home: content', () => {
-  it('shows the header with its description and "Refresh", "Connection", and "Services" with every service link', async () => {
-    const { wrapper } = await openHome(connected());
+  it('shows the head with its description and "Refresh", then "Connection", then "Providers" with its counter', async () => {
+    await openHome(connected());
     const main = screen.getByRole('main');
-    expect(within(main).getByRole('heading', { level: 1, name: 'Home' })).toBeInTheDocument();
-    expect(main).toHaveTextContent('A local console for your AWS emulator, through the EmuForge engine.');
-    expect(headerRefresh()).toBeInTheDocument();
-    expect(within(main).getByRole('heading', { level: 2, name: 'Connection' })).toBeInTheDocument();
-    const services = present(
-      wrapper.findAllContainers().find((c) => c.findHeader()?.getElement().textContent?.includes('Services')),
-      'the Services container',
-    );
-    const header = present(createWrapper(services.getElement()).findHeader(), 'the Services header');
-    expect(header.findCounter()?.getElement()).toHaveTextContent('(19)');
-    expect(header.findDescription()?.getElement()).toHaveTextContent('No service has a Studio screen yet.');
-    const links = within(services.getElement())
+    const heading = within(main).getByRole('heading', { level: 1, name: 'Home' });
+    expect(main).toHaveTextContent('A local console for your cloud emulators, through the EmuForge engine.');
+    const refresh = headerRefresh();
+    const connection = connectionSection();
+    const providers = within(main).getByRole('region', { name: 'Providers (1)' });
+    expect(within(providers).getByRole('heading', { level: 2 })).toHaveTextContent('Providers (1)');
+    // In this order in the page.
+    const order = [heading, refresh, connection, providers];
+    for (let i = 1; i < order.length; i++) {
+      const earlier = present(order[i - 1], 'an earlier part');
+      expect(
+        earlier.compareDocumentPosition(present(order[i], 'a later part')) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).not.toBe(0);
+    }
+  });
+
+  it('lists one provider: "Amazon Web Services" to /aws, "19 services · no Studio screen yet", every service link', async () => {
+    await openHome(connected());
+    const providers = screen.getByRole('region', { name: 'Providers (1)' });
+    const entry = within(providers).getByRole('link', { name: 'Amazon Web Services' });
+    expect(entry).toHaveAttribute('href', '/aws');
+    expect(providers).toHaveTextContent('19 services · no Studio screen yet');
+    const links = within(providers)
       .getAllByRole('link')
+      .filter((link) => link !== entry)
       .map((link) => [link.textContent, link.getAttribute('href')]);
     expect(links).toEqual(SERVICES);
+  });
+
+  it.each<[string, FakeAnswer]>([
+    ['checking', { hang: true }],
+    ['connected', connected()],
+    ['not started', emulatorDown('not_started')],
+    ['killed', emulatorDown('connection_refused')],
+    ['an unknown reason', emulatorDown('a_reason_studio_does_not_know')],
+    ['engine unreachable', { network: true }],
+    ['engine error', engineRefusal(503, 'Busy')],
+  ])('%s: no element of the page outside the frame has a Cloudscape class', async (_name, answer) => {
+    await openHome(answer);
+    expect(cloudscapeElements(screen.getByRole('main'))).toEqual([]);
+    expect(cloudscapeElements()).toEqual([]);
   });
 });

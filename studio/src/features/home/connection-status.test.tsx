@@ -1,5 +1,4 @@
-import createWrapper from '@cloudscape-design/components/test-utils/dom';
-import { fireEvent, screen } from '@testing-library/react';
+import { fireEvent, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   MAX_COMMAND_LINE,
@@ -10,15 +9,22 @@ import {
 } from './commands';
 import {
   advance,
+  buildOnceToggle,
+  cloudscapeElements,
   commandsIn,
   connected,
-  connectionAlert,
-  connectionAlerts,
   connectionDescription,
+  connectionNotice,
+  connectionNotices,
+  connectionSection,
+  copyButtonsIn,
   emulatorDown,
   engineRefusal,
   FakeEngine,
-  inAlert,
+  noticeHeading,
+  noticeText,
+  norm,
+  politeRegions,
   present,
   renderApp,
   row,
@@ -61,44 +67,39 @@ async function openHomeAnswered(answer: FakeAnswer) {
   return view;
 }
 
-function alertType(): string | undefined {
-  const root = connectionAlert().findRootElement().getElement();
-  const own = [root, ...root.querySelectorAll('*')].map((el) => String(el.className)).join(' ');
-  return /type-(error|info|warning|success)/.exec(own)?.[1];
+/** The notice's kind, as drawn: its band and icon in the error or the information hue. */
+function noticeKind(): string | undefined {
+  return /\bst-notice (err|info)\b/.exec(connectionNotice().className)?.[1];
 }
 
-function alertText(): string {
-  return (connectionAlert().getElement().textContent ?? '').replace(/\s+/g, ' ').trim();
-}
-
-/** Labels and buttons of the alert, in document order, for step and order checks. */
-function alertButtons(): HTMLElement[] {
-  return [...connectionAlert().getElement().querySelectorAll<HTMLElement>('button, [role="button"]')];
+/** Buttons of the notice, in document order. */
+function noticeButtons(): HTMLElement[] {
+  return within(connectionNotice()).queryAllByRole('button');
 }
 
 function isCopyOrToggle(button: HTMLElement): boolean {
   return (button.getAttribute('aria-label') ?? '').startsWith('Copy command:') || button.hasAttribute('aria-expanded');
 }
 
-/** Whether `element` sits in a collapsed expandable section of the alert. */
-function collapsedIn(element: HTMLElement): boolean {
-  return inAlert()
-    .findAllExpandableSections()
-    .some((section) => section.findExpandedContent() === null && section.getElement().contains(element));
+/** The build-once toggle of the notice. */
+function buildOnce(): HTMLElement {
+  const toggle = buildOnceToggle();
+  expect(toggle).not.toBeNull();
+  return present(toggle, 'the build-once toggle');
 }
 
-/** The build-once section of the alert. */
-function buildOnce() {
-  const section = inAlert().findExpandableSection();
-  expect(section).not.toBeNull();
-  return present(section, 'the build-once section');
+/** What the build-once toggle shows: its content element, or `null` while collapsed. */
+function buildOnceContent(): HTMLElement | null {
+  const id = present(buildOnce().getAttribute('aria-controls'), "the toggle's content");
+  const content = document.getElementById(id);
+  return content === null || content.hidden ? null : content;
 }
 
-/** Positions in the alert's text, to check what comes before what. */
+/** Positions in the notice's text, to check what comes before what. */
 function positionsIn(text: string, parts: string[]): number[] {
   return parts.map((part) => {
     const at = text.indexOf(part);
-    expect(at, `"${part}" in the alert`).toBeGreaterThanOrEqual(0);
+    expect(at, `"${part}" in the notice`).toBeGreaterThanOrEqual(0);
     return at;
   });
 }
@@ -108,49 +109,51 @@ function expectAscending(values: number[]) {
 }
 
 describe('Connection: Checking and Connected', () => {
-  it('shows both rows "Checking", "Not checked yet." and no alert while the first check has no answer', async () => {
+  it('shows both rows "Checking", "Not checked yet." and no notice while the first check has no answer', async () => {
     engine.healthAnswers = [{ hang: true }];
     renderApp('/');
     await advance();
     expect(row('Engine').status).toBe('Checking');
     expect(row('Emulator').status).toBe('Checking');
     expect(connectionDescription()).toBe('Not checked yet.');
-    expect(connectionAlerts()).toHaveLength(0);
+    expect(connectionNotices()).toHaveLength(0);
   });
 
-  it('shows both rows "Connected" with their endpoints, no alert and the time of the answer', async () => {
+  it('shows both rows "Connected" with their endpoints, no notice and the time of the answer', async () => {
     await openHomeAnswered(connected(9297));
     expect(row('Engine')).toMatchObject({ status: 'Connected', text: expect.stringContaining(ENGINE) as string });
     expect(row('Emulator')).toMatchObject({ status: 'Connected', text: expect.stringContaining(EMULATOR) as string });
-    expect(connectionAlerts()).toHaveLength(0);
+    expect(connectionNotices()).toHaveLength(0);
     expect(connectionDescription()).toBe('Last checked 16:05:12. Checked every 5 seconds.');
   });
 });
 
 describe('Connection: emulator not started', () => {
-  it('shows "Not started", an info alert naming the port with the build-once section, then the start command', async () => {
+  it('shows "Not started", an info notice naming the port with the build-once section, then the start command', async () => {
     await openHomeAnswered(emulatorDown('not_started', 9297));
     expect(row('Emulator')).toMatchObject({ status: 'Not started', text: expect.stringContaining(EMULATOR) as string });
-    expect(alertType()).toBe('info');
-    expect(connectionAlert().findHeader()?.getElement()).toHaveTextContent('No emulator is running on port 9297');
-    const text = alertText();
+    expect(noticeKind()).toBe('info');
+    expect(noticeHeading()).toHaveTextContent('No emulator is running on port 9297');
+    const text = noticeText();
     expectAscending(positionsIn(text, ['First run? Build the image once', 'Start the emulator on port 9297']));
-    expect(buildOnce().findExpandedContent()).toBeNull();
-    expect(commandsIn(connectionAlert())).toEqual([startEmulatorCommand(9297).split('\n')]);
+    expect(buildOnceContent()).toBeNull();
+    expect(commandsIn(connectionNotice())).toEqual([startEmulatorCommand(9297).split('\n')]);
     expect(text).not.toContain('Stop');
     expect(text).not.toContain('docker rm');
   });
 
   it('shows the build commands with a copy button when the build-once section is expanded, and hides them again', async () => {
     await openHomeAnswered(emulatorDown('not_started', 9297));
-    await click(buildOnce().findExpandButton().getElement());
-    const content = buildOnce().findExpandedContent();
-    expect(content).not.toBeNull();
-    expect(commandsIn(present(content, 'the expanded content'))).toEqual([BUILD]);
-    expect(createWrapper(present(content, 'the expanded content').getElement()).findCopyToClipboard()).not.toBeNull();
-    await click(buildOnce().findExpandButton().getElement());
-    expect(buildOnce().findExpandedContent()).toBeNull();
-    expect(commandsIn(connectionAlert())).toEqual([startEmulatorCommand(9297).split('\n')]);
+    expect(buildOnce()).toHaveAttribute('aria-expanded', 'false');
+    await click(buildOnce());
+    expect(buildOnce()).toHaveAttribute('aria-expanded', 'true');
+    const content = present(buildOnceContent(), 'the expanded content');
+    expect(commandsIn(content)).toEqual([BUILD]);
+    expect(copyButtonsIn(content).map((b) => b.getAttribute('aria-label'))).toEqual(['Copy command: build image']);
+    await click(buildOnce());
+    expect(buildOnce()).toHaveAttribute('aria-expanded', 'false');
+    expect(buildOnceContent()).toBeNull();
+    expect(commandsIn(connectionNotice())).toEqual([startEmulatorCommand(9297).split('\n')]);
   });
 });
 
@@ -176,8 +179,8 @@ describe('Connection: emulator unreachable with a recovery step', () => {
         text: expect.stringContaining(EMULATOR) as string,
       });
       expect(row('Engine').status).toBe('Connected');
-      expect(alertType()).toBe('error');
-      const text = alertText();
+      expect(noticeKind()).toBe('err');
+      const text = noticeText();
       expect(text).toContain(`Engine message: ${message}`);
       expect(text).toContain(explanation);
       expectAscending(
@@ -189,8 +192,8 @@ describe('Connection: emulator unreachable with a recovery step', () => {
           '2. Start the emulator on port 9297',
         ]),
       );
-      expect(commandsIn(connectionAlert())).toEqual([STOP_9297, startEmulatorCommand(9297).split('\n')]);
-      expect(alertButtons().every(isCopyOrToggle)).toBe(true);
+      expect(commandsIn(connectionNotice())).toEqual([STOP_9297, startEmulatorCommand(9297).split('\n')]);
+      expect(noticeButtons().every(isCopyOrToggle)).toBe(true);
     },
   );
 });
@@ -203,11 +206,11 @@ describe('Connection: emulator unreachable without a recovery step', () => {
       await openHomeAnswered(emulatorDown(reason, 9297, message));
       expect(row('Emulator').status).toBe('Unreachable');
       expect(row('Engine').status).toBe('Connected');
-      expect(alertText()).toContain(`Engine message: ${message}`);
-      expect(commandsIn(connectionAlert())).toEqual([]);
-      expect(inAlert().findExpandableSection()).toBeNull();
-      const action = connectionAlert().findActionSlot();
-      expect(action?.findButton()?.getElement()).toHaveAccessibleName('Refresh connection status');
+      expect(noticeText()).toContain(`Engine message: ${message}`);
+      expect(commandsIn(connectionNotice())).toEqual([]);
+      expect(buildOnceToggle()).toBeNull();
+      const action = within(noticeHeading().parentElement ?? connectionNotice()).getByRole('button');
+      expect(action).toHaveAccessibleName('Refresh connection status');
     },
   );
 });
@@ -237,11 +240,16 @@ describe('Connection: every state', () => {
   });
 
   it.each(ALERT_STATES)(
-    '%s: the alert ends with the re-check line and the description has no interval',
+    '%s: the notice holds the re-check line right after its heading row, before the rest; no interval in the description',
     async (_name, answer) => {
       await openHomeAnswered(answer);
-      const content = (connectionAlert().findContent().getElement().textContent ?? '').replace(/\s+/g, ' ').trim();
-      expect(content.endsWith(RECHECK), content).toBe(true);
+      const headRow = present(noticeHeading().parentElement, 'the heading row');
+      // The heading and its "Refresh" (where it has one), then the re-check line, then the rest of the notice.
+      expect(headRow.nextElementSibling).toHaveTextContent(RECHECK, { normalizeWhitespace: true });
+      const head = norm(headRow.textContent);
+      const text = noticeText();
+      expect(text.startsWith(head + RECHECK), text).toBe(true);
+      expect(text.length).toBeGreaterThan((head + RECHECK).length);
       expect(connectionDescription()).toBe('Last checked 16:05:12.');
     },
   );
@@ -250,18 +258,15 @@ describe('Connection: every state', () => {
     '%s: every command line is at most 26 characters and its copy button copies exactly the text shown',
     async (_name, answer) => {
       await openHomeAnswered(answer);
-      const section = inAlert().findExpandableSection();
-      if (section !== null) {
-        await click(section.findExpandButton().getElement());
+      const toggle = buildOnceToggle();
+      if (toggle !== null) {
+        await click(toggle);
       }
-      const shown = commandsIn(connectionAlert());
+      const shown = commandsIn(connectionNotice());
       for (const line of shown.flat()) {
         expect(line.length, line).toBeLessThanOrEqual(MAX_COMMAND_LINE);
       }
-      const copyButtons = inAlert()
-        .findAllCopyToClipboards()
-        .filter((copy) => !collapsedIn(copy.getElement()))
-        .map((copy) => copy.findCopyButton().getElement());
+      const copyButtons = copyButtonsIn(connectionNotice());
       expect(copyButtons).toHaveLength(shown.length);
       const copied: string[] = [];
       const writeText = vi.fn((text: string) => {
@@ -291,7 +296,7 @@ describe('Connection: every state', () => {
 
   it('shows the start command for port 9393 line by line', async () => {
     await openHomeAnswered(emulatorDown('not_started', 9393));
-    expect(commandsIn(connectionAlert())).toEqual([
+    expect(commandsIn(connectionNotice())).toEqual([
       [
         'E=$HOME/.aws/emulator',
         'P=9393',
@@ -309,16 +314,16 @@ describe('Connection: every state', () => {
 
   it('says in its own words, not as the engine message, that the engine sent no message', async () => {
     await openHomeAnswered(emulatorDown('unexpected_response', 9297, ''));
-    expect(alertText()).toContain(`The engine gave no message for ${EMULATOR}.`);
-    expect(alertText()).not.toContain('Engine message:');
+    expect(noticeText()).toContain(`The engine gave no message for ${EMULATOR}.`);
+    expect(noticeText()).not.toContain('Engine message:');
   });
 
   it('shows an engine message that looks like HTML as those characters, creating no element from it', async () => {
     await openHomeAnswered(emulatorDown('unexpected_response', 9297, '<b>x</b><script>'));
-    expect(alertText()).toContain('Engine message: <b>x</b><script>');
-    const alert = connectionAlert().getElement();
-    expect(alert.querySelector('b')).toBeNull();
-    expect(alert.querySelector('script')).toBeNull();
+    expect(noticeText()).toContain('Engine message: <b>x</b><script>');
+    const notice = connectionNotice();
+    expect(notice.querySelector('b')).toBeNull();
+    expect(notice.querySelector('script')).toBeNull();
   });
 });
 
@@ -328,9 +333,9 @@ describe('Connection: engine unreachable', () => {
     expect(row('Emulator').status).toBe('Unknown');
     // A dash on screen; "Not known" for a screen reader.
     expect(row('Emulator').text).toBe('EmulatorUnknown-Not known');
-    expect(alertType()).toBe('error');
-    expect(connectionAlert().findHeader()?.getElement()).toHaveTextContent('Studio cannot reach the engine');
-    const text = alertText();
+    expect(noticeKind()).toBe('err');
+    expect(noticeHeading()).toHaveTextContent('Studio cannot reach the engine');
+    const text = noticeText();
     expect(text).toContain(`Studio gets no answer it can read from the engine at ${ENGINE}.`);
     expect(text).toContain(
       'Either the engine is not running on that port, or it was started for another Studio origin.',
@@ -343,7 +348,7 @@ describe('Connection: engine unreachable', () => {
         ? [`  --studio-port ${STUDIO_PORT}`]
         : [`  --studio-port ${STUDIO_PORT} \\`, `  --emulator-port ${String(emulatorPort)}`]),
     ];
-    expect(commandsIn(connectionAlert())).toEqual([command]);
+    expect(commandsIn(connectionNotice())).toEqual([command]);
     return text;
   }
 
@@ -418,9 +423,9 @@ describe('Connection: engine error', () => {
     expect(row('Emulator').status).toBe('Unknown');
     // A dash on screen; "Not known" for a screen reader.
     expect(row('Emulator').text).toBe('EmulatorUnknown-Not known');
-    expect(alertType()).toBe('error');
-    expect(connectionAlert().findHeader()?.getElement()).toHaveTextContent('The engine answered with an error');
-    expect(connectionAlert().findActionSlot()?.findButton()?.getElement()).toHaveAccessibleName(
+    expect(noticeKind()).toBe('err');
+    expect(noticeHeading()).toHaveTextContent('The engine answered with an error');
+    expect(within(noticeHeading().parentElement ?? connectionNotice()).getByRole('button')).toHaveAccessibleName(
       'Refresh connection status',
     );
   }
@@ -428,13 +433,13 @@ describe('Connection: engine error', () => {
   it('503 Busy: "Error", "Unknown", the code and message after "Engine error:", and "Refresh"', async () => {
     await openHomeAnswered(engineRefusal(503, 'Busy', 'The engine has too many requests in flight.'));
     expectEngineError();
-    expect(alertText()).toContain('Engine error: Busy: The engine has too many requests in flight.');
+    expect(noticeText()).toContain('Engine error: Busy: The engine has too many requests in flight.');
   });
 
   it('403 OriginNotAllowed: the code and the message', async () => {
     await openHomeAnswered(engineRefusal(403, 'OriginNotAllowed', 'this origin is not the Studio origin'));
     expectEngineError();
-    expect(alertText()).toContain('Engine error: OriginNotAllowed: this origin is not the Studio origin');
+    expect(noticeText()).toContain('Engine error: OriginNotAllowed: this origin is not the Studio origin');
   });
 
   it.each<[string, FakeAnswer, string]>([
@@ -451,19 +456,19 @@ describe('Connection: engine error', () => {
     async (_n, answer, shown) => {
       await openHomeAnswered(answer);
       expectEngineError();
-      expect(alertText()).toContain(shown);
+      expect(noticeText()).toContain(shown);
     },
   );
 });
 
-describe('Connection: the alert\'s "Refresh"', () => {
+describe('Connection: the notice\'s "Refresh"', () => {
   it.each<[string, FakeAnswer]>([
     ['engine error', engineRefusal(503, 'Busy')],
     ['a reason without a recovery step', emulatorDown('unexpected_response')],
-  ])('%s: the alert carries "Refresh" named "Refresh connection status"', async (_name, answer) => {
+  ])('%s: the notice carries "Refresh" named "Refresh connection status"', async (_name, answer) => {
     await openHomeAnswered(answer);
     const refresh = screen.getByRole('button', { name: 'Refresh connection status' });
-    expect(connectionAlert().getElement()).toContainElement(refresh);
+    expect(connectionNotice()).toContainElement(refresh);
     expect(refresh).toHaveTextContent('Refresh');
   });
 
@@ -471,10 +476,69 @@ describe('Connection: the alert\'s "Refresh"', () => {
     ['not started', emulatorDown('not_started')],
     ['a reason with a recovery step', emulatorDown('connection_refused')],
     ['engine unreachable', { network: true }],
-  ])('%s: the alert has no button besides copy buttons and the build-once toggle', async (_name, answer) => {
+  ])('%s: the notice has no button besides copy buttons and the build-once toggle', async (_name, answer) => {
     await openHomeAnswered(answer);
-    expect(alertButtons().length).toBeGreaterThan(0);
-    expect(alertButtons().filter((b) => !isCopyOrToggle(b))).toEqual([]);
+    expect(noticeButtons().length).toBeGreaterThan(0);
+    expect(noticeButtons().filter((b) => !isCopyOrToggle(b))).toEqual([]);
     expect(screen.queryByRole('button', { name: 'Refresh connection status' })).toBeNull();
   });
+});
+
+const EVERY_STATE: [string, FakeAnswer][] = [['checking', { hang: true }], ['connected', connected()], ...ALERT_STATES];
+
+describe("Connection: in Studio's own elements (issue 16)", () => {
+  it.each<[string, FakeAnswer]>([
+    ['checking', { hang: true }],
+    ['engine unreachable', { network: true }],
+    ['engine error Busy', engineRefusal(503, 'Busy')],
+  ])('%s: the Emulator row\'s "-" is hidden from a screen reader, which reads "Not known"', async (_name, answer) => {
+    await openHomeAnswered(answer);
+    const term = within(connectionSection())
+      .getAllByRole('term')
+      .find((el) => el.textContent === 'Emulator');
+    const value = present(term?.nextElementSibling, "the Emulator row's value") as HTMLElement;
+    const dash = within(value).getByText('-', { exact: true });
+    expect(dash.closest('[aria-hidden="true"]')).not.toBeNull();
+    const notKnown = within(value).getByText('Not known', { exact: true });
+    expect(notKnown.closest('[aria-hidden="true"]')).toBeNull();
+  });
+
+  it.each(EVERY_STATE)(
+    '%s: a region named "Connection", rows as text in Studio\'s own elements, no Cloudscape class',
+    async (_name, answer) => {
+      await openHomeAnswered(answer);
+      const section = connectionSection();
+      expect(section.tagName).toBe('SECTION');
+      for (const label of ['Engine', 'Emulator'] as const) {
+        const term = within(section)
+          .getAllByRole('term')
+          .find((el) => el.textContent === label);
+        expect(term, `the ${label} row's label`).toBeDefined();
+        const value = present(term?.nextElementSibling, `the ${label} row's value`);
+        expect(value.tagName).toBe('DD');
+        expect(row(label).status).not.toBe('');
+      }
+      expect(cloudscapeElements(section)).toEqual([]);
+    },
+  );
+
+  it.each(ALERT_STATES)(
+    '%s: the notice is found by its heading, is no live region, and its text is not announced as a whole',
+    async (_name, answer) => {
+      await openHomeAnswered(answer);
+      const notice = connectionNotice();
+      expect(noticeHeading(notice)).toHaveTextContent(/\S/);
+      for (let at: HTMLElement | null = notice; at !== null; at = at.parentElement) {
+        expect(at.getAttribute('aria-live'), at.tagName).toBeNull();
+        expect(['alert', 'status', 'log', 'group'], at.tagName).not.toContain(at.getAttribute('role'));
+      }
+      expect(notice.querySelector('[aria-live], [role="alert"], [role="status"]')).toBeNull();
+      const regions = politeRegions();
+      expect(regions).toHaveLength(2);
+      for (const region of regions) {
+        expect(region.contains(notice)).toBe(false);
+        expect(norm(region.textContent)).not.toContain(noticeText(notice));
+      }
+    },
+  );
 });
