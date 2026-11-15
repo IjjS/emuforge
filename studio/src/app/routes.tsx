@@ -2,7 +2,7 @@ import { lazy } from 'react';
 import type { RouteObject } from 'react-router';
 
 import { HomePage } from '../features/home/home-page';
-import { NOT_FOUND_TITLE, NotFoundPage } from '../features/not-found/not-found-page';
+import { NotFoundPage } from '../features/not-found/not-found-page';
 import { Frame, ProviderPage, StudioPage } from './frame';
 import { PROVIDERS } from './provider-list';
 
@@ -30,7 +30,7 @@ export const routes: RouteObject[] = [
       {
         path: '*',
         element: (
-          <StudioPage title={NOT_FOUND_TITLE}>
+          <StudioPage title="notFound.title">
             <NotFoundPage />
           </StudioPage>
         ),

@@ -3,16 +3,15 @@ import './not-found-page.css';
 import { Fragment, useLayoutEffect, useRef, type RefObject } from 'react';
 import { useLocation } from 'react-router';
 
+import { useLanguage } from '../../i18n/language-context';
 import { ButtonLink } from '../../ui/button-link';
 import { PageHead } from '../../ui/page-head';
-
-export const NOT_FOUND_TITLE = 'Page not found';
 
 /**
  * While the path is wider than its box, the box is a named, focusable scroller, so a keyboard can scroll it; the
  * scroll shade at its edge shows that more lies beyond (DESIGN.md, Page not found).
  */
-function useScrollerWhileOverflowing(box: RefObject<HTMLElement | null>, path: string): void {
+function useScrollerWhileOverflowing(box: RefObject<HTMLElement | null>, path: string, name: string): void {
   useLayoutEffect(() => {
     const element = box.current;
     if (element === null) {
@@ -22,7 +21,7 @@ function useScrollerWhileOverflowing(box: RefObject<HTMLElement | null>, path: s
       if (element.scrollWidth > element.clientWidth) {
         element.setAttribute('tabindex', '0');
         element.setAttribute('role', 'region');
-        element.setAttribute('aria-label', 'Path');
+        element.setAttribute('aria-label', name);
       } else {
         element.removeAttribute('tabindex');
         element.removeAttribute('role');
@@ -37,7 +36,7 @@ function useScrollerWhileOverflowing(box: RefObject<HTMLElement | null>, path: s
       observer?.disconnect();
       window.removeEventListener('resize', fit);
     };
-  }, [box, path]);
+  }, [box, path, name]);
 }
 
 /**
@@ -45,8 +44,9 @@ function useScrollerWhileOverflowing(box: RefObject<HTMLElement | null>, path: s
  * long path wraps between its segments and never inside one.
  */
 function RequestedPath({ path }: { path: string }) {
+  const { t } = useLanguage();
   const box = useRef<HTMLElement>(null);
-  useScrollerWhileOverflowing(box, path);
+  useScrollerWhileOverflowing(box, path, t('notFound.path'));
   return (
     <code ref={box}>
       {path.split('/').map((segment, index) => (
@@ -74,15 +74,17 @@ function decodedPath(pathname: string): string {
 
 /** Studio's "Page not found" (requirement R4.3): any path that is neither Home nor under a provider's segment. */
 export function NotFoundPage() {
+  const { t } = useLanguage();
   const { pathname } = useLocation();
   return (
     <div className="st-lost">
-      <PageHead title={NOT_FOUND_TITLE} />
+      <PageHead title={t('notFound.title')} />
+      {/* One message, so each language puts the path where its grammar needs it (requirement R4.4). */}
       <p className="st-lost-path">
-        Studio has no page at <RequestedPath path={decodedPath(pathname)} />.
+        {t('notFound.statement', { path: <RequestedPath path={decodedPath(pathname)} /> })}
       </p>
       <ButtonLink to="/" primary>
-        Go to Home
+        {t('notFound.home')}
       </ButtonLink>
     </div>
   );

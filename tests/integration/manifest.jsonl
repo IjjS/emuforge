@@ -76,3 +76,7 @@
 {"check_id": "studio.language-faces-per-script", "path": "tests/integration/studio/languages.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 17}
 {"check_id": "studio.language-control-keyboard-and-contrast", "path": "tests/integration/studio/languages.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 17}
 {"check_id": "studio.home-kill-notice-stop-step-names-container", "path": "tests/integration/studio/home-kill-notice.spec.ts", "module": "studio", "operations": [], "labels": ["own-emulator", "lifecycle", "regression"], "issue": 18}
+{"check_id": "studio.skip-link-reaches-page-content", "path": "tests/integration/studio/focus.spec.ts", "module": "studio", "operations": [], "labels": ["regression"], "issue": 19}
+{"check_id": "studio.route-change-focuses-new-page-content", "path": "tests/integration/studio/focus.spec.ts", "module": "studio", "operations": [], "labels": ["regression"], "issue": 19}
+{"check_id": "studio.focus-moves-change-nothing-on-screen", "path": "tests/integration/studio/focus.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 19}
+{"check_id": "studio.first-load-keeps-focus-at-document-start", "path": "tests/integration/studio/focus.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 19}

@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: bug
 Issue-Source: finder
 Issue-Key: studio|frame|skip-link-and-route-focus
-Issue-Check-Ids:
+Issue-Check-Ids: studio.skip-link-reaches-page-content studio.route-change-focuses-new-page-content studio.focus-moves-change-nothing-on-screen studio.first-load-keeps-focus-at-document-start
 Issue-Commit: 12d7086aaf0eb2826b9e2dd63d84a12711adce04
 
 # Make the skip link reach the AWS area's content and announce a route change

@@ -2,10 +2,12 @@ import './command.css';
 
 import type { ReactNode } from 'react';
 
+import { useLanguage } from '../i18n/language-context';
+
 interface CommandProps {
   /** What the command does, on the line above it. */
   label: ReactNode;
-  /** A short name for the command: the group is "Command: <name>". */
+  /** A short name for the command, in the current language: the group is "Command: <name>" (its message). */
   name: string;
   /** The command exactly as shown, lines separated by `\n`. */
   command: string;
@@ -15,8 +17,9 @@ interface CommandProps {
 
 /** A command to read and copy: a group with the step label and its control on one line, the command in a `pre`. */
 export function Command({ label, name, command, control }: CommandProps) {
+  const { t } = useLanguage();
   return (
-    <div className="st-cmd" role="group" aria-label={`Command: ${name}`}>
+    <div className="st-cmd" role="group" aria-label={t('command.group', { name })}>
       <div className="st-cmd-label">
         <span>{label}</span>
         {control}
