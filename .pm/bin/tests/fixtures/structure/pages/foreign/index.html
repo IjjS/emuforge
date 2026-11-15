@@ -6,6 +6,7 @@
 <!-- requests http://example.com/x.js and http://127.0.0.1:<port>/ok.js -->
 </head>
 <body>
+<div class="aws-area">
 <nav aria-label="Breadcrumbs">
   <ol>
     <li><a href="/s3">Amazon S3</a></li>
@@ -32,6 +33,7 @@
     </tbody>
   </table>
 </main>
+</div>
 <script>
   // one request to a host that is not loopback, one to the page's own loopback server
   for (const src of ["http://example.com/x.js", "http://127.0.0.1:" + location.port + "/ok.js"]) {

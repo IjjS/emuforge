@@ -6,6 +6,7 @@
 <!-- renders step <k> at ?step=<k>; step 3 never settles (a text changes every 100 ms) -->
 </head>
 <body>
+<div class="aws-area">
 <main>
   <nav aria-label="Breadcrumbs">
     <ol>
@@ -17,6 +18,7 @@
   <nav aria-label="Steps"><ol id="steps"></ol></nav>
   <form id="step" novalidate></form>
 </main>
+</div>
 <script>
   // the markup of the probe (requirement 8): one button per step named "Step <n>: <title>" in the navigation
   // Steps, the active step's title as a heading, its sections as headings with labelled inputs, the form's buttons
