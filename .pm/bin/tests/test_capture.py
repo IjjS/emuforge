@@ -21,6 +21,15 @@ step; they are scored against `specs/wizard.yaml` (screen `iam.create-role`). A 
 `<wt>/output/structure/` is any file there whose name holds `step` (the screen's name holds none). The
 Cloudscape wizard fixture (`fixtures/structure/cloudscape-wizard/`, its spec beside it) is built like the
 Cloudscape fixture, into <checkout>/studio/output/structure-cloudscape-wizard-<pid>/.
+
+Issue 21: every page is an AWS area screen, so each fixture page holds its content in one `<div class="aws-area">`
+(decisions.md R9.2 a). "The frame" is markup before the area in `<body>`: a `<header>` with the link `Skip to
+content`, the buttons `Empty` and `Frame only` and the navigation `Studio` with the link `Home`. The pages
+`frame-around`, `no-area`, `two-areas`, `area-hidden`, `area-empty`, `area-late`, `area-too-late`, `area-replaced`,
+`wizard-frame` and `wizard-no-area-step2` are described in their own comment. `cloudscape-frame/index.html` is put
+over a copy of `cloudscape/` and built like the Cloudscape fixture, into
+<checkout>/studio/output/structure-cloudscape-frame-<pid>/. `CaptureChild` runs the capture script itself with
+node, as `_pmbrowse.capture` does, on a job written by the case.
 """
 import http.server
 import json
@@ -414,6 +423,15 @@ class Cloudscape(CaptureCase):
         self.assertIn(" score=100.0 ", lines[0])
         self.assertIn("unmatched (0)", lines)
 
+    def test_seeded_snapshot_is_the_areas_tree(self):
+        """Issue 21: the snapshot is the area's tree; the score is test_seeded_scores_100's."""
+        site = self.site(BUCKETS)
+        p = self.structure("--serve", site, "--port", free_port(), spec=self.SPEC)
+        self.assertIn(p.returncode, (0, 1), f"stdout:\n{p.stdout}\nstderr:\n{p.stderr}")
+        nodes = self.snapshot(screen=self.SCREEN)["nodes"]
+        self.assertEqual([n for n in nodes if n["role"] == "RootWebArea"], [])
+        self.assertIsNone(nodes[0]["parent"], nodes[0])
+
     def test_empty_slot_matches(self):
         site = self.site([])
         p = self.structure("--serve", site, "--port", free_port(), "--state", "empty", spec=self.SPEC)
@@ -605,6 +623,272 @@ class CloudscapeWizard(CaptureCase):
         lines = p.stdout.splitlines()
         self.assertIn(" score=100.0 ", lines[0])
         self.assertIn("unmatched (0)", lines)
+
+    def test_steps_hold_no_root_web_area(self):
+        """Issue 21: each step's snapshot is the area's tree; the score is test_cloudscape_wizard_scores_100's."""
+        p = self.structure("--serve", self.build(), "--port", free_port(), spec=self.SPEC)
+        self.assertIn(p.returncode, (0, 1), f"stdout:\n{p.stdout}\nstderr:\n{p.stderr}")
+        steps = json.loads((self.out / "iam.cloudscape-wizard-fixture-seeded.ax.json").read_text())["steps"]
+        self.assertTrue(steps)
+        for k, entry in enumerate(steps, 1):
+            self.assertEqual([n for n in entry["nodes"] if n["role"] == "RootWebArea"], [], f"step {k}")
+
+
+# ---------------------------------------------------------------------------------------------------- issue 21
+
+FRAME_NAMES = ("Frame only", "Home", "Skip to content")  # the frame's own names; its Empty is named in each case
+FRAME_ROLES = ("RootWebArea", "banner")
+
+
+def group(stdout, title):
+    """The rows of one group of the standard output (`<title> (<n>)` then indented rows)."""
+    lines = stdout.splitlines()
+    start = next(i for i, ln in enumerate(lines) if re.fullmatch(re.escape(title) + r" \(\d+\)", ln))
+    rows = []
+    for ln in lines[start + 1:]:
+        if not ln.startswith("  "):
+            break
+        rows.append(ln[2:])
+    return rows
+
+
+class AreaCase(CaptureCase):
+    def scored_items(self, result):
+        return {i["id"]: i["status"] for i in result["items"] if i["status"] in ("matched", "unmatched")}
+
+    def assertOnlyUnmatched(self, result, unmatched):
+        s = self.scored_items(result)
+        self.assertEqual(sorted(k for k, v in s.items() if v == "unmatched"), sorted(unmatched), s)
+
+    def assertAreaError(self, p, port, message, screen="s3.bucket-list"):
+        self.assertExit(p, 2)
+        line = self.assertOneErrorLine(p, message)
+        self.assertEqual(line, f"pm-structure: {message}")
+        result = self.result(screen=screen)
+        self.assertEqual(result["verdict"], "error")
+        self.assertEqual(result["error"], message)
+        self.assertEqual(list(self.out.glob("*.ax.json")), [])
+
+
+class AreaPages(AreaCase):
+    def test_frame_button_never_matches(self):
+        """The regression of the issue: on main the frame's Empty matches header.actions[Empty] (score 100.0)."""
+        p = self.serve("frame-around")
+        self.assertExit(p, 0)
+        self.assertIn(" score=94.1 (16/17) ", p.stdout.splitlines()[0])
+        self.assertEqual(group(p.stdout, "unmatched"), ['header.actions[Empty]    button|link "Empty"'])
+        result = self.result()
+        self.assertOnlyUnmatched(result, ["header.actions[Empty]"])
+        self.assertEqual(len(self.scored_items(result)), 17)
+        detail = next(i["detail"] for i in result["items"] if i["id"] == "header.actions[Empty]")
+        self.assertEqual(detail, 'button|link "Empty"')
+
+    def test_frame_never_an_extra(self):
+        """The page has no main, so every node is considered for extras (#4 R5.6); none of the frame's is one."""
+        p = self.serve("frame-around")
+        self.assertIn(p.returncode, (0, 1), f"stdout:\n{p.stdout}\nstderr:\n{p.stderr}")
+        rows = group(p.stdout, "extra")
+        for name in FRAME_NAMES + ("Empty",):
+            self.assertFalse(any(json.dumps(name) in r for r in rows), rows)
+            self.assertNotIn(name, [e["name"] for e in self.result()["extras"]])
+
+    def test_snapshot_holds_the_area_only(self):
+        port = free_port()
+        p = self.serve("frame-around", port=port)
+        self.assertIn(p.returncode, (0, 1), f"stdout:\n{p.stdout}\nstderr:\n{p.stderr}")
+        snap = self.snapshot()
+        self.assertEqual(snap["format"], "pm-structure-snapshot/1")
+        nodes = snap["nodes"]
+        for name in FRAME_NAMES + ("Empty",):
+            self.assertEqual([n for n in nodes if n["name"] == name], [], name)
+        for role in FRAME_ROLES:
+            self.assertEqual([n for n in nodes if n["role"] == role], [], role)
+        self.assertEqual(snap["url"], f"http://127.0.0.1:{port}{ROUTE}")
+        self.assertEqual(snap["viewport"], {"width": 1280, "height": 800})
+        self.assertTrue(snap["browser"].startswith("chromium "), snap["browser"])
+
+    def test_area_snapshot_rescored(self):
+        p = self.serve("frame-around")
+        self.assertExit(p, 0)
+        self.assertIn(" score=94.1 (16/17) ", p.stdout.splitlines()[0])  # the run scored the area's tree
+        again = self.structure("--snapshot", self.out / "s3.bucket-list-seeded.ax.json")
+        self.assertEqual(again.returncode, p.returncode, f"stdout:\n{again.stdout}\nstderr:\n{again.stderr}")
+        self.assertEqual(again.stdout.encode(), p.stdout.encode())
+
+    def test_no_area_root(self):
+        port = free_port()
+        p = self.serve("no-area", port=port)
+        self.assertAreaError(p, port, f"http://127.0.0.1:{port}{ROUTE} has no AWS area root (class aws-area)")
+
+    def test_two_area_roots(self):
+        port = free_port()
+        p = self.serve("two-areas", port=port)
+        self.assertAreaError(p, port, f"http://127.0.0.1:{port}{ROUTE} has 2 AWS area roots (class aws-area)")
+
+    def test_hidden_area_root(self):
+        port = free_port()
+        p = self.serve("area-hidden", port=port)
+        self.assertAreaError(p, port,
+                             f"http://127.0.0.1:{port}{ROUTE}: the AWS area root is not in the accessibility tree")
+
+    def test_empty_area_is_scored(self):
+        p = self.serve("area-empty")
+        self.assertExit(p, 1)
+        self.assertIn(" score=17.6 (3/17) ", p.stdout.splitlines()[0])
+        result = self.result()
+        s = self.scored_items(result)
+        self.assertEqual(sorted(k for k, v in s.items() if v == "matched"),
+                         ["breadcrumbs.order", "header.actions.order", "table.columns.order"], s)
+        self.assertEqual(len(s), 17)
+        self.assertIn("reason: critical item unmatched: header.title, header.primary_action, table.columns[Name], "
+                      "table.columns[AWS Region], table.columns[Creation date]", self.reasons(p))
+
+    def test_area_after_load_while_changing(self):
+        p = self.serve("area-late")
+        self.assertExit(p, 0)
+        self.assertIn(" score=94.1 (16/17) ", p.stdout.splitlines()[0])
+        self.assertOnlyUnmatched(self.result(), ["header.actions[Empty]"])
+
+    def test_area_after_settling(self):
+        port = free_port()
+        p = self.serve("area-too-late", port=port)
+        self.assertExit(p, 2)
+        line = self.assertOneErrorLine(p, f"{ROUTE} has no AWS area root (class aws-area)")
+        self.assertEqual(line, f"pm-structure: http://127.0.0.1:{port}{ROUTE} has no AWS area root (class aws-area)")
+
+    def test_area_root_replaced_never_settles(self):
+        """The tree stays the same while the root element changes: the roots are part of settling (R3.3)."""
+        port = free_port()
+        p = self.serve("area-replaced", port=port)
+        self.assertExit(p, 2)
+        line = self.assertOneErrorLine(p, f"http://127.0.0.1:{port}{ROUTE} did not settle within 10 s")
+        self.assertEqual(line, f"pm-structure: http://127.0.0.1:{port}{ROUTE} did not settle within 10 s")
+
+
+class AreaWizardPages(AreaCase, WizardCaptureCase):
+    def test_frame_button_never_submits(self):
+        p = self.wizard("wizard-frame")
+        self.assertExit(p, 1)
+        self.assertIn("critical item unmatched: submit", " ".join(self.reasons(p)))
+        self.assertEqual(self.reasons(p), ["reason: critical item unmatched: submit"])
+        self.assertOnlyUnmatched(self.wizard_result(), ["submit"])
+        steps = json.loads(self.steps_file().read_text())["steps"]
+        for k, entry in enumerate(steps, 1):
+            nodes = entry["nodes"]
+            # provisional (decisions-needed.md, t1): the breadcrumb link "Create role" is the area's and is matched,
+            # so the frame's "Create role" is told by its role, a button
+            self.assertEqual([n for n in nodes if n["role"] == "button" and n["name"] == "Create role"], [],
+                             f"step {k}")
+            for name in ("Frame only", "Home"):
+                self.assertEqual([n for n in nodes if n["name"] == name], [], f"step {k}: {name}")
+
+    def test_step_without_area(self):
+        port = free_port()
+        p = self.wizard("wizard-no-area-step2", port=port)
+        message = f"http://127.0.0.1:{port}{WIZARD_ROUTE}?step=2 has no AWS area root (class aws-area)"
+        self.assertExit(p, 2)
+        self.assertEqual(self.assertOneErrorLine(p, message), f"pm-structure: {message}")
+        self.assertFalse(self.steps_file().exists())
+        self.assertEqual(self.step_files(), [])
+
+
+class CloudscapeFrame(AreaCase):
+    """The real Cloudscape fixture with the frame before its area (requirement 7)."""
+
+    SPEC = CLOUDSCAPE / "spec.yaml"
+    SCREEN = "s3.cloudscape-fixture"
+    PAGE = FIXTURES / "cloudscape-frame" / "index.html"
+    _build = None
+
+    @classmethod
+    def tearDownClass(cls):
+        if cls._build is not None:
+            shutil.rmtree(cls._build[0], True)
+
+    def build(self):
+        """A copy of cloudscape/ with cloudscape-frame/index.html over its index.html, built once per run with the
+        checkout's Studio Vite as the Cloudscape fixture is; returns its dist directory."""
+        cls = type(self)
+        if cls._build is None:
+            work = STUDIO / "output" / f"structure-cloudscape-frame-{os.getpid()}"
+            if work.exists():
+                shutil.rmtree(work)
+            shutil.copytree(CLOUDSCAPE, work, ignore=shutil.ignore_patterns("spec.yaml"))
+            shutil.copyfile(self.PAGE, work / "index.html")
+            vite = NODE_MODULES / ".bin" / "vite"
+            env = {k: os.environ[k] for k in ("PATH", "HOME", "TMPDIR", "LANG") if k in os.environ}
+            p = subprocess.run([str(vite), "build", str(work), "--outDir", "dist", "--emptyOutDir", "--logLevel",
+                                "warn"], cwd=work, capture_output=True, text=True, env=env, timeout=300)
+            cls._build = (work, p)
+        work, p = cls._build
+        if p.returncode != 0 or not (work / "dist" / "index.html").is_file():
+            self.fail(f"vite build of the Cloudscape frame fixture failed ({p.returncode}):\n{p.stdout}\n{p.stderr}")
+        return work / "dist"
+
+    def test_frame_around_cloudscape(self):
+        site = self.root / "site"
+        shutil.copytree(self.build(), site)
+        (site / "data.json").write_text(json.dumps({"items": BUCKETS}))
+        p = self.structure("--serve", site, "--port", free_port(), spec=self.SPEC)
+        self.assertExit(p, 0)
+        self.assertIn(" score=100.0 ", p.stdout.splitlines()[0])
+        result = self.result(screen=self.SCREEN)
+        nodes = self.snapshot(screen=self.SCREEN)["nodes"]
+        for name in FRAME_NAMES:
+            self.assertEqual([n for n in nodes if n["name"] == name], [], name)
+        for role in FRAME_ROLES:
+            self.assertEqual([n for n in nodes if n["role"] == role], [], role)
+        for item in result["items"]:
+            if item["node"] is not None:
+                self.assertNotIn(item["node"]["name"], FRAME_NAMES, item)
+        for extra in result["extras"]:
+            self.assertNotIn(extra["name"], FRAME_NAMES + ("Empty",), extra)
+        empties = [i for i, n in enumerate(nodes) if n["role"] == "button" and n["name"] == "Empty"]
+        self.assertEqual(len(empties), 1, empties)
+        empty = next(i for i in result["items"] if i["id"] == "header.actions[Empty]")
+        self.assertEqual(empty["status"], "matched")
+        self.assertEqual(empty["node"]["index"], empties[0])
+
+
+class CaptureChild(unittest.TestCase):
+    """The capture script run by itself, as `_pmbrowse.capture` runs it: `node <copy under studio/output/> <job>`."""
+
+    def setUp(self):
+        if not (NODE_MODULES / "@playwright" / "test").exists():
+            self.fail(f"@playwright/test is not installed in {STUDIO}; the capture child needs it")
+        self.root = CHECKOUT / "output" / "tests" / f"capture-{self._testMethodName}-{os.getpid()}"
+        if self.root.exists():
+            shutil.rmtree(self.root)
+        self.root.mkdir(parents=True)
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.wt = self.root / "wt"
+        (self.wt / "studio" / "output").mkdir(parents=True)
+        os.symlink(NODE_MODULES, self.wt / "studio" / "node_modules")
+        self.script = self.wt / "studio" / "output" / f".structure-capture-{os.getpid()}.mjs"
+        shutil.copyfile(BIN / "_pmstructure_capture.mjs", self.script)
+        self.out = self.wt / "output" / "structure" / "s3.bucket-list-seeded.ax.json"
+        self.out.parent.mkdir(parents=True)
+        refuse = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  # bound, never listening, as _pmbrowse does
+        refuse.bind(("127.0.0.1", 0))
+        self.addCleanup(refuse.close)
+        self.job = {"url": f"http://127.0.0.1:{free_port()}{ROUTE}", "out": str(self.out),
+                    "viewport": {"width": 1280, "height": 800}, "settleMs": 250, "settleMax": 10000,
+                    "navTimeout": 60000, "refuse": refuse.getsockname()[1]}
+
+    def run_child(self, job):
+        path = self.root / "job.json"
+        path.write_text(json.dumps(job))
+        return subprocess.run(["node", str(self.script), str(path)], cwd=self.wt / "studio", capture_output=True,
+                              text=True, env=clean_env(PLAYWRIGHT_BROWSERS_PATH=browsers_path()), timeout=180)
+
+    def test_job_without_valid_area_class_refused(self):
+        """The job's url points at a loopback port nothing listens on: a child that opened it would exit 11."""
+        for name, job in (("missing", dict(self.job)), ("not a class name", {**self.job, "areaClass": "aws area"})):
+            with self.subTest(job=name):
+                p = self.run_child(job)
+                self.assertEqual(p.returncode, 13, f"stdout:\n{p.stdout}\nstderr:\n{p.stderr}")
+                self.assertEqual(p.stderr.splitlines(), ["pm-structure-capture: job has no valid areaClass"])
+                self.assertFalse(self.out.exists())
 
 
 if __name__ == "__main__":
