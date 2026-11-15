@@ -59,3 +59,4 @@
 {"check_id": "studio.check-browser-sends-preflights-to-the-server", "path": "tests/integration/studio/check-browser.spec.ts", "module": "studio", "operations": [], "labels": ["regression"], "issue": 15}
 {"check_id": "studio.check-browser-sees-the-engine-preflight-refusal", "path": "tests/integration/studio/check-browser.spec.ts", "module": "studio", "operations": [], "labels": ["regression"], "issue": 15}
 {"check_id": "studio.check-browser-refuses-non-loopback-destinations", "path": "tests/integration/studio/check-browser.spec.ts", "module": "studio", "operations": [], "labels": ["safety"], "issue": 15}
+{"check_id": "studio.home-kill-notice-stop-step-names-container", "path": "tests/integration/studio/home-kill-notice.spec.ts", "module": "studio", "operations": [], "labels": ["own-emulator", "lifecycle", "regression"], "issue": 18}
