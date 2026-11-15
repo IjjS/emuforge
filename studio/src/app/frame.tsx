@@ -14,9 +14,15 @@ const BAR_ID = 'studio-bar';
 /** The id of Studio's own `main`, the target of "Skip to content" on Studio's own pages. */
 const MAIN_ID = 'main';
 
-/** The document title of requirement R4.4: `<page title> | EmuForge Studio`, or `EmuForge Studio` on Home. */
-function useDocumentTitle(pageTitle: string | null): void {
+/**
+ * The document title of requirement R4.4: `<page title> | EmuForge Studio`, or `EmuForge Studio` on Home (`null`).
+ * `undefined` leaves the title as it is: a page that does not know its title yet.
+ */
+function useDocumentTitle(pageTitle: string | null | undefined): void {
   useEffect(() => {
+    if (pageTitle === undefined) {
+      return;
+    }
     document.title = pageTitle === null ? STUDIO_NAME : `${pageTitle} | ${STUDIO_NAME}`;
   }, [pageTitle]);
 }
@@ -107,7 +113,8 @@ interface ProviderPageProps {
  * its own `main` landmark and tells the page's title, from which the document title is made.
  */
 export function ProviderPage({ area: Area }: ProviderPageProps) {
-  const [title, setTitle] = useState<string | null>(null);
+  // Unknown until the area, once loaded, tells its page's title.
+  const [title, setTitle] = useState<string>();
   useDocumentTitle(title);
   return (
     <div className="st-area">
