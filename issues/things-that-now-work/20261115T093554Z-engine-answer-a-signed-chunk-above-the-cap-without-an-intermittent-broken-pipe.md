@@ -4,7 +4,7 @@ Issue-Module: engine
 Issue-Kind: bug
 Issue-Source: worker
 Issue-Key: engine|relay-s3-signed-chunk-above-cap-refused|intermittent-broken-pipe
-Issue-Check-Ids:
+Issue-Check-Ids: engine.relay-s3-signed-chunk-above-cap-ends-cleanly engine.relay-early-answer-matches-direct engine.relay-s3-signed-chunk-above-cap-refused
 Issue-Commit: 4b9442c73158bd0bfd8046fd978f19c226b6acaf
 
 # Answer a signed chunk above the cap without an intermittent broken pipe
