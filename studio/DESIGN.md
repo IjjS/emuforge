@@ -49,6 +49,7 @@ colors:
   idle-dark: 'oklch(0.7 0.012 255)'
   scroll-shade-dark: 'oklch(1 0 0 / 0.18)'
 typography:
+  # `fontFamily` is the stack of Latin text; the stack of each other script is under Typography, Faces per script.
   display:
     fontFamily: 'Instrument Sans, ui-sans-serif, system-ui, sans-serif'
     fontSize: '30px'
@@ -164,14 +165,42 @@ components:
     textColor: '{colors.text}'
     rounded: '{rounded.s}'
     padding: '6px 10px'
+  language-control:
+    textColor: '{colors.text-2}'
+    typography: '{typography.label}'
+    rounded: '{rounded.m}'
+    height: '36px'
+    padding: '0 10px 0 9px'
+  language-control-open:
+    backgroundColor: '{colors.sunk}'
+    textColor: '{colors.text}'
+  language-control-narrow:
+    rounded: '{rounded.m}'
+    height: '40px'
+    width: '40px'
+    padding: '0'
+  language-menu:
+    backgroundColor: '{colors.surface}'
+    rounded: '{rounded.m}'
+    width: '248px'
+    padding: '6px'
+  language-option:
+    textColor: '{colors.text}'
+    rounded: '{rounded.s}'
+    height: '38px'
+    padding: '6px 10px'
+  language-option-hover:
+    backgroundColor: '{colors.sunk}'
 ---
 
 # Design System: EmuForge Studio
 
 This file records the design that passed the Screen stage of issue 16: the mock `.pm/issue-16/mocks/alt/` (picked
 in that issue's `decisions.md`), with the changes its review (`review-candidate-alt.md`) asked the build to make
-stated here as the design. It covers Studio's own layer only. Where this file and the mock differ, this file is the
-design.
+stated here as the design. Issue 17 added the language control, the faces per script and the rules of text in other
+languages, from its passed mock (`.pm/issue-17/mocks/`, revised r2) with the changes its review
+(`review-revised-r2.md`) asked for. It covers Studio's own layer only. Where this file and a mock differ, this file
+is the design.
 
 ## Overview
 
@@ -193,7 +222,10 @@ reads as the frame above the provider's surface rather than a different material
 - Status in its own hues: green for connected, red for error and unreachable, blue for checking and information,
   grey for not started and unknown.
 - Flat: depth from tone and hairlines, never from shadows.
-- Instrument Sans for the interface; JetBrains Mono only for code, addresses, paths and commands.
+- Instrument Sans for the interface; JetBrains Mono only for code, addresses, paths and commands. A script
+  Instrument Sans lacks is drawn in a face chosen for it, and Latin text stays Instrument Sans in every language but
+  Vietnamese, which is wholly in its own face.
+- Twelve languages, chosen in the bar; left to right in all of them.
 
 ### The two layers
 
@@ -207,7 +239,9 @@ Studio has two layers, and each screen belongs to exactly one.
 **The Two-Layer Rule.** Studio's design stops at the edge of a provider area, and the provider's stops at the edge
 of Studio's. No Studio rule matches the area's root or anything inside it; no provider class or rule reaches
 Studio's own elements, `html` or `body`. An EmuForge-only state inside a provider area (the `/aws` index, "no
-screen yet", the area's "Page not found") is built from the provider's design system, not from this one.
+screen yet", the area's "Page not found") is built from the provider's design system, not from this one. Studio's
+own layer is in the current language; the AWS area is English in every language, and its root says so with
+`lang="en"`, so the frame on an area page is the one place where two languages sit side by side, each marked.
 
 **The One Layer Rule.** Every rule of Studio's own CSS sits in one cascade layer named `studio`
 (`@layer studio { … }`). Being layered, it never outranks a provider's unlayered rules, and the built app tells
@@ -216,8 +250,13 @@ Studio's rules apart from a provider's by that layer. No declaration in the `stu
 **The Two Containers Rule.** Studio's own containers are the bar and the page (`main`). Every inherited property
 (font, size, weight, line height, colour) and the universal, selection and focus rules start on those two and
 never on a common ancestor of a provider area. `html` and `body` get only `color-scheme`, the `--st-*` tokens and
-non-inherited properties (background, margin, scroll padding). The element that holds a provider area is layout
-only (`display: block`), with no inherited property.
+non-inherited properties (background, margin, scroll padding). The element that holds a provider area (`.st-area`)
+is layout only, with no inherited property: `display: block` and `isolation: isolate`.
+
+**The Isolated Area Rule.** The holder of a provider area makes its own stacking context (`isolation: isolate`,
+not inherited). However high the area's own layers go (Cloudscape's sticky and overlay layers reach `z-index`
+7000), they stay inside it, under Studio's sticky bar and the language menu, and the area keeps its state behind
+the open menu. Studio never raises its own layers to outbid a provider's.
 
 **The Prefix Rule.** Every Studio custom property is named `--st-*`. They are declared on `:root` and inherit
 into a provider area, where nothing reads them: no provider rule names an `--st-*` property.
@@ -288,12 +327,18 @@ provider link, focus. It is never a background for a section and never a status.
 
 **Character:** a plain, slightly narrow grotesque for the interface, with weights between the usual steps (560, 650) so emphasis is firm without shouting; a monospace that keeps commands and addresses legible and copyable.
 
-Both faces are the latin subset, variable weight, WOFF2, from `@fontsource-variable/instrument-sans` and
-`@fontsource-variable/jetbrains-mono` 5.3.0 (SIL Open Font License 1.1): Instrument Sans with weights 400 to 700,
-JetBrains Mono 100 to 800, `font-display: swap`. They are files of Studio's own source, served from the app's own
-origin. The licence text and copyright notices of both faces travel with the files, next to them (for example
-`ui/fonts/OFL-instrument-sans.txt` and `ui/fonts/OFL-jetbrains-mono.txt`), as OFL 1.1 requires for redistribution.
-No font comes from another origin, and no text is baked into an image.
+**Script Faces:** Noto Sans Thai for Thai, Noto Sans for Cyrillic and for Vietnamese; the platform's own face for
+Korean and Japanese (Faces per script, below).
+
+All served faces are variable weight, WOFF2, from `@fontsource-variable/instrument-sans`, `jetbrains-mono`,
+`noto-sans` and `noto-sans-thai` 5.3.0 (SIL Open Font License 1.1), `font-display: swap`: Instrument Sans in its
+`latin` and `latin-ext` subsets with weights 400 to 700, JetBrains Mono `latin` 100 to 800, Noto Sans `cyrillic`,
+`latin` and `vietnamese` and Noto Sans Thai `thai` 100 to 900. Every Instrument Sans and Noto file is declared with
+its Fontsource `unicode-range`, so the browser fetches a file only when a page draws a character of its range. They
+are files of Studio's own source, served from the app's own origin. The licence text and copyright notices of each
+face travel with the files, next to them (`ui/fonts/OFL-instrument-sans.txt`, `OFL-jetbrains-mono.txt`,
+`OFL-noto-sans.txt`, `OFL-noto-sans-thai.txt`), as OFL 1.1 requires for redistribution. No font comes from another
+origin, and no text is baked into an image.
 
 Weights: 400 (text), 560 (labels, tabs, buttons), 650 (headings, status, the wordmark's "EmuForge").
 
@@ -311,7 +356,67 @@ Weights: 400 (text), 560 (labels, tabs, buttons), 650 (headings, status, the wor
   15px in the code font, inside a 16px sentence.
 - **Wordmark** (16px, -0.01em): "EmuForge" at 650 in `text`, then "Studio" at 400 in `text-2`.
 
+### Faces per script
+
+Studio's twelve languages are English, Korean, Japanese, Spanish, Brazilian Portuguese, French, German, Russian,
+Italian, Polish, Vietnamese and Thai. The interface face is drawn per script run: a Latin run (a name, a number, a
+command's name in a sentence, a Latin word) is Instrument Sans in every language, and a run of another script is
+drawn in the one face chosen for that script. A word is never drawn in two faces. The interface stack is the token
+`--st-font-ui`:
+
+| Text                                                          | Stack (`--st-font-ui`)                                                                                                                | Face of the script's own runs                                                                 |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| English, Spanish, Portuguese, French, German, Italian, Polish | `'Instrument Sans', 'Noto Sans Cyrillic', 'Noto Sans Thai', ui-sans-serif, system-ui, sans-serif`                                     | Instrument Sans: `latin`, and `latin-ext` for the letters Polish needs (ą ć ę ł ń ś ź ż)      |
+| Russian                                                       | the same                                                                                                                              | Noto Sans `cyrillic` (as `Noto Sans Cyrillic`), by its `unicode-range` after Instrument Sans  |
+| Thai                                                          | the same                                                                                                                              | Noto Sans Thai, by its `unicode-range` after Instrument Sans                                  |
+| Vietnamese                                                    | `'Noto Sans Vietnamese', ui-sans-serif, system-ui, sans-serif`                                                                        | all of the text in Noto Sans (`latin` and `vietnamese` under one family name), Latin runs too |
+| Korean                                                        | `'Instrument Sans', 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', 'Noto Sans CJK KR', ui-sans-serif, system-ui, sans-serif` | the platform's Hangul face                                                                    |
+| Japanese                                                      | `'Instrument Sans', 'Hiragino Sans', 'Yu Gothic UI', 'Noto Sans JP', 'Noto Sans CJK JP', ui-sans-serif, system-ui, sans-serif`        | the platform's kana and kanji face                                                            |
+
+- **Why Vietnamese is whole:** its letters are Latin letters with marks Instrument Sans lacks (ạ, ế, ư, ơ), so a
+  stack by run would draw one word in two faces. Every interface text of a Vietnamese page is Noto Sans.
+- **Why Korean and Japanese use the platform's face:** a CJK face is too large to serve. The face must still draw
+  every character of the catalogue with no fallback glyph in the check and capture environment (headless Chromium of
+  `@playwright/test`); a language whose script has no such platform face there gets a served face instead.
+- **The stack per element:** the token is set on `:root` by the page's language, and again on every element of the
+  bar and the page that names its own `lang`, so a language's own name in another script (ไทย on a Japanese page,
+  Русский or 한국어 on a Vietnamese one, "Tiếng Việt" on an English one) is drawn in its own script's face on every
+  page.
+- **The wordmark** "EmuForge Studio" is Instrument Sans in every language, Vietnamese too (`--st-font-mark`).
+- **Code** is JetBrains Mono in every language; commands, addresses and paths are not translated.
+- **Thai size:** Noto Sans Thai is declared with `size-adjust: 110%`. Measured at 100px, a Thai consonant's body
+  (น, อ, ก) is 55px against Instrument Sans's 51px x-height, yet in a mixed line Thai reads smaller (thin strokes,
+  small counters); at 110% the body is about 1.18 x-height and 0.84 cap height, so Thai and the Latin words beside
+  it read as one size.
+- **Before the menu opens:** the first pointer over or focus on the language control loads the faces of every
+  language's own name (`document.fonts.load()`), so no name swaps its face while the menu is open the first time.
+- **A new script** adds its face here and in `ui/fonts.css`, with its licence file beside it; a new language in a
+  script that already has a face adds no CSS.
+
+### Text in every language
+
+- **One scale:** the sizes, weights and spacing of the hierarchy hold in every script.
+- **No negative tracking on Thai, Korean or Japanese:** text in those languages has `letter-spacing: 0` (Display
+  and Headline lose their -0.022em and -0.01em); the wordmark, Latin in every language, keeps its own.
+- **Thai line height:** a Thai page's text is at 1.7 and its headings at 1.45, for the marks above and below the
+  line.
+- **Thai wrapping:** Thai has no spaces between words and the browser breaks it by its dictionary. Its text has
+  `text-wrap: pretty`, so a line does not end on a short tail. A loanword written in Thai letters that the
+  dictionary does not know (คลาวด์ "cloud", เอนจิน "engine") would break inside; the Thai catalogue joins its
+  letters with U+2060 WORD JOINER, so it breaks only before or after.
+- **The long-word guard:** all of Studio's text, in the bar and the page, has `hyphens: auto` (with
+  `hyphenate-limit-chars: 12 5 5`) and `overflow-wrap: break-word`, so a long word (a German compound) hyphenates
+  where its language allows, or breaks, inside its box instead of pushing the box wider. It is on every language,
+  so a new language with long words needs no CSS. Inline code and commands are never broken (Components).
+- **Text in another language than the page** (the engine's English message, a language's own name, an area page's
+  English title) carries its own `lang`, takes its own language's face, and has `hyphens: manual`: it is shown as it
+  came, never hyphenated by the page's language.
+- **Direction:** every language is left to right; no page sets `dir` other than `ltr`.
+
 ### Named Rules
+
+**The One Face Per Word Rule.** A word is drawn in one face: Latin runs in Instrument Sans (Vietnamese wholly in
+Noto Sans), each other script's runs in its own face, no fallback glyph.
 
 **The Mono Means Literal Rule.** The code font is for text a person types, copies or reads back exactly
 (commands, addresses, paths, error codes). Never for labels or decoration.
@@ -321,7 +426,7 @@ Weights: 400 (text), 560 (labels, tabs, buttons), 650 (headings, status, the wor
 One column inside a sticky bar.
 
 - **The bar** is 56px tall, sticky at the top, full width, with a gutter of 32px (16px below 640px). The wordmark
-  sits left; the tabs follow with a 24px gap (12px below 480px).
+  sits left; the tabs follow with a 24px gap (8px at 480px and below); the language control sits at the bar's end.
 - **The page** (`main`) is at most 1120px wide, with the gutter at each side, 40px above (28px below 640px) and
   72px below.
 - **Rhythm:** the page head is 36px above the first section; sections are 40px apart; a section's header is 12px
@@ -337,9 +442,11 @@ One column inside a sticky bar.
     screen. A notice's icon moves into its heading so the text gets the full width. Services are one list. The
     copied state of a command shows no text beside the step label: the check icon and green edge on the button and
     the polite region carry it.
-  - 480px: the bar's gap and the tabs' padding tighten (12px, 0 8px).
-- **No sideways scroll** at 1280 and 390 wide. A command never wraps: its block scrolls within itself. The path
-  on "Page not found" breaks only after a `/`; a segment wider than the box scrolls within the box.
+  - 480px: the bar's gap and the tabs' padding tighten (8px, 0 7px), and the language control is its globe alone,
+    40px square, so the wordmark, every tab and the control fit at 390 in every language (Polish "Strona główna"
+    with "Polski" would not).
+- **No sideways scroll** at 1280 and 390 wide, in every language. A command never wraps: its block scrolls within
+  itself. The path on "Page not found" breaks only after a `/`; a segment wider than the box scrolls within the box.
 
 ### Named Rules
 
@@ -370,7 +477,8 @@ so a notice band inside it follows the panel's curve. Icons are 24-unit line ico
 ### The frame (Studio's bar)
 
 - **Content:** the wordmark "EmuForge Studio" linking to `/`, then a navigation landmark labelled "Studio" with
-  "Home" and one tab per provider from the providers list ("AWS").
+  "Home" and one tab per provider from the providers list ("AWS"), then the language control at the bar's end. The
+  bar is the same on every page, a provider area's pages too, and in the current language.
 - **Tabs:** 14px, 560, `text-2`, full bar height, 0 12px padding. Hover: `text`. Current: `text` with a 2px
   verdigris underline drawn inside the tab's bottom edge. "Home" is current on `/` (`aria-current="page"`); a
   provider's tab is current on its index (`page`) and marked current (`true`) anywhere deeper in its area.
@@ -380,6 +488,46 @@ so a notice band inside it follows the panel's curve. Icons are 24-unit line ico
   content target the page names, past a provider area's navigation and breadcrumbs. It is hidden until focused,
   then shown at the bar's start with the focus ring, above the bar's other content. A route change moves focus to
   the new page's content target the same way, without a ring; a first load leaves focus at the document's start.
+
+### Language control
+
+The bar's last item, in the bar's Tab order after the tabs; never inside a provider area. A quiet control like the
+tabs, with a control edge so it reads as something that opens.
+
+- **Trigger:** a button with a globe icon, the current language's own name (in that language's `lang` and face)
+  and a chevron. 36px tall, 0 10px 0 9px padding, 6px gap; label type (14px, 560) in `text-2`, no fill, a 1px
+  `control-line` edge (3.87:1 / 4.00:1 against the bar's `surface`, as the buttons' edge), 10px radius, never
+  wrapped. Its accessible name is "Language" and the own name, as the catalogue joins them ("Sprache: Deutsch"), so
+  the name it shows is part of it.
+- **States:** hover turns the text `text`; open (`aria-expanded="true"`) is `text` on `sunk` with the chevron
+  turned 180° (120ms ease-out; none under `prefers-reduced-motion`); keyboard focus shows the 2px `focus` ring.
+  There is no loading, empty or error state: a choice applies at once, and storage that cannot be written changes
+  nothing visible.
+- **480px and below:** the globe alone, 40px square (beside Studio's 36px buttons, a touch target of its own); the
+  accessible name still names the language.
+- **Menu:** a `menu` named "Language" in the current language, 248px wide, 8px under the trigger, aligned to its
+  right edge; at 480px and below it spans the bar between the gutters, 4px under the bar. `surface` fill, 1px
+  `control-line` edge, 10px radius, 6px padding, no shadow (The Hairline Rule). It is at most the visible height
+  less the bar and 24px (`100dvh`, `100vh` where that is not known), and scrolls within itself without scrolling the
+  page. It is drawn above everything of a provider area (The Isolated Area Rule).
+- **Options:** `menuitemradio`s: "Browser language" first, in the current language, with the language the
+  browser's languages resolve to under it (14px, 400, `text-2`, in that language's `lang`), its accessible name
+  "Browser language, <name>"; a `line` separator; then the twelve languages by their own names, each in its own
+  `lang` and face, in the order of `Intl.Collator('und')` (Deutsch, English, Español, Français, Italiano, Polski,
+  Português, Tiếng Việt, Русский, ไทย, 한국어, 日本語). Each option is at least 38px tall, 6px 10px padding, 15px at
+  1.35 in `text`, a 6px radius, an 18px check column 10px before the label.
+- **Chosen and here:** exactly one option is checked: "Browser language" while no choice is stored, otherwise the
+  stored language. The chosen option is marked by its check (in `accent`) and weight 560 only. `sunk` marks where
+  the pointer or keyboard focus is, never the choice; focus draws the ring inside the option (offset -2px).
+- **Keyboard:** Enter, Space or a click opens it, and so do Down and Up on the trigger. Opening puts focus on the
+  checked option, so a reflexive Enter changes nothing. Down and Up move and wrap; Home and End go to the first and
+  last; letters typed within half a second go to the next option whose label (an own name, or "Browser language")
+  starts with them. Enter or Space chooses. Esc closes without a change; choosing closes; both put focus back on the
+  trigger. Tab closes and moves on from the control. A press outside closes it and leaves focus where the press put
+  it; focus that leaves the control closes it.
+- **Choosing:** applies at once, on the same page, without a reload: Studio's own text changes in one step, focus
+  stays on the control, scroll and what is open stay. Choosing the checked option changes nothing. A language is
+  stored in the browser (`emuforge.studio.language`); "Browser language" removes the stored choice.
 
 ### Panels
 
@@ -428,7 +576,9 @@ so a notice band inside it follows the panel's curve. Icons are 24-unit line ico
 - **Build once:** a disclosure ("First run? Build the image once, from the root of your EmuForge checkout"), 14px,
   560, with a chevron in `text-2` that turns 90° when open (160ms, `cubic-bezier(0.16, 1, 0.3, 1)`); the build
   command is inside it, 12px below the summary.
-- **Inline code:** in a sentence, code font 13px on `sunk`, 4px radius, 1px 5px padding, never broken.
+- **Inline code:** in a sentence, code font 13px on `sunk`, 4px radius, 1px 5px padding, never broken. An image or
+  container name in a step label (`aws-emulator`, `emuforge-emulator-<port>`) is inline code, kept whole in every
+  language.
 
 ### Buttons
 
@@ -477,7 +627,10 @@ so a notice band inside it follows the panel's curve. Icons are 24-unit line ico
 - **Do** follow the operating system's colour scheme, while the page is open, in both layers at once: `html` has
   `color-scheme: light` or `dark`; the AWS area's root carries `awsui-dark-mode` exactly when dark. Store nothing;
   there is no toggle.
-- **Do** serve Instrument Sans and JetBrains Mono from the app's own origin.
+- **Do** serve Instrument Sans, JetBrains Mono and every script's face from the app's own origin, each Instrument
+  Sans and Noto file with its `unicode-range`.
+- **Do** draw Latin runs in Instrument Sans in every language but Vietnamese, each other script in its own face,
+  and mark every text in another language than the page with its `lang`.
 - **Do** give every status its icon and word, every icon-only meaning a text alternative, and every focusable
   element the 2px `focus` ring.
 - **Do** keep commands on one line each, scrolling within their block.
@@ -492,4 +645,7 @@ so a notice band inside it follows the panel's curve. Icons are 24-unit line ico
 - **Don't** use Tailwind, CSS-in-JS or a third-party component library.
 - **Don't** load a font, image or other asset from another origin, or bake text into an image.
 - **Don't** use shadows for depth, or the accent as a status.
+- **Don't** give Thai, Korean or Japanese text a negative letter spacing, or hyphenate text in another language
+  than the page.
+- **Don't** raise a Studio layer's `z-index` to cover a provider area: the area's holder isolates its stacking.
 - **Don't** clip a focusable element with a mask or `overflow`, so its ring is never cut.
