@@ -18,6 +18,8 @@ export interface Stack {
 export interface StackOptions {
   /** Start an emulator of the check's own (checks labelled `own-emulator`). */
   ownEmulator?: boolean;
+  /** With `ownEmulator`: the lowest port that emulator may get (10000 for a port of five digits). */
+  ownEmulatorMinPort?: number | undefined;
   /** Start the engine with this `--studio-port` instead of the port Studio is served on. */
   engineStudioPort?: number;
 }
@@ -29,7 +31,7 @@ export interface StackOptions {
 export async function startStack(ctx: Ctx, options: StackOptions = {}): Promise<Stack> {
   const studio = await StudioServer.start(ctx);
   let emulator: OwnEmulator | null = null;
-  if (options.ownEmulator) emulator = await OwnEmulator.start(ctx);
+  if (options.ownEmulator) emulator = await OwnEmulator.start(ctx, { minPort: options.ownEmulatorMinPort });
   else await requireRunEmulator(ctx);
   const emulatorPort = emulator ? emulator.port : ctx.emulatorPort;
   const engineOptions: EngineOptions = {

@@ -19,16 +19,27 @@ export async function freePort(): Promise<number> {
   });
 }
 
+export interface FreePortOptions {
+  /** The lowest port to accept (for example 10000, for a port of five digits); any port when unset. */
+  min?: number | undefined;
+}
+
 /**
  * A free loopback port that is none of `taken` and whose `$HOME/.aws/emulator/<port>/` does not exist, so no
- * emulator ran there and a guard may remove that directory later without touching another emulator's files.
+ * emulator ran there and a guard may remove that directory later without touching another emulator's files. With
+ * `min`, only a port of at least `min` counts; `EnvError` when 20 tries give none.
  */
-export async function freePortExcept(home: string, taken: number[]): Promise<number> {
+export async function freePortExcept(home: string, taken: number[], options: FreePortOptions = {}): Promise<number> {
+  const min = options.min ?? 0;
   for (let i = 0; i < 20; i++) {
     const port = await freePort();
-    if (!taken.includes(port) && !fs.existsSync(emulatorDir(home, port))) return port;
+    if (port >= min && !taken.includes(port) && !fs.existsSync(emulatorDir(home, port))) return port;
   }
-  throw new EnvError('no free loopback port after 20 tries');
+  throw new EnvError(
+    min > 0
+      ? `no free loopback port of at least ${String(min)} after 20 tries`
+      : 'no free loopback port after 20 tries',
+  );
 }
 
 /**
