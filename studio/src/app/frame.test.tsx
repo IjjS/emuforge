@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react';
 import { createMemoryRouter, RouterProvider, type RouteObject } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { LanguageProvider } from '../i18n/language-provider';
 import { Frame, ProviderPage } from './frame';
 import type { ProviderAreaProps } from './provider-list';
 import { Providers } from './providers';
@@ -32,21 +33,28 @@ afterEach(() => {
   vi.doUnmock('./provider-list');
 });
 
-/** The frame alone at `path`, above an empty page. */
+/** The frame alone at `path`, above an empty page, in the browser's language. */
 function openFrame(path: string) {
   const router = createMemoryRouter([{ element: <Frame />, children: [{ path: '*', element: null }] }], {
     initialEntries: [path],
   });
-  return render(<RouterProvider router={router} />);
+  return render(
+    <LanguageProvider>
+      <RouterProvider router={router} />
+    </LanguageProvider>,
+  );
 }
 
-/** Studio at `path`, with its real routes (or `withRoutes`). */
-function openStudio(path: string, withRoutes: RouteObject[] = routes) {
+/**
+ * Studio at `path`, with its real routes (or `withRoutes`, and the providers of the same module graph, `withProviders`,
+ * since routes evaluated afresh read the context of a language module evaluated afresh).
+ */
+function openStudio(path: string, withRoutes: RouteObject[] = routes, WithProviders: typeof Providers = Providers) {
   const router = createMemoryRouter(withRoutes, { initialEntries: [path] });
   const result = render(
-    <Providers>
+    <WithProviders>
       <RouterProvider router={router} />
-    </Providers>,
+    </WithProviders>,
   );
   return { ...result, router };
 }
@@ -365,7 +373,8 @@ describe('"Skip to content" and a route change', () => {
       return { ...actual, PROVIDERS: providers };
     });
     const fresh = await import('./routes');
-    const { router } = openStudio('/', fresh.routes);
+    const freshProviders = await import('./providers');
+    const { router } = openStudio('/', fresh.routes, freshProviders.Providers);
 
     await act(() => router.navigate('/aws'));
     expect(screen.queryByRole('heading', { level: 1, name: 'Amazon Web Services' })).toBeNull();
