@@ -1,8 +1,11 @@
 //! Pure SigV4 (`AWS4-HMAC-SHA256`): which form of authentication a client request carries, its canonical
-//! request, the string to sign and the signature. No I/O, no clock: every date comes from the request.
+//! request, the string to sign and the signature, and the chunk and trailer signatures of a signed-chunk upload.
+//! No I/O, no clock: every date comes from the request.
 //!
 //! Canonicalization follows the AWS General Reference, "Create a signed AWS API request". The engine never
 //! verifies a client's signature; [`classify`] only reads its form.
+
+use std::fmt;
 
 use http::header::{AUTHORIZATION, HeaderMap, HeaderName};
 use http::request::Parts;
@@ -16,6 +19,11 @@ pub const ALGORITHM: &str = "AWS4-HMAC-SHA256";
 /// The payload hash the engine adds and signs when a header-signed client sent none, and the payload hash of
 /// every query-signed request.
 pub const UNSIGNED_PAYLOAD: &str = "UNSIGNED-PAYLOAD";
+/// The `x-amz-content-sha256` value of an upload whose chunks each carry an HMAC signature. Compared exactly.
+pub const SIGNED_CHUNKS: &str = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD";
+/// The `x-amz-content-sha256` value of an upload whose chunks and trailer each carry an HMAC signature. Compared
+/// exactly.
+pub const SIGNED_CHUNKS_TRAILER: &str = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER";
 /// The `x-amz-content-sha256` values whose body carries a chain of chunk signatures. Compared exactly.
 pub const SIGNED_CHUNK_MODES: [&str; 4] = [
     "STREAMING-AWS4-HMAC-SHA256-PAYLOAD",
@@ -23,6 +31,10 @@ pub const SIGNED_CHUNK_MODES: [&str; 4] = [
     "STREAMING-AWS4-ECDSA-P256-SHA256-PAYLOAD",
     "STREAMING-AWS4-ECDSA-P256-SHA256-PAYLOAD-TRAILER",
 ];
+/// The algorithm line of a chunk's string to sign.
+const CHUNK_ALGORITHM: &str = "AWS4-HMAC-SHA256-PAYLOAD";
+/// The algorithm line of a trailer's string to sign.
+const TRAILER_ALGORITHM: &str = "AWS4-HMAC-SHA256-TRAILER";
 /// The last element of every credential scope.
 const TERMINATOR: &str = "aws4_request";
 const AMZ_DATE: &str = "x-amz-date";
@@ -267,6 +279,22 @@ pub fn string_to_sign(amz_date: &str, scope: &Scope, canonical_request: &str) ->
 
 /// The lower-case hex HMAC-SHA256 of `string_to_sign` under the signing key derived from `secret` and `scope`.
 pub fn signature(secret: &Secret, scope: &Scope, string_to_sign: &str) -> String {
+    sign_with(&signing_key(secret, scope), string_to_sign)
+}
+
+/// The SigV4 signing key of one credential scope, derived from a secret. `Debug` prints `[redacted]`; there is
+/// no `Display`.
+#[derive(Clone)]
+pub struct SigningKey(hmac::Key);
+
+impl fmt::Debug for SigningKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("[redacted]")
+    }
+}
+
+/// `AWS4<secret>` HMAC-chained through the scope's date, region, service and `aws4_request`.
+pub fn signing_key(secret: &Secret, scope: &Scope) -> SigningKey {
     let derive = |key: &[u8], data: &str| {
         hmac::sign(&hmac::Key::new(hmac::HMAC_SHA256, key), data.as_bytes())
     };
@@ -274,7 +302,74 @@ pub fn signature(secret: &Secret, scope: &Scope, string_to_sign: &str) -> String
     let region_key = derive(date_key.as_ref(), &scope.region);
     let service_key = derive(region_key.as_ref(), &scope.service);
     let signing_key = derive(service_key.as_ref(), TERMINATOR);
-    hex(derive(signing_key.as_ref(), string_to_sign).as_ref())
+    SigningKey(hmac::Key::new(hmac::HMAC_SHA256, signing_key.as_ref()))
+}
+
+/// The lower-case hex HMAC-SHA256 of `string_to_sign` under `key`.
+pub fn sign_with(key: &SigningKey, string_to_sign: &str) -> String {
+    hex(hmac::sign(&key.0, string_to_sign.as_bytes()).as_ref())
+}
+
+/// The signature of one chunk of a signed-chunk upload (the final, empty chunk included): `string_to_sign` is
+/// `AWS4-HMAC-SHA256-PAYLOAD`, the request date, the scope, the previous signature (the seed for the first chunk),
+/// the hex SHA-256 of the empty string and the hex SHA-256 of `data`, joined by newlines.
+pub fn chunk_signature(
+    key: &SigningKey,
+    amz_date: &str,
+    scope: &Scope,
+    previous: &str,
+    data: &[u8],
+) -> String {
+    let empty = digest::digest(&digest::SHA256, b"");
+    let data = digest::digest(&digest::SHA256, data);
+    sign_with(
+        key,
+        &format!(
+            "{CHUNK_ALGORITHM}\n{amz_date}\n{}\n{previous}\n{}\n{}",
+            scope_text(scope),
+            hex(empty.as_ref()),
+            hex(data.as_ref())
+        ),
+    )
+}
+
+/// The trailing headers as they are signed: sorted by lower-cased name, each `<lower-cased name>:<value>\n` with
+/// the value's leading and trailing ASCII whitespace removed. No header gives no byte.
+pub fn canonical_trailer(headers: &[(&[u8], &[u8])]) -> Vec<u8> {
+    let mut lines: Vec<(Vec<u8>, &[u8])> = headers
+        .iter()
+        .map(|(name, value)| (name.to_ascii_lowercase(), value.trim_ascii()))
+        .collect();
+    lines.sort_by(|(left, _), (right, _)| left.cmp(right));
+    let mut canonical = Vec::new();
+    for (name, value) in lines {
+        canonical.extend_from_slice(&name);
+        canonical.push(b':');
+        canonical.extend_from_slice(value);
+        canonical.push(b'\n');
+    }
+    canonical
+}
+
+/// The signature of the trailer of a signed-chunk upload: `string_to_sign` is `AWS4-HMAC-SHA256-TRAILER`, the
+/// request date, the scope, the final chunk's signature and the hex SHA-256 of `canonical` (a
+/// [`canonical_trailer`]), joined by newlines.
+pub fn trailer_signature(
+    key: &SigningKey,
+    amz_date: &str,
+    scope: &Scope,
+    previous: &str,
+    canonical: &[u8],
+) -> String {
+    let hash = digest::digest(&digest::SHA256, canonical);
+    sign_with(
+        key,
+        &format!(
+            "{TRAILER_ALGORITHM}\n{amz_date}\n{}\n{previous}\n{}",
+            scope_text(scope),
+            hex(hash.as_ref())
+        ),
+    )
 }
 
 /// `<yyyymmdd>/<region>/<service>/aws4_request`.

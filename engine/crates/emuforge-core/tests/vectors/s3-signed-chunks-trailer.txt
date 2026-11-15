@@ -1,0 +1,37 @@
+# Source: Amazon S3 API Reference, "Signature calculations for trailing headers (chunked uploads) (AWS Signature
+# Version 4)", https://docs.aws.amazon.com/AmazonS3/latest/developerguide/sigv4-streaming-trailers.html (the API/
+# path of the same page redirects there; read 2026-11-15 as its markdown version, sigv4-streaming-trailers.md),
+# section "Examples: Checking signature calculations" (PUT /examplebucket/chunkObject.txt, x-amz-content-sha256:
+# STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER, x-amz-trailer: x-amz-checksum-crc32c).
+# Credentials of the example: AKIAIOSFODNN7EXAMPLE / wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY.
+# The data of every chunk is the byte of `data-byte` repeated ("with value 97 for letter 'a'"). The body is each
+# chunk as the page's "Chunk data sent" writes it, `<size in hex>;chunk-signature=<signature>\r\n<data>\r\n`, the
+# final chunk's header line, then each trailing header line, `x-amz-trailer-signature:<trailer signature>` and an
+# empty line, each ending `\r\n`; its length is the page's Content-Length. `trailer-hash` is the page's hex
+# SHA-256 of `x-amz-checksum-crc32c:sOO8/Q==\n`.
+== secret ==
+wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+== amz-date ==
+20130524T000000Z
+== scope ==
+20130524/us-east-1/s3/aws4_request
+== content-length ==
+66946
+== data-byte ==
+a
+== seed-signature ==
+106e2a8a18243abcf37539882f36619c00e2dfc72633413f02d3b74544bfeb8e
+== chunk-sizes ==
+65536
+1024
+0
+== chunk-signatures ==
+b474d8862b1487a5145d686f57f013e54db672cee1c953b3010fb58501ef5aa2
+1c1344b170168f8e65b41376b44b20fe354e373826ccbbe2c1d40a8cae51e5c7
+2ca2aba2005185cf7159c6277faf83795951dd77a3a99e6e65d5c9f85863f992
+== trailing-headers ==
+x-amz-checksum-crc32c:sOO8/Q==
+== trailer-hash ==
+1e376db7e1a34a8ef1c4bcee131a2d60a1cb62503747488624e10995f448d774
+== trailer-signature ==
+d81f82fc3505edab99d459891051a732e8730629a2e4a59689829ca17fe2e435

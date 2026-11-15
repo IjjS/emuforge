@@ -10,15 +10,24 @@
 //   taken), so the run says nothing about Studio;
 // - `failed` when an assertion did not hold, a bounded wait ran out, or the check timed out.
 //
-// Every request the browser makes is checked against the destination rule first: a request to anything but a
-// loopback address is aborted before it leaves and logged. Checks reach only Studio, the engine and the emulator.
+// The browser context a check gets (`context`, and `page` in it) keeps the destination rule: checks reach only
+// Studio, the engine and the emulator. The rule is the context's proxy (`refuse.ts`), a loopback listener the check
+// owns, with a bypass list of exactly `127.0.0.0/8` and `[::1]`: a request to a loopback address goes direct and
+// unchanged; a request to anything else, host names such as `localhost` included, reaches the listener, which logs
+// `refused browser request to <origin>: checks reach only loopback addresses` and closes the connection, so the page
+// sees the request fail and nothing leaves the machine.
+//
+// The contract installs no request interception on that context or page: no `route`, no `routeFromHAR`. While any
+// route is installed, Playwright answers every CORS preflight itself with a canned allow and never sends it, so the
+// page would not see the server's own answer (issue 15). A check does not add a route to them, and does not set
+// `proxy` with `test.use`, which would replace the destination rule.
 
 import { test as base, type TestInfo } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 
 import { runEnv, type RunEnv } from './env';
-import { isLoopback } from './net';
+import { LOOPBACK_BYPASS, startRefusingProxy } from './refuse';
 import { redact } from './secrets';
 
 const envErrors: string[] = [];
@@ -112,17 +121,11 @@ export const test = base.extend<{ ctx: Ctx }>({
     { auto: true },
   ],
 
-  context: async ({ context, ctx }, use) => {
-    await context.route('**/*', async (route) => {
-      const url = new URL(route.request().url());
-      if (url.protocol === 'data:' || url.protocol === 'blob:' || isLoopback(url.hostname)) {
-        await route.fallback();
-        return;
-      }
-      ctx.log(`refused browser request to ${url.origin}: checks reach only loopback addresses`);
-      await route.abort('blockedbyclient');
-    });
-    await use(context);
+  // The context's proxy, set up after `ctx` and stopped by it once the context is closed.
+  proxy: async ({ ctx }, use) => {
+    const proxy = await startRefusingProxy((line) => ctx.log(line));
+    ctx.own(proxy);
+    await use({ server: proxy.server, bypass: LOOPBACK_BYPASS });
   },
 });
 
