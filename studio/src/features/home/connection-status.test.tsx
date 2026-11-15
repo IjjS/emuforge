@@ -1,5 +1,7 @@
-import { fireEvent, screen, within } from '@testing-library/react';
+import { act, fireEvent, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { formatNumber, formatTime } from '../../i18n/format';
 import {
   MAX_COMMAND_LINE,
   startEmulatorCommand,
@@ -21,6 +23,10 @@ import {
   emulatorDown,
   engineRefusal,
   FakeEngine,
+  languageStore,
+  MARK_CLOSE,
+  MARK_OPEN,
+  MARKED_TAG,
   noticeHeading,
   noticeText,
   norm,
@@ -694,5 +700,38 @@ describe('Connection: step 1 names the container it stops (issue 18)', () => {
     expect(noticeText()).not.toMatch(/\b1\. /);
     expectStepLabel('start emulator', 'Start the emulator on port 9297');
     expect(commandsIn(connectionNotice())).toEqual([START_9297]);
+  });
+});
+
+describe('Connection: a change of language keeps the rhythm of the checks (R2.6)', () => {
+  it('with fake timers, a check at 0 s and the language changed at 2 s: the next check is sent at 5 s, no other', async () => {
+    engine.healthAnswers = [connected()];
+    const checkedAt = Date.now();
+    const language = languageStore('en');
+    renderApp('/', language);
+    await advance();
+    expect(engine.healths).toHaveLength(1);
+
+    await advance(2_000);
+    act(() => {
+      language.choose(MARKED_TAG);
+    });
+    await advance();
+    // The page is in the other language now, with the last answer kept, and no request was sent for the change.
+    const time = formatTime(MARKED_TAG, checkedAt);
+    const seconds = formatNumber(MARKED_TAG, 5);
+    expect(connectionDescription()).toBe(
+      `${MARK_OPEN}Last checked ${time}. Checked every ${seconds} seconds.${MARK_CLOSE}`,
+    );
+    expect(engine.healths).toHaveLength(1);
+
+    await advance(2_999);
+    expect(engine.healths).toHaveLength(1);
+    await advance(1);
+    expect(engine.healths).toHaveLength(2);
+    await advance(4_999);
+    expect(engine.healths).toHaveLength(2);
+    await advance(1);
+    expect(engine.healths).toHaveLength(3);
   });
 });
