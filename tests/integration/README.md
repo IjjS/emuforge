@@ -25,3 +25,24 @@ server. The run's output is `output/logs/integration-playwright.log`.
 When `studio/package.json` is missing, its install fails or its build fails, every Studio check fails at its first
 step, as the engine checks do without an engine. Studio's port is `EMUFORGE_STUDIO_PORT` when set, else a free
 loopback port.
+
+## Product stage
+
+`run` also builds the product form of issue 34: the image of the root `docker-compose.yml`, once per run, with
+`docker compose --progress plain build` at the checkout's root under the run's own name (`EMUFORGE_IMAGE` set to
+`emuforge-it-product-<run id>`; log `output/logs/integration-product-build.log`). It tags the run's pinned emulator
+image under the run's own name too (`EMUFORGE_EMULATOR_IMAGE` set to `emuforge-it-emulator-<run id>`), so a
+situation 4 start in a check never rebuilds or retags `aws-emulator`. The checks never use the names `emuforge` or
+`aws-emulator` and never port 9297. When it ends, `run` removes both names and every container started from them,
+with their Compose networks.
+
+The product checks (`studio/product-*.spec.ts`, ids `engine.product-…`) start a form each through
+`studio/support/product.ts`, which holds the start and stop command lines of each situation (the README check
+compares the README with them). A form runs at the checkout's root on free ports of its own, with an environment of
+exactly `HOME`, the three ports, the two image names and a `PATH` on which `cargo`, `rustc`, `bun` and `node` are not
+found (the Docker client's own `DOCKER_CONFIG`, `DOCKER_HOST` and `DOCKER_CONTEXT` are passed on when set). Its
+containers are those that carry its Compose project's label, `emuforge-app-<studio port>`. Each check stops its form
+with the stop command and removes whatever is left, whatever its verdict.
+
+When `docker-compose.yml` is missing or the image does not build, every product check still runs and fails at its
+start command, as the engine checks do without an engine.
