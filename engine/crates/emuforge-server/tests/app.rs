@@ -1750,15 +1750,24 @@ async fn answer_of(app: &Router, request: Request<Body>) -> Answer {
     }
 }
 
-/// The same answer `app` gives to `request` without a connection: status, every header it sets, body.
+/// The same answer `app` gives to `request` without a connection: status, every value of every header it sets,
+/// in order, and body.
 fn assert_unchanged(wire: &Wire, direct: &Answer, case: &str) {
     assert_eq!(wire.status, direct.status.as_u16(), "case {case}");
-    for (name, value) in &direct.headers {
-        assert_eq!(
-            wire.header(name.as_str()),
-            Some(value.to_str().unwrap()),
-            "case {case}: header {name}"
-        );
+    for name in direct.headers.keys() {
+        let expected = direct
+            .headers
+            .get_all(name)
+            .iter()
+            .map(|value| value.to_str().unwrap())
+            .collect::<Vec<_>>();
+        let seen = wire
+            .headers
+            .iter()
+            .filter(|(header, _)| header == name.as_str())
+            .map(|(_, value)| value.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(seen, expected, "case {case}: header {name}");
     }
     assert_eq!(wire.body, direct.body.as_ref(), "case {case}: body");
 }
