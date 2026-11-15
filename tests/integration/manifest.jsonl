@@ -97,3 +97,8 @@
 {"check_id": "studio.brand-social-image-holds-its-layout", "path": "tests/integration/studio/brand-files.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 36}
 {"check_id": "studio.brand-colours-are-studio-tokens", "path": "tests/integration/studio/brand-files.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 36}
 {"check_id": "studio.brand-rasters-are-their-vectors-drawn", "path": "tests/integration/studio/brand-files.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 36}
+{"check_id": "studio.document-icons-are-served-as-images", "path": "tests/integration/studio/icons.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 36}
+{"check_id": "studio.favicon-follows-the-colour-scheme", "path": "tests/integration/studio/icons.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 36}
+{"check_id": "studio.frame-wordmark-shows-the-tile", "path": "tests/integration/studio/frame-logo.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 36}
+{"check_id": "studio.frame-tile-stays-while-engine-and-emulator-are-away", "path": "tests/integration/studio/frame-logo.spec.ts", "module": "studio", "operations": [], "labels": ["lifecycle", "own-emulator"], "issue": 36}
+{"check_id": "studio.frame-bar-fits-with-the-tile-in-every-language", "path": "tests/integration/studio/frame-logo.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 36}
