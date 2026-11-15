@@ -584,6 +584,12 @@ enum Script {
         size: usize,
         closed: mpsc::UnboundedSender<tokio::time::Instant>,
     },
+    /// One answer with `Content-Length`, sent after the head and before any body byte is read; the stand-in then
+    /// holds the connection without reading, so the upload cannot end before the answer arrives.
+    Early {
+        status: u16,
+        body: &'static [u8],
+    },
     Error(RelayError),
 }
 
@@ -701,6 +707,18 @@ async fn stand_in(mut stream: DuplexStream, script: Script, head_only: bool) {
                 let _ = stream.read(&mut byte).await;
             }
             let _ = closed.send(tokio::time::Instant::now());
+        }
+        Script::Early { status, body } => {
+            let head = format!(
+                "HTTP/1.1 {status} X\r\ncontent-length: {}\r\n\r\n",
+                body.len()
+            );
+            if stream.write_all(head.as_bytes()).await.is_err()
+                || stream.write_all(body).await.is_err()
+            {
+                return;
+            }
+            std::future::pending::<()>().await;
         }
         Script::Error(_) => {}
     }
@@ -1506,4 +1524,375 @@ async fn studio_signed_chunk_put_reaches_the_relay_with_its_mode_and_body_unchan
     assert_eq!(seen.len(), 1, "the relay was not called once");
     assert_eq!(seen[0].0.as_deref(), Some(SIGNED_CHUNKS));
     assert_eq!(seen[0].1.as_ref(), body.as_bytes(), "the body unchanged");
+}
+
+// ---- Ending a connection after an early answer (issue 22) ----
+
+/// A listener that accepts the in-memory connections sent to it.
+struct Connections(mpsc::UnboundedReceiver<DuplexStream>);
+
+impl axum::serve::Listener for Connections {
+    type Io = DuplexStream;
+    type Addr = std::net::SocketAddr;
+
+    async fn accept(&mut self) -> (DuplexStream, std::net::SocketAddr) {
+        match self.0.recv().await {
+            Some(stream) => (stream, ([127, 0, 0, 1], 50000).into()),
+            None => std::future::pending().await,
+        }
+    }
+
+    fn local_addr(&self) -> io::Result<std::net::SocketAddr> {
+        Ok(([127, 0, 0, 1], 8297).into())
+    }
+}
+
+/// `app` served over [`IdleListener`] on in-memory connections, each opened by [`Served::connect`].
+struct Served(mpsc::UnboundedSender<DuplexStream>);
+
+impl Served {
+    fn new(app: Router) -> Served {
+        let (connections, accepted) = mpsc::unbounded_channel();
+        let listener = IdleListener::new(Connections(accepted), CLIENT_WRITE_IDLE);
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        Served(connections)
+    }
+
+    /// Opens a connection and returns its peer.
+    fn connect(&self) -> DuplexStream {
+        let (peer, server) = tokio::io::duplex(64 * 1024);
+        self.0.send(server).unwrap();
+        peer
+    }
+}
+
+/// An answer as the peer read it.
+struct Wire {
+    status: u16,
+    headers: Vec<(String, String)>,
+    body: Vec<u8>,
+}
+
+impl Wire {
+    /// Splits the head from the body of `bytes`, which hold one answer.
+    fn parse(bytes: &[u8]) -> Wire {
+        let split = bytes
+            .windows(4)
+            .position(|w| w == b"\r\n\r\n")
+            .unwrap_or_else(|| panic!("no answer head in {:?}", String::from_utf8_lossy(bytes)));
+        let head = std::str::from_utf8(&bytes[..split]).unwrap();
+        let mut lines = head.split("\r\n");
+        let status = lines
+            .next()
+            .unwrap()
+            .split(' ')
+            .nth(1)
+            .unwrap()
+            .parse()
+            .unwrap();
+        let headers = lines
+            .map(|line| {
+                let (name, value) = line.split_once(':').unwrap();
+                (name.to_ascii_lowercase(), value.trim().to_owned())
+            })
+            .collect();
+        Wire {
+            status,
+            headers,
+            body: bytes[split + 4..].to_vec(),
+        }
+    }
+
+    fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(header, _)| header == name)
+            .map(|(_, value)| value.as_str())
+    }
+
+    fn text(&self) -> String {
+        String::from_utf8(self.body.clone()).unwrap()
+    }
+}
+
+/// Reads one answer whose body has a `Content-Length`, leaving the connection open.
+async fn read_answer(peer: &mut DuplexStream) -> Wire {
+    let mut bytes = Vec::new();
+    let mut byte = [0; 1];
+    while !bytes.ends_with(b"\r\n\r\n") {
+        assert_eq!(
+            peer.read(&mut byte).await.unwrap(),
+            1,
+            "the stream ended in the head"
+        );
+        bytes.push(byte[0]);
+    }
+    let length: usize = Wire::parse(&bytes)
+        .header("content-length")
+        .expect("no content-length")
+        .parse()
+        .unwrap();
+    let mut body = vec![0; length];
+    peer.read_exact(&mut body).await.unwrap();
+    bytes.extend_from_slice(&body);
+    Wire::parse(&bytes)
+}
+
+const UPLOAD: usize = 1024 * 1024;
+const UPLOAD_WRITE: usize = 64 * 1024;
+
+/// Request headers, by name and value.
+type Headers = Vec<(&'static str, String)>;
+
+/// The head of a `PUT` of [`UPLOAD`] bytes: the request line, `headers` and `Content-Length`.
+fn upload_head(path: &str, headers: &Headers) -> String {
+    let mut head = format!("PUT {path} HTTP/1.1\r\n");
+    for (name, value) in headers {
+        head.push_str(&format!("{name}: {value}\r\n"));
+    }
+    head.push_str(&format!("content-length: {UPLOAD}\r\n\r\n"));
+    head
+}
+
+/// The headers of an S3 request header-signed with the client key, with the engine's `Host`; each of `extra`
+/// replaces the header of its name or is added.
+fn signed_s3(extra: &[(&'static str, &str)]) -> Headers {
+    let mut headers: Headers = vec![
+        ("host", ENGINE_HOST.to_owned()),
+        (
+            "authorization",
+            format!(
+                "AWS4-HMAC-SHA256 Credential={CLIENT_KEY}/20261115/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date, Signature={SIGNATURE}"
+            ),
+        ),
+        ("x-amz-date", AMZ_DATE.to_owned()),
+    ];
+    headers.retain(|(name, _)| !extra.iter().any(|(other, _)| other == name));
+    headers.extend(
+        extra
+            .iter()
+            .map(|(name, value)| (*name, (*value).to_owned())),
+    );
+    headers
+}
+
+/// Sends `head`, then the whole [`UPLOAD`]-byte body in 64 KiB writes on a new connection, then reads until the
+/// stream ends. Asserts every write completed and the stream ended cleanly (every byte, then EOF, no read error);
+/// returns the answer.
+async fn upload_ending_cleanly(served: &Served, head: &str, case: &str) -> Wire {
+    let mut peer = served.connect();
+    peer.write_all(head.as_bytes())
+        .await
+        .unwrap_or_else(|error| panic!("case {case}: the head write failed: {error}"));
+    let chunk = vec![b'x'; UPLOAD_WRITE];
+    for write in 0..UPLOAD / UPLOAD_WRITE {
+        peer.write_all(&chunk)
+            .await
+            .unwrap_or_else(|error| panic!("case {case}: body write {write} failed: {error}"));
+    }
+    let mut received = Vec::new();
+    peer.read_to_end(&mut received)
+        .await
+        .unwrap_or_else(|error| panic!("case {case}: the stream did not end cleanly: {error}"));
+    Wire::parse(&received)
+}
+
+fn app_limited(relay: RelayFn, max_in_flight: usize) -> Router {
+    app(AppState {
+        engine_port: NonZeroU16::new(8297).unwrap(),
+        emulator: emulator(),
+        probe: reachable_probe(),
+        relay,
+        max_in_flight,
+        studio_origin: StudioOrigin::new(NonZeroU16::new(8296).unwrap()),
+        session: Arc::new(SessionToken::generate().unwrap()),
+    })
+}
+
+#[tokio::test(start_paused = true)]
+async fn chunk_too_large_before_the_body_is_read_lets_the_client_send_it_all_and_ends_cleanly() {
+    let relay = TestRelay::answering(Script::Error(RelayError::ChunkTooLarge));
+    let served = Served::new(app_relaying(reachable_probe(), relay.relay.clone()));
+    let headers = signed_s3(&[("x-amz-content-sha256", SIGNED_CHUNKS)]);
+    let answer =
+        upload_ending_cleanly(&served, &upload_head("/b/k", &headers), "chunk too large").await;
+    assert_eq!(answer.status, 400);
+    assert_eq!(xml_element(&answer.text(), "Code"), "ChunkTooLarge");
+    assert_eq!(answer.header("connection"), Some("close"));
+    assert_eq!(relay.seen().len(), 1, "the relay was not called once");
+}
+
+#[tokio::test(start_paused = true)]
+async fn early_emulator_answer_lets_the_client_send_it_all_and_ends_cleanly() {
+    let relay = TestRelay::answering(Script::Early {
+        status: 413,
+        body: b"<Error><Code>EntityTooLarge</Code></Error>",
+    });
+    let served = Served::new(app_relaying(reachable_probe(), relay.relay.clone()));
+    let headers = signed_s3(&[]);
+    let answer = upload_ending_cleanly(&served, &upload_head("/b/k", &headers), "early 413").await;
+    assert_eq!(answer.status, 413);
+    assert_eq!(answer.header("connection"), Some("close"));
+    assert_eq!(answer.text(), "<Error><Code>EntityTooLarge</Code></Error>");
+}
+
+/// `app`'s answer to `request` without a connection, CORS headers included.
+async fn answer_of(app: &Router, request: Request<Body>) -> Answer {
+    let response = tokio::time::timeout(Duration::from_secs(1), app.clone().oneshot(request))
+        .await
+        .expect("the request waited instead of answering at once")
+        .unwrap();
+    let (parts, body) = response.into_parts();
+    Answer {
+        status: parts.status,
+        headers: parts.headers,
+        body: axum::body::to_bytes(body, usize::MAX).await.unwrap(),
+    }
+}
+
+/// The same answer `app` gives to `request` without a connection: status, every header it sets, body.
+fn assert_unchanged(wire: &Wire, direct: &Answer, case: &str) {
+    assert_eq!(wire.status, direct.status.as_u16(), "case {case}");
+    for (name, value) in &direct.headers {
+        assert_eq!(
+            wire.header(name.as_str()),
+            Some(value.to_str().unwrap()),
+            "case {case}: header {name}"
+        );
+    }
+    assert_eq!(wire.body, direct.body.as_ref(), "case {case}: body");
+}
+
+/// A request answered before its body is read, with the app that answers it and the status it gets.
+struct EarlyCase {
+    case: &'static str,
+    app: Router,
+    path: &'static str,
+    headers: Headers,
+    status: u16,
+}
+
+#[tokio::test(start_paused = true)]
+async fn answers_before_the_body_is_read_let_the_client_send_it_all_and_end_cleanly() {
+    const STUDIO: &str = "http://127.0.0.1:8296";
+    let unavailable =
+        TestRelay::answering(Script::Error(RelayError::Unavailable(Reason::NotStarted)));
+    let ok = TestRelay::answering(Script::ok());
+    let mut held = Held::new(2);
+    let busy_app = app_relaying(held.probe.clone(), ok.relay.clone());
+    let _first = spawn_get(&busy_app, health_request());
+    let _second = spawn_get(&busy_app, health_request());
+    held.wait_entered(2).await;
+    let refusing = || app_relaying(reachable_probe(), ok.relay.clone());
+    let host: Headers = vec![("host", ENGINE_HOST.to_owned())];
+    let cases = [
+        EarlyCase {
+            case: "503 Busy",
+            app: busy_app,
+            path: "/b/k",
+            headers: signed_s3(&[]),
+            status: 503,
+        },
+        EarlyCase {
+            case: "503 EmulatorUnavailable",
+            app: app_relaying(reachable_probe(), unavailable.relay.clone()),
+            path: "/b/k",
+            headers: signed_s3(&[]),
+            status: 503,
+        },
+        EarlyCase {
+            case: "foreign Host",
+            app: refusing(),
+            path: "/b/k",
+            headers: signed_s3(&[("host", "example.com:8297")]),
+            status: 421,
+        },
+        EarlyCase {
+            case: "foreign Origin",
+            app: refusing(),
+            path: "/b/k",
+            headers: signed_s3(&[("origin", "http://example.com")]),
+            status: 403,
+        },
+        EarlyCase {
+            case: "unidentified caller",
+            app: refusing(),
+            path: "/b/k",
+            headers: signed_s3(&[("origin", STUDIO)]),
+            status: 401,
+        },
+        EarlyCase {
+            case: "404 NotFound",
+            app: refusing(),
+            path: "/__emuforge/other",
+            headers: host.clone(),
+            status: 404,
+        },
+        EarlyCase {
+            case: "405 MethodNotAllowed",
+            app: refusing(),
+            path: HEALTH,
+            headers: host,
+            status: 405,
+        },
+    ];
+    for EarlyCase {
+        case,
+        app,
+        path,
+        headers,
+        status,
+    } in cases
+    {
+        let mut direct = Request::builder().method(Method::PUT).uri(path);
+        for (name, value) in &headers {
+            direct = direct.header(*name, value);
+        }
+        let direct = answer_of(&app, direct.body(Body::from(vec![b'x'; UPLOAD])).unwrap()).await;
+        assert_eq!(direct.status.as_u16(), status, "case {case}: direct");
+        let served = Served::new(app);
+        let wire = upload_ending_cleanly(&served, &upload_head(path, &headers), case).await;
+        assert_unchanged(&wire, &direct, case);
+    }
+    assert!(ok.seen().is_empty(), "a refused request was relayed");
+}
+
+#[tokio::test(start_paused = true)]
+async fn draining_connection_holds_no_in_flight_permit() {
+    let relay = TestRelay::answering(Script::Error(RelayError::ChunkTooLarge));
+    let served = Served::new(app_limited(relay.relay.clone(), 1));
+    let headers = signed_s3(&[("x-amz-content-sha256", SIGNED_CHUNKS)]);
+    let mut draining = served.connect();
+    draining
+        .write_all(upload_head("/b/k", &headers).as_bytes())
+        .await
+        .unwrap();
+    let mut received = Vec::new();
+    draining.read_to_end(&mut received).await.unwrap();
+    assert_eq!(Wire::parse(&received).status, 400, "the first answer");
+
+    let mut second = served.connect();
+    second
+        .write_all(
+            b"GET /__emuforge/health HTTP/1.1\r\nHost: 127.0.0.1:8297\r\nConnection: close\r\n\r\n",
+        )
+        .await
+        .unwrap();
+    let answer = read_answer(&mut second).await;
+    assert_eq!(answer.status, 200, "{}", answer.text());
+    drop(draining);
+}
+
+#[tokio::test(start_paused = true)]
+async fn keep_alive_connection_answers_a_second_request_without_a_drain_between() {
+    let served = Served::new(app_with(reachable_probe()));
+    let mut peer = served.connect();
+    for request in ["first", "second"] {
+        peer.write_all(b"GET /__emuforge/health HTTP/1.1\r\nHost: 127.0.0.1:8297\r\n\r\n")
+            .await
+            .unwrap();
+        let answer = read_answer(&mut peer).await;
+        assert_eq!(answer.status, 200, "case {request}");
+        assert_eq!(answer.header("connection"), None, "case {request}");
+    }
 }
