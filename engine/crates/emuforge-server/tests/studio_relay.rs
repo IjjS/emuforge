@@ -756,6 +756,32 @@ async fn relayed_request_from_studio_with_another_token_is_401_session_invalid_w
 }
 
 #[tokio::test]
+async fn relayed_request_from_studio_with_another_token_is_401_varying_on_the_session() {
+    let harness = Harness::relaying_ok().await;
+    let foreign = foreign_token().await;
+    let zeros = "0".repeat(64);
+    let cases = [
+        (
+            "another app's token, GET /bucket/key",
+            empty(studio_form(Method::GET, "/bucket/key", "s3", &foreign)),
+        ),
+        (
+            "64 zeros, GET /bucket/key",
+            empty(studio_form(Method::GET, "/bucket/key", "s3", &zeros)),
+        ),
+        ("another app's token, ListBuckets", list_buckets(&foreign)),
+    ];
+    for (case, request) in cases {
+        let answer = harness.send(request, case).await;
+        answer.assert_s3_error(StatusCode::UNAUTHORIZED, "SessionInvalid", case);
+        answer.assert_www_authenticate(case);
+        answer.assert_cors(case);
+        answer.assert_vary_studio(case);
+    }
+    harness.assert_untouched("another token");
+}
+
+#[tokio::test]
 async fn relayed_request_with_the_token_only_in_the_query_is_401_session_required() {
     let harness = Harness::relaying_ok().await;
     let target = format!("/?x-id=ListBuckets&X-EmuForge-Session={}", harness.token);
@@ -935,6 +961,55 @@ async fn relayed_answer_vary_gains_origin_and_is_not_exposed() {
         ["Accept-Encoding", "Origin", "X-EmuForge-Session"]
     );
     assert!(!answer.exposed("Vary").contains(&"vary"));
+}
+
+#[tokio::test]
+async fn relayed_answer_to_studio_keeps_its_cache_headers_byte_for_byte_and_exposes_them() {
+    let cache_headers = [
+        ("Cache-Control", "max-age=3600"),
+        ("Expires", "Mon, 16 Nov 2026 10:24:15 GMT"),
+        ("Last-Modified", "Sun, 15 Nov 2026 10:24:15 GMT"),
+        ("ETag", "\"5eb63bbbe01eeed093cb22bb8f5acdc3\""),
+    ];
+    let body = b"hello world";
+    let mut headers: Vec<(&'static str, String)> = cache_headers
+        .iter()
+        .map(|(name, value)| (*name, (*value).to_owned()))
+        .collect();
+    headers.push(("Content-Length", body.len().to_string()));
+    let harness = Harness::new(Script::Fixed {
+        status: 200,
+        headers,
+        body: body.to_vec(),
+    })
+    .await;
+    let answer = harness
+        .send(
+            empty(studio_form(
+                Method::GET,
+                "/bucket/key",
+                "s3",
+                &harness.token,
+            )),
+            "cache headers",
+        )
+        .await;
+    assert_eq!(answer.status, StatusCode::OK);
+    assert_eq!(answer.body, &body[..]);
+    for (name, value) in cache_headers {
+        let sent: Vec<&[u8]> = answer
+            .headers
+            .get_all(name)
+            .iter()
+            .map(HeaderValue::as_bytes)
+            .collect();
+        assert_eq!(sent, [value.as_bytes()], "{name}");
+    }
+    answer.assert_cors("cache headers");
+    answer.assert_exposes(
+        &["cache-control", "etag", "expires", "last-modified"],
+        "cache headers",
+    );
 }
 
 /// An answer with `Access-Control-*` headers of its own, as an upstream might send.
@@ -1197,5 +1272,52 @@ async fn answers_on_relayed_paths_never_carry_the_token() {
     for (case, request) in cases {
         let answer = harness.send(request, case).await;
         answer.assert_no_token(&token, case);
+    }
+}
+
+#[tokio::test]
+async fn studio_answers_carry_the_token_in_no_header() {
+    let relaying = Harness::relaying_ok().await;
+    let unavailable =
+        Harness::new(Script::Error(RelayError::Unavailable(Reason::NotStarted))).await;
+    let cases = [
+        (
+            "relayed 200 with the token",
+            &relaying,
+            list_buckets(&relaying.token),
+            StatusCode::OK,
+        ),
+        (
+            "401 SessionInvalid",
+            &relaying,
+            list_buckets(&foreign_token().await),
+            StatusCode::UNAUTHORIZED,
+        ),
+        (
+            "relayed-path preflight",
+            &relaying,
+            empty(sdk_preflight("/", S, "PUT")),
+            StatusCode::NO_CONTENT,
+        ),
+        (
+            "503 EmulatorUnavailable with the token",
+            &unavailable,
+            list_buckets(&unavailable.token),
+            StatusCode::SERVICE_UNAVAILABLE,
+        ),
+    ];
+    for (case, harness, request, status) in cases {
+        let answer = read(harness.app.clone().oneshot(request).await.unwrap()).await;
+        assert_eq!(answer.status, status, "case {case}: status");
+        for (name, value) in &answer.headers {
+            assert!(
+                !name.as_str().contains(harness.token.as_str()),
+                "case {case}: the token is in a header name"
+            );
+            assert!(
+                !String::from_utf8_lossy(value.as_bytes()).contains(harness.token.as_str()),
+                "case {case}: the token is in header {name}"
+            );
+        }
     }
 }

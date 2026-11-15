@@ -511,6 +511,19 @@ async fn health_from_studio_without_token_is_401_session_required_without_probe(
 }
 
 #[tokio::test]
+async fn health_from_studio_without_token_is_401_varying_on_origin_and_the_session() {
+    let (app, calls) = reachable();
+    let answer = send(
+        &app,
+        studio(Method::GET, HEALTH).body(Body::empty()).unwrap(),
+    )
+    .await;
+    answer.assert_error(StatusCode::UNAUTHORIZED, "SessionRequired", "no token");
+    answer.assert_vary_studio("no token");
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
 async fn health_from_studio_with_a_wrong_token_is_401_session_invalid_without_probe() {
     let (app, calls) = reachable();
     let token = token(&app).await;
@@ -870,6 +883,27 @@ async fn session_from_studio_with_a_foreign_host_is_421_with_cors_and_no_token()
         answer.assert_cors(host);
         answer.assert_no_token(&token, host);
     }
+}
+
+#[tokio::test]
+async fn studio_request_with_a_foreign_host_is_421_varying_on_origin_and_the_session() {
+    let (app, calls) = reachable();
+    let token = token(&app).await;
+    for host in ["evil.example:8297", "localhost:8297"] {
+        let answer = send(
+            &app,
+            Request::get(HEALTH)
+                .header(HOST, host)
+                .header(ORIGIN, S)
+                .header(SESSION_HEADER, &token)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        answer.assert_error(StatusCode::MISDIRECTED_REQUEST, "MisdirectedRequest", host);
+        answer.assert_vary_studio(host);
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]
