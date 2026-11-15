@@ -137,8 +137,15 @@ test('studio.frame-leads-between-layers', async ({ ctx, page }) => {
     async () => {
       const found: string[] = [];
       for (const { path, h1 } of PAGES) {
-        await openPage(page, path, h1);
-        await expect(page, `title on ${path}`).toHaveTitle(titleOf(h1));
+        await page.goto(path);
+        await expect(page.getByRole('heading', { level: 1 }), `the page at ${path}`).toBeVisible();
+        const own = await heading(page, h1 ?? 'Home')
+          .waitFor({ state: 'visible', ...ACTION })
+          .then(() => true)
+          .catch(() => false);
+        if (!own) found.push(`${path}: no "${h1 ?? 'Home'}" header`);
+        const title = await page.title();
+        if (title !== titleOf(h1)) found.push(`${path}: the title is "${title}", not "${titleOf(h1)}"`);
         const mains = await page.getByRole('main').count();
         if (mains !== 1) found.push(`${path}: ${String(mains)} main landmarks`);
         if ((await f.banner.count()) !== 1) {
