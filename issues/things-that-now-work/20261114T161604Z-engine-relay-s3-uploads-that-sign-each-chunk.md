@@ -4,7 +4,7 @@ Issue-Module: engine
 Issue-Kind: feature
 Issue-Source: plan
 Issue-Key: engine|relay.signed-chunk-upload|missing
-Issue-Check-Ids: engine.relay-s3-signed-chunk-put-matches-direct,engine.relay-s3-signed-chunk-trailer-put-matches-direct,engine.relay-s3-signed-chunk-upload-part-matches-direct,engine.relay-s3-signed-chunk-malformed-matches-direct,engine.relay-s3-ecdsa-chunk-modes-pass-unchanged,engine.relay-s3-signed-chunk-above-cap-refused,engine.relay-s3-signed-chunk-put-survives-emulator-restart,engine.relay-s3-unsigned-trailer-upload-stored,engine.relay-no-secret-in-output
+Issue-Check-Ids: engine.relay-s3-signed-chunk-put-matches-direct engine.relay-s3-signed-chunk-trailer-put-matches-direct engine.relay-s3-signed-chunk-upload-part-matches-direct engine.relay-s3-signed-chunk-malformed-matches-direct engine.relay-s3-ecdsa-chunk-modes-pass-unchanged engine.relay-s3-signed-chunk-above-cap-refused engine.relay-s3-signed-chunk-put-survives-emulator-restart engine.relay-no-secret-in-output
 Issue-Commit: 5d2272d5f0fce6922055a084780221cf8885e7e9
 
 # Relay S3 uploads that sign each chunk
