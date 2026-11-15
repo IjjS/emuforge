@@ -231,3 +231,185 @@ export async function layoutIssues(page: Page, lines: string[]): Promise<LayoutI
     return out;
   }, lines);
 }
+
+/** One thing a notice shows, in the order it is drawn (`noticeItems`). */
+export type NoticeItem =
+  | {
+      /** A run of text in one block (a paragraph, a step's label), whitespace collapsed. */
+      kind: 'text';
+      text: string;
+      /** The text as it is drawn, one entry per line on screen, whitespace collapsed. */
+      drawn: string[];
+      top: number;
+      bottom: number;
+    }
+  | {
+      /** A command (`pre`): its lines exactly as in the page, leading spaces kept. */
+      kind: 'command';
+      lines: string[];
+      /** The command as it is drawn, one entry per line on screen, trimmed. */
+      drawn: string[];
+      top: number;
+      bottom: number;
+    }
+  | {
+      /** A button, by its accessible name (`aria-label`, else its text). */
+      kind: 'button';
+      name: string;
+      top: number;
+      bottom: number;
+    };
+
+/**
+ * Reads the visible content of the notice titled `title` in Home's "Connection" section (found as `connectionView`
+ * finds notices), in document order, which is the order it is drawn: its texts (the heading, paragraphs, each
+ * step's label), its commands and its buttons (the copy buttons by name, the build-once toggle). Hidden content
+ * (a closed disclosure) and `aria-hidden` content are left out. `null` when the section holds no such notice. Never
+ * waits.
+ *
+ * Text is grouped by its block: the nearest element around it whose display is neither inline nor `contents`, so
+ * a label with an inline span in it (`st-nowrap`) reads as one text. `drawn` splits an item at the line breaks on
+ * screen, so a check can tell whether a name in a label sits on one line or a command line wraps.
+ */
+export async function noticeItems(page: Page, title: string): Promise<NoticeItem[] | null> {
+  const regions = page.getByRole('region', { name: 'Connection', exact: true });
+  return regions.evaluateAll((found, wanted) => {
+    const norm = (s: string | null | undefined) => (s ?? '').replace(/\s+/g, ' ').trim();
+    const cloudscape = (el: Element | null): boolean => {
+      for (let at = el; at; at = at.parentElement) {
+        if ([...at.classList].some((c) => c.startsWith('awsui'))) return true;
+      }
+      return false;
+    };
+    const box = found.filter((r) => !cloudscape(r)).at(-1);
+    if (!box) return null;
+    const exactly = (text: string) =>
+      [...box.querySelectorAll('*')].filter(
+        (el) => norm(el.textContent) === text && ![...el.children].some((child) => norm(child.textContent) === text),
+      );
+    const labels = [...exactly('Engine'), ...exactly('Emulator')];
+    const heading = [...box.querySelectorAll('h1, h2, h3, h4, h5, h6, [role="heading"]')].find(
+      (h) => norm(h.textContent) === wanted,
+    );
+    if (!heading) return null;
+    let notice: Element = heading;
+    while (
+      notice.parentElement &&
+      notice.parentElement !== box &&
+      !labels.some((l) => notice.parentElement!.contains(l))
+    ) {
+      notice = notice.parentElement;
+    }
+
+    /** The characters of `nodes` with a box on screen, split into the lines they are drawn on. */
+    const drawnLines = (nodes: Text[]): { lines: string[]; top: number; bottom: number } | null => {
+      const lines: string[] = [];
+      let current = '';
+      let lineBottom = -Infinity;
+      let top = Infinity;
+      let bottom = -Infinity;
+      let pendingSpace = false;
+      for (const node of nodes) {
+        for (let i = 0; i < node.data.length; i++) {
+          const ch = node.data[i];
+          if (ch === '\n' || /\s/.test(ch)) {
+            pendingSpace = true;
+            continue;
+          }
+          const range = document.createRange();
+          range.setStart(node, i);
+          range.setEnd(node, i + 1);
+          const rect = [...range.getClientRects()].find((r) => r.width > 0 && r.height > 0);
+          if (!rect) continue;
+          top = Math.min(top, rect.top);
+          bottom = Math.max(bottom, rect.bottom);
+          if (current !== '' && rect.top >= lineBottom - 1) {
+            lines.push(current);
+            current = '';
+            pendingSpace = false;
+          }
+          if (current === '') lineBottom = rect.bottom;
+          current += (pendingSpace && current !== '' ? ' ' : '') + ch;
+          pendingSpace = false;
+          lineBottom = Math.min(lineBottom, rect.bottom);
+        }
+      }
+      if (current !== '') lines.push(current);
+      return lines.length === 0 ? null : { lines, top, bottom };
+    };
+
+    const textsIn = (el: Element): Text[] => {
+      const out: Text[] = [];
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) out.push(n as Text);
+      return out;
+    };
+    const blockOf = (node: Node): Element => {
+      let at = node.parentElement!;
+      while (at !== notice) {
+        const display = getComputedStyle(at).display;
+        if (!display.startsWith('inline') && display !== 'contents') break;
+        at = at.parentElement!;
+      }
+      return at;
+    };
+
+    type Item =
+      | { kind: 'text'; text: string; drawn: string[]; top: number; bottom: number }
+      | { kind: 'command'; lines: string[]; drawn: string[]; top: number; bottom: number }
+      | { kind: 'button'; name: string; top: number; bottom: number };
+    const items: Item[] = [];
+    let run: { block: Element; nodes: Text[] } | null = null;
+    const flush = () => {
+      if (!run) return;
+      const drawn = drawnLines(run.nodes);
+      if (drawn) {
+        items.push({
+          kind: 'text',
+          text: norm(run.nodes.map((n) => n.data).join('')),
+          drawn: drawn.lines,
+          top: drawn.top,
+          bottom: drawn.bottom,
+        });
+      }
+      run = null;
+    };
+    const visit = (el: Element) => {
+      if (el.getAttribute('aria-hidden') === 'true' || (el as HTMLElement).hidden) return;
+      const tag = el.tagName.toLowerCase();
+      if (tag === 'pre' || tag === 'button') {
+        flush();
+        const rects = [...el.getClientRects()].filter((r) => r.width > 0 && r.height > 0);
+        if (rects.length === 0) return;
+        const top = Math.min(...rects.map((r) => r.top));
+        const bottom = Math.max(...rects.map((r) => r.bottom));
+        if (tag === 'button') {
+          items.push({ kind: 'button', name: norm(el.getAttribute('aria-label') ?? el.textContent), top, bottom });
+        } else {
+          const drawn = drawnLines(textsIn(el));
+          items.push({
+            kind: 'command',
+            lines: (el.textContent ?? '').split('\n'),
+            drawn: drawn ? drawn.lines : [],
+            top,
+            bottom,
+          });
+        }
+        return;
+      }
+      for (const child of el.childNodes) {
+        if (child.nodeType === Node.ELEMENT_NODE) {
+          visit(child as Element);
+        } else if (child.nodeType === Node.TEXT_NODE) {
+          const block = blockOf(child);
+          if (run && run.block !== block) flush();
+          if (!run) run = { block, nodes: [] };
+          run.nodes.push(child as Text);
+        }
+      }
+    };
+    visit(notice);
+    flush();
+    return items;
+  }, title);
+}

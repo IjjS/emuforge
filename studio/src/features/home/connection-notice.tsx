@@ -102,6 +102,20 @@ function BuildOnce() {
   );
 }
 
+/**
+ * Step 1's label: the stop label, then the container the stop command removes and step 2 starts, by name; the name
+ * is never broken across lines (requirement R4.1).
+ */
+function StopStepLabel({ port, stopLabel }: { port: number; stopLabel: string }) {
+  return (
+    <>
+      {`1. ${stopLabel} (the container `}
+      <span className="st-nowrap">{`emuforge-emulator-${String(port)}`}</span>
+      {', which step 2 starts)'}
+    </>
+  );
+}
+
 /** The build note, then step 1 to stop (when the reason needs one), then the start command. */
 function EmulatorSteps({ port, stopLabel }: { port: number; stopLabel?: string | undefined }) {
   return (
@@ -109,7 +123,7 @@ function EmulatorSteps({ port, stopLabel }: { port: number; stopLabel?: string |
       <BuildOnce />
       {stopLabel !== undefined && (
         <CommandBlock
-          label={`1. ${stopLabel} (a container started with the command below)`}
+          label={<StopStepLabel port={port} stopLabel={stopLabel} />}
           name="stop emulator"
           command={stopEmulatorCommand(port)}
         />
