@@ -3,15 +3,17 @@
 //
 // - The vector files, from the geometry of `src/ui/brand-paths.ts`: `brand/symbol.svg`, the four logo files
 //   `brand/logo-<primary|compact>-<light|dark>.svg`, the app icons `brand/app-icon-<teal|cream|night>.svg` and
-//   `brand/app-icon-teal-square.svg`, and `public/favicon.svg`.
-// - The rasters of the icons, each its vector drawn at its size: `brand/app-icon-<ground>-<192|512>.png`,
-//   `public/apple-touch-icon.png` (180, from the square teal icon) and `public/favicon.ico` (16, 32 and 48, the
-//   light favicon).
+//   `brand/app-icon-teal-square.svg`, `public/favicon.svg`, and the social image `brand/social.svg`, which holds the
+//   primary light logo's own path data.
+// - The rasters, each its vector drawn at its size: `brand/app-icon-<ground>-<192|512>.png`,
+//   `public/apple-touch-icon.png` (180, from the square teal icon), `public/favicon.ico` (16, 32 and 48, the light
+//   favicon) and `brand/social-1200x630.png`.
 //
 // Every colour is the sRGB value of one of Studio's tokens (`src/ui/tokens.css`), as the Chromium of
 // `@playwright/test` computes it from the token's OKLCH value; no colour is written here. The letters of the logos
-// are the outlines of Studio's own Instrument Sans (`src/ui/fonts/instrument-sans-latin-wght-normal.woff2`) at the
-// weights the requirement names (R4.6), read with `fontkit`; no text element and no font is in any file. The
+// and of the social image's line are the outlines of Studio's own Instrument Sans
+// (`src/ui/fonts/instrument-sans-latin-wght-normal.woff2`) at the weights the requirement names (R4.6), read with
+// `fontkit`; no text element and no font is in any file. The
 // rasters are drawn by the same Chromium at device pixel ratio 1 (the functions given to `page.evaluate` run in the
 // page, hence the DOM types above). Nothing is fetched. The results are committed, so
 // a build needs no browser; rerun after a change of the geometry, the tokens or the face.
@@ -169,7 +171,13 @@ function shape(face: Buffer, text: string, weight: number, tracking: number): Wo
   let pen = 0;
   run.glyphs.forEach((glyph, i) => {
     const source = decoded[glyph.id];
-    if (!source?.points || source.numberOfContours <= 0) throw new Error(`glyph ${String(glyph.id)} is not simple`);
+    const position = run.positions[i];
+    if (source === undefined || source.numberOfContours === 0) {
+      // A glyph with no outline (the space): its advance alone.
+      pen += (position?.xAdvance ?? glyph.advanceWidth) + tracking * plain.unitsPerEm;
+      return;
+    }
+    if (!source.points || source.numberOfContours < 0) throw new Error(`glyph ${String(glyph.id)} is not simple`);
     const points = source.points.map((p) => p.copy());
     const first = source.points[0] as FontPoint;
     const xMin = Math.min(...points.map((p) => p.x));
@@ -185,7 +193,6 @@ function shape(face: Buffer, text: string, weight: number, tracking: number): Wo
     });
     processor.transformPoints(glyph.id, [...points, ...phantom]);
     const shift = (phantom[0] as FontPoint).x;
-    const position = run.positions[i];
     glyphs.push({
       points: points.map((p) => ({ ...p, x: p.x - shift })) as FontPoint[],
       x: pen + (position?.xOffset ?? 0),
@@ -363,8 +370,16 @@ function appIconFile(colours: Colours, ground: Ground, square = false): string {
 
 type Logo = 'primary' | 'compact';
 
-/** A logo for a light or a dark ground (R4.4, R4.5, R4's table): the tile, then the letters, nothing else. */
-function logoFile(colours: Colours, words: { name: Word; line: Word }, logo: Logo, scheme: Scheme): string {
+/**
+ * A logo's contents for a light or a dark ground (R4.4, R4.5, R4's table): the tile at the origin with side 100, then
+ * the letters, nothing else; and the width they take.
+ */
+function logoBody(
+  colours: Colours,
+  words: { name: Word; line: Word },
+  logo: Logo,
+  scheme: Scheme,
+): { body: string; width: number } {
   const S = TILE_SIDE;
   const left = S + NAME.gap * S;
   const nameCap = NAME.capHeight * S;
@@ -387,12 +402,103 @@ function logoFile(colours: Colours, words: { name: Word; line: Word }, logo: Log
       }),
     );
   }
+  return { body: parts.join(''), width: Math.ceil(width * 100) / 100 };
+}
+
+/** A logo file: the logo's contents, its viewBox their box (R4.4, R4.5). */
+function logoFile(colours: Colours, words: { name: Word; line: Word }, logo: Logo, scheme: Scheme): string {
+  const { body, width } = logoBody(colours, words, logo, scheme);
   const title = logo === 'primary' ? 'EmuForge Studio' : 'EmuForge';
-  return svg(
-    `0 0 ${n(Math.ceil(width * 100) / 100)} ${String(S)}`,
-    `${title} logo, for a ${scheme} ground`,
-    parts.join(''),
+  return svg(`0 0 ${n(width)} ${String(TILE_SIDE)}`, `${title} logo, for a ${scheme} ground`, body);
+}
+
+// --- the social image ------------------------------------------------------------------------------------------
+
+/**
+ * The social image's layout on 1200 x 630 (R4.8, R8.6), in pixels. The left half: the primary light logo, and under
+ * it the line in two rows whose ink starts at the tile's left edge. The right half: three stacked windows. Two bands
+ * rise from the lower left to the right edge behind everything but the ground.
+ */
+const SOCIAL = {
+  width: 1200,
+  height: 630,
+  logo: { x: 80, y: 136, scale: 1.3 },
+  /** The line (not a brand commitment; Owner decisions, Q2), its rows, their capitals' height and their tops. */
+  line: { rows: ['Your free, local', 'cloud workspace'], weight: 500, capHeight: 30, tops: [326, 384] },
+  farBand: 'M 0 590 C 380 585 760 470 1200 260 L 1200 630 L 0 630 Z',
+  nearBand: 'M 220 630 C 520 610 850 540 1200 410 L 1200 630 Z',
+  back: { x: 650, y: 80, w: 360, h: 240, r: 14, bar: 44, dots: { x: 678, gap: 22, r: 7 } },
+  middle: { x: 730, y: 180, w: 330, h: 250, r: 14, edge: 3, tile: { x: 772, y: 245, scale: 1.2 } },
+  card: { x: 920, y: 300, w: 230, h: 260, r: 14, edge: 3, rows: [350, 430, 510], disc: { x: 962, r: 18 } },
+} as const;
+
+/** The social image (R4.8, R8.6): every colour one token's, light; the logo is `logo-primary-light.svg`'s body. */
+function socialFile(colours: Colours, words: { name: Word; line: Word }, line: Word[]): string {
+  const c = (name: string, scheme: Scheme = 'light') => token(colours, scheme, name);
+  const { logo, back, middle, card } = SOCIAL;
+  const rect = (x: number, y: number, w: number, h: number, r: number, paint: string) =>
+    `<rect ${paint} x="${n(x)}" y="${n(y)}" width="${n(w)}" height="${n(h)}" rx="${n(r)}"/>`;
+  const parts: string[] = [
+    `<rect fill="${c('bg')}" width="${String(SOCIAL.width)}" height="${String(SOCIAL.height)}"/>`,
+    `<path fill="${c('accent-wash')}" d="${SOCIAL.farBand}"/>`,
+    `<path fill="${c('accent', 'dark')}" d="${SOCIAL.nearBand}"/>`,
+    `<g transform="translate(${n(logo.x)} ${n(logo.y)}) scale(${n(logo.scale)})">` +
+      logoBody(colours, words, 'primary', 'light').body +
+      '</g>',
+    ...line.map((row, i) =>
+      letters(row, c('text'), {
+        capHeight: SOCIAL.line.capHeight,
+        left: logo.x,
+        top: SOCIAL.line.tops[i] as number,
+      }),
+    ),
+  ];
+
+  // The back window: an accent-wash body, an accent title bar with its top corners rounded, three accent-ink dots.
+  const barBottom = back.y + back.bar;
+  const k = back.r * 0.45;
+  const titleBar =
+    `M ${n(back.x)} ${n(barBottom)} L ${n(back.x)} ${n(back.y + back.r)} ` +
+    `C ${n(back.x)} ${n(back.y + back.r - k)} ${n(back.x + back.r - k)} ${n(back.y)} ${n(back.x + back.r)} ${n(back.y)} ` +
+    `L ${n(back.x + back.w - back.r)} ${n(back.y)} ` +
+    `C ${n(back.x + back.w - back.r + k)} ${n(back.y)} ${n(back.x + back.w)} ${n(back.y + back.r - k)} ` +
+    `${n(back.x + back.w)} ${n(back.y + back.r)} L ${n(back.x + back.w)} ${n(barBottom)} Z`;
+  const dots = [0, 1, 2].map(
+    (i) =>
+      `<circle fill="${c('accent-ink')}" cx="${n(back.dots.x + i * back.dots.gap)}" cy="${n(back.y + back.bar / 2)}" r="${n(back.dots.r)}"/>`,
   );
+  parts.push(
+    `<g>${rect(back.x, back.y, back.w, back.h, back.r, `fill="${c('accent-wash')}"`)}` +
+      `<path fill="${c('accent')}" d="${titleBar}"/>${dots.join('')}</g>`,
+  );
+
+  // The middle window: a surface body with an accent edge, holding the tile with the code sign.
+  const tileAt = middle.tile;
+  parts.push(
+    `<g>${rect(middle.x, middle.y, middle.w, middle.h, middle.r, `fill="${c('surface')}" stroke="${c('accent')}" stroke-width="${n(middle.edge)}"`)}` +
+      `<g transform="translate(${n(tileAt.x)} ${n(tileAt.y)}) scale(${n(tileAt.scale)})">` +
+      tile({ id: 'window-tile', ground: c('accent'), symbol: c('accent-ink'), code: true }) +
+      '</g></g>',
+  );
+
+  // The checklist card: a surface body with a line-strong edge; three rows of an accent disc with an accent-ink tick
+  // and an accent-wash bar.
+  const rows = card.rows.map((y) => {
+    const { x, r } = card.disc;
+    const tick = `M ${n(x - 8)} ${n(y + 0.5)} L ${n(x - 2.5)} ${n(y + 6)} L ${n(x + 8.5)} ${n(y - 6)}`;
+    const barLeft = x + r + 16;
+    return (
+      `<circle fill="${c('accent')}" cx="${n(x)}" cy="${n(y)}" r="${n(r)}"/>` +
+      `<path fill="none" stroke="${c('accent-ink')}" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round" d="${tick}"/>` +
+      rect(barLeft, y - 8, card.x + card.w - 26 - barLeft, 16, 8, `fill="${c('accent-wash')}"`)
+    );
+  });
+  parts.push(
+    `<g>${rect(card.x, card.y, card.w, card.h, card.r, `fill="${c('surface')}" stroke="${c('line-strong')}" stroke-width="${n(card.edge)}"`)}` +
+      `${rows.join('')}</g>`,
+  );
+
+  return svg(`0 0 ${String(SOCIAL.width)} ${String(SOCIAL.height)}`, 'EmuForge Studio social image', parts.join(''));
 }
 
 /** "STUDIO" tracked so that its ink is `LINE.widthShare` of "EmuForge"'s. */
@@ -478,6 +584,8 @@ async function main(): Promise<void> {
         vectors[`brand/logo-${logo}-${scheme}.svg`] = logoFile(colours, words, logo, scheme);
       }
     }
+    const line = SOCIAL.line.rows.map((row) => shape(face, row, SOCIAL.line.weight, 0));
+    vectors['brand/social.svg'] = socialFile(colours, words, line);
 
     const rasters: Record<string, Buffer> = {};
     for (const ground of ['teal', 'cream', 'night'] as const) {
@@ -501,6 +609,12 @@ async function main(): Promise<void> {
     const entries = [];
     for (const size of [16, 32, 48]) entries.push({ size, png: await rasterise(page, favicon, size, size) });
     rasters['public/favicon.ico'] = ico(entries);
+    rasters['brand/social-1200x630.png'] = await rasterise(
+      page,
+      vectors['brand/social.svg'] as string,
+      SOCIAL.width,
+      SOCIAL.height,
+    );
 
     await mkdir(BRAND, { recursive: true });
     await mkdir(PUBLIC, { recursive: true });
