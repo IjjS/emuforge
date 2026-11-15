@@ -79,10 +79,14 @@ test('studio.home-kill-notice-stop-step-names-container', async ({ ctx, page }) 
           { timeout: CHANGE_BOUND_MS },
         )
         .toEqual({ emulator: 'Unreachable', stepOneLabel: stopStepLabel(port) });
-      // A string is a call that got no HTTP answer; a missing `ca.pem` would mean the call was never made.
+      // No answer is a connection refused or reset, or no answer within `directHealth`'s 5 seconds. Any other
+      // outcome (an HTTP answer, a TLS or protocol error from something that answered, a missing `ca.pem` so the call
+      // was never made) is shown as it is.
       const health = await directHealth(ctx.home, port);
       expect(
-        typeof health === 'string' && !health.endsWith('does not exist') ? 'no answer' : health,
+        typeof health === 'string' && /ECONNREFUSED|ECONNRESET|socket hang up|no answer within 5 s/.test(health)
+          ? 'no answer'
+          : health,
         "a direct call to the emulator's /__admin/health",
       ).toBe('no answer');
     },
