@@ -24,9 +24,9 @@ holding every step's tree; --snapshot reads either format.
 
 Prints the score, the unmatched, matched, omitted, not-applicable, not-scored and extra items, the blocked
 requests, and the verdict. Exit 0 pass (score >= 90 and no critical item unmatched: header.title,
-header.primary_action, table.columns, a wizard's steps[<t>].title and submit), 1 fail, 2 error (usage, invalid spec, refused URL, page not reachable or not
-settled, toolchain missing, unreadable snapshot, another run of the same screen and state in progress, terminated by
-SIGTERM, SIGHUP or SIGINT); an error is never a pass or a fail.
+header.primary_action, table.columns, a wizard's steps[<t>].title and submit), 1 fail, 2 error (usage, invalid
+spec, refused URL, page not reachable or not settled, toolchain missing, unreadable snapshot, another run of the
+same screen and state in progress, terminated by SIGTERM, SIGHUP or SIGINT); an error is never a pass or a fail.
 Result: <worktree>/output/structure/<screen>-<state>.json and the scored snapshot <screen>-<state>.ax.json,
 overwritten by the next run of the same screen and state. --record ISSUE POINT (POINT: baseline | final) also
 appends a row to .pm/issue-<ISSUE>/structure-scores.json of the checkout that holds this script. --table ISSUE
@@ -156,15 +156,19 @@ def first_url(base, spec):
     return f"{url}?step=1" if spec.kind == "wizard" else url
 
 
-def read_step(path):
-    """One step's snapshot the capture wrote, as JSON, under the snapshot cap."""
+def read_step(path, ax, k):
+    """Step k's snapshot the capture wrote at `path`, as JSON, under the snapshot cap; an error names the steps
+    file `ax` and the step, as load_snapshot does (the temp file is gone by the time it is reported)."""
+    def bad(why):
+        return _pmbrowse.BrowseError(f"cannot read snapshot {ax}: step {k}: {why}")
+
     if os.path.getsize(path) > _pmscore.MAX_SNAPSHOT:
-        raise _pmbrowse.BrowseError(f"cannot read snapshot {path}: larger than {_pmscore.MAX_SNAPSHOT} bytes")
+        raise bad(f"larger than {_pmscore.MAX_SNAPSHOT} bytes")
     with open(path, "rb") as f:
         try:
             return json.loads(f.read().decode("utf-8"))
         except (UnicodeDecodeError, ValueError):
-            raise _pmbrowse.BrowseError(f"cannot read snapshot {path}: not JSON") from None
+            raise bad("not JSON") from None
 
 
 def capture_steps(a, wt, spec, base, ax, job, logs):
@@ -182,7 +186,8 @@ def capture_steps(a, wt, spec, base, ax, job, logs):
             log = os.path.join(logs, f"structure-capture-{spec.screen}-{a.state}-step{k}.log")
             _pmbrowse.capture(wt, url, tmp, job, a.storage_state, log)
         _pmproc.check()
-        body = _pmscore.dumps({"format": _pmscore.FORMAT_STEPS, "steps": [read_step(t) for t in tmps]})
+        entries = [read_step(t, ax, k) for k, t in enumerate(tmps, 1)]
+        body = _pmscore.dumps({"format": _pmscore.FORMAT_STEPS, "steps": entries})
         data = body.encode("utf-8")
         if len(data) > _pmscore.MAX_SNAPSHOT:  # what --snapshot would refuse is never kept (design section 4)
             raise _pmbrowse.BrowseError(f"cannot read snapshot {ax}: larger than {_pmscore.MAX_SNAPSHOT} bytes")

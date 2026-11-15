@@ -118,17 +118,18 @@ structure score = matched items / (all items - omitted items - not-applicable it
 
 - With two runs, each run has its own score, and the screen passes only when both runs pass.
 
+- The report lists every unmatched item, and separately every action, column, tab or field found on the screen
+  that the spec does not have.
+- The same build, seed and spec always give the same score.
+
 A wizard is opened once per shown step (its steps that are not omitted, in order): step `k` is the spec's route
 opened with `?step=<k>`, each a fresh page, nothing on it operated (no click, no typing). A Studio wizard screen
 therefore opens at step `k` when its route is opened with `?step=<k>`; one that ignores the parameter shows its
 first step on every page and its later steps come out unmatched. Each step's items are scored on that step's tree
 only: its title (a heading, critical), its sections and fields; `submit` (a button, critical) on the last shown
 step's tree; the breadcrumbs and the steps' order (each step's entry in the step navigation) on step 1's tree.
-Every line of the report names the step its item was scored on.
-
-- The report lists every unmatched item, and separately every action, column, tab or field found on the screen
-  that the spec does not have.
-- The same build, seed and spec always give the same score.
+Every unmatched, matched and extra line of the report starts with `step <k>: `, the step its item
+was scored on or its extra was first found on.
 
 Pass line and what happens below it: `references/critique.md`.
 

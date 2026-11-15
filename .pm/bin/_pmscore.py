@@ -360,8 +360,9 @@ def score(spec, snap, state):
                 at = nxt
             return True, None, None
         if k == "steps_order":
-            # unlike the other lists a missing entry makes the item unmatched: the entries are not items
-            at = -1
+            # unlike the other lists a missing entry makes the item unmatched: the entries are not items. Every
+            # shown step's entry is looked up first; the order is judged only when all are found (requirement 5.2)
+            entries = []
             for e, title in zip(item.entries, item.names):
                 if e in omitted:
                     continue
@@ -369,6 +370,9 @@ def score(spec, snap, state):
                 hits = [n.index for n in nodes if pred(n)]
                 if not hits:
                     return False, None, f"no navigation entry for {json.dumps(title, ensure_ascii=False)}"
+                entries.append(hits)
+            at = -1
+            for hits in entries:
                 nxt = next((c for c in hits if c > at), None)
                 if nxt is None:
                     return False, None, "out of order"
