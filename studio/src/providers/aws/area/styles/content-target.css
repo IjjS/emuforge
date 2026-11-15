@@ -1,0 +1,5 @@
+/* The area's content target takes focus from "Skip to content" and a route change without a ring around the page,
+   as Studio's own `main` does. It is the area's own element, not a Cloudscape component's. */
+.aws-area-content:focus {
+  outline: none;
+}

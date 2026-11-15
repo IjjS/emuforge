@@ -376,8 +376,10 @@ so a notice band inside it follows the panel's curve. Icons are 24-unit line ico
   provider's tab is current on its index (`page`) and marked current (`true`) anywhere deeper in its area.
 - **Tab focus:** the ring sits inside the tab's padding (offset -4px), with the 8px radius of the tab's ring
   unchanged, so it never crosses the label.
-- **Skip to content:** the frame's first Tab stop is a "Skip to content" link targeting `main`. It is hidden until
-  focused, then shown at the bar's start with the focus ring, above the bar's other content.
+- **Skip to content:** the frame's first Tab stop is a "Skip to content" link targeting the page's content: the
+  content target the page names, past a provider area's navigation and breadcrumbs. It is hidden until focused,
+  then shown at the bar's start with the focus ring, above the bar's other content. A route change moves focus to
+  the new page's content target the same way, without a ring; a first load leaves focus at the document's start.
 
 ### Panels
 

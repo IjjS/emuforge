@@ -14,6 +14,20 @@ export interface ProviderAreaProps {
    * found`), whenever it changes. Studio makes the document title from it.
    */
   onPageTitle: (title: string) => void;
+  /**
+   * Called with a function that moves focus to the content target of the page the area shows, whenever it changes,
+   * and with `null` while the area names none. The target is the page's `h1`, or an element of the area's content
+   * that holds the `h1` and the page's controls and is named by the `h1`, past the area's navigation and
+   * breadcrumbs. Studio's "Skip to content" calls it; Studio finds no element of the area itself.
+   */
+  onContentTarget: (focus: (() => void) | null) => void;
+  /**
+   * How many route changes the document has seen since it loaded: `0` on a first load, one more each time the path
+   * changes inside the open document (a link, a button, Back, Forward). The area moves focus to its content target,
+   * once its page has rendered, when it first renders with a count above `0` and whenever the count changes; it
+   * never moves focus while the count is `0`.
+   */
+  routeChanges: number;
 }
 
 /** A service of a provider, as Home lists it. */
