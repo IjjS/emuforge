@@ -150,6 +150,9 @@ test('engine.product-browser-rules-hold', async ({ ctx }) => {
   expect(answer.status, `${what}: status, body ${answer.body.toString('utf8')}`).toBe(421);
   expect(errorCode(answer), `${what}: error code`).toBe('MisdirectedRequest');
 
+  // The bucket's deletion is registered before any PUT of it is sent, the refused one included.
+  deleteWhenDone(ctx, [`/${bucket}`]);
+
   // A PUT /<bucket> with the Studio origin and no X-EmuForge-Session → 401 SessionRequired, and the emulator does
   // not list the bucket.
   what = `PUT /${bucket} with Origin ${studioOrigin} and no X-EmuForge-Session`;
@@ -168,7 +171,7 @@ test('engine.product-browser-rules-hold', async ({ ctx }) => {
   );
 
   // GET /__emuforge/session with the Studio origin → 200 with a token; the same PUT with it gets the emulator's
-  // answer. The bucket's deletion is registered before that PUT is sent.
+  // answer.
   what = `GET ${SESSION_PATH} with Origin ${studioOrigin}`;
   answer = answered(
     await request(form.enginePort, 'GET', SESSION_PATH, {
@@ -185,7 +188,6 @@ test('engine.product-browser-rules-hold', async ({ ctx }) => {
   registerSecret([token]);
   expect(answer.status, `${what}: status`).toBe(200);
   expect(token, `${what}: token`).not.toBe('');
-  deleteWhenDone(ctx, [`/${bucket}`]);
   what = `PUT /${bucket} with Origin ${studioOrigin} and the token`;
   answer = answered(
     await signedVia(form.enginePort, key, 'PUT', `/${bucket}`, {
