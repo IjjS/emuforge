@@ -1,0 +1,9 @@
+{
+  "engine": { "forms": ["engine", "engines"], "exempt": [], "stems": {} },
+  "emulator": { "forms": ["emulator", "emulators"], "exempt": [], "stems": {} },
+  "Refresh": { "forms": ["Refresh"], "exempt": [], "stems": {} },
+  "Home": { "forms": ["Home"], "exempt": [], "stems": {} },
+  "Studio": { "forms": ["Studio"], "exempt": [], "stems": {} },
+  "command": { "forms": ["command", "commands"], "exempt": [], "stems": {} },
+  "port": { "forms": ["port", "ports"], "exempt": [], "stems": {} }
+}

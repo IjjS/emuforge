@@ -89,6 +89,32 @@ describe('import boundaries: lib', () => {
   });
 });
 
+describe('import boundaries: i18n (issue #17, R4.10)', () => {
+  it.each(['providers/aws/area/x.tsx', 'providers/aws/area/pages/x.tsx', 'lib/x.ts', 'lib/engine/x.ts'])(
+    '%s importing i18n/ → an error',
+    async (file) => {
+      expect(await boundaryErrors(file, importing(from(file, 'i18n/language-context')))).toHaveLength(1);
+    },
+  );
+
+  it.each(['app/frame', 'ui/button', 'features/home/home-page', 'providers/aws/provider', 'providers/aws/area/index'])(
+    'i18n/x.ts importing from %s → an error',
+    async (target) => {
+      const file = 'i18n/x.ts';
+      expect(await boundaryErrors(file, importing(from(file, target)))).toHaveLength(1);
+    },
+  );
+
+  it.each(['app/x.tsx', 'ui/x.tsx', 'features/home/x.tsx'])('%s importing i18n/ → no error', async (file) => {
+    expect(await boundaryErrors(file, importing(from(file, 'i18n/language-context')))).toEqual([]);
+  });
+
+  it('a test under i18n/ rendering what reads it, from ui/ → no error', async () => {
+    const file = 'i18n/x.test.tsx';
+    expect(await boundaryErrors(file, importing(from(file, 'ui/button')))).toEqual([]);
+  });
+});
+
 describe('overlays stay in the AWS area', () => {
   it('providers/aws/area/x.tsx rendering a Cloudscape component with expandToViewport → an error', async () => {
     const code = [

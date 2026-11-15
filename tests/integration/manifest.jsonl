@@ -59,6 +59,7 @@
 {"check_id": "studio.check-browser-sends-preflights-to-the-server", "path": "tests/integration/studio/check-browser.spec.ts", "module": "studio", "operations": [], "labels": ["regression"], "issue": 15}
 {"check_id": "studio.check-browser-sees-the-engine-preflight-refusal", "path": "tests/integration/studio/check-browser.spec.ts", "module": "studio", "operations": [], "labels": ["regression"], "issue": 15}
 {"check_id": "studio.check-browser-refuses-non-loopback-destinations", "path": "tests/integration/studio/check-browser.spec.ts", "module": "studio", "operations": [], "labels": ["safety"], "issue": 15}
+{"check_id": "studio.checks-browser-language-is-english", "path": "tests/integration/studio/languages-browser.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 17}
 {"check_id": "studio.skip-link-reaches-page-content", "path": "tests/integration/studio/focus.spec.ts", "module": "studio", "operations": [], "labels": ["regression"], "issue": 19}
 {"check_id": "studio.route-change-focuses-new-page-content", "path": "tests/integration/studio/focus.spec.ts", "module": "studio", "operations": [], "labels": ["regression"], "issue": 19}
 {"check_id": "studio.focus-moves-change-nothing-on-screen", "path": "tests/integration/studio/focus.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 19}
