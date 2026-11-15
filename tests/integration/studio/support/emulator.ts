@@ -145,9 +145,14 @@ export class OwnEmulator {
     return `https://127.0.0.1:${this.port}`;
   }
 
-  /** Starts an emulator with telemetry off and waits until it answers `200 ok` on its own health route. */
-  static async start(ctx: Ctx): Promise<OwnEmulator> {
-    const port = await freePortExcept(ctx.home, [ctx.emulatorPort, ctx.enginePort, ctx.studioPort]);
+  /**
+   * Starts an emulator with telemetry off and waits until it answers `200 ok` on its own health route. With
+   * `minPort`, its port is at least `minPort` (`EnvError` when no such port is free).
+   */
+  static async start(ctx: Ctx, options: { minPort?: number | undefined } = {}): Promise<OwnEmulator> {
+    const port = await freePortExcept(ctx.home, [ctx.emulatorPort, ctx.enginePort, ctx.studioPort], {
+      min: options.minPort,
+    });
     const name = `emuforge-it-${port}-${ctx.runId}`;
     const emulator = new OwnEmulator(ctx, port, emulatorDir(ctx.home, port), name);
     ctx.own(emulator);
