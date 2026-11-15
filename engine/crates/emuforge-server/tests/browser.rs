@@ -200,6 +200,16 @@ impl Answer {
         assert_eq!(self.values(VARY), ["Origin"], "case {case}: Vary");
     }
 
+    /// An answer to the Studio origin: `Vary` is `Origin` and `X-EmuForge-Session`, one line each, so a browser
+    /// never reuses it for a request with another session header or none (issue 24 D2).
+    fn assert_vary_studio(&self, case: &str) {
+        assert_eq!(
+            self.values(VARY),
+            ["Origin", "X-EmuForge-Session"],
+            "case {case}: Vary"
+        );
+    }
+
     fn assert_error(&self, status: StatusCode, code: &str, case: &str) {
         assert_eq!(self.status, status, "case {case}: status");
         assert_eq!(
@@ -303,7 +313,7 @@ async fn session_from_studio_is_200_with_the_token_and_cors_without_probe() {
     assert_eq!(answer.headers[CONTENT_TYPE], "application/json");
     assert_eq!(answer.values(CACHE_CONTROL), ["no-store"]);
     answer.assert_cors("session");
-    answer.assert_vary_origin("session");
+    answer.assert_vary_studio("session");
     let body = answer.json();
     let object = body.as_object().unwrap();
     assert_eq!(object.len(), 1, "{body}");
@@ -417,7 +427,7 @@ fn assert_preflight(answer: &Answer, case: &str) {
         ["600"],
         "case {case}"
     );
-    answer.assert_vary_origin(case);
+    answer.assert_vary_studio(case);
 }
 
 #[tokio::test]
@@ -472,7 +482,7 @@ async fn health_from_studio_with_token_is_1s_answer_with_cors() {
         );
         assert_eq!(answer.json(), health_body(health), "case {case}");
         answer.assert_cors(case);
-        answer.assert_vary_origin(case);
+        answer.assert_vary_studio(case);
     }
 }
 
@@ -730,7 +740,7 @@ async fn relayed_path_from_studio_with_token_is_relayed_with_cors() {
         assert_eq!(answer.status, StatusCode::OK, "case {case}: status");
         assert_eq!(answer.body, RELAYED.as_bytes(), "case {case}: body");
         answer.assert_cors(case);
-        answer.assert_vary_origin(case);
+        answer.assert_vary_studio(case);
         assert_eq!(
             relayed.load(Ordering::SeqCst),
             1,
@@ -1026,7 +1036,7 @@ async fn studio_requests_past_the_limit_are_busy_with_cors() {
         let answer = send_at_once(&app, request).await;
         answer.assert_error(StatusCode::SERVICE_UNAVAILABLE, "Busy", case);
         answer.assert_cors(case);
-        answer.assert_vary_origin(case);
+        answer.assert_vary_studio(case);
     }
 }
 

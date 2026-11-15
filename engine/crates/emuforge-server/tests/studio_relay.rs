@@ -429,8 +429,14 @@ impl Answer {
         }
     }
 
-    fn assert_vary_origin(&self, case: &str) {
-        assert_eq!(self.values(VARY), ["Origin"], "case {case}: Vary");
+    /// An answer to the Studio origin with no `Vary` of the upstream's: `Vary` is `Origin` and
+    /// `X-EmuForge-Session`, one line each (issue 24 D2).
+    fn assert_vary_studio(&self, case: &str) {
+        assert_eq!(
+            self.values(VARY),
+            ["Origin", "X-EmuForge-Session"],
+            "case {case}: Vary"
+        );
     }
 
     /// An error in S3's XML shape with `code`.
@@ -520,7 +526,7 @@ fn assert_relayed_preflight(answer: &Answer, allow_headers: Option<&str>, case: 
         ["600"],
         "case {case}: Access-Control-Max-Age"
     );
-    answer.assert_vary_origin(case);
+    answer.assert_vary_studio(case);
     assert!(
         !answer.headers.contains_key(ACCESS_CONTROL_EXPOSE_HEADERS),
         "case {case}: Access-Control-Expose-Headers"
@@ -706,7 +712,7 @@ async fn relayed_request_from_studio_without_token_is_401_session_required_witho
         }
         answer.assert_www_authenticate(case);
         answer.assert_cors(case);
-        answer.assert_vary_origin(case);
+        answer.assert_vary_studio(case);
         answer.assert_exposes(&["www-authenticate"], case);
         if case.starts_with("POST") {
             assert_eq!(
@@ -909,7 +915,7 @@ async fn relayed_answer_to_studio_keeps_its_headers_and_exposes_them() {
             "content-length, content-type, etag, last-modified, x-amz-id-2, x-amz-meta-a, x-amz-request-id"
         ]
     );
-    answer.assert_vary_origin("relayed");
+    answer.assert_vary_studio("relayed");
 }
 
 #[tokio::test]
@@ -924,7 +930,10 @@ async fn relayed_answer_vary_gains_origin_and_is_not_exposed() {
     })
     .await;
     let answer = harness.send(list_buckets(&harness.token), "Vary").await;
-    assert_eq!(answer.values(VARY), ["Accept-Encoding", "Origin"]);
+    assert_eq!(
+        answer.values(VARY),
+        ["Accept-Encoding", "Origin", "X-EmuForge-Session"]
+    );
     assert!(!answer.exposed("Vary").contains(&"vary"));
 }
 
@@ -991,7 +1000,7 @@ async fn relayed_204_without_headers_to_studio_exposes_nothing() {
     let answer = harness.send(list_buckets(&harness.token), "204").await;
     assert_eq!(answer.status, StatusCode::NO_CONTENT);
     answer.assert_cors("204");
-    answer.assert_vary_origin("204");
+    answer.assert_vary_studio("204");
     assert!(
         !answer.headers.contains_key(ACCESS_CONTROL_EXPOSE_HEADERS),
         "{:?}",
@@ -1082,7 +1091,7 @@ async fn relay_unavailable_for_studio_is_503_readable() {
     );
     answer.assert_cors("not started");
     answer.assert_exposes(&["content-type"], "not started");
-    answer.assert_vary_origin("not started");
+    answer.assert_vary_studio("not started");
 }
 
 #[tokio::test]
