@@ -28,6 +28,8 @@ export default defineConfig({
     baseURL: studioPort ? `http://127.0.0.1:${studioPort}` : undefined,
     viewport: { width: 1280, height: 800 },
     colorScheme: 'light',
+    // English whatever the machine's language (issue 17, R8.1); a check about language sets its own.
+    locale: 'en-US',
     trace: 'off',
     video: 'off',
     // A screenshot is not redacted: a defective page showing a key or a token would keep it in an image.

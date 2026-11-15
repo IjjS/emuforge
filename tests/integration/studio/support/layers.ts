@@ -1290,10 +1290,11 @@ export function cloudscapeFontFamilies(ctx: Ctx): string[] {
   return [...new Set([...text.matchAll(/font-family:\s*['"]?([^;'"]+)['"]?\s*;/g)].map((m) => m[1].trim()))];
 }
 
-/** A context of the same browser for a reference document: the scheme given, nothing reaching the network. */
+/** A context of the same browser for a reference document: the scheme given, English, no network. */
 export async function referenceContext(browser: Browser, scheme: Scheme): Promise<BrowserContext> {
   const context = await browser.newContext({
     colorScheme: scheme,
+    locale: 'en-US',
     viewport: { width: 1280, height: 800 },
     serviceWorkers: 'block',
   });
