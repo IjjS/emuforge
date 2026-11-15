@@ -1,0 +1,201 @@
+#!/usr/bin/env -S python3 -I
+"""Fill a brief template for a pane and write it to .pm/issue-<id>/. The PM runs this instead of filling `{{…}}` by hand.
+
+  pm-brief plan <issue> [--grade console|native|none] [--precedent <archived id>]...
+        writes brief-plan.md and brief-rev.md (one rev pane serves the whole issue)
+  pm-brief worker <issue> <unit> --summary "<what the unit does>" [--owned "<files>"]
+        [--close "<check ids>" | --close auto] [--precedent <id>]... [--inputs "<a, b>"] [--conventions "<a, b>"]
+        writes brief-<unit>.md. --owned defaults to "the files breakdown.md lists for `<unit>`"; --close names
+        the check ids for the unit that closes the issue (auto: "the ids breakdown.md and test-criteria.md give")
+  pm-brief crit <issue> --targets "<routes or mock files>" --capture-wt <worktree> [--grade console|native]
+        writes brief-crit.md
+  pm-brief show <issue>
+        the briefs written so far and the values remembered for the issue
+
+Templates: .agents/skills/pm/references/briefs/{plan,rev,worker,crit}.md; what each placeholder means:
+briefs/README.md. Everything that can be looked up is looked up:
+  issue, title, module, kind, issue file   from the issue file (open or closed)
+  worktree, branch, base                   from the worktree registry (run pm-worktree new first)
+  references to read                       from the module (its AGENTS.md and every file in its references/)
+  inputs, conventions, the work block      from the unit's side (its first letter: t, e, s, h) and the screen grade
+A studio issue needs its screen grade once (--grade on `plan`); it is remembered in brief.json for the worker and
+crit briefs. The command fails, and writes nothing, when a placeholder is left unfilled or a value it needs is
+missing. Pass the written file to `pm-pane new … --brief <file>`.
+"""
+import argparse
+import os
+import pathlib
+import re
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _pmlib import PM, ROOT, WORKTREES, issue_dir, load, save
+
+BRIEFS = ROOT / ".agents" / "skills" / "pm" / "references" / "briefs"
+ISSUE_DIRS = ("issues/things-that-do-not-work", "issues/things-that-now-work")
+# the folder whose AGENTS.md and references/ an issue of this module is planned and reviewed against
+MODULE_DIR = {"studio": "studio", "engine": "engine", "cli": "engine", "iam": "engine", "verify": "engine", "harness": "engine"}
+GRADES = ("console", "native", "none")
+SCREEN_STEP = {
+    None: "`design.md` per engine/references/workflow.md stage 2, with the security review rows for everything the "
+          "change touches. REVIEW design r1.",
+    "console": "one reference spec per screen under specs/ per studio/references/console-reference.md. REVIEW spec r1.",
+    "native": "a mock under mocks/ built from the design system of the screen's layer (studio/references/critique.md, "
+              "native screens), showing the states the requirement names; capture it with pm-capture <root> mock-<id> "
+              "--file <mock.html>, then stop with BLOCKED i<id>-plan depends crit mock; the PM has crit score it; revise "
+              "until critique.md's Screen stage passes.",
+    "none": "(no screen stage for this grade)",
+}
+CONVENTIONS = {
+    "t": "`tests/integration/AGENTS.md`",
+    "e": "`engine/AGENTS.md`, `engine/references/security-review.md`, `engine/references/relay-fidelity.md`",
+    "s": "`studio/AGENTS.md`",
+    "h": "`AGENTS.md`",
+}
+BLOCK_TESTS = "<!-- block: tests (unit t<n>) -->\n"
+BLOCK_IMPL = "<!-- block: implementation (unit e<n>, s<n>, h<n>) -->\n"
+
+
+def issue(n):
+    """Header values, title and path of the issue file with this Issue-Id."""
+    for d in ISSUE_DIRS:
+        for f in sorted((ROOT / d).glob("*.md")):
+            text = f.read_text(errors="replace")
+            if re.search(rf"(?m)^Issue-Id:\s*{re.escape(str(n))}\s*$", text):
+                head = dict(re.findall(r"(?m)^Issue-([A-Za-z-]+):[ \t]*(.*)$", text))
+                title = re.search(r"(?m)^# (.+)$", text)
+                if not title or head.get("Module") not in MODULE_DIR:
+                    sys.exit(f"{f}: no title or no known Issue-Module")
+                return dict(issue=str(n), title=title.group(1).strip(), module=head["Module"].strip(),
+                            kind=head.get("Kind", "").strip(), issue_file=str(f.relative_to(ROOT)))
+    sys.exit(f"no issue file with Issue-Id {n} under issues/")
+
+
+def module_refs(module):
+    d = MODULE_DIR[module]
+    refs = sorted(str(p.relative_to(ROOT)) for p in (ROOT / d / "references").glob("*") if p.is_file())
+    return ", ".join([f"{d}/AGENTS.md", *refs])
+
+
+def precedents(ids):
+    for m in ids:
+        if not (PM / "archive" / f"{m}.md").exists():
+            sys.exit(f"no archive .pm/archive/{m}.md for --precedent {m}")
+    return "".join(f", .pm/archive/{m}.md (precedent)" for m in ids)
+
+
+def grade_of(n, module, given):
+    """The issue's screen grade: None for a non-studio issue, else --grade or the remembered one."""
+    memo = load(issue_dir(n) / "brief.json", {})
+    if module != "studio":
+        if given:
+            sys.exit(f"--grade is for studio issues; #{n} is {module}")
+        return None
+    grade = given or memo.get("grade")
+    if not grade:
+        sys.exit(f"#{n} is a studio issue: pass --grade console|native|none (remembered afterwards)")
+    if grade != memo.get("grade"):
+        save(issue_dir(n) / "brief.json", {**memo, "grade": grade})
+    return grade
+
+
+def fill(template, values):
+    text = template
+    for _ in range(5):  # a value may itself hold placeholders (work holds close_step, which holds root)
+        before = text
+        for k, v in values.items():
+            text = text.replace("{{%s}}" % k, v)
+        if text == before:
+            break
+    left = sorted(set(re.findall(r"\{\{.*?\}\}", text)))
+    if left:
+        sys.exit(f"unfilled placeholders: {', '.join(left)}")
+    return text
+
+
+def write(n, name, text):
+    path = issue_dir(n) / f"brief-{name}.md"
+    path.write_text(text)
+    print(path)
+
+
+def cmd_plan(a):
+    v = issue(a.issue)
+    grade = grade_of(a.issue, v["module"], a.grade)
+    refs = module_refs(v["module"])
+    common = dict(v, root=str(ROOT))
+    plan = dict(common, precedents=precedents(a.precedent), screen_step=SCREEN_STEP[grade],
+                plan_refs=f"AGENTS.md, issues/README.md, tests/integration/AGENTS.md, {refs}")
+    rev = dict(common, refs=f"AGENTS.md, issues/README.md, {refs}, tests/integration/AGENTS.md")
+    texts = [("plan", fill((BRIEFS / "plan.md").read_text(), plan)), ("rev", fill((BRIEFS / "rev.md").read_text(), rev))]
+    for name, text in texts:  # both filled before either is written
+        write(a.issue, name, text)
+
+
+def cmd_worker(a):
+    v = issue(a.issue)
+    side = a.unit[:1]
+    if side not in CONVENTIONS or not re.fullmatch(r"[tesh]\d+", a.unit):
+        sys.exit(f"unit {a.unit!r}: expected t<n>, e<n>, s<n> or h<n>")
+    wt = next((w for w in load(WORKTREES, []) if w["issue"] == str(a.issue) and w["unit"] == a.unit), None)
+    if not wt:
+        sys.exit(f"no registered worktree for issue {a.issue} unit {a.unit}; run pm-worktree new first")
+    grade = grade_of(a.issue, v["module"], None) if v["module"] == "studio" else None
+    if a.inputs:
+        inputs = a.inputs
+    elif side == "t":
+        inputs = "`requirement.md`, `test-criteria.md`" + (", `specs/`" if grade == "console" else "")
+    elif side == "s":
+        inputs = "`requirement.md`, `decisions.md`, `test-criteria.md`" + {"console": ", `specs/`", "native": ", `mocks/`"}.get(grade, "")
+    else:  # a studio issue has no design.md
+        inputs = "`requirement.md`, `decisions.md`, " + ("" if v["module"] == "studio" else "`design.md`, ") + "`test-criteria.md`"
+    if a.close and side == "t":
+        sys.exit("--close: a test unit does not close the issue")
+    ids = "<the check ids breakdown.md and test-criteria.md give this issue>" if a.close == "auto" else a.close
+    close = (f'Run {{{{root}}}}/.pm/bin/pm-issue close {{{{issue}}}} --checks "{ids}" --in {{{{worktree}}}} and commit the '
+             "move with your last commit.") if a.close else "(This unit does not close the issue; nothing to do in this step.)"
+    template = (BRIEFS / "worker.md").read_text()
+    try:
+        head, rest = template.split(BLOCK_TESTS)
+        tests, impl = rest.split(BLOCK_IMPL)
+    except ValueError:
+        sys.exit(f"{BRIEFS / 'worker.md'}: the two block markers are not both present exactly once")
+    values = dict(v, root=str(ROOT), unit=a.unit, unit_summary=a.summary.strip(), owned_files=(a.owned or f"the files breakdown.md lists for `{a.unit}`").strip(),
+                  worktree=wt["path"], branch=wt["branch"], base=wt.get("base") or "main", inputs=inputs,
+                  conventions=a.conventions or CONVENTIONS[side], precedents=precedents(a.precedent), close_step=close,
+                  work=(tests if side == "t" else impl).rstrip("\n"))
+    write(a.issue, a.unit, fill(head.rstrip("\n") + "\n", values))
+
+
+def cmd_crit(a):
+    v = issue(a.issue)
+    grade = grade_of(a.issue, v["module"], a.grade)
+    if grade not in ("console", "native"):
+        sys.exit(f"#{a.issue} has no screen to score (module {v['module']}, grade {grade})")
+    wt = pathlib.Path(a.capture_wt).resolve()
+    if not (wt / "studio").is_dir():
+        sys.exit(f"{wt} has no studio/ folder")
+    values = dict(v, root=str(ROOT), grade=grade, targets=a.targets.strip(), capture_wt=str(wt))
+    write(a.issue, "crit", fill((BRIEFS / "crit.md").read_text(), values))
+
+
+def cmd_show(a):
+    d = PM / f"issue-{a.issue}"
+    print(f"remembered: {load(d / 'brief.json', {})}")
+    for f in sorted(d.glob("brief-*.md")):
+        print(f)
+
+
+p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+sp = p.add_subparsers(dest="cmd", required=True)
+x = sp.add_parser("plan"); x.add_argument("issue"); x.add_argument("--grade", choices=GRADES)
+x.add_argument("--precedent", action="append", default=[]); x.set_defaults(f=cmd_plan)
+x = sp.add_parser("worker"); x.add_argument("issue"); x.add_argument("unit")
+x.add_argument("--summary", required=True); x.add_argument("--owned"); x.add_argument("--close")
+x.add_argument("--precedent", action="append", default=[]); x.add_argument("--inputs"); x.add_argument("--conventions")
+x.set_defaults(f=cmd_worker)
+x = sp.add_parser("crit"); x.add_argument("issue"); x.add_argument("--targets", required=True)
+x.add_argument("--capture-wt", required=True); x.add_argument("--grade", choices=("console", "native")); x.set_defaults(f=cmd_crit)
+x = sp.add_parser("show"); x.add_argument("issue"); x.set_defaults(f=cmd_show)
+a = p.parse_args()
+a.f(a)

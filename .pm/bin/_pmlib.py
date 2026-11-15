@@ -20,7 +20,10 @@ PMINFO = RUN / "pm.json"              # {"pm_pane":..., "pm_name":..., "workspac
 EVENTS = RUN / "events.log"
 
 MODEL_IDS = {"opus": "claude-opus-5-5", "fable": "claude-fable-5-2", "sonnet": "claude-sonnet-5-5", "haiku": "claude-haiku-5-5"}
-LIMITS = {"studio_worker": 2, "engine_worker": 3, "total": 16, "mem_gb": 22.5}
+# worker panes per side (a unit's first letter). Test units mostly wait between a check fix and the next, so they
+# get more room than the sides that build; memory, CPU and the total still gate every new pane.
+LIMITS = {"studio_worker": 2, "engine_worker": 3, "tests_worker": 6, "harness_worker": 3, "total": 16,
+          "mem_gb": 22.5, "cpu_pct": 90, "checks": 2}
 SIDES = {"s": "studio", "e": "engine", "t": "tests", "h": "harness"}  # first letter of a unit name: s1, e2, t1, h1
 
 
@@ -125,6 +128,32 @@ def mem_gb():
     m = re.search(r"total = ([0-9.]+)M\s+used = ([0-9.]+)M", sw)
     st, su = (float(m.group(1)) / 1024, float(m.group(2)) / 1024) if m else (0.0, 0.0)
     return used, su, st
+
+
+def cpu_pct(seconds=1):
+    """CPU in use across all cores over `seconds`, in percent (100 - idle), or None when top gave no answer.
+    The first sample of top is since boot, so two are taken and the second is read."""
+    import re
+    try:
+        out = subprocess.run(["top", "-l", "2", "-n", "0", "-s", str(seconds)], capture_output=True, text=True,
+                             timeout=seconds + 10).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    idle = re.findall(r"CPU usage:.*?([0-9.]+)% idle", out)
+    return round(100 - float(idle[-1]), 1) if idle else None
+
+
+def wake_watchd():
+    """Tell a running pm-watchd to look now instead of at its next tick (SIGUSR1). Silent when none runs."""
+    import signal
+    try:
+        # watchd.wake exists only while a daemon that handles the signal runs; an older one would die of it
+        pid = int((RUN / "watchd.wake").read_text())
+        cmd = subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True).stdout
+        if "pm-watchd" in cmd:  # a stale file whose pid now belongs to something else is left alone
+            os.kill(pid, signal.SIGUSR1)
+    except (FileNotFoundError, ValueError, ProcessLookupError, PermissionError):
+        pass
 
 
 def pm_target():

@@ -42,7 +42,8 @@ not leave a comment in the code. File it and carry on:
 ```
 
 Fill the file's sections per `issues/README.md`; evidence is required. A worker passes `--in` its worktree and
-commits the file on its branch (`issue: file #<n>`), so it reaches `main` when the unit merges. A plan pane files
+commits the file on its branch with `pm-issue commit --in <your worktree>` (it writes `issue: file #<n>` itself),
+so it reaches `main` when the unit merges. A plan pane files
 in the main checkout and leaves the commit to the PM. Name the filed ids in your `UNIT READY` or `STAGE READY`
 line (`… filed #14 #15`). The PM assigns them once the current worktrees are merged. Something that blocks your
 own unit is not this: that is `BLOCKED`.
@@ -77,6 +78,7 @@ own unit is not this: that is `BLOCKED`.
 | stage documents, reviews, decisions, scores | `<Root>/.pm/issue-<id>/` (text only, never images) |
 | state | `.pm/issue-<id>/state.md` is the PM's; yours is `state-<role>.md` (worker: `output/state.md`); questions go to `decisions-needed.md` (append only) |
 | logs, check records, captures, your resume note | your worktree's `output/` (ignored): `logs/`, `checks/`, `captures/<phase>/`, `state.md` |
+| the running check | your worktree's `output/checks/running.json` while `pm-check` runs (what `pm-check --stop` ends) |
 | ports | your worktree's `output/ports.json`: `studio`, `engine`, `emulator`. Use only these; never 9297 or another unit's |
 | mocks | `.pm/issue-<id>/mocks/` |
 | critique snapshots | written by the impeccable skill under the worktree's `studio/.impeccable/critique/`; recorded with `pm-critique record` |
@@ -92,10 +94,24 @@ unit's. Sign only with the keys under `~/.aws/emulator/<your port>/`. Never read
 
 ## Machine
 
-Memory budget 22.5 GB used (`<Root>/.pm/bin/pm-mem`). Before `cargo build`, Playwright, a dev server or an
-emulator run `pm-mem --check`; if it fails, stop with `BLOCKED <name> memory` at once. No long-running dev
-servers: web checks use the built app served by `pm-capture --serve` or on your own port. Headless Playwright
-only. Stop only your own processes, by port or PID.
+Memory budget 22.5 GB used, CPU 90% (`<Root>/.pm/bin/pm-mem`). Before `cargo build`, Playwright, a dev server or
+an emulator run `pm-mem --wait`: it waits up to five minutes for the CPU to drop and fails at once on memory. If
+it fails on memory, stop with `BLOCKED <name> memory` at once; if the CPU is still over after the wait, stop with
+`BLOCKED <name> cpu`. `pm-check` needs nothing before it: it queues behind other
+worktrees' runs and waits for the CPU by itself, so a long quiet start is normal; never start a second one. No
+long-running dev servers: web checks use the built app served by `pm-capture --serve` or on your own port.
+Headless Playwright only.
+
+Other worktrees run the same tools as you at the same time. Stop only what is yours:
+
+- your `pm-check` run: `<Root>/.pm/bin/pm-check <your worktree> --stop`, and nothing else;
+- anything else you started: by the PID you got when you started it, or by your own port from
+  `output/ports.json` (`lsof -ti tcp:<port>`).
+
+Never `pkill`, `killall` or `kill` by a program's name or by a pattern (`cargo`, `bun`, `node`, `vitest`,
+`playwright`, `pm-check`, `chromium`, `docker`): that ends other worktrees' work too. Never stop a container you
+did not start. A process you cannot tie to your worktree is not yours; leave it and, if it is in your way,
+`BLOCKED <name> depends <what>`.
 
 ## Reporting lines
 
@@ -109,7 +125,7 @@ Report through the file channel, then print the same line as the last line of yo
 STAGE READY <name>                 plan: every stage document is written and passed by rev; crit: the scores are recorded
 UNIT READY <name> <branch>         worker: pm-check passed on the pushed-to-branch commit and rev passed impl-<unit>
 DONE <name> <one line>             an order the PM sent after your UNIT READY finished (what changed, committed)
-BLOCKED <name> <reason>            you cannot continue without the PM: decision-needed <q> | memory | depends <unit> <what> | review <stage> (3 rounds failed) | check <id>
+BLOCKED <name> <reason>            you cannot continue without the PM: decision-needed <q> | memory | cpu | depends <unit> <what> | review <stage> (3 rounds failed) | check <id>
 REVIEWED <stage> r<k> verdict=<pass|revise> p1=<n> p2=<n> p3=<n> <review-file>    rev only: sent to the lead with herdr agent prompt, and pm-report --from <rev-name> for the log
 ```
 
