@@ -12,7 +12,9 @@ export type AreaModalProps = Omit<ModalProps, 'modalRoot' | 'getModalRoot' | 're
 export function AreaModal(props: AreaModalProps) {
   const root = useContext(AreaRootContext);
   // Cloudscape asks for the root in the commit that mounts the modal, where the area's root, an ancestor, may not
-  // have its ref yet; it is looked up once that commit is done.
+  // have its ref yet; it is looked up once that commit is done. Outside an area it rejects: Cloudscape's portal
+  // catches that, logs "[AwsUi] [portal]: failed to load portal root" and renders no modal, rather than one under
+  // `document.body`.
   const getModalRoot = () =>
     Promise.resolve().then(() => {
       const area = root.current;
