@@ -1,5 +1,6 @@
 import { S3Client } from '@aws-sdk/client-s3';
 import { SFNClient } from '@aws-sdk/client-sfn';
+import { FetchHttpHandler } from '@smithy/fetch-http-handler';
 import { SESSION_HEADER } from '../engine/engine-client';
 import { engineSession, type EngineSession } from './engine-session';
 
@@ -59,6 +60,21 @@ export function engineEndpoint(enginePort: number): string {
   return checkedEndpoint(`http://${ENGINE_HOST}:${String(enginePort)}`);
 }
 
+// Reads whose answers the browser must neither keep nor reuse (issue 26). An S3 object's body is emulator content,
+// which can change between two reads through Studio or around it, and the engine's answers carry nothing that keeps
+// the HTTP cache from storing them. Every other method is sent with no cache mode, as the browser never answers one
+// from its cache: a `no-store` request also gets `Cache-Control: no-cache` from the browser, which the engine relays
+// and which `PutObject` would store as the object's metadata.
+const UNCACHED_METHODS: ReadonlySet<string> = new Set(['GET', 'HEAD']);
+
+// Every request goes through the page's `fetch`, in every environment: the SDK would otherwise pick its Node handler
+// under Node, the unit tests included.
+function requestHandler(): FetchHttpHandler {
+  return new FetchHttpHandler({
+    requestInit: (request): RequestInit => (UNCACHED_METHODS.has(request.method) ? { cache: 'no-store' } : {}),
+  });
+}
+
 // Options every client shares. Each one that the SDK would otherwise resolve from the environment or a shared
 // config file, and that decides where a request goes or how it is authenticated, is set here.
 function commonConfig({ endpoint }: AwsClientOptions) {
@@ -69,6 +85,7 @@ function commonConfig({ endpoint }: AwsClientOptions) {
     useDualstackEndpoint: false,
     useFipsEndpoint: false,
     credentials: PLACEHOLDER_CREDENTIAL,
+    requestHandler: requestHandler(),
   };
 }
 

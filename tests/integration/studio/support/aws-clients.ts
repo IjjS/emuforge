@@ -5,15 +5,21 @@
 //   --target=browser` against Studio's installed SDK, into the run's own scratch space (never into `studio/`), loads
 //   the bundle into the page, and creates one S3 client and one Step Functions client there for the engine's
 //   endpoint. The bundle calls only `engineEndpoint`, `createS3Client` and `createSfnClient` and the SDK's commands;
-//   the clients live in the page until it closes, so later calls go through the same clients.
+//   the clients live in the page until it closes, so later calls go through the same clients. A resolved command
+//   carries its request id (`$metadata.requestId`, the emulator's id of the request it answered); the object
+//   commands (issue 26) carry what their result reads: body, `ETag`, `CacheControl`, keys.
 // - `EngineRequests` reads the page's engine requests from a `Traffic` recording: method, path, whether
 //   `Authorization` has the Studio credential's prefix, and whether `X-EmuForge-Session` equals a session token the
 //   engine handed the page. Tokens stay in memory (`Traffic` registers each for redaction as it sees it); only
 //   presence and equality reach a log.
+// - `CacheRecord` is the browser's own record of where each engine answer came from: a Chrome DevTools Protocol
+//   session on the page (`Network.requestWillBeSent`, `Network.requestServedFromCache`, `Network.responseReceived`).
+//   It only listens; it changes no request and installs no route.
 // - `directS3` and `directSfn` send an operation straight to the emulator, SigV4-signed with its key, TLS verified
-//   against its `ca.pem`.
+//   against its `ca.pem`. A direct S3 call may carry a body and extra headers; every direct answer carries its
+//   headers.
 
-import type { BrowserContext, Page } from '@playwright/test';
+import type { BrowserContext, CDPSession, Page } from '@playwright/test';
 import { execFile } from 'node:child_process';
 import { createHash, createHmac } from 'node:crypto';
 import fs from 'node:fs';
@@ -23,6 +29,7 @@ import path from 'node:path';
 import { type Ctx } from './check';
 import { emulatorDir, readEmulatorFiles } from './emulator';
 import { SESSION_PATH, Traffic, type SeenRequest } from './traffic';
+import { waitFor } from './wait';
 
 const REGION = 'us-east-1';
 
@@ -35,9 +42,29 @@ export const STUDIO_AUTH_PREFIX = 'AWS4-HMAC-SHA256 Credential=emuforge-studio/'
 /** The name the bundle gives its calls on `window`. */
 const GLOBAL = '__emuforgeAwsClients';
 
-/** What a command sent through a page client gave: its result, or the rejection's name, HTTP status and message. */
+/** How long the browser's record may take to report the answers of the requests it saw. */
+const RECORD_BOUND_MS = 10_000;
+
+/**
+ * What a command sent through a page client gave: its result with its request id (`null` when the answer named
+ * none), or the rejection's name, HTTP status and message.
+ */
 export type Outcome<T> =
-  { resolved: true; value: T } | { resolved: false; name: string; status: number | null; message: string };
+  | { resolved: true; value: T; requestId: string | null }
+  | { resolved: false; name: string; status: number | null; message: string };
+
+/** What `GetObject` resolved with. */
+export interface ObjectRead {
+  body: string;
+  etag: string | null;
+  cacheControl: string | null;
+}
+
+/** What `HeadObject` resolved with. */
+export interface ObjectHead {
+  etag: string | null;
+  cacheControl: string | null;
+}
 
 export interface StateMachineEntry {
   name: string;
@@ -50,7 +77,15 @@ export interface StateMachineEntry {
  */
 function entrySource(factory: string): string {
   return `import { createS3Client, createSfnClient, engineEndpoint } from ${JSON.stringify(factory)};
-import { HeadBucketCommand, ListBucketsCommand } from '@aws-sdk/client-s3';
+import {
+  DeleteObjectCommand,
+  GetObjectCommand,
+  HeadBucketCommand,
+  HeadObjectCommand,
+  ListBucketsCommand,
+  ListObjectsV2Command,
+  PutObjectCommand,
+} from '@aws-sdk/client-s3';
 import { ListStateMachinesCommand } from '@aws-sdk/client-sfn';
 
 let s3;
@@ -58,7 +93,9 @@ let sfn;
 
 async function outcome(send, map) {
   try {
-    return { resolved: true, value: map(await send()) };
+    const out = await send();
+    const requestId = out && out.$metadata && typeof out.$metadata.requestId === 'string' ? out.$metadata.requestId : null;
+    return { resolved: true, value: await map(out), requestId };
   } catch (e) {
     const status = e && e.$metadata && typeof e.$metadata.httpStatusCode === 'number' ? e.$metadata.httpStatusCode : null;
     return { resolved: false, name: String((e && e.name) || 'Error'), status, message: String((e && e.message) || e) };
@@ -82,6 +119,39 @@ window[${JSON.stringify(GLOBAL)}] = {
     return outcome(
       () => sfn.send(new ListStateMachinesCommand({})),
       (out) => (out.stateMachines || []).map((m) => ({ name: m.name, arn: m.stateMachineArn })),
+    );
+  },
+  getObject(bucket, key) {
+    return outcome(
+      () => s3.send(new GetObjectCommand({ Bucket: bucket, Key: key })),
+      async (out) => ({
+        body: out.Body ? await out.Body.transformToString() : '',
+        etag: out.ETag ?? null,
+        cacheControl: out.CacheControl ?? null,
+      }),
+    );
+  },
+  headObject(bucket, key) {
+    return outcome(
+      () => s3.send(new HeadObjectCommand({ Bucket: bucket, Key: key })),
+      (out) => ({ etag: out.ETag ?? null, cacheControl: out.CacheControl ?? null }),
+    );
+  },
+  putObject(bucket, key, body, cacheControl) {
+    const input = { Bucket: bucket, Key: key, Body: body };
+    if (cacheControl !== null) input.CacheControl = cacheControl;
+    return outcome(() => s3.send(new PutObjectCommand(input)), (out) => out.ETag ?? null);
+  },
+  deleteObject(bucket, key) {
+    return outcome(
+      () => s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: key })),
+      (out) => out.$metadata.httpStatusCode,
+    );
+  },
+  listObjectsV2(bucket) {
+    return outcome(
+      () => s3.send(new ListObjectsV2Command({ Bucket: bucket })),
+      (out) => (out.Contents || []).map((o) => o.Key),
     );
   },
 };
@@ -120,6 +190,19 @@ async function buildBundle(ctx: Ctx): Promise<string> {
   return bundle;
 }
 
+/** The calls the bundle's entry puts on `window`. */
+const CALLS = [
+  'init',
+  'listBuckets',
+  'headBucket',
+  'listStateMachines',
+  'getObject',
+  'headObject',
+  'putObject',
+  'deleteObject',
+  'listObjectsV2',
+];
+
 /** The factory's clients in `page`, created once for the engine on `enginePort`. */
 export class PageClients {
   private constructor(
@@ -135,14 +218,15 @@ export class PageClients {
   static async load(ctx: Ctx, page: Page, enginePort: number, requests: EngineRequests): Promise<PageClients> {
     const bundle = await buildBundle(ctx);
     await page.addScriptTag({ path: bundle });
-    const exposed = await page.evaluate((name) => {
-      const calls = (window as unknown as Record<string, Record<string, unknown> | undefined>)[name];
-      return ['init', 'listBuckets', 'headBucket', 'listStateMachines'].filter((c) => typeof calls?.[c] === 'function');
-    }, GLOBAL);
-    if (exposed.length !== 4) {
-      throw new Error(
-        `the loaded bundle exposes ${JSON.stringify(exposed)} of init, listBuckets, headBucket, listStateMachines`,
-      );
+    const exposed = await page.evaluate(
+      ({ name, calls }) => {
+        const all = (window as unknown as Record<string, Record<string, unknown> | undefined>)[name];
+        return calls.filter((c) => typeof all?.[c] === 'function');
+      },
+      { name: GLOBAL, calls: CALLS },
+    );
+    if (exposed.length !== CALLS.length) {
+      throw new Error(`the loaded bundle exposes ${JSON.stringify(exposed)} of ${CALLS.join(', ')}`);
     }
     const endpoint = await page.evaluate(
       ({ name, port }) => (window as unknown as Record<string, { init(port: number): string }>)[name].init(port),
@@ -164,6 +248,33 @@ export class PageClients {
     return this.call('ListStateMachines', 'listStateMachines', []);
   }
 
+  getObject(bucket: string, key: string): Promise<Outcome<ObjectRead>> {
+    return this.call(`GetObject ${bucket}/${key}`, 'getObject', [bucket, key]);
+  }
+
+  headObject(bucket: string, key: string): Promise<Outcome<ObjectHead>> {
+    return this.call(`HeadObject ${bucket}/${key}`, 'headObject', [bucket, key]);
+  }
+
+  /** `PutObject` with `body` and, unless `null`, `CacheControl`; resolves with the `ETag`. */
+  putObject(bucket: string, key: string, body: string, cacheControl: string | null): Promise<Outcome<string | null>> {
+    return this.call(
+      `PutObject ${bucket}/${key}${cacheControl === null ? ' without CacheControl' : ` CacheControl ${cacheControl}`}`,
+      'putObject',
+      [bucket, key, body, cacheControl],
+    );
+  }
+
+  /** `DeleteObject`; resolves with the HTTP status. */
+  deleteObject(bucket: string, key: string): Promise<Outcome<number>> {
+    return this.call(`DeleteObject ${bucket}/${key}`, 'deleteObject', [bucket, key]);
+  }
+
+  /** `ListObjectsV2`; resolves with the keys. */
+  listObjectsV2(bucket: string): Promise<Outcome<string[]>> {
+    return this.call(`ListObjectsV2 ${bucket}`, 'listObjectsV2', [bucket]);
+  }
+
   private async call<T>(what: string, method: string, args: unknown[]): Promise<Outcome<T>> {
     const outcome = await this.page.evaluate(
       ({ name, method, args }) =>
@@ -176,7 +287,7 @@ export class PageClients {
     // The engine's answers to this command are logged first.
     await this.requests.settle();
     this.ctx.log(
-      `page ${what}: ${result.resolved ? 'resolved' : `rejected ${result.name} status ${String(result.status)}: ${result.message}`}`,
+      `page ${what}: ${result.resolved ? `resolved, request id ${String(result.requestId)}` : `rejected ${result.name} status ${String(result.status)}: ${result.message}`}`,
     );
     return result;
   }
@@ -298,8 +409,11 @@ export function describe(requests: EngineRequest[]): string {
   );
 }
 
-/** An answer of a direct call, or the error that kept it from arriving. */
-export type DirectAnswer = { status: number; body: string } | { error: string };
+/**
+ * An answer of a direct call, with its headers (lower-case names, repeated ones joined with `, `), or the error that
+ * kept it from arriving.
+ */
+export type DirectAnswer = { status: number; body: string; headers: Record<string, string> } | { error: string };
 
 function sha256Hex(data: string): string {
   return createHash('sha256').update(data).digest('hex');
@@ -365,7 +479,13 @@ async function direct(
         let text = '';
         response.setEncoding('utf8');
         response.on('data', (chunk: string) => (text += chunk));
-        response.on('end', () => resolve({ status: response.statusCode ?? 0, body: text }));
+        response.on('end', () => {
+          const headers: Record<string, string> = {};
+          for (const [name, value] of Object.entries(response.headers)) {
+            if (value !== undefined) headers[name] = Array.isArray(value) ? value.join(', ') : value;
+          }
+          resolve({ status: response.statusCode ?? 0, body: text, headers });
+        });
         response.on('error', (e) => resolve({ error: e.message }));
       },
     );
@@ -375,9 +495,26 @@ async function direct(
   });
 }
 
-/** An S3 operation without a body, straight to the emulator (path style: `/` or `/<bucket>`). */
-export function directS3(ctx: Ctx, port: number, method: string, pathname: string): Promise<DirectAnswer> {
-  return direct(ctx, port, 's3', method, pathname, '', {});
+/** What a direct S3 call sends besides its method and path. */
+export interface DirectS3Options {
+  /** The request body; none when absent. */
+  body?: string;
+  /** More headers, signed with the rest (`cache-control`, …). */
+  headers?: Record<string, string>;
+}
+
+/**
+ * An S3 operation straight to the emulator (path style: `/`, `/<bucket>` or `/<bucket>/<key>`), without a body unless
+ * `options` gives one.
+ */
+export function directS3(
+  ctx: Ctx,
+  port: number,
+  method: string,
+  pathname: string,
+  options: DirectS3Options = {},
+): Promise<DirectAnswer> {
+  return direct(ctx, port, 's3', method, pathname, options.body ?? '', options.headers ?? {});
 }
 
 /** A Step Functions action (`ListStateMachines`, …) with its JSON input, straight to the emulator. */
@@ -396,4 +533,107 @@ export function shown(answer: DirectAnswer): string {
 /** The bucket names of a `ListBuckets` XML body. */
 export function bucketNames(xml: string): string[] {
   return [...xml.matchAll(/<Bucket>[\s\S]*?<Name>([^<]*)<\/Name>[\s\S]*?<\/Bucket>/g)].map((m) => m[1]);
+}
+
+/** One answer the browser reported for a request of the page to the engine. */
+export interface RecordedAnswer {
+  method: string;
+  path: string;
+  status: number;
+  /** Where the browser says the answer came from: `network`, or the cache flags it reported. */
+  source: string;
+  /** The browser reported it served from a cache of its own (disk, memory, prefetch, service worker). */
+  fromCache: boolean;
+}
+
+interface Pending {
+  method: string;
+  url: string;
+  servedFromCache: boolean;
+  done: boolean;
+}
+
+/**
+ * The browser's own record of where each answer to a request of the page to the engine at `engineOrigin` came from:
+ * Chrome DevTools Protocol `Network` events of a session on the page. `Network.enable` only turns the events on; the
+ * record sends no request and changes none.
+ */
+export class CacheRecord {
+  private readonly seen = new Map<string, Pending>();
+  readonly answers: RecordedAnswer[] = [];
+
+  private constructor(
+    private readonly ctx: Ctx,
+    private readonly engineOrigin: string,
+  ) {}
+
+  /** Starts recording before the page's first request to the engine. */
+  static async attach(ctx: Ctx, context: BrowserContext, page: Page, engineOrigin: string): Promise<CacheRecord> {
+    const record = new CacheRecord(ctx, engineOrigin);
+    const cdp: CDPSession = await context.newCDPSession(page);
+    cdp.on('Network.requestWillBeSent', (e) => {
+      if (new URL(e.request.url).origin !== engineOrigin) return;
+      const known = record.seen.get(e.requestId);
+      // A redirect reuses the id; the request is the latest one.
+      record.seen.set(e.requestId, {
+        method: e.request.method,
+        url: e.request.url,
+        servedFromCache: known?.servedFromCache ?? false,
+        done: false,
+      });
+    });
+    cdp.on('Network.requestServedFromCache', (e) => {
+      const known = record.seen.get(e.requestId);
+      if (known) known.servedFromCache = true;
+    });
+    cdp.on('Network.responseReceived', (e) => {
+      const known = record.seen.get(e.requestId);
+      if (!known) return;
+      known.done = true;
+      const r = e.response;
+      const flags = [
+        r.fromDiskCache === true ? 'disk cache' : null,
+        known.servedFromCache ? 'served from cache' : null,
+        r.fromPrefetchCache === true ? 'prefetch cache' : null,
+        r.fromServiceWorker === true ? 'service worker' : null,
+      ].filter((f): f is string => f !== null);
+      const answer: RecordedAnswer = {
+        method: known.method,
+        path: new URL(r.url).pathname,
+        status: r.status,
+        source: flags.length === 0 ? 'network' : flags.join(', '),
+        fromCache: flags.length > 0,
+      };
+      record.answers.push(answer);
+      record.ctx.log(
+        `browser record: ${answer.method} ${answer.path} answered ${String(answer.status)} from ${answer.source}`,
+      );
+    });
+    cdp.on('Network.loadingFailed', (e) => {
+      const known = record.seen.get(e.requestId);
+      if (!known || known.done) return;
+      known.done = true;
+      record.ctx.log(`browser record: ${known.method} ${new URL(known.url).pathname} failed: ${e.errorText}`);
+    });
+    await cdp.send('Network.enable');
+    return record;
+  }
+
+  /**
+   * Every answer recorded so far, once each request to the engine the browser reported has its answer or its
+   * failure, within a bound. Throws when one is still open after it.
+   */
+  async all(): Promise<RecordedAnswer[]> {
+    const open = await waitFor(RECORD_BOUND_MS, () => {
+      const left = [...this.seen.values()].filter((p) => !p.done);
+      return left.length === 0 ? null : undefined;
+    });
+    if (open === undefined) {
+      const left = [...this.seen.values()].filter((p) => !p.done).map((p) => `${p.method} ${new URL(p.url).pathname}`);
+      throw new Error(
+        `the browser reported no answer within ${String(RECORD_BOUND_MS)} ms for ${String(left.length)} request(s) to ${this.engineOrigin}: ${left.join('; ')}`,
+      );
+    }
+    return [...this.answers];
+  }
 }
