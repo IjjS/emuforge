@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: bug
 Issue-Source: plan
 Issue-Key: studio|aws-client.http-cache|stale-answer
-Issue-Check-Ids:
+Issue-Check-Ids: studio.aws-clients-get-object-shows-change-made-outside studio.aws-clients-get-object-shows-studio-own-change studio.aws-clients-every-read-reaches-the-engine studio.aws-clients-put-object-stores-only-what-the-command-gives
 Issue-Commit: 37f568848d80f32259e69837fae525c1ce89940c
 
 # Make Studio's AWS reads show the emulator's current state, not a browser-cached answer
