@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: gap
 Issue-Source: plan
 Issue-Key: harness|structure-score|aws-area-scope
-Issue-Check-Ids:
+Issue-Check-Ids: harness-test
 Issue-Commit: ec897b9b1f81d6b3ef567cbe08bdc83e94bfdfb0
 
 # Score only the AWS area's accessibility tree in the structure score tool
