@@ -26,9 +26,9 @@ Only `crit` and `rev` look at captures, once per round.
 ### Captures and languages
 
 `pm-capture` sets no locale, but its headless Chromium reports `en-US` whatever the machine's language, and it
-stores nothing, so a capture is in English. A language is captured with
-`--storage-state FILE`, a Playwright storage state that holds the language choice for Studio's origin, and `--name`
-naming the language, for example `output/captures/lang-de.json`:
+stores nothing, so a capture is in English. A language is captured with `--storage-state FILE`, a Playwright
+storage state that holds the language choice for Studio's origin, and `--name` naming the language, for example
+`output/captures/lang-de.json`:
 
 ```json
 {
