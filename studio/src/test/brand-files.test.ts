@@ -1,8 +1,9 @@
 /// <reference types="node" />
-// EmuForge's brand files as files (issue 36, test-criteria.md, "Unit — test/brand-files.test.ts"): what each vector
-// file holds and may not hold (requirement R5.2), that the tile path keeps the symbol's head (R4.2), the code sign
-// (R4.3), the favicon's two schemes (R7.2), the script that writes the files and its font parser (R5.3, R5.4), and
-// that nothing of the owner's reference sheet is tracked (R5.6). The files are read from the checkout; how they draw
+// EmuForge's brand files as files (issue 36, test-criteria.md, "Unit — test/brand-files.test.ts"): which files exist
+// (requirement R5.1), what each vector file holds and may not hold (R5.2), that the tile path keeps the symbol's head
+// (R4.2), the code sign (R4.3), the favicon's two schemes (R7.2), the social image's logo (R8.6), the rasters' sizes
+// (R5.1, R5.3), the script that writes the files and its font parser (R5.3, R5.4), and that nothing of the owner's
+// reference sheet is tracked (R5.6). The files are read from the checkout; how they draw
 // is the flow checks' (tests/integration/studio/brand.spec.ts).
 
 import { execFileSync } from 'node:child_process';
@@ -18,9 +19,22 @@ const REPOSITORY = path.resolve(STUDIO, '..');
 
 const LOGOS = ['logo-primary-light.svg', 'logo-primary-dark.svg', 'logo-compact-light.svg', 'logo-compact-dark.svg'];
 const APP_ICONS = ['app-icon-teal.svg', 'app-icon-cream.svg', 'app-icon-night.svg', 'app-icon-teal-square.svg'];
-/** Every vector file of R5.1's table but the social image's, which comes with it. */
-const TILE_FILES = [...LOGOS, ...APP_ICONS, 'favicon.svg'];
+/** Every vector file of R5.1's table that places the tile path: all but `symbol.svg`. */
+const TILE_FILES = [...LOGOS, ...APP_ICONS, 'favicon.svg', 'social.svg'];
 const VECTOR_FILES = ['symbol.svg', ...TILE_FILES];
+/** How many times a file places the tile path: the social image's logo and its window's tile; once elsewhere. */
+const TILES_IN: Record<string, number> = { 'social.svg': 2 };
+
+/** R5.1's table: the files of `brand/` and of `public/`, and no other. */
+const BRAND_FILES = [
+  'symbol.svg',
+  ...LOGOS,
+  ...APP_ICONS,
+  ...['teal', 'cream', 'night'].flatMap((g) => [`app-icon-${g}-192.png`, `app-icon-${g}-512.png`]),
+  'social.svg',
+  'social-1200x630.png',
+];
+const PUBLIC_FILES = ['favicon.svg', 'favicon.ico', 'apple-touch-icon.png'];
 
 /** The file of R5.1's table: the three files Studio serves at a fixed path are in `public/`, the rest in `brand/`. */
 function brandFile(name: string): string {
@@ -162,6 +176,15 @@ function viewBoxOf(doc: Document): { x: number; y: number; size: number } {
 
 // --- the files -------------------------------------------------------------------------------------------------
 
+describe('the brand files', () => {
+  it('brand/ and public/ hold exactly the files of R5.1, and no two files have the same bytes', () => {
+    expect(readdirSync(path.join(STUDIO, 'brand')).sort()).toEqual([...BRAND_FILES].sort());
+    expect(readdirSync(path.join(STUDIO, 'public')).sort()).toEqual([...PUBLIC_FILES].sort());
+    const bytes = [...BRAND_FILES, ...PUBLIC_FILES].map((name) => readFileSync(brandFile(name)).toString('base64'));
+    expect(new Set(bytes).size).toBe(bytes.length);
+  });
+});
+
 const ALLOWED = new Set(['svg', 'path', 'rect', 'circle', 'g', 'clipPath', 'defs', 'title']);
 
 describe('every vector file', () => {
@@ -239,14 +262,15 @@ describe('the symbol path and the tile path', () => {
   it.each(TILE_FILES)('%s holds the tile path under the same limits, and not the symbol path', (name) => {
     const doc = parse(name);
     const marks = markPaths(doc);
-    expect(marks).toHaveLength(1);
-    const [mark] = marks as [Element];
-    const d = mark.getAttribute('d') ?? '';
-    expect(d).toBe(TILE_PATH);
-    expect(isStroked(mark)).toBe(false);
-    expect(subpaths(d)).toHaveLength(2);
-    expect(segmentCount(d)).toBeLessThanOrEqual(60);
-    expect(longNumbers(d)).toEqual([]);
+    expect(marks).toHaveLength(TILES_IN[name] ?? 1);
+    for (const mark of marks) {
+      const d = mark.getAttribute('d') ?? '';
+      expect(d).toBe(TILE_PATH);
+      expect(isStroked(mark)).toBe(false);
+      expect(subpaths(d)).toHaveLength(2);
+      expect(segmentCount(d)).toBeLessThanOrEqual(60);
+      expect(longNumbers(d)).toEqual([]);
+    }
     expect(read(name)).not.toContain(SYMBOL_PATH);
   });
 
@@ -258,65 +282,74 @@ describe('the symbol path and the tile path', () => {
     "%s: the tile path's head and eye are the symbol path's after one uniform scale and one translation",
     (name) => {
       const doc = parse(name);
-      const mark = markPaths(doc)[0] as Element;
-      // The tile path as the file places it, in units of its viewBox's larger side.
-      const at = placementOf(mark);
-      const box = viewBoxOf(doc);
-      const place = ([x, y]: Point): Point => [
-        (at.x + at.scale * x - box.x) / box.size,
-        (at.y + at.scale * y - box.y) / box.size,
-      ];
-      const tile = subpaths(mark.getAttribute('d') ?? '');
-      const symbol = subpaths(SYMBOL_PATH);
-      // The one scale and translation from the placed tile path to the symbol path, by the first point and the eye's.
-      const [p0, q0] = [place((tile[0] as { start: Point }).start), (symbol[0] as { start: Point }).start];
-      const [p1, q1] = [place((tile[1] as { start: Point }).start), (symbol[1] as { start: Point }).start];
-      const scale = Math.hypot(q1[0] - q0[0], q1[1] - q0[1]) / Math.hypot(p1[0] - p0[0], p1[1] - p0[1]);
-      const map = ([x, y]: Point): Point => [q0[0] + (x - p0[0]) * scale, q0[1] + (y - p0[1]) * scale];
-      const same = (a: Segment, b: Segment) =>
-        a.command === b.command &&
-        a.points.length === b.points.length &&
-        a.points.every((p, k) => {
-          const m = map(place(p));
-          const s = b.points[k] as Point;
-          return Math.abs(m[0] - s[0]) <= 0.01 && Math.abs(m[1] - s[1]) <= 0.01;
-        });
-
-      // The eye: the whole second subpath, start included.
-      const tileEye = tile[1] as { start: Point; segments: Segment[] };
-      const symbolEye = symbol[1] as { start: Point; segments: Segment[] };
-      expect(tileEye.segments.length).toBe(symbolEye.segments.length);
-      tileEye.segments.forEach((s, k) =>
-        expect(same(s, symbolEye.segments[k] as Segment), `eye segment ${String(k)}`).toBe(true),
-      );
-      const eyeStart = map(place(tileEye.start));
-      expect(
-        Math.abs(eyeStart[0] - symbolEye.start[0]) + Math.abs(eyeStart[1] - symbolEye.start[1]),
-      ).toBeLessThanOrEqual(0.02);
-
-      // The outline: from the beak's start round the crest to the neck, and from the neck under the beak to the
-      // throat, the same segments; only the segments between differ, and they are all below the head.
-      const a = (tile[0] as { segments: Segment[] }).segments;
-      const b = (symbol[0] as { segments: Segment[] }).segments;
-      let head = 0;
-      while (head < Math.min(a.length, b.length) && same(a[head] as Segment, b[head] as Segment)) head++;
-      let tail = 0;
-      while (
-        tail < Math.min(a.length, b.length) - head &&
-        same(a[a.length - 1 - tail] as Segment, b[b.length - 1 - tail] as Segment)
-      )
-        tail++;
-      const neck = b.slice(head, b.length - tail);
-      expect(neck.length, 'symbol segments that differ').toBeGreaterThan(0);
-      // Below the head: every point of the symbol's differing segments is lower than the eye and the beak, which
-      // are in the top 0.45 of the symbol's height.
-      const heights = symbol.flatMap((s) => [s.start, ...s.segments.flatMap((g) => g.points)]).map((p) => p[1]);
-      const below = 0.45 * Math.max(...heights);
-      const start = b[head - 1]?.points.at(-1) ?? [0, 0];
-      for (const p of [start, ...neck.flatMap((s) => s.points)]) expect(p[1]).toBeGreaterThan(below);
+      const marks = markPaths(doc);
+      expect(marks.length).toBeGreaterThan(0);
+      for (const mark of marks) expectHeadOfSymbol(doc, mark);
     },
   );
 });
+
+/**
+ * The tile path `mark` as its file places it keeps the symbol path's head and eye: after one uniform scale and one
+ * translation they equal the symbol path's within 0.01, and only segments below the head differ.
+ */
+function expectHeadOfSymbol(doc: Document, mark: Element): void {
+  // The tile path as the file places it, in units of its viewBox's larger side.
+  const at = placementOf(mark);
+  const box = viewBoxOf(doc);
+  const place = ([x, y]: Point): Point => [
+    (at.x + at.scale * x - box.x) / box.size,
+    (at.y + at.scale * y - box.y) / box.size,
+  ];
+  const tile = subpaths(mark.getAttribute('d') ?? '');
+  const symbol = subpaths(SYMBOL_PATH);
+  // The one scale and translation from the placed tile path to the symbol path, by the first point and the eye's.
+  const [p0, q0] = [place((tile[0] as { start: Point }).start), (symbol[0] as { start: Point }).start];
+  const [p1, q1] = [place((tile[1] as { start: Point }).start), (symbol[1] as { start: Point }).start];
+  const scale = Math.hypot(q1[0] - q0[0], q1[1] - q0[1]) / Math.hypot(p1[0] - p0[0], p1[1] - p0[1]);
+  const map = ([x, y]: Point): Point => [q0[0] + (x - p0[0]) * scale, q0[1] + (y - p0[1]) * scale];
+  const same = (a: Segment, b: Segment) =>
+    a.command === b.command &&
+    a.points.length === b.points.length &&
+    a.points.every((p, k) => {
+      const m = map(place(p));
+      const s = b.points[k] as Point;
+      return Math.abs(m[0] - s[0]) <= 0.01 && Math.abs(m[1] - s[1]) <= 0.01;
+    });
+
+  // The eye: the whole second subpath, start included.
+  const tileEye = tile[1] as { start: Point; segments: Segment[] };
+  const symbolEye = symbol[1] as { start: Point; segments: Segment[] };
+  expect(tileEye.segments.length).toBe(symbolEye.segments.length);
+  tileEye.segments.forEach((s, k) =>
+    expect(same(s, symbolEye.segments[k] as Segment), `eye segment ${String(k)}`).toBe(true),
+  );
+  const eyeStart = map(place(tileEye.start));
+  expect(Math.abs(eyeStart[0] - symbolEye.start[0]) + Math.abs(eyeStart[1] - symbolEye.start[1])).toBeLessThanOrEqual(
+    0.02,
+  );
+
+  // The outline: from the beak's start round the crest to the neck, and from the neck under the beak to the
+  // throat, the same segments; only the segments between differ, and they are all below the head.
+  const a = (tile[0] as { segments: Segment[] }).segments;
+  const b = (symbol[0] as { segments: Segment[] }).segments;
+  let head = 0;
+  while (head < Math.min(a.length, b.length) && same(a[head] as Segment, b[head] as Segment)) head++;
+  let tail = 0;
+  while (
+    tail < Math.min(a.length, b.length) - head &&
+    same(a[a.length - 1 - tail] as Segment, b[b.length - 1 - tail] as Segment)
+  )
+    tail++;
+  const neck = b.slice(head, b.length - tail);
+  expect(neck.length, 'symbol segments that differ').toBeGreaterThan(0);
+  // Below the head: every point of the symbol's differing segments is lower than the eye and the beak, which
+  // are in the top 0.45 of the symbol's height.
+  const heights = symbol.flatMap((s) => [s.start, ...s.segments.flatMap((g) => g.points)]).map((p) => p[1]);
+  const below = 0.45 * Math.max(...heights);
+  const start = b[head - 1]?.points.at(-1) ?? [0, 0];
+  for (const p of [start, ...neck.flatMap((s) => s.points)]) expect(p[1]).toBeGreaterThan(below);
+}
 
 describe('the logos, the app icons and the favicon', () => {
   it.each(LOGOS)('%s draws its letters as paths, in one group per line of letters', (name) => {
@@ -374,6 +407,51 @@ describe('the logos, the app icons and the favicon', () => {
     }
     expect(ground.getAttribute('fill')).toBeNull();
     expect(mark.getAttribute('fill')).toBeNull();
+  });
+});
+
+describe('the social image', () => {
+  it('social.svg is 1200 x 630 and holds the tile path and the letter paths of logo-primary-light.svg', () => {
+    const doc = parse('social.svg');
+    expect(doc.documentElement.getAttribute('viewBox')).toBe('0 0 1200 630');
+    const ds = (d: Document) => [...d.getElementsByTagName('path')].map((p) => p.getAttribute('d') ?? '');
+    const social = new Set(ds(doc));
+    expect(social.has(TILE_PATH)).toBe(true);
+    const logo = parse('logo-primary-light.svg');
+    const letterPaths = [...logo.getElementsByTagName('path')]
+      .filter((p) => p.getAttribute('fill-rule') !== 'evenodd' && !isStroked(p))
+      .map((p) => p.getAttribute('d') ?? '');
+    expect(letterPaths.length).toBeGreaterThan(0);
+    expect(letterPaths.filter((d) => !social.has(d))).toEqual([]);
+  });
+});
+
+describe('the raster files', () => {
+  it.each(
+    ['teal', 'cream', 'night'].flatMap((g) => [192, 512].map((size) => [`app-icon-${g}-${String(size)}.png`, size])),
+  )('%s is %i x %i', (name, size) => {
+    expect(imageSize(readFileSync(brandFile(name as string)))).toEqual({ width: size, height: size });
+  });
+
+  it('social-1200x630.png is 1200 x 630 and apple-touch-icon.png 180 x 180', () => {
+    expect(imageSize(readFileSync(brandFile('social-1200x630.png')))).toEqual({ width: 1200, height: 630 });
+    expect(imageSize(readFileSync(brandFile('apple-touch-icon.png')))).toEqual({ width: 180, height: 180 });
+  });
+
+  it('favicon.ico holds exactly three entries, 16, 32 and 48 pixels square', () => {
+    const ico = readFileSync(brandFile('favicon.ico'));
+    expect([ico.readUInt16LE(0), ico.readUInt16LE(2)]).toEqual([0, 1]);
+    const count = ico.readUInt16LE(4);
+    expect(count).toBe(3);
+    const entries = Array.from({ length: count }, (_, i) => {
+      const at = 6 + 16 * i;
+      const side = (byte: number) => (byte === 0 ? 256 : byte);
+      const header = { width: side(ico.readUInt8(at)), height: side(ico.readUInt8(at + 1)) };
+      const image = ico.subarray(ico.readUInt32LE(at + 12), ico.readUInt32LE(at + 12) + ico.readUInt32LE(at + 8));
+      return { header, image: imageSize(image) };
+    });
+    expect(entries.map((e) => e.header)).toEqual([16, 32, 48].map((n) => ({ width: n, height: n })));
+    expect(entries.map((e) => e.image)).toEqual([16, 32, 48].map((n) => ({ width: n, height: n })));
   });
 });
 
