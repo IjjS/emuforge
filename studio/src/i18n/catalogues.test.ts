@@ -1,6 +1,7 @@
 // The catalogue check (requirement R4.7, R1.4) on test catalogues: each rule fails on the catalogue that breaks it,
-// names the key, and passes once the catalogue keeps it.
+// names the key, and passes once the catalogue keeps it. And no screen code names a language (R4.6).
 
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
 import { parseCatalogue, type Catalogue } from './catalogue';
@@ -166,5 +167,70 @@ describe('the glossary rule', () => {
     ['Go to Home', 'Home'],
   ])('the whole-word rule: %j → "%s" is found, whatever its case', (text, term) => {
     expect(holdsTerm(text, [term, `${term}s`])).toBe(true);
+  });
+});
+
+/** The tags of requirement R1.1. */
+const TAGS = ['en', 'ko', 'ja', 'es', 'pt-BR', 'fr', 'de', 'ru', 'it', 'pl', 'vi', 'th'];
+
+/** The source of every file of Studio's own screens, tests aside: `app/`, `ui/` and `features/`. */
+const SCREEN_CODE = import.meta.glob<string>(
+  ['../app/**/*.{ts,tsx}', '../ui/**/*.{ts,tsx}', '../features/**/*.{ts,tsx}', '!../**/*.test.{ts,tsx}'],
+  { eager: true, query: '?raw', import: 'default' },
+);
+
+/**
+ * Each string literal, template without a placeholder or JSX text of `source` whose text is a tag of R1.1 (ignoring
+ * case), with its line; the value `en` of a `lang` attribute written `lang="en"` aside (R4.3). Which elements carry
+ * `lang="en"` is not read here: that only the engine's message and an area page title do is the run-time line of
+ * `home-languages.test.tsx` (every element whose `lang` differs from the page's).
+ */
+function tagLiterals(file: string, source: string): string[] {
+  const tags = new Set(TAGS.map((tag) => tag.toLowerCase()));
+  const tree = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const found: string[] = [];
+  const visit = (node: ts.Node) => {
+    let text: string | undefined;
+    if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+      text = node.text;
+    } else if (ts.isJsxText(node)) {
+      text = node.text.trim();
+    }
+    if (text !== undefined && tags.has(text.toLowerCase())) {
+      const parent = node.parent;
+      const englishLang =
+        text === 'en' && ts.isStringLiteral(node) && ts.isJsxAttribute(parent) && parent.name.getText() === 'lang';
+      if (!englishLang) {
+        const { line } = tree.getLineAndCharacterOfPosition(node.getStart());
+        found.push(`${file}:${String(line + 1)} "${text}"`);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(tree);
+  return found;
+}
+
+describe('screen code and languages (R4.6)', () => {
+  it('no file under app/, ui/ or features/ holds a language tag of R1.1, other than lang="en"', () => {
+    expect(Object.keys(SCREEN_CODE).length).toBeGreaterThan(10);
+    expect(Object.entries(SCREEN_CODE).flatMap(([file, source]) => tagLiterals(file, source))).toEqual([]);
+  });
+
+  it.each([
+    ["const tag = 'de';", '"de"'],
+    ['const tag = "pt-br";', '"pt-br"'],
+    ['const tag = `th`;', '"th"'],
+    ['export const A = () => <p lang="ja">日本語</p>;', '"ja"'],
+    ["export const A = () => <p lang={'en'}>x</p>;", '"en"'],
+    ['export const A = () => <p data-tag="en">x</p>;', '"en"'],
+    ['export const A = () => <p>ko</p>;', '"ko"'],
+  ])('the rule finds %s', (source, literal) => {
+    expect(tagLiterals('x.tsx', source)).toEqual([`x.tsx:1 ${literal}`]);
+  });
+
+  it('the rule passes lang="en" and text that only holds a tag', () => {
+    expect(tagLiterals('x.tsx', 'export const A = () => <span lang="en">{message}</span>;')).toEqual([]);
+    expect(tagLiterals('x.tsx', "const a = 'den'; const b = 'English'; const c = `${tag}-x`;")).toEqual([]);
   });
 });

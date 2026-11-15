@@ -17,6 +17,8 @@ import {
 } from 'react';
 import { Link, Outlet, useLocation } from 'react-router';
 
+import type { MessageKey } from '../i18n/catalogue';
+import { useLanguage } from '../i18n/language-context';
 import { PAGE_TITLE_ID } from '../ui/page-head';
 import { PROVIDERS, type ProviderAreaProps } from './provider-list';
 
@@ -83,6 +85,7 @@ function currentOf(pathname: string, target: string, deeper: boolean): Current {
  * Home and one link per provider of the providers list, then the page. Built from Studio's own design only.
  */
 export function Frame() {
+  const { t } = useLanguage();
   const { pathname } = useLocation();
   const routeChanges = useRouteChanges(pathname);
   // The content target the page below names; `null` while it names none (an area whose code is still loading).
@@ -107,14 +110,14 @@ export function Frame() {
     <div className="st-root">
       <header id={BAR_ID} className="st-bar">
         <a className="st-skip" href={`#${MAIN_ID}`} onClick={handleSkip}>
-          Skip to content
+          {t('frame.skip')}
         </a>
         <Link className="st-wordmark" to="/">
           <b>EmuForge</b> <span>Studio</span>
         </Link>
-        <nav className="st-nav" aria-label="Studio">
+        <nav className="st-nav" aria-label={t('frame.nav')}>
           <Link to="/" aria-current={currentOf(pathname, '/', false)}>
-            Home
+            {t('frame.home')}
           </Link>
           {PROVIDERS.map((provider) => {
             const target = `/${provider.segment}`;
@@ -154,8 +157,11 @@ function useStudioContentTarget(target: RefObject<HTMLElement | null>): void {
 }
 
 interface StudioPageProps {
-  /** The page's `h1`, for the document title; `null` on Home, whose title is Studio's name alone. */
-  title: string | null;
+  /**
+   * The message of the page's `h1`, for the document title in the current language; `null` on Home, whose title is
+   * Studio's name alone (requirement R5.2).
+   */
+  title: MessageKey | null;
   children: ReactNode;
 }
 
@@ -164,7 +170,8 @@ interface StudioPageProps {
  * page's content target; it takes focus from script only (`tabindex="-1"`), so it is not a Tab stop.
  */
 export function StudioPage({ title, children }: StudioPageProps) {
-  useDocumentTitle(title);
+  const { t } = useLanguage();
+  useDocumentTitle(title === null ? null : t(title));
   const main = useRef<HTMLElement>(null);
   useStudioContentTarget(main);
   return (
