@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react';
 
+import type { MessageKey } from '../../i18n/catalogue';
+import { useLanguage } from '../../i18n/language-context';
 import type { CheckResult } from '../../lib/engine/engine-client';
 import { Button } from '../../ui/button';
 import { InlineCode, Steps } from '../../ui/command';
@@ -8,32 +10,28 @@ import { RefreshIcon } from '../../ui/icons';
 import { Notice } from '../../ui/notice';
 import { CommandBlock } from './command-block';
 import { BUILD_IMAGE_COMMAND, startEmulatorCommand, startEngineCommand, stopEmulatorCommand } from './commands';
+import { RECHECK_MS } from './use-connection-check';
 
-export const RECHECK_LINE = 'Studio checks again every 5 seconds; this page updates on its own.';
+/** The image the build-once command builds and every start command runs. */
+const IMAGE = 'aws-emulator';
 
-/** The emulator reasons that have a recovery step (requirement 3.3): what happened, and how step 1 is worded. */
+/** The engine's default emulator port, as its start command names it without `--emulator-port`. */
+const DEFAULT_EMULATOR_PORT = 9297;
+
+/**
+ * The emulator reasons that have a recovery step (requirement 3.3): what happened, and step 1's label. Each is one
+ * message, with the port and the container as placeholders (requirement R4.4).
+ */
 interface Recovery {
-  explanation: (port: number) => string;
-  stopLabel: (port: number) => string;
+  explanation: MessageKey;
+  stopStep: MessageKey;
 }
 
 const RECOVERIES: Readonly<Record<string, Recovery>> = {
-  connection_refused: {
-    explanation: () => 'The emulator stopped without cleaning up (killed).',
-    stopLabel: () => 'Stop what is left of the emulator',
-  },
-  tls_untrusted: {
-    explanation: () => 'The files on disk belong to another emulator run.',
-    stopLabel: (port) => `Stop the emulator on port ${String(port)}`,
-  },
-  files_unreadable: {
-    explanation: (port) => `The engine cannot read the emulator's files for port ${String(port)}.`,
-    stopLabel: (port) => `Stop the emulator on port ${String(port)}`,
-  },
-  timeout: {
-    explanation: () => 'The emulator accepts connections but does not answer.',
-    stopLabel: () => 'Stop the emulator',
-  },
+  connection_refused: { explanation: 'notice.killed', stopStep: 'notice.stopLeftover' },
+  tls_untrusted: { explanation: 'notice.tlsUntrusted', stopStep: 'notice.stopOnPort' },
+  files_unreadable: { explanation: 'notice.filesUnreadable', stopStep: 'notice.stopOnPort' },
+  timeout: { explanation: 'notice.timeout', stopStep: 'notice.stop' },
 };
 
 function recoveryFor(reason: string): Recovery | undefined {
@@ -58,20 +56,21 @@ function StatusNotice(props: {
   refresh?: { refreshing: boolean; onRefresh: () => void } | undefined;
   children: ReactNode;
 }) {
+  const { t, formatNumber } = useLanguage();
   const action = props.refresh && (
     <Button
       small
       icon={<RefreshIcon />}
       busy={props.refresh.refreshing}
-      ariaLabel="Refresh connection status"
+      ariaLabel={t('notice.refreshName')}
       onClick={props.refresh.onRefresh}
     >
-      Refresh
+      {t('notice.refresh')}
     </Button>
   );
   return (
     <Notice kind={props.kind} title={props.title} action={action}>
-      <p className="st-recheck">{RECHECK_LINE}</p>
+      <p className="st-recheck">{t('notice.recheck', { seconds: formatNumber(RECHECK_MS / 1000) })}</p>
       {props.children}
     </Notice>
   );
@@ -86,51 +85,59 @@ function EngineSaid({ label, children }: { label: string; children: ReactNode })
   );
 }
 
+/** The engine's `message`, as it was sent: English text, in every language, and its element says so (R4.3). */
+function EngineText({ children }: { children: string }) {
+  return <span lang="en">{children}</span>;
+}
+
 /** The engine's message about the emulator; Studio's own words, unlabelled, when the engine sent none. */
 function EmulatorMessage({ message, endpoint }: { message: string; endpoint: string }) {
+  const { t } = useLanguage();
   if (message === '') {
-    return <p>{`The engine gave no message for ${endpoint}.`}</p>;
+    return <p>{t('notice.noEngineMessage', { endpoint })}</p>;
   }
-  return <EngineSaid label="Engine message:">{message}</EngineSaid>;
+  return (
+    <EngineSaid label={t('notice.engineMessage')}>
+      <EngineText>{message}</EngineText>
+    </EngineSaid>
+  );
 }
 
 function BuildOnce() {
+  const { t } = useLanguage();
   return (
-    <Disclosure summary="First run? Build the image once, from the root of your EmuForge checkout">
-      <CommandBlock label="Build the aws-emulator image" name="build image" command={BUILD_IMAGE_COMMAND} />
+    <Disclosure summary={t('notice.buildOnce')}>
+      <CommandBlock
+        label={t('notice.buildImage', { image: IMAGE })}
+        name={t('command.build')}
+        command={BUILD_IMAGE_COMMAND}
+      />
     </Disclosure>
   );
 }
 
-/**
- * Step 1's label: the stop label, then the container the stop command removes and step 2 starts, by name; the name
- * is never broken across lines (requirement R4.1).
- */
-function StopStepLabel({ port, stopLabel }: { port: number; stopLabel: string }) {
-  return (
-    <>
-      {`1. ${stopLabel} (the container `}
-      <span className="st-nowrap">{`emuforge-emulator-${String(port)}`}</span>
-      {', which step 2 starts)'}
-    </>
-  );
-}
-
 /** The build note, then step 1 to stop (when the reason needs one), then the start command. */
-function EmulatorSteps({ port, stopLabel }: { port: number; stopLabel?: string | undefined }) {
+function EmulatorSteps({ port, stopStep }: { port: number; stopStep?: MessageKey | undefined }) {
+  const { t } = useLanguage();
+  const portText = String(port);
   return (
     <Steps>
       <BuildOnce />
-      {stopLabel !== undefined && (
+      {stopStep !== undefined && (
         <CommandBlock
-          label={<StopStepLabel port={port} stopLabel={stopLabel} />}
-          name="stop emulator"
+          // Step 1 names the container the stop command removes and step 2 starts; the name is never broken across
+          // lines (issue 18).
+          label={t(stopStep, {
+            port: portText,
+            container: <span className="st-nowrap">{`emuforge-emulator-${portText}`}</span>,
+          })}
+          name={t('command.stop')}
           command={stopEmulatorCommand(port)}
         />
       )}
       <CommandBlock
-        label={`${stopLabel !== undefined ? '2. ' : ''}Start the emulator on port ${String(port)}`}
-        name="start emulator"
+        label={t(stopStep !== undefined ? 'notice.startStep' : 'notice.start', { port: portText })}
+        name={t('command.start')}
         command={startEmulatorCommand(port)}
       />
     </Steps>
@@ -144,34 +151,26 @@ function EngineUnreachableNotice(props: {
   emulatorPort: number | undefined;
 }) {
   const { engineOrigin, enginePort, studioPort, emulatorPort } = props;
+  const { t } = useLanguage();
   return (
-    <StatusNotice kind="err" title="Studio cannot reach the engine">
-      <p>
-        Studio gets no answer it can read from the engine at <span className="st-nowrap">{engineOrigin}</span>. Either
-        the engine is not running on that port, or it was started for another Studio origin.
-      </p>
+    <StatusNotice kind="err" title={t('notice.engineUnreachable')}>
+      <p>{t('notice.noEngineAnswer', { origin: <span className="st-nowrap">{engineOrigin}</span> })}</p>
       <Steps>
         <CommandBlock
-          label={
-            <>
-              One command covers both, run in <InlineCode>engine/</InlineCode> of the EmuForge checkout
-            </>
-          }
-          name="start engine"
+          label={t('notice.startEngine', { folder: <InlineCode>engine/</InlineCode> })}
+          name={t('command.startEngine')}
           command={startEngineCommand({ enginePort, studioPort, emulatorPort })}
         />
       </Steps>
       <p className="st-note">
-        {emulatorPort !== undefined ? (
-          <>
-            <InlineCode>{`--emulator-port ${String(emulatorPort)}`}</InlineCode> is the emulator port the engine last
-            reported.
-          </>
-        ) : (
-          <>
-            Add <InlineCode>{'--emulator-port <port>'}</InlineCode> if your emulator is not on 9297.
-          </>
-        )}
+        {emulatorPort !== undefined
+          ? t('notice.lastEmulatorPort', {
+              option: <InlineCode>{`--emulator-port ${String(emulatorPort)}`}</InlineCode>,
+            })
+          : t('notice.addEmulatorPort', {
+              option: <InlineCode>{'--emulator-port <port>'}</InlineCode>,
+              port: String(DEFAULT_EMULATOR_PORT),
+            })}
       </p>
     </StatusNotice>
   );
@@ -186,6 +185,7 @@ export function ConnectionNotice({
   refreshing,
   onRefresh,
 }: ConnectionNoticeProps) {
+  const { t } = useLanguage();
   if (result === undefined) {
     return null;
   }
@@ -197,7 +197,7 @@ export function ConnectionNotice({
       const { port, endpoint } = result.emulator;
       if (result.reason === 'not_started') {
         return (
-          <StatusNotice kind="info" title={`No emulator is running on port ${String(port)}`}>
+          <StatusNotice kind="info" title={t('notice.notStarted', { port: String(port) })}>
             <EmulatorSteps port={port} />
           </StatusNotice>
         );
@@ -205,16 +205,16 @@ export function ConnectionNotice({
       const recovery = recoveryFor(result.reason);
       if (recovery === undefined) {
         return (
-          <StatusNotice kind="err" title="The engine reports a problem with the emulator" refresh={refresh}>
+          <StatusNotice kind="err" title={t('notice.unknownReason')} refresh={refresh}>
             <EmulatorMessage message={result.message} endpoint={endpoint} />
           </StatusNotice>
         );
       }
       return (
-        <StatusNotice kind="err" title="The engine cannot reach the emulator">
+        <StatusNotice kind="err" title={t('notice.emulatorUnreachable')}>
           <EmulatorMessage message={result.message} endpoint={endpoint} />
-          <p>{recovery.explanation(port)}</p>
-          <EmulatorSteps port={port} stopLabel={recovery.stopLabel(port)} />
+          <p>{t(recovery.explanation, { port: String(port) })}</p>
+          <EmulatorSteps port={port} stopStep={recovery.stopStep} />
         </StatusNotice>
       );
     }
@@ -229,20 +229,29 @@ export function ConnectionNotice({
       );
     case 'engine-error':
       return (
-        <StatusNotice kind="err" title="The engine answered with an error" refresh={refresh}>
+        <StatusNotice kind="err" title={t('notice.engineError')} refresh={refresh}>
           {result.code !== undefined ? (
-            <EngineSaid label="Engine error:">
+            <EngineSaid label={t('notice.engineErrorLabel')}>
               <InlineCode>{result.code}</InlineCode>
-              {result.message !== undefined ? `: ${result.message}` : ''}
+              {result.message !== undefined && (
+                <>
+                  {': '}
+                  <EngineText>{result.message}</EngineText>
+                </>
+              )}
             </EngineSaid>
           ) : (
             <>
               <p>
-                {result.status >= 200 && result.status < 300
-                  ? `The engine answered with HTTP status ${String(result.status)}, not in the form Studio expects.`
-                  : `The engine answered with HTTP status ${String(result.status)} and no error code.`}
+                {t(result.status >= 200 && result.status < 300 ? 'notice.unexpectedAnswer' : 'notice.noErrorCode', {
+                  status: String(result.status),
+                })}
               </p>
-              {result.message !== undefined && <EngineSaid label="Engine message:">{result.message}</EngineSaid>}
+              {result.message !== undefined && (
+                <EngineSaid label={t('notice.engineMessage')}>
+                  <EngineText>{result.message}</EngineText>
+                </EngineSaid>
+              )}
             </>
           )}
         </StatusNotice>
