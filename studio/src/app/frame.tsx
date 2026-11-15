@@ -19,6 +19,7 @@ import { Link, Outlet, useLocation } from 'react-router';
 
 import type { MessageKey } from '../i18n/catalogue';
 import { useLanguage } from '../i18n/language-context';
+import { LanguageControl } from '../ui/language-control';
 import { PAGE_TITLE_ID } from '../ui/page-head';
 import { PROVIDERS, type ProviderAreaProps } from './provider-list';
 
@@ -81,8 +82,9 @@ function currentOf(pathname: string, target: string, deeper: boolean): Current {
 }
 
 /**
- * Studio's frame on every page (requirement R5.1): the top bar with "EmuForge Studio" and the navigation "Studio",
- * Home and one link per provider of the providers list, then the page. Built from Studio's own design only.
+ * Studio's frame on every page (requirement R5.1): the top bar with "EmuForge Studio", the navigation "Studio" with
+ * Home and one link per provider of the providers list, and the language control (issue #17, R3.1), then the page.
+ * Built from Studio's own design only.
  */
 export function Frame() {
   const { t } = useLanguage();
@@ -128,6 +130,7 @@ export function Frame() {
             );
           })}
         </nav>
+        <LanguageControl />
       </header>
       <PageFocusContext value={pageFocus}>
         <Outlet />

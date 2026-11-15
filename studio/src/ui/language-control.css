@@ -1,0 +1,152 @@
+/* The language control (DESIGN.md, The frame): the bar's last item, at its end, and the menu it opens. */
+
+@layer studio {
+  .st-lang {
+    position: relative;
+    margin-left: auto;
+    flex: none;
+  }
+
+  /* A quiet control like the tabs, on a 3:1 control line so it reads as something that opens (crit revised r2 P3). */
+  .st-lang-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 36px;
+    padding: 0 10px 0 9px;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 560;
+    color: var(--st-text-2);
+    background: transparent;
+    border: 1px solid var(--st-control-line);
+    border-radius: var(--st-radius-m);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .st-lang-btn:hover,
+  .st-lang-btn[aria-expanded='true'] {
+    color: var(--st-text);
+  }
+
+  .st-lang-btn[aria-expanded='true'] {
+    background: var(--st-sunk);
+  }
+
+  .st-lang-btn svg {
+    flex: none;
+  }
+
+  .st-lang-chev {
+    transition: transform 120ms ease-out;
+  }
+
+  .st-lang-btn[aria-expanded='true'] .st-lang-chev {
+    transform: rotate(180deg);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .st-lang-chev {
+      transition: none;
+    }
+  }
+
+  /* The menu: Studio's surface on a hairline, no shadow (DESIGN.md, The Hairline Rule); it scrolls within itself. */
+  .st-lang-menu {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    z-index: 20;
+    width: 248px;
+    max-height: calc(100vh - var(--st-bar-h) - 24px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 6px;
+    background: var(--st-surface);
+    border: 1px solid var(--st-control-line);
+    border-radius: var(--st-radius-m);
+  }
+
+  .st-lang-item {
+    display: grid;
+    grid-template-columns: 18px 1fr;
+    align-items: center;
+    column-gap: 10px;
+    width: 100%;
+    min-height: 38px;
+    padding: 6px 10px;
+    font: inherit;
+    font-size: 15px;
+    font-weight: 400;
+    line-height: 1.35;
+    text-align: start;
+    color: var(--st-text);
+    background: transparent;
+    border: 0;
+    border-radius: var(--st-radius-s);
+    cursor: pointer;
+  }
+
+  /* `sunk` means "pointer or focus is here", never "chosen": the chosen option is marked by its check and weight. */
+  .st-lang-item:hover,
+  .st-lang-item:focus-visible {
+    background: var(--st-sunk);
+  }
+
+  .st-lang-item:focus-visible {
+    outline-offset: -2px;
+  }
+
+  .st-lang-item svg {
+    color: var(--st-accent);
+    visibility: hidden;
+  }
+
+  .st-lang-item[aria-checked='true'] {
+    font-weight: 560;
+  }
+
+  .st-lang-item[aria-checked='true'] svg {
+    visibility: visible;
+  }
+
+  .st-lang-sub {
+    grid-column: 2;
+    font-size: 14px;
+    font-weight: 400;
+    color: var(--st-text-2);
+  }
+
+  .st-lang-sep {
+    height: 1px;
+    margin: 6px 4px;
+    background: var(--st-line);
+  }
+
+  /* At 480 and below the control is the globe alone, 40px square (its accessible name still says the language), and
+     the menu spans the bar's width under it. */
+  @media (max-width: 480px) {
+    .st-lang {
+      position: static;
+    }
+
+    .st-lang-btn {
+      width: 40px;
+      height: 40px;
+      padding: 0;
+      justify-content: center;
+    }
+
+    .st-lang-btn :is(.st-lang-name, .st-lang-chev) {
+      display: none;
+    }
+
+    .st-lang-menu {
+      top: calc(var(--st-bar-h) + 4px);
+      left: var(--st-gutter);
+      right: var(--st-gutter);
+      width: auto;
+    }
+  }
+}
