@@ -64,7 +64,7 @@ function announcement({ t }: Messages, result: CheckResult | undefined): string 
   }
 }
 
-function description({ t, formatTime, formatNumber }: Messages, result: CheckResult | undefined): string {
+function description({ t, plural, formatTime }: Messages, result: CheckResult | undefined): string {
   if (result === undefined) {
     return t('connection.notChecked');
   }
@@ -72,7 +72,7 @@ function description({ t, formatTime, formatNumber }: Messages, result: CheckRes
   // A notice says the interval in its re-check line, so it is said only once.
   return hasNotice(result)
     ? t('connection.lastChecked', { time })
-    : t('connection.lastCheckedEvery', { time, seconds: formatNumber(RECHECK_MS / 1000) });
+    : plural('connection.lastCheckedEvery', RECHECK_MS / 1000, { time });
 }
 
 export interface ConnectionStatusProps {

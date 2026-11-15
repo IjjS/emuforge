@@ -181,7 +181,9 @@ const SCREEN_CODE = import.meta.glob<string>(
 
 /**
  * Each string literal, template without a placeholder or JSX text of `source` whose text is a tag of R1.1 (ignoring
- * case), with its line; the value `en` of a `lang` attribute written `lang="en"` aside (R4.3).
+ * case), with its line; the value `en` of a `lang` attribute written `lang="en"` aside (R4.3). Which elements carry
+ * `lang="en"` is not read here: that only the engine's message and an area page title do is the run-time line of
+ * `home-languages.test.tsx` (every element whose `lang` differs from the page's).
  */
 function tagLiterals(file: string, source: string): string[] {
   const tags = new Set(TAGS.map((tag) => tag.toLowerCase()));

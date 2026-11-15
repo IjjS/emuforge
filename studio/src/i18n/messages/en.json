@@ -10,7 +10,10 @@
   "connection.title": "Connection",
   "connection.notChecked": "Not checked yet.",
   "connection.lastChecked": "Last checked {time}.",
-  "connection.lastCheckedEvery": "Last checked {time}. Checked every {seconds} seconds.",
+  "connection.lastCheckedEvery": {
+    "one": "Last checked {time}. Checked every {count} second.",
+    "other": "Last checked {time}. Checked every {count} seconds."
+  },
   "connection.engine": "Engine",
   "connection.emulator": "Emulator",
   "status.checking": "Checking",
@@ -26,7 +29,10 @@
   "announce.engineUnreachable": "Engine unreachable.",
   "announce.engineErrorCode": "Engine error: {code}.",
   "announce.engineErrorStatus": "Engine error: HTTP status {status}.",
-  "notice.recheck": "Studio checks again every {seconds} seconds; this page updates on its own.",
+  "notice.recheck": {
+    "one": "Studio checks again every {count} second; this page updates on its own.",
+    "other": "Studio checks again every {count} seconds; this page updates on its own."
+  },
   "notice.refresh": "Refresh",
   "notice.refreshName": "Refresh connection status",
   "notice.notStarted": "No emulator is running on port {port}",
@@ -52,6 +58,7 @@
   "notice.addEmulatorPort": "Add {option} if your emulator is not on {port}.",
   "notice.engineError": "The engine answered with an error",
   "notice.engineErrorLabel": "Engine error:",
+  "notice.codeAndMessage": "{code}: {message}",
   "notice.unexpectedAnswer": "The engine answered with HTTP status {status}, not in the form Studio expects.",
   "notice.noErrorCode": "The engine answered with HTTP status {status} and no error code.",
   "command.group": "Command: {name}",

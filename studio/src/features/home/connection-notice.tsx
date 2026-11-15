@@ -56,7 +56,7 @@ function StatusNotice(props: {
   refresh?: { refreshing: boolean; onRefresh: () => void } | undefined;
   children: ReactNode;
 }) {
-  const { t, formatNumber } = useLanguage();
+  const { t, plural } = useLanguage();
   const action = props.refresh && (
     <Button
       small
@@ -70,7 +70,7 @@ function StatusNotice(props: {
   );
   return (
     <Notice kind={props.kind} title={props.title} action={action}>
-      <p className="st-recheck">{t('notice.recheck', { seconds: formatNumber(RECHECK_MS / 1000) })}</p>
+      <p className="st-recheck">{plural('notice.recheck', RECHECK_MS / 1000)}</p>
       {props.children}
     </Notice>
   );
@@ -232,12 +232,14 @@ export function ConnectionNotice({
         <StatusNotice kind="err" title={t('notice.engineError')} refresh={refresh}>
           {result.code !== undefined ? (
             <EngineSaid label={t('notice.engineErrorLabel')}>
-              <InlineCode>{result.code}</InlineCode>
-              {result.message !== undefined && (
-                <>
-                  {': '}
-                  <EngineText>{result.message}</EngineText>
-                </>
+              {result.message !== undefined ? (
+                // One message, so each language writes the separator between the code and the message its own way.
+                t('notice.codeAndMessage', {
+                  code: <InlineCode>{result.code}</InlineCode>,
+                  message: <EngineText>{result.message}</EngineText>,
+                })
+              ) : (
+                <InlineCode>{result.code}</InlineCode>
               )}
             </EngineSaid>
           ) : (

@@ -1,7 +1,7 @@
 import { act, fireEvent, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { formatNumber, formatTime } from '../../i18n/format';
+import { formatTime } from '../../i18n/format';
 import {
   MAX_COMMAND_LINE,
   startEmulatorCommand,
@@ -719,7 +719,7 @@ describe('Connection: a change of language keeps the rhythm of the checks (R2.6)
     await advance();
     // The page is in the other language now, with the last answer kept, and no request was sent for the change.
     const time = formatTime(MARKED_TAG, checkedAt);
-    const seconds = formatNumber(MARKED_TAG, 5);
+    const seconds = new Intl.NumberFormat(MARKED_TAG).format(5);
     expect(connectionDescription()).toBe(
       `${MARK_OPEN}Last checked ${time}. Checked every ${seconds} seconds.${MARK_CLOSE}`,
     );
