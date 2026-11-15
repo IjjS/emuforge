@@ -611,6 +611,7 @@ test('studio.studio-layer-complete-in-every-language', async ({ ctx, browser, pr
       await visit(s.page, s.traffic, '/');
       await s.page.getByRole('main').locator('a[href="/aws/s3"]').first().click(ACTION);
       await expect(s.page).toHaveURL(addressOf('/aws/s3'));
+      const htmlLang = (await s.page.locator('html').getAttribute('lang')) ?? '';
       const title = 'Amazon Simple Storage Service';
       // #19 announces a route change by moving focus to the page's content target, named by the page title
       // (decisions.md, check correction): the announcement is that target's accessible name.
@@ -647,12 +648,14 @@ test('studio.studio-layer-complete-in-every-language', async ({ ctx, browser, pr
       const titled = announced!.items.filter((i) => norm(i.text) === title);
       expect(
         {
+          pageInGerman: isLang(htmlLang, 'de'),
           problems,
           titleInLangEn: titled.length > 0 && titled.every((i) => i.explicit && isLang(i.lang, 'en')),
           wholeFromCatalogue: announced!.name === title || rest === '' || matcher.matches(announced!.name),
         },
-        `the announcement "${announced!.name}"`,
+        `the announcement "${announced!.name}" on a page with <html lang="${htmlLang}">`,
       ).toEqual({
+        pageInGerman: true,
         problems: [],
         titleInLangEn: true,
         wholeFromCatalogue: true,
