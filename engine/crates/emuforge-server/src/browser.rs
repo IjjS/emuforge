@@ -30,6 +30,9 @@ const RELAYED_PREFLIGHT_METHODS: &str = "GET, HEAD, PUT, POST, DELETE, PATCH";
 const FETCH_METADATA_PREFIX: &str = "sec-fetch-";
 /// Name prefix of every CORS response header; on a relayed Studio answer each one is the engine's (D5).
 const CORS_PREFIX: &str = "access-control-";
+/// The `Vary` line every answer to the Studio origin gains after `Origin`, so a browser reuses a stored answer only
+/// for a request with the same session token, absence included (RFC 9111 4.1). The name, never the token.
+const VARY_SESSION: &str = "X-EmuForge-Session";
 
 /// The one origin whose browser requests the engine serves: `http://127.0.0.1:<studio port>`, always.
 #[derive(Debug, Clone)]
@@ -265,8 +268,10 @@ fn is_tchar(b: u8) -> bool {
 
 /// The CORS layer, outermost: on the way out, whatever answered, `Access-Control-Allow-Origin: <studio origin>`
 /// when the request's one `Origin` is the Studio origin, and `Vary: Origin` on an engine path, an answer of
-/// orders 1-3c, or any answer to the Studio origin. On a relayed path every other answer to the Studio origin
-/// than the preflight loses the `Access-Control-*` headers it came with and exposes its own headers.
+/// orders 1-3c, or any answer to the Studio origin; an answer to the Studio origin then also gets
+/// `Vary: X-EmuForge-Session`, so no stored answer reaches a request without the current token. On a relayed
+/// path every other answer to the Studio origin than the preflight loses the `Access-Control-*` headers it came
+/// with and exposes its own headers.
 pub(crate) async fn cors(
     State(studio): State<StudioOrigin>,
     request: Request,
@@ -303,6 +308,9 @@ pub(crate) async fn cors(
     }
     if engine_path || refused || from_studio {
         headers.append(VARY, HeaderValue::from_static("Origin"));
+    }
+    if from_studio {
+        headers.append(VARY, HeaderValue::from_static(VARY_SESSION));
     }
     response
 }
