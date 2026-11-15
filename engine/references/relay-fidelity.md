@@ -24,6 +24,7 @@ The engine may differ on purpose in exactly these cases, each with its own check
 | IAM enforce mode denies the request | An AWS-shaped `AccessDenied` in the caller's protocol, naming the statement or the missing allow |
 | The caller is not identified | The error AWS returns for an unsigned or wrongly signed request |
 | The emulator is unreachable | A 5xx in the caller's protocol saying the emulator is not running, with the endpoint |
+| A chunk of an `aws-chunked` upload is larger than the engine's cap (1 MiB of data, issue #9, D4) | `400 ChunkTooLarge` in the caller's protocol; nothing is stored (`engine.relay-s3-signed-chunk-above-cap-refused`) |
 
 Anything else that differs is a `gap` issue.
 
@@ -32,6 +33,10 @@ Anything else that differs is a `gap` issue.
 - A response of HTTP 501 `NotImplemented` from the emulator. The engine never turns it into success, a
   different error, or an empty result.
 - The body in both directions, streamed. The engine does not parse, re-encode or re-chunk it.
+  One exception (issue #9, D1): in a header-signed upload in an HMAC signed-chunk mode
+  (`STREAMING-AWS4-HMAC-SHA256-PAYLOAD`, `-PAYLOAD-TRAILER`), the engine replaces in place the 64-character
+  signature value of each chunk header and of the trailer it recognizes with the one the emulator expects from a
+  client holding the emulator's key. Every other byte and the body's length stay as received.
 - Operations AWS serves without a signature.
 
 ## Paired checks

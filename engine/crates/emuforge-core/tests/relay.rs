@@ -13,7 +13,8 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use bytes::Bytes;
-use emuforge_core::sigv4::SIGNED_CHUNK_MODES;
+use emuforge_core::chunked::ChunkSigning;
+use emuforge_core::sigv4::{Scope, signing_key};
 use emuforge_core::{
     CA_FILE, CONNECT_DEADLINE, CREDENTIALS_FILE, Emulator, EmulatorFiles, IdleWrite, Limits,
     Prepared, Reason, RelayBody, RelayError, connect_on, forward, prepare, relay,
@@ -344,22 +345,6 @@ async fn prepare_without_payload_hash_adds_and_signs_unsigned_payload() {
 }
 
 #[tokio::test]
-async fn prepare_signed_chunk_modes_are_refused_naming_the_mode() {
-    let captured = vector_head("put-object-k1");
-    for mode in SIGNED_CHUNK_MODES {
-        let client = client_form(&captured, CLIENT_KEY_ID).replace(
-            "X-Amz-Content-SHA256: b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9",
-            &format!("X-Amz-Content-SHA256: {mode}"),
-        );
-        assert_eq!(
-            prepared(&client).await.unwrap_err(),
-            RelayError::PayloadSigningNotSupported { mode },
-            "{mode}"
-        );
-    }
-}
-
-#[tokio::test]
 async fn prepare_signed_chunk_mode_in_another_case_is_forwarded() {
     let client = client_form(&vector_head("put-object-k1"), CLIENT_KEY_ID).replace(
         "X-Amz-Content-SHA256: b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9",
@@ -613,13 +598,6 @@ async fn prepared_debug_of_a_query_signed_request_shows_no_query() {
 #[test]
 fn relay_error_display_shows_a_code_and_kind_only() {
     let cases = [
-        (
-            "payload signing",
-            RelayError::PayloadSigningNotSupported {
-                mode: SIGNED_CHUNK_MODES[0],
-            },
-            "PayloadSigningNotSupported (STREAMING-AWS4-HMAC-SHA256-PAYLOAD)",
-        ),
         (
             "unavailable, not started",
             RelayError::Unavailable(Reason::NotStarted),
@@ -1013,24 +991,6 @@ async fn relay_with_malformed_ca_is_unavailable_files_unreadable() {
             .await
             .unwrap_err(),
         RelayError::Unavailable(Reason::FilesUnreadable { file: CA_FILE })
-    );
-}
-
-#[tokio::test]
-async fn relay_signed_chunk_upload_is_refused_before_the_files_are_read() {
-    let home = tempfile::tempdir().unwrap();
-    let head = client_form(&vector_head("put-object-k1"), CLIENT_KEY_ID).replace(
-        "X-Amz-Content-SHA256: b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9",
-        "X-Amz-Content-SHA256: STREAMING-AWS4-HMAC-SHA256-PAYLOAD",
-    );
-    let request = Request::from_parts(parts(&head), Empty::<Bytes>::new());
-    assert_eq!(
-        relay(&emulator(home.path()), request, &Limits::DEFAULT)
-            .await
-            .unwrap_err(),
-        RelayError::PayloadSigningNotSupported {
-            mode: "STREAMING-AWS4-HMAC-SHA256-PAYLOAD"
-        }
     );
 }
 
@@ -1603,4 +1563,618 @@ async fn forward_after_a_head_timeout_serves_the_next_exchange() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
+}
+
+// ---------------------------------------------------------------------------------------------- signed chunks (issue 9)
+
+const SIGNED_CHUNKS: &str = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD";
+const SIGNED_CHUNKS_TRAILER: &str = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER";
+/// The payload hash of the `put-object-k1` prepare vector.
+const K1_PAYLOAD_HASH: &str = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9";
+const CHUNK_SIGNATURE_EXTENSION: &str = ";chunk-signature=";
+const ZERO_SIGNATURE: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+const MIB: usize = 1_048_576;
+
+/// True when `text` holds 64 hex characters in a row.
+fn has_64_hex(text: &str) -> bool {
+    let mut run = 0;
+    for byte in text.bytes() {
+        run = if byte.is_ascii_hexdigit() { run + 1 } else { 0 };
+        if run >= 64 {
+            return true;
+        }
+    }
+    false
+}
+
+/// `put-object-k1` in client form, its `X-Amz-Content-SHA256` replaced by `mode`.
+fn k1_with_mode(mode: &str) -> String {
+    client_form(&vector_head("put-object-k1"), CLIENT_KEY_ID).replace(
+        &format!("X-Amz-Content-SHA256: {K1_PAYLOAD_HASH}"),
+        &format!("X-Amz-Content-SHA256: {mode}"),
+    )
+}
+
+/// Re-signed as #2 prepares a header-signed head: the emulator as `Host`, `Authorization` with the emulator's
+/// key id and a new signature, `X-Amz-Content-SHA256` as received.
+fn assert_resigned(prepared: &Prepared, mode: &str, case: &str) {
+    assert_eq!(prepared.head.headers[HOST], EMULATOR_HOST, "case {case}");
+    let authorization = authorization(prepared);
+    assert!(
+        authorization.starts_with(&format!(
+            "AWS4-HMAC-SHA256 Credential={EMULATOR_KEY_ID}/20261114/us-east-1/s3/aws4_request, SignedHeaders="
+        )),
+        "case {case}: {authorization}"
+    );
+    assert_ne!(signature_of(authorization), ANY_SIGNATURE, "case {case}");
+    assert_eq!(
+        prepared.head.headers["x-amz-content-sha256"], mode,
+        "case {case}"
+    );
+}
+
+fn has_chunk_signing(prepared: &Prepared) -> bool {
+    prepared.head.extensions.get::<ChunkSigning>().is_some()
+}
+
+#[tokio::test]
+async fn prepare_hmac_signed_chunk_modes_resign_the_head_and_attach_a_chunk_signing() {
+    for mode in [SIGNED_CHUNKS, SIGNED_CHUNKS_TRAILER] {
+        let prepared = prepared(&k1_with_mode(mode)).await.unwrap();
+        assert_resigned(&prepared, mode, mode);
+        assert!(has_chunk_signing(&prepared), "case {mode}: no ChunkSigning");
+    }
+}
+
+#[tokio::test]
+async fn prepare_signed_chunks_attach_a_chunk_signing_whatever_the_content_encoding() {
+    let cases = [
+        ("no Content-Encoding", None),
+        ("gzip,aws-chunked", Some("gzip,aws-chunked")),
+        ("AWS-CHUNKED", Some("AWS-CHUNKED")),
+    ];
+    for (case, encoding) in cases {
+        let mut head = k1_with_mode(SIGNED_CHUNKS);
+        if let Some(encoding) = encoding {
+            head.push_str(&format!("\nContent-Encoding: {encoding}"));
+        }
+        let prepared = prepared(&head).await.unwrap();
+        assert!(has_chunk_signing(&prepared), "case {case}: no ChunkSigning");
+        assert_eq!(
+            prepared
+                .head
+                .headers
+                .get("content-encoding")
+                .map(|value| value.to_str().unwrap()),
+            encoding,
+            "case {case}: Content-Encoding as received"
+        );
+    }
+}
+
+#[tokio::test]
+async fn prepare_other_payload_modes_attach_no_chunk_signing() {
+    for mode in [
+        "STREAMING-AWS4-ECDSA-P256-SHA256-PAYLOAD",
+        "STREAMING-AWS4-ECDSA-P256-SHA256-PAYLOAD-TRAILER",
+        "STREAMING-AWS4-HMAC-SHA256-payload",
+    ] {
+        let prepared = prepared(&k1_with_mode(mode)).await.unwrap();
+        assert_resigned(&prepared, mode, mode);
+        assert!(!has_chunk_signing(&prepared), "case {mode}: a ChunkSigning");
+    }
+}
+
+#[tokio::test]
+async fn prepare_query_signed_and_other_forms_in_signed_chunks_attach_no_chunk_signing() {
+    // Query-signed: the header is not among the signed ones, so the query is the captured one.
+    let captured = presign_head();
+    let client = format!(
+        "{}\nX-Amz-Content-SHA256: {SIGNED_CHUNKS}",
+        client_form(&captured, CLIENT_KEY_ID)
+    );
+    let query = prepared(&client).await.unwrap();
+    assert_eq!(query.head.uri, parts(&captured).uri, "case query-signed");
+    assert!(
+        !query.head.headers.contains_key(AUTHORIZATION),
+        "case query-signed"
+    );
+    assert!(!has_chunk_signing(&query), "case query-signed");
+
+    // Other: no signature at all, forwarded as received.
+    let head = format!(
+        "PUT /b1/k1 HTTP/1.1\nHost: {ENGINE_HOST}\nX-Amz-Content-SHA256: {SIGNED_CHUNKS}\nContent-Length: 11"
+    );
+    let received = parts(&head);
+    let other = prepared(&head).await.unwrap();
+    let mut expected = received.headers.clone();
+    expected.insert(HOST, HeaderValue::from_static(EMULATOR_HOST));
+    assert_eq!(other.head.headers, expected, "case other");
+    assert!(!has_chunk_signing(&other), "case other");
+}
+
+#[tokio::test]
+async fn prepared_debug_with_a_chunk_signing_shows_no_64_hex() {
+    let prepared = prepared(&k1_with_mode(SIGNED_CHUNKS)).await.unwrap();
+    assert!(has_chunk_signing(&prepared));
+    let debug = format!("{prepared:?}");
+    assert!(!has_64_hex(&debug), "{debug}");
+}
+
+#[test]
+fn relay_error_chunk_too_large_display_is_its_code_and_kind() {
+    assert_eq!(
+        RelayError::ChunkTooLarge.to_string(),
+        "ChunkTooLarge (chunk above the cap)"
+    );
+}
+
+/// The chunk vector (`tests/vectors/s3-signed-chunks.txt`, S3 API Reference "Transferring payload in multiple
+/// chunks"), as its file gives it.
+struct ChunkVector {
+    secret: String,
+    amz_date: String,
+    scope: Scope,
+    seed: String,
+    byte: u8,
+    sizes: Vec<usize>,
+    signatures: Vec<String>,
+    content_length: usize,
+}
+
+impl ChunkVector {
+    fn load() -> ChunkVector {
+        let vector = sections("s3-signed-chunks.txt");
+        let get = |name: &str| vector[name].clone();
+        let scope: Vec<String> = get("scope").split('/').map(str::to_owned).collect();
+        ChunkVector {
+            secret: get("secret"),
+            amz_date: get("amz-date"),
+            scope: Scope {
+                date: scope[0].clone(),
+                region: scope[1].clone(),
+                service: scope[2].clone(),
+            },
+            seed: get("seed-signature"),
+            byte: get("data-byte").as_bytes()[0],
+            sizes: get("chunk-sizes")
+                .lines()
+                .map(|size| size.parse().unwrap())
+                .collect(),
+            signatures: get("chunk-signatures").lines().map(str::to_owned).collect(),
+            content_length: get("content-length").parse().unwrap(),
+        }
+    }
+
+    /// The body in the page's framing, every chunk signed with `signature(index)`.
+    fn body_with(&self, signature: impl Fn(usize) -> String) -> Vec<u8> {
+        let mut body = Vec::new();
+        for (index, &size) in self.sizes.iter().enumerate() {
+            body.extend_from_slice(
+                format!(
+                    "{size:x}{CHUNK_SIGNATURE_EXTENSION}{}\r\n",
+                    signature(index)
+                )
+                .as_bytes(),
+            );
+            body.extend(std::iter::repeat_n(self.byte, size));
+            body.extend_from_slice(b"\r\n");
+        }
+        assert_eq!(body.len(), self.content_length, "the page's Content-Length");
+        body
+    }
+
+    /// The body as the page sends it.
+    fn body(&self) -> Vec<u8> {
+        self.body_with(|index| self.signatures[index].clone())
+    }
+
+    /// The body with every chunk signature 64 `0` characters.
+    fn zeroed(&self) -> Vec<u8> {
+        self.body_with(|_| ZERO_SIGNATURE.to_owned())
+    }
+
+    /// The vector's `ChunkSigning`, its secret read from emulator files in a temp home.
+    async fn signing(&self) -> ChunkSigning {
+        let home = tempfile::tempdir().unwrap();
+        write_files(
+            home.path(),
+            &certificate_a().pem,
+            &format!(
+                "[default]\naws_access_key_id = AKIAIOSFODNN7EXAMPLE\naws_secret_access_key = {}\n",
+                self.secret
+            ),
+        );
+        let files = EmulatorFiles::read(&emulator(home.path())).await.unwrap();
+        ChunkSigning::new(
+            signing_key(&files.credentials().secret_access_key, &self.scope),
+            self.amz_date.clone(),
+            self.scope.clone(),
+            self.seed.clone(),
+            false,
+        )
+    }
+}
+
+/// A PUT head with `content_length` and `signing` in its extensions.
+fn signed_put_head(content_length: Option<usize>, signing: ChunkSigning) -> Prepared {
+    let mut prepared = put_head("/examplebucket/chunkObject.txt", content_length, "PUT");
+    prepared.head.extensions.insert(signing);
+    prepared
+}
+
+/// A client body sending `frames`, then ending.
+async fn frames_body(frames: Vec<Vec<u8>>) -> ChannelBody {
+    let (sender, receiver) = mpsc::channel(frames.len().max(1));
+    for frame in frames {
+        sender.send(Ok(Bytes::from(frame))).await.unwrap();
+    }
+    ChannelBody(receiver)
+}
+
+/// `body` cut into three frames.
+fn three_frames(body: &[u8]) -> Vec<Vec<u8>> {
+    let third = body.len() / 3;
+    vec![
+        body[..third].to_vec(),
+        body[third..2 * third].to_vec(),
+        body[2 * third..].to_vec(),
+    ]
+}
+
+/// A stand-in that records the request head and body and answers `200` with a small XML body.
+async fn record_and_answer(mut peer: Peer) -> (String, Vec<u8>) {
+    let head = peer.head().await.unwrap();
+    let body = peer.body(&head).await;
+    peer.write(
+        b"HTTP/1.1 200 OK\r\nContent-Type: application/xml\r\nx-amz-request-id: R9\r\n\
+          ETag: \"e9b\"\r\nContent-Length: 4\r\n\r\ndone",
+    )
+    .await;
+    (head, body)
+}
+
+/// The header names of a raw head, lower-cased and sorted.
+fn raw_header_names(head: &str) -> Vec<String> {
+    let mut names: Vec<String> = head
+        .lines()
+        .skip(1)
+        .map(|line| line.split_once(':').unwrap().0.to_ascii_lowercase())
+        .collect();
+    names.sort();
+    names
+}
+
+#[tokio::test(start_paused = true)]
+async fn forward_with_a_chunk_signing_sends_the_vector_body_with_its_content_length() {
+    let vector = ChunkVector::load();
+    let (engine, peer) = stand_in(record_and_answer).await;
+    let prepared = signed_put_head(Some(vector.content_length), vector.signing().await);
+    let sent_names = header_names(&prepared.head.headers);
+    let body = frames_body(three_frames(&vector.zeroed())).await;
+    let response = exchange(engine, prepared, body).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["x-amz-request-id"], "R9");
+    assert_eq!(response.headers()["etag"], "\"e9b\"");
+    let answer = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(answer.as_ref(), b"done");
+    let (head, received) = peer.await.unwrap();
+    assert_eq!(
+        header(&head, "content-length").unwrap(),
+        vector.content_length.to_string()
+    );
+    assert_eq!(raw_header_names(&head), sent_names, "{head}");
+    assert!(
+        received == vector.body(),
+        "the chunk vector body, byte for byte"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn forward_with_a_chunk_signing_and_no_content_length_sends_it_chunked() {
+    let vector = ChunkVector::load();
+    let (engine, peer) = stand_in(record_and_answer).await;
+    let prepared = signed_put_head(None, vector.signing().await);
+    let body = frames_body(three_frames(&vector.zeroed())).await;
+    let response = exchange(engine, prepared, body).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (head, received) = peer.await.unwrap();
+    assert_eq!(
+        header(&head, "transfer-encoding").as_deref(),
+        Some("chunked"),
+        "{head}"
+    );
+    assert_eq!(header(&head, "content-length"), None, "{head}");
+    assert!(received == vector.body(), "the chunk vector body, decoded");
+}
+
+#[tokio::test(start_paused = true)]
+async fn forward_without_a_chunk_signing_sends_the_body_unchanged() {
+    let vector = ChunkVector::load();
+    let (engine, peer) = stand_in(record_and_answer).await;
+    let prepared = put_head(
+        "/examplebucket/chunkObject.txt",
+        Some(vector.content_length),
+        "PUT",
+    );
+    let body = frames_body(three_frames(&vector.zeroed())).await;
+    let response = exchange(engine, prepared, body).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_head, received) = peer.await.unwrap();
+    assert!(received == vector.zeroed(), "the zeroed body, unchanged");
+}
+
+#[tokio::test(start_paused = true)]
+async fn forward_chunk_above_the_cap_is_chunk_too_large_after_the_chunks_before_it() {
+    let vector = ChunkVector::load();
+    let zeroed = vector.zeroed();
+    let signed = vector.body();
+    // The vector's first chunk: its header line, 65536 data bytes and `\r\n`.
+    let first_len = zeroed
+        .windows(2)
+        .enumerate()
+        .filter(|(_, pair)| *pair == b"\r\n")
+        .map(|(at, _)| at + 2)
+        .nth(1)
+        .unwrap();
+    let too_large = format!("100001{CHUNK_SIGNATURE_EXTENSION}{ZERO_SIGNATURE}\r\n");
+    let content_length = first_len + too_large.len() + (MIB + 1) + 2 + 86;
+    let (first_received, first_rx) = tokio::sync::oneshot::channel();
+    let (engine, peer) = stand_in(move |mut peer| async move {
+        let head = peer.head().await.unwrap();
+        let mut body = Vec::new();
+        peer.exact(first_len, |bytes| body.extend_from_slice(bytes))
+            .await;
+        first_received.send(()).unwrap();
+        while peer.fill().await {}
+        body.extend_from_slice(&peer.pending);
+        (head, body)
+    })
+    .await;
+    let (sender, body) = channel_body();
+    let prepared = signed_put_head(Some(content_length), vector.signing().await);
+    let call = tokio::spawn(exchange(engine, prepared, body));
+    sender
+        .send(Ok(Bytes::from(zeroed[..first_len].to_vec())))
+        .await
+        .unwrap();
+    first_rx.await.unwrap();
+    sender
+        .send(Ok(Bytes::from(too_large.into_bytes())))
+        .await
+        .unwrap();
+    assert_eq!(call.await.unwrap().unwrap_err(), RelayError::ChunkTooLarge);
+    let (head, received) = peer.await.unwrap();
+    assert_eq!(
+        header(&head, "content-length").unwrap(),
+        content_length.to_string()
+    );
+    assert!(
+        received[..first_len] == signed[..first_len],
+        "the first chunk, re-signed"
+    );
+    assert!(
+        received.len() < content_length,
+        "the request ended before its Content-Length: {} of {content_length}",
+        received.len()
+    );
+    drop(sender);
+}
+
+/// A 1 MiB chunk with a zero signature, its data `pattern(0)`.
+fn mib_chunk_header() -> Vec<u8> {
+    format!("100000{CHUNK_SIGNATURE_EXTENSION}{ZERO_SIGNATURE}\r\n").into_bytes()
+}
+
+fn final_chunk() -> Vec<u8> {
+    format!("\r\n0{CHUNK_SIGNATURE_EXTENSION}{ZERO_SIGNATURE}\r\n\r\n").into_bytes()
+}
+
+#[tokio::test(start_paused = true)]
+async fn forward_client_sending_a_chunk_in_pieces_30_s_apart_is_not_timed_out() {
+    let vector = ChunkVector::load();
+    let header_line = mib_chunk_header();
+    let content_length = header_line.len() + MIB + final_chunk().len();
+    let (engine, peer) = stand_in(record_and_answer).await;
+    let (sender, body) = channel_body();
+    let prepared = signed_put_head(Some(content_length), vector.signing().await);
+    let call = tokio::spawn(exchange(engine, prepared, body));
+    sender
+        .send(Ok(Bytes::from(header_line.clone())))
+        .await
+        .unwrap();
+    for _ in 0..4 {
+        sleep(Duration::from_secs(30)).await;
+        sender
+            .send(Ok(Bytes::from(vec![pattern(0); MIB / 4])))
+            .await
+            .unwrap();
+    }
+    sender.send(Ok(Bytes::from(final_chunk()))).await.unwrap();
+    drop(sender);
+    let response = call.await.unwrap().unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["x-amz-request-id"], "R9");
+    let (_head, received) = peer.await.unwrap();
+    assert_eq!(received.len(), content_length, "the whole body");
+    let data_at = header_line.len();
+    assert!(
+        received[data_at..data_at + MIB]
+            .iter()
+            .all(|&byte| byte == pattern(0)),
+        "the chunk's data"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn forward_client_stopping_mid_chunk_is_client_stalled_at_60_s_before_any_chunk_byte() {
+    let vector = ChunkVector::load();
+    let header_line = mib_chunk_header();
+    let content_length = header_line.len() + MIB + final_chunk().len();
+    let (engine, peer) = stand_in(|mut peer| async move {
+        peer.head().await.unwrap();
+        while peer.fill().await {}
+        peer.pending
+    })
+    .await;
+    let (sender, body) = channel_body();
+    sender.send(Ok(Bytes::from(header_line))).await.unwrap();
+    sender
+        .send(Ok(Bytes::from(vec![pattern(0); MIB / 2])))
+        .await
+        .unwrap();
+    let prepared = signed_put_head(Some(content_length), vector.signing().await);
+    let start = Instant::now();
+    let call = tokio::spawn(async move {
+        let result = exchange(engine, prepared, body).await;
+        (result.err(), Instant::now())
+    });
+    sleep(IDLE - MS).await;
+    assert!(!call.is_finished(), "pending at 60 s - 1 ms");
+    let (error, at) = call.await.unwrap();
+    assert_eq!(error, Some(RelayError::ClientStalled));
+    assert_eq!(at - start, IDLE);
+    let received = peer.await.unwrap();
+    assert!(
+        received.is_empty(),
+        "the stand-in received {} bytes of the chunk",
+        received.len()
+    );
+    drop(sender);
+}
+
+/// The steps `relay` takes for one request (read this request's files, prepare, connect, forward), over a duplex
+/// to a recording stand-in instead of a socket: what the emulator receives for `head` and `body` when the files in
+/// `home` hold `credentials` and the CA of `certificate`.
+async fn relayed_with(
+    home: &Path,
+    certificate: &Certificate,
+    credentials: &str,
+    head: &str,
+    body: Vec<u8>,
+) -> (String, Vec<u8>) {
+    write_files(home, &certificate.pem, credentials);
+    let emulator = emulator(home);
+    let files = EmulatorFiles::read(&emulator).await.unwrap();
+    let prepared = prepare(parts(head), &emulator, files.credentials()).unwrap();
+    let (engine, server) = tokio::io::duplex(DUPLEX);
+    let acceptor = acceptor(certificate);
+    let peer = tokio::spawn(async move {
+        let tls = acceptor.accept(server).await.unwrap();
+        record_and_answer(Peer {
+            tls,
+            pending: Vec::new(),
+        })
+        .await
+    });
+    let idle = IdleWrite::new(engine, Limits::DEFAULT.upload_idle);
+    let stalled = idle.stalled_flag();
+    let stream = connect_on(idle, &files, CONNECT_DEADLINE).await.unwrap();
+    drop(files);
+    let response = forward(
+        stream,
+        stalled,
+        prepared,
+        Full::new(Bytes::from(body)),
+        &Limits::DEFAULT,
+    )
+    .await
+    .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    peer.await.unwrap()
+}
+
+#[tokio::test(start_paused = true)]
+async fn relay_after_the_credentials_change_signs_the_chain_with_the_new_key() {
+    let vector = ChunkVector::load();
+    let zeroed = vector.zeroed();
+    let head = format!(
+        "{}\nContent-Length: {}",
+        k1_with_mode(SIGNED_CHUNKS),
+        zeroed.len()
+    );
+    let home = tempfile::tempdir().unwrap();
+    let certificate = certificate_a();
+    let other_credentials = "[default]\naws_access_key_id = EMUKEYID000000000002\n\
+                             aws_secret_access_key = emuforgeUnitTestSecretKey000000000000002\n";
+    let (first_head, first) = relayed_with(
+        home.path(),
+        &certificate,
+        CREDENTIALS,
+        &head,
+        zeroed.clone(),
+    )
+    .await;
+    let (second_head, second) =
+        relayed_with(home.path(), &certificate, other_credentials, &head, zeroed).await;
+
+    for (received, key_id) in [
+        (&first_head, EMULATOR_KEY_ID),
+        (&second_head, "EMUKEYID000000000002"),
+    ] {
+        let authorization = header(received, "authorization").unwrap();
+        assert!(
+            authorization.starts_with(&format!("AWS4-HMAC-SHA256 Credential={key_id}/")),
+            "{authorization}"
+        );
+    }
+    assert_eq!(first.len(), second.len());
+    let signature_ranges: Vec<std::ops::Range<usize>> = first
+        .windows(CHUNK_SIGNATURE_EXTENSION.len())
+        .enumerate()
+        .filter(|(_, window)| *window == CHUNK_SIGNATURE_EXTENSION.as_bytes())
+        .map(|(at, _)| {
+            let start = at + CHUNK_SIGNATURE_EXTENSION.len();
+            start..start + 64
+        })
+        .collect();
+    assert_eq!(signature_ranges.len(), vector.sizes.len(), "one per chunk");
+    for range in &signature_ranges {
+        assert_ne!(
+            first[range.clone()],
+            second[range.clone()],
+            "the chunk signature at {range:?} differs"
+        );
+    }
+    for (at, (a, b)) in first.iter().zip(&second).enumerate() {
+        if a != b {
+            assert!(
+                signature_ranges.iter().any(|range| range.contains(&at)),
+                "byte {at} differs outside a chunk signature"
+            );
+        }
+    }
+}
+
+/// A client body that records whether it was ever polled.
+struct PolledBody(Arc<AtomicBool>);
+
+impl Body for PolledBody {
+    type Data = Bytes;
+    type Error = io::Error;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, io::Error>>> {
+        self.0.store(true, Ordering::SeqCst);
+        Poll::Ready(None)
+    }
+}
+
+#[tokio::test]
+async fn relay_signed_chunk_upload_without_emulator_files_is_unavailable_before_the_body_is_read() {
+    let home = tempfile::tempdir().unwrap();
+    let polled = Arc::new(AtomicBool::new(false));
+    let request = Request::from_parts(
+        parts(&k1_with_mode(SIGNED_CHUNKS)),
+        PolledBody(polled.clone()),
+    );
+    assert_eq!(
+        relay(&emulator(home.path()), request, &Limits::DEFAULT)
+            .await
+            .unwrap_err(),
+        RelayError::Unavailable(Reason::NotStarted)
+    );
+    assert!(!polled.load(Ordering::SeqCst), "the body was polled");
 }
