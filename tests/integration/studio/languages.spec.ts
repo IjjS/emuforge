@@ -200,11 +200,14 @@ async function focusedIs(page: Page, locator: ReturnType<Page['locator']>): Prom
 /**
  * #19's route announcement: the focused content target's accessible name, as Chromium's accessibility tree gives it
  * (CDP `Accessibility.getPartialAXTree`), with the text of the elements that give it (those `aria-labelledby` names,
- * or the target itself), area text included; `null` while nothing but `body` has focus.
+ * or the target itself), area text included, and whether the target is inside the AWS area's root (`inArea`, false
+ * without an area); `null` while nothing but `body` has focus.
  */
-async function focusedAnnouncement(
-  page: Page,
-): Promise<{ name: string; items: { text: string; lang: string; explicit: boolean; where: string }[] } | null> {
+async function focusedAnnouncement(page: Page): Promise<{
+  name: string;
+  inArea: boolean;
+  items: { text: string; lang: string; explicit: boolean; where: string }[];
+} | null> {
   const cdp = await page.context().newCDPSession(page);
   try {
     const { result } = await cdp.send('Runtime.evaluate', {
@@ -216,6 +219,16 @@ async function focusedAnnouncement(
       fetchRelatives: false,
     });
     const name = norm(String((nodes[0]?.name?.value as unknown) ?? ''));
+    // `areaRootLang` installs the probe and is `null` while the page has no area's root.
+    const inArea =
+      (await areaRootLang(page)) !== null &&
+      (await page.evaluate(() => {
+        const root = (
+          window as unknown as { __emuforgeItLang: { areaRoot: () => Element | null } }
+        ).__emuforgeItLang.areaRoot();
+        const target = document.activeElement;
+        return root !== null && target !== null && target !== document.body && root.contains(target);
+      }));
     const items = await page.evaluate(() => {
       const target = document.activeElement;
       if (!target || target === document.body) return [];
@@ -242,7 +255,7 @@ async function focusedAnnouncement(
       }
       return out;
     });
-    return { name, items };
+    return { name, inArea, items };
   } finally {
     await cdp.detach().catch(() => undefined);
   }
@@ -614,15 +627,16 @@ test('studio.studio-layer-complete-in-every-language', async ({ ctx, browser, pr
       const htmlLang = (await s.page.locator('html').getAttribute('lang')) ?? '';
       const title = 'Amazon Simple Storage Service';
       // #19 announces a route change by moving focus to the page's content target, named by the page title
-      // (decisions.md, check correction): the announcement is that target's accessible name.
+      // (decisions.md, check correction): the announcement is that target's accessible name. The target is inside
+      // the area's root; the clicked Home link carries the same name and is not it (decisions.md, second correction).
       let last: Awaited<ReturnType<typeof focusedAnnouncement>> = null;
       const announced = await waitFor(CHANGE_BOUND_MS, async () => {
         last = await focusedAnnouncement(s.page);
-        return last !== null && last.name.includes(title) ? last : undefined;
+        return last !== null && last.inArea && last.name.includes(title) ? last : undefined;
       }).catch(() => undefined);
       expect(
         announced,
-        `focus on a content target whose accessible name holds "${title}" (focused: ${JSON.stringify(last)})`,
+        `focus on a content target inside the area's root whose accessible name holds "${title}" (focused: ${JSON.stringify(last)})`,
       ).toBeDefined();
       const matcher = new ValueMatcher(cats.get('de')!.values);
       const rest = norm(announced!.name.replace(title, ' '));
