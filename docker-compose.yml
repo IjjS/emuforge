@@ -1,0 +1,79 @@
+# EmuForge as a product (issue 34): the engine and Studio built into one image and run from this checkout.
+#
+# An emulator already running on EMULATOR_PORT:
+#   docker compose up -d --build
+#   docker compose down
+# No emulator: the same start also brings one up (the service of infra/aws-emulator/docker-compose.yml), and only
+# its own stop removes it; `docker compose down` without the profile leaves that emulator running:
+#   docker compose --profile emulator up -d --build
+#   docker compose --profile emulator down
+#
+# Then open http://127.0.0.1:8296/. Change the ports with EMULATOR_PORT (9297), EMUFORGE_ENGINE_PORT (8297) and
+# EMUFORGE_STUDIO_PORT (8296), and give the stop command the same values. 18296 and 18297 are the gateway's own
+# inside the form and cannot be used for any of the three. Every port is published on 127.0.0.1 only.
+# Each EMUFORGE_STUDIO_PORT is its own project (emuforge-app-<port>), so forms on different Studio and engine ports
+# run side by side; left unset, the project is emuforge-app. Set no COMPOSE_PROJECT_NAME or -p.
+#
+# EMUFORGE_IMAGE and EMUFORGE_EMULATOR_IMAGE name the two images (emuforge, aws-emulator); the checks set their own.
+name: emuforge-app${EMUFORGE_STUDIO_PORT:+-${EMUFORGE_STUDIO_PORT}}
+
+x-emuforge: &emuforge
+  image: ${EMUFORGE_IMAGE:-emuforge}
+  build:
+    context: .
+    dockerfile: infra/emuforge/Dockerfile
+    additional_contexts:
+      gateway: infra/emuforge
+  # Always built from this checkout, never pulled from a registry under the image's name.
+  pull_policy: build
+  environment:
+    EMULATOR_PORT: ${EMULATOR_PORT:-9297}
+    EMUFORGE_ENGINE_PORT: ${EMUFORGE_ENGINE_PORT:-8297}
+    EMUFORGE_STUDIO_PORT: ${EMUFORGE_STUDIO_PORT:-8296}
+    HOME: /home/emuforge
+  # The engine installs no signal handler; as process 1 it would ignore SIGTERM and make every stop wait.
+  init: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+
+services:
+  # Owns the form's network namespace and its two published ports; carries bytes, nothing else (haproxy.cfg).
+  gateway:
+    <<: *emuforge
+    command: ["haproxy", "-db", "-f", "/opt/emuforge/haproxy.cfg"]
+    ports:
+      # Published on 127.0.0.1 only, never on the whole network.
+      - "127.0.0.1:${EMUFORGE_STUDIO_PORT:-8296}:18296"
+      - "127.0.0.1:${EMUFORGE_ENGINE_PORT:-8297}:18297"
+
+  engine:
+    <<: *emuforge
+    network_mode: "service:gateway"
+    depends_on: [gateway]
+    command: ["emuforge-server"]
+    volumes:
+      # The one host path of the form: the emulators' directory, read-only. The parent, not the port's own
+      # directory, so the engine sees the emulator's files after every start, stop and restart.
+      - type: bind
+        source: ${HOME}/.aws/emulator
+        target: /home/emuforge/.aws/emulator
+        read_only: true
+        bind:
+          create_host_path: true
+
+  studio:
+    <<: *emuforge
+    network_mode: "service:gateway"
+    depends_on: [gateway]
+    # --no-install: bun never fetches a package at run time.
+    command: ["bun", "--no-install", "/opt/emuforge/studio/scripts/serve.ts"]
+
+  aws-emulator:
+    profiles: [emulator]
+    extends:
+      file: infra/aws-emulator/docker-compose.yml
+      service: aws-emulator
+    image: ${EMUFORGE_EMULATOR_IMAGE:-aws-emulator}
+    pull_policy: build
+    # Keyed on the emulator's port like the name it replaces, and never equal to it.
+    container_name: emuforge-app-aws-emulator${EMULATOR_PORT:+-${EMULATOR_PORT}}
