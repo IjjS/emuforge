@@ -102,9 +102,13 @@ Computed from the running app, not from the code, by `.pm/bin/pm-structure`.
 
 1. Open the spec's `route` in the built app at 1280x800 against a seeded emulator, and take the accessibility
    tree (roles and accessible names) of the AWS area: everything under the area's root, its `AppLayout` with the
-   breadcrumbs included. Studio's frame around the area is not part of the screen and is not scored. A spec with items that exist in only one data state
-   (`table.empty`, which needs an empty table, or a `single` or `multi` `table.selection`, which needs rows) is
-   scored in two runs of the same build: one against a seeded emulator and one against an empty one.
+   breadcrumbs included. The area's root is the element with class `aws-area` (Studio's `AREA_ROOT_CLASS`), and
+   the tree scored is that element's subtree of the accessibility tree. Studio's frame around the area is not part
+   of the screen and is not scored. A page with no element of class `aws-area`, more than one, or one that is not
+   in the accessibility tree is an error, not a score: the screen must have exactly one. A spec with items that
+   exist in only one data state (`table.empty`, which needs an empty table, or a `single` or `multi`
+   `table.selection`, which needs rows) is scored in two runs of the same build: one against a seeded emulator and
+   one against an empty one.
 2. Every leaf of the spec is one **item**: a breadcrumb, the title, each action, each column, each tab, each
    field label, each step. Each ordered list adds one more item for its order.
 3. An item **matches** when an element with the expected role and the same accessible name (trimmed, case
