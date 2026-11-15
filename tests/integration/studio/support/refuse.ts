@@ -30,8 +30,10 @@ export interface RefusingProxy {
 /**
  * The origin of the URL the page requested, from the request line the proxy received: the absolute URL of a plain
  * HTTP request (`GET http://192.0.2.1/x HTTP/1.1` → `http://192.0.2.1`), or `https://<host>[:<port>]` for a tunnel,
- * which names only its destination (`CONNECT 192.0.2.1:443 HTTP/1.1` → `https://192.0.2.1`). `null` when the line
- * is not a request line.
+ * which names only its destination (`CONNECT 192.0.2.1:443 HTTP/1.1` → `https://192.0.2.1`). A tunnel does not carry
+ * the page's scheme, so it is reported as `https` whatever that scheme was: Chromium also tunnels `ws://` and
+ * `wss://`, and a refused `ws://192.0.2.1/` is logged as `https://192.0.2.1:80`. `null` when the line is not a request
+ * line.
  */
 export function requestedOrigin(line: string): string | null {
   const match = /^([A-Z]+) (\S+) HTTP\/\d(?:\.\d)?$/.exec(line);
