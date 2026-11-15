@@ -29,6 +29,17 @@ tests/integration/
 - Never depends on another check having run, or on run order.
 - Has no sleep. It waits on a condition with a bound.
 
+## Studio checks and language
+
+- The Studio flow checks run with an English browser: `locale: 'en-US'` in `studio/playwright.config.ts` and in
+  every browser context the support code opens for a check that is not about a language, so no check depends on
+  the machine's language. `studio.checks-browser-language-is-english` guards it.
+- A check reads Studio's English text unless it is about a language. A check about a language sets it itself, with
+  its context's `locale` or a storage state that holds `emuforge.studio.language` for Studio's origin, never with a
+  change of Studio's code or catalogues.
+- A check that reads another language's text reads it from Studio's catalogue files (`studio/src/i18n/messages/`)
+  at run time and matches by value; it holds no copy of a translation and names no message key.
+
 ## Isolation
 
 The emulator has no reset and keeps everything in memory, so isolation is the check's job.
