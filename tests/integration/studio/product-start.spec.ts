@@ -157,9 +157,12 @@ test('engine.product-first-start-without-aws-directory', async ({ ctx }) => {
   readEmulatorFiles(emulatorDir(home, form.emulatorPort));
   expect(identities(await form.containers()), 'the containers right after the start command').toEqual(afterStart);
 
-  // That HOME → only `.aws`, `.aws/emulator`, `.aws/emulator/<port>` and the emulator's files in it.
+  // Under that HOME's `.aws` → only `.aws`, `.aws/emulator`, `.aws/emulator/<port>` and the emulator's files in it
+  // (requirement R8; decisions.md, PM decisions: entries elsewhere under HOME, such as Docker Desktop's own, are
+  // not the product form's).
   const port = `.aws/emulator/${String(form.emulatorPort)}`;
-  expect(entries(home), `the entries under ${home}`).toEqual(
+  const underAws = entries(home).filter((entry) => entry === '.aws' || entry.startsWith('.aws/'));
+  expect(underAws, `the entries under ${path.join(home, '.aws')}`).toEqual(
     ['.aws', '.aws/emulator', port, ...EMULATOR_FILES.map((f) => `${port}/${f}`)].sort(),
   );
 
