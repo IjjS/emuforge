@@ -10,6 +10,7 @@
         "@cloudscape-design/code-view": "3.0.191",
         "@cloudscape-design/components": "3.0.1407",
         "@cloudscape-design/global-styles": "1.0.71",
+        "@smithy/fetch-http-handler": "5.8.1",
         "@tanstack/react-query": "5.105.0",
         "react": "19.3.1",
         "react-dom": "19.3.1",
