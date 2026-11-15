@@ -14,7 +14,7 @@ import {
   politeRegions,
   present,
   renderApp,
-} from './home-test-kit';
+} from '../../test/home-test-kit';
 
 let engine: FakeEngine;
 

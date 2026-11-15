@@ -56,7 +56,7 @@ studio/src/
   providers/aws/area/services/<service>/
                                one folder per AWS service: api.ts, queries.ts, pages/, components/
   lib/                         aws client factory, engine client, errors, env; no UI
-  test/                        test setup
+  test/                        test setup, and the support several test files share
 ```
 
 - File names are kebab-case, components PascalCase, functions and variables camelCase. Event handlers are
@@ -193,7 +193,7 @@ Applies to everything under `providers/aws/area/`, at `/aws` and below.
 - Playwright for flows a user can observe, against the real engine and a real emulator. These live in
   `/tests/integration/studio`, not here.
 - Never replace `bun run test:unit` with `bun test`.
-- Fixtures exist only inside tests.
+- Fixtures and fakes exist only in test files and under `src/test/`.
 
 ## Checks before review
 
