@@ -69,12 +69,16 @@ export function titleOf(heading: string | null): string {
 
 /** True when the element, or an element around it, carries a Cloudscape class: it is inside the AWS area. */
 export async function inCloudscape(locator: Locator): Promise<boolean> {
-  return locator.evaluate((el) => {
-    for (let at: Element | null = el; at; at = at.parentElement) {
-      if ([...at.classList].some((c) => c.startsWith('awsui'))) return true;
-    }
-    return false;
-  }, ACTION);
+  return locator.evaluate(
+    (el) => {
+      for (let at: Element | null = el; at; at = at.parentElement) {
+        if ([...at.classList].some((c) => c.startsWith('awsui'))) return true;
+      }
+      return false;
+    },
+    undefined,
+    ACTION,
+  );
 }
 
 /** Every element of the document that carries a Cloudscape class, as `tag.class` (at most 10 listed). */

@@ -2,7 +2,7 @@
 // in the built app served by `bun run serve` in front of a real engine and the run's emulator (test-criteria.md,
 // issue 16, Integration checks): `studio.frame-leads-between-layers`, `studio.aws-area-loads-only-when-opened`.
 
-import type { Locator, Page, Response } from '@playwright/test';
+import type { Page, Response } from '@playwright/test';
 
 import { expect, startStack, test } from './support';
 import {
@@ -17,6 +17,7 @@ import {
   titleOf,
 } from './support/frame';
 import { Lines } from './support/lines';
+import { lookOf, markDiffers, type LinkLook } from './support/marks';
 
 /** Each page of R4.4 with its `h1`; `null` is Home. */
 const PAGES: { path: string; h1: string | null }[] = [
@@ -30,73 +31,6 @@ const PAGES: { path: string; h1: string | null }[] = [
 async function openPage(page: Page, path: string, h1: string | null): Promise<void> {
   await page.goto(path);
   await expect(heading(page, h1 ?? 'Home')).toBeVisible();
-}
-
-/**
- * The computed properties that can mark a link visibly besides the colour of its text: its own box (underline by
- * shadow, border or text decoration, background, weight) and the boxes of its `::before` and `::after`.
- */
-const MARK_PROPERTIES = [
-  'box-shadow',
-  'border-top-width',
-  'border-top-style',
-  'border-top-color',
-  'border-bottom-width',
-  'border-bottom-style',
-  'border-bottom-color',
-  'border-left-width',
-  'border-left-style',
-  'border-left-color',
-  'border-right-width',
-  'border-right-style',
-  'border-right-color',
-  'text-decoration-line',
-  'text-decoration-color',
-  'text-decoration-thickness',
-  'background-color',
-  'background-image',
-  'font-weight',
-  'outline-style',
-  'outline-width',
-  'outline-color',
-];
-const PSEUDO_PROPERTIES = [
-  'content',
-  'background-color',
-  'box-shadow',
-  'border-bottom-width',
-  'border-bottom-color',
-  'height',
-  'width',
-];
-
-interface LinkLook {
-  color: string;
-  cursor: string;
-  /** Every property of `MARK_PROPERTIES` on the link, and of `PSEUDO_PROPERTIES` on its pseudo-elements. */
-  mark: Record<string, string>;
-}
-
-async function lookOf(link: Locator): Promise<LinkLook> {
-  return link.evaluate(
-    (el, { own, pseudo }) => {
-      const style = getComputedStyle(el);
-      const mark: Record<string, string> = {};
-      for (const name of own) mark[name] = style.getPropertyValue(name);
-      for (const where of ['::before', '::after']) {
-        const p = getComputedStyle(el, where);
-        for (const name of pseudo) mark[`${where} ${name}`] = p.getPropertyValue(name);
-      }
-      return { color: style.color, cursor: style.cursor, mark };
-    },
-    { own: MARK_PROPERTIES, pseudo: PSEUDO_PROPERTIES },
-    ACTION,
-  );
-}
-
-/** The properties of `mark` in which `a` and `b` differ. */
-function markDiffers(a: LinkLook, b: LinkLook): string[] {
-  return Object.keys(a.mark).filter((name) => a.mark[name] !== b.mark[name]);
 }
 
 /** Moves the pointer off the frame and drops focus, so no link is hovered or focused while it is measured. */
@@ -190,7 +124,7 @@ test('studio.frame-leads-between-layers', async ({ ctx, page }) => {
             if (path === '/') unmarked = await lookOf(f.aws);
             const second = markDiffers(marked, plain);
             ctx.log(
-              `${where}: color ${marked.color} vs ${plain.color}; also differs: ${second.map((n) => `${n} ${marked.mark[n]} vs ${plain.mark[n]}`).join('; ') || 'nothing'}`,
+              `${where}: color ${marked.color} vs ${plain.color}; also drawn differently: ${second.map((n) => `${n} ${marked.mark[n] ?? 'none'} vs ${plain.mark[n] ?? 'none'}`).join('; ') || 'nothing'}`,
             );
             if (marked.color === plain.color) found.push(`${where}: the marked link has the same color as the other`);
             if (second.length === 0) {
