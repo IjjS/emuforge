@@ -18,7 +18,8 @@
 # Product form (issue 34): the image of the root docker-compose.yml is built once per run under the run's own
 # name (emuforge-it-product-<run id>), and the run's pinned emulator image is tagged under the run's own name
 # (emuforge-it-emulator-<run id>), so a check's `docker compose ... up --build` is a cache hit and never retags
-# `emuforge` or `aws-emulator`. Both names are removed at the end, with every container started from them.
+# `emuforge` or `aws-emulator`. Both names are removed at the end, with the containers and networks of the forms
+# the checks recorded and could not remove.
 #
 # Exit: 0 when every check passed; 1 when any failed; 127 when there are only errors (the environment failed:
 # Docker, the image, cargo, bun; pm-check records 127 as `error`). The engine and Studio are the subject, not the
@@ -208,26 +209,30 @@ cleanup() {
   if [[ -e "$emulator_dir" ]]; then
     rm -rf "$emulator_dir"
   fi
-  # The product forms a check started and could not remove: every container of the run's two images, the
-  # networks of their Compose projects, and the files a killed situation 4 emulator left under the run's HOME.
-  local product projects project name source port
-  product="$( (docker ps -aq --filter "ancestor=$product_image"; docker ps -aq --filter "ancestor=$emulator_image") \
-    2>/dev/null | sort -u || true)"
-  if [[ -n "$product" ]]; then
-    projects="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' $product 2>/dev/null \
-      | sort -u || true)"
-    while read -r name source; do
-      port="${name##*-}"
-      if [[ "$name" == /emuforge-app-aws-emulator-* && "$port" =~ ^[0-9]+$ && "$source" == "$HOME/.aws/emulator" \
-        && -e "$HOME/.aws/emulator/$port" ]]; then
-        rm -rf "$HOME/.aws/emulator/$port"
-      fi
-    done < <(docker inspect -f '{{.Name}} {{range .Mounts}}{{.Source}}{{end}}' \
-      $(docker ps -aq --filter "ancestor=$emulator_image" 2>/dev/null) 2>/dev/null || true)
-    docker rm -f $product >/dev/null 2>&1 || true
+  # The product forms a check started and could not remove (the test process was killed). Each form records its
+  # Compose project in $out/tmp/product-projects (support/product.ts); of those projects' containers, only the ones
+  # created under one of the run's own image names are removed, so a project of the same name started elsewhere
+  # (another worktree's form on a port this run let go) is left alone. Then the networks of those projects that no
+  # container uses any more, and the files a killed situation 4 emulator of the run left under the run's HOME.
+  local projects project id image cname source port
+  if [[ -f "$out/tmp/product-projects" ]]; then
+    projects="$(sort -u "$out/tmp/product-projects")"
     for project in $projects; do
-      docker network rm $(docker network ls -q --filter "label=com.docker.compose.project=$project") \
-        >/dev/null 2>&1 || true
+      while read -r id image cname source; do
+        [[ "$image" == "$product_image" || "$image" == "$emulator_image" ]] || continue
+        port="${cname##*-}"
+        if [[ "$image" == "$emulator_image" && "$cname" == /emuforge-app-aws-emulator-* && "$port" =~ ^[0-9]+$ \
+          && "$source" == "$HOME/.aws/emulator" && -e "$HOME/.aws/emulator/$port" ]]; then
+          rm -rf "$HOME/.aws/emulator/$port"
+          echo "integration: cleanup removed $HOME/.aws/emulator/$port of ${cname#/}" >&2
+        fi
+        docker rm -f "$id" >/dev/null 2>&1 && echo "integration: cleanup removed container ${cname#/}" >&2
+      done < <(docker inspect -f '{{.Id}} {{.Config.Image}} {{.Name}} {{range .Mounts}}{{.Source}}{{end}}' \
+        $(docker ps -aq --filter "label=com.docker.compose.project=$project" 2>/dev/null) 2>/dev/null || true)
+      for id in $(docker network ls -q --filter "label=com.docker.compose.project=$project" 2>/dev/null); do
+        # A network still in use by a container is refused by Docker and kept.
+        docker network rm "$id" >/dev/null 2>&1 && echo "integration: cleanup removed network $id of $project" >&2
+      done
     done
   fi
   docker image rm "$product_image" "$emulator_image" >/dev/null 2>&1 || true

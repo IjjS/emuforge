@@ -181,22 +181,22 @@ export function identities(containers: ContainerState[]): { id: string; startedA
 }
 
 /**
- * Every container on the machine that has host port `port` in its port bindings, declared or published, running or
- * not. Read-only.
+ * Every running container on the machine that publishes host port `port` (`NetworkSettings.Ports`). A container
+ * that only declares the port and was never started (Compose creates one before Docker refuses its publish)
+ * publishes nothing and is not counted. Read-only.
  */
 export async function containersPublishing(port: number): Promise<ContainerState[]> {
-  const all = (await dockerRead(['ps', '-aq', '--no-trunc'])).split('\n').filter((id) => id !== '');
-  if (all.length === 0) return [];
-  const format = '{{.Id}}\t{{json .HostConfig.PortBindings}}\t{{json .NetworkSettings.Ports}}';
-  const out = await dockerOut(['inspect', '-f', format, ...all]);
+  const running = (await dockerRead(['ps', '-q', '--no-trunc'])).split('\n').filter((id) => id !== '');
+  if (running.length === 0) return [];
+  const format = '{{.Id}}\t{{json .NetworkSettings.Ports}}';
+  const out = await dockerOut(['inspect', '-f', format, ...running]);
   const ids: string[] = [];
   for (const line of out.stdout.split('\n')) {
-    const [id, declared, published] = line.split('\t');
-    if (!id || declared === undefined) continue;
-    const ports = [...bindings(declared), ...bindings(published ?? 'null')].map((b) => b.hostPort);
-    if (ports.includes(String(port))) ids.push(id);
+    const [id, published] = line.split('\t');
+    if (!id || published === undefined) continue;
+    if (bindings(published).some((b) => b.hostPort === String(port))) ids.push(id);
   }
-  return inspectContainers(ids);
+  return (await inspectContainers(ids)).filter((c) => c.running);
 }
 
 /** A host binding of a published port. */
@@ -463,6 +463,9 @@ export class Form {
       options.emulatorPort === undefined && options.situation === 4,
     );
     ctx.own(form);
+    // `run` removes, at its end, what a killed check left of the projects listed here.
+    fs.mkdirSync(ctx.tmp, { recursive: true });
+    fs.appendFileSync(path.join(ctx.tmp, 'product-projects'), `${form.project}\n`);
     ctx.log(
       `form ${form.project}: situation ${options.situation}, emulator port ${emulatorPort}, engine port ${enginePort}, studio port ${studioPort}, HOME ${form.home}`,
     );

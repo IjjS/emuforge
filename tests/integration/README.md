@@ -33,8 +33,10 @@ loopback port.
 `emuforge-it-product-<run id>`; log `output/logs/integration-product-build.log`). It tags the run's pinned emulator
 image under the run's own name too (`EMUFORGE_EMULATOR_IMAGE` set to `emuforge-it-emulator-<run id>`), so a
 situation 4 start in a check never rebuilds or retags `aws-emulator`. The checks never use the names `emuforge` or
-`aws-emulator` and never port 9297. When it ends, `run` removes both names and every container started from them,
-with their Compose networks.
+`aws-emulator` and never port 9297. Each form writes its Compose project to `output/integration/tmp/product-projects`;
+when it ends, `run` removes, of those projects, the containers created under one of the run's two image names and
+the networks no container uses any more, logs each removal, then removes both names (`docker image rm`, which only
+untags an image that has another name).
 
 The product checks (`studio/product-*.spec.ts`, ids `engine.product-…`) start a form each through
 `studio/support/product.ts`, which holds the start and stop command lines of each situation (the README check
