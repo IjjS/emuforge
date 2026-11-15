@@ -331,25 +331,9 @@ test('studio.check-browser-refuses-non-loopback-destinations', async ({ ctx, pag
   // `http://emuforge-check.invalid/x` → rejected, and the refusal line names `http://emuforge-check.invalid`.
   await refusedFetch('http://emuforge-check.invalid/x', 'http://emuforge-check.invalid');
 
-  // Navigating to `http://192.0.2.1/` → the navigation fails, and the refusal line names `http://192.0.2.1`.
-  let mark = logLines().length;
-  let navigation = 'loaded';
-  try {
-    await page.goto('http://192.0.2.1/', { timeout: 10_000 });
-  } catch (e) {
-    navigation = `failed: ${(e as Error).message.split('\n')[0]}`;
-  }
-  ctx.log(`navigation to http://192.0.2.1/: ${navigation}`);
-  expect(navigation, 'navigation to http://192.0.2.1/').toMatch(/^failed: /);
-  await expect
-    .poll(() => refusalsSince(mark), { message: 'navigation to http://192.0.2.1/: refusal lines the check log gained' })
-    .toContain(refusal('http://192.0.2.1'));
-
   // `http://127.0.0.1:<port>/x` and `http://[::1]:<port6>/x` → each resolves with its server's body, each server
   // recorded the request, and the log has no refusal line for either.
-  await page.goto(`${pageOrigin}/`);
-  expect(new URL(page.url()).origin, 'the page origin, again').toBe(pageOrigin);
-  mark = logLines().length;
+  let mark = logLines().length;
   for (const [server, host] of [
     [v4, '127.0.0.1'],
     [v6, '::1'],
@@ -370,4 +354,19 @@ test('studio.check-browser-refuses-non-loopback-destinations', async ({ ctx, pag
     refusalsSince(mark).filter((line) => loopbackOrigins.some((o) => line === refusal(o))),
     'refusal lines naming the loopback test servers',
   ).toEqual([]);
+
+  // Navigating to `http://192.0.2.1/` → the navigation fails, and the refusal line names `http://192.0.2.1`.
+  // Last: the failed navigation leaves the page on Chromium's error page.
+  mark = logLines().length;
+  let navigation = 'loaded';
+  try {
+    await page.goto('http://192.0.2.1/', { timeout: 10_000 });
+  } catch (e) {
+    navigation = `failed: ${(e as Error).message.split('\n')[0]}`;
+  }
+  ctx.log(`navigation to http://192.0.2.1/: ${navigation}`);
+  expect(navigation, 'navigation to http://192.0.2.1/').toMatch(/^failed: /);
+  await expect
+    .poll(() => refusalsSince(mark), { message: 'navigation to http://192.0.2.1/: refusal lines the check log gained' })
+    .toContain(refusal('http://192.0.2.1'));
 });
