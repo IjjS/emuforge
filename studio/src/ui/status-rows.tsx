@@ -2,6 +2,7 @@ import './status-rows.css';
 
 import type { ReactNode } from 'react';
 
+import { useLanguage } from '../i18n/language-context';
 import { ClockIcon, ConnectedIcon, FailedIcon, IdleIcon } from './icons';
 
 /** A status's hue and icon (DESIGN.md, Status rows): ok, failed, idle (not started, unknown) or waiting (checking). */
@@ -19,12 +20,13 @@ interface StatusRowProps {
   kind: StatusKind;
   /** The status word ("Connected"). */
   status: string;
-  /** The address the row is about, in the code font; `undefined` shows "-", read as "Not known". */
+  /** The address the row is about, in the code font; `undefined` shows "-", read as "Not known" (its message). */
   address: string | undefined;
 }
 
 /** One row: its label, the status's icon and word, and the address under them. */
 export function StatusRow({ label, kind, status, address }: StatusRowProps) {
+  const { t } = useLanguage();
   const Icon = ICONS[kind];
   return (
     <div className="st-row">
@@ -37,7 +39,7 @@ export function StatusRow({ label, kind, status, address }: StatusRowProps) {
         {address === undefined ? (
           <span className="st-addr none">
             <span aria-hidden="true">-</span>
-            <span className="st-sr">Not known</span>
+            <span className="st-sr">{t('status.notKnown')}</span>
           </span>
         ) : (
           <span className="st-addr">{address}</span>

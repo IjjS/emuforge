@@ -1,12 +1,25 @@
 // Used by unit tests only; nothing in the app imports it. A fake engine behind `fetch` that answers Studio's
 // `/config.json`, the engine's session and health routes the way a test tells it to and records every request,
-// and Home rendered with the app's real routes and providers. Only the network is replaced.
+// and Home rendered with the app's real routes and providers. Only the network is replaced. For tests of language:
+// a marked test catalogue and what of Studio's text it does not cover.
 
 import { notifyManager } from '@tanstack/react-query';
 import { act, render, screen, within } from '@testing-library/react';
 import { createMemoryRouter, RouterProvider } from 'react-router';
+import { PROVIDERS } from '../app/provider-list';
 import { Providers } from '../app/providers';
 import { routes } from '../app/routes';
+import { BUNDLED_CATALOGUES } from '../i18n/bundled';
+import {
+  catalogueSet,
+  PLACEHOLDER,
+  textsOf,
+  type Catalogue,
+  type Catalogues,
+  type Message,
+  type MessageKey,
+} from '../i18n/catalogue';
+import { createLanguageStore, type LanguageStore } from '../i18n/language';
 
 // TanStack Query hands its notifications to React on a 0 ms timer. Under fake timers a 0 ms timer set while timers
 // run waits for the clock to move, which would make every step of a test move time; the kit notifies in a microtask.
@@ -176,15 +189,153 @@ export async function advance(ms = 0): Promise<void> {
   }
 }
 
-/** Renders the app's routes at `path` (Home by default) with its providers. */
-export function renderApp(path = '/') {
+/**
+ * Renders the app's routes at `path` (Home by default) with its providers, in `language` (by default the one the
+ * browser's languages give over the bundled catalogues).
+ */
+export function renderApp(path = '/', language?: LanguageStore) {
   const router = createMemoryRouter(routes, { initialEntries: [path] });
   const result = render(
-    <Providers>
+    <Providers language={language}>
       <RouterProvider router={router} />
     </Providers>,
   );
   return { ...result, router };
+}
+
+/** The marks around every value of the marked test catalogue. */
+export const MARK_OPEN = '⟦';
+export const MARK_CLOSE = '⟧';
+
+/** The tag of the marked test catalogue: a well-formed tag of no language Studio has. */
+export const MARKED_TAG = 'zz';
+
+function mark(text: string): string {
+  return `${MARK_OPEN}${text}${MARK_CLOSE}`;
+}
+
+function markMessage(message: Message): Message {
+  return typeof message === 'string'
+    ? mark(message)
+    : Object.fromEntries(Object.entries(message).map(([category, text]) => [category, mark(text)]));
+}
+
+/** A test catalogue that holds every message of `source` (English), each value wrapped in the marks. */
+export function markedCatalogue(source: Catalogue = BUNDLED_CATALOGUES.source): Catalogue {
+  return {
+    tag: MARKED_TAG,
+    name: mark(source.name),
+    sameAsEnglish: [],
+    messages: new Map([...source.messages].map(([key, message]) => [key, markMessage(message)])),
+  };
+}
+
+/** Studio's bundled catalogues and the marked test catalogue. */
+export function withMarked(): Catalogues {
+  return catalogueSet([...BUNDLED_CATALOGUES.byTag.values(), markedCatalogue()]);
+}
+
+/** A page's current language: `tag` from `catalogues`, as a browser whose only language is `tag` resolves it. */
+export function languageStore(tag: string, catalogues: Catalogues = withMarked()): LanguageStore {
+  return createLanguageStore(catalogues, { languages: [tag], language: tag, storage: () => window.localStorage });
+}
+
+/** What is kept as it is besides what the kit knows itself (test-criteria.md, "Kept as it is"). */
+export interface KeptAsItIs {
+  /** The engine's `message`s the page was sent: kept in an element with `lang="en"` that holds exactly one. */
+  engineMessages?: readonly string[];
+}
+
+/** Names Studio never translates: the wordmark and the providers' names and service labels (R4.3). */
+function keptNames(): string[] {
+  const names = PROVIDERS.flatMap((p) => [p.name, p.shortName, ...p.services.map((service) => service.label)]);
+  // Longest first, so a name that holds another is removed whole.
+  return ['EmuForge Studio', 'EmuForge', ...names].sort((a, b) => b.length - a.length);
+}
+
+const ADDRESS = /https?:\/\/127\.0\.0\.1(?::\d+)?/g;
+const DIGITS_AND_PUNCTUATION = /^[\p{N}\p{P}\p{S}\s]*$/u;
+
+/** Whether `text`, once names and addresses are taken out, is digits and punctuation alone. */
+function keptText(text: string): boolean {
+  let rest = text.replace(ADDRESS, ' ');
+  for (const name of keptNames()) {
+    rest = rest.split(name).join(' ');
+  }
+  return DIGITS_AND_PUNCTUATION.test(rest);
+}
+
+/** The text of `text` outside the marks, from `depth` marks open; and the depth at its end. */
+function outsideMarks(text: string, depth = 0): { outside: string; depth: number } {
+  let outside = '';
+  let open = depth;
+  for (const char of text) {
+    if (char === MARK_OPEN) {
+      open++;
+    } else if (char === MARK_CLOSE) {
+      open = Math.max(0, open - 1);
+    } else if (open === 0) {
+      outside += char;
+    }
+  }
+  return { outside, depth: open };
+}
+
+/** Whether `element` is inside a provider's area, which is not Studio's own layer. */
+function inArea(element: Element): boolean {
+  return element.closest('.st-area') !== null;
+}
+
+/** Attributes that hold text a user hears or reads. */
+const TEXT_ATTRIBUTES = ['aria-label', 'aria-description', 'aria-roledescription', 'aria-valuetext', 'title', 'alt'];
+
+/**
+ * Every piece of Studio's text (test-criteria.md) on the page that is neither inside the marks nor kept as it is:
+ * text nodes of Studio's own layer, read in document order so a placeholder's element sits inside its message's
+ * marks, its attributes that are read or heard, and the document title. Empty when the page holds only marked text.
+ */
+export function unmarkedText(kept: KeptAsItIs = {}): string[] {
+  const found: string[] = [];
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  let depth = 0;
+  for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+    const parent = node.parentElement;
+    if (parent === null || inArea(parent)) {
+      continue;
+    }
+    const step = outsideMarks(node.textContent ?? '', depth);
+    depth = step.depth;
+    if (step.outside.trim() === '' || parent.closest('code, pre, .st-wordmark') !== null) {
+      continue;
+    }
+    const marked = parent.closest('[lang]');
+    if (
+      marked !== null &&
+      marked !== document.documentElement &&
+      marked.getAttribute('lang') === 'en' &&
+      (kept.engineMessages ?? []).includes(marked.textContent ?? '')
+    ) {
+      continue;
+    }
+    if (!keptText(step.outside)) {
+      found.push(`text "${norm(step.outside)}" in <${parent.tagName.toLowerCase()}>`);
+    }
+  }
+  for (const element of document.body.querySelectorAll('*')) {
+    if (inArea(element)) {
+      continue;
+    }
+    for (const name of TEXT_ATTRIBUTES) {
+      const value = element.getAttribute(name);
+      if (value !== null && !keptText(outsideMarks(value).outside)) {
+        found.push(`${name} "${value}" on <${element.tagName.toLowerCase()}>`);
+      }
+    }
+  }
+  if (!keptText(outsideMarks(document.title).outside)) {
+    found.push(`document title "${document.title}"`);
+  }
+  return found;
 }
 
 /** The status words a row shows (requirement R9.1). */
@@ -199,9 +350,31 @@ export function norm(text: string | null | undefined): string {
   return (text ?? '').replace(/\s+/g, ' ').trim();
 }
 
-/** The "Connection" section: the region of that name. */
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * What the message `key` reads in any language of the bundled catalogues or the marked one, each placeholder standing
+ * for any text: how the kit finds an element by the name a user hears in whichever language the page is in.
+ */
+function anyLanguage(key: MessageKey): RegExp {
+  const texts = [...withMarked().byTag.values()].flatMap((catalogue) => {
+    const message = catalogue.messages.get(key);
+    return message === undefined ? [] : textsOf(message);
+  });
+  const patterns = texts.map((text) =>
+    text
+      .split(PLACEHOLDER)
+      .map((part, index) => (index % 2 === 1 ? '.+' : escapeRegExp(part)))
+      .join(''),
+  );
+  return new RegExp(`^(?:${patterns.join('|')})$`, 'su');
+}
+
+/** The "Connection" section: the region of that name, in the page's language. */
 export function connectionSection(): HTMLElement {
-  return screen.getByRole('region', { name: 'Connection' });
+  return screen.getByRole('region', { name: anyLanguage('connection.title') });
 }
 
 /** The status and the whole text of the "Engine" or "Emulator" row: the term of that name and what it describes. */
@@ -251,18 +424,18 @@ export function noticeText(notice: HTMLElement = connectionNotice()): string {
 /** The commands shown in `scope`, in order: each command group's `pre`, as lines. */
 export function commandsIn(scope: HTMLElement): string[][] {
   return within(scope)
-    .queryAllByRole('group', { name: /^Command: / })
+    .queryAllByRole('group', { name: anyLanguage('command.group') })
     .map((group) => (group.querySelector('pre')?.textContent ?? '').split('\n'));
 }
 
 /** The copy buttons shown in `scope`, in order. */
 export function copyButtonsIn(scope: HTMLElement): HTMLElement[] {
-  return within(scope).queryAllByRole('button', { name: /^Copy command: / });
+  return within(scope).queryAllByRole('button', { name: anyLanguage('copy.name') });
 }
 
 /** The build-once toggle of the notice, or `null`. */
 export function buildOnceToggle(notice: HTMLElement = connectionNotice()): HTMLElement | null {
-  return within(notice).queryByRole('button', { name: /^First run\? Build the image once/ });
+  return within(notice).queryByRole('button', { name: anyLanguage('notice.buildOnce') });
 }
 
 /** The header "Refresh" of Home. */
