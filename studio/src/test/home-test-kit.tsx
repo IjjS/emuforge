@@ -308,13 +308,8 @@ export function unmarkedText(kept: KeptAsItIs = {}): string[] {
     if (step.outside.trim() === '' || parent.closest('code, pre, .st-wordmark') !== null) {
       continue;
     }
-    const marked = parent.closest('[lang]');
-    if (
-      marked !== null &&
-      marked !== document.documentElement &&
-      marked.getAttribute('lang') === 'en' &&
-      (kept.engineMessages ?? []).includes(marked.textContent ?? '')
-    ) {
+    // The engine's message, or a language's own name in an element of that language (R4.3).
+    if (keptByLang(parent, kept)) {
       continue;
     }
     if (!keptText(step.outside)) {

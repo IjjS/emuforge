@@ -8,7 +8,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BUNDLED_CATALOGUES } from '../i18n/bundled';
 import { STORAGE_KEY } from '../i18n/language';
 import { LanguageProvider } from '../i18n/language-provider';
-import { languageStore, textNotFrom } from '../test/home-test-kit';
+import {
+  buildOnceToggle,
+  connected,
+  connectionNotice,
+  connectionSection,
+  emulatorDown,
+  FakeEngine,
+  languageStore,
+  present,
+  textNotFrom,
+} from '../test/home-test-kit';
 import { Frame, ProviderPage } from './frame';
 import type { ProviderAreaProps } from './provider-list';
 import { Providers } from './providers';
@@ -550,5 +560,373 @@ describe('the frame in each of the twelve languages (R5.2, R2.7)', () => {
       vi.doUnmock('react-dom/client');
       vi.resetModules();
     }
+  });
+});
+
+/** The own names of Studio's languages in the order of `Intl.Collator('und')` (requirement R3.3). */
+const OWN_NAMES_IN_ORDER = [
+  'Deutsch',
+  'English',
+  'Español',
+  'Français',
+  'Italiano',
+  'Polski',
+  'Português',
+  'Tiếng Việt',
+  'Русский',
+  'ไทย',
+  '한국어',
+  '日本語',
+];
+
+/** The tag of the language whose own name is `name`. */
+function tagOfName(name: string): string {
+  const found = [...BUNDLED_CATALOGUES.byTag.values()].find((catalogue) => catalogue.name === name);
+  return present(found, `the language named ${name}`).tag;
+}
+
+/** The control's accessible name in `tag`: the catalogue's "Language" with the own name in it (R3.2). */
+function controlName(tag: string): string {
+  return messageIn(tag, 'language.control').replace('{name}', present(BUNDLED_CATALOGUES.byTag.get(tag), tag).name);
+}
+
+/** The language control in the banner: its accessible name ends with a language's own name. */
+function languageControl(): HTMLElement {
+  const names = OWN_NAMES_IN_ORDER.map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+  return within(screen.getByRole('banner')).getByRole('button', { name: new RegExp(`(?:${names})$`, 'u') });
+}
+
+function menuOptions(): HTMLElement[] {
+  return within(screen.getByRole('menu')).getAllByRole('menuitemradio');
+}
+
+function checkedOptions(): string[] {
+  return menuOptions()
+    .filter((option) => option.getAttribute('aria-checked') === 'true')
+    .map((option) => option.getAttribute('aria-label') ?? option.textContent);
+}
+
+/** Opens the menu with a click on the control. */
+async function openMenu(user = userEvent.setup()) {
+  await user.click(languageControl());
+  return { user, menu: screen.getByRole('menu') };
+}
+
+/** The option of the menu whose label is `label`. */
+function option(label: string): HTMLElement {
+  return present(
+    menuOptions().find((item) => item.textContent === label || item.textContent.startsWith(label)),
+    `the option ${label}`,
+  );
+}
+
+describe('the language control (R3)', () => {
+  afterEach(() => {
+    localStorage.clear();
+    document.documentElement.lang = 'en';
+  });
+
+  it.each(['/', '/does-not-exist', AREA_PATH])(
+    'on %s: the banner holds the control, after the navigation "Studio"',
+    async (path) => {
+      openStudio(path);
+      if (path.startsWith('/aws')) {
+        await screen.findByRole('heading', { level: 1, name: AREA_TITLE }, { timeout: AREA_LOAD_MS });
+      }
+      const { banner, nav } = frameLinks();
+      const control = languageControl();
+
+      expect(banner.contains(control)).toBe(true);
+      expect(nav.contains(control)).toBe(false);
+      expect(follows(nav, control)).toBe(true);
+      expect(control.closest('.st-area')).toBeNull();
+    },
+    20_000,
+  );
+
+  it('in English, nothing stored: named "Language: English", it shows "English" in an element with lang="en"', () => {
+    openFrame('/');
+    const control = languageControl();
+
+    expect(control).toHaveAccessibleName('Language: English');
+    expect(control).toHaveTextContent(/^English$/);
+    expect(within(control).getByText('English')).toHaveAttribute('lang', 'en');
+    expect(control).toHaveAttribute('aria-haspopup', 'menu');
+    expect(control).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it.each(['de', 'fr'])('stored %s: the catalogue\'s "Language" followed by the own name, which it shows', (tag) => {
+    localStorage.setItem(STORAGE_KEY, tag);
+    openFrame('/');
+    const control = languageControl();
+    const own = present(BUNDLED_CATALOGUES.byTag.get(tag), tag).name;
+
+    // The attribute as the catalogue gives it, French space before the colon included.
+    expect(control).toHaveAttribute('aria-label', controlName(tag));
+    expect(control.getAttribute('aria-label')).not.toBe(`Language: ${own}`);
+    expect(control).toHaveTextContent(new RegExp(`^${own}$`, 'u'));
+    expect(within(control).getByText(own)).toHaveAttribute('lang', tag);
+  });
+
+  it('opened: a menu named "Language", "Browser language" first, then the twelve own names in order, each with its lang', async () => {
+    openFrame('/');
+    await openMenu();
+
+    expect(screen.getByRole('menu')).toHaveAccessibleName('Language');
+    expect(languageControl()).toHaveAttribute('aria-expanded', 'true');
+    const [first, ...languages] = menuOptions();
+    expect(first).toHaveAccessibleName('Browser language, English');
+    expect(languages.map((item) => item.textContent)).toEqual(OWN_NAMES_IN_ORDER);
+    for (const item of languages) {
+      expect(item).toHaveAttribute('lang', tagOfName(item.textContent));
+    }
+  });
+
+  it('opened in German: "Language" and "Browser language" are the German catalogue\'s', async () => {
+    localStorage.setItem(STORAGE_KEY, 'de');
+    openFrame('/');
+    await openMenu();
+
+    expect(screen.getByRole('menu')).toHaveAccessibleName(messageIn('de', 'language.menu'));
+    expect(menuOptions()[0]).toHaveAccessibleName(
+      messageIn('de', 'language.browserNamed').replace('{name}', 'English'),
+    );
+    expect(menuOptions()[0]).toHaveTextContent(`${messageIn('de', 'language.browser')}English`);
+    expect(textNotFrom('de')).toEqual([]);
+  });
+
+  it('opened with nothing stored: only "Browser language" is checked, showing the resolved language\'s own name', async () => {
+    openFrame('/');
+    await openMenu();
+
+    expect(checkedOptions()).toEqual(['Browser language, English']);
+    expect(within(present(menuOptions()[0], 'the first option')).getByText('English')).toHaveAttribute('lang', 'en');
+  });
+
+  it('opened with stored de: only Deutsch is checked', async () => {
+    localStorage.setItem(STORAGE_KEY, 'de');
+    openFrame('/');
+    await openMenu();
+
+    expect(checkedOptions()).toEqual(['Deutsch']);
+  });
+
+  it.each([
+    ['Enter', '{Enter}'],
+    ['Space', ' '],
+    ['ArrowDown', '{ArrowDown}'],
+  ])('opened with %s on the control: focus is on the checked option', async (_key, keys) => {
+    localStorage.setItem(STORAGE_KEY, 'de');
+    openFrame('/');
+    const user = userEvent.setup();
+    act(() => {
+      languageControl().focus();
+    });
+
+    await user.keyboard(keys);
+
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    expect(document.activeElement).toBe(option('Deutsch'));
+  });
+
+  it('in the menu: ArrowDown on the last → first, ArrowUp on the first → last, Home → first, End → last', async () => {
+    openFrame('/');
+    const { user } = await openMenu();
+    const first = menuOptions()[0];
+    const last = menuOptions().at(-1);
+    expect(document.activeElement).toBe(first);
+
+    await user.keyboard('{ArrowUp}');
+    expect(document.activeElement).toBe(last);
+    await user.keyboard('{ArrowDown}');
+    expect(document.activeElement).toBe(first);
+    await user.keyboard('{ArrowDown}');
+    expect(document.activeElement).toBe(option('Deutsch'));
+    await user.keyboard('{End}');
+    expect(document.activeElement).toBe(last);
+    await user.keyboard('{Home}');
+    expect(document.activeElement).toBe(first);
+  });
+
+  it('in the menu: typing "p" goes to the next own name that starts with P, Polski, then Português', async () => {
+    openFrame('/');
+    const { user } = await openMenu();
+
+    await user.keyboard('p');
+    expect(document.activeElement).toBe(option('Polski'));
+    await user.keyboard('p');
+    expect(document.activeElement).toBe(option('Português'));
+    await user.keyboard('p');
+    expect(document.activeElement).toBe(option('Polski'));
+  });
+
+  it.each([
+    ['Esc', '{Escape}'],
+    ['Tab', '{Tab}'],
+  ])('%s in the menu: closed, nothing changed', async (key, keys) => {
+    localStorage.setItem(STORAGE_KEY, 'de');
+    openFrame('/');
+    const { user } = await openMenu();
+    await user.keyboard('{ArrowDown}');
+
+    await user.keyboard(keys);
+
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(languageControl()).toHaveAttribute('aria-expanded', 'false');
+    expect(localStorage.getItem(STORAGE_KEY)).toBe('de');
+    expect(document.documentElement.lang).toBe('de');
+    expect(languageControl()).toHaveAttribute('aria-label', controlName('de'));
+    if (key === 'Esc') {
+      expect(document.activeElement).toBe(languageControl());
+    } else {
+      expect(screen.getByRole('banner').contains(document.activeElement)).toBe(false);
+    }
+  });
+
+  it("the control's first focus loads each own name's face, once (crit revised r2 P3)", () => {
+    const load = vi.fn<(font: string, text: string) => Promise<FontFace[]>>(() => Promise.resolve([]));
+    Object.defineProperty(document, 'fonts', { configurable: true, value: { load } });
+    try {
+      openFrame('/');
+      act(() => {
+        languageControl().focus();
+      });
+      act(() => {
+        languageControl().blur();
+        languageControl().focus();
+      });
+
+      expect(load.mock.calls.map(([, text]) => text).sort()).toEqual([...OWN_NAMES_IN_ORDER].sort());
+      // No probe of the load stays in the page.
+      expect(screen.getByRole('banner').querySelectorAll('[hidden]')).toHaveLength(0);
+    } finally {
+      Reflect.deleteProperty(document, 'fonts');
+    }
+  });
+
+  it('a press outside the menu closes it, and changes nothing', async () => {
+    openFrame('/');
+    const { user } = await openMenu();
+
+    await user.click(document.body);
+
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+  });
+});
+
+describe('choosing a language (R3.6, R2.4, R2.6)', () => {
+  let engine: FakeEngine;
+
+  beforeEach(() => {
+    engine = new FakeEngine();
+    vi.stubGlobal('fetch', engine.fetch);
+  });
+
+  afterEach(() => {
+    localStorage.clear();
+    document.documentElement.lang = 'en';
+  });
+
+  /** Home in the browser's language, once its first check has answered. */
+  async function openHome() {
+    openStudio('/');
+    await waitFor(() => {
+      expect(engine.healths.length).toBeGreaterThan(0);
+    });
+    const answered = [...BUNDLED_CATALOGUES.byTag.keys()].flatMap((tag) => [
+      messageIn(tag, 'status.connected'),
+      messageIn(tag, 'status.notStarted'),
+    ]);
+    await screen.findAllByText((text) => answered.includes(text));
+  }
+
+  it('Deutsch on Home: <html lang> de, the frame and Home in German, focus on the control, stored de, no request', async () => {
+    await openHome();
+    const before = engine.requests.length;
+
+    const { user } = await openMenu();
+    await user.click(option('Deutsch'));
+
+    expect(document.documentElement.lang).toBe('de');
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(messageIn('de', 'home.title'));
+    expect(textNotFrom('de')).toEqual([]);
+    expect(document.activeElement).toBe(languageControl());
+    expect(languageControl()).toHaveAttribute('aria-label', controlName('de'));
+    expect(localStorage.getItem(STORAGE_KEY)).toBe('de');
+    expect(engine.requests).toHaveLength(before);
+  });
+
+  it.each([
+    ['nothing stored, "Browser language"', null, 'Browser language'],
+    ['stored de, Deutsch', 'de', 'Deutsch'],
+  ])(
+    'the checked option (%s): nothing stored changes, the text stays, focus on the control',
+    async (_n, stored, label) => {
+      if (stored !== null) {
+        localStorage.setItem(STORAGE_KEY, stored);
+      }
+      await openHome();
+      const text = document.body.textContent;
+      const setItem = vi.spyOn(Storage.prototype, 'setItem');
+      const removeItem = vi.spyOn(Storage.prototype, 'removeItem');
+
+      const { user } = await openMenu();
+      await user.click(option(label));
+
+      expect(setItem).not.toHaveBeenCalled();
+      expect(removeItem).not.toHaveBeenCalled();
+      expect(localStorage.getItem(STORAGE_KEY)).toBe(stored);
+      expect(document.body.textContent).toBe(text);
+      expect(document.activeElement).toBe(languageControl());
+      setItem.mockRestore();
+      removeItem.mockRestore();
+    },
+  );
+
+  it('"Browser language" with stored de and the browser in English: the key is removed and the text is English', async () => {
+    localStorage.setItem(STORAGE_KEY, 'de');
+    await openHome();
+
+    const { user } = await openMenu();
+    await user.click(option(messageIn('de', 'language.browser')));
+
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+    expect(document.documentElement.lang).toBe('en');
+    expect(languageControl()).toHaveAccessibleName('Language: English');
+    expect(textNotFrom('en')).toEqual([]);
+  });
+
+  it('German on Home with the build-once disclosure open: it stays open; the connection keeps its last answer', async () => {
+    engine.healthAnswers = [emulatorDown('not_started', 9297)];
+    await openHome();
+    const user = userEvent.setup();
+    await user.click(present(buildOnceToggle(), 'the build-once toggle'));
+    expect(buildOnceToggle()).toHaveAttribute('aria-expanded', 'true');
+    const checks = engine.healths.length;
+
+    await openMenu(user);
+    await user.click(option('Deutsch'));
+
+    const toggle = present(buildOnceToggle(), 'the build-once toggle in German');
+    expect(toggle).toHaveAccessibleName(messageIn('de', 'notice.buildOnce'));
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(within(connectionNotice()).getByRole('heading', { level: 3 })).toHaveTextContent(
+      messageIn('de', 'notice.notStarted').replace('{port}', '9297'),
+    );
+    expect(within(connectionSection()).getAllByText(messageIn('de', 'status.notStarted')).length).toBeGreaterThan(0);
+    expect(engine.healths).toHaveLength(checks);
+  });
+
+  it('connected Home, then Deutsch: the rows keep their answer, in German', async () => {
+    engine.healthAnswers = [connected()];
+    await openHome();
+    const checks = engine.healths.length;
+
+    const { user } = await openMenu();
+    await user.click(option('Deutsch'));
+
+    expect(within(connectionSection()).getAllByText(messageIn('de', 'status.connected'))).toHaveLength(2);
+    expect(engine.healths).toHaveLength(checks);
   });
 });

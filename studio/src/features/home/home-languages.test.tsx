@@ -213,6 +213,28 @@ describe('Home and the frame with a marked test catalogue: no text written in a 
     },
     AREA_TEST_MS,
   );
+
+  it.each(['/', '/does-not-exist', '/aws/s3'])(
+    'the frame on %s with the language menu open: every text of Studio outside the area is marked or kept as it is',
+    async (path) => {
+      renderApp(path, languageStore(MARKED_TAG));
+      await vi.waitFor(async () => {
+        await advance();
+        expect(screen.getByRole('heading', { level: 1 })).toBeInTheDocument();
+      }, AREA_LOAD);
+      const banner = screen.getByRole('banner');
+      await click(
+        within(banner).getByRole('button', {
+          name: `${MARK_OPEN}Language: ${MARK_OPEN}English${MARK_CLOSE}${MARK_CLOSE}`,
+        }),
+      );
+      const menu = screen.getByRole('menu', { name: `${MARK_OPEN}Language${MARK_CLOSE}` });
+      // "Browser language" and a language of each catalogue, the marked one included.
+      expect(within(menu).getAllByRole('menuitemradio')).toHaveLength(BUNDLED_CATALOGUES.byTag.size + 2);
+      expect(unmarkedText()).toEqual([]);
+    },
+    AREA_TEST_MS,
+  );
 });
 
 /** The tags of every bundled catalogue, and the marked test catalogue's. */
