@@ -2,6 +2,11 @@
 
 console-reference.md is checked because the owner took decision line 6 (`decisions.md`, owner decisions,
 2026-11-15: two runs, seeded and empty, and the formula without the not-applicable items).
+
+Issue 8 (requirement 9): "Format" lists the kinds without `dashboard`, says how a dashboard is written, and defines
+the wizard blocks, either as the YAML of requirement 3 (`steps:` whose entries start with `- title:` followed by
+`sections:`) or in prose (`steps` (each with `title` and `sections`)); "Structure score" says how a wizard is opened
+and scored.
 """
 import pathlib
 import re
@@ -72,6 +77,34 @@ class Guides(unittest.TestCase):
         self.assertRegex(flat, r"structure score = matched[^/]*/ \(all[^)]*- omitted[^)]*- not[- ]applicable")
         self.assertIn("seeded", score)
         self.assertIn("empty", score)
+
+
+class WizardAndDashboardGuide(unittest.TestCase):
+    def setUp(self):
+        text = CONSOLE.read_text()
+        self.format = section(text, "## Format")
+        self.score = section(text, "## Structure score")
+
+    def test_kinds_without_dashboard_and_dashboard_as_detail(self):
+        self.assertIn("table | detail | form | wizard", self.format)
+        self.assertNotRegex(self.format, r"\|\s*dashboard")
+        said = [b for b in blocks(self.format) if "dashboard" in b.lower()]
+        self.assertTrue(any("kind: detail" in b and "header" in b and "sections" in b for b in said), said)
+
+    def test_wizard_blocks(self):
+        flat = " ".join(self.format.split())
+        yaml = re.search(r"\n\s*steps:[^\n]*\n\s*- title:[^\n]*\n\s*sections:", self.format)
+        prose = "`steps` (each with `title` and `sections`)" in flat
+        self.assertTrue(yaml or prose, self.format)
+        self.assertRegex(self.format, r"`submit`|\bsubmit:")
+
+    def test_wizard_opened_per_shown_step_and_scored_per_step(self):
+        flat = " ".join(self.score.split())
+        self.assertIn("?step=<k>", flat)
+        self.assertRegex(flat, r"once per shown step|each shown step|every shown step")
+        self.assertTrue(any("Studio" in b and "?step=<k>" in b and "wizard" in b for b in blocks(self.score)),
+                        self.score)
+        self.assertIn("step's tree", flat)
 
 
 if __name__ == "__main__":

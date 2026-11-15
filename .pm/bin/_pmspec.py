@@ -9,7 +9,8 @@ as something other than a string must be quoted. Everything else is refused with
 
 The items (requirement 5.1) come out in spec order with their kind (the matching rule of 5.2), expected name,
 list, critical flag (5.5) and the states they apply to (5.3); `omitted` entries (5.4) carry the item ids they
-cover.
+cover. A `wizard` spec (issue 8, requirement 3) also gives its shown steps, and each of its items the position of
+the shown step whose tree it is scored on.
 """
 import dataclasses
 import hashlib
@@ -20,9 +21,12 @@ import stat
 MAX_BYTES = 1024 * 1024
 STATES = ("seeded", "empty")
 SCREEN = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*\.[a-z0-9]+(-[a-z0-9]+)*")
-KINDS = ("table", "detail", "form")
-UNSUPPORTED_KINDS = ("wizard", "dashboard")
-TOP_KEYS = ("screen", "service", "kind", "route", "breadcrumbs", "header", "table", "tabs", "sections", "omitted")
+KINDS = ("table", "detail", "form", "wizard")
+TOP_KEYS = ("screen", "service", "kind", "route", "breadcrumbs", "header", "table", "tabs", "sections", "steps",
+            "submit", "omitted")
+NOT_WIZARD_KEYS = ("header", "table", "tabs", "sections")
+WIZARD_KEYS = ("steps", "submit")
+STEP_KEYS = ("title", "sections")
 HEADER_KEYS = ("title", "counter", "actions", "primary_action")
 TABLE_KEYS = ("selection", "filter", "pagination", "columns", "empty")
 EMPTY_KEYS = ("title", "action")
@@ -46,12 +50,16 @@ class Item:
     id: str
     kind: str                  # breadcrumb title counter action column selection filter pagination
                                # empty_title empty_action tab section_title field order
+                               # step_title steps_order submit (kind wizard)
     name: object = None        # expected accessible name; the mode for selection and filter; None otherwise
     list: object = None        # id of the list the item is an entry of
     critical: bool = False
     states: tuple = STATES
     entries: tuple = ()        # order items: the ids of the list's entries, in spec order
     counter: bool = False      # header.title: the heading may carry a counter
+    step: object = None        # kind wizard: the 1-based shown step whose tree the item is scored on; None for
+                               # the other kinds and for the items of an omitted step
+    names: tuple = ()          # steps.order: the step titles, in spec order
 
 
 @dataclasses.dataclass
@@ -73,6 +81,7 @@ class Spec:
     omitted: list
     not_scored: list           # (field item id, key, value)
     needs_states: tuple
+    steps: tuple = ()          # kind wizard: the shown step titles, in order
 
     def omitted_reason(self, item_id):
         for e in self.omitted:
@@ -358,6 +367,7 @@ class _Builder:
     def __init__(self, path, doc):
         self.path, self.doc = path, doc
         self.items, self.not_scored, self.screen = [], [], None
+        self.step_items = []   # kind wizard: (title, ids of the step's items), in spec order
 
     def fail(self, what):
         raise SpecError(f"spec {self.path}: {what}", self.screen)
@@ -421,23 +431,27 @@ class _Builder:
         if not SCREEN.fullmatch(screen):
             self.fail(f"screen {screen!r} is not <service>.<screen> in lower-case letters, digits and hyphens")
         self.screen = screen
-        if "steps" in doc:
-            self.fail("steps is not supported")
         if "kind" not in doc:
             self.fail("missing kind")
         kind = self.string(doc["kind"], "kind")
-        if kind in UNSUPPORTED_KINDS:
-            self.fail(f"kind {kind} is not supported")
         self.enum(kind, KINDS, "kind")
         self.keys(doc, TOP_KEYS, "")
+        wizard = kind == "wizard"
+        for key in NOT_WIZARD_KEYS if wizard else WIZARD_KEYS:
+            if key in doc:
+                self.fail(f"{key} is not used by kind wizard" if wizard else f"{key} is only for kind wizard")
+        if wizard and "steps" not in doc:
+            self.fail("kind wizard needs steps")
         if "route" not in doc:
             self.fail("missing route")
         route = self.string(doc["route"], "route")
         if not route.startswith("/"):
             self.fail("route must start with /")
+        if wizard and ("?" in route or "#" in route):  # the tool adds ?step=<k> (requirement 4)
+            self.fail("route of kind wizard must not hold ? or #")
         service = self.string(doc["service"], "service") if "service" in doc else None
         header = self.mapping(doc.get("header", {}), "header")
-        if "title" not in header:
+        if not wizard and "title" not in header:
             self.fail("missing header.title")
         table = self.mapping(doc["table"], "table") if "table" in doc else None
         if kind == "table" and (table is None or "columns" not in table):
@@ -453,10 +467,15 @@ class _Builder:
                 self.name_list("tabs", self.names(value, "tabs"), "tab")
             elif key == "sections":
                 self.sections(value)
+            elif key == "steps":
+                self.steps(value)
+            elif key == "submit":
+                self.add(Item("submit", "submit", self.string(value, "submit"), critical=True))
         omitted = self.omitted(doc.get("omitted", []))
+        shown = self.place_steps(omitted) if wizard else ()
         needs = STATES if table is not None and ("empty" in table or table.get("selection") in ("single", "multi")) \
             else ("seeded",)
-        return screen, service, kind, route, omitted, needs
+        return screen, service, kind, route, omitted, needs, shown
 
     def header(self, h):
         self.keys(h, HEADER_KEYS, "header")
@@ -501,27 +520,77 @@ class _Builder:
                     self.add(Item(f"table.empty.{k}", f"empty_{k}", self.string(v, f"table.empty.{k}"),
                                   states=("empty",)))
 
-    def sections(self, value):
+    def sections(self, value, prefix=""):
+        """The sections of a detail or form spec (prefix ""), or of a wizard step (prefix "steps[<t>].")."""
+        where_all = f"{prefix}sections"
         if not isinstance(value, list):
-            self.fail("sections must be a list")
+            self.fail(f"{where_all} must be a list")
         if not value:
-            self.fail("sections is empty")
+            self.fail(f"{where_all} is empty")
         titles, seen = [], set()
         for n, s in enumerate(value, 1):
-            s = self.mapping(s, f"sections entry {n}")
+            s = self.mapping(s, f"{where_all} entry {n}")
             if "title" not in s:
-                self.fail(f"sections entry {n} has no title")
-            title = self.string(s["title"], f"sections entry {n} title")
-            where = f"sections[{title}]"
+                self.fail(f"{where_all} entry {n} has no title")
+            title = self.string(s["title"], f"{where_all} entry {n} title")
+            where = f"{where_all}[{title}]"
             self.keys(s, SECTION_KEYS, where)
             if norm(title) in seen:
-                self.fail(f"sections has {title} twice")
+                self.fail(f"{where_all} has {title} twice")
             seen.add(norm(title))
             titles.append(f"{where}.title")
-            self.add(Item(f"{where}.title", "section_title", title, "sections"))
+            self.add(Item(f"{where}.title", "section_title", title, where_all))
             if "fields" in s:
                 self.name_list(f"{where}.fields", self.fields(s["fields"], f"{where}.fields"), "field")
-        self.add(Item("sections.order", "order", entries=tuple(titles)))
+        self.add(Item(f"{where_all}.order", "order", entries=tuple(titles)))
+
+    def steps(self, value):
+        """The steps of a wizard (requirement 3): per step its title and sections, then `steps.order`."""
+        if not isinstance(value, list):
+            self.fail("steps must be a list")
+        if not value:
+            self.fail("steps is empty")
+        titles, seen = [], set()
+        for n, s in enumerate(value, 1):
+            if not isinstance(s, dict):
+                self.fail(f"steps entry {n} must be a mapping")
+            if "title" not in s:
+                self.fail(f"steps entry {n} has no title")
+            title = self.string(s["title"], f"steps entry {n} title")
+            where = f"steps[{title}]"
+            self.keys(s, STEP_KEYS, where)
+            if norm(title) in seen:
+                self.fail(f"steps has {title} twice")
+            seen.add(norm(title))
+            titles.append(title)
+            start = len(self.items)
+            self.add(Item(f"{where}.title", "step_title", title, critical=True))
+            if "sections" in s:
+                self.sections(s["sections"], f"{where}.")
+            self.step_items.append((title, tuple(i.id for i in self.items[start:])))
+        self.add(Item("steps.order", "steps_order", entries=tuple(f"steps[{t}].title" for t in titles),
+                      names=tuple(titles)))
+
+    def place_steps(self, omitted):
+        """Refuse an omitted step title without its step, give each item its shown step (requirement 4, 5.1) and
+        return the shown step titles. An omitted step is not shown and its items keep step None."""
+        for e in omitted:
+            for title, ids in self.step_items:
+                if f"steps[{title}].title" in e.items and not set(ids) <= set(e.items):
+                    self.fail(f"omitted {e.path}: omit the whole step as steps[{title}]")
+        gone = {i for e in omitted for i in e.items}
+        shown = [(title, ids) for title, ids in self.step_items if f"steps[{title}].title" not in gone]
+        if not shown:
+            self.fail("every step is omitted")
+        position = {i: k for k, (_, ids) in enumerate(shown, 1) for i in ids}
+        for item in self.items:
+            if item.kind == "breadcrumb" or item.id in ("breadcrumbs.order", "steps.order"):
+                item.step = 1
+            elif item.kind == "submit":
+                item.step = len(shown)
+            else:
+                item.step = position.get(item.id)
+        return tuple(title for title, _ in shown)
 
     def fields(self, value, where):
         if not isinstance(value, list):
@@ -602,6 +671,7 @@ def load(path):
     except _YamlError as e:
         raise SpecError(f"spec {path}:{e.line}: {e.what}") from None
     b = _Builder(path, doc)
-    screen, service, kind, route, omitted, needs = b.build()
+    screen, service, kind, route, omitted, needs, shown = b.build()
     return Spec(path=path, sha256=hashlib.sha256(data).hexdigest(), screen=screen, service=service, kind=kind,
-                route=route, items=b.items, omitted=omitted, not_scored=b.not_scored, needs_states=needs)
+                route=route, items=b.items, omitted=omitted, not_scored=b.not_scored, needs_states=needs,
+                steps=shown)
