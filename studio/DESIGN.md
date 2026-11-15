@@ -445,8 +445,8 @@ One column inside a sticky bar.
   - 480px: the bar's gap and the tabs' padding tighten (8px, 0 7px), and the language control is its globe alone,
     40px square, so the wordmark, every tab and the control fit at 390 in every language (Polish "Strona główna"
     with "Polski" would not).
-- **No sideways scroll** at 1280 and 390 wide, in every language. A command never wraps: its block scrolls within itself. The path
-  on "Page not found" breaks only after a `/`; a segment wider than the box scrolls within the box.
+- **No sideways scroll** at 1280 and 390 wide, in every language. A command never wraps: its block scrolls within
+  itself. The path on "Page not found" breaks only after a `/`; a segment wider than the box scrolls within the box.
 
 ### Named Rules
 
@@ -496,7 +496,7 @@ tabs, with a control edge so it reads as something that opens.
 
 - **Trigger:** a button with a globe icon, the current language's own name (in that language's `lang` and face)
   and a chevron. 36px tall, 0 10px 0 9px padding, 6px gap; label type (14px, 560) in `text-2`, no fill, a 1px
-  `control-line` edge (3.87:1 / 4.52:1 against the bar's `surface`, as the buttons' edge), 10px radius, never
+  `control-line` edge (3.87:1 / 4.00:1 against the bar's `surface`, as the buttons' edge), 10px radius, never
   wrapped. Its accessible name is "Language" and the own name, as the catalogue joins them ("Sprache: Deutsch"), so
   the name it shows is part of it.
 - **States:** hover turns the text `text`; open (`aria-expanded="true"`) is `text` on `sunk` with the chevron
