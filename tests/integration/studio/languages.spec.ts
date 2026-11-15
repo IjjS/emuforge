@@ -37,7 +37,6 @@ import {
   languageMenu,
   languageProblems,
   LANGUAGES,
-  liveRegions,
   markAreaRoot,
   markRecording,
   marks,
@@ -196,6 +195,57 @@ async function engineWithoutEmulator(ctx: Ctx, stack: Stack): Promise<number> {
 async function focusedIs(page: Page, locator: ReturnType<Page['locator']>): Promise<boolean> {
   if ((await locator.count()) !== 1) return false;
   return locator.evaluate((el) => el === document.activeElement, undefined, ACTION).catch(() => false);
+}
+
+/**
+ * #19's route announcement: the focused content target's accessible name, as Chromium's accessibility tree gives it
+ * (CDP `Accessibility.getPartialAXTree`), with the text of the elements that give it (those `aria-labelledby` names,
+ * or the target itself), area text included; `null` while nothing but `body` has focus.
+ */
+async function focusedAnnouncement(
+  page: Page,
+): Promise<{ name: string; items: { text: string; lang: string; explicit: boolean; where: string }[] } | null> {
+  const cdp = await page.context().newCDPSession(page);
+  try {
+    const { result } = await cdp.send('Runtime.evaluate', {
+      expression: 'document.activeElement === document.body ? null : document.activeElement',
+    });
+    if (result.objectId === undefined) return null;
+    const { nodes } = await cdp.send('Accessibility.getPartialAXTree', {
+      objectId: result.objectId,
+      fetchRelatives: false,
+    });
+    const name = norm(String((nodes[0]?.name?.value as unknown) ?? ''));
+    const items = await page.evaluate(() => {
+      const target = document.activeElement;
+      if (!target || target === document.body) return [];
+      const ids = (target.getAttribute('aria-labelledby') ?? '').split(/\s+/).filter((id) => id !== '');
+      const naming =
+        ids.length > 0 ? ids.map((id) => document.getElementById(id)).filter((el) => el !== null) : [target];
+      const out: { text: string; lang: string; explicit: boolean; where: string }[] = [];
+      for (const el of naming) {
+        const label = el.getAttribute('aria-label');
+        const langOf = (e: Element) => {
+          const h = e.closest('[lang]');
+          return { lang: h?.getAttribute('lang') ?? '', explicit: h !== null && h !== document.documentElement };
+        };
+        if (label !== null && label.trim() !== '') {
+          out.push({ text: label, ...langOf(el), where: `${el.tagName.toLowerCase()} @aria-label` });
+          continue;
+        }
+        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+        for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+          const parent = n.parentElement;
+          if (!parent || (n as Text).data.trim() === '') continue;
+          out.push({ text: (n as Text).data, ...langOf(parent), where: parent.tagName.toLowerCase() });
+        }
+      }
+      return out;
+    });
+    return { name, items };
+  } finally {
+    await cdp.detach().catch(() => undefined);
+  }
 }
 
 /** Opens the build-once disclosure of Home's notice in the page's language; throws when its toggle is not there. */
@@ -562,22 +612,46 @@ test('studio.studio-layer-complete-in-every-language', async ({ ctx, browser, pr
       await s.page.getByRole('main').locator('a[href="/aws/s3"]').first().click(ACTION);
       await expect(s.page).toHaveURL(addressOf('/aws/s3'));
       const title = 'Amazon Simple Storage Service';
-      const region = await waitFor(CHANGE_BOUND_MS, async () =>
-        (await liveRegions(s.page)).find((r) => r.text.includes(title)),
-      );
-      expect(region, `a live region of Studio's own layer announcing "${title}"`).toBeDefined();
+      // #19 announces a route change by moving focus to the page's content target, named by the page title
+      // (decisions.md, check correction): the announcement is that target's accessible name.
+      let last: Awaited<ReturnType<typeof focusedAnnouncement>> = null;
+      const announced = await waitFor(CHANGE_BOUND_MS, async () => {
+        last = await focusedAnnouncement(s.page);
+        return last !== null && last.name.includes(title) ? last : undefined;
+      }).catch(() => undefined);
+      expect(
+        announced,
+        `focus on a content target whose accessible name holds "${title}" (focused: ${JSON.stringify(last)})`,
+      ).toBeDefined();
       const matcher = new ValueMatcher(cats.get('de')!.values);
-      const problems = region!.items
-        .map((i) => textProblem(i, 'de', matcher, new Set()))
+      const rest = norm(announced!.name.replace(title, ' '));
+      const problems = announced!.items
+        .filter((i) => norm(i.text) !== title)
+        .map((i) =>
+          textProblem(
+            {
+              kind: 'text',
+              text: i.text,
+              lang: i.lang,
+              explicit: i.explicit,
+              code: false,
+              wordmark: false,
+              where: i.where,
+            },
+            'de',
+            matcher,
+            new Set(),
+          ),
+        )
         .filter((p): p is string => p !== null);
-      const titled = region!.items.filter((i) => norm(i.text) === title);
+      const titled = announced!.items.filter((i) => norm(i.text) === title);
       expect(
         {
           problems,
           titleInLangEn: titled.length > 0 && titled.every((i) => i.explicit && isLang(i.lang, 'en')),
-          wholeFromCatalogue: matcher.matches(region!.text),
+          wholeFromCatalogue: announced!.name === title || rest === '' || matcher.matches(announced!.name),
         },
-        `the announcement "${region!.text}"`,
+        `the announcement "${announced!.name}"`,
       ).toEqual({
         problems: [],
         titleInLangEn: true,
