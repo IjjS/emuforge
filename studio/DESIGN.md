@@ -195,13 +195,12 @@ components:
 
 # Design System: EmuForge Studio
 
-This file records the design that passed the Screen stage of issue 16: the mock `.pm/issue-16/mocks/alt/` (picked
-in that issue's `decisions.md`), with the changes its review (`review-candidate-alt.md`) asked the build to make
-stated here as the design. Issue 17 added the language control, the faces per script and the rules of text in other
-languages, from its passed mock (`.pm/issue-17/mocks/`, revised r2) with the changes its review
-(`review-revised-r2.md`) asked for. Issue 36 added the logo and the tile in the frame's wordmark, from its passed
-mock (`.pm/issue-36/mocks/`, revised r1) as the build landed it. It covers Studio's own layer only. Where this file and a mock differ, this file
-is the design.
+This file records the design that passed the Screen stage of issue 16: the mock `.pm/issue-16/mocks/alt/` (picked in
+that issue's `decisions.md`), with the changes its review (`review-candidate-alt.md`) asked the build to make stated
+here as the design. Issue 17 added the language control, the faces per script and the rules of text in other languages,
+from its passed mock (`.pm/issue-17/mocks/`, revised r2) with the changes its review (`review-revised-r2.md`) asked for.
+Issue 36 added the logo and the tile in the frame's wordmark, from its passed mock (`.pm/issue-36/mocks/`, revised r1)
+as the build landed it. It covers Studio's own layer only. Where this file and a mock differ, this file is the design.
 
 ## Overview
 
@@ -532,10 +531,11 @@ a change of the geometry, the tokens or the face, and commit the results.
 | `public/favicon.ico`                                                              | the light favicon at 16, 32 and 48 pixels                                |
 | `public/apple-touch-icon.png`                                                     | 180 pixels, square and opaque (the device rounds it)                     |
 
-The app icon PNGs are transparent outside the tile. `public/` holds what Studio serves at a fixed path; Vite copies it to the root of the build, and the page links the
-three icons. `brand/` holds the rest; no Studio screen shows a file of it. Every vector file is paths, rectangles,
-circles and groups only: no text, no image, no filter, no opacity, no gradient, every painted area one token's
-opaque sRGB value.
+The app icon PNGs are transparent outside the tile. `public/` holds what Studio serves at a fixed path; Vite copies it
+to the root of the build, and the page links the three icons. `brand/` holds the rest; no Studio screen shows a file of
+it. Every vector file holds only paths, rectangles, circles, groups, clip paths and their `defs`, a `title`, and the
+favicon's one `style`: no text, no image, no filter, no opacity, no gradient, every painted area one token's opaque sRGB
+value.
 
 ### Grounds
 
@@ -568,18 +568,17 @@ properties, so it costs no request and is in the first paint (The frame, below).
 
 ### The frame (Studio's bar)
 
-- **Content:** the wordmark (the tile, then "EmuForge Studio") linking to `/`, then a navigation landmark labelled "Studio" with
-  "Home" and one tab per provider from the providers list ("AWS"), then the language control at the bar's end. The
-  bar is the same on every page, a provider area's pages too, and in the current language.
+- **Content:** the wordmark (the tile, then "EmuForge Studio") linking to `/`, then a navigation landmark labelled
+  "Studio" with "Home" and one tab per provider from the providers list ("AWS"), then the language control at the bar's
+  end. The bar is the same on every page, a provider area's pages too, and in the current language.
 - **Tabs:** 14px, 560, `text-2`, full bar height, 0 12px padding. Hover: `text`. Current: `text` with a 2px
   verdigris underline drawn inside the tab's bottom edge. "Home" is current on `/` (`aria-current="page"`); a
   provider's tab is current on its index (`page`) and marked current (`true`) anywhere deeper in its area.
-- **Wordmark:** the tile is 28px square with a 6px gap to the text; at 640px and below it is 24px with a 5px gap,
-  and "Studio" is clipped out of sight (`position: absolute`, 1px square, `overflow: hidden`,
-  `clip-path: inset(50%)`) and stays in the accessible name. The tile is `accent` with the bird in `accent-ink`, `accent-dark`
-  with `accent-ink-dark` in dark, following the scheme while the page is open. It is decoration: hidden from
-  assistive technology, so the link's accessible name is exactly "EmuForge Studio" in every language. The link never
-  shrinks and has no hover style.
+- **Wordmark:** the tile is 28px square with a 6px gap to the text; at 640px and below it is 24px with a 5px gap, and
+  "Studio" is clipped out of sight (`position: absolute`, 1px square, `overflow: hidden`, `clip-path: inset(50%)`) and
+  stays in the accessible name. The tile is `accent` with the bird in `accent-ink`, `accent-dark` with `accent-ink-dark`
+  in dark, following the scheme while the page is open. It is decoration: hidden from assistive technology, so the
+  link's accessible name is exactly "EmuForge Studio" in every language. The link never shrinks and has no hover style.
 - **Wordmark focus:** the ring surrounds tile and text together, 4px out from the link's box, so 4px of the bar's
   surface lie between it and the tile's corner; with the 6px radius at that offset the ring's corner is about 10px.
   This and the tabs' are the two exceptions to the 2px offset.

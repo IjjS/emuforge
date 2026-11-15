@@ -3,8 +3,9 @@
 // (requirement R5.1), what each vector file holds and may not hold (R5.2), that the tile path keeps the symbol's head
 // (R4.2), the code sign (R4.3), the favicon's two schemes (R7.2), the social image's logo (R8.6), the rasters' sizes
 // (R5.1, R5.3), the page's icon links (R7.1), the script that writes the files and its font parser (R5.3, R5.4),
-// that nothing of the owner's reference sheet is tracked (R5.6), and that the guides say what was built (R9). The files are read from the checkout; how they
-// draw is the flow checks' (tests/integration/studio/brand.spec.ts and tests/integration/studio/brand-files.spec.ts).
+// that nothing of the owner's reference sheet is tracked (R5.6), and that the guides say what was built (R9). The
+// files are read from the checkout; how they draw is the flow checks' (tests/integration/studio/brand.spec.ts and
+// tests/integration/studio/brand-files.spec.ts).
 
 import { execFileSync } from 'node:child_process';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
@@ -621,7 +622,7 @@ describe('the guides', () => {
     }
   });
 
-  it('DESIGN.md has a section for the logo naming every file of R5.1, and AGENTS.md names the folders and scopes its rule', () => {
+  it('DESIGN.md names every file of R5.1 in its logo section; AGENTS.md names the folders and scopes its rule', () => {
     const logo = sectionOf(guide('DESIGN.md'), /^## .*\blogo\b/i);
     const unnamed = [
       ...BRAND_FILES.map((name) => `brand/${name}`),
