@@ -1,8 +1,10 @@
 """Scoring for pm-structure: snapshots, matching, order items, extras, the pass line, reports and records. Not a
 command.
 
-  snap = load_snapshot(path)               the accessibility snapshot of design 2.2, or SnapshotError
-  result = score(spec, snap, state)        requirement 5.2 to 5.6; SpecError("... nothing to score")
+  snap = load_snapshot(path)               the accessibility snapshot of design 2.2 (a Snapshot), or a wizard's
+                                           steps snapshot (Steps, issue 8 D2.2); SnapshotError otherwise
+  result = score(spec, snap, state)        requirement 5.2 to 5.6; SpecError("... nothing to score");
+                                           SnapshotError when the snapshot does not fit the spec's kind
   render_text(result[, result_path])       the standard output of requirement 3
   result_json(result, extra)               the result file's content
   table(rows)                              the --table text of structure-scores.json rows
@@ -19,6 +21,7 @@ import stat
 from _pmspec import SpecError, norm
 
 FORMAT = "pm-structure-snapshot/1"
+FORMAT_STEPS = "pm-structure-steps/1"
 MAX_SNAPSHOT = 64 * 1024 * 1024
 EXTRA_ROLES = ("button", "columnheader", "tab", "LabelText", "term")
 COUNTER = r" \(([0-9]+\+?|[0-9]+/[0-9]+)\)"
@@ -51,8 +54,16 @@ class Snapshot:
     nodes: list
 
 
+@dataclasses.dataclass
+class Steps:
+    """A wizard's steps snapshot: one Snapshot per shown step, in step order (issue 8, requirement 4)."""
+    path: str
+    steps: list
+
+
 def load_snapshot(path):
-    """Read a snapshot file pm-structure wrote; SnapshotError `cannot read snapshot <path>: <why>` otherwise."""
+    """Read a snapshot file pm-structure wrote, of either format; SnapshotError `cannot read snapshot <path>:
+    <why>` otherwise, `<why>` starting with `step <k>: ` for an entry of a steps file."""
     def bad(why):
         raise SnapshotError(f"cannot read snapshot {path}: {why}")
 
@@ -72,6 +83,22 @@ def load_snapshot(path):
         d = json.loads(data.decode("utf-8"))
     except (UnicodeDecodeError, ValueError):
         bad("not JSON")
+    if isinstance(d, dict) and d.get("format") == FORMAT_STEPS:
+        if "steps" not in d:
+            bad("steps is missing")
+        if not isinstance(d["steps"], list):
+            bad("steps is not a list")
+        if not d["steps"]:
+            bad("steps is empty")
+
+        def entry_bad(k):
+            return lambda why: bad(f"step {k}: {why}")
+        return Steps(path=path, steps=[_parse(path, e, entry_bad(k)) for k, e in enumerate(d["steps"], 1)])
+    return _parse(path, d, bad)
+
+
+def _parse(path, d, bad):
+    """The Snapshot of one pm-structure-snapshot/1 object `d`; `bad(why)` raises."""
     if not isinstance(d, dict) or d.get("format") != FORMAT:
         bad(f"format is not {FORMAT}")
     if not isinstance(d.get("url"), str) or not isinstance(d.get("browser"), str):
@@ -169,8 +196,10 @@ def _predicate(item):
         return _named(("button", "link"), item.name)
     if k == "tab":
         return _named(("tab",), item.name)
-    if k == "section_title":
+    if k in ("section_title", "step_title"):
         return _named(("heading",), item.name)
+    if k == "submit":
+        return _named(("button",), item.name)
     if k == "field":
         want = norm(item.name)
         return lambda n: (n.role in ("LabelText", "term") and norm(n.name) == want) or (
@@ -182,7 +211,8 @@ def _claims(item):
     """(role, normalized name) pairs an item of any status carries, for the extras rule (requirement 5.6)."""
     roles = {"breadcrumb": ("link", "StaticText"), "title": ("heading",), "action": ("button", "link"),
              "column": ("columnheader",), "empty_title": ("heading", "StaticText"), "empty_action": ("button", "link"),
-             "tab": ("tab",), "section_title": ("heading",), "field": ("LabelText", "term")}.get(item.kind)
+             "tab": ("tab",), "section_title": ("heading",), "field": ("LabelText", "term"),
+             "step_title": ("heading",), "submit": ("button",)}.get(item.kind)
     if roles:
         return {(r, norm(item.name)) for r in roles}
     if item.kind == "pagination":
@@ -208,7 +238,7 @@ def _expected(item, spec):
         return 'button "Next page" + button "Previous page"'
     roles = {"breadcrumb": "link|StaticText", "title": "heading", "action": "button|link", "column": "columnheader",
              "empty_title": "heading|StaticText", "empty_action": "button|link", "tab": "tab",
-             "section_title": "heading", "field": "LabelText|term"}[k]
+             "section_title": "heading", "field": "LabelText|term", "step_title": "heading", "submit": "button"}[k]
     return f"{roles} {q(item.name)}"
 
 
@@ -223,6 +253,7 @@ class ItemResult:
     node: object = None        # the Node shown for a matched item
     detail: str = ""
     reason: str = ""           # omitted: the spec's reason
+    step: object = None        # kind wizard: the shown step the item is scored on; None for the other kinds
 
 
 @dataclasses.dataclass
@@ -236,7 +267,7 @@ class Result:
     verdict: str
     reasons: list
     critical_unmatched: list
-    extras: list               # (role, name) as found
+    extras: list               # (role, name, step) as found; step is the first step found on, None but for a wizard
 
     @property
     def score(self):
@@ -247,13 +278,48 @@ class Result:
         return list(self.spec.needs_states)
 
 
+def _fit(spec, snap):
+    """The trees of `snap` in step order (one for a kind other than wizard); SnapshotError when the snapshot does
+    not fit the spec (issue 8, design 2.2)."""
+    def bad(why):
+        raise SnapshotError(f"cannot read snapshot {snap.path}: {why}")
+
+    wizard = spec.kind == "wizard"
+    if isinstance(snap, Steps):
+        if not wizard:
+            bad(f"a steps snapshot for a spec of kind {spec.kind}")
+        if len(snap.steps) != len(spec.steps):
+            bad(f"it holds {len(snap.steps)} steps, the spec shows {len(spec.steps)}")
+        return list(snap.steps)
+    if wizard:
+        bad("a wizard needs a steps snapshot")
+    return [snap]
+
+
+def _nav_entry(title):
+    """A step navigation entry of a wizard (requirement 5.2): a button or link in a navigation that is not the
+    breadcrumbs, named the title or `<anything>: <title>`."""
+    want = norm(title)
+    return lambda n: (n.role in ("button", "link") and n.in_navigation and not n.in_breadcrumbs
+                      and (norm(n.name) == want or norm(n.name).endswith(": " + want)))
+
+
 def score(spec, snap, state):
-    """Score `snap` against `spec` in `state` (requirement 5.2 to 5.6)."""
-    nodes = snap.nodes
+    """Score `snap` against `spec` in `state` (requirement 5.2 to 5.6; for a wizard issue 8, requirement 5). Each
+    item is matched on the tree of its own step only; a spec of another kind has one tree."""
+    trees = _fit(spec, snap)
+    wizard = spec.kind == "wizard"
+
+    def tree(item):
+        """The nodes an item is matched on; an omitted step's items (step None) have none."""
+        if not wizard:
+            return trees[0].nodes
+        return trees[item.step - 1].nodes if item.step is not None else []
+
     cands = {}
     for item in spec.items:
         pred = _predicate(item)
-        cands[item.id] = [n.index for n in nodes if pred(n)] if pred else []
+        cands[item.id] = [n.index for n in tree(item) if pred(n)] if pred else []
     first = {i: (c[0] if c else None) for i, c in cands.items()}
     by_id = {i.id: i for i in spec.items}
     omitted = {}
@@ -263,51 +329,69 @@ def score(spec, snap, state):
     scored = {i.id for i in spec.items if i.id not in omitted and state in i.states}
 
     def found(item):
-        """(matched, index of the node shown or None) of one item, whatever its status."""
+        """(matched, index of the node shown or None, detail of an unmatched item or None) of one item, whatever
+        its status; a None detail is the item's expected role and name."""
         k = item.kind
+        nodes = tree(item)
         if k == "counter":
             t = by_id.get("header.title")
             n = first.get("header.title")
             ok = n is not None and re.fullmatch(re.escape(norm(t.name)) + COUNTER, norm(nodes[n].name)) is not None
-            return ok, (n if ok else None)
+            return ok, (n if ok else None), None
         if k == "empty_action":
             t = first.get("table.empty.title")
             later = [c for c in cands[item.id] if t is not None and c > t]
-            return bool(later), (later[0] if later else None)
+            return bool(later), (later[0] if later else None), None
         if k == "selection" and item.name == "none":
             hit = any(n.in_table and n.role in ("radio", "checkbox") for n in nodes)
-            return not hit, None
+            return not hit, None, None
         if k == "pagination":
             nxt = [n.index for n in nodes if n.role == "button" and norm(n.name) == "next page"]
             prev = [n.index for n in nodes if n.role == "button" and norm(n.name) == "previous page"]
             ok = bool(nxt and prev)
-            return ok, (min(nxt[0], prev[0]) if ok else None)
+            return ok, (min(nxt[0], prev[0]) if ok else None), None
         if k == "order":
             at = -1
             live = [e for e in item.entries if e in scored and cands[e]]
             for e in live:
                 nxt = next((c for c in cands[e] if c > at), None)
                 if nxt is None:
-                    return False, None
+                    return False, None, None
                 at = nxt
-            return True, None
-        return first[item.id] is not None, first[item.id]
+            return True, None, None
+        if k == "steps_order":
+            # unlike the other lists a missing entry makes the item unmatched: the entries are not items
+            at = -1
+            for e, title in zip(item.entries, item.names):
+                if e in omitted:
+                    continue
+                pred = _nav_entry(title)
+                hits = [n.index for n in nodes if pred(n)]
+                if not hits:
+                    return False, None, f"no navigation entry for {json.dumps(title, ensure_ascii=False)}"
+                nxt = next((c for c in hits if c > at), None)
+                if nxt is None:
+                    return False, None, "out of order"
+                at = nxt
+            return True, None, None
+        return first[item.id] is not None, first[item.id], None
 
     results = []
     for item in spec.items:
+        step = item.step if wizard else None
         if item.id in omitted:
-            results.append(ItemResult(item, "omitted", reason=omitted[item.id]))
+            results.append(ItemResult(item, "omitted", reason=omitted[item.id], step=step))
             continue
         if state not in item.states:
-            results.append(ItemResult(item, "not-applicable"))
+            results.append(ItemResult(item, "not-applicable", step=step))
             continue
-        ok, idx = found(item)
-        node = nodes[idx] if idx is not None else None
+        ok, idx, why = found(item)
+        node = tree(item)[idx] if idx is not None else None
         if ok:
-            detail = "in order" if item.kind == "order" else _node_text(node) if node else "none"
-            results.append(ItemResult(item, "matched", node, detail))
+            detail = "in order" if item.kind in ("order", "steps_order") else _node_text(node) if node else "none"
+            results.append(ItemResult(item, "matched", node, detail, step=step))
         else:
-            results.append(ItemResult(item, "unmatched", None, _expected(item, spec)))
+            results.append(ItemResult(item, "unmatched", None, why or _expected(item, spec), step=step))
     total = sum(1 for r in results if r.status in ("matched", "unmatched"))
     if total == 0:
         raise SpecError(f"spec {spec.path}: nothing to score", spec.screen)
@@ -318,16 +402,19 @@ def score(spec, snap, state):
         reasons.append("critical item unmatched: " + ", ".join(critical))
     if matched * 100 < 90 * total:
         reasons.append("score below 90")
+    # what an item claims is taken over the whole spec and excludes a node on every step's tree (requirement 5.6,
+    # issue 8 R5.4); an extra found on several steps is listed once, at the first
     claimed = set().union(*(_claims(i) for i in spec.items)) if spec.items else set()
-    has_main = any(n.role == "main" for n in nodes)
     extras, seen = [], set()
-    for n in nodes:
-        name = n.name.strip()
-        key = (n.role, norm(n.name))
-        if (n.role in EXTRA_ROLES and name and not re.fullmatch(r"[0-9]+", name) and (n.in_main or not has_main)
-                and not n.in_navigation and key not in claimed and key not in seen):
-            seen.add(key)
-            extras.append((n.role, n.name))
+    for k, t in enumerate(trees, 1):
+        has_main = any(n.role == "main" for n in t.nodes)
+        for n in t.nodes:
+            name = n.name.strip()
+            key = (n.role, norm(n.name))
+            if (n.role in EXTRA_ROLES and name and not re.fullmatch(r"[0-9]+", name) and (n.in_main or not has_main)
+                    and not n.in_navigation and key not in claimed and key not in seen):
+                seen.add(key)
+                extras.append((n.role, n.name, k if wizard else None))
     return Result(spec=spec, snapshot=snap, state=state, items=results, matched=matched, total=total,
                   verdict="fail" if reasons else "pass", reasons=reasons, critical_unmatched=critical,
                   extras=extras)
@@ -341,6 +428,22 @@ def _scalar(v):
 
 def score_text(result):
     return f"{result.score:.1f}"
+
+
+def _trees(result):
+    snap = result.snapshot
+    return list(snap.steps) if isinstance(snap, Steps) else [snap]
+
+
+def _blocked(result):
+    """The blocked URLs: a page's own list; for a wizard every step's, each once, sorted (issue 8, R5.5)."""
+    if isinstance(result.snapshot, Steps):
+        return sorted({b for t in result.snapshot.steps for b in t.blocked})
+    return list(result.snapshot.blocked)
+
+
+def _at(step):
+    return "" if step is None else f"step {step}: "
 
 
 def render_text(result, result_path=None):
@@ -358,21 +461,24 @@ def render_text(result, result_path=None):
         out.extend(f"  {r}" for r in rows)
 
     by = lambda status: [r for r in result.items if r.status == status]
-    group("unmatched", [f"{r.item.id}    {r.detail}" for r in by("unmatched")])
-    group("matched", [f"{r.item.id}    {r.detail}" for r in by("matched")])
+    group("unmatched", [f"{r.item.id}    {_at(r.step)}{r.detail}" for r in by("unmatched")])
+    group("matched", [f"{r.item.id}    {_at(r.step)}{r.detail}" for r in by("matched")])
     group("omitted", [f"{r.item.id}    {r.reason}" for r in by("omitted")])
     group("not applicable", [f"{r.item.id}    state={result.state}" for r in by("not-applicable")])
     group("not scored", [f"{p}    {k}: {_scalar(v)}" for p, k, v in spec.not_scored])
-    group("extra", [f"{role} {json.dumps(name, ensure_ascii=False)}" for role, name in result.extras])
-    group("blocked requests", list(result.snapshot.blocked))
+    group("extra", [f"{_at(step)}{role} {json.dumps(name, ensure_ascii=False)}" for role, name, step in result.extras])
+    group("blocked requests", _blocked(result))
     if result_path is not None:
         out.append(f"result: {result_path}")
     return "\n".join(out) + "\n"
 
 
 def result_json(result, extra):
-    """The result file's content (design 2.5): the report's content plus `extra` (spec, commit, dirty, at, ...)."""
-    snap = result.snapshot
+    """The result file's content (design 2.5): the report's content plus `extra` (spec, commit, dirty, at, ...).
+    A wizard's (issue 8, R5.5) takes `url`, `viewport` and `browser` from step 1, adds `step_urls`, and gives each
+    matched item's `node` and each extra its `step`."""
+    trees = _trees(result)
+    wizard = isinstance(result.snapshot, Steps)
     items = []
     for r in result.items:
         d = {"id": r.item.id, "status": r.status, "critical": r.item.critical, "detail": r.detail}
@@ -381,14 +487,23 @@ def result_json(result, extra):
         if r.status == "not-applicable":
             d["state"] = result.state
         d["node"] = None if r.node is None else {"index": r.node.index, "role": r.node.role, "name": r.node.name}
+        if wizard and r.node is not None:
+            d["node"]["step"] = r.step
         items.append(d)
+    extras = []
+    for role, name, step in result.extras:
+        e = {"role": role, "name": name}
+        if wizard:
+            e["step"] = step
+        extras.append(e)
     body = {"screen": result.spec.screen, "state": result.state, "verdict": result.verdict, "score": result.score,
             "matched": result.matched, "total": result.total, "reasons": result.reasons,
             "critical_unmatched": result.critical_unmatched, "requires": result.requires, "items": items,
             "not_scored": [{"path": p, "key": k, "value": v} for p, k, v in result.spec.not_scored],
-            "extras": [{"role": role, "name": name} for role, name in result.extras],
-            "blocked": list(snap.blocked), "url": snap.url, "viewport": snap.viewport, "browser": snap.browser,
-            "spec": os.path.abspath(result.spec.path), "spec_sha256": result.spec.sha256}
+            "extras": extras, "blocked": _blocked(result), "url": trees[0].url, "viewport": trees[0].viewport,
+            "browser": trees[0].browser, "spec": os.path.abspath(result.spec.path), "spec_sha256": result.spec.sha256}
+    if wizard:
+        body["step_urls"] = [t.url for t in trees]
     body.update(extra)
     return body
 
