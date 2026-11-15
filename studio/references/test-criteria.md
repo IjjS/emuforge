@@ -34,6 +34,10 @@ Group cases under one heading per target.
 - A flow that creates, changes or deletes something ends by asking the emulator directly, not only by reading
   the screen back.
 - Append the scope only when a condition does not hold everywhere: `— 390 wide`, `— dark`.
+- A case reads Studio's English text and runs with an English browser unless it tests a language. A case about a
+  language names the language and sets it as a user's browser does: a stored choice or the browser's languages,
+  never a change of Studio's code or catalogues. It reads another language's text from that language's catalogue,
+  not from a copy of it.
 - For a `bug`, append `(regression)` to the case that reproduces the reported defect.
 
 Good: `- [ ] Create a bucket with an empty name → the field shows its constraint text and no bucket exists in the emulator`
@@ -59,7 +63,9 @@ Nine axes. Each is accounted for in the checklist below whether or not it produc
 8. **Emulator lifecycle**: the emulator restarts and Studio reconnects without a reload, showing the now empty
    account rather than stale data.
 9. **Finish**: keyboard reaches every action, focus returns after a dialog, light and dark, 1280 and 390 wide
-   without horizontal overflow.
+   without horizontal overflow. For a screen of Studio's own layer the layout holds in every language of Studio
+   (`studio/AGENTS.md`, "Languages of Studio's own layer"): no sideways scroll, no text overflowing its control or
+   panel, no label cut, long words (German) and Thai included.
 
 ## Coverage checklist
 

@@ -8,6 +8,10 @@ Such a screen is graded `console` and lives in the AWS area, at `/aws` and below
 layers"). Studio's own layer (the frame, Home, Studio's "Page not found") has no `console` screen and no spec; its
 screens are designed per `critique.md` in Studio's own design system.
 
+A spec records the English console: AWS's English labels, from the English AWS user guide. The AWS area is English
+in every language of Studio (`studio/AGENTS.md`), so a spec has no other language and a screen's structure score is
+the same whatever Studio's language.
+
 Inside the AWS area everything is Cloudscape, the design system of the AWS console, so components already look
 right. What a spec pins down is structure: which screen exists, what it is called, which actions, columns, tabs,
 fields and steps it has.
@@ -102,7 +106,8 @@ Computed from the running app, not from the code, by `.pm/bin/pm-structure`.
 
 1. Open the spec's `route` in the built app at 1280x800 against a seeded emulator, and take the accessibility
    tree (roles and accessible names) of the AWS area: everything under the area's root, its `AppLayout` with the
-   breadcrumbs included. Studio's frame around the area is not part of the screen and is not scored. A spec with items that exist in only one data state
+   breadcrumbs included. Studio's frame around the area is not part of the screen and is not scored, so its
+   language does not count either. A spec with items that exist in only one data state
    (`table.empty`, which needs an empty table, or a `single` or `multi` `table.selection`, which needs rows) is
    scored in two runs of the same build: one against a seeded emulator and one against an empty one.
 2. Every leaf of the spec is one **item**: a breadcrumb, the title, each action, each column, each tab, each

@@ -19,8 +19,33 @@ Same every time, so scores are comparable:
 - Viewports 1280x800 and 390x844, light and dark.
 - Against a seeded emulator, so tables have rows; and once against an empty emulator, for the empty states.
 - From the built app, never from the dev server.
+- In English, unless a language is asked for (below).
 
 Only `crit` and `rev` look at captures, once per round.
+
+### Captures and languages
+
+`pm-capture`'s browser is English and stores nothing, so a capture is in English. A language is captured with
+`--storage-state FILE`, a Playwright storage state that holds the language choice for Studio's origin, and `--name`
+naming the language, for example `output/captures/lang-de.json`:
+
+```json
+{
+  "cookies": [],
+  "origins": [
+    {
+      "origin": "http://127.0.0.1:<studio port>",
+      "localStorage": [{ "name": "emuforge.studio.language", "value": "de" }]
+    }
+  ]
+}
+```
+
+- A `native` screen of Studio's own layer is scored on its English captures, and its critique also reads captures
+  in German (long words) and in Thai (a script of its own) at 1280 and 390. A finding in them counts the same as one
+  in English.
+- A screen inside a provider area is captured in English only: the area is English in every language of Studio
+  (`studio/AGENTS.md`), so another language changes only the frame around it.
 
 ## `console` screens
 
