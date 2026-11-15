@@ -223,7 +223,8 @@ reads as the frame above the provider's surface rather than a different material
   grey for not started and unknown.
 - Flat: depth from tone and hairlines, never from shadows.
 - Instrument Sans for the interface; JetBrains Mono only for code, addresses, paths and commands. A script
-  Instrument Sans lacks is drawn in a face chosen for it, and Latin text stays Instrument Sans in every language.
+  Instrument Sans lacks is drawn in a face chosen for it, and Latin text stays Instrument Sans in every language but
+  Vietnamese, which is wholly in its own face.
 - Twelve languages, chosen in the bar; left to right in all of them.
 
 ### The two layers
