@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: bug
 Issue-Source: worker
 Issue-Key: studio|integration-support.browser-routing|preflight-answered-by-playwright
-Issue-Check-Ids:
+Issue-Check-Ids: studio.check-browser-sends-preflights-to-the-server studio.check-browser-sees-the-engine-preflight-refusal
 Issue-Commit: 53f12179789103f40939b66f4043091b05c6917f
 
 # Let Studio flow checks see the engine's own CORS preflight answer

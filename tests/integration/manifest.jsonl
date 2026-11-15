@@ -56,3 +56,6 @@
 {"check_id": "studio.studio-style-stays-outside-aws-area", "path": "tests/integration/studio/layers.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 16}
 {"check_id": "studio.colour-scheme-follows-the-system-in-both-layers", "path": "tests/integration/studio/layers.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 16}
 {"check_id": "studio.own-layer-contrast-and-focus", "path": "tests/integration/studio/layers.spec.ts", "module": "studio", "operations": [], "labels": ["own-emulator", "lifecycle"], "issue": 16}
+{"check_id": "studio.check-browser-sends-preflights-to-the-server", "path": "tests/integration/studio/check-browser.spec.ts", "module": "studio", "operations": [], "labels": ["regression"], "issue": 15}
+{"check_id": "studio.check-browser-sees-the-engine-preflight-refusal", "path": "tests/integration/studio/check-browser.spec.ts", "module": "studio", "operations": [], "labels": ["regression"], "issue": 15}
+{"check_id": "studio.check-browser-refuses-non-loopback-destinations", "path": "tests/integration/studio/check-browser.spec.ts", "module": "studio", "operations": [], "labels": ["safety"], "issue": 15}
