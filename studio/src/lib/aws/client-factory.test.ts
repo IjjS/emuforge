@@ -1,4 +1,13 @@
-import { GetObjectCommand, ListBucketsCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import {
+  CreateBucketCommand,
+  DeleteObjectCommand,
+  GetObjectCommand,
+  HeadObjectCommand,
+  ListBucketsCommand,
+  ListObjectsV2Command,
+  PutObjectCommand,
+  S3Client,
+} from '@aws-sdk/client-s3';
 import { ListStateMachinesCommand, SFNClient, StartSyncExecutionCommand } from '@aws-sdk/client-sfn';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createS3Client, createSfnClient, EndpointRefusedError, engineEndpoint } from './client-factory';
@@ -449,5 +458,195 @@ describe('session header', () => {
     for (const spy of consoleSpies) {
       expect(JSON.stringify(spy.mock.calls)).not.toContain(token);
     }
+  });
+});
+
+// The engine played at the page's `fetch` (issue 26): the session route answers `200 {"token": token}`, every other
+// call is an AWS request, read as the request it makes and answered by `answer`. Nothing of the factory or the SDK
+// is replaced.
+interface PlayedEngine {
+  awsRequests: Request[];
+}
+
+type AwsAnswer = (request: Request) => Response | Promise<Response>;
+
+function playEngine(token: string, answer: AwsAnswer): PlayedEngine {
+  const played: PlayedEngine = { awsRequests: [] };
+  vi.stubGlobal(
+    'fetch',
+    vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init);
+      if (new URL(request.url).pathname === '/__emuforge/session') {
+        return Promise.resolve(
+          new Response(JSON.stringify({ token }), { status: 200, headers: { 'content-type': 'application/json' } }),
+        );
+      }
+      played.awsRequests.push(request);
+      return Promise.resolve(answer(request));
+    }),
+  );
+  return played;
+}
+
+const XML = { 'content-type': 'application/xml' };
+const AMZ_JSON = { 'content-type': 'application/x-amz-json-1.0' };
+
+// A plain success for each operation the cases send, the way the emulator shapes it.
+function answerAsEmulator(request: Request): Response {
+  const url = new URL(request.url);
+  if (url.searchParams.get('list-type') === '2') {
+    return new Response('<ListBucketResult><Name>b</Name><KeyCount>0</KeyCount></ListBucketResult>', {
+      status: 200,
+      headers: XML,
+    });
+  }
+  if (request.method === 'GET' && url.pathname === '/') {
+    return new Response('<ListAllMyBucketsResult><Buckets></Buckets></ListAllMyBucketsResult>', {
+      status: 200,
+      headers: XML,
+    });
+  }
+  if (request.method === 'POST') {
+    const target = request.headers.get('x-amz-target') ?? '';
+    const body = target.endsWith('ListStateMachines')
+      ? { stateMachines: [] }
+      : {
+          executionArn: 'arn:aws:states:us-east-1:000000000000:execution:sm:e',
+          startDate: 0,
+          stopDate: 0,
+          status: 'SUCCEEDED',
+        };
+    return new Response(JSON.stringify(body), { status: 200, headers: AMZ_JSON });
+  }
+  if (request.method === 'DELETE') {
+    return new Response(null, { status: 204 });
+  }
+  if (request.method === 'GET') {
+    return new Response('hello', { status: 200, headers: { 'content-type': 'binary/octet-stream' } });
+  }
+  return new Response(null, { status: 200 });
+}
+
+const STATE_MACHINE_ARN = 'arn:aws:states:us-east-1:000000000000:stateMachine:sm';
+
+describe('requests at the page fetch', () => {
+  it('sends GetObject, HeadObject, ListObjectsV2 and ListBuckets as GET or HEAD with cache no-store', async () => {
+    const played = playEngine(SESSION_TOKEN, answerAsEmulator);
+    const s3 = createS3Client({ endpoint });
+    const sends = [
+      () => s3.send(new GetObjectCommand({ Bucket: 'b', Key: 'k' })),
+      () => s3.send(new HeadObjectCommand({ Bucket: 'b', Key: 'k' })),
+      () => s3.send(new ListObjectsV2Command({ Bucket: 'b' })),
+      () => s3.send(new ListBucketsCommand({})),
+    ];
+
+    for (const send of sends) {
+      const before = played.awsRequests.length;
+      await send();
+      const sent = played.awsRequests.slice(before);
+
+      expect(sent).toHaveLength(1);
+      const [request] = sent;
+      expect(['GET', 'HEAD']).toContain(request?.method);
+      expect(request?.url.startsWith(`http://127.0.0.1:${String(ENGINE_PORT)}/`)).toBe(true);
+      expect(request?.cache).toBe('no-store');
+    }
+  });
+
+  it('sends PutObject, DeleteObject, CreateBucket, ListStateMachines and StartSyncExecution with cache default', async () => {
+    const played = playEngine(SESSION_TOKEN, answerAsEmulator);
+    const s3 = createS3Client({ endpoint });
+    const sfn = createSfnClient({ endpoint });
+    const sends: [string, () => Promise<unknown>][] = [
+      ['PUT', () => s3.send(new PutObjectCommand({ Bucket: 'b', Key: 'k', Body: encoder.encode('hello') }))],
+      ['DELETE', () => s3.send(new DeleteObjectCommand({ Bucket: 'b', Key: 'k' }))],
+      ['PUT', () => s3.send(new CreateBucketCommand({ Bucket: 'b' }))],
+      ['POST', () => sfn.send(new ListStateMachinesCommand({}))],
+      ['POST', () => sfn.send(new StartSyncExecutionCommand({ stateMachineArn: STATE_MACHINE_ARN }))],
+    ];
+
+    for (const [method, send] of sends) {
+      const before = played.awsRequests.length;
+      await send();
+      const sent = played.awsRequests.slice(before);
+
+      expect(sent).toHaveLength(1);
+      expect(sent[0]?.method).toBe(method);
+      expect(sent[0]?.cache).toBe('default');
+    }
+  });
+
+  it('adds no cache header to PutObject and sends the CacheControl the command gives as it is', async () => {
+    const played = playEngine(SESSION_TOKEN, answerAsEmulator);
+    const s3 = createS3Client({ endpoint });
+
+    await s3.send(new PutObjectCommand({ Bucket: 'b', Key: 'k', Body: encoder.encode('hello') }));
+    await s3.send(
+      new PutObjectCommand({ Bucket: 'b', Key: 'k', Body: encoder.encode('hello'), CacheControl: 'max-age=60' }),
+    );
+
+    const [without, withCacheControl] = played.awsRequests;
+    expect(played.awsRequests).toHaveLength(2);
+    expect(without?.headers.has('cache-control')).toBe(false);
+    expect(without?.headers.has('pragma')).toBe(false);
+    expect(withCacheControl?.headers.get('cache-control')).toBe('max-age=60');
+  });
+
+  it('carries the session token once and the SigV4 authorization of emuforge-studio on each AWS request', async () => {
+    const token = 'c4d2e6f8a0b1c3d5e7f9a1b3c5d7e9f0a2b4c6d8e0f1a3b5c7d9e1f2a4b6c8d0';
+    const played = playEngine(token, answerAsEmulator);
+    const port = freshEndpoint();
+    const s3 = createS3Client({ endpoint: port });
+    const sfn = createSfnClient({ endpoint: port });
+
+    await s3.send(new GetObjectCommand({ Bucket: 'b', Key: 'k' }));
+    await sfn.send(new ListStateMachinesCommand({}));
+
+    expect(played.awsRequests).toHaveLength(2);
+    for (const request of played.awsRequests) {
+      // A header sent twice would read here as both values joined by a comma.
+      expect(request.headers.get('x-emuforge-session')).toBe(token);
+      expect(request.headers.get('authorization')).toMatch(/^AWS4-HMAC-SHA256 Credential=emuforge-studio\//);
+    }
+  });
+
+  it('resolves GetObject with the body the engine answers', async () => {
+    playEngine(SESSION_TOKEN, () => new Response(encoder.encode('hello'), { status: 200 }));
+    const s3 = createS3Client({ endpoint });
+
+    const result = await s3.send(new GetObjectCommand({ Bucket: 'b', Key: 'k' }));
+
+    expect(await result.Body?.transformToString()).toBe('hello');
+  });
+
+  it('rejects GetObject with NoSuchKey when the engine answers 404 NoSuchKey', async () => {
+    playEngine(
+      SESSION_TOKEN,
+      () =>
+        new Response(
+          '<?xml version="1.0" encoding="UTF-8"?><Error><Code>NoSuchKey</Code><Message>The specified key does not exist.</Message><Key>k</Key></Error>',
+          { status: 404, headers: XML },
+        ),
+    );
+    const s3 = createS3Client({ endpoint });
+
+    const sent = s3.send(new GetObjectCommand({ Bucket: 'b', Key: 'k' }));
+
+    await expect(sent).rejects.toMatchObject({ name: 'NoSuchKey' });
+  });
+
+  it('ends a GetObject the engine does not answer when its abortSignal aborts', async () => {
+    const played = playEngine(SESSION_TOKEN, () => new Promise<Response>(() => undefined));
+    const s3 = createS3Client({ endpoint });
+    const controller = new AbortController();
+
+    const sent = s3.send(new GetObjectCommand({ Bucket: 'b', Key: 'k' }), { abortSignal: controller.signal });
+    await vi.waitFor(() => {
+      expect(played.awsRequests).toHaveLength(1);
+    });
+    controller.abort();
+
+    await expect(sent).rejects.toMatchObject({ name: 'AbortError' });
+    expect(played.awsRequests[0]?.signal.aborted).toBe(true);
   });
 });
