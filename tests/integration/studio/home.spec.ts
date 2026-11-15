@@ -1,12 +1,12 @@
-// The Home checks of issue 3 (test-criteria.md, Flow): the "Connection" container of the built app served by
-// `bun run serve`, in front of a real engine started for that Studio and a real emulator, while the check stops,
-// kills and starts them; and the finish of the shell (keyboard, colour scheme, layout at 1280 and 390 wide).
+// The Home checks of issue 3, rewritten for issue 16 (test-criteria.md, issue 16, Integration checks; R9.3): the
+// "Connection" section of the built app served by `bun run serve`, read in Studio's own elements by role and name,
+// in front of a real engine started for that Studio and a real emulator, while the check stops, kills and starts
+// them; and the finish of Studio's frame, Home and the AWS area (keyboard, colour scheme, layout at 1280 and 390).
 //
 // `studio.home-shows-connected`, `studio.home-shows-emulator-not-started-after-stop`,
 // `studio.home-reconnects-after-emulator-kill-and-start`, `studio.home-shows-engine-unreachable-and-recovers`,
 // `studio.home-shows-engine-unreachable-for-another-studio-origin`, `studio.shell-finish`.
 
-import createWrapper from '@cloudscape-design/components/test-utils/selectors';
 import type { Locator, Page } from '@playwright/test';
 import fs from 'node:fs';
 
@@ -21,16 +21,15 @@ import {
   startCommandLines,
   stillSamePage,
 } from './support/home';
+import { frame, heading, NAVIGATION_TOGGLE, providersSection, SIDE_NAVIGATION } from './support/frame';
+import { Lines } from './support/lines';
 import { HEALTH_PATH, latestEmulatorMessage, Traffic } from './support/traffic';
 
 /** Requirement 3.4: a check every 5 seconds, so a change shows within two of them. */
 const CHANGE_BOUND_MS = 10_000;
 
-const sideNavigation = createWrapper().findSideNavigation().toSelector();
-const identityLink = createWrapper().findTopNavigation().findIdentityLink().toSelector();
-const copyButtons = createWrapper().findCopyToClipboard().findCopyButton().toSelector();
-const alertToggles = `${createWrapper().findAlert().toSelector()} [aria-expanded]`;
-const navigationToggle = createWrapper().findAppLayout().findNavigationToggle().toSelector();
+/** The label of the build-once disclosure's toggle (requirement R9.1). */
+const BUILD_ONCE = 'First run? Build the image once, from the root of your EmuForge checkout';
 
 /** `https://127.0.0.1:<port>`, not followed by another digit. */
 function emulatorEndpoint(port: number): RegExp {
@@ -68,14 +67,14 @@ test('studio.home-shows-emulator-not-started-after-stop', async ({ ctx, page }) 
   await expectBothConnected(page, emulator.port, CHANGE_BOUND_MS);
 
   // Stop the check's emulator cleanly while Home is open → within 10 seconds the Emulator row shows "Not started",
-  // the Engine row "Connected", the alert names the emulator port; the emulator's directory is empty.
+  // the Engine row "Connected", the notice names the emulator port; the emulator's directory is empty.
   await emulator.stop();
   await expect
     .poll(() => connectionView(page), { timeout: CHANGE_BOUND_MS })
     .toMatchObject({
       engine: { status: 'Connected' },
       emulator: { status: 'Not started' },
-      alert: expect.stringMatching(new RegExp(`port ${String(emulator.port)}(?!\\d)`)),
+      notice: expect.stringMatching(new RegExp(`port ${String(emulator.port)}(?!\\d)`)),
     });
   // Requirement 5: `docker stop` empties `~/.aws/emulator/<port>/`; no file of the stopped run is left.
   const left = fs.existsSync(emulator.dir) ? fs.readdirSync(emulator.dir) : [];
@@ -92,7 +91,7 @@ test('studio.home-reconnects-after-emulator-kill-and-start', async ({ ctx, page,
   const before = emulator.files();
 
   // Kill the check's emulator while Home is open → within 10 seconds the Emulator row shows "Unreachable" and the
-  // alert holds the engine's message (the `emulator.message` of the engine's latest answer to the page).
+  // notice holds the engine's message (the `emulator.message` of the engine's latest answer to the page).
   await emulator.kill();
   await expect
     .poll(
@@ -102,12 +101,12 @@ test('studio.home-reconnects-after-emulator-kill-and-start', async ({ ctx, page,
         const message = latestEmulatorMessage(traffic);
         return {
           emulator: view.emulator?.status ?? null,
-          alertHoldsEngineMessage: message !== null && view.alert.includes(message.replace(/\s+/g, ' ').trim()),
+          noticeHoldsEngineMessage: message !== null && view.notice.includes(message.replace(/\s+/g, ' ').trim()),
         };
       },
       { timeout: CHANGE_BOUND_MS },
     )
-    .toEqual({ emulator: 'Unreachable', alertHoldsEngineMessage: true });
+    .toEqual({ emulator: 'Unreachable', noticeHoldsEngineMessage: true });
 
   // Start the emulator again on the same port, without reloading the page → within 10 seconds both rows show
   // "Connected", and a direct call to the emulator's `/__admin/health` with its new `ca.pem` answers `ok`.
@@ -131,7 +130,7 @@ test('studio.home-shows-engine-unreachable-and-recovers', async ({ ctx, page, co
   await markPage(page);
 
   // Stop the check's engine while Home is open → within 10 seconds the Engine row shows "Unreachable", the Emulator
-  // row "Unknown", the alert's command carries the engine's port, Studio's port and the emulator port reported before.
+  // row "Unknown", the notice's command carries the engine's port, Studio's port and the emulator port reported before.
   await stack.engine.stop();
   await expect
     .poll(
@@ -140,9 +139,9 @@ test('studio.home-shows-engine-unreachable-and-recovers', async ({ ctx, page, co
         return {
           engine: view.engine?.status ?? null,
           emulator: view.emulator?.status ?? null,
-          enginePort: flagWithPort('--port', stack.engine.port).test(view.alert),
-          studioPort: flagWithPort('--studio-port', stack.studio.port).test(view.alert),
-          emulatorPort: flagWithPort('--emulator-port', stack.emulatorPort).test(view.alert),
+          enginePort: flagWithPort('--port', stack.engine.port).test(view.notice),
+          studioPort: flagWithPort('--studio-port', stack.studio.port).test(view.notice),
+          emulatorPort: flagWithPort('--emulator-port', stack.emulatorPort).test(view.notice),
         };
       },
       { timeout: CHANGE_BOUND_MS },
@@ -171,7 +170,7 @@ test('studio.home-shows-engine-unreachable-and-recovers', async ({ ctx, page, co
 
 test('studio.home-shows-engine-unreachable-for-another-studio-origin', async ({ ctx, page }) => {
   // Start the check's engine with `--studio-port` set to a port other than the one Studio is served on, then open
-  // `/` → within 10 seconds the Engine row shows "Unreachable" and the alert's command carries
+  // `/` → within 10 seconds the Engine row shows "Unreachable" and the notice's command carries
   // `--studio-port <Studio's port>`.
   const other = await freePortExcept(ctx.home, [ctx.emulatorPort, ctx.enginePort, ctx.studioPort]);
   const stack = await startStack(ctx, { engineStudioPort: other });
@@ -183,7 +182,7 @@ test('studio.home-shows-engine-unreachable-for-another-studio-origin', async ({ 
         const view = await connectionView(page);
         return {
           engine: view.engine?.status ?? null,
-          studioPort: flagWithPort('--studio-port', stack.studio.port).test(view.alert),
+          studioPort: flagWithPort('--studio-port', stack.studio.port).test(view.notice),
         };
       },
       { timeout: CHANGE_BOUND_MS },
@@ -225,7 +224,7 @@ async function unreached(targets: FocusTarget[]): Promise<string[]> {
   return missing;
 }
 
-/** Most Tab presses a keyboard walk may take: the shell has about 30 stops, a Home alert a dozen more. */
+/** Most Tab presses a keyboard walk may take: the frame and Home have about 30 stops, a notice a dozen more. */
 const TAB_BOUND = 150;
 
 /** Presses Tab, at most `TAB_BOUND` times, until focus is on (or inside) `target`. True when it got there. */
@@ -239,128 +238,212 @@ async function tabTo(page: Page, target: Locator): Promise<boolean> {
   return false;
 }
 
+/**
+ * The AWS area's root as the page shows it in dark: the one element that carries `awsui-dark-mode`. Reports where the
+ * class is, whether that element holds the area (its side navigation and the page's `h1`) and not the frame's banner,
+ * and the `awsui-` classes of `body`.
+ */
+async function darkModeHolders(page: Page) {
+  return page.evaluate((sideNavigation) => {
+    const holders = [...document.querySelectorAll('.awsui-dark-mode')];
+    const root = holders.length === 1 ? holders[0] : null;
+    const banner = [...document.querySelectorAll('header, [role="banner"]')].find((b) =>
+      [...b.querySelectorAll('a')].some((a) => a.textContent?.replace(/\s+/g, ' ').trim() === 'EmuForge Studio'),
+    );
+    const nav = document.querySelector(sideNavigation);
+    const h1 = document.querySelector('h1');
+    return {
+      holders: holders.map((el) => el.tagName.toLowerCase()),
+      rootIsHtmlOrBody: root !== null && (root === document.documentElement || root === document.body),
+      rootHoldsArea: root !== null && nav !== null && h1 !== null && root.contains(nav) && root.contains(h1),
+      rootHoldsBanner: root !== null && banner !== undefined && root.contains(banner),
+      bodyAwsuiClasses: [...document.body.classList].filter((c) => c.startsWith('awsui')),
+    };
+  }, SIDE_NAVIGATION);
+}
+
+async function htmlColorScheme(page: Page): Promise<string> {
+  return page.evaluate(() => getComputedStyle(document.documentElement).colorScheme);
+}
+
 test('studio.shell-finish', async ({ ctx, page, context }) => {
-  // Four states, three pages, two widths and two colour schemes, each page waited for.
-  test.setTimeout(360_000);
+  // Four states, five pages, two widths and two colour schemes, each page waited for.
+  test.setTimeout(480_000);
   const stack = await startStack(ctx, { ownEmulator: true });
   const emulator = stack.emulator!;
   const traffic = Traffic.attach(ctx, context, page);
+  const lines = new Lines(ctx);
+  const f = frame(page);
   const refresh = page.getByRole('button', { name: 'Refresh', exact: true });
+  const connection = page.getByRole('region', { name: 'Connection', exact: true });
 
-  // With the keyboard only, on `/` with the emulator stopped → focus reaches the top navigation identity, every side
-  // navigation link, the header "Refresh", the build-once toggle and every copy button, and Enter on "Refresh" sends
-  // a new check.
   await emulator.stop();
-  await page.goto('/');
-  await expect
-    .poll(() => connectionView(page), { timeout: CHANGE_BOUND_MS })
-    .toMatchObject({ emulator: { status: 'Not started' } });
-  await recordFocus(page);
-  const targets: FocusTarget[] = [
-    { name: 'top navigation identity', locator: page.locator(identityLink), each: true },
-    { name: 'side navigation link', locator: page.locator(sideNavigation).getByRole('link'), each: true },
-    { name: 'header "Refresh"', locator: refresh, each: true },
-    { name: 'build-once toggle', locator: page.locator(alertToggles), each: false },
-    { name: 'copy button', locator: page.locator(copyButtons).filter({ visible: true }), each: true },
-  ];
-  let missing = await unreached(targets);
-  for (let i = 0; i < TAB_BOUND && missing.length > 0; i++) {
-    await page.keyboard.press('Tab');
-    missing = await unreached(targets);
-  }
-  expect(missing, `not reached with Tab in ${String(TAB_BOUND)} presses`).toEqual([]);
+  await lines.line(
+    '(changed) With the keyboard only, on `/` with the emulator stopped → focus reaches the frame\'s "EmuForge Studio", "Home" and "AWS" links, the header "Refresh", every link of Home\'s "Providers" section, the build-once toggle and every copy button, and Enter on "Refresh" sends a new check',
+    async () => {
+      await page.goto('/');
+      await expect
+        .poll(() => connectionView(page), { timeout: CHANGE_BOUND_MS, message: 'Home shows "Not started"' })
+        .toMatchObject({ emulator: { status: 'Not started' } });
+      await recordFocus(page);
+      const targets: FocusTarget[] = [
+        { name: 'frame "EmuForge Studio"', locator: f.wordmark, each: true },
+        { name: 'frame "Home"', locator: f.home, each: true },
+        { name: 'frame "AWS"', locator: f.aws, each: true },
+        { name: 'header "Refresh"', locator: refresh, each: true },
+        { name: '"Providers" link', locator: providersSection(page).getByRole('link'), each: true },
+        {
+          name: 'build-once toggle',
+          locator: connection.locator('summary, [aria-expanded]').filter({ hasText: BUILD_ONCE }),
+          each: false,
+        },
+        {
+          name: 'copy button',
+          locator: connection.getByRole('button', { name: /^Copy command: / }).filter({ visible: true }),
+          each: true,
+        },
+      ];
+      let missing = await unreached(targets);
+      for (let i = 0; i < TAB_BOUND && missing.length > 0; i++) {
+        await page.keyboard.press('Tab');
+        missing = await unreached(targets);
+      }
+      expect(missing, `not reached with Tab in ${String(TAB_BOUND)} presses`).toEqual([]);
 
-  expect(await tabTo(page, refresh), 'Tab reaches the header "Refresh"').toBe(true);
-  // Right after an answer, the next timed check is 5 seconds away: a check sent within 2 seconds is Enter's.
-  await page.waitForResponse((r) => new URL(r.url()).pathname === HEALTH_PATH, { timeout: CHANGE_BOUND_MS });
-  const checks = traffic.to(stack.engine.url, HEALTH_PATH).length;
-  await page.keyboard.press('Enter');
-  await expect
-    .poll(() => traffic.to(stack.engine.url, HEALTH_PATH).length, {
-      timeout: 2_000,
-      message: 'Enter on "Refresh" sends a health request',
-    })
-    .toBeGreaterThan(checks);
-
-  // With the keyboard only, on `/s3` and on `/does-not-exist` → focus reaches "Go to Home", and Enter on it opens Home.
-  for (const path of ['/s3', '/does-not-exist']) {
-    await page.goto(path);
-    const goHome = page.getByRole('link', { name: 'Go to Home', exact: true });
-    await expect(goHome).toBeVisible();
-    expect(await tabTo(page, goHome), `Tab reaches "Go to Home" on ${path}`).toBe(true);
-    await page.keyboard.press('Enter');
-    await expect(page).toHaveURL(/^http:\/\/127\.0\.0\.1:\d+\/$/);
-    await expect(page.getByRole('heading', { level: 1, name: 'Home', exact: true })).toBeVisible();
-  }
-
-  // Open `/` with the browser's colour scheme dark → the page is in Cloudscape's dark mode; with it light → it is
-  // not — 1280 wide.
-  await page.setViewportSize({ width: 1280, height: 800 });
-  await page.emulateMedia({ colorScheme: 'dark' });
-  await page.goto('/');
-  await expect(page.locator('body')).toHaveClass(/(^|\s)awsui-dark-mode(\s|$)/);
-  await page.emulateMedia({ colorScheme: 'light' });
-  await page.goto('/');
-  await expect(page.locator('body')).not.toHaveClass(/(^|\s)awsui-dark-mode(\s|$)/);
-
-  // Open `/` at 390 wide → the side navigation is collapsed behind its toggle, and opening it lists the 19
-  // services — 390 wide.
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto('/');
-  await expect(page.getByRole('heading', { level: 1, name: 'Home', exact: true })).toBeVisible();
-  await expect(page.locator(sideNavigation)).toBeHidden();
-  await page.locator(navigationToggle).click();
-  await expect(page.locator(sideNavigation)).toBeVisible();
-  const listed = await page.locator(sideNavigation).getByRole('link').allInnerTexts();
-  expect(listed.map((t) => t.trim()).filter((t) => SERVICE_LABELS.includes(t))).toEqual(SERVICE_LABELS);
-
-  // Open `/`, `/s3` and `/does-not-exist` with the emulator running, with it stopped and with the engine stopped →
-  // no horizontal scrolling and no command line wrapped — 1280 wide and 390 wide, light and dark.
-  const states = [
-    {
-      name: 'emulator stopped',
-      enter: async () => undefined,
-      home: { emulator: { status: 'Not started' } },
-      lines: startCommandLines(emulator.port),
+      expect(await tabTo(page, refresh), 'Tab reaches the header "Refresh"').toBe(true);
+      // Right after an answer, the next timed check is 5 seconds away: a check sent within 2 seconds is Enter's.
+      await page.waitForResponse((r) => new URL(r.url()).pathname === HEALTH_PATH, { timeout: CHANGE_BOUND_MS });
+      const checks = traffic.to(stack.engine.url, HEALTH_PATH).length;
+      await page.keyboard.press('Enter');
+      await expect
+        .poll(() => traffic.to(stack.engine.url, HEALTH_PATH).length, {
+          timeout: 2_000,
+          message: 'Enter on "Refresh" sends a health request',
+        })
+        .toBeGreaterThan(checks);
     },
-    {
-      name: 'emulator running',
-      enter: () => emulator.startAgain(),
-      home: bothConnected(emulator.port),
-      lines: [] as string[],
+  );
+
+  await lines.line(
+    'With the keyboard only, on `/aws/s3` and on `/does-not-exist` → focus reaches "Go to Home", and Enter on it opens Home',
+    async () => {
+      for (const path of ['/aws/s3', '/does-not-exist']) {
+        await page.goto(path);
+        const goHome = page.getByRole('link', { name: 'Go to Home', exact: true });
+        await expect(goHome).toBeVisible();
+        expect(await tabTo(page, goHome), `Tab reaches "Go to Home" on ${path}`).toBe(true);
+        await page.keyboard.press('Enter');
+        await expect(page).toHaveURL(/^http:\/\/127\.0\.0\.1:\d+\/$/);
+        await expect(heading(page, 'Home')).toBeVisible();
+      }
     },
-    {
-      name: 'engine stopped',
-      enter: () => stack.engine.stop(),
-      home: { engine: { status: 'Unreachable' } },
-      lines: engineCommandLines(stack.engine.port, stack.studio.port),
+  );
+
+  await lines.line(
+    "(changed) Open `/` with the browser's colour scheme dark → `html`'s computed `color-scheme` is `dark`; open `/aws/s3` → the area's root has `awsui-dark-mode` and `body` has no `awsui-` class; with the scheme light → `html`'s `color-scheme` is `light` and no element has `awsui-dark-mode` — 1280 wide",
+    async () => {
+      await page.setViewportSize({ width: 1280, height: 800 });
+      await page.emulateMedia({ colorScheme: 'dark' });
+      await page.goto('/');
+      await expect(heading(page, 'Home')).toBeVisible();
+      expect(await htmlColorScheme(page), 'html color-scheme on / in dark').toBe('dark');
+      await page.goto('/aws/s3');
+      await expect(heading(page, 'Amazon Simple Storage Service')).toBeVisible();
+      expect(await darkModeHolders(page), 'awsui-dark-mode on /aws/s3 in dark').toEqual({
+        holders: [expect.any(String)],
+        rootIsHtmlOrBody: false,
+        rootHoldsArea: true,
+        rootHoldsBanner: false,
+        bodyAwsuiClasses: [],
+      });
+      await page.emulateMedia({ colorScheme: 'light' });
+      for (const { path, h1 } of [
+        { path: '/', h1: 'Home' },
+        { path: '/aws/s3', h1: 'Amazon Simple Storage Service' },
+      ]) {
+        await page.goto(path);
+        await expect(heading(page, h1)).toBeVisible();
+        expect(await htmlColorScheme(page), `html color-scheme on ${path} in light`).toBe('light');
+        expect((await darkModeHolders(page)).holders, `elements with awsui-dark-mode on ${path} in light`).toEqual([]);
+      }
     },
-  ];
-  const issues: string[] = [];
-  for (const state of states) {
-    await state.enter();
-    for (const width of [1280, 390]) {
-      for (const colorScheme of ['light', 'dark'] as const) {
-        await page.setViewportSize({ width, height: width === 390 ? 844 : 800 });
-        await page.emulateMedia({ colorScheme });
-        for (const path of ['/', '/s3', '/does-not-exist']) {
-          await page.goto(path);
-          if (path === '/') {
-            await expect
-              .poll(() => connectionView(page), { timeout: CHANGE_BOUND_MS, message: `${state.name}: Home shows it` })
-              .toMatchObject(state.home);
-          } else {
-            await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+  );
+
+  await lines.line(
+    "(changed) Open `/aws` at 390 wide → the area's side navigation is collapsed behind its toggle, and opening it lists the 19 services; open `/` at 390 wide → the frame's items are visible and Home's \"Providers\" section lists the 19 services — 390 wide",
+    async () => {
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.goto('/aws');
+      await expect(heading(page, 'Amazon Web Services')).toBeVisible();
+      await expect(page.locator(SIDE_NAVIGATION)).toBeHidden();
+      await page.locator(NAVIGATION_TOGGLE).click();
+      await expect(page.locator(SIDE_NAVIGATION)).toBeVisible();
+      const listed = await page.locator(SIDE_NAVIGATION).getByRole('link').allInnerTexts();
+      expect(listed.map((t) => t.trim()).filter((t) => SERVICE_LABELS.includes(t))).toEqual(SERVICE_LABELS);
+
+      await page.goto('/');
+      await expect(heading(page, 'Home')).toBeVisible();
+      for (const link of [f.wordmark, f.home, f.aws]) await expect(link).toBeVisible();
+      const services = await providersSection(page).getByRole('link').filter({ visible: true }).allInnerTexts();
+      expect(services.map((t) => t.trim()).filter((t) => SERVICE_LABELS.includes(t))).toEqual(SERVICE_LABELS);
+    },
+  );
+
+  await lines.line(
+    '(changed) Open `/`, `/aws`, `/aws/s3`, `/aws/does-not-exist` and `/does-not-exist` with the emulator running, with it stopped and with the engine stopped → no horizontal scrolling and no command line wrapped — 1280 wide and 390 wide, light and dark',
+    async () => {
+      const states = [
+        {
+          name: 'emulator stopped',
+          enter: async () => undefined,
+          home: { emulator: { status: 'Not started' } },
+          lines: startCommandLines(emulator.port),
+        },
+        {
+          name: 'emulator running',
+          enter: () => emulator.startAgain(),
+          home: bothConnected(emulator.port),
+          lines: [] as string[],
+        },
+        {
+          name: 'engine stopped',
+          enter: () => stack.engine.stop(),
+          home: { engine: { status: 'Unreachable' } },
+          lines: engineCommandLines(stack.engine.port, stack.studio.port),
+        },
+      ];
+      const issues: string[] = [];
+      for (const state of states) {
+        await state.enter();
+        for (const width of [1280, 390]) {
+          for (const colorScheme of ['light', 'dark'] as const) {
+            await page.setViewportSize({ width, height: width === 390 ? 844 : 800 });
+            await page.emulateMedia({ colorScheme });
+            for (const path of ['/', '/aws', '/aws/s3', '/aws/does-not-exist', '/does-not-exist']) {
+              await page.goto(path);
+              if (path === '/') {
+                await expect
+                  .poll(() => connectionView(page), {
+                    timeout: CHANGE_BOUND_MS,
+                    message: `${state.name}: Home shows it`,
+                  })
+                  .toMatchObject(state.home);
+              } else {
+                await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+              }
+              const found = await layoutIssues(page, path === '/' ? state.lines : []);
+              const where = `${state.name}, ${path}, ${String(width)} wide, ${colorScheme}`;
+              if (found.pageScrolls) issues.push(`${where}: the page scrolls sideways`);
+              for (const s of found.scrolling) issues.push(`${where}: scrolls sideways: ${s}`);
+              for (const l of found.wrapped) issues.push(`${where}: command line wrapped: ${l}`);
+              for (const l of found.missing) issues.push(`${where}: command line not shown: ${l}`);
+            }
           }
-          const found = await layoutIssues(page, path === '/' ? state.lines : []);
-          const where = `${state.name}, ${path}, ${String(width)} wide, ${colorScheme}`;
-          if (found.pageScrolls) issues.push(`${where}: the page scrolls sideways`);
-          for (const s of found.scrolling) issues.push(`${where}: scrolls sideways: ${s}`);
-          for (const l of found.wrapped) issues.push(`${where}: command line wrapped: ${l}`);
-          for (const l of found.missing) issues.push(`${where}: command line not shown: ${l}`);
         }
       }
-    }
-  }
-  expect(issues).toEqual([]);
+      expect(issues).toEqual([]);
+    },
+  );
+
+  lines.end();
 });

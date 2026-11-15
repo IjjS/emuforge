@@ -1,5 +1,5 @@
-// `studio.app-talks-only-to-engine-and-own-origin` (test-criteria.md, issue 3, Flow): in one run through Home,
-// "Refresh", a service route and the not-found route, the page talks only to its own origin and the engine, never
+// `studio.app-talks-only-to-engine-and-own-origin` (test-criteria.md, issue 3, Flow; rewritten for issue 16's routes,
+// R9.3): in one run through Home, "Refresh", the AWS area's index, a service route in it and Studio's not-found route, the page talks only to its own origin and the engine, never
 // holds an emulator key or a line of its certificate, and keeps the session token out of URLs, the console and
 // everything but the `X-EmuForge-Session` request header (requirement 3.1, 4).
 
@@ -26,7 +26,7 @@ test('studio.app-talks-only-to-engine-and-own-origin', async ({ ctx, page, conte
     throw new EnvError(`the emulator files under ${emulatorDir(ctx.home, stack.emulatorPort)} are incomplete`);
   const traffic = Traffic.attach(ctx, context, page, { bodies: true });
 
-  // Open `/`, wait for "Connected", choose "Refresh", open `/s3` and `/does-not-exist`.
+  // Open `/`, wait for "Connected", choose "Refresh", open `/aws`, `/aws/s3` and `/does-not-exist`.
   await page.goto('/');
   await expect
     .poll(() => connectionView(page), { timeout: 10_000 })
@@ -34,7 +34,9 @@ test('studio.app-talks-only-to-engine-and-own-origin', async ({ ctx, page, conte
   const answered = page.waitForResponse((r) => new URL(r.url()).pathname === HEALTH_PATH, { timeout: 10_000 });
   await page.getByRole('button', { name: 'Refresh', exact: true }).click();
   await answered;
-  await page.goto('/s3');
+  await page.goto('/aws');
+  await expect(page.getByRole('heading', { level: 1, name: 'Amazon Web Services', exact: true })).toBeVisible();
+  await page.goto('/aws/s3');
   await expect(
     page.getByRole('heading', { level: 1, name: 'Amazon Simple Storage Service', exact: true }),
   ).toBeVisible();
