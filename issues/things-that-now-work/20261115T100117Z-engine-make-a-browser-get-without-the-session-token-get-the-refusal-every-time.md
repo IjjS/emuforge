@@ -4,7 +4,7 @@ Issue-Module: engine
 Issue-Kind: bug
 Issue-Source: worker
 Issue-Key: engine|studio-relay.browser-get-without-session|intermittent-200
-Issue-Check-Ids: engine.studio-browser-get-without-session-after-stored-answer-is-refused engine.studio-browser-force-cache-get-without-session-is-refused engine.studio-browser-head-without-session-after-stored-answer-is-refused engine.studio-browser-get-with-another-token-after-stored-answer-is-refused engine.studio-browser-get-with-session-keeps-emulator-cache-headers
+Issue-Check-Ids: engine.studio-browser-get-without-session-after-stored-answer-is-refused engine.studio-browser-force-cache-get-without-session-is-refused engine.studio-browser-head-without-session-after-stored-answer-is-refused engine.studio-browser-get-with-another-token-after-stored-answer-is-refused engine.studio-browser-reads-relayed-s3-answer
 Issue-Commit: d701a2693f9f824caa4492a520ac05733520459e
 
 # Make a browser GET without the session token get the refusal every time
