@@ -12,6 +12,13 @@ that moment is recorded, and every recorded process still alive at the end of th
 The --snapshot case builds a valid snapshot of about 60 MiB (`full-seeded.json` padded with `StaticText` nodes
 under `main`) and signals the run once its lock file exists; no child runs then.
 
+Issue 25 adds three kinds of case. A paused browser: every recorded Chromium process is sent SIGSTOP just before
+the SIGTERM and nothing resumes it, with `--serve` and with `--url` (a page served by the case). A storm: the
+signal is sent again without pause until the run has exited (os.kill, then a non-blocking waitpid, so the PID
+signalled is never a reaped one). After the report (`AfterReport`, no browser): a `--snapshot` run of
+`full-seeded.json`, which passes, is stormed with SIGTERM from the moment its result file exists; its stdout and
+stderr go to files, since a pipe that nothing drains during the storm would block the run.
+
 "Alive" means `os.kill(pid, 0)` succeeds and `ps` does not show the process as a zombie.
 """
 import http.server
@@ -92,6 +99,28 @@ def descendants(root):
             found[pid] = table[pid][1]
             todo.extend(children.get(pid, []))
     return found
+
+
+def page_server(case):
+    """Serve pages/restless/index.html on 127.0.0.1 for the length of `case`; return the server's URL."""
+    page = (PAGES / "restless" / "index.html").read_bytes()
+
+    class Page(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(page)))
+            self.end_headers()
+            self.wfile.write(page)
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Page)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    case.addCleanup(server.server_close)
+    case.addCleanup(server.shutdown)
+    return f"http://127.0.0.1:{server.server_address[1]}"
 
 
 def is_node(command):
@@ -220,6 +249,17 @@ class TerminateCase(unittest.TestCase):
                 return
             except subprocess.TimeoutExpired:
                 os.kill(run.proc.pid, sig)
+
+    def storm(self, run, sig):
+        """Send `sig` without pause until pm-structure has exited (bounded): each os.kill follows a non-blocking
+        waitpid (Popen.poll) that found the run unreaped. Return the number of signals sent."""
+        sent, deadline = 0, time.monotonic() + RUN_BOUND
+        while run.proc.poll() is None:
+            if time.monotonic() > deadline:
+                self.fail(f"pm-structure did not exit within {RUN_BOUND} s of a storm of {sig.name}")
+            os.kill(run.proc.pid, sig)
+            sent += 1
+        return sent
 
     def browser_run(self, wt, *signals, args=None, port=None, repeat=None):
         """Run pm-structure on pages/restless (or with `args`), send `signals` once Chromium runs, then `repeat`
@@ -367,6 +407,41 @@ class BrowserRun(TerminateCase):
         self.assertEqual(run.code, 2, detail)
         self.assertEqual(run.stderr.splitlines(), ["pm-structure: terminated by SIGINT"], detail)
 
+    def test_paused_browser_is_gone(self):
+        # issue 25, form 1: a browser that is slow at the moment of the signal, paused and never resumed
+        for case in ("serve", "url"):
+            with self.subTest(case=case):
+                wt = self.worktree(f"wt-{case}")
+                port = free_port() if case == "serve" else None
+                args = (("--serve", PAGES / "restless", "--port", port) if case == "serve"
+                        else ("--url", page_server(self)))
+                run = self.start(wt, *args)
+                self.wait_for_chromium(run)
+                for pid, command in run.recorded.items():
+                    if is_chromium(command):
+                        try:
+                            os.kill(pid, signal.SIGSTOP)
+                        except ProcessLookupError:
+                            pass
+                self.signal(run, signal.SIGTERM)
+                self.finish(run)
+                self.assertTerminated(run, wt, "SIGTERM")
+                self.assertNothingLeft(run, wt, port)
+
+    def test_signal_storm_exits_2_with_one_line_each(self):
+        # issue 25, forms 2 and 3: the signal sent again without pause until the run has exited
+        for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+            with self.subTest(case=sig.name):
+                wt = self.worktree(f"wt-{sig.name}")
+                port = free_port()
+                run = self.start(wt, "--serve", PAGES / "restless", "--port", port)
+                self.wait_for_chromium(run)
+                run.signalled = time.monotonic()
+                self.storm(run, sig)
+                self.finish(run)
+                self.assertTerminated(run, wt, sig.name)
+                self.assertNothingLeft(run, wt, port)
+
 
 class SnapshotRun(TerminateCase):
     def big_snapshot(self):
@@ -396,6 +471,52 @@ class SnapshotRun(TerminateCase):
         self.assertEqual(result.get("verdict"), "error", result)
         self.assertEqual(result.get("error"), "terminated by SIGTERM", result)
         self.assertFalse(lock.exists(), "the lock file is left")
+
+
+
+class AfterReport(TerminateCase):
+    """Issue 25, form 3: a storm of SIGTERM that starts after a --snapshot run has written its pass report."""
+
+    def snapshot_run(self, wt, name, storm=False):
+        """Run pm-structure --snapshot full-seeded.json with stdout and stderr in files under the case's directory.
+        With `storm`, watch for the result file in a loop without pause and, once it exists, send SIGTERM without
+        pause until the run has exited. Return (exit status, stdout, stderr, signals sent)."""
+        files = [open(self.root / f"{name}.{stream}", "w+") for stream in ("out", "err")]
+        for f in files:
+            self.addCleanup(f.close)
+        cmd = [str(self.bin / "pm-structure"), str(wt), str(BUCKET_LIST), "--snapshot", str(FULL_SEEDED)]
+        proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=files[0], stderr=files[1], env=clean_env(),
+                                start_new_session=True)
+        self.started.append(proc.pid)
+        self.addCleanup(self.reap, proc)
+        result, sent, deadline = self.result_path(wt), 0, time.monotonic() + RUN_BOUND
+        while proc.poll() is None:  # a non-blocking waitpid before each signal: the PID is never a reaped one
+            if time.monotonic() > deadline:
+                self.fail(f"pm-structure --snapshot did not exit within {RUN_BOUND} s ({name})")
+            if storm and result.exists():
+                os.kill(proc.pid, signal.SIGTERM)
+                sent += 1
+        out, err = (f.seek(0) or f.read() for f in files)
+        return proc.returncode, out, err, sent
+
+    def test_storm_after_the_pass_report_changes_nothing(self):
+        wt = self.worktree()
+        result = self.result_path(wt)
+        ax = result.with_name(f"{SCREEN}.ax.json")
+        code, reference, ref_err, _ = self.snapshot_run(wt, "reference")
+        self.assertEqual(code, 0, f"the reference run: stdout:\n{reference}\nstderr:\n{ref_err}")
+        self.assertEqual(reference.splitlines()[-1:], [f"result: {result}"], reference)
+        self.assertEqual(self.result(wt).get("verdict"), "pass")
+        for path in (result, ax):  # a --snapshot run writes no .ax.json; one left by anything else goes too
+            path.unlink(missing_ok=True)
+            self.assertFalse(path.exists(), f"{path} is still there before the signalled run")
+        code, out, err, sent = self.snapshot_run(wt, "signalled", storm=True)
+        detail = f"exit {code} after {sent} signals; stdout:\n{out}\nstderr:\n{err}"
+        self.assertIn(code, (0, 2), detail)
+        self.assertEqual(out, reference, detail)
+        self.assertEqual(err, "", detail)
+        self.assertEqual(self.result(wt).get("verdict"), "pass", detail)
+        self.assertGreater(sent, 0, f"no signal was sent before the exit; {detail}")
 
 
 if __name__ == "__main__":
