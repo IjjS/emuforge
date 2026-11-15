@@ -6,8 +6,8 @@ use std::num::NonZeroU16;
 use std::path::PathBuf;
 
 use emuforge_core::sigv4::{
-    Auth, ClientAuth, Scope, UriMode, canonical_request, canonical_trailer, chunk_signature, classify,
-    sign_with, signature, signing_key, string_to_sign, trailer_signature,
+    Auth, ClientAuth, Scope, UriMode, canonical_request, canonical_trailer, chunk_signature,
+    classify, sign_with, signature, signing_key, string_to_sign, trailer_signature,
 };
 use emuforge_core::{CA_FILE, CREDENTIALS_FILE, Emulator, EmulatorFiles};
 use http::header::{HeaderMap, HeaderName, HeaderValue};

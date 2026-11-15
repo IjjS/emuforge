@@ -3,6 +3,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod chunked;
 pub mod connect;
 mod emulator;
 mod files;
