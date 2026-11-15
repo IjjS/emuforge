@@ -3,7 +3,7 @@ import type { RouteObject } from 'react-router';
 import { HomePage } from '../features/home/home-page';
 import { NoScreenPage } from './no-screen-page';
 import { NotFoundPage } from './not-found-page';
-import { SERVICES } from './services';
+import { SERVICES } from '../providers/aws/services';
 import { Shell, type ShellHandle } from './shell';
 
 const home: ShellHandle = { activeHref: '/' };

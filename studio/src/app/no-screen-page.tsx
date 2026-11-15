@@ -1,5 +1,5 @@
-import { EmptyPage } from '../components/empty-page';
-import type { Service } from './services';
+import { EmptyPage } from '../providers/aws/area/components/empty-page';
+import type { Service } from '../providers/aws/services';
 
 /** `/<service>` and every path below it, until the service has a screen (requirement 2.3). Calls nothing. */
 export function NoScreenPage({ service }: { service: Service }) {

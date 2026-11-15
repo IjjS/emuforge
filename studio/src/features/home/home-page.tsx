@@ -7,8 +7,8 @@ import Link from '@cloudscape-design/components/link';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 
 import { useCallback, useRef } from 'react';
-import { SERVICES } from '../../app/services';
-import { useFollow } from '../../components/use-follow';
+import { SERVICES } from '../../providers/aws/services';
+import { useFollow } from '../../providers/aws/area/components/use-follow';
 import { ConnectionStatus } from './connection-status';
 import { useConnectionCheck } from './use-connection-check';
 
