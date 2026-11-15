@@ -7,7 +7,10 @@ Interface used (design 2.1): `_pmspec.load(path)` returns a Spec or raises `_pms
   applies to, a collection of "seeded" and "empty");
 - `spec.omitted`: one entry per `omitted` entry, with `path`, `reason` and `items` (the item ids it covers);
 - `spec.not_scored`: `(spec path, key, value)` per form field key other than `label`;
-- `spec.needs_states`: the states the spec needs to be scored in.
+- `spec.needs_states`: the states the spec needs to be scored in;
+- issue 8 (design 2.1): `spec.steps`, the shown step titles of a wizard in order; each item's `critical` flag and
+  `step`, the 1-based position of the shown step whose tree the item is scored on (None for other kinds and for
+  the items of an omitted step).
 
 Each attribute may be an attribute or a mapping key. Spec texts written by a case go to
 <checkout>/output/tests/spec-<pid>/ and are removed when the case ends.
@@ -294,13 +297,6 @@ class Validation(SpecCase):
             with self.subTest(key=key):
                 self.refused(text, contains=(key,))
 
-    def test_wizard_dashboard_and_steps_are_not_supported(self):
-        for text in (BASE.replace("kind: table", "kind: wizard"), BASE.replace("kind: table", "kind: dashboard"),
-                     BASE + "steps: [Choose, Review]\n"):
-            with self.subTest(text=text.splitlines()[2] if "steps" not in text else "steps"):
-                msg = self.refused(text)
-                self.assertTrue(msg.endswith("is not supported"), msg)
-
 
 FORM = """\
 screen: s3.create-bucket
@@ -461,6 +457,197 @@ class States(SpecCase):
         self.assertEqual(set(get(item(multi, "table.selection"), "states")), {"seeded"})
         none = self.load_text(BASE + "  selection: none\n")
         self.assertEqual(set(get(item(none, "table.selection"), "states")), {"seeded", "empty"})
+
+
+# ---------------------------------------------------------------------------------------------------- issue 8
+
+T1, T2, T3 = "Select trusted entity", "Add permissions", "Name, review, and create"
+WIZARD_IDS = [
+    "breadcrumbs[IAM]", "breadcrumbs[Roles]", "breadcrumbs[Create role]", "breadcrumbs.order",
+    f"steps[{T1}].title", f"steps[{T1}].sections[Trusted entity type].title",
+    f"steps[{T1}].sections[Trusted entity type].fields[Use case]",
+    f"steps[{T1}].sections[Trusted entity type].fields[Service]",
+    f"steps[{T1}].sections[Trusted entity type].fields.order", f"steps[{T1}].sections.order",
+    f"steps[{T2}].title", f"steps[{T2}].sections[Permissions policies].title", f"steps[{T2}].sections.order",
+    f"steps[{T3}].title", "steps.order", "submit"]
+
+WIZARD_HEAD = """\
+screen: iam.create-role
+service: iam
+kind: wizard
+route: {route}
+breadcrumbs: [IAM, Roles, Create role]
+"""
+
+WIZARD_STEPS = """\
+steps:
+  - title: Select trusted entity
+    sections:
+      - title: Trusted entity type
+        fields: [Use case, Service]
+  - title: Add permissions
+    sections:
+      - title: Permissions policies
+  - title: Name, review, and create
+"""
+
+
+def wizard(steps=WIZARD_STEPS, top="", route="/aws/iam/roles/create", submit="submit: Create role\n", omitted=""):
+    """A wizard spec text in the form of requirement 3, with one part replaced."""
+    return WIZARD_HEAD.format(route=route) + top + steps + submit + omitted
+
+
+def omit(*paths):
+    return "omitted:\n" + "".join(f"  - item: {p}\n    reason: the emulator does not implement it\n" for p in paths)
+
+
+FORM_BUCKET = FORM.format(field="      - Bucket name")
+
+# Every wizard error of requirement 3 the cases below raise: (case, spec text, screen, `<what>` of
+# `spec <path>: <what>`, or a tuple of the accepted ones).
+WIZARD_ERRORS = [
+    ("no_steps", wizard(steps=""), "iam.create-role", "kind wizard needs steps"),
+    ("top_header", wizard(top="header:\n  title: Create role\n"), "iam.create-role",
+     "header is not used by kind wizard"),
+    ("top_table", wizard(top="table:\n  columns: [Role name]\n"), "iam.create-role",
+     "table is not used by kind wizard"),
+    ("top_tabs", wizard(top="tabs: [Trust, Permissions]\n"), "iam.create-role", "tabs is not used by kind wizard"),
+    ("top_sections", wizard(top="sections:\n  - title: Role details\n"), "iam.create-role",
+     "sections is not used by kind wizard"),
+    ("form_steps", FORM_BUCKET + "steps:\n  - title: Choose\n", "s3.create-bucket", "steps is only for kind wizard"),
+    ("form_submit", FORM_BUCKET + "submit: Create bucket\n", "s3.create-bucket", "submit is only for kind wizard"),
+    ("route_query", wizard(route="/aws/iam/roles/create?step=1"), "iam.create-role",
+     "route of kind wizard must not hold ? or #"),
+    ("route_fragment", wizard(route="/aws/iam/roles/create#top"), "iam.create-role",
+     "route of kind wizard must not hold ? or #"),
+    ("steps_scalar", wizard(steps="steps: Choose\n"), "iam.create-role", "steps must be a list"),
+    ("steps_empty", wizard(steps="steps: []\n"), "iam.create-role", "steps is empty"),
+    ("steps_scalar_entry", wizard(steps="steps:\n  - title: Choose\n  - Review\n"), "iam.create-role",
+     "steps entry 2 must be a mapping"),
+    ("steps_entry_no_title", wizard(steps="steps:\n  - title: Choose\n  - sections:\n      - title: Review\n"),
+     "iam.create-role", "steps entry 2 has no title"),
+    ("steps_entry_fields", wizard(steps="steps:\n  - title: Add permissions\n    fields: [Policy name]\n"),
+     "iam.create-role", "unknown key steps[Add permissions].fields"),
+    ("steps_twice", wizard(steps='steps:\n  - title: Add permissions\n  - title: "add permissions "\n'),
+     "iam.create-role", ("steps has Add permissions twice", "steps has add permissions twice",
+                         "steps has add permissions  twice")),
+    ("step_section_no_title", wizard(steps="steps:\n  - title: Add permissions\n    sections:\n"
+                                           "      - title: Permissions policies\n      - fields: [Boundary]\n"),
+     "iam.create-role", "steps[Add permissions].sections entry 2 has no title"),
+    ("submit_list", wizard(submit="submit: [Create, role]\n"), "iam.create-role", "submit must be a string"),
+    ("submit_empty", wizard(submit='submit: ""\n'), "iam.create-role", "submit is empty"),
+    ("omitted_step_title", wizard(omitted=omit("steps[Add permissions].title")), "iam.create-role",
+     "omitted steps[Add permissions].title: omit the whole step as steps[Add permissions]"),
+    ("omitted_each_step", wizard(omitted=omit(f"steps[{T1}]", f"steps[{T2}]", f"steps[{T3}]")), "iam.create-role",
+     "every step is omitted"),
+    ("omitted_steps", wizard(omitted=omit("steps")), "iam.create-role", "every step is omitted"),
+]
+ERRORS = {name: (text, screen, what) for name, text, screen, what in WIZARD_ERRORS}
+
+
+class WizardCase(SpecCase):
+    def refused_with(self, name):
+        """Assert that the spec of WIZARD_ERRORS `name` is refused with exactly `spec <path>: <what>`."""
+        text, _, what = ERRORS[name]
+        p = self.write(text, f"{name}.yaml")
+        with self.assertRaises(_pmspec.SpecError) as cm:
+            _pmspec.load(str(p))
+        msg = str(cm.exception)
+        accepted = [f"spec {p}: {w}" for w in (what if isinstance(what, tuple) else (what,))]
+        self.assertIn(msg, accepted)
+        return cm.exception
+
+    def refused_each(self, *names):
+        for name in names:
+            with self.subTest(case=name):
+                self.refused_with(name)
+
+
+class Wizard(WizardCase):
+    def test_wizard_items_critical_shown_steps_and_states(self):
+        spec = _pmspec.load(str(SPECS / "wizard.yaml"))
+        self.assertEqual(ids(spec), WIZARD_IDS)
+        critical = [get(i, "id") for i in get(spec, "items") if get(i, "critical")]
+        self.assertEqual(critical, [f"steps[{T1}].title", f"steps[{T2}].title", f"steps[{T3}].title", "submit"])
+        self.assertEqual(list(get(spec, "steps")), [T1, T2, T3])
+        self.assertEqual(set(get(spec, "needs_states")), {"seeded"})
+
+    def test_wizard_omitted_section(self):
+        spec = _pmspec.load(str(SPECS / "wizard-omitted.yaml"))
+        gone = f"steps[{T2}].sections[Permissions policies].title"
+        self.assertEqual(omitted_ids(spec), {gone})
+        self.assertEqual(get(spec, "omitted_reason")(gone), "the emulator has no managed policies to list")
+        self.assertEqual(total(spec, "seeded"), 15)
+
+    def test_wizard_omitted_step(self):
+        spec = _pmspec.load(str(SPECS / "wizard-omit-step.yaml"))
+        step2 = [i for i in ids(spec) if i.startswith(f"steps[{T2}]")]
+        self.assertEqual(step2, [f"steps[{T2}].title", f"steps[{T2}].sections[Permissions policies].title",
+                                 f"steps[{T2}].sections.order"])
+        self.assertEqual(omitted_ids(spec), set(step2))
+        self.assertEqual(list(get(spec, "steps")), [T1, T3])
+        self.assertEqual(get(item(spec, "submit"), "step"), 2)
+
+    def test_wizard_field_control_not_scored(self):
+        spec = _pmspec.load(str(SPECS / "wizard.yaml"))
+        field = f"steps[{T1}].sections[Trusted entity type].fields[Use case]"
+        self.assertIn(field, ids(spec))
+        self.assertEqual(get(item(spec, field), "name"), "Use case")
+        self.assertEqual([tuple(r) for r in get(spec, "not_scored")], [(field, "control", "input")])
+
+    def test_wizard_without_steps(self):
+        self.refused_with("no_steps")
+
+    def test_wizard_top_level_keys_not_used(self):
+        self.refused_each("top_header", "top_table", "top_tabs", "top_sections")
+
+    def test_steps_and_submit_only_for_wizard(self):
+        self.refused_each("form_steps", "form_submit")
+
+    def test_wizard_route_with_query_or_fragment(self):
+        self.refused_each("route_query", "route_fragment")
+        form = self.load_text(FORM_BUCKET.replace("route: /s3/buckets/create", "route: /s3/buckets/create?tab=general"))
+        self.assertEqual(get(form, "route"), "/s3/buckets/create?tab=general")
+
+    def test_steps_shapes(self):
+        self.refused_each("steps_scalar", "steps_empty", "steps_scalar_entry", "steps_entry_no_title",
+                          "steps_entry_fields", "steps_twice")
+
+    def test_step_section_without_title(self):
+        self.refused_with("step_section_no_title")
+
+    def test_submit_not_a_string_or_empty(self):
+        self.refused_each("submit_list", "submit_empty")
+
+    def test_omitted_step_title_alone_or_whole_step(self):
+        self.refused_with("omitted_step_title")
+        spec = _pmspec.load(str(SPECS / "wizard-omit-step.yaml"))
+        self.assertEqual([get(e, "path") for e in get(spec, "omitted")], [f"steps[{T2}]"])
+
+    def test_every_step_omitted(self):
+        self.refused_each("omitted_each_step", "omitted_steps")
+
+    def test_wizard_errors_carry_the_screen(self):
+        for name, _, screen, _ in WIZARD_ERRORS:
+            with self.subTest(case=name):
+                self.assertEqual(self.refused_with(name).screen, screen)
+
+
+class Dashboard(SpecCase):
+    def test_dashboard_kind_is_refused(self):
+        path = SPECS / "dashboard.yaml"
+        with self.assertRaises(_pmspec.SpecError) as cm:
+            _pmspec.load(str(path))
+        self.assertEqual(str(cm.exception), f"spec {path}: kind must be one of table, detail, form, wizard")
+
+    def test_dashboard_as_detail_loads(self):
+        """Guard: passes on main as well (breakdown, Dependencies and notes)."""
+        text = (SPECS / "dashboard.yaml").read_text()
+        self.assertIn("kind: dashboard\n", text)
+        spec = self.load_text(text.replace("kind: dashboard\n", "kind: detail\n"))
+        self.assertEqual(get(spec, "kind"), "detail")
+        self.assertIn("header.title", ids(spec))
+        self.assertIn("sections[Resources].fields[Volumes]", ids(spec))
 
 
 if __name__ == "__main__":
