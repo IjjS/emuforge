@@ -102,7 +102,9 @@ function token(colours: Colours, scheme: Scheme, name: string): string {
 // `fontkit` ships no types; these are the parts of it this script reads. It decodes the WOFF2 file (Brotli and the
 // transformed `glyf` table) and holds the face's variation data, but does not apply the variations to a WOFF2
 // glyph's points, so the script applies them with fontkit's own variation processor (`gvar`, and `HVAR` for the
-// advances) to the decoded points.
+// advances) to the decoded points. That reads fontkit's private members (`_transformGlyfTable`, `_transformedGlyphs`,
+// `_variationProcessor`), which the exact pin in `package.json` holds: move the pin only after rerunning
+// `bun run brand` and `studio.brand-logos-hold-their-layout`, which compares the outlines with live Instrument Sans.
 
 interface FontPoint {
   x: number;
@@ -317,7 +319,7 @@ function tile(options: {
 function symbolFile(colours: Colours): string {
   return svg(
     '0 0 167 140',
-    'EmuForge',
+    'EmuForge symbol',
     `<path fill="${token(colours, 'light', 'accent')}" fill-rule="evenodd" d="${SYMBOL_PATH}"/>`,
   );
 }
@@ -328,7 +330,7 @@ function faviconFile(colours: Colours): string {
     `.ground{fill:${token(colours, scheme, 'accent')}}.symbol{fill:${token(colours, scheme, 'accent-ink')}}`;
   return svg(
     '0 0 100 100',
-    'EmuForge Studio',
+    'EmuForge Studio favicon',
     `<style>${rules('light')}@media (prefers-color-scheme: dark){${rules('dark')}}</style>` +
       tile({ id: 'tile', ground: '', symbol: '', classes: { ground: 'ground', symbol: 'symbol' } }),
   );
