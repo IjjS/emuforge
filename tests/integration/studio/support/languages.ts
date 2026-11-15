@@ -1101,6 +1101,8 @@ export interface FaceItem {
 export function allowedFaces(item: { text: string; lang: string; code: boolean; wordmark: boolean }): string[] {
   if (item.code) return [FACES.code];
   if (item.wordmark) return [FACES.latin];
+  // The code face draws commands, addresses and paths (R6.2) wherever they stand; a Latin run may stay in Instrument Sans.
+  if (ADDRESS.test(norm(item.text)) || PATH.test(norm(item.text))) return [FACES.code, FACES.latin];
   const tag = languageOf(item.lang)?.tag ?? item.lang;
   if (tag === 'vi') return [FACES.noto];
   const chars = [...item.text];
