@@ -553,6 +553,7 @@ export function expectedIconLinks(origin: string): { rel: string; resolved: stri
  * the `head`. `tileWatch` reads what was recorded.
  */
 export async function watchTile(page: Page): Promise<void> {
+  await tileBox(page);
   await tileOf(page).evaluate(
     (tile) => {
       const w = window as unknown as { __emuforgeItTileWatch?: { changes: string[] } };
@@ -695,16 +696,20 @@ export async function ringReport(page: Page, link: Locator, bar: Locator, focus:
   const box = await link.boundingBox(ACTION);
   const barBox = await bar.boundingBox(ACTION);
   if (box === null || barBox === null) throw new Error('the wordmark link or the bar is not drawn');
-  const style = await link.evaluate((el) => {
-    const cs = getComputedStyle(el);
-    return {
-      style: cs.outlineStyle,
-      width: parseFloat(cs.outlineWidth) || 0,
-      offset: parseFloat(cs.outlineOffset) || 0,
-      colour: cs.outlineColor,
-      radius: parseFloat(cs.borderTopLeftRadius) || 0,
-    };
-  }, ACTION);
+  const style = await link.evaluate(
+    (el) => {
+      const cs = getComputedStyle(el);
+      return {
+        style: cs.outlineStyle,
+        width: parseFloat(cs.outlineWidth) || 0,
+        offset: parseFloat(cs.outlineOffset) || 0,
+        colour: cs.outlineColor,
+        radius: parseFloat(cs.borderTopLeftRadius) || 0,
+      };
+    },
+    undefined,
+    ACTION,
+  );
   const problems: string[] = [];
   const reach = Math.max(style.offset + style.width, 0) + 3;
   const outer = {
@@ -735,7 +740,8 @@ export async function ringReport(page: Page, link: Locator, bar: Locator, focus:
     height: Math.min(size.height, Math.ceil(box.y + box.height + reach)) - clipY,
   };
   const d = await shot(page, clip);
-  const keep = style.radius + style.offset + style.width + 2;
+  // The outline runs straight along the box's edge wherever the border does: away from the corners' radius.
+  const keep = style.radius > 0 ? style.radius + 1 : 1;
   const sides: RingReport['sides'] = {
     top: { sampled: 0, missing: 0, distances: [] },
     right: { sampled: 0, missing: 0, distances: [] },
@@ -842,20 +848,24 @@ export async function surfaceBetween(
 
 /** Every computed property of `locator`'s element and of each element inside it, `cursor` left out. */
 export async function computedLook(locator: Locator): Promise<Record<string, string>> {
-  return locator.evaluate((root) => {
-    const out: Record<string, string> = {};
-    const all = [root, ...root.querySelectorAll('*')];
-    for (const [i, el] of all.entries()) {
-      for (const a of el.getAnimations()) a.finish();
-      const cs = getComputedStyle(el);
-      for (let k = 0; k < cs.length; k++) {
-        const name = cs.item(k);
-        if (name === 'cursor') continue;
-        out[`${String(i)} ${el.tagName.toLowerCase()} ${name}`] = cs.getPropertyValue(name);
+  return locator.evaluate(
+    (root) => {
+      const out: Record<string, string> = {};
+      const all = [root, ...root.querySelectorAll('*')];
+      for (const [i, el] of all.entries()) {
+        for (const a of el.getAnimations()) a.finish();
+        const cs = getComputedStyle(el);
+        for (let k = 0; k < cs.length; k++) {
+          const name = cs.item(k);
+          if (name === 'cursor') continue;
+          out[`${String(i)} ${el.tagName.toLowerCase()} ${name}`] = cs.getPropertyValue(name);
+        }
       }
-    }
-    return out;
-  }, ACTION);
+      return out;
+    },
+    undefined,
+    ACTION,
+  );
 }
 
 // --- the tile's rules ------------------------------------------------------------------------------------------
@@ -878,104 +888,109 @@ export interface TileRules {
  * property `__emuforgeItRoot`; `null` when the page has no area).
  */
 export async function tileRules(page: Page): Promise<TileRules> {
-  return tileOf(page).evaluate((tile) => {
-    const widen = (selector: string) =>
-      selector
-        .replace(/::?(before|after|marker|placeholder|selection|first-line|first-letter|backdrop)\b/g, '')
-        .replace(/:(hover|active|focus-visible|focus-within|focus)\b/g, '');
-    const layerOf = (rule: CSSRule): string[] => {
-      const names: string[] = [];
-      for (let r: CSSRule | null = rule; r; r = r.parentRule) {
-        if (r instanceof CSSLayerBlockRule) names.unshift(r.name || '(anonymous)');
-      }
-      return names;
-    };
-    const found: { rule: CSSStyleRule; selector: string; layer: string; sheet: string }[] = [];
-    const unreadable: string[] = [];
-    const all: { rule: CSSStyleRule; selector: string; layer: string; sheet: string }[] = [];
-    const walk = (rules: CSSRuleList, sheet: string, parent: string | null, layers: string[]) => {
-      for (const rule of rules) {
-        if (rule instanceof CSSImportRule) {
-          try {
-            if (rule.styleSheet) {
-              walk(
-                rule.styleSheet.cssRules,
-                rule.href,
-                null,
-                rule.layerName !== null ? [...layers, rule.layerName] : layers,
-              );
+  await tileBox(page);
+  return tileOf(page).evaluate(
+    (tile) => {
+      const widen = (selector: string) =>
+        selector
+          .replace(/::?(before|after|marker|placeholder|selection|first-line|first-letter|backdrop)\b/g, '')
+          .replace(/:(hover|active|focus-visible|focus-within|focus)\b/g, '');
+      const layerOf = (rule: CSSRule): string[] => {
+        const names: string[] = [];
+        for (let r: CSSRule | null = rule; r; r = r.parentRule) {
+          if (r instanceof CSSLayerBlockRule) names.unshift(r.name || '(anonymous)');
+        }
+        return names;
+      };
+      const found: { rule: CSSStyleRule; selector: string; layer: string; sheet: string }[] = [];
+      const unreadable: string[] = [];
+      const all: { rule: CSSStyleRule; selector: string; layer: string; sheet: string }[] = [];
+      const walk = (rules: CSSRuleList, sheet: string, parent: string | null, layers: string[]) => {
+        for (const rule of rules) {
+          if (rule instanceof CSSImportRule) {
+            try {
+              if (rule.styleSheet) {
+                walk(
+                  rule.styleSheet.cssRules,
+                  rule.href,
+                  null,
+                  rule.layerName !== null ? [...layers, rule.layerName] : layers,
+                );
+              }
+            } catch {
+              unreadable.push(rule.href);
             }
-          } catch {
-            unreadable.push(rule.href);
+          } else if (rule instanceof CSSStyleRule) {
+            const own = rule.selectorText;
+            const selector =
+              parent === null ? own : own.includes('&') ? own.replace(/&/g, `:is(${parent})`) : `:is(${parent}) ${own}`;
+            all.push({ rule, selector, layer: [...layers, ...layerOf(rule)].join('.'), sheet });
+            if (rule.cssRules.length > 0) walk(rule.cssRules, sheet, selector, layers);
+          } else if ('cssRules' in rule) {
+            walk((rule as CSSGroupingRule).cssRules, sheet, parent, layers);
           }
-        } else if (rule instanceof CSSStyleRule) {
-          const own = rule.selectorText;
-          const selector =
-            parent === null ? own : own.includes('&') ? own.replace(/&/g, `:is(${parent})`) : `:is(${parent}) ${own}`;
-          all.push({ rule, selector, layer: [...layers, ...layerOf(rule)].join('.'), sheet });
-          if (rule.cssRules.length > 0) walk(rule.cssRules, sheet, selector, layers);
-        } else if ('cssRules' in rule) {
-          walk((rule as CSSGroupingRule).cssRules, sheet, parent, layers);
+        }
+      };
+      for (const sheet of document.styleSheets) {
+        try {
+          walk(sheet.cssRules, sheet.href ?? '(inline)', null, []);
+        } catch {
+          unreadable.push(sheet.href ?? '(inline)');
         }
       }
-    };
-    for (const sheet of document.styleSheets) {
-      try {
-        walk(sheet.cssRules, sheet.href ?? '(inline)', null, []);
-      } catch {
-        unreadable.push(sheet.href ?? '(inline)');
+      const tileElements = [tile, ...tile.querySelectorAll('*')];
+      const matches = (el: Element, selector: string) => {
+        try {
+          return el.matches(widen(selector));
+        } catch {
+          return false;
+        }
+      };
+      for (const r of all) if (tileElements.some((el) => matches(el, r.selector))) found.push(r);
+      const describe = (el: Element) =>
+        `${el.tagName.toLowerCase()}${el.classList.length > 0 ? `.${[...el.classList].slice(0, 2).join('.')}` : ''}`;
+      const root = [...document.querySelectorAll('*')].find(
+        (el) => (el as Element & { __emuforgeItRoot?: boolean }).__emuforgeItRoot === true,
+      );
+      const inside = root ? [root, ...root.querySelectorAll('*')] : [];
+      const tileClasses = new Set(tileElements.flatMap((el) => [...el.classList]));
+      const named = new Set<string>();
+      for (const r of found) {
+        for (const m of r.selector.matchAll(/\.(-?[_a-zA-Z][\w-]*)/g)) if (tileClasses.has(m[1]!)) named.add(m[1]!);
       }
-    }
-    const tileElements = [tile, ...tile.querySelectorAll('*')];
-    const matches = (el: Element, selector: string) => {
-      try {
-        return el.matches(widen(selector));
-      } catch {
-        return false;
+      const custom = new Set<string>();
+      for (const r of found) {
+        for (let k = 0; k < r.rule.style.length; k++) {
+          const name = r.rule.style.item(k);
+          if (name.startsWith('--')) custom.add(name);
+        }
       }
-    };
-    for (const r of all) if (tileElements.some((el) => matches(el, r.selector))) found.push(r);
-    const describe = (el: Element) =>
-      `${el.tagName.toLowerCase()}${el.classList.length > 0 ? `.${[...el.classList].slice(0, 2).join('.')}` : ''}`;
-    const root = [...document.querySelectorAll('*')].find(
-      (el) => (el as Element & { __emuforgeItRoot?: boolean }).__emuforgeItRoot === true,
-    );
-    const inside = root ? [root, ...root.querySelectorAll('*')] : [];
-    const tileClasses = new Set(tileElements.flatMap((el) => [...el.classList]));
-    const named = new Set<string>();
-    for (const r of found) {
-      for (const m of r.selector.matchAll(/\.(-?[_a-zA-Z][\w-]*)/g)) if (tileClasses.has(m[1]!)) named.add(m[1]!);
-    }
-    const custom = new Set<string>();
-    for (const r of found) {
-      for (let k = 0; k < r.rule.style.length; k++) {
-        const name = r.rule.style.item(k);
-        if (name.startsWith('--')) custom.add(name);
+      const docStyle = getComputedStyle(document.documentElement);
+      const matchedInside: string[] = [];
+      const classesInside: string[] = [];
+      const customInside: string[] = [];
+      for (const el of inside) {
+        const hit = found.find((r) => matches(el, r.selector));
+        if (hit) matchedInside.push(`${describe(el)} by ${hit.selector}`);
+        const cls = [...el.classList].filter((c) => named.has(c));
+        if (cls.length > 0) classesInside.push(`${describe(el)}: ${cls.join(' ')}`);
+        const cs = getComputedStyle(el);
+        for (const name of custom) {
+          const v = cs.getPropertyValue(name).trim();
+          if (v !== '' && v !== docStyle.getPropertyValue(name).trim())
+            customInside.push(`${describe(el)}: ${name} ${v}`);
+        }
       }
-    }
-    const docStyle = getComputedStyle(document.documentElement);
-    const matchedInside: string[] = [];
-    const classesInside: string[] = [];
-    const customInside: string[] = [];
-    for (const el of inside) {
-      const hit = found.find((r) => matches(el, r.selector));
-      if (hit) matchedInside.push(`${describe(el)} by ${hit.selector}`);
-      const cls = [...el.classList].filter((c) => named.has(c));
-      if (cls.length > 0) classesInside.push(`${describe(el)}: ${cls.join(' ')}`);
-      const cs = getComputedStyle(el);
-      for (const name of custom) {
-        const v = cs.getPropertyValue(name).trim();
-        if (v !== '' && v !== docStyle.getPropertyValue(name).trim())
-          customInside.push(`${describe(el)}: ${name} ${v}`);
-      }
-    }
-    const cap = (list: string[]) => [...new Set(list)].slice(0, 20);
-    return {
-      rules: found.map((r) => ({ selector: r.selector, layer: r.layer, sheet: r.sheet })),
-      matchedInside: cap(matchedInside),
-      classesInside: cap(classesInside),
-      customInside: cap(customInside),
-      unreadable,
-    };
-  }, ACTION);
+      const cap = (list: string[]) => [...new Set(list)].slice(0, 20);
+      return {
+        rules: found.map((r) => ({ selector: r.selector, layer: r.layer, sheet: r.sheet })),
+        matchedInside: cap(matchedInside),
+        classesInside: cap(classesInside),
+        customInside: cap(customInside),
+        unreadable,
+      };
+    },
+    undefined,
+    ACTION,
+  );
 }
