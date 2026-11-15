@@ -1,0 +1,37 @@
+# Source: Amazon S3 API Reference, "Signature Calculations for the Authorization Header: Transferring Payload
+# in Multiple Chunks (Chunked Upload) (AWS Signature Version 4)",
+# https://docs.aws.amazon.com/AmazonS3/latest/developerguide/sigv4-streaming.html (the API/ path of the same page
+# redirects there; read 2026-11-15 as its markdown version, sigv4-streaming.md), example "Example: PUT Object"
+# (PUT /examplebucket/chunkObject.txt, x-amz-content-sha256: STREAMING-AWS4-HMAC-SHA256-PAYLOAD).
+# Credentials of the example: AKIAIOSFODNN7EXAMPLE / wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY.
+# The data of every chunk is the byte of `data-byte` repeated ("with value 97 for letter 'a'"). The body is each
+# chunk as the page's "Chunk data sent" and "Defining the Chunk Body" write it, `<size in hex>;chunk-signature=
+# <signature>\r\n<data>\r\n`, the final chunk's header line followed by `\r\n` alone; its length is the page's
+# Content-Length.
+== secret ==
+wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+== amz-date ==
+20130524T000000Z
+== scope ==
+20130524/us-east-1/s3/aws4_request
+== content-length ==
+66824
+== data-byte ==
+a
+== seed-signature ==
+4f232c4386841ef735655705268965c44a0e4690baa4adea153f7db9fa80a0a9
+== chunk-sizes ==
+65536
+1024
+0
+== chunk-signatures ==
+ad80c730a21e5b8d04586a2213dd63b9a0e99e0e2307b0ade35a65485a288648
+0055627c9e194cb4542bae2aa5492e3c1575bbb81b612b7d234b86a503ef5497
+b6c6ea8a5354eaf15b3cb7646744f4275b71ea724fed81ceb9323e279d449df9
+== chunk-1-string-to-sign ==
+AWS4-HMAC-SHA256-PAYLOAD
+20130524T000000Z
+20130524/us-east-1/s3/aws4_request
+4f232c4386841ef735655705268965c44a0e4690baa4adea153f7db9fa80a0a9
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+bf718b6f653bebc184e1479f1935b8da974d701b893afcf49e701f3e2f9f9c5a
