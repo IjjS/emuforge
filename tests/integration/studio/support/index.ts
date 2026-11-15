@@ -27,6 +27,7 @@ export {
   type Scheme,
   type TileColours,
 } from './brand';
+export { decodeIco, decodePng, drawClear, drawLogo, lettersOf, meanDifference, readBrandBytes } from './brand-files';
 export { EnvError, expect, test, type Ctx } from './check';
 export { Engine, type EngineOptions } from './engine';
 export {

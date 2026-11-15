@@ -109,3 +109,7 @@
 {"check_id": "studio.aws-clients-put-object-stores-only-what-the-command-gives", "path": "tests/integration/studio/aws-clients-cache.spec.ts", "module": "studio", "operations": ["s3:CreateBucket", "s3:PutObject", "s3:HeadObject", "s3:GetObject", "s3:DeleteObject", "s3:DeleteBucket"], "labels": [], "issue": 26}
 {"check_id": "studio.brand-symbol-holds-the-reference-numbers", "path": "tests/integration/studio/brand.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 36}
 {"check_id": "studio.brand-tile-and-app-icons-hold-their-layout", "path": "tests/integration/studio/brand.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 36}
+{"check_id": "studio.brand-logos-hold-their-layout", "path": "tests/integration/studio/brand-files.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 36}
+{"check_id": "studio.brand-social-image-holds-its-layout", "path": "tests/integration/studio/brand-files.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 36}
+{"check_id": "studio.brand-colours-are-studio-tokens", "path": "tests/integration/studio/brand-files.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 36}
+{"check_id": "studio.brand-rasters-are-their-vectors-drawn", "path": "tests/integration/studio/brand-files.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 36}
