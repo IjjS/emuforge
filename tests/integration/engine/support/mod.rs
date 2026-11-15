@@ -9,6 +9,7 @@ mod aws;
 mod body;
 mod check;
 mod chunked;
+mod close;
 mod emulator;
 mod engine;
 mod fifo;
@@ -30,6 +31,7 @@ pub use chunked::{
     ECDSA_CHUNKS, Malformed, SIGNED_CHUNKS, SIGNED_CHUNKS_TRAILER, SignedChunkUpload,
     ZERO_SIGNATURE, md5_hex, signed_chunk_pair, signed_chunk_put,
 };
+pub use close::{End, Exchange, close_exchange, direct_head};
 pub use emulator::{EmulatorFiles, OwnEmulator, direct_health, emulator_dir, sha256_file};
 pub use engine::{Engine, EngineCmd, Output};
 pub use fifo::{ENXIO, HeldFifo, open_write_nonblocking};
