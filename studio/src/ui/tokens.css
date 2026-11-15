@@ -61,14 +61,16 @@
      Instrument Sans so Latin words keep Studio's face. */
   :root:lang(ko),
   :is(.st-bar, .st-main) [lang]:lang(ko) {
-    --st-font-ui: 'Instrument Sans', 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', 'Noto Sans CJK KR',
-      ui-sans-serif, system-ui, sans-serif;
+    --st-font-ui:
+      'Instrument Sans', 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', 'Noto Sans CJK KR', ui-sans-serif,
+      system-ui, sans-serif;
   }
 
   :root:lang(ja),
   :is(.st-bar, .st-main) [lang]:lang(ja) {
-    --st-font-ui: 'Instrument Sans', 'Hiragino Sans', 'Yu Gothic UI', 'Noto Sans JP', 'Noto Sans CJK JP', ui-sans-serif,
-      system-ui, sans-serif;
+    --st-font-ui:
+      'Instrument Sans', 'Hiragino Sans', 'Yu Gothic UI', 'Noto Sans JP', 'Noto Sans CJK JP', ui-sans-serif, system-ui,
+      sans-serif;
   }
 
   @media (prefers-color-scheme: dark) {
