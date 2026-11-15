@@ -1,5 +1,5 @@
 import Modal, { type ModalProps } from '@cloudscape-design/components/modal';
-import { useCallback, useContext } from 'react';
+import { useContext } from 'react';
 
 import { AreaRootContext } from '../area-root';
 
@@ -11,18 +11,21 @@ export type AreaModalProps = Omit<ModalProps, 'modalRoot' | 'getModalRoot' | 're
  */
 export function AreaModal(props: AreaModalProps) {
   const root = useContext(AreaRootContext);
-  const getModalRoot = useCallback(() => {
-    const area = root.current;
-    if (area === null) {
-      return Promise.reject(new Error('A modal of the AWS area opened outside the area.'));
-    }
-    const container = document.createElement('div');
-    area.appendChild(container);
-    return Promise.resolve(container);
-  }, [root]);
+  // Cloudscape asks for the root in the commit that mounts the modal, where the area's root, an ancestor, may not
+  // have its ref yet; it is looked up once that commit is done.
+  const getModalRoot = () =>
+    Promise.resolve().then(() => {
+      const area = root.current;
+      if (area === null) {
+        throw new Error('A modal of the AWS area opened outside the area.');
+      }
+      const container = document.createElement('div');
+      area.appendChild(container);
+      return container;
+    });
   return <Modal {...props} getModalRoot={getModalRoot} removeModalRoot={removeModalRoot} />;
 }
 
-function removeModalRoot(container: HTMLElement): void {
-  container.remove();
+function removeModalRoot(container: HTMLElement | null): void {
+  container?.remove();
 }
