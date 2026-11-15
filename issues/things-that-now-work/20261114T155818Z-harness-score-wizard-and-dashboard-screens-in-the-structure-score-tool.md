@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: feature
 Issue-Source: plan
 Issue-Key: harness|structure-score|wizard-dashboard-specs
-Issue-Check-Ids:
+Issue-Check-Ids: harness.spec harness.score harness.records harness.capture harness.docs
 Issue-Commit: b6826962168941938001393417fa6f23f2acc5ce
 
 # Score wizard and dashboard screens in the structure score tool

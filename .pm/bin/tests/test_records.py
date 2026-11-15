@@ -8,6 +8,9 @@ case ends. Rows written directly by a case (for --table) have the fields of desi
 The detail of a matched item that rests on more than one node (`table.pagination`: two buttons) is its first node
 in document order, so text A shows `button "Previous page"`; `header.counter` shows the node `header.title`
 matched.
+
+Issue 8: the wizard cases run `specs/wizard.yaml` and `specs/dashboard.yaml` on the steps snapshots of
+`snapshots/wizard-*.json`; the result file of a wizard holds `step_urls` (requirement 5.5).
 """
 import hashlib
 import json
@@ -459,6 +462,67 @@ class Archive(RecordsCase):
         self.assertEqual(section.strip(), table.stdout.strip())
         seen = calls.read_text().splitlines() if calls.exists() else []
         self.assertEqual([c for c in seen if c.startswith(("pane close", "tab close", "agent prompt"))], [], seen)
+
+
+# ---------------------------------------------------------------------------------------------------- issue 8
+
+WIZARD = SPECS / "wizard.yaml"
+DASHBOARD = SPECS / "dashboard.yaml"
+WIZARD_SCREEN = "iam.create-role"
+
+
+class WizardRecords(RecordsCase):
+    def test_wizard_full_steps_snapshot(self):
+        p = self.structure(WIZARD, "--snapshot", self.snap("wizard-full"))
+        self.assertExit(p, 0)
+        lines = p.stdout.splitlines()
+        self.assertEqual(lines[0], "structure iam.create-role state=seeded score=100.0 (16/16) verdict=pass")
+        self.assertFalse(any(ln.startswith("requires also") for ln in lines), p.stdout)
+        r = self.result(screen=WIZARD_SCREEN)
+        self.assertEqual(r["verdict"], "pass")
+        self.assertEqual(r["step_urls"], [f"http://127.0.0.1:8102/aws/iam/roles/create?step={k}" for k in (1, 2, 3)])
+
+    def test_wizard_ignoring_the_step_fails(self):
+        p = self.structure(WIZARD, "--snapshot", self.snap("wizard-ignores-step"))
+        self.assertExit(p, 1)
+        r = self.result(screen=WIZARD_SCREEN)
+        self.assertEqual(r["verdict"], "fail")
+        self.assertEqual(r["critical_unmatched"], ["steps[Add permissions].title",
+                                                   "steps[Name, review, and create].title", "submit"])
+
+    def test_wizard_record_and_table(self):
+        self.issue(8)
+        p = self.structure(WIZARD, "--snapshot", self.snap("wizard-full"), "--record", "8", "final")
+        self.assertExit(p, 0)
+        rows = self.rows(8)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual((rows[0]["screen"], rows[0]["state"], rows[0]["verdict"]), (WIZARD_SCREEN, "seeded", "pass"))
+        self.assertEqual(rows[0]["requires"], ["seeded"])
+        table = self.structure("--table", "8")
+        self.assertExit(table, 0)
+        line = [ln for ln in table.stdout.splitlines() if ln.startswith("point final iam.create-role")]
+        self.assertEqual(line, ["point final iam.create-role: passed"], table.stdout)
+
+    def test_wizard_with_a_single_page_snapshot(self):
+        path = self.snap("full-seeded")
+        p = self.structure(WIZARD, "--snapshot", path)
+        self.assertExit(p, 2)
+        self.assertEqual(p.stderr, f"pm-structure: cannot read snapshot {path}: a wizard needs a steps snapshot\n")
+        r = self.result(screen=WIZARD_SCREEN)
+        self.assertEqual(r["verdict"], "error")
+
+    def test_dashboard_kind_refused(self):
+        p = self.structure(DASHBOARD, "--snapshot", self.snap("full-seeded"))
+        self.assertExit(p, 2)
+        self.assertEqual(p.stderr.splitlines(),
+                         [f"pm-structure: spec {DASHBOARD}: kind must be one of table, detail, form, wizard"])
+
+    def test_form_with_steps_refused(self):
+        spec = self.spec_file(FORM_SPEC + "steps:\n  - title: Choose\n", "form-steps.yaml")
+        p = self.structure(spec, "--snapshot", self.snap("form-fields"))
+        self.assertExit(p, 2)
+        self.assertEqual(p.stderr.splitlines(), [f"pm-structure: spec {spec}: steps is only for kind wizard"])
+        self.assertNotIn("is not supported", p.stderr)
 
 
 class ArchiveGuide(unittest.TestCase):

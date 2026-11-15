@@ -14,6 +14,13 @@ checkout's Studio Vite, and served from two copies of the build: one whose `data
 Result fields read (design 2.2, 2.5): the snapshot `<screen>-<state>.ax.json` (`url`, `viewport`, `browser`,
 `nodes`), the result `<screen>-<state>.json` (`items[]` with `id` and `status`, `url`, `viewport`, `browser`,
 and the blocked URLs among its values).
+
+Issue 8: the wizard pages `fixtures/structure/pages/wizard-<case>/index.html` read `?step=<k>` and render that
+step; they are scored against `specs/wizard.yaml` (screen `iam.create-role`). A wizard run writes the steps file
+`<screen>-<state>.ax.json` (`pm-structure-steps/1`) and the result's `step_urls`; a file of a single step left under
+`<wt>/output/structure/` is any file there whose name holds `step` (the screen's name holds none). The
+Cloudscape wizard fixture (`fixtures/structure/cloudscape-wizard/`, its spec beside it) is built like the
+Cloudscape fixture, into <checkout>/studio/output/structure-cloudscape-wizard-<pid>/.
 """
 import http.server
 import json
@@ -414,6 +421,190 @@ class Cloudscape(CaptureCase):
         s = statuses(self.result("empty", self.SCREEN))
         self.assertEqual(s["table.empty.title"], "matched")
         self.assertEqual(s["table.empty.action"], "matched")
+
+
+# ---------------------------------------------------------------------------------------------------- issue 8
+
+WIZARD = FIXTURES / "specs" / "wizard.yaml"
+WIZARD_SCREEN = "iam.create-role"
+WIZARD_ROUTE = "/aws/iam/roles/create"
+CLOUDSCAPE_WIZARD = FIXTURES / "cloudscape-wizard"
+
+
+class WizardCaptureCase(CaptureCase):
+    def wizard(self, case, *args, spec=WIZARD, port=None, **kw):
+        return self.structure("--serve", PAGES / case, "--port", port or free_port(), *args, spec=spec, **kw)
+
+    def wizard_result(self):
+        return self.result(screen=WIZARD_SCREEN)
+
+    def steps_file(self):
+        return self.out / f"{WIZARD_SCREEN}-seeded.ax.json"
+
+    def step_files(self):
+        """Files of a single step left under <wt>/output/structure/."""
+        return sorted(p.name for p in self.out.iterdir() if "step" in p.name) if self.out.exists() else []
+
+    def step_logs(self):
+        logs = self.wt / "output" / "logs"
+        return sorted(p.name for p in logs.glob(f"structure-capture-{WIZARD_SCREEN}-seeded-step*.log")) \
+            if logs.exists() else []
+
+
+class WizardPages(WizardCaptureCase):
+    def test_full_steps_file_and_rescore(self):
+        p = self.wizard("wizard-full")
+        self.assertExit(p, 0)
+        self.assertIn(" score=100.0 ", p.stdout.splitlines()[0])
+        steps = json.loads(self.steps_file().read_text())
+        self.assertEqual(steps["format"], "pm-structure-steps/1")
+        self.assertEqual(len(steps["steps"]), 3)
+        for k, entry in enumerate(steps["steps"], 1):
+            self.assertEqual(entry["format"], "pm-structure-snapshot/1")
+            self.assertTrue(entry["url"].endswith(f"{WIZARD_ROUTE}?step={k}"), entry["url"])
+        again = self.structure("--snapshot", self.steps_file(), spec=WIZARD)
+        self.assertExit(again, 0)
+        self.assertEqual(again.stdout.encode(), p.stdout.encode())
+        self.assertEqual(list(self.out.glob("*.step*.tmp.json")), [])
+
+    def test_page_ignoring_the_step(self):
+        p = self.wizard("wizard-ignores-step")
+        self.assertExit(p, 1)
+        reasons = " ".join(self.reasons(p))
+        for item in ("steps[Add permissions].title", "steps[Name, review, and create].title", "submit"):
+            self.assertIn(item, reasons, p.stdout)
+
+    def test_page_validating_on_next(self):
+        p = self.wizard("wizard-validates")
+        self.assertExit(p, 0)
+        self.assertIn(" score=100.0 ", p.stdout.splitlines()[0])
+        # a click on Next would add the alert "Use case is required." to step 1's tree
+        step1 = json.loads(self.steps_file().read_text())["steps"][0]["nodes"]
+        self.assertEqual([n for n in step1 if n["role"] == "alert" or "is required" in n["name"]], [])
+
+    def test_step_answering_404(self):
+        index = (PAGES / "wizard-full" / "index.html").read_bytes()
+
+        class StepTwoMissing(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+                body, status, kind = (b"not found\n", 404, "text/plain") if query.get("step") == ["2"] \
+                    else (index, 200, "text/html; charset=utf-8")
+                self.send_response(status)
+                self.send_header("Content-Type", kind)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), StepTwoMissing)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        p = self.structure("--url", base, spec=WIZARD)
+        self.assertExit(p, 2)
+        self.assertOneErrorLine(p, f"cannot open {base}{WIZARD_ROUTE}?step=2: 404")
+        self.assertFalse(self.steps_file().exists())
+        self.assertEqual(self.step_files(), [])
+        self.assertEqual(self.wizard_result()["verdict"], "error")
+        self.assertEqual(self.wizard_result()["url"], f"{base}{WIZARD_ROUTE}?step=1")
+
+    def test_step_never_settling(self):
+        port = free_port()
+        p = self.wizard("wizard-restless-step3", port=port)
+        self.assertExit(p, 2)
+        self.assertOneErrorLine(p, f"http://127.0.0.1:{port}{WIZARD_ROUTE}?step=3 did not settle within 10 s")
+        self.assertEqual(list(self.out.glob("*.ax.json")), [])
+        self.assertEqual(self.step_files(), [])
+
+    def test_foreign_request_on_one_step(self):
+        p = self.wizard("wizard-foreign-step2")
+        self.assertExit(p, 0)  # decided by the items alone
+        header, listed = self.blocked_lines(p)
+        self.assertEqual(header, "blocked requests (1)")
+        self.assertEqual(len([ln for ln in listed if "http://example.com/x.js" in ln]), 1, p.stdout)
+
+    def test_one_capture_log_per_step_one_server(self):
+        port = free_port()
+        self.assertExit(self.wizard("wizard-full", port=port), 0)
+        self.assertEqual(self.step_logs(), [f"structure-capture-{WIZARD_SCREEN}-seeded-step{k}.log" for k in (1, 2, 3)])
+        urls = self.wizard_result()["step_urls"]
+        self.assertEqual(len(urls), 3)
+        self.assertEqual({urllib.parse.urlsplit(u).port for u in urls}, {port})
+
+    def test_same_wizard_page_twice(self):
+        port = free_port()
+        first = self.wizard("wizard-full", port=port)
+        self.assertExit(first, 0)
+        steps1 = json.loads(self.steps_file().read_text())
+        second = self.wizard("wizard-full", port=port)
+        self.assertExit(second, 0)
+        steps2 = json.loads(self.steps_file().read_text())
+        self.assertEqual(steps1, steps2)
+        self.assertEqual(first.stdout.encode(), second.stdout.encode())
+
+    def test_omitted_step_is_not_opened(self):
+        p = self.wizard("wizard-full", spec=FIXTURES / "specs" / "wizard-omit-step.yaml")
+        self.assertIn(p.returncode, (0, 1), f"stdout:\n{p.stdout}\nstderr:\n{p.stderr}")
+        log = (self.wt / "output" / "logs" / "structure-server.log").read_text()
+        self.assertIn(f"{WIZARD_ROUTE}?step=1 ", log)
+        self.assertIn(f"{WIZARD_ROUTE}?step=2 ", log)
+        self.assertNotIn("step=3", log)
+
+    def test_url_not_loopback_refused_before_any_step(self):
+        port = free_port()
+        p = self.structure("--url", f"http://10.0.0.1:{port}", spec=WIZARD)
+        self.assertExit(p, 2)
+        self.assertOneErrorLine(p, f"refused: http://10.0.0.1:{port} is not a loopback address")
+        self.assertEqual(self.step_logs(), [])
+        self.assertEqual(self.step_files(), [])
+
+    def test_caller_secrets_never_reach_a_wizard_run(self):
+        profile, secret = "decoy-profile-wizard-5d2e", "decoy-secret-wizard-81c7"
+        p = self.wizard("wizard-full", env=clean_env(AWS_PROFILE=profile, AWS_SECRET_ACCESS_KEY=secret))
+        self.assertExit(p, 0)
+        self.assertTrue(self.steps_file().is_file())
+        self.assertNowhere([profile, secret], [p])
+
+
+class CloudscapeWizard(CaptureCase):
+    """The page built from real Cloudscape Wizard, opened at ?step=<k>, scores 100 against its spec (requirement 8)."""
+
+    SPEC = CLOUDSCAPE_WIZARD / "spec.yaml"
+    _build = None
+
+    @classmethod
+    def tearDownClass(cls):
+        if cls._build is not None:
+            shutil.rmtree(cls._build[0], True)
+
+    def build(self):
+        """Build the fixture once per run with the checkout's Studio Vite; returns its dist directory."""
+        cls = type(self)
+        if cls._build is None:
+            work = STUDIO / "output" / f"structure-cloudscape-wizard-{os.getpid()}"
+            if work.exists():
+                shutil.rmtree(work)
+            shutil.copytree(CLOUDSCAPE_WIZARD, work, ignore=shutil.ignore_patterns("spec.yaml"))
+            vite = NODE_MODULES / ".bin" / "vite"
+            env = {k: os.environ[k] for k in ("PATH", "HOME", "TMPDIR", "LANG") if k in os.environ}
+            p = subprocess.run([str(vite), "build", str(work), "--outDir", "dist", "--emptyOutDir", "--logLevel",
+                                "warn"], cwd=work, capture_output=True, text=True, env=env, timeout=300)
+            cls._build = (work, p)
+        work, p = cls._build
+        if p.returncode != 0 or not (work / "dist" / "index.html").is_file():
+            self.fail(f"vite build of the Cloudscape wizard fixture failed ({p.returncode}):\n{p.stdout}\n{p.stderr}")
+        return work / "dist"
+
+    def test_cloudscape_wizard_scores_100(self):
+        p = self.structure("--serve", self.build(), "--port", free_port(), spec=self.SPEC)
+        self.assertExit(p, 0)
+        lines = p.stdout.splitlines()
+        self.assertIn(" score=100.0 ", lines[0])
+        self.assertIn("unmatched (0)", lines)
 
 
 if __name__ == "__main__":
