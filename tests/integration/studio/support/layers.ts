@@ -1291,7 +1291,7 @@ export function cloudscapeFontFamilies(ctx: Ctx): string[] {
 }
 
 /** A context of the same browser for a reference document: the scheme given, nothing reaching the network. */
-async function referenceContext(browser: Browser, scheme: Scheme): Promise<BrowserContext> {
+export async function referenceContext(browser: Browser, scheme: Scheme): Promise<BrowserContext> {
   const context = await browser.newContext({
     colorScheme: scheme,
     viewport: { width: 1280, height: 800 },
