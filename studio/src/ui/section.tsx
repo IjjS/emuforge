@@ -23,7 +23,7 @@ export function Section({ title, counter, meta, children }: SectionProps) {
       aria-labelledby={headingId}
       aria-describedby={meta === undefined ? undefined : metaId}
     >
-      <header>
+      <div className="st-section-head">
         <h2 id={headingId}>
           {title}
           {counter !== undefined && (
@@ -38,7 +38,7 @@ export function Section({ title, counter, meta, children }: SectionProps) {
             {meta}
           </p>
         )}
-      </header>
+      </div>
       {children}
     </section>
   );

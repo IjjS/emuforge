@@ -7,7 +7,7 @@ import {
   present,
   renderApp,
   row,
-  connectionAlert,
+  connectionNotice,
   TOKEN_1,
   TOKEN_2,
 } from '../../features/home/home-test-kit';
@@ -29,7 +29,7 @@ afterEach(() => {
 });
 
 function alertText(): string {
-  return (connectionAlert().getElement().textContent ?? '').replace(/\s+/g, ' ').trim();
+  return (connectionNotice().textContent ?? '').replace(/\s+/g, ' ').trim();
 }
 
 /** Which engine route each engine request went to, in order. */

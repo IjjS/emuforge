@@ -6,7 +6,7 @@
     margin-top: 40px;
   }
 
-  .st-section > header {
+  .st-section-head {
     display: flex;
     align-items: baseline;
     flex-wrap: wrap;
