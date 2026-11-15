@@ -6,6 +6,7 @@ import type { Locator, Page, Response } from '@playwright/test';
 
 import { expect, startStack, test } from './support';
 import {
+  ACTION,
   addressOf,
   cloudscapeElements,
   expectHome,
@@ -89,6 +90,7 @@ async function lookOf(link: Locator): Promise<LinkLook> {
       return { color: style.color, cursor: style.cursor, mark };
     },
     { own: MARK_PROPERTIES, pseudo: PSEUDO_PROPERTIES },
+    ACTION,
   );
 }
 
@@ -115,17 +117,17 @@ test('studio.frame-leads-between-layers', async ({ ctx, page }) => {
     async () => {
       await page.goto('/');
       await expectHome(page);
-      await f.aws.click();
+      await f.aws.click(ACTION);
       await expect(page).toHaveURL(addressOf('/aws'));
       await expectInAwsArea(page, 'Amazon Web Services');
       await expect(f.aws).toHaveAttribute('aria-current', 'page');
-      await f.home.click();
+      await f.home.click(ACTION);
       await expectHome(page);
       await expect(f.home).toHaveAttribute('aria-current', 'page');
-      await providersSection(page).getByRole('link', { name: 'Amazon Web Services', exact: true }).click();
+      await providersSection(page).getByRole('link', { name: 'Amazon Web Services', exact: true }).click(ACTION);
       await expect(page).toHaveURL(addressOf('/aws'));
       await expectInAwsArea(page, 'Amazon Web Services');
-      await f.wordmark.click();
+      await f.wordmark.click(ACTION);
       await expectHome(page);
     },
   );
@@ -143,8 +145,11 @@ test('studio.frame-leads-between-layers', async ({ ctx, page }) => {
           found.push(`${path}: ${String(await f.banner.count())} frame banners`);
           continue;
         }
-        const nested = await f.banner.evaluate((banner) =>
-          [...document.querySelectorAll('main, [role="main"]')].some((m) => m.contains(banner) || banner.contains(m)),
+        const nested = await f.banner.evaluate(
+          (banner) =>
+            [...document.querySelectorAll('main, [role="main"]')].some((m) => m.contains(banner) || banner.contains(m)),
+          undefined,
+          ACTION,
         );
         if (nested) found.push(`${path}: the frame's banner and a main landmark are nested`);
       }
@@ -169,7 +174,7 @@ test('studio.frame-leads-between-layers', async ({ ctx, page }) => {
             const where = `${path}, ${String(width)} wide, ${colorScheme}`;
             await openPage(page, path, h1);
             await rest(page);
-            if ((await current.getAttribute('aria-current')) === null) {
+            if ((await current.getAttribute('aria-current', ACTION)) === null) {
               found.push(`${where}: the current link has no aria-current`);
               continue;
             }
@@ -194,7 +199,8 @@ test('studio.frame-leads-between-layers', async ({ ctx, page }) => {
             ['Home', f.home],
             ['AWS', f.aws],
           ] as const) {
-            if ((await link.getAttribute('aria-current')) !== null) found.push(`${where}: "${name}" has aria-current`);
+            if ((await link.getAttribute('aria-current', ACTION)) !== null)
+              found.push(`${where}: "${name}" has aria-current`);
             if (unmarked === null) continue;
             const look = await lookOf(link);
             const differs = markDiffers(look, unmarked);
@@ -220,7 +226,7 @@ test('studio.frame-leads-between-layers', async ({ ctx, page }) => {
         { path: '/aws/s3', h1: 'Amazon Simple Storage Service' },
       ]) {
         await openPage(page, path, h1);
-        const bar = await f.banner.boundingBox();
+        const bar = await f.banner.boundingBox(ACTION);
         if (bar === null) {
           found.push(`${path}: the frame's banner is not drawn`);
           continue;
@@ -231,7 +237,7 @@ test('studio.frame-leads-between-layers', async ({ ctx, page }) => {
           ['AWS', f.aws],
         ] as const) {
           await expect(link, `"${name}" on ${path}`).toBeVisible();
-          const box = await link.boundingBox();
+          const box = await link.boundingBox(ACTION);
           if (box === null) {
             found.push(`${path}: "${name}" is not drawn`);
             continue;
@@ -336,7 +342,7 @@ test('studio.aws-area-loads-only-when-opened', async ({ ctx, page, context }) =>
     async () => {
       await assets.settle();
       choice = Date.now();
-      await frame(page).aws.click();
+      await frame(page).aws.click(ACTION);
       await expect(page).toHaveURL(addressOf('/aws'));
       await expectInAwsArea(page, 'Amazon Web Services');
       await page.waitForLoadState('networkidle', { timeout: 10_000 });

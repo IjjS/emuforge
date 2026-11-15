@@ -6,6 +6,7 @@
 
 import { expect, startStack, test } from './support';
 import {
+  ACTION,
   addressOf,
   BREADCRUMB_GROUP,
   breadcrumbs,
@@ -32,7 +33,7 @@ test('studio.service-routes-say-no-screen-yet', async ({ ctx, page }) => {
     async () => {
       await page.goto('/');
       await expectHome(page);
-      await providersSection(page).getByRole('link', { name: S3, exact: true }).click();
+      await providersSection(page).getByRole('link', { name: S3, exact: true }).click(ACTION);
       await expectNoScreenYet(page, S3, '/aws/s3');
     },
   );
@@ -42,7 +43,7 @@ test('studio.service-routes-say-no-screen-yet', async ({ ctx, page }) => {
     async () => {
       await page.goto('/aws/dynamodb');
       await expectNoScreenYet(page, DYNAMODB, '/aws/dynamodb');
-      await page.locator(SIDE_NAVIGATION).getByRole('link', { name: S3, exact: true }).click();
+      await page.locator(SIDE_NAVIGATION).getByRole('link', { name: S3, exact: true }).click(ACTION);
       await expectNoScreenYet(page, S3, '/aws/s3');
     },
   );
@@ -64,7 +65,7 @@ test('studio.service-routes-say-no-screen-yet', async ({ ctx, page }) => {
       await expectNoScreenYet(page, S3, '/aws/s3');
       await page.goForward();
       await expectNoScreenYet(page, DYNAMODB, '/aws/dynamodb/tables');
-      await page.getByRole('link', { name: 'Go to Home', exact: true }).click();
+      await page.getByRole('link', { name: 'Go to Home', exact: true }).click(ACTION);
       await expectHome(page);
     },
   );
@@ -79,7 +80,7 @@ test('studio.unknown-route-shows-page-not-found', async ({ ctx, page }) => {
   // choose "Go to Home" → Home.
   await page.goto('/does-not-exist/today');
   await expectStudioNotFound(page, '/does-not-exist/today');
-  await page.getByRole('link', { name: 'Go to Home', exact: true }).click();
+  await page.getByRole('link', { name: 'Go to Home', exact: true }).click(ACTION);
   await expectHome(page);
 });
 
@@ -122,7 +123,7 @@ test('studio.aws-area-unknown-path-shows-page-not-found', async ({ ctx, page }) 
     .locator(BREADCRUMB_GROUP)
     .getByRole('link', { name: 'Amazon Web Services', exact: true })
     .filter({ visible: true })
-    .click();
+    .click(ACTION);
   await expect(page).toHaveURL(addressOf('/aws'));
   await expect(heading(page, 'Amazon Web Services')).toBeVisible();
 });

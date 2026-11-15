@@ -8,6 +8,12 @@ import type { Locator, Page } from '@playwright/test';
 
 import { expect } from './check';
 
+/**
+ * The bound of every action on an element (choose, read, measure): an element that is not on the page fails the
+ * action after it, never the whole check by its timeout.
+ */
+export const ACTION = { timeout: 10_000 };
+
 /** The AWS area's Cloudscape `SideNavigation` (requirement R5.2), wherever its layout puts it. */
 export const SIDE_NAVIGATION = createWrapper().findSideNavigation().toSelector();
 /** The side navigation's active item. */
@@ -68,7 +74,7 @@ export async function inCloudscape(locator: Locator): Promise<boolean> {
       if ([...at.classList].some((c) => c.startsWith('awsui'))) return true;
     }
     return false;
-  });
+  }, ACTION);
 }
 
 /** Every element of the document that carries a Cloudscape class, as `tag.class` (at most 10 listed). */

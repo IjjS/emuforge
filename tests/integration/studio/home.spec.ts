@@ -21,7 +21,7 @@ import {
   startCommandLines,
   stillSamePage,
 } from './support/home';
-import { frame, heading, NAVIGATION_TOGGLE, providersSection, SIDE_NAVIGATION } from './support/frame';
+import { ACTION, frame, heading, NAVIGATION_TOGGLE, providersSection, SIDE_NAVIGATION } from './support/frame';
 import { Lines } from './support/lines';
 import { HEALTH_PATH, latestEmulatorMessage, Traffic } from './support/traffic';
 
@@ -262,6 +262,15 @@ async function darkModeHolders(page: Page) {
   }, SIDE_NAVIGATION);
 }
 
+/** True when `locator` is visible within the bound; false when it is not, never an error. */
+async function shown(locator: Locator): Promise<boolean> {
+  return locator
+    .first()
+    .waitFor({ state: 'visible', timeout: ACTION.timeout })
+    .then(() => true)
+    .catch(() => false);
+}
+
 async function htmlColorScheme(page: Page): Promise<string> {
   return page.evaluate(() => getComputedStyle(document.documentElement).colorScheme);
 }
@@ -342,50 +351,82 @@ test('studio.shell-finish', async ({ ctx, page, context }) => {
   await lines.line(
     "(changed) Open `/` with the browser's colour scheme dark → `html`'s computed `color-scheme` is `dark`; open `/aws/s3` → the area's root has `awsui-dark-mode` and `body` has no `awsui-` class; with the scheme light → `html`'s `color-scheme` is `light` and no element has `awsui-dark-mode` — 1280 wide",
     async () => {
+      const found: string[] = [];
       await page.setViewportSize({ width: 1280, height: 800 });
       await page.emulateMedia({ colorScheme: 'dark' });
       await page.goto('/');
       await expect(heading(page, 'Home')).toBeVisible();
-      expect(await htmlColorScheme(page), 'html color-scheme on / in dark').toBe('dark');
+      const darkScheme = await htmlColorScheme(page);
+      if (darkScheme !== 'dark') found.push(`/ in dark: html's color-scheme is "${darkScheme}"`);
       await page.goto('/aws/s3');
-      await expect(heading(page, 'Amazon Simple Storage Service')).toBeVisible();
-      expect(await darkModeHolders(page), 'awsui-dark-mode on /aws/s3 in dark').toEqual({
-        holders: [expect.any(String)],
-        rootIsHtmlOrBody: false,
-        rootHoldsArea: true,
-        rootHoldsBanner: false,
-        bodyAwsuiClasses: [],
-      });
-      await page.emulateMedia({ colorScheme: 'light' });
-      for (const { path, h1 } of [
-        { path: '/', h1: 'Home' },
-        { path: '/aws/s3', h1: 'Amazon Simple Storage Service' },
-      ]) {
-        await page.goto(path);
-        await expect(heading(page, h1)).toBeVisible();
-        expect(await htmlColorScheme(page), `html color-scheme on ${path} in light`).toBe('light');
-        expect((await darkModeHolders(page)).holders, `elements with awsui-dark-mode on ${path} in light`).toEqual([]);
+      await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+      if (!(await shown(heading(page, 'Amazon Simple Storage Service')))) {
+        found.push('/aws/s3 in dark: no "Amazon Simple Storage Service" header');
       }
+      const dark = await darkModeHolders(page);
+      ctx.log(`awsui-dark-mode on /aws/s3 in dark: ${JSON.stringify(dark)}`);
+      if (dark.holders.length !== 1) {
+        found.push(
+          `/aws/s3 in dark: ${String(dark.holders.length)} elements carry awsui-dark-mode (${dark.holders.join(', ')})`,
+        );
+      }
+      if (dark.rootIsHtmlOrBody) found.push('/aws/s3 in dark: awsui-dark-mode is on html or body');
+      if (dark.holders.length === 1 && !dark.rootHoldsArea) {
+        found.push('/aws/s3 in dark: the element with awsui-dark-mode does not hold the area');
+      }
+      if (dark.rootHoldsBanner)
+        found.push("/aws/s3 in dark: the element with awsui-dark-mode holds the frame's banner");
+      if (dark.bodyAwsuiClasses.length > 0) found.push(`/aws/s3 in dark: body has ${dark.bodyAwsuiClasses.join(' ')}`);
+      await page.emulateMedia({ colorScheme: 'light' });
+      for (const path of ['/', '/aws/s3']) {
+        await page.goto(path);
+        await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+        const scheme = await htmlColorScheme(page);
+        if (scheme !== 'light') found.push(`${path} in light: html's color-scheme is "${scheme}"`);
+        const holders = (await darkModeHolders(page)).holders;
+        if (holders.length > 0) found.push(`${path} in light: awsui-dark-mode on ${holders.join(', ')}`);
+      }
+      expect(found).toEqual([]);
     },
   );
 
   await lines.line(
     "(changed) Open `/aws` at 390 wide → the area's side navigation is collapsed behind its toggle, and opening it lists the 19 services; open `/` at 390 wide → the frame's items are visible and Home's \"Providers\" section lists the 19 services — 390 wide",
     async () => {
+      const found: string[] = [];
       await page.setViewportSize({ width: 390, height: 844 });
       await page.goto('/aws');
-      await expect(heading(page, 'Amazon Web Services')).toBeVisible();
-      await expect(page.locator(SIDE_NAVIGATION)).toBeHidden();
-      await page.locator(NAVIGATION_TOGGLE).click();
-      await expect(page.locator(SIDE_NAVIGATION)).toBeVisible();
-      const listed = await page.locator(SIDE_NAVIGATION).getByRole('link').allInnerTexts();
-      expect(listed.map((t) => t.trim()).filter((t) => SERVICE_LABELS.includes(t))).toEqual(SERVICE_LABELS);
+      await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+      if (!(await shown(heading(page, 'Amazon Web Services')))) found.push('/aws: no "Amazon Web Services" header');
+      const nav = page.locator(SIDE_NAVIGATION);
+      if (await shown(nav)) found.push('/aws at 390: the side navigation is not collapsed');
+      else if (!(await shown(page.locator(NAVIGATION_TOGGLE)))) found.push('/aws at 390: no navigation toggle');
+      else {
+        await page.locator(NAVIGATION_TOGGLE).click(ACTION);
+        await expect(nav, 'the side navigation, opened').toBeVisible();
+        const listed = (await nav.getByRole('link').allInnerTexts()).map((t) => t.trim());
+        const services = listed.filter((t) => SERVICE_LABELS.includes(t));
+        if (JSON.stringify(services) !== JSON.stringify(SERVICE_LABELS)) {
+          found.push(`/aws at 390: the opened side navigation lists ${JSON.stringify(services)}`);
+        }
+      }
 
       await page.goto('/');
       await expect(heading(page, 'Home')).toBeVisible();
-      for (const link of [f.wordmark, f.home, f.aws]) await expect(link).toBeVisible();
-      const services = await providersSection(page).getByRole('link').filter({ visible: true }).allInnerTexts();
-      expect(services.map((t) => t.trim()).filter((t) => SERVICE_LABELS.includes(t))).toEqual(SERVICE_LABELS);
+      for (const [name, link] of [
+        ['EmuForge Studio', f.wordmark],
+        ['Home', f.home],
+        ['AWS', f.aws],
+      ] as const) {
+        if (!(await shown(link))) found.push(`/ at 390: the frame's "${name}" is not visible`);
+      }
+      const services = (await providersSection(page).getByRole('link').filter({ visible: true }).allInnerTexts())
+        .map((t) => t.trim())
+        .filter((t) => SERVICE_LABELS.includes(t));
+      if (JSON.stringify(services) !== JSON.stringify(SERVICE_LABELS)) {
+        found.push(`/ at 390: Home's "Providers" section lists ${JSON.stringify(services)}`);
+      }
+      expect(found).toEqual([]);
     },
   );
 
