@@ -68,3 +68,7 @@
 {"check_id": "engine.relay-s3-signed-chunk-put-survives-emulator-restart", "path": "tests/integration/engine/tests/relay_signed_chunks.rs", "module": "engine", "operations": ["s3:CreateBucket", "s3:PutObject", "s3:GetObject", "s3:DeleteObject", "s3:DeleteBucket"], "labels": ["own-emulator", "lifecycle"], "issue": 9}
 {"check_id": "studio.checks-browser-language-is-english", "path": "tests/integration/studio/languages-browser.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 17}
 {"check_id": "studio.home-kill-notice-stop-step-names-container", "path": "tests/integration/studio/home-kill-notice.spec.ts", "module": "studio", "operations": [], "labels": ["own-emulator", "lifecycle", "regression"], "issue": 18}
+{"check_id": "studio.skip-link-reaches-page-content", "path": "tests/integration/studio/focus.spec.ts", "module": "studio", "operations": [], "labels": ["regression"], "issue": 19}
+{"check_id": "studio.route-change-focuses-new-page-content", "path": "tests/integration/studio/focus.spec.ts", "module": "studio", "operations": [], "labels": ["regression"], "issue": 19}
+{"check_id": "studio.focus-moves-change-nothing-on-screen", "path": "tests/integration/studio/focus.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 19}
+{"check_id": "studio.first-load-keeps-focus-at-document-start", "path": "tests/integration/studio/focus.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 19}

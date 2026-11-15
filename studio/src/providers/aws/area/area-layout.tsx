@@ -1,7 +1,7 @@
 import AppLayout from '@cloudscape-design/components/app-layout';
 import BreadcrumbGroup, { type BreadcrumbGroupProps } from '@cloudscape-design/components/breadcrumb-group';
 import SideNavigation, { type SideNavigationProps } from '@cloudscape-design/components/side-navigation';
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useLocation } from 'react-router';
 
 import { AWS_NAME, AWS_PATH, servicePath } from '../identity';
@@ -10,6 +10,7 @@ import { areaPage, areaPageTitle, type AreaPage } from './area-page';
 import { AreaRootContext } from './area-root';
 import { AREA_ROOT_CLASS } from './styles/root-class';
 import { useColourMode } from './colour-mode';
+import { ContentTarget } from './components/content-target';
 import { useFollow } from './components/use-follow';
 import { IndexPage } from './pages/index-page';
 import { NoScreenPage } from './pages/no-screen-page';
@@ -21,6 +22,10 @@ export interface AreaLayoutProps {
   headerSelector: string;
   /** Called with the title of the page shown, its `h1`, whenever it changes. */
   onPageTitle: (title: string) => void;
+  /** Called with a function that focuses the content target of the page shown, and with `null` once it is gone. */
+  onContentTarget: (focus: (() => void) | null) => void;
+  /** Route changes since the document loaded: `0` on a first load, one more on each change of path. */
+  routeChanges: number;
 }
 
 const NAVIGATION_ITEMS: SideNavigationProps.Item[] = [
@@ -67,9 +72,10 @@ function PageContent({ page }: { page: AreaPage }) {
 
 /**
  * The AWS area, at `/aws` and below, as the AWS console: an `AppLayout` with the side navigation of the services
- * and breadcrumbs, no tools panel. Its root element carries Cloudscape's mode and scopes Cloudscape's base.
+ * and breadcrumbs, no tools panel. Its root element carries Cloudscape's mode and scopes Cloudscape's base. It names
+ * its content target to Studio and moves focus to it after a route change.
  */
-export function AreaLayout({ headerSelector, onPageTitle }: AreaLayoutProps) {
+export function AreaLayout({ headerSelector, onPageTitle, onContentTarget, routeChanges }: AreaLayoutProps) {
   const { pathname } = useLocation();
   const handleFollow = useFollow();
   const root = useRef<HTMLDivElement>(null);
@@ -80,6 +86,24 @@ export function AreaLayout({ headerSelector, onPageTitle }: AreaLayoutProps) {
   useEffect(() => {
     onPageTitle(title);
   }, [onPageTitle, title]);
+
+  // The page's content target: named to Studio for "Skip to content", focused after a route change once the page
+  // has rendered (on the area's first render too, when a route change opened it), never on a first load.
+  const target = useRef<HTMLElement>(null);
+  const focusTarget = useCallback(() => {
+    target.current?.focus();
+  }, []);
+  useEffect(() => {
+    onContentTarget(focusTarget);
+    return () => {
+      onContentTarget(null);
+    };
+  }, [onContentTarget, focusTarget]);
+  useEffect(() => {
+    if (routeChanges > 0) {
+      focusTarget();
+    }
+  }, [routeChanges, focusTarget]);
 
   return (
     <div ref={root} className={AREA_ROOT_CLASS}>
@@ -99,7 +123,12 @@ export function AreaLayout({ headerSelector, onPageTitle }: AreaLayoutProps) {
               onFollow={handleFollow}
             />
           }
-          content={<PageContent page={page} />}
+          content={
+            // One target per path, so a route change between two paths of the same page focuses a new element.
+            <ContentTarget key={pathname} targetRef={target}>
+              <PageContent page={page} />
+            </ContentTarget>
+          }
         />
       </AreaRootContext>
     </div>
