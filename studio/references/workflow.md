@@ -40,6 +40,8 @@ An issue that touches both a `console` and a `native` screen is split.
   its segment (`/aws/...`).
 - The grade, as it follows from the layer.
 - What is out of scope, including parts of the AWS screen that are deliberately left out and why.
+- For a screen of Studio's own layer, its text in English: every visible text, accessible name and announcement, as
+  it will read in the English catalogue. The requirement does not give the other languages.
 
 ## 2. Screen
 
@@ -59,9 +61,15 @@ Per `references/test-criteria.md`, before any code.
 In the issue's worktree, on its branch, only the files the unit owns. Conventions: `studio/AGENTS.md`, with the
 rules of the layer the unit's files are in and the import boundaries between the layers.
 
+The unit that adds or changes a text of Studio's own layer adds its key to every catalogue of `i18n/messages/` in
+that unit: English in the requirement's wording, every other language translated in its catalogue's register with
+the glossary's terms (`studio/AGENTS.md`, "Languages of Studio's own layer"). Its breakdown gives it the catalogues
+for those keys, and `rev` reviews the register in that unit's review. Text inside a provider area is English only.
+
 ## 5. Critique
 
-`crit` captures the implemented screens from the running app and scores them per `references/critique.md`.
+`crit` captures the implemented screens from the running app and scores them per `references/critique.md`, in
+English and, for a screen of Studio's own layer, in German and Thai as well ("Captures and languages").
 A screen that does not reach its pass line goes back to the worker once, then is scored again.
 
 Then: the commands in `studio/AGENTS.md` pass, every integration check listed in stage 3 passes against a fresh
