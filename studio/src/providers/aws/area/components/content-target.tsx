@@ -13,18 +13,24 @@ interface ContentTargetProps {
  * The area's content target (form (b) of the content target, as Studio's provider contract asks): a region inside
  * `AppLayout`'s content, past the side navigation and the breadcrumbs, that holds the page's `h1` and its controls
  * and is named by the `h1`. It takes focus from script only, never from Tab, and draws no ring. Cloudscape's `Header`
- * gives its `h1` no id, so the region gives it one to be named by.
+ * gives its `h1` no id, so the region gives it one to be named by; an id the `h1` already has is kept and used.
  */
 export function ContentTarget({ targetRef, children }: ContentTargetProps) {
   const headingId = useId();
+  // Before the page is painted, on every render: the region is named by its `h1`, under the id the `h1` has.
   useLayoutEffect(() => {
-    const heading = targetRef.current?.querySelector('h1');
-    if (heading != null && heading.id !== headingId) {
+    const region = targetRef.current;
+    const heading = region?.querySelector('h1');
+    if (region == null || heading == null) {
+      return;
+    }
+    if (heading.id === '') {
       heading.id = headingId;
     }
+    region.setAttribute('aria-labelledby', heading.id);
   });
   return (
-    <section ref={targetRef} className="aws-area-content" tabIndex={-1} aria-labelledby={headingId}>
+    <section ref={targetRef} className="aws-area-content" tabIndex={-1}>
       {children}
     </section>
   );

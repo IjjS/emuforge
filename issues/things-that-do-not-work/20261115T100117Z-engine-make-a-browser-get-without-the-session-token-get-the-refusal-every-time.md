@@ -33,6 +33,10 @@ engine's refusal.
 - Four earlier full runs on the same branch (`5b98463`, `9da3e2f` twice, `0590dcc`) passed this check.
 - In the same failing run the engine's own check `studio_relay_refuses_without_current_session`
   (`tests/integration/engine/tests/studio_relay.rs`), which sends its requests without a browser, passed.
+- The failing `GET` repeats a URL the browser had just fetched with the token, and it got that `GET`'s status and
+  body, so an answer from the browser's HTTP cache is not ruled out. If that is so, a relayed answer that needed
+  the session can be served by the browser without it: the relayed answer's caching headers are the first thing to
+  look at.
 
 ## Steps to Reproduce
 
