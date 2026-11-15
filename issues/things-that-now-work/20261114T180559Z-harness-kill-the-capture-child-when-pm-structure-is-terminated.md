@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: bug
 Issue-Source: worker
 Issue-Key: harness|pm-structure-terminated-child|cleanup
-Issue-Check-Ids:
+Issue-Check-Ids: harness.proc harness.terminate
 Issue-Commit: 6392e41fb16259aaffe741be6f84dec6fa404fd2
 
 # Kill the capture child when pm-structure is terminated
