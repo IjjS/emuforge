@@ -101,11 +101,21 @@ Undecided:
 
 ## Brand Commitments
 
-The names "EmuForge" and "EmuForge Studio" are binding. No logo, colour or voice is binding.
+Binding: the names "EmuForge" and "EmuForge Studio", and the symbol: the head and neck of an emu in profile,
+facing right, with a crest of pointed feathers at the back of the crown, an almond eye cut out as a hole, a pointed
+beak and a neck curving down to the left, as one closed silhouette in one flat colour (`brand/symbol.svg`; the
+owner's decision in issue #36).
+
+Not commitments: the tile the symbol sits on, the lock-ups (the compact and the primary logo), the app icons, the
+social image, their colours, their letters and their proportions, and the line "Your free, local cloud workspace",
+which is used on the social image only. They are Studio's design and change by the usual stages. No voice is
+binding.
 
 ## Evidence on Hand
 
-- No logo or other brand asset exists.
+- The brand assets exist as files in `studio/brand/` (the symbol, the four logos, the app icons with their PNGs, the
+  social image and its PNG) and `studio/public/` (the favicon as SVG and ICO, the Apple touch icon); `DESIGN.md`,
+  The logo, lists them. `bun run brand` draws them from one geometry.
 - No customers, testimonials, case studies, benchmarks, pricing or press exist. Do not invent them.
 - What EmuForge does is shown by its own checks against a real emulator (`tests/integration/`), not by claims.
 
