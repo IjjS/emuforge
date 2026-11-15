@@ -1,0 +1,50 @@
+/* Studio's buttons (DESIGN.md, Buttons): a sunk fill and a 3:1 edge, so they read as controls next to text. */
+
+@layer studio {
+  .st-btn {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    height: 36px;
+    padding: 0 14px;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 560;
+    white-space: nowrap;
+    color: var(--st-text);
+    background: var(--st-sunk);
+    border: 1px solid var(--st-control-line);
+    border-radius: var(--st-radius-m);
+    cursor: pointer;
+    text-decoration: none;
+  }
+
+  .st-btn:hover {
+    border-color: var(--st-text-2);
+    background: var(--st-surface);
+  }
+
+  .st-btn[aria-disabled='true'] {
+    color: var(--st-text-2);
+    cursor: progress;
+  }
+
+  .st-btn.primary {
+    background: var(--st-accent);
+    border-color: var(--st-accent);
+    color: var(--st-accent-ink);
+  }
+
+  .st-btn.primary:hover {
+    background: var(--st-accent-hover);
+    border-color: var(--st-accent-hover);
+  }
+
+  .st-btn.small {
+    height: 30px;
+    padding: 0 10px;
+    gap: 6px;
+    border-radius: var(--st-radius-s);
+  }
+}

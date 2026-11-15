@@ -1,0 +1,119 @@
+/* Studio's bar (DESIGN.md, The frame): the wordmark, then the navigation "Studio" with Home and one tab per provider. */
+
+@layer studio {
+  .st-bar {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    height: var(--st-bar-h);
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    padding: 0 var(--st-gutter);
+    background: var(--st-surface);
+    border-bottom: 1px solid var(--st-line);
+  }
+
+  /* "Skip to content": the bar's first Tab stop, hidden until it has focus, then shown at the bar's start. */
+  .st-skip {
+    position: absolute;
+    top: 10px;
+    left: var(--st-gutter);
+    z-index: 1;
+    display: inline-flex;
+    align-items: center;
+    height: 36px;
+    padding: 0 14px;
+    font-size: 14px;
+    font-weight: 560;
+    color: var(--st-text);
+    background: var(--st-surface);
+    border: 1px solid var(--st-control-line);
+    border-radius: var(--st-radius-m);
+    text-decoration: none;
+    white-space: nowrap;
+  }
+
+  .st-skip:not(:focus) {
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    border: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+  .st-wordmark {
+    flex: none;
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+    color: var(--st-text);
+    text-decoration: none;
+    white-space: nowrap;
+    font-size: 16px;
+    letter-spacing: -0.01em;
+  }
+
+  .st-wordmark b {
+    font-weight: 650;
+  }
+
+  .st-wordmark span {
+    color: var(--st-text-2);
+    font-weight: 400;
+  }
+
+  /* Providers grow the tab list, never the page: it scrolls within itself when it outgrows the bar (R5.1, R6.2). */
+  .st-nav {
+    display: flex;
+    height: 100%;
+    gap: 2px;
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+    overscroll-behavior-x: contain;
+  }
+
+  .st-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .st-nav a {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    height: 100%;
+    padding: 0 12px;
+    color: var(--st-text-2);
+    text-decoration: none;
+    font-weight: 560;
+    font-size: 14px;
+    box-shadow: inset 0 -2px 0 transparent;
+  }
+
+  .st-nav a:hover {
+    color: var(--st-text);
+  }
+
+  .st-nav a[aria-current] {
+    color: var(--st-text);
+    box-shadow: inset 0 -2px 0 var(--st-accent);
+  }
+
+  /* The ring sits inside the tab's padding, so it never crosses the label. */
+  .st-nav a:focus-visible {
+    outline-offset: -4px;
+    border-radius: 8px;
+  }
+
+  @media (max-width: 480px) {
+    .st-bar {
+      gap: 12px;
+    }
+
+    .st-nav a {
+      padding: 0 8px;
+    }
+  }
+}

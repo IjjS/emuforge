@@ -1,0 +1,72 @@
+/* Studio's base (DESIGN.md, The Two Containers Rule). `html` and `body` get only non-inherited properties here; every
+   inherited property, and the universal, selection and focus rules, start on Studio's own containers, the bar and
+   the page (`.st-bar`, `.st-main`), never on a common ancestor of a provider area. */
+
+@layer studio {
+  /* Focus and in-page scrolling stop clear of the sticky bar, and of the viewport's bottom edge. Set here once. */
+  html {
+    scroll-padding-top: calc(var(--st-bar-h) + 16px);
+    scroll-padding-bottom: 16px;
+  }
+
+  body {
+    margin: 0;
+    background: var(--st-bg);
+  }
+
+  .st-root {
+    min-height: 100vh;
+  }
+
+  .st-bar,
+  .st-main {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    font-family: var(--st-font-ui);
+    font-size: 15px;
+    font-weight: 400;
+    line-height: 1.5;
+    color: var(--st-text);
+  }
+
+  :is(.st-bar, .st-main),
+  :is(.st-bar, .st-main) *,
+  :is(.st-bar, .st-main) *::before,
+  :is(.st-bar, .st-main) *::after {
+    box-sizing: border-box;
+  }
+
+  :is(.st-bar, .st-main) ::selection {
+    background: var(--st-accent-wash);
+    color: var(--st-text);
+  }
+
+  :is(.st-bar, .st-main) :focus-visible {
+    outline: 2px solid var(--st-focus);
+    outline-offset: 2px;
+    border-radius: var(--st-radius-s);
+  }
+
+  /* Studio's `main` takes focus from "Skip to content" without drawing a ring around the whole page. */
+  .st-main:focus {
+    outline: none;
+  }
+
+  .st-nowrap {
+    white-space: nowrap;
+  }
+
+  .st-sr {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  /* The holder of a provider area: layout only, no inherited property (R8.3). */
+  .st-area {
+    display: block;
+  }
+}
