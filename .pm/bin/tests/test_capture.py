@@ -478,6 +478,9 @@ class WizardPages(WizardCaptureCase):
         p = self.wizard("wizard-validates")
         self.assertExit(p, 0)
         self.assertIn(" score=100.0 ", p.stdout.splitlines()[0])
+        # a click on Next would add the alert "Use case is required." to step 1's tree
+        step1 = json.loads(self.steps_file().read_text())["steps"][0]["nodes"]
+        self.assertEqual([n for n in step1 if n["role"] == "alert" or "is required" in n["name"]], [])
 
     def test_step_answering_404(self):
         index = (PAGES / "wizard-full" / "index.html").read_bytes()
