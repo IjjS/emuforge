@@ -244,6 +244,8 @@ export function languageStore(tag: string, catalogues: Catalogues = withMarked()
 export interface KeptAsItIs {
   /** The engine's `message`s the page was sent: kept in an element with `lang="en"` that holds exactly one. */
   engineMessages?: readonly string[];
+  /** The area page titles Studio's own layer shows or announces: kept in an element with `lang="en"` (R5.2). */
+  areaTitles?: readonly string[];
 }
 
 /** Names Studio never translates: the wordmark and the providers' names and service labels (R4.3). */
@@ -336,6 +338,182 @@ export function unmarkedText(kept: KeptAsItIs = {}): string[] {
     found.push(`document title "${document.title}"`);
   }
   return found;
+}
+
+/** `text` as a pattern: whitespace runs match any whitespace, every other character itself. */
+function literalPattern(text: string): string {
+  return escapeRegExp(text.trim()).replace(/\s+/g, '\\s+');
+}
+
+/**
+ * What a value of a catalogue can show as one text node, attribute or title (test-criteria.md, "comes from L's
+ * catalogue"): the value with each placeholder standing for any text, and each run of its pieces split around
+ * placeholders, since a placeholder's element splits the value's text. A pattern whose own text holds no letter
+ * (`{code}: {message}`) is left out: punctuation alone is kept as it is, and such a pattern would match any text.
+ */
+function valuePatterns(text: string): RegExp[] {
+  const pieces = text.split(PLACEHOLDER).filter((_part, index) => index % 2 === 0);
+  const patterns: RegExp[] = [];
+  for (let first = 0; first < pieces.length; first++) {
+    for (let last = first; last < pieces.length; last++) {
+      const run = pieces.slice(first, last + 1);
+      if (!/\p{L}/u.test(run.join(''))) {
+        continue;
+      }
+      const body = run.map((piece, index) => {
+        const own = literalPattern(piece);
+        return index === 0 ? own : `[\\s\\S]+?${own}`;
+      });
+      patterns.push(new RegExp(`^\\s*${body.join('')}\\s*$`, 'u'));
+    }
+  }
+  return patterns;
+}
+
+/** Every value of `catalogue`, by key: its texts' patterns, and the whole value's pattern for each text. */
+interface CataloguePatterns {
+  /** Every pattern of every value, the language's own name included. */
+  pieces: RegExp[];
+  /** By key, the pattern of each whole text (each plural form). */
+  whole: Map<string, RegExp[]>;
+}
+
+const PATTERNS = new Map<string, CataloguePatterns>();
+
+function patternsOf(tag: string): CataloguePatterns {
+  let patterns = PATTERNS.get(tag);
+  if (patterns === undefined) {
+    const catalogue = present(withMarked().byTag.get(tag), `the catalogue ${tag}`);
+    const whole = new Map<string, RegExp[]>();
+    const pieces: RegExp[] = [];
+    for (const [key, message] of catalogue.messages) {
+      const texts = textsOf(message);
+      pieces.push(...texts.flatMap(valuePatterns));
+      // Only a text with words of its own: one of punctuation and placeholders alone would match any text.
+      const worded = texts.filter((text) =>
+        /\p{L}/u.test(
+          text
+            .split(PLACEHOLDER)
+            .filter((_p, i) => i % 2 === 0)
+            .join(''),
+        ),
+      );
+      whole.set(
+        key,
+        worded.map((text) => {
+          const parts = text
+            .split(PLACEHOLDER)
+            .map((part, index) => (index % 2 === 1 ? '[\\s\\S]+?' : literalPattern(part)));
+          return new RegExp(`^\\s*${parts.join('')}\\s*$`, 'u');
+        }),
+      );
+    }
+    pieces.push(...valuePatterns(catalogue.name));
+    patterns = { pieces, whole };
+    PATTERNS.set(tag, patterns);
+  }
+  return patterns;
+}
+
+/** Whether `text` is an English value whose text `tag`'s catalogue does not give for the same key. */
+function englishNotOwn(tag: string, text: string): boolean {
+  const own = patternsOf(tag).whole;
+  return [...patternsOf(BUNDLED_CATALOGUES.source.tag).whole].some(
+    ([key, english]) =>
+      english.some((pattern) => pattern.test(text)) && !(own.get(key) ?? []).some((pattern) => pattern.test(text)),
+  );
+}
+
+/** Why `text` of Studio's text is not `tag`'s: `undefined` when it comes from `tag`'s catalogue or is kept as it is. */
+function notFrom(tag: string, text: string): string | undefined {
+  if (keptText(text)) {
+    return undefined;
+  }
+  if (!patternsOf(tag).pieces.some((pattern) => pattern.test(text))) {
+    return 'not from the catalogue';
+  }
+  if (tag !== BUNDLED_CATALOGUES.source.tag && englishNotOwn(tag, text)) {
+    return "an English value the catalogue's differs from";
+  }
+  return undefined;
+}
+
+/** The own names of the languages Studio has, by tag (R1.3): kept as they are in an element with that `lang`. */
+function ownNames(): Map<string, string> {
+  return new Map([...withMarked().byTag.values()].map((catalogue) => [catalogue.tag, catalogue.name]));
+}
+
+/** Whether `element` sits in an element whose `lang` keeps its text as it is: the engine's message, or an own name. */
+function keptByLang(element: Element, kept: KeptAsItIs): boolean {
+  const marked = element.closest('[lang]');
+  if (marked === null || marked === document.documentElement) {
+    return false;
+  }
+  const lang = marked.getAttribute('lang') ?? '';
+  const text = marked.textContent ?? '';
+  return (
+    (lang === 'en' && ((kept.engineMessages ?? []).includes(text) || (kept.areaTitles ?? []).includes(text))) ||
+    ownNames().get(lang) === text
+  );
+}
+
+/**
+ * Every piece of Studio's text (test-criteria.md) on the page that neither comes from the catalogue of `tag` nor is
+ * kept as it is, and every text that is an English value where `tag`'s catalogue gives another: text nodes of
+ * Studio's own layer, the attributes read or heard, and the document title, each split at " | ". Empty when the page
+ * is wholly in `tag`.
+ */
+export function textNotFrom(tag: string, kept: KeptAsItIs = {}): string[] {
+  const found: string[] = [];
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+    const parent = node.parentElement;
+    const text = node.textContent ?? '';
+    if (parent === null || inArea(parent) || text.trim() === '' || parent.closest('code, pre, .st-wordmark') !== null) {
+      continue;
+    }
+    if (keptByLang(parent, kept)) {
+      continue;
+    }
+    const why = notFrom(tag, text);
+    if (why !== undefined) {
+      found.push(`text "${norm(text)}" in <${parent.tagName.toLowerCase()}>: ${why}`);
+    }
+  }
+  for (const element of document.body.querySelectorAll('*')) {
+    if (inArea(element)) {
+      continue;
+    }
+    for (const name of TEXT_ATTRIBUTES) {
+      const value = element.getAttribute(name);
+      const why = value === null ? undefined : notFrom(tag, value);
+      if (why !== undefined) {
+        found.push(`${name} "${String(value)}" on <${element.tagName.toLowerCase()}>: ${why}`);
+      }
+    }
+  }
+  for (const part of document.title.split(' | ')) {
+    const why = (kept.areaTitles ?? []).includes(part) ? undefined : notFrom(tag, part);
+    if (why !== undefined) {
+      found.push(`document title "${document.title}", "${part}": ${why}`);
+    }
+  }
+  return found;
+}
+
+/**
+ * Every element of Studio's own layer whose `lang` differs from the page's and whose text is not the engine's
+ * message, an area page title or the own name of the language it names (requirement R4.3): `[]` when there is none.
+ */
+export function otherLangElements(kept: KeptAsItIs = {}): string[] {
+  const page = document.documentElement.lang;
+  return [...document.body.querySelectorAll('[lang]')]
+    .filter((element) => !inArea(element) && element.getAttribute('lang') !== page)
+    .filter((element) => !keptByLang(element, kept))
+    .map(
+      (element) =>
+        `<${element.tagName.toLowerCase()} lang="${String(element.getAttribute('lang'))}">${norm(element.textContent)}`,
+    );
 }
 
 /** The status words a row shows (requirement R9.1). */

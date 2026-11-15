@@ -1,10 +1,14 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
+import type { Root } from 'react-dom/client';
 import { createMemoryRouter, RouterProvider, type RouteObject } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { BUNDLED_CATALOGUES } from '../i18n/bundled';
+import { STORAGE_KEY } from '../i18n/language';
 import { LanguageProvider } from '../i18n/language-provider';
+import { languageStore, textNotFrom } from '../test/home-test-kit';
 import { Frame, ProviderPage } from './frame';
 import type { ProviderAreaProps } from './provider-list';
 import { Providers } from './providers';
@@ -417,5 +421,134 @@ describe('"Skip to content" and a route change', () => {
     await screen.findAllByRole(role, { name: first });
 
     expect(document.activeElement).toBe(document.body);
+  });
+});
+
+/** The catalogue's text of `key` in `tag`. */
+function messageIn(tag: string, key: string): string {
+  const message = BUNDLED_CATALOGUES.byTag.get(tag)?.messages.get(key);
+  if (typeof message !== 'string') {
+    throw new Error(`${tag} has no text "${key}"`);
+  }
+  return message;
+}
+
+/** Studio at `path` with its real routes, in `tag`, as a browser whose only language it is. */
+function openStudioIn(path: string, tag: string) {
+  const router = createMemoryRouter(routes, { initialEntries: [path] });
+  const result = render(
+    <Providers language={languageStore(tag)}>
+      <RouterProvider router={router} />
+    </Providers>,
+  );
+  return { ...result, router };
+}
+
+/** The AWS area page the language cases open, and its English title. */
+const AREA_PATH = '/aws/s3';
+const AREA_TITLE = 'Amazon Simple Storage Service';
+
+describe('the frame in each of the twelve languages (R5.2, R2.7)', () => {
+  afterEach(() => {
+    localStorage.clear();
+    document.documentElement.lang = 'en';
+    document.title = '';
+  });
+
+  it.each([...BUNDLED_CATALOGUES.byTag.keys()])(
+    "%s: from / to /does-not-exist the route change announces the catalogue's page title; to /aws/s3, the area's",
+    async (tag) => {
+      const { router } = openStudioIn('/', tag);
+
+      await act(() => router.navigate('/does-not-exist'));
+      await expectFocusOnTarget(messageIn(tag, 'notFound.title'), messageIn(tag, 'notFound.home'));
+
+      await act(() => router.navigate('/'));
+      await expectFocusOnTarget(messageIn(tag, 'home.title'), messageIn(tag, 'home.refresh'));
+      await act(() => router.navigate(AREA_PATH));
+      await screen.findByRole('heading', { level: 1, name: AREA_TITLE }, { timeout: AREA_LOAD_MS });
+      await expectFocusOnTarget(AREA_TITLE, 'Go to Home');
+    },
+    20_000,
+  );
+
+  it('German: the document title is EmuForge Studio on Home, the German page title on "Page not found", English in the area', async () => {
+    const { router } = openStudioIn('/', 'de');
+    await waitFor(() => {
+      expect(document.title).toBe('EmuForge Studio');
+    });
+
+    await act(() => router.navigate('/does-not-exist'));
+    await waitFor(() => {
+      expect(document.title).toBe(`${messageIn('de', 'notFound.title')} | EmuForge Studio`);
+    });
+    expect(document.title).not.toBe('Page not found | EmuForge Studio');
+
+    await act(() => router.navigate(AREA_PATH));
+    await waitFor(
+      () => {
+        expect(document.title).toBe(`${AREA_TITLE} | EmuForge Studio`);
+      },
+      { timeout: AREA_LOAD_MS },
+    );
+  }, 20_000);
+
+  it('the app started with stored th: <html lang> is th before the first render, whose first content is Thai', async () => {
+    localStorage.setItem(STORAGE_KEY, 'th');
+    document.documentElement.lang = 'en';
+    // As index.html holds them until the first render (R2.7).
+    document.title = 'EmuForge Studio';
+    const container = document.createElement('div');
+    container.id = 'root';
+    document.body.append(container);
+    const langAtRender: string[] = [];
+    const roots: Root[] = [];
+    // The first content put into #root, as a recorder of every change to it sees it.
+    const firstContent: { lang: string; heading: string | undefined; notThai: string[] }[] = [];
+    const observer = new MutationObserver(() => {
+      if (firstContent.length === 0 && container.childNodes.length > 0) {
+        firstContent.push({
+          lang: document.documentElement.lang,
+          heading: container.querySelector('h1')?.textContent ?? undefined,
+          notThai: textNotFrom('th'),
+        });
+      }
+    });
+    observer.observe(container, { childList: true, subtree: true, characterData: true });
+    vi.resetModules();
+    vi.doMock('react-dom/client', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('react-dom/client')>();
+      return {
+        ...actual,
+        createRoot: (...args: Parameters<typeof actual.createRoot>) => {
+          const root = actual.createRoot(...args);
+          roots.push(root);
+          const renderNow = root.render.bind(root);
+          root.render = (children: ReactNode) => {
+            langAtRender.push(document.documentElement.lang);
+            renderNow(children);
+          };
+          return root;
+        },
+      };
+    });
+    try {
+      await import('../main');
+      await waitFor(() => {
+        expect(firstContent).toHaveLength(1);
+      });
+      expect(langAtRender).toEqual(['th']);
+      expect(firstContent[0]).toEqual({ lang: 'th', heading: messageIn('th', 'home.title'), notThai: [] });
+    } finally {
+      observer.disconnect();
+      act(() => {
+        roots.forEach((root) => {
+          root.unmount();
+        });
+      });
+      container.remove();
+      vi.doUnmock('react-dom/client');
+      vi.resetModules();
+    }
   });
 });
