@@ -248,10 +248,13 @@ describe('Home: leaving and returning', () => {
     const { wrapper } = await openHome(connected());
     await click(screen.getByRole('link', { name: 'AWS' }));
     // The AWS area loads on its first opening; the import is real work, not a timer.
-    const s3 = await vi.waitFor(async () => {
-      await advance();
-      return present(wrapper.findSideNavigation()?.findLinkByHref('/aws/s3'), 'the S3 link').getElement();
-    });
+    const s3 = await vi.waitFor(
+      async () => {
+        await advance();
+        return present(wrapper.findSideNavigation()?.findLinkByHref('/aws/s3'), 'the S3 link').getElement();
+      },
+      { timeout: 10_000, interval: 20 },
+    );
     await click(s3);
     expect(screen.getByRole('heading', { level: 1, name: 'Amazon Simple Storage Service' })).toBeInTheDocument();
     const checks = engine.healths.length;

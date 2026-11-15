@@ -32,6 +32,9 @@ const SERVICES: [string, string][] = [
   ['AWS Step Functions', '/aws/states'],
 ];
 
+/** The AWS area's first import is real work (Cloudscape's modules), not a timer; a cold run takes a while. */
+const AREA_LOAD_MS = 10_000;
+
 let fetchSpy: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
@@ -77,7 +80,7 @@ function cloudscapeElements(): Element[] {
 
 /** The page's `h1`, once the page (the AWS area loads on first opening) is there. */
 async function heading(name: string): Promise<HTMLElement> {
-  return screen.findByRole('heading', { level: 1, name });
+  return screen.findByRole('heading', { level: 1, name }, { timeout: AREA_LOAD_MS });
 }
 
 function main(): HTMLElement {

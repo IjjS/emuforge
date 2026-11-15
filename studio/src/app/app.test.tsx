@@ -4,6 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { advance, connected, FakeEngine, present, row } from '../features/home/home-test-kit';
 import { App } from './app';
 
+/** The AWS area's first import is real work (Cloudscape's modules), not a timer; a cold run takes a while. */
+const AREA_LOAD = { timeout: 10_000, interval: 20 };
+
 let engine: FakeEngine;
 // The browser's IndexedDB, watched: jsdom has none, so the test gives the page one that records every use.
 let indexedDb: {
@@ -59,7 +62,7 @@ describe('Studio in the browser', () => {
     const s3 = await vi.waitFor(async () => {
       await advance();
       return present(createWrapper(container).findSideNavigation()?.findLinkByHref('/aws/s3'), 'the S3 link');
-    });
+    }, AREA_LOAD);
     expect(window.location.pathname).toBe('/aws');
     expect(screen.getByRole('heading', { level: 1, name: 'Amazon Web Services' })).toBeInTheDocument();
 

@@ -6,6 +6,9 @@ import { Frame } from './frame';
 import { Providers } from './providers';
 import { routes } from './routes';
 
+/** The AWS area's first import is real work (Cloudscape's modules), not a timer; a cold run takes a while. */
+const AREA_LOAD_MS = 10_000;
+
 beforeEach(() => {
   // No network in these tests: Home's check fails at once, and nothing reaches an engine.
   vi.stubGlobal(
@@ -102,7 +105,7 @@ describe('Studio’s frame', () => {
       openStudio(path);
       if (path.startsWith('/aws')) {
         // The area is on the page beside the frame.
-        await screen.findByRole('main');
+        await screen.findByRole('main', {}, { timeout: AREA_LOAD_MS });
       }
       const { banner } = frameLinks();
 
@@ -122,9 +125,12 @@ describe('Studio’s frame', () => {
     openStudio(path);
 
     await act(async () => {
-      await vi.waitFor(() => {
-        expect(document.title).toBe(title);
-      });
+      await vi.waitFor(
+        () => {
+          expect(document.title).toBe(title);
+        },
+        { timeout: AREA_LOAD_MS },
+      );
     });
   });
 });
