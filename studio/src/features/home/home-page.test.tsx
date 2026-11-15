@@ -238,8 +238,20 @@ describe('Home: reconnects without a reload', () => {
 
 describe('Home: leaving and returning', () => {
   it('sends no check after leaving Home, and starts checking again on return', async () => {
+    // The AWS area follows the operating system's scheme, which jsdom does not report: light here.
+    vi.stubGlobal('matchMedia', (media: string) => ({
+      media,
+      matches: false,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    }));
     const { wrapper } = await openHome(connected());
-    const s3 = present(wrapper.findSideNavigation()?.findLinkByHref('/s3'), 'the S3 link').getElement();
+    await click(screen.getByRole('link', { name: 'AWS' }));
+    // The AWS area loads on its first opening; the import is real work, not a timer.
+    const s3 = await vi.waitFor(async () => {
+      await advance();
+      return present(wrapper.findSideNavigation()?.findLinkByHref('/aws/s3'), 'the S3 link').getElement();
+    });
     await click(s3);
     expect(screen.getByRole('heading', { level: 1, name: 'Amazon Simple Storage Service' })).toBeInTheDocument();
     const checks = engine.healths.length;

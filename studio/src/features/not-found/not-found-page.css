@@ -1,0 +1,43 @@
+/* Studio's "Page not found" (DESIGN.md, Page not found): the sentence with the path box, and "Go to Home". */
+
+@layer studio {
+  .st-lost .st-head {
+    margin-bottom: 16px;
+  }
+
+  .st-lost-path {
+    margin: 0 0 24px;
+    max-width: 70ch;
+    font-size: 16px;
+    color: var(--st-text-2);
+  }
+
+  /* On the sentence's baseline, so its "." follows the box's last line. */
+  .st-lost-path code {
+    display: inline-block;
+    vertical-align: baseline;
+    max-width: calc(100% - 1ch);
+    overflow-x: auto;
+    margin-top: 8px;
+    padding: 6px 10px;
+    font-family: var(--st-font-code);
+    font-size: 15px;
+    color: var(--st-text);
+    border: 1px solid var(--st-line);
+    border-radius: var(--st-radius-s);
+    /* Scroll shadows, no mask: a shade at an edge only while more of the path lies beyond it. The `local` covers move
+       with the content and hide the `scroll` shades at the ends. Nothing clips the box, so its focus ring shows whole. */
+    background:
+      linear-gradient(to right, var(--st-sunk) 40%, transparent) left center / 40px 100% no-repeat local,
+      linear-gradient(to left, var(--st-sunk) 40%, transparent) right center / 40px 100% no-repeat local,
+      radial-gradient(farthest-side at 0 50%, var(--st-scroll-shade), transparent) left center / 14px 100% no-repeat
+        scroll,
+      radial-gradient(farthest-side at 100% 50%, var(--st-scroll-shade), transparent) right center / 14px 100% no-repeat
+        scroll,
+      var(--st-sunk);
+  }
+
+  .st-lost-path code span {
+    white-space: nowrap;
+  }
+}

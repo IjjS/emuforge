@@ -6,29 +6,30 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Providers } from './providers';
 import { routes } from './routes';
 
+const AWS = 'Amazon Web Services';
 const S3 = 'Amazon Simple Storage Service';
 
-// Requirement 2.2, in label order.
+// providers/aws/services.ts, in label order, each under /aws.
 const SERVICES: [string, string][] = [
-  ['Amazon API Gateway', '/apigateway'],
-  ['Amazon CloudWatch', '/cloudwatch'],
-  ['Amazon CloudWatch Logs', '/logs'],
-  ['Amazon DynamoDB', '/dynamodb'],
-  ['Amazon Elastic Compute Cloud', '/ec2'],
-  ['Amazon Elastic Container Registry', '/ecr'],
-  ['Amazon EventBridge', '/events'],
-  ['Amazon Kinesis', '/kinesis'],
-  ['Amazon Route 53', '/route53'],
-  ['Amazon Simple Notification Service', '/sns'],
-  ['Amazon Simple Queue Service', '/sqs'],
-  ['Amazon Simple Storage Service', '/s3'],
-  ['Amazon Simple Systems Manager (SSM)', '/ssm'],
-  ['AWS CloudFormation', '/cloudformation'],
-  ['AWS Identity and Access Management', '/iam'],
-  ['AWS Key Management Service', '/kms'],
-  ['AWS Lambda', '/lambda'],
-  ['AWS Secrets Manager', '/secretsmanager'],
-  ['AWS Step Functions', '/states'],
+  ['Amazon API Gateway', '/aws/apigateway'],
+  ['Amazon CloudWatch', '/aws/cloudwatch'],
+  ['Amazon CloudWatch Logs', '/aws/logs'],
+  ['Amazon DynamoDB', '/aws/dynamodb'],
+  ['Amazon Elastic Compute Cloud', '/aws/ec2'],
+  ['Amazon Elastic Container Registry', '/aws/ecr'],
+  ['Amazon EventBridge', '/aws/events'],
+  ['Amazon Kinesis', '/aws/kinesis'],
+  ['Amazon Route 53', '/aws/route53'],
+  ['Amazon Simple Notification Service', '/aws/sns'],
+  ['Amazon Simple Queue Service', '/aws/sqs'],
+  ['Amazon Simple Storage Service', '/aws/s3'],
+  ['Amazon Simple Systems Manager (SSM)', '/aws/ssm'],
+  ['AWS CloudFormation', '/aws/cloudformation'],
+  ['AWS Identity and Access Management', '/aws/iam'],
+  ['AWS Key Management Service', '/aws/kms'],
+  ['AWS Lambda', '/aws/lambda'],
+  ['AWS Secrets Manager', '/aws/secretsmanager'],
+  ['AWS Step Functions', '/aws/states'],
 ];
 
 let fetchSpy: ReturnType<typeof vi.fn>;
@@ -36,6 +37,13 @@ let fetchSpy: ReturnType<typeof vi.fn>;
 beforeEach(() => {
   fetchSpy = vi.fn(() => Promise.reject(new TypeError('no network in this test')));
   vi.stubGlobal('fetch', fetchSpy);
+  // The AWS area follows the operating system's scheme, which jsdom does not report: light here.
+  vi.stubGlobal('matchMedia', (media: string) => ({
+    media,
+    matches: false,
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+  }));
 });
 
 afterEach(() => {
@@ -44,121 +52,139 @@ afterEach(() => {
 
 function open(path: string) {
   const router = createMemoryRouter(routes, { initialEntries: [path] });
-  const result = render(
+  return render(
     <Providers>
       <RouterProvider router={router} />
     </Providers>,
   );
-  return { ...result, wrapper: createWrapper(result.container) };
 }
 
-function breadcrumbTexts(wrapper: ReturnType<typeof createWrapper>): string[] {
-  const group = wrapper.findBreadcrumbGroup();
-  expect(group).not.toBeNull();
-  return (group?.findBreadcrumbLinks() ?? []).map((item) => item.getElement().textContent);
+/** True when the element, or an element around it, carries a Cloudscape class: it is inside the AWS area. */
+function inCloudscape(element: Element): boolean {
+  for (let at: Element | null = element; at !== null; at = at.parentElement) {
+    if ([...at.classList].some((name) => name.startsWith('awsui'))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function cloudscapeElements(): Element[] {
+  return [...document.querySelectorAll('*')].filter((element) =>
+    [...element.classList].some((name) => name.startsWith('awsui')),
+  );
+}
+
+/** The page's `h1`, once the page (the AWS area loads on first opening) is there. */
+async function heading(name: string): Promise<HTMLElement> {
+  return screen.findByRole('heading', { level: 1, name });
 }
 
 function main(): HTMLElement {
   return screen.getByRole('main');
 }
 
-function expectNoScreenYet(label: string) {
-  expect(within(main()).getByRole('heading', { level: 1, name: label })).toBeInTheDocument();
+async function expectNoScreenYet(label: string) {
+  const h1 = await heading(label);
+  expect(inCloudscape(h1)).toBe(true);
   expect(main()).toHaveTextContent(`Studio has no screen for ${label} yet.`);
   expect(within(main()).getByRole('link', { name: 'Go to Home' })).toHaveAttribute('href', '/');
 }
 
 describe('routes', () => {
-  it('opens Home at /, with the breadcrumb EmuForge Studio and Home active in the navigation', () => {
-    const { wrapper } = open('/');
+  it('opens Home at /', () => {
+    open('/');
 
     expect(within(main()).getByRole('heading', { level: 1, name: 'Home' })).toBeInTheDocument();
-    expect(breadcrumbTexts(wrapper)).toEqual(['EmuForge Studio']);
-    const active = wrapper.findSideNavigation()?.findActiveLink();
-    expect(active?.getElement()).toHaveTextContent(/^Home$/);
-    expect(active?.getElement()).toHaveAttribute('href', '/');
   });
 
-  it('opens /s3 as the "no screen yet" page of Amazon Simple Storage Service, sending nothing to the engine', () => {
-    const { wrapper } = open('/s3');
+  it('opens /aws as the AWS area index: "Services" (19), its line, and the 19 services in label order', async () => {
+    open('/aws');
 
-    expectNoScreenYet(S3);
-    expect(breadcrumbTexts(wrapper)).toEqual(['EmuForge Studio', S3]);
-    const active = wrapper.findSideNavigation()?.findActiveLink();
-    expect(active?.getElement()).toHaveTextContent(S3);
-    expect(active?.getElement()).toHaveAttribute('href', '/s3');
+    expect(inCloudscape(await heading(AWS))).toBe(true);
+    const container = createWrapper(main()).findContainer();
+    expect(container).not.toBeNull();
+    const header = container?.findHeader()?.getElement();
+    expect(header).toHaveTextContent('Services');
+    expect(header).toHaveTextContent('(19)');
+    expect(header).toHaveTextContent('No service has a Studio screen yet.');
+    const links = within(container?.findContent().getElement() as HTMLElement)
+      .getAllByRole('link')
+      .map((link) => [link.textContent, link.getAttribute('href')]);
+    expect(links).toEqual(SERVICES);
+  });
+
+  it('opens /aws/s3 as the "no screen yet" page of Amazon Simple Storage Service, sending nothing to the engine', async () => {
+    open('/aws/s3');
+
+    await expectNoScreenYet(S3);
     const engineCalls = fetchSpy.mock.calls.filter(([input]) => String(input).includes('127.0.0.1'));
     expect(engineCalls).toEqual([]);
   });
 
-  it('opens a path below a service, /s3/buckets/my-bucket, as the same "no screen yet" page', () => {
-    const { wrapper } = open('/s3/buckets/my-bucket');
+  it('opens a path below a service, /aws/s3/buckets/my-bucket, as the same "no screen yet" page', async () => {
+    open('/aws/s3/buckets/my-bucket');
 
-    expectNoScreenYet(S3);
-    expect(breadcrumbTexts(wrapper)).toEqual(['EmuForge Studio', S3]);
-    expect(wrapper.findSideNavigation()?.findActiveLink()?.getElement()).toHaveAttribute('href', '/s3');
+    await expectNoScreenYet(S3);
   });
 
-  it.each(SERVICES)('opens the route of %s, %s, as its "no screen yet" page', (label, route) => {
-    const { wrapper } = open(route);
+  it.each(SERVICES)('opens the route of %s, %s, as its "no screen yet" page', async (label, path) => {
+    open(path);
 
-    expectNoScreenYet(label);
-    expect(breadcrumbTexts(wrapper)).toEqual(['EmuForge Studio', label]);
-    expect(wrapper.findSideNavigation()?.findActiveLink()?.getElement()).toHaveAttribute('href', route);
+    await expectNoScreenYet(label);
   });
 
-  it('opens an unknown path as "Page not found", with the path as text and the last breadcrumb not a link', () => {
-    const { wrapper } = open('/does-not-exist/today');
+  it('opens /aws/does-not-exist/today as the AWS area’s "Page not found", with the path as text', async () => {
+    open('/aws/does-not-exist/today');
 
-    expect(within(main()).getByRole('heading', { level: 1, name: 'Page not found' })).toBeInTheDocument();
-    expect(main()).toHaveTextContent('/does-not-exist/today');
+    expect(inCloudscape(await heading('Page not found'))).toBe(true);
+    expect(main()).toHaveTextContent('/aws/does-not-exist/today');
     expect(within(main()).getByRole('link', { name: 'Go to Home' })).toHaveAttribute('href', '/');
-    expect(breadcrumbTexts(wrapper)).toEqual(['EmuForge Studio', 'Page not found']);
-    const breadcrumbs = screen.getByRole('navigation', { name: 'Breadcrumbs' });
-    expect(within(breadcrumbs).getByRole('link', { name: 'EmuForge Studio' })).toBeInTheDocument();
-    // The last item is the current page: it carries no address to follow.
-    const current = wrapper.findBreadcrumbGroup()?.findBreadcrumbLinks().at(-1)?.getElement();
-    expect(current).toHaveAttribute('aria-current', 'page');
-    expect(current).toHaveTextContent('Page not found');
-    expect(current).not.toHaveAttribute('href');
-    expect(current?.closest('a[href]')).toBeNull();
-    expect(current?.querySelector('a[href]')).toBeNull();
-    expect(wrapper.findSideNavigation()?.findActiveLink()).toBeNull();
   });
 
-  it('shows a path that looks like HTML as those characters, creating no element from it', () => {
-    const path = '/<img src=x onerror=alert(1)>';
-    const { container } = open(path);
+  it.each(['/s3', '/dynamodb/tables', '/does-not-exist/today'])(
+    'opens %s as Studio’s "Page not found", outside any AWS area',
+    async (path) => {
+      open(path);
 
-    expect(within(main()).getByRole('heading', { level: 1, name: 'Page not found' })).toBeInTheDocument();
-    expect(main()).toHaveTextContent(path);
-    expect(container.querySelector('img')).toBeNull();
-  });
+      expect(await heading('Page not found')).toBeInTheDocument();
+      expect(main()).toHaveTextContent(`Studio has no page at ${path}.`);
+      expect(within(main()).getByRole('link', { name: 'Go to Home' })).toHaveAttribute('href', '/');
+      expect(cloudscapeElements()).toEqual([]);
+    },
+  );
 
-  it('lists in the side navigation the header, Home, and the 19 services in label order, each to its route', () => {
-    const { wrapper } = open('/');
-    const navigation = wrapper.findSideNavigation();
+  it.each(['/<img src=x onerror=alert(1)>', '/aws/<img src=x onerror=alert(1)>'])(
+    'shows the path %s as those characters, creating no element from it',
+    async (path) => {
+      const { container } = open(path);
 
-    const header = navigation?.findHeaderLink()?.getElement();
-    expect(header).toHaveTextContent('EmuForge Studio');
-    expect(header).toHaveAttribute('href', '/');
-    expect(navigation?.findLinkByHref('/')?.getElement()).toHaveTextContent(/^Home$/);
+      expect(await heading('Page not found')).toBeInTheDocument();
+      expect(main()).toHaveTextContent(path);
+      expect(container.querySelector('img')).toBeNull();
+    },
+  );
 
-    // Items: Home, a divider, then the section.
-    const section = navigation?.findItemByIndex(3);
-    expect(section?.findSectionTitle()?.getElement()).toHaveTextContent('Services');
-    const links = (section?.findItems() ?? []).map((item) => {
-      const link = item.findLink()?.getElement();
-      return [link?.textContent, link?.getAttribute('href')];
-    });
-    expect(links).toEqual(SERVICES);
-  });
+  it.each([
+    ['/', 'Home'],
+    ['/aws', AWS],
+    ['/aws/s3', S3],
+    ['/aws/s3/buckets/my-bucket', S3],
+    ['/aws/does-not-exist/today', 'Page not found'],
+    ['/s3', 'Page not found'],
+    ['/dynamodb/tables', 'Page not found'],
+    ['/does-not-exist/today', 'Page not found'],
+    ['/<img src=x onerror=alert(1)>', 'Page not found'],
+    ['/aws/<img src=x onerror=alert(1)>', 'Page not found'],
+  ])('on %s: exactly one main landmark, and the frame’s banner is not inside it', async (path, h1) => {
+    open(path);
+    await heading(h1);
 
-  it('shows the identity EmuForge Studio in the top navigation, linking to /', () => {
-    const { wrapper } = open('/s3');
-
-    const identity = wrapper.findTopNavigation()?.findIdentityLink()?.getElement();
-    expect(identity).toHaveTextContent('EmuForge Studio');
-    expect(identity).toHaveAttribute('href', '/');
+    const mains = screen.getAllByRole('main');
+    expect(mains).toHaveLength(1);
+    const banner = screen.getByRole('banner');
+    expect(within(banner).getByRole('link', { name: 'EmuForge Studio' })).toBeInTheDocument();
+    expect(mains[0]?.contains(banner)).toBe(false);
+    expect(banner.contains(mains[0] as HTMLElement)).toBe(false);
   });
 });
