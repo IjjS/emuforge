@@ -10,8 +10,8 @@
 Roles: plan, worker, rev, crit. Name = i<issue>-<role>[-<unit>], e.g. i12-plan, i12-worker-s1, i12-rev (herdr names must start with a letter).
 A unit name starts with its side: s<n> studio, e<n> engine, t<n> tests, h<n> harness.
 Tab: "#<issue>" in the PM's workspace; created when missing. New agents are panes inside that tab.
-Limits (enforced unless --no-limit): studio workers 2, engine workers 3, total live panes 16, memory 22.5 GB, swap free 256 MB,
-and the Claude token rate of the last hour under today's target when one is set (pm-tokens).
+Limits (enforced unless --no-limit): worker panes per side (studio 2, engine 3, tests 6, harness 3), total live panes 16,
+memory 22.5 GB, swap free 256 MB, CPU 90%, and the Claude token rate of the last hour under today's target when one is set (pm-tokens).
 Default: claude on opus. Any pane takes --kind/--model (the PM passes what the owner chose at session start). The brief is sent as: "Read <FILE> and follow it. Your pane name is <name>."
 To talk to a pane use herdr directly: herdr agent prompt <name> "<text>" (it refuses a pane blocked at a dialog).
 """
@@ -23,7 +23,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _pmlib import (LIMITS, MODEL_IDS, PANES, PANES_HISTORY, PMINFO, ROOT, agent_by_name, find_key, herdr, load, log,
+from _pmlib import (LIMITS, MODEL_IDS, PANES, PANES_HISTORY, PMINFO, ROOT, agent_by_name, cpu_pct, find_key, herdr, load, log,
                     mem_gb, now, panes, save, side_of, tabs)
 
 
@@ -138,6 +138,9 @@ def cmd_new(a):
             sys.exit(f"QUEUE: memory {used:.1f}GB > {LIMITS['mem_gb']}GB; close or wait, then retry")
         if st and st - su < 0.25:
             sys.exit(f"QUEUE: swap free {(st - su) * 1024:.0f}MB < 256MB; close or wait, then retry")
+        cpu = cpu_pct()
+        if cpu is not None and cpu > LIMITS["cpu_pct"]:
+            sys.exit(f"QUEUE: cpu {cpu:.0f}% > {LIMITS['cpu_pct']}%; wait for it to drop (EVENT cpu ok), then retry")
         from _pmtokens import fmt, status as token_status
         rate, tgt, over = token_status()
         if over:
@@ -147,7 +150,7 @@ def cmd_new(a):
             sys.exit(f"QUEUE: {len(alive)} live panes >= {LIMITS['total']}")
         if a.role == "worker":
             n = sum(1 for r in alive if r["role"] == "worker" and r.get("side") == side)
-            cap = LIMITS["studio_worker"] if side == "studio" else LIMITS["engine_worker"]
+            cap = LIMITS.get(f"{side}_worker", LIMITS["engine_worker"])
             if n >= cap:
                 sys.exit(f"QUEUE: {n} {side} worker panes >= {cap}")
     info = load(PMINFO, {})
@@ -265,7 +268,7 @@ def cmd_list(a):
     reg = registry()
     ags = {x.get("name"): x for x in (herdr("agent", "list", check=False) or {}).get("agents", [])}
     used, su, st = mem_gb()
-    print(f"mem used {used:.1f}GB swap {su:.1f}/{st:.1f}GB; live panes {len(live(reg))}/{LIMITS['total']}")
+    print(f"mem used {used:.1f}GB swap {su:.1f}/{st:.1f}GB cpu {cpu_pct()}%; live panes {len(live(reg))}/{LIMITS['total']}")
     for r in reg:
         st_ = "gone" if r.get("gone") else (ags.get(r["name"]) or {}).get("agent_status", "?")
         print(f"  {r['name']:16} {r['pane_id']:8} {st_:8} {r['kind']:6} {str(r.get('model') or ''):18} resets={r.get('resets', 0)} {r['cwd']}")

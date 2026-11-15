@@ -4,11 +4,14 @@
   pm-merge <issue> <unit> [--dry-run]
 
 Refuses unless: the main checkout is on main with a clean tree; the unit's worktree has nothing uncommitted; the
-unit's last pm-check run passed on the commit being merged; and rev passed impl-<unit> (the newest
-review-impl-<unit>-r<k>.md in .pm/issue-<n>/ says verdict: pass).
+unit's last pm-check run passed on the commit being merged; and rev passed the unit: the newest
+review-impl-<unit>-r<k>.md in .pm/issue-<n>/ says verdict: pass. A test unit (t<n>) that is merged by itself has
+no implementation review; its newest review-checks-<unit>-r<k>.md counts instead. (A test unit whose checks are
+red by design never gets here: its pm-check does not pass, and it arrives through the unit stacked on it.)
+A run that passed with a flaky step (failed once, passed on the second run) is accepted and named in the output.
 Merges with --no-ff so every unit is one merge commit on main. On a conflict the merge is aborted and main is left
 as it was: send the unit back to its worker to merge main into its branch, check again, then rerun.
-Never pushes; the PM pushes main after each successful merge (pm skill, flow step 5).
+Never pushes; the PM pushes main when an issue is finished (pm skill, flow step 6).
 """
 import argparse
 import json
@@ -49,9 +52,16 @@ def main():
         problems.append(f"pm-check ran on {str(last.get('commit'))[:9]}, the branch is at {head[:9]}; run pm-check again")
     elif not last.get("passed"):
         problems.append(f"pm-check failed: {', '.join(last.get('failed', []))}")
-    reviews = sorted((PM / f"issue-{a.issue}").glob(f"review-impl-{a.unit}-r*.md"), key=lambda f: int(re.search(r"-r(\d+)\.md$", f.name).group(1)))
+    def rounds(stage):
+        return sorted((PM / f"issue-{a.issue}").glob(f"review-{stage}-{a.unit}-r*.md"),
+                      key=lambda f: int(re.search(r"-r(\d+)\.md$", f.name).group(1)))
+
+    reviews = rounds("impl")
+    if not reviews and a.unit.startswith("t"):
+        reviews = rounds("checks")
     if not reviews:
-        problems.append(f"no review-impl-{a.unit}-r<k>.md; rev has not reviewed the implementation")
+        want = f"review-impl-{a.unit}-r<k>.md" + (f" or review-checks-{a.unit}-r<k>.md" if a.unit.startswith("t") else "")
+        problems.append(f"no {want}; rev has not reviewed this unit")
     elif not re.search(r"^verdict:\s*pass\s*$", reviews[-1].read_text(errors="replace")[:400], re.M):
         problems.append(f"{reviews[-1].name} is not verdict: pass")
     if problems:
@@ -65,7 +75,8 @@ def main():
         sys.exit(f"merge conflict; main left unchanged. Have the worker merge main into {branch}, rerun pm-check, then retry.\n{r.stdout.strip()[-600:]}")
     new = git("rev-parse", "HEAD").stdout.strip()
     log(f"merge {a.issue} {a.unit} {branch} -> main {new[:9]}")
-    print(f"merged {branch} into main at {new[:9]}; units stacked on it must merge main into their branch")
+    flaky = f"; flaky in its check run: {', '.join(last['flaky'])} (file the flake, see .pm/run/flakes.jsonl)" if last.get("flaky") else ""
+    print(f"merged {branch} into main at {new[:9]} (reviewed: {reviews[-1].name}){flaky}; units stacked on it must merge main into their branch")
 
 
 main()
