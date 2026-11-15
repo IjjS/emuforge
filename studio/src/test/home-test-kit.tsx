@@ -5,8 +5,8 @@
 import { notifyManager } from '@tanstack/react-query';
 import { act, render, screen, within } from '@testing-library/react';
 import { createMemoryRouter, RouterProvider } from 'react-router';
-import { Providers } from '../../app/providers';
-import { routes } from '../../app/routes';
+import { Providers } from '../app/providers';
+import { routes } from '../app/routes';
 
 // TanStack Query hands its notifications to React on a 0 ms timer. Under fake timers a 0 ms timer set while timers
 // run waits for the clock to move, which would make every step of a test move time; the kit notifies in a microtask.
