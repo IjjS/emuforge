@@ -542,3 +542,155 @@ describe("Connection: in Studio's own elements (issue 16)", () => {
     },
   );
 });
+
+/** The reasons with a stop step: step 1's stop label on `port` and the explanation on port 9297 (issue 18, R4.1). */
+const STOP_STEP_REASONS: [string, (port: number) => string, string][] = [
+  [
+    'connection_refused',
+    () => 'Stop what is left of the emulator',
+    'The emulator stopped without cleaning up (killed).',
+  ],
+  [
+    'tls_untrusted',
+    (port) => `Stop the emulator on port ${String(port)}`,
+    'The files on disk belong to another emulator run.',
+  ],
+  [
+    'files_unreadable',
+    (port) => `Stop the emulator on port ${String(port)}`,
+    "The engine cannot read the emulator's files for port 9297.",
+  ],
+  ['timeout', () => 'Stop the emulator', 'The emulator accepts connections but does not answer.'],
+];
+
+/** The label of the command group named `Command: <name>` in the notice, as drawn above its command. */
+function stepLabel(name: string): string {
+  const group = within(connectionNotice()).getByRole('group', { name: `Command: ${name}` });
+  return norm(present(group.querySelector('.st-cmd-label > span:first-child'), `the label of ${name}`).textContent);
+}
+
+const START_9297 = [
+  'E=$HOME/.aws/emulator',
+  'P=9297',
+  'docker run -d \\',
+  '  --name \\',
+  '  emuforge-emulator-$P \\',
+  '  -p 127.0.0.1:$P:$P \\',
+  '  -e HOME=$HOME \\',
+  '  -v $E:$E \\',
+  '  aws-emulator \\',
+  '  -p $P -t off',
+];
+
+describe('Connection: step 1 names the container it stops (issue 18)', () => {
+  it.each<[string, string]>([
+    [
+      'connection_refused',
+      '1. Stop what is left of the emulator (the container emuforge-emulator-9297, which step 2 starts)',
+    ],
+    ['tls_untrusted', '1. Stop the emulator on port 9297 (the container emuforge-emulator-9297, which step 2 starts)'],
+    [
+      'files_unreadable',
+      '1. Stop the emulator on port 9297 (the container emuforge-emulator-9297, which step 2 starts)',
+    ],
+    ['timeout', '1. Stop the emulator (the container emuforge-emulator-9297, which step 2 starts)'],
+  ])('reason %s on port 9297: step 1\'s label reads exactly "%s"', async (reason, label) => {
+    await openHomeAnswered(emulatorDown(reason, 9297));
+    expect(stepLabel('stop emulator')).toBe(label);
+  });
+
+  it.each(STOP_STEP_REASONS)(
+    'reason %s on port 65535: the label, the stop command and the start command name the same container',
+    async (reason, stopLabel) => {
+      await openHomeAnswered(emulatorDown(reason, 65535));
+      expect(stepLabel('stop emulator')).toBe(
+        `1. ${stopLabel(65535)} (the container emuforge-emulator-65535, which step 2 starts)`,
+      );
+      const [stop, start] = commandsIn(connectionNotice());
+      expect(present(stop, 'the stop command').at(-1)).toBe('  emuforge-emulator-65535');
+      expect(present(start, 'the start command')).toContain('P=65535');
+      expect(start).toContain('  emuforge-emulator-$P \\');
+    },
+  );
+
+  it.each(ALERT_STATES)('%s: nothing in the notice reads "command below"', async (_name, answer) => {
+    await openHomeAnswered(answer);
+    const toggle = buildOnceToggle();
+    if (toggle !== null) {
+      await click(toggle);
+    }
+    expect(noticeText()).not.toContain('command below');
+  });
+
+  it.each(STOP_STEP_REASONS)(
+    'reason %s: message, explanation, build-once, step 1, stop command, step 2, start command; two commands only',
+    async (reason, stopLabel, explanation) => {
+      const message = `nothing answers on ${EMULATOR} (${reason})`;
+      await openHomeAnswered(emulatorDown(reason, 9297, message));
+      const label = `1. ${stopLabel(9297)} (the container emuforge-emulator-9297, which step 2 starts)`;
+      expectAscending(
+        positionsIn(noticeText(), [
+          `Engine message: ${message}`,
+          explanation,
+          'First run? Build the image once',
+          label,
+          'docker rm -f \\ emuforge-emulator-9297',
+          '2. Start the emulator on port 9297',
+          'E=$HOME/.aws/emulator P=9297',
+        ]),
+      );
+      expect(stepLabel('stop emulator')).toBe(label);
+      expect(stepLabel('start emulator')).toBe('2. Start the emulator on port 9297');
+      expect(commandsIn(connectionNotice())).toEqual([STOP_9297, START_9297]);
+    },
+  );
+
+  it.each(STOP_STEP_REASONS)(
+    'reason %s: the only buttons are build-once, then copy stop, then copy start; each copies its own command',
+    async (reason) => {
+      await openHomeAnswered(emulatorDown(reason, 9297));
+      const [toggle, ...copies] = noticeButtons();
+      expect(toggle).toBe(buildOnce());
+      expect(copies.map((b) => b.getAttribute('aria-label'))).toEqual([
+        'Copy command: stop emulator',
+        'Copy command: start emulator',
+      ]);
+      const copied: string[] = [];
+      const writeText = vi.fn((text: string) => {
+        copied.push(text);
+        return Promise.resolve();
+      });
+      Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+      for (const button of copies) {
+        await click(button);
+      }
+      expect(copied).toEqual([STOP_9297.join('\n'), START_9297.join('\n')]);
+    },
+  );
+
+  it.each(STOP_STEP_REASONS)(
+    'reason %s: the build-once toggle opens to the build command and its copy button, and closes again',
+    async (reason) => {
+      await openHomeAnswered(emulatorDown(reason, 9297));
+      expect(buildOnceContent()).toBeNull();
+      await click(buildOnce());
+      expect(buildOnce()).toHaveAttribute('aria-expanded', 'true');
+      const content = present(buildOnceContent(), 'the expanded content');
+      expect(commandsIn(content)).toEqual([BUILD]);
+      expect(copyButtonsIn(content).map((b) => b.getAttribute('aria-label'))).toEqual(['Copy command: build image']);
+      await click(buildOnce());
+      expect(buildOnce()).toHaveAttribute('aria-expanded', 'false');
+      expect(buildOnceContent()).toBeNull();
+      expect(commandsIn(connectionNotice())).toEqual([STOP_9297, START_9297]);
+    },
+  );
+
+  it('not started on port 9297: no step 1, no "Stop", no number before the start label, only the start command', async () => {
+    await openHomeAnswered(emulatorDown('not_started', 9297));
+    expect(within(connectionNotice()).queryByRole('group', { name: 'Command: stop emulator' })).toBeNull();
+    expect(noticeText()).not.toContain('Stop');
+    expect(noticeText()).not.toMatch(/\b1\. /);
+    expect(stepLabel('start emulator')).toBe('Start the emulator on port 9297');
+    expect(commandsIn(connectionNotice())).toEqual([START_9297]);
+  });
+});
