@@ -775,8 +775,8 @@ class AreaWizardPages(AreaCase, WizardCaptureCase):
         steps = json.loads(self.steps_file().read_text())["steps"]
         for k, entry in enumerate(steps, 1):
             nodes = entry["nodes"]
-            # provisional (decisions-needed.md, t1): the breadcrumb link "Create role" is the area's and is matched,
-            # so the frame's "Create role" is told by its role, a button
+            # decisions.md, PM decisions (wizard-frame, option a): the breadcrumb link "Create role" is the area's and
+            # is matched, so the frame's "Create role" is told by its role, a button
             self.assertEqual([n for n in nodes if n["role"] == "button" and n["name"] == "Create role"], [],
                              f"step {k}")
             for name in ("Frame only", "Home"):
