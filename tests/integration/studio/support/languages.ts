@@ -572,19 +572,25 @@ function installLanguageProbe(record: boolean): void {
     }
     return { pageScrolls, issues: [...new Set(issues)] };
   };
-  /** Text nodes of Studio's own layer that hold a character of `script` and whose letter spacing is below 0 (R6.3). */
+  /**
+   * Text nodes of Studio's own layer that hold a character of `script` and whose letter spacing is below 0 (R6.3);
+   * a page with no such node is reported too, as it shows nothing of the script to measure.
+   */
   const negativeTracking = (script: string) => {
     const re = new RegExp(script, 'u');
     const root = areaRoot();
     const out: string[] = [];
+    let seen = 0;
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
     for (let n = walker.nextNode(); n; n = walker.nextNode()) {
       const el = n.parentElement;
       if (!el || !re.test((n as Text).data) || el.closest(SKIP) || (root && root.contains(el))) continue;
+      seen++;
       const ls = getComputedStyle(el).letterSpacing;
       const px = ls === 'normal' ? 0 : parseFloat(ls);
       if (px < 0) out.push(`"${norm((n as Text).data).slice(0, 40)}" in ${describe(el)}: letter-spacing ${ls}`);
     }
+    if (seen === 0) out.push(`no text node of Studio's own layer holds a character of ${script}`);
     return out;
   };
   /** The topmost element at a point lies inside `el`. */
@@ -1117,11 +1123,38 @@ function sameFace(reported: string, expected: string): boolean {
   return reported.toLowerCase().replace(/\s+variable$/, '') === expected.toLowerCase();
 }
 
-/** Why `item` is drawn by another face than `allowed` (default: `allowedFaces`); `null` when it is not. */
+const LATIN_LETTER = /\p{Script=Latin}/gu;
+/** Latin ligatures a face may form by default (`liga`); each draws its letters as one glyph. */
+const LATIN_LIGATURE = /ff[il]?|f[ijlt]/g;
+
+/**
+ * The fewest glyphs that can draw the Latin letters of `text`: one per letter, less what the default ligatures
+ * join.
+ */
+function latinGlyphsAtLeast(text: string): number {
+  const letters = text.match(LATIN_LETTER)?.length ?? 0;
+  const joined = [...text.matchAll(LATIN_LIGATURE)].reduce((n, m) => n + m[0].length - 1, 0);
+  return letters - joined;
+}
+
+/**
+ * Why `item` is drawn by another face than `allowed` (default: `allowedFaces`); `null` when it is not. When a node
+ * mixes a script's own face with Instrument Sans, its Latin runs must be Instrument Sans's (R6.2): that face draws
+ * at least one glyph per Latin letter, so a stack that puts the script's face first, which also carries Latin, is
+ * told apart.
+ */
 export function faceProblem(item: FaceItem, allowed = allowedFaces(item)): string | null {
+  const drawnBy = `"${norm(item.text).slice(0, 50)}" (lang ${item.lang || 'none'}) in ${item.where} is drawn by ${item.fonts.map((f) => `${f.family} (${String(f.glyphs)})`).join(', ')}`;
   const other = item.fonts.filter((f) => !allowed.some((a) => sameFace(f.family, a)));
-  if (other.length === 0) return null;
-  return `"${norm(item.text).slice(0, 50)}" (lang ${item.lang || 'none'}) in ${item.where} is drawn by ${item.fonts.map((f) => `${f.family} (${String(f.glyphs)})`).join(', ')}; allowed: ${allowed.join(', ') || 'none'}`;
+  if (other.length > 0) return `${drawnBy}; allowed: ${allowed.join(', ') || 'none'}`;
+  const mixed =
+    allowed.some((a) => sameFace(a, FACES.latin)) &&
+    allowed.some((a) => Object.values(SCRIPT_FACE).some((s) => sameFace(a, s)));
+  if (!mixed) return null;
+  const need = latinGlyphsAtLeast(item.text);
+  const latin = item.fonts.filter((f) => sameFace(f.family, FACES.latin)).reduce((n, f) => n + f.glyphs, 0);
+  if (latin >= need) return null;
+  return `${drawnBy}; its Latin letters need at least ${String(need)} glyphs of ${FACES.latin}, it draws ${String(latin)}`;
 }
 
 interface DomNode {

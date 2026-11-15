@@ -536,6 +536,8 @@ test('studio.studio-layer-complete-in-every-language', async ({ ctx, browser, pr
         const s = await storedPage(ctx, browser, proxy, stack, l.tag);
         for (const path of STUDIO_PAGES) {
           await visit(s.page, s.traffic, path);
+          const htmlLang = (await s.page.locator('html').getAttribute('lang')) ?? '';
+          if (!isLang(htmlLang, l.tag)) found.push(`${l.tag} ${path}: <html lang="${htmlLang}">, not the language's`);
           const mains = await s.page.getByRole('main').count();
           const banners = await frame(s.page).banner.count();
           const bannerInMain =
@@ -854,6 +856,9 @@ test('studio.language-layout-in-every-language', async ({ ctx, browser, proxy })
                   .map((t) => t.trim())
                   .filter((t) => t !== '');
                 if (pres.length === 0) found.commands.push(`${where}: no command is shown`);
+                const htmlLang = (await s.page.locator('html').getAttribute('lang')) ?? '';
+                if (!isLang(htmlLang, l.tag))
+                  found.commands.push(`${where}: <html lang="${htmlLang}">, not the language's`);
                 const c = await layoutIssues(s.page, pres);
                 for (const w of c.wrapped) found.commands.push(`${where}: command line wrapped: ${w}`);
                 for (const m of c.missing) found.commands.push(`${where}: command line not shown: ${m}`);
@@ -1035,8 +1040,11 @@ test('studio.language-faces-per-script', async ({ ctx, page, context, browser, p
   await lines.line('The wordmark in every language → Instrument Sans alone', async () => {
     const found: string[] = [];
     for (const l of LANGUAGES) {
-      const marksDrawn = (itemsByTag.get(l.tag) ?? []).filter((i) => i.wordmark);
+      const drawnHere = itemsByTag.get(l.tag) ?? [];
+      const marksDrawn = drawnHere.filter((i) => i.wordmark);
       if (marksDrawn.length === 0) found.push(`${l.tag}: the wordmark was not drawn`);
+      if (!drawnHere.some((i) => isLang(i.lang, l.tag) && !i.code && !i.wordmark && /\p{L}/u.test(i.text)))
+        found.push(`${l.tag}: no drawn text in ${l.tag} beside the wordmark`);
       for (const i of marksDrawn) {
         const p = faceProblem(i, [FACES.latin]);
         if (p) found.push(`${l.tag}: ${p}`);
