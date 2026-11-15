@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: gap
 Issue-Source: worker
 Issue-Key: studio|unit-test-support-location|layout
-Issue-Check-Ids:
+Issue-Check-Ids: studio-unit:src/test/test-support-location.test.ts
 Issue-Commit: 6fbbdf204eedb190c4466fc3aa64e67b443844f0
 
 # Give shared unit-test support a place the app build does not type-check

@@ -16,7 +16,7 @@ import {
   renderApp,
   row,
   type FakeAnswer,
-} from './home-test-kit';
+} from '../../test/home-test-kit';
 
 // Requirement R9.2: the AWS services, in label order, under the AWS area's segment.
 const SERVICES: [string, string][] = [

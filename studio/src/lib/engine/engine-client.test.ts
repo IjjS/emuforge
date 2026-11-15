@@ -10,7 +10,7 @@ import {
   connectionNotice,
   TOKEN_1,
   TOKEN_2,
-} from '../../features/home/home-test-kit';
+} from '../../test/home-test-kit';
 
 const SESSION_URL = 'http://127.0.0.1:8297/__emuforge/session';
 const HEALTH_URL = 'http://127.0.0.1:8297/__emuforge/health';
@@ -148,7 +148,7 @@ describe('engine client: engine port', () => {
   // The page reads its configuration once per load; each case loads the app afresh.
   async function renderFresh() {
     vi.resetModules();
-    const kit = await import('../../features/home/home-test-kit');
+    const kit = await import('../../test/home-test-kit');
     const view = kit.renderApp('/');
     await kit.advance();
     return view;

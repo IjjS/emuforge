@@ -29,7 +29,7 @@ import {
   renderApp,
   row,
   type FakeAnswer,
-} from './home-test-kit';
+} from '../../test/home-test-kit';
 
 const RECHECK = 'Studio checks again every 5 seconds; this page updates on its own.';
 const ENGINE = 'http://127.0.0.1:8297';
