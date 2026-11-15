@@ -1,9 +1,121 @@
 {
-  "engine": { "forms": ["engine", "engines"], "exempt": [], "stems": {} },
-  "emulator": { "forms": ["emulator", "emulators"], "exempt": [], "stems": {} },
-  "Refresh": { "forms": ["Refresh"], "exempt": [], "stems": {} },
-  "Home": { "forms": ["Home"], "exempt": [], "stems": {} },
-  "Studio": { "forms": ["Studio"], "exempt": [], "stems": {} },
-  "command": { "forms": ["command", "commands"], "exempt": [], "stems": {} },
-  "port": { "forms": ["port", "ports"], "exempt": [], "stems": {} }
+  "engine": {
+    "forms": ["engine", "engines"],
+    "exempt": [],
+    "stems": {
+      "ko": "엔진",
+      "ja": "エンジン",
+      "es": "motor",
+      "pt-BR": "mecanismo",
+      "fr": "moteur",
+      "de": "Engine",
+      "ru": "движ",
+      "it": "motor",
+      "pl": "silnik",
+      "vi": "bộ máy",
+      "th": "เ\u2060อ\u2060น\u2060จิ\u2060น"
+    }
+  },
+  "emulator": {
+    "forms": ["emulator", "emulators"],
+    "exempt": [],
+    "stems": {
+      "ko": "에뮬레이터",
+      "ja": "エミュレーター",
+      "es": "emulador",
+      "pt-BR": "emulador",
+      "fr": "émulateur",
+      "de": "Emulator",
+      "ru": "эмулятор",
+      "it": "emulator",
+      "pl": "emulator",
+      "vi": "trình giả lập",
+      "th": "อี\u2060มู\u2060เ\u2060ล\u2060เ\u2060ต\u2060อ\u2060ร์"
+    }
+  },
+  "Refresh": {
+    "forms": ["Refresh"],
+    "exempt": [],
+    "stems": {
+      "ko": "새로 고침",
+      "ja": "更新",
+      "es": "Actualizar",
+      "pt-BR": "Atualizar",
+      "fr": "Actualiser",
+      "de": "Aktualisieren",
+      "ru": "Обнов",
+      "it": "Aggiorn",
+      "pl": "Odśw",
+      "vi": "Làm mới",
+      "th": "รี\u2060เ\u2060ฟ\u2060ร\u2060ช"
+    }
+  },
+  "Home": {
+    "forms": ["Home"],
+    "exempt": [],
+    "stems": {
+      "ko": "홈",
+      "ja": "ホーム",
+      "es": "Inicio",
+      "pt-BR": "Início",
+      "fr": "Accueil",
+      "de": "Startseite",
+      "ru": "Главн",
+      "it": "Home",
+      "pl": "główn",
+      "vi": "Trang chủ",
+      "th": "หน้าแรก"
+    }
+  },
+  "Studio": {
+    "forms": ["Studio"],
+    "exempt": [],
+    "stems": {
+      "ko": "Studio",
+      "ja": "Studio",
+      "es": "Studio",
+      "pt-BR": "Studio",
+      "fr": "Studio",
+      "de": "Studio",
+      "ru": "Studio",
+      "it": "Studio",
+      "pl": "Studio",
+      "vi": "Studio",
+      "th": "Studio"
+    }
+  },
+  "command": {
+    "forms": ["command", "commands"],
+    "exempt": [],
+    "stems": {
+      "ko": "명령",
+      "ja": "コマンド",
+      "es": "comando",
+      "pt-BR": "comando",
+      "fr": "commande",
+      "de": "Befehl",
+      "ru": "команд",
+      "it": "comand",
+      "pl": "polece",
+      "vi": "lệnh",
+      "th": "คำสั่ง"
+    }
+  },
+  "port": {
+    "forms": ["port", "ports"],
+    "exempt": [],
+    "stems": {
+      "ko": "포트",
+      "ja": "ポート",
+      "es": "puerto",
+      "pt-BR": "porta",
+      "fr": "port",
+      "de": "Port",
+      "ru": "порт",
+      "it": "port",
+      "pl": "por",
+      "vi": "cổng",
+      "th": "พ\u2060อ\u2060ร์\u2060ต"
+    }
+  }
 }
