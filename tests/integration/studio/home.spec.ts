@@ -239,23 +239,27 @@ async function tabTo(page: Page, target: Locator): Promise<boolean> {
 }
 
 /**
- * The AWS area's root as the page shows it in dark: the one element that carries `awsui-dark-mode`. Reports where the
- * class is, whether that element holds the area (its side navigation and the page's `h1`) and not the frame's banner,
- * and the `awsui-` classes of `body`.
+ * The AWS area's root as the page shows it in dark: the outermost element with `awsui-dark-mode` that holds the area
+ * (its side navigation and the page's `h1`). Elements inside that root may carry the class too (Cloudscape's own
+ * dropdowns do); `outside` lists the holders that are not inside it. Reports whether the root is `html` or `body`,
+ * whether it holds the frame's banner, every holder (for the light case) and the `awsui-` classes of `body`.
  */
 async function darkModeHolders(page: Page) {
   return page.evaluate((sideNavigation) => {
     const holders = [...document.querySelectorAll('.awsui-dark-mode')];
-    const root = holders.length === 1 ? holders[0] : null;
     const banner = [...document.querySelectorAll('header, [role="banner"]')].find((b) =>
       [...b.querySelectorAll('a')].some((a) => a.textContent?.replace(/\s+/g, ' ').trim() === 'EmuForge Studio'),
     );
     const nav = document.querySelector(sideNavigation);
     const h1 = document.querySelector('h1');
+    const holdsArea = holders.filter((el) => nav !== null && h1 !== null && el.contains(nav) && el.contains(h1));
+    const root = holdsArea.find((el) => !holdsArea.some((other) => other !== el && other.contains(el))) ?? null;
+    const name = (el: Element) => el.tagName.toLowerCase();
     return {
-      holders: holders.map((el) => el.tagName.toLowerCase()),
+      holders: holders.map(name),
+      root: root === null ? null : name(root),
+      outside: holders.filter((el) => root === null || !root.contains(el)).map(name),
       rootIsHtmlOrBody: root !== null && (root === document.documentElement || root === document.body),
-      rootHoldsArea: root !== null && nav !== null && h1 !== null && root.contains(nav) && root.contains(h1),
       rootHoldsBanner: root !== null && banner !== undefined && root.contains(banner),
       bodyAwsuiClasses: [...document.body.classList].filter((c) => c.startsWith('awsui')),
     };
@@ -365,15 +369,17 @@ test('studio.shell-finish', async ({ ctx, page, context }) => {
       }
       const dark = await darkModeHolders(page);
       ctx.log(`awsui-dark-mode on /aws/s3 in dark: ${JSON.stringify(dark)}`);
-      if (dark.holders.length !== 1) {
+      if (dark.root === null) {
+        const where = dark.holders.join(', ') || 'none';
+        found.push(`/aws/s3 in dark: no element with awsui-dark-mode holds the area (holders: ${where})`);
+      }
+      if (dark.root !== null && dark.outside.length > 0) {
+        const count = String(dark.outside.length);
         found.push(
-          `/aws/s3 in dark: ${String(dark.holders.length)} elements carry awsui-dark-mode (${dark.holders.join(', ')})`,
+          `/aws/s3 in dark: ${count} elements outside the area's root carry awsui-dark-mode (${dark.outside.join(', ')})`,
         );
       }
       if (dark.rootIsHtmlOrBody) found.push('/aws/s3 in dark: awsui-dark-mode is on html or body');
-      if (dark.holders.length === 1 && !dark.rootHoldsArea) {
-        found.push('/aws/s3 in dark: the element with awsui-dark-mode does not hold the area');
-      }
       if (dark.rootHoldsBanner)
         found.push("/aws/s3 in dark: the element with awsui-dark-mode holds the frame's banner");
       if (dark.bodyAwsuiClasses.length > 0) found.push(`/aws/s3 in dark: body has ${dark.bodyAwsuiClasses.join(' ')}`);
