@@ -6,7 +6,8 @@ use std::num::NonZeroU16;
 use std::path::PathBuf;
 
 use emuforge_core::sigv4::{
-    Auth, ClientAuth, Scope, UriMode, canonical_request, classify, signature, string_to_sign,
+    Auth, ClientAuth, Scope, UriMode, canonical_request, canonical_trailer, chunk_signature,
+    classify, sign_with, signature, signing_key, string_to_sign, trailer_signature,
 };
 use emuforge_core::{CA_FILE, CREDENTIALS_FILE, Emulator, EmulatorFiles};
 use http::header::{HeaderMap, HeaderName, HeaderValue};
@@ -22,6 +23,8 @@ const DOCUMENT_VECTORS: [&str; 6] = [
     "s3-list-objects.txt",
     "s3-presigned-get-object.txt",
 ];
+/// The two signed-chunk vectors (design §8), one per file.
+const CHUNK_VECTORS: [&str; 2] = ["s3-signed-chunks.txt", "s3-signed-chunks-trailer.txt"];
 const EMPTY_HASH: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 const ANY_SIGNATURE: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
@@ -231,6 +234,115 @@ async fn signature_of_each_document_vector_equals_its_signature() {
         );
         assert_eq!(built, section(&vector, "signature", file), "{file}");
     }
+}
+
+#[tokio::test]
+async fn sign_with_of_each_document_vector_equals_its_signature() {
+    for file in DOCUMENT_VECTORS {
+        let vector = sections(file);
+        let files = files_with_secret(section(&vector, "secret", file)).await;
+        let key = signing_key(
+            &files.credentials().secret_access_key,
+            &scope(section(&vector, "scope", file)),
+        );
+        let built = sign_with(&key, section(&vector, "string-to-sign", file));
+        assert_eq!(built, section(&vector, "signature", file), "{file}");
+    }
+}
+
+// Given the chunk vector and the trailer vector
+
+#[tokio::test]
+async fn chunk_signature_of_each_vector_chunk_equals_its_signature() {
+    for file in CHUNK_VECTORS {
+        let vector = sections(file);
+        let files = files_with_secret(section(&vector, "secret", file)).await;
+        let scope = scope(section(&vector, "scope", file));
+        let key = signing_key(&files.credentials().secret_access_key, &scope);
+        let byte = section(&vector, "data-byte", file).as_bytes()[0];
+        let sizes = section(&vector, "chunk-sizes", file).lines();
+        let signatures = section(&vector, "chunk-signatures", file).lines();
+        let mut previous = section(&vector, "seed-signature", file).to_owned();
+        for (size, expected) in sizes.zip(signatures) {
+            let size: usize = size.parse().unwrap();
+            let case = match size {
+                0 => format!("{file}: final empty chunk"),
+                _ => format!("{file}: chunk of {size} bytes"),
+            };
+            let built = chunk_signature(
+                &key,
+                section(&vector, "amz-date", file),
+                &scope,
+                &previous,
+                &vec![byte; size],
+            );
+            assert_eq!(built, expected, "{case}");
+            previous = built;
+        }
+    }
+}
+
+#[tokio::test]
+async fn trailer_signature_of_the_trailer_vector_equals_its_signature() {
+    let file = "s3-signed-chunks-trailer.txt";
+    let vector = sections(file);
+    let files = files_with_secret(section(&vector, "secret", file)).await;
+    let scope = scope(section(&vector, "scope", file));
+    let key = signing_key(&files.credentials().secret_access_key, &scope);
+    let headers: Vec<(&[u8], &[u8])> = section(&vector, "trailing-headers", file)
+        .lines()
+        .map(|line| {
+            let (name, value) = line.split_once(':').unwrap();
+            (name.as_bytes(), value.as_bytes())
+        })
+        .collect();
+    let canonical = canonical_trailer(&headers);
+    let hash = ring::digest::digest(&ring::digest::SHA256, &canonical);
+    let hash: String = hash.as_ref().iter().map(|b| format!("{b:02x}")).collect();
+    assert_eq!(hash, section(&vector, "trailer-hash", file), "trailer hash");
+    let final_chunk = section(&vector, "chunk-signatures", file)
+        .lines()
+        .last()
+        .unwrap();
+    let built = trailer_signature(
+        &key,
+        section(&vector, "amz-date", file),
+        &scope,
+        final_chunk,
+        &canonical,
+    );
+    assert_eq!(built, section(&vector, "trailer-signature", file));
+}
+
+// Given trailing headers
+
+#[test]
+fn canonical_trailer_sorts_by_lower_cased_name_and_trims_values() {
+    let headers: [(&[u8], &[u8]); 2] = [
+        (b"X-Amz-Checksum-SHA256", b" b "),
+        (b"x-amz-checksum-crc32", b"a"),
+    ];
+    assert_eq!(
+        canonical_trailer(&headers),
+        b"x-amz-checksum-crc32:a\nx-amz-checksum-sha256:b\n"
+    );
+}
+
+#[test]
+fn canonical_trailer_of_no_header_is_empty() {
+    assert_eq!(canonical_trailer(&[]), b"");
+}
+
+// Given a secret whose text is the AWS example key
+
+#[tokio::test]
+async fn signing_key_debug_is_redacted() {
+    let files = files_with_secret("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY").await;
+    let key = signing_key(
+        &files.credentials().secret_access_key,
+        &scope("20130524/us-east-1/s3/aws4_request"),
+    );
+    assert_eq!(format!("{key:?}"), "[redacted]");
 }
 
 // Given a raw path and query
