@@ -134,6 +134,11 @@ class TerminateCase(unittest.TestCase):
         self.addCleanup(self.kill_started)
         self.bin = BIN
 
+    def reap(self, proc):
+        """Kill what the case started, then wait for `proc`: the wait only reaps, it never waits for a process."""
+        self.kill_started()
+        proc.wait()
+
     def kill_started(self):
         for pid in self.started:
             if alive(pid):
@@ -154,7 +159,7 @@ class TerminateCase(unittest.TestCase):
         proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 text=True, env=clean_env(), start_new_session=True)
         self.started.append(proc.pid)
-        self.addCleanup(proc.wait)
+        self.addCleanup(self.reap, proc)
         self.addCleanup(proc.stderr.close)
         self.addCleanup(proc.stdout.close)
         return Run(proc)
@@ -205,13 +210,27 @@ class TerminateCase(unittest.TestCase):
         for sig in signals:
             os.kill(run.proc.pid, sig)
 
-    def browser_run(self, wt, *signals, args=None, port=None):
-        """Run pm-structure on pages/restless (or with `args`), send `signals` once Chromium runs, wait for it."""
+    def keep_signalling(self, run, sig):
+        """Send `sig` again every POLL until pm-structure exits (bounded): a signal still pending when the same one
+        arrives is merged with it, so this is how a later one reaches a run that is already unwinding."""
+        deadline = time.monotonic() + RUN_BOUND
+        while time.monotonic() < deadline:
+            try:
+                run.proc.wait(timeout=POLL)
+                return
+            except subprocess.TimeoutExpired:
+                os.kill(run.proc.pid, sig)
+
+    def browser_run(self, wt, *signals, args=None, port=None, repeat=None):
+        """Run pm-structure on pages/restless (or with `args`), send `signals` once Chromium runs, then `repeat`
+        every POLL until it exits, and wait for it."""
         if args is None:
             args = ("--serve", PAGES / "restless", "--port", port or free_port())
         run = self.start(wt, *args)
         self.wait_for_chromium(run)
         self.signal(run, *signals)
+        if repeat is not None:
+            self.keep_signalling(run, repeat)
         return self.finish(run)
 
     def result_path(self, wt):
@@ -336,7 +355,8 @@ class BrowserRun(TerminateCase):
     def test_second_sigterm_changes_nothing(self):
         wt = self.worktree()
         port = free_port()
-        run = self.browser_run(wt, signal.SIGTERM, signal.SIGTERM, port=port)
+        # the second SIGTERM right after the first, then again every POLL while the run unwinds
+        run = self.browser_run(wt, signal.SIGTERM, signal.SIGTERM, port=port, repeat=signal.SIGTERM)
         self.assertTerminated(run, wt, "SIGTERM")
         self.assertNothingLeft(run, wt, port)
 
@@ -350,12 +370,13 @@ class BrowserRun(TerminateCase):
 
 class SnapshotRun(TerminateCase):
     def big_snapshot(self):
-        """A valid snapshot of about 60 MiB: full-seeded.json with StaticText nodes added under `main`."""
+        """A valid snapshot of about 60 MiB: full-seeded.json with StaticText nodes (20-character names, about 910k
+        of them, the shape of the measurement the criteria cite: lock held about 2.3 s) added under `main`."""
         snap = json.loads(FULL_SEEDED.read_text())
         main = next(i for i, n in enumerate(snap["nodes"]) if n["role"] == "main")
-        node = json.dumps({"role": "StaticText", "name": "padding " + "x" * 200, "parent": main})
-        count = (SNAPSHOT_BYTES - len(json.dumps(snap))) // (len(node) + 2)
-        snap["nodes"].extend(json.loads(node) for _ in range(count))
+        node = {"role": "StaticText", "name": "x" * 20, "parent": main}
+        count = (SNAPSHOT_BYTES - len(json.dumps(snap))) // (len(json.dumps(node)) + 2)
+        snap["nodes"].extend([node] * count)
         path = self.root / "big-snapshot.json"
         path.write_text(json.dumps(snap))
         size = path.stat().st_size

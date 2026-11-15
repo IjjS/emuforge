@@ -275,6 +275,11 @@ class Stop(ProcCase):
         self.started = []  # PIDs to kill at the end: drivers, children, grandchildren, unrelated processes
         self.addCleanup(self.kill_started)
 
+    def reap(self, proc):
+        """Kill what the case started, then wait for `proc`: the wait only reaps, it never waits for a process."""
+        self.kill_started()
+        proc.wait()
+
     def kill_started(self):
         for pid in self.started:
             for kill in (os.killpg, os.kill):
@@ -288,7 +293,7 @@ class Stop(ProcCase):
                              cwd=str(self.work), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE, text=True, start_new_session=True)
         self.started.append(d.pid)
-        self.addCleanup(d.wait)
+        self.addCleanup(self.reap, d)
         self.addCleanup(d.stderr.close)
         self.addCleanup(d.stdout.close)
         return d
@@ -397,7 +402,7 @@ class Stop(ProcCase):
     def test_stop_kills_only_the_childs_group(self):
         unrelated = subprocess.Popen(["sleep", "30"], stdin=subprocess.DEVNULL, start_new_session=True)
         self.started.append(unrelated.pid)
-        self.addCleanup(unrelated.wait)
+        self.addCleanup(self.reap, unrelated)
         d = self.driver("scope")
         self.wait_ready(d)
         os.kill(d.pid, signal.SIGTERM)
