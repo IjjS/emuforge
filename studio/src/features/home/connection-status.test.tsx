@@ -563,10 +563,11 @@ const STOP_STEP_REASONS: [string, (port: number) => string, string][] = [
   ['timeout', () => 'Stop the emulator', 'The emulator accepts connections but does not answer.'],
 ];
 
-/** The label of the command group named `Command: <name>` in the notice, as drawn above its command. */
-function stepLabel(name: string): string {
+/** The command group named `Command: <name>` in the notice shows `label` as its whole label, as a user reads it. */
+function expectStepLabel(name: string, label: string) {
   const group = within(connectionNotice()).getByRole('group', { name: `Command: ${name}` });
-  return norm(present(group.querySelector('.st-cmd-label > span:first-child'), `the label of ${name}`).textContent);
+  // Matched on each element's whole text: the container's name sits in an element of its own inside the label.
+  expect(within(group).getByText((_text, element) => norm(element?.textContent) === label)).toBeVisible();
 }
 
 const START_9297 = [
@@ -596,14 +597,15 @@ describe('Connection: step 1 names the container it stops (issue 18)', () => {
     ['timeout', '1. Stop the emulator (the container emuforge-emulator-9297, which step 2 starts)'],
   ])('reason %s on port 9297: step 1\'s label reads exactly "%s"', async (reason, label) => {
     await openHomeAnswered(emulatorDown(reason, 9297));
-    expect(stepLabel('stop emulator')).toBe(label);
+    expectStepLabel('stop emulator', label);
   });
 
   it.each(STOP_STEP_REASONS)(
     'reason %s on port 65535: the label, the stop command and the start command name the same container',
     async (reason, stopLabel) => {
       await openHomeAnswered(emulatorDown(reason, 65535));
-      expect(stepLabel('stop emulator')).toBe(
+      expectStepLabel(
+        'stop emulator',
         `1. ${stopLabel(65535)} (the container emuforge-emulator-65535, which step 2 starts)`,
       );
       const [stop, start] = commandsIn(connectionNotice());
@@ -639,8 +641,8 @@ describe('Connection: step 1 names the container it stops (issue 18)', () => {
           'E=$HOME/.aws/emulator P=9297',
         ]),
       );
-      expect(stepLabel('stop emulator')).toBe(label);
-      expect(stepLabel('start emulator')).toBe('2. Start the emulator on port 9297');
+      expectStepLabel('stop emulator', label);
+      expectStepLabel('start emulator', '2. Start the emulator on port 9297');
       expect(commandsIn(connectionNotice())).toEqual([STOP_9297, START_9297]);
     },
   );
@@ -690,7 +692,7 @@ describe('Connection: step 1 names the container it stops (issue 18)', () => {
     expect(within(connectionNotice()).queryByRole('group', { name: 'Command: stop emulator' })).toBeNull();
     expect(noticeText()).not.toContain('Stop');
     expect(noticeText()).not.toMatch(/\b1\. /);
-    expect(stepLabel('start emulator')).toBe('Start the emulator on port 9297');
+    expectStepLabel('start emulator', 'Start the emulator on port 9297');
     expect(commandsIn(connectionNotice())).toEqual([START_9297]);
   });
 });
