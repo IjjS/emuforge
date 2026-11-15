@@ -1297,3 +1297,213 @@ async fn listener_client_that_stops_reading_is_closed_at_the_idle_bound() {
         .unwrap();
     assert!(received.len() < LARGE, "the whole body arrived");
 }
+
+// ---- A chunk above the cap (issue 9) ----
+
+const CHUNK_TOO_LARGE_MESSAGE: &str = "a chunk of the aws-chunked request body is larger than 1048576 bytes, the most the engine relays in one chunk; upload with smaller chunks";
+const SIGNED_CHUNKS: &str = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD";
+
+/// `request` answered by a test relay that returns `ChunkTooLarge`; the relay is called once.
+async fn chunk_too_large(request: Request<Body>) -> Answer {
+    let relay = TestRelay::answering(Script::Error(RelayError::ChunkTooLarge));
+    let app = app_relaying(reachable_probe(), relay.relay.clone());
+    let answer = send(&app, request).await;
+    assert_eq!(relay.seen().len(), 1, "the relay was not called once");
+    answer
+}
+
+/// The text of the first `<name>` element of an XML body.
+fn xml_element(body: &str, name: &str) -> String {
+    let open = format!("<{name}>");
+    let start = body.find(&open).unwrap() + open.len();
+    let end = body[start..].find(&format!("</{name}>")).unwrap() + start;
+    body[start..end].to_owned()
+}
+
+#[tokio::test]
+async fn chunk_too_large_is_400_in_the_callers_protocol_and_closes_the_connection() {
+    let s3 = chunk_too_large(
+        header_signed(Method::PUT, "/b/k", "s3")
+            .header("x-amz-content-sha256", SIGNED_CHUNKS)
+            .body(Body::from("0;chunk-signature="))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(s3.headers[CONTENT_TYPE], "application/xml", "case s3");
+    assert!(
+        s3.text().starts_with("<Error><Code>ChunkTooLarge</Code>"),
+        "case s3: {}",
+        s3.text()
+    );
+    let s3_message = xml_element(&s3.text(), "Message");
+
+    let json = chunk_too_large(empty(
+        header_signed(Method::POST, "/", "dynamodb")
+            .header("x-amz-target", "DynamoDB_20120810.ListTables")
+            .header(CONTENT_TYPE, "application/x-amz-json-1.0"),
+    ))
+    .await;
+    assert_eq!(
+        json.headers[CONTENT_TYPE], "application/x-amz-json-1.0",
+        "case json"
+    );
+    assert_eq!(json.aws_code(), "ChunkTooLarge", "case json");
+    let json_message = json.json()["message"].as_str().unwrap().to_owned();
+
+    let query = chunk_too_large(empty(
+        header_signed(Method::POST, "/", "iam").header(CONTENT_TYPE, FORM),
+    ))
+    .await;
+    assert_eq!(query.headers[CONTENT_TYPE], "text/xml", "case query");
+    let (error_type, code, query_message) = query_error(&query.text());
+    assert_eq!(error_type, "Sender", "case query");
+    assert_eq!(code, "ChunkTooLarge", "case query");
+
+    let rest_json = chunk_too_large(empty(header_signed(
+        Method::GET,
+        "/2015-03-31/functions/",
+        "lambda",
+    )))
+    .await;
+    assert_eq!(
+        rest_json.headers[CONTENT_TYPE], "application/json",
+        "case rest-json"
+    );
+    assert_eq!(rest_json.aws_code(), "ChunkTooLarge", "case rest-json");
+    let rest_json_message = rest_json.json()["message"].as_str().unwrap().to_owned();
+
+    for (case, answer, message) in [
+        ("s3", &s3, s3_message),
+        ("json", &json, json_message),
+        ("query", &query, query_message),
+        ("rest-json", &rest_json, rest_json_message),
+    ] {
+        assert_eq!(answer.status, StatusCode::BAD_REQUEST, "case {case}");
+        assert_eq!(message, CHUNK_TOO_LARGE_MESSAGE, "case {case}");
+        assert_eq!(answer.headers[CONNECTION], "close", "case {case}");
+    }
+}
+
+#[tokio::test]
+async fn chunk_too_large_to_a_head_request_is_400_with_the_s3_headers_and_no_body() {
+    let answer = chunk_too_large(empty(header_signed(Method::HEAD, "/b/k", "s3"))).await;
+    assert_eq!(answer.status, StatusCode::BAD_REQUEST);
+    assert_eq!(answer.headers[CONTENT_TYPE], "application/xml");
+    assert_eq!(answer.headers[CONNECTION], "close");
+    assert!(answer.body.is_empty(), "{:?}", answer.body);
+}
+
+#[tokio::test]
+async fn chunk_too_large_answer_carries_no_request_header_value() {
+    let canaries = [
+        "canary-user-agent-e9b",
+        "canary-meta-e9b",
+        "canary-encoding-e9b",
+    ];
+    let answer = chunk_too_large(
+        header_signed(Method::PUT, "/b/k", "s3")
+            .header("x-amz-content-sha256", SIGNED_CHUNKS)
+            .header("user-agent", canaries[0])
+            .header("x-amz-meta-note", canaries[1])
+            .header("content-encoding", canaries[2])
+            .body(Body::from("10000;chunk-signature="))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::BAD_REQUEST);
+    let text = answer.text();
+    for canary in canaries {
+        assert!(!text.contains(canary), "{canary} in {text}");
+    }
+}
+
+/// A relay seam that records the `X-Amz-Content-SHA256` and the body of each request it is handed, then answers
+/// `Script::ok()` through `forward` with that body.
+struct BodyRecorder {
+    relay: RelayFn,
+    seen: Arc<Mutex<Vec<Recorded>>>,
+}
+
+/// The `X-Amz-Content-SHA256` and the body of one request handed to the relay.
+type Recorded = (Option<String>, Bytes);
+
+impl BodyRecorder {
+    fn new() -> BodyRecorder {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let record = seen.clone();
+        let relay: RelayFn = Arc::new(move |request: Request<Body>| {
+            let record = record.clone();
+            Box::pin(async move {
+                let (parts, body) = request.into_parts();
+                let body = axum::body::to_bytes(body, usize::MAX).await.unwrap();
+                let mode = parts
+                    .headers
+                    .get("x-amz-content-sha256")
+                    .map(|value| value.to_str().unwrap().to_owned());
+                record.lock().unwrap().push((mode, body.clone()));
+                let (engine, emulator) = tokio::io::duplex(64 * 1024);
+                tokio::spawn(stand_in(emulator, Script::ok(), false));
+                forward(
+                    engine,
+                    Arc::new(AtomicBool::new(false)),
+                    Prepared { head: parts },
+                    Body::from(body),
+                    &Limits::DEFAULT,
+                )
+                .await
+            })
+        });
+        BodyRecorder { relay, seen }
+    }
+}
+
+#[tokio::test]
+async fn studio_signed_chunk_put_reaches_the_relay_with_its_mode_and_body_unchanged() {
+    const STUDIO: &str = "http://127.0.0.1:8296";
+    let recorder = BodyRecorder::new();
+    let app = app_relaying(reachable_probe(), recorder.relay.clone());
+    let session = app
+        .clone()
+        .oneshot(
+            request(Method::GET, "/__emuforge/session")
+                .header(ORIGIN, STUDIO)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(session.status(), StatusCode::OK, "session");
+    let session = axum::body::to_bytes(session.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let token = serde_json::from_slice::<Value>(&session).unwrap()["token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let body =
+        format!("5;chunk-signature={SIGNATURE}\r\nhello\r\n0;chunk-signature={SIGNATURE}\r\n\r\n");
+    let request = header_signed(Method::PUT, "/b/k", "s3")
+        .header("x-amz-content-sha256", SIGNED_CHUNKS)
+        .header("content-encoding", "aws-chunked")
+        .header("x-amz-decoded-content-length", "5")
+        .header(ORIGIN, STUDIO)
+        .header("sec-fetch-site", "same-site")
+        .header("sec-fetch-mode", "cors")
+        .header("sec-fetch-dest", "empty")
+        .header("x-emuforge-session", &token)
+        .body(Body::from(body.clone()))
+        .unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["x-amz-request-id"], "test-request-1");
+    let answer = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(answer.as_ref(), b"<ListAllMyBucketsResult/>");
+
+    let seen = recorder.seen.lock().unwrap().clone();
+    assert_eq!(seen.len(), 1, "the relay was not called once");
+    assert_eq!(seen[0].0.as_deref(), Some(SIGNED_CHUNKS));
+    assert_eq!(seen[0].1.as_ref(), body.as_bytes(), "the body unchanged");
+}
