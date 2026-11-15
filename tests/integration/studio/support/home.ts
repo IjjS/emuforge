@@ -1,70 +1,96 @@
-// What Home's "Connection" container shows, read from the page the way a user reads it: the "Engine" and
-// "Emulator" rows (the status indicator's text and the row's text), and the text of the alert inside the container
-// (requirement 2.1, 3.2). Used by the Home checks of issue 3 (`home.spec.ts`, `safety.spec.ts`).
+// What Home's "Connection" section shows, read from the page the way a user reads it, in Studio's own elements found
+// by role and name (requirement R9.1, R9.3; test-criteria.md, issue 16): the region named "Connection", its "Engine"
+// and "Emulator" rows (the row's status text and all its text) and the notices under the rows, each named by its
+// heading. Used by the Home checks of issues 3 and 16 (`home.spec.ts`, `safety.spec.ts`).
 
-import createWrapper from '@cloudscape-design/components/test-utils/selectors';
 import type { Page } from '@playwright/test';
 
-const CONTAINER = createWrapper().findContainer().toSelector();
-const STATUS_INDICATOR = createWrapper().findStatusIndicator().toSelector();
-const ALERT = createWrapper().findAlert().toSelector();
+/** The status texts a row shows (requirement R9.1). */
+export const STATUSES = ['Checking', 'Connected', 'Not started', 'Unreachable', 'Error', 'Unknown'];
 
-/** One row of the "Connection" container. */
+/** One row of the "Connection" section. */
 export interface RowView {
-  /** The text of the row's status indicator; `null` when the row has none, or more than one. */
+  /** The row's status text; `null` when the row shows none of `STATUSES`, or more than one. */
   status: string | null;
-  /** All visible text of the row, whitespace collapsed: the label, the status and the endpoint. */
+  /** All visible text of the row, whitespace collapsed: the label, the status and the address. */
   text: string;
 }
 
 export interface ConnectionView {
-  /** The "Engine" row; `null` when the page has no "Connection" container or no row labelled "Engine". */
+  /** The "Engine" row; `null` when the page has no Studio "Connection" region or no row labelled "Engine". */
   engine: RowView | null;
   /** The "Emulator" row; `null` likewise. */
   emulator: RowView | null;
-  /** How many alerts the container holds. */
-  alerts: number;
-  /** The visible text of the container's alerts, whitespace collapsed; `''` when it holds none. */
-  alert: string;
+  /** How many notices the section holds. */
+  notices: number;
+  /** The visible text of the section's notices, whitespace collapsed; `''` when it holds none. */
+  notice: string;
 }
 
 /**
- * Reads the "Connection" container once. A row is the smallest element that holds the element whose text is exactly
- * the row's label and a status indicator. Never waits: a page without the container reads as `null` rows.
+ * Reads the "Connection" section once. Never waits: a page without it reads as `null` rows.
+ *
+ * - The section is the element with role `region` and accessible name "Connection" that is Studio's own: neither it
+ *   nor an element around it carries a Cloudscape class (a class starting with `awsui`).
+ * - A notice is the largest element inside the section that holds a heading other than "Connection" and none of the
+ *   rows' labels.
+ * - A row is the smallest element around the element whose text is exactly the row's label (outside every notice)
+ *   that also holds an element whose text is exactly one of `STATUSES`.
  */
 export async function connectionView(page: Page): Promise<ConnectionView> {
-  return page.evaluate(
-    ({ container, indicator, alert }) => {
-      const norm = (s: string | null | undefined) => (s ?? '').replace(/\s+/g, ' ').trim();
-      const visible = (el: Element) => norm((el as HTMLElement).innerText);
-      const containers = [...document.querySelectorAll(container)].filter((c) =>
-        [...c.querySelectorAll('h1, h2, h3, h4, h5, h6')].some((h) => norm(h.textContent) === 'Connection'),
+  const regions = page.getByRole('region', { name: 'Connection', exact: true });
+  const views = await regions.evaluateAll((found, statuses) => {
+    const norm = (s: string | null | undefined) => (s ?? '').replace(/\s+/g, ' ').trim();
+    const visible = (el: Element) => norm((el as HTMLElement).innerText);
+    const cloudscape = (el: Element | null): boolean => {
+      for (let at = el; at; at = at.parentElement) {
+        if ([...at.classList].some((c) => c.startsWith('awsui'))) return true;
+      }
+      return false;
+    };
+    const box = found.filter((r) => !cloudscape(r)).at(-1);
+    if (!box) return null;
+    const exactly = (text: string) =>
+      [...box.querySelectorAll('*')].filter(
+        (el) => norm(el.textContent) === text && ![...el.children].some((child) => norm(child.textContent) === text),
       );
-      const box = containers.at(-1);
-      if (!box) return { engine: null, emulator: null, alerts: 0, alert: '' };
-      const row = (label: string) => {
-        const labels = [...box.querySelectorAll('*')].filter(
+    const labels = [...exactly('Engine'), ...exactly('Emulator')];
+    const headings = [...box.querySelectorAll('h1, h2, h3, h4, h5, h6, [role="heading"]')].filter(
+      (h) => norm(h.textContent) !== 'Connection',
+    );
+    const notices: Element[] = [];
+    for (const heading of headings) {
+      let el: Element = heading;
+      while (el.parentElement && el.parentElement !== box && !labels.some((l) => el.parentElement!.contains(l))) {
+        el = el.parentElement;
+      }
+      if (labels.some((l) => el.contains(l))) continue;
+      if (!notices.some((n) => n.contains(el))) notices.push(el);
+    }
+    const row = (label: string) => {
+      const own = exactly(label).find((el) => !notices.some((n) => n.contains(el)));
+      if (!own) return null;
+      for (let scope = own.parentElement; scope && box.contains(scope); scope = scope.parentElement) {
+        const shown = [...scope.querySelectorAll('*')].filter(
           (el) =>
-            norm(el.textContent) === label && ![...el.children].some((child) => norm(child.textContent) === label),
+            !notices.some((n) => n.contains(el)) &&
+            statuses.includes(norm(el.textContent)) &&
+            ![...el.children].some((child) => norm(child.textContent) === norm(el.textContent)),
         );
-        const own = labels.find((el) => !el.closest(alert));
-        if (!own) return null;
-        let scope: Element | null = own.parentElement;
-        while (scope && scope !== box && scope.querySelectorAll(indicator).length === 0) scope = scope.parentElement;
-        if (!scope) return null;
-        const found = scope.querySelectorAll(indicator);
-        return { status: found.length === 1 ? norm(found[0].textContent) : null, text: visible(scope) };
-      };
-      const alerts = [...box.querySelectorAll(alert)];
-      return {
-        engine: row('Engine'),
-        emulator: row('Emulator'),
-        alerts: alerts.length,
-        alert: alerts.map(visible).join(' '),
-      };
-    },
-    { container: CONTAINER, indicator: STATUS_INDICATOR, alert: ALERT },
-  );
+        if (shown.length === 0) continue;
+        const distinct = [...new Set(shown.map((el) => norm(el.textContent)))];
+        return { status: distinct.length === 1 ? distinct[0] : null, text: visible(scope) };
+      }
+      return null;
+    };
+    return {
+      engine: row('Engine'),
+      emulator: row('Emulator'),
+      notices: notices.length,
+      notice: notices.map(visible).join(' '),
+    };
+  }, STATUSES);
+  return views ?? { engine: null, emulator: null, notices: 0, notice: '' };
 }
 
 /** A pattern matching `<flag> <port>` not followed by another digit, as a command line names a port. */
@@ -86,7 +112,7 @@ export async function stillSamePage(page: Page): Promise<boolean> {
   return page.evaluate(() => (window as unknown as { __emuforgeItMark?: boolean }).__emuforgeItMark === true);
 }
 
-/** The 19 service labels of requirement 2.2, in label order, as the side navigation lists them. */
+/** The 19 service labels (requirement R5.2, R9.2), in label order, as the AWS area and Home's "Providers" list them. */
 export const SERVICE_LABELS = [
   'Amazon API Gateway',
   'Amazon CloudWatch',

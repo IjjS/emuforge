@@ -1,0 +1,108 @@
+/* Studio's notices (DESIGN.md, Notices): a band in its panel with a hairline above it, a 20px icon column beside the
+   body (the icon moves into the heading below 640px), and the heading with its action at the end. */
+
+@layer studio {
+  .st-notice {
+    display: grid;
+    grid-template-columns: 20px minmax(0, 1fr);
+    gap: 0 12px;
+    padding: 20px var(--st-pad) 22px;
+    border-top: 1px solid var(--st-line);
+  }
+
+  .st-notice.err {
+    background: var(--st-err-wash);
+    border-top-color: var(--st-err-line);
+  }
+
+  .st-notice.info {
+    background: var(--st-info-wash);
+    border-top-color: var(--st-info-line);
+  }
+
+  .st-notice > svg {
+    margin-top: 2px;
+  }
+
+  .st-notice.err > svg,
+  .st-notice.err h3 > svg {
+    color: var(--st-err);
+  }
+
+  .st-notice.info > svg,
+  .st-notice.info h3 > svg {
+    color: var(--st-info);
+  }
+
+  .st-notice-body {
+    min-width: 0;
+  }
+
+  .st-notice-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px 16px;
+    margin-bottom: 8px;
+  }
+
+  .st-notice-head .st-btn {
+    margin-top: -4px;
+  }
+
+  .st-notice h3 {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin: 0;
+    font-size: 16px;
+    line-height: 1.35;
+    font-weight: 650;
+  }
+
+  .st-notice h3 > svg {
+    display: none;
+    flex: none;
+    margin-top: 1px;
+  }
+
+  .st-notice p {
+    max-width: 70ch;
+    margin: 0 0 12px;
+  }
+
+  .st-notice p.st-recheck {
+    margin: -4px 0 14px;
+    font-size: 14px;
+    color: var(--st-text-2);
+  }
+
+  .st-notice .st-said-label {
+    font-weight: 560;
+  }
+
+  .st-notice .st-said-text {
+    overflow-wrap: anywhere;
+  }
+
+  .st-notice p.st-note {
+    margin: 8px 0 0;
+    font-size: 14px;
+    color: var(--st-text-2);
+  }
+
+  @media (max-width: 640px) {
+    .st-notice {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .st-notice > svg {
+      display: none;
+    }
+
+    .st-notice h3 > svg {
+      display: block;
+    }
+  }
+}

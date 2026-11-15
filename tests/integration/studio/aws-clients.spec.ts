@@ -1,7 +1,8 @@
 // Studio's AWS SDK clients (`studio/src/lib/aws/client-factory.ts`) from a page at the built Studio's origin, through
-// the engine started for that origin (test-criteria.md, issue 13, Flow sections). The page opens `/s3`, the "no
-// screen yet" page, which sends nothing to the engine, so every engine request the page makes is the factory's. The
-// factory runs bundled for the browser against Studio's installed SDK (`support/aws-clients.ts`).
+// the engine started for that origin (test-criteria.md, issue 13, Flow sections). The page opens `/aws/s3` (issue
+// 16's route, R9.3), the "no screen yet" page, which sends nothing to the engine, so every engine request the page
+// makes is the factory's. The factory runs bundled for the browser against Studio's installed SDK
+// (`support/aws-clients.ts`).
 
 import type { BrowserContext, Page } from '@playwright/test';
 
@@ -43,7 +44,7 @@ function answered(answer: DirectAnswer, status: number, what: string): string {
 }
 
 /**
- * Opens `/s3` with the page's requests recorded, loads the factory's clients and asserts the precondition: the page
+ * Opens `/aws/s3` with the page's requests recorded, loads the factory's clients and asserts the precondition: the page
  * has made no engine request.
  */
 async function openWithClients(
@@ -55,9 +56,9 @@ async function openWithClients(
   enginePort: number,
 ): Promise<{ clients: PageClients; requests: EngineRequests }> {
   const requests = EngineRequests.attach(ctx, context, page, engineOrigin);
-  await page.goto('/s3');
+  await page.goto('/aws/s3');
   expect(new URL(page.url()).origin, 'the page origin').toBe(studioOrigin);
-  expect(new URL(page.url()).pathname, 'the page path').toBe('/s3');
+  expect(new URL(page.url()).pathname, 'the page path').toBe('/aws/s3');
   const clients = await PageClients.load(ctx, page, enginePort, requests);
   const before = await requests.all();
   ctx.log(`engine requests before the first command: ${describe(before)}`);

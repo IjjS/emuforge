@@ -2,8 +2,6 @@
 // `/config.json`, the engine's session and health routes the way a test tells it to and records every request,
 // and Home rendered with the app's real routes and providers. Only the network is replaced.
 
-import createWrapper, { type ElementWrapper } from '@cloudscape-design/components/test-utils/dom';
-import selectors from '@cloudscape-design/components/test-utils/selectors';
 import { notifyManager } from '@tanstack/react-query';
 import { act, render, screen, within } from '@testing-library/react';
 import { createMemoryRouter, RouterProvider } from 'react-router';
@@ -162,9 +160,6 @@ export function present<T>(value: T | null | undefined, what: string): T {
   return value;
 }
 
-/** A wrapper that finds any Cloudscape component inside its element. */
-type Wrapper = ReturnType<typeof createWrapper>;
-
 /**
  * Lets every timer due within `ms` fire, then settles what they started: answers, TanStack Query's notifications and
  * React's renders, each render able to start the next request. Each round is its own `act`, so React renders between.
@@ -189,92 +184,85 @@ export function renderApp(path = '/') {
       <RouterProvider router={router} />
     </Providers>,
   );
-  return { ...result, router, wrapper: createWrapper(result.container) };
+  return { ...result, router };
 }
 
-const ALERT = selectors().findAlert().toSelector();
-const indicator = selectors().findStatusIndicator().toSelector();
+/** The status words a row shows (requirement R9.1). */
+const STATUSES = ['Checking', 'Connected', 'Not started', 'Unreachable', 'Error', 'Unknown'];
 
 export interface RowText {
   status: string;
   text: string;
 }
 
-function norm(text: string | null | undefined): string {
+export function norm(text: string | null | undefined): string {
   return (text ?? '').replace(/\s+/g, ' ').trim();
 }
 
-/** The "Connection" container. */
-export function connectionContainer(): Wrapper {
-  const heading = screen.getByRole('heading', { level: 2, name: 'Connection' });
-  const container = createWrapper(document.body)
-    .findAllContainers()
-    .find((c) => c.getElement().contains(heading));
-  if (container === undefined) {
-    throw new Error('no "Connection" container');
-  }
-  return createWrapper(container.getElement());
+/** The "Connection" section: the region of that name. */
+export function connectionSection(): HTMLElement {
+  return screen.getByRole('region', { name: 'Connection' });
 }
 
-/** The status and the whole text of the "Engine" or "Emulator" row. */
+/** The status and the whole text of the "Engine" or "Emulator" row: the term of that name and what it describes. */
 export function row(label: 'Engine' | 'Emulator'): RowText {
-  const box = connectionContainer().getElement();
-  const labelElement = within(box as HTMLElement)
-    .getAllByText(label, { exact: true })
-    .find((el) => el.closest(ALERT) === null);
-  let scope = labelElement?.parentElement ?? null;
-  while (scope !== null && scope.querySelector(indicator) === null) {
-    scope = scope.parentElement;
-  }
-  if (scope === null) {
-    throw new Error(`no "${label}" row`);
-  }
-  return { status: norm(scope.querySelector(indicator)?.textContent), text: norm(scope.textContent) };
+  const term = within(connectionSection())
+    .getAllByRole('term')
+    .find((el) => norm(el.textContent) === label);
+  const scope = present(term?.parentElement, `the "${label}" row`);
+  const statuses = [...scope.querySelectorAll('dd *')]
+    .map((el) => norm(el.textContent))
+    .filter((text) => STATUSES.includes(text));
+  return { status: [...new Set(statuses)].join(' | '), text: norm(scope.textContent) };
 }
 
-/** The description under the "Connection" heading. */
+/** The line that describes the "Connection" section (next to its heading). */
 export function connectionDescription(): string {
-  return norm(connectionContainer().findHeader()?.findDescription()?.getElement().textContent);
+  const id = present(connectionSection().getAttribute('aria-describedby'), "the section's description");
+  return norm(document.getElementById(id)?.textContent);
 }
 
-/** The alerts inside the "Connection" container. */
-export function connectionAlerts() {
-  return connectionContainer().findAllAlerts();
+/** The notices inside the "Connection" section: what each heading under "Connection" heads. */
+export function connectionNotices(): HTMLElement[] {
+  return within(connectionSection())
+    .queryAllByRole('heading', { level: 3 })
+    .map((heading) => present(heading.closest<HTMLElement>('.st-notice'), 'the notice of a heading'));
 }
 
-/** The one alert inside the "Connection" container; fails when there is not exactly one. */
-export function connectionAlert() {
-  const alerts = connectionAlerts();
-  if (alerts.length !== 1) {
-    throw new Error(`expected one alert in "Connection", found ${String(alerts.length)}`);
+/** The one notice inside the "Connection" section; fails when there is not exactly one. */
+export function connectionNotice(): HTMLElement {
+  const notices = connectionNotices();
+  if (notices.length !== 1) {
+    throw new Error(`expected one notice in "Connection", found ${String(notices.length)}`);
   }
-  return present(alerts[0], 'the alert');
+  return present(notices[0], 'the notice');
 }
 
-/** The lines of a code view, as it draws them (one table row a line). */
-function linesOf(view: ElementWrapper<Element>): string[] {
-  return [...view.getElement().querySelectorAll('tr')].map((tr) => (tr.textContent ?? '').replace(/\n$/, ''));
+/** The notice's heading. */
+export function noticeHeading(notice: HTMLElement = connectionNotice()): HTMLElement {
+  return within(notice).getByRole('heading', { level: 3 });
 }
 
-/**
- * The lines of every command shown in `scope`, in order. A command inside a collapsed expandable section is in the
- * page but not shown, and left out.
- */
-export function commandsIn(scope: { getElement(): Element }): string[][] {
-  const within = createWrapper(scope.getElement());
-  const collapsed = within
-    .findAllExpandableSections()
-    .filter((section) => section.findExpandedContent() === null)
-    .map((section) => section.getElement());
-  return within
-    .findAll('[aria-label^="Command: "]')
-    .filter((view) => !collapsed.some((section) => section.contains(view.getElement())))
-    .map(linesOf);
+/** The text of the notice, whitespace collapsed. */
+export function noticeText(notice: HTMLElement = connectionNotice()): string {
+  return norm(notice.textContent);
 }
 
-/** The one alert of "Connection" as a plain wrapper, to find any component inside it. */
-export function inAlert(): Wrapper {
-  return createWrapper(connectionAlert().getElement());
+/** The commands shown in `scope`, in order: each command group's `pre`, as lines. */
+export function commandsIn(scope: HTMLElement): string[][] {
+  return within(scope)
+    .queryAllByRole('group', { name: /^Command: / })
+    .map((group) => (group.querySelector('pre')?.textContent ?? '').split('\n'));
+}
+
+/** The copy buttons shown in `scope`, in order. */
+export function copyButtonsIn(scope: HTMLElement): HTMLElement[] {
+  return within(scope).queryAllByRole('button', { name: /^Copy command: / });
+}
+
+/** The build-once toggle of the notice, or `null`. */
+export function buildOnceToggle(notice: HTMLElement = connectionNotice()): HTMLElement | null {
+  return within(notice).queryByRole('button', { name: /^First run\? Build the image once/ });
 }
 
 /** The header "Refresh" of Home. */
@@ -282,12 +270,19 @@ export function headerRefresh(): HTMLElement {
   return screen.getByRole('button', { name: /^Refresh$/ });
 }
 
-/** The "Refresh" of the alert, by its accessible name. */
-export function alertRefresh(): HTMLElement | null {
+/** The "Refresh" of the notice, by its accessible name. */
+export function noticeRefresh(): HTMLElement | null {
   return screen.queryByRole('button', { name: 'Refresh connection status' });
 }
 
-/** Every polite announcement element Cloudscape's live regions write to. */
-export function announcements(): string[] {
-  return [...document.querySelectorAll('[aria-live="polite"][aria-atomic="true"]')].map((el) => norm(el.textContent));
+/** The polite regions of the "Connection" section, the state's and the copy region, and what each says now. */
+export function politeRegions(): HTMLElement[] {
+  return [...connectionSection().querySelectorAll<HTMLElement>('[aria-live="polite"]')];
+}
+
+/** Every element of the document whose class names a Cloudscape class (`awsui…`). */
+export function cloudscapeElements(scope: Element = document.documentElement): Element[] {
+  return [scope, ...scope.querySelectorAll('*')].filter((el) =>
+    [...el.classList].some((name) => name.startsWith('awsui')),
+  );
 }

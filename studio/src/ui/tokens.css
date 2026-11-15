@@ -1,0 +1,78 @@
+/* Studio's own tokens (DESIGN.md, frontmatter): every one named `--st-*`, light by default and redeclared when the
+   operating system's scheme is dark. `color-scheme` follows the same scheme, so `html` computes `light` or `dark`.
+   Custom properties inherit into a provider area, where no rule reads an `--st-*` name. */
+
+@layer studio {
+  :root {
+    color-scheme: light;
+    --st-font-ui: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
+    --st-font-code: 'JetBrains Mono', ui-monospace, monospace;
+
+    --st-bg: oklch(0.972 0.005 85);
+    --st-surface: oklch(0.993 0.003 85);
+    --st-sunk: oklch(0.948 0.006 85);
+    --st-line: oklch(0.885 0.007 85);
+    --st-line-strong: oklch(0.79 0.009 85);
+    --st-control-line: oklch(0.6 0.012 85);
+    --st-text: oklch(0.23 0.012 255);
+    --st-text-2: oklch(0.46 0.013 255);
+    --st-accent: oklch(0.47 0.085 187);
+    --st-accent-hover: oklch(0.4 0.08 187);
+    --st-accent-ink: oklch(0.99 0.004 187);
+    --st-accent-wash: oklch(0.92 0.035 187);
+    --st-focus: oklch(0.52 0.12 187);
+
+    --st-ok: oklch(0.5 0.13 150);
+    --st-err: oklch(0.52 0.17 28);
+    --st-err-wash: oklch(0.965 0.02 28);
+    --st-err-line: oklch(0.86 0.06 28);
+    --st-info: oklch(0.5 0.12 255);
+    --st-info-wash: oklch(0.962 0.018 255);
+    --st-info-line: oklch(0.86 0.05 255);
+    --st-idle: oklch(0.52 0.012 255);
+    --st-scroll-shade: oklch(0.3 0.02 85 / 0.28);
+
+    --st-radius-s: 6px;
+    --st-radius-m: 10px;
+    --st-radius-l: 14px;
+    --st-bar-h: 56px;
+    --st-gutter: 32px;
+    --st-pad: 22px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --st-bg: oklch(0.185 0.012 252);
+      --st-surface: oklch(0.225 0.013 252);
+      --st-sunk: oklch(0.162 0.011 252);
+      --st-line: oklch(0.32 0.014 252);
+      --st-line-strong: oklch(0.42 0.014 252);
+      --st-control-line: oklch(0.58 0.014 252);
+      --st-text: oklch(0.935 0.006 85);
+      --st-text-2: oklch(0.75 0.01 85);
+      --st-accent: oklch(0.79 0.085 187);
+      --st-accent-hover: oklch(0.86 0.075 187);
+      --st-accent-ink: oklch(0.2 0.03 187);
+      --st-accent-wash: oklch(0.33 0.045 187);
+      --st-focus: oklch(0.8 0.1 187);
+      --st-ok: oklch(0.78 0.14 150);
+      --st-err: oklch(0.75 0.14 28);
+      --st-err-wash: oklch(0.245 0.035 28);
+      --st-err-line: oklch(0.42 0.08 28);
+      --st-info: oklch(0.78 0.1 255);
+      --st-info-wash: oklch(0.24 0.03 255);
+      --st-info-line: oklch(0.42 0.07 255);
+      --st-idle: oklch(0.7 0.012 255);
+      /* A light tint: at least 1.5:1 against --st-sunk at the edge (DESIGN.md, The Shade Rule). */
+      --st-scroll-shade: oklch(1 0 0 / 0.18);
+    }
+  }
+
+  @media (max-width: 640px) {
+    :root {
+      --st-gutter: 16px;
+      --st-pad: 16px;
+    }
+  }
+}

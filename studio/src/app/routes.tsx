@@ -1,35 +1,40 @@
+import { lazy } from 'react';
 import type { RouteObject } from 'react-router';
 
 import { HomePage } from '../features/home/home-page';
-import { NoScreenPage } from './no-screen-page';
-import { NotFoundPage } from './not-found-page';
-import { SERVICES } from '../providers/aws/services';
-import { Shell, type ShellHandle } from './shell';
-
-const home: ShellHandle = { activeHref: '/' };
-
-const notFound: ShellHandle = {
-  activeHref: '',
-  breadcrumb: (pathname) => ({ text: 'Page not found', href: pathname }),
-};
+import { NOT_FOUND_TITLE, NotFoundPage } from '../features/not-found/not-found-page';
+import { Frame, ProviderPage, StudioPage } from './frame';
+import { PROVIDERS } from './provider-list';
 
 /**
- * The routes of requirement 2: Home at `/`; each service at its route and every path below it, with "no screen
- * yet"; anything else "Page not found". Routes stay thin: each renders one page.
+ * The routes of requirement section 4, inside Studio's frame: Home at `/`; every path under a provider's segment
+ * (`/aws`, `/aws/...`) to that provider's area, loaded only when one of its paths is opened; every other path to
+ * Studio's "Page not found". Routes stay thin: each renders one page.
  */
 export const routes: RouteObject[] = [
   {
-    element: <Shell />,
+    element: <Frame />,
     children: [
-      { index: true, element: <HomePage />, handle: home },
-      ...SERVICES.map((service): RouteObject => {
-        const handle: ShellHandle = {
-          activeHref: service.route,
-          breadcrumb: () => ({ text: service.label, href: service.route }),
-        };
-        return { path: `${service.route}/*`, element: <NoScreenPage service={service} />, handle };
+      {
+        index: true,
+        element: (
+          <StudioPage title={null}>
+            <HomePage />
+          </StudioPage>
+        ),
+      },
+      ...PROVIDERS.map((provider): RouteObject => {
+        const Area = lazy(provider.loadArea);
+        return { path: `${provider.segment}/*`, element: <ProviderPage area={Area} /> };
       }),
-      { path: '*', element: <NotFoundPage />, handle: notFound },
+      {
+        path: '*',
+        element: (
+          <StudioPage title={NOT_FOUND_TITLE}>
+            <NotFoundPage />
+          </StudioPage>
+        ),
+      },
     ],
   },
 ];

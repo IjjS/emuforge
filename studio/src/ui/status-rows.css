@@ -1,0 +1,103 @@
+/* Studio's status rows (DESIGN.md, Status rows): side by side with a hairline between them; below 640px stacked, each
+   compact, its label and status on one line and the address under the status. */
+
+@layer studio {
+  .st-rows {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    margin: 0;
+  }
+
+  .st-row {
+    min-width: 0;
+    padding: 18px var(--st-pad) 20px;
+  }
+
+  .st-row + .st-row {
+    border-left: 1px solid var(--st-line);
+  }
+
+  .st-row dt {
+    margin-bottom: 4px;
+    font-size: 14px;
+    font-weight: 560;
+    color: var(--st-text-2);
+  }
+
+  .st-row dd {
+    min-width: 0;
+    margin: 0;
+  }
+
+  .st-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 16px;
+    font-weight: 650;
+  }
+
+  .st-status svg {
+    flex: none;
+  }
+
+  .st-status.ok {
+    color: var(--st-ok);
+  }
+
+  .st-status.err {
+    color: var(--st-err);
+  }
+
+  .st-status.idle {
+    color: var(--st-idle);
+  }
+
+  .st-status.wait {
+    color: var(--st-info);
+  }
+
+  .st-addr {
+    display: block;
+    margin-top: 4px;
+    overflow: hidden;
+    font-family: var(--st-font-code);
+    font-size: 13px;
+    color: var(--st-text-2);
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .st-addr.none {
+    font-family: var(--st-font-ui);
+    font-size: 14px;
+  }
+
+  @media (max-width: 640px) {
+    .st-rows {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .st-row {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      align-items: baseline;
+      column-gap: 12px;
+      padding-top: 14px;
+      padding-bottom: 14px;
+    }
+
+    .st-row + .st-row {
+      border-left: 0;
+      border-top: 1px solid var(--st-line);
+    }
+
+    .st-row dt {
+      margin-bottom: 0;
+    }
+
+    .st-addr {
+      margin-top: 2px;
+    }
+  }
+}

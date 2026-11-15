@@ -1,0 +1,75 @@
+/* Home's providers (DESIGN.md, Links): the provider's name in the accent with an arrow, its services line, and its
+   services as quiet links underlined at rest. The services run in rows, three to a row (two below 900px, one below
+   640px), so their reading order is their Tab order. */
+
+@layer studio {
+  .st-provider {
+    padding: 20px var(--st-pad) 22px;
+  }
+
+  .st-provider-head {
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--st-line);
+  }
+
+  .st-provider-head a {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 18px;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    color: var(--st-accent);
+    text-decoration: none;
+  }
+
+  .st-provider-head a svg {
+    flex: none;
+  }
+
+  .st-provider-head a:hover {
+    color: var(--st-accent-hover);
+    text-decoration: underline;
+    text-underline-offset: 4px;
+  }
+
+  .st-provider-head p {
+    margin: 2px 0 0;
+    font-size: 14px;
+    color: var(--st-text-2);
+  }
+
+  .st-services {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px 28px;
+    margin: 16px 0 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .st-services a {
+    color: var(--st-text);
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-decoration-color: var(--st-line-strong);
+    text-underline-offset: 4px;
+  }
+
+  .st-services a:hover {
+    color: var(--st-accent);
+    text-decoration-color: currentColor;
+  }
+
+  @media (max-width: 900px) {
+    .st-services {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @media (max-width: 640px) {
+    .st-services {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+}

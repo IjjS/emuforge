@@ -1,4 +1,4 @@
-// `studio.serve-binds-loopback-with-spa-fallback` (test-criteria.md, issue 3, Flow): Studio's own server,
+// `studio.serve-binds-loopback-with-spa-fallback` (test-criteria.md, issue 3, Flow; issue 16's route, R9.3): Studio's own server,
 // `bun run serve` in `studio/` after `bun run build`, serves the built app on 127.0.0.1 only with an SPA fallback,
 // refuses a port that is taken, and gives the page the engine port it is started with (requirement 3.1, 4).
 
@@ -16,11 +16,12 @@ test('studio.serve-binds-loopback-with-spa-fallback', async ({ ctx, page, contex
   const taken = [ctx.emulatorPort, ctx.enginePort, ctx.studioPort];
 
   // Run `bun run serve` with `EMUFORGE_STUDIO_PORT` set to a free port → `http://127.0.0.1:<port>/` and
-  // `http://127.0.0.1:<port>/dynamodb/tables` both answer the app; nothing listens on that port on any other address.
+  // `http://127.0.0.1:<port>/aws/dynamodb/tables` both answer the app; nothing listens on that port on any other
+  // address.
   const port = await freePortExcept(ctx.home, taken);
   const studio = await StudioServer.start(ctx, { port });
   const index = fs.readFileSync(path.join(ctx.studioDir, 'dist', 'index.html'), 'utf8');
-  for (const route of ['/', '/dynamodb/tables']) {
+  for (const route of ['/', '/aws/dynamodb/tables']) {
     const answer = await get(port, route);
     expect(answer, `GET ${route} answers the built index.html`).toEqual({
       status: 200,
