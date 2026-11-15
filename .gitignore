@@ -8,12 +8,12 @@
 docs/
 .initial-refs/
 
-# --- Agent tooling: per-user settings stay local; only the shared skills are tracked
-# (.agents/skills/ is tracked; .claude/skills is a link to it)
-.claude/*
-!.claude/skills
+# --- Agent tooling: .agents/ and .claude/ are tracked (.claude/skills is a link to .agents/skills);
+# per-user settings and local state are not
 **/.claude/settings.json
 **/.claude/settings.local.json
+**/.claude/*.local.*
+**/.claude/worktrees/
 
 # --- Harness: only the scripts are tracked; working files, run state and archives are local
 .pm/*
