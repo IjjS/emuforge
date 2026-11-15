@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: studio|i18n|multi-language
-Issue-Check-Ids:
+Issue-Check-Ids: studio.checks-browser-language-is-english studio.language-follows-the-browser studio.language-choice-applies-at-once-and-survives-reload studio.language-first-render-is-already-in-the-language studio.studio-layer-complete-in-every-language studio.aws-area-stays-english-in-every-language studio.language-layout-in-every-language studio.language-faces-per-script studio.language-control-keyboard-and-contrast
 Issue-Commit: b318cf77a386eb150667b8ef2ffda8af1a0c1ba7
 
 # Let Studio be used in more than one language

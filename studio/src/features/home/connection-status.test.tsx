@@ -2,6 +2,8 @@ import { act, fireEvent, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { formatTime } from '../../i18n/format';
+import german from '../../i18n/messages/de.json';
+import japanese from '../../i18n/messages/ja.json';
 import {
   MAX_COMMAND_LINE,
   startEmulatorCommand,
@@ -621,6 +623,17 @@ describe('Connection: step 1 names the container it stops (issue 18)', () => {
     },
   );
 
+  it.each(STOP_STEP_REASONS)(
+    "reason %s: the container name in step 1's label is inline code, whole, as the name in the stop command",
+    async (reason) => {
+      await openHomeAnswered(emulatorDown(reason, 9297));
+      const group = within(connectionNotice()).getByRole('group', { name: 'Command: stop emulator' });
+      const name = within(group).getByText('emuforge-emulator-9297');
+      expect(name.tagName).toBe('CODE');
+      expect(group.querySelector('pre')?.contains(name)).toBe(false);
+    },
+  );
+
   it.each(ALERT_STATES)('%s: nothing in the notice reads "command below"', async (_name, answer) => {
     await openHomeAnswered(answer);
     const toggle = buildOnceToggle();
@@ -700,6 +713,54 @@ describe('Connection: step 1 names the container it stops (issue 18)', () => {
     expect(noticeText()).not.toMatch(/\b1\. /);
     expectStepLabel('start emulator', 'Start the emulator on port 9297');
     expect(commandsIn(connectionNotice())).toEqual([START_9297]);
+  });
+});
+
+describe('Connection: a change of language changes the text at once (R2.6, R5.3)', () => {
+  afterEach(() => {
+    localStorage.clear();
+  });
+
+  it('connected at 16:05:12, then Japanese without a new check: the meta line is Japanese, its time Japanese', async () => {
+    engine.healthAnswers = [connected()];
+    const language = languageStore('en');
+    renderApp('/', language);
+    await advance();
+    expect(connectionDescription()).toBe('Last checked 16:05:12. Checked every 5 seconds.');
+
+    act(() => {
+      language.choose('ja');
+    });
+    await advance();
+
+    const time = new Intl.DateTimeFormat('ja', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hourCycle: 'h23',
+    }).format(new Date(2026, 10, 15, 16, 5, 12));
+    const seconds = new Intl.NumberFormat('ja').format(5);
+    expect(connectionDescription()).toBe(
+      japanese['connection.lastCheckedEvery'].other.replace('{time}', time).replace('{count}', seconds),
+    );
+    expect(engine.healths).toHaveLength(1);
+  });
+
+  it('emulator not started, then German: the live region says the German announcement of that state', async () => {
+    engine.healthAnswers = [emulatorDown('not_started', 9297)];
+    const language = languageStore('en');
+    renderApp('/', language);
+    await advance();
+    expect(politeRegions().map((region) => norm(region.textContent))).toContain('Emulator not started.');
+
+    act(() => {
+      language.choose('de');
+    });
+    await advance();
+
+    expect(politeRegions().map((region) => norm(region.textContent))).toContain(german['announce.notStarted']);
+    expect(politeRegions().map((region) => norm(region.textContent))).not.toContain('Emulator not started.');
+    expect(engine.healths).toHaveLength(1);
   });
 });
 

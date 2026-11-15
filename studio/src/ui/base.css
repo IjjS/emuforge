@@ -27,6 +27,39 @@
     font-weight: 400;
     line-height: 1.5;
     color: var(--st-text);
+    /* The long-word guard, in every language: a word longer than its box (a German compound) hyphenates where the
+       page's language allows, or breaks, instead of pushing the box wider (requirement R6.4). */
+    hyphens: auto;
+    hyphenate-limit-chars: 12 5 5;
+    overflow-wrap: break-word;
+  }
+
+  /* An element that names its own language (the engine's English message, a language's own name): drawn in the face
+     of its own language (tokens.css) and shown as it came, never hyphenated by another language's rules. */
+  :is(.st-bar, .st-main) [lang] {
+    font-family: var(--st-font-ui);
+    hyphens: manual;
+  }
+
+  /* The wordmark is Studio's name: Instrument Sans in every language, Vietnamese too. */
+  .st-bar .st-wordmark {
+    font-family: var(--st-font-mark);
+  }
+
+  /* Thai, Korean and Japanese: no negative letter spacing on their text (requirement R6.3); the wordmark, Latin in
+     every language, keeps its own. */
+  :is(.st-bar, .st-main) :is(:lang(th), :lang(ko), :lang(ja)):not(.st-wordmark, .st-wordmark *) {
+    letter-spacing: 0;
+  }
+
+  /* Thai: room for its stacked marks, and lines that do not end on a short tail inside a word (crit revised r2). */
+  .st-main:lang(th) {
+    line-height: 1.7;
+    text-wrap: pretty;
+  }
+
+  .st-main:lang(th) :is(h1, h2, h3) {
+    line-height: 1.45;
   }
 
   :is(.st-bar, .st-main),
@@ -65,8 +98,11 @@
     white-space: nowrap;
   }
 
-  /* The holder of a provider area: layout only, no inherited property (R8.3). */
+  /* The holder of a provider area: layout only, no inherited property (R8.3). Its own stacking context keeps the
+     area's sticky and overlay layers (Cloudscape's run to z-index 7000) under Studio's bar and the language menu
+     (requirement R3.1); `isolation` is not inherited. */
   .st-area {
     display: block;
+    isolation: isolate;
   }
 }

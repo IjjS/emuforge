@@ -145,3 +145,23 @@ export function ArrowIcon() {
     </Icon>
   );
 }
+
+/** The language control's globe (DESIGN.md, The frame): the control's only mark at 480 wide and below. */
+export function GlobeIcon() {
+  return (
+    <Icon size={18}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M3 12h18" />
+      <path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18" />
+    </Icon>
+  );
+}
+
+/** The sign that a control opens a menu below it; it turns while the menu is open. */
+export function ExpandIcon({ className }: { className: string }) {
+  return (
+    <Icon size={14} className={className}>
+      <path d="m6 9 6 6 6-6" />
+    </Icon>
+  );
+}

@@ -6,6 +6,7 @@ import { fireEvent, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { BUNDLED_CATALOGUES } from '../../i18n/bundled';
+import german from '../../i18n/messages/de.json';
 import {
   advance,
   buildOnceToggle,
@@ -19,8 +20,11 @@ import {
   MARK_CLOSE,
   MARK_OPEN,
   MARKED_TAG,
+  noticeHeading,
+  otherLangElements,
   present,
   renderApp,
+  textNotFrom,
   unmarkedText,
   type FakeAnswer,
 } from '../../test/home-test-kit';
@@ -209,6 +213,28 @@ describe('Home and the frame with a marked test catalogue: no text written in a 
     },
     AREA_TEST_MS,
   );
+
+  it.each(['/', '/does-not-exist', '/aws/s3'])(
+    'the frame on %s with the language menu open: every text of Studio outside the area is marked or kept as it is',
+    async (path) => {
+      renderApp(path, languageStore(MARKED_TAG));
+      await vi.waitFor(async () => {
+        await advance();
+        expect(screen.getByRole('heading', { level: 1 })).toBeInTheDocument();
+      }, AREA_LOAD);
+      const banner = screen.getByRole('banner');
+      await click(
+        within(banner).getByRole('button', {
+          name: `${MARK_OPEN}Language: ${MARK_OPEN}English${MARK_CLOSE}${MARK_CLOSE}`,
+        }),
+      );
+      const menu = screen.getByRole('menu', { name: `${MARK_OPEN}Language${MARK_CLOSE}` });
+      // "Browser language" and a language of each catalogue, the marked one included.
+      expect(within(menu).getAllByRole('menuitemradio')).toHaveLength(BUNDLED_CATALOGUES.byTag.size + 2);
+      expect(unmarkedText()).toEqual([]);
+    },
+    AREA_TEST_MS,
+  );
 });
 
 /** The tags of every bundled catalogue, and the marked test catalogue's. */
@@ -230,4 +256,59 @@ describe("the engine's message in every language (R4.3)", () => {
       expect(marked.textContent).toBe(MESSAGE);
     },
   );
+});
+
+/** The tags of Studio's catalogues: the twelve languages of R1.1. */
+const STUDIO_LANGUAGES = [...BUNDLED_CATALOGUES.byTag.keys()];
+
+/** Each state of Home in each of the twelve languages. */
+const EVERY_LANGUAGE_AND_STATE = STUDIO_LANGUAGES.flatMap((tag) =>
+  HOME_STATES.map((state) => [tag, state.name, state] as const),
+);
+
+describe('Home in each of the twelve languages (R4.3, R4.9)', () => {
+  afterEach(() => {
+    localStorage.clear();
+  });
+
+  it.each(EVERY_LANGUAGE_AND_STATE)(
+    '%s, %s: every text of Studio comes from that catalogue or is kept as it is, no English value in its place',
+    async (tag, _name, state) => {
+      await openHomeIn(tag, state);
+      expect(document.documentElement.lang).toBe(tag);
+      expect(textNotFrom(tag, { engineMessages: state.engineMessages })).toEqual([]);
+    },
+  );
+
+  it('the same check finds the English text of Home when the page is not in the catalogue it is checked against', async () => {
+    await openHomeIn('en', present(HOME_STATES[2], 'not started'));
+    const found = textNotFrom('de');
+    expect(found).toContainEqual(expect.stringContaining('"Skip to content"'));
+    expect(found).toContainEqual(expect.stringContaining('"No emulator is running on port 9297"'));
+    expect(found).toContainEqual(expect.stringContaining('aria-label "Copy command: start emulator"'));
+  });
+
+  it.each(EVERY_LANGUAGE_AND_STATE)(
+    "%s, %s: each element whose lang differs from the page's holds the engine's message and nothing else",
+    async (tag, _name, state) => {
+      await openHomeIn(tag, state);
+      expect(otherLangElements({ engineMessages: state.engineMessages })).toEqual([]);
+    },
+  );
+
+  it('the same check finds an element in another language that holds text of Studio', async () => {
+    await openHomeIn('de', present(HOME_STATES[2], 'not started'));
+    connectionNotice().querySelector('p')?.setAttribute('lang', 'en');
+    expect(otherLangElements()).toHaveLength(1);
+  });
+
+  it('German, emulator not started on port 9297: the port reads 9297 in the heading and the step label', async () => {
+    await openHomeIn('de', present(HOME_STATES[2], 'not started'));
+    expect(noticeHeading()).toHaveTextContent(german['notice.notStarted'].replace('{port}', '9297'));
+    const group = within(connectionNotice()).getByRole('group', {
+      name: german['command.group'].replace('{name}', german['command.start']),
+    });
+    expect(group).toHaveTextContent(german['notice.start'].replace('{port}', '9297'));
+    expect(connectionNotice()).not.toHaveTextContent('9.297');
+  });
 });
