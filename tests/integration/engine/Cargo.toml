@@ -16,6 +16,10 @@ if-addrs = "=0.15.0"
 # Reference SigV4 signer for the requests the relay checks send, independent of the engine's own signer.
 aws-sigv4 = { version = "=1.6.5", default-features = false, features = ["sign-http", "http1"] }
 aws-credential-types = "=1.3.1"
+# The argument types of aws-sigv4's sign_chunk (bytes::Bytes) and sign_trailer (Headers), for the reference
+# signed-chunk uploads; both already built as dependencies of aws-sigv4 (issue 9, D7).
+bytes = "=1.12.1"
+aws-smithy-runtime-api = { version = "=1.21.0", default-features = false }
 # TLS for requests sent straight to the emulator, trusting only its ca.pem.
 rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-pki-types = { version = "=1.16.0", features = ["std"] }
