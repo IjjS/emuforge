@@ -17,7 +17,8 @@ use axum::http::header::{ALLOW, CONNECTION, CONTENT_TYPE, HOST, ORIGIN};
 use axum::http::{HeaderMap, Method, Request, StatusCode};
 use emuforge_core::{Emulator, Health, Limits, Prepared, Reason, RelayError, forward};
 use emuforge_server::{
-    AppState, CLIENT_WRITE_IDLE, IdleListener, ProbeFn, RelayFn, SessionToken, StudioOrigin, app,
+    AppState, CLIENT_WRITE_IDLE, DRAIN_BOUND, IdleListener, ProbeFn, RelayFn, SessionToken,
+    StudioOrigin, app,
 };
 use hyper::body::{Bytes, Frame};
 use serde_json::{Value, json};
@@ -1871,6 +1872,7 @@ async fn draining_connection_holds_no_in_flight_permit() {
     let relay = TestRelay::answering(Script::Error(RelayError::ChunkTooLarge));
     let served = Served::new(app_limited(relay.relay.clone(), 1));
     let headers = signed_s3(&[("x-amz-content-sha256", SIGNED_CHUNKS)]);
+    let started = tokio::time::Instant::now();
     let mut draining = served.connect();
     draining
         .write_all(upload_head("/b/k", &headers).as_bytes())
@@ -1889,7 +1891,11 @@ async fn draining_connection_holds_no_in_flight_permit() {
         .unwrap();
     let answer = read_answer(&mut second).await;
     assert_eq!(answer.status, 200, "{}", answer.text());
-    drop(draining);
+    assert!(started.elapsed() < DRAIN_BOUND, "the drain bound passed");
+    draining
+        .write_all(b"x")
+        .await
+        .expect("the first connection no longer drains");
 }
 
 #[tokio::test(start_paused = true)]
