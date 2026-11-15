@@ -26,23 +26,17 @@
 // - "Stored choice": `localStorage` key `emuforge.studio.language` for Studio's origin, set with the browser context's
 //   storage state (R8.4).
 
-import fs from "node:fs";
-import path from "node:path";
+import fs from 'node:fs';
+import path from 'node:path';
 
-import type {
-  Browser,
-  BrowserContext,
-  BrowserContextOptions,
-  Locator,
-  Page,
-} from "@playwright/test";
+import type { Browser, BrowserContext, BrowserContextOptions, Locator, Page } from '@playwright/test';
 
-import { type Ctx } from "./check";
-import { ACTION, frame } from "./frame";
-import { SERVICE_LABELS } from "./home";
-import { type Scheme } from "./layers";
-import { type StudioServer } from "./studio";
-import { type Traffic } from "./traffic";
+import { type Ctx } from './check';
+import { ACTION, frame } from './frame';
+import { SERVICE_LABELS } from './home';
+import { type Scheme } from './layers';
+import { type StudioServer } from './studio';
+import { type Traffic } from './traffic';
 
 // ---------------------------------------------------------------------------------------------------------------
 // The twelve languages (R1.1) and the control's order (R3.3).
@@ -56,38 +50,38 @@ export interface Language {
 
 /** R1.1, in the requirement's order. */
 export const LANGUAGES: readonly Language[] = [
-  { tag: "en", name: "English" },
-  { tag: "ko", name: "한국어" },
-  { tag: "ja", name: "日本語" },
-  { tag: "es", name: "Español" },
-  { tag: "pt-BR", name: "Português" },
-  { tag: "fr", name: "Français" },
-  { tag: "de", name: "Deutsch" },
-  { tag: "ru", name: "Русский" },
-  { tag: "it", name: "Italiano" },
-  { tag: "pl", name: "Polski" },
-  { tag: "vi", name: "Tiếng Việt" },
-  { tag: "th", name: "ไทย" },
+  { tag: 'en', name: 'English' },
+  { tag: 'ko', name: '한국어' },
+  { tag: 'ja', name: '日本語' },
+  { tag: 'es', name: 'Español' },
+  { tag: 'pt-BR', name: 'Português' },
+  { tag: 'fr', name: 'Français' },
+  { tag: 'de', name: 'Deutsch' },
+  { tag: 'ru', name: 'Русский' },
+  { tag: 'it', name: 'Italiano' },
+  { tag: 'pl', name: 'Polski' },
+  { tag: 'vi', name: 'Tiếng Việt' },
+  { tag: 'th', name: 'ไทย' },
 ];
 
 /** The own names in the menu's order after "Browser language" (R3.3). */
 export const MENU_ORDER: readonly string[] = [
-  "Deutsch",
-  "English",
-  "Español",
-  "Français",
-  "Italiano",
-  "Polski",
-  "Português",
-  "Tiếng Việt",
-  "Русский",
-  "ไทย",
-  "한국어",
-  "日本語",
+  'Deutsch',
+  'English',
+  'Español',
+  'Français',
+  'Italiano',
+  'Polski',
+  'Português',
+  'Tiếng Việt',
+  'Русский',
+  'ไทย',
+  '한국어',
+  '日本語',
 ];
 
 /** The key of the stored choice (R2.4). */
-export const STORAGE_KEY = "emuforge.studio.language";
+export const STORAGE_KEY = 'emuforge.studio.language';
 
 export function language(tag: string): Language {
   const found = LANGUAGES.find((l) => l.tag === tag);
@@ -111,14 +105,14 @@ function languageOf(lang: string): Language | undefined {
 
 /** Whitespace collapsed to one space, trimmed: how text is compared. */
 export function norm(text: string): string {
-  return text.replace(/\s+/g, " ").trim();
+  return text.replace(/\s+/g, ' ').trim();
 }
 
 const PLACEHOLDER = /\{[A-Za-z][A-Za-z0-9_]*\}/g;
 const LETTER = /\p{L}/u;
 
 function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 export interface Catalogue {
@@ -134,13 +128,7 @@ export interface Catalogue {
 
 /** Reads the catalogue of `tag` from the checkout under test, as it is on disk now. */
 export function readCatalogue(ctx: Ctx, tag: string): Catalogue {
-  const file = path.join(
-    ctx.studioDir,
-    "src",
-    "i18n",
-    "messages",
-    `${tag}.json`,
-  );
+  const file = path.join(ctx.studioDir, 'src', 'i18n', 'messages', `${tag}.json`);
   const catalogue: Catalogue = {
     tag,
     file,
@@ -150,32 +138,28 @@ export function readCatalogue(ctx: Ctx, tag: string): Catalogue {
   };
   let json: unknown;
   try {
-    json = JSON.parse(fs.readFileSync(file, "utf8"));
+    json = JSON.parse(fs.readFileSync(file, 'utf8'));
   } catch (e) {
-    catalogue.missing = `no catalogue of ${tag} at ${path.relative(ctx.checkout, file)} (${(e as Error).message.split("\n")[0]})`;
+    catalogue.missing = `no catalogue of ${tag} at ${path.relative(ctx.checkout, file)} (${(e as Error).message.split('\n')[0]})`;
     return catalogue;
   }
-  if (typeof json !== "object" || json === null || Array.isArray(json)) {
+  if (typeof json !== 'object' || json === null || Array.isArray(json)) {
     catalogue.missing = `the catalogue of ${tag} is not a JSON object`;
     return catalogue;
   }
   for (const [key, value] of Object.entries(json as Record<string, unknown>)) {
-    if (key === "@name" && typeof value === "string")
-      catalogue.values.push(value);
-    if (key.startsWith("@")) continue;
+    if (key === '@name' && typeof value === 'string') catalogue.values.push(value);
+    if (key.startsWith('@')) continue;
     const texts =
-      typeof value === "string"
+      typeof value === 'string'
         ? [value]
-        : typeof value === "object" && value !== null
-          ? Object.values(value as Record<string, unknown>).filter(
-              (t): t is string => typeof t === "string",
-            )
+        : typeof value === 'object' && value !== null
+          ? Object.values(value as Record<string, unknown>).filter((t): t is string => typeof t === 'string')
           : [];
     catalogue.messages.set(key, texts);
     catalogue.values.push(...texts);
   }
-  if (catalogue.messages.size === 0)
-    catalogue.missing = `the catalogue of ${tag} holds no message`;
+  if (catalogue.messages.size === 0) catalogue.missing = `the catalogue of ${tag} holds no message`;
   return catalogue;
 }
 
@@ -187,20 +171,14 @@ export class ValueMatcher {
   constructor(values: readonly string[]) {
     for (const raw of values) {
       const value = norm(raw);
-      if (!LETTER.test(value.replace(PLACEHOLDER, ""))) continue;
+      if (!LETTER.test(value.replace(PLACEHOLDER, ''))) continue;
       const pieces = value.split(PLACEHOLDER);
       if (pieces.length === 1) {
         this.exact.add(value);
         continue;
       }
-      for (const piece of pieces)
-        if (LETTER.test(piece)) this.exact.add(norm(piece));
-      this.patterns.push(
-        new RegExp(
-          `^${pieces.map((p) => escapeRegExp(p.trim())).join("\\s*[\\s\\S]*?\\s*")}$`,
-          "u",
-        ),
-      );
+      for (const piece of pieces) if (LETTER.test(piece)) this.exact.add(norm(piece));
+      this.patterns.push(new RegExp(`^${pieces.map((p) => escapeRegExp(p.trim())).join('\\s*[\\s\\S]*?\\s*')}$`, 'u'));
     }
   }
 
@@ -220,28 +198,17 @@ export class ValueMatcher {
  * `english` (today's wording, R4.2). Found by value: the key is never named. Throws, naming what is missing, when
  * either catalogue lacks it.
  */
-export function translationOf(
-  en: Catalogue,
-  other: Catalogue,
-  english: string,
-): string[] {
+export function translationOf(en: Catalogue, other: Catalogue, english: string): string[] {
   const keys = [...en.messages]
-    .filter(([, texts]) =>
-      texts.some(
-        (t) =>
-          norm(t) === norm(english) || new ValueMatcher([t]).matches(english),
-      ),
-    )
+    .filter(([, texts]) => texts.some((t) => norm(t) === norm(english) || new ValueMatcher([t]).matches(english)))
     .map(([k]) => k);
   if (keys.length === 0) {
-    throw new Error(
-      `the English catalogue has no message "${english}"${en.missing ? ` (${en.missing})` : ""}`,
-    );
+    throw new Error(`the English catalogue has no message "${english}"${en.missing ? ` (${en.missing})` : ''}`);
   }
   const texts = keys.flatMap((k) => other.messages.get(k) ?? []);
   if (texts.length === 0) {
     throw new Error(
-      `the catalogue of ${other.tag} has no text for the English "${english}"${other.missing ? ` (${other.missing})` : ""}`,
+      `the catalogue of ${other.tag} has no text for the English "${english}"${other.missing ? ` (${other.missing})` : ''}`,
     );
   }
   return texts;
@@ -263,7 +230,7 @@ export function englishOnly(en: Catalogue, other: Catalogue): string[] {
 
 /** One text of Studio's text, as the page reads it. */
 export interface TextItem {
-  kind: "text" | "attribute";
+  kind: 'text' | 'attribute';
   text: string;
   /** The `lang` of the closest element that carries one (`html`'s when no other does). */
   lang: string;
@@ -287,23 +254,12 @@ export interface PageText {
 }
 
 /** The area's page titles Studio's own layer may show or announce, in English (R5.2). */
-export const AREA_TITLES: readonly string[] = [
-  ...SERVICE_LABELS,
-  "Amazon Web Services",
-  "Page not found",
-];
+export const AREA_TITLES: readonly string[] = [...SERVICE_LABELS, 'Amazon Web Services', 'Page not found'];
 
 /** Names that are the same in every language (R4.3). */
-const NAMES = new Set([
-  "EmuForge",
-  "EmuForge Studio",
-  "Amazon Web Services",
-  "AWS",
-  ...SERVICE_LABELS,
-]);
+const NAMES = new Set(['EmuForge', 'EmuForge Studio', 'Amazon Web Services', 'AWS', ...SERVICE_LABELS]);
 
-const ADDRESS =
-  /^(?:https?:\/\/)?(?:\d{1,3}(?:\.\d{1,3}){3}|\[[0-9a-fA-F:]+\]|localhost)(?::\d+)?(?:\/\S*)?$/;
+const ADDRESS = /^(?:https?:\/\/)?(?:\d{1,3}(?:\.\d{1,3}){3}|\[[0-9a-fA-F:]+\]|localhost)(?::\d+)?(?:\/\S*)?$/;
 const PATH = /^\/\S*$/;
 
 /** What the engine sent the page, kept as it came: its messages and its error codes (R4.3). */
@@ -314,12 +270,8 @@ export function engineWords(traffic: Traffic): Set<string> {
       emulator?: { message?: unknown };
       error?: { message?: unknown; code?: unknown };
     } | null;
-    for (const v of [
-      body?.emulator?.message,
-      body?.error?.message,
-      body?.error?.code,
-    ]) {
-      if (typeof v === "string" && v.trim() !== "") out.add(norm(v));
+    for (const v of [body?.emulator?.message, body?.error?.message, body?.error?.code]) {
+      if (typeof v === 'string' && v.trim() !== '') out.add(norm(v));
     }
   }
   return out;
@@ -327,13 +279,7 @@ export function engineWords(traffic: Traffic): Set<string> {
 
 /** Kept as it is whatever its element: names, addresses, paths, ports, codes, text with no letter. */
 function literal(text: string, engine: Set<string>): boolean {
-  return (
-    !LETTER.test(text) ||
-    NAMES.has(text) ||
-    ADDRESS.test(text) ||
-    PATH.test(text) ||
-    engine.has(text)
-  );
+  return !LETTER.test(text) || NAMES.has(text) || ADDRESS.test(text) || PATH.test(text) || engine.has(text);
 }
 
 /**
@@ -347,58 +293,36 @@ export function textProblem(
   engine: Set<string>,
 ): string | null {
   const text = norm(item.text);
-  if (text === "" || item.code || item.wordmark) return null;
+  if (text === '' || item.code || item.wordmark) return null;
   const own = languageOf(item.lang);
-  if (item.kind === "attribute") {
+  if (item.kind === 'attribute') {
     // An attribute's language is its element's; a language's own name, the engine's text or an area title there is
     // kept like the text it names.
-    if (
-      LANGUAGES.some((l) => l.name === text) ||
-      AREA_TITLES.includes(text) ||
-      literal(text, engine)
-    )
-      return null;
+    if (LANGUAGES.some((l) => l.name === text) || AREA_TITLES.includes(text) || literal(text, engine)) return null;
   } else if (item.explicit) {
     if (own && own.name === text) return null;
-    if (
-      isLang(item.lang, "en") &&
-      (engine.has(text) || AREA_TITLES.includes(text))
-    )
-      return null;
+    if (isLang(item.lang, 'en') && (engine.has(text) || AREA_TITLES.includes(text))) return null;
     if (!isLang(item.lang, pageTag)) {
       return `"${text}" in ${item.where} carries lang="${item.lang}" on a ${pageTag} page and is neither the engine's message, an area page title nor a language's own name`;
     }
   }
   if (literal(text, engine) || matcher.matches(text)) return null;
-  return `"${text}" in ${item.where}${item.kind === "attribute" ? "" : ` (lang ${item.lang || "none"})`} is not from the ${pageTag} catalogue`;
+  return `"${text}" in ${item.where}${item.kind === 'attribute' ? '' : ` (lang ${item.lang || 'none'})`} is not from the ${pageTag} catalogue`;
 }
 
-export type PageKind = "home" | "not-found" | "area";
+export type PageKind = 'home' | 'not-found' | 'area';
 
 /** Why the document title is not R5.2's on a page of `kind` in `pageTag`; `null` when it is. */
-export function titleProblem(
-  title: string,
-  kind: PageKind,
-  pageTag: string,
-  matcher: ValueMatcher,
-): string | null {
+export function titleProblem(title: string, kind: PageKind, pageTag: string, matcher: ValueMatcher): string | null {
   const t = norm(title);
-  if (kind === "home")
-    return t === "EmuForge Studio"
-      ? null
-      : `the title on Home is "${t}", not "EmuForge Studio"`;
-  const suffix = " | EmuForge Studio";
-  if (!t.endsWith(suffix))
-    return `the title "${t}" does not end with "${suffix}"`;
+  if (kind === 'home') return t === 'EmuForge Studio' ? null : `the title on Home is "${t}", not "EmuForge Studio"`;
+  const suffix = ' | EmuForge Studio';
+  if (!t.endsWith(suffix)) return `the title "${t}" does not end with "${suffix}"`;
   const head = t.slice(0, -suffix.length);
-  if (kind === "area") {
-    return AREA_TITLES.includes(head)
-      ? null
-      : `the title "${t}" does not start with the area's English page title`;
+  if (kind === 'area') {
+    return AREA_TITLES.includes(head) ? null : `the title "${t}" does not start with the area's English page title`;
   }
-  return matcher.matches(head)
-    ? null
-    : `the title "${t}" does not start with a page title of the ${pageTag} catalogue`;
+  return matcher.matches(head) ? null : `the title "${t}" does not start with a page title of the ${pageTag} catalogue`;
 }
 
 /**
@@ -414,8 +338,7 @@ export function languageProblems(
   const tag = catalogue.tag;
   const out: string[] = [];
   if (catalogue.missing) out.push(catalogue.missing);
-  if (!isLang(page.htmlLang, tag))
-    out.push(`<html lang="${page.htmlLang}">, not "${tag}"`);
+  if (!isLang(page.htmlLang, tag)) out.push(`<html lang="${page.htmlLang}">, not "${tag}"`);
   for (const d of page.dirs) out.push(`dir is set other than ltr: ${d}`);
   const matcher = new ValueMatcher(catalogue.values);
   if (kind !== null) {
@@ -430,11 +353,7 @@ export function languageProblems(
 }
 
 /** Texts of `items` that equal an English text the catalogue of `tag` gives differently (R2.7). */
-export function englishTexts(
-  items: TextItem[],
-  englishOnlyValues: string[],
-  own: ValueMatcher,
-): string[] {
+export function englishTexts(items: TextItem[], englishOnlyValues: string[], own: ValueMatcher): string[] {
   const english = new ValueMatcher(englishOnlyValues);
   return [
     ...new Set(
@@ -474,41 +393,34 @@ export interface Recording {
 function installLanguageProbe(record: boolean): void {
   const w = window as any;
   if (w.__emuforgeItLang) return;
-  const norm = (s: string | null | undefined) =>
-    (s ?? "").replace(/\s+/g, " ").trim();
+  const norm = (s: string | null | undefined) => (s ?? '').replace(/\s+/g, ' ').trim();
   const ATTRIBUTES = [
-    "aria-label",
-    "aria-description",
-    "aria-roledescription",
-    "aria-valuetext",
-    "aria-placeholder",
-    "title",
-    "alt",
-    "placeholder",
+    'aria-label',
+    'aria-description',
+    'aria-roledescription',
+    'aria-valuetext',
+    'aria-placeholder',
+    'title',
+    'alt',
+    'placeholder',
   ];
   const describe = (el: Element | null): string => {
-    if (!el) return "(none)";
-    const id = el.id ? `#${el.id}` : "";
-    const cls =
-      el.classList.length > 0
-        ? `.${[...el.classList].slice(0, 2).join(".")}`
-        : "";
-    const role = el.getAttribute("role")
-      ? `[role=${el.getAttribute("role")}]`
-      : "";
+    if (!el) return '(none)';
+    const id = el.id ? `#${el.id}` : '';
+    const cls = el.classList.length > 0 ? `.${[...el.classList].slice(0, 2).join('.')}` : '';
+    const role = el.getAttribute('role') ? `[role=${el.getAttribute('role')}]` : '';
     return `${el.tagName.toLowerCase()}${id}${cls}${role}`;
   };
   const areaRoot = (): Element | null => {
-    const tree = [...document.querySelectorAll('[class*="awsui_"]')].filter(
-      (el) => [...el.classList].some((c) => c.startsWith("awsui_")),
+    const tree = [...document.querySelectorAll('[class*="awsui_"]')].filter((el) =>
+      [...el.classList].some((c) => c.startsWith('awsui_')),
     );
     if (tree.length === 0) return null;
     let common: Element | null = tree[0];
     for (const el of tree.slice(1)) {
       while (common && !common.contains(el)) common = common.parentElement;
     }
-    if (common && [...common.classList].some((c) => c.startsWith("awsui_")))
-      common = common.parentElement;
+    if (common && [...common.classList].some((c) => c.startsWith('awsui_'))) common = common.parentElement;
     while (
       common &&
       common.attributes.length === 0 &&
@@ -521,13 +433,13 @@ function installLanguageProbe(record: boolean): void {
   };
   const wordmark = (): Element | null =>
     [...document.querySelectorAll('header a, [role="banner"] a')].find(
-      (a) => norm(a.textContent) === "EmuForge Studio",
+      (a) => norm(a.textContent) === 'EmuForge Studio',
     ) ?? null;
-  const SKIP = "script, style, template, noscript, [data-emuforge-it-value]";
+  const SKIP = 'script, style, template, noscript, [data-emuforge-it-value]';
   const langOf = (el: Element) => {
-    const holder = el.closest("[lang]");
+    const holder = el.closest('[lang]');
     return {
-      lang: holder?.getAttribute("lang") ?? "",
+      lang: holder?.getAttribute('lang') ?? '',
       explicit: holder !== null && holder !== document.documentElement,
     };
   };
@@ -538,30 +450,29 @@ function installLanguageProbe(record: boolean): void {
     const start = inside ? root : (scope ?? document.body);
     const items: any[] = [];
     if (!start) return items;
-    const keep = (el: Element) =>
-      inside ? true : !(root && root.contains(el));
+    const keep = (el: Element) => (inside ? true : !(root && root.contains(el)));
     const walker = document.createTreeWalker(start, NodeFilter.SHOW_TEXT);
     for (let n = walker.nextNode(); n; n = walker.nextNode()) {
       const el = n.parentElement;
       const text = (n as Text).data;
-      if (!el || text.trim() === "" || el.closest(SKIP) || !keep(el)) continue;
+      if (!el || text.trim() === '' || el.closest(SKIP) || !keep(el)) continue;
       items.push({
-        kind: "text",
+        kind: 'text',
         text,
         ...langOf(el),
-        code: el.closest("code, pre") !== null,
+        code: el.closest('code, pre') !== null,
         wordmark: mark !== null && mark.contains(el),
         where: describe(el),
       });
     }
-    const elements = [start, ...start.querySelectorAll("*")];
+    const elements = [start, ...start.querySelectorAll('*')];
     for (const el of elements) {
       if (el.closest(SKIP) || !keep(el)) continue;
       for (const name of ATTRIBUTES) {
         const value = el.getAttribute(name);
-        if (value === null || value.trim() === "") continue;
+        if (value === null || value.trim() === '') continue;
         items.push({
-          kind: "attribute",
+          kind: 'attribute',
           text: value,
           ...langOf(el),
           code: false,
@@ -575,18 +486,17 @@ function installLanguageProbe(record: boolean): void {
   const page = () => {
     const root = areaRoot();
     const dirs: string[] = [];
-    const htmlDir = document.documentElement.getAttribute("dir");
-    if (htmlDir !== null && htmlDir.toLowerCase() !== "ltr")
-      dirs.push(`html: ${htmlDir}`);
-    for (const el of document.body.querySelectorAll("[dir]")) {
+    const htmlDir = document.documentElement.getAttribute('dir');
+    if (htmlDir !== null && htmlDir.toLowerCase() !== 'ltr') dirs.push(`html: ${htmlDir}`);
+    for (const el of document.body.querySelectorAll('[dir]')) {
       if (root && root.contains(el)) continue;
-      const d = el.getAttribute("dir") ?? "";
-      if (d.toLowerCase() !== "ltr") dirs.push(`${describe(el)}: ${d}`);
+      const d = el.getAttribute('dir') ?? '';
+      if (d.toLowerCase() !== 'ltr') dirs.push(`${describe(el)}: ${d}`);
     }
     return {
       items: collect(null),
       title: document.title,
-      htmlLang: document.documentElement.getAttribute("lang") ?? "",
+      htmlLang: document.documentElement.getAttribute('lang') ?? '',
       dirs,
     };
   };
@@ -595,26 +505,18 @@ function installLanguageProbe(record: boolean): void {
   const hiddenFromSight = (el: Element): boolean => {
     for (let a: Element | null = el; a; a = a.parentElement) {
       const cs = getComputedStyle(a);
-      if (
-        cs.clip !== "auto" &&
-        cs.clip !== "" &&
-        /absolute|fixed/.test(cs.position)
-      )
-        return true;
+      if (cs.clip !== 'auto' && cs.clip !== '' && /absolute|fixed/.test(cs.position)) return true;
       if (/inset\(\s*50%/.test(cs.clipPath)) return true;
       const box = a.getBoundingClientRect();
-      if (cs.overflow !== "visible" && (box.width <= 1 || box.height <= 1))
-        return true;
-      if (cs.visibility === "hidden" || cs.opacity === "0") return true;
+      if (cs.overflow !== 'visible' && (box.width <= 1 || box.height <= 1)) return true;
+      if (cs.visibility === 'hidden' || cs.opacity === '0') return true;
     }
     return false;
   };
   const rectsOf = (n: Node) => {
     const range = document.createRange();
     range.selectNodeContents(n);
-    return [...range.getClientRects()].filter(
-      (r) => r.width > 0.5 && r.height > 0.5,
-    );
+    return [...range.getClientRects()].filter((r) => r.width > 0.5 && r.height > 0.5);
   };
   /** The text of `el` that is drawn and visible, in order. */
   const visibleText = (el: Element): string => {
@@ -622,16 +524,10 @@ function installLanguageProbe(record: boolean): void {
     const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
     for (let n = walker.nextNode(); n; n = walker.nextNode()) {
       const parent = n.parentElement;
-      if (
-        !parent ||
-        (n as Text).data.trim() === "" ||
-        rectsOf(n).length === 0 ||
-        hiddenFromSight(parent)
-      )
-        continue;
+      if (!parent || (n as Text).data.trim() === '' || rectsOf(n).length === 0 || hiddenFromSight(parent)) continue;
       out.push((n as Text).data);
     }
-    return norm(out.join(" "));
+    return norm(out.join(' '));
   };
   const scrolls = (cs: CSSStyleDeclaration) => /auto|scroll/.test(cs.overflowX);
   /** R6.4: the page scrolling sideways, and every text of Studio's own layer drawn outside its box or cut. */
@@ -640,30 +536,18 @@ function installLanguageProbe(record: boolean): void {
     const issues: string[] = [];
     const de = document.documentElement;
     const pageScrolls = de.scrollWidth > de.clientWidth;
-    const walker = document.createTreeWalker(
-      document.body,
-      NodeFilter.SHOW_TEXT,
-    );
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
     for (let n = walker.nextNode(); n; n = walker.nextNode()) {
       const el = n.parentElement;
       const text = norm((n as Text).data);
-      if (!el || text === "" || el.closest(SKIP) || (root && root.contains(el)))
-        continue;
+      if (!el || text === '' || el.closest(SKIP) || (root && root.contains(el))) continue;
       const rects = rectsOf(n);
       if (rects.length === 0 || hiddenFromSight(el)) continue;
       let box: Element = el;
-      while (
-        box.parentElement &&
-        /^(inline|contents)$/.test(getComputedStyle(box).display)
-      )
-        box = box.parentElement;
+      while (box.parentElement && /^(inline|contents)$/.test(getComputedStyle(box).display)) box = box.parentElement;
       let scroller = false;
       const clippers: Element[] = [];
-      for (
-        let a: Element | null = el;
-        a && a !== document.body;
-        a = a.parentElement
-      ) {
+      for (let a: Element | null = el; a && a !== document.body; a = a.parentElement) {
         const cs = getComputedStyle(a);
         if (scrolls(cs)) scroller = true;
         else if (/hidden|clip/.test(cs.overflowX)) clippers.push(a);
@@ -679,45 +563,27 @@ function installLanguageProbe(record: boolean): void {
       }
       for (const c of clippers) {
         const r = c.getBoundingClientRect();
-        if (right > r.right + 1 || left < r.left - 1)
-          issues.push(`"${text.slice(0, 50)}" is cut by ${describe(c)}`);
+        if (right > r.right + 1 || left < r.left - 1) issues.push(`"${text.slice(0, 50)}" is cut by ${describe(c)}`);
       }
       const ps = getComputedStyle(box);
-      if (
-        ps.textOverflow === "ellipsis" &&
-        box.scrollWidth > box.clientWidth + 1
-      ) {
-        issues.push(
-          `"${text.slice(0, 50)}" is cut with an ellipsis in ${describe(box)}`,
-        );
+      if (ps.textOverflow === 'ellipsis' && box.scrollWidth > box.clientWidth + 1) {
+        issues.push(`"${text.slice(0, 50)}" is cut with an ellipsis in ${describe(box)}`);
       }
     }
     return { pageScrolls, issues: [...new Set(issues)] };
   };
   /** Text nodes of Studio's own layer that hold a character of `script` and whose letter spacing is below 0 (R6.3). */
   const negativeTracking = (script: string) => {
-    const re = new RegExp(script, "u");
+    const re = new RegExp(script, 'u');
     const root = areaRoot();
     const out: string[] = [];
-    const walker = document.createTreeWalker(
-      document.body,
-      NodeFilter.SHOW_TEXT,
-    );
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
     for (let n = walker.nextNode(); n; n = walker.nextNode()) {
       const el = n.parentElement;
-      if (
-        !el ||
-        !re.test((n as Text).data) ||
-        el.closest(SKIP) ||
-        (root && root.contains(el))
-      )
-        continue;
+      if (!el || !re.test((n as Text).data) || el.closest(SKIP) || (root && root.contains(el))) continue;
       const ls = getComputedStyle(el).letterSpacing;
-      const px = ls === "normal" ? 0 : parseFloat(ls);
-      if (px < 0)
-        out.push(
-          `"${norm((n as Text).data).slice(0, 40)}" in ${describe(el)}: letter-spacing ${ls}`,
-        );
+      const px = ls === 'normal' ? 0 : parseFloat(ls);
+      if (px < 0) out.push(`"${norm((n as Text).data).slice(0, 40)}" in ${describe(el)}: letter-spacing ${ls}`);
     }
     return out;
   };
@@ -730,11 +596,7 @@ function installLanguageProbe(record: boolean): void {
   const placed = (el: Element) => {
     const r = el.getBoundingClientRect();
     const inside =
-      r.width > 0 &&
-      r.left >= -0.5 &&
-      r.top >= -0.5 &&
-      r.right <= innerWidth + 0.5 &&
-      r.bottom <= innerHeight + 0.5;
+      r.width > 0 && r.left >= -0.5 && r.top >= -0.5 && r.right <= innerWidth + 0.5 && r.bottom <= innerHeight + 0.5;
     const covered = !topIsIn(el, r.left + r.width / 2, r.top + r.height / 2);
     return {
       inside,
@@ -747,20 +609,12 @@ function installLanguageProbe(record: boolean): void {
     const r = menu.getBoundingClientRect();
     const cs = getComputedStyle(menu);
     const problems: string[] = [];
-    if (
-      r.left < -0.5 ||
-      r.top < -0.5 ||
-      r.right > innerWidth + 0.5 ||
-      r.bottom > innerHeight + 0.5
-    ) {
+    if (r.left < -0.5 || r.top < -0.5 || r.right > innerWidth + 0.5 || r.bottom > innerHeight + 0.5) {
       problems.push(
         `the menu (${r.left.toFixed(0)},${r.top.toFixed(0)}-${r.right.toFixed(0)},${r.bottom.toFixed(0)}) is not inside the viewport ${String(innerWidth)}x${String(innerHeight)}`,
       );
     }
-    if (
-      menu.scrollHeight > menu.clientHeight + 1 &&
-      !/auto|scroll/.test(cs.overflowY)
-    ) {
+    if (menu.scrollHeight > menu.clientHeight + 1 && !/auto|scroll/.test(cs.overflowY)) {
       problems.push(
         `the menu is taller than its box (${String(menu.scrollHeight)} > ${String(menu.clientHeight)}) and does not scroll`,
       );
@@ -770,18 +624,15 @@ function installLanguageProbe(record: boolean): void {
       const b = bar.getBoundingClientRect();
       const y = b.bottom - 0.5;
       for (const x of [r.left + 2, r.left + r.width / 2, r.right - 2]) {
-        if (x >= 0 && x <= innerWidth && topIsIn(menu, x, y))
-          covers.push(`the bar's hairline at x=${x.toFixed(0)}`);
+        if (x >= 0 && x <= innerWidth && topIsIn(menu, x, y)) covers.push(`the bar's hairline at x=${x.toFixed(0)}`);
       }
-      const current = bar.querySelector("[aria-current]");
+      const current = bar.querySelector('[aria-current]');
       if (current) {
         const c = current.getBoundingClientRect();
         for (const x of [c.left + 1, c.left + c.width / 2, c.right - 1]) {
           for (const yy of [c.bottom - 1, b.bottom - 1.5]) {
             if (x >= 0 && x <= innerWidth && topIsIn(menu, x, yy))
-              covers.push(
-                `the current tab's underline at ${x.toFixed(0)},${yy.toFixed(0)}`,
-              );
+              covers.push(`the current tab's underline at ${x.toFixed(0)},${yy.toFixed(0)}`);
           }
         }
       }
@@ -792,42 +643,39 @@ function installLanguageProbe(record: boolean): void {
   const onTop = (el: Element) => {
     const r = el.getBoundingClientRect();
     const points: [string, number, number][] = [
-      ["top left", r.left + 2, r.top + 2],
-      ["top right", r.right - 2, r.top + 2],
-      ["bottom left", r.left + 2, r.bottom - 2],
-      ["bottom right", r.right - 2, r.bottom - 2],
-      ["centre", r.left + r.width / 2, r.top + r.height / 2],
+      ['top left', r.left + 2, r.top + 2],
+      ['top right', r.right - 2, r.top + 2],
+      ['bottom left', r.left + 2, r.bottom - 2],
+      ['bottom right', r.right - 2, r.bottom - 2],
+      ['centre', r.left + r.width / 2, r.top + r.height / 2],
     ];
     return points
       .filter(([, x, y]) => !topIsIn(el, x, y))
-      .map(
-        ([name, x, y]) =>
-          `${name} (${x.toFixed(0)},${y.toFixed(0)}): ${describe(document.elementFromPoint(x, y))}`,
-      );
+      .map(([name, x, y]) => `${name} (${x.toFixed(0)},${y.toFixed(0)}): ${describe(document.elementFromPoint(x, y))}`);
   };
   /** The marks of an option drawn besides its text: visible `svg`, `img` and generated content. */
   const marks = (el: Element) => {
     let count = 0;
-    for (const m of el.querySelectorAll("svg, img")) {
+    for (const m of el.querySelectorAll('svg, img')) {
       const cs = getComputedStyle(m);
       const r = m.getBoundingClientRect();
       if (
         r.width > 0 &&
         r.height > 0 &&
-        cs.visibility === "visible" &&
+        cs.visibility === 'visible' &&
         parseFloat(cs.opacity) > 0 &&
         !hiddenFromSight(m)
       )
         count++;
     }
-    for (const at of [el, ...el.querySelectorAll("*")]) {
-      for (const where of ["::before", "::after"]) {
+    for (const at of [el, ...el.querySelectorAll('*')]) {
+      for (const where of ['::before', '::after']) {
         const p = getComputedStyle(at, where);
         if (
-          p.content !== "none" &&
-          p.content !== "normal" &&
-          p.display !== "none" &&
-          p.visibility === "visible" &&
+          p.content !== 'none' &&
+          p.content !== 'normal' &&
+          p.display !== 'none' &&
+          p.visibility === 'visible' &&
           parseFloat(p.opacity) > 0
         )
           count++;
@@ -843,26 +691,17 @@ function installLanguageProbe(record: boolean): void {
   };
   if (record) {
     const observer = new MutationObserver((records) => {
-      const root = document.getElementById("root");
+      const root = document.getElementById('root');
       if (!root) return;
       if (recording.firstContentLang === null) {
         for (let i = 0; i < records.length; i++) {
           const r = records[i];
-          if (
-            r.type !== "childList" ||
-            r.addedNodes.length === 0 ||
-            !root.contains(r.target)
-          )
-            continue;
-          let lang = document.documentElement.getAttribute("lang") ?? "";
+          if (r.type !== 'childList' || r.addedNodes.length === 0 || !root.contains(r.target)) continue;
+          let lang = document.documentElement.getAttribute('lang') ?? '';
           for (let j = i + 1; j < records.length; j++) {
             const q = records[j];
-            if (
-              q.type === "attributes" &&
-              q.target === document.documentElement &&
-              q.attributeName === "lang"
-            ) {
-              lang = q.oldValue ?? "";
+            if (q.type === 'attributes' && q.target === document.documentElement && q.attributeName === 'lang') {
+              lang = q.oldValue ?? '';
               break;
             }
           }
@@ -873,7 +712,7 @@ function installLanguageProbe(record: boolean): void {
       if (root.childNodes.length > 0 && recording.states.length < 2000) {
         recording.states.push({
           at: performance.now(),
-          lang: document.documentElement.getAttribute("lang") ?? "",
+          lang: document.documentElement.getAttribute('lang') ?? '',
           items: collect(root),
         });
       }
@@ -919,54 +758,44 @@ export async function recordRoot(target: BrowserContext | Page): Promise<void> {
 }
 
 export async function recording(page: Page): Promise<Recording> {
-  return page.evaluate(
-    () =>
-      (window as unknown as { __emuforgeItLang: Probe }).__emuforgeItLang
-        .recording,
-  );
+  return page.evaluate(() => (window as unknown as { __emuforgeItLang: Probe }).__emuforgeItLang.recording);
 }
 
 /** Marks the recording: the states recorded from now on are "after the mark". */
 export async function markRecording(page: Page): Promise<void> {
   await page.evaluate(() => {
-    const r = (window as unknown as { __emuforgeItLang: Probe })
-      .__emuforgeItLang.recording;
+    const r = (window as unknown as { __emuforgeItLang: Probe }).__emuforgeItLang.recording;
     r.mark = r.states.length;
   });
 }
 
-async function call<T>(
-  page: Page,
-  name: string,
-  ...args: unknown[]
-): Promise<T> {
+async function call<T>(page: Page, name: string, ...args: unknown[]): Promise<T> {
   await ensureProbe(page);
   return (await page.evaluate(
     ([fn, list]) => {
-      const api = (window as unknown as { __emuforgeItLang: Probe })
-        .__emuforgeItLang;
+      const api = (window as unknown as { __emuforgeItLang: Probe }).__emuforgeItLang;
       return api[fn as string](...(list as unknown[]));
     },
     [name, args] as const,
   )) as T;
 }
 
+/** Throws at once, naming `what`, when `locator` finds nothing: a missing element fails its step without a wait. */
+async function present(locator: Locator, what: string): Promise<void> {
+  if ((await locator.count()) === 0) throw new Error(`${what} is not on the page`);
+}
+
 /** Studio's text of the page as it is now. */
 export async function pageText(page: Page): Promise<PageText> {
-  return call<PageText>(page, "page");
+  return call<PageText>(page, 'page');
 }
 
 /** Studio's text inside `locator`'s element (its text nodes and attributes), outside the area's root. */
-export async function textWithin(
-  page: Page,
-  locator: Locator,
-): Promise<TextItem[]> {
+export async function textWithin(page: Page, locator: Locator): Promise<TextItem[]> {
   await ensureProbe(page);
+  await present(locator, 'the element');
   return locator.evaluate(
-    (el) =>
-      (
-        window as unknown as { __emuforgeItLang: Probe }
-      ).__emuforgeItLang.collect(el) as TextItem[],
+    (el) => (window as unknown as { __emuforgeItLang: Probe }).__emuforgeItLang.collect(el) as TextItem[],
     undefined,
     ACTION,
   );
@@ -976,25 +805,17 @@ export async function textWithin(
  * The live regions of Studio's own layer (`aria-live` other than `off`, roles `status`, `alert`, `log`) that hold
  * text now, each with its text and its text items.
  */
-export async function liveRegions(
-  page: Page,
-): Promise<{ text: string; items: TextItem[] }[]> {
+export async function liveRegions(page: Page): Promise<{ text: string; items: TextItem[] }[]> {
   await ensureProbe(page);
   return page.evaluate(() => {
-    const api = (window as unknown as { __emuforgeItLang: Probe })
-      .__emuforgeItLang;
+    const api = (window as unknown as { __emuforgeItLang: Probe }).__emuforgeItLang;
     const root = api.areaRoot() as Element | null;
     return [
-      ...document.querySelectorAll(
-        '[aria-live]:not([aria-live="off"]), [role="status"], [role="alert"], [role="log"]',
-      ),
+      ...document.querySelectorAll('[aria-live]:not([aria-live="off"]), [role="status"], [role="alert"], [role="log"]'),
     ]
-      .filter(
-        (el) =>
-          !(root && root.contains(el)) && (el.textContent ?? "").trim() !== "",
-      )
+      .filter((el) => !(root && root.contains(el)) && (el.textContent ?? '').trim() !== '')
       .map((el) => ({
-        text: (el.textContent ?? "").replace(/\s+/g, " ").trim(),
+        text: (el.textContent ?? '').replace(/\s+/g, ' ').trim(),
         items: api.collect(el) as TextItem[],
       }));
   });
@@ -1004,12 +825,11 @@ export async function liveRegions(
 export async function areaText(page: Page): Promise<string[] | null> {
   await ensureProbe(page);
   return page.evaluate(() => {
-    const api = (window as unknown as { __emuforgeItLang: Probe })
-      .__emuforgeItLang;
+    const api = (window as unknown as { __emuforgeItLang: Probe }).__emuforgeItLang;
     if (!api.areaRoot()) return null;
     return (api.collect(null, true) as TextItem[]).map(
       (i) =>
-        `${i.kind === "attribute" ? `${i.where.replace(/^.* @/, "@")}=` : ""}${i.text.replace(/\s+/g, " ").trim()}`,
+        `${i.kind === 'attribute' ? `${i.where.replace(/^.* @/, '@')}=` : ''}${i.text.replace(/\s+/g, ' ').trim()}`,
     );
   });
 }
@@ -1018,10 +838,8 @@ export async function areaText(page: Page): Promise<string[] | null> {
 export async function areaRootLang(page: Page): Promise<string | null> {
   await ensureProbe(page);
   return page.evaluate(() => {
-    const root = (
-      window as unknown as { __emuforgeItLang: Probe }
-    ).__emuforgeItLang.areaRoot() as Element | null;
-    return root === null ? null : (root.getAttribute("lang") ?? "");
+    const root = (window as unknown as { __emuforgeItLang: Probe }).__emuforgeItLang.areaRoot() as Element | null;
+    return root === null ? null : (root.getAttribute('lang') ?? '');
   });
 }
 
@@ -1029,9 +847,7 @@ export async function areaRootLang(page: Page): Promise<string | null> {
 export async function markAreaRoot(page: Page): Promise<boolean> {
   await ensureProbe(page);
   return page.evaluate(() => {
-    const root = (
-      window as unknown as { __emuforgeItLang: Probe }
-    ).__emuforgeItLang.areaRoot() as
+    const root = (window as unknown as { __emuforgeItLang: Probe }).__emuforgeItLang.areaRoot() as
       (Element & { __emuforgeItRoot?: boolean }) | null;
     if (root) root.__emuforgeItRoot = true;
     return root !== null;
@@ -1041,32 +857,25 @@ export async function markAreaRoot(page: Page): Promise<boolean> {
 export async function areaRootMarked(page: Page): Promise<boolean> {
   await ensureProbe(page);
   return page.evaluate(() => {
-    const root = (
-      window as unknown as { __emuforgeItLang: Probe }
-    ).__emuforgeItLang.areaRoot() as
+    const root = (window as unknown as { __emuforgeItLang: Probe }).__emuforgeItLang.areaRoot() as
       (Element & { __emuforgeItRoot?: boolean }) | null;
     return root?.__emuforgeItRoot === true;
   });
 }
 
-export async function layout(
-  page: Page,
-): Promise<{ pageScrolls: boolean; issues: string[] }> {
-  return call(page, "layout");
+export async function layout(page: Page): Promise<{ pageScrolls: boolean; issues: string[] }> {
+  return call(page, 'layout');
 }
 
 /** Scripts whose text must not be tracked tighter than normal (R6.3), as Unicode property patterns. */
 export const TRACKED_SCRIPTS: Record<string, string> = {
-  th: "\\p{Script=Thai}",
-  ko: "\\p{Script=Hangul}",
-  ja: "[\\p{Script=Hiragana}\\p{Script=Katakana}\\p{Script=Han}]",
+  th: '\\p{Script=Thai}',
+  ko: '\\p{Script=Hangul}',
+  ja: '[\\p{Script=Hiragana}\\p{Script=Katakana}\\p{Script=Han}]',
 };
 
-export async function negativeTracking(
-  page: Page,
-  tag: string,
-): Promise<string[]> {
-  return call(page, "negativeTracking", TRACKED_SCRIPTS[tag]);
+export async function negativeTracking(page: Page, tag: string): Promise<string[]> {
+  return call(page, 'negativeTracking', TRACKED_SCRIPTS[tag]);
 }
 
 /** Whether `locator`'s element lies inside the viewport and is not covered at its centre. */
@@ -1075,11 +884,10 @@ export async function placed(
   locator: Locator,
 ): Promise<{ inside: boolean; covered: boolean; rect: string }> {
   await ensureProbe(page);
+  await present(locator, 'the element');
   return locator.evaluate(
     (el) =>
-      (
-        window as unknown as { __emuforgeItLang: Probe }
-      ).__emuforgeItLang.placed(el) as {
+      (window as unknown as { __emuforgeItLang: Probe }).__emuforgeItLang.placed(el) as {
         inside: boolean;
         covered: boolean;
         rect: string;
@@ -1089,31 +897,23 @@ export async function placed(
   );
 }
 
-export async function visibleText(
-  page: Page,
-  locator: Locator,
-): Promise<string> {
+export async function visibleText(page: Page, locator: Locator): Promise<string> {
   await ensureProbe(page);
+  await present(locator, 'the element');
   return locator.evaluate(
-    (el) =>
-      (
-        window as unknown as { __emuforgeItLang: Probe }
-      ).__emuforgeItLang.visibleText(el) as string,
+    (el) => (window as unknown as { __emuforgeItLang: Probe }).__emuforgeItLang.visibleText(el) as string,
     undefined,
     ACTION,
   );
 }
 
-export async function menuPlace(
-  page: Page,
-): Promise<{ problems: string[]; covers: string[] }> {
+export async function menuPlace(page: Page): Promise<{ problems: string[]; covers: string[] }> {
   await ensureProbe(page);
+  await present(languageMenu(page), 'the language menu');
   const bar = await frame(page).banner.elementHandle(ACTION);
   return languageMenu(page).evaluate(
     (menu, b) =>
-      (
-        window as unknown as { __emuforgeItLang: Probe }
-      ).__emuforgeItLang.menuPlace(menu, b) as {
+      (window as unknown as { __emuforgeItLang: Probe }).__emuforgeItLang.menuPlace(menu, b) as {
         problems: string[];
         covers: string[];
       },
@@ -1123,16 +923,11 @@ export async function menuPlace(
 }
 
 /** The points of `locator`'s element (corners and centre) where something else is on top. */
-export async function notOnTop(
-  page: Page,
-  locator: Locator,
-): Promise<string[]> {
+export async function notOnTop(page: Page, locator: Locator): Promise<string[]> {
   await ensureProbe(page);
+  await present(locator, 'the element');
   return locator.evaluate(
-    (el) =>
-      (window as unknown as { __emuforgeItLang: Probe }).__emuforgeItLang.onTop(
-        el,
-      ) as string[],
+    (el) => (window as unknown as { __emuforgeItLang: Probe }).__emuforgeItLang.onTop(el) as string[],
     undefined,
     ACTION,
   );
@@ -1141,11 +936,9 @@ export async function notOnTop(
 /** How many marks besides text `locator`'s element draws (visible icons and generated content). */
 export async function marks(page: Page, locator: Locator): Promise<number> {
   await ensureProbe(page);
+  await present(locator, 'the element');
   return locator.evaluate(
-    (el) =>
-      (window as unknown as { __emuforgeItLang: Probe }).__emuforgeItLang.marks(
-        el,
-      ) as number,
+    (el) => (window as unknown as { __emuforgeItLang: Probe }).__emuforgeItLang.marks(el) as number,
     undefined,
     ACTION,
   );
@@ -1154,9 +947,7 @@ export async function marks(page: Page, locator: Locator): Promise<number> {
 /** Waits two frames and for every font load the page has started. */
 export async function settled(page: Page): Promise<void> {
   await page.evaluate(async () => {
-    await new Promise((r) =>
-      requestAnimationFrame(() => requestAnimationFrame(r)),
-    );
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
     await document.fonts.ready;
   });
 }
@@ -1188,7 +979,7 @@ export function heightFor(width: number): number {
 export async function languageContext(
   ctx: Ctx,
   browser: Browser,
-  proxy: BrowserContextOptions["proxy"],
+  proxy: BrowserContextOptions['proxy'],
   studio: StudioServer,
   options: LanguageContextOptions = {},
 ): Promise<{ context: BrowserContext; page: Page }> {
@@ -1196,10 +987,10 @@ export async function languageContext(
   const context = await browser.newContext({
     proxy,
     baseURL: studio.origin,
-    locale: options.locale ?? "en-US",
-    colorScheme: options.scheme ?? "light",
+    locale: options.locale ?? 'en-US',
+    colorScheme: options.scheme ?? 'light',
     viewport: { width, height: heightFor(width) },
-    serviceWorkers: "block",
+    serviceWorkers: 'block',
     storageState:
       options.stored === undefined
         ? undefined
@@ -1217,7 +1008,7 @@ export async function languageContext(
   if (options.record) await recordRoot(context);
   const page = await context.newPage();
   ctx.log(
-    `context: locale ${options.locale ?? "en-US"}, stored ${options.stored ?? "(none)"}, ${String(width)} wide, ${options.scheme ?? "light"}`,
+    `context: locale ${options.locale ?? 'en-US'}, stored ${options.stored ?? '(none)'}, ${String(width)} wide, ${options.scheme ?? 'light'}`,
   );
   return { context, page };
 }
@@ -1231,29 +1022,27 @@ export async function storedChoice(page: Page): Promise<string | null> {
 // The control and its menu (R3).
 // ---------------------------------------------------------------------------------------------------------------
 
-const OWN_NAME_AT_END = new RegExp(
-  `(${LANGUAGES.map((l) => escapeRegExp(l.name)).join("|")})$`,
-  "u",
-);
+const OWN_NAME_AT_END = new RegExp(`(${LANGUAGES.map((l) => escapeRegExp(l.name)).join('|')})$`, 'u');
 
 /** The control: the banner's button whose accessible name ends with a language's own name (R3.2). */
 export function languageControl(page: Page): Locator {
-  return frame(page).banner.getByRole("button", { name: OWN_NAME_AT_END });
+  return frame(page).banner.getByRole('button', { name: OWN_NAME_AT_END });
 }
 
 /** The menu the control opens. */
 export function languageMenu(page: Page): Locator {
-  return page.getByRole("menu");
+  return page.getByRole('menu');
 }
 
 export function menuOptions(page: Page): Locator {
-  return languageMenu(page).getByRole("menuitemradio");
+  return languageMenu(page).getByRole('menuitemradio');
 }
 
 export async function openMenu(page: Page): Promise<void> {
+  await present(languageControl(page), 'the language control');
   await languageControl(page).click(ACTION);
   await languageMenu(page).waitFor({
-    state: "visible",
+    state: 'visible',
     timeout: ACTION.timeout,
   });
 }
@@ -1262,7 +1051,7 @@ export async function openMenu(page: Page): Promise<void> {
 export async function choose(page: Page, option: string): Promise<void> {
   await openMenu(page);
   const item =
-    option === "browser"
+    option === 'browser'
       ? menuOptions(page).first()
       : menuOptions(page).filter({
           hasText: new RegExp(`^${escapeRegExp(option)}$`),
@@ -1276,12 +1065,12 @@ export async function choose(page: Page, option: string): Promise<void> {
 
 /** Faces of the passed mock, by the family name Chromium reports. */
 export const FACES = {
-  latin: "Instrument Sans",
-  noto: "Noto Sans",
-  thai: "Noto Sans Thai",
-  korean: "Apple SD Gothic Neo",
-  japanese: "Hiragino Sans",
-  code: "JetBrains Mono",
+  latin: 'Instrument Sans',
+  noto: 'Noto Sans',
+  thai: 'Noto Sans Thai',
+  korean: 'Apple SD Gothic Neo',
+  japanese: 'Hiragino Sans',
+  code: 'JetBrains Mono',
 } as const;
 
 /** The face of each language's own script, for the languages whose script Instrument Sans lacks. */
@@ -1309,16 +1098,11 @@ export interface FaceItem {
 }
 
 /** The faces allowed to draw `item`, by its own language (R6.2; the passed mock's per-script runs). */
-export function allowedFaces(item: {
-  text: string;
-  lang: string;
-  code: boolean;
-  wordmark: boolean;
-}): string[] {
+export function allowedFaces(item: { text: string; lang: string; code: boolean; wordmark: boolean }): string[] {
   if (item.code) return [FACES.code];
   if (item.wordmark) return [FACES.latin];
   const tag = languageOf(item.lang)?.tag ?? item.lang;
-  if (tag === "vi") return [FACES.noto];
+  if (tag === 'vi') return [FACES.noto];
   const chars = [...item.text];
   const out: string[] = [];
   if (chars.some((c) => !SCRIPT_CHAR.test(c))) out.push(FACES.latin);
@@ -1328,22 +1112,14 @@ export function allowedFaces(item: {
 }
 
 function sameFace(reported: string, expected: string): boolean {
-  return (
-    reported.toLowerCase().replace(/\s+variable$/, "") ===
-    expected.toLowerCase()
-  );
+  return reported.toLowerCase().replace(/\s+variable$/, '') === expected.toLowerCase();
 }
 
 /** Why `item` is drawn by another face than `allowed` (default: `allowedFaces`); `null` when it is not. */
-export function faceProblem(
-  item: FaceItem,
-  allowed = allowedFaces(item),
-): string | null {
-  const other = item.fonts.filter(
-    (f) => !allowed.some((a) => sameFace(f.family, a)),
-  );
+export function faceProblem(item: FaceItem, allowed = allowedFaces(item)): string | null {
+  const other = item.fonts.filter((f) => !allowed.some((a) => sameFace(f.family, a)));
   if (other.length === 0) return null;
-  return `"${norm(item.text).slice(0, 50)}" (lang ${item.lang || "none"}) in ${item.where} is drawn by ${item.fonts.map((f) => `${f.family} (${String(f.glyphs)})`).join(", ")}; allowed: ${allowed.join(", ") || "none"}`;
+  return `"${norm(item.text).slice(0, 50)}" (lang ${item.lang || 'none'}) in ${item.where} is drawn by ${item.fonts.map((f) => `${f.family} (${String(f.glyphs)})`).join(', ')}; allowed: ${allowed.join(', ') || 'none'}`;
 }
 
 interface DomNode {
@@ -1364,21 +1140,21 @@ export async function faceItems(page: Page): Promise<FaceItem[]> {
   await settled(page);
   const session = await page.context().newCDPSession(page);
   try {
-    await session.send("DOM.enable");
-    await session.send("CSS.enable");
-    const { root } = (await session.send("DOM.getDocument", {
+    await session.send('DOM.enable');
+    await session.send('CSS.enable');
+    const { root } = (await session.send('DOM.getDocument', {
       depth: -1,
     })) as unknown as { root: DomNode };
     const nodeIdOf = async (expression: string): Promise<number | null> => {
-      const { result } = await session.send("Runtime.evaluate", { expression });
+      const { result } = await session.send('Runtime.evaluate', { expression });
       if (!result.objectId) return null;
-      const { nodeId } = await session.send("DOM.requestNode", {
+      const { nodeId } = await session.send('DOM.requestNode', {
         objectId: result.objectId,
       });
       return nodeId;
     };
-    const area = await nodeIdOf("window.__emuforgeItLang.areaRoot()");
-    const mark = await nodeIdOf("window.__emuforgeItLang.wordmark()");
+    const area = await nodeIdOf('window.__emuforgeItLang.areaRoot()');
+    const mark = await nodeIdOf('window.__emuforgeItLang.wordmark()');
     const found: {
       nodeId: number;
       text: string;
@@ -1399,42 +1175,36 @@ export async function faceItems(page: Page): Promise<FaceItem[]> {
       },
     ): void => {
       if (node.nodeType === 3) {
-        if (node.nodeValue.trim() !== "")
-          found.push({ nodeId: node.nodeId, text: node.nodeValue, ...at });
+        if (node.nodeValue.trim() !== '') found.push({ nodeId: node.nodeId, text: node.nodeValue, ...at });
         return;
       }
       if (node.nodeType === 1) {
         if (node.nodeId === area) return;
-        if (
-          ["SCRIPT", "STYLE", "TEMPLATE", "NOSCRIPT", "HEAD"].includes(
-            node.nodeName,
-          )
-        )
-          return;
+        if (['SCRIPT', 'STYLE', 'TEMPLATE', 'NOSCRIPT', 'HEAD'].includes(node.nodeName)) return;
         const attrs = new Map<string, string>();
         for (let i = 0; i + 1 < (node.attributes ?? []).length; i += 2)
           attrs.set(node.attributes![i], node.attributes![i + 1]);
-        const cls = attrs.get("class")?.split(/\s+/)[0];
+        const cls = attrs.get('class')?.split(/\s+/)[0];
         at = {
-          lang: attrs.get("lang") ?? at.lang,
-          code: at.code || node.nodeName === "CODE" || node.nodeName === "PRE",
+          lang: attrs.get('lang') ?? at.lang,
+          code: at.code || node.nodeName === 'CODE' || node.nodeName === 'PRE',
           wordmark: at.wordmark || node.nodeId === mark,
-          value: at.value || attrs.has("data-emuforge-it-value"),
-          where: `${node.nodeName.toLowerCase()}${cls ? `.${cls}` : ""}`,
+          value: at.value || attrs.has('data-emuforge-it-value'),
+          where: `${node.nodeName.toLowerCase()}${cls ? `.${cls}` : ''}`,
         };
       }
       for (const child of node.children ?? []) walk(child, at);
     };
     walk(root, {
-      lang: "",
+      lang: '',
       code: false,
       wordmark: false,
       value: false,
-      where: "document",
+      where: 'document',
     });
     const out: FaceItem[] = [];
     for (const f of found) {
-      const { fonts } = (await session.send("CSS.getPlatformFontsForNode", {
+      const { fonts } = (await session.send('CSS.getPlatformFontsForNode', {
         nodeId: f.nodeId,
       })) as {
         fonts: { familyName: string; glyphCount: number }[];
@@ -1460,15 +1230,12 @@ export async function faceItems(page: Page): Promise<FaceItem[]> {
  * Appends one paragraph per value to Studio's `main` (outside the area), each with the value as its text and the
  * attribute `data-emuforge-it-value`; the check adds them, Studio's code is unchanged. Returns how many were added.
  */
-export async function appendValues(
-  page: Page,
-  values: string[],
-): Promise<number> {
-  return page.getByRole("main").evaluate(
+export async function appendValues(page: Page, values: string[]): Promise<number> {
+  return page.getByRole('main').evaluate(
     (main, list) => {
       for (const v of list) {
-        const p = document.createElement("p");
-        p.setAttribute("data-emuforge-it-value", "");
+        const p = document.createElement('p');
+        p.setAttribute('data-emuforge-it-value', '');
         p.textContent = v;
         main.appendChild(p);
       }
@@ -1480,9 +1247,5 @@ export async function appendValues(
 }
 
 export async function removeValues(page: Page): Promise<void> {
-  await page.evaluate(() =>
-    document
-      .querySelectorAll("[data-emuforge-it-value]")
-      .forEach((p) => p.remove()),
-  );
+  await page.evaluate(() => document.querySelectorAll('[data-emuforge-it-value]').forEach((p) => p.remove()));
 }
