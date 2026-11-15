@@ -268,7 +268,7 @@ The engine's and the emulator's codes, reasons and messages do not depend on the
   language's catalogue with it; any other face is served from the app's own origin.
 - The font stack is the `--st-font-ui` token, set per language with `:lang()` in `ui/tokens.css`. Every inherited
   text property that depends on a language (font stack, hyphenation, wrapping, line height, letter spacing) is set
-  on `.st-bar` and `.st-main` or inside them, per language as `:lang(th) :is(.st-bar, .st-main)` or through a
+  on `.st-bar` and `.st-main` or inside them, per language as `.st-main:lang(th)` or through a
   `--st-*` token read there; never on `html`, `body`, Studio's root or the area's holder ("No leak either way"). A
   `--st-*` token on `:root` is a custom property, not such a property.
 - Every text of Studio's own layer hyphenates where its language allows or breaks inside its box (`hyphens: auto`,
