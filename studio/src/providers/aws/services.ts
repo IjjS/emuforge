@@ -1,10 +1,10 @@
-// The services Studio will cover (requirement 2.2): the shell's navigation, not data read from the emulator. Each
+// The AWS services Studio will cover: the AWS area's navigation and Home's list, not data read from the emulator. Each
 // label is the service's `serviceFullName` from the AWS CLI service model, verbatim; the list is sorted by label.
 // The issue that builds a service's first screen turns its entry into that screen.
 
 export interface Service {
   label: string;
-  /** The service's route, `/<name>`; every path below it belongs to the service too. */
+  /** The service's route inside the AWS area, `/<name>`; every path below it belongs to the service too. */
   route: string;
 }
 

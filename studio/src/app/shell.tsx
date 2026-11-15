@@ -5,8 +5,8 @@ import TopNavigation from '@cloudscape-design/components/top-navigation';
 import { useEffect } from 'react';
 import { Outlet, useLocation, useMatches, useNavigate } from 'react-router';
 
-import { useFollow } from '../components/use-follow';
-import { SERVICES } from './services';
+import { useFollow } from '../providers/aws/area/components/use-follow';
+import { SERVICES } from '../providers/aws/services';
 
 export const STUDIO_NAME = 'EmuForge Studio';
 

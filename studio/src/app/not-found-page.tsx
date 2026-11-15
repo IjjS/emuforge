@@ -2,7 +2,7 @@ import Box from '@cloudscape-design/components/box';
 import { Fragment } from 'react';
 import { useLocation } from 'react-router';
 
-import { EmptyPage } from '../components/empty-page';
+import { EmptyPage } from '../providers/aws/area/components/empty-page';
 
 /**
  * The requested path as text. A break is allowed after each `/` only, so a long path wraps between its segments
