@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { useEffect } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { advance, connected, FakeEngine, present, row } from '../features/home/home-test-kit';
+import { advance, connected, FakeEngine, present, row } from '../test/home-test-kit';
 import { App } from './app';
 import type { Provider, ProviderAreaProps } from './provider-list';
 
