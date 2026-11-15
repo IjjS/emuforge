@@ -473,7 +473,6 @@ class SnapshotRun(TerminateCase):
         self.assertFalse(lock.exists(), "the lock file is left")
 
 
-
 class AfterReport(TerminateCase):
     """Issue 25, form 3: a storm of SIGTERM that starts after a --snapshot run has written its pass report."""
 
@@ -490,6 +489,11 @@ class AfterReport(TerminateCase):
         self.started.append(proc.pid)
         self.addCleanup(self.reap, proc)
         result, sent, deadline = self.result_path(wt), 0, time.monotonic() + RUN_BOUND
+        if not storm:
+            try:
+                proc.wait(timeout=RUN_BOUND)
+            except subprocess.TimeoutExpired:
+                self.fail(f"pm-structure --snapshot did not exit within {RUN_BOUND} s ({name})")
         while proc.poll() is None:  # a non-blocking waitpid before each signal: the PID is never a reaped one
             if time.monotonic() > deadline:
                 self.fail(f"pm-structure --snapshot did not exit within {RUN_BOUND} s ({name})")

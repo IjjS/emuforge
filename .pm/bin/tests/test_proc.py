@@ -160,7 +160,7 @@ SPAWN_FILE = os.path.join(work, "spawn.py")  # written by the case
 TREE_TIMEOUT = 8  # seconds: the tree is up well before, and the case waits this long once
 SHAPES = {
     "detached": {"name": "child", "kids": [{"name": "grandchild", "how": "session",
-                                            "kids": [{"name": "helper", "how": "group"}]}]},
+                                            "kids": [{"name": "helper", "how": "same"}]}]},
     "levels": {"name": "child", "kids": [{"name": "grandchild", "how": "session",
                                           "kids": [{"name": "great", "how": "session"}]}]},
     "leaderless": {"name": "child", "kids": [{"name": "x", "how": "group"},
@@ -352,11 +352,12 @@ elif mode == "by-itself":
 """
 
 # The tree cases (issue 25): the case writes SPAWN into its own directory, and DRIVER runs it as `run`'s child,
-# with the shape the case names (DRIVER's SHAPES). A node of SPAWN starts its kids as the shape says (`same`: in its own group; `group`: a new group in its session;
-# `join:<kid>`: the group of an earlier kid; `session`: a session of its own), each with stdin, stdout and stderr
-# on /dev/null, and waits on a pipe until each kid's subtree is up. It then kills and reaps the kids named in
-# `reap`, writes `<name>.pid` and sleeps 30 s (or exits 0 with `exit`): a sleeper. The child writes its PID last,
-# once the whole tree is up.
+# with the shape the case names (DRIVER's SHAPES). A node of SPAWN starts its kids as the shape says (`same`: in
+# the node's group; `group`: a new group in its session; `join:<kid>`: the group of an earlier kid; `session`: a
+# session of its own), each with stdin, stdout and stderr on /dev/null, and waits on a pipe until each kid's
+# subtree is up. It then kills and reaps the kids named in `reap`, writes `<name>.pid` and sleeps 30 s (or exits 0
+# with `exit`): a sleeper. The child writes its PID last, once the whole tree is up. In `detached`, the helper sits
+# in the grandchild's group, as the browser's helpers sit in the browser's.
 SPAWN = r"""
 import json, os, subprocess, sys, time
 work, spec = sys.argv[1], json.loads(sys.argv[2])
@@ -624,7 +625,8 @@ class Stop(ProcCase):
         self.assertEqual(code, 0, f"the calling process did not end on its own (exit {code}); stderr:\n{err}")
         for name in caller:
             pid = int((self.work / f"{name}.pid").read_text())
-            self.assertFalse(line["stat"][name].startswith("T"), f"{name} {pid} was stopped when run raised: {line}")
+            self.assertFalse((line["stat"][name] or "").startswith("T"),
+                             f"{name} {pid} was stopped when run raised: {line}")
             self.assertTrue(alive(pid), f"{name} {pid} was killed")
             stat = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True).stdout
             self.assertFalse(stat.strip().startswith("T"), f"{name} {pid} is stopped: {stat.strip()!r}")
