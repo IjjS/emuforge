@@ -2,7 +2,9 @@
 //! emulator's key when the client signed it), [`forward`] it with the streamed body over one fresh connection,
 //! and pass the emulator's answer back as a streamed [`RelayBody`]. Every wait has a deadline from [`Limits`].
 //!
-//! The engine never reads a request or response body: both are `http_body` streams, frame by frame.
+//! The engine never reads a request or response body: both are `http_body` streams, frame by frame. The one
+//! exception is SigV4's own signed-chunk framing (issue #9, D1): the body of a header-signed upload in an HMAC
+//! signed-chunk mode goes through [`ChunkSigner`], which replaces the chunk and trailer signatures in place.
 
 use std::error::Error as StdError;
 use std::fmt;
@@ -14,7 +16,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use http::header::{AUTHORIZATION, CONNECTION, EXPECT, HOST, HeaderMap, HeaderName, HeaderValue};
 use http::request::Parts;
 use http::uri::PathAndQuery;
@@ -27,9 +29,11 @@ use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use tokio::time::{Sleep, sleep};
 
+use crate::chunked::{ChunkSigner, ChunkSigning, ChunkTooLarge};
 use crate::connect::{CONNECT_DEADLINE, connect, from_files};
 use crate::sigv4::{
-    self, ALGORITHM, Auth, ClientAuth, SIGNED_CHUNK_MODES, UNSIGNED_PAYLOAD, UriMode, classify,
+    self, ALGORITHM, Auth, ClientAuth, SIGNED_CHUNKS, SIGNED_CHUNKS_TRAILER, UNSIGNED_PAYLOAD,
+    UriMode, classify, signing_key,
 };
 use crate::{Credentials, Emulator, EmulatorFiles, Reason};
 
@@ -88,10 +92,10 @@ impl Limits {
 /// header value or a body byte.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RelayError {
-    /// A signed-chunk upload mode, refused before anything is read or sent. `mode` is one of
-    /// [`SIGNED_CHUNK_MODES`], never the received bytes.
-    #[error("PayloadSigningNotSupported ({mode})")]
-    PayloadSigningNotSupported { mode: &'static str },
+    /// A recognized chunk header of a re-signed body declared more than
+    /// [`CHUNK_DATA_CAP`](crate::chunked::CHUNK_DATA_CAP) bytes; the upload was aborted before its end.
+    #[error("ChunkTooLarge (chunk above the cap)")]
+    ChunkTooLarge,
     /// The emulator's files, the connection or the TLS handshake failed, or the emulator closed the connection
     /// before its response head.
     #[error("EmulatorUnavailable ({})", reason_text(.0))]
@@ -117,7 +121,9 @@ fn reason_text(reason: &Reason) -> String {
     }
 }
 
-/// The head that goes to the emulator. The body is never part of it.
+/// The head that goes to the emulator. The body is never part of it. When the body's chunk signatures are to be
+/// replaced, `head.extensions` holds the [`ChunkSigning`] they are signed with; [`forward`] takes it out before the
+/// head is sent.
 pub struct Prepared {
     pub head: Parts,
 }
@@ -144,19 +150,19 @@ impl fmt::Debug for Prepared {
 /// The request head as forwarded to `emulator`: origin-form target, `Host` set to the emulator, hop-by-hop
 /// headers removed, and for a header-signed or query-signed request the session token removed and the
 /// signature replaced by one made with `credentials`. Any other request keeps its `Authorization` (or its
-/// absence) as received. A header-signed signed-chunk upload is refused.
+/// absence) as received. A header-signed upload whose `X-Amz-Content-SHA256` is an HMAC signed-chunk mode gets
+/// a [`ChunkSigning`] in `head.extensions`, seeded with the new signature and keyed by `credentials`.
 pub fn prepare(
     parts: Parts,
     emulator: &Emulator,
     credentials: &Credentials,
 ) -> Result<Prepared, RelayError> {
     let auth = classify(&parts);
-    refuse_signed_chunks(&auth, &parts.headers)?;
     prepare_classified(parts, auth, emulator, credentials)
 }
 
-/// Reads the emulator's files for this request, prepares the head, connects and forwards. A signed-chunk
-/// upload is refused before any file is read.
+/// Reads the emulator's files for this request, prepares the head, connects and forwards. The same read signs
+/// the head and, for a signed-chunk upload, its chain.
 pub async fn relay<B>(
     emulator: &Emulator,
     request: Request<B>,
@@ -168,7 +174,6 @@ where
 {
     let (parts, body) = request.into_parts();
     let auth = classify(&parts);
-    refuse_signed_chunks(&auth, &parts.headers)?;
     let files = EmulatorFiles::read(emulator)
         .await
         .map_err(|error| RelayError::Unavailable(from_files(error)))?;
@@ -178,22 +183,6 @@ where
         .map_err(RelayError::Unavailable)?;
     drop(files);
     forward(upstream.stream, upstream.stalled, prepared, body, limits).await
-}
-
-fn refuse_signed_chunks(auth: &Auth, headers: &HeaderMap) -> Result<(), RelayError> {
-    if !matches!(auth, Auth::Header(_)) {
-        return Ok(());
-    }
-    let Some(value) = headers.get(X_AMZ_CONTENT_SHA256) else {
-        return Ok(());
-    };
-    match SIGNED_CHUNK_MODES
-        .iter()
-        .find(|mode| value.as_bytes() == mode.as_bytes())
-    {
-        Some(mode) => Err(RelayError::PayloadSigningNotSupported { mode }),
-        None => Ok(()),
-    }
 }
 
 fn prepare_classified(
@@ -216,11 +205,43 @@ fn prepare_classified(
         .unwrap_or_else(|| PathAndQuery::from_static("/"));
     parts.uri = Uri::from(path_and_query);
     match auth {
-        Auth::Header(client) => sign_header(&mut parts, &client, credentials)?,
+        Auth::Header(client) => {
+            let seed = sign_header(&mut parts, &client, credentials)?;
+            if let Some(signing) = chunk_signing(&parts.headers, client, seed, credentials) {
+                parts.extensions.insert(signing);
+            }
+        }
         Auth::Query(client) => sign_query(&mut parts, &client, credentials)?,
         Auth::Other => {}
     }
     Ok(Prepared { head: parts })
+}
+
+/// What the chain of a header-signed upload is re-signed with, when its `X-Amz-Content-SHA256` is exactly one of
+/// the two HMAC signed-chunk modes: the emulator's signing key for the client's scope, the client's date and
+/// scope, and `seed`, the signature of the prepared head. `None` for every other payload hash.
+fn chunk_signing(
+    headers: &HeaderMap,
+    client: ClientAuth,
+    seed: String,
+    credentials: &Credentials,
+) -> Option<ChunkSigning> {
+    let mode = headers.get(X_AMZ_CONTENT_SHA256)?.as_bytes();
+    let trailer = if mode == SIGNED_CHUNKS.as_bytes() {
+        false
+    } else if mode == SIGNED_CHUNKS_TRAILER.as_bytes() {
+        true
+    } else {
+        return None;
+    };
+    let key = signing_key(&credentials.secret_access_key, &client.scope);
+    Some(ChunkSigning::new(
+        key,
+        client.amz_date,
+        client.scope,
+        seed,
+        trailer,
+    ))
 }
 
 /// `Connection` and every header it names, then the fixed hop-by-hop list.
@@ -317,11 +338,12 @@ fn sign(
     )
 }
 
+/// Replaces `Authorization` with one signed by `credentials`; returns the new signature.
 fn sign_header(
     parts: &mut Parts,
     client: &ClientAuth,
     credentials: &Credentials,
-) -> Result<(), RelayError> {
+) -> Result<String, RelayError> {
     parts.headers.remove(X_AMZ_SECURITY_TOKEN);
     parts.headers.remove(AUTHORIZATION);
     let received_hash = parts
@@ -359,7 +381,7 @@ fn sign_header(
     parts
         .headers
         .insert(AUTHORIZATION, header_value(authorization)?);
-    Ok(())
+    Ok(signature)
 }
 
 /// Rebuilds the query from its raw parameters in their order: the credential and the signed header list
@@ -471,6 +493,9 @@ fn percent_decode(text: &str) -> Vec<u8> {
 /// One exchange over `stream`: the prepared head and the streamed `body`, then the emulator's response head
 /// within the deadlines of `limits`. `upstream_stalled` is the flag of the [`crate::IdleWrite`] under `stream`.
 ///
+/// When the head carries a [`ChunkSigning`], the body goes through a [`ChunkSigner`] on its way up; a chunk above
+/// the cap aborts the upload with [`RelayError::ChunkTooLarge`].
+///
 /// The connection is driven by one spawned task owned by the returned [`RelayBody`] (or by this future until
 /// then); dropping either aborts it and closes the connection. Nothing is reused for another exchange.
 pub async fn forward<S, B>(
@@ -495,8 +520,18 @@ where
 
     let (sent_tx, mut sent_rx) = watch::channel(false);
     let client = Arc::new(ClientOutcome::default());
+    let mut head = prepared.head;
+    let signing = head.extensions.remove::<ChunkSigning>();
     let upload = UploadBody::new(body, limits.upload_idle, sent_tx, Arc::clone(&client));
-    let request = Request::from_parts(prepared.head, upload);
+    let upload = match signing {
+        Some(signing) => Upload::Signed(Box::new(SignedChunks::new(
+            upload,
+            signing,
+            Arc::clone(&client),
+        ))),
+        None => Upload::Plain(upload),
+    };
+    let request = Request::from_parts(head, upload);
     let head_deadline = async {
         if sent_rx.wait_for(|sent| *sent).await.is_err() {
             // The upload was dropped unfinished: the request fails on its own.
@@ -510,7 +545,9 @@ where
         () = head_deadline => return Err(RelayError::HeadTimeout),
     };
     let response = answer.map_err(|error| {
-        if client.stalled.load(Ordering::Acquire) {
+        if client.too_large.load(Ordering::Acquire) {
+            RelayError::ChunkTooLarge
+        } else if client.stalled.load(Ordering::Acquire) {
             RelayError::ClientStalled
         } else if client.failed.load(Ordering::Acquire) {
             RelayError::ClientBodyFailed
@@ -572,6 +609,8 @@ impl Drop for AbortOnDrop {
 struct ClientOutcome {
     stalled: AtomicBool,
     failed: AtomicBool,
+    /// The signer met a chunk above the cap; the engine, not the client, ended the upload.
+    too_large: AtomicBool,
 }
 
 /// True once `sleep` (armed on the first call) has fired; the caller disarms it on progress.
@@ -668,6 +707,145 @@ where
 
     fn is_end_stream(&self) -> bool {
         self.inner.is_end_stream()
+    }
+
+    fn size_hint(&self) -> SizeHint {
+        self.inner.size_hint()
+    }
+}
+
+/// The request body as handed to hyper: the client's as it is, or re-signed.
+enum Upload<B> {
+    Plain(UploadBody<B>),
+    Signed(Box<SignedChunks<UploadBody<B>>>),
+}
+
+impl<B> Body for Upload<B>
+where
+    B: Body<Data = Bytes> + Unpin,
+    B::Error: Into<BoxError>,
+{
+    type Data = Bytes;
+    type Error = BoxError;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, BoxError>>> {
+        match self.get_mut() {
+            Upload::Plain(body) => Pin::new(body).poll_frame(cx),
+            Upload::Signed(body) => Pin::new(body).poll_frame(cx),
+        }
+    }
+
+    fn is_end_stream(&self) -> bool {
+        match self {
+            Upload::Plain(body) => body.is_end_stream(),
+            Upload::Signed(body) => body.is_end_stream(),
+        }
+    }
+
+    fn size_hint(&self) -> SizeHint {
+        match self {
+            Upload::Plain(body) => body.size_hint(),
+            Upload::Signed(body) => body.size_hint(),
+        }
+    }
+}
+
+/// An `aws-chunked` body re-signed as it streams: each data frame of `inner` goes through the signer, and what it
+/// writes is the next frame. The output has the input's length, so the size hint is the inner body's. A trailers
+/// frame of the HTTP transfer follows what the signer still held, unchanged.
+struct SignedChunks<B> {
+    inner: B,
+    signer: ChunkSigner,
+    out: BytesMut,
+    /// The inner body ended (and the signer's held bytes were written).
+    ended: bool,
+    /// A trailers frame of the HTTP transfer, passed after the signer's last bytes.
+    trailers: Option<HeaderMap>,
+    client: Arc<ClientOutcome>,
+}
+
+impl<B> SignedChunks<B> {
+    fn new(inner: B, signing: ChunkSigning, client: Arc<ClientOutcome>) -> Self {
+        SignedChunks {
+            inner,
+            signer: ChunkSigner::new(signing),
+            out: BytesMut::new(),
+            ended: false,
+            trailers: None,
+            client,
+        }
+    }
+
+    /// The bytes the signer wrote, as one frame, if it wrote any.
+    fn written(&mut self) -> Option<Frame<Bytes>> {
+        (!self.out.is_empty()).then(|| Frame::data(self.out.split().freeze()))
+    }
+
+    fn end(&mut self) {
+        self.signer.finish(&mut self.out);
+        self.ended = true;
+    }
+
+    fn too_large(&self) -> bool {
+        self.client.too_large.load(Ordering::Acquire)
+    }
+}
+
+impl<B> Body for SignedChunks<B>
+where
+    B: Body<Data = Bytes, Error = BoxError> + Unpin,
+{
+    type Data = Bytes;
+    type Error = BoxError;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, BoxError>>> {
+        let this = self.get_mut();
+        loop {
+            if this.too_large() {
+                return Poll::Ready(Some(Err(Box::new(ChunkTooLarge))));
+            }
+            if this.ended {
+                return Poll::Ready(
+                    this.trailers
+                        .take()
+                        .map(|trailers| Ok(Frame::trailers(trailers))),
+                );
+            }
+            match Pin::new(&mut this.inner).poll_frame(cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Some(Err(error))) => return Poll::Ready(Some(Err(error))),
+                Poll::Ready(Some(Ok(frame))) => match frame.into_data() {
+                    Ok(data) => {
+                        if this.signer.push(&data, &mut this.out).is_err() {
+                            this.out.clear();
+                            this.client.too_large.store(true, Ordering::Release);
+                            continue;
+                        }
+                    }
+                    Err(frame) => {
+                        this.trailers = frame.into_trailers().ok();
+                        this.end();
+                    }
+                },
+                Poll::Ready(None) => this.end(),
+            }
+            if let Some(frame) = this.written() {
+                return Poll::Ready(Some(Ok(frame)));
+            }
+        }
+    }
+
+    fn is_end_stream(&self) -> bool {
+        if self.too_large() || self.trailers.is_some() {
+            return false;
+        }
+        self.ended || (self.inner.is_end_stream() && self.signer.is_empty())
     }
 
     fn size_hint(&self) -> SizeHint {

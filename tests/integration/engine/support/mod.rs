@@ -26,7 +26,10 @@ mod wait;
 pub use aws::{Auth, CHECK_ACCESS_KEY_ID, Call, Endpoint, Key, Payload, percent_encode};
 pub use body::{aws_chunked_unsigned_trailer, base64, crc32_header, crc64nvme_header, seeded};
 pub use check::{Ctx, Env, TempDir, check};
-pub use chunked::{SIGNED_CHUNKS, aws_chunked_signed, signed_chunk_put};
+pub use chunked::{
+    ECDSA_CHUNKS, Malformed, SIGNED_CHUNKS, SIGNED_CHUNKS_TRAILER, SignedChunkUpload,
+    ZERO_SIGNATURE, md5_hex, signed_chunk_pair, signed_chunk_put,
+};
 pub use emulator::{EmulatorFiles, OwnEmulator, direct_health, emulator_dir, sha256_file};
 pub use engine::{Engine, EngineCmd, Output};
 pub use fifo::{ENXIO, HeldFifo, open_write_nonblocking};
