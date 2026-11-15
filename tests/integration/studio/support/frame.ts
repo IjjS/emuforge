@@ -40,8 +40,10 @@ export interface Frame {
 }
 
 export function frame(page: Page): Frame {
-  const wordmark = page.getByRole('banner').getByRole('link', { name: 'EmuForge Studio', exact: true });
-  const banner = page.getByRole('banner').filter({ has: wordmark });
+  // `has` resolves its locator inside each banner, so the link is found from the page, not from a banner.
+  const banner = page
+    .getByRole('banner')
+    .filter({ has: page.getByRole('link', { name: 'EmuForge Studio', exact: true }) });
   const nav = banner.getByRole('navigation', { name: 'Studio', exact: true });
   return {
     banner,
