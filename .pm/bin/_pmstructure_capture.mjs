@@ -74,8 +74,8 @@ function flatten(axNodes) {
 }
 
 // the backendNodeIds of the page's elements with class `areaClass`, in document order; the lookup does not pierce
-// shadow roots. null when an element the query found is gone before it is described: the page changed during the
-// lookup, so the take is not one to settle on
+// shadow roots. null when an element the query found is gone before it is described (CDP's node-gone error): the
+// page changed during the lookup, so the take is not one to settle on; any other error is thrown
 async function areaRoots(cdp, areaClass) {
   const { root } = await cdp.send("DOM.getDocument", { depth: 0 });
   const { nodeIds } = await cdp.send("DOM.querySelectorAll", { nodeId: root.nodeId, selector: "." + areaClass });
@@ -84,8 +84,9 @@ async function areaRoots(cdp, areaClass) {
     let described;
     try {
       described = await cdp.send("DOM.describeNode", { nodeId });
-    } catch {
-      return null;
+    } catch (e) {
+      if (String((e && e.message) || e).includes("Could not find node with given id")) return null;
+      throw e;
     }
     roots.push(described.node.backendNodeId);
   }
