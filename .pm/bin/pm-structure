@@ -381,8 +381,18 @@ def main(argv):
 if __name__ == "__main__":
     # the handler only records the first signal and never raises, so no cleanup is cut short; the stop is raised
     # at the next checkpoint or by the child wait in _pmproc.run (issue 12, design D1)
-    for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
-        signal.signal(sig, lambda signum, _: _pmproc.stop(Terminated(f"terminated by {signal.Signals(signum).name}")))
+    # the stops are built before any signal: under a storm the handler starts again inside itself, so it does a
+    # lookup and the first-wins record, and nothing that writes, raises or grows the stack (issue 25, C3)
+    # the run ends with os._exit after its own flushes: the interpreter's shutdown would set the handlers back to
+    # the default action, and a late signal would then kill the run (-15) after its report (issue 25, C2)
+    SIGNALS = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
+    STOPS = {sig: Terminated(f"terminated by {sig.name}") for sig in SIGNALS}
+
+    def on_signal(signum, _):
+        _pmproc.stop(STOPS[signum])
+
+    for sig in SIGNALS:
+        signal.signal(sig, on_signal)
     try:
         code = main(sys.argv[1:])
     except Terminated:  # a stop outside the lock-held block: before the lock, or during a report
@@ -393,6 +403,17 @@ if __name__ == "__main__":
     except Exception as e:  # never exit 0 or 1 on a bug
         say_error(f"internal error: {type(e).__name__}: {e}")
         code = 2
+    except SystemExit as e:  # argparse: a usage error (2) or --help (0); any other code is an error
+        if e.code is None or isinstance(e.code, int):
+            code = e.code or 0
+        else:
+            say_error(str(e.code))
+            code = 2
     if _pmproc.stop_requested() is not None:  # a signal where no checkpoint followed still ends in exit 2
         code = 2
-    sys.exit(code)
+    for stream in (sys.stdout, sys.stderr):  # each on its own: a failed stdout never costs the stderr line
+        try:
+            stream.flush()
+        except OSError:
+            code = 120  # the status Python itself gives when the flush at exit fails
+    os._exit(code)
