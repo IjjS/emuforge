@@ -19,7 +19,7 @@ Decided at the Requirement stage and written into it. A screen's grade follows f
 - Inside a provider area a screen is `console` when it mirrors a screen of that provider's console, and `native`
   otherwise; both are built from the provider's design system, never from Studio's own.
 
-An issue that touches both kinds of screen is split.
+An issue that touches both a `console` and a `native` screen is split.
 
 ## Stages by kind
 

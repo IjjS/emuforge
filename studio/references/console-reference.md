@@ -73,7 +73,8 @@ Region pickers). "Not built yet" is not a reason; that is a failing item.
 Computed from the running app, not from the code, by `.pm/bin/pm-structure`.
 
 1. Open the spec's `route` in the built app at 1280x800 against a seeded emulator, and take the accessibility
-   tree (roles and accessible names) of the page. A spec with items that exist in only one data state
+   tree (roles and accessible names) of the AWS area: everything under the area's root, its `AppLayout` with the
+   breadcrumbs included. Studio's frame around the area is not part of the screen and is not scored. A spec with items that exist in only one data state
    (`table.empty`, which needs an empty table, or a `single` or `multi` `table.selection`, which needs rows) is
    scored in two runs of the same build: one against a seeded emulator and one against an empty one.
 2. Every leaf of the spec is one **item**: a breadcrumb, the title, each action, each column, each tab, each
