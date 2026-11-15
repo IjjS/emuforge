@@ -645,14 +645,31 @@ function installLanguageProbe(record: boolean): void {
     }
     return { problems, covers: [...new Set(covers)] };
   };
-  /** Whether the topmost element at the corners and the centre of `el` is `el`'s. */
+  /**
+   * Whether the topmost element at the corners and the centre of `el` is `el`'s. Each corner probe is inset by
+   * that corner's border radius (at least 2px, at most half the box), so it falls inside the element's shape and
+   * not in the transparent part of a rounded corner.
+   */
   const onTop = (el: Element) => {
     const r = el.getBoundingClientRect();
+    const cs = getComputedStyle(el);
+    const inset = (corner: string): [number, number] => {
+      const parts = cs.getPropertyValue(`border-${corner}-radius`).trim().split(/\s+/);
+      const len = (v: string | undefined, size: number) =>
+        !v ? 0 : v.endsWith('%') ? (parseFloat(v) / 100) * size : parseFloat(v) || 0;
+      const rx = len(parts[0], r.width);
+      const ry = parts.length > 1 ? len(parts[1], r.height) : len(parts[0], r.height);
+      return [Math.min(Math.max(2, rx), r.width / 2), Math.min(Math.max(2, ry), r.height / 2)];
+    };
+    const [tlx, tly] = inset('top-left');
+    const [trx, try_] = inset('top-right');
+    const [blx, bly] = inset('bottom-left');
+    const [brx, bry] = inset('bottom-right');
     const points: [string, number, number][] = [
-      ['top left', r.left + 2, r.top + 2],
-      ['top right', r.right - 2, r.top + 2],
-      ['bottom left', r.left + 2, r.bottom - 2],
-      ['bottom right', r.right - 2, r.bottom - 2],
+      ['top left', r.left + tlx, r.top + tly],
+      ['top right', r.right - trx, r.top + try_],
+      ['bottom left', r.left + blx, r.bottom - bly],
+      ['bottom right', r.right - brx, r.bottom - bry],
       ['centre', r.left + r.width / 2, r.top + r.height / 2],
     ];
     return points
