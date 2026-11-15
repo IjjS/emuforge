@@ -331,7 +331,7 @@ One column inside a sticky bar.
   twice), and `html` has `scroll-padding-bottom: 16px` so a stop at the bottom of the viewport shows its whole ring.
   These are not inherited, so nothing reaches a provider area.
 - **Breakpoints:**
-  - 900px: Home's services go from three columns (seven rows, filled by column) to two (ten rows).
+  - 900px: Home's services go from three columns to two, filled by row in label order.
   - 640px: one column everywhere. The status rows stack, and each row is compact: the label and the status on one
     line, the address on the line under it, so the first recovery command of a notice stays high on a 390x844
     screen. A notice's icon moves into its heading so the text gets the full width. Services are one list. The
