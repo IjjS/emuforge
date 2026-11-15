@@ -32,6 +32,15 @@ over-cap chunk does not always get the engine's refusal, and the full check suit
   test result: FAILED. 6 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.59s
   ```
 
+- At `0590dcc` (one more issue file, no code change), the run failed on this check again, on its other case:
+  `output/logs/check-integration-0590dcc-run1.log` in the same worktree.
+
+  ```
+  assertion failed at tests/relay_signed_chunks.rs:42:29: PutObject with a 64 KiB signed data chunk, then one of 1048577 bytes: the engine gave no answer: Broken pipe (os error 32)
+  ```
+
+- Two of four full runs of `pm-check` on that branch failed on this check, and only on it.
+
 ## Steps to Reproduce
 
 1. Start a fresh emulator and the engine as `pm-check` does for the worktree.
