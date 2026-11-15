@@ -235,6 +235,8 @@ export interface LayerReport {
   rootText: Record<string, string> | null;
   /** Style rules the walk could not match (a selector the browser keeps but `matches` refuses), counted. */
   unmatchable: number;
+  /** Those rules by selector, layer and sheet (at most 20), so the log names what the walk could not judge. */
+  unmatchableRules: string[];
   /** Stylesheets whose rules could not be read. */
   unreadable: string[];
 }
@@ -247,6 +249,8 @@ export interface SourceReport {
   outsideStudio: string[];
   /** Source selectors not found in the built app (the build may have merged or rewritten them), counted. */
   notFound: number;
+  /** Those selectors with their source file (at most 20), so the log names what was not checked against the layer. */
+  notFoundSelectors: string[];
   /** Declarations of the `studio` layer that are `!important`. */
   important: string[];
   /** Custom properties declared in the `studio` layer whose name does not start with `--st-`. */
@@ -443,9 +447,6 @@ function installProbe(): void {
 
   const documentRules = () => walk([...document.styleSheets, ...(document.adoptedStyleSheets ?? [])]);
 
-  /** The custom properties Lightning CSS adds beside a `color-scheme` declaration (see `sourceInBuilt`). */
-  const MINIFIER_SCHEME_PROPERTIES = ['--lightningcss-light', '--lightningcss-dark'];
-
   const names = (style: CSSStyleDeclaration | null): string[] => {
     const out: string[] = [];
     if (!style) return out;
@@ -527,6 +528,7 @@ function installProbe(): void {
     for (let a = usableRoot?.parentElement ?? null; a; a = a.parentElement) ancestors.push(a);
 
     let unmatchable = 0;
+    const unmatchableRules: string[] = [];
     const foreign = new Map<Rule, { what: string; elements: Element[] }>();
     const studioIn = new Map<Rule, { what: string; elements: Element[] }>();
     const inherited = new Map<Rule, { what: string; elements: Element[] }>();
@@ -535,17 +537,15 @@ function installProbe(): void {
       if (r.kind !== 'style' || !r.applies) continue;
       if (r.match === null) {
         unmatchable++;
+        if (unmatchableRules.length < 20) unmatchableRules.push(ruleName(r));
         continue;
       }
       const props = names(r.style);
       if (isStudio(r.layer)) {
         const hitInside = inside.filter((el) => el.matches(r.match!));
         if (hitInside.length > 0) studioIn.set(r, { what: `{${props.slice(0, 6).join('; ')}}`, elements: hitInside });
-        const minifier = props.includes('color-scheme') ? MINIFIER_SCHEME_PROPERTIES : [];
         const leaking = props.filter(
-          (p) =>
-            (p.startsWith('--') ? !p.startsWith('--st-') && !minifier.includes(p) : inheritedNames.has(p)) &&
-            p !== 'color-scheme',
+          (p) => (p.startsWith('--') ? !p.startsWith('--st-') : inheritedNames.has(p)) && p !== 'color-scheme',
         );
         if (leaking.length > 0 && usableRoot) {
           const hit = ancestors.filter((el) => el.matches(r.match!));
@@ -579,6 +579,7 @@ function installProbe(): void {
       studioInheritedOnAncestors: grouped(inherited),
       rootText: usableRoot ? textOf(usableRoot) : null,
       unmatchable,
+      unmatchableRules,
       unreadable,
     };
   };
@@ -674,8 +675,8 @@ function installProbe(): void {
       .replace(/(^|[^:]):(before|after|first-line|first-letter)(?![-\w])/g, '$1::$2')
       .trim();
 
-  /** Studio's own source (its files' texts) against the built app's stylesheets. */
-  const sourceInBuilt = (texts: string[]) => {
+  /** Studio's own source (its files, as name and text) against the built app's stylesheets. */
+  const sourceInBuilt = (files: [string, string][]) => {
     const built = documentRules().rules.filter((r) => r.kind === 'style' && r.selector !== null);
     const index = new Map<string, Rule[]>();
     for (const r of built) {
@@ -687,8 +688,9 @@ function installProbe(): void {
     }
     let inStudio = 0;
     let notFound = 0;
+    const notFoundSelectors: string[] = [];
     const outsideStudio = new Set<string>();
-    for (const text of texts) {
+    for (const [file, text] of files) {
       const sheet = new CSSStyleSheet();
       sheet.replaceSync(text);
       for (const r of walk([sheet]).rules) {
@@ -697,8 +699,10 @@ function installProbe(): void {
         if (props.size === 0) continue;
         for (const s of splitList(r.selector)) {
           const same = (index.get(normSelector(s)) ?? []).filter((b) => names(b.style).some((p) => props.has(p)));
-          if (same.length === 0) notFound++;
-          else if (same.some((b) => isStudio(b.layer))) inStudio++;
+          if (same.length === 0) {
+            notFound++;
+            if (notFoundSelectors.length < 20) notFoundSelectors.push(`"${s}" (${file})`);
+          } else if (same.some((b) => isStudio(b.layer))) inStudio++;
           for (const b of same) if (!isStudio(b.layer)) outsideStudio.add(`source rule "${s}" is in ${ruleName(b)}`);
         }
       }
@@ -707,21 +711,16 @@ function installProbe(): void {
     const important: string[] = [];
     const foreignCustom: string[] = [];
     for (const r of studio) {
-      const declared = names(r.style);
-      // Vite's CSS minifier (Lightning CSS) writes `--lightningcss-light` and `--lightningcss-dark` beside every
-      // `color-scheme` declaration, as its own fallback for `light-dark()`. They are the build's, not Studio's
-      // source's, and R7.4 requires `color-scheme`; only these two names, and only in a rule that sets it, are passed.
-      const minifier = declared.includes('color-scheme') ? MINIFIER_SCHEME_PROPERTIES : [];
-      for (const p of declared) {
+      for (const p of names(r.style)) {
         if (r.style!.getPropertyPriority(p) === 'important') important.push(`${ruleName(r)} ${p}`);
-        if (p.startsWith('--') && !p.startsWith('--st-') && !minifier.includes(p))
-          foreignCustom.push(`${ruleName(r)} ${p}`);
+        if (p.startsWith('--') && !p.startsWith('--st-')) foreignCustom.push(`${ruleName(r)} ${p}`);
       }
     }
     return {
       inStudio,
       outsideStudio: [...outsideStudio].slice(0, 20),
       notFound,
+      notFoundSelectors,
       important: important.slice(0, 20),
       foreignCustom: foreignCustom.slice(0, 20),
       studioRules: studio.length,
@@ -1177,7 +1176,7 @@ function topLevel(text: string): { prelude: string; block: boolean }[] {
 
 /** Studio's own source (`studioSource(ctx).files`) against the built app's stylesheets in the page. */
 export async function sourceReport(page: Page, files: Record<string, string>): Promise<SourceReport> {
-  return call<SourceReport>(page, 'sourceInBuilt', Object.values(files));
+  return call<SourceReport>(page, 'sourceInBuilt', Object.entries(files));
 }
 
 /**

@@ -89,6 +89,8 @@ function logReport(ctx: Ctx, where: string, r: LayerReport): void {
   ctx.log(
     `${where}: root ${r.root ?? 'none'}, ${String(r.outside)} elements outside, ${String(r.inside)} inside, ${String(r.unmatchable)} rules unmatchable, awsui-dark-mode on ${JSON.stringify(r.darkModeHolders)}`,
   );
+  if (r.unmatchableRules.length > 0)
+    ctx.log(`${where}: rules the walk could not match: ${r.unmatchableRules.join('; ')}`);
 }
 
 const at = (where: string, list: string[]) => list.map((s) => `${where}: ${s}`);
