@@ -28,6 +28,7 @@ export {
   type FormOptions,
   type Situation,
 } from './product';
+export { composeArgs, directS3, runAt, searchImage, signedVia, transparencyDiff } from './product-inspect';
 export { register as registerSecret, redact } from './secrets';
 export { startStack, type Stack, type StackOptions } from './stack';
 export { StudioServer, type StudioOptions } from './studio';
