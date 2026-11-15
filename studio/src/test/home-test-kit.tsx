@@ -244,8 +244,6 @@ export function languageStore(tag: string, catalogues: Catalogues = withMarked()
 export interface KeptAsItIs {
   /** The engine's `message`s the page was sent: kept in an element with `lang="en"` that holds exactly one. */
   engineMessages?: readonly string[];
-  /** The area page titles Studio's own layer shows or announces: kept in an element with `lang="en"` (R5.2). */
-  areaTitles?: readonly string[];
 }
 
 /** Names Studio never translates: the wordmark and the providers' names and service labels (R4.3). */
@@ -451,10 +449,7 @@ function keptByLang(element: Element, kept: KeptAsItIs): boolean {
   }
   const lang = marked.getAttribute('lang') ?? '';
   const text = marked.textContent ?? '';
-  return (
-    (lang === 'en' && ((kept.engineMessages ?? []).includes(text) || (kept.areaTitles ?? []).includes(text))) ||
-    ownNames().get(lang) === text
-  );
+  return (lang === 'en' && (kept.engineMessages ?? []).includes(text)) || ownNames().get(lang) === text;
 }
 
 /**
@@ -493,7 +488,7 @@ export function textNotFrom(tag: string, kept: KeptAsItIs = {}): string[] {
     }
   }
   for (const part of document.title.split(' | ')) {
-    const why = (kept.areaTitles ?? []).includes(part) ? undefined : notFrom(tag, part);
+    const why = notFrom(tag, part);
     if (why !== undefined) {
       found.push(`document title "${document.title}", "${part}": ${why}`);
     }
@@ -503,7 +498,7 @@ export function textNotFrom(tag: string, kept: KeptAsItIs = {}): string[] {
 
 /**
  * Every element of Studio's own layer whose `lang` differs from the page's and whose text is not the engine's
- * message, an area page title or the own name of the language it names (requirement R4.3): `[]` when there is none.
+ * message or the own name of the language it names (requirement R4.3): `[]` when there is none.
  */
 export function otherLangElements(kept: KeptAsItIs = {}): string[] {
   const page = document.documentElement.lang;
