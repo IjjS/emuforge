@@ -4,8 +4,9 @@
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
+import { BUNDLED_CATALOGUES } from './bundled';
 import { parseCatalogue, type Catalogue } from './catalogue';
-import { catalogueProblems, holdsTerm, parseGlossary } from './catalogue-check';
+import { catalogueProblems, GLOSSARY as STUDIO_GLOSSARY, holdsTerm, parseGlossary } from './catalogue-check';
 
 const ENGLISH = parseCatalogue('en', {
   '@name': 'English',
@@ -172,6 +173,46 @@ describe('the glossary rule', () => {
 
 /** The tags of requirement R1.1. */
 const TAGS = ['en', 'ko', 'ja', 'es', 'pt-BR', 'fr', 'de', 'ru', 'it', 'pl', 'vi', 'th'];
+
+/** The languages of R1.1 and their own names. */
+const OWN_NAMES: Readonly<Record<string, string>> = {
+  en: 'English',
+  ko: '한국어',
+  ja: '日本語',
+  es: 'Español',
+  'pt-BR': 'Português',
+  fr: 'Français',
+  de: 'Deutsch',
+  ru: 'Русский',
+  it: 'Italiano',
+  pl: 'Polski',
+  vi: 'Tiếng Việt',
+  th: 'ไทย',
+};
+
+describe("Studio's catalogues (R1.1, R4.6, R4.7)", () => {
+  it('the catalogue files → exactly twelve, named by the tags of R1.1, each with its own name', () => {
+    const files = [...BUNDLED_CATALOGUES.byTag.values()];
+    expect(files.map((catalogue) => catalogue.tag).sort()).toEqual([...TAGS].sort());
+    expect(Object.fromEntries(files.map((catalogue) => [catalogue.tag, catalogue.name]))).toEqual(OWN_NAMES);
+  });
+
+  it.each(TAGS)('the catalogue %s on the branch → passes every rule of the check', (tag) => {
+    const catalogue = BUNDLED_CATALOGUES.byTag.get(tag);
+    expect(catalogue).toBeDefined();
+    expect(catalogueProblems(BUNDLED_CATALOGUES.source, catalogue as Catalogue)).toEqual([]);
+  });
+
+  it('the glossary → a stem for every term in each of the eleven languages other than English', () => {
+    const others = TAGS.filter((tag) => tag !== 'en');
+    expect(STUDIO_GLOSSARY.map((term) => term.term).sort()).toEqual(
+      ['Home', 'Refresh', 'Studio', 'command', 'emulator', 'engine', 'port'].sort(),
+    );
+    for (const term of STUDIO_GLOSSARY) {
+      expect([term.term, [...term.stems.keys()].sort()]).toEqual([term.term, [...others].sort()]);
+    }
+  });
+});
 
 /** The source of every file of Studio's own screens, tests aside: `app/`, `ui/` and `features/`. */
 const SCREEN_CODE = import.meta.glob<string>(

@@ -1,12 +1,18 @@
 // The message function (requirement R4.4, R4.5, R4.8) on test catalogues: placeholders filled with text or elements,
 // counted messages by the plural rules of their language, and English or `other` where a catalogue lacks a text.
 
-import { render } from '@testing-library/react';
-import { createElement } from 'react';
-import { describe, expect, it } from 'vitest';
+import { render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { createElement, Fragment } from 'react';
+import { afterEach, describe, expect, it } from 'vitest';
 
-import { catalogueSet, parseCatalogue, type Catalogues } from './catalogue';
+import { LanguageControl } from '../ui/language-control';
+import { BUNDLED_CATALOGUES } from './bundled';
+import { catalogueSet, parseCatalogue, textsOf, type Catalogues } from './catalogue';
 import { formatNumber } from './format';
+import { createLanguageStore, STORAGE_KEY } from './language';
+import { useLanguage } from './language-context';
+import { LanguageProvider } from './language-provider';
 import { messagesFor } from './messages';
 
 const STATEMENT = 'lost.statement';
@@ -150,5 +156,57 @@ describe('a catalogue that lacks a text', () => {
 
   it('a key English does not have either → an error, never the key shown', () => {
     expect(() => messagesFor<string>(CATALOGUES, 'ko').t('no.such.key')).toThrow(/no\.such\.key/);
+  });
+});
+
+/** A test catalogue for Ukrainian, a language Studio does not have: every English message marked `uk:`. */
+function ukrainian() {
+  const json: Record<string, unknown> = { '@name': 'Українська' };
+  for (const [key, message] of BUNDLED_CATALOGUES.source.messages) {
+    json[key] =
+      typeof message === 'string'
+        ? `uk:${message}`
+        : Object.fromEntries(Object.entries(message).map(([category, text]) => [category, `uk:${text}`]));
+  }
+  return parseCatalogue('uk', json);
+}
+
+/** A text of Studio's that reads the current language, beside the control. */
+function HomeLink() {
+  const { t } = useLanguage();
+  return createElement('p', null, t('frame.home'));
+}
+
+describe('a further language (R4.6)', () => {
+  afterEach(() => {
+    localStorage.clear();
+    document.documentElement.lang = 'en';
+  });
+
+  it('a test catalogue added for a further language → offered by the control and, once chosen, shown, with no other change', async () => {
+    const catalogues = catalogueSet([...BUNDLED_CATALOGUES.byTag.values(), ukrainian()]);
+    expect(textsOf(catalogues.byTag.get('uk')?.messages.get('frame.home') ?? '')).toEqual(['uk:Home']);
+    const store = createLanguageStore(catalogues, {
+      languages: ['en-US'],
+      language: 'en-US',
+      storage: () => window.localStorage,
+    });
+    render(
+      createElement(LanguageProvider, {
+        store,
+        children: createElement(Fragment, null, createElement(LanguageControl), createElement(HomeLink)),
+      }),
+    );
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole('button', { name: 'Language: English' }));
+    const offered = within(screen.getByRole('menu')).getByRole('menuitemradio', { name: 'Українська' });
+    expect(offered).toHaveAttribute('lang', 'uk');
+    await user.click(offered);
+
+    expect(screen.getByText('uk:Home')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'uk:Language: Українська' })).toBeInTheDocument();
+    expect(document.documentElement.lang).toBe('uk');
+    expect(localStorage.getItem(STORAGE_KEY)).toBe('uk');
   });
 });

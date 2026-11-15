@@ -7,6 +7,9 @@ Issue 8 (requirement 9): "Format" lists the kinds without `dashboard`, says how 
 the wizard blocks, either as the YAML of requirement 3 (`steps:` whose entries start with `- title:` followed by
 `sections:`) or in prose (`steps` (each with `title` and `sections`)); "Structure score" says how a wizard is opened
 and scored.
+
+Issue 21 (design 2.5): "Structure score" step 1 (the list item `1.`) names the area root's class `aws-area` and says
+that a page without exactly one such element (none, or more than one) is an error, not a score.
 """
 import pathlib
 import re
@@ -105,6 +108,18 @@ class WizardAndDashboardGuide(unittest.TestCase):
         self.assertTrue(any("Studio" in b and "?step=<k>" in b and "wizard" in b for b in blocks(self.score)),
                         self.score)
         self.assertIn("step's tree", flat)
+
+
+
+class AreaRootGuide(unittest.TestCase):
+    def test_step_1_names_the_area_class_and_the_error(self):
+        steps = [b for b in blocks(section(CONSOLE.read_text(), "## Structure score")) if b.startswith("1. ")]
+        self.assertEqual(len(steps), 1, steps)
+        flat = " ".join(steps[0].split())
+        self.assertIn("`aws-area`", flat)
+        self.assertRegex(flat, r"exactly one|more than one")
+        self.assertRegex(flat, r"\berror\b")
+        self.assertIn("not a score", flat)
 
 
 if __name__ == "__main__":

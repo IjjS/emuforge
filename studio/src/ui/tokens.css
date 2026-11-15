@@ -5,7 +5,11 @@
 @layer studio {
   :root {
     color-scheme: light;
-    --st-font-ui: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
+    /* Studio's interface face, then the faces of the scripts Instrument Sans lacks, each by its unicode-range
+       (fonts.css): Latin runs in Instrument Sans, Cyrillic and Thai runs in theirs (requirement R6.2). */
+    --st-font-ui: 'Instrument Sans', 'Noto Sans Cyrillic', 'Noto Sans Thai', ui-sans-serif, system-ui, sans-serif;
+    /* The wordmark is Studio's name, drawn the same in every language. */
+    --st-font-mark: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
     --st-font-code: 'JetBrains Mono', ui-monospace, monospace;
 
     --st-bg: oklch(0.972 0.005 85);
@@ -38,6 +42,35 @@
     --st-bar-h: 56px;
     --st-gutter: 32px;
     --st-pad: 22px;
+  }
+
+  /* The interface face per language (requirement R6.2), on the page and again on every element of Studio's own layer
+     that names its own language, so a language's own name in another script (ไทย on a Japanese page, Русский on a
+     Vietnamese one) takes its face; base.css reads the token there. Only `--st-*` properties are set on `:root`. */
+  :is(.st-bar, .st-main) [lang] {
+    --st-font-ui: 'Instrument Sans', 'Noto Sans Cyrillic', 'Noto Sans Thai', ui-sans-serif, system-ui, sans-serif;
+  }
+
+  /* Vietnamese: wholly Noto Sans, so no word is drawn in two faces. */
+  :root:lang(vi),
+  :is(.st-bar, .st-main) [lang]:lang(vi) {
+    --st-font-ui: 'Noto Sans Vietnamese', ui-sans-serif, system-ui, sans-serif;
+  }
+
+  /* Hangul, kana and Han: the platform's own face for the language (CJK faces are too large to serve), after
+     Instrument Sans so Latin words keep Studio's face. */
+  :root:lang(ko),
+  :is(.st-bar, .st-main) [lang]:lang(ko) {
+    --st-font-ui:
+      'Instrument Sans', 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', 'Noto Sans CJK KR', ui-sans-serif,
+      system-ui, sans-serif;
+  }
+
+  :root:lang(ja),
+  :is(.st-bar, .st-main) [lang]:lang(ja) {
+    --st-font-ui:
+      'Instrument Sans', 'Hiragino Sans', 'Yu Gothic UI', 'Noto Sans JP', 'Noto Sans CJK JP', ui-sans-serif, system-ui,
+      sans-serif;
   }
 
   @media (prefers-color-scheme: dark) {

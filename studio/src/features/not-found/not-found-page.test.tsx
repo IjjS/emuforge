@@ -4,6 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Providers } from '../../app/providers';
 import { routes } from '../../app/routes';
+import { BUNDLED_CATALOGUES } from '../../i18n/bundled';
+import { PLACEHOLDER } from '../../i18n/catalogue';
+import { languageStore, present, textNotFrom } from '../../test/home-test-kit';
 
 beforeEach(() => {
   vi.stubGlobal(
@@ -14,12 +17,16 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+  localStorage.clear();
+  document.documentElement.lang = 'en';
 });
 
-function open(path: string) {
+/** Studio at `path`, in the browser's language, or in `tag` as a browser whose only language it is. */
+function open(path: string, tag?: string) {
   const router = createMemoryRouter(routes, { initialEntries: [path] });
   render(
-    <Providers>
+    <Providers language={tag === undefined ? undefined : languageStore(tag)}>
       <RouterProvider router={router} />
     </Providers>,
   );
@@ -82,5 +89,59 @@ describe('Studio’s "Page not found"', () => {
 
     expect(pathBox().textContent).toBe(router.state.location.pathname);
     expect(router.state.location.pathname).toBe('/%E0%A4%A');
+  });
+});
+
+/** The catalogue's text of `key` in `tag`. */
+function messageIn(tag: string, key: string): string {
+  const message = BUNDLED_CATALOGUES.byTag.get(tag)?.messages.get(key);
+  if (typeof message !== 'string') {
+    throw new Error(`${tag} has no text "${key}"`);
+  }
+  return message;
+}
+
+const OVER_LONG = `/${'a-very-long-segment-of-a-path/'.repeat(12)}end`;
+
+describe('Studio’s "Page not found" in each of the twelve languages (R4.4, R4.9)', () => {
+  it.each(
+    [...BUNDLED_CATALOGUES.byTag.keys()].flatMap((tag) => [[tag, 'short'] as const, [tag, 'over-long'] as const]),
+  )(
+    '%s, a %s path: every text of Studio comes from that catalogue or is kept as it is; the path box named "Path"',
+    (tag, length) => {
+      if (length === 'over-long') {
+        // jsdom lays nothing out: the path box reports a width beyond its own, as an over-long path does.
+        vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockImplementation(function (this: HTMLElement) {
+          return this.tagName === 'CODE' ? 4_000 : 0;
+        });
+      }
+      open(length === 'short' ? '/does-not-exist' : OVER_LONG, tag);
+
+      expect(document.documentElement.lang).toBe(tag);
+      expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(messageIn(tag, 'notFound.title'));
+      expect(textNotFrom(tag)).toEqual([]);
+      const region = screen.queryByRole('region', { name: messageIn(tag, 'notFound.path') });
+      if (length === 'over-long') {
+        expect(region).toBe(pathBox());
+      } else {
+        expect(region).toBeNull();
+      }
+    },
+  );
+
+  it.each(['ko', 'ja'])('%s: the path box stands where the catalogue puts {path}, before the verb', (tag) => {
+    open('/does-not-exist', tag);
+    const [before, after] = messageIn(tag, 'notFound.statement')
+      .split(PLACEHOLDER)
+      .filter((_p, i) => i % 2 === 0);
+    const statement = present(pathBox().parentElement, 'the statement');
+    const nodes = [...statement.childNodes];
+
+    expect(nodes.map((node) => node.nodeName)).toEqual(['#text', 'CODE', '#text']);
+    expect(nodes[0]?.textContent).toBe(before);
+    expect(nodes[1]).toBe(pathBox());
+    expect(nodes[2]?.textContent).toBe(after);
+    // The verb comes after the path in these languages.
+    expect(present(after, 'the text after the path').trim()).toMatch(/(없습니다|ありません)。?\.?$/u);
   });
 });

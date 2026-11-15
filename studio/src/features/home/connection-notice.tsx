@@ -125,11 +125,11 @@ function EmulatorSteps({ port, stopStep }: { port: number; stopStep?: MessageKey
       <BuildOnce />
       {stopStep !== undefined && (
         <CommandBlock
-          // Step 1 names the container the stop command removes and step 2 starts; the name is never broken across
-          // lines (issue 18).
+          // Step 1 names the container the stop command removes and step 2 starts: a literal the user types, as inline
+          // code, never broken across lines (issue 18) and the same in every language (R4.3).
           label={t(stopStep, {
             port: portText,
-            container: <span className="st-nowrap">{`emuforge-emulator-${portText}`}</span>,
+            container: <InlineCode>{`emuforge-emulator-${portText}`}</InlineCode>,
           })}
           name={t('command.stop')}
           command={stopEmulatorCommand(port)}

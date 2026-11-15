@@ -5,16 +5,19 @@
                [--state seeded|empty] [--storage-state FILE] [--record ISSUE POINT]
   pm-structure --table ISSUE
 
---url BASE opens BASE + the spec's route; BASE must be a loopback IP address (127.0.0.0/8 or [::1]; `localhost`
-and every other name are refused). --serve DIR serves the built app in DIR on 127.0.0.1 with the single-page
-fallback, on --port, else the studio port of <worktree>/output/ports.json, else the first free port from 8090, and
-stops it before exiting. The page is opened in headless Chromium from @playwright/test in <worktree>/studio
-(1280x800, light), every request to a host that is not loopback is aborted and listed, and the accessibility tree
-is taken every 250 ms until two in a row are equal (10 s bound). --storage-state FILE gives the browser context a
-Playwright storage state; only the browser reads it. --snapshot scores an accessibility snapshot pm-structure
-saved earlier; no browser is started. --state is the data state of the emulator behind the app (default seeded):
-table.empty.* apply only to `empty`, a single or multi table.selection only to `seeded`. A spec that has either
-needs both runs; each run says `requires also: state=…`.
+--url BASE opens BASE + the spec's route; BASE must be a loopback IP address (127.0.0.0/8 or [::1]; `localhost` and
+every other name are refused). --serve DIR serves the built app in DIR on 127.0.0.1 with the single-page fallback,
+on --port, else the studio port of <worktree>/output/ports.json, else the first free port from 8090, and stops it
+before exiting. The page is opened in headless Chromium from @playwright/test in <worktree>/studio (1280x800,
+light), every request to a host that is not loopback is aborted and listed, and the accessibility tree is taken
+every 250 ms until two in a row are equal (10 s bound), each take with the page's elements of class `aws-area`,
+which must be the same too. Only the AWS area's tree is scored and saved: the accessibility subtree of the one
+element with class `aws-area` (Studio's AREA_ROOT_CLASS); Studio's frame around it is not. A page with no such
+element, more than one, or one that has no node in the accessibility tree is an error. --storage-state FILE gives
+the browser context a Playwright storage state; only the browser reads it. --snapshot scores an accessibility
+snapshot pm-structure saved earlier; no browser is started. --state is the data state of the emulator behind the app
+(default seeded): table.empty.* apply only to `empty`, a single or multi table.selection only to `seeded`. A spec
+that has either needs both runs; each run says `requires also: state=…`.
 
 A `kind: wizard` spec is opened once per shown step (the steps not omitted, in order): step k is BASE + route +
 `?step=<k>`, each in its own browser run, one after another, nothing on the page operated; the first step that
@@ -22,12 +25,12 @@ fails ends the run as an error. Each step's items are scored on that step's tree
 item or an extra starts with `step <k>: `. The scored snapshot is then one steps file (`pm-structure-steps/1`)
 holding every step's tree; --snapshot reads either format.
 
-Prints the score, the unmatched, matched, omitted, not-applicable, not-scored and extra items, the blocked
-requests, and the verdict. Exit 0 pass (score >= 90 and no critical item unmatched: header.title,
-header.primary_action, table.columns, a wizard's steps[<t>].title and submit), 1 fail, 2 error (usage, invalid
-spec, refused URL, page not reachable or not settled, toolchain missing, unreadable snapshot, another run of the
-same screen and state in progress, terminated by SIGTERM, SIGHUP or SIGINT); an error is never a pass or a fail.
-Result: <worktree>/output/structure/<screen>-<state>.json and the scored snapshot <screen>-<state>.ax.json,
+Prints the score, the unmatched, matched, omitted, not-applicable, not-scored and extra items, the blocked requests,
+and the verdict. Exit 0 pass (score >= 90 and no critical item unmatched: header.title, header.primary_action,
+table.columns, a wizard's steps[<t>].title and submit), 1 fail, 2 error (usage, invalid spec, refused URL, page not
+reachable or not settled, page without exactly one AWS area root, toolchain missing, unreadable snapshot, another
+run of the same screen and state in progress, terminated by SIGTERM, SIGHUP or SIGINT); an error is never a pass or
+a fail. Result: <worktree>/output/structure/<screen>-<state>.json and the scored snapshot <screen>-<state>.ax.json,
 overwritten by the next run of the same screen and state. --record ISSUE POINT (POINT: baseline | final) also
 appends a row to .pm/issue-<ISSUE>/structure-scores.json of the checkout that holds this script. --table ISSUE
 prints those rows as a markdown table and one line per point and screen saying whether every state it requires

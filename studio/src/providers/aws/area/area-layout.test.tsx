@@ -7,6 +7,25 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import AwsArea from './index';
 import { AREA_ROOT_CLASS } from './styles/root-class';
 
+/**
+ * Whether the area's "no screen yet" page also renders a Cloudscape `Calendar` below its own content, so a case can
+ * see what a component of the area formats; off unless a case turns it on.
+ */
+const extra = vi.hoisted(() => ({ calendar: false }));
+
+vi.mock('./pages/no-screen-page', async (importOriginal) => {
+  const original = await importOriginal<typeof import('./pages/no-screen-page')>();
+  const { default: Calendar } = await import('@cloudscape-design/components/calendar');
+  return {
+    NoScreenPage: (props: Parameters<typeof original.NoScreenPage>[0]) => (
+      <>
+        <original.NoScreenPage {...props} />
+        {extra.calendar && <Calendar value="2026-11-15" />}
+      </>
+    ),
+  };
+});
+
 const AWS = 'Amazon Web Services';
 const S3 = 'Amazon Simple Storage Service';
 
@@ -427,4 +446,76 @@ describe('the AWS area', () => {
       expect(document.activeElement).toBe(document.body);
     },
   );
+});
+
+/**
+ * A browser whose language is `tag`: `navigator.language` and `navigator.languages`, and the locale `Intl` takes when
+ * none is given (Cloudscape reads the browser's locale from `Intl.DateTimeFormat`). Returns what puts it back.
+ */
+function browserIn(tag: string): () => void {
+  vi.spyOn(navigator, 'language', 'get').mockReturnValue(tag);
+  vi.spyOn(navigator, 'languages', 'get').mockReturnValue([tag]);
+  const native = Intl.DateTimeFormat;
+  function InBrowser(locales?: string | string[], options?: Intl.DateTimeFormatOptions) {
+    return new native(locales ?? tag, options);
+  }
+  InBrowser.prototype = native.prototype;
+  InBrowser.supportedLocalesOf = native.supportedLocalesOf.bind(native);
+  Object.defineProperty(Intl, 'DateTimeFormat', { value: InBrowser, configurable: true, writable: true });
+  return () => {
+    Object.defineProperty(Intl, 'DateTimeFormat', { value: native, configurable: true, writable: true });
+  };
+}
+
+describe('the AWS area in a document of another language (R7.2, R7.3)', () => {
+  let restoreBrowser: (() => void) | null = null;
+
+  afterEach(() => {
+    restoreBrowser?.();
+    restoreBrowser = null;
+    extra.calendar = false;
+    document.documentElement.lang = '';
+    vi.restoreAllMocks();
+  });
+
+  it.each(['/aws', '/aws/s3', '/aws/does-not-exist'])(
+    'on %s with <html lang="ko">: the area\'s root carries lang="en"',
+    (path) => {
+      document.documentElement.lang = 'ko';
+      const { container } = open(path);
+
+      expect(areaRoot(container)).toHaveAttribute('lang', 'en');
+      expect(screen.getByRole('heading', { level: 1 }).closest('[lang]')).toBe(areaRoot(container));
+    },
+  );
+
+  it('with <html lang="ko"> and the browser in ko-KR: a Calendar in the area names its month and weekdays in English', () => {
+    document.documentElement.lang = 'ko';
+    restoreBrowser = browserIn('ko-KR');
+    extra.calendar = true;
+    const { wrapper } = open('/aws/s3');
+
+    const calendar = wrapper.findCalendar();
+    expect(calendar).not.toBeNull();
+    expect(calendar?.findHeader().getElement()).toHaveTextContent('November 2026');
+    const weekdays = [...(calendar?.getElement().querySelectorAll('thead th') ?? [])];
+    expect(weekdays.map((cell) => cell.querySelector('[aria-hidden="true"]')?.textContent)).toEqual([
+      'Sun',
+      'Mon',
+      'Tue',
+      'Wed',
+      'Thu',
+      'Fri',
+      'Sat',
+    ]);
+    expect(weekdays.map((cell) => cell.textContent)).toEqual([
+      'SunSunday',
+      'MonMonday',
+      'TueTuesday',
+      'WedWednesday',
+      'ThuThursday',
+      'FriFriday',
+      'SatSaturday',
+    ]);
+  });
 });

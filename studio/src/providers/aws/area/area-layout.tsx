@@ -1,5 +1,7 @@
 import AppLayout from '@cloudscape-design/components/app-layout';
 import BreadcrumbGroup, { type BreadcrumbGroupProps } from '@cloudscape-design/components/breadcrumb-group';
+import { I18nProvider } from '@cloudscape-design/components/i18n';
+import englishMessages from '@cloudscape-design/components/i18n/messages/all.en';
 import SideNavigation, { type SideNavigationProps } from '@cloudscape-design/components/side-navigation';
 import { useCallback, useEffect, useRef } from 'react';
 import { useLocation } from 'react-router';
@@ -42,6 +44,9 @@ const APP_LAYOUT_LABELS = {
   navigationToggle: 'Open navigation',
 };
 
+/** Cloudscape's own English text, for the built-in strings of the components the area renders. */
+const CLOUDSCAPE_MESSAGES = [englishMessages];
+
 const HOME_CRUMB: BreadcrumbGroupProps.Item = { text: AWS_NAME, href: AWS_PATH };
 
 function breadcrumbs(page: AreaPage, pathname: string): BreadcrumbGroupProps.Item[] {
@@ -74,6 +79,10 @@ function PageContent({ page }: { page: AreaPage }) {
  * The AWS area, at `/aws` and below, as the AWS console: an `AppLayout` with the side navigation of the services
  * and breadcrumbs, no tools panel. Its root element carries Cloudscape's mode and scopes Cloudscape's base. It names
  * its content target to Studio and moves focus to it after a route change.
+ *
+ * The area is English in every language of Studio (issue #17, R7): its root says so with `lang="en"`, and Cloudscape's
+ * locale is `en` for everything it renders, whatever the document's `lang` and the browser's languages, so a date, a
+ * number or a component's built-in text comes out in English.
  */
 export function AreaLayout({ headerSelector, onPageTitle, onContentTarget, routeChanges }: AreaLayoutProps) {
   const { pathname } = useLocation();
@@ -106,31 +115,33 @@ export function AreaLayout({ headerSelector, onPageTitle, onContentTarget, route
   }, [routeChanges, focusTarget]);
 
   return (
-    <div ref={root} className={AREA_ROOT_CLASS}>
-      <AreaRootContext value={root}>
-        <AppLayout
-          headerSelector={headerSelector}
-          toolsHide
-          ariaLabels={APP_LAYOUT_LABELS}
-          breadcrumbs={
-            <BreadcrumbGroup items={breadcrumbs(page, pathname)} ariaLabel="Breadcrumbs" onFollow={handleFollow} />
-          }
-          navigation={
-            <SideNavigation
-              header={{ text: AWS_NAME, href: AWS_PATH }}
-              activeHref={activeHref(page)}
-              items={NAVIGATION_ITEMS}
-              onFollow={handleFollow}
-            />
-          }
-          content={
-            // One target per path, so a route change between two paths of the same page focuses a new element.
-            <ContentTarget key={pathname} targetRef={target}>
-              <PageContent page={page} />
-            </ContentTarget>
-          }
-        />
-      </AreaRootContext>
+    <div ref={root} className={AREA_ROOT_CLASS} lang="en">
+      <I18nProvider locale="en" messages={CLOUDSCAPE_MESSAGES}>
+        <AreaRootContext value={root}>
+          <AppLayout
+            headerSelector={headerSelector}
+            toolsHide
+            ariaLabels={APP_LAYOUT_LABELS}
+            breadcrumbs={
+              <BreadcrumbGroup items={breadcrumbs(page, pathname)} ariaLabel="Breadcrumbs" onFollow={handleFollow} />
+            }
+            navigation={
+              <SideNavigation
+                header={{ text: AWS_NAME, href: AWS_PATH }}
+                activeHref={activeHref(page)}
+                items={NAVIGATION_ITEMS}
+                onFollow={handleFollow}
+              />
+            }
+            content={
+              // One target per path, so a route change between two paths of the same page focuses a new element.
+              <ContentTarget key={pathname} targetRef={target}>
+                <PageContent page={page} />
+              </ContentTarget>
+            }
+          />
+        </AreaRootContext>
+      </I18nProvider>
     </div>
   );
 }

@@ -1,4 +1,5 @@
-/* Studio's bar (DESIGN.md, The frame): the wordmark, then the navigation "Studio" with Home and one tab per provider. */
+/* Studio's bar (DESIGN.md, The frame): the wordmark, then the navigation "Studio" with Home and one tab per provider,
+   then the language control at its end (language-control.css). */
 
 @layer studio {
   .st-bar {
@@ -107,13 +108,14 @@
     border-radius: 8px;
   }
 
+  /* At 480 and below the bar keeps the wordmark, every tab and the control's globe (R3.5): tighter gaps and tabs. */
   @media (max-width: 480px) {
     .st-bar {
-      gap: 12px;
+      gap: 8px;
     }
 
     .st-nav a {
-      padding: 0 8px;
+      padding: 0 7px;
     }
   }
 }
