@@ -12,8 +12,9 @@ import { ServeConfigError, serveConfig, type ServeConfig } from '../src/app/serv
 const DIST = path.resolve(import.meta.dirname, '..', 'dist');
 const INDEX = path.join(DIST, 'index.html');
 
-// Vite puts every built asset here; a missing one is a 404, never the page.
+// Vite puts every built asset here, each with a hashed name; a missing one is a 404, never the page.
 const ASSETS_PREFIX = '/assets/';
+const ASSETS_DIR = path.join(DIST, 'assets') + path.sep;
 
 const CONTENT_TYPES: Readonly<Record<string, string>> = {
   '.html': 'text/html; charset=utf-8',
@@ -75,8 +76,9 @@ async function builtFile(pathname: string): Promise<string | null> {
 
 async function sendFile(response: ServerResponse, file: string, head: boolean) {
   const type = CONTENT_TYPES[path.extname(file)] ?? 'application/octet-stream';
-  // Hashed assets never change; the page itself is revalidated so a new build is picked up.
-  const cache = file === INDEX ? 'no-cache' : 'public, max-age=31536000, immutable';
+  // Vite's hashed assets never change. Every other file keeps its path from build to build, the page and the icons
+  // of `public/` that a browser asks for by name, so it is revalidated and a new build or a changed icon is picked up.
+  const cache = file.startsWith(ASSETS_DIR) ? 'public, max-age=31536000, immutable' : 'no-cache';
   send(response, 200, { 'Content-Type': type, 'Cache-Control': cache }, await readFile(file), head);
 }
 

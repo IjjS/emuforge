@@ -2,9 +2,9 @@
 // EmuForge's brand files as files (issue 36, test-criteria.md, "Unit — test/brand-files.test.ts"): which files exist
 // (requirement R5.1), what each vector file holds and may not hold (R5.2), that the tile path keeps the symbol's head
 // (R4.2), the code sign (R4.3), the favicon's two schemes (R7.2), the social image's logo (R8.6), the rasters' sizes
-// (R5.1, R5.3), the script that writes the files and its font parser (R5.3, R5.4), and that nothing of the owner's
-// reference sheet is tracked (R5.6). The files are read from the checkout; how they draw is the flow checks'
-// (tests/integration/studio/brand.spec.ts and tests/integration/studio/brand-files.spec.ts).
+// (R5.1, R5.3), the page's icon links (R7.1), the script that writes the files and its font parser (R5.3, R5.4),
+// and that nothing of the owner's reference sheet is tracked (R5.6). The files are read from the checkout; how they
+// draw is the flow checks' (tests/integration/studio/brand.spec.ts and tests/integration/studio/brand-files.spec.ts).
 
 import { execFileSync } from 'node:child_process';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
@@ -452,6 +452,29 @@ describe('the raster files', () => {
     });
     expect(entries.map((e) => e.header)).toEqual([16, 32, 48].map((n) => ({ width: n, height: n })));
     expect(entries.map((e) => e.image)).toEqual([16, 32, 48].map((n) => ({ width: n, height: n })));
+  });
+});
+
+describe("the page's icons", () => {
+  it('index.html links favicon.ico, favicon.svg and apple-touch-icon.png in that order, and no manifest or share tag', () => {
+    const doc = new DOMParser().parseFromString(readFileSync(path.join(STUDIO, 'index.html'), 'utf8'), 'text/html');
+    const links = [...doc.head.querySelectorAll('link')].map((link) => ({
+      rel: link.getAttribute('rel'),
+      href: link.getAttribute('href'),
+      sizes: link.getAttribute('sizes'),
+      type: link.getAttribute('type'),
+    }));
+
+    expect(links).toEqual([
+      { rel: 'icon', href: '/favicon.ico', sizes: '32x32', type: null },
+      { rel: 'icon', href: '/favicon.svg', sizes: null, type: 'image/svg+xml' },
+      { rel: 'apple-touch-icon', href: '/apple-touch-icon.png', sizes: null, type: null },
+    ]);
+    expect(doc.querySelectorAll('link[rel~="manifest" i]')).toHaveLength(0);
+    const shareTags = [...doc.querySelectorAll('meta')]
+      .map((meta) => meta.getAttribute('property') ?? meta.getAttribute('name') ?? '')
+      .filter((name) => /^(og|twitter):/i.test(name));
+    expect(shareTags).toEqual([]);
   });
 });
 
