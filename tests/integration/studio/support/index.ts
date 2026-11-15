@@ -2,6 +2,31 @@
 // server, engines, emulators) is owned by its `ctx` and stopped when the check ends, so a failed assertion leaves
 // nothing behind.
 
+export {
+  brandPath,
+  compareGrids,
+  core,
+  cornersOff,
+  drawSymbol,
+  drawTile,
+  edgeLineOff,
+  holes,
+  MAGENTA,
+  measureSymbol,
+  measureTile,
+  offBlend,
+  offColour,
+  onTile,
+  pixel,
+  readBrandFile,
+  tokenColours,
+  viewBoxOf,
+  WHITE,
+  type Drawing,
+  type Rgb,
+  type Scheme,
+  type TileColours,
+} from './brand';
 export { EnvError, expect, test, type Ctx } from './check';
 export { Engine, type EngineOptions } from './engine';
 export {
