@@ -291,7 +291,9 @@ provider link, focus. It is never a background for a section and never a status.
 Both faces are the latin subset, variable weight, WOFF2, from `@fontsource-variable/instrument-sans` and
 `@fontsource-variable/jetbrains-mono` 5.3.0 (SIL Open Font License 1.1): Instrument Sans with weights 400 to 700,
 JetBrains Mono 100 to 800, `font-display: swap`. They are files of Studio's own source, served from the app's own
-origin. No font comes from another origin, and no text is baked into an image.
+origin. The licence text and copyright notices of both faces travel with the files, next to them (for example
+`ui/fonts/OFL-instrument-sans.txt` and `ui/fonts/OFL-jetbrains-mono.txt`), as OFL 1.1 requires for redistribution.
+No font comes from another origin, and no text is baked into an image.
 
 Weights: 400 (text), 560 (labels, tabs, buttons), 650 (headings, status, the wordmark's "EmuForge").
 
