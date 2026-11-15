@@ -284,6 +284,18 @@ fn relay_s3_signed_chunk_upload_part_matches_direct() {
             )?;
             assert_matches_direct(ctx, what, &p, &[]);
             assert_status(&format!("{what}, through the engine"), &p.engine, 200);
+            // The MD5 oracle answers RFC 1321's own vectors before it judges an ETag.
+            for (input, expected) in [
+                (&b""[..], "d41d8cd98f00b204e9800998ecf8427e"),
+                (&b"abc"[..], "900150983cd24fb0d6963f7d28e17f72"),
+            ] {
+                if md5_hex(input) != expected {
+                    return Err(Env::new(format!(
+                        "md5_hex({:?}) is not the RFC 1321 vector {expected}",
+                        String::from_utf8_lossy(input)
+                    )));
+                }
+            }
             let md5 = format!("\"{}\"", md5_hex(&data));
             for (side, response) in [("through the engine", &p.engine), ("direct", &p.direct)] {
                 assert_eq!(
