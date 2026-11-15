@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Entry point of the integration suite; pm-check runs it as the `integration` step.
 #
-# Builds the engine and Studio, starts the run's own aws-emulator (telemetry off) on a loopback port, runs the
+# Builds the engine, Studio and the product form's image (issue 34), starts the run's own aws-emulator (telemetry off) on a loopback port, runs the
 # engine checks of tests/integration/engine one at a time, then the Studio flow checks of tests/integration/studio
 # one at a time, stops everything it started and writes <checkout>/output/integration/report.json: emulator
 # version and commit, the checkout's commit, the verdict of every manifest check (passed, failed, error) and the
@@ -14,6 +14,12 @@
 #
 # Ports: EMULATOR_PORT, EMUFORGE_ENGINE_PORT and EMUFORGE_STUDIO_PORT when set (EMULATOR_PORT=9297, the owner's
 # emulator, is refused), else a free loopback port each.
+#
+# Product form (issue 34): the image of the root docker-compose.yml is built once per run under the run's own
+# name (emuforge-it-product-<run id>), and the run's pinned emulator image is tagged under the run's own name
+# (emuforge-it-emulator-<run id>), so a check's `docker compose ... up --build` is a cache hit and never retags
+# `emuforge` or `aws-emulator`. Both names are removed at the end, with the containers and networks of the forms
+# the checks recorded and could not remove.
 #
 # Exit: 0 when every check passed; 1 when any failed; 127 when there are only errors (the environment failed:
 # Docker, the image, cargo, bun; pm-check records 127 as `error`). The engine and Studio are the subject, not the
@@ -29,6 +35,8 @@ for name in $(compgen -e); do
   esac
 done
 unset EMUFORGE_IT_ENGINE_BIN EMUFORGE_IT_ENGINE_BUILD EMUFORGE_IT_STUDIO_BUILD EMUFORGE_IT_VERDICTS EMUFORGE_IT_RUN_ID
+unset EMUFORGE_IT_PRODUCT_IMAGE EMUFORGE_IT_EMULATOR_IMAGE EMUFORGE_IT_PRODUCT_BUILD EMUFORGE_IT_EMULATOR_VERSION
+unset EMUFORGE_IT_EMULATOR_COMMIT EMUFORGE_IMAGE EMUFORGE_EMULATOR_IMAGE
 unset NODE_OPTIONS NODE_PATH
 export AWS_EC2_METADATA_DISABLED=true
 
@@ -40,6 +48,8 @@ logs="$checkout/output/logs"
 rm -rf "$out/verdicts" "$out/logs" "$out/tmp" "$out/playwright" "$out/report.json"
 mkdir -p "$out/verdicts" "$logs"
 run_id="$(date +%s)-$$"
+product_image="emuforge-it-product-$run_id"
+emulator_image="emuforge-it-emulator-$run_id"
 commit="$(git -C "$checkout" rev-parse HEAD 2>/dev/null || echo unknown)"
 emulator_version=unknown
 emulator_commit=unknown
@@ -117,6 +127,7 @@ echo "integration: run $run_id, emulator port $EMULATOR_PORT, engine port $EMUFO
 
 # Preflight: the environment, not the subject.
 docker info >/dev/null 2>&1 || preflight_error "docker does not answer"
+docker compose version >/dev/null 2>&1 || preflight_error "docker compose does not answer"
 docker image inspect aws-emulator >/dev/null 2>&1 \
   || preflight_error "image aws-emulator is missing: docker compose -f infra/aws-emulator/docker-compose.yml build"
 for tool in cargo curl shasum; do
@@ -198,9 +209,55 @@ cleanup() {
   if [[ -e "$emulator_dir" ]]; then
     rm -rf "$emulator_dir"
   fi
+  # The product forms a check started and could not remove (the test process was killed). Each form records its
+  # Compose project in $out/tmp/product-projects (support/product.ts); of those projects' containers, only the ones
+  # created under one of the run's own image names are removed, so a project of the same name started elsewhere
+  # (another worktree's form on a port this run let go) is left alone. Then the networks of those projects that no
+  # container uses any more, and the files a killed situation 4 emulator of the run left under the run's HOME.
+  local projects project id image cname source port
+  if [[ -f "$out/tmp/product-projects" ]]; then
+    projects="$(sort -u "$out/tmp/product-projects")"
+    for project in $projects; do
+      while read -r id image cname source; do
+        [[ "$image" == "$product_image" || "$image" == "$emulator_image" ]] || continue
+        port="${cname##*-}"
+        if [[ "$image" == "$emulator_image" && "$cname" == /emuforge-app-aws-emulator-* && "$port" =~ ^[0-9]+$ \
+          && "$source" == "$HOME/.aws/emulator" && -e "$HOME/.aws/emulator/$port" ]]; then
+          rm -rf "$HOME/.aws/emulator/$port"
+          echo "integration: cleanup removed $HOME/.aws/emulator/$port of ${cname#/}" >&2
+        fi
+        docker rm -f "$id" >/dev/null 2>&1 && echo "integration: cleanup removed container ${cname#/}" >&2
+      done < <(docker inspect -f '{{.Id}} {{.Config.Image}} {{.Name}} {{range .Mounts}}{{.Source}}{{end}}' \
+        $(docker ps -aq --filter "label=com.docker.compose.project=$project" 2>/dev/null) 2>/dev/null || true)
+      for id in $(docker network ls -q --filter "label=com.docker.compose.project=$project" 2>/dev/null); do
+        # A network still in use by a container is refused by Docker and kept.
+        docker network rm "$id" >/dev/null 2>&1 && echo "integration: cleanup removed network $id of $project" >&2
+      done
+    done
+  fi
+  docker image rm "$product_image" "$emulator_image" >/dev/null 2>&1 || true
   rm -rf "$out/tmp"
 }
 trap cleanup EXIT
+# The product form's images: the run's tag of its pinned emulator, then the product image, built once with the
+# root docker-compose.yml under the run's name. A missing file or a failed build is the subject's, not the
+# environment's: every product check still runs and fails at its start command, as the engine checks do without an
+# engine.
+docker tag aws-emulator "$emulator_image" || preflight_error "cannot tag aws-emulator as $emulator_image"
+product_log="$logs/integration-product-build.log"
+if [[ -f "$checkout/docker-compose.yml" ]]; then
+  if (cd "$checkout" && EMUFORGE_IMAGE="$product_image" EMUFORGE_EMULATOR_IMAGE="$emulator_image" \
+    docker compose --progress plain build) >"$product_log" 2>&1; then
+    product_build=ok
+  else
+    product_build=failed
+    echo "integration: product image build failed, see $product_log" >&2
+  fi
+else
+  product_build=absent
+  echo "integration: $checkout/docker-compose.yml does not exist; every product check will fail at its start" >&2
+  echo "$checkout/docker-compose.yml does not exist" >"$product_log"
+fi
 docker run -d --name "$container" --label "emuforge-it-run=$run_id" --memory 2g \
   -p "127.0.0.1:$EMULATOR_PORT:$EMULATOR_PORT" -e "HOME=$HOME" -v "$HOME/.aws/emulator:$HOME/.aws/emulator" \
   aws-emulator -p "$EMULATOR_PORT" -t off >/dev/null \
@@ -223,6 +280,9 @@ playwright="$checkout/studio/node_modules/.bin/playwright"
 if [[ -x "$playwright" && "$studio_build" != absent ]]; then
   EMUFORGE_IT_ENGINE_BIN="$engine_bin" EMUFORGE_IT_ENGINE_BUILD="$engine_build" \
     EMUFORGE_IT_STUDIO_BUILD="$studio_build" EMUFORGE_IT_VERDICTS="$out/verdicts" EMUFORGE_IT_RUN_ID="$run_id" \
+    EMUFORGE_IT_PRODUCT_IMAGE="$product_image" EMUFORGE_IT_EMULATOR_IMAGE="$emulator_image" \
+    EMUFORGE_IT_PRODUCT_BUILD="$product_build" EMUFORGE_IT_EMULATOR_VERSION="$emulator_version" \
+    EMUFORGE_IT_EMULATOR_COMMIT="$emulator_commit" \
     NODE_PATH="$checkout/studio/node_modules" \
     "$playwright" test --config "$here/studio/playwright.config.ts" 2>&1 | tee "$logs/integration-playwright.log" \
     || true
