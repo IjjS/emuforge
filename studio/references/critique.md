@@ -7,7 +7,7 @@ scores and the rules below decide, and where a rule leaves room the `pm` decides
 
 | Score | Measures | Applies to | How |
 |---|---|---|---|
-| Structure | The screen has the same parts as the AWS console screen | `console` screens | `references/console-reference.md`, computed, `/100` |
+| Structure | The screen has the same parts as the provider's console screen | `console` screens | `references/console-reference.md`, computed, `/100` |
 | Design health | The screen is a good screen: Nielsen heuristics | `console` and `native` screens | the `impeccable` critique, `/40` or its renormalized maximum |
 
 Both are recorded per issue with the commit, so the points below can be compared on one scale.
@@ -38,8 +38,8 @@ A `final` passes when all of these hold:
 - design health has no P0 or P1 finding
 - design health is not more than 2 points below `baseline`, when there is a baseline
 
-A finding that the screen would be "better" arranged differently from the AWS console is not a finding on a
-`console` screen. The reference wins; the critique judges what the reference leaves open.
+A finding that the screen would be "better" arranged differently from the provider's console is not a finding on
+a `console` screen. The reference wins; the critique judges what the reference leaves open.
 
 ## `native` screens
 
@@ -48,7 +48,7 @@ EmuForge's own screens have no reference, so design health decides and the `pm` 
 | Point | Target | When |
 |---|---|---|
 | `baseline` | the current screen on `main`, if it exists | before the mock |
-| `mock` | an HTML mock built from Cloudscape components and tokens | Screen stage |
+| `mock` | an HTML mock built from the design system of the screen's layer (below) | Screen stage |
 | `revised` | the mock after fixing its findings | each revision round, three at most |
 | `final` | the implemented screen | after implementation |
 
@@ -58,8 +58,16 @@ EmuForge's own screens have no reference, so design health decides and the `pm` 
 - The Screen stage passes when `revised` has no P0 or P1.
 - A `final` passes when it has no P0 or P1 and is not more than 2 points below `revised`.
 
-A native screen still follows the AWS console's conventions wherever one applies: the same layout shell, the
-same table, form and flash patterns. It is new content in a familiar frame, not a new visual language.
+A native screen follows the design system of the layer it is in (`studio/AGENTS.md`, "Two layers"):
+
+- In Studio's own layer it is built from Studio's own design system (`studio/DESIGN.md`, product context in
+  `studio/PRODUCT.md`), original and not imitating any provider's console. Its mock is not built from Cloudscape. A
+  difference from a provider's console is not a finding; the critique judges it as Studio's own design.
+- Inside a provider area (the area's index, "no screen yet", the area's "Page not found") it is built from that
+  provider's design system and follows that console's conventions wherever one applies: the same layout shell, the
+  same table, form and flash patterns. It is new content in a familiar frame, not a new visual language.
+- A page of Studio's own layer that holds a provider area is mocked with the area as a region in the provider's
+  design system, inside Studio's own frame.
 
 ## Below the pass line
 

@@ -6,15 +6,20 @@ a time. The owner is not asked to pick or approve a design at any stage.
 
 ## Screen grade
 
-Decided at the Requirement stage and written into it.
+Decided at the Requirement stage and written into it. A screen's grade follows from the layer it is in
+(`studio/AGENTS.md`, "Two layers"), and the layer decides the design system it is built from.
 
-| Grade | Meaning | Screen stage | Critique |
-|---|---|---|---|
-| `console` | The screen mirrors a screen of the AWS console | a reference spec per `console-reference.md` | structure score and impeccable score |
-| `native` | The screen exists only in EmuForge: home, connection, IAM simulator, Verify results | a design per `critique.md` | impeccable score |
-| `none` | No visible change | skipped | skipped |
+| Grade | Meaning | Layer and design system | Screen stage | Critique |
+|---|---|---|---|---|
+| `console` | The screen mirrors a screen of a provider's console | a provider area only (AWS: `/aws` and below), built from that provider's design system (Cloudscape) | a reference spec per `console-reference.md` | structure score and impeccable score |
+| `native` | The screen exists only in EmuForge | Studio's own layer (frame, Home, connection status, Studio's "Page not found", IAM simulator, Verify results): Studio's own design system (`studio/DESIGN.md`). Inside a provider area, an EmuForge-only state (the area's index, "no screen yet", the area's "Page not found"): the provider's design system, following its console's conventions | a design per `critique.md` | impeccable score |
+| `none` | No visible change | | skipped | skipped |
 
-An issue that touches both kinds of screen is split.
+- Every screen of Studio's own layer is `native`; Studio's own layer has no `console` screen.
+- Inside a provider area a screen is `console` when it mirrors a screen of that provider's console, and `native`
+  otherwise; both are built from the provider's design system, never from Studio's own.
+
+An issue that touches both a `console` and a `native` screen is split.
 
 ## Stages by kind
 
@@ -31,14 +36,19 @@ An issue that touches both kinds of screen is split.
 - What the user is trying to do, and the path through the screens.
 - Which AWS API operations the screens call, and what the emulator answers for each today: works, or 501.
   Find out by calling the emulator, not by reading a model.
-- The grade.
+- The layer of each screen (Studio's own, or a provider area) and its route; a provider area's routes start with
+  its segment (`/aws/...`).
+- The grade, as it follows from the layer.
 - What is out of scope, including parts of the AWS screen that are deliberately left out and why.
 
 ## 2. Screen
 
 - `console`: write or update the reference spec for each screen, per `references/console-reference.md`. The
   spec is the design; there are no candidates.
-- `native`: per `references/critique.md`: a mock, scored, revised until it passes.
+- `native`: per `references/critique.md`: a mock, scored, revised until it passes. The mock is drawn in the
+  design system of the screen's layer: Studio's own for Studio's own layer, the provider's for a state inside a
+  provider area. A page of Studio's own layer that holds a provider area shows the area as a region in the
+  provider's design system.
 
 ## 3. Test Criteria
 
@@ -46,7 +56,8 @@ Per `references/test-criteria.md`, before any code.
 
 ## 4. Implementation
 
-In the issue's worktree, on its branch, only the files the unit owns. Conventions: `studio/AGENTS.md`.
+In the issue's worktree, on its branch, only the files the unit owns. Conventions: `studio/AGENTS.md`, with the
+rules of the layer the unit's files are in and the import boundaries between the layers.
 
 ## 5. Critique
 
