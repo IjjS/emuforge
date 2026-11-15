@@ -208,8 +208,11 @@ async function focusedAnnouncement(page: Page): Promise<{
   inArea: boolean;
   items: { text: string; lang: string; explicit: boolean; where: string }[];
 } | null> {
+  // `areaRootLang` installs the probe whose `areaRoot` the target is read against.
+  await areaRootLang(page);
   const cdp = await page.context().newCDPSession(page);
   try {
+    // The focused element is resolved once; its name, `inArea` and items are all read from that same object.
     const { result } = await cdp.send('Runtime.evaluate', {
       expression: 'document.activeElement === document.body ? null : document.activeElement',
     });
@@ -219,19 +222,14 @@ async function focusedAnnouncement(page: Page): Promise<{
       fetchRelatives: false,
     });
     const name = norm(String((nodes[0]?.name?.value as unknown) ?? ''));
-    // `areaRootLang` installs the probe and is `null` while the page has no area's root.
-    const inArea =
-      (await areaRootLang(page)) !== null &&
-      (await page.evaluate(() => {
-        const root = (
-          window as unknown as { __emuforgeItLang: { areaRoot: () => Element | null } }
-        ).__emuforgeItLang.areaRoot();
-        const target = document.activeElement;
-        return root !== null && target !== null && target !== document.body && root.contains(target);
-      }));
-    const items = await page.evaluate(() => {
-      const target = document.activeElement;
-      if (!target || target === document.body) return [];
+    function read(this: Element): {
+      inArea: boolean;
+      items: { text: string; lang: string; explicit: boolean; where: string }[];
+    } {
+      const target = this;
+      const probe = (window as unknown as { __emuforgeItLang?: { areaRoot: () => Element | null } }).__emuforgeItLang;
+      const root = probe ? probe.areaRoot() : null;
+      const inArea = root !== null && root.contains(target);
       const ids = (target.getAttribute('aria-labelledby') ?? '').split(/\s+/).filter((id) => id !== '');
       const naming =
         ids.length > 0 ? ids.map((id) => document.getElementById(id)).filter((el) => el !== null) : [target];
@@ -253,8 +251,15 @@ async function focusedAnnouncement(page: Page): Promise<{
           out.push({ text: (n as Text).data, ...langOf(parent), where: parent.tagName.toLowerCase() });
         }
       }
-      return out;
+      return { inArea, items: out };
+    }
+    const called = await cdp.send('Runtime.callFunctionOn', {
+      objectId: result.objectId,
+      functionDeclaration: read.toString(),
+      returnByValue: true,
     });
+    if (called.exceptionDetails) throw new Error(`reading the focused element: ${called.exceptionDetails.text}`);
+    const { inArea, items } = called.result.value as ReturnType<typeof read>;
     return { name, inArea, items };
   } finally {
     await cdp.detach().catch(() => undefined);
