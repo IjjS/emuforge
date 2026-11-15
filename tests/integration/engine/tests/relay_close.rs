@@ -140,6 +140,22 @@ fn relay_s3_signed_chunk_above_cap_ends_cleanly() {
             let _engine = start_engine(ctx)?;
             let engine = Endpoint::engine(ctx);
 
+            let what = "PutObject with one signed data chunk of 1048576 bytes";
+            let x = exchange(ctx, what, &engine, &at_cap_head, &at_cap.zeroed_body());
+            assert_ended_cleanly(&format!("{what}, through the engine"), &x, 200);
+            let object = direct.send("GetObject atcap", &Call::s3("GET", &bucket.path("atcap")))?;
+            assert_eq!(
+                object.status,
+                200,
+                "{what}: GetObject of atcap, body {}",
+                snippet(&object)
+            );
+            assert!(
+                object.body == at_cap_data,
+                "{what}: the object holds {} bytes, not the 1048576 bytes sent",
+                object.body.len()
+            );
+
             let what = "PutObject with one signed data chunk of 1048577 bytes";
             let body = above.zeroed_body();
             let mut faults = Vec::new();
@@ -173,22 +189,6 @@ fn relay_s3_signed_chunk_above_cap_ends_cleanly() {
             assert_eq!(
                 head.status, 404,
                 "{what}: HeadObject of abovecap after the refusals"
-            );
-
-            let what = "PutObject with one signed data chunk of 1048576 bytes";
-            let x = exchange(ctx, what, &engine, &at_cap_head, &at_cap.zeroed_body());
-            assert_ended_cleanly(&format!("{what}, through the engine"), &x, 200);
-            let object = direct.send("GetObject atcap", &Call::s3("GET", &bucket.path("atcap")))?;
-            assert_eq!(
-                object.status,
-                200,
-                "{what}: GetObject of atcap, body {}",
-                snippet(&object)
-            );
-            assert!(
-                object.body == at_cap_data,
-                "{what}: the object holds {} bytes, not the 1048576 bytes sent",
-                object.body.len()
             );
             Ok(())
         },
@@ -275,21 +275,6 @@ fn relay_early_answer_matches_direct() {
             Ok(Pair { direct, engine })
         };
 
-        let what = "PutObject with Content-Length 16777217";
-        let p = both(
-            what,
-            &direct_head("early", early_data.len())?,
-            &early_head,
-            &early_data,
-            413,
-        )?;
-        assert_matches_direct(ctx, what, &p, &[]);
-        let head = direct.send("HeadObject early", &Call::s3("HEAD", &bucket.path("early")))?;
-        assert_eq!(
-            head.status, 404,
-            "{what}: HeadObject of early after the 413"
-        );
-
         let what = "PutObject with Content-Length 16777216";
         let p = both(
             what,
@@ -316,6 +301,21 @@ fn relay_early_answer_matches_direct() {
                 object.body.len()
             );
         }
+
+        let what = "PutObject with Content-Length 16777217";
+        let p = both(
+            what,
+            &direct_head("early", early_data.len())?,
+            &early_head,
+            &early_data,
+            413,
+        )?;
+        assert_matches_direct(ctx, what, &p, &[]);
+        let head = direct.send("HeadObject early", &Call::s3("HEAD", &bucket.path("early")))?;
+        assert_eq!(
+            head.status, 404,
+            "{what}: HeadObject of early after the 413"
+        );
         Ok(())
     });
 }
