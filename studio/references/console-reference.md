@@ -35,7 +35,7 @@ of its own. Captures are never committed; only the spec is.
 ```yaml
 screen: s3.bucket-list            # <service>.<screen>, unique
 service: s3
-kind: table                       # table | detail | form | wizard | dashboard
+kind: table                       # table | detail | form | wizard
 route: /aws/s3/buckets            # the Studio route that renders it, under the AWS area's /aws
 
 breadcrumbs: [Amazon S3, Buckets]
@@ -61,8 +61,36 @@ omitted:                          # on the AWS screen, deliberately not in Studi
 `route` always starts with `/aws/`: the AWS area's segment followed by the service's route.
 
 Other kinds use the same idea with their own blocks: `tabs` and `sections` (each with `fields`) for `detail`;
-`sections` with `fields` (label, control, required, constraint text) for `form`; `steps` (each with
-`sections`) for `wizard`. Every list that has a visible order is written in that order.
+`sections` with `fields` (label, control, required, constraint text) for `form`; `steps` (each with `title` and
+`sections`) and `submit` for `wizard`. Every list that has a visible order is written in that order.
+
+A wizard has no `header`, `table`, `tabs` or top-level `sections`: the active step's title is the page heading.
+Its `route` holds no `?` and no `#`, because the score adds the step to it:
+
+```yaml
+screen: iam.create-role
+service: iam
+kind: wizard
+route: /aws/iam/roles/create
+
+breadcrumbs: [IAM, Roles, Create role]
+steps:                            # in order
+  - title: Select trusted entity
+    sections:                     # as in kind form
+      - title: Trusted entity type
+        fields: [Use case, Service]
+  - title: Add permissions
+    sections:
+      - title: Permissions policies
+  - title: Name, review, and create
+submit: Create role               # the last step's primary button
+```
+
+A step is omitted as a whole (`steps[<title>]`), never by its title alone; an omitted step is not opened and not
+part of the steps' order.
+
+There is no `dashboard` kind. A dashboard screen (containers, each a header with key-value pairs or fields, as in
+the AWS console's service dashboards) is written as `kind: detail` with `header` and `sections`.
 
 `omitted` is for parts of the AWS screen Studio leaves out on purpose. Each needs a reason that can be checked:
 the emulator does not implement it, or it has no meaning without a real account (billing, cross-account,
@@ -93,6 +121,15 @@ structure score = matched items / (all items - omitted items - not-applicable it
 - The report lists every unmatched item, and separately every action, column, tab or field found on the screen
   that the spec does not have.
 - The same build, seed and spec always give the same score.
+
+A wizard is opened once per shown step (its steps that are not omitted, in order): step `k` is the spec's route
+opened with `?step=<k>`, each a fresh page, nothing on it operated (no click, no typing). A Studio wizard screen
+therefore opens at step `k` when its route is opened with `?step=<k>`; one that ignores the parameter shows its
+first step on every page and its later steps come out unmatched. Each step's items are scored on that step's tree
+only: its title (a heading, critical), its sections and fields; `submit` (a button, critical) on the last shown
+step's tree; the breadcrumbs and the steps' order (each step's entry in the step navigation) on step 1's tree.
+Every unmatched, matched and extra line of the report starts with `step <k>: `, the step its item
+was scored on or its extra was first found on.
 
 Pass line and what happens below it: `references/critique.md`.
 

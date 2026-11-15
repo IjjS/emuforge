@@ -5,7 +5,14 @@ Interface used (design 2.5): `_pmscore.load_snapshot(path)`, `_pmscore.score(spe
 command). The cases read that text, whose form R3 fixes, rather than the result's attributes. Each snapshot is a
 file under fixtures/structure/snapshots/ named by its condition; spec variants written by a case go to
 <checkout>/output/tests/score-<pid>/ and are removed when the case ends.
+
+Issue 8 (design 2.2 to 2.4): a steps snapshot (`pm-structure-steps/1`) loads as an object whose `steps` are one
+snapshot per shown step, each with `url` and `nodes`; `score()` raises `SnapshotError` when the snapshot does not
+fit the spec; `_pmscore.result_json(result, {})` carries `step_urls`, a `step` in each matched item's `node` and in
+each extra. The wizard cases read the report text and, where the criteria name them, those result fields. The
+steps snapshots are `snapshots/wizard-*.json`, each step entry a complete `pm-structure-snapshot/1` object.
 """
+import json
 import os
 import pathlib
 import re
@@ -392,6 +399,301 @@ class SnapshotFile(ScoreCase):
         with self.assertRaises(Exception) as cm:
             _pmscore.load_snapshot(str(path))
         self.assertIn(f"cannot read snapshot {path}", str(cm.exception))
+
+
+# ---------------------------------------------------------------------------------------------------- issue 8
+
+T1, T2, T3 = "Select trusted entity", "Add permissions", "Name, review, and create"
+WIZARD = SPECS / "wizard.yaml"
+STEP_URL = "http://127.0.0.1:8102/aws/iam/roles/create?step={}"
+# the step each item of wizard.yaml is scored on (requirement 5.1)
+STEP_OF = {
+    "breadcrumbs[IAM]": 1, "breadcrumbs[Roles]": 1, "breadcrumbs[Create role]": 1, "breadcrumbs.order": 1,
+    f"steps[{T1}].title": 1, f"steps[{T1}].sections[Trusted entity type].title": 1,
+    f"steps[{T1}].sections[Trusted entity type].fields[Use case]": 1,
+    f"steps[{T1}].sections[Trusted entity type].fields[Service]": 1,
+    f"steps[{T1}].sections[Trusted entity type].fields.order": 1, f"steps[{T1}].sections.order": 1,
+    f"steps[{T2}].title": 2, f"steps[{T2}].sections[Permissions policies].title": 2, f"steps[{T2}].sections.order": 2,
+    f"steps[{T3}].title": 3, "steps.order": 1, "submit": 3}
+
+MATCHED_FULL = [
+    'breadcrumbs[IAM]    step 1: link "IAM"',
+    'breadcrumbs[Roles]    step 1: link "Roles"',
+    'breadcrumbs[Create role]    step 1: link "Create role"',
+    "breadcrumbs.order    step 1: in order",
+    f'steps[{T1}].title    step 1: heading "{T1}"',
+    f'steps[{T1}].sections[Trusted entity type].title    step 1: heading "Trusted entity type"',
+    f'steps[{T1}].sections[Trusted entity type].fields[Use case]    step 1: LabelText "Use case"',
+    f'steps[{T1}].sections[Trusted entity type].fields[Service]    step 1: LabelText "Service"',
+    f"steps[{T1}].sections[Trusted entity type].fields.order    step 1: in order",
+    f"steps[{T1}].sections.order    step 1: in order",
+    f'steps[{T2}].title    step 2: heading "{T2}"',
+    f'steps[{T2}].sections[Permissions policies].title    step 2: heading "Permissions policies"',
+    f"steps[{T2}].sections.order    step 2: in order",
+    f'steps[{T3}].title    step 3: heading "{T3}"',
+    "steps.order    step 1: in order",
+    'submit    step 3: button "Create role"',
+]
+
+
+def get(obj, key):
+    return obj[key] if isinstance(obj, dict) else getattr(obj, key)
+
+
+class WizardCase(ScoreCase):
+    def wizard(self, snapshot, spec=WIZARD, state="seeded"):
+        """(report, result file body) of `snapshots/<snapshot>.json` scored against the spec at `spec`."""
+        if not isinstance(spec, pathlib.Path):
+            spec = self.spec(spec)
+        else:
+            spec = self.spec(path=spec)
+        snap = _pmscore.load_snapshot(str(SNAPS / f"{snapshot}.json"))
+        result = _pmscore.score(spec, snap, state)
+        return Report(_pmscore.render_text(result)), _pmscore.result_json(result, {})
+
+    def detail(self, report, group, item_id):
+        rows = [row.split("    ", 1)[1] for row in report.groups[group] if row.split("    ")[0] == item_id]
+        self.assertEqual(len(rows), 1, f"{item_id} in {group}:\n{report.text}")
+        return rows[0]
+
+    def node_step(self, body, item_id):
+        node = next(i for i in body["items"] if i["id"] == item_id)["node"]
+        self.assertIsNotNone(node, item_id)
+        return node["step"]
+
+    def extras(self, body):
+        return [(e["role"], e["name"], e["step"]) for e in body["extras"]]
+
+
+class WizardScore(WizardCase):
+    def test_full_every_item_on_its_own_step(self):
+        r, body = self.wizard("wizard-full")
+        self.assertEqual((r.matched, r.total, r.score, r.verdict), (16, 16, "100.0", "pass"))
+        self.assertEqual(r.counts["unmatched"], 0)
+        with_node = [i for i in body["items"] if i["node"] is not None]
+        self.assertLessEqual({"breadcrumbs[IAM]", f"steps[{T2}].title", f"steps[{T3}].title", "submit"},
+                             {i["id"] for i in with_node})
+        for i in with_node:
+            self.assertEqual(i["node"]["step"], STEP_OF[i["id"]], i["id"])
+        self.assertTrue(self.detail(r, "matched", "steps.order").startswith("step 1: "), r.text)
+        self.assertEqual(self.node_step(body, "submit"), 3)
+
+    def test_screen_ignoring_the_step(self):
+        r, _ = self.wizard("wizard-ignores-step")
+        self.assertEqual(r.ids("unmatched"), [f"steps[{T2}].title", f"steps[{T2}].sections[Permissions policies].title",
+                                              f"steps[{T3}].title", "submit"])
+        self.assertEqual(r.verdict, "fail")
+        self.assertEqual(r.reasons[0],
+                         f"critical item unmatched: steps[{T2}].title, steps[{T3}].title, submit")
+
+    def test_step_title_only_on_another_step(self):
+        r, _ = self.wizard("wizard-title-on-step2")
+        self.assertStatus(r, {f"steps[{T1}].title": "unmatched", f"steps[{T2}].title": "matched"})
+
+    def test_field_only_on_another_step(self):
+        r, _ = self.wizard("wizard-field-on-step3")
+        self.assertStatus(r, {f"steps[{T1}].sections[Trusted entity type].fields[Service]": "unmatched",
+                              f"steps[{T1}].sections[Trusted entity type].fields[Use case]": "matched"})
+
+    def test_navigation_entries_bare_titles_or_links(self):
+        for snap in ("wizard-nav-bare-titles", "wizard-nav-links"):
+            with self.subTest(snapshot=snap):
+                self.assertStatus(self.wizard(snap)[0], {"steps.order": "matched"})
+
+    def test_navigation_entries_swapped(self):
+        r, _ = self.wizard("wizard-nav-swapped")
+        self.assertStatus(r, {"steps.order": "unmatched", f"steps[{T1}].title": "matched",
+                              f"steps[{T2}].title": "matched", f"steps[{T3}].title": "matched"})
+        self.assertTrue(self.detail(r, "unmatched", "steps.order").endswith("out of order"), r.text)
+
+    def test_navigation_missing_or_without_the_last_entry(self):
+        for snap, title in (("wizard-nav-none", T1), ("wizard-nav-no-step3", T3)):
+            with self.subTest(snapshot=snap):
+                r, _ = self.wizard(snap)
+                self.assertStatus(r, {"steps.order": "unmatched"})
+                self.assertTrue(self.detail(r, "unmatched", "steps.order").endswith(
+                    f'no navigation entry for "{title}"'), r.text)
+
+    def test_entry_inside_the_breadcrumbs_is_not_a_navigation_entry(self):
+        r, _ = self.wizard("wizard-nav-in-breadcrumbs")
+        self.assertStatus(r, {"steps.order": "unmatched"})
+        self.assertTrue(self.detail(r, "unmatched", "steps.order").endswith(f'no navigation entry for "{T2}"'),
+                        r.text)
+
+    def test_submit_on_another_step(self):
+        r, _ = self.wizard("wizard-submit-on-step2")
+        self.assertStatus(r, {"submit": "unmatched"})
+        self.assertEqual(r.reasons[0], "critical item unmatched: submit")
+
+    def test_pass_line_around_fourteen_of_fifteen(self):
+        omitted = SPECS / "wizard-omitted.yaml"
+        r, _ = self.wizard("wizard-fourteen", omitted)
+        self.assertEqual((r.matched, r.total, r.score, r.verdict), (14, 15, "93.3", "pass"))
+        self.assertEqual(r.ids("unmatched"), [f"steps[{T1}].sections[Trusted entity type].fields[Service]"])
+        r, _ = self.wizard("wizard-thirteen", omitted)
+        self.assertEqual((r.matched, r.total, r.score, r.verdict), (13, 15, "86.6", "fail"))
+        self.assertEqual(r.reasons, ["score below 90"])
+
+    def test_omitted_step_two_shown_steps(self):
+        r, body = self.wizard("wizard-two-steps", SPECS / "wizard-omit-step.yaml")
+        self.assertEqual((r.matched, r.total, r.verdict), (13, 13, "pass"))
+        self.assertStatus(r, {f"steps[{T3}].title": "matched", "submit": "matched", "steps.order": "matched"})
+        self.assertEqual(self.node_step(body, f"steps[{T3}].title"), 2)
+        self.assertEqual(self.node_step(body, "submit"), 2)
+
+    def test_one_shown_step(self):
+        r, body = self.wizard("wizard-one-step", SPECS / "wizard-one-step.yaml")
+        self.assertEqual((r.matched, r.total, r.verdict), (7, 7, "pass"))
+        self.assertStatus(r, {"steps.order": "matched", f"steps[{T3}].title": "matched", "submit": "matched"})
+        self.assertEqual(self.node_step(body, f"steps[{T3}].title"), 1)
+        self.assertEqual(self.node_step(body, "submit"), 1)
+
+    def test_one_shown_step_without_navigation(self):
+        r, _ = self.wizard("wizard-one-step-no-nav", SPECS / "wizard-one-step.yaml")
+        self.assertStatus(r, {"steps.order": "unmatched"})
+        self.assertTrue(self.detail(r, "unmatched", "steps.order").endswith(f'no navigation entry for "{T3}"'),
+                        r.text)
+
+    def test_state_empty(self):
+        r, _ = self.wizard("wizard-full", state="empty")
+        self.assertEqual((r.state, r.matched, r.total, r.score), ("empty", 16, 16, "100.0"))
+        self.assertEqual(r.counts["not applicable"], 0)
+
+    def test_extras_once_at_the_first_step(self):
+        _, body = self.wizard("wizard-full")
+        self.assertEqual(self.extras(body), [("button", "Cancel", 1), ("button", "Next", 1),
+                                             ("button", "Previous", 2)])
+
+    def test_claims_hold_over_every_step(self):
+        text = WIZARD.read_text()
+        old = "  - title: Name, review, and create\n"
+        self.assertIn(old, text)
+        spec = self.spec(text.replace(old, old + "    sections:\n      - title: Role details\n"
+                                            "        fields: [Description]\n"))
+        snap = _pmscore.load_snapshot(str(SNAPS / "wizard-description.json"))
+        result = _pmscore.score(spec, snap, "seeded")
+        r = Report(_pmscore.render_text(result))
+        self.assertStatus(r, {f"steps[{T3}].sections[Role details].fields[Description]": "matched"})
+        self.assertEqual(self.extras(_pmscore.result_json(result, {})),
+                         [("button", "Cancel", 1), ("button", "Next", 1), ("button", "Previous", 2)])
+
+    def test_same_steps_snapshot_twice(self):
+        spec = self.spec(path=WIZARD)
+        texts = [_pmscore.render_text(_pmscore.score(spec, _pmscore.load_snapshot(str(SNAPS / "wizard-full.json")),
+                                                     "seeded")).encode() for _ in range(2)]
+        self.assertEqual(texts[0], texts[1])
+
+    def test_wizard_needs_a_steps_snapshot(self):
+        spec = self.spec(path=WIZARD)
+        path = SNAPS / "full-seeded.json"
+        with self.assertRaises(_pmscore.SnapshotError) as cm:
+            _pmscore.score(spec, _pmscore.load_snapshot(str(path)), "seeded")
+        self.assertEqual(str(cm.exception), f"cannot read snapshot {path}: a wizard needs a steps snapshot")
+
+    def test_steps_snapshot_for_another_kind(self):
+        spec = self.spec()
+        path = SNAPS / "wizard-full.json"
+        with self.assertRaises(_pmscore.SnapshotError) as cm:
+            _pmscore.score(spec, _pmscore.load_snapshot(str(path)), "seeded")
+        self.assertEqual(str(cm.exception), f"cannot read snapshot {path}: a steps snapshot for a spec of kind table")
+
+    def test_steps_snapshot_with_too_few_steps(self):
+        spec = self.spec(path=WIZARD)
+        path = SNAPS / "wizard-two-steps.json"
+        with self.assertRaises(_pmscore.SnapshotError) as cm:
+            _pmscore.score(spec, _pmscore.load_snapshot(str(path)), "seeded")
+        self.assertEqual(str(cm.exception), f"cannot read snapshot {path}: it holds 2 steps, the spec shows 3")
+
+
+class StepsSnapshotFile(WizardCase):
+    def refused(self, path):
+        with self.assertRaises(_pmscore.SnapshotError) as cm:
+            _pmscore.load_snapshot(str(path))
+        return str(cm.exception)
+
+    def test_valid_steps_snapshot(self):
+        path = SNAPS / "wizard-full.json"
+        steps = list(get(_pmscore.load_snapshot(str(path)), "steps"))
+        self.assertEqual([get(s, "url") for s in steps], [STEP_URL.format(k) for k in (1, 2, 3)])
+        raw = json.loads(path.read_text())["steps"]
+        self.assertEqual([len(get(s, "nodes")) for s in steps], [len(e["nodes"]) for e in raw])
+        self.assertEqual([get(n, "name") for n in get(steps[1], "nodes")], [n["name"] for n in raw[1]["nodes"]])
+
+    def test_steps_missing_not_a_list_or_empty(self):
+        for name in ("wizard-bad-no-steps", "wizard-bad-steps-not-list", "wizard-bad-steps-empty"):
+            path = SNAPS / f"{name}.json"
+            with self.subTest(snapshot=name):
+                msg = self.refused(path)
+                prefix = f"cannot read snapshot {path}: "
+                self.assertTrue(msg.startswith(prefix), msg)
+                self.assertIn("steps", msg[len(prefix):])  # the why names the steps, not the format
+
+    def test_entry_node_without_role(self):
+        path = SNAPS / "wizard-bad-node-no-role.json"
+        self.assertEqual(self.refused(path), f"cannot read snapshot {path}: step 2: node 3 has no role or name")
+
+    def test_entry_of_another_format(self):
+        path = SNAPS / "wizard-bad-entry-format.json"
+        msg = self.refused(path)
+        self.assertTrue(msg.startswith(f"cannot read snapshot {path}: step 1: "), msg)
+
+    def test_larger_than_64_mib(self):
+        """The steps file padded with whitespace to exactly 64 MiB loads; one byte more is refused by its size."""
+        path = WORK / "large-steps.json"
+        body = (SNAPS / "wizard-full.json").read_bytes()
+        limit = 64 * 1024 * 1024
+        with path.open("wb") as f:
+            f.write(body)
+            f.write(b" " * (limit - len(body)))
+        self.assertEqual(path.stat().st_size, limit)
+        self.assertEqual(len(get(_pmscore.load_snapshot(str(path)), "steps")), 3)
+        with path.open("ab") as f:
+            f.write(b" ")
+        self.assertEqual(path.stat().st_size, limit + 1)
+        self.assertEqual(self.refused(path), f"cannot read snapshot {path}: larger than 67108864 bytes")
+
+
+class WizardReport(WizardCase):
+    def test_matched_lines_carry_the_step(self):
+        r, _ = self.wizard("wizard-full")
+        self.assertEqual(r.groups["matched"], MATCHED_FULL)
+
+    def test_unmatched_lines_carry_the_step(self):
+        r, _ = self.wizard("wizard-ignores-step")
+        self.assertEqual(r.groups["unmatched"], [
+            f'steps[{T2}].title    step 2: heading "{T2}"',
+            f'steps[{T2}].sections[Permissions policies].title    step 2: heading "Permissions policies"',
+            f'steps[{T3}].title    step 3: heading "{T3}"',
+            'submit    step 3: button "Create role"'])
+
+    def test_extra_lines_carry_the_step(self):
+        r, _ = self.wizard("wizard-full")
+        self.assertEqual(r.groups["extra"], ['step 1: button "Cancel"', 'step 1: button "Next"',
+                                             'step 2: button "Previous"'])
+
+    def test_omitted_and_not_scored_lines_carry_no_step(self):
+        r, _ = self.wizard("wizard-full", SPECS / "wizard-omitted.yaml")
+        self.assertEqual(r.groups["omitted"], [
+            f"steps[{T2}].sections[Permissions policies].title    the emulator has no managed policies to list"])
+        self.assertEqual(r.groups["not scored"],
+                         [f"steps[{T1}].sections[Trusted entity type].fields[Use case]    control: input"])
+
+    def test_blocked_requests_of_every_step_once(self):
+        r, _ = self.wizard("wizard-blocked")
+        self.assertEqual(r.groups["blocked requests"], ["http://example.com/a.js", "http://example.com/b.js"])
+
+    def test_result_file_fields(self):
+        _, body = self.wizard("wizard-blocked")
+        self.assertEqual(body["url"], STEP_URL.format(1))
+        self.assertEqual(body["step_urls"], [STEP_URL.format(k) for k in (1, 2, 3)])
+        matched = [i for i in body["items"] if i["status"] == "matched" and i["node"] is not None]
+        self.assertEqual(len(matched), 11)
+        for i in matched:
+            self.assertIn("step", i["node"], i["id"])
+        self.assertTrue(body["extras"])
+        for e in body["extras"]:
+            self.assertIn("step", e, e)
+        self.assertEqual(body["blocked"], ["http://example.com/a.js", "http://example.com/b.js"])
 
 
 if __name__ == "__main__":

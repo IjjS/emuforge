@@ -1,6 +1,6 @@
 screen: s3.bucket-list            # <service>.<screen>, unique
 service: s3
-kind: table                       # table | detail | form | wizard | dashboard
+kind: table                       # table | detail | form | wizard
 route: /s3/buckets                # the Studio route that renders it
 
 breadcrumbs: [Amazon S3, Buckets]
