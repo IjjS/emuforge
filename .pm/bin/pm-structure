@@ -19,8 +19,8 @@ needs both runs; each run says `requires also: state=…`.
 Prints the score, the unmatched, matched, omitted, not-applicable, not-scored and extra items, the blocked
 requests, and the verdict. Exit 0 pass (score >= 90 and no critical item unmatched: header.title,
 header.primary_action, table.columns), 1 fail, 2 error (usage, invalid spec, refused URL, page not reachable or not
-settled, toolchain missing, unreadable snapshot, another run of the same screen and state in progress); an error is
-never a pass or a fail.
+settled, toolchain missing, unreadable snapshot, another run of the same screen and state in progress, terminated by
+SIGTERM, SIGHUP or SIGINT); an error is never a pass or a fail.
 Result: <worktree>/output/structure/<screen>-<state>.json and the scored snapshot <screen>-<state>.ax.json,
 overwritten by the next run of the same screen and state. --record ISSUE POINT (POINT: baseline | final) also
 appends a row to .pm/issue-<ISSUE>/structure-scores.json of the checkout that holds this script. --table ISSUE
@@ -54,6 +54,11 @@ FIRST_FREE = 8090
 
 class Failure(Exception):
     """An error the run reports on one stderr line and exits 2 with."""
+
+
+class Terminated(BaseException):
+    """The stop a signal records (`terminated by <SIGNAME>`); delivered by _pmproc at a checkpoint (issue 12, D3).
+    A BaseException, so no `except Exception` takes it for an internal error."""
 
 
 def say_error(message):
@@ -172,6 +177,7 @@ def score_run(a, wt):
             url = _pmbrowse.page_url(a.url, spec.route)
     except (_pmspec.SpecError, _pmbrowse.BrowseError) as e:
         return error_result(a, wt, spec, e, url)
+    _pmproc.check()  # C0: a stop before the lock exits 2 with nothing written
     try:
         held = _pmbrowse.lock(out_dir, spec.screen, a.state)
         held.__enter__()
@@ -179,15 +185,31 @@ def score_run(a, wt):
         say_error(str(e))
         return 2
     try:
-        snapshot = a.snapshot if a.snapshot is not None else take_snapshot(a, wt, spec, out_dir)
+        # from the lock to the report a stop is reported as the run's error (requirement R2.1); the reports
+        # themselves stay outside this clause
+        browse_error = score_error = None
         try:
-            snap = _pmscore.load_snapshot(snapshot)
-            result = _pmscore.score(spec, snap, a.state)
-        except (_pmspec.SpecError, _pmscore.SnapshotError) as e:
-            return error_result(a, wt, spec, e, url, snapshot)
+            snapshot = a.snapshot
+            if snapshot is None:
+                try:
+                    snapshot = take_snapshot(a, wt, spec, out_dir)
+                except _pmbrowse.BrowseError as e:
+                    browse_error = e
+            _pmproc.check()  # C1: checks, server start, capture cleanup
+            if browse_error is None:
+                try:
+                    snap = _pmscore.load_snapshot(snapshot)
+                    result = _pmscore.score(spec, snap, a.state)
+                except (_pmspec.SpecError, _pmscore.SnapshotError) as e:
+                    score_error = e
+                _pmproc.check()  # C2: scoring, before the report
+        except Terminated as e:
+            return error_result(a, wt, spec, e, url)
+        if browse_error is not None:
+            return error_result(a, wt, spec, browse_error, url)
+        if score_error is not None:
+            return error_result(a, wt, spec, score_error, url, snapshot)
         return scored_result(a, wt, spec, result, snapshot)
-    except _pmbrowse.BrowseError as e:
-        return error_result(a, wt, spec, e, url)
     finally:
         held.__exit__(None, None, None)
 
@@ -288,14 +310,20 @@ def main(argv):
 
 
 if __name__ == "__main__":
-    for sig in (signal.SIGTERM, signal.SIGHUP):  # unwind through the finally blocks: no lock, job or server left
-        signal.signal(sig, lambda *_: sys.exit(2))
+    # the handler only records the first signal and never raises, so no cleanup is cut short; the stop is raised
+    # at the next checkpoint or by the child wait in _pmproc.run (issue 12, design D1)
+    for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+        signal.signal(sig, lambda signum, _: _pmproc.stop(Terminated(f"terminated by {signal.Signals(signum).name}")))
     try:
         code = main(sys.argv[1:])
+    except Terminated:  # a stop outside the lock-held block: before the lock, or during a report
+        code = 2
     except Failure as e:
         say_error(str(e))
         code = 2
     except Exception as e:  # never exit 0 or 1 on a bug
         say_error(f"internal error: {type(e).__name__}: {e}")
+        code = 2
+    if _pmproc.stop_requested() is not None:  # a signal where no checkpoint followed still ends in exit 2
         code = 2
     sys.exit(code)
