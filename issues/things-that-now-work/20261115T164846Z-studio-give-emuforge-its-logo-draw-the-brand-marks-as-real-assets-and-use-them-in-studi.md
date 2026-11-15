@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: studio|brand|logo-assets
-Issue-Check-Ids:
+Issue-Check-Ids: studio.brand-symbol-holds-the-reference-numbers studio.brand-tile-and-app-icons-hold-their-layout studio.brand-logos-hold-their-layout studio.brand-social-image-holds-its-layout studio.brand-colours-are-studio-tokens studio.brand-rasters-are-their-vectors-drawn studio.document-icons-are-served-as-images studio.favicon-follows-the-colour-scheme studio.frame-wordmark-shows-the-tile studio.frame-tile-stays-while-engine-and-emulator-are-away studio.frame-bar-fits-with-the-tile-in-every-language
 Issue-Commit: 736ba89ac0a09ccd44cba108edf2746e837e5639
 
 # Give EmuForge its logo: draw the brand marks as real assets and use them in Studio

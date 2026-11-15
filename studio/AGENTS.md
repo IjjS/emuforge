@@ -44,10 +44,23 @@ Product context (users, purpose, scope) is in `PRODUCT.md`; Studio's own design 
   next to it.
 
 ```
+studio/
+  brand/                       EmuForge's brand files (DESIGN.md, The logo): the symbol, the four logos, the app
+                               icons and their PNGs, the social image and its PNG; for use outside Studio, never
+                               shown on a Studio screen
+  public/                      what Studio serves at a fixed path: favicon.svg, favicon.ico, apple-touch-icon.png;
+                               Vite copies it to the root of dist/
+  scripts/                     brand.ts (bun run brand), serve.ts (bun run serve), aws-area-styles.ts (the AWS
+                               area's scoped copies of Cloudscape's document-wide styles)
+  src/                         the app, below
+```
+
+```
 studio/src/
   app/                         router, Studio's frame, the providers list (provider-list.ts), query client,
                                config, colour scheme of Studio's own layer; routes stay thin
-  ui/                          Studio's own design system: tokens.css (--st-*), <component>.tsx, *.css
+  ui/                          Studio's own design system: tokens.css (--st-*), <component>.tsx, *.css,
+                               brand-paths.ts (the mark's geometry, as data)
   features/<feature>/          Studio's own screens: home/ (with the connection status), not-found/
   i18n/                        the text of Studio's own layer: messages/<tag>.json (one catalogue per language),
                                glossary.json, the current language and its storage, the message function, time
@@ -67,6 +80,11 @@ studio/src/
 - A service folder imports nothing from another service folder. What two AWS services share moves to
   `providers/aws/area/components/` or `lib/`.
 - Screen state that one screen owns stays local. There is no global store.
+- `bun run brand` (`scripts/brand.ts`) writes every file of `brand/` and `public/` from `src/ui/brand-paths.ts` and
+  the `--st-*` tokens, and draws the rasters with the headless Chromium of `@playwright/test`. Rerun it after a
+  change of the geometry, the tokens or Instrument Sans, and commit what it writes; a build needs no browser. Its
+  font parser (`fontkit`) is a development dependency imported by that script alone: nothing under `src/` imports
+  it, or a file of `brand/` or `public/`.
 
 ### Providers
 
@@ -131,7 +149,9 @@ Applies to the frame, Home, Studio's "Page not found" and every other screen out
   (`@layer studio`), so it can be told apart from a provider's in the built app and never outranks a provider's
   unlayered rules. No declaration in the `studio` layer is `!important`.
 - No font, image or other asset from another origin; Studio's fonts are served from the app's own origin. No text
-  is baked into an image.
+  that Studio shows is baked into an image: what a Studio screen shows as text is live text from `i18n/`. The logo
+  files and the social image in `brand/` hold letters as shapes; they are the exception, and no Studio screen shows
+  them (a decision of issue 36).
 - Light and dark follow the operating system's colour scheme, change with it while the page is open, and are not
   stored; there is no toggle. Studio's own layer sets `color-scheme` on `html`. A provider area follows the same
   scheme at the same time, through its own mode.

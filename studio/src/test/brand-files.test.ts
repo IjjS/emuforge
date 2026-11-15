@@ -3,8 +3,9 @@
 // (requirement R5.1), what each vector file holds and may not hold (R5.2), that the tile path keeps the symbol's head
 // (R4.2), the code sign (R4.3), the favicon's two schemes (R7.2), the social image's logo (R8.6), the rasters' sizes
 // (R5.1, R5.3), the page's icon links (R7.1), the script that writes the files and its font parser (R5.3, R5.4),
-// and that nothing of the owner's reference sheet is tracked (R5.6). The files are read from the checkout; how they
-// draw is the flow checks' (tests/integration/studio/brand.spec.ts and tests/integration/studio/brand-files.spec.ts).
+// that nothing of the owner's reference sheet is tracked (R5.6), and that the guides say what was built (R9). The
+// files are read from the checkout; how they draw is the flow checks' (tests/integration/studio/brand.spec.ts and
+// tests/integration/studio/brand-files.spec.ts).
 
 import { execFileSync } from 'node:child_process';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
@@ -570,5 +571,77 @@ describe('the reference sheet', () => {
         return size !== null && size.width === 1774 && size.height === 887;
       });
     expect(sheetSized).toEqual([]);
+  });
+});
+
+// --- the guides ---------------------------------------------------------------------------------------------------
+
+/** A guide of `studio/`, as it is in the checkout. */
+function guide(name: string): string {
+  return readFileSync(path.join(STUDIO, name), 'utf8');
+}
+
+/** The text under the first heading that matches, up to the next heading of the same or a higher level. */
+function sectionOf(markdown: string, heading: RegExp): string {
+  const lines = markdown.split('\n');
+  const start = lines.findIndex((line) => /^#{1,6} /.test(line) && heading.test(line));
+  expect(start, `a heading matching ${String(heading)}`).toBeGreaterThanOrEqual(0);
+  const level = (lines[start] as string).indexOf(' ');
+  const end = lines.findIndex((line, i) => i > start && /^#{1,6} /.test(line) && line.indexOf(' ') <= level);
+  return lines.slice(start + 1, end === -1 ? undefined : end).join('\n');
+}
+
+/** A text's paragraphs, each with its line breaks and runs of spaces made one space. */
+function paragraphs(text: string): string[] {
+  return text
+    .split(/\n\s*\n/)
+    .map((paragraph) => paragraph.replace(/\s+/g, ' ').trim())
+    .filter((paragraph) => paragraph !== '');
+}
+
+describe('the guides', () => {
+  it('PRODUCT.md binds the symbol beside the two names, and nothing else of the brand files', () => {
+    const commitments = paragraphs(sectionOf(guide('PRODUCT.md'), /^## Brand Commitments$/));
+    const binding = commitments.filter((p) => /\bbinding\b/i.test(p) && !/\bnot commitments\b/i.test(p));
+    const notBinding = commitments.filter((p) => /\bnot commitments\b/i.test(p));
+
+    expect(binding.join(' ')).toMatch(/"EmuForge"/);
+    expect(binding.join(' ')).toMatch(/"EmuForge Studio"/);
+    expect(binding.join(' ')).toMatch(/\bsymbol\b.*\bemu\b/);
+    expect(notBinding).toHaveLength(1);
+    for (const item of [
+      /\block-ups\b/,
+      /\bicons\b/,
+      /\bsocial image\b/,
+      /\bcolours\b/,
+      /\bletters\b/,
+      /\bproportions\b/,
+      /"Your free, local cloud workspace"/,
+    ]) {
+      expect(notBinding[0], String(item)).toMatch(item);
+    }
+  });
+
+  it('DESIGN.md names every file of R5.1 in its logo section; AGENTS.md names the folders and scopes its rule', () => {
+    const logo = sectionOf(guide('DESIGN.md'), /^## .*\blogo\b/i);
+    const unnamed = [
+      ...BRAND_FILES.map((name) => `brand/${name}`),
+      ...PUBLIC_FILES.map((name) => `public/${name}`),
+    ].filter((file) => !logo.includes(file));
+    expect(unnamed).toEqual([]);
+
+    const agents = guide('AGENTS.md');
+    const structure = [...sectionOf(agents, /^## Stack and structure$/).matchAll(/```\n([\s\S]*?)```/g)]
+      .map((m) => m[1] as string)
+      .join('\n');
+    expect(structure).toMatch(/^\s*brand\/\s/m);
+    expect(structure).toMatch(/^\s*public\/\s/m);
+    expect(structure).toMatch(/^\s*scripts\/\s.*\bbrand\.ts\b/m);
+
+    const sentences = paragraphs(agents)
+      .flatMap((paragraph) => paragraph.split(/(?<=\.)\s+(?=[A-Z`"])/))
+      .filter((sentence) => /baked into an image/i.test(sentence));
+    expect(sentences.length).toBeGreaterThan(0);
+    for (const sentence of sentences) expect(sentence).toMatch(/\bStudio shows\b/);
   });
 });

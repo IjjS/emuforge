@@ -195,12 +195,12 @@ components:
 
 # Design System: EmuForge Studio
 
-This file records the design that passed the Screen stage of issue 16: the mock `.pm/issue-16/mocks/alt/` (picked
-in that issue's `decisions.md`), with the changes its review (`review-candidate-alt.md`) asked the build to make
-stated here as the design. Issue 17 added the language control, the faces per script and the rules of text in other
-languages, from its passed mock (`.pm/issue-17/mocks/`, revised r2) with the changes its review
-(`review-revised-r2.md`) asked for. It covers Studio's own layer only. Where this file and a mock differ, this file
-is the design.
+This file records the design that passed the Screen stage of issue 16: the mock `.pm/issue-16/mocks/alt/` (picked in
+that issue's `decisions.md`), with the changes its review (`review-candidate-alt.md`) asked the build to make stated
+here as the design. Issue 17 added the language control, the faces per script and the rules of text in other languages,
+from its passed mock (`.pm/issue-17/mocks/`, revised r2) with the changes its review (`review-revised-r2.md`) asked for.
+Issue 36 added the logo and the tile in the frame's wordmark, from its passed mock (`.pm/issue-36/mocks/`, revised r1)
+as the build landed it. It covers Studio's own layer only. Where this file and a mock differ, this file is the design.
 
 ## Overview
 
@@ -218,7 +218,8 @@ reads as the frame above the provider's surface rather than a different material
 **Key Characteristics:**
 
 - Warm neutral surfaces (hue 85) in light, blue-cast graphite (hue 252) in dark; text in cool graphite (hue 255).
-- One accent, verdigris (hue 187), for the primary action, the current tab, the provider link and the focus ring.
+- One accent, verdigris (hue 187), for the primary action, the current tab, the provider link and the focus ring,
+  and as the ground of the mark's tile.
 - Status in its own hues: green for connected, red for error and unreachable, blue for checking and information,
   grey for not started and unknown.
 - Flat: depth from tone and hairlines, never from shadows.
@@ -272,10 +273,11 @@ values (sRGB, WCAG 2.x), light / dark.
 
 ### Primary
 
-- **Verdigris** (`accent`): the primary button's fill, the current tab's underline, the provider link on Home.
+- **Verdigris** (`accent`): the primary button's fill, the current tab's underline, the provider link on Home, the
+  ground of the mark's tile (The logo).
   Against the surface 6.37:1 / 9.16:1.
 - **Deep Verdigris** (`accent-hover`): the hover of the primary button and the provider link.
-- **Verdigris Ink** (`accent-ink`): text on the accent fill, 6.32:1 / 9.63:1.
+- **Verdigris Ink** (`accent-ink`): text on the accent fill and the bird on the tile, 6.32:1 / 9.63:1.
 - **Verdigris Wash** (`accent-wash`): text selection inside Studio's containers, with `text` on it.
 - **Focus Verdigris** (`focus`): the focus ring. Against the page 4.57:1 / 10.40:1, against the surface
   4.86:1 / 9.54:1, against the notice washes at least 4.44:1 / 9.15:1.
@@ -316,7 +318,9 @@ Each status colour is at least 5.37:1 / 6.40:1 on the surface and on its own was
 **The Shade Rule.** The overflow shade is at least 1.5:1 against `--st-sunk` at its edge, in both schemes.
 
 **The One Accent Rule.** Verdigris marks what acts or where you are: the primary action, the current tab, the
-provider link, focus. It is never a background for a section and never a status.
+provider link, focus. It is never a background for a section and never a status. The one use that is neither an
+action, a place nor focus is the mark: the tile of the logo, the icons and the frame's wordmark is verdigris with
+the bird in its ink.
 
 **The Status Hue Rule.** A status is never shown by colour alone: every status has its icon and its word.
 
@@ -338,7 +342,8 @@ its Fontsource `unicode-range`, so the browser fetches a file only when a page d
 are files of Studio's own source, served from the app's own origin. The licence text and copyright notices of each
 face travel with the files, next to them (`ui/fonts/OFL-instrument-sans.txt`, `OFL-jetbrains-mono.txt`,
 `OFL-noto-sans.txt`, `OFL-noto-sans-thai.txt`), as OFL 1.1 requires for redistribution. No font comes from another
-origin, and no text is baked into an image.
+origin, and no text Studio shows is baked into an image (the logo files hold their letters as outlines of
+Instrument Sans and are never shown on a Studio screen; The logo).
 
 Weights: 400 (text), 560 (labels, tabs, buttons), 650 (headings, status, the wordmark's "EmuForge").
 
@@ -354,7 +359,8 @@ Weights: 400 (text), 560 (labels, tabs, buttons), 650 (headings, status, the wor
   figures), the re-check line, notes.
 - **Code** (JetBrains Mono 400, 13px, 1.55): commands, addresses, inline code. The path on "Page not found" is
   15px in the code font, inside a 16px sentence.
-- **Wordmark** (16px, -0.01em): "EmuForge" at 650 in `text`, then "Studio" at 400 in `text-2`.
+- **Wordmark** (16px, -0.01em): the tile, then "EmuForge" at 650 in `text`, then "Studio" at 400 in `text-2`
+  (The frame, below).
 
 ### Faces per script
 
@@ -437,7 +443,9 @@ One column inside a sticky bar.
   These are not inherited, so nothing reaches a provider area.
 - **Breakpoints:**
   - 900px: Home's services go from three columns to two, filled by row in label order.
-  - 640px: one column everywhere. The status rows stack, and each row is compact: the label and the status on one
+  - 640px: the bar shows the tile at 24px with a 5px gap and "EmuForge" without "Studio", which stays in the
+    link's accessible name; so at 481 to 640 wide the wordmark, every tab and the control fit in every language.
+    One column everywhere. The status rows stack, and each row is compact: the label and the status on one
     line, the address on the line under it, so the first recovery command of a notice stays high on a 390x844
     screen. A notice's icon moves into its heading so the text gets the full width. Services are one list. The
     copied state of a command shows no text beside the step label: the check icon and green edge on the button and
@@ -450,9 +458,12 @@ One column inside a sticky bar.
 
 ### Named Rules
 
-**The Grow Within Rule.** More providers grow the tab list, never the page: the tab list scrolls within the bar.
-When it does not fit, "Studio" leaves the bar (it stays in the link's accessible name), the bar's right padding
-goes, and the list's overflowing edge fades over its last 24px so a tab beyond it reads as more to scroll to.
+**The Grow Within Rule.** More providers grow the tab list, never the page: the tab list scrolls within the bar,
+and the wordmark link (tile and text) keeps its size and never shrinks. Above 640px, when the list does not fit,
+"Studio" is to leave the bar (it stays in the link's accessible name), the bar's right padding to go, and the list's
+overflowing edge to fade over its last 24px so a tab beyond it reads as more to scroll to. That fallback is not
+built yet (issue #38); today the list scrolls and nothing else changes. At 640px and below "Studio" is never drawn
+(Layout, Breakpoints).
 
 ## Elevation & Depth
 
@@ -472,16 +483,105 @@ buttons and command blocks; 14px (`l`) for panels; 4px for inline code. A panel 
 so a notice band inside it follows the panel's curve. Icons are 24-unit line icons drawn at 15px to 20px with a
 1.8 stroke and round caps and joins, `currentColor`, hidden from screen readers.
 
+## The logo
+
+The mark is EmuForge's, and Studio's design draws it. Of it only the symbol is a brand commitment (`PRODUCT.md`,
+Brand Commitments); the tile, the lock-ups, the icons, the social image, their colours and proportions are this
+file's design and change by the usual stages.
+
+### Marks
+
+- **Symbol:** the head and neck of an emu in profile, facing right: a crest of pointed feathers at the back of the
+  crown, an almond eye cut out as a hole, a beak ending in a point at the right, a neck curving down to the left to
+  a pointed base. One closed silhouette in one flat colour, the eye a hole that shows the ground.
+- **Tile:** the symbol on a rounded square of side `S`, corner radius `0.22 S`. The head is the symbol's, scaled and
+  moved only; the neck runs on along its curve and leaves the square through its bottom edge, where the square
+  clips it. One tile composition serves every logo, icon and the frame.
+- **Code sign:** `</>`, three round-capped strokes in the bird's colour at the tile's lower right. On the app icons
+  only.
+- **Compact logo:** the tile, then "EmuForge" to its right, centred on the tile's height.
+- **Primary logo:** the tile, then "EmuForge" with "STUDIO" under it in letter-spaced capitals, left edges aligned,
+  both lines inside the tile's height.
+- **App icon:** the tile with the code sign, on three grounds: teal, cream, night.
+- **Favicon:** the tile without the code sign.
+- **Social image:** 1200 x 630, the primary logo for a light ground and the line "Your free, local cloud workspace"
+  at the left, an illustration of three stacked windows at the right, two accent bands rising from the lower left.
+
+The letters of a logo file are outlines of Instrument Sans ("EmuForge" at 650 with -0.01em tracking, "STUDIO" at
+600), so a file draws the same without the face. In Studio itself the wordmark is live text (The frame, below).
+
+### Files
+
+One geometry, in `src/ui/brand-paths.ts` (the symbol path, the tile path and its placement, the code sign), drawn
+into every file by `bun run brand` (`scripts/brand.ts`); the rasters are the vectors drawn by Chromium. Rerun it after
+a change of the geometry, the tokens or the face, and commit the results.
+
+| File                                                                              | What                                                                     |
+| --------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `brand/symbol.svg`                                                                | the symbol alone, `accent` on no ground                                  |
+| `brand/logo-primary-light.svg`, `brand/logo-primary-dark.svg`                     | the primary logo for a light, a dark ground                              |
+| `brand/logo-compact-light.svg`, `brand/logo-compact-dark.svg`                     | the compact logo for a light, a dark ground                              |
+| `brand/app-icon-teal.svg`, `brand/app-icon-cream.svg`, `brand/app-icon-night.svg` | the app icon on each ground                                              |
+| `brand/app-icon-teal-192.png`, `brand/app-icon-teal-512.png`                      | the teal app icon at 192 and 512 pixels                                  |
+| `brand/app-icon-cream-192.png`, `brand/app-icon-cream-512.png`                    | the cream app icon at 192 and 512 pixels                                 |
+| `brand/app-icon-night-192.png`, `brand/app-icon-night-512.png`                    | the night app icon at 192 and 512 pixels                                 |
+| `brand/app-icon-teal-square.svg`                                                  | the teal app icon on a full square, the source of `apple-touch-icon.png` |
+| `brand/social.svg`, `brand/social-1200x630.png`                                   | the social image and its raster                                          |
+| `public/favicon.svg`                                                              | the favicon, with the light and the dark scheme inside                   |
+| `public/favicon.ico`                                                              | the light favicon at 16, 32 and 48 pixels                                |
+| `public/apple-touch-icon.png`                                                     | 180 pixels, square and opaque (the device rounds it)                     |
+
+The app icon PNGs are transparent outside the tile. `public/` holds what Studio serves at a fixed path; Vite copies it
+to the root of the build, and the page links the three icons. `brand/` holds the rest; no Studio screen shows a file of
+it. Every vector file holds only paths, rectangles, circles, groups, clip paths and their `defs`, a `title`, and the
+favicon's one `style`: no text, no image, no filter, no opacity, no gradient, every painted area one token's opaque sRGB
+value.
+
+### Grounds
+
+| Where                     | Ground                                   | Bird, code sign                                  | "EmuForge"  | "STUDIO"      |
+| ------------------------- | ---------------------------------------- | ------------------------------------------------ | ----------- | ------------- |
+| logo for a light ground   | tile `accent`                            | `accent-ink`                                     | `text`      | `accent`      |
+| logo for a dark ground    | tile `accent-dark`                       | `accent-ink-dark`                                | `text-dark` | `accent-dark` |
+| app icon, teal            | `accent`                                 | `accent-ink`                                     |             |               |
+| app icon, cream           | `bg`, with a `line` edge                 | `accent`                                         |             |               |
+| app icon, night           | `accent-ink-dark`                        | `accent-dark`                                    |             |               |
+| symbol alone              | none                                     | `accent`                                         |             |               |
+| favicon, the frame's tile | `accent`; `accent-dark` in a dark scheme | `accent-ink`; `accent-ink-dark` in a dark scheme |             |               |
+
+A light-ground logo goes on paper, sheet or any light ground; a dark-ground logo on graphite or any dark ground.
+The app icons keep their fixed colours and do not follow a scheme. In dark the tile turns mint and the bird dark
+(`accent-dark`, `accent-ink-dark`): intended, the same inversion as every accent fill of the dark scheme.
+
+### Clear space and smallest sizes
+
+- **Clear space:** at least `0.25 S` free on every side of a logo or an icon, where `S` is the tile's side.
+- **Smallest sizes:** the tile 16px; the compact logo 20px tall; the primary logo 32px tall. Below 64px no mark
+  carries the code sign: its strokes would be about a pixel.
+
+### In the frame
+
+The wordmark link holds the tile, drawn inline by `ui/brand-tile.tsx` with the tile path and coloured by `--st-*`
+properties, so it costs no request and is in the first paint (The frame, below).
+
 ## Components
 
 ### The frame (Studio's bar)
 
-- **Content:** the wordmark "EmuForge Studio" linking to `/`, then a navigation landmark labelled "Studio" with
-  "Home" and one tab per provider from the providers list ("AWS"), then the language control at the bar's end. The
-  bar is the same on every page, a provider area's pages too, and in the current language.
+- **Content:** the wordmark (the tile, then "EmuForge Studio") linking to `/`, then a navigation landmark labelled
+  "Studio" with "Home" and one tab per provider from the providers list ("AWS"), then the language control at the bar's
+  end. The bar is the same on every page, a provider area's pages too, and in the current language.
 - **Tabs:** 14px, 560, `text-2`, full bar height, 0 12px padding. Hover: `text`. Current: `text` with a 2px
   verdigris underline drawn inside the tab's bottom edge. "Home" is current on `/` (`aria-current="page"`); a
   provider's tab is current on its index (`page`) and marked current (`true`) anywhere deeper in its area.
+- **Wordmark:** the tile is 28px square with a 6px gap to the text; at 640px and below it is 24px with a 5px gap, and
+  "Studio" is clipped out of sight (`position: absolute`, 1px square, `overflow: hidden`, `clip-path: inset(50%)`) and
+  stays in the accessible name. The tile is `accent` with the bird in `accent-ink`, `accent-dark` with `accent-ink-dark`
+  in dark, following the scheme while the page is open. It is decoration: hidden from assistive technology, so the
+  link's accessible name is exactly "EmuForge Studio" in every language. The link never shrinks and has no hover style.
+- **Wordmark focus:** the ring surrounds tile and text together, 4px out from the link's box, so 4px of the bar's
+  surface lie between it and the tile's corner; with the 6px radius at that offset the ring's corner is about 10px.
+  This and the tabs' are the two exceptions to the 2px offset.
 - **Tab focus:** the ring sits inside the tab's padding (offset -4px), with the 8px radius of the tab's ring
   unchanged, so it never crosses the label.
 - **Skip to content:** the frame's first Tab stop is a "Skip to content" link targeting the page's content: the
@@ -598,13 +698,13 @@ tabs, with a control edge so it reads as something that opens.
   an underline 4px below.
 - **Service links** (Home): 15px in `text`, underlined at rest with a 1px `line-strong` underline 4px below, so
   they read as links on touch; hover `accent` text and underline.
-- **Wordmark:** `text`, no underline.
+- **Wordmark:** `text`, no underline, no hover style; its focus ring sits 4px out (The frame).
 
 ### Focus ring
 
 - **Everywhere in Studio's containers:** `:focus-visible` draws a 2px solid `focus` outline, offset 2px, with the
-  6px radius. The frame's tabs are the one exception in offset (above). Nothing clips a focusable element, so its
-  ring shows whole.
+  6px radius. Two exceptions in offset, both in the frame (above): the tabs' ring sits inside (-4px), the
+  wordmark's 4px out. Nothing clips a focusable element, so its ring shows whole.
 
 ### Page not found (signature)
 
@@ -643,7 +743,10 @@ tabs, with a control edge so it reads as something that opens.
   (other than `color-scheme` and `--st-*`) on an ancestor of the area.
 - **Don't** write `!important` in the `studio` layer.
 - **Don't** use Tailwind, CSS-in-JS or a third-party component library.
-- **Don't** load a font, image or other asset from another origin, or bake text into an image.
+- **Don't** load a font, image or other asset from another origin, or bake text Studio shows into an image. The
+  logo files and the social image hold letters as shapes; no Studio screen shows them.
+- **Don't** redraw, recolour, stretch, outline or shade the symbol, or give a mark an opacity or a gradient; draw
+  the files from `src/ui/brand-paths.ts` with `bun run brand`.
 - **Don't** use shadows for depth, or the accent as a status.
 - **Don't** give Thai, Korean or Japanese text a negative letter spacing, or hyphenate text in another language
   than the page.
