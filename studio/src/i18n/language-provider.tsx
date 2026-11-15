@@ -24,7 +24,8 @@ function languageOf(store: LanguageStore, state: LanguageState): Language<string
 
 /**
  * Gives Studio's own layer its current language. A change of it re-renders what reads it, in one step and on the same
- * page (R2.6, R2.7), and sets `<html lang>` to it (R5.1).
+ * page (R2.6, R2.7), and keeps `<html lang>` in step with it after each change (R5.1). It sets `<html lang>` only
+ * after a commit, so it does not set it before the first render: the start does that, before it renders (R2.7).
  */
 export function LanguageProvider({ store: given, children }: LanguageProviderProps) {
   const [store] = useState(() => given ?? createLanguageStore(BUNDLED_CATALOGUES));
