@@ -67,3 +67,11 @@
 {"check_id": "engine.relay-s3-signed-chunk-above-cap-refused", "path": "tests/integration/engine/tests/relay_signed_chunks.rs", "module": "engine", "operations": ["s3:CreateBucket", "s3:PutObject", "s3:HeadObject", "s3:GetObject", "s3:DeleteObject", "s3:DeleteBucket"], "labels": ["safety"], "issue": 9}
 {"check_id": "engine.relay-s3-signed-chunk-put-survives-emulator-restart", "path": "tests/integration/engine/tests/relay_signed_chunks.rs", "module": "engine", "operations": ["s3:CreateBucket", "s3:PutObject", "s3:GetObject", "s3:DeleteObject", "s3:DeleteBucket"], "labels": ["own-emulator", "lifecycle"], "issue": 9}
 {"check_id": "studio.checks-browser-language-is-english", "path": "tests/integration/studio/languages-browser.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 17}
+{"check_id": "studio.language-follows-the-browser", "path": "tests/integration/studio/languages.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 17}
+{"check_id": "studio.language-choice-applies-at-once-and-survives-reload", "path": "tests/integration/studio/languages.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 17}
+{"check_id": "studio.language-first-render-is-already-in-the-language", "path": "tests/integration/studio/languages.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 17}
+{"check_id": "studio.studio-layer-complete-in-every-language", "path": "tests/integration/studio/languages.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 17}
+{"check_id": "studio.aws-area-stays-english-in-every-language", "path": "tests/integration/studio/languages.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 17}
+{"check_id": "studio.language-layout-in-every-language", "path": "tests/integration/studio/languages.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 17}
+{"check_id": "studio.language-faces-per-script", "path": "tests/integration/studio/languages.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 17}
+{"check_id": "studio.language-control-keyboard-and-contrast", "path": "tests/integration/studio/languages.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 17}
