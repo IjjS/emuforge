@@ -933,3 +933,102 @@ describe('choosing a language (R3.6, R2.4, R2.6)', () => {
     expect(engine.healths).toHaveLength(checks);
   });
 });
+
+/** The banner's link "EmuForge Studio" and the tile in it. */
+function wordmark() {
+  const link = within(screen.getByRole('banner')).getByRole('link', { name: 'EmuForge Studio' });
+  const tiles = link.querySelectorAll('svg');
+  expect(tiles).toHaveLength(1);
+  return { link, tile: tiles[0] as SVGSVGElement };
+}
+
+/** Elements of `root` that draw an image: an image element, an embedded document or anything given the role. */
+const IMAGE = 'img, picture, canvas, object, embed, iframe, image, [role="img"], [role^="graphics-"]';
+
+describe('the tile in the wordmark link (issue #36, R6)', () => {
+  afterEach(() => {
+    localStorage.clear();
+    document.documentElement.lang = 'en';
+  });
+
+  it('on /: the link to / holds the tile first, then "EmuForge" and "Studio", named exactly "EmuForge Studio"', () => {
+    openFrame('/');
+    const { link, tile } = wordmark();
+
+    expect(link).toHaveAttribute('href', '/');
+    expect(link).toHaveAccessibleName('EmuForge Studio');
+    expect(link.firstElementChild).toBe(tile);
+    const texts = [...link.querySelectorAll('*')]
+      .filter((element) => !tile.contains(element) && element.children.length === 0)
+      .map((element) => element.textContent.trim());
+    expect(texts).toEqual(['EmuForge', 'Studio']);
+    expect(follows(tile, screen.getByText('EmuForge'))).toBe(true);
+  });
+
+  it.each(['/', '/does-not-exist', '/aws', '/aws/s3/buckets'])(
+    'on %s: the banner holds exactly one tile, inside the wordmark link, and no other image',
+    async (path) => {
+      openStudio(path);
+      if (path.startsWith('/aws')) {
+        await screen.findByRole('main', {}, { timeout: AREA_LOAD_MS });
+      }
+      const banner = screen.getByRole('banner');
+      const { tile } = wordmark();
+
+      expect(banner.querySelectorAll(IMAGE)).toHaveLength(0);
+      // Every other drawing of the banner is a glyph of the language control's button, hidden as the tile is.
+      const others = [...banner.querySelectorAll('svg')].filter((svg) => svg !== tile);
+      for (const svg of others) {
+        expect(svg.closest('.st-lang-btn'), 'an svg of the banner outside the language control').not.toBeNull();
+        expect(svg).toHaveAttribute('aria-hidden', 'true');
+      }
+      expect(banner.querySelectorAll('.st-tile')).toHaveLength(1);
+    },
+    20_000,
+  );
+
+  it.each(['de', 'th', 'pl'])(
+    'in %s: the link is named exactly "EmuForge Studio" and the tile is as in English',
+    (tag) => {
+      // The clip's id is made per tile, unique in the document (ui/brand-tile.test.tsx); the rest is compared as it is.
+      const markupOf = (tile: SVGSVGElement) => tile.outerHTML.replaceAll(tile.querySelector('[id]')?.id ?? '\0', 'ID');
+      const english = openFrame('/');
+      const markup = markupOf(wordmark().tile);
+      english.unmount();
+
+      openStudioIn('/does-not-exist', tag);
+      const { link, tile } = wordmark();
+
+      expect(document.documentElement.lang).toBe(tag);
+      expect(link).toHaveAccessibleName('EmuForge Studio');
+      expect(markupOf(tile)).toBe(markup);
+    },
+  );
+
+  it('the text content of the wordmark link is "EmuForge Studio", the space inside the element that holds "Studio"', () => {
+    openFrame('/');
+    const { link } = wordmark();
+
+    expect(link.textContent).toBe('EmuForge Studio');
+    const studio = [...link.querySelectorAll('*')].find((element) => element.textContent.trim() === 'Studio');
+    expect(studio?.textContent).toBe(' Studio');
+  });
+
+  it('Tab from the page’s start: the skip link, then the wordmark link; the tile is never focused', async () => {
+    openFrame('/');
+    const { link, tile } = wordmark();
+    const user = userEvent.setup();
+
+    await user.tab();
+    expect(document.activeElement).toBe(screen.getByRole('link', { name: 'Skip to content' }));
+    await user.tab();
+    expect(document.activeElement).toBe(link);
+    expect(tile).toHaveAttribute('focusable', 'false');
+    expect(tile).not.toHaveAttribute('tabindex');
+    for (let step = 0; step < tabStops().length; step++) {
+      await user.tab();
+      expect(document.activeElement).not.toBe(tile);
+      expect(tile.contains(document.activeElement)).toBe(false);
+    }
+  });
+});

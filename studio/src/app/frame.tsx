@@ -19,6 +19,7 @@ import { Link, Outlet, useLocation } from 'react-router';
 
 import type { MessageKey } from '../i18n/catalogue';
 import { useLanguage } from '../i18n/language-context';
+import { BrandTile } from '../ui/brand-tile';
 import { LanguageControl } from '../ui/language-control';
 import { PAGE_TITLE_ID } from '../ui/page-head';
 import { PROVIDERS, type ProviderAreaProps } from './provider-list';
@@ -82,9 +83,9 @@ function currentOf(pathname: string, target: string, deeper: boolean): Current {
 }
 
 /**
- * Studio's frame on every page (requirement R5.1): the top bar with "EmuForge Studio", the navigation "Studio" with
- * Home and one link per provider of the providers list, and the language control (issue #17, R3.1), then the page.
- * Built from Studio's own design only.
+ * Studio's frame on every page (requirement R5.1): the top bar with the tile and "EmuForge Studio" (issue #36, R6), the
+ * navigation "Studio" with Home and one link per provider of the providers list, and the language control (issue #17,
+ * R3.1), then the page. Built from Studio's own design only.
  */
 export function Frame() {
   const { t } = useLanguage();
@@ -114,8 +115,15 @@ export function Frame() {
         <a className="st-skip" href={`#${MAIN_ID}`} onClick={handleSkip}>
           {t('frame.skip')}
         </a>
+        {/* The tile, then the text. The space is inside the element that holds "Studio", so the link's name is
+            "EmuForge Studio" whether that element is drawn or not (requirement R6.3, R6.5); the two holders are
+            blocks, which a name computation that trims each element's text still separates by a space. */}
         <Link className="st-wordmark" to="/">
-          <b>EmuForge</b> <span>Studio</span>
+          <BrandTile />
+          <div className="st-wordmark-text">
+            <b>EmuForge</b>
+            <div className="st-wordmark-studio"> Studio</div>
+          </div>
         </Link>
         <nav className="st-nav" aria-label={t('frame.nav')}>
           <Link to="/" aria-current={currentOf(pathname, '/', false)}>
