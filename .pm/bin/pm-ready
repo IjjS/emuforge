@@ -24,7 +24,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _pmlib import ROOT, RUN, load, log, notify, now, save
+from _pmlib import ROOT, RUN, load, log, notify, now, save, wake_watchd
 
 STATE = RUN / "ready.json"      # {since, handled: [comment ids], queue: [{issue, comment, at}]}
 INBOX = RUN / "inbox.jsonl"
@@ -88,6 +88,7 @@ def cmd_poll(a):
         if pm_alive():
             with INBOX.open("a") as f:
                 f.write(json.dumps(dict(ts=now(), line=line)) + "\n")
+            wake_watchd()
             continue
         launch = load(CONFIG, {}).get("pm_launch")
         if launch:

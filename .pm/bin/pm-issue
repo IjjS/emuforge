@@ -5,6 +5,7 @@
   pm-issue list [--all]
   pm-issue show <id>
   pm-issue close <id> --checks "<check id> ..." [--in CHECKOUT]
+  pm-issue commit [--in CHECKOUT] [--dry-run]
 
 new    writes issues/things-that-do-not-work/<UTC timestamp>-<slug>.md with the header filled in and the body
        sections empty, assigns the next Issue-Id, and refuses a duplicate Issue-Key. Prints the id and the path.
@@ -13,6 +14,10 @@ new    writes issues/things-that-do-not-work/<UTC timestamp>-<slug>.md with the 
 close  moves the file to issues/things-that-now-work/ with `git mv` and sets Issue-Check-Ids. It changes nothing
        else in the file and does not commit: the move belongs in the commit that fixes the issue, so run it with
        --in <worktree> inside the unit that closes the issue.
+commit commits every issue file under issues/things-that-do-not-work/ that is new in the checkout (untracked or
+       added, not yet committed) and nothing else, with the message `issue: file #<id> #<id> …` built from the
+       files' own Issue-Id headers. Refuses a file whose Description or Evidence section is empty. Never type
+       this commit by hand: the message then names every filed issue, and only those.
 Ids are assigned from the main checkout so two worktrees never pick the same one.
 """
 import argparse
@@ -126,6 +131,48 @@ def cmd_close(a):
     print(f"closed #{a.id}: {target} (staged; commit it with the fix)")
 
 
+def section(text, name):
+    m = re.search(rf"(?ms)^## {re.escape(name)}\s*$(.*?)(?=^## |\Z)", text)
+    return m.group(1).strip() if m else ""
+
+
+def cmd_commit(a):
+    base = pathlib.Path(a.checkout).resolve() if a.checkout else ROOT
+    git = lambda *args: subprocess.run(["git", "-C", str(base), *args], capture_output=True, text=True)
+    new = []
+    for line in git("status", "--porcelain", "--untracked-files=all", "--", OPEN).stdout.splitlines():
+        status, path = line[:2], line[3:].strip().strip('"')
+        if path.endswith(".md") and (status == "??" or "A" in status):
+            new.append(base / path)
+    if not new:
+        sys.exit(f"no new issue file under {OPEN} in {base}")
+    ids, problems = [], []
+    for f in sorted(new):
+        h, text = header(f), f.read_text(errors="replace")
+        if not h.get("Issue-Id", "").isdigit():
+            problems.append(f"{f.name}: no Issue-Id (create issue files with pm-issue new)")
+            continue
+        ids.append(int(h["Issue-Id"]))
+        for name in ("Description", "Evidence"):
+            if not section(text, name):
+                problems.append(f"{f.name} (#{h['Issue-Id']}): the {name} section is empty")
+    if len(set(ids)) != len(ids):
+        problems.append(f"the same Issue-Id appears twice: {sorted(ids)}")
+    if problems:
+        sys.exit("cannot commit:\n- " + "\n- ".join(problems))
+    message = "issue: file " + " ".join(f"#{i}" for i in sorted(ids))
+    if a.dry_run:
+        print(f"would commit {len(new)} file(s): {message}")
+        return
+    paths = [str(f) for f in sorted(new)]
+    r = git("add", "--", *paths)
+    if r.returncode == 0:
+        r = git("commit", "-q", "--only", "-m", message, "--", *paths)  # nothing else that happens to be staged
+    if r.returncode != 0:
+        sys.exit(f"git failed: {(r.stderr or r.stdout).strip()}")
+    print(f"{git('rev-parse', '--short', 'HEAD').stdout.strip()} {message}")
+
+
 p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 sp = p.add_subparsers(dest="cmd", required=True)
 x = sp.add_parser("new"); x.add_argument("--module", required=True, choices=MODULES); x.add_argument("--kind", required=True, choices=KINDS)
@@ -134,5 +181,6 @@ x.add_argument("--key", required=True); x.add_argument("--title", required=True)
 x = sp.add_parser("list"); x.add_argument("--all", action="store_true"); x.set_defaults(f=cmd_list)
 x = sp.add_parser("show"); x.add_argument("id"); x.set_defaults(f=cmd_show)
 x = sp.add_parser("close"); x.add_argument("id"); x.add_argument("--checks", required=True); x.add_argument("--in", dest="checkout"); x.set_defaults(f=cmd_close)
+x = sp.add_parser("commit"); x.add_argument("--in", dest="checkout"); x.add_argument("--dry-run", action="store_true"); x.set_defaults(f=cmd_commit)
 a = p.parse_args()
 a.f(a)

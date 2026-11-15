@@ -4,7 +4,7 @@
   pm-report "<STAGE READY|UNIT READY|BLOCKED|DONE|RESET READY> <pane-name> …"
   pm-report --from <pane-name> "REVIEWED <stage> r<k> …"
 
-Appends {ts, seq, pane, line} to .pm/run/reports.jsonl; pm-watchd reads the file every tick and delivers PM lines
+Appends {ts, seq, pane, line} to .pm/run/reports.jsonl; pm-watchd is signalled, reads the file and delivers PM lines
 (STAGE READY, UNIT READY, BLOCKED, DONE) to the PM verbatim. Screen scraping stays as a fallback, but the file is
 exact: no wrapped URLs, no Claude/Codex rendering differences, no duplicates. The pane name must be a registered,
 live pane (pm-pane list), so a stray call cannot wake the PM. Print the same line in your reply as well.
@@ -16,7 +16,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _pmlib import PANES, RUN, load, now
+from _pmlib import PANES, RUN, load, now, wake_watchd
 
 REPORTS = RUN / "reports.jsonl"
 PREFIXES = ("STAGE READY", "UNIT READY", "BLOCKED", "DONE", "RESET READY", "REVIEWED")
@@ -41,6 +41,7 @@ def main():
     (RUN / "reports.seq").write_text(str(seq))
     with REPORTS.open("a") as f:
         f.write(json.dumps(dict(ts=now(), seq=seq, pane=pane, line=line), ensure_ascii=False) + "\n")
+    wake_watchd()
     print(f"reported #{seq}: {line[:100]}")
 
 

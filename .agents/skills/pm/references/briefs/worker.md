@@ -28,7 +28,8 @@ Steps:
 3. Commit in small steps on your branch. `REVIEW checks-{{unit}} r1 <paths> output/logs/` to rev, end your turn;
    fix P1s when `REVIEWED` arrives; up to three rounds.
 4. `{{root}}/.pm/bin/pm-report "UNIT READY i{{issue}}-worker-{{unit}} {{branch}}"`, print the same line, stop.
-   Your branch is red by design and is not merged by itself. You do not read or touch any implementation branch.
+   A branch that is red by design is not merged by itself; it arrives through the unit stacked on it. You do not
+   read or touch any implementation branch.
 
 <!-- block: implementation (unit e<n>, s<n>, h<n>) -->
 Steps:

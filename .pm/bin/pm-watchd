@@ -1,14 +1,21 @@
 #!/usr/bin/env -S python3 -I
 """Event daemon: watches herdr panes and pushes EVENT lines into the PM pane. Runs outside Claude Code.
 
-  pm-watchd start [--pm <pane-id|agent-name>] [--interval 20] [--mem 22.5] [--ctx 300000] [--pm-ctx 400000] [--stale-hours 3]
+  pm-watchd start [--pm <pane-id|agent-name>] [--interval 60] [--mem 22.5] [--cpu 90] [--ctx 300000] [--pm-ctx 400000] [--stale-hours 3]
   pm-watchd stop | status | tail [N] | whoami
 
 Start it at the beginning of every PM session from the PM pane. The PM pane is found from the process tree (Claude)
 or as the one working unregistered agent in this folder (Codex, whose shell commands run in an app-server with a
 frozen HERDR_PANE_ID); `whoami` shows the result without starting. A running daemon is restarted so it follows this
-PM pane and this PM session id; pm.json records them for pm-archive. Events, each
-delivered as one prompt line to the PM:
+PM pane and this PM session id; pm.json records them for pm-archive.
+
+The daemon does not poll. It subscribes to herdr's event socket (a pane's agent status changed, a pane opened,
+closed or exited) and is signalled by pm-report and pm-ready when they append a line, so it looks the moment
+something happens. --interval is only the fallback: the longest it sleeps when nothing wakes it, and the whole
+cadence while the socket is unreachable (logged once when that starts and once when it ends). What happened is
+always judged from `herdr agent list` and the report files, never from the event itself.
+
+Events, each delivered as one prompt line to the PM:
   EVENT ready <pane> <STAGE READY|UNIT READY|BLOCKED|DONE line> a registered pane finished a turn with a line for the PM
   EVENT go github#<n>                                           the owner commented READY on a GitHub issue (pm-ready poll)
   EVENT blocked <pane>                                          a pane waits at a permission/question dialog
@@ -18,6 +25,8 @@ delivered as one prompt line to the PM:
   EVENT ctx pm <tokens>                                         the PM's own context passed --pm-ctx
   EVENT mem <used>GB swap <used>/<total>GB top=<pane> <GB>,…    memory over --mem (at most once per 10 min)
   EVENT mem ok <used>GB                                         back under budget after a mem event (once)
+  EVENT cpu <pct>% top=<pane> <GB>,…                            CPU over --cpu on three looks in a row, 30 s apart (at most once per 10 min)
+  EVENT cpu ok <pct>%                                           back under after a cpu event (once)
   EVENT tokens over <rate> target <rate>                        the last hour's Claude token rate passed today's target (pm-tokens)
   EVENT tokens ok <rate>                                        back under the target (once)
 Panes report with `pm-report "<line>"` (file channel .pm/run/reports.jsonl, exact and agent-independent); the
@@ -36,10 +45,12 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _pmlib import (EVENTS, PANES, PMINFO, ROOT, RUN, agents, find_key, herdr, load, log, mem_gb, notify, now, pane_rss_gb, save,
-                    transcript_ctx)
+from _pmlib import (EVENTS, PANES, PMINFO, ROOT, RUN, agents, cpu_pct, find_key, herdr, load, log, mem_gb, notify, now, pane_rss_gb,
+                    save, transcript_ctx)
+from _pmwake import Waker
 
 PID = RUN / "watchd.pid"
+WAKE = RUN / "watchd.wake"  # this daemon's pid while it handles SIGUSR1 (_pmlib.wake_watchd reads it)
 LOG = RUN / "watchd.log"
 STATE = RUN / "watchd-state.json"
 PM_LINES = ("STAGE READY", "UNIT READY", "BLOCKED", "DONE")
@@ -226,17 +237,23 @@ def run(a):
     pm = a.pm
     st = load(STATE, {"seen": {}, "last_mem": 0, "pending": None, "queue": [], "pm": {}})
     st.setdefault("queue", []); st.setdefault("pm", {}); st["pm_target"] = pm
+    waker = Waker()
+    waker.install_signal()
+    WAKE.write_text(str(os.getpid()))
+    socket_state, watch_ids = None, set()
     while True:
         try:
             ags_list = agents()
             if ags_list is None:  # herdr did not answer: no judgement this tick
                 log("herdr agent list failed; tick skipped")
-                time.sleep(a.interval)
+                waker.close()
+                waker.wait(a.interval)
                 continue
             ags = {x.get("pane_id"): x for x in ags_list}
             pm_a = find_pm(ags_list, pm)
             events = list(st.get("queue") or [])
             reg = [r for r in load(PANES, []) if not r.get("gone")]
+            watch_ids = {r["pane_id"] for r in reg} | ({pm_a["pane_id"]} if pm_a else set())
             from _pmquota import tick as quota_tick
             events.extend(quota_tick(ags_list))
             seen = st["seen"]
@@ -295,6 +312,20 @@ def run(a):
             elif st.get("mem_over") and used < a.mem - 1.0:  # back under budget with 1 GB to spare: tell the PM once
                 events.append(f"EVENT mem ok {used:.1f}GB")
                 st["mem_over"] = False
+            if time.time() - st.get("cpu_checked", 0) >= 30:  # a second of measuring, so not on every wake-up
+                st["cpu_checked"] = time.time()
+                cpu = cpu_pct()
+                if cpu is not None and cpu > a.cpu:
+                    st["cpu_streak"] = st.get("cpu_streak", 0) + 1
+                    if st["cpu_streak"] >= 3 and time.time() - st.get("last_cpu", 0) > 600:
+                        events.append(f"EVENT cpu {cpu:.0f}% top={top_panes(reg)}")
+                        st["last_cpu"] = time.time()
+                        st["cpu_over"] = True
+                elif cpu is not None:
+                    st["cpu_streak"] = 0
+                    if st.get("cpu_over") and cpu < a.cpu - 10:
+                        events.append(f"EVENT cpu ok {cpu:.0f}%")
+                        st["cpu_over"] = False
             if time.time() - st.get("tokens_checked", 0) > 300:  # transcripts are large: look every 5 minutes
                 st["tokens_checked"] = time.time()
                 from _pmtokens import fmt, status as token_status
@@ -328,7 +359,12 @@ def run(a):
             save(STATE, st)
         except Exception as e:  # keep the daemon alive
             log(f"watchd error {e!r}")
-        time.sleep(a.interval)
+        on = waker.watch(watch_ids)
+        if on != socket_state:
+            log("herdr event socket in use" if on else f"herdr event socket unavailable ({waker.error}); looking every {a.interval}s")
+            socket_state = on
+        # while the CPU is being watched for a streak, look again in 30 s even when nothing happens
+        waker.wait(min(a.interval, 30) if st.get("cpu_streak") else a.interval)
 
 
 def ancestors():
@@ -372,6 +408,7 @@ def stop():
     if pid:
         os.kill(pid, signal.SIGTERM)
         PID.unlink(missing_ok=True)
+        WAKE.unlink(missing_ok=True)
     return pid
 
 
@@ -379,7 +416,8 @@ def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("cmd", choices=["start", "stop", "status", "tail", "run", "whoami"])
     p.add_argument("n", nargs="?", default="30")
-    p.add_argument("--pm"); p.add_argument("--interval", type=int, default=20); p.add_argument("--mem", type=float, default=22.5)
+    p.add_argument("--pm"); p.add_argument("--interval", type=int, default=60); p.add_argument("--mem", type=float, default=22.5)
+    p.add_argument("--cpu", type=float, default=90)
     p.add_argument("--ctx", type=int, default=300000); p.add_argument("--pm-ctx", type=int, default=1000000); p.add_argument("--stale-hours", type=float, default=3)
     a = p.parse_args()
     if a.cmd == "status":
@@ -437,11 +475,11 @@ def main():
     save(PMINFO, dict(pm_pane=pm_pane, pm_name=pm_a.get("name"), pm_session=pm_session, pm_sessions=sessions, session_issues=session_issues,
                       workspace=pm_a.get("workspace_id") or os.environ.get("HERDR_WORKSPACE_ID"), started=now()))
     args = [sys.executable, "-I", os.path.abspath(__file__), "run", "--pm", pm_pane, "--interval", str(a.interval),
-            "--mem", str(a.mem), "--ctx", str(a.ctx), "--pm-ctx", str(a.pm_ctx), "--stale-hours", str(a.stale_hours)]
+            "--mem", str(a.mem), "--cpu", str(a.cpu), "--ctx", str(a.ctx), "--pm-ctx", str(a.pm_ctx), "--stale-hours", str(a.stale_hours)]
     with open(LOG, "a") as out:
         proc = subprocess.Popen(args, stdout=out, stderr=out, stdin=subprocess.DEVNULL, start_new_session=True, close_fds=True)
     time.sleep(0.5)
-    print(f"started pid {proc.pid} pm={pm_a.get('name') or pm_pane} ({pm_pane}) session={pm_session} interval={a.interval}s mem>{a.mem}GB ctx>{a.ctx} pm-ctx>{a.pm_ctx}")
+    print(f"started pid {proc.pid} pm={pm_a.get('name') or pm_pane} ({pm_pane}) session={pm_session} fallback interval={a.interval}s mem>{a.mem}GB cpu>{a.cpu:.0f}% ctx>{a.ctx} pm-ctx>{a.pm_ctx}")
 
 
 main()

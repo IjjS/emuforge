@@ -1,7 +1,8 @@
 #!/usr/bin/env -S python3 -I
 """Run the checks of a checkout and record the result. The record, not an agent's word, is the evidence.
 
-  pm-check <worktree|.> [--only engine|studio|integration|harness]... [--list]
+  pm-check <worktree|.> [--only engine|studio|integration|harness]... [--no-retry] [--list]
+  pm-check <worktree|.> --stop
 
 Runs, for each module that exists in the checkout:
   engine       cargo fmt --all --check; cargo clippy --workspace --all-targets -- -D warnings; cargo test --workspace
@@ -15,17 +16,35 @@ Each step's output goes to <checkout>/output/logs/check-<step>.log. The summary 
 <checkout>/output/checks/last.json: {commit, dirty, passed, failed: [steps], steps: [{name, status, seconds, log}]}.
 pm-merge refuses a unit whose last.json is not a pass on the branch's current commit.
 Exit code 0 only when every step that ran passed and the tree was clean.
+
+Intermittent failures. A test step that fails (engine-test, studio-unit, integration, harness-test) is run once
+more. When the second run passes, the step is recorded as "flaky": the run still passes, the first run's log is
+kept as check-<step>.attempt1.log, and a line goes to <root>/.pm/run/flakes.jsonl, which the PM turns into an issue
+file. So one intermittent failure costs a rerun of one step, not the unit's merge, and it is never lost. A step
+that fails twice is failed. Format, lint, type and build steps are never retried. --no-retry turns this off.
+
+Load. At most two pm-check runs that build or test the product (engine, studio, integration) run at the same
+time across all worktrees; a third waits for a slot (<root>/.pm/run/check-slots/). Before its first step such a
+run also waits, up to five minutes, for the CPU to drop under 90%. Both are printed. A harness-only run does not
+wait.
+
+Processes. Each step runs in its own process group, recorded in <checkout>/output/checks/running.json while the
+run lasts. `pm-check <worktree> --stop` ends that worktree's run and nothing else: SIGTERM to the recorded group
+and the recorded pm-check, SIGKILL after ten seconds. Never stop a check by process name (pkill, killall): that
+ends other worktrees' runs too. A pm-check that receives SIGTERM or SIGINT stops its own step the same way.
 """
 import argparse
+import fcntl
 import json
 import os
 import pathlib
+import signal
 import subprocess
 import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _pmlib import now
+from _pmlib import LIMITS, ROOT, RUN, cpu_pct, now
 
 STEPS = {
     "engine": ("engine", "Cargo.toml", [
@@ -52,11 +71,124 @@ SCRUB = ("AWS_PROFILE", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSI
          "AWS_SHARED_CREDENTIALS_FILE", "AWS_ENDPOINT_URL", "AWS_DEFAULT_PROFILE", "AWS_ROLE_ARN", "AWS_WEB_IDENTITY_TOKEN_FILE")
 
 
+RETRY = ("engine-test", "studio-unit", "integration", "harness-test")  # steps whose failure can be intermittent
+HEAVY = ("engine", "studio", "integration")  # modules whose steps load the machine
+CPU_WAIT = 300  # seconds a heavy run waits for the CPU to drop under the limit before it starts anyway
+current = None  # the running step's Popen
+
+
+def take_slot():
+    """Hold one of LIMITS['checks'] locks for the life of this process; wait while all are taken. The lock is a
+    flock, so a run that dies frees its slot."""
+    d = RUN / "check-slots"
+    d.mkdir(parents=True, exist_ok=True)
+    said = False
+    while True:
+        for i in range(LIMITS["checks"]):
+            f = open(d / f"slot-{i}.lock", "w")
+            try:
+                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                f.write(f"{os.getpid()}\n"); f.flush()
+                return f
+            except BlockingIOError:
+                f.close()
+        if not said:
+            print(f"  queued: {LIMITS['checks']} pm-check runs are already building or testing; waiting for a slot", flush=True)
+            said = True
+        time.sleep(2)
+
+
+def wait_for_cpu():
+    """Wait up to CPU_WAIT for the CPU to be under the limit. Returns the last reading (None when unknown)."""
+    start, said = time.time(), False
+    while True:
+        cpu = cpu_pct()
+        if cpu is None or cpu <= LIMITS["cpu_pct"] or time.time() - start > CPU_WAIT:
+            if said:
+                print(f"  cpu {cpu}%: starting", flush=True)
+            return cpu
+        if not said:
+            print(f"  waiting: cpu {cpu}% > {LIMITS['cpu_pct']}% (at most {CPU_WAIT}s)", flush=True)
+            said = True
+        time.sleep(10)
+
+
+def end_group(pgid, grace=10):
+    """SIGTERM a process group, then SIGKILL what is left after `grace` seconds. True when it is gone."""
+    for sig, wait in ((signal.SIGTERM, grace), (signal.SIGKILL, 2)):
+        try:
+            os.killpg(pgid, sig)
+        except (ProcessLookupError, PermissionError):
+            return True
+        end = time.time() + wait
+        while time.time() < end:
+            try:
+                os.killpg(pgid, 0)
+            except (ProcessLookupError, PermissionError):
+                return True
+            time.sleep(0.1)
+    return False
+
+
+def on_signal(signum, _frame):
+    if current is not None and current.poll() is None:
+        end_group(current.pid)
+    sys.exit(128 + signum)
+
+
+def stop(co):
+    """End the run recorded for this checkout, and only that one. A pane may stop its own worktree's run; only a
+    caller in the main checkout (the PM) may stop another's."""
+    here = pathlib.Path.cwd().resolve()
+    if here != co and co not in here.parents and here != ROOT and ROOT not in here.parents:
+        sys.exit(f"refused: you are in {here}, not in {co}. Stop only your own worktree's run.")
+    rec = co / "output" / "checks" / "running.json"
+    try:
+        r = json.loads(rec.read_text())
+    except (FileNotFoundError, ValueError):
+        print(f"no pm-check run is recorded for {co}")
+        return
+    try:
+        os.kill(int(r["pm_check_pid"]), 0)
+    except (ProcessLookupError, PermissionError, KeyError, ValueError):
+        rec.unlink(missing_ok=True)
+        print(f"the recorded run (pid {r.get('pm_check_pid')}) is no longer alive; record removed")
+        return
+    # the run's own handler ends its step's group; the group is ended here as well in case the run is stuck
+    os.kill(int(r["pm_check_pid"]), signal.SIGTERM)
+    if r.get("pgid"):
+        end_group(int(r["pgid"]))
+    rec.unlink(missing_ok=True)
+    print(f"stopped pm-check pid {r['pm_check_pid']} (step {r.get('step')}) of {co}")
+
+
+def run_step(cmd, cwd, env, log, record, name):
+    """Run one step in its own process group with its output in `log`; return the exit code (127: not found)."""
+    global current
+    with open(log, "w") as f:
+        try:
+            current = subprocess.Popen(cmd, cwd=cwd, stdout=f, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                                       env=env, start_new_session=True)
+        except FileNotFoundError as e:
+            f.write(f"{e}\n")
+            return 127
+        record.write_text(json.dumps(dict(pm_check_pid=os.getpid(), pgid=current.pid, step=name, started=now())))
+        try:
+            return current.wait()
+        finally:
+            end_group(current.pid, grace=2)  # nothing a step started outlives it
+            current = None
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("checkout"); p.add_argument("--only", action="append", choices=list(STEPS)); p.add_argument("--list", action="store_true")
+    p.add_argument("--no-retry", action="store_true"); p.add_argument("--stop", action="store_true")
     a = p.parse_args()
     co = pathlib.Path(a.checkout).resolve()
+    if a.stop:
+        stop(co)
+        return
     if a.list:
         for mod, (sub, manifest, steps) in STEPS.items():
             print(f"{mod:12} {'present' if (co / sub / manifest).exists() else 'absent ':7} {', '.join(n for n, _ in steps)}")
@@ -71,8 +203,28 @@ def main():
         env.update(EMUFORGE_STUDIO_PORT=str(ports["studio"]), EMUFORGE_ENGINE_PORT=str(ports["engine"]), EMULATOR_PORT=str(ports["emulator"]))
     commit = subprocess.run(["git", "-C", str(co), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
     dirty = bool(subprocess.run(["git", "-C", str(co), "status", "--porcelain"], capture_output=True, text=True).stdout.strip())
-    results = []
-    for mod in (a.only or list(STEPS)):
+    record = out / "running.json"
+    for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(s, on_signal)
+    mods = a.only or list(STEPS)
+    cpu = None
+    slot = None
+    if any(m in HEAVY and (co / STEPS[m][0] / STEPS[m][1]).exists() for m in mods):
+        slot = take_slot()
+        cpu = wait_for_cpu()
+    results, flaky = [], []
+    try:
+        results, flaky = run_all(a, co, mods, env, logs, record, commit)
+    finally:
+        record.unlink(missing_ok=True)
+        if slot:
+            slot.close()
+    finish(a, co, out, commit, dirty, ports, results, flaky, cpu)
+
+
+def run_all(a, co, mods, env, logs, record, commit):
+    results, flaky = [], []
+    for mod in mods:
         sub, manifest, steps = STEPS[mod]
         if not (co / sub / manifest).exists():
             results.append(dict(name=mod, status="absent", seconds=0, log=None))
@@ -81,20 +233,32 @@ def main():
         for name, cmd in steps:
             log = logs / f"check-{name}.log"
             t = time.time()
-            with open(log, "w") as f:
-                try:
-                    code = subprocess.run(cmd, cwd=str(co / sub), stdout=f, stderr=subprocess.STDOUT, env=env).returncode
-                except FileNotFoundError as e:
-                    f.write(f"{e}\n")
-                    code = 127
-            status = "passed" if code == 0 else ("error" if code == 127 else "failed")
+            code = run_step(cmd, str(co / sub), env, log, record, name)
+            first = None
+            if code not in (0, 127) and name in RETRY and not a.no_retry:
+                first = logs / f"check-{name}.attempt1.log"
+                log.replace(first)
+                print(f"  {name:18} failed once; running it again (first log: {first})", flush=True)
+                code = run_step(cmd, str(co / sub), env, log, record, name)
+            status = "error" if code == 127 else "failed" if code != 0 else "flaky" if first else "passed"
             results.append(dict(name=name, status=status, seconds=round(time.time() - t, 1), log=str(log)))
-            print(f"  {name:18} {status:7} {results[-1]['seconds']:>7}s  {log}")
+            if first:
+                results[-1]["first_log"] = str(first)
+            if status == "flaky":
+                flaky.append(name)
+                with open(RUN / "flakes.jsonl", "a") as f:
+                    f.write(json.dumps(dict(at=now(), checkout=str(co), commit=commit, step=name, first_log=str(first))) + "\n")
+            print(f"  {name:18} {status:7} {results[-1]['seconds']:>7}s  {log}", flush=True)
+    return results, flaky
+
+
+def finish(a, co, out, commit, dirty, ports, results, flaky, cpu):
     failed = [r["name"] for r in results if r["status"] in ("failed", "error")]
     ran = [r for r in results if r["status"] != "absent"]
     full = not a.only
     passed = not failed and not dirty and full  # a checkout with no module to check (harness-only work) passes on a clean tree
-    summary = dict(at=now(), commit=commit, dirty=dirty, full=full, passed=passed, failed=failed, ports=ports, steps=results)
+    summary = dict(at=now(), commit=commit, dirty=dirty, full=full, passed=passed, failed=failed, flaky=flaky,
+                   cpu_at_start=cpu, ports=ports, steps=results)
     (out / "last.json").write_text(json.dumps(summary, indent=1))
     (out / f"{now()[:19].replace(':', '')}.json").write_text(json.dumps(summary, indent=1))
     notes = []
@@ -104,6 +268,8 @@ def main():
         notes.append("partial run (--only): not accepted by pm-merge")
     if not ran:
         notes.append("nothing to run in this checkout")
+    if flaky:
+        notes.append(f"flaky (failed once, passed on the second run): {', '.join(flaky)}; recorded in .pm/run/flakes.jsonl")
     print(f"{'PASSED' if passed else 'NOT PASSED'} commit={commit[:9]} failed={failed or '-'} {'; '.join(notes)}")
     sys.exit(0 if passed else 1)
 
