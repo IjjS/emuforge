@@ -10,6 +10,10 @@
 // | `EMUFORGE_ENGINE_PORT` | the port the engine a check starts listens on |
 // | `EMUFORGE_STUDIO_PORT` | the port Studio's server a check starts listens on |
 // | `EMUFORGE_IT_RUN_ID` | unique per run; names and labels the containers a check starts |
+// | `EMUFORGE_IT_PRODUCT_IMAGE` | the run's own name for the product form's image (`EMUFORGE_IMAGE` of a form) |
+// | `EMUFORGE_IT_EMULATOR_IMAGE` | the run's own tag of its pinned emulator image (`EMUFORGE_EMULATOR_IMAGE` of a form) |
+// | `EMUFORGE_IT_PRODUCT_BUILD` | `ok`, `absent` or `failed`: the run's build of the product image |
+// | `EMUFORGE_IT_EMULATOR_VERSION`, `EMUFORGE_IT_EMULATOR_COMMIT` | the version and commit the run recorded |
 
 import path from 'node:path';
 
@@ -32,6 +36,14 @@ export interface RunEnv {
   /** Why there is no built Studio to serve, when `run` knows it. */
   studioMissing: string | null;
   runId: string;
+  /** The run's names for the product form's images; `''` when `run` did not set them. */
+  productImage: string;
+  emulatorImage: string;
+  /** Why the run's product image did not build, when `run` knows it. */
+  productMissing: string | null;
+  /** The emulator version and commit the run recorded; `''` when `run` did not set them. */
+  emulatorVersion: string;
+  emulatorCommit: string;
 }
 
 function required(name: string): string {
@@ -84,6 +96,15 @@ export function runEnv(): RunEnv {
     engineMissing: missing(process.env.EMUFORGE_IT_ENGINE_BUILD, 'engine build', 'engine/Cargo.toml does not exist'),
     studioMissing: missing(process.env.EMUFORGE_IT_STUDIO_BUILD, 'studio build', 'studio/package.json does not exist'),
     runId: process.env.EMUFORGE_IT_RUN_ID || String(process.pid),
+    productImage: process.env.EMUFORGE_IT_PRODUCT_IMAGE ?? '',
+    emulatorImage: process.env.EMUFORGE_IT_EMULATOR_IMAGE ?? '',
+    productMissing: missing(
+      process.env.EMUFORGE_IT_PRODUCT_BUILD,
+      'product build',
+      'docker-compose.yml does not exist',
+    ),
+    emulatorVersion: process.env.EMUFORGE_IT_EMULATOR_VERSION ?? '',
+    emulatorCommit: process.env.EMUFORGE_IT_EMULATOR_COMMIT ?? '',
   };
   return cached;
 }

@@ -1,0 +1,10 @@
+# The build context of infra/emuforge/Dockerfile: engine/ and studio/ only, without what a host build or a run writes,
+# so nothing a checkout built on the host reaches the image.
+*
+!engine
+!studio
+engine/target
+studio/node_modules
+studio/dist
+**/output
+**/.impeccable
