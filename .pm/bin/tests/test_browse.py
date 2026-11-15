@@ -14,6 +14,11 @@ directory is removed when the case ends. Requests go to 127.0.0.1 only.
 "No browser" (the criteria heading) holds for `check_url` and `serve`. Of the `Structure` cases, the stale lock
 (`cannot open`) and the files-left-behind case (`browser did not start`, `cannot open`, two scored `--serve` runs)
 start the capture child, node with Playwright, so they need the checkout's Chromium like `test_capture.py`.
+
+Issue 21 (design 2.1, 5): `AreaExit` drives `_pmbrowse.capture` with `_pmbrowse.SCRIPT` pointed at a stub `.mjs`
+written by the case, which saves the job it is given next to `out` (`<out>.job-seen.json`), writes `out` when
+asked, prints the case's stderr and exits with the case's code; no browser is started. `AreaClass` pins
+`_pmbrowse.AREA_CLASS` to Studio's `AREA_ROOT_CLASS`.
 """
 import http.client
 import json
@@ -23,7 +28,9 @@ import shutil
 import socket
 import subprocess
 import threading
+import re
 import unittest
+import unittest.mock
 
 try:
     import _pmbrowse
@@ -38,6 +45,7 @@ BUCKET_LIST = FIXTURES / "specs" / "bucket-list.yaml"
 SNAPS = FIXTURES / "snapshots"
 PAGES = FIXTURES / "pages"
 NODE_MODULES = CHECKOUT / "studio" / "node_modules"
+ROOT_CLASS_TS = CHECKOUT / "studio" / "src" / "providers" / "aws" / "area" / "styles" / "root-class.ts"
 MIB = 1024 * 1024
 
 
@@ -297,6 +305,81 @@ class Structure(BrowseCase):
                 if message:
                     self.assertOneErrorLine(p, message)
                 self.assertEqual(self.leftovers(), [])
+
+
+
+# ---------------------------------------------------------------------------------------------------- issue 21
+
+STUB = """import fs from "node:fs";
+const job = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+fs.writeFileSync(job.out + ".job-seen.json", JSON.stringify(job));
+if (%(write)s) fs.writeFileSync(job.out, "{}");
+process.stderr.write(%(stderr)s);
+process.exit(%(code)d);
+"""
+
+
+class AreaExit(BrowseCase):
+    """`capture` maps the child's exit codes 14 to 16 to the messages of requirement 4 (design 2.1)."""
+
+    URL = "http://127.0.0.1:1/s3/buckets"  # never opened: the stub child opens nothing
+
+    def setUp(self):
+        self.need_module()
+        if not (NODE_MODULES / "@playwright" / "test").exists():
+            self.fail(f"@playwright/test is not installed in {CHECKOUT / 'studio'}")
+        self.root = self.work_dir()
+        self.wt = self.root / "wt"
+        (self.wt / "studio").mkdir(parents=True)
+        os.symlink(NODE_MODULES, self.wt / "studio" / "node_modules")
+        self.out = self.wt / "output" / "structure" / "s3.bucket-list-seeded.ax.json"
+        self.out.parent.mkdir(parents=True)
+        self.job = self.out.parent / "s3.bucket-list-seeded.job.json"
+
+    def run_capture(self, code, stderr="", write=False):
+        """`capture` with the stub child; returns the job the child read."""
+        stub = self.root / f"stub-{code}.mjs"
+        stub.write_text(STUB % {"write": "true" if write else "false", "stderr": json.dumps(stderr), "code": code})
+        seen = pathlib.Path(str(self.out) + ".job-seen.json")
+        if seen.exists():
+            seen.unlink()
+        with unittest.mock.patch.object(_pmbrowse, "SCRIPT", str(stub)):
+            _pmbrowse.capture(str(self.wt), self.URL, str(self.out), str(self.job))
+        return json.loads(seen.read_text())
+
+    def assertCaptureError(self, message, code, stderr=""):
+        with self.assertRaises(_pmbrowse.BrowseError) as cm:
+            self.run_capture(code, stderr)
+        self.assertEqual(str(cm.exception), message)
+
+    def test_exit_14_no_area_root(self):
+        self.assertCaptureError(f"{self.URL} has no AWS area root (class aws-area)", 14)
+
+    def test_exit_15_area_roots(self):
+        self.assertCaptureError(f"{self.URL} has 3 AWS area roots (class aws-area)", 15, "pm-structure-capture: 3\n")
+
+    def test_exit_15_bad_count(self):
+        for line in ("1", "two"):
+            with self.subTest(line=line):
+                self.assertCaptureError(f"browser run failed: {line}", 15, f"pm-structure-capture: {line}\n")
+
+    def test_exit_16_area_root_not_in_tree(self):
+        self.assertCaptureError(f"{self.URL}: the AWS area root is not in the accessibility tree", 16)
+
+    def test_exit_0_job_holds_area_class(self):
+        job = self.run_capture(0, write=True)
+        self.assertTrue(self.out.is_file())
+        self.assertIn("areaClass", job)
+        self.assertEqual(job["areaClass"], _pmbrowse.AREA_CLASS)
+
+
+class AreaClass(BrowseCase):
+    def test_pinned_to_studio(self):
+        """`_pmbrowse.AREA_CLASS` is the string Studio's `AREA_ROOT_CLASS` is assigned (requirement 3.1)."""
+        self.need_module()
+        m = re.search(r"""\bAREA_ROOT_CLASS\s*=\s*(['"])([^'"]*)\1""", ROOT_CLASS_TS.read_text())
+        self.assertIsNotNone(m, f"no assignment of AREA_ROOT_CLASS in {ROOT_CLASS_TS}")
+        self.assertEqual(_pmbrowse.AREA_CLASS, m.group(2))
 
 
 if __name__ == "__main__":

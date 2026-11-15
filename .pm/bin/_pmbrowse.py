@@ -7,6 +7,11 @@ Not a command.
   check_toolchain(wt), check_storage_state(path)
   capture(wt, url, out, job, storage_state)   run _pmstructure_capture.mjs with node; the snapshot lands at `out`
 
+The job file the capture child reads holds `areaClass`, AREA_CLASS: the class of the AWS area's root, Studio's
+AREA_ROOT_CLASS (studio/src/providers/aws/area/styles/root-class.ts). The child keeps only that element's
+accessibility subtree; its exit codes 14 (no area root), 15 (more than one, the count on its stderr line) and 16 (the
+root has no accessibility node) become the BrowseError messages of issue 21's requirement 4.
+
 Every child process is started through _pmproc (argument list, no shell, the allowlisted environment, a timeout).
 Errors are BrowseError with the one-line message of requirement 6; a held lock is Busy.
 """
@@ -32,8 +37,11 @@ MAX_IN_FLIGHT = 16
 RUN_TIMEOUT = 120
 VIEWPORT = {"width": 1280, "height": 800}
 SETTLE_MS, SETTLE_MAX, NAV_TIMEOUT = 250, 10000, 60000
-# the capture script's exit codes (design 2.3)
+# the capture script's exit codes (design 2.3; 14 to 16 issue 21, design 2.1)
 LAUNCH, OPEN, SETTLE = 10, 11, 12
+NO_AREA, AREAS, AREA_NOT_IN_TREE = 14, 15, 16
+# the class of the AWS area's root element: the one place the tool names it (issue 21, requirement 3.1)
+AREA_CLASS = "aws-area"
 PREFIX = "pm-structure-capture: "
 TYPES = {".html": "text/html; charset=utf-8", ".htm": "text/html; charset=utf-8", ".js": "text/javascript",
          ".mjs": "text/javascript", ".css": "text/css", ".json": "application/json", ".map": "application/json",
@@ -314,7 +322,7 @@ def capture(wt, url, out, job, storage_state=None, log=None):
     os.makedirs(studio_out, exist_ok=True)
     script = os.path.join(studio_out, f".structure-capture-{os.getpid()}.mjs")
     spec = {"url": url, "out": os.path.abspath(out), "viewport": VIEWPORT, "settleMs": SETTLE_MS,
-            "settleMax": SETTLE_MAX, "navTimeout": NAV_TIMEOUT}
+            "settleMax": SETTLE_MAX, "navTimeout": NAV_TIMEOUT, "areaClass": AREA_CLASS}
     if storage_state is not None:
         spec["storageState"] = os.path.abspath(storage_state)
     # a loopback port bound and never listened on: every connection to it is refused, and while the socket is held
@@ -349,4 +357,12 @@ def capture(wt, url, out, job, storage_state=None, log=None):
         raise BrowseError(f"cannot open {url}: {_message(p.stderr)}")
     if p.returncode == SETTLE:
         raise BrowseError(f"{url} did not settle within {SETTLE_MAX // 1000} s")
+    if p.returncode == NO_AREA:
+        raise BrowseError(f"{url} has no AWS area root (class {AREA_CLASS})")
+    if p.returncode == AREAS:
+        count = _message(p.stderr)
+        if count.isascii() and count.isdigit() and int(count) >= 2:
+            raise BrowseError(f"{url} has {int(count)} AWS area roots (class {AREA_CLASS})")
+    if p.returncode == AREA_NOT_IN_TREE:
+        raise BrowseError(f"{url}: the AWS area root is not in the accessibility tree")
     raise BrowseError(f"browser run failed: {_message(p.stderr)}")

@@ -3,18 +3,25 @@
 //
 //   node .structure-capture-<pid>.mjs <job.json>
 //
-// job: {url, out, storageState?, viewport, settleMs, settleMax, navTimeout, refuse}. Opens `url` in headless Chromium,
-// aborts every request whose host is not a loopback IP address and lists it, waits until two accessibility trees
-// taken `settleMs` apart are equal, and writes the snapshot (design 2.2) to `out`.
+// job: {url, out, storageState?, viewport, settleMs, settleMax, navTimeout, refuse, areaClass}. Opens `url` in
+// headless Chromium, aborts every request whose host is not a loopback IP address and lists it, waits until two takes
+// `settleMs` apart are equal (a take: the page's elements with class `areaClass` and its whole accessibility tree),
+// and writes the snapshot (design 2.2) of the settled take's AWS area to `out`: the accessibility subtree of the one
+// element with class `areaClass` (issue 21).
 // Exit 0 written; 10 the browser did not start; 11 the page could not be opened (error or status >= 400);
-// 12 the page did not settle within `settleMax`; 13 anything else. The message of 10, 11 and 13 is one stderr line
-// starting with "pm-structure-capture: ". Nothing is downloaded or installed, TLS errors are never ignored.
+// 12 the page did not settle within `settleMax`; 13 anything else, a job without a valid `areaClass` included;
+// 14 the settled take has no area root; 15 it has more than one (stderr line "pm-structure-capture: <n>");
+// 16 the area root has no node in the accessibility tree. The message of 10, 11, 13 and 15 is one stderr line
+// starting with "pm-structure-capture: ". Nothing is written on 14 to 16. Nothing is downloaded or installed, TLS
+// errors are never ignored.
 import { chromium } from "@playwright/test";
 import fs from "node:fs";
 
 const PREFIX = "pm-structure-capture: ";
 const FORMAT = "pm-structure-snapshot/1";
-const LAUNCH = 10, OPEN = 11, SETTLE = 12, OTHER = 13;
+const LAUNCH = 10, OPEN = 11, SETTLE = 12, OTHER = 13, NO_AREA = 14, AREAS = 15, AREA_NOT_IN_TREE = 16;
+// the class name becomes the selector "." + areaClass, so it is held to a plain CSS identifier
+const CLASS_NAME = /^[A-Za-z_][A-Za-z0-9_-]*$/;
 
 let browser = null;
 
@@ -36,14 +43,14 @@ function loopback(raw) {
   return !!m && m.slice(1).every((x) => Number(x) <= 255);
 }
 
-// Chromium's full accessibility tree as a pre-order list of the nodes that are not ignored and not InlineTextBox;
-// the walk goes through ignored nodes to their children and `parent` is the nearest kept ancestor
-function flatten(axNodes) {
+// Chromium's accessibility tree walked from `starts` as a pre-order list of the nodes that are not ignored and not
+// InlineTextBox; the walk goes through ignored nodes to their children and `parent` is the nearest kept ancestor
+// inside the walk, or null
+function walk(axNodes, starts) {
   const byId = new Map(axNodes.map((n) => [n.nodeId, n]));
-  const roots = axNodes.filter((n) => !n.parentId || !byId.has(n.parentId));
   const out = [];
   const seen = new Set();
-  const stack = roots.reverse().map((n) => [n, null]);
+  const stack = [...starts].reverse().map((n) => [n, null]);
   while (stack.length) {
     const [n, parent] = stack.pop();
     if (seen.has(n.nodeId)) continue;
@@ -60,8 +67,37 @@ function flatten(axNodes) {
   return out;
 }
 
+// the whole tree: the walk from every node without a parent in the list
+function flatten(axNodes) {
+  const ids = new Set(axNodes.map((n) => n.nodeId));
+  return walk(axNodes, axNodes.filter((n) => !n.parentId || !ids.has(n.parentId)));
+}
+
+// the backendNodeIds of the page's elements with class `areaClass`, in document order; the lookup does not pierce
+// shadow roots. null when an element the query found is gone before it is described (CDP's node-gone error): the
+// page changed during the lookup, so the take is not one to settle on; any other error is thrown
+async function areaRoots(cdp, areaClass) {
+  const { root } = await cdp.send("DOM.getDocument", { depth: 0 });
+  const { nodeIds } = await cdp.send("DOM.querySelectorAll", { nodeId: root.nodeId, selector: "." + areaClass });
+  const roots = [];
+  for (const nodeId of nodeIds) {
+    let described;
+    try {
+      described = await cdp.send("DOM.describeNode", { nodeId });
+    } catch (e) {
+      if (String((e && e.message) || e).includes("Could not find node with given id")) return null;
+      throw e;
+    }
+    roots.push(described.node.backendNodeId);
+  }
+  return roots;
+}
+
 async function main() {
   const job = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+  if (typeof job.areaClass !== "string" || !CLASS_NAME.test(job.areaClass)) {
+    return fail(OTHER, "job has no valid areaClass");
+  }
   try {
     // Requests reached through an HTTP redirect are not seen by context.route, so the browser also goes through a
     // proxy at job.refuse, a loopback port that refuses every connection, bypassed only for loopback addresses:
@@ -104,15 +140,22 @@ async function main() {
   await cdp.send("Accessibility.enable");
   const start = Date.now();
   let previous = null;
-  let nodes;
+  let roots, axNodes;
   for (;;) {
-    nodes = flatten((await cdp.send("Accessibility.getFullAXTree")).nodes);
-    const text = JSON.stringify(nodes);
-    if (text === previous) break;
+    // a take: the area roots, then the tree; it settles when the roots and the whole page's tree are both unchanged
+    roots = await areaRoots(cdp, job.areaClass);
+    axNodes = (await cdp.send("Accessibility.getFullAXTree")).nodes;
+    const text = roots === null ? null : JSON.stringify({ roots, nodes: flatten(axNodes) });
+    if (text !== null && text === previous) break;
     previous = text;
     if (Date.now() - start >= job.settleMax) return fail(SETTLE, "did not settle");
     await new Promise((resolve) => setTimeout(resolve, job.settleMs));
   }
+  if (roots.length === 0) return fail(NO_AREA, "no area root");
+  if (roots.length > 1) return fail(AREAS, String(roots.length));
+  const area = axNodes.find((n) => n.backendDOMNodeId === roots[0]);
+  if (!area) return fail(AREA_NOT_IN_TREE, "the area root is not in the accessibility tree");
+  const nodes = walk(axNodes, [area]);
   const snapshot = {
     format: FORMAT, url: page.url(), viewport: job.viewport, browser: `chromium ${browser.version()}`,
     blocked: [...blocked].sort(), nodes,
