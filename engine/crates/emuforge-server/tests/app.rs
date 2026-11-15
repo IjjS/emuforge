@@ -15,7 +15,6 @@ use axum::Router;
 use axum::body::Body;
 use axum::http::header::{ALLOW, CONNECTION, CONTENT_TYPE, HOST, ORIGIN};
 use axum::http::{HeaderMap, Method, Request, StatusCode};
-use emuforge_core::sigv4::SIGNED_CHUNK_MODES;
 use emuforge_core::{Emulator, Health, Limits, Prepared, Reason, RelayError, forward};
 use emuforge_server::{
     AppState, CLIENT_WRITE_IDLE, IdleListener, ProbeFn, RelayFn, SessionToken, StudioOrigin, app,
@@ -1019,15 +1018,6 @@ async fn relay_failing(error: RelayError) -> Answer {
 async fn relay_errors_are_the_engines_answers_in_the_callers_protocol() {
     let mut cases = vec![
         (
-            "PayloadSigningNotSupported",
-            RelayError::PayloadSigningNotSupported {
-                mode: SIGNED_CHUNK_MODES[0],
-            },
-            StatusCode::BAD_REQUEST,
-            "PayloadSigningNotSupported",
-            "Sender",
-        ),
-        (
             "ClientStalled",
             RelayError::ClientStalled,
             StatusCode::REQUEST_TIMEOUT,
@@ -1112,39 +1102,6 @@ async fn head_request_with_emulator_unavailable_is_503_with_headers_and_no_body(
     assert_eq!(answer.headers[CONTENT_TYPE], "application/json");
     assert_eq!(answer.headers["x-amzn-errortype"], "EmulatorUnavailable");
     assert!(answer.body.is_empty());
-}
-
-#[tokio::test]
-async fn payload_signing_refusal_names_the_mode_and_no_request_header_value() {
-    for mode in SIGNED_CHUNK_MODES {
-        let relay = TestRelay::answering(Script::Error(RelayError::PayloadSigningNotSupported {
-            mode,
-        }));
-        let app = app_relaying(reachable_probe(), relay.relay.clone());
-        let request = empty(
-            header_signed(Method::PUT, "/b/k", "s3")
-                .header("user-agent", "canary-agent-5e1d")
-                .header("x-amz-meta-note", "canary-meta-77ab")
-                .header("content-encoding", "aws-chunked"),
-        );
-        let values: Vec<String> = request
-            .headers()
-            .values()
-            .map(|value| value.to_str().unwrap().to_owned())
-            .collect();
-        let answer = send(&app, request).await;
-        assert_eq!(answer.status, StatusCode::BAD_REQUEST, "case {mode}");
-        let body = answer.text();
-        assert!(
-            body.starts_with("<Error><Code>PayloadSigningNotSupported</Code><Message>"),
-            "case {mode}: {body}"
-        );
-        assert!(body.contains(mode), "case {mode}: {body}");
-        for value in values {
-            assert!(!body.contains(&value), "case {mode}: {value} in {body}");
-        }
-        assert!(!body.contains(CLIENT_KEY), "case {mode}: key id in {body}");
-    }
 }
 
 // ---- In-flight bound across relayed bodies (issue 2, D11) ----

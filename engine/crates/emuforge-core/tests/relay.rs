@@ -13,7 +13,6 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use bytes::Bytes;
-use emuforge_core::sigv4::SIGNED_CHUNK_MODES;
 use emuforge_core::{
     CA_FILE, CONNECT_DEADLINE, CREDENTIALS_FILE, Emulator, EmulatorFiles, IdleWrite, Limits,
     Prepared, Reason, RelayBody, RelayError, connect_on, forward, prepare, relay,
@@ -344,22 +343,6 @@ async fn prepare_without_payload_hash_adds_and_signs_unsigned_payload() {
 }
 
 #[tokio::test]
-async fn prepare_signed_chunk_modes_are_refused_naming_the_mode() {
-    let captured = vector_head("put-object-k1");
-    for mode in SIGNED_CHUNK_MODES {
-        let client = client_form(&captured, CLIENT_KEY_ID).replace(
-            "X-Amz-Content-SHA256: b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9",
-            &format!("X-Amz-Content-SHA256: {mode}"),
-        );
-        assert_eq!(
-            prepared(&client).await.unwrap_err(),
-            RelayError::PayloadSigningNotSupported { mode },
-            "{mode}"
-        );
-    }
-}
-
-#[tokio::test]
 async fn prepare_signed_chunk_mode_in_another_case_is_forwarded() {
     let client = client_form(&vector_head("put-object-k1"), CLIENT_KEY_ID).replace(
         "X-Amz-Content-SHA256: b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9",
@@ -613,13 +596,6 @@ async fn prepared_debug_of_a_query_signed_request_shows_no_query() {
 #[test]
 fn relay_error_display_shows_a_code_and_kind_only() {
     let cases = [
-        (
-            "payload signing",
-            RelayError::PayloadSigningNotSupported {
-                mode: SIGNED_CHUNK_MODES[0],
-            },
-            "PayloadSigningNotSupported (STREAMING-AWS4-HMAC-SHA256-PAYLOAD)",
-        ),
         (
             "unavailable, not started",
             RelayError::Unavailable(Reason::NotStarted),
@@ -1013,24 +989,6 @@ async fn relay_with_malformed_ca_is_unavailable_files_unreadable() {
             .await
             .unwrap_err(),
         RelayError::Unavailable(Reason::FilesUnreadable { file: CA_FILE })
-    );
-}
-
-#[tokio::test]
-async fn relay_signed_chunk_upload_is_refused_before_the_files_are_read() {
-    let home = tempfile::tempdir().unwrap();
-    let head = client_form(&vector_head("put-object-k1"), CLIENT_KEY_ID).replace(
-        "X-Amz-Content-SHA256: b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9",
-        "X-Amz-Content-SHA256: STREAMING-AWS4-HMAC-SHA256-PAYLOAD",
-    );
-    let request = Request::from_parts(parts(&head), Empty::<Bytes>::new());
-    assert_eq!(
-        relay(&emulator(home.path()), request, &Limits::DEFAULT)
-            .await
-            .unwrap_err(),
-        RelayError::PayloadSigningNotSupported {
-            mode: "STREAMING-AWS4-HMAC-SHA256-PAYLOAD"
-        }
     );
 }
 
