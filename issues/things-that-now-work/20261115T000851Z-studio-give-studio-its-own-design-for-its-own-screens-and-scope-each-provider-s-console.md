@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: studio|style-layers|provider-scoped
-Issue-Check-Ids:
+Issue-Check-Ids: studio.serve-binds-loopback-with-spa-fallback,studio.home-shows-connected,studio.home-shows-emulator-not-started-after-stop,studio.home-reconnects-after-emulator-kill-and-start,studio.home-shows-engine-unreachable-and-recovers,studio.home-shows-engine-unreachable-for-another-studio-origin,studio.app-talks-only-to-engine-and-own-origin,studio.aws-clients-list-matches-direct,studio.aws-clients-renew-session-after-engine-restart,studio.service-routes-say-no-screen-yet,studio.unknown-route-shows-page-not-found,studio.old-root-service-paths-show-page-not-found,studio.aws-area-unknown-path-shows-page-not-found,studio.frame-leads-between-layers,studio.aws-area-loads-only-when-opened,studio.shell-finish,studio.cloudscape-stays-inside-aws-area,studio.studio-style-stays-outside-aws-area,studio.colour-scheme-follows-the-system-in-both-layers,studio.own-layer-contrast-and-focus
 Issue-Commit: 338dabcc4d1cb701adb3997baaaa0872118c8d96
 
 # Give Studio its own design for its own screens and scope each provider's console style to that provider's area
