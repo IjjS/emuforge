@@ -242,6 +242,8 @@ version = "0.0.0"
 dependencies = [
  "aws-credential-types",
  "aws-sigv4",
+ "aws-smithy-runtime-api",
+ "bytes",
  "crc32fast",
  "if-addrs",
  "rustls",

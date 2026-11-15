@@ -13,6 +13,7 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
+use emuforge_core::chunked::CHUNK_DATA_CAP;
 use emuforge_core::sigv4::{Auth, classify};
 use emuforge_core::{Emulator, Health, Limits, Reason, RelayBody, RelayError};
 use serde::Serialize;
@@ -316,8 +317,9 @@ fn logged_service(parts: &Parts) -> String {
     }
 }
 
-/// The engine's own answer to a relay that failed before the emulator's response head (requirement §6 rows
-/// 4-9). Rows 6-9 and a failed client body close the client connection after the answer.
+/// The engine's own answer to a relay that failed before the emulator's response head (issue #2 requirement §6
+/// rows 5-9, and issue #9's chunk above the cap). Rows 6-9, a failed client body and a chunk above the cap close
+/// the client connection after the answer.
 fn relay_error(
     emulator: &Emulator,
     protocol: Protocol,
@@ -327,13 +329,13 @@ fn relay_error(
     let endpoint = emulator.endpoint();
     let limits = Limits::DEFAULT;
     let (status, code, message, close) = match error {
-        RelayError::PayloadSigningNotSupported { mode } => (
+        RelayError::ChunkTooLarge => (
             StatusCode::BAD_REQUEST,
-            "PayloadSigningNotSupported",
+            "ChunkTooLarge",
             format!(
-                "the engine does not relay uploads with x-amz-content-sha256 {mode} yet; send the body with a payload hash or UNSIGNED-PAYLOAD"
+                "a chunk of the aws-chunked request body is larger than {CHUNK_DATA_CAP} bytes, the most the engine relays in one chunk; upload with smaller chunks"
             ),
-            false,
+            true,
         ),
         RelayError::Unavailable(reason) => (
             StatusCode::SERVICE_UNAVAILABLE,

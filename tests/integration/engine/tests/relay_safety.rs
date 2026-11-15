@@ -1,6 +1,6 @@
 //! `engine.relay-*` safety checks (test-criteria.md, issue 2): the relay signs with the emulator's key and with
-//! nothing from the process environment or `~/.aws` but the emulator's own files, refuses signed-chunk uploads,
-//! connects to nothing but the emulator on loopback, and writes no secret, key id, signature or canary to its
+//! nothing from the process environment or `~/.aws` but the emulator's own files, stores uploads with an unsigned
+//! trailer, connects to nothing but the emulator on loopback, and writes no secret, key id, signature or canary to its
 //! output.
 //!
 //! Setup and cleanup go straight to the emulator (`support/fixtures.rs`); only the requests under test go
@@ -221,42 +221,14 @@ fn fifo_name(dir: &Path, path: &Path) -> String {
 }
 
 #[test]
-fn relay_refuses_signed_chunk_upload() {
-    check("engine.relay-refuses-signed-chunk-upload", |ctx| {
+fn relay_s3_unsigned_trailer_upload_stored() {
+    check("engine.relay-s3-unsigned-trailer-upload-stored", |ctx| {
         let ctx: &Ctx = ctx;
         let direct = Direct::new(ctx)?;
         let bucket = Bucket::create(&direct, &format!("{}-chk", prefix(ctx, "chk")))?;
         let _engine = Engine::start(ctx, EngineCmd::new(ctx))?;
 
         let decoded = seeded(0x5eed_0101, 100 * 1024);
-        bucket.track("signed");
-        let refused = through_engine(
-            ctx,
-            "PutObject with signed chunks",
-            &signed_chunk_put(&bucket.path("signed"), &decoded),
-            &Key::check(),
-        );
-        assert_eq!(
-            refused.status,
-            400,
-            "PutObject with signed chunks, through the engine: status, body {}",
-            snippet(&refused)
-        );
-        assert_eq!(
-            elements(&refused.body, "Code"),
-            ["PayloadSigningNotSupported"],
-            "PutObject with signed chunks, through the engine: S3 XML error code in {}",
-            snippet(&refused)
-        );
-        let head = direct.send(
-            "HeadObject signed",
-            &Call::s3("HEAD", &bucket.path("signed")),
-        )?;
-        assert_eq!(
-            head.status, 404,
-            "HeadObject of the key after the refused signed-chunk PutObject"
-        );
-
         bucket.track("trailer");
         let trailer = Call::s3("PUT", &bucket.path("trailer"))
             .payload(Payload::Literal(
@@ -442,7 +414,7 @@ fn relay_no_secret_in_output() {
             ),
             (
                 "PutObject with signed chunks",
-                signed_chunk_put(&bucket.path("refused"), b"signed chunks are refused").at(at),
+                signed_chunk_put(&bucket.path("signed"), b"signed chunks are relayed").at(at),
                 &check_key,
             ),
             (
@@ -469,12 +441,12 @@ fn relay_no_secret_in_output() {
         ];
         // The engine's own error answers; every other request is relayed, and is answered as the emulator answers
         // it, or the When of the criteria line has not happened.
-        let own_errors = ["PutObject with signed chunks"];
+        let own_errors: [&str; 0] = [];
         let relayed_status = |what: &str| match what {
             "unsigned GetObject" => 403,
             _ => 200,
         };
-        bucket.track("refused");
+        bucket.track("signed");
 
         // The exact heads the engines will receive, recorded before they take the port.
         let mut heads = Vec::new();
