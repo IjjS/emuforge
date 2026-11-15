@@ -73,7 +73,7 @@
     "other": "{count} บริการ · ยังไม่มีหน้าจอใน Studio"
   },
   "notFound.title": "ไม่พบหน้า",
-  "notFound.statement": "Studio ไม่มีหน้าที่ {path}",
+  "notFound.statement": "Studio ไม่มีหน้า {path}",
   "notFound.path": "เส้นทาง",
   "notFound.home": "ไปที่หน้าแรก"
 }
