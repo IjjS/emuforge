@@ -44,10 +44,12 @@
     clip-path: inset(50%);
   }
 
+  /* The wordmark link: the tile, then the text, which keeps its own baseline pair. It never shrinks, and it has no
+     hover style (DESIGN.md, the wordmark). */
   .st-wordmark {
     flex: none;
     display: inline-flex;
-    align-items: baseline;
+    align-items: center;
     gap: 6px;
     color: var(--st-text);
     text-decoration: none;
@@ -56,13 +58,41 @@
     letter-spacing: -0.01em;
   }
 
+  .st-wordmark-text {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+  }
+
   .st-wordmark b {
     font-weight: 650;
   }
 
-  .st-wordmark span {
+  .st-wordmark-studio {
     color: var(--st-text-2);
     font-weight: 400;
+  }
+
+  /* The tile in the bar (issue #36, R6.4): 28px; the square is the accent, the bird the accent's ink. */
+  .st-wordmark .st-tile {
+    flex: none;
+    display: block;
+    width: 28px;
+    height: 28px;
+  }
+
+  .st-tile-ground {
+    fill: var(--st-accent);
+  }
+
+  .st-tile-bird {
+    fill: var(--st-accent-ink);
+  }
+
+  /* The ring takes tile and text together, 4px out so it does not touch the tile's corner: 4px of the bar's surface
+     lie between the tile and the ring, which keeps them apart in dark, where their colours are close (R6.4). */
+  .st-bar .st-wordmark:focus-visible {
+    outline-offset: 4px;
   }
 
   /* Providers grow the tab list, never the page: it scrolls within itself when it outgrows the bar (R5.1, R6.2). */
@@ -106,6 +136,28 @@
   .st-nav a:focus-visible {
     outline-offset: -4px;
     border-radius: 8px;
+  }
+
+  /* At 640 and below (where the gutter narrows) the tile is 24px with a 5px gap and the bar shows the tile and
+     "EmuForge"; "Studio" stays in the link's accessible name only, clipped as `.st-sr` clips (R6.4, R6.5). */
+  @media (max-width: 640px) {
+    .st-wordmark {
+      gap: 5px;
+    }
+
+    .st-wordmark .st-tile {
+      width: 24px;
+      height: 24px;
+    }
+
+    .st-wordmark-studio {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
   }
 
   /* At 480 and below the bar keeps the wordmark, every tab and the control's globe (R3.5): tighter gaps and tabs. */
