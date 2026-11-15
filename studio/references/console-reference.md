@@ -4,8 +4,13 @@ A screen that mirrors the AWS console is built from a **reference spec**: a text
 AWS screen and in what order. The spec is the design for that screen and the thing its structure score is
 measured against.
 
-Cloudscape is the design system of the AWS console, so components already look right. What a spec pins down is
-structure: which screen exists, what it is called, which actions, columns, tabs, fields and steps it has.
+Such a screen is graded `console` and lives in the AWS area, at `/aws` and below (`studio/AGENTS.md`, "Two
+layers"). Studio's own layer (the frame, Home, Studio's "Page not found") has no `console` screen and no spec; its
+screens are designed per `critique.md` in Studio's own design system.
+
+Inside the AWS area everything is Cloudscape, the design system of the AWS console, so components already look
+right. What a spec pins down is structure: which screen exists, what it is called, which actions, columns, tabs,
+fields and steps it has.
 
 ## Where and who
 
@@ -31,7 +36,7 @@ of its own. Captures are never committed; only the spec is.
 screen: s3.bucket-list            # <service>.<screen>, unique
 service: s3
 kind: table                       # table | detail | form | wizard | dashboard
-route: /s3/buckets                # the Studio route that renders it
+route: /aws/s3/buckets            # the Studio route that renders it, under the AWS area's /aws
 
 breadcrumbs: [Amazon S3, Buckets]
 header:
@@ -52,6 +57,8 @@ omitted:                          # on the AWS screen, deliberately not in Studi
   - item: header.actions[Copy ARN]
     reason: emulator returns 501 for the operation behind it
 ```
+
+`route` always starts with `/aws/`: the AWS area's segment followed by the service's route.
 
 Other kinds use the same idea with their own blocks: `tabs` and `sections` (each with `fields`) for `detail`;
 `sections` with `fields` (label, control, required, constraint text) for `form`; `steps` (each with
@@ -90,6 +97,6 @@ Pass line and what happens below it: `references/critique.md`.
 
 ## What a spec does not cover
 
-Color, spacing and typography (Cloudscape tokens decide those), responsive behavior, and the content of data.
-A structure score says the screen has the same parts as the reference. It does not say the screen is good; the
-impeccable critique does that.
+Color, spacing and typography (Cloudscape tokens decide those inside the AWS area), responsive behavior, and the
+content of data. A structure score says the screen has the same parts as the reference. It does not say the
+screen is good; the impeccable critique does that.
