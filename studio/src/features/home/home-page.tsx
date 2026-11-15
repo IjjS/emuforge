@@ -1,6 +1,7 @@
 import { useCallback, useRef } from 'react';
 
 import { PROVIDERS } from '../../app/provider-list';
+import { useLanguage } from '../../i18n/language-context';
 import { Button } from '../../ui/button';
 import { RefreshIcon } from '../../ui/icons';
 import { PageHead } from '../../ui/page-head';
@@ -19,6 +20,7 @@ function studioPort(): number {
  * providers Studio has, from the providers list.
  */
 export function HomePage() {
+  const { t } = useLanguage();
   const connection = useConnectionCheck();
   const refreshButton = useRef<HTMLButtonElement>(null);
   const handleFocusLost = useCallback(() => {
@@ -27,11 +29,11 @@ export function HomePage() {
   return (
     <>
       <PageHead
-        title="Home"
-        description="A local console for your cloud emulators, through the EmuForge engine."
+        title={t('home.title')}
+        description={t('home.description')}
         actions={
           <Button ref={refreshButton} icon={<RefreshIcon />} busy={connection.checking} onClick={connection.refresh}>
-            Refresh
+            {t('home.refresh')}
           </Button>
         }
       />

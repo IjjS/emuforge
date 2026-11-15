@@ -1,29 +1,33 @@
 import { useEffect, useRef, type FocusEvent } from 'react';
 
+import type { MessageKey } from '../../i18n/catalogue';
+import { useLanguage } from '../../i18n/language-context';
+import type { Messages } from '../../i18n/messages';
 import type { CheckResult } from '../../lib/engine/engine-client';
 import { Panel, Section } from '../../ui/section';
 import { StatusRow, StatusRows, type StatusKind } from '../../ui/status-rows';
 import { ConnectionNotice } from './connection-notice';
-import { formatCheckTime, hasNotice } from './connection-state';
+import { hasNotice } from './connection-state';
 import { CopyRegion } from './copy-region';
+import { RECHECK_MS } from './use-connection-check';
 
 /** One row of the section: a status and the address it is about; `endpoint` `undefined` shows "-". */
 interface Row {
   kind: StatusKind;
-  label: string;
+  label: MessageKey;
   endpoint: string | undefined;
 }
 
-const NOT_KNOWN: Row = { kind: 'idle', label: 'Unknown', endpoint: undefined };
+const NOT_KNOWN: Row = { kind: 'idle', label: 'status.unknown', endpoint: undefined };
 
 function rows(result: CheckResult | undefined, engineOrigin: string | undefined): { engine: Row; emulator: Row } {
   if (result === undefined) {
     return {
-      engine: { kind: 'wait', label: 'Checking', endpoint: engineOrigin },
-      emulator: { kind: 'wait', label: 'Checking', endpoint: undefined },
+      engine: { kind: 'wait', label: 'status.checking', endpoint: engineOrigin },
+      emulator: { kind: 'wait', label: 'status.checking', endpoint: undefined },
     };
   }
-  const connected: Row = { kind: 'ok', label: 'Connected', endpoint: engineOrigin };
+  const connected: Row = { kind: 'ok', label: 'status.connected', endpoint: engineOrigin };
   switch (result.kind) {
     case 'connected':
       return { engine: connected, emulator: { ...connected, endpoint: result.emulator.endpoint } };
@@ -32,39 +36,43 @@ function rows(result: CheckResult | undefined, engineOrigin: string | undefined)
         engine: connected,
         emulator:
           result.reason === 'not_started'
-            ? { kind: 'idle', label: 'Not started', endpoint: result.emulator.endpoint }
-            : { kind: 'err', label: 'Unreachable', endpoint: result.emulator.endpoint },
+            ? { kind: 'idle', label: 'status.notStarted', endpoint: result.emulator.endpoint }
+            : { kind: 'err', label: 'status.unreachable', endpoint: result.emulator.endpoint },
       };
     case 'engine-unreachable':
-      return { engine: { kind: 'err', label: 'Unreachable', endpoint: engineOrigin }, emulator: NOT_KNOWN };
+      return { engine: { kind: 'err', label: 'status.unreachable', endpoint: engineOrigin }, emulator: NOT_KNOWN };
     case 'engine-error':
-      return { engine: { kind: 'err', label: 'Error', endpoint: engineOrigin }, emulator: NOT_KNOWN };
+      return { engine: { kind: 'err', label: 'status.error', endpoint: engineOrigin }, emulator: NOT_KNOWN };
   }
 }
 
 /** What a screen reader hears when the state changes; the region's text stays the same while the state does. */
-function announcement(result: CheckResult | undefined): string {
+function announcement({ t }: Messages, result: CheckResult | undefined): string {
   switch (result?.kind) {
     case undefined:
       return '';
     case 'connected':
-      return 'Engine connected. Emulator connected.';
+      return t('announce.connected');
     case 'emulator-unreachable':
-      return result.reason === 'not_started' ? 'Emulator not started.' : 'Emulator unreachable.';
+      return t(result.reason === 'not_started' ? 'announce.notStarted' : 'announce.emulatorUnreachable');
     case 'engine-unreachable':
-      return 'Engine unreachable.';
+      return t('announce.engineUnreachable');
     case 'engine-error':
-      return `Engine error: ${result.code ?? `HTTP status ${String(result.status)}`}.`;
+      return result.code !== undefined
+        ? t('announce.engineErrorCode', { code: result.code })
+        : t('announce.engineErrorStatus', { status: String(result.status) });
   }
 }
 
-function description(result: CheckResult | undefined): string {
+function description({ t, plural, formatTime }: Messages, result: CheckResult | undefined): string {
   if (result === undefined) {
-    return 'Not checked yet.';
+    return t('connection.notChecked');
   }
-  const time = `Last checked ${formatCheckTime(result.checkedAt)}.`;
+  const time = formatTime(result.checkedAt);
   // A notice says the interval in its re-check line, so it is said only once.
-  return hasNotice(result) ? time : `${time} Checked every 5 seconds.`;
+  return hasNotice(result)
+    ? t('connection.lastChecked', { time })
+    : plural('connection.lastCheckedEvery', RECHECK_MS / 1000, { time });
 }
 
 export interface ConnectionStatusProps {
@@ -81,6 +89,8 @@ export interface ConnectionStatusProps {
 /** The "Connection" section of Home (requirement R9.1): the Engine and Emulator rows and the state's notice. */
 export function ConnectionStatus(props: ConnectionStatusProps) {
   const { result, engineOrigin, enginePort, studioPort, refreshing, onRefresh, onFocusLost } = props;
+  const language = useLanguage();
+  const { t } = language;
   const { engine, emulator } = rows(result, engineOrigin);
 
   // The element in the notice that last had focus, kept until focus leaves for another element. A focused element
@@ -114,12 +124,22 @@ export function ConnectionStatus(props: ConnectionStatusProps) {
   }, [result, onFocusLost]);
 
   return (
-    <Section title="Connection" meta={description(result)}>
+    <Section title={t('connection.title')} meta={description(language, result)}>
       <CopyRegion>
         <Panel>
           <StatusRows>
-            <StatusRow label="Engine" kind={engine.kind} status={engine.label} address={engine.endpoint} />
-            <StatusRow label="Emulator" kind={emulator.kind} status={emulator.label} address={emulator.endpoint} />
+            <StatusRow
+              label={t('connection.engine')}
+              kind={engine.kind}
+              status={t(engine.label)}
+              address={engine.endpoint}
+            />
+            <StatusRow
+              label={t('connection.emulator')}
+              kind={emulator.kind}
+              status={t(emulator.label)}
+              address={emulator.endpoint}
+            />
           </StatusRows>
           {engineOrigin !== undefined && enginePort !== undefined && hasNotice(result) && (
             <div onFocus={handleFocus} onBlur={handleBlur}>
@@ -136,7 +156,7 @@ export function ConnectionStatus(props: ConnectionStatusProps) {
         </Panel>
       </CopyRegion>
       <div className="st-sr" aria-live="polite" aria-atomic="true">
-        {announcement(result)}
+        {announcement(language, result)}
       </div>
     </Section>
   );
