@@ -117,6 +117,9 @@ impl ChunkSigner {
     /// Takes the next body bytes; appends to `out` every byte that is ready to forward. After `Err`, every later
     /// call returns `Err` and takes nothing.
     pub fn push(&mut self, input: &[u8], out: &mut BytesMut) -> Result<(), ChunkTooLarge> {
+        if self.state == State::TooLarge {
+            return Err(ChunkTooLarge);
+        }
         let mut input = input;
         while !input.is_empty() {
             input = match self.state {
