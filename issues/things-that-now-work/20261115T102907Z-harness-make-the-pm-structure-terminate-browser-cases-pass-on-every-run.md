@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: bug
 Issue-Source: worker
 Issue-Key: harness|test_terminate-browser-runs|intermittent
-Issue-Check-Ids:
+Issue-Check-Ids: harness.proc harness.terminate
 Issue-Commit: 3c8e746bb77424ae1077dcd04a1d430eb567bb23
 
 # Make the pm-structure terminate browser cases pass on every run
