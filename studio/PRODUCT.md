@@ -2,8 +2,9 @@
 
 <!-- impeccable:product-schema 1 -->
 
-Sources: the owner's answers of 2026-11-15 (issue #16), the owner's two-layer decision of the same day, and the
-BRD's one-line definition, principles and MVP scope. Anything those do not confirm is listed as undecided below.
+Sources: the owner's answers of 2026-11-15 (issue #16), the owner's two-layer decision of the same day, the
+BRD's one-line definition, principles and MVP scope, and the safety rules of the root `AGENTS.md`. Anything those do
+not confirm is listed as undecided below.
 
 ## Platform
 
@@ -105,7 +106,7 @@ The names "EmuForge" and "EmuForge Studio" are binding. No logo, colour or voice
 ## Evidence on Hand
 
 - No logo or other brand asset exists.
-- No customers, testimonials, case studies, benchmarks, pricing, licensing or press exist. Do not invent them.
+- No customers, testimonials, case studies, benchmarks, pricing or press exist. Do not invent them.
 - What EmuForge does is shown by its own checks against a real emulator (`tests/integration/`), not by claims.
 
 ## Product Principles
