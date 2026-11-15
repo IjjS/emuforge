@@ -24,13 +24,6 @@ pub const SIGNED_CHUNKS: &str = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD";
 /// The `x-amz-content-sha256` value of an upload whose chunks and trailer each carry an HMAC signature. Compared
 /// exactly.
 pub const SIGNED_CHUNKS_TRAILER: &str = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER";
-/// The `x-amz-content-sha256` values whose body carries a chain of chunk signatures. Compared exactly.
-pub const SIGNED_CHUNK_MODES: [&str; 4] = [
-    "STREAMING-AWS4-HMAC-SHA256-PAYLOAD",
-    "STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER",
-    "STREAMING-AWS4-ECDSA-P256-SHA256-PAYLOAD",
-    "STREAMING-AWS4-ECDSA-P256-SHA256-PAYLOAD-TRAILER",
-];
 /// The algorithm line of a chunk's string to sign.
 const CHUNK_ALGORITHM: &str = "AWS4-HMAC-SHA256-PAYLOAD";
 /// The algorithm line of a trailer's string to sign.
