@@ -8,6 +8,7 @@ import type { CheckResult } from '../../../lib/engine/engine-client';
 import type { AreaConnection } from './components/emulator-line';
 import AwsArea from './index';
 import { AREA_ROOT_CLASS } from './styles/root-class';
+import { NO_SCREEN_SENTENCE, NO_SCREEN_SERVICE } from '../../../test/no-screen';
 
 /**
  * Whether the area's "no screen yet" page also renders a Cloudscape `Calendar` below its own content, so a case can
@@ -29,7 +30,7 @@ vi.mock('./pages/no-screen-page', async (importOriginal) => {
 });
 
 const AWS = 'Amazon Web Services';
-const S3 = 'Amazon Simple Storage Service';
+const NO_SCREEN = NO_SCREEN_SERVICE.label;
 
 // providers/aws/services.ts, in label order, each under /aws.
 const SERVICES: [string, string][] = [
@@ -315,19 +316,19 @@ describe('the AWS area', () => {
     expect(titles.at(-1)).toBe(AWS);
   });
 
-  it('on /aws/s3/buckets: crumbs EmuForge (to /), AWS (to /aws), then S3, the current page, the service active', () => {
-    const { wrapper } = open('/aws/s3/buckets');
+  it('on /aws/kinesis/streams: crumbs EmuForge (to /), AWS (to /aws), then Kinesis, the current page, the service active', () => {
+    const { wrapper } = open(NO_SCREEN_SERVICE.below);
 
     expect(breadcrumbs(wrapper)).toEqual([
       ['EmuForge', '/'],
       ['AWS', '/aws'],
-      ['S3', null],
+      [NO_SCREEN_SERVICE.crumb, null],
     ]);
     const active = wrapper.findSideNavigation()?.findActiveLink()?.getElement();
-    expect(active).toHaveTextContent(S3);
-    expect(active).toHaveAttribute('href', '/aws/s3');
-    expect(screen.getByRole('heading', { level: 1, name: S3 })).toBeInTheDocument();
-    expect(titles.at(-1)).toBe(S3);
+    expect(active).toHaveTextContent(NO_SCREEN);
+    expect(active).toHaveAttribute('href', NO_SCREEN_SERVICE.path);
+    expect(screen.getByRole('heading', { level: 1, name: NO_SCREEN })).toBeInTheDocument();
+    expect(titles.at(-1)).toBe(NO_SCREEN);
   });
 
   it('on /aws/does-not-exist: crumbs EmuForge, AWS, then Page not found, nothing active', () => {
@@ -341,23 +342,26 @@ describe('the AWS area', () => {
 
   it('moves to a service chosen in the side navigation without loading the page', () => {
     const { wrapper, router } = open('/aws');
-    const s3 = wrapper.findSideNavigation()?.findLinkByHref('/aws/s3')?.getElement();
-    expect(s3).toBeDefined();
+    const service = wrapper.findSideNavigation()?.findLinkByHref(NO_SCREEN_SERVICE.path)?.getElement();
+    expect(service).toBeDefined();
 
     let followed = true;
     act(() => {
-      followed = fireEvent.click(s3 as HTMLElement);
+      followed = fireEvent.click(service as HTMLElement);
     });
 
     // A click whose default is prevented: the router moved, the browser did not load the address.
     expect(followed).toBe(false);
-    expect(router.state.location.pathname).toBe('/aws/s3');
-    expect(screen.getByRole('heading', { level: 1, name: S3 })).toBeInTheDocument();
-    expect(wrapper.findSideNavigation()?.findActiveLink()?.getElement()).toHaveAttribute('href', '/aws/s3');
+    expect(router.state.location.pathname).toBe(NO_SCREEN_SERVICE.path);
+    expect(screen.getByRole('heading', { level: 1, name: NO_SCREEN })).toBeInTheDocument();
+    expect(wrapper.findSideNavigation()?.findActiveLink()?.getElement()).toHaveAttribute(
+      'href',
+      NO_SCREEN_SERVICE.path,
+    );
   });
 
   it('has no tools panel and no toggle for one', () => {
-    const { wrapper } = open('/aws/s3');
+    const { wrapper } = open(NO_SCREEN_SERVICE.path);
     const layout = wrapper.findAppLayout();
 
     expect(layout).not.toBeNull();
@@ -368,7 +372,7 @@ describe('the AWS area', () => {
 
   it("carries Cloudscape's dark mode on the area's root only, following the scheme while open", async () => {
     scheme.dark = true;
-    const { container } = open('/aws/s3');
+    const { container } = open(NO_SCREEN_SERVICE.path);
     const root = areaRoot(container);
 
     expect(root).toHaveClass('awsui-dark-mode');
@@ -390,7 +394,7 @@ describe('the AWS area', () => {
 
   it('leaves no Cloudscape class in the document after leaving the area for /', async () => {
     scheme.dark = true;
-    const { router } = open('/aws/s3');
+    const { router } = open(NO_SCREEN_SERVICE.path);
     expect(cloudscapeElements().length).toBeGreaterThan(0);
 
     await act(() => router.navigate('/'));
@@ -403,7 +407,7 @@ describe('the AWS area', () => {
 
   it.each([
     ['/aws', AWS, 'Amazon API Gateway'],
-    ['/aws/s3', S3, 'Go to Home'],
+    [NO_SCREEN_SERVICE.path, NO_SCREEN, 'Go to Home'],
     ['/aws/does-not-exist', 'Page not found', 'Go to Home'],
   ])('on %s: names a content target named "%s", past its navigation, not its main', (path, name, firstStop) => {
     open(path);
@@ -430,8 +434,8 @@ describe('the AWS area', () => {
     expect(wrapper.findSideNavigation()?.findActiveLink()?.getElement()).toHaveTextContent('AWS Lambda');
   });
 
-  it('on /aws/s3, AWS chosen in the breadcrumbs: /aws and focus on the content target named Amazon Web Services', async () => {
-    const { wrapper, router } = open('/aws/s3');
+  it('on /aws/kinesis, AWS chosen in the breadcrumbs: /aws and focus on the content target named Amazon Web Services', async () => {
+    const { wrapper, router } = open(NO_SCREEN_SERVICE.path);
     const crumb = wrapper
       .findBreadcrumbGroup()
       ?.findBreadcrumbLinks()
@@ -465,21 +469,21 @@ describe('the AWS area', () => {
     await expectFocusOnTarget('Amazon API Gateway', 'Go to Home');
   });
 
-  it('on /aws/s3/buckets, the service chosen in the side navigation: /aws/s3 and focus on its content target', async () => {
-    const { wrapper, router } = open('/aws/s3/buckets');
-    const s3 = wrapper.findSideNavigation()?.findLinkByHref('/aws/s3')?.getElement();
-    expect(s3).toBeDefined();
+  it('on /aws/kinesis/streams, the service chosen in the side navigation: /aws/kinesis and focus on its content target', async () => {
+    const { wrapper, router } = open(NO_SCREEN_SERVICE.below);
+    const service = wrapper.findSideNavigation()?.findLinkByHref(NO_SCREEN_SERVICE.path)?.getElement();
+    expect(service).toBeDefined();
 
     act(() => {
-      (s3 as HTMLElement).focus();
-      fireEvent.click(s3 as HTMLElement);
+      (service as HTMLElement).focus();
+      fireEvent.click(service as HTMLElement);
     });
 
-    expect(router.state.location.pathname).toBe('/aws/s3');
-    await expectFocusOnTarget(S3, 'Go to Home');
+    expect(router.state.location.pathname).toBe(NO_SCREEN_SERVICE.path);
+    await expectFocusOnTarget(NO_SCREEN, 'Go to Home');
   });
 
-  it.each(['/aws', '/aws/s3', '/aws/does-not-exist'])(
+  it.each(['/aws', NO_SCREEN_SERVICE.path, '/aws/does-not-exist'])(
     'on %s, a first render: focus is on the body and stays there once the area has rendered',
     async (path) => {
       open(path);
@@ -497,7 +501,7 @@ describe('the AWS area', () => {
 
 const PAGES: [string, string, string][] = [
   ['/aws', AWS, 'AWS'],
-  ['/aws/s3', S3, 'S3'],
+  [NO_SCREEN_SERVICE.path, NO_SCREEN, NO_SCREEN_SERVICE.crumb],
   ['/aws/does-not-exist', 'Page not found', 'Page not found'],
 ];
 
@@ -560,8 +564,8 @@ describe('the AWS area from EmuForge (issue 45)', () => {
     },
   );
 
-  it('on /aws/s3, EmuForge chosen in the crumbs: the path is /, without a reload of the document', () => {
-    const { wrapper, router } = open('/aws/s3');
+  it('on /aws/kinesis, EmuForge chosen in the crumbs: the path is /, without a reload of the document', () => {
+    const { wrapper, router } = open(NO_SCREEN_SERVICE.path);
     const crumb = crumbLink(wrapper, 'EmuForge');
     expect(crumb).toHaveAttribute('href', '/');
 
@@ -576,7 +580,7 @@ describe('the AWS area from EmuForge (issue 45)', () => {
     expect(screen.getByText("Studio's Home")).toBeInTheDocument();
   });
 
-  it('after a connected answer on /aws, S3 then AWS: each page reads "Connected at <endpoint>" at once, nothing said, nothing asked', async () => {
+  it('after a connected answer on /aws, Kinesis then AWS: each page reads "Connected at <endpoint>" at once, nothing said, nothing asked', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
     try {
       connection.value = { result: undefined, engineOrigin: ENGINE_ORIGIN };
@@ -593,9 +597,11 @@ describe('the AWS area from EmuForge (issue 45)', () => {
       observer.observe(document.body, { subtree: true, childList: true, characterData: true });
 
       act(() => {
-        fireEvent.click(wrapper.findSideNavigation()?.findLinkByHref('/aws/s3')?.getElement() as HTMLElement);
+        fireEvent.click(
+          wrapper.findSideNavigation()?.findLinkByHref(NO_SCREEN_SERVICE.path)?.getElement() as HTMLElement,
+        );
       });
-      expect(router.state.location.pathname).toBe('/aws/s3');
+      expect(router.state.location.pathname).toBe(NO_SCREEN_SERVICE.path);
       expect(lineStatus()).toBe('Connected at https://127.0.0.1:9411');
       await act(async () => {
         await vi.advanceTimersByTimeAsync(2_000);
@@ -660,7 +666,7 @@ describe('the AWS area from EmuForge (issue 45)', () => {
   });
 
   it.each([
-    ['/aws/s3', `Studio has no screen for ${S3} yet.`],
+    [NO_SCREEN_SERVICE.path, NO_SCREEN_SENTENCE],
     ['/aws/does-not-exist', 'Studio has no page at /aws/does-not-exist.'],
   ])('on %s: "%s" with "Go to Home", as on main', (path, statement) => {
     open(path);
@@ -729,7 +735,7 @@ describe('the local-emulator notice in the AWS area (issue 45, R5)', () => {
 
   it('a page that names its resources "buckets", connected: the line ending with the (i) control, the notice, the h1', () => {
     resources = { word: 'buckets' };
-    open('/aws/s3');
+    open(NO_SCREEN_SERVICE.path);
     act(() => {
       focusContent?.();
     });
@@ -745,12 +751,12 @@ describe('the local-emulator notice in the AWS area (issue 45, R5)', () => {
     expect(target).toContainElement(region);
     expect(follows(emulatorLine(), region)).toBe(true);
     expect(follows(region, heading)).toBe(true);
-    expect(target).toHaveAccessibleName(S3);
+    expect(target).toHaveAccessibleName(NO_SCREEN);
   });
 
   it('a page that shows resources and names no word: "These resources are in your local emulator"', () => {
     resources = {};
-    open('/aws/s3');
+    open(NO_SCREEN_SERVICE.path);
 
     expect(within(notice() as HTMLElement).getByText('These resources are in your local emulator')).toBeInTheDocument();
     expect(about()).toHaveAttribute('aria-expanded', 'true');
@@ -758,7 +764,7 @@ describe('the local-emulator notice in the AWS area (issue 45, R5)', () => {
 
   it('the notice closed on one page: still closed on another page that shows resources, the (i) control collapsed', () => {
     resources = { word: 'buckets' };
-    const { wrapper, router } = open('/aws/s3');
+    const { wrapper, router } = open(NO_SCREEN_SERVICE.path);
     closeNotice();
     expect(notice()).toBeNull();
 
@@ -774,13 +780,13 @@ describe('the local-emulator notice in the AWS area (issue 45, R5)', () => {
 
   it('the notice closed, then the area rendered again as after a reload of the document: the notice is open', async () => {
     resources = { word: 'buckets' };
-    const first = open('/aws/s3');
+    const first = open(NO_SCREEN_SERVICE.path);
     closeNotice();
     expect(notice()).toBeNull();
     first.unmount();
 
     await freshLoad();
-    open('/aws/s3');
+    open(NO_SCREEN_SERVICE.path);
 
     expect(notice()).not.toBeNull();
     expect(about()).toHaveAttribute('aria-expanded', 'true');
@@ -817,7 +823,7 @@ describe('the AWS area in a document of another language (R7.2, R7.3)', () => {
     vi.restoreAllMocks();
   });
 
-  it.each(['/aws', '/aws/s3', '/aws/does-not-exist'])(
+  it.each(['/aws', NO_SCREEN_SERVICE.path, '/aws/does-not-exist'])(
     'on %s with <html lang="ko">: the area\'s root carries lang="en"',
     (path) => {
       document.documentElement.lang = 'ko';
@@ -832,7 +838,7 @@ describe('the AWS area in a document of another language (R7.2, R7.3)', () => {
     document.documentElement.lang = 'ko';
     restoreBrowser = browserIn('ko-KR');
     extra.calendar = true;
-    const { wrapper } = open('/aws/s3');
+    const { wrapper } = open(NO_SCREEN_SERVICE.path);
 
     const calendar = wrapper.findCalendar();
     expect(calendar).not.toBeNull();

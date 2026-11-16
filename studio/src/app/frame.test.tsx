@@ -23,6 +23,7 @@ import {
   row,
   textNotFrom,
 } from '../test/home-test-kit';
+import { NO_SCREEN_SERVICE } from '../test/no-screen';
 import { Frame, ProviderPage } from './frame';
 import { PROVIDERS, type ProviderAreaProps } from './provider-list';
 import { Providers } from './providers';
@@ -252,13 +253,16 @@ describe('Studio’s frame', () => {
     expect(home).not.toHaveAttribute('aria-current');
   });
 
-  it.each(['/aws/s3', '/aws/does-not-exist'])('on %s: AWS is marked as current (true), Home is not', (path) => {
-    openFrame(path);
-    const { home, aws } = frameLinks();
+  it.each([NO_SCREEN_SERVICE.path, '/aws/does-not-exist'])(
+    'on %s: AWS is marked as current (true), Home is not',
+    (path) => {
+      openFrame(path);
+      const { home, aws } = frameLinks();
 
-    expect(aws).toHaveAttribute('aria-current', 'true');
-    expect(home).not.toHaveAttribute('aria-current');
-  });
+      expect(aws).toHaveAttribute('aria-current', 'true');
+      expect(home).not.toHaveAttribute('aria-current');
+    },
+  );
 
   it.each(['/does-not-exist', '/s3'])('on %s: no link of the frame is marked', (path) => {
     openFrame(path);
@@ -269,7 +273,7 @@ describe('Studio’s frame', () => {
     }
   });
 
-  it.each(['/', '/aws', '/aws/s3', '/aws/does-not-exist', '/does-not-exist', '/s3'])(
+  it.each(['/', '/aws', NO_SCREEN_SERVICE.path, '/aws/does-not-exist', '/does-not-exist', '/s3'])(
     'on %s: no element of the frame has a Cloudscape class',
     async (path) => {
       openStudio(path);
@@ -289,7 +293,7 @@ describe('Studio’s frame', () => {
     ['/', 'EmuForge Studio'],
     ['/does-not-exist', 'Page not found | EmuForge Studio'],
     ['/aws', 'Amazon Web Services | EmuForge Studio'],
-    ['/aws/s3/buckets', 'Amazon Simple Storage Service | EmuForge Studio'],
+    [NO_SCREEN_SERVICE.below, `${NO_SCREEN_SERVICE.label} | EmuForge Studio`],
   ])('on %s: the document title is "%s"', async (path, title) => {
     document.title = 'not set by Studio';
     openStudio(path);
@@ -430,7 +434,7 @@ describe('"Skip to content" and a route change', () => {
   it.each([
     ['/', 'Home', 'button', 'Refresh'],
     ['/aws', 'Amazon Web Services', 'link', 'Amazon API Gateway'],
-    ['/aws/s3', 'Amazon Simple Storage Service', 'link', 'Go to Home'],
+    [NO_SCREEN_SERVICE.path, NO_SCREEN_SERVICE.label, 'link', 'Go to Home'],
   ])('on a first load of %s: focus stays on the body once the page shows its h1', async (path, name, role, first) => {
     openStudio(path);
 
@@ -463,8 +467,8 @@ function openStudioIn(path: string, tag: string) {
 }
 
 /** The AWS area page the language cases open, and its English title. */
-const AREA_PATH = '/aws/s3';
-const AREA_TITLE = 'Amazon Simple Storage Service';
+const AREA_PATH = NO_SCREEN_SERVICE.path;
+const AREA_TITLE = NO_SCREEN_SERVICE.label;
 
 describe('the frame in each of the twelve languages (R5.2, R2.7)', () => {
   afterEach(() => {
@@ -474,7 +478,7 @@ describe('the frame in each of the twelve languages (R5.2, R2.7)', () => {
   });
 
   it.each([...BUNDLED_CATALOGUES.byTag.keys()])(
-    "%s: from / to /does-not-exist the route change announces the catalogue's page title; to /aws/s3, the area's",
+    "%s: from / to /does-not-exist the route change announces the catalogue's page title; to /aws/kinesis, the area's",
     async (tag) => {
       // The engine answers connected, so the AWS area's emulator line adds no Tab stop (issue 45, R4.8).
       vi.stubGlobal('fetch', new FakeEngine().fetch);
@@ -1272,7 +1276,7 @@ describe('the tile in the wordmark link (issue #36, R6)', () => {
     expect(follows(tile, screen.getByText('EmuForge'))).toBe(true);
   });
 
-  it.each(['/', '/does-not-exist', '/aws', '/aws/s3/buckets'])(
+  it.each(['/', '/does-not-exist', '/aws', NO_SCREEN_SERVICE.below])(
     'on %s: the banner holds exactly one tile, inside the wordmark link, and no other image',
     async (path) => {
       openStudio(path);
@@ -1391,9 +1395,9 @@ describe("the AWS area's connection, as the frame checks it (issue 45, R4.4)", (
     expect(lineStatus()).toBe('Connected at https://127.0.0.1:9411');
   });
 
-  it('on /aws/s3, more than 5 seconds after an answer: a new request, and the line shows its answer', async () => {
+  it('on /aws/kinesis, more than 5 seconds after an answer: a new request, and the line shows its answer', async () => {
     engine.healthAnswers = [connected(9411), emulatorDown('not_started', 9411)];
-    await openArea('/aws/s3', 'Amazon Simple Storage Service');
+    await openArea(NO_SCREEN_SERVICE.path, NO_SCREEN_SERVICE.label);
     await advance();
     expect(lineStatus()).toBe('Connected at https://127.0.0.1:9411');
     expect(engine.healths).toHaveLength(1);
@@ -1410,9 +1414,9 @@ describe("the AWS area's connection, as the frame checks it (issue 45, R4.4)", (
     await advance();
     expect(lineStatus()).toBe('Connected at https://127.0.0.1:9411');
 
-    await act(() => router.navigate('/aws/s3'));
+    await act(() => router.navigate(NO_SCREEN_SERVICE.path));
     await advance(2_000);
-    expect(screen.getByRole('heading', { level: 1, name: 'Amazon Simple Storage Service' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1, name: NO_SCREEN_SERVICE.label })).toBeInTheDocument();
     expect(lineStatus()).toBe('Connected at https://127.0.0.1:9411');
     await act(() => router.navigate('/aws'));
     await advance(2_900);
@@ -1425,7 +1429,7 @@ describe("the AWS area's connection, as the frame checks it (issue 45, R4.4)", (
 
   it('a later check in flight after a connected answer: the line still reads "Connected at <endpoint>"', async () => {
     engine.healthAnswers = [connected(9411), { hang: true }];
-    await openArea('/aws/s3', 'Amazon Simple Storage Service');
+    await openArea(NO_SCREEN_SERVICE.path, NO_SCREEN_SERVICE.label);
     await advance();
 
     await advance(5_000);
@@ -1436,7 +1440,7 @@ describe("the AWS area's connection, as the frame checks it (issue 45, R4.4)", (
 
   it('Home chosen in the frame: no further request for the area; Home asks for itself and shows "Checking" until it answers', async () => {
     engine.healthAnswers = [connected(9411)];
-    await openArea('/aws/s3', 'Amazon Simple Storage Service');
+    await openArea(NO_SCREEN_SERVICE.path, NO_SCREEN_SERVICE.label);
     await advance();
     expect(lineStatus()).toBe('Connected at https://127.0.0.1:9411');
     const areaChecks = engine.healths.length;

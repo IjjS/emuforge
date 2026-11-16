@@ -28,6 +28,7 @@ import {
   unmarkedText,
   type FakeAnswer,
 } from '../../test/home-test-kit';
+import { NO_SCREEN_SERVICE } from '../../test/no-screen';
 
 /** The AWS area's first import is real work (Cloudscape's modules), not a timer; a cold run takes a while. */
 const AREA_LOAD = { timeout: 10_000, interval: 20 };
@@ -201,20 +202,20 @@ describe('Home and the frame with a marked test catalogue: no text written in a 
   it(
     'the frame on an AWS area page: every text of Studio outside the area is marked or kept as it is',
     async () => {
-      renderApp('/aws/s3', languageStore(MARKED_TAG));
+      renderApp(NO_SCREEN_SERVICE.path, languageStore(MARKED_TAG));
       await vi.waitFor(async () => {
         await advance();
-        expect(screen.getByRole('heading', { level: 1, name: 'Amazon Simple Storage Service' })).toBeInTheDocument();
+        expect(screen.getByRole('heading', { level: 1, name: NO_SCREEN_SERVICE.label })).toBeInTheDocument();
       }, AREA_LOAD);
       const studio = screen.getByRole('navigation', { name: `${MARK_OPEN}Studio${MARK_CLOSE}` });
       expect(within(studio).getByRole('link', { name: 'AWS' })).toBeInTheDocument();
-      expect(document.title).toBe('Amazon Simple Storage Service | EmuForge Studio');
+      expect(document.title).toBe(`${NO_SCREEN_SERVICE.label} | EmuForge Studio`);
       expect(unmarkedText()).toEqual([]);
     },
     AREA_TEST_MS,
   );
 
-  it.each(['/', '/does-not-exist', '/aws/s3'])(
+  it.each(['/', '/does-not-exist', NO_SCREEN_SERVICE.path])(
     'the frame on %s with the language menu open: every text of Studio outside the area is marked or kept as it is',
     async (path) => {
       renderApp(path, languageStore(MARKED_TAG));
