@@ -9,6 +9,19 @@ review-impl-<unit>-r<k>.md in .pm/issue-<n>/ says verdict: pass. A test unit (t<
 no implementation review; its newest review-checks-<unit>-r<k>.md counts instead. (A test unit whose checks are
 red by design never gets here: its pm-check does not pass, and it arrives through the unit stacked on it.)
 A run that passed with a flaky step (failed once, passed on the second run) is accepted and named in the output.
+
+Coverage. pm-merge decides the branch's paths against main again itself (the paths between its merge base with
+main and its head), with the rules of this main checkout (_pmscope.py, as pm-scope), and refuses unless the
+record's steps show, for every module those paths call for, that the module is absent or that each of its steps
+passed or was flaky. A step recorded not-needed, failed or missing does not cover its module. What the record's
+`scope` says is not trusted for this; only its steps are. Paths that cannot be read (say, a branch that shares no
+commit with main) call for every module.
+The main it merges into. Either main's commit is an ancestor of the branch's head, or what main gained since the
+branch left it calls for no module that the branch's own paths call for (main gaining only issue files is always
+this case); then the output says the branch is behind main and by how many paths. Otherwise it refuses, names the
+modules both sides call for and one gained path for each: merge main into the branch, run pm-check, then rerun.
+A record without `scope` and without `module` on its steps was written by the pm-check before issue 52, which
+passed only after running every module: it is judged as before, and neither question is asked of it.
 Merges with --no-ff so every unit is one merge commit on main. On a conflict the merge is aborted and main is left
 as it was: send the unit back to its worker to merge main into its branch, check again, then rerun.
 After the merge commit it runs `pm-emulator-dir rm --worktree` for the unit's worktree and for each registered
@@ -27,6 +40,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _pmlib import BIN, PM, ROOT, WORKTREES, load, log
+from _pmscope import MODULES, Unreadable, between, decide, merge_base
+from _pmscope import git as read_git
 
 EMULATOR_DIR = "pm-emulator-dir: "
 
@@ -48,6 +63,62 @@ def remove_emulator_dir(wt):
         return
     lines = [ln for ln in r.stdout.splitlines() if ln.startswith(EMULATOR_DIR)]
     print("\n".join(lines) if lines else f"{EMULATOR_DIR}no line for {wt['name']} (exit {r.returncode})")
+
+
+def earlier(last):
+    """A record of the pm-check before issue 52: no scope and no step with its module."""
+    return "scope" not in last and not any("module" in s for s in last.get("steps") or [])
+
+
+def covered(statuses):
+    return bool(statuses) and (all(s == "absent" for s in statuses) or all(s in ("passed", "flaky") for s in statuses))
+
+
+def plural(n):
+    return f"{n} path" if n == 1 else f"{n} paths"
+
+
+def judge(branch, head, last):
+    """Coverage (R7) and the main the branch merges into (R8), decided from git with this checkout's rules.
+    Returns (problems, note)."""
+    main = base = None
+    try:
+        main = read_git(ROOT, "rev-parse", "--verify", "--quiet", "refs/heads/main^{commit}").strip()
+        base = merge_base(ROOT, head, main)
+        own = decide(between(ROOT, base, head))
+    except Unreadable as e:
+        own = {m: [f"the branch's changes cannot be read: {e}"] for m in MODULES}
+    problems = []
+    statuses = {}
+    for s in last.get("steps") or []:
+        statuses.setdefault(s.get("module"), []).append(s.get("status"))
+    missing = [m for m in MODULES if m in own and not covered(statuses.get(m))]
+    if missing:
+        problems.append(f"the pm-check record does not cover {', '.join(missing)}, which this branch's changes call "
+                        f"for ({own[missing[0]][0]}); run pm-check again")
+    if base is not None and base == main:
+        return problems, None
+    gained = None
+    try:
+        if base is None:
+            raise Unreadable("the branch's merge base with main cannot be read")
+        gained = sorted(set(between(ROOT, base, main)))
+        theirs = decide(gained)
+    except Unreadable as e:
+        theirs = {m: [str(e)] for m in MODULES}
+    both = [m for m in MODULES if m in own and m in theirs]
+    if both:
+        if gained is None:
+            what = (f"what main gained since this branch left it cannot be read ({theirs[both[0]][0]}), so both "
+                    f"call for {', '.join(both)}")
+        else:
+            eg = ", ".join(f"{m}: {next(p for p in gained if m in decide([p]))}" for m in both)
+            what = f"main gained {plural(len(gained))} since this branch left it; both call for {', '.join(both)} (e.g. {eg})"
+        problems.append(f"{what}; merge main into {branch} and run pm-check again")
+        return problems, None
+    note = (f"behind main by {plural(len(gained))} that call for {', '.join(theirs) or 'nothing'}; "
+            f"this branch's changes call for none of them")
+    return problems, note
 
 
 def stack(wts, wt):
@@ -86,6 +157,10 @@ def main():
         problems.append(f"pm-check ran on {str(last.get('commit'))[:9]}, the branch is at {head[:9]}; run pm-check again")
     elif not last.get("passed"):
         problems.append(f"pm-check failed: {', '.join(last.get('failed', []))}")
+    note = None
+    if last and last.get("commit") == head and last.get("passed") and not earlier(last):
+        found, note = judge(branch, head, last)
+        problems += found
     def rounds(stage):
         return sorted((PM / f"issue-{a.issue}").glob(f"review-{stage}-{a.unit}-r*.md"),
                       key=lambda f: int(re.search(r"-r(\d+)\.md$", f.name).group(1)))
@@ -100,6 +175,8 @@ def main():
         problems.append(f"{reviews[-1].name} is not verdict: pass")
     if problems:
         sys.exit("cannot merge:\n- " + "\n- ".join(problems))
+    if note:
+        print(note)
     if a.dry_run:
         print(f"ok to merge {branch} ({head[:9]}) into main")
         return

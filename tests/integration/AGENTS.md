@@ -78,8 +78,10 @@ One JSON object per line in `manifest.jsonl`:
 | `passed` | every assertion held |
 | `failed` | an assertion did not hold, or the check timed out |
 | `error` | anything else: the emulator would not start, a tool is missing |
+| `not-run` | listed in the file given to `run --not-run` (`.github/not-run.json`) and not executed; never counted as `passed` or `failed`. The list is changed only on the `pm`'s decision, with the reason in the issue's `decisions.md` |
 
-`error` is never counted as `failed` or `passed`; it is reported and the run is not used as evidence.
+`error` is never counted as `failed` or `passed`; it is reported and the run is not used as evidence. A `not-run`
+check says nothing about the behavior it covers.
 
 A failing check that no open issue lists in `Issue-Check-Ids` becomes a new issue file. That is how gaps are
 found; nobody decides by reading code that something is probably broken.

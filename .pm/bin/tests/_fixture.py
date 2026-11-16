@@ -26,13 +26,14 @@ def git(repo, *args):
 
 
 def make(group, case, scripts, files=None):
-    """A committed fixture checkout holding `scripts` (names in .pm/bin) and `files` ({relative path: text})."""
+    """A committed fixture checkout holding `scripts` (names in .pm/bin), every `_pm*.py` helper of .pm/bin that
+    exists, and `files` ({relative path: text}). A named script is copied without asking whether it exists."""
     co = CHECKOUT / "output" / "tests" / group / case
     if co.exists():
         shutil.rmtree(co)
     b = co / ".pm" / "bin"
     b.mkdir(parents=True)
-    for f in scripts:
+    for f in [h.name for h in sorted(BIN.glob("_pm*.py"))] + list(scripts):
         shutil.copy2(BIN / f, b / f)
     for rel, text in (files or {}).items():
         p = co / rel
