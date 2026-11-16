@@ -186,6 +186,13 @@ flow step 1:
 
 - Take `finder`, `plan`, `worker` and `owner` issues without asking, highest severity first, oldest first within
   a severity. Skip `github#<n>` issues until their `EVENT go` arrives.
+- `LOW` issues go in batches of five. When only `LOW` issues are left, take the five oldest together (fewer when
+  fewer are open) and run them side by side, each with its own plan, units, reviews and merge as any issue. The
+  batch is finished as one: when the last of the five is merged, run `pm-check .` on `main` once, report the five
+  together, archive each and push once. A `LOW` issue is not started outside a batch, and the next batch starts
+  only when the one before it is pushed. Two issues of a batch that own the same file run one after the other
+  inside it. An issue of any other severity, or one the owner asks for, is taken ahead of the next batch and is
+  finished by itself as flow step 6 says.
 - Read the file first. A filed issue that is a duplicate, cannot be reproduced, or is the emulator's own gap is
   closed out in `decisions.md` and reported, not built.
 - `pm-tokens check` before starting; over the target, wait for `EVENT tokens ok`.
