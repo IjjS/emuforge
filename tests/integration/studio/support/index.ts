@@ -99,3 +99,25 @@ export { register as registerSecret, redact } from './secrets';
 export { startStack, type Stack, type StackOptions } from './stack';
 export { StudioServer, type StudioOptions } from './studio';
 export { waitFor } from './wait';
+export {
+  areaRootStyle,
+  countedMessages,
+  elementStyles,
+  hangulSplits,
+  HOME_STATES,
+  longWordDrawn,
+  measureCounted,
+  noticeHeadingStyle,
+  openHome,
+  resizeTo,
+  styledTexts,
+  WRAP_HEIGHT,
+  WRAP_WIDTHS,
+  type CountedDrawn,
+  type CountedMessage,
+  type CountedOnPage,
+  type HangulReport,
+  type HomePage,
+  type HomeState,
+  type StyledText,
+} from './wrapping';
