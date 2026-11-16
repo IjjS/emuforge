@@ -1,0 +1,180 @@
+# The check of `main` (issue 53). Every push of `main` runs, on an Ubuntu runner hosted by GitHub, the nine
+# commands of pm-check's engine, studio and integration steps (`.pm/bin/pm-check`, STEPS), each in its folder,
+# each as a step named after the pm-check step, through `.github/ci run`, which starts it without pm-check's
+# SCRUB names and replaces every run of a key's shape in what it prints (the repository is public, so is the log).
+# The integration step leaves out what `.github/not-run.json` lists; the step `not-run` prints that list.
+#
+# A failed step does not stop the later ones of the nine. engine-test, studio-unit and integration (pm-check's
+# RETRY) run once more, as `<step> (second run)`, only when their first run failed; a second run that passes is
+# printed and summarized as flaky. The run is a success only when each of the nine exited 0, in its first run or,
+# for those three, in its second.
+#
+# Rights: the token reads the repository's contents and nothing else; no secret is named, nothing is uploaded,
+# cached or published, and every action is one of GitHub's own, named by commit sha. No text from outside the
+# repository is put into a `run:` line.
+#
+# Time, as the first trial run took it (run 43861083645, nothing cached): preparing 1.2 minutes, the engine
+# steps 0.6, the Studio steps 0.7, integration 8.7 and its second run 7.5; 18.8 for the job with that second
+# run. The bounds stay above every figure with room for a slower runner: 80 minutes for the job, 30 for each
+# integration step and 15 for each other step of the nine, so one hung step cannot use up the time a second
+# run needs.
+name: main
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 80
+    env:
+      AWS_EC2_METADATA_DISABLED: "true"
+    steps:
+      - name: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: not-run
+        timeout-minutes: 5
+        run: .github/ci not-run
+
+      - name: versions
+        id: versions
+        timeout-minutes: 5
+        run: .github/ci versions >> "$GITHUB_OUTPUT"
+
+      - name: rust
+        timeout-minutes: 10
+        env:
+          RUST_VERSION: ${{ steps.versions.outputs.rust }}
+        run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal --component rustfmt --component clippy
+          rustup default "$RUST_VERSION"
+          cargo --version
+
+      - name: bun
+        timeout-minutes: 10
+        env:
+          BUN_VERSION: ${{ steps.versions.outputs.bun }}
+        run: |
+          npm install --global "bun@$BUN_VERSION"
+          bun --version
+
+      - name: tools
+        timeout-minutes: 10
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends lsof
+          for tool in lsof mkfifo shasum curl docker python3 cargo bun node; do
+            command -v "$tool" > /dev/null || { echo "missing tool: $tool"; exit 1; }
+          done
+          docker compose version
+
+      - name: studio dependencies
+        timeout-minutes: 10
+        working-directory: studio
+        run: bun install --frozen-lockfile
+
+      - name: chromium
+        timeout-minutes: 15
+        working-directory: studio
+        run: node_modules/.bin/playwright install --with-deps chromium
+
+      # The emulator writes its files as its image's user; on Docker Engine on Linux the runner's user can read
+      # them only when that is the runner's uid, so the image is rebuilt with it (removed by issue #55).
+      - name: emulator image
+        timeout-minutes: 15
+        run: |
+          mkdir -p "$HOME/.aws/emulator"
+          docker compose -f infra/aws-emulator/docker-compose.yml build
+          printf 'FROM aws-emulator\nUSER %s\n' "$(id -u)" | docker build --tag aws-emulator -
+
+      - name: engine-fmt
+        if: ${{ !cancelled() }}
+        timeout-minutes: 15
+        working-directory: engine
+        run: ../.github/ci run -- cargo fmt --all --check
+
+      - name: engine-clippy
+        if: ${{ !cancelled() }}
+        timeout-minutes: 15
+        working-directory: engine
+        run: ../.github/ci run -- cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: engine-test
+        id: engine_test
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 15
+        working-directory: engine
+        run: ../.github/ci run -- cargo test --workspace
+
+      - name: engine-test (second run)
+        if: ${{ !cancelled() && steps.engine_test.outcome == 'failure' }}
+        timeout-minutes: 15
+        working-directory: engine
+        run: ../.github/ci run --second engine-test -- cargo test --workspace
+
+      - name: studio-typecheck
+        if: ${{ !cancelled() }}
+        timeout-minutes: 15
+        working-directory: studio
+        run: ../.github/ci run -- bun run typecheck
+
+      - name: studio-lint
+        if: ${{ !cancelled() }}
+        timeout-minutes: 15
+        working-directory: studio
+        run: ../.github/ci run -- bun run lint
+
+      - name: studio-format
+        if: ${{ !cancelled() }}
+        timeout-minutes: 15
+        working-directory: studio
+        run: ../.github/ci run -- bun run format:check
+
+      - name: studio-unit
+        id: studio_unit
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 15
+        working-directory: studio
+        run: ../.github/ci run -- bun run test:unit --fsModuleCache=false
+
+      - name: studio-unit (second run)
+        if: ${{ !cancelled() && steps.studio_unit.outcome == 'failure' }}
+        timeout-minutes: 15
+        working-directory: studio
+        run: ../.github/ci run --second studio-unit -- bun run test:unit --fsModuleCache=false
+
+      - name: studio-build
+        if: ${{ !cancelled() }}
+        timeout-minutes: 15
+        working-directory: studio
+        run: ../.github/ci run -- bun run build
+
+      - name: integration
+        id: integration
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 30
+        working-directory: tests/integration
+        run: ../../.github/ci run --tails -- ./run --not-run ../../.github/not-run.json
+
+      - name: integration (second run)
+        if: ${{ !cancelled() && steps.integration.outcome == 'failure' }}
+        timeout-minutes: 30
+        working-directory: tests/integration
+        run: ../../.github/ci run --second integration --tails -- ./run --not-run ../../.github/not-run.json
