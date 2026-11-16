@@ -186,13 +186,22 @@ flow step 1:
 
 - Take `finder`, `plan`, `worker` and `owner` issues without asking, highest severity first, oldest first within
   a severity. Skip `github#<n>` issues until their `EVENT go` arrives.
-- `LOW` issues go in batches of five. When only `LOW` issues are left, take the five oldest together (fewer when
-  fewer are open) and run them side by side, each with its own plan, units, reviews and merge as any issue. The
-  batch is finished as one: when the last of the five is merged, run `pm-check .` on `main` once, report the five
-  together, archive each and push once. A `LOW` issue is not started outside a batch, and the next batch starts
-  only when the one before it is pushed. Two issues of a batch that own the same file run one after the other
-  inside it. An issue of any other severity, or one the owner asks for, is taken ahead of the next batch and is
-  finished by itself as flow step 6 says.
+- `LOW` issues go in batches of five, so that five small issues cost one review and one critique instead of
+  five: reviews, critiques and full checks are what takes the time. When only `LOW` issues are left, take the
+  five oldest of one module together (fewer when fewer are open) and run them as one piece of work:
+  - The oldest issue of the batch is its host. Its `.pm/issue-<host>/` holds the batch's stage documents, and
+    `decisions.md` names the other issue files. One `plan` pane plans all five in one requirement, one set of
+    test criteria and one breakdown, and one `rev` pane reviews each stage once for the whole batch.
+  - Units belong to the host (`pm-worktree new <host> <unit>`), each naming the issue it serves; `rev` reviews a
+    unit once. The unit that fixes an issue runs `pm-issue close` for that issue, so each issue file moves in its
+    own fixing commit.
+  - Studio screens of the batch are scored together: one `crit` pane, one mock round and one `final` for all the
+    screens the batch changes.
+  - The batch is finished as one: when its last unit is merged, run `pm-check .` on `main` once, report the five
+    together, archive the host and push once.
+  A `LOW` issue is not started outside a batch, and the next batch starts only when the one before it is pushed.
+  An issue of any other severity, or one the owner asks for, is taken ahead of the next batch and is finished by
+  itself as flow step 6 says.
 - Read the file first. A filed issue that is a duplicate, cannot be reproduced, or is the emulator's own gap is
   closed out in `decisions.md` and reported, not built.
 - `pm-tokens check` before starting; over the target, wait for `EVENT tokens ok`.
