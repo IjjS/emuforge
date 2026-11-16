@@ -229,16 +229,9 @@ class StormCase(unittest.TestCase):
         self.root.mkdir(parents=True)
         self.addCleanup(shutil.rmtree, self.root, True)
         self.children = []
-        self.pids = []  # other processes a case found, killed at the end
         self.addCleanup(self.kill_started)
 
     def kill_started(self):
-        for pid in self.pids:
-            if alive(pid):
-                try:
-                    os.kill(pid, signal.SIGKILL)
-                except (ProcessLookupError, PermissionError):
-                    pass
         for child in self.children:
             if child.code is None and child.proc.returncode is None:
                 try:
@@ -246,6 +239,18 @@ class StormCase(unittest.TestCase):
                 except (ProcessLookupError, PermissionError):
                     pass
                 child.proc.wait()
+
+    def kill_written(self, pidfile):
+        """Kill the process whose PID a case's script wrote to `pidfile`, when there is one and it is alive."""
+        try:
+            pid = int(pidfile.read_text().strip())
+        except (OSError, ValueError):
+            return
+        if alive(pid):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
 
     def spawn(self, cmd, name):
         """Start `cmd` in its own session with stdout and stderr in files under the case's directory."""
@@ -297,7 +302,9 @@ class StopOn(StormCase):
         return child
 
     def open_writer(self, child):
-        """Open the helper's FIFO for writing once, without blocking; the moment it opened, or None (no reader)."""
+        """Open the helper's FIFO for writing once, without blocking; the moment it opened, or None (no reader).
+        The writer stays open until the case ends: a reader whose open a signal interrupted opens again, and a
+        writer already closed by then leaves that second open waiting for good (seen on macOS)."""
         try:
             fd = os.open(child.fifo, os.O_WRONLY | os.O_NONBLOCK)
         except OSError as e:
@@ -305,7 +312,7 @@ class StopOn(StormCase):
                 raise
             return None
         opened = time.monotonic()
-        os.close(fd)
+        self.addCleanup(os.close, fd)
         return opened
 
     def writer(self, child):
@@ -387,6 +394,7 @@ class StopOn(StormCase):
     def test_run_after_a_stop_kills_the_child_at_its_timeout(self):
         pidfile = self.root / "child.pid"
         script = f"echo $$ > {shlex.quote(str(pidfile))}; while :; do :; done"
+        self.addCleanup(self.kill_written, pidfile)  # before any assertion: a shell left looping is killed
         child = self.helper(signalled=True, script=script, timeout=1, dir=str(self.root))
         os.kill(child.pid, signal.SIGTERM)
         report, detail = self.report(child, self.writer(child))
@@ -394,7 +402,6 @@ class StopOn(StormCase):
         self.assertEqual(report["run"], {"raised": "subprocess.TimeoutExpired"}, detail)
         self.assertTrue(pidfile.exists(), f"the script wrote no PID; {detail}")
         pid = int(pidfile.read_text().strip())
-        self.pids.append(pid)
         deadline = time.monotonic() + GONE_BOUND
         while alive(pid):
             if time.monotonic() > deadline:
