@@ -653,6 +653,8 @@ export function BucketListPage({ connection }: { connection: AreaConnection }) {
           title="Preferences"
           confirmLabel="Confirm"
           cancelLabel="Cancel"
+          // The dismiss control has its own name, as in the console; Cloudscape would name it "Cancel" too.
+          closeAriaLabel="Close modal"
           disabled={!loaded && starter !== 'preferences'}
           preferences={preferences}
           pageSizePreference={{

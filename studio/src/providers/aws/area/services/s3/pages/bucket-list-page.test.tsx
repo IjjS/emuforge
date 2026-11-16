@@ -920,6 +920,9 @@ describe('preferences and wrapping', () => {
     expect(within(dialog).getByText('Wrap lines')).toBeInTheDocument();
     expect(within(dialog).getByText('Show all of a long name, Region or date')).toBeInTheDocument();
     expect(footerButton(dialog, 'Cancel')).toBeInTheDocument();
+    // One control named "Cancel", the footer's; the dismiss control is "Close modal".
+    expect(within(dialog).getAllByRole('button', { name: 'Cancel' })).toHaveLength(1);
+    expect(within(dialog).getByRole('button', { name: 'Close modal' })).toBeInTheDocument();
 
     fireEvent.click(within(dialog).getByRole('radio', { name: '10 buckets' }));
     fireEvent.click(footerButton(dialog, 'Confirm'));
