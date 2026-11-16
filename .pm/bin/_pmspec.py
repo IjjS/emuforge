@@ -10,8 +10,8 @@ as something other than a string must be quoted. Everything else is refused with
 The items (requirement 5.1) come out in spec order with their kind (the matching rule of 5.2), expected name,
 list, critical flag (5.5) and the states they apply to (5.3); `omitted` entries (5.4) carry the item ids they
 cover, and an entry that covers the title, an action, a table column, `submit`, the empty title beside a scored
-empty action, or only order items is refused (issue 46, R2). A `wizard` spec (issue 8, requirement 3) also gives its shown steps, and each of its items the position of
-the shown step whose tree it is scored on.
+empty action, or only order items is refused (issue 46, R2). A `wizard` spec (issue 8, requirement 3) also gives
+its shown steps, and each of its items the position of the shown step whose tree it is scored on.
 """
 import dataclasses
 import hashlib

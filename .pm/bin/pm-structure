@@ -34,11 +34,11 @@ steps[<t>].title and submit, and no omitted item shown), 1 fail, 2 error (usage,
 reachable or not settled, page without exactly one AWS area root, toolchain missing, unreadable snapshot, another
 run of the same screen and state in progress, terminated by SIGTERM, SIGHUP or SIGINT); an error is never a pass or
 a fail. An omitted entry that covers the title, an action, a table column, submit or the empty title beside a scored
-empty action, or only order items, is an invalid spec. Result: <worktree>/output/structure/<screen>-<state>.json and the scored snapshot <screen>-<state>.ax.json,
-overwritten by the next run of the same screen and state. --record ISSUE POINT (POINT: baseline | final) also
-appends a row to .pm/issue-<ISSUE>/structure-scores.json of the checkout that holds this script. --table ISSUE
-prints those rows as a markdown table and one line per point and screen saying whether every state it requires
-passed.
+empty action, or only order items, is an invalid spec. Result: <worktree>/output/structure/<screen>-<state>.json
+and the scored snapshot <screen>-<state>.ax.json, overwritten by the next run of the same screen and state.
+--record ISSUE POINT (POINT: baseline | final) also appends a row to .pm/issue-<ISSUE>/structure-scores.json of the
+checkout that holds this script. --table ISSUE prints those rows as a markdown table and one line per point and
+screen saying whether every state it requires passed.
 """
 import argparse
 import contextlib
