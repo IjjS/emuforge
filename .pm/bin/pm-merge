@@ -109,7 +109,8 @@ def judge(branch, head, last):
     both = [m for m in MODULES if m in own and m in theirs]
     if both:
         if gained is None:
-            what = f"what main gained since this branch left it cannot be read ({theirs[both[0]][0]})"
+            what = (f"what main gained since this branch left it cannot be read ({theirs[both[0]][0]}), so both "
+                    f"call for {', '.join(both)}")
         else:
             eg = ", ".join(f"{m}: {next(p for p in gained if m in decide([p]))}" for m in both)
             what = f"main gained {plural(len(gained))} since this branch left it; both call for {', '.join(both)} (e.g. {eg})"

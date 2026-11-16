@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: harness|pm-check|scope-by-diff
-Issue-Check-Ids:
+Issue-Check-Ids: harness.scope harness.check-scope harness.merge-scope
 Issue-Commit: d76cc1d1c3af6c7dc64a5eca5051ed8810b0db25
 
 # Run only the checks a branch's changes call for, decided from its diff
