@@ -78,17 +78,17 @@ def _look(look):
 
 def _walk(nodes, look, start=0):
     """`nodes[start:]`, with a look before the first node and before every EVERY-th after it; `nodes` itself when
-    `look` is None and `start` is 0. Nothing is copied."""
+    `look` is None and `start` is 0. The list is not copied, only one stretch of EVERY nodes at a time."""
     if look is None and start == 0:
         return nodes
     return _walking(nodes, look, start)
 
 
 def _walking(nodes, look, start):
-    for i in range(start, len(nodes)):
-        if look is not None and not (i - start) % EVERY:
+    for i in range(start, len(nodes), EVERY):
+        if look is not None:
             look()
-        yield nodes[i]
+        yield from nodes[i:i + EVERY]
 
 
 def _counting_hook(look):
