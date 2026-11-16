@@ -589,7 +589,8 @@ class Unmarkable(SpecCase):
             (BUCKET_LIST_BARE, "table.filter", {"table.filter"}),
             (BUCKET_LIST_BARE, "table.pagination", {"table.pagination"}),
             (SPEC_D, "tabs[Properties]", {"tabs[Properties]"}),
-            (SPEC_D, gc, {f"{gc}.title", f"{gc}.fields[Bucket name]", f"{gc}.fields[AWS Region]", f"{gc}.fields.order"}),
+            (SPEC_D, gc,
+             {f"{gc}.title", f"{gc}.fields[Bucket name]", f"{gc}.fields[AWS Region]", f"{gc}.fields.order"}),
             (SPEC_D, f"{gc}.fields[AWS Region]", {f"{gc}.fields[AWS Region]"}),
         ]
         for base, path, covered in cases:
