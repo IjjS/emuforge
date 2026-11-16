@@ -126,6 +126,11 @@
     background: var(--st-line);
   }
 
+  /* The veil (issue 32, R3): drawn only at 480 and below, below. */
+  .st-lang-veil {
+    display: none;
+  }
+
   /* At 480 and below the control is the globe alone, 40px square (its accessible name still says the language), and
      the menu spans the bar's width under it. */
   @media (max-width: 480px) {
@@ -149,6 +154,16 @@
       left: var(--st-gutter);
       right: var(--st-gutter);
       width: auto;
+    }
+
+    /* While the menu is open, the page's ground at part opacity over everything under the bar, staying there when
+       the page scrolls: a change of tone, no shadow, no edge, no motion (DESIGN.md, The Hairline Rule). It comes
+       before the menu, which is drawn above it. */
+    .st-lang-veil {
+      display: block;
+      position: fixed;
+      inset: var(--st-bar-h) 0 0;
+      background: var(--st-veil);
     }
   }
 }
