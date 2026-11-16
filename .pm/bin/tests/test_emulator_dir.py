@@ -12,8 +12,8 @@ fails or sleeps when the case says so, and records its arguments and the names o
 variables. A listener is a real socket the case holds on a loopback port. Ports are free loopback ports the case
 draws, outside 9297 and the ranges pm-worktree gives, unless the case names the port.
 
-On a checkout without .pm/bin/pm-emulator-dir every case fails at once, saying so; the pane-rule case fails on
-the guide's text.
+On a checkout without .pm/bin/pm-emulator-dir every case fails at once, saying so; the two guide cases fail on
+the guides' text.
 """
 import json
 import os
@@ -247,6 +247,13 @@ class Case(unittest.TestCase):
     def assertKept(self, before):
         self.assertEqual(self.state(), before)
 
+    def assertFormRefusal(self, line):
+        """A refusal of the port's form or of output/ports.json: it did not reach the in-use step, whatever runs on
+        the machine's ports."""
+        for word in ("in use", "127.0.0.1", "docker"):
+            self.assertNotIn(word, line)
+        self.assertEqual(self.calls(), [])
+
 
 # ---------------------------------------------------------------------------------------------- rm --worktree
 
@@ -334,9 +341,10 @@ class RmWorktree(Case):
                 self.registry_path.unlink(missing_ok=True)
                 w = self.register(9302, name=f"w{i}", ports_json=text)
                 before = self.state(), snapshot(self.home / ".aws" / "9302")
+                self.docker()
                 r = self.run_script("rm", "--worktree", w)
                 self.assertExit(r, 1)
-                self.assertOneLine(r, "refused ")
+                self.assertFormRefusal(self.assertOneLine(r, "refused "))
                 self.assertEqual((self.state(), snapshot(self.home / ".aws" / "9302")), before)
 
     def test_ports_json_differing_from_the_registry_is_refused(self):
@@ -420,9 +428,10 @@ class RmPort(Case):
         for x in ("0", "65536", "09302", "9302 ", "+9302", "9302/../9303", "../9302", str(d), ""):
             with self.subTest(repr(x)):
                 before = self.state(), snapshot(self.home / ".aws" / "9302")
+                self.docker()
                 r = self.run_script("rm", "--port", x)
                 self.assertExit(r, 1)
-                self.assertOneLine(r, "refused ")
+                self.assertFormRefusal(self.assertOneLine(r, "refused "))
                 self.assertEqual((self.state(), snapshot(self.home / ".aws" / "9302")), before)
 
     def test_registry_that_is_not_a_list_is_refused(self):
@@ -1050,7 +1059,7 @@ class Archive(WorktreeCase):
         self.assertFalse(os.path.lexists(f))
 
 
-# ------------------------------------------------------------------------------------------------- pane rule
+# ---------------------------------------------------------------------------------------------------- guides
 
 class PaneRule(unittest.TestCase):
     def test_emulator_section_names_both_commands(self):
@@ -1060,6 +1069,14 @@ class PaneRule(unittest.TestCase):
         section = guide.split("\n## Emulator\n", 1)[1].split("\n## ", 1)[0]
         self.assertIn("<Root>/.pm/bin/pm-emulator-dir rm --worktree", section)
         self.assertIn("<Root>/.pm/bin/pm-emulator-dir rm --port", section)
+
+    def test_scripts_table_has_one_row(self):
+        """R8"""
+        guide = (CHECKOUT / ".agents" / "skills" / "pm" / "SKILL.md").read_text()
+        self.assertIn("\n## Scripts\n", guide)
+        section = guide.split("\n## Scripts\n", 1)[1].split("\n## ", 1)[0]
+        rows = [ln for ln in section.splitlines() if ln.startswith("| `pm-emulator-dir` |")]
+        self.assertEqual(len(rows), 1, rows)
 
 
 if __name__ == "__main__":
