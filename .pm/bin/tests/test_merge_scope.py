@@ -215,7 +215,7 @@ class MergeScope(unittest.TestCase):
         before = git(co, "rev-parse", "main")
         p = merge(co, 7, "h1")
         self.assertRefused(co, p, before)
-        self.assertNames(p.stderr, "harness")
+        self.assertNames(line(p.stderr, "does not cover"), "harness")
 
     def test_orphan_branch_needs_every_module(self):
         co = checkout("orphan")
