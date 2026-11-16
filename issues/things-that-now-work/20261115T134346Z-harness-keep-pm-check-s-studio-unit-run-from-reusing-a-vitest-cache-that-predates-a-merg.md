@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: bug
 Issue-Source: worker
 Issue-Key: harness|pm-check-studio-unit|stale-vitest-cache-after-merge
-Issue-Check-Ids:
+Issue-Check-Ids: harness.check-studio-cache
 Issue-Commit: 0b0337746e336192a742776f97cb40e5b758776c
 
 # Keep pm-check's studio unit run from reusing a vitest cache that predates a merge

@@ -6,7 +6,9 @@
 
 Runs, for each module that exists in the checkout:
   engine       cargo fmt --all --check; cargo clippy --workspace --all-targets -- -D warnings; cargo test --workspace
-  studio       bun run typecheck; lint; format:check; test:unit; build
+  studio       bun run typecheck; lint; format:check; test:unit --fsModuleCache=false; build
+               (a check's result is evidence about the commit, and Vitest's cache of transformed modules is
+               keyed by each module's own text, so it can hold the result of an earlier tree)
   integration  tests/integration/run (the suite's own entry point), given the worktree's engine and emulator ports
   harness      .pm/bin/tests/run (unittest discovery of the .pm/bin tools' tests)
 A module whose manifest is missing (engine/Cargo.toml, studio/package.json, tests/integration/run,
@@ -56,7 +58,7 @@ STEPS = {
         ("studio-typecheck", ["bun", "run", "typecheck"]),
         ("studio-lint", ["bun", "run", "lint"]),
         ("studio-format", ["bun", "run", "format:check"]),
-        ("studio-unit", ["bun", "run", "test:unit"]),
+        ("studio-unit", ["bun", "run", "test:unit", "--fsModuleCache=false"]),
         ("studio-build", ["bun", "run", "build"]),
     ]),
     "integration": ("tests/integration", "run", [
