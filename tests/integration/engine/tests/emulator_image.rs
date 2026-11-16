@@ -387,11 +387,22 @@ fn emulator_image_never_runs_as_root() {
     });
 }
 
-/// The part of `README.md` under `## Run the emulator`, up to the next heading of the same level.
+/// The part of `README.md` under `## Run the emulator`, up to the next heading of level 2 or higher outside a
+/// code block.
 fn run_the_emulator_part(readme: &str) -> Option<Vec<&str>> {
     let mut lines = readme.lines();
     lines.find(|l| l.trim_end() == "## Run the emulator")?;
-    Some(lines.take_while(|l| !l.starts_with("## ")).collect())
+    let mut in_code = false;
+    Some(
+        lines
+            .take_while(|l| {
+                if l.trim_start().starts_with("```") {
+                    in_code = !in_code;
+                }
+                in_code || !(l.starts_with("# ") || l.starts_with("## "))
+            })
+            .collect(),
+    )
 }
 
 /// Splits `text` into sentences at `.`, `!` or `?` followed by white space or the end.
@@ -447,18 +458,24 @@ fn readme_run_the_emulator_creates_the_folder_first() {
             }
             ctx.log(format!("commands of `Run the emulator`: {commands:?}"));
 
-            assert_eq!(
-                commands.first().map(String::as_str),
-                Some("mkdir -p ~/.aws/emulator"),
-                "the first command of `Run the emulator`"
-            );
-            let compose = "docker compose -f infra/aws-emulator/docker-compose.yml up -d --build";
-            let at = commands.iter().position(|c| c == compose);
-            assert!(
-                at.is_some_and(|at| at > 0),
-                "`{compose}` comes after `mkdir -p ~/.aws/emulator` in `Run the emulator`"
-            );
+            let mut cases = Cases::default();
+            cases.run(ctx, "the commands of the code block", |_| {
+                assert_eq!(
+                    commands.first().map(String::as_str),
+                    Some("mkdir -p ~/.aws/emulator"),
+                    "the first command of `Run the emulator`"
+                );
+                let compose =
+                    "docker compose -f infra/aws-emulator/docker-compose.yml up -d --build";
+                let at = commands.iter().position(|c| c == compose);
+                assert!(
+                    at.is_some_and(|at| at > 0),
+                    "`{compose}` comes after `mkdir -p ~/.aws/emulator` in `Run the emulator`"
+                );
+                Ok(())
+            });
 
+            cases.run(ctx, "the text outside the code block", |_| {
             let text = prose.join(" ");
             let sentences = sentences(&text);
             assert!(
@@ -477,6 +494,8 @@ fn readme_run_the_emulator_creates_the_folder_first() {
                 "one sentence of `Run the emulator` holds `root` and `refuses`; its sentences are {sentences:?}"
             );
             Ok(())
+            });
+            cases.finish()
         },
     );
 }
@@ -532,6 +551,8 @@ fn workflow_builds_the_emulator_image_as_the_repository_ships_it() {
         "engine.workflow-builds-the-emulator-image-as-the-repository-ships-it",
         |ctx| {
             let workflow = read_checkout_file(".github/workflows/main.yml")?;
+            let mut cases = Cases::default();
+            cases.run(ctx, "the run lines of `emulator image`", |ctx| {
             let run = emulator_image_run_lines(&workflow)
                 .unwrap_or_else(|| panic!("main.yml has no step named `emulator image`"));
             ctx.log(format!("run lines of `emulator image`: {run:?}"));
@@ -559,39 +580,44 @@ fn workflow_builds_the_emulator_image_as_the_repository_ships_it() {
                 run[2], "docker compose -f infra/aws-emulator/docker-compose.yml build",
                 "third command of `emulator image`"
             );
+            Ok(())
+            });
 
-            let forbidden = [
-                "docker build",
-                "docker buildx",
-                "docker tag",
-                "docker image tag",
-                "USER",
-            ];
-            for (n, line) in workflow.lines().enumerate() {
-                let code = line.trim_start();
-                if code.starts_with('#') {
-                    continue;
+            cases.run(ctx, "every line of the file", |_| {
+                let forbidden = [
+                    "docker build",
+                    "docker buildx",
+                    "docker tag",
+                    "docker image tag",
+                    "USER",
+                ];
+                for (n, line) in workflow.lines().enumerate() {
+                    let code = line.trim_start();
+                    if code.starts_with('#') {
+                        continue;
+                    }
+                    let code = match code.find(" #") {
+                        Some(at) => &code[..at],
+                        None => code,
+                    };
+                    for word in forbidden {
+                        assert!(
+                            !code.contains(word),
+                            "main.yml line {} holds `{word}` outside a comment: {line:?}",
+                            n + 1
+                        );
+                    }
                 }
-                let code = match code.find(" #") {
-                    Some(at) => &code[..at],
-                    None => code,
-                };
-                for word in forbidden {
+                for (n, line) in workflow.lines().enumerate() {
                     assert!(
-                        !code.contains(word),
-                        "main.yml line {} holds `{word}` outside a comment: {line:?}",
+                        !line.contains("#55"),
+                        "main.yml line {} holds `#55`: {line:?}",
                         n + 1
                     );
                 }
-            }
-            for (n, line) in workflow.lines().enumerate() {
-                assert!(
-                    !line.contains("#55"),
-                    "main.yml line {} holds `#55`: {line:?}",
-                    n + 1
-                );
-            }
-            Ok(())
+                Ok(())
+            });
+            cases.finish()
         },
     );
 }
