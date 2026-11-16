@@ -10,6 +10,11 @@ and scored.
 
 Issue 21 (design 2.5): "Structure score" step 1 (the list item `1.`) names the area root's class `aws-area` and says
 that a page without exactly one such element (none, or more than one) is an error, not a score.
+
+Issue 46 (R5.1 to R5.4): "Format"'s example omits no action; the passage on `omitted` (from the first block of
+"Format" that starts with `` `omitted` `` to the end of the section) says what the mark is for, what can never carry
+it, who sets it and on what evidence; "Structure score" says a shown omitted item fails the run and names
+`omitted=` on the first line; critique.md's pass line and "Records" name them.
 """
 import pathlib
 import re
@@ -120,6 +125,65 @@ class AreaRootGuide(unittest.TestCase):
         self.assertRegex(flat, r"exactly one|more than one")
         self.assertRegex(flat, r"\berror\b")
         self.assertIn("not a score", flat)
+
+
+
+def flat(text):
+    return " ".join(text.split())
+
+
+class OmittedGuide(unittest.TestCase):
+    def setUp(self):
+        text = CONSOLE.read_text()
+        self.format = section(text, "## Format")
+        self.score = section(text, "## Structure score")
+        found = [b for b in blocks(self.format) if b.startswith("`omitted`")]
+        self.assertTrue(found, self.format)
+        self.passage = flat(self.format[self.format.index(found[0]):])
+
+    def test_example_omits_no_action(self):
+        example = re.search(r"```yaml\n(.*?)```", self.format, re.S).group(1)
+        lines = example.splitlines()
+        start = next(i for i, ln in enumerate(lines) if ln.startswith("omitted:"))
+        block = [lines[start]] + [ln for ln in lines[start + 1:] if ln.startswith((" ", "-"))]
+        self.assertNotIn("header.actions", "\n".join(block), example)
+        actions = next(ln for ln in lines if ln.strip().startswith("actions:"))
+        self.assertIn("Copy ARN", actions)
+
+    def test_passage_says_what_the_mark_is_for_and_who_sets_it(self):
+        text = self.passage
+        self.assertRegex(text, r"emulator (does not have|doesn't have|lacks|has no)")
+        for word in ("title", "action", "column", "submit"):
+            self.assertIn(word, text)
+        self.assertRegex(text, r"\b(never|cannot)\b")
+        self.assertRegex(text, r"\brev\b")
+        self.assertRegex(text, r"(?i)screen stage")
+        self.assertIn("501", text)
+        self.assertRegex(text, r"(?i)empty list[^.]*not[^.]*evidence|not[^.]*evidence[^.]*empty list")
+        self.assertRegex(text, r"(?i)not built yet\W*\s*is not a reason")
+
+    def test_passage_drops_the_real_account_reason(self):
+        self.assertNotIn("no meaning without a real account", self.passage.lower())
+
+    def test_structure_score_says_shown_fails_and_names_the_count(self):
+        bs = [flat(b) for b in blocks(self.score)]
+        self.assertTrue(any("omitted" in b and re.search(r"\bshow(s|n)?\b", b) and re.search(r"\bfails?\b", b)
+                            for b in bs), self.score)
+        self.assertTrue(any("omitted=" in b and "first line" in b for b in bs), self.score)
+
+
+class OmittedCritique(unittest.TestCase):
+    def test_pass_line_names_an_omitted_item_shown(self):
+        console = section(CRITIQUE.read_text(), "## `console` screens")
+        bullets = [flat(b) for b in blocks(console) if b.startswith("- ") and "90" in b]
+        self.assertEqual(len(bullets), 1, console)
+        self.assertIn("omitted", bullets[0])
+        self.assertRegex(bullets[0], r"\bshown\b")
+
+    def test_records_say_a_row_carries_the_omitted_count(self):
+        records = flat(section(CRITIQUE.read_text(), "## Records"))
+        self.assertIn("omitted", records)
+        self.assertRegex(records, r"\b(number|count|how many)\b")
 
 
 if __name__ == "__main__":
