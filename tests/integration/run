@@ -178,8 +178,9 @@ for n, entry in enumerate(data["checks"]):
     listed[check_id] = entry["reason"]
 pathlib.Path(out, "not-run.json").write_text(json.dumps(listed, indent=1) + "\n")
 pathlib.Path(out, "not-run.ids").write_text("".join(i + "\n" for i in listed))
-# A Playwright test's title is its check id; the pattern matches a title path that ends in one of them.
-specs = [re.escape(i) for i in listed if paths[i].endswith(".spec.ts")]
+# A Playwright test's title is its check id; the pattern matches a title path that ends in one of them. An id is
+# [a-z0-9-] around one `.`, so escaping the `.` is all a regular expression of Python or JavaScript needs.
+specs = [i.replace(".", "\\.") for i in listed if paths[i].endswith(".spec.ts")]
 if specs:
     print("(^| )(" + "|".join(specs) + ")$")
 PY
