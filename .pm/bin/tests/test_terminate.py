@@ -20,6 +20,13 @@ signalled is never a reaped one). After the report (`AfterReport`, no browser): 
 stderr go to files, since a pipe that nothing drains during the storm would block the run.
 
 "Alive" means `os.kill(pid, 0)` succeeds and `ps` does not show the process as a zombie.
+
+A run still unreaped at RUN_BOUND is sampled before the case kills it and fails (issue 37, `_hang.sample`): at
+`finish`, at `storm` and at the two in `AfterReport.snapshot_run`. The case writes the process table of the run's
+tree to <checkout>/output/logs/hang-<test method>-<pid>.ps and what `/usr/bin/sample` records of the run over three
+seconds to output/logs/hang-<test method>-<pid>.sample, and appends both files' paths, the process lines and an
+excerpt of the call graph to its failure message, which starts with the same text as before. A run that ends inside
+its bound is not sampled.
 """
 import http.server
 import json
@@ -32,6 +39,8 @@ import subprocess
 import threading
 import time
 import unittest
+
+import _hang
 
 HERE = pathlib.Path(__file__).resolve().parent
 BIN = HERE.parent
@@ -197,14 +206,25 @@ class TerminateCase(unittest.TestCase):
         try:
             run.stdout, run.stderr = run.proc.communicate(timeout=RUN_BOUND)
         except subprocess.TimeoutExpired:
+            text = f"pm-structure did not end within {RUN_BOUND} s"
+            sampled = _hang.sample(run.proc, self._testMethodName, text, run.recorded)
             run.proc.kill()
             run.stdout, run.stderr = run.proc.communicate()
-            self.fail(f"pm-structure did not end within {RUN_BOUND} s; stderr:\n{run.stderr}")
+            self.fail(f"{text}; stderr:\n{run.stderr}" + sampled)
         run.exited_at = time.monotonic()
         run.code = run.proc.returncode
         if run.signalled is not None:
             run.took = run.exited_at - run.signalled
         return run
+
+    def gave_up(self, run_or_proc, text, detail=""):
+        """Sample the run that passed its bound (issue 37), then fail with today's text."""
+        if isinstance(run_or_proc, Run):
+            proc, recorded = run_or_proc.proc, run_or_proc.recorded
+        else:
+            proc, recorded = run_or_proc, None
+        sampled = _hang.sample(proc, self._testMethodName, text, recorded)
+        self.fail(text + detail + sampled)
 
     def wait_until(self, run, condition, bound, what):
         """Wait (bounded) for `condition()`; fail when pm-structure ends first or the bound passes."""
@@ -256,7 +276,7 @@ class TerminateCase(unittest.TestCase):
         sent, deadline = 0, time.monotonic() + RUN_BOUND
         while run.proc.poll() is None:
             if time.monotonic() > deadline:
-                self.fail(f"pm-structure did not exit within {RUN_BOUND} s of a storm of {sig.name}")
+                self.gave_up(run, f"pm-structure did not exit within {RUN_BOUND} s of a storm of {sig.name}")
             os.kill(run.proc.pid, sig)
             sent += 1
         return sent
@@ -493,10 +513,10 @@ class AfterReport(TerminateCase):
             try:
                 proc.wait(timeout=RUN_BOUND)
             except subprocess.TimeoutExpired:
-                self.fail(f"pm-structure --snapshot did not exit within {RUN_BOUND} s ({name})")
+                self.gave_up(proc, f"pm-structure --snapshot did not exit within {RUN_BOUND} s ({name})")
         while proc.poll() is None:  # a non-blocking waitpid before each signal: the PID is never a reaped one
             if time.monotonic() > deadline:
-                self.fail(f"pm-structure --snapshot did not exit within {RUN_BOUND} s ({name})")
+                self.gave_up(proc, f"pm-structure --snapshot did not exit within {RUN_BOUND} s ({name})")
             if storm and result.exists():
                 os.kill(proc.pid, signal.SIGTERM)
                 sent += 1

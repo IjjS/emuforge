@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: bug
 Issue-Source: worker
 Issue-Key: harness|pm-structure-signal-storm|no-exit-under-memory-pressure
-Issue-Check-Ids:
+Issue-Check-Ids: harness.hang
 Issue-Commit: 1b88c4785a55d7513a64636d2f876e1551452702
 
 # Find why a pm-structure run under a SIGINT storm did not exit within 180 s on a swapping machine
