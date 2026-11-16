@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: bug
 Issue-Source: owner
 Issue-Key: harness|emulator-port-folders|clean-up-at-merge
-Issue-Check-Ids:
+Issue-Check-Ids: harness.emulator-dir
 Issue-Commit: 1f7a38cff498ad7a19c356848c1bb887bb28597d
 
 # Remove a finished unit's own emulator port folder when its branch is merged
