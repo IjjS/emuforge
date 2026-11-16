@@ -43,6 +43,9 @@ RULES = [
          why="the harness scripts, their tests and the guides those tests read"),
     dict(paths=["issues/things-that-do-not-work/*.md", "issues/things-that-now-work/*.md"], calls=(),
          why="no step reads an issue file; every unit that files or closes an issue changes one"),
+    dict(paths=[".github/"], calls=HARNESS,
+         why="the workflow, its not-run list and its runner helper under .github/, which a harness test reads; "
+             "no pm-check step on this machine reads the folder"),
 ]
 
 

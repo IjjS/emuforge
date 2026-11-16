@@ -1,7 +1,7 @@
 # Archive
 
-Run `.pm/bin/pm-archive <id> --yes` after every unit of the issue is merged into local `main`, `pm-check .`
-passed on `main`, and the final report went to the owner. The script refuses when a branch of one of the issue's
+Run `.pm/bin/pm-archive <id> --yes` after every unit of the issue is merged into local `main`, each on its own
+passing record, and the final report went to the owner. The script refuses when a branch of one of the issue's
 registered worktrees is not an ancestor of `main`. `--force` overrides when the owner says the issue is finished
 as it is. The PM's own session id comes from `.pm/run/pm.json` (written by `pm-watchd start`); `--pm-session`
 overrides it.

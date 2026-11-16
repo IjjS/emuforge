@@ -34,9 +34,10 @@ archive. Never write a one-off script for any of those.
 
 - **Go signal.** Work from outside starts only on the owner's direct instruction or `EVENT go github#<n>` (the
   owner's `READY` comment, collected by `pm-ready`). Issue files the harness filed itself (`Issue-Source` `finder`,
-  `plan`, `worker`) need no new signal: see `Next issue`. A go signal authorizes commits on that issue's branches. `main` is
-  pushed when an issue is finished (flow step 6); any other push, releases, anything written to GitHub and deleting remote
-  branches need the owner's explicit word.
+  `plan`, `worker`) need no new signal: see `Next issue`. The exception is an issue filed from a run of the
+  workflow on GitHub Actions (flow step 6): it waits for the owner's signal. A go signal authorizes commits on
+  that issue's branches. `main` is pushed when an issue is finished (flow step 6); any other push, releases,
+  anything written to GitHub and deleting remote branches need the owner's explicit word.
 - **Touchpoints.** The owner is asked at most twice per issue: ① requirement decisions, one bundled list, and
   only when a question exists that the repository, the references and the reference behavior cannot answer;
   ② the final report. Nothing else goes to the owner. Designs are never put to the owner: scores decide, and
@@ -153,39 +154,75 @@ pass; no separate implementation review is asked of rev. After a merge tell ever
 base moved: `herdr agent prompt <pane> "main is at <sha>; merge it into your branch"`. The unit that closes the
 issue runs `pm-issue close` in its worktree, so the issue file moves in the fixing commit.
 
-When every unit is in: `pm-check .` on `main`. It must pass.
+A unit is merged on its own passing record: `pm-merge` takes a branch only when its last `pm-check` record is a
+pass on the commit being merged and covers what the branch changes against `main` as it is. Nothing else is run
+at a merge; `main` is checked on GitHub Actions after its push (flow step 6).
 
 **Intermittent failures.** `pm-check` runs a failed test step once more; when the second run passes, the step is
 `flaky`, the run passes and the unit is not held up. Every flake is a line in `.pm/run/flakes.jsonl` (step,
-commit, the first run's log). After a merge, and after `pm-check .` on `main`, read the new lines: file each as
+commit, the first run's log). After a merge, read the new lines: file each as
 `pm-issue new --source finder --kind bug` with the first log as evidence, unless an open issue already names that
-failure (then add the log path to it). A step that fails twice is a failure; find out whether the unit caused it
-before sending it back. Never rerun `pm-check` until it passes without recording why the earlier run failed.
+failure (then add the log path to it). The workflow on GitHub Actions retries the same three steps: a step named
+`<step> (second run)` that ran in a successful run of `main` is a flake, filed the same way with the run's url in
+place of the first log, and like everything a run shows it waits for the owner's signal (flow step 6). A step that
+fails twice is a failure; find out whether the unit caused it before sending it back. Never rerun `pm-check` until
+it passes without recording why the earlier run failed.
 
 ### 6. Report and archive
 
-Touchpoint ②, in this order: what merged (branches, `main` sha), the check result with the log path, the score
-tables (`pm-critique table <id>`, and `pm-structure --table <id>` for `console` screens), where each owner decision landed, review rounds per unit, what was not done,
+Touchpoint ②, in this order: what merged (branches, `main` sha), the record each unit merged on with its path,
+the score tables (`pm-critique table <id>`, and `pm-structure --table <id>` for `console` screens), where each owner decision landed, review rounds per unit, what was not done,
 and what is waiting for the owner's word (a reply on the GitHub issue, closing it). Then
 `pm-archive <id> --yes` per `references/archive.md`.
 
-Then push: the issue is finished, so with `git status` on `main` clean and the last `pm-check .` a pass on this
-commit, `git push origin main`. One push per finished issue, whatever else is still in flight (other issues'
-merged units go along; that is fine, each was merged on a passing check). Never force and never push an issue
-branch. A rejected push (the remote moved) is not yours to resolve: leave `main` as it is and tell the owner.
+Then push: the issue is finished, so with `git status` on `main` clean, `git push origin main`. One push per
+finished issue, whatever else is still in flight (other issues' merged units go along; that is fine, each was
+merged on a passing check). Never force and never push an issue branch. A rejected push (the remote moved) is not
+yours to resolve: leave `main` as it is and tell the owner.
+
+Then read the run the push started. The workflow `main` (`.github/workflows/main.yml`) checks every push of `main`
+on GitHub Actions, on Ubuntu; what it does not run there is listed in `.github/not-run.json`. You only read runs
+with `gh`: never re-run, cancel or delete one, and write nothing to GitHub. With `<sha>` the pushed commit and
+`<sha9>` its first nine characters:
+
+1. `gh run list --workflow main.yml --commit <sha> --json databaseId,status,conclusion,url` gives the run. When
+   it answers `[]` right after the push, look once more at the next event you handle.
+2. `gh run watch <id> --exit-status > .pm/run/ci-<sha9>.watch.log 2>&1`, started in the background: go on
+   answering events and read the file when the command has ended. Never block on a run and never sleep to look
+   again.
+3. The run is a pass only when it is `completed` with conclusion `success`. Any other conclusion (failed,
+   cancelled, timed out) is a failure: save the failed steps' log with
+   `gh run view <id> --log-failed > .pm/run/ci-<sha9>.log`.
+
+- A failed run becomes an issue file: `pm-issue new --source finder --kind bug` with the run's url and the
+  failing lines of `.pm/run/ci-<sha9>.log` as evidence, unless an open issue already lists the failing check in
+  `Issue-Check-Ids` or names the failing step; then add the run's url to that issue instead. Tell the owner in
+  one line (the run's url and the issue's id). The issue waits for the owner's signal like an issue from outside:
+  you do not start it yourself, and other work goes on.
+- A successful run with a step named `<step> (second run)` holds a flake: file it as flow step 5 says for flakes,
+  with the run's url in place of the first log; it waits for the owner's signal too.
+- With no run after the second look, or no answer from `gh`, the run is neither a pass nor a failure: tell the
+  owner in one line; nothing is filed.
+
+`gh workflow run main.yml --ref <branch>` tries a correction of the workflow on a pushed branch; pushing that
+branch needs the owner's word, as every push but `main`'s does.
 
 ### Next issue
 
-Work does not stop at the report. Open issue files come from three places: a `plan` or `worker` that met
-something outside its own issue and filed it instead of fixing it in passing; `pm-check .` on `main` failing a
-check that no open issue lists in `Issue-Check-Ids`, which you file with `--source finder` and the failing log as
-evidence (run it after every merge and when the pinned emulator version changes); and the owner.
+Work does not stop at the report. Open issue files come from four places: a `plan` or `worker` that met
+something outside its own issue and filed it instead of fixing it in passing; a failed or flaky run of the
+workflow on GitHub Actions after a push of `main`, filed with `--source finder` (flow step 6), which waits for the
+owner's signal; a check that fails when you run the full checks on `main` by hand; and the owner. Run
+`pm-check .` on `main` by hand only when the owner asks for it or the pinned emulator version changes, never as a
+condition of a merge or a push; a check it fails that no open issue lists in `Issue-Check-Ids` you file with
+`--source finder` and the failing log as evidence.
 
 When every worktree of the issues in flight is merged and archived, run `pm-issue list` and start the next one at
 flow step 1:
 
 - Take `finder`, `plan`, `worker` and `owner` issues without asking, highest severity first, oldest first within
-  a severity. Skip `github#<n>` issues until their `EVENT go` arrives.
+  a severity. Skip `github#<n>` issues until their `EVENT go` arrives, and an issue filed from a run of the
+  workflow (its evidence is the run's url) until the owner says to start it.
 - `LOW` issues go in batches of five, so that five small issues cost one review and one critique instead of
   five: reviews, critiques and full checks are what takes the time. When only `LOW` issues are left, take the
   five oldest of one module together (fewer when fewer are open) and run them as if they were one issue, in one
@@ -198,8 +235,8 @@ flow step 1:
     `pm-issue close` for that issue, so each issue file moves in the commit that fixes it.
   - Studio screens of the batch are scored together: one `crit` pane, one mock round and one `final` for all the
     screens the batch changes.
-  - The batch is finished as one: when its last unit is merged, run `pm-check .` on `main` once, report the five
-    together, archive the host and push once.
+  - The batch is finished as one: when its last unit is merged, report the five together, archive the host and
+    push once.
   A `LOW` issue is not started outside a batch, and the next batch starts only when the one before it is pushed.
   An issue of any other severity, or one the owner asks for, is taken ahead of the next batch and is finished by
   itself as flow step 6 says.
