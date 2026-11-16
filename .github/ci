@@ -1,0 +1,382 @@
+#!/usr/bin/env -S python3 -I
+"""The runner helper of .github/workflows/main.yml (issue 53). Python 3 standard library only; imports nothing of
+.pm/bin. <checkout> is the parent of the folder this file is in.
+
+  .github/ci not-run
+  .github/ci versions
+  .github/ci run [--second <step>] [--tails] -- <command> [<argument>...]
+
+not-run   Reads .github/not-run.json, tests/integration/manifest.jsonl and the step names `.pm/bin/pm-check
+          <checkout> --list` prints, and refuses the list (exit 1, one line `not-run: <entry>: <what is wrong>`
+          per fault) when it is not the shape {"checks": [{"id", "reason", "issue"}], "steps": [{"step",
+          "reason"}]}, a `checks` id is not a manifest id or is there twice, a `steps` entry is not a pm-check step
+          or is one of the nine this workflow runs (RUN_HERE), a pm-check step outside the nine is missing from
+          `steps`, or a reason is empty. Otherwise prints `not run  <id or step>  <reason>` for every entry and,
+          when GITHUB_STEP_SUMMARY is set, appends a table "Not run" to that file. Nothing in it is shown or
+          counted as passed.
+versions  Prints `rust=<v>` and `bun=<v>`, the tags of `FROM rust:<v>-...` and `FROM oven/bun:<v>-...` in
+          infra/emuforge/Dockerfile. Exit 1, with nothing on standard output, when a line is missing or a
+          version is not n.n.n; so only such a version reaches a `run:` line of the workflow.
+run       Starts <command> as given (an argument array, no shell) without the names of pm-check's SCRUB in its
+          environment (read from the tuple literal in .pm/bin/pm-check), with its standard output and error
+          joined, and passes every line on with keys replaced: a run of exactly 40 of [A-Za-z0-9/+] becomes
+          [redacted-40], a run of exactly 20 of [A-Z0-9] becomes [redacted-20] (the shapes of an emulator's
+          secret access key and access key id; no key's value is known or read here). Everything is printed
+          between ::stop-commands::<token> and ::<token>::, the token random per call, so no line of a command
+          or a check log is a workflow command to the runner. The command runs in a process group of its own,
+          ended when the command exits or the step is cancelled, as pm-check ends a step's. Exits with the
+          command's code; 127 when it cannot be started.
+          --tails         on a code other than 0, prints for every check of <checkout>/output/integration/
+                          report.json whose verdict is failed or error and whose log exists the last 200 lines
+                          of that log, keys replaced, under a header naming the check.
+          --second <step> this is the step's second run, made because its first failed: on code 0, prints
+                          `flaky  <step>  failed once, passed its second run`, appends it to the run summary
+                          and leaves a warning annotation, so the flake is never shown as a plain pass.
+Usage faults (an unknown subcommand, `run` without `--` or without a command) exit 2.
+"""
+import ast
+import json
+import os
+import pathlib
+import re
+import secrets
+import signal
+import subprocess
+import sys
+import threading
+import time
+
+CHECKOUT = pathlib.Path(__file__).resolve().parent.parent
+NOT_RUN = CHECKOUT / ".github" / "not-run.json"
+MANIFEST = CHECKOUT / "tests" / "integration" / "manifest.jsonl"
+PM_CHECK = CHECKOUT / ".pm" / "bin" / "pm-check"
+DOCKERFILE = CHECKOUT / "infra" / "emuforge" / "Dockerfile"
+REPORT = CHECKOUT / "output" / "integration" / "report.json"
+
+# The nine pm-check steps the workflow runs, one step of its own each (pm-check's modules engine, studio and
+# integration). `not-run` holds the list's `steps` to exactly pm-check's other steps.
+RUN_HERE = ("engine-fmt", "engine-clippy", "engine-test", "studio-typecheck", "studio-lint", "studio-format",
+            "studio-unit", "studio-build", "integration")
+TAIL = 200  # lines of a failed or errored check's log printed by --tails
+
+KEY40 = re.compile(r"(?<![A-Za-z0-9/+])[A-Za-z0-9/+]{40}(?![A-Za-z0-9/+])")
+KEY20 = re.compile(r"(?<![A-Z0-9])[A-Z0-9]{20}(?![A-Z0-9])")
+VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
+USAGE = "usage: .github/ci not-run | versions | run [--second <step>] [--tails] -- <command> [<argument>...]"
+
+
+def usage(why):
+    print(f"ci: {why}\n{USAGE}", file=sys.stderr)
+    sys.exit(2)
+
+
+def redact(line):
+    """The line with every run of a key's shape replaced (see the module's text)."""
+    return KEY20.sub("[redacted-20]", KEY40.sub("[redacted-40]", line))
+
+
+def summary(text):
+    """Append `text` to the run summary when the runner names one."""
+    path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if path:
+        with open(path, "a") as f:
+            f.write(text)
+
+
+# ---------------------------------------------------------------------------------------------- not-run
+
+def pm_check_steps():
+    """The step names `pm-check <checkout> --list` prints, in its order."""
+    p = subprocess.run([str(PM_CHECK), str(CHECKOUT), "--list"], capture_output=True, text=True,
+                       stdin=subprocess.DEVNULL, timeout=60)
+    if p.returncode != 0:
+        raise ValueError(f"{PM_CHECK.relative_to(CHECKOUT)} --list exited {p.returncode}: {p.stderr.strip()[-300:]}")
+    names = []
+    for line in p.stdout.splitlines():
+        parts = line.split(None, 2)  # module, present|absent, the step names joined by ", "
+        if len(parts) == 3:
+            names += [n.strip() for n in parts[2].split(",") if n.strip()]
+    if not names:
+        raise ValueError(f"{PM_CHECK.relative_to(CHECKOUT)} --list named no step")
+    return names
+
+
+def manifest_ids():
+    return {json.loads(line)["check_id"] for line in MANIFEST.read_text().splitlines() if line.strip()}
+
+
+def is_text(v):
+    return isinstance(v, str) and v.strip() != ""
+
+
+def check_list(data, ids, steps):
+    """The faults of the list as [(entry, what is wrong)], empty when it is right."""
+    rel = NOT_RUN.relative_to(CHECKOUT)
+    if not isinstance(data, dict) or set(data) != {"checks", "steps"}:
+        return [(rel, 'is not {"checks": [...], "steps": [...]}')]
+    faults = []
+    if not isinstance(data["checks"], list):
+        faults.append((rel, "`checks` is not a list"))
+    if not isinstance(data["steps"], list):
+        faults.append((rel, "`steps` is not a list"))
+    if faults:
+        return faults
+    seen = set()
+    for i, c in enumerate(data["checks"]):
+        if not isinstance(c, dict) or not isinstance(c.get("id"), str):
+            faults.append((f"checks[{i}]", "is not an object with a string `id`"))
+            continue
+        cid = c["id"]
+        if set(c) != {"id", "reason", "issue"}:
+            faults.append((cid, "does not hold exactly `id`, `reason` and `issue`"))
+        if not is_text(c.get("reason")):
+            faults.append((cid, "the reason is empty"))
+        if not isinstance(c.get("issue"), int) or isinstance(c.get("issue"), bool):
+            faults.append((cid, "`issue` is not an issue number"))
+        if cid not in ids:
+            faults.append((cid, f"not an id of {MANIFEST.relative_to(CHECKOUT)}"))
+        if cid in seen:
+            faults.append((cid, "listed twice"))
+        seen.add(cid)
+    known, named = set(steps), set()
+    for i, s in enumerate(data["steps"]):
+        if not isinstance(s, dict) or not isinstance(s.get("step"), str):
+            faults.append((f"steps[{i}]", "is not an object with a string `step`"))
+            continue
+        name = s["step"]
+        if set(s) != {"step", "reason"}:
+            faults.append((name, "does not hold exactly `step` and `reason`"))
+        if not is_text(s.get("reason")):
+            faults.append((name, "the reason is empty"))
+        if name not in known:
+            faults.append((name, "not a step `pm-check . --list` names"))
+        elif name in RUN_HERE:
+            faults.append((name, "one of the nine steps the workflow runs"))
+        if name in named:
+            faults.append((name, "listed twice"))
+        named.add(name)
+    for name in steps:
+        if name not in RUN_HERE and name not in named:
+            faults.append((name, "a pm-check step the workflow does not run, missing from `steps`"))
+    for name in RUN_HERE:
+        if name not in known:
+            faults.append((name, "a step the workflow runs that `pm-check . --list` does not name"))
+    return faults
+
+
+def cell(text):
+    return str(text).replace("|", "\\|").replace("\n", " ")
+
+
+def cmd_not_run():
+    rel = NOT_RUN.relative_to(CHECKOUT)
+    try:
+        data = json.loads(NOT_RUN.read_text())
+    except FileNotFoundError:
+        return fail_list([(rel, "does not exist")])
+    except (ValueError, UnicodeDecodeError) as e:
+        return fail_list([(rel, f"is not JSON ({e})")])
+    try:
+        ids = manifest_ids()
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        return fail_list([(MANIFEST.relative_to(CHECKOUT), f"cannot be read ({e!r})")])
+    try:
+        steps = pm_check_steps()
+    except (OSError, ValueError, subprocess.SubprocessError) as e:
+        return fail_list([(PM_CHECK.relative_to(CHECKOUT), f"cannot list the steps ({e})")])
+    faults = check_list(data, ids, steps)
+    if faults:
+        return fail_list(faults)
+    entries = [(c["id"], c["reason"], f"check, issue #{c['issue']}") for c in data["checks"]]
+    entries += [(s["step"], s["reason"], "pm-check step") for s in data["steps"]]
+    for name, reason, _kind in entries:
+        print(f"not run  {name}  {reason}")
+    print(f"{len(entries)} entries of {rel} are not run here; none of them counts toward the result")
+    rows = "".join(f"| not run | `{cell(name)}` | {cell(kind)} | {cell(reason)} |\n" for name, reason, kind in entries)
+    summary(f"### Not run\n\nNamed in `{rel}`; none of them counts toward the result.\n\n"
+            f"| Status | Entry | Kind | Reason |\n|---|---|---|---|\n{rows}\n")
+    return 0
+
+
+def fail_list(faults):
+    for entry, what in faults:
+        print(f"not-run: {entry}: {what}")
+    return 1
+
+
+# ---------------------------------------------------------------------------------------------- versions
+
+def cmd_versions():
+    try:
+        text = DOCKERFILE.read_text()
+    except OSError as e:
+        print(f"versions: {DOCKERFILE.relative_to(CHECKOUT)} cannot be read ({e.strerror})", file=sys.stderr)
+        return 1
+    found, faults = {}, []
+    for key, image in (("rust", "rust"), ("bun", "oven/bun")):
+        m = re.search(rf"^FROM\s+{re.escape(image)}:([^\s-]+)\S*(\s|$)", text, re.M | re.I)
+        if not m:
+            faults.append(f"no line `FROM {image}:<version>-...` in {DOCKERFILE.relative_to(CHECKOUT)}")
+        elif not VERSION.match(m.group(1)):
+            faults.append(f"the {image} tag `{m.group(1)}` in {DOCKERFILE.relative_to(CHECKOUT)} is not n.n.n")
+        else:
+            found[key] = m.group(1)
+    if faults:
+        for f in faults:
+            print(f"versions: {f}", file=sys.stderr)
+        return 1
+    print(f"rust={found['rust']}\nbun={found['bun']}")
+    return 0
+
+
+# ---------------------------------------------------------------------------------------------- run
+
+def scrub_names():
+    """SCRUB as the source of .pm/bin/pm-check assigns it (a tuple of strings), read without importing it."""
+    for node in ast.parse(PM_CHECK.read_text()).body:
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and getattr(node.targets[0], "id", None) == "SCRUB":
+            names = ast.literal_eval(node.value)
+            if isinstance(names, tuple) and names and all(isinstance(n, str) for n in names):
+                return names
+    raise ValueError(f"{PM_CHECK.relative_to(CHECKOUT)} assigns no tuple SCRUB")
+
+
+def tails():
+    """The last TAIL lines of each failed or errored check's log, from report.json; nothing when there is none."""
+    try:
+        report = json.loads(REPORT.read_text())
+        checks = list(report["checks"])
+    except FileNotFoundError:
+        print(f"--tails: {REPORT.relative_to(CHECKOUT)} does not exist; no check log to show")
+        return
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        print(f"--tails: {REPORT.relative_to(CHECKOUT)} cannot be read ({type(e).__name__}); no check log to show")
+        return
+    for c in checks:
+        if not isinstance(c, dict) or c.get("verdict") not in ("failed", "error") or not c.get("log"):
+            continue
+        log = pathlib.Path(str(c["log"]))
+        if not log.is_absolute():
+            log = CHECKOUT / log
+        try:
+            lines = log.read_bytes().decode("utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        print(f"--- {redact(str(c.get('check_id')))} ({c['verdict']}), last {TAIL} lines of its log")
+        for line in lines[-TAIL:]:
+            print(redact(line))
+    sys.stdout.flush()
+
+
+OUTPUT = threading.Lock()  # held for every line passed on and for the closing token
+CLOSED = threading.Event()  # set, under OUTPUT, just before the closing token: no line of the command after it
+
+
+def pass_on(stream):
+    """Print each line of `stream` with keys replaced, until the commands are resumed."""
+    for raw in stream:
+        with OUTPUT:
+            if CLOSED.is_set():
+                return
+            sys.stdout.write(redact(raw.decode("utf-8", errors="replace").rstrip("\r\n")) + "\n")
+            sys.stdout.flush()
+
+
+def close(token):
+    """Print the closing token; a line the command's output still holds after it is never printed."""
+    with OUTPUT:
+        CLOSED.set()
+        print(f"::{token}::", flush=True)
+
+
+def end_group(pgid, grace=2):
+    """SIGTERM the command's process group, then SIGKILL what is left after `grace` seconds."""
+    for sig, wait in ((signal.SIGTERM, grace), (signal.SIGKILL, 2)):
+        try:
+            os.killpg(pgid, sig)
+        except (ProcessLookupError, PermissionError):
+            return
+        end = time.monotonic() + wait
+        while time.monotonic() < end:
+            try:
+                os.killpg(pgid, 0)
+            except (ProcessLookupError, PermissionError):
+                return
+            time.sleep(0.1)
+
+
+def cmd_run(args):
+    if "--" not in args:
+        usage("run needs `--` before the command")
+    at = args.index("--")
+    opts, argv = args[:at], args[at + 1:]
+    if not argv:
+        usage("run needs a command after `--`")
+    second, want_tails = None, False
+    i = 0
+    while i < len(opts):
+        if opts[i] == "--tails":
+            want_tails = True
+        elif opts[i] == "--second" and i + 1 < len(opts) and opts[i + 1] in RUN_HERE:
+            second = opts[i + 1]
+            i += 1
+        else:
+            usage(f"run does not know `{opts[i]}`" if opts[i] != "--second" else "--second needs one of the nine steps")
+        i += 1
+    try:
+        drop = scrub_names()
+    except (OSError, ValueError, SyntaxError) as e:
+        print(f"ci: cannot read SCRUB, so the command is not started: {e}", file=sys.stderr)
+        return 127
+    env = {k: v for k, v in os.environ.items() if k not in drop}
+
+    token = secrets.token_hex(16)
+    print(f"::stop-commands::{token}", flush=True)
+    try:
+        child = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                                 env=env, start_new_session=True)
+    except OSError as e:
+        print(f"ci: cannot start {redact(argv[0])}: {e.strerror}", flush=True)
+        print(f"::{token}::", flush=True)
+        return 127
+    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):  # a cancelled run ends the command's group too
+        signal.signal(sig, lambda signum, _frame: (end_group(child.pid), sys.exit(128 + signum)))
+    reader = threading.Thread(target=pass_on, args=(child.stdout,), daemon=True)
+    reader.start()
+    code = child.wait()
+    end_group(child.pid)  # as pm-check does: nothing the command started outlives it, nor holds its output open
+    reader.join(timeout=10)
+    if reader.is_alive():  # a process outside the command's group still holds its output
+        with OUTPUT:
+            print("ci: the command has ended; output a process it left behind still writes is not shown", flush=True)
+    if code < 0:
+        code = 128 - code  # ended by a signal
+    if want_tails and code != 0:
+        tails()
+    flaky = None
+    if second and code == 0:
+        flaky = f"{second} failed once, passed its second run"
+        print(f"flaky  {second}  failed once, passed its second run", flush=True)
+        summary(f"- **flaky**: `{second}` failed once, passed its second run\n")
+    close(token)
+    if flaky:
+        print(f"::warning title=flaky::{flaky}", flush=True)
+    return code
+
+
+def main(args):
+    sys.stdout.reconfigure(errors="replace")
+    if not args:
+        usage("a subcommand is needed")
+    sub, rest = args[0], args[1:]
+    if sub == "not-run" and not rest:
+        return cmd_not_run()
+    if sub == "versions" and not rest:
+        return cmd_versions()
+    if sub == "run":
+        return cmd_run(rest)
+    usage(f"unknown subcommand or arguments: {' '.join(args)}")
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
