@@ -1,3 +1,6 @@
+import Header from '@cloudscape-design/components/header';
+import HelpPanel from '@cloudscape-design/components/help-panel';
+import Link from '@cloudscape-design/components/link';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState, useSyncExternalStore } from 'react';
@@ -6,7 +9,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { CheckResult } from '../../../lib/engine/engine-client';
 import type { AreaConnection } from './components/emulator-line';
+import { usePageHelp } from './components/page-help';
+import { useShowsResources } from './components/page-resources';
 import AwsArea from './index';
+import type { AreaScreen } from './screens';
 import { AREA_ROOT_CLASS } from './styles/root-class';
 import { NO_SCREEN_SENTENCE, NO_SCREEN_SERVICE } from '../../../test/no-screen';
 
@@ -28,6 +34,11 @@ vi.mock('./pages/no-screen-page', async (importOriginal) => {
     ),
   };
 });
+
+/** The area's screens as a case registers them; empty, as on `main`, unless a case adds one. */
+const registry = vi.hoisted(() => ({ screens: [] as unknown[] }));
+
+vi.mock('./screens', () => ({ SCREENS: registry.screens }));
 
 const AWS = 'Amazon Web Services';
 const NO_SCREEN = NO_SCREEN_SERVICE.label;
@@ -862,5 +873,297 @@ describe('the AWS area in a document of another language (R7.2, R7.3)', () => {
       'FriFriday',
       'SatSaturday',
     ]);
+  });
+});
+
+describe('a console screen in the AWS area (issue 56, R5)', () => {
+  const HELP_TEXT = 'Things are kept in your local emulator.';
+  /** The text of Cloudscape's "Info" link, with the hidden separator it names itself with. */
+  const INFO_TEXT = 'Info:';
+
+  /** A test screen's page: its `h1` with an "Info" control that asks for its help, and a sentence. */
+  function ThingsPage() {
+    const openHelp = usePageHelp();
+    return (
+      <Header
+        variant="h1"
+        info={
+          <Link variant="info" onFollow={() => openHelp()}>
+            Info
+          </Link>
+        }
+      >
+        Things
+      </Header>
+    );
+  }
+
+  function ThingsHelp() {
+    return (
+      <HelpPanel header={<h2>Things</h2>}>
+        <p>{HELP_TEXT}</p>
+      </HelpPanel>
+    );
+  }
+
+  /** A second test screen, without help, that names its resources "widgets". */
+  function WidgetsPage() {
+    useShowsResources('widgets');
+    return <Header variant="h1">Widgets</Header>;
+  }
+
+  const NAVIGATION_OF_THINGS = {
+    header: { text: 'Things of DynamoDB', href: '/aws/dynamodb' },
+    items: [
+      {
+        type: 'section',
+        text: 'Things',
+        items: [
+          { type: 'link', text: 'All things', href: '/aws/dynamodb/things' },
+          { type: 'link', text: 'Widgets', href: '/aws/dynamodb/widgets' },
+          { type: 'link', text: 'Other things', href: '/aws/dynamodb/other-things' },
+        ],
+      },
+    ],
+    activeHref: '/aws/dynamodb/things',
+  } satisfies AreaScreen['navigation'];
+
+  const THINGS: AreaScreen = {
+    service: '/dynamodb',
+    paths: ['/aws/dynamodb', '/aws/dynamodb/things'],
+    title: 'Things',
+    crumb: 'Things',
+    navigation: NAVIGATION_OF_THINGS,
+    help: ThingsHelp,
+    Page: ThingsPage,
+  };
+
+  const WIDGETS: AreaScreen = {
+    service: '/dynamodb',
+    paths: ['/aws/dynamodb/widgets'],
+    title: 'Widgets',
+    crumb: 'Widgets',
+    navigation: { ...NAVIGATION_OF_THINGS, activeHref: '/aws/dynamodb/widgets' },
+    Page: WidgetsPage,
+  };
+
+  beforeEach(() => {
+    registry.screens.push(THINGS, WIDGETS);
+  });
+
+  afterEach(() => {
+    registry.screens.length = 0;
+  });
+
+  function navigationLinks(wrapper: ReturnType<typeof createWrapper>): [string | null, string | null][] {
+    const navigation = wrapper.findSideNavigation()?.getElement() as HTMLElement;
+    const header = wrapper.findSideNavigation()?.findHeaderLink()?.getElement();
+    return within(navigation)
+      .getAllByRole('link')
+      .filter((link) => link !== header)
+      .map((link) => [link.textContent, link.getAttribute('href')]);
+  }
+
+  function info(): HTMLElement {
+    return screen.getByRole('button', { name: /^Info/ });
+  }
+
+  /** The open help panel, the region that holds the help text; Cloudscape keeps a closed one in the document, hidden. */
+  function helpPanel(): HTMLElement | null {
+    const panel = screen.queryByText(HELP_TEXT)?.closest('aside');
+    return panel instanceof HTMLElement && panel.closest('[aria-hidden="true"]') === null ? panel : null;
+  }
+
+  function askForHelp() {
+    act(() => {
+      info().focus();
+      fireEvent.click(info());
+    });
+  }
+
+  it.each(THINGS.paths)(
+    'on %s: the h1, the content target and the title reported to Studio are "Things"; crumbs EmuForge, AWS, DynamoDB, then Things, not a link',
+    (path) => {
+      const { wrapper } = open(path);
+      act(() => {
+        focusContent?.();
+      });
+
+      expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Things');
+      expect(contentTargetProblems(document.activeElement, 'Things', INFO_TEXT)).toEqual([]);
+      expect(titles.at(-1)).toBe('Things');
+      expect(breadcrumbs(wrapper)).toEqual([
+        ['EmuForge', '/'],
+        ['AWS', '/aws'],
+        ['DynamoDB', '/aws/dynamodb'],
+        ['Things', null],
+      ]);
+    },
+  );
+
+  it.each(THINGS.paths)(
+    "on %s: the side navigation is the screen's header and links, All things current, none of the 19 services",
+    (path) => {
+      const { wrapper } = open(path);
+      const navigation = wrapper.findSideNavigation();
+
+      const header = navigation?.findHeaderLink()?.getElement();
+      expect(header).toHaveTextContent('Things of DynamoDB');
+      expect(header).toHaveAttribute('href', '/aws/dynamodb');
+      expect(navigation?.findItemByIndex(1)?.findSectionTitle()?.getElement()).toHaveTextContent('Things');
+      expect(navigationLinks(wrapper)).toEqual([
+        ['All things', '/aws/dynamodb/things'],
+        ['Widgets', '/aws/dynamodb/widgets'],
+        ['Other things', '/aws/dynamodb/other-things'],
+      ]);
+      expect(navigation?.findActiveLink()?.getElement()).toHaveAttribute('href', '/aws/dynamodb/things');
+      const texts = navigationLinks(wrapper).map(([text]) => text);
+      const hrefs = navigationLinks(wrapper).map(([, href]) => href);
+      for (const [label, route] of SERVICES) {
+        expect(texts).not.toContain(label);
+        expect(hrefs).not.toContain(route);
+      }
+    },
+  );
+
+  it('on /aws/dynamodb/other-things, a path of the service no screen lists: the "no screen yet" page with the services list, as before', () => {
+    const { wrapper } = open('/aws/dynamodb/other-things');
+
+    expect(screen.getByRole('heading', { level: 1, name: 'Amazon DynamoDB' })).toBeInTheDocument();
+    expect(screen.getByRole('main')).toHaveTextContent('Studio has no screen for Amazon DynamoDB yet.');
+    expect(wrapper.findSideNavigation()?.findHeaderLink()?.getElement()).toHaveTextContent(AWS);
+    expect(navigationLinks(wrapper)).toEqual(SERVICES);
+    expect(wrapper.findSideNavigation()?.findActiveLink()?.getElement()).toHaveAttribute('href', '/aws/dynamodb');
+    expect(breadcrumbs(wrapper).map(([text]) => text)).toEqual(['EmuForge', 'AWS', 'DynamoDB']);
+    expect(titles.at(-1)).toBe('Amazon DynamoDB');
+  });
+
+  it.each(['/aws', NO_SCREEN_SERVICE.path, '/aws/does-not-exist'])(
+    'on %s: the services list as navigation and no help toggle, as before',
+    (path) => {
+      const { wrapper } = open(path);
+
+      expect(wrapper.findSideNavigation()?.findHeaderLink()?.getElement()).toHaveTextContent(AWS);
+      expect(navigationLinks(wrapper)).toEqual(SERVICES);
+      expect(wrapper.findAppLayout()?.findToolsToggle()).toBeNull();
+      expect(screen.queryByRole('button', { name: /help panel/i })).toBeNull();
+    },
+  );
+
+  it.each([
+    ['/aws/dynamodb/things', '/aws/dynamodb/other-things', 'Amazon DynamoDB', 'Go to Home'],
+    ['/aws/dynamodb', '/aws/dynamodb/things', 'Things', INFO_TEXT],
+  ])(
+    'on %s, %s chosen in the screen\'s navigation: the path changes without a document load, focus on the content target "%s"',
+    async (path, href, name, firstStop) => {
+      const { wrapper, router } = open(path);
+      const link = wrapper.findSideNavigation()?.findLinkByHref(href)?.getElement();
+      expect(link).toBeDefined();
+
+      let followed = true;
+      act(() => {
+        (link as HTMLElement).focus();
+        followed = fireEvent.click(link as HTMLElement);
+      });
+
+      expect(followed).toBe(false);
+      expect(router.state.location.pathname).toBe(href);
+      await expectFocusOnTarget(name, firstStop);
+    },
+  );
+
+  it('on a screen that gives help: a toggle named "Open help panel", the panel closed', () => {
+    const { wrapper } = open('/aws/dynamodb/things');
+
+    const toggle = wrapper.findAppLayout()?.findToolsToggle()?.getElement();
+    expect(toggle).toHaveAccessibleName('Open help panel');
+    expect(helpPanel()).toBeNull();
+  });
+
+  it('the screen asks for its help: the panel opens with its help, focus inside it, the toggle named "Close help panel"', async () => {
+    const { wrapper } = open('/aws/dynamodb/things');
+
+    askForHelp();
+
+    const panel = helpPanel();
+    expect(panel).not.toBeNull();
+    expect(within(panel as HTMLElement).getByText(HELP_TEXT)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(panel).toContainElement(document.activeElement as HTMLElement);
+    });
+    expect(wrapper.findAppLayout()?.findToolsToggle()?.getElement()).toHaveAccessibleName('Close help panel');
+  });
+
+  it('the panel opened by "Info", then closed: it is gone and focus is on "Info"', async () => {
+    const { wrapper } = open('/aws/dynamodb/things');
+    askForHelp();
+    await waitFor(() => {
+      expect(helpPanel()).toContainElement(document.activeElement as HTMLElement);
+    });
+
+    act(() => {
+      fireEvent.click(wrapper.findAppLayout()?.findToolsClose()?.getElement() as HTMLElement);
+    });
+
+    expect(helpPanel()).toBeNull();
+    await waitFor(() => {
+      expect(document.activeElement).toBe(info());
+    });
+  });
+
+  it('the panel opened by its toggle, then closed: it is gone and focus is on the toggle', async () => {
+    const { wrapper } = open('/aws/dynamodb/things');
+    const toggle = () => wrapper.findAppLayout()?.findToolsToggle()?.getElement() as HTMLElement;
+    act(() => {
+      toggle().focus();
+      fireEvent.click(toggle());
+    });
+    expect(helpPanel()).not.toBeNull();
+
+    act(() => {
+      fireEvent.click(wrapper.findAppLayout()?.findToolsClose()?.getElement() as HTMLElement);
+    });
+
+    expect(helpPanel()).toBeNull();
+    await waitFor(() => {
+      expect(document.activeElement).toBe(toggle());
+    });
+  });
+
+  it.each([
+    ['/aws/dynamodb/other-things', 'Amazon DynamoDB'],
+    ['/aws/dynamodb/widgets', 'Widgets'],
+  ])('the panel open, then %s chosen, a page without help: no panel and no toggle', (href, h1) => {
+    const { wrapper, router } = open('/aws/dynamodb/things');
+    askForHelp();
+    expect(helpPanel()).not.toBeNull();
+
+    act(() => {
+      fireEvent.click(wrapper.findSideNavigation()?.findLinkByHref(href)?.getElement() as HTMLElement);
+    });
+
+    expect(router.state.location.pathname).toBe(href);
+    expect(screen.getByRole('heading', { level: 1, name: h1 })).toBeInTheDocument();
+    expect(helpPanel()).toBeNull();
+    expect(wrapper.findAppLayout()?.findToolsToggle()).toBeNull();
+    expect(screen.queryByRole('button', { name: /help panel/i })).toBeNull();
+  });
+
+  it('a screen that names its resources: the emulator line, then the notice, then the h1, inside the content target', () => {
+    open('/aws/dynamodb/widgets');
+    act(() => {
+      focusContent?.();
+    });
+    const target = document.activeElement as HTMLElement;
+    const notice = screen.getByRole('region', { name: 'Local emulator notice' });
+    const heading = screen.getByRole('heading', { level: 1 });
+
+    expect(target).toHaveAccessibleName('Widgets');
+    expect(within(notice).getByText('These widgets are in your local emulator')).toBeInTheDocument();
+    expect(target).toContainElement(emulatorLine());
+    expect(target).toContainElement(notice);
+    expect(target).toContainElement(heading);
+    expect(follows(emulatorLine(), notice)).toBe(true);
+    expect(follows(notice, heading)).toBe(true);
   });
 });
