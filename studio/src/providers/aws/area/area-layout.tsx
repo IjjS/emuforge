@@ -95,7 +95,13 @@ function PageContent({ page }: { page: AreaPage }) {
  * locale is `en` for everything it renders, whatever the document's `lang` and the browser's languages, so a date, a
  * number or a component's built-in text comes out in English.
  */
-export function AreaLayout({ headerSelector, onPageTitle, onContentTarget, routeChanges, connection }: AreaLayoutProps) {
+export function AreaLayout({
+  headerSelector,
+  onPageTitle,
+  onContentTarget,
+  routeChanges,
+  connection,
+}: AreaLayoutProps) {
   const { pathname } = useLocation();
   const handleFollow = useFollow();
   const root = useRef<HTMLDivElement>(null);

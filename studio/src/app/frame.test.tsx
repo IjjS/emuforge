@@ -1,14 +1,16 @@
+import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { act, fireEvent, getRoles, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useEffect, useRef, type ReactNode } from 'react';
 import type { Root } from 'react-dom/client';
 import { createMemoryRouter, RouterProvider, type RouteObject } from 'react-router';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { BUNDLED_CATALOGUES } from '../i18n/bundled';
 import { STORAGE_KEY } from '../i18n/language';
 import { LanguageProvider } from '../i18n/language-provider';
 import {
+  advance,
   buildOnceToggle,
   connected,
   connectionNotice,
@@ -18,10 +20,11 @@ import {
   headerRefresh,
   languageStore,
   present,
+  row,
   textNotFrom,
 } from '../test/home-test-kit';
 import { Frame, ProviderPage } from './frame';
-import type { ProviderAreaProps } from './provider-list';
+import { PROVIDERS, type ProviderAreaProps } from './provider-list';
 import { Providers } from './providers';
 import { routes } from './routes';
 
@@ -1328,5 +1331,124 @@ describe('the tile in the wordmark link (issue #36, R6)', () => {
       expect(document.activeElement).not.toBe(tile);
       expect(tile.contains(document.activeElement)).toBe(false);
     }
+  });
+});
+
+describe("the AWS area's connection, as the frame checks it (issue 45, R4.4)", () => {
+  let engine: FakeEngine;
+
+  beforeAll(async () => {
+    // The area's first import is real work, not a timer: done before the clock is faked.
+    await PROVIDERS[0]?.loadArea();
+  });
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
+    engine = new FakeEngine();
+    vi.stubGlobal('fetch', engine.fetch);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const LINE = 'Local emulator, not AWS';
+
+  /** The emulator line's status: the text of its status indicator. */
+  function lineStatus(): string {
+    const line = screen.getByRole('group', { name: LINE });
+    return (createWrapper(line).findStatusIndicator()?.getElement().textContent ?? '').trim();
+  }
+
+  /** Studio at `path` under the AWS area, once its `h1` is shown. */
+  async function openArea(path: string, h1: string) {
+    const opened = openStudio(path);
+    await vi.waitFor(
+      async () => {
+        await advance();
+        expect(screen.getByRole('heading', { level: 1, name: h1 })).toBeInTheDocument();
+      },
+      { timeout: AREA_LOAD_MS, interval: 20 },
+    );
+    return opened;
+  }
+
+  it('on /aws: the line shows "Checking", then the answer\'s state once the engine has answered', async () => {
+    engine.healthAnswers = [{ ...connected(9411), delayMs: 1_000 }];
+    await openArea('/aws', 'Amazon Web Services');
+
+    expect(lineStatus()).toBe('Checking');
+    expect(engine.healths).toHaveLength(1);
+
+    await advance(1_000);
+
+    expect(lineStatus()).toBe('Connected at https://127.0.0.1:9411');
+  });
+
+  it('on /aws/s3, more than 5 seconds after an answer: a new request, and the line shows its answer', async () => {
+    engine.healthAnswers = [connected(9411), emulatorDown('not_started', 9411)];
+    await openArea('/aws/s3', 'Amazon Simple Storage Service');
+    await advance();
+    expect(lineStatus()).toBe('Connected at https://127.0.0.1:9411');
+    expect(engine.healths).toHaveLength(1);
+
+    await advance(5_000);
+
+    expect(engine.healths).toHaveLength(2);
+    expect(lineStatus()).toBe('Not started on port 9411');
+  });
+
+  it('a route change inside the area within 5 seconds of an answer: the line keeps it, and no new request is made', async () => {
+    engine.healthAnswers = [connected(9411)];
+    const { router } = await openArea('/aws', 'Amazon Web Services');
+    await advance();
+    expect(lineStatus()).toBe('Connected at https://127.0.0.1:9411');
+
+    await act(() => router.navigate('/aws/s3'));
+    await advance(2_000);
+    expect(screen.getByRole('heading', { level: 1, name: 'Amazon Simple Storage Service' })).toBeInTheDocument();
+    expect(lineStatus()).toBe('Connected at https://127.0.0.1:9411');
+    await act(() => router.navigate('/aws'));
+    await advance(2_900);
+
+    expect(lineStatus()).toBe('Connected at https://127.0.0.1:9411');
+    expect(engine.healths).toHaveLength(1);
+    await advance(100);
+    expect(engine.healths).toHaveLength(2);
+  });
+
+  it('a later check in flight after a connected answer: the line still reads "Connected at <endpoint>"', async () => {
+    engine.healthAnswers = [connected(9411), { hang: true }];
+    await openArea('/aws/s3', 'Amazon Simple Storage Service');
+    await advance();
+
+    await advance(5_000);
+    expect(engine.healths).toHaveLength(2);
+
+    expect(lineStatus()).toBe('Connected at https://127.0.0.1:9411');
+  });
+
+  it('Home chosen in the frame: no further request for the area; Home asks for itself and shows "Checking" until it answers', async () => {
+    engine.healthAnswers = [connected(9411)];
+    await openArea('/aws/s3', 'Amazon Simple Storage Service');
+    await advance();
+    expect(lineStatus()).toBe('Connected at https://127.0.0.1:9411');
+    const areaChecks = engine.healths.length;
+    // Home's own checks take a second each.
+    engine.answerHealth({ ...connected(9411), delayMs: 1_000 });
+
+    fireEvent.click(frameLinks().home);
+    await advance();
+
+    expect(screen.getByRole('heading', { level: 1, name: 'Home' })).toBeInTheDocument();
+    expect(engine.healths).toHaveLength(areaChecks + 1);
+    expect(row('Engine').status).toBe('Checking');
+    expect(row('Emulator').status).toBe('Checking');
+    await advance(1_000);
+    expect(row('Emulator').status).toBe('Connected');
+
+    // Only Home's rhythm from here: a check 5 seconds after each of its answers, each answered a second later.
+    await advance(19_000);
+    expect(engine.healths).toHaveLength(areaChecks + 4);
   });
 });

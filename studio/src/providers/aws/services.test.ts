@@ -36,6 +36,8 @@ describe('the AWS services', () => {
   });
 
   it('keep the labels of main, in the same order', () => {
-    expect(SERVICES.map(({ route, label }) => [route, label])).toEqual(SERVICE_NAMES.map(([route, label]) => [route, label]));
+    expect(SERVICES.map(({ route, label }) => [route, label])).toEqual(
+      SERVICE_NAMES.map(([route, label]) => [route, label]),
+    );
   });
 });
