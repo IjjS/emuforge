@@ -304,10 +304,16 @@ describe('a listing', () => {
     await waitFor(() => {
       expect(result.current.buckets?.map((b) => b.name)).toEqual(['newer']);
     });
-    act(() => {
-      older.answer(['older']);
+    // The older request has been given up: no query waits for its answer any more.
+    await waitFor(() => {
+      expect(older.signal.aborted).toBe(true);
+      expect(client.isFetching()).toBe(0);
     });
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(client.getQueryCache().findAll()).toHaveLength(1);
+    await act(async () => {
+      older.answer(['older']);
+      await Promise.resolve();
+    });
 
     expect(result.current.buckets?.map((b) => b.name)).toEqual(['newer']);
     expect(result.current.count).toEqual({ total: 1, more: false });
