@@ -121,7 +121,7 @@ async function openWithClients(
   engineOrigin: string,
   enginePort: number,
 ): Promise<{ clients: PageClients; requests: EngineRequests }> {
-  const requests = EngineRequests.attach(ctx, context, page, engineOrigin);
+  const requests = await EngineRequests.attach(ctx, context, page, engineOrigin);
   await page.goto('/aws/s3');
   expect(new URL(page.url()).origin, 'the page origin').toBe(studioOrigin);
   expect(new URL(page.url()).pathname, 'the page path').toBe('/aws/s3');

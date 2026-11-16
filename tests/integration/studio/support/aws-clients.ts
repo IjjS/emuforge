@@ -3,16 +3,17 @@
 //
 // - `PageClients.load` bundles `studio/src/lib/aws/client-factory.ts` for the browser with `bun build
 //   --target=browser` against Studio's installed SDK, into the run's own scratch space (never into `studio/`), loads
-//   the bundle into the page, and creates one S3 client and one Step Functions client there for the engine's
-//   endpoint. The bundle calls only `engineEndpoint`, `createS3Client` and `createSfnClient` and the SDK's commands;
-//   the clients live in the page until it closes, so later calls go through the same clients. A resolved command
+//   the bundle into the page as a script named `CLIENTS_SCRIPT_URL`, and creates one S3 client and one Step
+//   Functions client there for the engine's endpoint. The bundle calls only `engineEndpoint`, `createS3Client` and
+//   `createSfnClient` and the SDK's commands; the clients live in the page until it closes, so later calls go through
+//   the same clients. A resolved command
 //   carries its request id (`$metadata.requestId`, the emulator's id of the request it answered); the object
 //   commands (issue 26) carry what their result reads: body, `ETag`, `CacheControl`, keys.
-// - `EngineRequests` records the page's engine requests: method, path, whether `Authorization` has the Studio
-//   credential's prefix, and whether `X-EmuForge-Session` equals a session token the engine handed the clients. The
-//   AWS area's emulator line asks the engine on its own (issue 45); its session and health requests are left out.
-//   Tokens stay in memory (a `Traffic` registers each for redaction as it sees it); only presence and equality reach a
-//   log.
+// - `EngineRequests` records the page's engine requests over a Chrome DevTools Protocol session (it only listens):
+//   method, path, whether `Authorization` has the Studio credential's prefix, and whether `X-EmuForge-Session` equals
+//   a session token the engine handed the clients. The AWS area's emulator line asks the engine on its own (issue
+//   45); its session and health requests, told apart by the script that sent them, are left out. Tokens stay in
+//   memory (a `Traffic` registers each for redaction as it sees it); only presence and equality reach a log.
 // - `CacheRecord` is the browser's own record of where each engine answer came from: a Chrome DevTools Protocol
 //   session on the page (`Network.requestWillBeSent`, `Network.requestServedFromCache`, `Network.responseReceived`).
 //   It only listens; it changes no request and installs no route.
@@ -20,7 +21,7 @@
 //   against its `ca.pem`. A direct S3 call may carry a body and extra headers; every direct answer carries its
 //   headers.
 
-import type { BrowserContext, CDPSession, Page, Request } from '@playwright/test';
+import type { BrowserContext, CDPSession, Page } from '@playwright/test';
 import { execFile } from 'node:child_process';
 import { createHash, createHmac } from 'node:crypto';
 import fs from 'node:fs';
@@ -39,6 +40,9 @@ const BUILD_BOUND_MS = 60_000;
 
 /** The start of every `Authorization` the factory must send (requirement R1, R2). */
 export const STUDIO_AUTH_PREFIX = 'AWS4-HMAC-SHA256 Credential=emuforge-studio/';
+
+/** The script URL the clients' bundle runs under in the page (`sourceURL`); `EngineRequests` reads it in stacks. */
+const CLIENTS_SCRIPT_URL = 'emuforge-it-aws-clients.js';
 
 /** The name the bundle gives its calls on `window`. */
 const GLOBAL = '__emuforgeAwsClients';
@@ -218,7 +222,8 @@ export class PageClients {
    */
   static async load(ctx: Ctx, page: Page, enginePort: number, requests: EngineRequests): Promise<PageClients> {
     const bundle = await buildBundle(ctx);
-    await page.addScriptTag({ path: bundle });
+    const source = await fs.promises.readFile(bundle, 'utf8');
+    await page.addScriptTag({ content: `${source}\n//# sourceURL=${CLIENTS_SCRIPT_URL}\n` });
     const exposed = await page.evaluate(
       ({ name, calls }) => {
         const all = (window as unknown as Record<string, Record<string, unknown> | undefined>)[name];
@@ -310,24 +315,52 @@ export interface EngineRequest {
   sessionToken: number;
 }
 
-/** One engine request as `EngineRequests` saw it: its final headers, and for a session request the token it got. */
+/** One engine request as `EngineRequests` saw it. */
 interface SeenEngineRequest {
   method: string;
   path: string;
+  /** The headers the browser sent, lower-case names. */
   headers: Record<string, string>;
+  /** Where the request came from: the clients' bundle, another script of the page, or no stack reported. */
+  initiator: 'clients' | 'other' | 'unknown';
+  /** The script URL of the top frame of the initiator's stack, for the log. */
+  initiatorUrl: string;
   /** The token of the session answer; `null` until it is read, or when the answer gave none. */
   token: string | null;
+  /** The browser reported the request finished or failed, and a session answer's token has been read. */
+  done: boolean;
+}
+
+/** The CDP initiator's stack, its async parents included. */
+interface InitiatorStack {
+  callFrames: { url: string }[];
+  parent?: InitiatorStack;
+}
+
+/** Every script URL of `stack`, top frame first, then its async parents. */
+function stackUrls(stack: InitiatorStack | undefined): string[] {
+  const urls: string[] = [];
+  for (let s = stack; s !== undefined; s = s.parent) urls.push(...s.callFrames.map((f) => f.url));
+  return urls;
+}
+
+function lowerCased(headers: Record<string, unknown>): Record<string, string> {
+  return Object.fromEntries(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), String(v)]));
 }
 
 /**
- * The page's requests to the engine at `engineOrigin`, preflights (`OPTIONS`) excepted. A `Traffic` stays attached
- * so that every session token is registered for redaction the moment it is seen.
+ * The page's requests to the engine at `engineOrigin`, preflights (`OPTIONS`) excepted, from a Chrome DevTools
+ * Protocol session on the page (`Network` events; it only listens). A `Traffic` stays attached so that every session
+ * token is registered for redaction the moment it is seen.
  *
- * The AWS area's emulator line (issue 45, R4.4) asks the engine for a session and for its health on its own; those
- * requests are the line's, not the clients', and are left out of `all()`, `since()` and `tokenCount()`: every request
- * to `HEALTH_PATH`, and every session request whose token no AWS request (a request to any other engine path)
- * carries, a session request whose answer gave no token included. The clients' tokens are the session tokens an AWS
- * request carries, in the order of their session requests.
+ * The AWS area's emulator line (issue 45, R4.4) asks the engine for a session and for its health on its own. The
+ * engine hands one token for its whole run, so the line's session request and the clients' get the same token; what
+ * tells them apart is the script that sent them. The clients' bundle runs under `CLIENTS_SCRIPT_URL`, and each request
+ * carries its initiator's stack. Left out of `all()`, `since()` and `tokenCount()` as the line's: every request to
+ * `HEALTH_PATH`, and every session request whose stack does not hold the bundle's script. A session request with no
+ * stack is kept, so a browser that reports none fails the counts rather than hides a request. Every AWS request (a
+ * request to any other engine path) is kept. The clients' tokens are the tokens of the clients' session answers, in
+ * the order of their requests.
  */
 export class EngineRequests {
   private readonly seen: SeenEngineRequest[] = [];
@@ -342,47 +375,67 @@ export class EngineRequests {
   ) {}
 
   /**
-   * Starts recording `page`'s requests (a `Traffic` of `context`). Each engine answer that is not a success is logged
-   * with its status, the error code its body names and whether it has `WWW-Authenticate`: an SDK that cannot read the
-   * answer hides that code.
+   * Starts recording `page`'s requests (a CDP session on `page`, and a `Traffic` of `context`). Each engine answer
+   * that is not a success is logged with its status, the error code its body names and whether it has
+   * `WWW-Authenticate`: an SDK that cannot read the answer hides that code.
    */
-  static attach(ctx: Ctx, context: BrowserContext, page: Page, engineOrigin: string): EngineRequests {
+  static async attach(ctx: Ctx, context: BrowserContext, page: Page, engineOrigin: string): Promise<EngineRequests> {
     const requests = new EngineRequests(ctx, Traffic.attach(ctx, context, page), engineOrigin);
-    const byRequest = new Map<Request, SeenEngineRequest>();
-    context.on('request', (request) => {
-      const url = new URL(request.url());
-      if (url.origin !== engineOrigin || request.method() === 'OPTIONS') return;
+    const byId = new Map<string, SeenEngineRequest>();
+    const extra = new Map<string, Record<string, string>>();
+    const cdp: CDPSession = await context.newCDPSession(page);
+    cdp.on('Network.requestWillBeSent', (e) => {
+      const url = new URL(e.request.url);
+      if (url.origin !== engineOrigin || e.request.method === 'OPTIONS' || byId.has(e.requestId)) return;
+      const urls = stackUrls(e.initiator.stack as InitiatorStack | undefined);
       const seen: SeenEngineRequest = {
-        method: request.method(),
+        method: e.request.method,
         path: url.pathname,
-        headers: request.headers(),
+        headers: { ...lowerCased(e.request.headers), ...extra.get(e.requestId) },
+        initiator: urls.length === 0 ? 'unknown' : urls.includes(CLIENTS_SCRIPT_URL) ? 'clients' : 'other',
+        initiatorUrl: urls[0] ?? '(no stack)',
         token: null,
+        done: false,
       };
+      extra.delete(e.requestId);
+      byId.set(e.requestId, seen);
       requests.seen.push(seen);
-      byRequest.set(request, seen);
+    });
+    cdp.on('Network.requestWillBeSentExtraInfo', (e) => {
+      const headers = lowerCased(e.headers);
+      const seen = byId.get(e.requestId);
+      if (seen) Object.assign(seen.headers, headers);
+      else extra.set(e.requestId, headers);
+    });
+    cdp.on('Network.loadingFinished', (e) => {
+      const seen = byId.get(e.requestId);
+      if (!seen) return;
+      if (seen.path !== SESSION_PATH) {
+        seen.done = true;
+        return;
+      }
       requests.pending.push(
-        request
-          .allHeaders()
-          .then((headers) => (seen.headers = headers))
-          .catch(() => undefined),
+        cdp
+          .send('Network.getResponseBody', { requestId: e.requestId })
+          .then((r) => {
+            const body = JSON.parse(r.base64Encoded ? Buffer.from(r.body, 'base64').toString() : r.body) as {
+              token?: unknown;
+            };
+            if (typeof body.token === 'string' && body.token !== '') seen.token = body.token;
+          })
+          .catch(() => undefined)
+          .finally(() => (seen.done = true)),
       );
     });
+    cdp.on('Network.loadingFailed', (e) => {
+      const seen = byId.get(e.requestId);
+      if (seen) seen.done = true;
+    });
+    await cdp.send('Network.enable');
     context.on('response', (response) => {
       const url = new URL(response.url());
-      if (url.origin !== engineOrigin) return;
+      if (url.origin !== engineOrigin || response.status() < 400) return;
       const request = response.request();
-      const seen = byRequest.get(request);
-      if (seen !== undefined && url.pathname === SESSION_PATH && response.ok()) {
-        requests.pending.push(
-          response
-            .json()
-            .then((body: { token?: unknown }) => {
-              if (typeof body.token === 'string' && body.token !== '') seen.token = body.token;
-            })
-            .catch(() => undefined),
-        );
-      }
-      if (response.status() < 400) return;
       const www = response.headers()['www-authenticate'] !== undefined;
       const read = response
         .text()
@@ -402,29 +455,42 @@ export class EngineRequests {
     return requests;
   }
 
-  /** Waits until every engine answer and header seen so far has been recorded and logged. */
+  /**
+   * Waits until every engine answer seen so far has been logged, and every request counted as the clients' has
+   * finished or failed with its session token read, within a bound. Throws when one is still open after it.
+   */
   async settle(): Promise<void> {
+    const open = await waitFor(RECORD_BOUND_MS, () =>
+      this.seen.some((r) => this.isClients(r) && !r.done) ? undefined : null,
+    );
     for (;;) {
       const now = [...this.answers.splice(0), ...this.pending.splice(0)];
       await this.traffic.settle();
-      if (now.length === 0) return;
+      if (now.length === 0) break;
       await Promise.allSettled(now);
+    }
+    if (open === undefined) {
+      const left = this.seen.filter((r) => this.isClients(r) && !r.done).map((r) => `${r.method} ${r.path}`);
+      throw new Error(`no end within ${String(RECORD_BOUND_MS)} ms for engine request(s): ${left.join('; ')}`);
     }
   }
 
   /**
-   * Every recorded engine request of the clients so far, once their headers and tokens are recorded: the emulator
-   * line's requests are left out (see the class), and how many were is logged when that number changes.
+   * Every recorded engine request of the clients so far, once settled: the emulator line's requests are left out
+   * (see the class), and how many were, with the script each was sent from, is logged when that number changes.
    */
   async all(): Promise<EngineRequest[]> {
     await this.settle();
-    const tokens = this.clientTokens();
-    const kept = this.seen.filter((r) => this.isClients(r, tokens));
-    const leftOut = this.seen.length - kept.length;
-    if (leftOut !== this.leftOutLogged) {
-      this.leftOutLogged = leftOut;
-      this.ctx.log(`engine requests of the emulator line left out: ${String(leftOut)}`);
+    const kept = this.seen.filter((r) => this.isClients(r));
+    const leftOut = this.seen.filter((r) => !this.isClients(r));
+    if (leftOut.length !== this.leftOutLogged) {
+      this.leftOutLogged = leftOut.length;
+      const from = [...new Set(leftOut.map((r) => r.initiatorUrl))].join(', ') || 'none';
+      this.ctx.log(`engine requests of the emulator line left out: ${String(leftOut.length)} (sent from ${from})`);
     }
+    const unknown = kept.filter((r) => r.path === SESSION_PATH && r.initiator === 'unknown').length;
+    if (unknown > 0) this.ctx.log(`session requests kept with no initiator stack: ${String(unknown)}`);
+    const tokens = this.clientTokens();
     return kept.map((r) => this.reduce(r, tokens));
   }
 
@@ -439,26 +505,20 @@ export class EngineRequests {
     return this.clientTokens().length;
   }
 
-  /** The session tokens an AWS request carries, in the order of the session requests that got them. */
+  /** The tokens of the clients' session answers, in the order of their requests, each once. */
   private clientTokens(): string[] {
-    const carried = new Set(
-      this.seen
-        .filter((r) => r.path !== SESSION_PATH && r.path !== HEALTH_PATH)
-        .map((r) => r.headers['x-emuforge-session'])
-        .filter((t): t is string => t !== undefined),
-    );
     const tokens: string[] = [];
     for (const r of this.seen) {
-      if (r.path === SESSION_PATH && r.token !== null && carried.has(r.token) && !tokens.includes(r.token)) {
+      if (r.path === SESSION_PATH && this.isClients(r) && r.token !== null && !tokens.includes(r.token)) {
         tokens.push(r.token);
       }
     }
     return tokens;
   }
 
-  private isClients(r: SeenEngineRequest, tokens: string[]): boolean {
+  private isClients(r: SeenEngineRequest): boolean {
     if (r.path === HEALTH_PATH) return false;
-    if (r.path === SESSION_PATH) return r.token !== null && tokens.includes(r.token);
+    if (r.path === SESSION_PATH) return r.initiator !== 'other';
     return true;
   }
 
