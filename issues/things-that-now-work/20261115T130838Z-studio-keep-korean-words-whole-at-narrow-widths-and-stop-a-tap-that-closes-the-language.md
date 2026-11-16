@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: bug
 Issue-Source: finder
 Issue-Key: studio|i18n|final-critique-findings
-Issue-Check-Ids:
+Issue-Check-Ids: studio.korean-words-stay-whole studio.count-and-unit-stay-on-one-line studio.language-menu-dismissing-press-does-nothing-else studio.language-menu-is-veiled-at-480-and-below
 Issue-Commit: d009b29c5fdb1b3c59b60e6d3d9d073fe0903fe4
 
 # Keep Korean words whole at narrow widths and stop a tap that closes the language menu from following a link

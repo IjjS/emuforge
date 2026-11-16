@@ -35,6 +35,8 @@
     --st-info-line: oklch(0.86 0.05 255);
     --st-idle: oklch(0.52 0.012 255);
     --st-scroll-shade: oklch(0.3 0.02 85 / 0.28);
+    /* The page's ground at part opacity, over the page while the language menu is open at 480 and below. */
+    --st-veil: oklch(0.972 0.005 85 / 0.75);
 
     --st-radius-s: 6px;
     --st-radius-m: 10px;
@@ -99,6 +101,7 @@
       --st-idle: oklch(0.7 0.012 255);
       /* A light tint: at least 1.5:1 against --st-sunk at the edge (DESIGN.md, The Shade Rule). */
       --st-scroll-shade: oklch(1 0 0 / 0.18);
+      --st-veil: oklch(0.185 0.012 252 / 0.8);
     }
   }
 

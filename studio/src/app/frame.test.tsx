@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, getRoles, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useEffect, useRef, type ReactNode } from 'react';
 import type { Root } from 'react-dom/client';
@@ -15,6 +15,7 @@ import {
   connectionSection,
   emulatorDown,
   FakeEngine,
+  headerRefresh,
   languageStore,
   present,
   textNotFrom,
@@ -932,6 +933,303 @@ describe('choosing a language (R3.6, R2.4, R2.6)', () => {
     expect(within(connectionSection()).getAllByText(messageIn('de', 'status.connected'))).toHaveLength(2);
     expect(engine.healths).toHaveLength(checks);
   });
+});
+
+/** The attributes that give an element an accessible name or description. */
+const NAMING = ['aria-label', 'aria-labelledby', 'aria-describedby', 'aria-description', 'title', 'alt'];
+
+/** The elements of `scope` in the accessibility tree that have a role, in document order. */
+function accessibleIn(scope: HTMLElement): Element[] {
+  const elements = new Set<Element>(Object.values(getRoles(scope)).flat());
+  return [...scope.querySelectorAll('*')].filter((element) => elements.has(element));
+}
+
+describe('a press outside the open menu only puts it away (issue 32, R2, R3.3, R3.4)', () => {
+  let engine: FakeEngine;
+
+  beforeEach(() => {
+    engine = new FakeEngine();
+    vi.stubGlobal('fetch', engine.fetch);
+  });
+
+  afterEach(() => {
+    localStorage.clear();
+    document.documentElement.lang = 'en';
+  });
+
+  /** The link of Home's providers to Amazon API Gateway, and the path it opens. */
+  const SERVICE = { name: 'Amazon API Gateway', path: '/aws/apigateway' };
+
+  /** Home, connected, once its first check has answered and its service links are shown. */
+  async function openHome(user = userEvent.setup()) {
+    const opened = openStudio('/');
+    await waitFor(() => {
+      expect(engine.healths.length).toBeGreaterThan(0);
+    });
+    await screen.findAllByText('Connected');
+    await screen.findByRole('link', { name: SERVICE.name });
+    return { ...opened, user, path: () => opened.router.state.location.pathname };
+  }
+
+  /** The AWS area's index at `/aws`, once its service links are shown. */
+  async function openArea(user = userEvent.setup()) {
+    const opened = openStudio('/aws');
+    await screen.findByRole('heading', { level: 1, name: 'Amazon Web Services' }, { timeout: AREA_LOAD_MS });
+    return { ...opened, user, path: () => opened.router.state.location.pathname };
+  }
+
+  function homeService(): HTMLElement {
+    return within(screen.getByRole('main')).getByRole('link', { name: SERVICE.name });
+  }
+
+  function areaService(): HTMLElement {
+    const area = present(document.querySelector('.st-area'), 'the AWS area');
+    return present(area.querySelector<HTMLElement>(`a[href="${SERVICE.path}"]`), `the area's link to ${SERVICE.path}`);
+  }
+
+  /** Records every event of `types` that reaches `element` or a listener below the window. */
+  function heard(element: HTMLElement, types: string[]): string[] {
+    const seen: string[] = [];
+    for (const type of types) {
+      element.addEventListener(type, () => seen.push(type));
+    }
+    return seen;
+  }
+
+  const PRESS_EVENTS = ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click', 'auxclick'];
+
+  function expectClosedWithFocus() {
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(languageControl()).toHaveAttribute('aria-expanded', 'false');
+    expect(document.activeElement).toBe(languageControl());
+    expect(languageControl()).toHaveAccessibleName('Language: English');
+  }
+
+  it('on / with the menu open, a click on the bar\'s "AWS" tab: closed, the path is still / (regression)', async () => {
+    const { user, path } = await openHome();
+    await openMenu(user);
+
+    await user.click(frameLinks().aws);
+
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(path()).toBe('/');
+  });
+
+  it('on / with the menu open, a click on a service link of Home: closed, the path is still /, nothing stored (regression)', async () => {
+    const { user, path } = await openHome();
+    const setItem = vi.spyOn(Storage.prototype, 'setItem');
+    const removeItem = vi.spyOn(Storage.prototype, 'removeItem');
+    await openMenu(user);
+    const link = homeService();
+    const seen = heard(link, PRESS_EVENTS);
+
+    await user.click(link);
+
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(path()).toBe('/');
+    expect(seen).toEqual([]);
+    expect(setItem).not.toHaveBeenCalled();
+    expect(removeItem).not.toHaveBeenCalled();
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+    setItem.mockRestore();
+    removeItem.mockRestore();
+  });
+
+  it('on / with the menu open, a click on Home\'s "Refresh": closed, no new check is sent to the engine', async () => {
+    const { user } = await openHome();
+    const requests = engine.requests.length;
+    await openMenu(user);
+
+    await user.click(headerRefresh());
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(engine.requests).toHaveLength(requests);
+  });
+
+  it.each([
+    ['the bar\'s "AWS" tab', () => frameLinks().aws],
+    ['a service link of Home', homeService],
+    ['Home\'s "Refresh"', headerRefresh],
+  ])(
+    'after a click on %s with the menu open: focus is on the control, named "Language: English"',
+    async (_n, target) => {
+      const { user } = await openHome();
+      await openMenu(user);
+
+      await user.click(target());
+
+      expectClosedWithFocus();
+    },
+  );
+
+  it('after the menu was closed by a click on the "AWS" tab, a second click on it: the path is /aws', async () => {
+    const { user, path } = await openHome();
+    await openMenu(user);
+    await user.click(frameLinks().aws);
+    expect(path()).toBe('/');
+
+    await user.click(frameLinks().aws);
+
+    expect(path()).toBe('/aws');
+  });
+
+  it('on /aws with the menu open, a click on a service link inside the area: closed, the path is still /aws; again: the service', async () => {
+    const { user, path } = await openArea();
+    await openMenu(user);
+
+    await user.click(areaService());
+
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(path()).toBe('/aws');
+    expect(document.activeElement).toBe(languageControl());
+
+    await user.click(areaService());
+
+    expect(path()).toBe(SERVICE.path);
+  }, 20_000);
+
+  it('a touch on a service link that the browser cancels (a drag): closed, the path unchanged; then a click opens it', async () => {
+    const { user, path } = await openHome();
+    await openMenu(user);
+    const link = homeService();
+
+    fireEvent.pointerDown(link, { pointerId: 7, pointerType: 'touch', isPrimary: true });
+    fireEvent.pointerCancel(link, { pointerId: 7, pointerType: 'touch', isPrimary: true });
+
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(path()).toBe('/');
+
+    await user.click(homeService());
+
+    expect(path()).toBe(SERVICE.path);
+  });
+
+  it('a press of the middle button on a service link: closed, the path unchanged, no auxiliary click heard; then a click opens it', async () => {
+    const { user, path } = await openHome();
+    await openMenu(user);
+    const link = homeService();
+    const seen = heard(link, PRESS_EVENTS);
+    const auxclicks: MouseEvent[] = [];
+    const record = (event: MouseEvent) => auxclicks.push(event);
+    window.addEventListener('auxclick', record, true);
+
+    await user.pointer({ keys: '[MouseMiddle]', target: link });
+
+    window.removeEventListener('auxclick', record, true);
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(path()).toBe('/');
+    expect(seen).toEqual([]);
+    // The browser opens a link in another tab as the auxiliary click's default action: it is cancelled.
+    expect(auxclicks.map((event) => event.defaultPrevented)).toEqual([true]);
+
+    await user.click(homeService());
+
+    expect(path()).toBe(SERVICE.path);
+  });
+
+  it('a press of the secondary button on a service link: closed, the path unchanged, the context menu not cancelled; then a click opens it', async () => {
+    const { user, path } = await openHome();
+    await openMenu(user);
+    const link = homeService();
+    const contextMenus: MouseEvent[] = [];
+    const record = (event: MouseEvent) => contextMenus.push(event);
+    window.addEventListener('contextmenu', record);
+
+    await user.pointer({ keys: '[MouseRight]', target: link });
+
+    window.removeEventListener('contextmenu', record);
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(path()).toBe('/');
+    expect(contextMenus).toHaveLength(1);
+    expect(contextMenus[0]?.defaultPrevented).toBe(false);
+
+    await user.click(homeService());
+
+    expect(path()).toBe(SERVICE.path);
+  });
+
+  it('a press of a pen on a service link: closed, the path unchanged, focus on the control; then a click opens it', async () => {
+    const { user, path } = await openHome();
+    await openMenu(user);
+    const link = homeService();
+    const seen = heard(link, PRESS_EVENTS);
+    const pen = { pointerId: 9, pointerType: 'pen', isPrimary: true, button: 0 };
+
+    // A pen's press as a browser delivers it: its pointer events, the mouse events made from them, then the click.
+    fireEvent.pointerDown(link, { ...pen, buttons: 1 });
+    fireEvent.mouseDown(link, { button: 0, buttons: 1 });
+    fireEvent.pointerUp(link, { ...pen, buttons: 0 });
+    fireEvent.mouseUp(link, { button: 0, buttons: 0 });
+    const followed = fireEvent.click(link, { button: 0, detail: 1 });
+
+    expect(seen).toEqual([]);
+    expect(followed).toBe(false);
+    expect(path()).toBe('/');
+    expectClosedWithFocus();
+
+    await user.click(homeService());
+
+    expect(path()).toBe(SERVICE.path);
+  });
+
+  it('with the menu open, a click on the control: closed, focus stays on the control', async () => {
+    openFrame('/');
+    const { user } = await openMenu();
+
+    await user.click(languageControl());
+
+    expectClosedWithFocus();
+  });
+
+  it('with the menu open, the banner exposes the control and the menu and nothing else new', async () => {
+    openFrame('/');
+    const banner = screen.getByRole('banner');
+    const before = new Set(banner.querySelectorAll('*'));
+    const rolesBefore = accessibleIn(banner);
+    const textBefore = banner.textContent;
+
+    const { menu } = await openMenu();
+
+    const added = [...banner.querySelectorAll('*')].filter((element) => !before.has(element));
+    const besideMenu = added.filter((element) => element !== menu && !menu.contains(element));
+    // What is added beside the menu has no role, no name, no text and takes no focus.
+    for (const element of besideMenu) {
+      expect(element.getAttribute('role')).toBeNull();
+      expect(NAMING.filter((name) => element.hasAttribute(name))).toEqual([]);
+      expect(element.textContent).toBe('');
+      expect((element as HTMLElement).tabIndex).toBeLessThan(0);
+      expect(element.matches(TAB_STOP)).toBe(false);
+    }
+    // The accessible elements beside the menu are those of before; nothing new but the menu can take focus.
+    expect(accessibleIn(banner).filter((element) => !menu.contains(element))).toEqual(rolesBefore);
+    const focusable = [...banner.querySelectorAll<HTMLElement>(TAB_STOP)].filter((element) => !before.has(element));
+    expect(
+      focusable.every((element) => menu.contains(element) && element.getAttribute('role') === 'menuitemradio'),
+    ).toBe(true);
+    // No text is added but the menu's.
+    expect((banner.textContent ?? '').replace(menu.textContent, '')).toBe(textBefore);
+  });
+
+  it.each([
+    ['Esc', async (user: ReturnType<typeof userEvent.setup>) => user.keyboard('{Escape}')],
+    ['a choice', async (user: ReturnType<typeof userEvent.setup>) => user.click(option('Browser language'))],
+    ['a press outside', async (user: ReturnType<typeof userEvent.setup>) => user.click(screen.getByRole('main'))],
+  ])(
+    'the menu closed by %s: nothing of the menu or of what covered the page is left in the document',
+    async (_n, close) => {
+      const { user } = await openHome();
+      const before = new Set(document.querySelectorAll('*'));
+      await openMenu(user);
+
+      await close(user);
+
+      expect(screen.queryByRole('menu')).toBeNull();
+      expect([...document.querySelectorAll('*')].filter((element) => !before.has(element))).toEqual([]);
+    },
+  );
 });
 
 /** The banner's link "EmuForge Studio" and the tile in it. */

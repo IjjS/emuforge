@@ -120,3 +120,5 @@
 {"check_id": "studio.frame-bar-fits-with-the-tile-in-every-language", "path": "tests/integration/studio/frame-logo.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 36}
 {"check_id": "studio.korean-words-stay-whole", "path": "tests/integration/studio/wrapping.spec.ts", "module": "studio", "operations": [], "labels": ["own-emulator", "regression"], "issue": 32}
 {"check_id": "studio.count-and-unit-stay-on-one-line", "path": "tests/integration/studio/wrapping.spec.ts", "module": "studio", "operations": [], "labels": ["own-emulator", "regression"], "issue": 32}
+{"check_id": "studio.language-menu-dismissing-press-does-nothing-else", "path": "tests/integration/studio/language-menu.spec.ts", "module": "studio", "operations": [], "labels": ["own-emulator", "regression"], "issue": 32}
+{"check_id": "studio.language-menu-is-veiled-at-480-and-below", "path": "tests/integration/studio/language-menu.spec.ts", "module": "studio", "operations": [], "labels": ["own-emulator", "regression"], "issue": 32}

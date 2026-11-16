@@ -58,11 +58,66 @@ function loadFaces(holder: HTMLElement, names: readonly { tag: string; name: str
 }
 
 /**
+ * Swallows the rest of a press that only put the menu away (issue 32, R2): its mouse events, so focus stays on the
+ * control and nothing under the press acts on a button going down, and the click or auxiliary click that completes
+ * it, so no link is followed, in this tab or another, and no button runs. The context menu of a secondary press is
+ * the browser's and is left alone. The next press, a key, or a press the browser cancelled (a touch that became a
+ * scroll) ends it, so nothing is left pending that could swallow a later press (R2.3). Returns the function that
+ * ends it early.
+ */
+function swallowRestOfPress(): () => void {
+  const swallow = (event: Event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  };
+  const complete = (event: Event) => {
+    swallow(event);
+    end();
+  };
+  const listeners: [string, (event: Event) => void][] = [
+    ['mousedown', swallow],
+    ['pointerup', swallow],
+    ['mouseup', swallow],
+    ['click', complete],
+    ['auxclick', complete],
+    [
+      'pointerdown',
+      () => {
+        end();
+      },
+    ],
+    [
+      'pointercancel',
+      () => {
+        end();
+      },
+    ],
+    [
+      'keydown',
+      () => {
+        end();
+      },
+    ],
+  ];
+  function end() {
+    for (const [type, listener] of listeners) {
+      window.removeEventListener(type, listener, true);
+    }
+  }
+  // Added while the press's own `pointerdown` is dispatched at the window: they first hear what comes after it.
+  for (const [type, listener] of listeners) {
+    window.addEventListener(type, listener, true);
+  }
+  return end;
+}
+
+/**
  * The language control of Studio's bar (requirement R3): a button that names the current language and opens a menu
  * of "Browser language" and every language by its own name, in the order of `Intl.Collator('und')`. The menu opens
  * with focus on the checked option; Up and Down wrap, Home and End go to the ends, letters go to the next option
  * whose name starts with them; Esc and Tab close it without a change; choosing an option applies it and puts focus
- * back on the control (R2.6).
+ * back on the control (R2.6). A press outside it only puts the menu away (issue 32, R2); at 480 and below a veil,
+ * decoration with no role, name or text, lies over the page under the bar while the menu is open (issue 32, R3).
  */
 export function LanguageControl() {
   const { t, tag, choice, browser, languages, choose } = useLanguage();
@@ -70,6 +125,8 @@ export function LanguageControl() {
   const menuId = useId();
   const holder = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  const endSwallow = useRef<(() => void) | null>(null);
   const items = useRef<(HTMLButtonElement | null)[]>([]);
   const typed = useRef({ text: '', at: 0 });
   const facesLoaded = useRef(false);
@@ -89,6 +146,12 @@ export function LanguageControl() {
   );
   const nameOf = (of: string) => languages.find((language) => language.tag === of)?.name ?? of;
 
+  // The control is in the sticky bar, always in view: a browser that scrolls a sticky box's element to the box's own
+  // place in the page would otherwise move the page when focus comes back to it (issue 32, R3.3).
+  const focusControl = () => {
+    trigger.current?.focus({ preventScroll: true });
+  };
+
   // Opening puts focus on the checked option, so a reflexive Enter does not reset a stored choice (crit r2 P2).
   useLayoutEffect(() => {
     if (open) {
@@ -98,21 +161,39 @@ export function LanguageControl() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  // A press anywhere outside the control closes the menu, and leaves focus where the press put it.
+  // A press anywhere outside the control and its menu, the veil included, closes the menu, puts focus on the control
+  // as Esc does, and does nothing else (issue 32, R2): no element under it hears the press or its click.
   useEffect(() => {
     if (!open) {
       return;
     }
     const handlePointerDown = (event: PointerEvent) => {
-      if (!(event.target instanceof Node) || holder.current?.contains(event.target) !== true) {
-        setOpen(false);
+      const target = event.target;
+      if (
+        target instanceof Node &&
+        (trigger.current?.contains(target) === true || menu.current?.contains(target) === true)
+      ) {
+        return;
       }
+      event.stopPropagation();
+      endSwallow.current?.();
+      endSwallow.current = swallowRestOfPress();
+      focusControl();
+      setOpen(false);
     };
-    document.addEventListener('pointerdown', handlePointerDown);
+    window.addEventListener('pointerdown', handlePointerDown, true);
     return () => {
-      document.removeEventListener('pointerdown', handlePointerDown);
+      window.removeEventListener('pointerdown', handlePointerDown, true);
     };
   }, [open]);
+
+  // A press still being swallowed when the control goes away is let go with it.
+  useEffect(
+    () => () => {
+      endSwallow.current?.();
+    },
+    [],
+  );
 
   const handleFirstReach = () => {
     if (facesLoaded.current || holder.current === null) {
@@ -122,9 +203,9 @@ export function LanguageControl() {
     loadFaces(holder.current, languages);
   };
 
-  const close = (focusControl: boolean) => {
-    if (focusControl) {
-      trigger.current?.focus();
+  const close = (withFocus: boolean) => {
+    if (withFocus) {
+      focusControl();
     }
     setOpen(false);
   };
@@ -220,8 +301,10 @@ export function LanguageControl() {
         </span>
         <ExpandIcon className="st-lang-chev" />
       </button>
+      {open && <div className="st-lang-veil" aria-hidden="true" />}
       {open && (
         <div
+          ref={menu}
           id={menuId}
           className="st-lang-menu"
           role="menu"
