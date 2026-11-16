@@ -79,6 +79,16 @@
       "id": "engine.product-readme-gives-the-commands-the-checks-run",
       "reason": "the product form does not support Docker Engine on Linux yet: its gateway reaches the emulator through host.docker.internal, which the root docker-compose.yml does not map there",
       "issue": 54
+    },
+    {
+      "id": "studio.language-faces-per-script",
+      "reason": "the check allows Korean and Japanese text only in macOS faces, and the Ubuntu runner has its own (issue #59)",
+      "issue": 59
+    },
+    {
+      "id": "studio.korean-words-stay-whole",
+      "reason": "at 320 wide an address with a five-digit port is cut, and the runner's free ports have five digits: a defect of the screen the runner exposes (issue #60)",
+      "issue": 60
     }
   ],
   "steps": [

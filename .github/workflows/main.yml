@@ -13,10 +13,11 @@
 # cached or published, and every action is one of GitHub's own, named by commit sha. No text from outside the
 # repository is put into a `run:` line.
 #
-# Time, estimated for a 4-vCPU runner with nothing cached (to be replaced by the first green run's figures):
-# preparing 6 minutes, the engine steps 5, the Studio steps 2, integration 22; about 35 in all, about 52 with
-# every second run. Hence 80 minutes for the job, 30 for each integration step and 15 for each other step of
-# the nine, so one hung step cannot use up the time a second run needs.
+# Time, as the first trial run took it (run 43861083645, nothing cached): preparing 1.2 minutes, the engine
+# steps 0.6, the Studio steps 0.7, integration 8.7 and its second run 7.5; 18.8 for the job with that second
+# run. The bounds stay above every figure with room for a slower runner: 80 minutes for the job, 30 for each
+# integration step and 15 for each other step of the nine, so one hung step cannot use up the time a second
+# run needs.
 name: main
 
 on:
