@@ -3,18 +3,24 @@
 
   pm-scope <checkout> [--json]
 
-The changes are every path that differs between the checkout's commit and its merge base with main, plus every
-uncommitted change, untracked files included; a renamed file counts under both names. Each path is decided by the
-first rule of _pmscope.RULES it matches (a path no rule knows calls for every module), and the answer is the union.
-The first line is `scope: <kind>, <reason>: <modules or "nothing">`, then one line per called-for module with the
-rule's sentence, the number of paths and one of them. Kinds:
+The changes are every path that differs between the checkout's commit and its merge base with its target, plus
+every uncommitted change, untracked files included; a renamed file counts under both names. The target is the
+branch the checkout's work merges into: feat/<id> for a branch <feat|refactor|fix>/<id>-<rest> when that local
+branch (the issue branch) exists, main for every other checkout, an issue branch itself included. Each path is
+decided by the first rule of _pmscope.RULES it matches (a path no rule knows calls for every module), and the
+answer is the union. The first line is `scope: <kind>, <reason>: <modules or "nothing">`, then one line per
+called-for module with the rule's sentence, the number of paths and one of them. Kinds:
   diff   the branch has commits of its own against main: what its paths call for
   main   the head is main's commit or an ancestor of it: the product modules (engine, studio, integration);
          the harness tests are left out
-  full   the changes cannot be read (not the top of a git work tree, no branch main, no commit shared with main,
-         git failed or took over 30 s): every module, with what failed
---json prints the same as the object pm-check records under `scope`. pm-check and pm-merge decide with the same
-code. Exit 0 for every answer; 2 for a command line it cannot parse or a checkout that is not a directory.
+  unit   a unit of an issue branch: what its own paths against feat/<id> call for (a unit without a change of
+         its own calls for nothing), except integration, which is left to the issue branch: the first line ends
+         `; integration left to feat/<id>` and the module is `deferred` in the object, not called
+  full   the changes cannot be read (not the top of a git work tree, no branch main or no issue branch, no commit
+         shared with the target, git failed or took over 30 s): every module, with what failed, nothing deferred
+--json prints the same as the object pm-check records under `scope`, with `target` (main or feat/<id>). pm-check
+and pm-merge decide with the same code. Exit 0 for every answer; 2 for a command line it cannot parse or a
+checkout that is not a directory.
 """
 import argparse
 import json
