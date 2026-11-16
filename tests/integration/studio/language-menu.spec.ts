@@ -57,6 +57,9 @@ import { layerReport, type Scheme } from './support/layers';
 import { Lines } from './support/lines';
 import { HEALTH_PATH } from './support/traffic';
 
+/** Home checks again this long after each answer (requirement 3.4 of issue 3). */
+const RECHECK_MS = 5_000;
+
 /** The service link of Home every press on a link uses: the first of the AWS provider's (requirement D2). */
 const HOME_LINK = 'Amazon API Gateway';
 
@@ -237,6 +240,9 @@ test('studio.language-menu-dismissing-press-does-nothing-else', async ({ ctx, br
       const points = await aim(m.page, refresh, '"Refresh"');
       const isHealth = (r: { url(): string }) => new URL(r.url()).pathname === HEALTH_PATH;
       await m.page.waitForResponse(isHealth, { timeout: CHANGE_BOUND_MS });
+      // Home's own timer sends a check 5 seconds after each answer (requirement 3.4 of issue 3): the count holds only
+      // while the second click's check is answered within those 5 seconds.
+      const answeredAt = Date.now();
       const before = await languageNow(m.page);
       await openMenuBy(m.page, 'click');
       await m.traffic.settle();
@@ -265,7 +271,14 @@ test('studio.language-menu-dismissing-press-does-nothing-else', async ({ ctx, br
         await m.traffic.settle();
         const sent = m.traffic.to(stack.engine.url, HEALTH_PATH).length - sentBefore;
         ctx.log(`"Refresh": ${String(sent)} checks sent to the engine since the menu was opened`);
-        if (sent !== 1) found.refresh.push(`${String(sent)} checks were sent to the engine since the menu was opened`);
+        const took = Date.now() - answeredAt;
+        if (took >= RECHECK_MS) {
+          found.refresh.push(
+            `could not measure: the second click's check was answered ${String(took)}ms after the check the line starts from, so Home's own timer may have sent one`,
+          );
+        } else if (sent !== 1) {
+          found.refresh.push(`${String(sent)} checks were sent to the engine since the menu was opened`);
+        }
       }
     } catch (e) {
       found.refresh.push(`could not press "Refresh": ${first(e)}`);
