@@ -81,4 +81,5 @@ English and, for a screen of Studio's own layer, in German and Thai as well ("Ca
 A screen that does not reach its pass line goes back to the worker once, then is scored again.
 
 Then: the commands in `studio/AGENTS.md` pass, every integration check listed in stage 3 passes against a fresh
-emulator, no check that passed on `main` now fails, `rev` reviews the implementation, and the `pm` merges.
+emulator (when the issue has an issue branch, in the issue's check record: the whole check on the issue branch),
+no check that passed on `main` now fails, `rev` reviews the implementation, and the `pm` merges.

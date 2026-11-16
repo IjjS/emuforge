@@ -72,14 +72,20 @@ praise, no summaries. A finding without a location and a fix is not a finding.
   in the unit that implements against them; owned files do not overlap between parallel units; the order leaves
   every branch green at its merge; no unit is more than a day.
 - **checks-<unit>**: `tests/integration/AGENTS.md`; one check per integration line of the criteria and nothing
-  the criteria do not list; each fails now for the reason its line names (log paths given); a manifest row per
+  the criteria do not list; each fails now for the reason its line names, shown by the `--checks` record
+  `output/checks/checks.json` and its log `output/logs/checks-integration.log`; a manifest row per
   check; isolation and cleanup; no sleep; loopback only.
-- **impl-<unit>** (engine side): diff against `main` in the same crate; `engine/AGENTS.md`; every
-  `security-review.md` row; `pm-check` record is a pass on the commit under review (`output/checks/last.json`);
-  no integration check, spec or criteria file changed; relay fidelity not lower than on `main`.
-- **impl-<unit>** (studio): diff against `main` in the same folder; `studio/AGENTS.md`; the four states built for
-  every data screen; 501 shown as "not implemented", never hidden or faked; `pm-check` record is a pass on the
-  commit under review; no integration check, spec or criteria file changed; the contact sheet read once.
+- **impl-<unit>** (engine side): diff against the unit's target (the issue branch, or `main`) in the same crate;
+  `engine/AGENTS.md`; every `security-review.md` row; `pm-check` record is a pass on the commit under review
+  (`output/checks/last.json`): for a unit of an issue branch its fast check, with `integration` recorded
+  `deferred` and left to the issue branch's whole check, else a record that ran the integration checks; no
+  integration check, spec or criteria file changed; relay fidelity not lower than on `main` (on an issue branch,
+  shown by its whole check before it merges).
+- **impl-<unit>** (studio): diff against the unit's target (the issue branch, or `main`) in the same folder;
+  `studio/AGENTS.md`; the four states built for every data screen; 501 shown as "not implemented", never hidden or
+  faked; `pm-check` record is a pass on the commit under review: for a unit of an issue branch its fast check,
+  with `integration` left to the issue branch's whole check; no integration check, spec or criteria file changed;
+  the contact sheet read once.
 
 ## Independence
 

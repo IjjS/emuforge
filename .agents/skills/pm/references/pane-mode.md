@@ -43,7 +43,8 @@ not leave a comment in the code. File it and carry on:
 
 Fill the file's sections per `issues/README.md`; evidence is required. A worker passes `--in` its worktree and
 commits the file on its branch with `pm-issue commit --in <your worktree>` (it writes `issue: file #<n>` itself),
-so it reaches `main` when the unit merges. A plan pane files
+so it reaches `main` with its issue: when the issue branch merges, or the unit's own branch for an issue without
+one. A plan pane files
 in the main checkout and leaves the commit to the PM. Name the filed ids in your `UNIT READY` or `STAGE READY`
 line (`… filed #14 #15`). The PM assigns them once the current worktrees are merged. Something that blocks your
 own unit is not this: that is `BLOCKED`.
@@ -69,6 +70,11 @@ own unit is not this: that is `BLOCKED`.
   arrives as your next prompt.
 - Checks only through `<Root>/.pm/bin/pm-check <worktree>`; captures only through `pm-capture`. Their records
   are the evidence; a command you ran by hand is not.
+- For a unit of an issue that has an issue branch, `pm-check` is the fast check: it runs what the unit's own paths
+  against the issue branch call for and leaves `integration` to the issue branch (the step is recorded
+  `deferred`). The integration checks run once, in the whole check on the issue branch.
+- Single integration checks run with `<Root>/.pm/bin/pm-check <worktree> --checks <id>…`, on any checkout. Their
+  record is `output/checks/checks.json`, their log `output/logs/checks-integration.log`; it is never a gate.
 - All text you write into the repository is English.
 
 ## Files and places
@@ -84,7 +90,8 @@ own unit is not this: that is `BLOCKED`.
 | critique snapshots | written by the impeccable skill under the worktree's `studio/.impeccable/critique/`; recorded with `pm-critique record` |
 
 Nothing goes to `/tmp` or the `.pm/` root. Do not create or edit GitHub issues, comments or labels. Do not merge,
-push, rebase, or touch `main`; bring your branch up to date with `git merge main` when the PM tells you main moved.
+push, rebase, or touch `main`; bring your branch up to date only when the PM tells you that the branch it names
+moved, with `git merge <that branch>`: the issue branch `feat/<id>` for a unit cut from it, else `main`.
 
 ## Emulator
 
