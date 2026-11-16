@@ -128,3 +128,4 @@
 {"check_id": "studio.aws-area-emulator-line-shows-engine-unreachable", "path": "tests/integration/studio/aws-area-frame.spec.ts", "module": "studio", "operations": [], "labels": ["lifecycle"], "issue": 45}
 {"check_id": "studio.aws-area-emulator-line-keyboard-and-layout", "path": "tests/integration/studio/aws-area-frame.spec.ts", "module": "studio", "operations": [], "labels": ["own-emulator"], "issue": 45}
 {"check_id": "studio.aws-area-shows-no-image", "path": "tests/integration/studio/aws-area-frame.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 45}
+{"check_id": "studio.addresses-stay-whole-with-five-digit-ports", "path": "tests/integration/studio/addresses.spec.ts", "module": "studio", "operations": [], "labels": ["own-emulator", "regression"], "issue": 60}
