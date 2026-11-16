@@ -1,10 +1,11 @@
 import '../styles/emulator-line.css';
 
 import Box from '@cloudscape-design/components/box';
+import Button, { type ButtonProps } from '@cloudscape-design/components/button';
 import Link from '@cloudscape-design/components/link';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator, { type StatusIndicatorProps } from '@cloudscape-design/components/status-indicator';
-import { useId, useState } from 'react';
+import { useId, useState, type Ref } from 'react';
 
 import type { CheckResult } from '../../../../lib/engine/engine-client';
 import { useFollow } from './use-follow';
@@ -16,6 +17,19 @@ export interface AreaConnection {
   /** The engine's address the page is configured with; `undefined` until known. */
   engineOrigin: string | undefined;
 }
+
+/**
+ * The (i) control at the line's end, on a page that carries the local-emulator notice (requirement R5.4): whether
+ * the notice is open, the notice's id for `aria-controls` while it is on the page, and what the control does.
+ */
+export interface AboutControl {
+  open: boolean;
+  noticeId: string;
+  onToggle: () => void;
+}
+
+/** The (i) control's accessible name (R5.4). */
+export const ABOUT_NAME = 'About the local emulator';
 
 /** The line's constant label, the same in every state (requirement R4.2). */
 export const LINE_LABEL = 'Local emulator, not AWS';
@@ -89,6 +103,10 @@ function useAnnouncement(status: LineStatus): string {
 
 interface EmulatorLineProps {
   connection: AreaConnection;
+  /** The (i) control, on a page that carries the notice; none on a page that shows no resources. */
+  about?: AboutControl | undefined;
+  /** The (i) control's button, for the notice to move focus to it. */
+  aboutRef?: Ref<ButtonProps.Ref> | undefined;
 }
 
 /**
@@ -96,35 +114,54 @@ interface EmulatorLineProps {
  * the constant label "Local emulator, not AWS" and the connection's state as Studio last read it, and in a state that
  * needs it the link "Connection status" to Home. It has no control that closes or hides it. The group is named by
  * its visible label; a change of state is announced once in a polite, atomic live region beside it that holds the
- * label and the status, never the link. Every value is rendered as text.
+ * label and the status, never the link. Every value is rendered as text. On a page that carries the notice the line
+ * ends with the (i) control, kept a wider gap apart from "Connection status" so it does not read as help for the link.
  */
-export function EmulatorLine({ connection }: EmulatorLineProps) {
+export function EmulatorLine({ connection, about, aboutRef }: EmulatorLineProps) {
   const handleFollow = useFollow();
   const labelId = useId();
   const status = lineStatus(connection);
   const announcement = useAnnouncement(status);
+  const state = (
+    <SpaceBetween direction="horizontal" size="xs" alignItems="center">
+      <span id={labelId}>
+        <Box variant="strong">{LINE_LABEL}</Box>
+      </span>
+      <StatusIndicator type={status.type}>
+        {status.before}
+        {status.value !== undefined && (
+          <Box variant="code" display="inline">
+            {status.value}
+          </Box>
+        )}
+        {status.after}
+      </StatusIndicator>
+      {status.recovery && (
+        <Link href="/" onFollow={handleFollow}>
+          Connection status
+        </Link>
+      )}
+    </SpaceBetween>
+  );
   return (
     <div className="aws-area-emulator-line">
       <div role="group" aria-labelledby={labelId}>
-        <SpaceBetween direction="horizontal" size="xs" alignItems="center">
-          <span id={labelId}>
-            <Box variant="strong">{LINE_LABEL}</Box>
-          </span>
-          <StatusIndicator type={status.type}>
-            {status.before}
-            {status.value !== undefined && (
-              <Box variant="code" display="inline">
-                {status.value}
-              </Box>
-            )}
-            {status.after}
-          </StatusIndicator>
-          {status.recovery && (
-            <Link href="/" onFollow={handleFollow}>
-              Connection status
-            </Link>
-          )}
-        </SpaceBetween>
+        {about === undefined ? (
+          state
+        ) : (
+          <SpaceBetween direction="horizontal" size="m" alignItems="center">
+            {state}
+            <Button
+              ref={aboutRef}
+              variant="icon"
+              iconName="status-info"
+              ariaLabel={ABOUT_NAME}
+              ariaExpanded={about.open}
+              {...(about.open && { ariaControls: about.noticeId })}
+              onClick={about.onToggle}
+            />
+          </SpaceBetween>
+        )}
       </div>
       <div className="aws-area-announcer" aria-live="polite" aria-atomic="true">
         {announcement !== '' && (

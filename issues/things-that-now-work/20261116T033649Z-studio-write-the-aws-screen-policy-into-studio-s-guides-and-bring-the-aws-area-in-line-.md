@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: studio|aws-area|screen-policy
-Issue-Check-Ids:
+Issue-Check-Ids: studio.aws-area-breadcrumbs-start-at-emuforge studio.aws-area-emulator-line-shows-connected-endpoint studio.aws-area-emulator-line-follows-emulator-stop-and-start studio.aws-area-emulator-line-shows-engine-unreachable studio.aws-area-emulator-line-keyboard-and-layout
 Issue-Commit: f91e23282a1e0377835ed9b76e716013d162b259
 
 # Write the AWS screen policy into Studio's guides and bring the AWS area in line with it

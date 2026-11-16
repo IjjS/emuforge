@@ -124,6 +124,8 @@ function connectedAt(port: number): CheckResult {
 }
 
 let connection: Connection;
+/** The area Studio renders: the one imported above, or one evaluated afresh, as on a fresh load of the document. */
+let Area: typeof AwsArea = AwsArea;
 let scheme: ColourScheme;
 let titles: string[];
 /** The function the area named last to focus its content target; `null` while it names none. */
@@ -160,7 +162,7 @@ function AreaWithStudioProps() {
     setSeen({ pathname, changes });
   }
   return (
-    <AwsArea
+    <Area
       headerSelector="#top-bar"
       onPageTitle={handlePageTitle}
       onContentTarget={handleContentTarget}
@@ -666,6 +668,122 @@ describe('the AWS area from EmuForge (issue 45)', () => {
 
     expect(main).toHaveTextContent(statement);
     expect(within(main).getByRole('link', { name: 'Go to Home' })).toHaveAttribute('href', '/');
+  });
+});
+
+describe('the local-emulator notice in the AWS area (issue 45, R5)', () => {
+  const ABOUT = 'About the local emulator';
+  const NOTICE = 'Local emulator notice';
+
+  /** The resources the "no screen yet" page names to the area's frame, as a service screen does; none until set. */
+  let resources: { word?: string } | null;
+
+  /**
+   * A fresh load of the document: the area's modules, and the notice's open state with them, evaluated anew, with a
+   * "no screen yet" page that names `resources` through the fresh area's own `useShowsResources`.
+   */
+  async function freshLoad() {
+    vi.resetModules();
+    vi.doMock('./pages/no-screen-page', async (importOriginal) => {
+      const original = await importOriginal<typeof import('./pages/no-screen-page')>();
+      const { useShowsResources } = await import('./components/page-resources');
+      function NamesResources({ word }: { word: string | undefined }) {
+        useShowsResources(word);
+        return null;
+      }
+      return {
+        NoScreenPage: (props: Parameters<typeof original.NoScreenPage>[0]) => (
+          <>
+            <original.NoScreenPage {...props} />
+            {resources !== null && <NamesResources word={resources.word} />}
+          </>
+        ),
+      };
+    });
+    Area = (await import('./index')).default;
+  }
+
+  beforeEach(async () => {
+    resources = null;
+    await freshLoad();
+  });
+
+  afterEach(() => {
+    vi.doUnmock('./pages/no-screen-page');
+    Area = AwsArea;
+  });
+
+  function notice(): HTMLElement | null {
+    return screen.queryByRole('region', { name: NOTICE });
+  }
+
+  function about(): HTMLElement {
+    return within(emulatorLine()).getByRole('button', { name: ABOUT });
+  }
+
+  function closeNotice() {
+    act(() => {
+      fireEvent.click(within(notice() as HTMLElement).getByRole('button', { name: 'Close the local emulator notice' }));
+    });
+  }
+
+  it('a page that names its resources "buckets", connected: the line ending with the (i) control, the notice, the h1', () => {
+    resources = { word: 'buckets' };
+    open('/aws/s3');
+    act(() => {
+      focusContent?.();
+    });
+    const target = document.activeElement as HTMLElement;
+    const heading = screen.getByRole('heading', { level: 1 });
+    const region = notice() as HTMLElement;
+
+    expect(lineStatus()).toBe('Connected at https://127.0.0.1:9297');
+    const controls = [...emulatorLine().querySelectorAll('a[href], button')];
+    expect(controls).toEqual([about()]);
+    expect(within(region).getByText('These buckets are in your local emulator')).toBeInTheDocument();
+    expect(target).toContainElement(emulatorLine());
+    expect(target).toContainElement(region);
+    expect(follows(emulatorLine(), region)).toBe(true);
+    expect(follows(region, heading)).toBe(true);
+    expect(target).toHaveAccessibleName(S3);
+  });
+
+  it('a page that shows resources and names no word: "These resources are in your local emulator"', () => {
+    resources = {};
+    open('/aws/s3');
+
+    expect(within(notice() as HTMLElement).getByText('These resources are in your local emulator')).toBeInTheDocument();
+    expect(about()).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('the notice closed on one page: still closed on another page that shows resources, the (i) control collapsed', () => {
+    resources = { word: 'buckets' };
+    const { wrapper, router } = open('/aws/s3');
+    closeNotice();
+    expect(notice()).toBeNull();
+
+    act(() => {
+      fireEvent.click(wrapper.findSideNavigation()?.findLinkByHref('/aws/sqs')?.getElement() as HTMLElement);
+    });
+
+    expect(router.state.location.pathname).toBe('/aws/sqs');
+    expect(screen.getByRole('heading', { level: 1, name: 'Amazon Simple Queue Service' })).toBeInTheDocument();
+    expect(notice()).toBeNull();
+    expect(about()).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('the notice closed, then the area rendered again as after a reload of the document: the notice is open', async () => {
+    resources = { word: 'buckets' };
+    const first = open('/aws/s3');
+    closeNotice();
+    expect(notice()).toBeNull();
+    first.unmount();
+
+    await freshLoad();
+    open('/aws/s3');
+
+    expect(notice()).not.toBeNull();
+    expect(about()).toHaveAttribute('aria-expanded', 'true');
   });
 });
 
