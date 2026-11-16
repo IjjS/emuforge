@@ -1,5 +1,7 @@
 // `studio.app-talks-only-to-engine-and-own-origin` (test-criteria.md, issue 3, Flow; rewritten for issue 16's routes,
-// R9.3): in one run through Home, "Refresh", the AWS area's index, a service route in it and Studio's not-found route, the page talks only to its own origin and the engine, never
+// R9.3, and for issue 56, which gives S3's route the bucket list: the run waits for its `h1` "Buckets" and the
+// table's first answer, so the `ListBuckets` request is covered too): in one run through Home, "Refresh", the AWS
+// area's index, a service route in it and Studio's not-found route, the page talks only to its own origin and the engine, never
 // holds an emulator key or a line of its certificate, and keeps the session token out of URLs, the console and
 // everything but the `X-EmuForge-Session` request header (requirement 3.1, 4).
 
@@ -8,6 +10,7 @@ import path from 'node:path';
 
 import { emulatorDir, EnvError, expect, readEmulatorFiles, startStack, test } from './support';
 import { connectionView } from './support/home';
+import { isListBuckets } from './support/s3';
 import { HEALTH_PATH, Traffic } from './support/traffic';
 
 /** Every file under `dir`, recursively. */
@@ -26,7 +29,8 @@ test('studio.app-talks-only-to-engine-and-own-origin', async ({ ctx, page, conte
     throw new EnvError(`the emulator files under ${emulatorDir(ctx.home, stack.emulatorPort)} are incomplete`);
   const traffic = Traffic.attach(ctx, context, page, { bodies: true });
 
-  // Open `/`, wait for "Connected", choose "Refresh", open `/aws`, `/aws/s3` and `/does-not-exist`.
+  // Open `/`, wait for "Connected", choose "Refresh", open `/aws`, `/aws/s3` (until the bucket list's `h1` and the
+  // table's first answer) and `/does-not-exist`.
   await page.goto('/');
   await expect
     .poll(() => connectionView(page), { timeout: 10_000 })
@@ -36,10 +40,12 @@ test('studio.app-talks-only-to-engine-and-own-origin', async ({ ctx, page, conte
   await answered;
   await page.goto('/aws');
   await expect(page.getByRole('heading', { level: 1, name: 'Amazon Web Services', exact: true })).toBeVisible();
+  const listed = page.waitForResponse((r) => isListBuckets(r.url(), r.request().method(), stack.engine.url), {
+    timeout: 10_000,
+  });
   await page.goto('/aws/s3');
-  await expect(
-    page.getByRole('heading', { level: 1, name: 'Amazon Simple Storage Service', exact: true }),
-  ).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: 'Buckets', exact: true })).toBeVisible();
+  await listed;
   await page.goto('/does-not-exist');
   await expect(page.getByRole('heading', { level: 1, name: 'Page not found', exact: true })).toBeVisible();
   await traffic.settle();
