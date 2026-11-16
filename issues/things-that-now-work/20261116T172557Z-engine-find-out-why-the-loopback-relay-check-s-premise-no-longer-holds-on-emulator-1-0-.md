@@ -4,7 +4,7 @@ Issue-Module: engine
 Issue-Kind: bug
 Issue-Source: finder
 Issue-Key: engine|relay-loopback-check|emulator-1.0.471-describe-endpoints
-Issue-Check-Ids:
+Issue-Check-Ids: engine.relay-stays-on-loopback
 Issue-Commit: 921b2b3ab0966850719fc9c80cbc7bcfe7af5294
 
 # Find out why the loopback relay check's premise no longer holds on emulator 1.0.471
