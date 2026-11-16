@@ -327,6 +327,8 @@ describe('"Skip to content" and a route change', () => {
   });
 
   it("on /aws: Skip to content focuses the area's content target named Amazon Web Services, not its main", async () => {
+    // The engine answers connected, so the AWS area's emulator line adds no Tab stop (issue 45, R4.8).
+    vi.stubGlobal('fetch', new FakeEngine().fetch);
     const { router } = openStudio('/aws');
     await screen.findByRole('heading', { level: 1, name: 'Amazon Web Services' }, { timeout: AREA_LOAD_MS });
 
@@ -373,6 +375,8 @@ describe('"Skip to content" and a route change', () => {
   });
 
   it("from / to /aws before the area has loaded: focus on the area's content target once it shows its h1", async () => {
+    // The engine answers connected, so the AWS area's emulator line adds no Tab stop (issue 45, R4.8).
+    vi.stubGlobal('fetch', new FakeEngine().fetch);
     // Routes evaluated afresh, with the area's code held back until the route change has happened.
     let release: () => void = () => undefined;
     const held = new Promise<void>((resolve) => {
@@ -472,6 +476,8 @@ describe('the frame in each of the twelve languages (R5.2, R2.7)', () => {
   it.each([...BUNDLED_CATALOGUES.byTag.keys()])(
     "%s: from / to /does-not-exist the route change announces the catalogue's page title; to /aws/s3, the area's",
     async (tag) => {
+      // The engine answers connected, so the AWS area's emulator line adds no Tab stop (issue 45, R4.8).
+      vi.stubGlobal('fetch', new FakeEngine().fetch);
       const { router } = openStudioIn('/', tag);
 
       await act(() => router.navigate('/does-not-exist'));
