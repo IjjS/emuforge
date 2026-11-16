@@ -567,11 +567,12 @@ test('studio.focus-moves-change-nothing-on-screen', async ({ ctx, page }) => {
   }
 
   await lines.line(
-    'Fresh load of each of `/`, `/aws`, `/aws/s3`, `/aws/does-not-exist` and `/does-not-exist`, Tab, Enter on "Skip to content" → the page\'s `h1`, its first content stop and the frame\'s bar are at the same place as before the Enter, and no element draws an outline',
+    'Fresh load of each of `/`, `/aws`, `/aws/s3`, `/aws/does-not-exist` and `/does-not-exist`, Tab, Enter on "Skip to content" → the page\'s `h1`, its first content stop and the frame\'s bar are at the same place as before the Enter, and no element draws an outline; on a page of the area the "before" places are read once the emulator line shows "Connected at `<endpoint>`" (changed, issue 45)',
     async () => {
       const found: string[] = [];
       for (const p of FIVE) {
         await openFresh(page, p);
+        await lineAnswered(page, p.path, stack.emulatorPort);
         await tabToSkip(page);
         const before = await places(p);
         await page.keyboard.press('Enter');
