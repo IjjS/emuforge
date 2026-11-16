@@ -7,10 +7,14 @@ scores and the rules below decide, and where a rule leaves room the `pm` decides
 
 | Score | Measures | Applies to | How |
 |---|---|---|---|
-| Structure | The screen has the same parts as the provider's console screen | `console` screens | `references/console-reference.md`, computed, `/100` |
+| Structure | The screen has the parts of the provider's console screen that the emulator has, with the console's labels, in the console's order | `console` screens | `references/console-reference.md`, computed, `/100` |
 | Design health | The screen is a good screen: Nielsen heuristics | `console` and `native` screens | the `impeccable` critique, `/40` or its renormalized maximum |
 
 Both are recorded per issue with the commit, so the points below can be compared on one scale.
+
+Likeness to the console is not a goal (`studio/AGENTS.md`, "AWS screen policy"): no score rewards a screen for
+looking like the console. The structure score counts the spec's parts and labels, not appearance, and a spec lists
+only the parts the emulator has.
 
 ## Captures
 
@@ -64,8 +68,17 @@ A `final` passes when all of these hold:
 - design health has no P0 or P1 finding
 - design health is not more than 2 points below `baseline`, when there is a baseline
 
-A finding that the screen would be "better" arranged differently from the provider's console is not a finding on
-a `console` screen. The reference wins; the critique judges what the reference leaves open.
+On a `console` screen these are P1 findings, whatever the structure score:
+
+- the console's descriptive or help text used as the screen's own text;
+- a part shown that the emulator lacks;
+- an emulator line that is missing, or that can be closed or hidden;
+- a statement the engine does not know (an endpoint written as a constant, a claim about the emulator's behavior
+  that no check shows).
+
+A finding that the screen would be "better" with the parts the spec lists arranged differently is not a finding on
+a `console` screen. The reference wins for the arrangement of the parts it lists; the critique judges what the
+reference leaves open.
 
 ## `native` screens
 
@@ -90,8 +103,10 @@ A native screen follows the design system of the layer it is in (`studio/AGENTS.
   `studio/PRODUCT.md`), original and not imitating any provider's console. Its mock is not built from Cloudscape. A
   difference from a provider's console is not a finding; the critique judges it as Studio's own design.
 - Inside a provider area (the area's index, "no screen yet", the area's "Page not found") it is built from that
-  provider's design system and follows that console's conventions wherever one applies: the same layout shell, the
-  same table, form and flash patterns. It is new content in a familiar frame, not a new visual language.
+  provider's design system and follows Cloudscape's published patterns wherever one applies: the same layout
+  shell, the same table, form and flash patterns. It is new content in a familiar frame, not a new visual language,
+  and it carries the area's frame parts (`studio/AGENTS.md`, "AWS screen policy"). It follows Cloudscape's
+  patterns, not a console's conventions.
 - A page of Studio's own layer that holds a provider area is mocked with the area as a region in the provider's
   design system, inside Studio's own frame.
 

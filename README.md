@@ -2,7 +2,17 @@
 
 A local workbench on top of the official [aws-emulator](https://github.com/aws/aws-emulator): a web console
 (Studio), a CLI, IAM policy evaluation and IaC verification. EmuForge does not reimplement the emulator; it
-calls one that is already running. It is not an AWS project.
+calls one that is already running.
+
+## Independence and trademarks
+
+EmuForge is an independent project. It is not affiliated with, endorsed by or sponsored by Amazon Web Services
+(AWS).
+
+Amazon Web Services, AWS and the names of AWS services are trademarks of Amazon.com, Inc. or its affiliates.
+
+Studio's AWS area is built with the [Cloudscape Design System](https://cloudscape.design/), open source under the
+Apache License 2.0, and is not a copy of the AWS console.
 
 ## Layout
 
