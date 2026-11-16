@@ -210,14 +210,14 @@ class Score(Case):
         n = 5000
         path = self.padded(n)
         i, p = self.walks(self.spec)
-        self.assertEqual((i, p), (20, 15), "bucket-list.yaml is not the spec the criteria count")
+        self.assertEqual((i, p), (21, 15), "bucket-list.yaml is not the spec the criteria count")
         look = Counting()
         result = _pmscore.score(self.spec, _pmscore.load_snapshot(path), "seeded", look=look)
         reference = _pmscore.score(self.spec, _pmscore.load_snapshot(path), "seeded")
         self.assertEqual(_pmscore.result_json(result, {}), _pmscore.result_json(reference, {}))
         self.assertEqual(_pmscore.render_text(result), _pmscore.render_text(reference))
         least = i + (p + 1) * (n // EVERY)
-        self.assertEqual(least, 84)
+        self.assertEqual(least, 85)
         self.assertGreaterEqual(look.calls, least)
 
     def test_counting_look_full_seeded(self):
