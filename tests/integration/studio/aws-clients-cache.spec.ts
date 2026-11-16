@@ -1,9 +1,10 @@
 // Issue 26 (test-criteria.md, Integration checks): a read that Studio's AWS SDK clients
 // (`studio/src/lib/aws/client-factory.ts`) send from a page at the built Studio's origin shows the emulator's current
-// state, not an answer the browser kept from an earlier read. The page opens `/aws/s3`, the "no screen yet" page,
-// which sends nothing to the engine, so every engine request of the page is the factory's. The factory runs bundled
-// for the browser against Studio's installed SDK (`support/aws-clients.ts`). Every object is first stored with
-// `Cache-Control: max-age=3600`, the form of the defect that needs no wait.
+// state, not an answer the browser kept from an earlier read. The page opens `/aws/s3`, the "no screen yet" page;
+// its only engine requests are the AWS area's emulator line's (issue 45), which `EngineRequests` leaves out, so every
+// engine request counted is the factory's. The factory runs bundled for the browser against Studio's installed SDK
+// (`support/aws-clients.ts`). Every object is first stored with `Cache-Control: max-age=3600`, the form of the defect
+// that needs no wait.
 //
 // The regression lines use `expect.soft`, so one run of a check reports every line that does not hold, each with its
 // own reason; the lines before and after them are hard assertions.
@@ -109,7 +110,8 @@ async function getDirect(ctx: Ctx, bucket: string, key: string): Promise<string>
 
 /**
  * Opens `/aws/s3` with the page's requests recorded, loads the factory's clients and asserts the precondition: the page
- * has made no engine request.
+ * has made no engine request other than the emulator line's (changed, issue 45 PM decision: the area's line asks for
+ * the session and the health on its own, R4.4; `EngineRequests` leaves those out).
  */
 async function openWithClients(
   ctx: Ctx,
@@ -119,7 +121,7 @@ async function openWithClients(
   engineOrigin: string,
   enginePort: number,
 ): Promise<{ clients: PageClients; requests: EngineRequests }> {
-  const requests = EngineRequests.attach(ctx, context, page, engineOrigin);
+  const requests = await EngineRequests.attach(ctx, context, page, engineOrigin);
   await page.goto('/aws/s3');
   expect(new URL(page.url()).origin, 'the page origin').toBe(studioOrigin);
   expect(new URL(page.url()).pathname, 'the page path').toBe('/aws/s3');
