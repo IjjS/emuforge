@@ -12,7 +12,7 @@ Issue 21 (design 2.5): "Structure score" step 1 (the list item `1.`) names the a
 that a page without exactly one such element (none, or more than one) is an error, not a score.
 
 Issue 46 (R5.1 to R5.4): "Format"'s example omits no action; the passage on `omitted` (from the first block of
-"Format" that starts with `` `omitted` `` to the end of the section) says what the mark is for, what can never carry
+"Format" that names `` `omitted` `` to the end of the section) says what the mark is for, what can never carry
 it, who sets it and on what evidence; "Structure score" says a shown omitted item fails the run and names
 `omitted=` on the first line; critique.md's pass line and "Records" name them.
 """
@@ -137,7 +137,7 @@ class OmittedGuide(unittest.TestCase):
         text = CONSOLE.read_text()
         self.format = section(text, "## Format")
         self.score = section(text, "## Structure score")
-        found = [b for b in blocks(self.format) if b.startswith("`omitted`")]
+        found = [b for b in blocks(self.format) if "`omitted`" in b]
         self.assertTrue(found, self.format)
         self.passage = flat(self.format[self.format.index(found[0]):])
 

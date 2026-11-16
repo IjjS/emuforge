@@ -33,7 +33,9 @@ SNAPS = FIXTURES / "snapshots"
 WORK = CHECKOUT / "output" / "tests" / f"score-{os.getpid()}"
 BUCKET_LIST = (SPECS / "bucket-list.yaml").read_text()
 
-# issue 46 (R4.1): ` omitted=<o>/<n>` before ` verdict=`; exposed as Report.omitted and Report.spec_items
+# issue 46 (R4.1): ` omitted=<o>/<n>` before ` verdict=`; exposed as Report.omitted and Report.spec_items. The group
+# is optional only so the confirmed cases read through Report run on main; R4.1 itself is held by the cases that
+# compare the whole first line (OmittedShown, OmittedCount, WizardOmittedShown, test_records' texts).
 FIRST = re.compile(r"^structure (\S+) state=(\S+) score=(\d+\.\d) \((\d+)/(\d+)\)(?: omitted=(\d+)/(\d+))? "
                    r"verdict=(pass|fail)$")
 GROUP = re.compile(r"^(unmatched|matched|omitted|not applicable|not scored|extra|blocked requests) \((\d+)\)$")

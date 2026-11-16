@@ -593,7 +593,7 @@ class OmittedRecords(RecordsCase):
         self.assertEqual(p.stderr.splitlines(), [f"pm-structure: {message}"])
         r = self.result()
         self.assertEqual(r["verdict"], "error")
-        self.assertTrue(any(isinstance(v, str) and message in v for v in r.values()), r)
+        self.assertEqual(r["error"], message)
         rows = self.rows(46)
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["verdict"], "error")
