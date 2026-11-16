@@ -1,7 +1,8 @@
 """Fixture checkouts for the tests of the harness scripts. Not a test.
 
 A fixture checkout is a git repository under <checkout>/output/tests/<group>/<case>/ with its own copies of the
-scripts under test in .pm/bin, so `_pmlib.ROOT` is the fixture and nothing touches the real .pm/run.
+scripts under test in .pm/bin, so `_pmlib.ROOT` is the fixture and nothing touches the real .pm/run. Its `home/`
+is ignored by git, so a case can use it as a made-up HOME without making the checkout dirty.
 """
 import os
 import pathlib
@@ -39,13 +40,14 @@ def make(group, case, scripts, files=None):
         p.write_text(text)
         if text.startswith("#!"):
             p.chmod(0o755)
-    (co / ".gitignore").write_text("output/\n.pm/run/\n.pm/issue-*/\n__pycache__/\n")
+    (co / ".gitignore").write_text("output/\nhome/\n.pm/run/\n.pm/issue-*/\n__pycache__/\n")
     git(co, "init", "-q", "-b", "main")
     git(co, "add", "-A")
     git(co, "commit", "-q", "-m", "fixture")
     return co
 
 
-def run(co, script, *args, cwd=None, timeout=120):
+def run(co, script, *args, cwd=None, timeout=120, env=None):
+    """Run a fixture script; `env` replaces the default environment (`clean_env()`) when given."""
     return subprocess.run([str(co / ".pm" / "bin" / script), *map(str, args)], capture_output=True, text=True,
-                          env=clean_env(), cwd=str(cwd or co), timeout=timeout)
+                          env=clean_env() if env is None else env, cwd=str(cwd or co), timeout=timeout)

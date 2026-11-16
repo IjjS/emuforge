@@ -54,6 +54,7 @@ import {
 import { ACTION, addressOf, frame, providersSection } from './support/frame';
 import { languageControl, languageMenu, notOnTop, settled } from './support/languages';
 import { layerReport, type Scheme } from './support/layers';
+import { lineAnswered } from './support/focus';
 import { Lines } from './support/lines';
 import { HEALTH_PATH } from './support/traffic';
 
@@ -291,6 +292,10 @@ test('studio.language-menu-dismissing-press-does-nothing-else', async ({ ctx, br
     ] as const) {
       try {
         await openArea(m.page, '/aws', 'Amazon Web Services');
+        // (changed, issue 45 PM decision) The area's emulator line may add a row with its first answer (R4.7); the
+        // link's point is read once the line shows it, as the focus check does.
+        await lineAnswered(m.page, '/aws', stack.emulatorPort);
+        await settled(m.page);
         const links = m.page.getByRole('link', { name: AREA_LINK, exact: true }).filter({ visible: true });
         const count = await links.count();
         let link: Locator | null = null;
@@ -560,7 +565,7 @@ test('studio.language-menu-dismissing-press-does-nothing-else', async ({ ctx, br
     async () => expect(found.disclosure).toEqual([]),
   );
   await lines.line(
-    "On `/aws`, 1280 and 390 wide: open the menu and press a service link inside the AWS area → the menu is closed and the path is still `/aws`; press it again → that service's path opens",
+    "On `/aws`, 1280 and 390 wide: open the menu and press a service link inside the AWS area → the menu is closed and the path is still `/aws`; press it again → that service's path opens; the link's point is read once the emulator line shows its first answer (changed, issue 45 PM decision)",
     async () => expect(found.area).toEqual([]),
   );
   await lines.line(

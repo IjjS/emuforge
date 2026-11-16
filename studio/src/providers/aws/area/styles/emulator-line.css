@@ -1,0 +1,15 @@
+/* The emulator line's live region is read, not drawn: its text is the label and the status already shown in the line,
+   announced once on a change of state. Visually hidden, never `display: none`, so assistive technology still hears
+   it. It is the area's own element, not a Cloudscape component's; it sets no colour, spacing or font. */
+.aws-area-emulator-line {
+  position: relative;
+}
+
+.aws-area-announcer {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

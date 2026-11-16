@@ -1,9 +1,11 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { useState } from 'react';
+import { useState, useSyncExternalStore } from 'react';
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { CheckResult } from '../../../lib/engine/engine-client';
+import type { AreaConnection } from './components/emulator-line';
 import AwsArea from './index';
 import { AREA_ROOT_CLASS } from './styles/root-class';
 
@@ -86,12 +88,52 @@ class ColourScheme {
   }
 }
 
+/** The connection Studio hands the area, as a test sets it; each change re-renders the area as Studio's frame does. */
+class Connection {
+  value: AreaConnection = { result: undefined, engineOrigin: undefined };
+  private readonly listeners = new Set<() => void>();
+
+  readonly subscribe = (listener: () => void) => {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  };
+
+  readonly get = () => this.value;
+
+  set(value: AreaConnection) {
+    this.value = value;
+    act(() => {
+      for (const listener of this.listeners) {
+        listener();
+      }
+    });
+  }
+}
+
+const ENGINE_ORIGIN = 'http://127.0.0.1:8297';
+
+/** A connected answer for the emulator on `port`, as the engine client maps it. */
+function connectedAt(port: number): CheckResult {
+  return {
+    kind: 'connected',
+    checkedAt: Date.now(),
+    emulator: { port, endpoint: `https://127.0.0.1:${String(port)}` },
+  };
+}
+
+let connection: Connection;
+/** The area Studio renders: the one imported above, or one evaluated afresh, as on a fresh load of the document. */
+let Area: typeof AwsArea = AwsArea;
 let scheme: ColourScheme;
 let titles: string[];
 /** The function the area named last to focus its content target; `null` while it names none. */
 let focusContent: (() => void) | null;
 
 beforeEach(() => {
+  connection = new Connection();
+  connection.value = { result: connectedAt(9297), engineOrigin: ENGINE_ORIGIN };
   scheme = new ColourScheme();
   vi.stubGlobal('matchMedia', scheme.matchMedia);
   titles = [];
@@ -108,22 +150,24 @@ function handleContentTarget(focus: (() => void) | null) {
 
 /**
  * The area with Studio's props, as Studio's frame hands them: the route changes counted as Studio counts them, one
- * more each time the path changes, none on the first render.
+ * more each time the path changes, none on the first render; the connection as the test sets it, connected by default.
  */
 function AreaWithStudioProps() {
   const { pathname } = useLocation();
   const [seen, setSeen] = useState({ pathname, changes: 0 });
+  const current = useSyncExternalStore(connection.subscribe, connection.get);
   let changes = seen.changes;
   if (seen.pathname !== pathname) {
     changes += 1;
     setSeen({ pathname, changes });
   }
   return (
-    <AwsArea
+    <Area
       headerSelector="#top-bar"
       onPageTitle={handlePageTitle}
       onContentTarget={handleContentTarget}
       routeChanges={changes}
+      connection={current}
     />
   );
 }
@@ -250,7 +294,7 @@ function cloudscapeElements(): Element[] {
 }
 
 describe('the AWS area', () => {
-  it('on /aws: the side navigation header and the 19 services in label order, one crumb, nothing active', () => {
+  it('on /aws: the side navigation header and the 19 services in label order, crumbs EmuForge (to /) then AWS, nothing active', () => {
     const { wrapper } = open('/aws');
     const navigation = wrapper.findSideNavigation();
 
@@ -265,17 +309,19 @@ describe('the AWS area', () => {
     });
     expect(links).toEqual(SERVICES);
     expect(navigation?.findItemByIndex(2)).toBeNull();
-    expect(breadcrumbs(wrapper).map(([text]) => text)).toEqual([AWS]);
+    expect(breadcrumbs(wrapper).map(([text]) => text)).toEqual(['EmuForge', 'AWS']);
+    expect(breadcrumbs(wrapper)[0]).toEqual(['EmuForge', '/']);
     expect(navigation?.findActiveLink()).toBeNull();
     expect(titles.at(-1)).toBe(AWS);
   });
 
-  it('on /aws/s3/buckets: crumbs Amazon Web Services (to /aws) then the service, the service active', () => {
+  it('on /aws/s3/buckets: crumbs EmuForge (to /), AWS (to /aws), then S3, the current page, the service active', () => {
     const { wrapper } = open('/aws/s3/buckets');
 
     expect(breadcrumbs(wrapper)).toEqual([
-      [AWS, '/aws'],
-      [S3, null],
+      ['EmuForge', '/'],
+      ['AWS', '/aws'],
+      ['S3', null],
     ]);
     const active = wrapper.findSideNavigation()?.findActiveLink()?.getElement();
     expect(active).toHaveTextContent(S3);
@@ -284,10 +330,10 @@ describe('the AWS area', () => {
     expect(titles.at(-1)).toBe(S3);
   });
 
-  it('on /aws/does-not-exist: crumbs Amazon Web Services then Page not found, nothing active', () => {
+  it('on /aws/does-not-exist: crumbs EmuForge, AWS, then Page not found, nothing active', () => {
     const { wrapper } = open('/aws/does-not-exist');
 
-    expect(breadcrumbs(wrapper).map(([text]) => text)).toEqual([AWS, 'Page not found']);
+    expect(breadcrumbs(wrapper).map(([text]) => text)).toEqual(['EmuForge', 'AWS', 'Page not found']);
     expect(wrapper.findSideNavigation()?.findActiveLink()).toBeNull();
     expect(screen.getByRole('heading', { level: 1, name: 'Page not found' })).toBeInTheDocument();
     expect(titles.at(-1)).toBe('Page not found');
@@ -384,14 +430,14 @@ describe('the AWS area', () => {
     expect(wrapper.findSideNavigation()?.findActiveLink()?.getElement()).toHaveTextContent('AWS Lambda');
   });
 
-  it('on /aws/s3, Amazon Web Services chosen in the breadcrumbs: focus on the content target named so', async () => {
-    const { wrapper } = open('/aws/s3');
+  it('on /aws/s3, AWS chosen in the breadcrumbs: /aws and focus on the content target named Amazon Web Services', async () => {
+    const { wrapper, router } = open('/aws/s3');
     const crumb = wrapper
       .findBreadcrumbGroup()
       ?.findBreadcrumbLinks()
       .map((item) => item.getElement())
       .map((element) => element.closest<HTMLElement>('a[href]') ?? element.querySelector<HTMLElement>('a[href]'))
-      .find((link) => link?.getAttribute('href') === '/aws');
+      .find((link) => link?.textContent === 'AWS' && link.getAttribute('href') === '/aws');
     expect(crumb).toBeDefined();
 
     act(() => {
@@ -399,6 +445,7 @@ describe('the AWS area', () => {
       fireEvent.click(crumb as HTMLElement);
     });
 
+    expect(router.state.location.pathname).toBe('/aws');
     await expectFocusOnTarget(AWS, 'Amazon API Gateway');
   });
 
@@ -446,6 +493,298 @@ describe('the AWS area', () => {
       expect(document.activeElement).toBe(document.body);
     },
   );
+});
+
+const PAGES: [string, string, string][] = [
+  ['/aws', AWS, 'AWS'],
+  ['/aws/s3', S3, 'S3'],
+  ['/aws/does-not-exist', 'Page not found', 'Page not found'],
+];
+
+const LINE_LABEL = 'Local emulator, not AWS';
+
+/** The crumb links of the breadcrumbs, by their text. */
+function crumbLink(wrapper: ReturnType<typeof createWrapper>, text: string): HTMLElement | undefined {
+  return (
+    (wrapper.findBreadcrumbGroup()?.findBreadcrumbLinks() ?? [])
+      .map((item) => item.getElement())
+      .map((element) => element.closest<HTMLElement>('a[href]') ?? element.querySelector<HTMLElement>('a[href]'))
+      .find((link) => link?.textContent === text) ?? undefined
+  );
+}
+
+function emulatorLine(): HTMLElement {
+  return screen.getByRole('group', { name: LINE_LABEL });
+}
+
+function lineStatus(): string {
+  return (createWrapper(emulatorLine()).findStatusIndicator()?.getElement().textContent ?? '').trim();
+}
+
+function liveRegionText(): string {
+  return (document.querySelector('[aria-live="polite"]')?.textContent ?? '').trim();
+}
+
+describe('the AWS area from EmuForge (issue 45)', () => {
+  let fetchSpy: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    // The area asks nothing itself: what it shows of the connection is what Studio hands it.
+    fetchSpy = vi.fn(() => Promise.reject(new TypeError('no network in this test')));
+    vi.stubGlobal('fetch', fetchSpy);
+  });
+
+  it.each(PAGES)('on %s: the last crumb is the current page and is not a link', (path, _h1, last) => {
+    const { wrapper } = open(path);
+
+    const items = wrapper.findBreadcrumbGroup()?.findBreadcrumbLinks() ?? [];
+    const current = items.at(-1)?.getElement();
+    expect(current?.textContent).toBe(last);
+    expect(current?.closest('a[href]') ?? current?.querySelector('a[href]') ?? null).toBeNull();
+    // Cloudscape's current page: no address to follow, marked current and unavailable to follow.
+    const marked = current?.closest('[aria-current="page"]') ?? current?.querySelector('[aria-current="page"]');
+    expect(marked).not.toBeNull();
+    expect(marked).not.toHaveAttribute('href');
+    expect(marked).toHaveAttribute('aria-disabled', 'true');
+    expect(breadcrumbs(wrapper).at(-1)).toEqual([last, null]);
+  });
+
+  it.each(PAGES)(
+    'on %s: no crumb reads Amazon Web Services; the h1 is still "%s" and the side navigation header Amazon Web Services',
+    (path, h1) => {
+      const { wrapper } = open(path);
+
+      expect(breadcrumbs(wrapper).map(([text]) => text)).not.toContain(AWS);
+      expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(h1);
+      expect(wrapper.findSideNavigation()?.findHeaderLink()?.getElement()).toHaveTextContent(AWS);
+    },
+  );
+
+  it('on /aws/s3, EmuForge chosen in the crumbs: the path is /, without a reload of the document', () => {
+    const { wrapper, router } = open('/aws/s3');
+    const crumb = crumbLink(wrapper, 'EmuForge');
+    expect(crumb).toHaveAttribute('href', '/');
+
+    let followed = true;
+    act(() => {
+      followed = fireEvent.click(crumb as HTMLElement);
+    });
+
+    // A click whose default is prevented: the router moved, the browser did not load the address.
+    expect(followed).toBe(false);
+    expect(router.state.location.pathname).toBe('/');
+    expect(screen.getByText("Studio's Home")).toBeInTheDocument();
+  });
+
+  it('after a connected answer on /aws, S3 then AWS: each page reads "Connected at <endpoint>" at once, nothing said, nothing asked', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
+    try {
+      connection.value = { result: undefined, engineOrigin: ENGINE_ORIGIN };
+      const { wrapper, router } = open('/aws');
+      expect(lineStatus()).toBe('Checking');
+      connection.set({ result: connectedAt(9411), engineOrigin: ENGINE_ORIGIN });
+      expect(lineStatus()).toBe('Connected at https://127.0.0.1:9411');
+      const statuses: string[] = [];
+      const said: string[] = [];
+      const observer = new MutationObserver(() => {
+        statuses.push(lineStatus());
+        said.push(liveRegionText());
+      });
+      observer.observe(document.body, { subtree: true, childList: true, characterData: true });
+
+      act(() => {
+        fireEvent.click(wrapper.findSideNavigation()?.findLinkByHref('/aws/s3')?.getElement() as HTMLElement);
+      });
+      expect(router.state.location.pathname).toBe('/aws/s3');
+      expect(lineStatus()).toBe('Connected at https://127.0.0.1:9411');
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_000);
+      });
+      act(() => {
+        fireEvent.click(crumbLink(wrapper, 'AWS') as HTMLElement);
+      });
+      expect(router.state.location.pathname).toBe('/aws');
+      expect(lineStatus()).toBe('Connected at https://127.0.0.1:9411');
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_900);
+      });
+      observer.disconnect();
+
+      expect(statuses.filter((status) => status !== 'Connected at https://127.0.0.1:9411')).toEqual([]);
+      expect(said.filter((text) => text !== '')).toEqual([]);
+      expect(liveRegionText()).toBe('');
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(PAGES)(
+    'on %s, connected: the line is inside the content target before the h1; the target is named by the h1; no notice',
+    (path, h1) => {
+      open(path);
+      act(() => {
+        focusContent?.();
+      });
+      const target = document.activeElement as HTMLElement;
+      const heading = screen.getByRole('heading', { level: 1 });
+
+      expect(target).toContainElement(emulatorLine());
+      expect(follows(emulatorLine(), heading)).toBe(true);
+      expect(emulatorLine().contains(heading)).toBe(false);
+      expect(target).toHaveAccessibleName(h1);
+      expect(target.getAttribute('aria-labelledby')).toBe(heading.id);
+      expect(lineStatus()).toBe('Connected at https://127.0.0.1:9297');
+      expect(screen.queryByText(/^These .+ are in your local emulator$/)).toBeNull();
+      expect(screen.queryByRole('button', { name: 'About the local emulator' })).toBeNull();
+    },
+  );
+
+  it('on /aws, connected: the description under the h1; "Services", "(19)", its line and the 19 links as on main', () => {
+    const { wrapper } = open('/aws');
+
+    const header = wrapper.findContentLayout()?.findHeader()?.findHeader();
+    expect(header?.findHeadingText().getElement()).toHaveTextContent(AWS);
+    expect(header?.findDescription()?.getElement()).toHaveTextContent(
+      'EmuForge Studio works with a local emulator of AWS services. It is a stand-alone tool, not the AWS console and not an AWS feature.',
+    );
+    const container = wrapper.findContentLayout()?.findContent()?.findContainer();
+    const services = container?.findHeader()?.findHeader();
+    expect(services?.findHeadingText().getElement()).toHaveTextContent('Services');
+    expect(services?.findCounter()?.getElement()).toHaveTextContent('(19)');
+    expect(services?.findDescription()?.getElement()).toHaveTextContent('No service has a Studio screen yet.');
+    const links = within(container?.findContent().getElement() as HTMLElement)
+      .getAllByRole('link')
+      .map((link) => [link.textContent, link.getAttribute('href')]);
+    expect(links).toEqual(SERVICES);
+  });
+
+  it.each([
+    ['/aws/s3', `Studio has no screen for ${S3} yet.`],
+    ['/aws/does-not-exist', 'Studio has no page at /aws/does-not-exist.'],
+  ])('on %s: "%s" with "Go to Home", as on main', (path, statement) => {
+    open(path);
+    const main = screen.getByRole('main');
+
+    expect(main).toHaveTextContent(statement);
+    expect(within(main).getByRole('link', { name: 'Go to Home' })).toHaveAttribute('href', '/');
+  });
+});
+
+describe('the local-emulator notice in the AWS area (issue 45, R5)', () => {
+  const ABOUT = 'About the local emulator';
+  const NOTICE = 'Local emulator notice';
+
+  /** The resources the "no screen yet" page names to the area's frame, as a service screen does; none until set. */
+  let resources: { word?: string } | null;
+
+  /**
+   * A fresh load of the document: the area's modules, and the notice's open state with them, evaluated anew, with a
+   * "no screen yet" page that names `resources` through the fresh area's own `useShowsResources`.
+   */
+  async function freshLoad() {
+    vi.resetModules();
+    vi.doMock('./pages/no-screen-page', async (importOriginal) => {
+      const original = await importOriginal<typeof import('./pages/no-screen-page')>();
+      const { useShowsResources } = await import('./components/page-resources');
+      function NamesResources({ word }: { word: string | undefined }) {
+        useShowsResources(word);
+        return null;
+      }
+      return {
+        NoScreenPage: (props: Parameters<typeof original.NoScreenPage>[0]) => (
+          <>
+            <original.NoScreenPage {...props} />
+            {resources !== null && <NamesResources word={resources.word} />}
+          </>
+        ),
+      };
+    });
+    Area = (await import('./index')).default;
+  }
+
+  beforeEach(async () => {
+    resources = null;
+    await freshLoad();
+  });
+
+  afterEach(() => {
+    vi.doUnmock('./pages/no-screen-page');
+    Area = AwsArea;
+  });
+
+  function notice(): HTMLElement | null {
+    return screen.queryByRole('region', { name: NOTICE });
+  }
+
+  function about(): HTMLElement {
+    return within(emulatorLine()).getByRole('button', { name: ABOUT });
+  }
+
+  function closeNotice() {
+    act(() => {
+      fireEvent.click(within(notice() as HTMLElement).getByRole('button', { name: 'Close the local emulator notice' }));
+    });
+  }
+
+  it('a page that names its resources "buckets", connected: the line ending with the (i) control, the notice, the h1', () => {
+    resources = { word: 'buckets' };
+    open('/aws/s3');
+    act(() => {
+      focusContent?.();
+    });
+    const target = document.activeElement as HTMLElement;
+    const heading = screen.getByRole('heading', { level: 1 });
+    const region = notice() as HTMLElement;
+
+    expect(lineStatus()).toBe('Connected at https://127.0.0.1:9297');
+    const controls = [...emulatorLine().querySelectorAll('a[href], button')];
+    expect(controls).toEqual([about()]);
+    expect(within(region).getByText('These buckets are in your local emulator')).toBeInTheDocument();
+    expect(target).toContainElement(emulatorLine());
+    expect(target).toContainElement(region);
+    expect(follows(emulatorLine(), region)).toBe(true);
+    expect(follows(region, heading)).toBe(true);
+    expect(target).toHaveAccessibleName(S3);
+  });
+
+  it('a page that shows resources and names no word: "These resources are in your local emulator"', () => {
+    resources = {};
+    open('/aws/s3');
+
+    expect(within(notice() as HTMLElement).getByText('These resources are in your local emulator')).toBeInTheDocument();
+    expect(about()).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('the notice closed on one page: still closed on another page that shows resources, the (i) control collapsed', () => {
+    resources = { word: 'buckets' };
+    const { wrapper, router } = open('/aws/s3');
+    closeNotice();
+    expect(notice()).toBeNull();
+
+    act(() => {
+      fireEvent.click(wrapper.findSideNavigation()?.findLinkByHref('/aws/sqs')?.getElement() as HTMLElement);
+    });
+
+    expect(router.state.location.pathname).toBe('/aws/sqs');
+    expect(screen.getByRole('heading', { level: 1, name: 'Amazon Simple Queue Service' })).toBeInTheDocument();
+    expect(notice()).toBeNull();
+    expect(about()).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('the notice closed, then the area rendered again as after a reload of the document: the notice is open', async () => {
+    resources = { word: 'buckets' };
+    const first = open('/aws/s3');
+    closeNotice();
+    expect(notice()).toBeNull();
+    first.unmount();
+
+    await freshLoad();
+    open('/aws/s3');
+
+    expect(notice()).not.toBeNull();
+    expect(about()).toHaveAttribute('aria-expanded', 'true');
+  });
 });
 
 /**
