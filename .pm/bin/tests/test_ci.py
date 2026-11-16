@@ -586,18 +586,22 @@ class Real_keys(Case):
             self.fail(f"emulator_credentials does not hold two values ({len(values)} found)")
         named = dict(zip(("the access key id", "the secret access key"), values))
         names = {"the access key id": "AWS_ACCESS_KEY_ID", "the secret access key": "AWS_SECRET_ACCESS_KEY"}
-        forms = {"NAME=<v>": "{N}={v}", "name = <v>": "{n} = {v}", '"<v>"': '"{v}"', "Credential=<v>/x": "Credential={v}/x"}
+        three = {"NAME=<v>": "{N}={v}", "name = <v>": "{n} = {v}", '"<v>"': '"{v}"'}
+        # PM decision (issue 53, decisions.md): a signed request carries the key id after `Credential=`, never the
+        # secret, so the key id is written in that form too and the secret in the other three only.
+        forms_of = {"the access key id": {**three, "Credential=<v>/x": "Credential={v}/x"},
+                    "the secret access key": three}
         fd = os.open(self.keys_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "w") as f:
             for label, v in named.items():
-                for fmt in forms.values():
+                for fmt in forms_of[label].values():
                     f.write(fmt.format(N=names[label], n=names[label].lower(), v=v) + "\n")
 
         p = self.ci("run", "--", "/bin/cat", self.keys_file)
         both = p.stdout + p.stderr
         leaked = []
         for label, v in named.items():
-            for form, fmt in forms.items():
+            for form, fmt in forms_of[label].items():
                 if fmt.format(N=names[label], n=names[label].lower(), v=v) in both:
                     leaked.append(f"{label} in the form {form}")
             if v in both and not any(x.startswith(label) for x in leaked):
