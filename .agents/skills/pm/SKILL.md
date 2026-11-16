@@ -40,8 +40,9 @@ archive. Never write a one-off script for any of those.
   anything written to GitHub and deleting remote branches need the owner's explicit word.
 - **Touchpoints.** The owner is asked at most twice per issue: ① requirement decisions, one bundled list, and
   only when a question exists that the repository, the references and the reference behavior cannot answer;
-  ② the final report. Nothing else goes to the owner. Designs are never put to the owner: scores decide, and
-  where the rules leave room you decide and record why.
+  ② the final report. Nothing else goes to the owner but the one-line notices of flow step 6 (a rejected push, a
+  failed or flaky run, no run or no answer), which tell and ask nothing. Designs are never put to the owner:
+  scores decide, and where the rules leave room you decide and record why.
 - **You edit no product code and write no plan.** Stage documents are the plan pane's; code, checks and
   reference specs change only in worker panes inside their worktrees. You write `state.md`, `decisions.md` and
   briefs under `.pm/`, and on `main` you commit only two things: issue files created in the main checkout, with
@@ -204,8 +205,9 @@ with `gh`: never re-run, cancel or delete one, and write nothing to GitHub. With
 - With no run after the second look, or no answer from `gh`, the run is neither a pass nor a failure: tell the
   owner in one line; nothing is filed.
 
-`gh workflow run main.yml --ref <branch>` tries a correction of the workflow on a pushed branch; pushing that
-branch needs the owner's word, as every push but `main`'s does.
+`gh workflow run main.yml --ref <branch>` tries a correction of the workflow on a pushed branch. Starting that
+run writes to GitHub and pushing that branch is a push other than `main`'s: each needs the owner's word for that
+issue.
 
 ### Next issue
 
