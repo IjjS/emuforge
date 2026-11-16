@@ -92,6 +92,12 @@ Start your own emulator on your worktree's `emulator` port and stop it when you 
 unit's. Sign only with the keys under `~/.aws/emulator/<your port>/`. Never read `~/.aws/credentials` or
 `~/.aws/config`, never set `AWS_PROFILE`, never point anything at an AWS host.
 
+A stopped emulator leaves its folder `~/.aws/emulator/<port>/`, and the next worktree on that port finds it. Once
+you have stopped an emulator you started and removed its container, remove its folder with
+`<Root>/.pm/bin/pm-emulator-dir rm --worktree <your worktree>` for your worktree's port, or
+`<Root>/.pm/bin/pm-emulator-dir rm --port <port>` for a port outside a worktree (a plan's probe, a crit's capture).
+It refuses while anything uses the port and never reads the files. Never `rm` or `rmdir` the folder by hand.
+
 ## Machine
 
 Memory budget 22.5 GB used, CPU 90% (`<Root>/.pm/bin/pm-mem`). Before `cargo build`, Playwright, a dev server or

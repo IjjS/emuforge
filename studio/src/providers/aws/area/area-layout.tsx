@@ -3,16 +3,20 @@ import BreadcrumbGroup, { type BreadcrumbGroupProps } from '@cloudscape-design/c
 import { I18nProvider } from '@cloudscape-design/components/i18n';
 import englishMessages from '@cloudscape-design/components/i18n/messages/all.en';
 import SideNavigation, { type SideNavigationProps } from '@cloudscape-design/components/side-navigation';
-import { useCallback, useEffect, useRef } from 'react';
+import SpaceBetween from '@cloudscape-design/components/space-between';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router';
 
-import { AWS_NAME, AWS_PATH, servicePath } from '../identity';
+import { AWS_NAME, AWS_PATH, AWS_SHORT_NAME, servicePath } from '../identity';
 import { SERVICES } from '../services';
 import { areaPage, areaPageTitle, type AreaPage } from './area-page';
 import { AreaRootContext } from './area-root';
 import { AREA_ROOT_CLASS } from './styles/root-class';
 import { useColourMode } from './colour-mode';
 import { ContentTarget } from './components/content-target';
+import type { AreaConnection } from './components/emulator-line';
+import { EmulatorLineAndNotice } from './components/local-notice';
+import { PageResourcesContext, type PageResources } from './components/page-resources';
 import { useFollow } from './components/use-follow';
 import { IndexPage } from './pages/index-page';
 import { NoScreenPage } from './pages/no-screen-page';
@@ -28,6 +32,8 @@ export interface AreaLayoutProps {
   onContentTarget: (focus: (() => void) | null) => void;
   /** Route changes since the document loaded: `0` on a first load, one more on each change of path. */
   routeChanges: number;
+  /** The engine's connection status, as Studio's frame last read it; the area never asks for it itself. */
+  connection: AreaConnection;
 }
 
 const NAVIGATION_ITEMS: SideNavigationProps.Item[] = [
@@ -47,16 +53,21 @@ const APP_LAYOUT_LABELS = {
 /** Cloudscape's own English text, for the built-in strings of the components the area renders. */
 const CLOUDSCAPE_MESSAGES = [englishMessages];
 
-const HOME_CRUMB: BreadcrumbGroupProps.Item = { text: AWS_NAME, href: AWS_PATH };
+/** The first crumbs of every page (requirement R3): EmuForge's Home, then the area's index. */
+const AREA_CRUMBS: BreadcrumbGroupProps.Item[] = [
+  { text: 'EmuForge', href: '/' },
+  { text: AWS_SHORT_NAME, href: AWS_PATH },
+];
 
+/** `EmuForge > AWS > <service's crumb> > …`; the last crumb is the current page, which Cloudscape shows as no link. */
 function breadcrumbs(page: AreaPage, pathname: string): BreadcrumbGroupProps.Item[] {
   switch (page.kind) {
     case 'index':
-      return [HOME_CRUMB];
+      return AREA_CRUMBS;
     case 'service':
-      return [HOME_CRUMB, { text: page.service.label, href: servicePath(page.service) }];
+      return [...AREA_CRUMBS, { text: page.service.crumb, href: servicePath(page.service) }];
     case 'not-found':
-      return [HOME_CRUMB, { text: areaPageTitle(page), href: pathname }];
+      return [...AREA_CRUMBS, { text: areaPageTitle(page), href: pathname }];
   }
 }
 
@@ -77,14 +88,23 @@ function PageContent({ page }: { page: AreaPage }) {
 
 /**
  * The AWS area, at `/aws` and below, as the AWS console: an `AppLayout` with the side navigation of the services
- * and breadcrumbs, no tools panel. Its root element carries Cloudscape's mode and scopes Cloudscape's base. It names
- * its content target to Studio and moves focus to it after a route change.
+ * and breadcrumbs from EmuForge, no tools panel. Its root element carries Cloudscape's mode and scopes Cloudscape's
+ * base. It names its content target to Studio and moves focus to it after a route change. The content target holds
+ * the emulator line, the local-emulator notice when the page names its resources, then the page (requirement R4.8),
+ * so what is read first after a move is that this is a local emulator and not AWS. A page names its resources with
+ * `useShowsResources` (R5); the area's own pages name none and carry neither the notice nor the (i) control.
  *
  * The area is English in every language of Studio (issue #17, R7): its root says so with `lang="en"`, and Cloudscape's
  * locale is `en` for everything it renders, whatever the document's `lang` and the browser's languages, so a date, a
  * number or a component's built-in text comes out in English.
  */
-export function AreaLayout({ headerSelector, onPageTitle, onContentTarget, routeChanges }: AreaLayoutProps) {
+export function AreaLayout({
+  headerSelector,
+  onPageTitle,
+  onContentTarget,
+  routeChanges,
+  connection,
+}: AreaLayoutProps) {
   const { pathname } = useLocation();
   const handleFollow = useFollow();
   const root = useRef<HTMLDivElement>(null);
@@ -114,6 +134,9 @@ export function AreaLayout({ headerSelector, onPageTitle, onContentTarget, route
     }
   }, [routeChanges, focusTarget]);
 
+  // What the page shows of the emulator, as it names it; the notice's open state outlives the page (R5.3).
+  const [resources, setResources] = useState<PageResources | null>(null);
+
   return (
     <div ref={root} className={AREA_ROOT_CLASS} lang="en">
       <I18nProvider locale="en" messages={CLOUDSCAPE_MESSAGES}>
@@ -136,7 +159,12 @@ export function AreaLayout({ headerSelector, onPageTitle, onContentTarget, route
             content={
               // One target per path, so a route change between two paths of the same page focuses a new element.
               <ContentTarget key={pathname} targetRef={target}>
-                <PageContent page={page} />
+                <SpaceBetween size="m">
+                  <EmulatorLineAndNotice connection={connection} resources={resources} />
+                  <PageResourcesContext value={setResources}>
+                    <PageContent page={page} />
+                  </PageResourcesContext>
+                </SpaceBetween>
               </ContentTarget>
             }
           />

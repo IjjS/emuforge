@@ -122,3 +122,9 @@
 {"check_id": "studio.count-and-unit-stay-on-one-line", "path": "tests/integration/studio/wrapping.spec.ts", "module": "studio", "operations": [], "labels": ["own-emulator", "regression"], "issue": 32}
 {"check_id": "studio.language-menu-dismissing-press-does-nothing-else", "path": "tests/integration/studio/language-menu.spec.ts", "module": "studio", "operations": [], "labels": ["own-emulator", "regression"], "issue": 32}
 {"check_id": "studio.language-menu-is-veiled-at-480-and-below", "path": "tests/integration/studio/language-menu.spec.ts", "module": "studio", "operations": [], "labels": ["own-emulator", "regression"], "issue": 32}
+{"check_id": "studio.aws-area-breadcrumbs-start-at-emuforge", "path": "tests/integration/studio/aws-area-frame.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 45}
+{"check_id": "studio.aws-area-emulator-line-shows-connected-endpoint", "path": "tests/integration/studio/aws-area-frame.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 45}
+{"check_id": "studio.aws-area-emulator-line-follows-emulator-stop-and-start", "path": "tests/integration/studio/aws-area-frame.spec.ts", "module": "studio", "operations": [], "labels": ["own-emulator", "lifecycle"], "issue": 45}
+{"check_id": "studio.aws-area-emulator-line-shows-engine-unreachable", "path": "tests/integration/studio/aws-area-frame.spec.ts", "module": "studio", "operations": [], "labels": ["lifecycle"], "issue": 45}
+{"check_id": "studio.aws-area-emulator-line-keyboard-and-layout", "path": "tests/integration/studio/aws-area-frame.spec.ts", "module": "studio", "operations": [], "labels": ["own-emulator"], "issue": 45}
+{"check_id": "studio.aws-area-shows-no-image", "path": "tests/integration/studio/aws-area-frame.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 45}

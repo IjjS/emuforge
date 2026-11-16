@@ -48,3 +48,19 @@ with the stop command and removes whatever is left, whatever its verdict.
 
 When `docker-compose.yml` is missing or the image does not build, every product check still runs and fails at its
 start command, as the engine checks do without an engine.
+
+## Checks not run
+
+`run --not-run <file>` leaves out the checks a not-run list names; the workflow on GitHub Actions passes it
+`.github/not-run.json`. Only the list's `checks` are read: each entry's `id` must be a manifest id, listed once,
+with a non-empty `reason`. A list that cannot be read or breaks one of these makes every check `error` (exit 127)
+before anything is built or started. `run` with any other argument prints a usage line and exits 2; without
+arguments it runs every check.
+
+A listed engine check returns at once: `run` gives `cargo test` `EMUFORGE_IT_NOT_RUN` naming
+`output/integration/not-run.ids`, and `support::check::check` prints `not-run <id>` and writes no verdict, so
+`cargo test` shows that test as `ok`. A listed Studio or product check is left out of the Playwright run with one
+`--grep-invert` pattern of the listed ids. `report.json` is the record: each listed check is `not-run` with the
+list's reason as its message, and counts neither as passed nor as failed; the exit code and relay fidelity are
+computed over the other checks, and a list that names every check gives 127. Everything else runs as without the
+option, the product image's build included.

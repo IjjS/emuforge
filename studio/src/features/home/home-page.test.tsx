@@ -249,28 +249,12 @@ describe('Home: reconnects without a reload', () => {
 
 describe('Home: leaving and returning', () => {
   it('sends no check after leaving Home, and starts checking again on return', async () => {
-    // The AWS area follows the operating system's scheme, which jsdom does not report: light here.
-    vi.stubGlobal('matchMedia', (media: string) => ({
-      media,
-      matches: false,
-      addEventListener: () => undefined,
-      removeEventListener: () => undefined,
-    }));
-    await openHome(connected());
-    await click(within(screen.getByRole('navigation', { name: 'Studio' })).getByRole('link', { name: 'AWS' }));
-    // The AWS area loads on its first opening; the import is real work, not a timer.
-    const s3 = await vi.waitFor(
-      async () => {
-        await advance();
-        return present(
-          screen.queryAllByRole('link', { name: 'Amazon Simple Storage Service' })[0],
-          'an S3 link in the AWS area',
-        );
-      },
-      { timeout: 10_000, interval: 20 },
-    );
-    await click(s3);
-    expect(screen.getByRole('heading', { level: 1, name: 'Amazon Simple Storage Service' })).toBeInTheDocument();
+    const { router } = await openHome(connected());
+    // Home is left for Studio's "Page not found", which asks the engine nothing; the AWS area checks the connection
+    // itself every 5 seconds (issue 45, R4.4), so it is no page to leave Home for here.
+    await act(() => router.navigate('/does-not-exist'));
+    await advance();
+    expect(screen.getByRole('heading', { level: 1, name: 'Page not found' })).toBeInTheDocument();
     const checks = engine.healths.length;
     await advance(20_000);
     expect(engine.healths).toHaveLength(checks);

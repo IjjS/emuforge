@@ -267,11 +267,12 @@ def score_run(a, wt):
             _pmproc.check()  # C1: checks, server start, capture cleanup
             if browse_error is None:
                 try:
-                    snap = _pmscore.load_snapshot(snapshot)
-                    result = _pmscore.score(spec, snap, a.state)
+                    # the stop is also looked for during the load and the scoring (issue 31, design D1)
+                    snap = _pmscore.load_snapshot(snapshot, look=_pmproc.check)
+                    result = _pmscore.score(spec, snap, a.state, look=_pmproc.check)
                 except (_pmspec.SpecError, _pmscore.SnapshotError) as e:
                     score_error = e
-                _pmproc.check()  # C2: scoring, before the report
+                _pmproc.check()  # C2: after the scoring, before the report
         except Terminated as e:
             return error_result(a, wt, spec, e, url)
         if browse_error is not None:

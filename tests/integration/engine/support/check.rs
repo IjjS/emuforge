@@ -9,6 +9,11 @@
 //!
 //! Then it panics unless the verdict is `passed`, so `cargo test` reports the check as failing too.
 //!
+//! A check listed in the file `EMUFORGE_IT_NOT_RUN` names is not run: `check` returns at once, before its body and
+//! without a verdict file, and prints `not-run <id>` on standard error. `cargo test` shows it as `ok`; `run` reports
+//! it `not-run` in `report.json`, which is the record. A variable that is set and names a file that cannot be read is
+//! a panic naming the file, so a listed check never runs by accident.
+//!
 //! The process environment it reads (set by `tests/integration/run`, or by hand for one `cargo test`):
 //!
 //! | Variable | Meaning |
@@ -19,6 +24,7 @@
 //! | `EMULATOR_PORT` | the run's emulator, already started |
 //! | `EMUFORGE_ENGINE_PORT` | the port every engine a check starts listens on |
 //! | `EMUFORGE_IT_RUN_ID` | unique per run; names the containers a check starts |
+//! | `EMUFORGE_IT_NOT_RUN` | optional: a file of check ids, one per line, that are not run (`run --not-run`) |
 
 use std::fs::{self, File};
 use std::io::Write as _;
@@ -141,9 +147,29 @@ fn install_redacting_panic_hook() {
     });
 }
 
+/// Whether `id` is in the not-run list `EMUFORGE_IT_NOT_RUN` names; panics when the variable is set and its file
+/// cannot be read.
+fn listed_not_run(id: &str) -> bool {
+    let Some(path) = std::env::var_os("EMUFORGE_IT_NOT_RUN") else {
+        return false;
+    };
+    let path = PathBuf::from(path);
+    let text = fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!(
+            "EMUFORGE_IT_NOT_RUN: cannot read the not-run list {}: {e}",
+            path.display()
+        )
+    });
+    text.lines().any(|line| line.trim() == id)
+}
+
 /// Runs one check; see the module documentation.
 pub fn check(id: &'static str, body: impl FnOnce(&mut Ctx) -> Result<(), Env>) {
     install_redacting_panic_hook();
+    if listed_not_run(id) {
+        eprintln!("not-run {id}");
+        return;
+    }
     let verdicts = PathBuf::from(var("EMUFORGE_IT_VERDICTS").unwrap_or_else(|e| panic!("{e}")));
     let out_dir = verdicts
         .parent()

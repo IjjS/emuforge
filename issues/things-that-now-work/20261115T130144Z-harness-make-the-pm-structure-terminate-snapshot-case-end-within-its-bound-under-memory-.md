@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: bug
 Issue-Source: plan
 Issue-Key: harness|test_terminate-snapshot-run|slow-under-memory-pressure
-Issue-Check-Ids:
+Issue-Check-Ids: harness.stop-work
 Issue-Commit: d009b29c5fdb1b3c59b60e6d3d9d073fe0903fe4
 
 # Make the pm-structure terminate snapshot case end within its bound under memory pressure

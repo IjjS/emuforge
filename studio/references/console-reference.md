@@ -1,20 +1,26 @@
 # Console reference specs
 
-A screen that mirrors the AWS console is built from a **reference spec**: a text file that lists what is on the
-AWS screen and in what order. The spec is the design for that screen and the thing its structure score is
-measured against.
+A screen that follows the information structure and flow of an AWS console screen is built from a **reference
+spec**: a text file that lists the parts of the AWS screen that Studio shows, their labels and their order. The
+spec is the design for that screen and the thing its structure score is measured against. It is written to the AWS
+screen policy (`studio/AGENTS.md`, "AWS screen policy").
+
+A spec lists structure and vocabulary only: which parts, their labels and their order. It never holds the
+console's descriptions or help text; a screen's descriptions, help and states are EmuForge's own words, written in
+its requirement. A part of the console screen that the emulator does not have is left out and recorded under
+`omitted` (below), with the emulator's answer that shows it lacks the part.
 
 Such a screen is graded `console` and lives in the AWS area, at `/aws` and below (`studio/AGENTS.md`, "Two
 layers"). Studio's own layer (the frame, Home, Studio's "Page not found") has no `console` screen and no spec; its
 screens are designed per `critique.md` in Studio's own design system.
 
-A spec records the English console: AWS's English labels, from the English AWS user guide. The AWS area is English
-in every language of Studio (`studio/AGENTS.md`), so a spec has no other language and a screen's structure score is
-the same whatever Studio's language.
+A spec records the English console: AWS's English labels, from the owner's captures of the English console and the
+English AWS user guide. The AWS area is English in every language of Studio (`studio/AGENTS.md`), so a spec has no
+other language and a screen's structure score is the same whatever Studio's language.
 
-Inside the AWS area everything is Cloudscape, the design system of the AWS console, so components already look
-right. What a spec pins down is structure: which screen exists, what it is called, which actions, columns, tabs,
-fields and steps it has.
+Inside the AWS area everything is Cloudscape in its default theme, used as published; a spec says nothing about how
+a screen looks and does not ask it to look like the console. What a spec pins down is structure: which screen
+exists, what it is called, which actions, columns, tabs, fields and steps it has, in which order.
 
 ## Where and who
 
@@ -24,15 +30,19 @@ fields and steps it has.
 
 ## Writing a spec
 
-Read the AWS user guide for the service (console procedures, field names and their order) and the corresponding
-view in StackPort (`DaviReisVieira/stackport`, MIT, a Cloudscape console for local emulators). Read StackPort for
-what a view contains; never copy its code.
+Sources, in this order:
 
-Do not write a spec from memory of what the console looks like. An item you cannot point to in one of those two
-places is not in the spec.
+1. The owner's captures of the screen under `docs/aws-console/` (its `.png` and `.mhtml` files), which is not in
+   git. They are the first source. They are reference for structure only: of `docs/`, only that folder is read,
+   and nothing of the captures (markup, styles, scripts, images, descriptive text) is copied into the repository.
+2. The AWS user guide for the service (console procedures, field names and their order), for a screen or an item
+   that no capture shows.
+3. The corresponding view in StackPort (`DaviReisVieira/stackport`, MIT, a Cloudscape console for local
+   emulators). Read StackPort for what a view contains; never copy its code.
 
-When the owner supplies captures of the real AWS console, each affected spec is checked against them in an issue
-of its own. Captures are never committed; only the spec is.
+Do not write a spec from memory of what the console looks like. An item you cannot point to in one of those
+places is not in the spec. The captures are there and are read when the spec is written; they are never committed,
+only the spec is.
 
 ## Format
 
@@ -42,7 +52,7 @@ service: s3
 kind: table                       # table | detail | form | wizard
 route: /aws/s3/buckets            # the Studio route that renders it, under the AWS area's /aws
 
-breadcrumbs: [Amazon S3, Buckets]
+breadcrumbs: [EmuForge, AWS, S3, Buckets]
 header:
   title: General purpose buckets
   counter: true
@@ -64,6 +74,10 @@ omitted:                          # on the AWS screen, deliberately not in Studi
 
 `route` always starts with `/aws/`: the AWS area's segment followed by the service's route.
 
+`breadcrumbs` are the area's crumbs (`studio/AGENTS.md`, "AWS screen policy", point 8): `EmuForge`, `AWS`, the
+service's short name, then the console's crumbs below the service. They never start with "Amazon Web Services" or
+with the console's own first crumb.
+
 Other kinds use the same idea with their own blocks: `tabs` and `sections` (each with `fields`) for `detail`;
 `sections` with `fields` (label, control, required, constraint text) for `form`; `steps` (each with `title` and
 `sections`) and `submit` for `wizard`. Every list that has a visible order is written in that order.
@@ -77,7 +91,7 @@ service: iam
 kind: wizard
 route: /aws/iam/roles/create
 
-breadcrumbs: [IAM, Roles, Create role]
+breadcrumbs: [EmuForge, AWS, IAM, Roles, Create role]
 steps:                            # in order
   - title: Select trusted entity
     sections:                     # as in kind form

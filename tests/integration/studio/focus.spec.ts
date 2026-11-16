@@ -21,6 +21,7 @@ import {
   focusMoves,
   focusRing,
   hasFocus,
+  lineAnswered,
   liveRegions,
   outlinedElements,
   placeDiffers,
@@ -425,11 +426,11 @@ test('studio.route-change-focuses-new-page-content', async ({ ctx, page }) => {
   );
 
   await lines.line(
-    'Fresh load of `/aws/s3`, focus "Amazon Web Services" in the breadcrumbs, Enter → the address is `/aws`, focus is on the content target named "Amazon Web Services"',
+    '(changed, issue 45) Fresh load of `/aws/s3`, focus "AWS" in the breadcrumbs, Enter → the address is `/aws`, focus is on the content target named "Amazon Web Services"',
     async () => {
       await openFresh(page, S3_PAGE);
-      await follow(page, breadcrumbLink(page, AWS));
-      expectArrived(await arrive('/aws/s3 → "Amazon Web Services" in the breadcrumbs', INDEX), false);
+      await follow(page, breadcrumbLink(page, 'AWS'));
+      expectArrived(await arrive('/aws/s3 → "AWS" in the breadcrumbs', INDEX), false);
     },
   );
 
@@ -557,7 +558,7 @@ test('studio.route-change-focuses-new-page-content', async ({ ctx, page }) => {
 
 test('studio.focus-moves-change-nothing-on-screen', async ({ ctx, page }) => {
   test.setTimeout(300_000);
-  await startStack(ctx);
+  const stack = await startStack(ctx);
   const lines = new Lines(ctx);
   const f = frame(page);
 
@@ -566,11 +567,12 @@ test('studio.focus-moves-change-nothing-on-screen', async ({ ctx, page }) => {
   }
 
   await lines.line(
-    'Fresh load of each of `/`, `/aws`, `/aws/s3`, `/aws/does-not-exist` and `/does-not-exist`, Tab, Enter on "Skip to content" → the page\'s `h1`, its first content stop and the frame\'s bar are at the same place as before the Enter, and no element draws an outline',
+    'Fresh load of each of `/`, `/aws`, `/aws/s3`, `/aws/does-not-exist` and `/does-not-exist`, Tab, Enter on "Skip to content" → the page\'s `h1`, its first content stop and the frame\'s bar are at the same place as before the Enter, and no element draws an outline; on a page of the area the "before" places are read once the emulator line shows "Connected at `<endpoint>`" (changed, issue 45)',
     async () => {
       const found: string[] = [];
       for (const p of FIVE) {
         await openFresh(page, p);
+        await lineAnswered(page, p.path, stack.emulatorPort);
         await tabToSkip(page);
         const before = await places(p);
         await page.keyboard.press('Enter');
@@ -585,7 +587,7 @@ test('studio.focus-moves-change-nothing-on-screen', async ({ ctx, page }) => {
   );
 
   await lines.line(
-    'Each of those five pages reached by a route change: `/` by the frame\'s "Home" from a fresh `/aws`; `/aws` by the frame\'s "AWS" from a fresh `/`; `/aws/s3` by "Amazon Simple Storage Service" in the side navigation from a fresh `/aws`; `/aws/does-not-exist` by Back after a fresh `/aws/does-not-exist` and "Amazon Web Services" in its breadcrumbs; `/does-not-exist` by Back after a fresh `/does-not-exist` and "Go to Home" → the page\'s `h1`, its first content stop and the frame\'s bar are at the same place as on a fresh load of the same path, and no element draws an outline',
+    'Each of those five pages reached by a route change: `/` by the frame\'s "Home" from a fresh `/aws`; `/aws` by the frame\'s "AWS" from a fresh `/`; `/aws/s3` by "Amazon Simple Storage Service" in the side navigation from a fresh `/aws`; `/aws/does-not-exist` by Back after a fresh `/aws/does-not-exist` and "AWS" in its breadcrumbs (changed, issue 45); `/does-not-exist` by Back after a fresh `/does-not-exist` and "Go to Home" → the page\'s `h1`, its first content stop and the frame\'s bar are at the same place as on a fresh load of the same path, and no element draws an outline; on a page of the area the places are read, on the fresh load and after the route change alike, once the emulator line shows "Connected at `<endpoint>`" (changed, issue 45)',
     async () => {
       const routes: { to: PageOf; how: string; go: () => Promise<void> }[] = [
         {
@@ -614,10 +616,10 @@ test('studio.focus-moves-change-nothing-on-screen', async ({ ctx, page }) => {
         },
         {
           to: AREA_NOT_FOUND,
-          how: 'Back after a fresh /aws/does-not-exist and "Amazon Web Services" in its breadcrumbs',
+          how: 'Back after a fresh /aws/does-not-exist and "AWS" in its breadcrumbs',
           go: async () => {
             await openFresh(page, AREA_NOT_FOUND);
-            await follow(page, breadcrumbLink(page, AWS));
+            await follow(page, breadcrumbLink(page, 'AWS'));
             await shown(page, INDEX);
             await page.goBack();
           },
@@ -636,11 +638,13 @@ test('studio.focus-moves-change-nothing-on-screen', async ({ ctx, page }) => {
       const found: string[] = [];
       for (const { to, how, go } of routes) {
         await openFresh(page, to);
+        await lineAnswered(page, to.path, stack.emulatorPort);
         await settled(page);
         const reference = await places(to);
         await go();
         await shown(page, to);
         await awaitTarget(page, to.h1, to.firstStop);
+        await lineAnswered(page, to.path, stack.emulatorPort);
         await settled(page);
         const after = await places(to);
         for (const moved of placeDiffers(reference, after)) found.push(`${to.path} by ${how}: ${moved}`);
