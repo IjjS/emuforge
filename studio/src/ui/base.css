@@ -62,6 +62,29 @@
     line-height: 1.45;
   }
 
+  /* Korean is written with spaces between words: a line breaks only at white space, never between two syllables of
+     one word (issue 32, R1.1), on a Korean bar or page and on Korean text in another page ("한국어"). The long-word
+     guard above still breaks a word wider than its box. */
+  :is(.st-bar, .st-main):lang(ko),
+  :is(.st-bar, .st-main) :lang(ko) {
+    word-break: keep-all;
+  }
+
+  /* Text in another language inside a Korean bar or page (a language's own name, the engine's English message)
+     wraps by its own language's rules (R1.6). */
+  :is(.st-bar, .st-main) [lang]:not(:lang(ko)) {
+    word-break: normal;
+  }
+
+  /* With whole words a Korean paragraph can end on a line of one word: ask for even lines (R1.7). */
+  .st-main:lang(ko) {
+    text-wrap: pretty;
+  }
+
+  .st-main:lang(ko) .st-notice h3 {
+    text-wrap: balance;
+  }
+
   :is(.st-bar, .st-main),
   :is(.st-bar, .st-main) *,
   :is(.st-bar, .st-main) *::before,
