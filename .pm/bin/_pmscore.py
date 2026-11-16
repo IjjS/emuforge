@@ -1,9 +1,10 @@
 """Scoring for pm-structure: snapshots, matching, order items, extras, the pass line, reports and records. Not a
 command.
 
-  snap = load_snapshot(path)               the accessibility snapshot of design 2.2 (a Snapshot), or a wizard's
+  snap = load_snapshot(path[, look])       the accessibility snapshot of design 2.2 (a Snapshot), or a wizard's
                                            steps snapshot (Steps, issue 8 D2.2); SnapshotError otherwise
-  result = score(spec, snap, state)        requirement 5.2 to 5.6; SpecError("... nothing to score");
+  result = score(spec, snap, state[, look])
+                                           requirement 5.2 to 5.6; SpecError("... nothing to score");
                                            SnapshotError when the snapshot does not fit the spec's kind
   render_text(result[, result_path])       the standard output of requirement 3
   result_json(result, extra)               the result file's content
@@ -11,6 +12,14 @@ command.
 
 Names are compared trimmed and case-folded (`norm`); the snapshot keeps the browser's own roles and names, and
 the report prints them as found.
+
+`look` (issue 31, design D2) is None or a function of no argument that `load_snapshot` and `score` call while they
+work: once after the file is read, once after it is decoded, at least once per EVERY JSON objects parsed, before
+each spec item and at least once per EVERY nodes of every walk over a tree's nodes. What it returns is ignored;
+what it raises leaves the function as it is, with no later call of `look` and no value returned. It must raise
+nothing or an exception that is not an `Exception` (pm-structure passes `_pmproc.check`, which raises its
+`Terminated`): `load_snapshot` takes a `ValueError` or `OSError` of its own work for the file's fault. With `look`
+None nothing is called. This module knows nothing of signals or processes; it only calls what it is given.
 """
 import dataclasses
 import json
@@ -25,6 +34,7 @@ FORMAT_STEPS = "pm-structure-steps/1"
 MAX_SNAPSHOT = 64 * 1024 * 1024
 EXTRA_ROLES = ("button", "columnheader", "tab", "LabelText", "term")
 COUNTER = r" \(([0-9]+\+?|[0-9]+/[0-9]+)\)"
+EVERY = 1024                   # nodes or JSON objects between two looks at most (issue 31, requirement R3)
 
 
 class SnapshotError(Exception):
@@ -61,9 +71,43 @@ class Steps:
     steps: list
 
 
-def load_snapshot(path):
+def _look(look):
+    if look is not None:
+        look()
+
+
+def _walk(nodes, look, start=0):
+    """`nodes[start:]`, with a look before the first node and before every EVERY-th after it; `nodes` itself when
+    `look` is None and `start` is 0. The list is not copied, only one stretch of EVERY nodes at a time."""
+    if look is None and start == 0:
+        return nodes
+    return _walking(nodes, look, start)
+
+
+def _walking(nodes, look, start):
+    for i in range(start, len(nodes), EVERY):
+        if look is not None:
+            look()
+        yield from nodes[i:i + EVERY]
+
+
+def _counting_hook(look):
+    """A json `object_hook` that returns each object unchanged and looks at every EVERY-th one built."""
+    built = 0
+
+    def hook(obj):
+        nonlocal built
+        built += 1
+        if not built % EVERY:
+            look()
+        return obj
+    return hook
+
+
+def load_snapshot(path, look=None):
     """Read a snapshot file pm-structure wrote, of either format; SnapshotError `cannot read snapshot <path>:
-    <why>` otherwise, `<why>` starting with `step <k>: ` for an entry of a steps file."""
+    <why>` otherwise, `<why>` starting with `step <k>: ` for an entry of a steps file. `look` as in the module
+    docstring."""
     def bad(why):
         raise SnapshotError(f"cannot read snapshot {path}: {why}")
 
@@ -79,10 +123,14 @@ def load_snapshot(path):
         bad(e.strerror or str(e))
     if len(data) > MAX_SNAPSHOT:
         bad(f"larger than {MAX_SNAPSHOT} bytes")
+    _look(look)  # after the read
     try:
-        d = json.loads(data.decode("utf-8"))
+        text = data.decode("utf-8")
+        _look(look)  # after the decode
+        d = json.loads(text) if look is None else json.loads(text, object_hook=_counting_hook(look))
     except (UnicodeDecodeError, ValueError):
         bad("not JSON")
+    del text  # as before, the text is not held while the nodes are parsed
     if isinstance(d, dict) and d.get("format") == FORMAT_STEPS:
         if "steps" not in d:
             bad("steps is missing")
@@ -93,11 +141,11 @@ def load_snapshot(path):
 
         def entry_bad(k):
             return lambda why: bad(f"step {k}: {why}")
-        return Steps(path=path, steps=[_parse(path, e, entry_bad(k)) for k, e in enumerate(d["steps"], 1)])
-    return _parse(path, d, bad)
+        return Steps(path=path, steps=[_parse(path, e, entry_bad(k), look) for k, e in enumerate(d["steps"], 1)])
+    return _parse(path, d, bad, look)
 
 
-def _parse(path, d, bad):
+def _parse(path, d, bad, look=None):
     """The Snapshot of one pm-structure-snapshot/1 object `d`; `bad(why)` raises."""
     if not isinstance(d, dict) or d.get("format") != FORMAT:
         bad(f"format is not {FORMAT}")
@@ -113,7 +161,7 @@ def _parse(path, d, bad):
     if not isinstance(raw, list):
         bad("nodes is not a list")
     nodes = []
-    for i, n in enumerate(raw):
+    for i, n in enumerate(_walk(raw, look)):
         if not isinstance(n, dict) or not isinstance(n.get("role"), str) or not isinstance(n.get("name"), str):
             bad(f"node {i} has no role or name")
         p = n.get("parent")
@@ -129,21 +177,21 @@ def _parse(path, d, bad):
         else:
             bad(f"node {i} has a parent that is not an earlier node")
         nodes.append(node)
-    _label_texts(nodes)
+    _label_texts(nodes, look)
     return Snapshot(path=path, url=d["url"], viewport={"width": vp["width"], "height": vp["height"]},
                     browser=d["browser"], blocked=list(blocked), nodes=nodes)
 
 
-def _label_texts(nodes):
+def _label_texts(nodes, look=None):
     """Requirement 5.2 as corrected (decisions.md, "Requirement correction R5.2"): Chromium gives a form label an
     empty-name LabelText whose text sits in its StaticText children. For each such node, `text` is the names of
     its StaticText descendants joined in document order. Descendants follow their ancestor without a gap (the
     nodes are a pre-order walk), so the scan stops at the first node outside the subtree."""
-    for node in nodes:
+    for node in _walk(nodes, look):
         if node.role != "LabelText" or node.name.strip():
             continue
         inside, parts = {node.index}, []
-        for n in nodes[node.index + 1:]:
+        for n in _walking(nodes, look, node.index + 1):
             if n.parent not in inside:
                 break
             inside.add(n.index)
@@ -304,9 +352,10 @@ def _nav_entry(title):
                       and (norm(n.name) == want or norm(n.name).endswith(": " + want)))
 
 
-def score(spec, snap, state):
+def score(spec, snap, state, look=None):
     """Score `snap` against `spec` in `state` (requirement 5.2 to 5.6; for a wizard issue 8, requirement 5). Each
-    item is matched on the tree of its own step only; a spec of another kind has one tree."""
+    item is matched on the tree of its own step only; a spec of another kind has one tree. `look` as in the module
+    docstring."""
     trees = _fit(spec, snap)
     wizard = spec.kind == "wizard"
 
@@ -318,8 +367,9 @@ def score(spec, snap, state):
 
     cands = {}
     for item in spec.items:
+        _look(look)
         pred = _predicate(item)
-        cands[item.id] = [n.index for n in tree(item) if pred(n)] if pred else []
+        cands[item.id] = [n.index for n in _walk(tree(item), look) if pred(n)] if pred else []
     first = {i: (c[0] if c else None) for i, c in cands.items()}
     by_id = {i.id: i for i in spec.items}
     omitted = {}
@@ -343,11 +393,11 @@ def score(spec, snap, state):
             later = [c for c in cands[item.id] if t is not None and c > t]
             return bool(later), (later[0] if later else None), None
         if k == "selection" and item.name == "none":
-            hit = any(n.in_table and n.role in ("radio", "checkbox") for n in nodes)
+            hit = any(n.in_table and n.role in ("radio", "checkbox") for n in _walk(nodes, look))
             return not hit, None, None
         if k == "pagination":
-            nxt = [n.index for n in nodes if n.role == "button" and norm(n.name) == "next page"]
-            prev = [n.index for n in nodes if n.role == "button" and norm(n.name) == "previous page"]
+            nxt = [n.index for n in _walk(nodes, look) if n.role == "button" and norm(n.name) == "next page"]
+            prev = [n.index for n in _walk(nodes, look) if n.role == "button" and norm(n.name) == "previous page"]
             ok = bool(nxt and prev)
             return ok, (min(nxt[0], prev[0]) if ok else None), None
         if k == "order":
@@ -367,7 +417,7 @@ def score(spec, snap, state):
                 if e in omitted:
                     continue
                 pred = _nav_entry(title)
-                hits = [n.index for n in nodes if pred(n)]
+                hits = [n.index for n in _walk(nodes, look) if pred(n)]
                 if not hits:
                     return False, None, f"no navigation entry for {json.dumps(title, ensure_ascii=False)}"
                 entries.append(hits)
@@ -382,6 +432,7 @@ def score(spec, snap, state):
 
     results = []
     for item in spec.items:
+        _look(look)
         step = item.step if wizard else None
         if item.id in omitted:
             results.append(ItemResult(item, "omitted", reason=omitted[item.id], step=step))
@@ -411,8 +462,8 @@ def score(spec, snap, state):
     claimed = set().union(*(_claims(i) for i in spec.items)) if spec.items else set()
     extras, seen = [], set()
     for k, t in enumerate(trees, 1):
-        has_main = any(n.role == "main" for n in t.nodes)
-        for n in t.nodes:
+        has_main = any(n.role == "main" for n in _walk(t.nodes, look))
+        for n in _walk(t.nodes, look):
             name = n.name.strip()
             key = (n.role, norm(n.name))
             if (n.role in EXTRA_ROLES and name and not re.fullmatch(r"[0-9]+", name) and (n.in_main or not has_main)
