@@ -11,13 +11,14 @@ Decided at the Requirement stage and written into it. A screen's grade follows f
 
 | Grade | Meaning | Layer and design system | Screen stage | Critique |
 |---|---|---|---|---|
-| `console` | The screen mirrors a screen of a provider's console | a provider area only (AWS: `/aws` and below), built from that provider's design system (Cloudscape) | a reference spec per `console-reference.md` | structure score and impeccable score |
-| `native` | The screen exists only in EmuForge | Studio's own layer (frame, Home, connection status, Studio's "Page not found", IAM simulator, Verify results): Studio's own design system (`studio/DESIGN.md`). Inside a provider area, an EmuForge-only state (the area's index, "no screen yet", the area's "Page not found"): the provider's design system, following its console's conventions | a design per `critique.md` | impeccable score |
+| `console` | The screen follows the information structure and flow of a screen of a provider's console; it is not a copy of it | a provider area only (AWS: `/aws` and below), built from that provider's design system (Cloudscape, default theme) | a reference spec per `console-reference.md` | structure score and impeccable score |
+| `native` | The screen exists only in EmuForge | Studio's own layer (frame, Home, connection status, Studio's "Page not found", IAM simulator, Verify results): Studio's own design system (`studio/DESIGN.md`). Inside a provider area, an EmuForge-only state (the area's index, "no screen yet", the area's "Page not found"): the provider's design system, following its published patterns | a design per `critique.md` | impeccable score |
 | `none` | No visible change | | skipped | skipped |
 
 - Every screen of Studio's own layer is `native`; Studio's own layer has no `console` screen.
-- Inside a provider area a screen is `console` when it mirrors a screen of that provider's console, and `native`
-  otherwise; both are built from the provider's design system, never from Studio's own.
+- Inside a provider area a screen is `console` when it follows the structure and flow of a screen of that
+  provider's console, and `native` otherwise; both are built from the provider's design system, never from
+  Studio's own, and both follow the AWS screen policy (`studio/AGENTS.md`, "AWS screen policy").
 
 An issue that touches both a `console` and a `native` screen is split.
 
@@ -40,17 +41,24 @@ An issue that touches both a `console` and a `native` screen is split.
   its segment (`/aws/...`).
 - The grade, as it follows from the layer.
 - What is out of scope, including parts of the AWS screen that are deliberately left out and why.
+- For a `console` screen, the parts of the console screen (panels, tabs, navigation entries, badges) that are left
+  out, each with the emulator's answer that shows it lacks the part (policy point 4). An action on a resource the
+  emulator has is not left out; its 501, if the emulator answers one, is named here (point 5).
+- For a `console` screen, the screen's EmuForge-own text, in English (point 3): its description, help, and empty,
+  loading and error states, and the resource word of its local-emulator notice ("buckets": "These buckets are in
+  your local emulator"). Each says only what the engine knows.
 - For a screen of Studio's own layer, its text in English: every visible text, accessible name and announcement, as
   it will read in the English catalogue. The requirement does not give the other languages.
 
 ## 2. Screen
 
-- `console`: write or update the reference spec for each screen, per `references/console-reference.md`. The
+- `console`: write or update the reference spec for each screen, per `references/console-reference.md`, from the
+  console screen's structure: its parts, their labels and their order, never its descriptions or help text. The
   spec is the design; there are no candidates.
 - `native`: per `references/critique.md`: a mock, scored, revised until it passes. The mock is drawn in the
   design system of the screen's layer: Studio's own for Studio's own layer, the provider's for a state inside a
-  provider area. A page of Studio's own layer that holds a provider area shows the area as a region in the
-  provider's design system.
+  provider area, where a native state follows Cloudscape's published patterns. A page of Studio's own layer that
+  holds a provider area shows the area as a region in the provider's design system.
 
 ## 3. Test Criteria
 
