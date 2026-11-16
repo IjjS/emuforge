@@ -11,7 +11,8 @@
 // themselves which of their buttons are stops, and its `Tabs` make the tab panel a stop after the tabs; each of those
 // is allowed where Cloudscape places it and nowhere else. The help toggle R9 names after the crumbs is allowed there
 // or where Cloudscape's layout places it, after the content, and must be a stop exactly once (PM decision on
-// decisions-needed 17). Every other stop must be the next one R9 names.
+// decisions-needed 17). Every other stop must be the next one R9 names. The walk ends at the help toggle after the
+// content, or where the focus leaves the area; a stop after the last expected one is reported too.
 
 import type { Page, Request } from '@playwright/test';
 
@@ -154,7 +155,7 @@ function orderProblems(stops: Stop[], expected: Expected[]): string[] {
     if (want.optional) continue;
     return [`expected ${want.what}, the Tab reached ${stop === undefined ? 'nothing more' : shown(stop)}`];
   }
-  return [];
+  return stops.slice(at).map((stop) => `${shown(stop)} after the last expected stop`);
 }
 
 /** The 63-character name's link against its cell, as drawn now; `null` when the link is not on the page. */
@@ -219,6 +220,8 @@ test('studio.s3-bucket-list-keyboard-and-layout', async ({ ctx, page, context })
           continue;
         }
         stops.push(stop);
+        // The help toggle after the content is the area's last stop R9 names; the walk ends there.
+        if (named(HELP_OPEN, 'button')(stop) && stops.some(named(two[0], 'link'))) break;
       }
       ctx.log(`Tab stops in the area: ${stops.map(shown).join(', ')}`);
       expect(orderProblems(stops, r9Order(two)), 'the order of the Tab stops').toEqual([]);
