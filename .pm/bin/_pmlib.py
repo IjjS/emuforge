@@ -20,9 +20,9 @@ PMINFO = RUN / "pm.json"              # {"pm_pane":..., "pm_name":..., "workspac
 EVENTS = RUN / "events.log"
 
 MODEL_IDS = {"opus": "claude-opus-5-5", "fable": "claude-fable-5-2", "sonnet": "claude-sonnet-5-5", "haiku": "claude-haiku-5-5"}
-# worker panes per side (a unit's first letter). Test units mostly wait between a check fix and the next, so they
-# get more room than the sides that build; memory, CPU and the total still gate every new pane.
-LIMITS = {"studio_worker": 2, "engine_worker": 3, "tests_worker": 6, "harness_worker": 3, "total": 16,
+# worker panes per side (a unit's first letter), the same for every side, and live panes in all (plan, rev and crit
+# included), set so that every side can reach its limit; memory, swap, CPU and the token rate still gate every new pane.
+LIMITS = {"studio_worker": 8, "engine_worker": 8, "tests_worker": 8, "harness_worker": 8, "total": 24,
           "mem_gb": 22.5, "cpu_pct": 90, "checks": 2}
 SIDES = {"s": "studio", "e": "engine", "t": "tests", "h": "harness"}  # first letter of a unit name: s1, e2, t1, h1
 

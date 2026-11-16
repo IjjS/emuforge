@@ -133,7 +133,7 @@ For each unit: `pm-worktree new <id> <unit> [--base <branch>]`, then
 that closes the issue gets `--close`), then
 `pm-pane new <id> worker --unit <unit> --cwd <worktree> --brief .pm/issue-<id>/brief-<unit>.md`. `pm-pane` refuses
 over the limits and answers `QUEUE`; start the rest when a pane closes. Worker panes are counted per side:
-studio 2, engine 3, tests 6, harness 3. A test unit's pane mostly waits for the next check fix, so leave it open
+studio 8, engine 8, tests 8, harness 8. A test unit's pane mostly waits for the next check fix, so leave it open
 until its issue is merged instead of closing and reopening it; close one early only when memory is short. A worker implements, runs `pm-check`,
 gets `REVIEWED … pass` from rev, and reports `UNIT READY <name> <branch>`. You react only to events.
 
