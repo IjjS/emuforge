@@ -354,6 +354,15 @@ test('studio.aws-area-emulator-line-shows-engine-unreachable', async ({ ctx, pag
   const lines = new Lines(ctx);
   const engine = stack.engine;
   const unreachable = engineNotAnswering(engine.url);
+  let engineRunning = true;
+
+  /** Puts the engine in the state a line needs. */
+  async function engineIs(want: 'running' | 'stopped'): Promise<void> {
+    if ((want === 'running') === engineRunning) return;
+    if (want === 'stopped') await engine.stop();
+    else await engine.startAgain();
+    engineRunning = want === 'running';
+  }
 
   await lines.line(
     'Open `/aws` with the engine running, then stop the engine while the page stays open → without a reload the line reads "The EmuForge engine at `<engine origin>` is not answering" with "Connection status", and the line shows no `https://` address',
@@ -361,7 +370,7 @@ test('studio.aws-area-emulator-line-shows-engine-unreachable', async ({ ctx, pag
       await open(page, '/aws', AWS);
       await expectLine(page, connectedAt(stack.emulatorPort));
       await markPage(page);
-      await engine.stop();
+      await engineIs('stopped');
       await expectLine(page, unreachable);
       await expect(connectionStatusLink(page), `the line's "${CONNECTION_STATUS}" link`).toBeVisible();
       const text = (await lineText(page)) ?? '';
@@ -373,14 +382,16 @@ test('studio.aws-area-emulator-line-shows-engine-unreachable', async ({ ctx, pag
   await lines.line(
     'Start the engine again on the same port → without a reload the line reads "Connected at `<endpoint>`"',
     async () => {
-      await engine.startAgain();
+      // The Given: the engine was stopped while the page stayed open (the line before).
+      await engineIs('stopped');
+      await engineIs('running');
       await expectLine(page, connectedAt(stack.emulatorPort));
       expect(await stillSamePage(page), 'the document was not reloaded').toBe(true);
     },
   );
 
   // A page of its own, opened once the engine is stopped.
-  await engine.stop();
+  await engineIs('stopped');
   const fresh = await context.newPage();
 
   await lines.line(

@@ -62,17 +62,18 @@ export async function lineText(page: Page): Promise<string | null> {
   return (await line.innerText(ACTION)).replace(/\s+/g, ' ').trim();
 }
 
-/** Waits until the emulator line holds the label and text matching `status`. */
+/**
+ * Waits until the emulator line holds the label followed by text matching `status`. A failure shows what the line read
+ * last, or "(no emulator line)".
+ */
 export async function expectLine(page: Page, status: RegExp, timeout = LINE_CHANGE_BOUND_MS): Promise<void> {
+  const wanted = new RegExp(`${escape(LINE_LABEL)}[\\s\\S]*${status.source}`);
   await expect
-    .poll(
-      async () => {
-        const text = await lineText(page);
-        return { line: text !== null, label: text?.includes(LINE_LABEL) ?? false, status: status.test(text ?? '') };
-      },
-      { timeout, message: `the emulator line reads "${LINE_LABEL}" and ${String(status)} (it reads: see the log)` },
-    )
-    .toEqual({ line: true, label: true, status: true });
+    .poll(async () => (await lineText(page)) ?? '(no emulator line)', {
+      timeout,
+      message: `the emulator line reads "${LINE_LABEL}" and ${String(status)}`,
+    })
+    .toMatch(wanted);
 }
 
 /** The texts of the crumbs on screen, in order, the current page last. */
