@@ -22,7 +22,13 @@
 //   translation is copied: every text is read from `studio/src/i18n/messages/` at run time.
 // - "The unit's first character": the first character after the count, past one white space character where one
 //   directly follows it (U+0020 or U+00A0). "The unit is whole": the count, that space and every character after it up
-//   to the next white space are on one line.
+//   to the next white space, or to the message's end, are on one line.
+// - "Text drawn outside its control or panel": a text of Studio's own layer that `layout` of `support/languages.ts`
+//   finds wider than its box, unless an element around it clips it there (an address cut with an ellipsis, as
+//   `studio/DESIGN.md` draws an address): clipped text is not drawn outside.
+// - "The engine's English message on Home" (provisional, `decisions-needed.md` of issue 32): the notice Home shows
+//   for the emulator stopped by `docker stop` ("No emulator is running on port …") holds no text of the engine's, so
+//   the message is read where Home shows it, in the notice for the check's own emulator killed (`docker kill`).
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -180,7 +186,7 @@ function countedPattern(form: string, tag: string, count: number): string {
 export interface CountedDrawn {
   /** The count's last character and the unit's first are on different lines. */
   apart: boolean;
-  /** The count and the characters after it up to the next white space (past one space) are not on one line. */
+  /** The count, one space, and what follows up to the next white space or the message's end are not on one line. */
   unitBroken: boolean;
   /** The message's last line starts at the count or after it. */
   lastLineFromCount: boolean;
@@ -250,7 +256,7 @@ export async function measureCounted(page: Page, tag: string, messages: CountedM
         const first = rectAt(unit);
         const apart = !(last && first && sameLine(last, first));
         let unitEnd = unit;
-        while (unitEnd < flat.length && !space(flat[unitEnd])) unitEnd++;
+        while (unitEnd < end && !space(flat[unitEnd])) unitEnd++;
         const base = rectAt(countStart);
         let unitBroken = base === null;
         for (let i = countStart; i < unitEnd && base; i++) {
@@ -342,6 +348,16 @@ export async function openHome(
   if (missing.length > 0) throw new Error(`${tag} ${state}: Home does not show ${missing.join(', ')} within 10s`);
   await settled(page);
   return { context, page, traffic };
+}
+
+/**
+ * Of the issues `layout` (`support/languages.ts`) reports, the texts drawn outside their box: each text it finds
+ * wider than its box for which it reports no element that cuts it (a clip, an ellipsis).
+ */
+export function drawnOutside(issues: string[]): string[] {
+  const textOf = (issue: string) => /^"(.*)" is /.exec(issue)?.[1] ?? null;
+  const clipped = new Set(issues.filter((i) => /" is cut (by|with an ellipsis in) /.test(i)).map((i) => textOf(i)));
+  return issues.filter((i) => /" is wider than its box /.test(i) && !clipped.has(textOf(i)));
 }
 
 // ---------------------------------------------------------------------------------------------------------------

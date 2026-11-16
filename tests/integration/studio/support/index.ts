@@ -102,6 +102,7 @@ export { waitFor } from './wait';
 export {
   areaRootStyle,
   countedMessages,
+  drawnOutside,
   elementStyles,
   hangulSplits,
   HOME_STATES,

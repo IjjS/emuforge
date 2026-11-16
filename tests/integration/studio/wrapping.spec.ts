@@ -13,6 +13,7 @@ import type { Page } from '@playwright/test';
 import {
   areaRootStyle,
   countedMessages,
+  drawnOutside,
   elementStyles,
   expect,
   hangulSplits,
@@ -221,21 +222,36 @@ test('studio.korean-words-stay-whole', async ({ ctx, browser, proxy }) => {
     }
   }
 
-  // Emulator stopped.
-  await enter(ctx, stack, 'emulator stopped');
+  // The engine's English message (provisional, see `support/wrapping.ts`): the emulator killed, then started again.
   {
-    const ko = await openHome(ctx, browser, proxy, stack.studio, 'ko', 'emulator stopped', messages);
+    const emulator = stack.emulator!;
+    await emulator.kill();
     try {
-      const english = (await styledTexts(ko.page.getByRole('main'), 'word-break')).filter(
-        (t) => t.explicit && t.lang.toLowerCase() === 'en',
-      );
+      const ko = await openHome(ctx, browser, proxy, stack.studio, 'ko', 'emulator stopped', messages);
+      const englishOf = async () =>
+        (await styledTexts(ko.page.getByRole('main'), 'word-break')).filter(
+          (t) => t.explicit && t.lang.toLowerCase() === 'en',
+        );
+      const english =
+        (await waitFor(SHOW_BOUND_MS, async () => {
+          const shown = await englishOf();
+          return shown.length > 0 ? shown : undefined;
+        })) ?? [];
       if (english.length === 0) found.otherInKorean.push("Home shows no text marked as the engine's English");
       for (const t of english) {
         if (t.value !== 'normal') found.otherInKorean.push(`page: ${t.where} "${t.text}" (en): word-break ${t.value}`);
       }
+      await ko.context.close();
     } catch (e) {
       found.otherInKorean.push(`the engine's message: could not measure: ${first(e)}`);
     }
+    await emulator.startAgain();
+  }
+
+  // Emulator stopped.
+  await enter(ctx, stack, 'emulator stopped');
+  {
+    const ko = await openHome(ctx, browser, proxy, stack.studio, 'ko', 'emulator stopped', messages);
     await wrapStyles(ko.page, 'ko', recheck, 'pretty', 'balance', found.wrapKorean);
     await sweep(ko.page, 'ko / emulator stopped', found.whole, found.layout, true);
     await ko.context.close();
@@ -392,7 +408,7 @@ test('studio.count-and-unit-stay-on-one-line', async ({ ctx, browser, proxy }) =
           }
           const lay = await layout(home.page);
           if (lay.pageScrolls) found.layout.push(`${where}: the page scrolls sideways`);
-          for (const i of lay.issues) found.layout.push(`${where}: ${i}`);
+          for (const i of drawnOutside(lay.issues)) found.layout.push(`${where}: ${i}`);
         } catch (e) {
           found.together.push(`${where}: could not measure: ${first(e)}`);
         }
