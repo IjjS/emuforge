@@ -2,9 +2,9 @@
 
 <!-- impeccable:product-schema 1 -->
 
-Sources: the owner's answers of 2026-11-15 (issue #16), the owner's two-layer decision of the same day, the
-BRD's one-line definition, principles and MVP scope, and the safety rules of the root `AGENTS.md`. Anything those do
-not confirm is listed as undecided below.
+Sources: the owner's answers of 2026-11-15 (issue #16), the owner's two-layer decision of the same day, the owner's
+decisions of 2026-11-16 on AWS screens (issue #45), the BRD's one-line definition, principles and MVP scope, and the
+safety rules of the root `AGENTS.md`. Anything those do not confirm is listed as undecided below.
 
 ## Platform
 
@@ -22,7 +22,8 @@ Three primary audiences, all confirmed by the owner:
 Team use and CI use were offered and not chosen; they are not a primary audience.
 
 The jobs a user does in Studio: see whether Studio reaches the engine and the emulator, and fix it when it does not;
-go into a cloud provider's area and work there as in that provider's console.
+go into a cloud provider's area and work there in the structure and flow of that provider's console, in screens that
+are not a copy of it and that say on every page that this is a local emulator, not the provider.
 
 ## Product Purpose
 
@@ -48,6 +49,8 @@ reimplemented, so what Studio shows is what the emulator really holds and really
 created anywhere (Studio, the CLI, Terraform) and states plainly what the emulator does not support instead of
 hiding or faking it. Everything runs locally; nothing reaches real AWS.
 
+EmuForge is an independent project. It is not affiliated with, endorsed by or sponsored by Amazon Web Services (AWS).
+
 ## Operating Context
 
 - Runs on the user's own machine. The emulator runs separately (on a port the user names); the engine connects to
@@ -59,9 +62,11 @@ hiding or faking it. Everything runs locally; nothing reaches real AWS.
 - Studio has two layers:
   - **Studio's own layer**: the parts only Studio has (its frame, home or dashboard, settings, connection status,
     and later the IAM simulation and Verify results). These are original and do not imitate any provider's console.
-  - **The provider layer**: inside Studio's frame, each cloud provider's area follows that provider's console. AWS
-    is the only provider today; its area follows the AWS console. Google Cloud and Azure, when added, follow their
-    own consoles, not AWS's.
+  - **The provider layer**: inside Studio's frame, each cloud provider's area follows the information structure and
+    flow of that provider's console and is not a copy of it. AWS is the only provider today; its area follows the
+    AWS console's structure and flow, built from Cloudscape in its default theme, by the AWS screen policy
+    (`studio/AGENTS.md`, "AWS screen policy"). Google Cloud and Azure, when added, follow the structure and flow of
+    their own consoles, not AWS's.
 
 ## Capabilities and Constraints
 
@@ -70,9 +75,9 @@ Confirmed MVP scope for Studio and the engine (BRD):
 - Connect to a running emulator on a given port; read the keys and certificates again after a restart.
 - Home: connection status, emulator version, endpoint, recent errors, and the engine process's own CPU and memory
   use (never the host's or other processes').
-- AWS service screens that resemble the AWS console (Cloudscape): list, detail, create wizard, edit and delete.
-  Resources made outside Studio appear as well. First targets: S3 and DynamoDB. The IAM console is built on the
-  emulator's IAM API the same way as the other service screens.
+- AWS service screens that follow the AWS console's structure and flow and are not a copy of it (Cloudscape): list,
+  detail, create wizard, edit and delete. Resources made outside Studio appear as well. First targets: S3 and
+  DynamoDB. The IAM console is built on the emulator's IAM API the same way as the other service screens.
 - An HTTP 501 answer is shown clearly as "not implemented by the emulator".
 - Destructive actions are confirmed. Light and dark mode.
 - One Docker Compose start brings up Studio and the engine (and the emulator when needed).
@@ -84,8 +89,9 @@ Constraints (BRD principles and the owner's decisions):
 - No request goes to real AWS, under any circumstance.
 - What is and is not supported is never hidden; the emulator's `501 NotImplemented` is shown as it is.
 - Start simple; add complexity when a real need appears.
-- A provider's console style stays inside that provider's area, and Studio's own style does not restyle a provider
-  area.
+- A provider's area follows the structure and flow of that provider's console and is not a copy of it. The
+  provider's design system stays inside that provider's area (Cloudscape inside the AWS area), and Studio's own style
+  does not restyle a provider area.
 
 Terminology: **EmuForge** (the product), **EmuForge Studio** or **Studio** (the web console), **engine** (the local
 server between Studio and the emulator), **provider** and **provider area** (a cloud provider and its part of
@@ -124,8 +130,8 @@ binding.
 1. **Show the emulator as it is.** Real state from the real emulator, whoever created it; an unsupported operation
    is stated, never hidden or faked.
 2. **Local and safe.** Nothing leaves the machine for real AWS; the only upstream is the local emulator.
-3. **Studio's own, the provider's own.** Studio's own screens are Studio's; inside a provider's area the user works
-   as in that provider's console, and neither layer leaks into the other.
+3. **Studio's own, the provider's own.** Studio's own screens are Studio's; inside a provider's area the user finds
+   the structure and flow of that provider's console, not a copy of it, and neither layer leaks into the other.
 4. **Built for more than one cloud.** AWS is the first provider, not the only one; adding a provider does not
    change Studio's own screens or another provider's area.
 5. **Simple first.** Add complexity only when a real need appears.
