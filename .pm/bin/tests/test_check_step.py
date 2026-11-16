@@ -39,11 +39,13 @@ def fresh(name):
 
 
 def make_checkout(name, run=None):
-    """A fixture checkout: pm-check and _pmlib.py copied from this checkout, tests/run from `run` (or none)."""
+    """A fixture checkout on the branch `fixture`, not `main`, so pm-check cannot read its changes against `main`
+    and runs every module: pm-check and every `_pm*.py` helper copied from this checkout, tests/run from `run`
+    (or none)."""
     co = fresh(name)
     b = co / ".pm" / "bin"
     b.mkdir(parents=True)
-    for f in ("pm-check", "_pmlib.py"):
+    for f in ["pm-check"] + [h.name for h in sorted(BIN.glob("_pm*.py"))]:
         shutil.copy2(BIN / f, b / f)
     (b / "pm-check").chmod(0o755)
     if run:
@@ -51,7 +53,7 @@ def make_checkout(name, run=None):
         shutil.copy2(FIXTURES / run, b / "tests" / "run")
         (b / "tests" / "run").chmod(0o755)
     shutil.copy2(FIXTURES / "gitignore", co / ".gitignore")
-    git(co, "init", "-q")
+    git(co, "init", "-q", "-b", "fixture")
     git(co, "add", "-A")
     git(co, "commit", "-q", "-m", "fixture")
     return co
