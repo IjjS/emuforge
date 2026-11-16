@@ -7,9 +7,11 @@ to the web console. Stages for a studio issue are in `references/workflow.md`.
 
 A local console for cloud emulators, through the EmuForge engine. It has two layers. Studio's own layer is
 EmuForge's frame and its own screens, in a design of its own. Inside it, each cloud provider has an area that
-looks and behaves like that provider's console: the AWS area, at `/aws`, looks like the AWS console where an AWS
-console screen exists, and like a careful Cloudscape application where it does not. Studio shows what is really in
-the emulator, whoever created it, and it never pretends an operation works when the emulator answers HTTP 501.
+follows the information structure and flow of that provider's console and is not a copy of it: the AWS area, at
+`/aws`, follows the structure and flow of an AWS console screen where one exists, and is a careful Cloudscape
+application where none does, built from Cloudscape in its default theme either way. Every page of the area says
+that it is a stand-alone local emulator and not AWS ("AWS screen policy" below). Studio shows what is really in the
+emulator, whoever created it, and it never pretends an operation works when the emulator answers HTTP 501.
 
 Product context (users, purpose, scope) is in `PRODUCT.md`; Studio's own design system is recorded in `DESIGN.md`.
 
@@ -18,7 +20,7 @@ Product context (users, purpose, scope) is in `PRODUCT.md`; Studio's own design 
 | Layer | What | Paths | Folders | Design system |
 |---|---|---|---|---|
 | Studio's own | the frame (top bar), Home with the connection status, Studio's "Page not found", every later screen that exists only in EmuForge outside a provider (settings, IAM simulation, Verify results) | `/` and every path that is not a provider's | `app/`, `ui/`, `features/` | Studio's own (`DESIGN.md`), original, imitating no provider's console |
-| Provider area | everything of one provider; today the AWS area | the provider's first segment and every path below it: `/aws`, `/aws/...` | `providers/<id>/area/` | the provider's: Cloudscape for AWS, as the AWS console |
+| Provider area | everything of one provider; today the AWS area | the provider's first segment and every path below it: `/aws`, `/aws/...` | `providers/<id>/area/` | the provider's, as published: Cloudscape in its default theme for AWS |
 
 - The root of the path space belongs to Studio's own layer. Each provider has exactly one first segment (`aws`), and
   every path under it belongs to its area, including the area's EmuForge-only states (the area's index, "no screen
@@ -27,10 +29,11 @@ Product context (users, purpose, scope) is in `PRODUCT.md`; Studio's own design 
 - The area sits in Studio's frame, below the top bar, and fills the rest of the page. Studio's frame is never built
   from a provider's design system, and a provider's area holds nothing of Studio's own design.
 - A screen's grade follows from its layer (`references/workflow.md`, "Screen grade"): every screen of Studio's own
-  layer is `native` and is built from Studio's own design system. Inside a provider area, a screen that mirrors a
-  screen of that provider's console is `console` and is built from the provider's design system against a reference
-  spec (`references/console-reference.md`); an EmuForge-only state inside the area is `native` and is still built
-  from the provider's design system, following that console's conventions.
+  layer is `native` and is built from Studio's own design system. Inside a provider area, a screen that follows the
+  structure and flow of a screen of that provider's console is `console` and is built from the provider's design
+  system against a reference spec (`references/console-reference.md`); an EmuForge-only state inside the area is
+  `native` and is still built from the provider's design system, following that design system's published
+  patterns. Both follow "AWS screen policy" below.
 - Neither layer's style leaks into the other: "No leak either way" below.
 
 ## Stack and structure
@@ -68,6 +71,7 @@ studio/src/
   providers/aws/provider.ts    the AWS entry of the providers list: names, segment, services (services.ts),
                                the area loaded with import(); plain data, no UI import
   providers/aws/area/          the AWS area: layout (AppLayout, SideNavigation, BreadcrumbGroup, colour mode),
+                               its frame parts (the emulator line, the local-emulator notice and its (i) control),
                                its pages (index, "no screen yet", "Page not found"), components/ shared inside it
   providers/aws/area/services/<service>/
                                one folder per AWS service: api.ts, queries.ts, pages/, components/
@@ -92,6 +96,11 @@ studio/src/
   Services"), its short name for the frame ("AWS"), its first path segment (`aws`), its services for Home (label
   and path) and its area: the component that renders everything under its segment, loaded with a dynamic
   `import()`.
+- Studio hands an open area its connection as a plain value: the latest answer of the engine's connection status
+  (none before the first answer) and the engine's origin. Studio's frame checks the connection as Home does, when
+  a page of the area opens and again 5 seconds after each answer, for as long as a page of the area is open, so a
+  route change inside the area keeps the last answer. The area reads the connection from what Studio hands it and
+  its types from `lib/`, and imports nothing from `app/` or `features/` to learn it.
 - The frame, Home and the router read that list and name no provider themselves. Adding a provider is one new
   entry and that provider's own folder (`providers/<id>/provider.ts`, `providers/<id>/area/`); it changes no file
   of Studio's own screens and no file of another provider's area.
@@ -110,8 +119,9 @@ studio/src/
   `lib/`.
 - `i18n/` is Studio's own layer's only source of text. `app/`, `ui/` and `features/` may import it. `i18n/` imports
   nothing from `app/`, `ui/`, `features/` or `providers/` (a test of `i18n/` may render what reads it).
-  `providers/<id>/area/` and `lib/` import nothing from `i18n/`: an area is in its console's language, and `lib/`
-  has no text a user reads.
+  `providers/<id>/area/` and `lib/` import nothing from `i18n/`: the AWS area is English in every language of
+  Studio, EmuForge's own words inside it included, which are English text of the area; and `lib/` has no text a
+  user reads.
 - `bun run lint` enforces these boundaries: it fails on a file that breaks one.
 
 ## Talking to AWS
@@ -310,14 +320,120 @@ The engine's and the emulator's codes, reasons and messages do not depend on the
   or panel, and no label is cut; at 390 the top bar shows the wordmark, every navigation link and the language
   control (the globe alone at 480 and below).
 
+## AWS screen policy
+
+The owner's decisions of 2026-11-16 (issue #45). This section is the policy's home: `PRODUCT.md`,
+`references/workflow.md`, `references/critique.md` and `references/console-reference.md` point here. It applies to
+every page of the AWS area, at `/aws` and below, the area's own pages included. Nothing in Studio's guides asks an
+AWS screen to look like, mirror or copy the AWS console.
+
+1. **Structure and flow, not a copy.** An AWS screen follows the AWS console's information structure and flow:
+   which screens there are, how one leads to the next, which parts a screen has and in what order. It is not a
+   copy of the console.
+2. **The console's words.** The service's vocabulary follows the console word for word: control labels, column
+   names, action names, navigation entries, and their arrangement and order. They are not paraphrased. A `console`
+   screen's reference spec records them (`references/console-reference.md`).
+3. **EmuForge's own words.** Descriptions, help, guidance, and the empty, loading and error states are EmuForge's
+   own words, never the console's. They always say that this is a stand-alone local emulator and not AWS or an AWS
+   feature, and they say only what the engine knows: an endpoint comes from the engine's connection status, never
+   from a constant, and a claim about the emulator's behavior needs a check that shows it.
+4. **Only the parts the emulator has.** A part (a panel, a tab, a navigation entry, a badge) is on a screen only if
+   the emulator really has it, shown by calling the emulator at the Requirement stage. A part it lacks is left out
+   and recorded in the screen's reference spec under `omitted` with that reason.
+5. **The actions stay.** An action on a resource the emulator has is never such a part: the console's action
+   stays, and when the emulator answers HTTP 501 the screen reports it as "not implemented by the emulator"
+   ("Errors and states").
+6. **Cloudscape as published.** Cloudscape and its default theme are used as published; a screen is not made to
+   look the same as the console. Layout follows the Cloudscape published pattern that keeps the console's flow.
+   EmuForge's own states use Cloudscape's patterns as well: a `Flashbar` for an action's result, an error status
+   with a retry for a failed load.
+7. **The emulator line and the notice.** Every page of the area carries the emulator line, which cannot be
+   dismissed; a screen that shows resources of the emulator also carries the local-emulator notice, worded for its
+   resources, closable, with the (i) control that brings it back. Both are described below.
+8. **Breadcrumbs start at EmuForge.** `EmuForge > AWS > <service> > …`, for example `EmuForge > AWS > S3 >
+   Buckets`. "EmuForge" leads to Home (`/`), "AWS" to the area's index (`/aws`), a service's crumb to the
+   service's route; the last crumb is the current page and is not a link. A service's crumb is its short name: its
+   label without a leading "Amazon " or "AWS ", the acronym where the service's route abbreviates the name (`S3`,
+   `EC2`, `IAM`), "Systems Manager" for `ssm`. No crumb reads "Amazon Web Services".
+9. **No AWS artwork.** No AWS logo, no AWS service icon and no resource icon. Service and resource names are
+   written as text. Cloudscape's own interface icons (status, refresh, close and the like) are Cloudscape's and are
+   used.
+10. **Captures are reference for structure only.** The owner's captures of the real console are under
+    `docs/aws-console/` (`.png` and `.mhtml`), which is not in git. Of `docs/`, only that folder is read. Nothing of
+    the captures (markup, styles, scripts, images, descriptive text) is copied into the repository.
+11. **Studio's own layer is its own.** Studio's own layer keeps its own design tokens and components, shaped by the
+    critique ("Studio's own layer").
+
+### The emulator line
+
+- Every page of the area shows one line, the emulator line, between the breadcrumbs and the page's content, at
+  every width and in every state of the page. It has no control that closes or hides it, and it is not inside the
+  side navigation or anything else that can be collapsed.
+- It is the constant label "Local emulator, not AWS" followed by the connection's state, as the engine reports it
+  in the connection Studio hands the area ("Providers"), and from nothing else:
+
+| State | Status after the label | Cloudscape status type |
+|---|---|---|
+| No check has answered yet | "Checking" | loading |
+| The emulator is connected | "Connected at `{endpoint}`" | success |
+| The emulator is not started | "Not started on port `{port}`" | stopped |
+| The emulator does not answer, for any other reason | "Not answering at `{endpoint}`" | error |
+| The engine does not answer | "The EmuForge engine at `{engine origin}` is not answering" | error |
+| The engine answers with an error that has a code | "The EmuForge engine answered with an error: `{code}`" | error |
+| The engine answers with an error without a code | "The EmuForge engine answered with HTTP status `{status}`" | error |
+
+- `{endpoint}` and `{port}` are the emulator's as the engine reported them in that answer, `{engine origin}` the
+  engine's address the page is configured with. Every value is rendered as text; no endpoint, port or origin is a
+  constant in the area's source, and a state in which the engine does not answer or answers with an error names
+  no emulator endpoint.
+- In every state but "Checking" and connected the line ends with the link "Connection status" to Home, a route
+  change like a crumb's.
+- The line stays current while a page of the area is open (the 5-second rhythm of "Providers"); while a later
+  check is in flight it keeps showing the last answer's state. A change of state is announced once, label and new
+  status together, in a polite live region that does not hold the link; a check that finds the same state
+  announces nothing, and the first answer is announced only when it is not connected.
+- The line's height is not fixed: at 390 wide a long status may take a row more, so a check that compares
+  positions on a page of the area measures after the line shows its first answer.
+
+### The local-emulator notice
+
+- A screen of the area that shows resources of the emulator carries a notice directly under the emulator line,
+  worded for its resources: "These {resources} are in your local emulator", with the plural word the screen gives
+  ("These buckets are in your local emulator"), or "These resources are in your local emulator" when it gives
+  none. A screen turns the notice on by naming its resources to the area's frame.
+- Its body says only what is known in the connection's state: connected, "They are in the emulator at
+  `{endpoint}`, not in an AWS account. EmuForge Studio is a stand-alone local tool, not an AWS feature."; in any
+  other state, "They are not in an AWS account. EmuForge Studio is a stand-alone local tool, not an AWS feature."
+- It is an informational Cloudscape notice with a close control (X) named "Close the local emulator notice".
+  Closing it removes it from every page of the area until the document is reloaded; nothing is stored.
+- On a page that carries the notice the emulator line ends with an (i) control, a button named "About the local
+  emulator" that says whether the notice is open (`aria-expanded`). Activating it opens a closed notice and moves
+  focus to it, or closes an open one; closing the notice with its X moves focus to the (i) control. The (i)
+  control is never removed.
+- The area's own pages (index, "no screen yet", "Page not found") show no resources: they carry the emulator line
+  and neither the notice nor the (i) control.
+
+### Where the line and the notice sit
+
+- Both are inside the area's content target, before the page's `h1`: the content target holds the line, the
+  notice when the page carries it, then the `h1` and the page's controls, and is still named by the `h1`. "Skip to
+  content" and every route change therefore put focus where the next thing read is "Local emulator, not AWS".
+- Tab order: the breadcrumbs, then the line's controls ("Connection status" when shown, then the (i) control when
+  the page has it), then the notice's close control when it is open, then the page's content. While connected on
+  a page without the notice the line adds no Tab stop.
+- They are Cloudscape components styled with Cloudscape tokens only, inside the area's root, under every rule of
+  "Inside a provider area" below. At 1280 and 390 wide, light and dark, the line wraps inside the page (a long
+  endpoint breaks rather than overflowing) and stays visible at 390 with the side navigation closed.
+
 ## Inside a provider area: AWS and Cloudscape
 
 Applies to everything under `providers/aws/area/`, at `/aws` and below.
 
 - Use Cloudscape components and patterns as they are: `AppLayout`, `SideNavigation`, `BreadcrumbGroup`,
   `Header` with actions, `Table` with `collection-hooks`, `PropertyFilter` or `TextFilter`, `Pagination`,
-  `Form` with `Container` and `FormField`, `Wizard`, `Modal`, `Flashbar`. Follow the AWS console's conventions,
-  for the area's EmuForge-only states as well as for the screens that mirror the console.
+  `Form` with `Container` and `FormField`, `Wizard`, `Modal`, `Flashbar`. A screen with a console screen follows
+  that screen's information structure and flow; the area's EmuForge-only states, and EmuForge's own states on
+  every screen, follow Cloudscape's published patterns ("AWS screen policy").
 - Style with Cloudscape design tokens only. No hardcoded color, spacing or font. No CSS that restyles a
   Cloudscape component's internals. No rule of the area names a `--st-*` property.
 - Light and dark through Cloudscape's mode, applied to the area's root element only: in dark that element
@@ -339,8 +455,12 @@ Applies to everything under `providers/aws/area/`, at `/aws` and below.
   focus where it was.
 - Fill every `ariaLabel` and `i18nStrings` a component asks for. A dialog traps focus, closes on Esc, and
   returns focus to what opened it.
-- UI text is English, in every language of Studio, and follows the wording of the screen's reference spec. Do not
-  paraphrase AWS's labels. The area imports nothing from `i18n/`; its root carries `lang="en"`; and everything it
+- UI text is English, in every language of Studio, and of two kinds ("AWS screen policy", points 2 and 3). The
+  console's vocabulary (control labels, column names, action names, navigation entries, and their order) follows
+  the screen's reference spec word for word and is not paraphrased. EmuForge's own words (descriptions, help,
+  guidance, the empty, loading and error states, the emulator line and the notice) are written in the requirement,
+  never taken from the console, and are English text of the area. The area imports nothing from `i18n/`; its root
+  carries `lang="en"`; and everything it
   renders sits inside Cloudscape's `I18nProvider` with locale `en` and Cloudscape's English messages
   (`i18n/messages/all.en`). Cloudscape otherwise takes its locale from `<html lang>` and the browser's language, so a
   date, a number or a component's built-in text would follow Studio's language.
@@ -399,7 +519,8 @@ PRODUCT.md               product context: users, purpose, scope
 DESIGN.md                Studio's own design system: tokens, type, components, the studio cascade layer
 references/
   workflow.md            stages of a studio issue and what each produces, the grade by layer
-  console-reference.md   reference specs for screens that mirror a provider's console, and the structure score
+  console-reference.md   reference specs for screens that follow the structure and flow of a provider's console
+                         screen, and the structure score
   critique.md            how screens are scored and what score lets a screen through
   test-criteria.md       form of the test cases, coverage axes
   console/               the reference specs, one file per screen
