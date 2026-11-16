@@ -249,11 +249,19 @@ test('studio.language-menu-dismissing-press-does-nothing-else', async ({ ctx, br
       if (after.stored !== before.stored || after.lang !== before.lang) {
         found.language.push(`1280, "Refresh": stored ${String(after.stored)}, page language ${String(after.lang)}`);
       }
-      const answered = m.page.waitForResponse(isHealth, { timeout: CHANGE_BOUND_MS });
-      const problem = await pressAgain(m.page, 'click', refresh, point, '"Refresh"');
+      // "Refresh" ignores a choice while its check is in flight (it is busy), so it is clicked again once it is not:
+      // a click it acts on, whose check is the one waited for.
+      const idle = await expect(refresh)
+        .not.toHaveAttribute('aria-busy', 'true', ACTION)
+        .then(() => true)
+        .catch(() => false);
+      const answered = m.page.waitForResponse(isHealth, { timeout: CHANGE_BOUND_MS }).catch(() => null);
+      const problem = idle
+        ? await pressAgain(m.page, 'click', refresh, point, '"Refresh"')
+        : '"Refresh" was still busy 10s after the click';
       if (problem) found.refresh.push(problem);
       else {
-        await answered;
+        if ((await answered) === null) found.refresh.push('no check was answered within 10s of the second click');
         await m.traffic.settle();
         const sent = m.traffic.to(stack.engine.url, HEALTH_PATH).length - sentBefore;
         ctx.log(`"Refresh": ${String(sent)} checks sent to the engine since the menu was opened`);
