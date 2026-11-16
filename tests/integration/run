@@ -286,6 +286,13 @@ cleanup() {
       fi
     done
   fi
+  # The Docker volumes a check made and could not remove (support/volume.rs, issue 55). Each carries the run's
+  # label; the containers that mounted them are gone by now, so Docker lets them go.
+  local volumes
+  volumes="$(docker volume ls -q --filter "label=emuforge-it-run=$run_id" 2>/dev/null || true)"
+  if [[ -n "$volumes" ]]; then
+    docker volume rm -f $volumes >/dev/null 2>&1 || true
+  fi
   # A clean stop deletes the files; a kill would leave them. The directory did not exist before this run.
   if [[ -e "$emulator_dir" ]]; then
     rm -rf "$emulator_dir"
