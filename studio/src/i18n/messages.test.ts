@@ -166,10 +166,11 @@ describe('a counted message with U+00A0 after the count (issue 32, R4.1)', () =>
   ])(
     '%s, count %d → the formatted count, then U+00A0, then the unit, no ordinary space between them',
     (tag, count, rest) => {
+      const formatted = formatNumber(tag, count);
       const text = messagesFor<string>(JOINED, tag).plural(SERVICES, count);
-      expect(text).toBe(`${formatNumber(tag, count)}\u00a0${rest}`);
-      const count_ = formatNumber(tag, count);
-      expect(text.slice(0, count_.length + 1 + rest.indexOf(' '))).not.toContain(' ');
+      expect(text).toBe(`${formatted}\u00a0${rest}`);
+      // The count, the no-break space and the unit up to the next space: no ordinary space among them.
+      expect(text.slice(0, formatted.length + 1 + rest.indexOf(' '))).not.toContain(' ');
     },
   );
 });
