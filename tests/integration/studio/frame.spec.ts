@@ -4,7 +4,7 @@
 
 import type { Page, Response } from '@playwright/test';
 
-import { expect, startStack, test } from './support';
+import { expect, NO_SCREEN_SERVICE, startStack, test } from './support';
 import {
   ACTION,
   addressOf,
@@ -23,7 +23,7 @@ import { lookOf, markDiffers, type LinkLook } from './support/marks';
 const PAGES: { path: string; h1: string | null }[] = [
   { path: '/', h1: null },
   { path: '/aws', h1: 'Amazon Web Services' },
-  { path: '/aws/s3', h1: 'Amazon Simple Storage Service' },
+  { path: NO_SCREEN_SERVICE.path, h1: NO_SCREEN_SERVICE.label },
   { path: '/aws/does-not-exist', h1: 'Page not found' },
   { path: '/does-not-exist', h1: 'Page not found' },
 ];
@@ -67,7 +67,7 @@ test('studio.frame-leads-between-layers', async ({ ctx, page }) => {
   );
 
   await lines.line(
-    "Each of `/`, `/aws`, `/aws/s3`, `/aws/does-not-exist` and `/does-not-exist` → exactly one `main` landmark, the frame's banner outside it, and the document title of R4.4",
+    "Each of `/`, `/aws`, `/aws/kinesis`, `/aws/does-not-exist` and `/does-not-exist` → exactly one `main` landmark, the frame's banner outside it, and the document title of R4.4",
     async () => {
       const found: string[] = [];
       for (const { path, h1 } of PAGES) {
@@ -99,7 +99,7 @@ test('studio.frame-leads-between-layers', async ({ ctx, page }) => {
   );
 
   await lines.line(
-    'Open `/`, `/aws` and `/aws/s3`, light and dark, at 1280 and 390 → the frame link with `aria-current` differs from the frame link without it in computed `color` and in a second visible property that is not a colour of the text; on `/does-not-exist` no frame link shows that mark (R5.1)',
+    'Open `/`, `/aws` and `/aws/kinesis`, light and dark, at 1280 and 390 → the frame link with `aria-current` differs from the frame link without it in computed `color` and in a second visible property that is not a colour of the text; on `/does-not-exist` no frame link shows that mark (R5.1)',
     async () => {
       const found: string[] = [];
       for (const width of [1280, 390]) {
@@ -110,7 +110,7 @@ test('studio.frame-leads-between-layers', async ({ ctx, page }) => {
           for (const { path, h1, current, other } of [
             { path: '/', h1: null, current: f.home, other: f.aws },
             { path: '/aws', h1: 'Amazon Web Services', current: f.aws, other: f.home },
-            { path: '/aws/s3', h1: 'Amazon Simple Storage Service', current: f.aws, other: f.home },
+            { path: NO_SCREEN_SERVICE.path, h1: NO_SCREEN_SERVICE.label, current: f.aws, other: f.home },
           ]) {
             const where = `${path}, ${String(width)} wide, ${colorScheme}`;
             await openPage(page, path, h1);
@@ -158,13 +158,13 @@ test('studio.frame-leads-between-layers', async ({ ctx, page }) => {
   );
 
   await lines.line(
-    'Open `/` and `/aws/s3` at 390 wide → "EmuForge Studio", "Home" and "AWS" are each inside the viewport and inside the bar, and the page does not scroll sideways — 390 wide',
+    'Open `/` and `/aws/kinesis` at 390 wide → "EmuForge Studio", "Home" and "AWS" are each inside the viewport and inside the bar, and the page does not scroll sideways — 390 wide',
     async () => {
       await page.setViewportSize({ width: 390, height: 844 });
       const found: string[] = [];
       for (const { path, h1 } of [
         { path: '/', h1: null },
-        { path: '/aws/s3', h1: 'Amazon Simple Storage Service' },
+        { path: NO_SCREEN_SERVICE.path, h1: NO_SCREEN_SERVICE.label },
       ]) {
         await openPage(page, path, h1);
         const bar = await f.banner.boundingBox(ACTION);

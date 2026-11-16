@@ -70,6 +70,7 @@ export {
 } from './frame-logo';
 export { emulatorLine, expectLine, lineText, LINE_LABEL, type AreaBox, type WidthReport } from './aws-area';
 export { EnvError, expect, test, type Ctx } from './check';
+export { NO_SCREEN_SENTENCE, NO_SCREEN_SERVICE } from './no-screen';
 export { Engine, type EngineOptions } from './engine';
 export {
   OwnEmulator,

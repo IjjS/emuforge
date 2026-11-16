@@ -4,11 +4,14 @@ import { createMemoryRouter, RouterProvider } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { FakeEngine } from '../test/home-test-kit';
+import { NO_SCREEN_SERVICE } from '../test/no-screen';
 import { Providers } from './providers';
 import { routes } from './routes';
 
 const AWS = 'Amazon Web Services';
-const S3 = 'Amazon Simple Storage Service';
+const NO_SCREEN = NO_SCREEN_SERVICE.label;
+/** A path two segments below the route of the service without a screen. */
+const BELOW = `${NO_SCREEN_SERVICE.below}/my-stream`;
 
 // providers/aws/services.ts, in label order, each under /aws.
 const SERVICES: [string, string][] = [
@@ -32,6 +35,9 @@ const SERVICES: [string, string][] = [
   ['AWS Secrets Manager', '/aws/secretsmanager'],
   ['AWS Step Functions', '/aws/states'],
 ];
+
+/** Every service but Amazon Simple Storage Service, whose route has a screen of its own (issue 56). */
+const WITHOUT_SCREEN = SERVICES.filter(([label]) => label !== 'Amazon Simple Storage Service');
 
 /** The AWS area's first import is real work (Cloudscape's modules), not a timer; a cold run takes a while. */
 const AREA_LOAD_MS = 10_000;
@@ -118,12 +124,12 @@ describe('routes', () => {
     expect(links).toEqual(SERVICES);
   });
 
-  it('opens /aws/s3 as the "no screen yet" page of Amazon Simple Storage Service, asking the engine only for its connection status', async () => {
+  it(`opens ${NO_SCREEN_SERVICE.path} as the "no screen yet" page of ${NO_SCREEN}, asking the engine only for its connection status`, async () => {
     const engine = new FakeEngine();
     vi.stubGlobal('fetch', engine.fetch);
-    open('/aws/s3');
+    open(NO_SCREEN_SERVICE.path);
 
-    await expectNoScreenYet(S3);
+    await expectNoScreenYet(NO_SCREEN);
     // The area asks when it opens (requirement R4.4); the page is shown by now.
     await waitFor(
       () => {
@@ -138,13 +144,13 @@ describe('routes', () => {
     expect(otherEngineCalls).toEqual([]);
   });
 
-  it('opens a path below a service, /aws/s3/buckets/my-bucket, as the same "no screen yet" page', async () => {
-    open('/aws/s3/buckets/my-bucket');
+  it(`opens a path below a service, ${BELOW}, as the same "no screen yet" page`, async () => {
+    open(BELOW);
 
-    await expectNoScreenYet(S3);
+    await expectNoScreenYet(NO_SCREEN);
   });
 
-  it.each(SERVICES)('opens the route of %s, %s, as its "no screen yet" page', async (label, path) => {
+  it.each(WITHOUT_SCREEN)('opens the route of %s, %s, as its "no screen yet" page', async (label, path) => {
     open(path);
 
     await expectNoScreenYet(label);
@@ -184,8 +190,8 @@ describe('routes', () => {
   it.each([
     ['/', 'Home'],
     ['/aws', AWS],
-    ['/aws/s3', S3],
-    ['/aws/s3/buckets/my-bucket', S3],
+    [NO_SCREEN_SERVICE.path, NO_SCREEN],
+    [BELOW, NO_SCREEN],
     ['/aws/does-not-exist/today', 'Page not found'],
     ['/s3', 'Page not found'],
     ['/dynamodb/tables', 'Page not found'],

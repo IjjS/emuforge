@@ -13,7 +13,17 @@
 import createWrapper from '@cloudscape-design/components/test-utils/selectors';
 import type { BrowserContext, Page, Request } from '@playwright/test';
 
-import { Engine, expect, freePortExcept, startStack, test, waitFor, type Ctx, type Stack } from './support';
+import {
+  Engine,
+  expect,
+  freePortExcept,
+  NO_SCREEN_SERVICE,
+  startStack,
+  test,
+  waitFor,
+  type Ctx,
+  type Stack,
+} from './support';
 import { ACTION, addressOf, cloudscapeElements, frame, NAVIGATION_TOGGLE, providersSection } from './support/frame';
 import { layoutIssues, markPage, stillSamePage } from './support/home';
 import { textContrast, type Focused } from './support/layers';
@@ -83,7 +93,7 @@ const NO_EMULATOR = (port: number) => `No emulator is running on port ${String(p
 /** An over-long path for Studio's "Page not found" (R4.9). */
 const LONG_PATH = `/does-not-exist/${'a-very-long-path-segment-without-any-break-'.repeat(4)}end`;
 
-const STUDIO_PAGES = ['/', '/does-not-exist', '/aws/s3'] as const;
+const STUDIO_PAGES = ['/', '/does-not-exist', NO_SCREEN_SERVICE.path] as const;
 
 // ---------------------------------------------------------------------------------------------------------------
 // Shared steps.
@@ -549,7 +559,7 @@ test('studio.studio-layer-complete-in-every-language', async ({ ctx, browser, pr
   const lines = new Lines(ctx);
 
   await lines.line(
-    "For each of the twelve languages (stored choice), on `/` connected, on `/does-not-exist`, and the frame on `/aws/s3` → `<html lang>` is the language's tag, `dir` is unset or `ltr`, the document title is as R5.2, and every text of Studio's text comes from that language's catalogue or is kept as it is",
+    "For each of the twelve languages (stored choice), on `/` connected, on `/does-not-exist`, and the frame on `/aws/kinesis` → `<html lang>` is the language's tag, `dir` is unset or `ltr`, the document title is as R5.2, and every text of Studio's text comes from that language's catalogue or is kept as it is",
     async () => {
       const found: string[] = [];
       for (const l of LANGUAGES) {
@@ -623,14 +633,14 @@ test('studio.studio-layer-complete-in-every-language', async ({ ctx, browser, pr
   );
 
   await lines.line(
-    'In German, move from `/` to `/aws/s3` within the built app (the area loaded on that move) → #19\'s route announcement comes from the German catalogue, and the area page title in it is in an element with `lang="en"` (binds once #19 is merged)',
+    'In German, move from `/` to `/aws/kinesis` within the built app (the area loaded on that move) → #19\'s route announcement comes from the German catalogue, and the area page title in it is in an element with `lang="en"` (binds once #19 is merged)',
     async () => {
       const s = await storedPage(ctx, browser, proxy, stack, 'de');
       await visit(s.page, s.traffic, '/');
-      await s.page.getByRole('main').locator('a[href="/aws/s3"]').first().click(ACTION);
-      await expect(s.page).toHaveURL(addressOf('/aws/s3'));
+      await s.page.getByRole('main').locator(`a[href="${NO_SCREEN_SERVICE.path}"]`).first().click(ACTION);
+      await expect(s.page).toHaveURL(addressOf(NO_SCREEN_SERVICE.path));
       const htmlLang = (await s.page.locator('html').getAttribute('lang')) ?? '';
-      const title = 'Amazon Simple Storage Service';
+      const title = NO_SCREEN_SERVICE.label;
       // #19 announces a route change by moving focus to the page's content target, named by the page title
       // (decisions.md, check correction): the announcement is that target's accessible name. The target is inside
       // the area's root; the clicked Home link carries the same name and is not it (decisions.md, second correction).
@@ -722,7 +732,7 @@ test('studio.studio-layer-complete-in-every-language', async ({ ctx, browser, pr
 // studio.aws-area-stays-english-in-every-language
 // ---------------------------------------------------------------------------------------------------------------
 
-const AREA_PAGES = ['/aws', '/aws/s3', '/aws/does-not-exist'] as const;
+const AREA_PAGES = ['/aws', NO_SCREEN_SERVICE.path, '/aws/does-not-exist'] as const;
 const NAVIGATION_CLOSE = createWrapper().findAppLayout().findNavigationClose().toSelector();
 
 /** The area's text once it has stopped changing (two equal reads), or `null` without an area. */
@@ -757,7 +767,7 @@ test('studio.aws-area-stays-english-in-every-language', async ({ ctx, page, brow
   const traffic = Traffic.attach(ctx, page.context(), page);
 
   await lines.line(
-    'For each of the twelve languages, `/aws`, `/aws/s3` and `/aws/does-not-exist` → the area\'s text and accessible names equal those of the English run, and the area\'s root carries `lang="en"`',
+    'For each of the twelve languages, `/aws`, `/aws/kinesis` and `/aws/does-not-exist` → the area\'s text and accessible names equal those of the English run, and the area\'s root carries `lang="en"`',
     async () => {
       const english = new Map<string, string[] | null>();
       for (const path of AREA_PAGES) {
@@ -782,11 +792,11 @@ test('studio.aws-area-stays-english-in-every-language', async ({ ctx, page, brow
   );
 
   await lines.line(
-    "On `/aws/s3` with the side navigation's state set, choose Deutsch → the frame is German; the area's root is the same element as before, its text and state unchanged",
+    "On `/aws/kinesis` with the side navigation's state set, choose Deutsch → the frame is German; the area's root is the same element as before, its text and state unchanged",
     async () => {
       const s = await languageContext(ctx, browser, proxy, stack.studio);
       const t = Traffic.attach(ctx, s.context, s.page);
-      await visit(s.page, t, '/aws/s3');
+      await visit(s.page, t, NO_SCREEN_SERVICE.path);
       await s.page.locator(NAVIGATION_CLOSE).click(ACTION);
       await expect(s.page.locator(NAVIGATION_TOGGLE), 'the side navigation closed').toBeVisible();
       const before = await stableAreaText(s.page);
@@ -800,7 +810,7 @@ test('studio.aws-area-stays-english-in-every-language', async ({ ctx, page, brow
           areaText: differences(await stableAreaText(s.page), before),
           navigationStillClosed: await s.page.locator(NAVIGATION_TOGGLE).isVisible(),
         },
-        'after choosing Deutsch on /aws/s3',
+        'after choosing Deutsch on /aws/kinesis',
       ).toEqual({
         problems: [],
         sameRoot: true,
@@ -811,7 +821,7 @@ test('studio.aws-area-stays-english-in-every-language', async ({ ctx, page, brow
   );
 
   await lines.line(
-    "On `/aws/s3` at 1280 and 390, open the menu → the topmost element at the menu's corners and centre is the menu's; close it → the area as before",
+    "On `/aws/kinesis` at 1280 and 390, open the menu → the topmost element at the menu's corners and centre is the menu's; close it → the area as before",
     async () => {
       const found: string[] = [];
       for (const width of [1280, 390]) {
@@ -819,7 +829,7 @@ test('studio.aws-area-stays-english-in-every-language', async ({ ctx, page, brow
           width,
         });
         const t = Traffic.attach(ctx, s.context, s.page);
-        await visit(s.page, t, '/aws/s3');
+        await visit(s.page, t, NO_SCREEN_SERVICE.path);
         const before = await stableAreaText(s.page);
         await markAreaRoot(s.page);
         await openMenu(s.page);
@@ -972,7 +982,7 @@ test('studio.language-layout-in-every-language', async ({ ctx, browser, proxy })
     }
   };
 
-  await sweep(['/', LONG_PATH, '/aws/s3'], true);
+  await sweep(['/', LONG_PATH, NO_SCREEN_SERVICE.path], true);
 
   // Polish, Vietnamese and German at 480 and 481 on `/`.
   const narrow: string[] = [];
@@ -1004,7 +1014,7 @@ test('studio.language-layout-in-every-language', async ({ ctx, browser, proxy })
   await sweep(['/'], false);
 
   await lines.line(
-    'For each of the twelve languages, at 1280 and 390, light and dark, on `/` connected, on `/` with the "No emulator is running" notice and build-once open, on `/does-not-exist` with an over-long path, and on `/aws/s3` → no page scrolls sideways, no element of Studio\'s own layer that holds text is wider than its box (scrollers excepted), and no button label or status word is cut',
+    'For each of the twelve languages, at 1280 and 390, light and dark, on `/` connected, on `/` with the "No emulator is running" notice and build-once open, on `/does-not-exist` with an over-long path, and on `/aws/kinesis` → no page scrolls sideways, no element of Studio\'s own layer that holds text is wider than its box (scrollers excepted), and no button label or status word is cut',
     async () => expect(cap(found.layout, 80)).toEqual([]),
   );
   await lines.line(
@@ -1224,10 +1234,10 @@ test('studio.language-control-keyboard-and-contrast', async ({ ctx, page }) => {
   const control = languageControl(page);
 
   await lines.line(
-    "On `/` and `/aws/s3`, Tab from the page's start → the skip link, the wordmark, each navigation link, then the control, in visible order",
+    "On `/` and `/aws/kinesis`, Tab from the page's start → the skip link, the wordmark, each navigation link, then the control, in visible order",
     async () => {
       const found: string[] = [];
-      for (const path of ['/', '/aws/s3']) {
+      for (const path of ['/', NO_SCREEN_SERVICE.path]) {
         await visit(page, traffic, path);
         const f = frame(page);
         const links = f.banner.getByRole('navigation').getByRole('link');

@@ -10,7 +10,7 @@
 import type { Locator, Page } from '@playwright/test';
 import fs from 'node:fs';
 
-import { directHealth, EnvError, expect, freePortExcept, startStack, test } from './support';
+import { directHealth, EnvError, expect, freePortExcept, NO_SCREEN_SERVICE, startStack, test } from './support';
 import {
   connectionView,
   engineCommandLines,
@@ -338,9 +338,9 @@ test('studio.shell-finish', async ({ ctx, page, context }) => {
   );
 
   await lines.line(
-    'With the keyboard only, on `/aws/s3` and on `/does-not-exist` → focus reaches "Go to Home", and Enter on it opens Home',
+    'With the keyboard only, on `/aws/kinesis` and on `/does-not-exist` → focus reaches "Go to Home", and Enter on it opens Home',
     async () => {
-      for (const path of ['/aws/s3', '/does-not-exist']) {
+      for (const path of [NO_SCREEN_SERVICE.path, '/does-not-exist']) {
         await page.goto(path);
         const goHome = page.getByRole('link', { name: 'Go to Home', exact: true });
         await expect(goHome).toBeVisible();
@@ -353,7 +353,7 @@ test('studio.shell-finish', async ({ ctx, page, context }) => {
   );
 
   await lines.line(
-    "(changed) Open `/` with the browser's colour scheme dark → `html`'s computed `color-scheme` is `dark`; open `/aws/s3` → the area's root has `awsui-dark-mode` and `body` has no `awsui-` class; with the scheme light → `html`'s `color-scheme` is `light` and no element has `awsui-dark-mode` — 1280 wide",
+    "(changed) Open `/` with the browser's colour scheme dark → `html`'s computed `color-scheme` is `dark`; open `/aws/kinesis` → the area's root has `awsui-dark-mode` and `body` has no `awsui-` class; with the scheme light → `html`'s `color-scheme` is `light` and no element has `awsui-dark-mode` — 1280 wide",
     async () => {
       const found: string[] = [];
       await page.setViewportSize({ width: 1280, height: 800 });
@@ -362,29 +362,30 @@ test('studio.shell-finish', async ({ ctx, page, context }) => {
       await expect(heading(page, 'Home')).toBeVisible();
       const darkScheme = await htmlColorScheme(page);
       if (darkScheme !== 'dark') found.push(`/ in dark: html's color-scheme is "${darkScheme}"`);
-      await page.goto('/aws/s3');
+      await page.goto(NO_SCREEN_SERVICE.path);
       await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
-      if (!(await shown(heading(page, 'Amazon Simple Storage Service')))) {
-        found.push('/aws/s3 in dark: no "Amazon Simple Storage Service" header');
+      if (!(await shown(heading(page, NO_SCREEN_SERVICE.label)))) {
+        found.push('/aws/kinesis in dark: no "Amazon Kinesis" header');
       }
       const dark = await darkModeHolders(page);
-      ctx.log(`awsui-dark-mode on /aws/s3 in dark: ${JSON.stringify(dark)}`);
+      ctx.log(`awsui-dark-mode on /aws/kinesis in dark: ${JSON.stringify(dark)}`);
       if (dark.root === null) {
         const where = dark.holders.join(', ') || 'none';
-        found.push(`/aws/s3 in dark: no element with awsui-dark-mode holds the area (holders: ${where})`);
+        found.push(`/aws/kinesis in dark: no element with awsui-dark-mode holds the area (holders: ${where})`);
       }
       if (dark.root !== null && dark.outside.length > 0) {
         const count = String(dark.outside.length);
         found.push(
-          `/aws/s3 in dark: ${count} elements outside the area's root carry awsui-dark-mode (${dark.outside.join(', ')})`,
+          `/aws/kinesis in dark: ${count} elements outside the area's root carry awsui-dark-mode (${dark.outside.join(', ')})`,
         );
       }
-      if (dark.rootIsHtmlOrBody) found.push('/aws/s3 in dark: awsui-dark-mode is on html or body');
+      if (dark.rootIsHtmlOrBody) found.push('/aws/kinesis in dark: awsui-dark-mode is on html or body');
       if (dark.rootHoldsBanner)
-        found.push("/aws/s3 in dark: the element with awsui-dark-mode holds the frame's banner");
-      if (dark.bodyAwsuiClasses.length > 0) found.push(`/aws/s3 in dark: body has ${dark.bodyAwsuiClasses.join(' ')}`);
+        found.push("/aws/kinesis in dark: the element with awsui-dark-mode holds the frame's banner");
+      if (dark.bodyAwsuiClasses.length > 0)
+        found.push(`/aws/kinesis in dark: body has ${dark.bodyAwsuiClasses.join(' ')}`);
       await page.emulateMedia({ colorScheme: 'light' });
-      for (const path of ['/', '/aws/s3']) {
+      for (const path of ['/', NO_SCREEN_SERVICE.path]) {
         await page.goto(path);
         await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
         const scheme = await htmlColorScheme(page);
@@ -437,7 +438,7 @@ test('studio.shell-finish', async ({ ctx, page, context }) => {
   );
 
   await lines.line(
-    '(changed) Open `/`, `/aws`, `/aws/s3`, `/aws/does-not-exist` and `/does-not-exist` with the emulator running, with it stopped and with the engine stopped → no horizontal scrolling and no command line wrapped — 1280 wide and 390 wide, light and dark',
+    '(changed) Open `/`, `/aws`, `/aws/kinesis`, `/aws/does-not-exist` and `/does-not-exist` with the emulator running, with it stopped and with the engine stopped → no horizontal scrolling and no command line wrapped — 1280 wide and 390 wide, light and dark',
     async () => {
       const states = [
         {
@@ -466,7 +467,7 @@ test('studio.shell-finish', async ({ ctx, page, context }) => {
           for (const colorScheme of ['light', 'dark'] as const) {
             await page.setViewportSize({ width, height: width === 390 ? 844 : 800 });
             await page.emulateMedia({ colorScheme });
-            for (const path of ['/', '/aws', '/aws/s3', '/aws/does-not-exist', '/does-not-exist']) {
+            for (const path of ['/', '/aws', NO_SCREEN_SERVICE.path, '/aws/does-not-exist', '/does-not-exist']) {
               await page.goto(path);
               if (path === '/') {
                 await expect

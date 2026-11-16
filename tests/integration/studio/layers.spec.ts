@@ -10,7 +10,7 @@
 
 import type { Page } from '@playwright/test';
 
-import { expect, startStack, test, type Ctx } from './support';
+import { expect, NO_SCREEN_SERVICE, startStack, test, type Ctx } from './support';
 import { ACTION, addressOf, heading } from './support/frame';
 import { connectionView, markPage, stillSamePage } from './support/home';
 import {
@@ -38,7 +38,7 @@ import { Lines } from './support/lines';
 /** The pages of the AWS area the checks open, with their `h1`. */
 const AREA_PAGES = [
   { path: '/aws', h1: 'Amazon Web Services' },
-  { path: '/aws/s3', h1: 'Amazon Simple Storage Service' },
+  { path: NO_SCREEN_SERVICE.path, h1: NO_SCREEN_SERVICE.label },
   { path: '/aws/does-not-exist', h1: 'Page not found' },
 ];
 const WIDTHS = [1280, 390];
@@ -131,14 +131,14 @@ test('studio.cloudscape-stays-inside-aws-area', async ({ ctx, page }) => {
   );
 
   await lines.line(
-    'Open `/aws/s3`, then choose "Home" in the frame (no reload) → the same holds on `/` (R8.1)',
+    'Open `/aws/kinesis`, then choose "Home" in the frame (no reload) → the same holds on `/` (R8.1)',
     async () => {
       await look(page, 1280, 'light');
       const found: string[] = [...(await layer())];
-      found.push(...at('/aws/s3', await open(page, '/aws/s3', 'Amazon Simple Storage Service')));
+      found.push(...at(NO_SCREEN_SERVICE.path, await open(page, NO_SCREEN_SERVICE.path, NO_SCREEN_SERVICE.label)));
       const area = await layerReport(page, true);
-      logReport(ctx, '/aws/s3', area);
-      found.push(...at('/aws/s3', area.rootProblems));
+      logReport(ctx, NO_SCREEN_SERVICE.path, area);
+      found.push(...at(NO_SCREEN_SERVICE.path, area.rootProblems));
       await markPage(page);
       const chosen = await f.home
         .click(ACTION)
@@ -149,24 +149,24 @@ test('studio.cloudscape-stays-inside-aws-area', async ({ ctx, page }) => {
         expect(found).toEqual([]);
       }
       await expect(page).toHaveURL(addressOf('/'));
-      found.push(...at('/ after /aws/s3', await shows(page, 'Home')));
+      found.push(...at('/ after /aws/kinesis', await shows(page, 'Home')));
       if (!(await stillSamePage(page))) found.push('choosing "Home" reloaded the page');
       await rest(page);
       const r = await layerReport(page, false);
-      logReport(ctx, '/ after /aws/s3', r);
-      found.push(...at('/ after /aws/s3', leaks(r)));
+      logReport(ctx, '/ after /aws/kinesis', r);
+      found.push(...at('/ after /aws/kinesis', leaks(r)));
       expect(found).toEqual([]);
     },
   );
 
   await lines.line(
-    "Open `/aws/s3` in dark → the area's root has `awsui-dark-mode`; `html` and `body` carry no `awsui-` class (a `data-awsui-focus-visible` attribute on `body` is allowed); in light → no element has `awsui-dark-mode` (R8.2)",
+    "Open `/aws/kinesis` in dark → the area's root has `awsui-dark-mode`; `html` and `body` carry no `awsui-` class (a `data-awsui-focus-visible` attribute on `body` is allowed); in light → no element has `awsui-dark-mode` (R8.2)",
     async () => {
       const found: string[] = [];
       for (const scheme of SCHEMES) {
-        const where = `/aws/s3, ${scheme}`;
+        const where = `/aws/kinesis, ${scheme}`;
         await look(page, 1280, scheme);
-        found.push(...at(where, await open(page, '/aws/s3', 'Amazon Simple Storage Service')));
+        found.push(...at(where, await open(page, NO_SCREEN_SERVICE.path, NO_SCREEN_SERVICE.label)));
         const r = await layerReport(page, true);
         logReport(ctx, where, r);
         found.push(...at(where, r.rootProblems));
@@ -225,7 +225,7 @@ test('studio.cloudscape-stays-inside-aws-area', async ({ ctx, page }) => {
   });
 
   await lines.line(
-    "Open `/aws`, `/aws/s3` and `/aws/does-not-exist`, at 1280 and 390, light and dark (the AWS area mounted, its component styles, base theme and `index-base.css` loaded) → no element of Studio's own layer (the frame, `html`, `body` and every ancestor of the area's root) has a Cloudscape class, and no rule outside the `studio` layer that declares a property other than a custom property matches any of them (R8.1)",
+    "Open `/aws`, `/aws/kinesis` and `/aws/does-not-exist`, at 1280 and 390, light and dark (the AWS area mounted, its component styles, base theme and `index-base.css` loaded) → no element of Studio's own layer (the frame, `html`, `body` and every ancestor of the area's root) has a Cloudscape class, and no rule outside the `studio` layer that declares a property other than a custom property matches any of them (R8.1)",
     async () => {
       const found: string[] = [...(await layer())];
       for (const width of WIDTHS) {
@@ -274,7 +274,7 @@ test('studio.studio-style-stays-outside-aws-area', async ({ ctx, page, browser }
   }
 
   await lines.line(
-    "Open `/aws`, `/aws/s3` and `/aws/does-not-exist`, light and dark → no rule of the `studio` layer matches the area's root or any element inside it (R8.3)",
+    "Open `/aws`, `/aws/kinesis` and `/aws/does-not-exist`, light and dark → no rule of the `studio` layer matches the area's root or any element inside it (R8.3)",
     async () => {
       const found = await eachAreaPage(async (_where, r) =>
         r.studioInside.map((s) => `a rule of the studio layer reaches into the area: ${s}`),
@@ -375,13 +375,13 @@ test('studio.colour-scheme-follows-the-system-in-both-layers', async ({ ctx, pag
   const schemeNow = (p: Page) => p.evaluate(() => getComputedStyle(document.documentElement).colorScheme);
 
   await lines.line(
-    "Open `/aws/s3` dark → the side navigation's computed `background-color` and its links' `color` equal those of a Cloudscape `SideNavigation` in a Cloudscape reference document with `index.css` and `applyMode` dark on `body`; light → equal to the same in light (R8.2a)",
+    "Open `/aws/kinesis` dark → the side navigation's computed `background-color` and its links' `color` equal those of a Cloudscape `SideNavigation` in a Cloudscape reference document with `index.css` and `applyMode` dark on `body`; light → equal to the same in light (R8.2a)",
     async () => {
       const found: string[] = [];
       for (const scheme of ['dark', 'light'] as const) {
-        const where = `/aws/s3, ${scheme}`;
+        const where = `/aws/kinesis, ${scheme}`;
         await look(page, 1280, scheme);
-        found.push(...at(where, await open(page, '/aws/s3', 'Amazon Simple Storage Service')));
+        found.push(...at(where, await open(page, NO_SCREEN_SERVICE.path, NO_SCREEN_SERVICE.label)));
         const r = await layerReport(page, true);
         found.push(...at(where, r.rootProblems));
         const here = await navigationLook(page);
@@ -441,11 +441,11 @@ test('studio.colour-scheme-follows-the-system-in-both-layers', async ({ ctx, pag
   );
 
   await lines.line(
-    "On `/aws/s3`, switch the browser's scheme from light to dark without a reload, before any other user action → `html`'s `color-scheme` is `dark` and the area's root has `awsui-dark-mode`; switch back → both light again (R7.4)",
+    "On `/aws/kinesis`, switch the browser's scheme from light to dark without a reload, before any other user action → `html`'s `color-scheme` is `dark` and the area's root has `awsui-dark-mode`; switch back → both light again (R7.4)",
     async () => {
       const found: string[] = [];
       await look(page, 1280, 'light');
-      found.push(...(await open(page, '/aws/s3', 'Amazon Simple Storage Service')));
+      found.push(...(await open(page, NO_SCREEN_SERVICE.path, NO_SCREEN_SERVICE.label)));
       const first = await layerReport(page, true);
       found.push(...first.rootProblems);
       if (found.length > 0) {
@@ -475,7 +475,7 @@ test('studio.colour-scheme-follows-the-system-in-both-layers', async ({ ctx, pag
   );
 
   await lines.line(
-    'Open `/`, `/aws/s3` and reload → nothing in `localStorage`, `sessionStorage` or cookies records a colour scheme, and the page has no control that sets one (R7.4)',
+    'Open `/`, `/aws/kinesis` and reload → nothing in `localStorage`, `sessionStorage` or cookies records a colour scheme, and the page has no control that sets one (R7.4)',
     async () => {
       const found: string[] = [];
       const SCHEME_WORDS = /dark|light|scheme|theme|colou?r|appearance|mode/i;
@@ -500,11 +500,11 @@ test('studio.colour-scheme-follows-the-system-in-both-layers', async ({ ctx, pag
       await look(page, 1280, 'light');
       found.push(...at('/', await open(page, '/', 'Home')));
       await controls('/');
-      found.push(...at('/aws/s3', await open(page, '/aws/s3', 'Amazon Simple Storage Service')));
-      found.push(...at('/aws/s3', (await layerReport(page, true)).rootProblems));
+      found.push(...at(NO_SCREEN_SERVICE.path, await open(page, NO_SCREEN_SERVICE.path, NO_SCREEN_SERVICE.label)));
+      found.push(...at(NO_SCREEN_SERVICE.path, (await layerReport(page, true)).rootProblems));
       await page.reload();
-      found.push(...at('/aws/s3 reloaded', await shows(page, 'Amazon Simple Storage Service')));
-      await controls('/aws/s3');
+      found.push(...at('/aws/kinesis reloaded', await shows(page, NO_SCREEN_SERVICE.label)));
+      await controls(NO_SCREEN_SERVICE.path);
       const storage = await page.evaluate(() => ({
         local: Object.entries(localStorage),
         session: Object.entries(sessionStorage),

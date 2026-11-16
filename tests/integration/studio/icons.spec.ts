@@ -25,6 +25,7 @@ import {
   icoEntries,
   measureTile,
   mediaType,
+  NO_SCREEN_SERVICE,
   onTile,
   readBrandBytes,
   schemeTokens,
@@ -75,10 +76,10 @@ test('studio.document-icons-are-served-as-images', async ({ ctx, page, context }
   );
 
   await lines.line(
-    "Open `/aws/s3/buckets` and `/does-not-exist/deeper/still` directly → the same three links resolve to the same three addresses at Studio's origin, not under the page's path",
+    "Open `/aws/kinesis/streams` and `/does-not-exist/deeper/still` directly → the same three links resolve to the same three addresses at Studio's origin, not under the page's path",
     async () => {
       const found: string[] = [];
-      for (const p of ['/aws/s3/buckets', '/does-not-exist/deeper/still']) {
+      for (const p of [NO_SCREEN_SERVICE.below, '/does-not-exist/deeper/still']) {
         await page.goto(p);
         await rendered(page);
         const links = await relsAndAddresses();

@@ -9,7 +9,7 @@
 import createWrapper from '@cloudscape-design/components/test-utils/selectors';
 import type { Locator, Page } from '@playwright/test';
 
-import { expect, startStack, test } from './support';
+import { expect, NO_SCREEN_SERVICE, startStack, test } from './support';
 import {
   awaitTarget,
   contentStopProblems,
@@ -46,7 +46,7 @@ import {
 import { Lines } from './support/lines';
 
 const AWS = 'Amazon Web Services';
-const S3 = 'Amazon Simple Storage Service';
+const SERVICE = NO_SCREEN_SERVICE.label;
 const GO_HOME = 'Go to Home';
 const NOT_FOUND = 'Page not found';
 const SKIP = 'Skip to content';
@@ -62,8 +62,8 @@ interface PageOf {
 
 const HOME: PageOf = { path: '/', h1: 'Home', firstStop: 'Refresh', home: true };
 const INDEX: PageOf = { path: '/aws', h1: AWS, firstStop: 'Amazon API Gateway' };
-const S3_PAGE: PageOf = { path: '/aws/s3', h1: S3, firstStop: GO_HOME };
-const S3_BUCKETS: PageOf = { path: '/aws/s3/buckets', h1: S3, firstStop: GO_HOME };
+const SERVICE_PAGE: PageOf = { path: NO_SCREEN_SERVICE.path, h1: SERVICE, firstStop: GO_HOME };
+const SERVICE_BELOW: PageOf = { path: NO_SCREEN_SERVICE.below, h1: SERVICE, firstStop: GO_HOME };
 const DYNAMODB: PageOf = { path: '/aws/dynamodb', h1: 'Amazon DynamoDB', firstStop: GO_HOME };
 const API_GATEWAY: PageOf = { path: '/aws/apigateway', h1: 'Amazon API Gateway', firstStop: GO_HOME };
 const LAMBDA: PageOf = { path: '/aws/lambda', h1: 'AWS Lambda', firstStop: GO_HOME };
@@ -71,7 +71,7 @@ const AREA_NOT_FOUND: PageOf = { path: '/aws/does-not-exist', h1: NOT_FOUND, fir
 const STUDIO_NOT_FOUND: PageOf = { path: '/does-not-exist', h1: NOT_FOUND, firstStop: GO_HOME };
 
 /** The five pages the criteria go through on each line that names them, in their order. */
-const FIVE = [HOME, INDEX, S3_PAGE, AREA_NOT_FOUND, STUDIO_NOT_FOUND];
+const FIVE = [HOME, INDEX, SERVICE_PAGE, AREA_NOT_FOUND, STUDIO_NOT_FOUND];
 
 const SERVICES_CONTAINER = createWrapper().findContainer().toSelector();
 
@@ -169,7 +169,7 @@ test('studio.skip-link-reaches-page-content', async ({ ctx, page }) => {
     },
   );
 
-  for (const p of [S3_PAGE, AREA_NOT_FOUND]) {
+  for (const p of [SERVICE_PAGE, AREA_NOT_FOUND]) {
     await lines.line(
       `Fresh load of \`${p.path}\`, Tab, Enter → focus is on the content target named "${p.h1}", it draws no focus ring, the address is unchanged; the next Tab reaches "Go to Home" (regression)`,
       async () => {
@@ -207,12 +207,12 @@ test('studio.skip-link-reaches-page-content', async ({ ctx, page }) => {
   );
 
   await lines.line(
-    'Fresh load of `/aws/s3`, Tab, Enter → focus is on the content target named "Amazon Simple Storage Service"; the next Tab reaches "Go to Home" — 390 wide',
+    'Fresh load of `/aws/kinesis`, Tab, Enter → focus is on the content target named "Amazon Kinesis"; the next Tab reaches "Go to Home" — 390 wide',
     async () => {
       await page.setViewportSize({ width: 390, height: 844 });
       try {
-        await skipOn(page, S3_PAGE);
-        await expectTarget(page, S3_PAGE.h1, S3_PAGE.firstStop);
+        await skipOn(page, SERVICE_PAGE);
+        await expectTarget(page, SERVICE_PAGE.h1, SERVICE_PAGE.firstStop);
         await expectNextContentStop(page, GO_HOME);
       } finally {
         await page.setViewportSize({ width: 1280, height: 800 });
@@ -221,12 +221,12 @@ test('studio.skip-link-reaches-page-content', async ({ ctx, page }) => {
   );
 
   await lines.line(
-    'Fresh load of `/aws/s3`, Tab, click "Skip to content" → focus is on the content target named "Amazon Simple Storage Service" and the address is unchanged',
+    'Fresh load of `/aws/kinesis`, Tab, click "Skip to content" → focus is on the content target named "Amazon Kinesis" and the address is unchanged',
     async () => {
-      await openFresh(page, S3_PAGE);
+      await openFresh(page, SERVICE_PAGE);
       await tabToSkip(page);
       await skipLink(page).click(ACTION);
-      await expectSkipped(S3_PAGE, false);
+      await expectSkipped(SERVICE_PAGE, false);
     },
   );
 
@@ -248,7 +248,7 @@ test('studio.skip-link-reaches-page-content', async ({ ctx, page }) => {
     'Each of the five pages above, after Tab → the focused element is "Skip to content", it is visible with its focus ring, and it is at the bar\'s start',
     async () => {
       const found: string[] = [];
-      for (const p of [INDEX, S3_PAGE, AREA_NOT_FOUND, HOME, STUDIO_NOT_FOUND]) {
+      for (const p of [INDEX, SERVICE_PAGE, AREA_NOT_FOUND, HOME, STUDIO_NOT_FOUND]) {
         await openFresh(page, p);
         const stop = await pressTab(page);
         if (stop?.name !== SKIP || !(await hasFocus(skipLink(page)))) {
@@ -390,11 +390,11 @@ test('studio.route-change-focuses-new-page-content', async ({ ctx, page }) => {
   );
 
   await lines.line(
-    'Fresh load of `/aws/s3`, focus the frame\'s "EmuForge Studio", Enter → the address is `/`, focus is on the content target named "Home"',
+    'Fresh load of `/aws/kinesis`, focus the frame\'s "EmuForge Studio", Enter → the address is `/`, focus is on the content target named "Home"',
     async () => {
-      await openFresh(page, S3_PAGE);
+      await openFresh(page, SERVICE_PAGE);
       await follow(page, f.wordmark);
-      expectArrived(await arrive('/aws/s3 → "EmuForge Studio"', HOME), false);
+      expectArrived(await arrive('/aws/kinesis → "EmuForge Studio"', HOME), false);
     },
   );
 
@@ -426,19 +426,19 @@ test('studio.route-change-focuses-new-page-content', async ({ ctx, page }) => {
   );
 
   await lines.line(
-    '(changed, issue 45) Fresh load of `/aws/s3`, focus "AWS" in the breadcrumbs, Enter → the address is `/aws`, focus is on the content target named "Amazon Web Services"',
+    '(changed, issue 45) Fresh load of `/aws/kinesis`, focus "AWS" in the breadcrumbs, Enter → the address is `/aws`, focus is on the content target named "Amazon Web Services"',
     async () => {
-      await openFresh(page, S3_PAGE);
+      await openFresh(page, SERVICE_PAGE);
       await follow(page, breadcrumbLink(page, 'AWS'));
-      expectArrived(await arrive('/aws/s3 → "AWS" in the breadcrumbs', INDEX), false);
+      expectArrived(await arrive('/aws/kinesis → "AWS" in the breadcrumbs', INDEX), false);
     },
   );
 
   await lines.line(
-    'Fresh load of `/aws/s3` and of `/aws/does-not-exist`, focus "Go to Home", Enter → the address is `/`, focus is on the content target named "Home"',
+    'Fresh load of `/aws/kinesis` and of `/aws/does-not-exist`, focus "Go to Home", Enter → the address is `/`, focus is on the content target named "Home"',
     async () => {
       const found: string[] = [];
-      for (const from of [S3_PAGE, AREA_NOT_FOUND]) {
+      for (const from of [SERVICE_PAGE, AREA_NOT_FOUND]) {
         await openFresh(page, from);
         await follow(page, goToHome(page));
         const a = await arrive(`${from.path} → "Go to Home"`, HOME);
@@ -466,16 +466,19 @@ test('studio.route-change-focuses-new-page-content', async ({ ctx, page }) => {
   );
 
   await lines.line(
-    'Fresh load of `/aws/s3/buckets`, focus "Amazon Simple Storage Service" in the side navigation, Enter → the address is `/aws/s3` and focus is on the content target named "Amazon Simple Storage Service"; press Back → the address is `/aws/s3/buckets` and focus is on the content target named "Amazon Simple Storage Service"',
+    'Fresh load of `/aws/kinesis/streams`, focus "Amazon Kinesis" in the side navigation, Enter → the address is `/aws/kinesis` and focus is on the content target named "Amazon Kinesis"; press Back → the address is `/aws/kinesis/streams` and focus is on the content target named "Amazon Kinesis"',
     async () => {
-      await openFresh(page, S3_BUCKETS);
-      await follow(page, sideNavigationLink(page, S3));
-      const there = await arrive('/aws/s3/buckets → "Amazon Simple Storage Service" in the side navigation', S3_PAGE);
+      await openFresh(page, SERVICE_BELOW);
+      await follow(page, sideNavigationLink(page, SERVICE));
+      const there = await arrive('/aws/kinesis/streams → "Amazon Kinesis" in the side navigation', SERVICE_PAGE);
       await page.goBack();
-      const back = await arrive('/aws/s3 → Back', S3_BUCKETS);
+      const back = await arrive('/aws/kinesis → Back', SERVICE_BELOW);
       expect(
-        [...there.target.problems.map((p) => `to /aws/s3: ${p}`), ...back.target.problems.map((p) => `Back: ${p}`)],
-        'focus is on the content target named "Amazon Simple Storage Service" both times',
+        [
+          ...there.target.problems.map((p) => `to /aws/kinesis: ${p}`),
+          ...back.target.problems.map((p) => `Back: ${p}`),
+        ],
+        'focus is on the content target named "Amazon Kinesis" both times',
       ).toEqual([]);
     },
   );
@@ -567,7 +570,7 @@ test('studio.focus-moves-change-nothing-on-screen', async ({ ctx, page }) => {
   }
 
   await lines.line(
-    'Fresh load of each of `/`, `/aws`, `/aws/s3`, `/aws/does-not-exist` and `/does-not-exist`, Tab, Enter on "Skip to content" → the page\'s `h1`, its first content stop and the frame\'s bar are at the same place as before the Enter, and no element draws an outline; on a page of the area the "before" places are read once the emulator line shows "Connected at `<endpoint>`" (changed, issue 45)',
+    'Fresh load of each of `/`, `/aws`, `/aws/kinesis`, `/aws/does-not-exist` and `/does-not-exist`, Tab, Enter on "Skip to content" → the page\'s `h1`, its first content stop and the frame\'s bar are at the same place as before the Enter, and no element draws an outline; on a page of the area the "before" places are read once the emulator line shows "Connected at `<endpoint>`" (changed, issue 45)',
     async () => {
       const found: string[] = [];
       for (const p of FIVE) {
@@ -587,7 +590,7 @@ test('studio.focus-moves-change-nothing-on-screen', async ({ ctx, page }) => {
   );
 
   await lines.line(
-    'Each of those five pages reached by a route change: `/` by the frame\'s "Home" from a fresh `/aws`; `/aws` by the frame\'s "AWS" from a fresh `/`; `/aws/s3` by "Amazon Simple Storage Service" in the side navigation from a fresh `/aws`; `/aws/does-not-exist` by Back after a fresh `/aws/does-not-exist` and "AWS" in its breadcrumbs (changed, issue 45); `/does-not-exist` by Back after a fresh `/does-not-exist` and "Go to Home" → the page\'s `h1`, its first content stop and the frame\'s bar are at the same place as on a fresh load of the same path, and no element draws an outline; on a page of the area the places are read, on the fresh load and after the route change alike, once the emulator line shows "Connected at `<endpoint>`" (changed, issue 45)',
+    'Each of those five pages reached by a route change: `/` by the frame\'s "Home" from a fresh `/aws`; `/aws` by the frame\'s "AWS" from a fresh `/`; `/aws/kinesis` by "Amazon Kinesis" in the side navigation from a fresh `/aws`; `/aws/does-not-exist` by Back after a fresh `/aws/does-not-exist` and "AWS" in its breadcrumbs (changed, issue 45); `/does-not-exist` by Back after a fresh `/does-not-exist` and "Go to Home" → the page\'s `h1`, its first content stop and the frame\'s bar are at the same place as on a fresh load of the same path, and no element draws an outline; on a page of the area the places are read, on the fresh load and after the route change alike, once the emulator line shows "Connected at `<endpoint>`" (changed, issue 45)',
     async () => {
       const routes: { to: PageOf; how: string; go: () => Promise<void> }[] = [
         {
@@ -607,11 +610,11 @@ test('studio.focus-moves-change-nothing-on-screen', async ({ ctx, page }) => {
           },
         },
         {
-          to: S3_PAGE,
-          how: '"Amazon Simple Storage Service" in the side navigation from a fresh /aws',
+          to: SERVICE_PAGE,
+          how: '"Amazon Kinesis" in the side navigation from a fresh /aws',
           go: async () => {
             await openFresh(page, INDEX);
-            await follow(page, sideNavigationLink(page, S3));
+            await follow(page, sideNavigationLink(page, SERVICE));
           },
         },
         {
@@ -682,7 +685,7 @@ test('studio.first-load-keeps-focus-at-document-start', async ({ ctx, page }) =>
   }
 
   await lines.line(
-    "Fresh load of `/`, `/aws`, `/aws/s3`, `/aws/does-not-exist` and `/does-not-exist` → once the page's `h1` is visible and the document title is the page's, focus is on the document's `body`, and the first Tab reaches \"Skip to content\"",
+    "Fresh load of `/`, `/aws`, `/aws/kinesis`, `/aws/does-not-exist` and `/does-not-exist` → once the page's `h1` is visible and the document title is the page's, focus is on the document's `body`, and the first Tab reaches \"Skip to content\"",
     async () => {
       const found: string[] = [];
       for (const p of FIVE) {
