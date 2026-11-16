@@ -460,10 +460,9 @@ Applies to everything under `providers/aws/area/`, at `/aws` and below.
   the screen's reference spec word for word and is not paraphrased. EmuForge's own words (descriptions, help,
   guidance, the empty, loading and error states, the emulator line and the notice) are written in the requirement,
   never taken from the console, and are English text of the area. The area imports nothing from `i18n/`; its root
-  carries `lang="en"`; and everything it
-  renders sits inside Cloudscape's `I18nProvider` with locale `en` and Cloudscape's English messages
-  (`i18n/messages/all.en`). Cloudscape otherwise takes its locale from `<html lang>` and the browser's language, so a
-  date, a number or a component's built-in text would follow Studio's language.
+  carries `lang="en"`; and everything it renders sits inside Cloudscape's `I18nProvider` with locale `en` and
+  Cloudscape's English messages (`i18n/messages/all.en`). Cloudscape otherwise takes its locale from `<html lang>`
+  and the browser's language, so a date, a number or a component's built-in text would follow Studio's language.
 - A change of Studio's language does not re-render the area from scratch: its text, focus and state stay as they
   were. On a page of the area the frame is in Studio's language and the area in English, each marked by its `lang`.
 

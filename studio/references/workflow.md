@@ -57,8 +57,8 @@ An issue that touches both a `console` and a `native` screen is split.
   spec is the design; there are no candidates.
 - `native`: per `references/critique.md`: a mock, scored, revised until it passes. The mock is drawn in the
   design system of the screen's layer: Studio's own for Studio's own layer, the provider's for a state inside a
-  provider area, where a native state follows Cloudscape's published patterns. A page of Studio's own layer that holds a provider area shows the area as a region in the
-  provider's design system.
+  provider area, where a native state follows Cloudscape's published patterns. A page of Studio's own layer that
+  holds a provider area shows the area as a region in the provider's design system.
 
 ## 3. Test Criteria
 
