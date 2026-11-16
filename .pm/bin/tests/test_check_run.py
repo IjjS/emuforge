@@ -7,7 +7,8 @@ import subprocess
 import time
 import unittest
 
-from _fixture import clean_env, make, run
+from _fixture import clean_env, git, run
+from _fixture import make as make_on_main
 
 SCRIPTS = ("pm-check", "_pmlib.py")
 # fails the first time it runs in a checkout, passes afterwards (the marker lives in the ignored output/)
@@ -24,6 +25,14 @@ sleep 300 &
 echo "$$ $!" > ../../../output/pids
 wait
 """
+
+
+def make(group, case, scripts, files=None):
+    """`_fixture.make` with the branch renamed from `main` to `fixture`, so pm-check cannot read the changes against
+    `main` and runs every module, the harness step included."""
+    co = make_on_main(group, case, scripts, files)
+    git(co, "branch", "-m", "fixture")
+    return co
 
 
 def last(co):
