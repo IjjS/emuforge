@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: bug
 Issue-Source: worker
 Issue-Key: harness|pm-structure-signal-storm|busy-in-open-under-storm
-Issue-Check-Ids:
+Issue-Check-Ids: harness.storm-wait harness.terminate
 Issue-Commit: 424d7ad0ea51921ba0de9decbdafd9a85aa0c223
 
 # Make a pm-structure run under a SIGTERM storm exit instead of staying busy in open()
