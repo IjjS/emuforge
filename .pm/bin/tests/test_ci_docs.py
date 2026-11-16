@@ -108,8 +108,9 @@ class Skill(unittest.TestCase):
         self.assertTrue(filed, found)
         self.assertTrue(any("Issue-Check-Ids" in b and re.search(r"\bopen issue\b", b) for b in filed), filed)
         self.assertTrue(any(re.search(r"\bowner'?s?\b[^.]*\bsignal\b", b) for b in filed), filed)
-        for b in filed:
-            self.assertNotIn("ahead of", b)
+        for b in found:
+            if re.search(r"\b(fail(ed|s|ing)?)\b[^.]*\brun\b", b):
+                self.assertNotIn("ahead of", b)
         none = [b for b in found if re.search(r"\bno run\b", b) and re.search(r"\bno answer\b", b)]
         self.assertTrue(any(re.search(r"\bowner\b", b)
                             and re.search(r"files nothing|nothing is filed|no issue is filed|without filing", b)
