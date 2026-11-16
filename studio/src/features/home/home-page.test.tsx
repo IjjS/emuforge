@@ -331,6 +331,11 @@ describe('Home: content', () => {
     const entry = within(providers).getByRole('link', { name: 'Amazon Web Services' });
     expect(entry).toHaveAttribute('href', '/aws');
     expect(providers).toHaveTextContent('19 services · no Studio screen yet');
+    // As written in the page: U+00A0 between the count and its unit (issue 32, R4.1).
+    const line = within(providers).getByText(
+      (_content, element) => element?.tagName === 'P' && /services/.test(element.textContent ?? ''),
+    );
+    expect(line.textContent).toBe('19\u00a0services · no Studio screen yet');
     const links = within(providers)
       .getAllByRole('link')
       .filter((link) => link !== entry)

@@ -15,8 +15,8 @@
   "connection.notChecked": "Not checked yet.",
   "connection.lastChecked": "Last checked {time}.",
   "connection.lastCheckedEvery": {
-    "one": "Last checked {time}. Checked every {count} second.",
-    "other": "Last checked {time}. Checked every {count} seconds."
+    "one": "Last checked {time}. Checked every {count}\u00a0second.",
+    "other": "Last checked {time}. Checked every {count}\u00a0seconds."
   },
   "connection.engine": "Engine",
   "connection.emulator": "Emulator",
@@ -34,8 +34,8 @@
   "announce.engineErrorCode": "Engine error: {code}.",
   "announce.engineErrorStatus": "Engine error: HTTP status {status}.",
   "notice.recheck": {
-    "one": "Studio checks again every {count} second; this page updates on its own.",
-    "other": "Studio checks again every {count} seconds; this page updates on its own."
+    "one": "Studio checks again every {count}\u00a0second; this page updates on its own.",
+    "other": "Studio checks again every {count}\u00a0seconds; this page updates on its own."
   },
   "notice.refresh": "Refresh",
   "notice.refreshName": "Refresh connection status",
@@ -76,8 +76,8 @@
   "copy.failed": "Command not copied",
   "providers.title": "Providers",
   "providers.services": {
-    "one": "{count} service · no Studio screen yet",
-    "other": "{count} services · no Studio screen yet"
+    "one": "{count}\u00a0service · no Studio screen yet",
+    "other": "{count}\u00a0services · no Studio screen yet"
   },
   "notFound.title": "Page not found",
   "notFound.statement": "Studio has no page at {path}.",

@@ -15,9 +15,9 @@
   "connection.notChecked": "Pas encore vérifié.",
   "connection.lastChecked": "Dernière vérification à {time}.",
   "connection.lastCheckedEvery": {
-    "one": "Dernière vérification à {time}. Vérifié toutes les {count} seconde.",
-    "many": "Dernière vérification à {time}. Vérifié toutes les {count} de secondes.",
-    "other": "Dernière vérification à {time}. Vérifié toutes les {count} secondes."
+    "one": "Dernière vérification à {time}. Vérifié toutes les {count}\u00a0seconde.",
+    "many": "Dernière vérification à {time}. Vérifié toutes les {count}\u00a0de\u00a0secondes.",
+    "other": "Dernière vérification à {time}. Vérifié toutes les {count}\u00a0secondes."
   },
   "connection.engine": "Moteur",
   "connection.emulator": "Émulateur",
@@ -35,9 +35,9 @@
   "announce.engineErrorCode": "Erreur du moteur\u00a0: {code}.",
   "announce.engineErrorStatus": "Erreur du moteur\u00a0: statut HTTP {status}.",
   "notice.recheck": {
-    "one": "Studio vérifie de nouveau toutes les {count} seconde\u202f; cette page se met à jour d’elle-même.",
-    "many": "Studio vérifie de nouveau toutes les {count} de secondes\u202f; cette page se met à jour d’elle-même.",
-    "other": "Studio vérifie de nouveau toutes les {count} secondes\u202f; cette page se met à jour d’elle-même."
+    "one": "Studio vérifie de nouveau toutes les {count}\u00a0seconde. Cette page se met à jour d’elle-même.",
+    "many": "Studio vérifie de nouveau toutes les {count}\u00a0de\u00a0secondes. Cette page se met à jour d’elle-même.",
+    "other": "Studio vérifie de nouveau toutes les {count}\u00a0secondes. Cette page se met à jour d’elle-même."
   },
   "notice.refresh": "Actualiser",
   "notice.refreshName": "Actualiser l’état de la connexion",
@@ -78,9 +78,9 @@
   "copy.failed": "Commande non copiée",
   "providers.title": "Fournisseurs",
   "providers.services": {
-    "one": "{count} service · pas encore d’écran Studio",
-    "many": "{count} de services · pas encore d’écran Studio",
-    "other": "{count} services · pas encore d’écran Studio"
+    "one": "{count}\u00a0service · pas encore d’écran Studio",
+    "many": "{count}\u00a0de\u00a0services · pas encore d’écran Studio",
+    "other": "{count}\u00a0services · pas encore d’écran Studio"
   },
   "notFound.title": "Page introuvable",
   "notFound.statement": "Studio n’a aucune page à {path}.",

@@ -140,6 +140,41 @@ describe('counted messages', () => {
   });
 });
 
+describe('a counted message with U+00A0 after the count (issue 32, R4.1)', () => {
+  const JOINED: Catalogues = catalogueSet([
+    parseCatalogue('en', {
+      '@name': 'English',
+      [SERVICES]: {
+        one: '{count}\u00a0service · no Studio screen yet',
+        other: '{count}\u00a0services · no Studio screen yet',
+      },
+    }),
+    parseCatalogue('de', {
+      '@name': 'Deutsch',
+      [SERVICES]: {
+        one: '{count}\u00a0Dienst · noch keine Studio-Ansicht',
+        other: '{count}\u00a0Dienste · noch keine Studio-Ansicht',
+      },
+    }),
+  ]);
+
+  it.each([
+    ['en', 19, 'services · no Studio screen yet'],
+    ['en', 12345, 'services · no Studio screen yet'],
+    ['de', 5, 'Dienste · noch keine Studio-Ansicht'],
+    ['de', 12345, 'Dienste · noch keine Studio-Ansicht'],
+  ])(
+    '%s, count %d → the formatted count, then U+00A0, then the unit, no ordinary space between them',
+    (tag, count, rest) => {
+      const formatted = formatNumber(tag, count);
+      const text = messagesFor<string>(JOINED, tag).plural(SERVICES, count);
+      expect(text).toBe(`${formatted}\u00a0${rest}`);
+      // The count, the no-break space and the unit up to the next space: no ordinary space among them.
+      expect(text.slice(0, formatted.length + 1 + rest.indexOf(' '))).not.toContain(' ');
+    },
+  );
+});
+
 describe('a catalogue that lacks a text', () => {
   it('a message missing from the current catalogue → the English text; never the key, never an empty text', () => {
     expect(messagesFor<string>(CATALOGUES, 'ko').t('only.english')).toBe('Only in English');

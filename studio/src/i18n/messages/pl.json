@@ -15,10 +15,10 @@
   "connection.notChecked": "Jeszcze nie sprawdzono.",
   "connection.lastChecked": "Ostatnie sprawdzenie: {time}.",
   "connection.lastCheckedEvery": {
-    "one": "Ostatnie sprawdzenie: {time}. Sprawdzanie co {count} sekundę.",
-    "few": "Ostatnie sprawdzenie: {time}. Sprawdzanie co {count} sekundy.",
-    "many": "Ostatnie sprawdzenie: {time}. Sprawdzanie co {count} sekund.",
-    "other": "Ostatnie sprawdzenie: {time}. Sprawdzanie co {count} sekundy."
+    "one": "Ostatnie sprawdzenie: {time}. Sprawdzanie co {count}\u00a0sekundę.",
+    "few": "Ostatnie sprawdzenie: {time}. Sprawdzanie co {count}\u00a0sekundy.",
+    "many": "Ostatnie sprawdzenie: {time}. Sprawdzanie co {count}\u00a0sekund.",
+    "other": "Ostatnie sprawdzenie: {time}. Sprawdzanie co {count}\u00a0sekundy."
   },
   "connection.engine": "Silnik",
   "connection.emulator": "Emulator",
@@ -36,10 +36,10 @@
   "announce.engineErrorCode": "Błąd silnika: {code}.",
   "announce.engineErrorStatus": "Błąd silnika: status HTTP {status}.",
   "notice.recheck": {
-    "one": "Studio sprawdza ponownie co {count} sekundę; ta strona aktualizuje się sama.",
-    "few": "Studio sprawdza ponownie co {count} sekundy; ta strona aktualizuje się sama.",
-    "many": "Studio sprawdza ponownie co {count} sekund; ta strona aktualizuje się sama.",
-    "other": "Studio sprawdza ponownie co {count} sekundy; ta strona aktualizuje się sama."
+    "one": "Studio sprawdza ponownie co {count}\u00a0sekundę; ta strona aktualizuje się sama.",
+    "few": "Studio sprawdza ponownie co {count}\u00a0sekundy; ta strona aktualizuje się sama.",
+    "many": "Studio sprawdza ponownie co {count}\u00a0sekund; ta strona aktualizuje się sama.",
+    "other": "Studio sprawdza ponownie co {count}\u00a0sekundy; ta strona aktualizuje się sama."
   },
   "notice.refresh": "Odśwież",
   "notice.refreshName": "Odśwież stan połączenia",
@@ -80,10 +80,10 @@
   "copy.failed": "Nie skopiowano polecenia",
   "providers.title": "Dostawcy",
   "providers.services": {
-    "one": "{count} usługa · jeszcze bez ekranu w Studio",
-    "few": "{count} usługi · jeszcze bez ekranu w Studio",
-    "many": "{count} usług · jeszcze bez ekranu w Studio",
-    "other": "{count} usługi · jeszcze bez ekranu w Studio"
+    "one": "{count}\u00a0usługa · jeszcze bez ekranu w Studio",
+    "few": "{count}\u00a0usługi · jeszcze bez ekranu w Studio",
+    "many": "{count}\u00a0usług · jeszcze bez ekranu w Studio",
+    "other": "{count}\u00a0usługi · jeszcze bez ekranu w Studio"
   },
   "notFound.title": "Nie znaleziono strony",
   "notFound.statement": "Studio nie ma strony pod adresem {path}.",
