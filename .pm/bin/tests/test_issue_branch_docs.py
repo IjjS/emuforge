@@ -136,10 +136,10 @@ class Skill(unittest.TestCase):
         with self.subTest("no block: arrive on main with the code"):
             self.assertFalse([b for b in gate if "arrive on `main` with the code" in b])
         with self.subTest("the issue branch is green when it merges into main"):
-            self.assertTrue(any(has(s, r"\bissue branch\b", r"\bgreen\b", r"\binto `main`")
+            self.assertTrue(any(has(s, r"\bissue branch\b", r"\bgreen\b", r"\binto `?main\b")
                                 for b in gate for s in sentences(b)), gate)
         with self.subTest("a t unit may be merged into the issue branch on its checks review"):
-            self.assertTrue(any(has(s, r"`t` unit", r"\bmay be merged into the issue branch\b",
+            self.assertTrue(any(has(s, r"`t` unit", r"\bmay be merged\b[^.]*\binto the issue branch\b",
                                     r"\bchecks\b[^.]*\breview\b|review-checks")
                                 for b in gate for s in sentences(b)), gate)
 
