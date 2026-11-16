@@ -108,20 +108,20 @@ test('studio.aws-area-unknown-path-shows-page-not-found', async ({ ctx, page }) 
   await startStack(ctx);
   const path = '/aws/does-not-exist/today';
 
-  // Open `/aws/does-not-exist/today` directly → inside the AWS area: "Page not found" with that path, breadcrumbs
-  // "Amazon Web Services" then "Page not found", the side navigation with no active item; choose "Amazon Web
-  // Services" in the breadcrumbs → `/aws`.
+  // (changed, issue 45) Open `/aws/does-not-exist/today` directly → inside the AWS area: "Page not found" with that
+  // path, crumbs "EmuForge", "AWS", "Page not found", the side navigation with no active item; choose "AWS" in the
+  // crumbs → `/aws`.
   await page.goto(path);
   await expect(page).toHaveURL(addressOf(path));
   await expectInAwsArea(page, 'Page not found');
   await expect(page.getByRole('main')).toContainText(path);
   await expect
     .poll(() => breadcrumbs(page), { message: 'the breadcrumbs' })
-    .toEqual(['Amazon Web Services', 'Page not found']);
+    .toEqual(['EmuForge', 'AWS', 'Page not found']);
   await expect(page.locator(SIDE_NAVIGATION_ACTIVE), 'the side navigation’s active item').toHaveCount(0);
   await page
     .locator(BREADCRUMB_GROUP)
-    .getByRole('link', { name: 'Amazon Web Services', exact: true })
+    .getByRole('link', { name: 'AWS', exact: true })
     .filter({ visible: true })
     .click(ACTION);
   await expect(page).toHaveURL(addressOf('/aws'));

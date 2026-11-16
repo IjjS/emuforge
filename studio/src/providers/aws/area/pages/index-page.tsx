@@ -17,11 +17,20 @@ const serviceColumns = Array.from({ length: SERVICE_COLUMNS }, (_, column) =>
   SERVICES.slice(column * SERVICES_PER_COLUMN, (column + 1) * SERVICES_PER_COLUMN),
 );
 
-/** `/aws`, the area's index: the services, each to its page. Calls nothing. */
+/** `/aws`, the area's index: EmuForge's description of the area, then the services, each to its page. Calls nothing. */
 export function IndexPage() {
   const handleFollow = useFollow();
   return (
-    <ContentLayout header={<Header variant="h1">{AWS_NAME}</Header>}>
+    <ContentLayout
+      header={
+        <Header
+          variant="h1"
+          description="EmuForge Studio works with a local emulator of AWS services. It is a stand-alone tool, not the AWS console and not an AWS feature."
+        >
+          {AWS_NAME}
+        </Header>
+      }
+    >
       <Container
         header={
           <Header
