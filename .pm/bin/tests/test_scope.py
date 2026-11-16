@@ -77,8 +77,19 @@ class Rules(unittest.TestCase):
     def test_rule_9_issue_files_call_for_nothing(self):
         self.assertCalls(["issues/things-that-do-not-work/a.md", "issues/things-that-now-work/a.md"], set())
 
+    def test_github_folder_calls_for_the_harness_by_its_own_rule(self):
+        """Issue 53 (requirement section 7): the workflow, the not-run list and the runner helper are read by the
+        harness tests (test_ci.py), so a path under .github/ calls for them by a rule that names the folder."""
+        for path in [".github/workflows/main.yml", ".github/not-run.json", ".github/ci"]:
+            with self.subTest(path=path):
+                answer = decide([path])
+                self.assertIn("harness", answer)
+                rules = [re.sub(r" \(\d+ paths?, e\.g\. .*\)$", "", why) for why in answer["harness"]]
+                self.assertFalse(any(r.startswith("the rules do not know") for r in rules), rules)
+                self.assertTrue(any(".github/" in r for r in rules), rules)
+
     def test_unknown_path_calls_for_every_module_and_is_named(self):
-        for path in ["AGENTS.md", "LICENSE", ".gitignore", ".github/a.yml", "issues/README.md",
+        for path in ["AGENTS.md", "LICENSE", ".gitignore", ".githubx/a.yml", "issues/README.md",
                      "issues/things-that-do-not-work/a.txt", "studio", "enginex/a.rs", ".pm/binx/a"]:
             with self.subTest(path=path):
                 answer = decide([path])
