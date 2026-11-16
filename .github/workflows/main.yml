@@ -92,14 +92,14 @@ jobs:
         working-directory: studio
         run: node_modules/.bin/playwright install --with-deps chromium
 
-      # The emulator writes its files as its image's user; on Docker Engine on Linux the runner's user can read
-      # them only when that is the runner's uid, so the image is rebuilt with it (removed by issue #55).
+      # The emulator runs as the owner of this folder (infra/aws-emulator/entrypoint.sh); made here so that it is
+      # the runner's and not root's, which Docker Engine would make it.
       - name: emulator image
         timeout-minutes: 15
         run: |
           mkdir -p "$HOME/.aws/emulator"
+          echo "runner uid $(id -u)"
           docker compose -f infra/aws-emulator/docker-compose.yml build
-          printf 'FROM aws-emulator\nUSER %s\n' "$(id -u)" | docker build --tag aws-emulator -
 
       - name: engine-fmt
         if: ${{ !cancelled() }}
