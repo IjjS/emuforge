@@ -22,7 +22,7 @@ name: main
 
 on:
   push:
-    branches: [main, feat/53-h2]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
