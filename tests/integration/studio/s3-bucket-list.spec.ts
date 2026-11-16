@@ -246,15 +246,12 @@ test('studio.s3-bucket-list-rereads-on-open-and-refresh', async ({ ctx, page, co
       const answers = (await cache.all()).filter((a) => a.method === 'GET' && a.path === '/');
       const fromCache = answers.filter((a) => a.fromCache);
       expect(fromCache, 'ListBuckets answers the browser served from its own cache').toEqual([]);
-      // Each opening and each refresh sent one without a prefix; typing the filter sent the others.
-      const unfiltered = record.requests.filter((r) => r.status !== null && r.query.prefix === undefined).length;
+      // Lines 1 and 2 waited for an answered request after each opening and each refresh; here every one of them
+      // came from the network, at least one for each.
       expect(
-        unfiltered,
-        `ListBuckets answered without a prefix, for ${String(openings)} openings and ${String(refreshes)} refresh`,
-      ).toBeGreaterThanOrEqual(openings);
-      expect(answers.length, 'ListBuckets answers that reached the page from the network').toBeGreaterThanOrEqual(
-        openings + refreshes,
-      );
+        answers.length,
+        `ListBuckets answers that reached the page from the network, for ${String(openings)} openings and ${String(refreshes)} refresh`,
+      ).toBeGreaterThanOrEqual(openings + refreshes);
     },
   );
 

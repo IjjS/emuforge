@@ -198,6 +198,7 @@ test('studio.s3-bucket-list-pages-follow-the-emulator', async ({ ctx, page }) =>
         'localStorage keys but emuforge.studio.language',
       ).toEqual([]);
       expect(storage.session, 'sessionStorage').toEqual([]);
+      expect(storage.databases, 'IndexedDB databases').toEqual([]);
       expect(storage.rows, 'IndexedDB rows').toEqual([]);
       const values = [...storage.local, ...storage.session].map(([k, v]) => `${k}=${v}`).concat(storage.rows);
       expect(
