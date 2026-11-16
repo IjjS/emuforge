@@ -1,9 +1,11 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { useState } from 'react';
+import { useState, useSyncExternalStore } from 'react';
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { CheckResult } from '../../../lib/engine/engine-client';
+import type { AreaConnection } from './components/emulator-line';
 import AwsArea from './index';
 import { AREA_ROOT_CLASS } from './styles/root-class';
 
@@ -86,12 +88,46 @@ class ColourScheme {
   }
 }
 
+/** The connection Studio hands the area, as a test sets it; each change re-renders the area as Studio's frame does. */
+class Connection {
+  value: AreaConnection = { result: undefined, engineOrigin: undefined };
+  private readonly listeners = new Set<() => void>();
+
+  readonly subscribe = (listener: () => void) => {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  };
+
+  readonly get = () => this.value;
+
+  set(value: AreaConnection) {
+    this.value = value;
+    act(() => {
+      for (const listener of this.listeners) {
+        listener();
+      }
+    });
+  }
+}
+
+const ENGINE_ORIGIN = 'http://127.0.0.1:8297';
+
+/** A connected answer for the emulator on `port`, as the engine client maps it. */
+function connectedAt(port: number): CheckResult {
+  return { kind: 'connected', checkedAt: Date.now(), emulator: { port, endpoint: `https://127.0.0.1:${String(port)}` } };
+}
+
+let connection: Connection;
 let scheme: ColourScheme;
 let titles: string[];
 /** The function the area named last to focus its content target; `null` while it names none. */
 let focusContent: (() => void) | null;
 
 beforeEach(() => {
+  connection = new Connection();
+  connection.value = { result: connectedAt(9297), engineOrigin: ENGINE_ORIGIN };
   scheme = new ColourScheme();
   vi.stubGlobal('matchMedia', scheme.matchMedia);
   titles = [];
@@ -108,11 +144,12 @@ function handleContentTarget(focus: (() => void) | null) {
 
 /**
  * The area with Studio's props, as Studio's frame hands them: the route changes counted as Studio counts them, one
- * more each time the path changes, none on the first render.
+ * more each time the path changes, none on the first render; the connection as the test sets it, connected by default.
  */
 function AreaWithStudioProps() {
   const { pathname } = useLocation();
   const [seen, setSeen] = useState({ pathname, changes: 0 });
+  const current = useSyncExternalStore(connection.subscribe, connection.get);
   let changes = seen.changes;
   if (seen.pathname !== pathname) {
     changes += 1;
@@ -124,6 +161,7 @@ function AreaWithStudioProps() {
       onPageTitle={handlePageTitle}
       onContentTarget={handleContentTarget}
       routeChanges={changes}
+      connection={current}
     />
   );
 }

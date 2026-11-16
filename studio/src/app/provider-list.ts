@@ -1,6 +1,19 @@
 import type { ComponentType } from 'react';
 
+import type { CheckResult } from '../lib/engine/engine-client';
 import { AWS_PROVIDER } from '../providers/aws/provider';
+
+/**
+ * The connection Studio hands an open area: a plain value, which the area reads and never asks for itself. Studio's
+ * frame checks the engine's connection status as Home does, when a page of the area opens and again 5 seconds after
+ * each answer, for as long as a page of the area is open.
+ */
+export interface ProviderConnection {
+  /** The answer to the latest completed check; `undefined` before the first answer. */
+  result: CheckResult | undefined;
+  /** The engine's address the page is configured with, `http://127.0.0.1:<engine port>`; `undefined` until known. */
+  engineOrigin: string | undefined;
+}
 
 /** What Studio hands a provider's area when it renders it. */
 export interface ProviderAreaProps {
@@ -28,6 +41,8 @@ export interface ProviderAreaProps {
    * never moves focus while the count is `0`.
    */
   routeChanges: number;
+  /** The engine's connection status, as Studio's frame last read it. */
+  connection: ProviderConnection;
 }
 
 /** A service of a provider, as Home lists it. */

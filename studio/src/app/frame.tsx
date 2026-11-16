@@ -15,14 +15,18 @@ import {
   type ReactNode,
   type RefObject,
 } from 'react';
+import { QueryClientProvider } from '@tanstack/react-query';
 import { Link, Outlet, useLocation } from 'react-router';
+
+import { useConnectionCheck } from '../features/home/use-connection-check';
 
 import type { MessageKey } from '../i18n/catalogue';
 import { useLanguage } from '../i18n/language-context';
 import { BrandTile } from '../ui/brand-tile';
 import { LanguageControl } from '../ui/language-control';
 import { PAGE_TITLE_ID } from '../ui/page-head';
-import { PROVIDERS, type ProviderAreaProps } from './provider-list';
+import { PROVIDERS, type ProviderAreaProps, type ProviderConnection } from './provider-list';
+import { createQueryClient } from './query-client';
 
 export const STUDIO_NAME = 'EmuForge Studio';
 
@@ -192,6 +196,21 @@ export function StudioPage({ title, children }: StudioPageProps) {
   );
 }
 
+/** The connection before its first answer. */
+const NO_ANSWER: ProviderConnection = { result: undefined, engineOrigin: undefined };
+
+/**
+ * Runs Home's connection check for as long as it is mounted and hands each answer up as a plain value. It renders
+ * nothing.
+ */
+function ConnectionCheck({ onConnection }: { onConnection: (connection: ProviderConnection) => void }) {
+  const { result, engineOrigin } = useConnectionCheck();
+  useEffect(() => {
+    onConnection({ result, engineOrigin });
+  }, [onConnection, result, engineOrigin]);
+  return null;
+}
+
 interface ProviderPageProps {
   /** The provider's area, loaded on first render (`React.lazy` of the provider's `loadArea`). */
   area: ComponentType<ProviderAreaProps>;
@@ -201,8 +220,16 @@ interface ProviderPageProps {
  * Everything under a provider's segment: its area, below the bar, in a holder that is layout only. The area brings
  * its own `main` landmark, tells the page's title, from which the document title is made, and names its content
  * target; it moves focus to that target itself on a route change.
+ *
+ * It checks the engine's connection status as Home does, once when a page of the area opens and again 5 seconds after
+ * each answer, and hands the latest answer to the area (issue 45, R4.4). It stays mounted across the area's route
+ * changes, so the answer and the rhythm go on. The check runs in a query client of its own, made for this mount: Home
+ * and the area use the same check under the same key, and Home, mounted in the same render that removes the area,
+ * would otherwise be handed the area's last answer instead of checking afresh.
  */
 export function ProviderPage({ area: Area }: ProviderPageProps) {
+  const [checks] = useState(createQueryClient);
+  const [connection, setConnection] = useState(NO_ANSWER);
   // Unknown until the area, once loaded, tells its page's title.
   const [title, setTitle] = useState<string>();
   useDocumentTitle(title);
@@ -221,12 +248,16 @@ export function ProviderPage({ area: Area }: ProviderPageProps) {
   );
   return (
     <div className="st-area">
+      <QueryClientProvider client={checks}>
+        <ConnectionCheck onConnection={setConnection} />
+      </QueryClientProvider>
       <Suspense fallback={null}>
         <Area
           headerSelector={`#${BAR_ID}`}
           onPageTitle={setTitle}
           onContentTarget={handleContentTarget}
           routeChanges={routeChanges}
+          connection={connection}
         />
       </Suspense>
     </div>
