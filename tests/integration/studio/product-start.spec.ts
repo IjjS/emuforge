@@ -25,7 +25,6 @@ import {
   readEmulatorFiles,
   requireRunEmulator,
   test,
-  type Ctx,
 } from './support';
 import { connectionView } from './support/home';
 import {
