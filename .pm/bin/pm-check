@@ -1,10 +1,22 @@
 #!/usr/bin/env -S python3 -I
 """Run the checks of a checkout and record the result. The record, not an agent's word, is the evidence.
 
-  pm-check <worktree|.> [--only engine|studio|integration|harness]... [--no-retry] [--list]
+  pm-check <worktree|.> [--full | --only engine|studio|integration|harness...] [--no-retry] [--list]
   pm-check <worktree|.> --stop
 
-Runs, for each module that exists in the checkout:
+Runs the steps of the modules the checkout's changes call for, as pm-scope decides them (the same code,
+_pmscope.py): the paths that differ between the checkout's commit and its merge base with main, plus every
+uncommitted change, each decided by the first rule it matches. Before the first step it prints the decision: one
+line with the kind of run and the modules called for, one line per called-for module with the reason. Kinds:
+  diff   the branch has commits of its own: what its paths call for (a path no rule knows: every module)
+  main   the head is main's commit or an ancestor (the main checkout, a new branch): the product modules
+         engine, studio and integration; the harness tests are left out
+  full   --full, or the changes cannot be read (no branch main, no commit shared with main, git failed):
+         every module
+  only   --only: the named modules; a partial run, which never passes
+--full runs every module whatever changed; it cannot be combined with --only.
+A step of a module that exists and was not called for is recorded "not-needed" (0 s, no log); it never counts as
+passed. The steps, for each module that exists in the checkout:
   engine       cargo fmt --all --check; cargo clippy --workspace --all-targets -- -D warnings; cargo test --workspace
   studio       bun run typecheck; lint; format:check; test:unit --fsModuleCache=false; build
                (a check's result is evidence about the commit, and Vitest's cache of transformed modules is
@@ -12,12 +24,15 @@ Runs, for each module that exists in the checkout:
   integration  tests/integration/run (the suite's own entry point), given the worktree's engine and emulator ports
   harness      .pm/bin/tests/run (unittest discovery of the .pm/bin tools' tests)
 A module whose manifest is missing (engine/Cargo.toml, studio/package.json, tests/integration/run,
-.pm/bin/tests/run) is reported as "absent" and does not count as a failure. A checkout where every module is
-absent passes on a clean tree.
+.pm/bin/tests/run) is reported as "absent" and does not count as a failure, called for or not. A checkout where
+every module is absent, or where nothing was called for (only issue files changed), passes on a clean tree.
 Each step's output goes to <checkout>/output/logs/check-<step>.log. The summary goes to
-<checkout>/output/checks/last.json: {commit, dirty, passed, failed: [steps], steps: [{name, status, seconds, log}]}.
-pm-merge refuses a unit whose last.json is not a pass on the branch's current commit.
-Exit code 0 only when every step that ran passed and the tree was clean.
+<checkout>/output/checks/last.json: {commit, dirty, full, passed, failed: [steps], scope, steps: [{name, module,
+status, seconds, log}]}. `scope` is what `pm-scope <checkout> --json` prints: kind, reason, main's commit, the
+merge base, the number of changed paths, and per module whether it was called for and why. `full` is true only
+when every module was called for. pm-merge refuses a unit whose last.json is not a pass on the branch's current
+commit, or whose steps do not cover every module the branch's changes call for (it decides that again itself).
+Exit code 0 only when no step that ran failed, the tree was clean and the run was not --only.
 
 Intermittent failures. A test step that fails (engine-test, studio-unit, integration, harness-test) is run once
 more. When the second run passes, the step is recorded as "flaky": the run still passes, the first run's log is
@@ -27,8 +42,8 @@ that fails twice is failed. Format, lint, type and build steps are never retried
 
 Load. At most two pm-check runs that build or test the product (engine, studio, integration) run at the same
 time across all worktrees; a third waits for a slot (<root>/.pm/run/check-slots/). Before its first step such a
-run also waits, up to five minutes, for the CPU to drop under 90%. Both are printed. A harness-only run does not
-wait.
+run also waits, up to five minutes, for the CPU to drop under 90%. Both are printed. A run that calls for no
+product module that exists (harness only, or nothing) does not wait.
 
 Processes. Each step runs in its own process group, recorded in <checkout>/output/checks/running.json while the
 run lasts. `pm-check <worktree> --stop` ends that worktree's run and nothing else: SIGTERM to the recorded group
@@ -47,6 +62,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _pmlib import LIMITS, ROOT, RUN, cpu_pct, now
+from _pmscope import called, lines, scope
 
 STEPS = {
     "engine": ("engine", "Cargo.toml", [
@@ -185,8 +201,11 @@ def run_step(cmd, cwd, env, log, record, name):
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("checkout"); p.add_argument("--only", action="append", choices=list(STEPS)); p.add_argument("--list", action="store_true")
+    p.add_argument("--full", action="store_true", help="run every module whatever changed")
     p.add_argument("--no-retry", action="store_true"); p.add_argument("--stop", action="store_true")
     a = p.parse_args()
+    if a.full and a.only:
+        p.error("--full and --only cannot be combined")
     co = pathlib.Path(a.checkout).resolve()
     if a.stop:
         stop(co)
@@ -208,29 +227,37 @@ def main():
     record = out / "running.json"
     for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(s, on_signal)
+    sc = scope(co, full=a.full, only=a.only)
+    print("\n".join(lines(sc)), flush=True)
+    calls = called(sc)
     mods = a.only or list(STEPS)
     cpu = None
     slot = None
-    if any(m in HEAVY and (co / STEPS[m][0] / STEPS[m][1]).exists() for m in mods):
+    if any(m in HEAVY and (co / STEPS[m][0] / STEPS[m][1]).exists() for m in calls):
         slot = take_slot()
         cpu = wait_for_cpu()
     results, flaky = [], []
     try:
-        results, flaky = run_all(a, co, mods, env, logs, record, commit)
+        results, flaky = run_all(a, co, mods, calls, env, logs, record, commit)
     finally:
         record.unlink(missing_ok=True)
         if slot:
             slot.close()
-    finish(a, co, out, commit, dirty, ports, results, flaky, cpu)
+    finish(co, out, commit, dirty, ports, sc, results, flaky, cpu)
 
 
-def run_all(a, co, mods, env, logs, record, commit):
+def run_all(a, co, mods, calls, env, logs, record, commit):
     results, flaky = [], []
     for mod in mods:
         sub, manifest, steps = STEPS[mod]
         if not (co / sub / manifest).exists():
-            results.append(dict(name=mod, status="absent", seconds=0, log=None))
+            results.append(dict(name=mod, module=mod, status="absent", seconds=0, log=None))
             print(f"  {mod:18} absent")
+            continue
+        if mod not in calls:
+            for name, _ in steps:
+                results.append(dict(name=name, module=mod, status="not-needed", seconds=0, log=None))
+                print(f"  {name:18} not needed", flush=True)
             continue
         for name, cmd in steps:
             log = logs / f"check-{name}.log"
@@ -243,7 +270,7 @@ def run_all(a, co, mods, env, logs, record, commit):
                 print(f"  {name:18} failed once; running it again (first log: {first})", flush=True)
                 code = run_step(cmd, str(co / sub), env, log, record, name)
             status = "error" if code == 127 else "failed" if code != 0 else "flaky" if first else "passed"
-            results.append(dict(name=name, status=status, seconds=round(time.time() - t, 1), log=str(log)))
+            results.append(dict(name=name, module=mod, status=status, seconds=round(time.time() - t, 1), log=str(log)))
             if first:
                 results[-1]["first_log"] = str(first)
             if status == "flaky":
@@ -254,25 +281,29 @@ def run_all(a, co, mods, env, logs, record, commit):
     return results, flaky
 
 
-def finish(a, co, out, commit, dirty, ports, results, flaky, cpu):
+def finish(co, out, commit, dirty, ports, sc, results, flaky, cpu):
     failed = [r["name"] for r in results if r["status"] in ("failed", "error")]
-    ran = [r for r in results if r["status"] != "absent"]
-    full = not a.only
-    passed = not failed and not dirty and full  # a checkout with no module to check (harness-only work) passes on a clean tree
+    present = [r for r in results if r["status"] != "absent"]
+    ran = [r for r in present if r["status"] != "not-needed"]
+    full = sc["kind"] == "full"
+    partial = sc["kind"] == "only"
+    passed = not failed and not dirty and not partial  # a run that called for nothing passes on a clean tree
     summary = dict(at=now(), commit=commit, dirty=dirty, full=full, passed=passed, failed=failed, flaky=flaky,
-                   cpu_at_start=cpu, ports=ports, steps=results)
+                   cpu_at_start=cpu, ports=ports, scope=sc, steps=results)
     (out / "last.json").write_text(json.dumps(summary, indent=1))
     (out / f"{now()[:19].replace(':', '')}.json").write_text(json.dumps(summary, indent=1))
     notes = []
     if dirty:
         notes.append("uncommitted changes: commit, then run again")
-    if not full:
+    if partial:
         notes.append("partial run (--only): not accepted by pm-merge")
-    if not ran:
+    if not present:
         notes.append("nothing to run in this checkout")
+    elif not ran:
+        notes.append("nothing was called for")
     if flaky:
         notes.append(f"flaky (failed once, passed on the second run): {', '.join(flaky)}; recorded in .pm/run/flakes.jsonl")
-    print(f"{'PASSED' if passed else 'NOT PASSED'} commit={commit[:9]} failed={failed or '-'} {'; '.join(notes)}")
+    print(f"{'PASSED' if passed else 'NOT PASSED'} commit={commit[:9]} scope={sc['kind']} failed={failed or '-'} {'; '.join(notes)}")
     sys.exit(0 if passed else 1)
 
 
