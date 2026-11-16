@@ -117,7 +117,7 @@ HERDR = '#!/bin/sh\necho \'{"result": {"agents": [], "panes": [], "tabs": []}}\'
 
 def exact(name):
     """A pattern for a branch or worktree name that a longer name starting with it does not match."""
-    return re.compile(re.escape(str(name)) + r"(?![\w./-])")
+    return re.compile(re.escape(str(name)) + r"(?![\w/-])")
 
 
 def has(line, word):
