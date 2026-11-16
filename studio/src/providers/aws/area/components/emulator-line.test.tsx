@@ -1,11 +1,12 @@
+import type { ButtonProps } from '@cloudscape-design/components/button';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
-import { useSyncExternalStore } from 'react';
+import { createRef, useSyncExternalStore } from 'react';
 import { createMemoryRouter, RouterProvider } from 'react-router';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import type { CheckResult } from '../../../../lib/engine/engine-client';
-import { EmulatorLine, type AreaConnection } from './emulator-line';
+import { EmulatorLine, type AboutControl, type AreaConnection } from './emulator-line';
 
 const LABEL = 'Local emulator, not AWS';
 const ENGINE_ORIGIN = 'http://127.0.0.1:8297';
@@ -334,5 +335,58 @@ describe('the emulator line', () => {
     expect(followed).toBe(false);
     expect(router.state.location.pathname).toBe('/');
     expect(screen.getByText("Studio's Home")).toBeInTheDocument();
+  });
+});
+
+describe("the emulator line's (i) control (issue 45, R5.4)", () => {
+  const ABOUT = 'About the local emulator';
+
+  /** The line on `/aws` inside a router, with the (i) control of a page that carries the notice, or without. */
+  function openWith(about: AboutControl | undefined) {
+    const aboutRef = createRef<ButtonProps.Ref>();
+    function LineWithAbout() {
+      const current = useSyncExternalStore(connection.subscribe, connection.get);
+      return <EmulatorLine connection={current} about={about} aboutRef={aboutRef} />;
+    }
+    const router = createMemoryRouter([{ path: '/aws/*', element: <LineWithAbout /> }], {
+      initialEntries: ['/aws'],
+    });
+    render(<RouterProvider router={router} />);
+  }
+
+  function aboutControl(): AboutControl {
+    return { open: true, noticeId: 'the-notice', onToggle: () => undefined };
+  }
+
+  it.each([
+    ['connected', () => connected(9297)],
+    ['not started', () => emulatorDown('not_started', 9411)],
+  ])('%s, on a page without resources: no "About the local emulator" control', (_name, result) => {
+    connection.value = { result: result(), engineOrigin: ENGINE_ORIGIN };
+    openWith(undefined);
+
+    expect(within(line()).queryByRole('button', { name: ABOUT })).toBeNull();
+    expect(screen.queryByRole('button')).toBeNull();
+  });
+
+  it('connected, on a page with resources: the line ends with the control, and there is no link', () => {
+    connection.value = { result: connected(9297), engineOrigin: ENGINE_ORIGIN };
+    openWith(aboutControl());
+
+    const about = within(line()).getByRole('button', { name: ABOUT });
+    const indicator = createWrapper(line()).findStatusIndicator()?.getElement() as HTMLElement;
+    expect(follows(indicator, about)).toBe(true);
+    expect(connectionStatusLink()).toBeNull();
+    expect(about).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('not started, on a page with resources: the control comes after "Connection status", the last of the line', () => {
+    connection.value = { result: emulatorDown('not_started', 9411), engineOrigin: ENGINE_ORIGIN };
+    openWith(aboutControl());
+
+    const about = within(line()).getByRole('button', { name: ABOUT });
+    expect(follows(connectionStatusLink() as HTMLElement, about)).toBe(true);
+    const controls = [...line().querySelectorAll('a[href], button')];
+    expect(controls.at(-1)).toBe(about);
   });
 });
