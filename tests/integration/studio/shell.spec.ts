@@ -4,7 +4,7 @@
 // `studio.old-root-service-paths-show-page-not-found` and `studio.aws-area-unknown-path-shows-page-not-found`
 // (test-criteria.md, issue 16, Integration checks).
 
-import { expect, startStack, test } from './support';
+import { expect, NO_SCREEN_SERVICE, startStack, test } from './support';
 import {
   ACTION,
   addressOf,
@@ -21,7 +21,7 @@ import {
 } from './support/frame';
 import { Lines } from './support/lines';
 
-const S3 = 'Amazon Simple Storage Service';
+const SERVICE = NO_SCREEN_SERVICE.label;
 const DYNAMODB = 'Amazon DynamoDB';
 
 test('studio.service-routes-say-no-screen-yet', async ({ ctx, page }) => {
@@ -29,22 +29,22 @@ test('studio.service-routes-say-no-screen-yet', async ({ ctx, page }) => {
   const lines = new Lines(ctx);
 
   await lines.line(
-    '(changed) On `/`, choose "Amazon Simple Storage Service" in Home\'s "Providers" section → the "no screen yet" page for it inside the AWS area, the address is `/aws/s3`',
+    '(changed) On `/`, choose "Amazon Kinesis" in Home\'s "Providers" section → the "no screen yet" page for it inside the AWS area, the address is `/aws/kinesis`',
     async () => {
       await page.goto('/');
       await expectHome(page);
-      await providersSection(page).getByRole('link', { name: S3, exact: true }).click(ACTION);
-      await expectNoScreenYet(page, S3, '/aws/s3');
+      await providersSection(page).getByRole('link', { name: SERVICE, exact: true }).click(ACTION);
+      await expectNoScreenYet(page, SERVICE, NO_SCREEN_SERVICE.path);
     },
   );
 
   await lines.line(
-    '(changed) In the AWS area\'s side navigation, choose "Amazon Simple Storage Service" → its "no screen yet" page, the address is `/aws/s3` (open `/aws/dynamodb` first)',
+    '(changed) In the AWS area\'s side navigation, choose "Amazon Kinesis" → its "no screen yet" page, the address is `/aws/kinesis` (open `/aws/dynamodb` first)',
     async () => {
       await page.goto('/aws/dynamodb');
       await expectNoScreenYet(page, DYNAMODB, '/aws/dynamodb');
-      await page.locator(SIDE_NAVIGATION).getByRole('link', { name: S3, exact: true }).click(ACTION);
-      await expectNoScreenYet(page, S3, '/aws/s3');
+      await page.locator(SIDE_NAVIGATION).getByRole('link', { name: SERVICE, exact: true }).click(ACTION);
+      await expectNoScreenYet(page, SERVICE, NO_SCREEN_SERVICE.path);
     },
   );
 
@@ -62,7 +62,7 @@ test('studio.service-routes-say-no-screen-yet', async ({ ctx, page }) => {
     'Go back → the previous page is shown again; go forward → the later page again; choose "Go to Home" → Home',
     async () => {
       await page.goBack();
-      await expectNoScreenYet(page, S3, '/aws/s3');
+      await expectNoScreenYet(page, SERVICE, NO_SCREEN_SERVICE.path);
       await page.goForward();
       await expectNoScreenYet(page, DYNAMODB, '/aws/dynamodb/tables');
       await page.getByRole('link', { name: 'Go to Home', exact: true }).click(ACTION);

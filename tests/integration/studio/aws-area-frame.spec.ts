@@ -12,7 +12,7 @@
 
 import type { Page, Request } from '@playwright/test';
 
-import { expect, startStack, test } from './support';
+import { expect, NO_SCREEN_SENTENCE, NO_SCREEN_SERVICE, startStack, test } from './support';
 import {
   ABOUT_CONTROL,
   areaImages,
@@ -51,18 +51,16 @@ import { connectionView, markPage, stillSamePage } from './support/home';
 import { Lines } from './support/lines';
 
 const AWS = 'Amazon Web Services';
-const S3 = 'Amazon Simple Storage Service';
 const NOT_FOUND = 'Page not found';
 const GO_HOME = 'Go to Home';
 const SKIP = 'Skip to content';
-const NO_SCREEN_S3 = `Studio has no screen for ${S3} yet.`;
 const INDEX_DESCRIPTION =
   'EmuForge Studio works with a local emulator of AWS services. It is a stand-alone tool, not the AWS console and not an AWS feature.';
 
 /** The area's three own pages, each with its `h1`. */
 const PAGES = [
   { path: '/aws', h1: AWS },
-  { path: '/aws/s3', h1: S3 },
+  { path: NO_SCREEN_SERVICE.path, h1: NO_SCREEN_SERVICE.label },
   { path: '/aws/does-not-exist', h1: NOT_FOUND },
 ];
 
@@ -93,10 +91,12 @@ test('studio.aws-area-breadcrumbs-start-at-emuforge', async ({ ctx, page }) => {
   });
 
   await lines.line(
-    'Open `/aws/s3` → the crumbs are "EmuForge", "AWS", "S3"; open `/aws/dynamodb/tables/orders` → "EmuForge", "AWS", "DynamoDB"',
+    'Open `/aws/kinesis` → the crumbs are "EmuForge", "AWS", "Kinesis"; open `/aws/dynamodb/tables/orders` → "EmuForge", "AWS", "DynamoDB"',
     async () => {
-      await open(page, '/aws/s3', S3);
-      await expect.poll(() => crumbs(page), { message: 'the crumbs on /aws/s3' }).toEqual(['EmuForge', 'AWS', 'S3']);
+      await open(page, NO_SCREEN_SERVICE.path, NO_SCREEN_SERVICE.label);
+      await expect
+        .poll(() => crumbs(page), { message: `the crumbs on ${NO_SCREEN_SERVICE.path}` })
+        .toEqual(['EmuForge', 'AWS', NO_SCREEN_SERVICE.crumb]);
       await open(page, '/aws/dynamodb/tables/orders', 'Amazon DynamoDB');
       await expect
         .poll(() => crumbs(page), { message: 'the crumbs on /aws/dynamodb/tables/orders' })
@@ -115,7 +115,7 @@ test('studio.aws-area-breadcrumbs-start-at-emuforge', async ({ ctx, page }) => {
       const found: string[] = [];
       for (const { path, h1, marked } of [
         { path: '/aws', h1: AWS, marked: 'page' },
-        { path: '/aws/s3', h1: S3, marked: 'true' },
+        { path: NO_SCREEN_SERVICE.path, h1: NO_SCREEN_SERVICE.label, marked: 'true' },
         { path: '/aws/dynamodb/tables/orders', h1: 'Amazon DynamoDB', marked: 'true' },
         { path: '/aws/does-not-exist', h1: NOT_FOUND, marked: 'true' },
       ]) {
@@ -133,9 +133,9 @@ test('studio.aws-area-breadcrumbs-start-at-emuforge', async ({ ctx, page }) => {
   );
 
   await lines.line(
-    'On `/aws/s3`, choose "AWS" in the crumbs → the address is `/aws`, the `h1` is "Amazon Web Services", and the document was not reloaded',
+    'On `/aws/kinesis`, choose "AWS" in the crumbs → the address is `/aws`, the `h1` is "Amazon Web Services", and the document was not reloaded',
     async () => {
-      await open(page, '/aws/s3', S3);
+      await open(page, NO_SCREEN_SERVICE.path, NO_SCREEN_SERVICE.label);
       await markPage(page);
       await crumbLink(page, 'AWS').click(ACTION);
       await expect(page).toHaveURL(addressOf('/aws'));
@@ -145,26 +145,26 @@ test('studio.aws-area-breadcrumbs-start-at-emuforge', async ({ ctx, page }) => {
   );
 
   await lines.line(
-    'On `/aws/s3`, choose "EmuForge" in the crumbs → the address is `/`, Home is shown, focus is on the content target named "Home", the document was not reloaded, and Back returns to `/aws/s3`',
+    'On `/aws/kinesis`, choose "EmuForge" in the crumbs → the address is `/`, Home is shown, focus is on the content target named "Home", the document was not reloaded, and Back returns to `/aws/kinesis`',
     async () => {
-      await open(page, '/aws/s3', S3);
+      await open(page, NO_SCREEN_SERVICE.path, NO_SCREEN_SERVICE.label);
       await markPage(page);
       await crumbLink(page, 'EmuForge').click(ACTION);
       await expectHome(page);
       await expectTarget(page, 'Home', 'Refresh');
       expect(await stillSamePage(page), 'the document was not reloaded').toBe(true);
       await page.goBack();
-      await expect(page).toHaveURL(addressOf('/aws/s3'));
-      await expect(heading(page, S3)).toBeVisible();
+      await expect(page).toHaveURL(addressOf(NO_SCREEN_SERVICE.path));
+      await expect(heading(page, NO_SCREEN_SERVICE.label)).toBeVisible();
     },
   );
 
   await lines.line(
-    'Open `/aws/s3`, at 390 wide → the crumbs can still be reached: opening the breadcrumbs\' collapsed entry lists "EmuForge" and "AWS" — 390 wide',
+    'Open `/aws/kinesis`, at 390 wide → the crumbs can still be reached: opening the breadcrumbs\' collapsed entry lists "EmuForge" and "AWS" — 390 wide',
     async () => {
       await narrow(page);
       try {
-        await open(page, '/aws/s3', S3);
+        await open(page, NO_SCREEN_SERVICE.path, NO_SCREEN_SERVICE.label);
         const reach = await reachableCrumbs(page);
         ctx.log(`crumbs at 390: ${reach.collapsed ? 'collapsed' : 'not collapsed'}, ${JSON.stringify(reach.texts)}`);
         // (provisional, decisions-needed.md) Cloudscape collapses crumbs by width only: when the three fit at 390,
@@ -190,7 +190,7 @@ test('studio.aws-area-emulator-line-shows-connected-endpoint', async ({ ctx, pag
   const connected = connectedAt(stack.emulatorPort);
 
   await lines.line(
-    'Open each of `/aws`, `/aws/s3`, `/aws/does-not-exist` with the emulator running → the emulator line reads "Local emulator, not AWS" and "Connected at `<endpoint>`", where `<endpoint>` is `https://127.0.0.1:` and the port of the run\'s emulator',
+    'Open each of `/aws`, `/aws/kinesis`, `/aws/does-not-exist` with the emulator running → the emulator line reads "Local emulator, not AWS" and "Connected at `<endpoint>`", where `<endpoint>` is `https://127.0.0.1:` and the port of the run\'s emulator',
     async () => {
       for (const p of PAGES) {
         await open(page, p.path, p.h1);
@@ -259,20 +259,20 @@ test('studio.aws-area-emulator-line-shows-connected-endpoint', async ({ ctx, pag
     },
   );
 
-  await lines.line('Reload `/aws/s3` → the line shows "Connected at `<endpoint>`" again', async () => {
-    await open(page, '/aws/s3', S3);
+  await lines.line('Reload `/aws/kinesis` → the line shows "Connected at `<endpoint>`" again', async () => {
+    await open(page, NO_SCREEN_SERVICE.path, NO_SCREEN_SERVICE.label);
     await expectLine(page, connected);
     await page.reload();
-    await expect(heading(page, S3)).toBeVisible();
+    await expect(heading(page, NO_SCREEN_SERVICE.label)).toBeVisible();
     await expectLine(page, connected);
   });
 
   await lines.line(
-    "Open `/aws/s3` at 390 wide with the side navigation closed → the line is visible without opening anything and its whole text is inside the page's width — 390 wide",
+    "Open `/aws/kinesis` at 390 wide with the side navigation closed → the line is visible without opening anything and its whole text is inside the page's width — 390 wide",
     async () => {
       await narrow(page);
       try {
-        await open(page, '/aws/s3', S3);
+        await open(page, NO_SCREEN_SERVICE.path, NO_SCREEN_SERVICE.label);
         await expect(
           page.locator(SIDE_NAVIGATION).filter({ visible: true }),
           'the side navigation is closed',
@@ -280,7 +280,7 @@ test('studio.aws-area-emulator-line-shows-connected-endpoint', async ({ ctx, pag
         await expectLine(page, connected);
         await expect(emulatorLine(page), 'the emulator line').toBeVisible();
         const width = await lineWidth(page);
-        ctx.log(`/aws/s3 at 390: ${JSON.stringify(width)}`);
+        ctx.log(`${NO_SCREEN_SERVICE.path} at 390: ${JSON.stringify(width)}`);
         expect(width?.outside ?? ['no emulator line'], "the line's text inside the page's width").toEqual([]);
       } finally {
         await wide(page);
@@ -300,22 +300,22 @@ test('studio.aws-area-emulator-line-follows-emulator-stop-and-start', async ({ c
   const link = connectionStatusLink(page);
 
   await lines.line(
-    'Open `/aws/s3` with the check\'s own emulator running → "Connected at `<endpoint>`" with that emulator\'s port',
+    'Open `/aws/kinesis` with the check\'s own emulator running → "Connected at `<endpoint>`" with that emulator\'s port',
     async () => {
-      await open(page, '/aws/s3', S3);
+      await open(page, NO_SCREEN_SERVICE.path, NO_SCREEN_SERVICE.label);
       await expectLine(page, connectedAt(emulator.port));
     },
   );
   await markPage(page);
 
   await lines.line(
-    'Stop that emulator while the page stays open → without a reload the line reads "Not started on port `<port>`" and shows the link "Connection status"; the `h1` and "Studio has no screen for Amazon Simple Storage Service yet." are still shown',
+    'Stop that emulator while the page stays open → without a reload the line reads "Not started on port `<port>`" and shows the link "Connection status"; the `h1` and "Studio has no screen for Amazon Kinesis yet." are still shown',
     async () => {
       await emulator.stop();
       await expectLine(page, notStartedOn(emulator.port));
       await expect(link, `the line's "${CONNECTION_STATUS}" link`).toBeVisible();
-      await expect(heading(page, S3)).toBeVisible();
-      await expect(page.getByRole('main')).toContainText(NO_SCREEN_S3);
+      await expect(heading(page, NO_SCREEN_SERVICE.label)).toBeVisible();
+      await expect(page.getByRole('main')).toContainText(NO_SCREEN_SENTENCE);
       expect(await stillSamePage(page), 'the document was not reloaded').toBe(true);
     },
   );
@@ -398,10 +398,12 @@ test('studio.aws-area-emulator-line-shows-engine-unreachable', async ({ ctx, pag
   const fresh = await context.newPage();
 
   await lines.line(
-    'Open `/aws/s3` in a fresh page while the engine is stopped → the page still shows its `h1`, crumbs and "Go to Home", and the line reads "The EmuForge engine at `<engine origin>` is not answering"',
+    'Open `/aws/kinesis` in a fresh page while the engine is stopped → the page still shows its `h1`, crumbs and "Go to Home", and the line reads "The EmuForge engine at `<engine origin>` is not answering"',
     async () => {
-      await open(fresh, '/aws/s3', S3);
-      await expect.poll(() => crumbs(fresh), { message: 'the crumbs' }).toEqual(['EmuForge', 'AWS', 'S3']);
+      await open(fresh, NO_SCREEN_SERVICE.path, NO_SCREEN_SERVICE.label);
+      await expect
+        .poll(() => crumbs(fresh), { message: 'the crumbs' })
+        .toEqual(['EmuForge', 'AWS', NO_SCREEN_SERVICE.crumb]);
       await expect(fresh.getByRole('link', { name: GO_HOME, exact: true })).toBeVisible();
       await expectLine(fresh, unreachable);
     },
@@ -414,11 +416,11 @@ test('studio.aws-area-emulator-line-shows-engine-unreachable', async ({ ctx, pag
       await narrow(fresh);
       for (const colorScheme of ['light', 'dark'] as const) {
         await fresh.emulateMedia({ colorScheme });
-        await open(fresh, '/aws/s3', S3);
+        await open(fresh, NO_SCREEN_SERVICE.path, NO_SCREEN_SERVICE.label);
         await expectLine(fresh, unreachable);
         await expect(connectionStatusLink(fresh)).toBeVisible();
         const width = await lineWidth(fresh);
-        ctx.log(`/aws/s3, engine stopped, 390, ${colorScheme}: ${JSON.stringify(width)}`);
+        ctx.log(`${NO_SCREEN_SERVICE.path}, engine stopped, 390, ${colorScheme}: ${JSON.stringify(width)}`);
         if (width === null) {
           found.push(`${colorScheme}: no emulator line`);
           continue;
@@ -479,12 +481,12 @@ test('studio.aws-area-emulator-line-keyboard-and-layout', async ({ ctx, page }) 
   );
 
   await lines.line(
-    'With the emulator stopped, fresh load of `/aws/s3`, Tab on from the current-page crumb "S3" → the next stop is "Connection status", with a visible focus indicator, and the one after is "Go to Home" (changed, issue 45 PM decision)',
+    'With the emulator stopped, fresh load of `/aws/kinesis`, Tab on from the current-page crumb "Kinesis" → the next stop is "Connection status", with a visible focus indicator, and the one after is "Go to Home" (changed, issue 45 PM decision)',
     async () => {
       await emulatorIs('stopped');
-      await open(page, '/aws/s3', S3);
+      await open(page, NO_SCREEN_SERVICE.path, NO_SCREEN_SERVICE.label);
       await expectLine(page, status());
-      await expect(currentCrumb(page), 'the current-page crumb').toHaveText('S3');
+      await expect(currentCrumb(page), 'the current-page crumb').toHaveText(NO_SCREEN_SERVICE.crumb);
       await currentCrumb(page).focus(ACTION);
       const stop = await pressTab(page);
       expect(contentStopProblems(stop, CONNECTION_STATUS), `the next Tab reaches "${CONNECTION_STATUS}"`).toEqual([]);
@@ -496,21 +498,21 @@ test('studio.aws-area-emulator-line-keyboard-and-layout', async ({ ctx, page }) 
   );
 
   await lines.line(
-    'With the emulator stopped, fresh load of `/aws/s3`, "Skip to content", Enter → focus is on the content target named "Amazon Simple Storage Service", and the next Tab reaches "Connection status"',
+    'With the emulator stopped, fresh load of `/aws/kinesis`, "Skip to content", Enter → focus is on the content target named "Amazon Kinesis", and the next Tab reaches "Connection status"',
     async () => {
       await emulatorIs('stopped');
-      await open(page, '/aws/s3', S3);
+      await open(page, NO_SCREEN_SERVICE.path, NO_SCREEN_SERVICE.label);
       await expectLine(page, status());
       const skip = await pressTab(page);
       expect(skip?.name, `the first Tab reaches "${SKIP}" (it reached ${describeStop(skip)})`).toBe(SKIP);
       await page.keyboard.press('Enter');
-      await expectTarget(page, S3, CONNECTION_STATUS);
+      await expectTarget(page, NO_SCREEN_SERVICE.label, CONNECTION_STATUS);
       await expectNextContentStop(page, CONNECTION_STATUS);
     },
   );
 
   await lines.line(
-    "Each of `/aws`, `/aws/s3`, `/aws/does-not-exist`, connected and with the emulator stopped → the page does not scroll sideways, and every part of the emulator line is inside the page's width — 1280 and 390 wide, light and dark",
+    "Each of `/aws`, `/aws/kinesis`, `/aws/does-not-exist`, connected and with the emulator stopped → the page does not scroll sideways, and every part of the emulator line is inside the page's width — 1280 and 390 wide, light and dark",
     async () => {
       const found: string[] = [];
       for (const state of ['running', 'stopped'] as const) {
@@ -588,9 +590,9 @@ test('studio.aws-area-shows-no-image', async ({ ctx, page, context }) => {
     if (isImageRequest(request)) requested.push(request.url());
   });
 
-  // Open each of `/aws`, `/aws/s3`, `/aws/does-not-exist` → the area holds no `img`, `picture` or `image` element and
-  // no element whose background is an image file, and the page requested no image file for the area (Cloudscape's
-  // own inline interface icons are not image files).
+  // Open each of `/aws`, `/aws/kinesis`, `/aws/does-not-exist` → the area holds no `img`, `picture` or `image`
+  // element and no element whose background is an image file, and the page requested no image file for the area
+  // (Cloudscape's own inline interface icons are not image files).
   const found: string[] = [];
   for (const p of PAGES) {
     requested.length = 0;
