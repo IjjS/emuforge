@@ -207,7 +207,8 @@ languages are the catalogue files in `i18n/messages/`, today twelve: `en` (the s
 - `bun run test:unit` runs the catalogue check (`i18n/catalogue-check.ts`) on every catalogue and fails, naming the
   catalogue and the key, on a key of English the catalogue lacks, a key English lacks, a placeholder dropped or
   renamed, a plural category the language needs and lacks, a text equal to English that `@sameAsEnglish` does not
-  list, and a glossary term without its stem.
+  list, a glossary term without its stem, and a form of a counted message in which an ordinary space (U+0020)
+  directly follows `{count}` ("Placeholders and plurals").
 
 ### Adding a language
 
@@ -231,6 +232,12 @@ languages are the catalogue files in `i18n/messages/`, today twelve: `en` (the s
   `few`, `many`, `other`; Korean, Japanese, Vietnamese and Thai `other` only. `plural()` picks the form and fills
   `{count}` with the count formatted in that language. A category the browser asks for that the catalogue lacks
   shows that language's `other` form, never English.
+- In every form of a counted message, a space between `{count}` and its unit is U+00A0 NO-BREAK SPACE, so a line
+  never parts the count from its unit (`"{count}\u00a0seconds"`); a language with no space there (Korean) keeps none.
+  In the `many` forms of Spanish, French, Italian and Portuguese ("{count} de segundos") the space after "de" or "di"
+  is U+00A0 as well. A catalogue spells it as the escape `\u00a0`, never the character itself, so it shows in the
+  file and in a diff; an editor or a heredoc may turn a typed escape into the character, so read the file back after
+  editing it.
 
 ### Dates and numbers
 
@@ -294,6 +301,11 @@ The engine's and the emulator's codes, reasons and messages do not depend on the
 - Every text of Studio's own layer hyphenates where its language allows or breaks inside its box (`hyphens: auto`,
   `overflow-wrap: break-word`); commands keep their unbroken lines. Thai, Korean and Japanese text has no negative
   letter spacing.
+- Korean text breaks a line only at white space, never inside a word: `word-break: keep-all` by `:lang(ko)` on
+  `.st-bar` and `.st-main` or inside them (a Korean bar or page, and an element with `lang="ko"` on a page in another
+  language), and `word-break: normal` on an element inside them whose `lang` is another language. The long-word
+  guard still breaks a Korean word wider than its box. Korean text of the page has `text-wrap: pretty`, and a
+  notice's heading in Korean `text-wrap: balance`.
 - At 1280 and 390 wide, light and dark, in every language, no page scrolls sideways, no text overflows its control
   or panel, and no label is cut; at 390 the top bar shows the wordmark, every navigation link and the language
   control (the globe alone at 480 and below).

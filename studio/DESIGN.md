@@ -25,6 +25,7 @@ colors:
   info-line: 'oklch(0.86 0.05 255)'
   idle: 'oklch(0.52 0.012 255)'
   scroll-shade: 'oklch(0.3 0.02 85 / 0.28)'
+  veil: 'oklch(0.972 0.005 85 / 0.75)'
   # Dark scheme: the same `--st-<key>` names, redeclared under `prefers-color-scheme: dark`.
   bg-dark: 'oklch(0.185 0.012 252)'
   surface-dark: 'oklch(0.225 0.013 252)'
@@ -48,6 +49,7 @@ colors:
   info-line-dark: 'oklch(0.42 0.07 255)'
   idle-dark: 'oklch(0.7 0.012 255)'
   scroll-shade-dark: 'oklch(1 0 0 / 0.18)'
+  veil-dark: 'oklch(0.185 0.012 252 / 0.8)'
 typography:
   # `fontFamily` is the stack of Latin text; the stack of each other script is under Typography, Faces per script.
   display:
@@ -313,6 +315,15 @@ Each status colour is at least 5.37:1 / 6.40:1 on the surface and on its own was
   In light a graphite tint, 1.71:1 at the edge against `sunk`. In dark a light tint (`oklch(1 0 0 / 0.18)`), 1.68:1
   at the edge against `sunk`. This replaces the mock's dark value (`oklch(0 0 0 / 0.6)`, 1.05:1, invisible).
 
+### Veil
+
+- **Page Veil** (`veil`): the page's own ground at part opacity, laid over the page under the bar while the language
+  menu is open at 480 wide and below (Language control), so the page fades toward its ground and the menu stands
+  apart from it. Light `oklch(0.972 0.005 85 / 0.75)` (Paper at 0.75), dark `oklch(0.185 0.012 252 / 0.8)` (Paper
+  at 0.8). Under it the page's text is at most 1.8:1 against its ground: 1.69:1 on `bg` and 1.71:1 on a panel in
+  light, 1.73:1 and 1.70:1 in dark (15.4:1 or more without the veil). The menu's own text keeps its contrast, and
+  the menu's `control-line` edge is 3.70:1 / 4.29:1 against a veiled panel.
+
 ### Named Rules
 
 **The Shade Rule.** The overflow shade is at least 1.5:1 against `--st-sunk` at its edge, in both schemes.
@@ -410,13 +421,25 @@ drawn in the one face chosen for that script. A word is never drawn in two faces
   `text-wrap: pretty`, so a line does not end on a short tail. A loanword written in Thai letters that the
   dictionary does not know (คลาวด์ "cloud", เอนจิน "engine") would break inside; the Thai catalogue joins its
   letters with U+2060 WORD JOINER, so it breaks only before or after.
+- **Korean wrapping:** Korean is written with spaces between words, and its lines break only at white space, never
+  between two syllables of one word: Korean text of the bar and the page has `word-break: keep-all`, on a Korean bar
+  or page and on an element that carries `lang="ko"` on a page in another language (the name "한국어"). The
+  long-word guard still breaks a Korean word that alone is wider than its box. With whole words a paragraph can end
+  on a line of one word, so Korean text of the page has `text-wrap: pretty`, as Thai has, and a notice's heading in
+  Korean has `text-wrap: balance`.
 - **The long-word guard:** all of Studio's text, in the bar and the page, has `hyphens: auto` (with
   `hyphenate-limit-chars: 12 5 5`) and `overflow-wrap: break-word`, so a long word (a German compound) hyphenates
   where its language allows, or breaks, inside its box instead of pushing the box wider. It is on every language,
   so a new language with long words needs no CSS. Inline code and commands are never broken (Components).
 - **Text in another language than the page** (the engine's English message, a language's own name, an area page's
-  English title) carries its own `lang`, takes its own language's face, and has `hyphens: manual`: it is shown as it
-  came, never hyphenated by the page's language.
+  English title) carries its own `lang`, takes its own language's face, and has `hyphens: manual` and
+  `word-break: normal`: it is shown as it came, never hyphenated or kept whole by the page's language.
+- **A count and its unit:** in every form of a counted message ("every 5 seconds", "19 services") the count is
+  joined to its unit by U+00A0 NO-BREAK SPACE, never an ordinary space, so a line never parts the number from its
+  unit; Korean has no space there and keeps none. In the `many` forms of Spanish, French, Italian and Portuguese
+  ("{count} de segundos") the space after "de" or "di" is U+00A0 as well, so the unit is whole on the count's line.
+  Every catalogue spells it as the escape `\u00a0`, as French spells its narrow no-break space `\u202f`, so it can be
+  seen in the file and in a diff.
 - **Direction:** every language is left to right; no page sets `dir` other than `ltr`.
 
 ### Named Rules
@@ -470,7 +493,9 @@ built yet (issue #38); today the list scrolls and nothing else changes. At 640px
 Flat. There are no shadows. Depth comes from three tones (the page `bg`, the raised `surface` of the bar, panels and
 command blocks, the `sunk` well of buttons, inline code and the path box) and from 1px hairlines. The bar is set
 apart by its surface tone and the hairline under it, not by a shadow, even while sticky. The only shade in the
-system is the overflow cue of the path box, and it means "more to scroll", not height.
+system is the overflow cue of the path box, and it means "more to scroll", not height. Beside it, the veil
+(`veil`) over the page while the language menu is open at 480 and below is a tone, not a shade: the page's own
+ground at part opacity, with no edge, no shadow and no motion. It means "the page is behind the menu", not height.
 
 ### Named Rules
 
@@ -623,8 +648,24 @@ tabs, with a control edge so it reads as something that opens.
   checked option, so a reflexive Enter changes nothing. Down and Up move and wrap; Home and End go to the first and
   last; letters typed within half a second go to the next option whose label (an own name, or "Browser language")
   starts with them. Enter or Space chooses. Esc closes without a change; choosing closes; both put focus back on the
-  trigger. Tab closes and moves on from the control. A press outside closes it and leaves focus where the press put
-  it; focus that leaves the control closes it.
+  trigger. Tab closes and moves on from the control. Focus that leaves the control closes it.
+- **A press outside:** a press outside the control while the menu is open (a mouse click, a tap or a pen press, on
+  the bar, the page, the veil or a provider area) closes the menu and does nothing else: a link under it is not
+  followed, a button or a disclosure under it does not run, the path, the page's state and the stored language stay
+  as they were, and no request is sent. Focus goes to the trigger, as after Esc, never to what the press did not
+  activate. A press of the middle button closes the menu and opens no link, in this tab or another; a press of the
+  secondary button closes it and the browser's own context menu may open; a touch drag closes it and the page may
+  scroll with it; scrolling with a wheel or a trackpad leaves it open. Nothing is left pending: the next press acts
+  as usual.
+- **Veil (480px and below):** while the menu is open, a veil of `veil` lies over everything under the bar, from the
+  bar's bottom edge to the bottom of the viewport and across its whole width, and stays there when the page
+  scrolls. The bar is not veiled; the menu is drawn above the veil, in its own place and size. The veil is a tone
+  (The Hairline Rule) and decoration: no role, no accessible name, no text, not focusable, hidden from the
+  accessibility tree. It appears and goes with the menu with no motion, and opening or closing the menu moves
+  nothing on the page: no layout shift, the scroll position kept. A press on it is a press outside. On a page of a
+  provider area it covers the area as it covers Studio's own pages: it belongs to the frame, and nothing of it is
+  rendered inside the area's root. Above 480 wide no veil is drawn; at every width the menu's own box, fill, edge,
+  options and keyboard are the same.
 - **Choosing:** applies at once, on the same page, without a reload: Studio's own text changes in one step, focus
   stays on the control, scroll and what is open stay. Choosing the checked option changes nothing. A language is
   stored in the browser (`emuforge.studio.language`); "Browser language" removes the stored choice.
