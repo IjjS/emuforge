@@ -188,8 +188,8 @@ export interface CountedDrawn {
   apart: boolean;
   /** The count, one space, and what follows up to the next white space or the message's end are not on one line. */
   unitBroken: boolean;
-  /** The message's last line starts at the count or after it. */
-  lastLineFromCount: boolean;
+  /** The message's last line starts after the count: the unit, or what follows it, without its count. */
+  lastLineAfterCount: boolean;
   /** The message as it is drawn, one entry per line, white space as one space. */
   drawn: string[];
 }
@@ -242,7 +242,7 @@ export async function measureCounted(page: Page, tag: string, messages: CountedM
       const places: {
         apart: boolean;
         unitBroken: boolean;
-        lastLineFromCount: boolean;
+        lastLineAfterCount: boolean;
         drawn: string[];
       }[] = [];
       for (const m of flat.matchAll(new RegExp(source, 'gdu'))) {
@@ -290,7 +290,7 @@ export async function measureCounted(page: Page, tag: string, messages: CountedM
           pendingSpace = false;
         }
         if (current !== '') drawn.push(current);
-        places.push({ apart, unitBroken, lastLineFromCount: lastLineStart >= countStart, drawn });
+        places.push({ apart, unitBroken, lastLineAfterCount: lastLineStart > countStart, drawn });
       }
       return { name, places };
     });

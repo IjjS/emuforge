@@ -400,8 +400,8 @@ test('studio.count-and-unit-stay-on-one-line', async ({ ctx, browser, proxy }) =
               }
               if (l.tag === 'de' && state === 'connected' && width === 390 && m.name === connection.name) {
                 germanMeasured = true;
-                if (p.lastLineFromCount) {
-                  found.germanLastLine.push(`the last line starts at or after the count: ${drawn}`);
+                if (p.lastLineAfterCount) {
+                  found.germanLastLine.push(`the last line starts after the count: ${drawn}`);
                 }
               }
             }
@@ -431,7 +431,7 @@ test('studio.count-and-unit-stay-on-one-line', async ({ ctx, browser, proxy }) =
     async () => expect(cap(found.layout, 80)).toEqual([]),
   );
   await lines.line(
-    "Open `/` connected in German at 390 wide → the last line of the connection's description holds more than the unit: it starts before the count",
+    "Open `/` connected in German at 390 wide → the last line of the connection's description holds more than the unit: it starts at the count or before it",
     async () => expect(found.germanLastLine).toEqual([]),
   );
 
