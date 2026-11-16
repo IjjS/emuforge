@@ -64,9 +64,10 @@
 
   /* Korean is written with spaces between words: a line breaks only at white space, never between two syllables of
      one word (issue 32, R1.1), on a Korean bar or page and on Korean text in another page ("한국어"). The long-word
-     guard above still breaks a word wider than its box. */
+     guard above still breaks a word wider than its box. Inside the bar and the page it is set only where an element
+     names its own language: the rest inherits it. */
   :is(.st-bar, .st-main):lang(ko),
-  :is(.st-bar, .st-main) :lang(ko) {
+  :is(.st-bar, .st-main) [lang]:lang(ko) {
     word-break: keep-all;
   }
 
