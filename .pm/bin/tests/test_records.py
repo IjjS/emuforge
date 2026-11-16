@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import unittest
@@ -51,13 +52,14 @@ MATCHED_FULL = [
 
 def text_a(wt):
     return "\n".join([
-        "structure s3.bucket-list state=seeded score=100.0 (17/17) verdict=pass",
+        "structure s3.bucket-list state=seeded score=100.0 (17/17) omitted=2/21 verdict=pass",
         "requires also: state=empty",
         "unmatched (0)",
         "matched (17)",
         *("  " + m for m in MATCHED_FULL),
-        "omitted (1)",
-        "  header.actions[Copy ARN]    emulator returns 501 for the operation behind it",
+        "omitted (2)",
+        "  tabs[Directory buckets]    the emulator has no directory buckets",
+        "  tabs.order    the emulator has no directory buckets",
         "not applicable (2)",
         "  table.empty.title    state=seeded",
         "  table.empty.action    state=seeded",
@@ -70,15 +72,16 @@ def text_a(wt):
 
 def text_b(wt):
     return "\n".join([
-        "structure s3.bucket-list state=seeded score=94.1 (16/17) verdict=fail",
+        "structure s3.bucket-list state=seeded score=94.1 (16/17) omitted=2/21 verdict=fail",
         "requires also: state=empty",
         "reason: critical item unmatched: table.columns[AWS Region]",
         "unmatched (1)",
         '  table.columns[AWS Region]    columnheader "AWS Region"',
         "matched (16)",
         *("  " + m for m in MATCHED_FULL if not m.startswith("table.columns[AWS Region]")),
-        "omitted (1)",
-        "  header.actions[Copy ARN]    emulator returns 501 for the operation behind it",
+        "omitted (2)",
+        "  tabs[Directory buckets]    the emulator has no directory buckets",
+        "  tabs.order    the emulator has no directory buckets",
         "not applicable (2)",
         "  table.empty.title    state=seeded",
         "  table.empty.action    state=seeded",
@@ -198,9 +201,9 @@ class Snapshot(RecordsCase):
         self.assertEqual(float(r["score"]), 100.0)
         self.assertEqual((r["matched"], r["total"]), (17, 17))
         statuses = status_map(r)
-        self.assertEqual(len(statuses), 20)
+        self.assertEqual(len(statuses), 21)
         self.assertEqual(sum(1 for s in statuses.values() if s == "matched"), 17)
-        self.assertEqual(statuses["header.actions[Copy ARN]"], "omitted")
+        self.assertEqual(statuses["tabs[Directory buckets]"], "omitted")
         self.assertEqual(statuses["table.empty.title"], "not-applicable")
         self.assertEqual(statuses["table.empty.action"], "not-applicable")
         self.assertEqual(r["spec_sha256"], hashlib.sha256(BUCKET_LIST.read_bytes()).hexdigest())
@@ -242,7 +245,7 @@ class Snapshot(RecordsCase):
         p = self.structure(BUCKET_LIST, "--snapshot", self.snap("empty-full"), "--state", "empty")
         self.assertExit(p, 0)
         lines = p.stdout.splitlines()
-        self.assertEqual(lines[0], "structure s3.bucket-list state=empty score=100.0 (18/18) verdict=pass")
+        self.assertEqual(lines[0], "structure s3.bucket-list state=empty score=100.0 (18/18) omitted=2/21 verdict=pass")
         self.assertEqual(lines[1], "requires also: state=seeded")
         i = lines.index("not applicable (1)")
         self.assertEqual(lines[i + 1], "  table.selection    state=empty")
@@ -431,7 +434,8 @@ class Table(RecordsCase):
         out = self.table(rows)
         table = [ln.strip() for ln in out.splitlines() if ln.lstrip().startswith("|")]
         header = [c.strip() for c in table[0].strip("|").split("|")]
-        self.assertEqual(header, ["point", "screen", "state", "score", "verdict", "critical unmatched", "commit"])
+        self.assertEqual(header, ["point", "screen", "state", "score", "omitted", "verdict", "critical unmatched",
+                                  "commit"])
         self.assertTrue(set(table[1].replace("|", "").replace(" ", "")) <= set("-:"), table[1])
         self.assertEqual(len(table) - 2, len(rows), out)
         self.point_line(out, "baseline", "s3.ten-items")
@@ -476,7 +480,8 @@ class WizardRecords(RecordsCase):
         p = self.structure(WIZARD, "--snapshot", self.snap("wizard-full"))
         self.assertExit(p, 0)
         lines = p.stdout.splitlines()
-        self.assertEqual(lines[0], "structure iam.create-role state=seeded score=100.0 (16/16) verdict=pass")
+        self.assertEqual(lines[0],
+                         "structure iam.create-role state=seeded score=100.0 (16/16) omitted=0/16 verdict=pass")
         self.assertFalse(any(ln.startswith("requires also") for ln in lines), p.stdout)
         r = self.result(screen=WIZARD_SCREEN)
         self.assertEqual(r["verdict"], "pass")
@@ -530,6 +535,123 @@ class ArchiveGuide(unittest.TestCase):
         guide = (CHECKOUT / ".agents" / "skills" / "pm" / "references" / "archive.md").read_text()
         keep = guide.split("## Keep list", 1)[1].split("\n## ", 1)[0]
         self.assertIn("structure-scores.json", keep)
+
+
+# ---------------------------------------------------------------------------------------------------- issue 46
+
+TAB_SHOWN_FIRST = "structure s3.bucket-list state=seeded score=100.0 (17/17) omitted=2/21 verdict=fail"
+TAB = "tabs[Directory buckets]"
+REFUSED_TITLE = "omitted header.title: header.title cannot be omitted: the title"
+
+
+class OmittedRecords(RecordsCase):
+    """R3.4, R4.2, R4.3, R6: pm-structure on snapshots with an omitted item shown or refused."""
+
+    def test_tab_shown_exit_1(self):
+        p = self.structure(BUCKET_LIST, "--snapshot", self.snap("tab-shown"))
+        self.assertExit(p, 1)
+        self.assertEqual(p.stdout.splitlines()[0], TAB_SHOWN_FIRST)
+        r = self.result()
+        self.assertEqual(r["verdict"], "fail")
+        self.assertEqual(r["omitted_shown"], [TAB])
+
+    def test_tab_shown_twice_is_identical(self):
+        runs = []
+        for _ in range(2):
+            p = self.structure(BUCKET_LIST, "--snapshot", self.snap("tab-shown"))
+            self.assertExit(p, 1)
+            self.assertIn(f"reason: omitted item shown: {TAB}", p.stdout.splitlines())
+            r = self.result()
+            r.pop("at")
+            runs.append((p.stdout.encode(), r))
+        self.assertEqual(runs[0][0], runs[1][0])
+        self.assertEqual(runs[0][1], runs[1][1])
+
+    def test_record_full_seeded(self):
+        self.issue(46)
+        self.assertExit(self.structure(BUCKET_LIST, "--snapshot", self.snap("full-seeded"), "--record", "46", "final"),
+                        0)
+        row = self.rows(46)[0]
+        self.assertLessEqual(ROW_FIELDS, set(row))
+        self.assertEqual((row["omitted"], row["spec_items"], row["omitted_shown"]), (2, 21, []))
+
+    def test_record_tab_shown(self):
+        self.issue(46)
+        self.assertExit(self.structure(BUCKET_LIST, "--snapshot", self.snap("tab-shown"), "--record", "46", "final"), 1)
+        row = self.rows(46)[0]
+        self.assertEqual(row["verdict"], "fail")
+        self.assertEqual(float(row["score"]), 100.0)
+        self.assertEqual(row["critical_unmatched"], [])
+        self.assertEqual(row["omitted_shown"], [TAB])
+
+    def test_refused_spec_error_result_and_row(self):
+        self.issue(46)
+        spec = self.spec_file(BUCKET_LIST.read_text() + "  - item: header.title\n    reason: fixture reason\n")
+        p = self.structure(spec, "--snapshot", self.snap("full-seeded"), "--record", "46", "final")
+        self.assertExit(p, 2)
+        message = f"spec {spec}: {REFUSED_TITLE}"
+        self.assertEqual(p.stderr.splitlines(), [f"pm-structure: {message}"])
+        r = self.result()
+        self.assertEqual(r["verdict"], "error")
+        self.assertTrue(any(isinstance(v, str) and message in v for v in r.values()), r)
+        rows = self.rows(46)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["verdict"], "error")
+        self.assertEqual((rows[0]["omitted"], rows[0]["spec_items"], rows[0]["omitted_shown"]), (None, None, []))
+
+
+def counted(state, verdict, omitted=2, spec_items=21, shown=(), **kw):
+    """A row of design 2.6 with the three fields of issue 46 (R4.3)."""
+    return dict(row(state, verdict, **kw), omitted=omitted, spec_items=spec_items, omitted_shown=list(shown))
+
+
+class OmittedTable(RecordsCase):
+    """R4.4: --table has a column omitted after score."""
+
+    def cells(self, rows):
+        """The omitted cell of each markdown row, in row order, and the --table output."""
+        d = self.issue(4)
+        (d / "structure-scores.json").write_text(json.dumps(rows, indent=1))
+        p = self.structure("--table", "4")
+        self.assertExit(p, 0)
+        table = [ln.strip() for ln in p.stdout.splitlines() if ln.lstrip().startswith("|")]
+        split = lambda ln: [c.strip() for c in ln.strip("|").split("|")]
+        header = split(table[0])
+        self.assertIn("omitted", header, p.stdout)
+        self.assertEqual(header.index("omitted"), header.index("score") + 1, p.stdout)
+        return [split(ln)[header.index("omitted")] for ln in table[2:]], p.stdout
+
+    def test_counts(self):
+        cells, _ = self.cells([counted("seeded", "pass")])
+        self.assertEqual(cells, ["2/21"])
+
+    def test_shown(self):
+        shown = dict(counted("seeded", "fail", shown=[TAB], requires=("seeded",)), score=100.0, matched=17,
+                     critical_unmatched=[])
+        cells, out = self.cells([shown])
+        self.assertEqual(cells, ["2/21, 1 shown"])
+        line = [ln for ln in out.splitlines() if ln.startswith("point final s3.bucket-list")]
+        self.assertEqual(len(line), 1, out)
+        self.assertIn("not passed", line[0])
+        self.assertIn("state=seeded fail", line[0])
+
+    def test_rows_without_the_counts(self):
+        error = counted("empty", "error", omitted=None, spec_items=None)
+        cells, _ = self.cells([row("seeded", "pass"), error])
+        self.assertEqual(cells, ["-", "-"])
+
+
+class OmittedHelp(unittest.TestCase):
+    def test_help_names_the_count_and_the_shown_fail(self):
+        """R5.5: the first line's form names omitted=; an omitted item shown is a fail."""
+        p = subprocess.run([str(BIN / "pm-structure"), "--help"], capture_output=True, text=True, env=clean_env(),
+                           timeout=60)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        flat = " ".join(p.stdout.split())
+        self.assertRegex(flat, r"omitted=\S+ verdict=")
+        sentences = re.split(r"(?<=[.;])\s", flat)
+        self.assertTrue(any("omitted item" in s and "shown" in s and re.search(r"\bfail", s) for s in sentences),
+                        p.stdout)
 
 
 if __name__ == "__main__":
