@@ -133,6 +133,13 @@ Each part has its own guide and unit tests: [engine/README.md](engine/README.md)
 [studio/README.md](studio/README.md). The checks that run against a real emulator are in `tests/integration/`
 ([tests/integration/README.md](tests/integration/README.md)).
 
+[![main](https://github.com/IjjS/emuforge/actions/workflows/main.yml/badge.svg?branch=main)](https://github.com/IjjS/emuforge/actions/workflows/main.yml)
+
+Every push of `main` is checked on GitHub Actions, on Ubuntu, by
+[.github/workflows/main.yml](.github/workflows/main.yml): the engine, Studio and integration steps of `pm-check`,
+each in its folder. What it does not run there is listed, each with its reason, in
+[.github/not-run.json](.github/not-run.json).
+
 ## Run the emulator
 
 ```bash

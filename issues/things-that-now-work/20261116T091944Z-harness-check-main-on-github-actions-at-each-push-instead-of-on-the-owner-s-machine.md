@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: harness|ci|check-main-on-github-actions
-Issue-Check-Ids:
+Issue-Check-Ids: harness.integration-not-run harness.ci harness.ci-docs
 Issue-Commit: 8e35c04f7dc15af29485f083fb0efb6221624d69
 
 # Check main on GitHub Actions at each push instead of on the owner's machine
