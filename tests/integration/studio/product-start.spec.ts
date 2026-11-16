@@ -47,6 +47,7 @@ import {
   userIds,
   type CommandResult,
 } from './support/product';
+import { entries, freshHome } from './support/product-wrapper';
 
 function expectExit(result: CommandResult, code: 'zero' | 'non-zero') {
   const message = `${result.line}: exit code; output:\n${tail(result)}`;
@@ -107,28 +108,6 @@ async function expectBothConnected(page: Page) {
 /** No container and no network of the form is left. */
 async function expectGone(form: Form) {
   expect(await form.waitGone(), `what is left of ${form.project}`).toEqual({ containers: [], networks: [] });
-}
-
-/** A new, empty directory under the run's output, removed when the check ends (after its form). */
-function freshHome(ctx: Ctx): string {
-  const home = path.join(ctx.tmp, `home-${ctx.id}-${String(Date.now())}`);
-  fs.mkdirSync(home, { recursive: true });
-  ctx.own({ dispose: async () => fs.rmSync(home, { recursive: true, force: true }) });
-  return home;
-}
-
-/** Every path under `root`, relative and sorted. */
-function entries(root: string): string[] {
-  const out: string[] = [];
-  const walk = (dir: string) => {
-    for (const name of fs.readdirSync(dir)) {
-      const full = path.join(dir, name);
-      out.push(path.relative(root, full));
-      if (fs.lstatSync(full).isDirectory()) walk(full);
-    }
-  };
-  walk(root);
-  return out.sort();
 }
 
 test('engine.product-start-with-running-emulator-connects', async ({ ctx, page }) => {
