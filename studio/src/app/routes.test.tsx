@@ -1,8 +1,9 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import { createMemoryRouter, RouterProvider } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { FakeEngine } from '../test/home-test-kit';
 import { Providers } from './providers';
 import { routes } from './routes';
 
@@ -117,12 +118,24 @@ describe('routes', () => {
     expect(links).toEqual(SERVICES);
   });
 
-  it('opens /aws/s3 as the "no screen yet" page of Amazon Simple Storage Service, sending nothing to the engine', async () => {
+  it('opens /aws/s3 as the "no screen yet" page of Amazon Simple Storage Service, asking the engine only for its connection status', async () => {
+    const engine = new FakeEngine();
+    vi.stubGlobal('fetch', engine.fetch);
     open('/aws/s3');
 
     await expectNoScreenYet(S3);
-    const engineCalls = fetchSpy.mock.calls.filter(([input]) => String(input).includes('127.0.0.1'));
-    expect(engineCalls).toEqual([]);
+    // The area asks when it opens (requirement R4.4); the page is shown by now.
+    await waitFor(
+      () => {
+        expect(engine.healths.length).toBeGreaterThan(0);
+      },
+      { timeout: 2_000 },
+    );
+    const otherEngineCalls = engine.requests
+      .filter((request) => request.origin.startsWith('http://127.0.0.1:'))
+      .filter((request) => request.path !== '/__emuforge/session' && request.path !== '/__emuforge/health')
+      .map((request) => request.url);
+    expect(otherEngineCalls).toEqual([]);
   });
 
   it('opens a path below a service, /aws/s3/buckets/my-bucket, as the same "no screen yet" page', async () => {

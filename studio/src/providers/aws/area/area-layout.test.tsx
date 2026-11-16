@@ -250,7 +250,7 @@ function cloudscapeElements(): Element[] {
 }
 
 describe('the AWS area', () => {
-  it('on /aws: the side navigation header and the 19 services in label order, one crumb, nothing active', () => {
+  it('on /aws: the side navigation header and the 19 services in label order, crumbs EmuForge (to /) then AWS, nothing active', () => {
     const { wrapper } = open('/aws');
     const navigation = wrapper.findSideNavigation();
 
@@ -265,17 +265,19 @@ describe('the AWS area', () => {
     });
     expect(links).toEqual(SERVICES);
     expect(navigation?.findItemByIndex(2)).toBeNull();
-    expect(breadcrumbs(wrapper).map(([text]) => text)).toEqual([AWS]);
+    expect(breadcrumbs(wrapper).map(([text]) => text)).toEqual(['EmuForge', 'AWS']);
+    expect(breadcrumbs(wrapper)[0]).toEqual(['EmuForge', '/']);
     expect(navigation?.findActiveLink()).toBeNull();
     expect(titles.at(-1)).toBe(AWS);
   });
 
-  it('on /aws/s3/buckets: crumbs Amazon Web Services (to /aws) then the service, the service active', () => {
+  it('on /aws/s3/buckets: crumbs EmuForge (to /), AWS (to /aws), then S3, the current page, the service active', () => {
     const { wrapper } = open('/aws/s3/buckets');
 
     expect(breadcrumbs(wrapper)).toEqual([
-      [AWS, '/aws'],
-      [S3, null],
+      ['EmuForge', '/'],
+      ['AWS', '/aws'],
+      ['S3', null],
     ]);
     const active = wrapper.findSideNavigation()?.findActiveLink()?.getElement();
     expect(active).toHaveTextContent(S3);
@@ -284,10 +286,10 @@ describe('the AWS area', () => {
     expect(titles.at(-1)).toBe(S3);
   });
 
-  it('on /aws/does-not-exist: crumbs Amazon Web Services then Page not found, nothing active', () => {
+  it('on /aws/does-not-exist: crumbs EmuForge, AWS, then Page not found, nothing active', () => {
     const { wrapper } = open('/aws/does-not-exist');
 
-    expect(breadcrumbs(wrapper).map(([text]) => text)).toEqual([AWS, 'Page not found']);
+    expect(breadcrumbs(wrapper).map(([text]) => text)).toEqual(['EmuForge', 'AWS', 'Page not found']);
     expect(wrapper.findSideNavigation()?.findActiveLink()).toBeNull();
     expect(screen.getByRole('heading', { level: 1, name: 'Page not found' })).toBeInTheDocument();
     expect(titles.at(-1)).toBe('Page not found');
@@ -384,14 +386,14 @@ describe('the AWS area', () => {
     expect(wrapper.findSideNavigation()?.findActiveLink()?.getElement()).toHaveTextContent('AWS Lambda');
   });
 
-  it('on /aws/s3, Amazon Web Services chosen in the breadcrumbs: focus on the content target named so', async () => {
-    const { wrapper } = open('/aws/s3');
+  it('on /aws/s3, AWS chosen in the breadcrumbs: /aws and focus on the content target named Amazon Web Services', async () => {
+    const { wrapper, router } = open('/aws/s3');
     const crumb = wrapper
       .findBreadcrumbGroup()
       ?.findBreadcrumbLinks()
       .map((item) => item.getElement())
       .map((element) => element.closest<HTMLElement>('a[href]') ?? element.querySelector<HTMLElement>('a[href]'))
-      .find((link) => link?.getAttribute('href') === '/aws');
+      .find((link) => link?.textContent === 'AWS' && link.getAttribute('href') === '/aws');
     expect(crumb).toBeDefined();
 
     act(() => {
@@ -399,6 +401,7 @@ describe('the AWS area', () => {
       fireEvent.click(crumb as HTMLElement);
     });
 
+    expect(router.state.location.pathname).toBe('/aws');
     await expectFocusOnTarget(AWS, 'Amazon API Gateway');
   });
 
