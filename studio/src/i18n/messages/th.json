@@ -15,7 +15,7 @@
   "connection.notChecked": "ยังไม่ได้ตรวจสอบ",
   "connection.lastChecked": "ตรวจสอบล่าสุดเมื่อ {time}",
   "connection.lastCheckedEvery": {
-    "other": "ตรวจสอบล่าสุดเมื่อ {time} ตรวจสอบทุก {count} วินาที"
+    "other": "ตรวจสอบล่าสุดเมื่อ {time} ตรวจสอบทุก {count}\u00a0วินาที"
   },
   "connection.engine": "เ\u2060อ\u2060น\u2060จิ\u2060น",
   "connection.emulator": "อี\u2060มู\u2060เ\u2060ล\u2060เ\u2060ต\u2060อ\u2060ร์",
@@ -33,7 +33,7 @@
   "announce.engineErrorCode": "ข้อผิดพลาดของเ\u2060อ\u2060น\u2060จิ\u2060น: {code}",
   "announce.engineErrorStatus": "ข้อผิดพลาดของเ\u2060อ\u2060น\u2060จิ\u2060น: สถานะ HTTP {status}",
   "notice.recheck": {
-    "other": "Studio จะตรวจสอบอีกครั้งทุก {count} วินาที และหน้านี้จะอั\u2060ป\u2060เ\u2060ด\u2060ตเอง"
+    "other": "Studio จะตรวจสอบอีกครั้งทุก {count}\u00a0วินาที และหน้านี้จะอั\u2060ป\u2060เ\u2060ด\u2060ตเอง"
   },
   "notice.refresh": "รี\u2060เ\u2060ฟ\u2060ร\u2060ช",
   "notice.refreshName": "รี\u2060เ\u2060ฟ\u2060ร\u2060ชสถานะการเชื่อมต่อ",
@@ -74,7 +74,7 @@
   "copy.failed": "คัดลอกคำสั่งไม่สำเร็จ",
   "providers.title": "ผู้ให้บริการ",
   "providers.services": {
-    "other": "{count} บริการ · ยังไม่มีหน้าจอใน Studio"
+    "other": "{count}\u00a0บริการ · ยังไม่มีหน้าจอใน Studio"
   },
   "notFound.title": "ไม่พบหน้า",
   "notFound.statement": "Studio ไม่มีหน้า {path}",

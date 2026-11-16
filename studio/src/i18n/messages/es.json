@@ -15,9 +15,9 @@
   "connection.notChecked": "Aún no se ha comprobado.",
   "connection.lastChecked": "Última comprobación: {time}.",
   "connection.lastCheckedEvery": {
-    "one": "Última comprobación: {time}. Se comprueba cada {count} segundo.",
-    "many": "Última comprobación: {time}. Se comprueba cada {count} de segundos.",
-    "other": "Última comprobación: {time}. Se comprueba cada {count} segundos."
+    "one": "Última comprobación: {time}. Se comprueba cada {count}\u00a0segundo.",
+    "many": "Última comprobación: {time}. Se comprueba cada {count}\u00a0de\u00a0segundos.",
+    "other": "Última comprobación: {time}. Se comprueba cada {count}\u00a0segundos."
   },
   "connection.engine": "Motor",
   "connection.emulator": "Emulador",
@@ -35,9 +35,9 @@
   "announce.engineErrorCode": "Error del motor: {code}.",
   "announce.engineErrorStatus": "Error del motor: estado HTTP {status}.",
   "notice.recheck": {
-    "one": "Studio vuelve a comprobar cada {count} segundo; esta página se actualiza sola.",
-    "many": "Studio vuelve a comprobar cada {count} de segundos; esta página se actualiza sola.",
-    "other": "Studio vuelve a comprobar cada {count} segundos; esta página se actualiza sola."
+    "one": "Studio vuelve a comprobar cada {count}\u00a0segundo; esta página se actualiza sola.",
+    "many": "Studio vuelve a comprobar cada {count}\u00a0de\u00a0segundos; esta página se actualiza sola.",
+    "other": "Studio vuelve a comprobar cada {count}\u00a0segundos; esta página se actualiza sola."
   },
   "notice.refresh": "Actualizar",
   "notice.refreshName": "Actualizar el estado de la conexión",
@@ -78,9 +78,9 @@
   "copy.failed": "Comando no copiado",
   "providers.title": "Proveedores",
   "providers.services": {
-    "one": "{count} servicio · aún sin pantalla en Studio",
-    "many": "{count} de servicios · aún sin pantalla en Studio",
-    "other": "{count} servicios · aún sin pantalla en Studio"
+    "one": "{count}\u00a0servicio · aún sin pantalla en Studio",
+    "many": "{count}\u00a0de\u00a0servicios · aún sin pantalla en Studio",
+    "other": "{count}\u00a0servicios · aún sin pantalla en Studio"
   },
   "notFound.title": "Página no encontrada",
   "notFound.statement": "Studio no tiene ninguna página en {path}.",
