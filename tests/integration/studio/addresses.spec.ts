@@ -45,6 +45,33 @@ function cap(list: string[], n = 60): string[] {
   return list.length > n ? [...list.slice(0, n), `… and ${String(list.length - n)} more`] : list;
 }
 
+/**
+ * A list of problems in short, for the log: one line per language, state and row, with the widths it was found at
+ * and how many problems; any problem not of that form as it is.
+ */
+function summary(list: string[]): string[] {
+  const groups = new Map<string, number[]>();
+  const counts = new Map<string, number>();
+  const other: string[] = [];
+  for (const p of list) {
+    const m = /^(\S+ \/ [a-z ]+?) (\d+)( [A-Z][a-z]+)?: /.exec(p);
+    if (!m) {
+      other.push(p);
+      continue;
+    }
+    const key = `${m[1]}${m[3] ?? ''}`;
+    const widths = groups.get(key) ?? [];
+    if (!widths.includes(Number(m[2]))) widths.push(Number(m[2]));
+    groups.set(key, widths);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  const out = [...groups].map(
+    ([key, widths]) =>
+      `${key}: ${String(counts.get(key))} problems at ${String(widths.length)} widths (${String(widths[0])} to ${String(widths.at(-1))})`,
+  );
+  return [...out, ...other];
+}
+
 /** The first line of an error's message. */
 function first(e: unknown): string {
   return ((e as Error).message ?? String(e)).split('\n')[0];
@@ -458,6 +485,10 @@ test('studio.addresses-stay-whole-with-five-digit-ports', async ({ ctx, browser,
     for (const state of ['emulator stopped', 'engine unreachable']) {
       if (!commandSeen.has(`${tag} / ${state}`)) found.command.push(`${tag} / ${state}: not measured`);
     }
+  }
+
+  for (const [name, list] of Object.entries(found)) {
+    ctx.log(`found ${name}: ${String(list.length)}${list.length > 0 ? `\n  ${summary(list).join('\n  ')}` : ''}`);
   }
 
   await lines.line(
