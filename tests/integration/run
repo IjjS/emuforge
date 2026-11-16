@@ -4,8 +4,17 @@
 # Builds the engine, Studio and the product form's image (issue 34), starts the run's own aws-emulator (telemetry off) on a loopback port, runs the
 # engine checks of tests/integration/engine one at a time, then the Studio flow checks of tests/integration/studio
 # one at a time, stops everything it started and writes <checkout>/output/integration/report.json: emulator
-# version and commit, the checkout's commit, the verdict of every manifest check (passed, failed, error) and the
-# relay fidelity figure.
+# version and commit, the checkout's commit, the verdict of every manifest check (passed, failed, error, not-run)
+# and the relay fidelity figure.
+#
+# Usage: run [--not-run <file>]. The file is a not-run list (.github/not-run.json, issue 53): its `checks` name
+# manifest ids, each with a `reason`; its other keys are not read. A listed check is not executed: the engine
+# checks get EMUFORGE_IT_NOT_RUN naming a file of the listed ids, so support::check::check returns at once, and
+# Playwright gets one --grep-invert pattern of the listed Studio and product ids. Each listed check is reported
+# `not-run` with its reason and counts neither as passed nor as failed; everything else, the builds included, runs
+# as without the option. A list that cannot be read, is not that shape or names an id twice or one the manifest
+# does not hold makes every check `error` (exit 127) before anything is built or started. Any other argument is
+# refused with a usage line (exit 2). Only the option turns this on; EMUFORGE_IT_NOT_RUN from the caller is unset.
 #
 # Relay fidelity (engine/references/relay-fidelity.md): passed / total over the manifest rows labelled
 # `transparency` whose verdict is passed or failed (`error` counts in neither). It is written into report.json as
@@ -21,8 +30,9 @@
 # `emuforge` or `aws-emulator`. Both names are removed at the end, with the containers and networks of the forms
 # the checks recorded and could not remove.
 #
-# Exit: 0 when every check passed; 1 when any failed; 127 when there are only errors (the environment failed:
-# Docker, the image, cargo, bun; pm-check records 127 as `error`). The engine and Studio are the subject, not the
+# Exit, over the checks that are not `not-run`: 0 when every one passed; 1 when any failed; 127 when there are only
+# errors (the environment failed: Docker, the image, cargo, bun; pm-check records 127 as `error`) or every check is
+# `not-run` (nothing was checked); 2 for a usage error. The engine and Studio are the subject, not the
 # environment: when engine/ or studio/ does not exist or does not build, every check still runs and fails at its
 # first engine or Studio step.
 set -euo pipefail
@@ -36,16 +46,29 @@ for name in $(compgen -e); do
 done
 unset EMUFORGE_IT_ENGINE_BIN EMUFORGE_IT_ENGINE_BUILD EMUFORGE_IT_STUDIO_BUILD EMUFORGE_IT_VERDICTS EMUFORGE_IT_RUN_ID
 unset EMUFORGE_IT_PRODUCT_IMAGE EMUFORGE_IT_EMULATOR_IMAGE EMUFORGE_IT_PRODUCT_BUILD EMUFORGE_IT_EMULATOR_VERSION
-unset EMUFORGE_IT_EMULATOR_COMMIT EMUFORGE_IMAGE EMUFORGE_EMULATOR_IMAGE
+unset EMUFORGE_IT_EMULATOR_COMMIT EMUFORGE_IMAGE EMUFORGE_EMULATOR_IMAGE EMUFORGE_IT_NOT_RUN
 unset NODE_OPTIONS NODE_PATH
 export AWS_EC2_METADATA_DISABLED=true
+
+usage() {
+  echo "usage: tests/integration/run [--not-run <file>]" >&2
+  exit 2
+}
+not_run=no
+not_run_file=
+case "$#" in
+  0) ;;
+  2) [[ "$1" == "--not-run" ]] || usage; not_run=yes; not_run_file="$2" ;;
+  *) usage ;;
+esac
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$here"
 checkout="$(cd ../.. && pwd)"
 out="$checkout/output/integration"
 logs="$checkout/output/logs"
-rm -rf "$out/verdicts" "$out/logs" "$out/tmp" "$out/playwright" "$out/report.json"
+rm -rf "$out/verdicts" "$out/logs" "$out/tmp" "$out/playwright" "$out/report.json" "$out/not-run.ids" \
+  "$out/not-run.json"
 mkdir -p "$out/verdicts" "$logs"
 run_id="$(date +%s)-$$"
 product_image="emuforge-it-product-$run_id"
@@ -58,9 +81,11 @@ emulator_commit=unknown
 # reason, the run did not get to its checks and every check is `error` with that reason.
 report() {
   python3 -I - "$here/manifest.jsonl" "$out/verdicts" "$out/report.json" \
-    "$emulator_version" "$emulator_commit" "$commit" "${1:-}" <<'PY'
+    "$emulator_version" "$emulator_commit" "$commit" "$out/not-run.json" "${1:-}" <<'PY'
 import json, pathlib, sys
-manifest, verdicts, report, version, emulator_commit, commit, reason = sys.argv[1:]
+manifest, verdicts, report, version, emulator_commit, commit, not_run, reason = sys.argv[1:]
+# {id: reason} of the validated not-run list; written only when --not-run was given and the list held.
+listed = json.loads(pathlib.Path(not_run).read_text()) if pathlib.Path(not_run).exists() else {}
 checks = []
 transparency = set()
 for line in pathlib.Path(manifest).read_text().splitlines():
@@ -73,6 +98,8 @@ for line in pathlib.Path(manifest).read_text().splitlines():
     record = pathlib.Path(verdicts) / f"{check_id}.json"
     if reason:
         entry = dict(check_id=check_id, verdict="error", seconds=0, log=None, message=reason)
+    elif check_id in listed:
+        entry = dict(check_id=check_id, verdict="not-run", seconds=0, log=None, message=listed[check_id])
     elif record.exists():
         v = json.loads(record.read_text())
         entry = dict(check_id=check_id, verdict=v["verdict"], seconds=v["seconds"], log=v["log"], message=v.get("message", ""))
@@ -86,7 +113,7 @@ pathlib.Path(report).write_text(json.dumps(dict(
     checks=checks), indent=1) + "\n")
 for c in checks:
     print(f"  {c['verdict']:7} {c['check_id']}  {c['message'].splitlines()[0][:160] if c['message'] else ''}", file=sys.stderr)
-verdicts = {c["verdict"] for c in checks}
+verdicts = {c["verdict"] for c in checks if c["verdict"] != "not-run"}
 print(0 if verdicts == {"passed"} else 1 if "failed" in verdicts else 127)
 PY
 }
@@ -112,6 +139,59 @@ preflight_error() {
 free_port() {
   python3 -I -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])'
 }
+
+# The not-run list, before anything is built or started. On success it writes $out/not-run.json ({id: reason}) for
+# report and $out/not-run.ids (one id per line) for the engine checks, and prints the Playwright pattern of the
+# listed .spec.ts ids (nothing when there is none); on a refusal it prints the reason. Only ids that are manifest
+# ids are used further. (Its output goes through a file: bash 3.2 cannot parse a heredoc inside $(...).)
+grep_invert=
+if [[ "$not_run" == yes ]]; then
+  if python3 -I - "$not_run_file" "$here/manifest.jsonl" "$out" >"$out/not-run.out" <<'PY'
+import json, pathlib, re, sys
+path, manifest, out = sys.argv[1:]
+
+def refuse(what):
+    print(f"not-run list {path}: {what}")
+    sys.exit(1)
+
+try:
+    data = json.loads(pathlib.Path(path).read_text())
+except OSError as e:
+    refuse(f"cannot be read: {e.strerror or e}")
+except ValueError as e:
+    refuse(f"is not JSON: {e}")
+if not isinstance(data, dict) or not isinstance(data.get("checks"), list):
+    refuse('has no list "checks"')
+rows = [json.loads(line) for line in pathlib.Path(manifest).read_text().splitlines() if line.strip()]
+paths = {row["check_id"]: row["path"] for row in rows}
+listed = {}
+for n, entry in enumerate(data["checks"]):
+    if not isinstance(entry, dict) or not isinstance(entry.get("id"), str):
+        refuse(f'checks[{n}] has no string "id"')
+    check_id = entry["id"]
+    if not isinstance(entry.get("reason"), str) or not entry["reason"].strip():
+        refuse(f"checks[{n}] {check_id!r} has no reason")
+    if not re.fullmatch(r"[a-z]+\.[a-z0-9-]+", check_id) or check_id not in paths:
+        refuse(f"checks[{n}] {check_id!r} is not a check id of the manifest")
+    if check_id in listed:
+        refuse(f"checks[{n}] {check_id!r} is listed twice")
+    listed[check_id] = entry["reason"]
+pathlib.Path(out, "not-run.json").write_text(json.dumps(listed, indent=1) + "\n")
+pathlib.Path(out, "not-run.ids").write_text("".join(i + "\n" for i in listed))
+# A Playwright test's title is its check id; the pattern matches a title path that ends in one of them.
+specs = [re.escape(i) for i in listed if paths[i].endswith(".spec.ts")]
+if specs:
+    print("(^| )(" + "|".join(specs) + ")$")
+PY
+  then
+    grep_invert="$(cat "$out/not-run.out")"
+    rm -f "$out/not-run.out"
+  else
+    reason="$(cat "$out/not-run.out")"
+    rm -f "$out/not-run.out"
+    preflight_error "${reason:-not-run list $not_run_file: cannot be checked}"
+  fi
+fi
 
 # Ports.
 if [[ "${EMULATOR_PORT:-}" == "9297" ]]; then
@@ -267,16 +347,25 @@ health="$(curl -q -fsS --noproxy '*' --retry-all-errors --retry 60 --retry-delay
 [[ "$health" == "ok" ]] || preflight_error "the run's emulator did not answer 200 ok within 30 s"
 echo "integration: emulator $emulator_version ($emulator_commit) answers on 127.0.0.1:$EMULATOR_PORT" >&2
 
-# The checks, one at a time.
+# The checks, one at a time. A listed engine check returns at once (support::check::check reads the ids file).
+if [[ "$not_run" == yes ]]; then
+  export EMUFORGE_IT_NOT_RUN="$out/not-run.ids"
+fi
 EMUFORGE_IT_ENGINE_BIN="$engine_bin" EMUFORGE_IT_ENGINE_BUILD="$engine_build" \
   EMUFORGE_IT_VERDICTS="$out/verdicts" EMUFORGE_IT_RUN_ID="$run_id" \
   cargo test --manifest-path engine/Cargo.toml --no-fail-fast -- --test-threads=1 2>&1 | tee "$logs/integration-cargo-test.log" \
   || true
+unset EMUFORGE_IT_NOT_RUN
 
 # The Studio flow checks, one at a time, with Studio's own pinned Playwright (no second package). Without it
 # (no studio/ package, or its install failed) there is nothing to run them with, and each Studio check is
-# `failed` with that reason, as an engine check is without an engine.
+# `failed` with that reason, as an engine check is without an engine. Listed Studio and product checks are left out
+# with one --grep-invert pattern.
 playwright="$checkout/studio/node_modules/.bin/playwright"
+grep_args=()
+if [[ -n "$grep_invert" ]]; then
+  grep_args=(--grep-invert "$grep_invert")
+fi
 if [[ -x "$playwright" && "$studio_build" != absent ]]; then
   EMUFORGE_IT_ENGINE_BIN="$engine_bin" EMUFORGE_IT_ENGINE_BUILD="$engine_build" \
     EMUFORGE_IT_STUDIO_BUILD="$studio_build" EMUFORGE_IT_VERDICTS="$out/verdicts" EMUFORGE_IT_RUN_ID="$run_id" \
@@ -284,7 +373,8 @@ if [[ -x "$playwright" && "$studio_build" != absent ]]; then
     EMUFORGE_IT_PRODUCT_BUILD="$product_build" EMUFORGE_IT_EMULATOR_VERSION="$emulator_version" \
     EMUFORGE_IT_EMULATOR_COMMIT="$emulator_commit" \
     NODE_PATH="$checkout/studio/node_modules" \
-    "$playwright" test --config "$here/studio/playwright.config.ts" 2>&1 | tee "$logs/integration-playwright.log" \
+    "$playwright" test --config "$here/studio/playwright.config.ts" ${grep_args[@]+"${grep_args[@]}"} 2>&1 \
+    | tee "$logs/integration-playwright.log" \
     || true
 else
   if [[ "$studio_build" == absent ]]; then
