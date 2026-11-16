@@ -1,4 +1,4 @@
-import AppLayout from '@cloudscape-design/components/app-layout';
+import AppLayout, { type AppLayoutProps } from '@cloudscape-design/components/app-layout';
 import BreadcrumbGroup, { type BreadcrumbGroupProps } from '@cloudscape-design/components/breadcrumb-group';
 import { I18nProvider } from '@cloudscape-design/components/i18n';
 import englishMessages from '@cloudscape-design/components/i18n/messages/all.en';
@@ -16,6 +16,7 @@ import { useColourMode } from './colour-mode';
 import { ContentTarget } from './components/content-target';
 import type { AreaConnection } from './components/emulator-line';
 import { EmulatorLineAndNotice } from './components/local-notice';
+import { PageHelpContext } from './components/page-help';
 import { PageResourcesContext, type PageResources } from './components/page-resources';
 import { useFollow } from './components/use-follow';
 import { IndexPage } from './pages/index-page';
@@ -36,6 +37,7 @@ export interface AreaLayoutProps {
   connection: AreaConnection;
 }
 
+/** The area's own navigation, on every page that is not a screen with its own (requirement R5.1). */
 const NAVIGATION_ITEMS: SideNavigationProps.Item[] = [
   {
     type: 'section',
@@ -44,11 +46,20 @@ const NAVIGATION_ITEMS: SideNavigationProps.Item[] = [
   },
 ];
 
+/**
+ * The layout's labels. The help panel's toggle stays while the panel is open and then closes it, so it is named for
+ * what it does next (requirement R5.6): "Open help panel" while the panel is closed, "Close help panel" while it is open.
+ */
 const APP_LAYOUT_LABELS = {
   navigation: 'Navigation',
   navigationClose: 'Close navigation',
   navigationToggle: 'Open navigation',
+  tools: 'Help panel',
+  toolsClose: 'Close help panel',
+  toolsToggle: 'Open help panel',
 };
+
+const APP_LAYOUT_LABELS_HELP_OPEN = { ...APP_LAYOUT_LABELS, toolsToggle: 'Close help panel' };
 
 /** Cloudscape's own English text, for the built-in strings of the components the area renders. */
 const CLOUDSCAPE_MESSAGES = [englishMessages];
@@ -64,6 +75,12 @@ function breadcrumbs(page: AreaPage, pathname: string): BreadcrumbGroupProps.Ite
   switch (page.kind) {
     case 'index':
       return AREA_CRUMBS;
+    case 'screen':
+      return [
+        ...AREA_CRUMBS,
+        { text: page.service.crumb, href: servicePath(page.service) },
+        { text: page.screen.crumb, href: pathname },
+      ];
     case 'service':
       return [...AREA_CRUMBS, { text: page.service.crumb, href: servicePath(page.service) }];
     case 'not-found':
@@ -71,14 +88,25 @@ function breadcrumbs(page: AreaPage, pathname: string): BreadcrumbGroupProps.Ite
   }
 }
 
-function activeHref(page: AreaPage): string {
-  return page.kind === 'service' ? servicePath(page.service) : '';
+/** The side navigation: a screen's own (R5.1), or the area's header and services with the page's service active. */
+function navigation(page: AreaPage): SideNavigationProps {
+  if (page.kind === 'screen') {
+    const { header, items, activeHref } = page.screen.navigation;
+    return { header, items, activeHref };
+  }
+  return {
+    header: { text: AWS_NAME, href: AWS_PATH },
+    items: NAVIGATION_ITEMS,
+    activeHref: page.kind === 'service' ? servicePath(page.service) : '',
+  };
 }
 
 function PageContent({ page }: { page: AreaPage }) {
   switch (page.kind) {
     case 'index':
       return <IndexPage />;
+    case 'screen':
+      return <page.screen.Page />;
     case 'service':
       return <NoScreenPage service={page.service} />;
     case 'not-found':
@@ -88,7 +116,9 @@ function PageContent({ page }: { page: AreaPage }) {
 
 /**
  * The AWS area, at `/aws` and below, as the AWS console: an `AppLayout` with the side navigation of the services
- * and breadcrumbs from EmuForge, no tools panel. Its root element carries Cloudscape's mode and scopes Cloudscape's
+ * and breadcrumbs from EmuForge. A `console` screen (`screens.ts`) brings its own title, crumb and side navigation,
+ * and its help, which the layout's tools region shows as the help panel; a page that gives no help has no panel and
+ * no toggle for one (requirement R5 of issue 56). Its root element carries Cloudscape's mode and scopes Cloudscape's
  * base. It names its content target to Studio and moves focus to it after a route change. The content target holds
  * the emulator line, the local-emulator notice when the page names its resources, then the page (requirement R4.8),
  * so what is read first after a move is that this is a local emulator and not AWS. A page names its resources with
@@ -137,32 +167,75 @@ export function AreaLayout({
   // What the page shows of the emulator, as it names it; the notice's open state outlives the page (R5.3).
   const [resources, setResources] = useState<PageResources | null>(null);
 
+  // The help panel of a screen that gives help (issue 56, R5.6): open for the visit it was opened on, so a route
+  // change closes it. Opened by the screen ("Info"), it takes focus and gives it back to the opener when closed;
+  // opened by its toggle, Cloudscape moves focus to it and back to the toggle.
+  const Help = page.kind === 'screen' ? page.screen.help : undefined;
+  const hasHelp = Help !== undefined;
+  const layout = useRef<AppLayoutProps.Ref>(null);
+  const opener = useRef<HTMLElement | null>(null);
+  const [help, setHelp] = useState({ visit: routeChanges, open: false, asked: 0 });
+  const helpOpen = hasHelp && help.open && help.visit === routeChanges;
+  const openHelp = useCallback(
+    (from?: HTMLElement | null) => {
+      if (!hasHelp) {
+        return;
+      }
+      const active = document.activeElement;
+      opener.current = from ?? (active instanceof HTMLElement && active !== document.body ? active : null);
+      setHelp((current) => ({ visit: routeChanges, open: true, asked: current.asked + 1 }));
+    },
+    [hasHelp, routeChanges],
+  );
+  const handleToolsChange = useCallback(
+    ({ detail }: { detail: AppLayoutProps.ChangeDetail }) => {
+      const open = detail.open;
+      if (open) {
+        opener.current = null;
+      }
+      setHelp((current) => ({ ...current, visit: routeChanges, open }));
+    },
+    [routeChanges],
+  );
+  useEffect(() => {
+    if (help.asked > 0) {
+      layout.current?.focusToolsClose();
+    }
+  }, [help.asked]);
+  useEffect(() => {
+    if (!helpOpen && opener.current !== null) {
+      if (opener.current.isConnected) {
+        opener.current.focus();
+      }
+      opener.current = null;
+    }
+  }, [helpOpen]);
+
   return (
     <div ref={root} className={AREA_ROOT_CLASS} lang="en">
       <I18nProvider locale="en" messages={CLOUDSCAPE_MESSAGES}>
         <AreaRootContext value={root}>
           <AppLayout
+            ref={layout}
             headerSelector={headerSelector}
-            toolsHide
-            ariaLabels={APP_LAYOUT_LABELS}
+            tools={Help === undefined ? undefined : <Help />}
+            toolsHide={Help === undefined}
+            toolsOpen={helpOpen}
+            onToolsChange={handleToolsChange}
+            ariaLabels={helpOpen ? APP_LAYOUT_LABELS_HELP_OPEN : APP_LAYOUT_LABELS}
             breadcrumbs={
               <BreadcrumbGroup items={breadcrumbs(page, pathname)} ariaLabel="Breadcrumbs" onFollow={handleFollow} />
             }
-            navigation={
-              <SideNavigation
-                header={{ text: AWS_NAME, href: AWS_PATH }}
-                activeHref={activeHref(page)}
-                items={NAVIGATION_ITEMS}
-                onFollow={handleFollow}
-              />
-            }
+            navigation={<SideNavigation {...navigation(page)} onFollow={handleFollow} />}
             content={
               // One target per path, so a route change between two paths of the same page focuses a new element.
               <ContentTarget key={pathname} targetRef={target}>
                 <SpaceBetween size="m">
                   <EmulatorLineAndNotice connection={connection} resources={resources} />
                   <PageResourcesContext value={setResources}>
-                    <PageContent page={page} />
+                    <PageHelpContext value={openHelp}>
+                      <PageContent page={page} />
+                    </PageHelpContext>
                   </PageResourcesContext>
                 </SpaceBetween>
               </ContentTarget>
