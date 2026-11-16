@@ -9,7 +9,8 @@ as something other than a string must be quoted. Everything else is refused with
 
 The items (requirement 5.1) come out in spec order with their kind (the matching rule of 5.2), expected name,
 list, critical flag (5.5) and the states they apply to (5.3); `omitted` entries (5.4) carry the item ids they
-cover. A `wizard` spec (issue 8, requirement 3) also gives its shown steps, and each of its items the position of
+cover, and an entry that covers the title, an action, a table column, `submit`, the empty title beside a scored
+empty action, or only order items is refused (issue 46, R2). A `wizard` spec (issue 8, requirement 3) also gives its shown steps, and each of its items the position of
 the shown step whose tree it is scored on.
 """
 import dataclasses
@@ -642,8 +643,31 @@ class _Builder:
                             if i.id == path or i.id.startswith(path + ".") or i.id.startswith(path + "["))
             if not covered:
                 self.fail(f"omitted {path}: names nothing in the spec")
+            self.markable(path, covered)
             out.append(Omitted(path, reason, covered))
         return out
+
+    def markable(self, path, covered):
+        """Refuse an omitted entry that covers an item that can never be marked, or only order items (issue 46,
+        R2): the first such item in spec order is named."""
+        by_id = {i.id: i for i in self.items}
+        scored_empty_action = "table.empty.action" in by_id
+        for item_id in covered:
+            item = by_id[item_id]
+            why = _UNMARKABLE.get(item.kind)
+            if item.id == "table.columns.order":
+                why = "a table column"
+            elif item.id == "table.empty.title" and scored_empty_action:
+                why = "the empty title of a scored empty action"
+            if why:
+                self.fail(f"omitted {path}: {item.id} cannot be omitted: {why}")
+        if all(by_id[i].kind in ("order", "steps_order") for i in covered):
+            self.fail(f"omitted {path}: {covered[0]} cannot be omitted: an order without its list")
+
+
+# the kinds an omitted entry may never cover, and why (issue 46, R2)
+_UNMARKABLE = {"title": "the title", "action": "an action", "empty_action": "an action", "column": "a table column",
+               "submit": "the submit action"}
 
 
 def load(path):

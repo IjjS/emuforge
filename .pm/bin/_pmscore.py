@@ -4,7 +4,8 @@ command.
   snap = load_snapshot(path[, look])       the accessibility snapshot of design 2.2 (a Snapshot), or a wizard's
                                            steps snapshot (Steps, issue 8 D2.2); SnapshotError otherwise
   result = score(spec, snap, state[, look])
-                                           requirement 5.2 to 5.6; SpecError("... nothing to score");
+                                           requirement 5.2 to 5.6, and whether an omitted item is shown (issue 46,
+                                           R3); SpecError("... nothing to score");
                                            SnapshotError when the snapshot does not fit the spec's kind
   render_text(result[, result_path])       the standard output of requirement 3
   result_json(result, extra)               the result file's content
@@ -301,7 +302,9 @@ class ItemResult:
     node: object = None        # the Node shown for a matched item
     detail: str = ""
     reason: str = ""           # omitted: the spec's reason
-    step: object = None        # kind wizard: the shown step the item is scored on; None for the other kinds
+    step: object = None        # kind wizard: the shown step the item is scored on (a shown omitted item: the step
+                               # its node is on); None for the other kinds
+    shown: bool = False        # omitted: the screen shows the item (issue 46, R3); `node` is then the node found
 
 
 @dataclasses.dataclass
@@ -316,6 +319,16 @@ class Result:
     reasons: list
     critical_unmatched: list
     extras: list               # (role, name, step) as found; step is the first step found on, None but for a wizard
+    omitted_shown: list = dataclasses.field(default_factory=list)   # ids of the shown omitted items, spec order
+
+    @property
+    def omitted(self):
+        """The number of items with status omitted in this run (issue 46, R4.1)."""
+        return sum(1 for r in self.items if r.status == "omitted")
+
+    @property
+    def spec_items(self):
+        return len(self.spec.items)
 
     @property
     def score(self):
@@ -430,12 +443,54 @@ def score(spec, snap, state, look=None):
             return True, None, None
         return first[item.id] is not None, first[item.id], None
 
-    results = []
+    # issue 46, R3: an omitted item is shown when the rule that would match it finds it, passing over a node that an
+    # item that is not omitted claims, whatever that item's states
+    kept = set().union(*(_claims(i) for i in spec.items if i.id not in omitted))
+
+    def key(n):
+        if n.role == "LabelText" and not n.name.strip():
+            return n.role, norm(n.text)
+        return n.role, norm(n.name)
+
+    def shown(item):
+        """(node, step) of an omitted item the screen shows, or None (R3.1 to R3.3)."""
+        k = item.kind
+        if state not in item.states or k in ("order", "steps_order") or (k == "selection" and item.name == "none"):
+            return None
+        if wizard and item.step is None:  # an item of an omitted step: only its title is looked for
+            if k != "step_title":
+                return None
+            pred = _nav_entry(item.name)
+            for n in _walk(trees[0].nodes, look):
+                if pred(n) and key(n) not in kept:
+                    return n, 1
+            pred = _named(("heading",), item.name)
+            for s, t in enumerate(trees, 1):
+                for n in _walk(t.nodes, look):
+                    if pred(n) and key(n) not in kept:
+                        return n, s
+            return None
+        step = item.step if wizard else None
+        if k in ("counter", "pagination"):
+            ok, idx, _ = found(item)
+            return (tree(item)[idx], step) if ok else None
+        nodes = tree(item)
+        for idx in cands[item.id]:
+            if key(nodes[idx]) not in kept:
+                return nodes[idx], step
+        return None
+
+    results, omitted_shown = [], []
     for item in spec.items:
         _look(look)
         step = item.step if wizard else None
         if item.id in omitted:
-            results.append(ItemResult(item, "omitted", reason=omitted[item.id], step=step))
+            hit = shown(item)
+            if hit is None:
+                results.append(ItemResult(item, "omitted", reason=omitted[item.id], step=step))
+            else:
+                omitted_shown.append(item.id)
+                results.append(ItemResult(item, "omitted", hit[0], reason=omitted[item.id], step=hit[1], shown=True))
             continue
         if state not in item.states:
             results.append(ItemResult(item, "not-applicable", step=step))
@@ -457,6 +512,8 @@ def score(spec, snap, state, look=None):
         reasons.append("critical item unmatched: " + ", ".join(critical))
     if matched * 100 < 90 * total:
         reasons.append("score below 90")
+    if omitted_shown:
+        reasons.append("omitted item shown: " + ", ".join(omitted_shown))
     # what an item claims is taken over the whole spec and excludes a node on every step's tree (requirement 5.6,
     # issue 8 R5.4); an extra found on several steps is listed once, at the first
     claimed = set().union(*(_claims(i) for i in spec.items)) if spec.items else set()
@@ -472,7 +529,7 @@ def score(spec, snap, state, look=None):
                 extras.append((n.role, n.name, k if wizard else None))
     return Result(spec=spec, snapshot=snap, state=state, items=results, matched=matched, total=total,
                   verdict="fail" if reasons else "pass", reasons=reasons, critical_unmatched=critical,
-                  extras=extras)
+                  extras=extras, omitted_shown=omitted_shown)
 
 
 # ---------------------------------------------------------------------------------------------------- output
@@ -505,7 +562,7 @@ def render_text(result, result_path=None):
     """The standard output of a scored run (requirement 3); the `result:` line when `result_path` is given."""
     spec = result.spec
     out = [f"structure {spec.screen} state={result.state} score={score_text(result)} "
-           f"({result.matched}/{result.total}) verdict={result.verdict}"]
+           f"({result.matched}/{result.total}) omitted={result.omitted}/{result.spec_items} verdict={result.verdict}"]
     others = [s for s in spec.needs_states if s != result.state]
     if len(spec.needs_states) > 1 and others:
         out.append("requires also: " + " ".join(f"state={s}" for s in others))
@@ -518,7 +575,8 @@ def render_text(result, result_path=None):
     by = lambda status: [r for r in result.items if r.status == status]
     group("unmatched", [f"{r.item.id}    {_at(r.step)}{r.detail}" for r in by("unmatched")])
     group("matched", [f"{r.item.id}    {_at(r.step)}{r.detail}" for r in by("matched")])
-    group("omitted", [f"{r.item.id}    {r.reason}" for r in by("omitted")])
+    group("omitted", [f"{r.item.id}    shown: {_at(r.step)}{_node_text(r.node)}    {r.reason}" if r.shown
+                      else f"{r.item.id}    {r.reason}" for r in by("omitted")])
     group("not applicable", [f"{r.item.id}    state={result.state}" for r in by("not-applicable")])
     group("not scored", [f"{p}    {k}: {_scalar(v)}" for p, k, v in spec.not_scored])
     group("extra", [f"{_at(step)}{role} {json.dumps(name, ensure_ascii=False)}" for role, name, step in result.extras])
@@ -539,6 +597,7 @@ def result_json(result, extra):
         d = {"id": r.item.id, "status": r.status, "critical": r.item.critical, "detail": r.detail}
         if r.status == "omitted":
             d["reason"] = r.reason
+            d["shown"] = r.shown
         if r.status == "not-applicable":
             d["state"] = result.state
         d["node"] = None if r.node is None else {"index": r.node.index, "role": r.node.role, "name": r.node.name}
@@ -554,6 +613,7 @@ def result_json(result, extra):
     body = {"screen": result.spec.screen, "state": result.state, "verdict": result.verdict, "score": result.score,
             "matched": result.matched, "total": result.total, "reasons": result.reasons,
             "critical_unmatched": result.critical_unmatched, "requires": result.requires, "items": items,
+            "omitted": result.omitted, "spec_items": result.spec_items, "omitted_shown": list(result.omitted_shown),
             "not_scored": [{"path": p, "key": k, "value": v} for p, k, v in result.spec.not_scored],
             "extras": extras, "blocked": _blocked(result), "url": trees[0].url, "viewport": trees[0].viewport,
             "browser": trees[0].browser, "spec": os.path.abspath(result.spec.path), "spec_sha256": result.spec.sha256}
@@ -574,16 +634,26 @@ def _cell(v):
     return str(v).replace("|", "\\|").replace("\n", " ")
 
 
+def _omitted_cell(r):
+    """`<o>/<n>`, `<o>/<n>, <k> shown`, or `-` for a row without the counts (an error row, an older row; R4.4)."""
+    o, n = r.get("omitted"), r.get("spec_items")
+    if not all(isinstance(v, int) and not isinstance(v, bool) for v in (o, n)):
+        return "-"
+    k = len(r.get("omitted_shown") or [])
+    return f"{o}/{n}, {k} shown" if k else f"{o}/{n}"
+
+
 def table(rows):
     """The --table text: one markdown row per recorded run, then one line per point and screen (requirement 5.3)."""
-    out = ["| point | screen | state | score | verdict | critical unmatched | commit |", "|---|---|---|---|---|---|---|"]
+    out = ["| point | screen | state | score | omitted | verdict | critical unmatched | commit |",
+           "|---|---|---|---|---|---|---|---|"]
     groups = {}
     for r in rows:
         score = "-" if r.get("score") is None else f"{float(r['score']):.1f}"
         commit = (r.get("commit") or "-")[:12] + (" (dirty)" if r.get("dirty") else "")
         crit = ", ".join(r.get("critical_unmatched") or []) or "-"
         out.append("| " + " | ".join(_cell(c) for c in (r.get("point"), r.get("screen"), r.get("state"), score,
-                                                        r.get("verdict"), crit, commit)) + " |")
+                                                        _omitted_cell(r), r.get("verdict"), crit, commit)) + " |")
         groups.setdefault((r.get("point"), r.get("screen")), []).append(r)
     out.append("")
     if not groups:
