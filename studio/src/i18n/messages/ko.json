@@ -51,7 +51,7 @@
   "notice.stop": "1. 에뮬레이터를 중지합니다(2단계에서 시작하는 컨테이너 {container})",
   "notice.startStep": "2. 포트 {port}에서 에뮬레이터를 시작합니다",
   "notice.start": "포트 {port}에서 에뮬레이터를 시작합니다",
-  "notice.buildOnce": "처음 실행하십니까? EmuForge 체크아웃의 루트에서 이미지를 한 번 빌드합니다",
+  "notice.buildOnce": "처음 실행하는 경우 EmuForge 체크아웃의 루트에서 이미지를 한 번 빌드합니다",
   "notice.buildImage": "{image} 이미지를 빌드합니다",
   "notice.engineUnreachable": "Studio가 엔진에 연결할 수 없습니다",
   "notice.noEngineAnswer": "Studio가 {origin}의 엔진에서 읽을 수 있는 응답을 받지 못했습니다. 엔진이 해당 포트에서 실행 중이 아니거나, 다른 Studio 오리진용으로 시작되었습니다.",

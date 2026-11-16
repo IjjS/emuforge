@@ -15,7 +15,7 @@
   "connection.notChecked": "まだ確認していません。",
   "connection.lastChecked": "最終確認 {time}。",
   "connection.lastCheckedEvery": {
-    "other": "最終確認 {time}。{count} 秒ごとに確認します。"
+    "other": "最終確認 {time}。{count}\u00a0秒ごとに確認します。"
   },
   "connection.engine": "エンジン",
   "connection.emulator": "エミュレーター",
@@ -33,7 +33,7 @@
   "announce.engineErrorCode": "エンジンエラー: {code}。",
   "announce.engineErrorStatus": "エンジンエラー: HTTP ステータス {status}。",
   "notice.recheck": {
-    "other": "Studio は {count} 秒ごとに再確認し、このページは自動的に更新されます。"
+    "other": "Studio は {count}\u00a0秒ごとに再確認し、このページは自動的に更新されます。"
   },
   "notice.refresh": "更新",
   "notice.refreshName": "接続状態を更新",
@@ -51,7 +51,7 @@
   "notice.stop": "1. エミュレーターを停止します (手順 2 で起動するコンテナー {container})",
   "notice.startStep": "2. ポート {port} でエミュレーターを起動します",
   "notice.start": "ポート {port} でエミュレーターを起動します",
-  "notice.buildOnce": "初めて実行しますか? EmuForge のチェックアウトのルートで、イメージを一度ビルドします",
+  "notice.buildOnce": "初めて実行する場合は、EmuForge のチェックアウトのルートでイメージを一度ビルドします",
   "notice.buildImage": "{image} イメージをビルドします",
   "notice.engineUnreachable": "Studio がエンジンに接続できません",
   "notice.noEngineAnswer": "Studio は {origin} のエンジンから読み取れる応答を受け取っていません。エンジンがそのポートで実行されていないか、別の Studio オリジン用に起動されています。",
@@ -74,7 +74,7 @@
   "copy.failed": "コマンドをコピーできませんでした",
   "providers.title": "プロバイダー",
   "providers.services": {
-    "other": "{count} サービス · Studio の画面はまだありません"
+    "other": "{count}\u00a0サービス · Studio の画面はまだありません"
   },
   "notFound.title": "ページが見つかりません",
   "notFound.statement": "Studio には {path} のページはありません。",
