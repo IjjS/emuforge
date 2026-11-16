@@ -741,7 +741,8 @@ describe('Connection: a change of language changes the text at once (R2.6, R5.3)
     }).format(new Date(2026, 10, 15, 16, 5, 12));
     const seconds = new Intl.NumberFormat('ja').format(5);
     expect(connectionDescription()).toBe(
-      japanese['connection.lastCheckedEvery'].other.replace('{time}', time).replace('{count}', seconds),
+      // The description is read with its white space normalised, the no-break space after the count included.
+      norm(japanese['connection.lastCheckedEvery'].other.replace('{time}', time).replace('{count}', seconds)),
     );
     expect(engine.healths).toHaveLength(1);
   });
@@ -794,5 +795,36 @@ describe('Connection: a change of language keeps the rhythm of the checks (R2.6)
     expect(engine.healths).toHaveLength(2);
     await advance(1);
     expect(engine.healths).toHaveLength(3);
+  });
+});
+
+/** The connection's description as it is written in the page, white space not normalised. */
+function rawConnectionDescription(): string | null | undefined {
+  const id = present(connectionSection().getAttribute('aria-describedby'), "the section's description");
+  return document.getElementById(id)?.textContent;
+}
+
+describe('Connection: a count and its unit (issue 32, R4.1)', () => {
+  it('connected, after a check: the description joins "5" and "seconds" with U+00A0, ordinary spaces elsewhere', async () => {
+    await openHomeAnswered(connected(9297));
+    expect(rawConnectionDescription()).toBe('Last checked 16:05:12. Checked every 5\u00a0seconds.');
+  });
+
+  it.each(ALERT_STATES)(
+    '%s: the re-check line joins "5" and "seconds" with U+00A0, ordinary spaces elsewhere',
+    async (_name, answer) => {
+      await openHomeAnswered(answer);
+      const recheck = present(noticeHeading().parentElement?.nextElementSibling, 'the re-check line');
+      expect(recheck.textContent).toBe('Studio checks again every 5\u00a0seconds; this page updates on its own.');
+    },
+  );
+
+  it('the polite region after a check: its announcement is unchanged, with no count in it', async () => {
+    await openHomeAnswered(connected(9297));
+    const said = politeRegions().map((region) => region.textContent ?? '');
+    expect(said).toContain('Engine connected. Emulator connected.');
+    for (const text of said) {
+      expect(text).not.toMatch(/\d|\u00a0|second/);
+    }
   });
 });
