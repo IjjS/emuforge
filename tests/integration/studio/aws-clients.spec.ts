@@ -1,12 +1,12 @@
 // Studio's AWS SDK clients (`studio/src/lib/aws/client-factory.ts`) from a page at the built Studio's origin, through
-// the engine started for that origin (test-criteria.md, issue 13, Flow sections). The page opens `/aws/s3` (issue
+// the engine started for that origin (test-criteria.md, issue 13, Flow sections). The page opens `/aws/kinesis` (issue
 // 16's route, R9.3), the "no screen yet" page; its only engine requests are the AWS area's emulator line's (issue 45),
 // which `EngineRequests` leaves out, so every engine request counted is the factory's. The factory runs bundled for
 // the browser against Studio's installed SDK (`support/aws-clients.ts`).
 
 import type { BrowserContext, Page } from '@playwright/test';
 
-import { expect, startStack, test, type Ctx } from './support';
+import { expect, NO_SCREEN_SERVICE, startStack, test, type Ctx } from './support';
 import {
   awsRequests,
   bucketNames,
@@ -44,9 +44,9 @@ function answered(answer: DirectAnswer, status: number, what: string): string {
 }
 
 /**
- * Opens `/aws/s3` with the page's requests recorded, loads the factory's clients and asserts the precondition: the page
- * has made no engine request other than the emulator line's (changed, issue 45 PM decision: the area's line asks for
- * the session and the health on its own, R4.4; `EngineRequests` leaves those out).
+ * Opens `/aws/kinesis` with the page's requests recorded, loads the factory's clients and asserts the precondition: the
+ * page has made no engine request other than the emulator line's (changed, issue 45 PM decision: the area's line asks
+ * for the session and the health on its own, R4.4; `EngineRequests` leaves those out).
  */
 async function openWithClients(
   ctx: Ctx,
@@ -57,9 +57,9 @@ async function openWithClients(
   enginePort: number,
 ): Promise<{ clients: PageClients; requests: EngineRequests }> {
   const requests = await EngineRequests.attach(ctx, context, page, engineOrigin);
-  await page.goto('/aws/s3');
+  await page.goto(NO_SCREEN_SERVICE.path);
   expect(new URL(page.url()).origin, 'the page origin').toBe(studioOrigin);
-  expect(new URL(page.url()).pathname, 'the page path').toBe('/aws/s3');
+  expect(new URL(page.url()).pathname, 'the page path').toBe(NO_SCREEN_SERVICE.path);
   const clients = await PageClients.load(ctx, page, enginePort, requests);
   const before = await requests.all();
   ctx.log(`engine requests before the first command: ${describe(before)}`);

@@ -24,6 +24,7 @@ import {
   MAGENTA,
   measureTile,
   mediaType,
+  NO_SCREEN_SERVICE,
   onTile,
   pageTileForm,
   recordFirstBarFrame,
@@ -339,25 +340,25 @@ test('studio.frame-wordmark-shows-the-tile', async ({ ctx, page, context, browse
   );
 
   await lines.line(
-    'Click the tile on `/aws/s3` → Home opens, as a click on the text does; click the text → the same',
+    'Click the tile on `/aws/kinesis` → Home opens, as a click on the text does; click the text → the same',
     async () => {
-      await open(page, '/aws/s3', 1280);
-      await expectInAwsArea(page, 'Amazon Simple Storage Service');
+      await open(page, NO_SCREEN_SERVICE.path, 1280);
+      await expectInAwsArea(page, NO_SCREEN_SERVICE.label);
       await tileOf(page).click(ACTION);
       await expectHome(page);
-      await open(page, '/aws/s3', 1280);
-      await expectInAwsArea(page, 'Amazon Simple Storage Service');
+      await open(page, NO_SCREEN_SERVICE.path, 1280);
+      await expectInAwsArea(page, NO_SCREEN_SERVICE.label);
       await f.wordmark.getByText('EmuForge', { exact: true }).click(ACTION);
       await expectHome(page);
     },
   );
 
   await lines.line(
-    'Open `/`, `/does-not-exist`, `/aws`, `/aws/s3/buckets` → the tile is at the same place with the same size and colours on all four; go back and forward between them and reload one → it is unchanged',
+    'Open `/`, `/does-not-exist`, `/aws`, `/aws/kinesis/streams` → the tile is at the same place with the same size and colours on all four; go back and forward between them and reload one → it is unchanged',
     async () => {
       const found: string[] = [];
       await page.setViewportSize({ width: 1280, height: 800 });
-      const paths = ['/', '/does-not-exist', '/aws', '/aws/s3/buckets'];
+      const paths = ['/', '/does-not-exist', '/aws', NO_SCREEN_SERVICE.below];
       const take = async (where: string) => {
         await rendered(page);
         await rest(page);
@@ -517,10 +518,10 @@ test('studio.frame-wordmark-shows-the-tile', async ({ ctx, page, context, browse
   );
 
   await lines.line(
-    "Open `/aws/s3` → no element inside the AWS area's root has a class, a custom property or a computed colour that comes from the tile's rules, and the tile's rules are in the `studio` layer",
+    "Open `/aws/kinesis` → no element inside the AWS area's root has a class, a custom property or a computed colour that comes from the tile's rules, and the tile's rules are in the `studio` layer",
     async () => {
-      await open(page, '/aws/s3', 1280);
-      await expectInAwsArea(page, 'Amazon Simple Storage Service');
+      await open(page, NO_SCREEN_SERVICE.path, 1280);
+      await expectInAwsArea(page, NO_SCREEN_SERVICE.label);
       expect(await markAreaRoot(page), "the AWS area's root is found").toBe(true);
       const r = await tileRules(page);
       ctx.log(`the tile's rules: ${JSON.stringify(r.rules)}; unreadable sheets ${JSON.stringify(r.unreadable)}`);
@@ -871,14 +872,14 @@ test('studio.frame-bar-fits-with-the-tile-in-every-language', async ({ ctx, brow
             await open(page, '/', width);
             await rest(page);
             const home = await tileShot(page);
-            await open(page, '/aws/s3', width);
+            await open(page, NO_SCREEN_SERVICE.path, width);
             await expect(
-              page.getByRole('heading', { level: 1, name: 'Amazon Simple Storage Service', exact: true }),
+              page.getByRole('heading', { level: 1, name: NO_SCREEN_SERVICE.label, exact: true }),
             ).toBeVisible();
             await rest(page);
             const area = await tileShot(page);
-            ctx.log(`${where}: the tile on / ${fmt(home.box)}, on /aws/s3 ${fmt(area.box)}`);
-            found.area.push(...tileShotDiffers(home, area).map((d) => `${where}: /aws/s3 against /: ${d}`));
+            ctx.log(`${where}: the tile on / ${fmt(home.box)}, on /aws/kinesis ${fmt(area.box)}`);
+            found.area.push(...tileShotDiffers(home, area).map((d) => `${where}: /aws/kinesis against /: ${d}`));
           } catch (e) {
             found.area.push(`${where}: ${(e as Error).message.split('\n')[0]}`);
           }
@@ -906,7 +907,7 @@ test('studio.frame-bar-fits-with-the-tile-in-every-language', async ({ ctx, brow
     async () => expect(cap(found.w641)).toEqual([]),
   );
   await lines.line(
-    'Thai and German on `/aws/s3` at 390 and 1280 → the bar is as on `/`: same tile, same place',
+    'Thai and German on `/aws/kinesis` at 390 and 1280 → the bar is as on `/`: same tile, same place',
     async () => expect(cap(found.area)).toEqual([]),
   );
   await lines.line(

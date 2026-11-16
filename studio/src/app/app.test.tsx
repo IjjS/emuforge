@@ -3,6 +3,7 @@ import { useEffect } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { advance, connected, FakeEngine, present, row } from '../test/home-test-kit';
+import { NO_SCREEN_SENTENCE, NO_SCREEN_SERVICE } from '../test/no-screen';
 import { App } from './app';
 import type { Provider, ProviderAreaProps } from './provider-list';
 
@@ -105,19 +106,19 @@ describe('Studio with a second provider in the list', () => {
     expect(within(studio).getByRole('link', { name: 'Test' })).toHaveAttribute('aria-current', 'true');
 
     act(() => {
-      window.history.pushState(null, '', '/aws/s3');
+      window.history.pushState(null, '', NO_SCREEN_SERVICE.path);
       window.dispatchEvent(new PopStateEvent('popstate'));
     });
     await vi.waitFor(async () => {
       await advance();
-      expect(screen.getByRole('heading', { level: 1, name: 'Amazon Simple Storage Service' })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { level: 1, name: NO_SCREEN_SERVICE.label })).toBeInTheDocument();
     }, AREA_LOAD);
-    expect(screen.getByText('Studio has no screen for Amazon Simple Storage Service yet.')).toBeInTheDocument();
+    expect(screen.getByText(NO_SCREEN_SENTENCE)).toBeInTheDocument();
   });
 });
 
 describe('Studio in the browser', () => {
-  it('stores nothing in localStorage, sessionStorage, cookies or IndexedDB across Home, /aws, /aws/s3 and not found', async () => {
+  it('stores nothing in localStorage, sessionStorage, cookies or IndexedDB across Home, /aws, /aws/kinesis and not found', async () => {
     render(<App />);
     await advance();
     expect(row('Engine').status).toBe('Connected');
@@ -126,20 +127,20 @@ describe('Studio in the browser', () => {
     const studio = screen.getByRole('navigation', { name: 'Studio' });
     fireEvent.click(within(studio).getByRole('link', { name: 'AWS' }));
     // The AWS area loads on its first opening; the import is real work, not a timer.
-    const s3 = await vi.waitFor(async () => {
+    const service = await vi.waitFor(async () => {
       await advance();
       return present(
-        screen.queryAllByRole('link', { name: 'Amazon Simple Storage Service' })[0],
-        'an S3 link in the AWS area',
+        screen.queryAllByRole('link', { name: NO_SCREEN_SERVICE.label })[0],
+        `a link to ${NO_SCREEN_SERVICE.label} in the AWS area`,
       );
     }, AREA_LOAD);
     expect(window.location.pathname).toBe('/aws');
     expect(screen.getByRole('heading', { level: 1, name: 'Amazon Web Services' })).toBeInTheDocument();
 
-    fireEvent.click(s3);
+    fireEvent.click(service);
     await advance();
-    expect(window.location.pathname).toBe('/aws/s3');
-    expect(screen.getByRole('heading', { level: 1, name: 'Amazon Simple Storage Service' })).toBeInTheDocument();
+    expect(window.location.pathname).toBe(NO_SCREEN_SERVICE.path);
+    expect(screen.getByRole('heading', { level: 1, name: NO_SCREEN_SERVICE.label })).toBeInTheDocument();
 
     act(() => {
       window.history.pushState(null, '', '/does-not-exist');
