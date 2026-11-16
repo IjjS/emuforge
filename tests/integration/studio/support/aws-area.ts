@@ -87,6 +87,14 @@ export function crumbLink(page: Page, name: string): Locator {
 }
 
 /**
+ * The current-page crumb as it is shown. Cloudscape's breadcrumb group renders it as a Tab stop
+ * (`role="link"`, `aria-current="page"`), so a Tab walk through the crumbs goes on from it.
+ */
+export function currentCrumb(page: Page): Locator {
+  return page.locator(BREADCRUMB_GROUP).locator('[aria-current="page"]').filter({ visible: true });
+}
+
+/**
  * At a narrow width: the crumbs a user can reach. When the breadcrumbs collapse into an entry ("Show path" and its
  * like), it is opened and its items are read; the crumbs still shown are read too. Returns every reachable crumb text,
  * and whether a collapsed entry was opened.

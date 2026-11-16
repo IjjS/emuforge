@@ -22,6 +22,7 @@ import {
   connectionStatusLink,
   crumbLink,
   crumbs,
+  currentCrumb,
   documentIcons,
   emulatorLine,
   engineNotAnswering,
@@ -109,21 +110,23 @@ test('studio.aws-area-breadcrumbs-start-at-emuforge', async ({ ctx, page }) => {
   });
 
   await lines.line(
-    'On each of those pages → no crumb reads "Amazon Web Services", and the frame\'s "AWS" is marked current',
+    'On each of those pages → no crumb reads "Amazon Web Services", and the frame\'s "AWS" is marked current: `aria-current="page"` on `/aws`, `"true"` on the pages below it (changed, issue 45 PM decision)',
     async () => {
       const found: string[] = [];
-      for (const { path, h1 } of [
-        { path: '/aws', h1: AWS },
-        { path: '/aws/s3', h1: S3 },
-        { path: '/aws/dynamodb/tables/orders', h1: 'Amazon DynamoDB' },
-        { path: '/aws/does-not-exist', h1: NOT_FOUND },
+      for (const { path, h1, marked } of [
+        { path: '/aws', h1: AWS, marked: 'page' },
+        { path: '/aws/s3', h1: S3, marked: 'true' },
+        { path: '/aws/dynamodb/tables/orders', h1: 'Amazon DynamoDB', marked: 'true' },
+        { path: '/aws/does-not-exist', h1: NOT_FOUND, marked: 'true' },
       ]) {
         await open(page, path, h1);
         const shown = await crumbs(page);
         if (shown.length === 0) found.push(`${path}: no crumb is shown`);
         if (shown.includes(AWS)) found.push(`${path}: a crumb reads "${AWS}" (${JSON.stringify(shown)})`);
         const current = await f.aws.getAttribute('aria-current', ACTION);
-        if (current !== 'page') found.push(`${path}: the frame's "AWS" has aria-current ${String(current)}`);
+        if (current !== marked) {
+          found.push(`${path}: the frame's "AWS" has aria-current ${String(current)}, not "${marked}"`);
+        }
       }
       expect(found).toEqual([]);
     },
@@ -462,12 +465,13 @@ test('studio.aws-area-emulator-line-keyboard-and-layout', async ({ ctx, page }) 
   }
 
   await lines.line(
-    'Fresh load of `/aws`, connected, Tab on from the crumb "EmuForge" → the next stop is "Amazon API Gateway" in the page\'s "Services"; nothing in the emulator line is a Tab stop',
+    'Fresh load of `/aws`, connected, Tab on from the current-page crumb "AWS" → the next stop is "Amazon API Gateway" in the page\'s "Services"; nothing in the emulator line is a Tab stop (changed, issue 45 PM decision)',
     async () => {
       await emulatorIs('running');
       await open(page, '/aws', AWS);
       await expectLine(page, status());
-      await crumbLink(page, 'EmuForge').focus(ACTION);
+      await expect(currentCrumb(page), 'the current-page crumb').toHaveText('AWS');
+      await currentCrumb(page).focus(ACTION);
       const stop = await pressTab(page);
       expect(contentStopProblems(stop, 'Amazon API Gateway'), 'the next Tab reaches "Amazon API Gateway"').toEqual([]);
       expect((await lineControls(page)).tabStops, 'Tab stops in the emulator line').toEqual([]);
@@ -475,12 +479,13 @@ test('studio.aws-area-emulator-line-keyboard-and-layout', async ({ ctx, page }) 
   );
 
   await lines.line(
-    'With the emulator stopped, fresh load of `/aws/s3`, Tab on from the last crumb link → the next stop is "Connection status", with a visible focus indicator, and the one after is "Go to Home"',
+    'With the emulator stopped, fresh load of `/aws/s3`, Tab on from the current-page crumb "S3" → the next stop is "Connection status", with a visible focus indicator, and the one after is "Go to Home" (changed, issue 45 PM decision)',
     async () => {
       await emulatorIs('stopped');
       await open(page, '/aws/s3', S3);
       await expectLine(page, status());
-      await crumbLink(page, 'AWS').focus(ACTION);
+      await expect(currentCrumb(page), 'the current-page crumb').toHaveText('S3');
+      await currentCrumb(page).focus(ACTION);
       const stop = await pressTab(page);
       expect(contentStopProblems(stop, CONNECTION_STATUS), `the next Tab reaches "${CONNECTION_STATUS}"`).toEqual([]);
       expect(await hasFocus(connectionStatusLink(page)), `the line's "${CONNECTION_STATUS}" has focus`).toBe(true);
