@@ -188,13 +188,14 @@ flow step 1:
   a severity. Skip `github#<n>` issues until their `EVENT go` arrives.
 - `LOW` issues go in batches of five, so that five small issues cost one review and one critique instead of
   five: reviews, critiques and full checks are what takes the time. When only `LOW` issues are left, take the
-  five oldest of one module together (fewer when fewer are open) and run them as one piece of work:
+  five oldest of one module together (fewer when fewer are open) and run them as if they were one issue, in one
+  tab:
   - The oldest issue of the batch is its host. Its `.pm/issue-<host>/` holds the batch's stage documents, and
     `decisions.md` names the other issue files. One `plan` pane plans all five in one requirement, one set of
     test criteria and one breakdown, and one `rev` pane reviews each stage once for the whole batch.
-  - Units belong to the host (`pm-worktree new <host> <unit>`), each naming the issue it serves; `rev` reviews a
-    unit once. The unit that fixes an issue runs `pm-issue close` for that issue, so each issue file moves in its
-    own fixing commit.
+  - Units belong to the host (`pm-worktree new <host> <unit>`) and are cut as for one issue: a unit may fix
+    several of the five and names the ones it fixes; `rev` reviews a unit once. The unit that fixes an issue runs
+    `pm-issue close` for that issue, so each issue file moves in the commit that fixes it.
   - Studio screens of the batch are scored together: one `crit` pane, one mock round and one `final` for all the
     screens the batch changes.
   - The batch is finished as one: when its last unit is merged, run `pm-check .` on `main` once, report the five
