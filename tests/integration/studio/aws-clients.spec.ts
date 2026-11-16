@@ -1,8 +1,8 @@
 // Studio's AWS SDK clients (`studio/src/lib/aws/client-factory.ts`) from a page at the built Studio's origin, through
 // the engine started for that origin (test-criteria.md, issue 13, Flow sections). The page opens `/aws/s3` (issue
-// 16's route, R9.3), the "no screen yet" page, which sends nothing to the engine, so every engine request the page
-// makes is the factory's. The factory runs bundled for the browser against Studio's installed SDK
-// (`support/aws-clients.ts`).
+// 16's route, R9.3), the "no screen yet" page; its only engine requests are the AWS area's emulator line's (issue 45),
+// which `EngineRequests` leaves out, so every engine request counted is the factory's. The factory runs bundled for
+// the browser against Studio's installed SDK (`support/aws-clients.ts`).
 
 import type { BrowserContext, Page } from '@playwright/test';
 
@@ -45,7 +45,8 @@ function answered(answer: DirectAnswer, status: number, what: string): string {
 
 /**
  * Opens `/aws/s3` with the page's requests recorded, loads the factory's clients and asserts the precondition: the page
- * has made no engine request.
+ * has made no engine request other than the emulator line's (changed, issue 45 PM decision: the area's line asks for
+ * the session and the health on its own, R4.4; `EngineRequests` leaves those out).
  */
 async function openWithClients(
   ctx: Ctx,

@@ -8,10 +8,11 @@
 //   the clients live in the page until it closes, so later calls go through the same clients. A resolved command
 //   carries its request id (`$metadata.requestId`, the emulator's id of the request it answered); the object
 //   commands (issue 26) carry what their result reads: body, `ETag`, `CacheControl`, keys.
-// - `EngineRequests` reads the page's engine requests from a `Traffic` recording: method, path, whether
-//   `Authorization` has the Studio credential's prefix, and whether `X-EmuForge-Session` equals a session token the
-//   engine handed the page. Tokens stay in memory (`Traffic` registers each for redaction as it sees it); only
-//   presence and equality reach a log.
+// - `EngineRequests` records the page's engine requests: method, path, whether `Authorization` has the Studio
+//   credential's prefix, and whether `X-EmuForge-Session` equals a session token the engine handed the clients. The
+//   AWS area's emulator line asks the engine on its own (issue 45); its session and health requests are left out.
+//   Tokens stay in memory (a `Traffic` registers each for redaction as it sees it); only presence and equality reach a
+//   log.
 // - `CacheRecord` is the browser's own record of where each engine answer came from: a Chrome DevTools Protocol
 //   session on the page (`Network.requestWillBeSent`, `Network.requestServedFromCache`, `Network.responseReceived`).
 //   It only listens; it changes no request and installs no route.
@@ -19,7 +20,7 @@
 //   against its `ca.pem`. A direct S3 call may carry a body and extra headers; every direct answer carries its
 //   headers.
 
-import type { BrowserContext, CDPSession, Page } from '@playwright/test';
+import type { BrowserContext, CDPSession, Page, Request } from '@playwright/test';
 import { execFile } from 'node:child_process';
 import { createHash, createHmac } from 'node:crypto';
 import fs from 'node:fs';
@@ -28,7 +29,7 @@ import path from 'node:path';
 
 import { type Ctx } from './check';
 import { emulatorDir, readEmulatorFiles } from './emulator';
-import { SESSION_PATH, Traffic, type SeenRequest } from './traffic';
+import { HEALTH_PATH, SESSION_PATH, Traffic } from './traffic';
 import { waitFor } from './wait';
 
 const REGION = 'us-east-1';
@@ -302,13 +303,40 @@ export interface EngineRequest {
   /** `X-Amz-Target`, `null` when absent (S3). */
   target: string | null;
   hasSession: boolean;
-  /** Index into `Traffic.tokens` of the token `X-EmuForge-Session` equals; -1 when none or no match. */
+  /**
+   * Index among the clients' session tokens (`EngineRequests`) of the token `X-EmuForge-Session` equals; -1 when none
+   * or no match.
+   */
   sessionToken: number;
 }
 
-/** The page's requests to the engine at `engineOrigin`, from a `Traffic` recording. */
+/** One engine request as `EngineRequests` saw it: its final headers, and for a session request the token it got. */
+interface SeenEngineRequest {
+  method: string;
+  path: string;
+  headers: Record<string, string>;
+  /** The token of the session answer; `null` until it is read, or when the answer gave none. */
+  token: string | null;
+}
+
+/**
+ * The page's requests to the engine at `engineOrigin`, preflights (`OPTIONS`) excepted. A `Traffic` stays attached
+ * so that every session token is registered for redaction the moment it is seen.
+ *
+ * The AWS area's emulator line (issue 45, R4.4) asks the engine for a session and for its health on its own; those
+ * requests are the line's, not the clients', and are left out of `all()`, `since()` and `tokenCount()`: every request
+ * to `HEALTH_PATH`, and every session request whose token no AWS request (a request to any other engine path)
+ * carries, a session request whose answer gave no token included. The clients' tokens are the session tokens an AWS
+ * request carries, in the order of their session requests.
+ */
 export class EngineRequests {
-  constructor(
+  private readonly seen: SeenEngineRequest[] = [];
+  private readonly pending: Promise<unknown>[] = [];
+  private readonly answers: Promise<unknown>[] = [];
+  private leftOutLogged = -1;
+
+  private constructor(
+    private readonly ctx: Ctx,
     private readonly traffic: Traffic,
     private readonly engineOrigin: string,
   ) {}
@@ -319,11 +347,42 @@ export class EngineRequests {
    * answer hides that code.
    */
   static attach(ctx: Ctx, context: BrowserContext, page: Page, engineOrigin: string): EngineRequests {
-    const requests = new EngineRequests(Traffic.attach(ctx, context, page), engineOrigin);
+    const requests = new EngineRequests(ctx, Traffic.attach(ctx, context, page), engineOrigin);
+    const byRequest = new Map<Request, SeenEngineRequest>();
+    context.on('request', (request) => {
+      const url = new URL(request.url());
+      if (url.origin !== engineOrigin || request.method() === 'OPTIONS') return;
+      const seen: SeenEngineRequest = {
+        method: request.method(),
+        path: url.pathname,
+        headers: request.headers(),
+        token: null,
+      };
+      requests.seen.push(seen);
+      byRequest.set(request, seen);
+      requests.pending.push(
+        request
+          .allHeaders()
+          .then((headers) => (seen.headers = headers))
+          .catch(() => undefined),
+      );
+    });
     context.on('response', (response) => {
       const url = new URL(response.url());
-      if (url.origin !== engineOrigin || response.status() < 400) return;
+      if (url.origin !== engineOrigin) return;
       const request = response.request();
+      const seen = byRequest.get(request);
+      if (seen !== undefined && url.pathname === SESSION_PATH && response.ok()) {
+        requests.pending.push(
+          response
+            .json()
+            .then((body: { token?: unknown }) => {
+              if (typeof body.token === 'string' && body.token !== '') seen.token = body.token;
+            })
+            .catch(() => undefined),
+        );
+      }
+      if (response.status() < 400) return;
       const www = response.headers()['www-authenticate'] !== undefined;
       const read = response
         .text()
@@ -343,24 +402,30 @@ export class EngineRequests {
     return requests;
   }
 
-  private readonly answers: Promise<unknown>[] = [];
-
   /** Waits until every engine answer and header seen so far has been recorded and logged. */
   async settle(): Promise<void> {
     for (;;) {
-      const now = this.answers.splice(0);
+      const now = [...this.answers.splice(0), ...this.pending.splice(0)];
       await this.traffic.settle();
       if (now.length === 0) return;
       await Promise.allSettled(now);
     }
   }
 
-  /** Every recorded engine request so far, preflights (`OPTIONS`) excepted, once their headers are recorded. */
+  /**
+   * Every recorded engine request of the clients so far, once their headers and tokens are recorded: the emulator
+   * line's requests are left out (see the class), and how many were is logged when that number changes.
+   */
   async all(): Promise<EngineRequest[]> {
     await this.settle();
-    return this.traffic.requests
-      .filter((r) => new URL(r.url).origin === this.engineOrigin && r.method !== 'OPTIONS')
-      .map((r) => this.reduce(r));
+    const tokens = this.clientTokens();
+    const kept = this.seen.filter((r) => this.isClients(r, tokens));
+    const leftOut = this.seen.length - kept.length;
+    if (leftOut !== this.leftOutLogged) {
+      this.leftOutLogged = leftOut;
+      this.ctx.log(`engine requests of the emulator line left out: ${String(leftOut)}`);
+    }
+    return kept.map((r) => this.reduce(r, tokens));
   }
 
   /** The engine requests after the first `from` of `all()`. */
@@ -368,21 +433,44 @@ export class EngineRequests {
     return (await this.all()).slice(from);
   }
 
-  /** How many session tokens the engine has handed the page so far. */
+  /** How many session tokens the engine has handed the clients so far. */
   async tokenCount(): Promise<number> {
-    await this.traffic.settle();
-    return this.traffic.tokens.length;
+    await this.settle();
+    return this.clientTokens().length;
   }
 
-  private reduce(r: SeenRequest): EngineRequest {
+  /** The session tokens an AWS request carries, in the order of the session requests that got them. */
+  private clientTokens(): string[] {
+    const carried = new Set(
+      this.seen
+        .filter((r) => r.path !== SESSION_PATH && r.path !== HEALTH_PATH)
+        .map((r) => r.headers['x-emuforge-session'])
+        .filter((t): t is string => t !== undefined),
+    );
+    const tokens: string[] = [];
+    for (const r of this.seen) {
+      if (r.path === SESSION_PATH && r.token !== null && carried.has(r.token) && !tokens.includes(r.token)) {
+        tokens.push(r.token);
+      }
+    }
+    return tokens;
+  }
+
+  private isClients(r: SeenEngineRequest, tokens: string[]): boolean {
+    if (r.path === HEALTH_PATH) return false;
+    if (r.path === SESSION_PATH) return r.token !== null && tokens.includes(r.token);
+    return true;
+  }
+
+  private reduce(r: SeenEngineRequest, tokens: string[]): EngineRequest {
     const session = r.headers['x-emuforge-session'];
     return {
       method: r.method,
-      path: new URL(r.url).pathname,
+      path: r.path,
       studioAuth: (r.headers.authorization ?? '').startsWith(STUDIO_AUTH_PREFIX),
       target: r.headers['x-amz-target'] ?? null,
       hasSession: session !== undefined,
-      sessionToken: session === undefined ? -1 : this.traffic.tokens.indexOf(session),
+      sessionToken: session === undefined ? -1 : tokens.indexOf(session),
     };
   }
 }
