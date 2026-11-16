@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: harness|structure-score|parts-not-in-the-emulator
-Issue-Check-Ids:
+Issue-Check-Ids: harness.spec harness.score harness.records harness.docs
 Issue-Commit: f91e23282a1e0377835ed9b76e716013d162b259
 
 # Let a reference spec mark a console part as not in the emulator so the structure score leaves it out
