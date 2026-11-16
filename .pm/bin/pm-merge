@@ -11,6 +11,10 @@ red by design never gets here: its pm-check does not pass, and it arrives throug
 A run that passed with a flaky step (failed once, passed on the second run) is accepted and named in the output.
 Merges with --no-ff so every unit is one merge commit on main. On a conflict the merge is aborted and main is left
 as it was: send the unit back to its worker to merge main into its branch, check again, then rerun.
+After the merge commit it runs `pm-emulator-dir rm --worktree` for the unit's worktree and for each registered
+worktree of the issue it is stacked on (the chain of base branches down to main), and prints their lines: the
+emulator port folders those units leave under ~/.aws/emulator. A refusal or a failure there does not change the
+merge or the exit code. A refused merge, --dry-run and an aborted merge remove nothing.
 Never pushes; the PM pushes main when an issue is finished (pm skill, flow step 6).
 """
 import argparse
@@ -22,18 +26,48 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _pmlib import PM, ROOT, WORKTREES, load, log
+from _pmlib import BIN, PM, ROOT, WORKTREES, load, log
+
+EMULATOR_DIR = "pm-emulator-dir: "
 
 
 def git(*args, cwd=ROOT):
     return subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True)
 
 
+def remove_emulator_dir(wt):
+    """Run pm-emulator-dir for one worktree and pass on its lines; nothing it does changes the merge."""
+    try:
+        r = subprocess.run([str(BIN / "pm-emulator-dir"), "rm", "--worktree", wt["path"]], capture_output=True,
+                           text=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        print(f"{EMULATOR_DIR}did not run for {wt['name']}: timeout after 60 s")
+        return
+    except OSError as e:
+        print(f"{EMULATOR_DIR}did not run for {wt['name']}: {type(e).__name__}")
+        return
+    lines = [ln for ln in r.stdout.splitlines() if ln.startswith(EMULATOR_DIR)]
+    print("\n".join(lines) if lines else f"{EMULATOR_DIR}no line for {wt['name']} (exit {r.returncode})")
+
+
+def stack(wts, wt):
+    """The unit's entry, then the entry of the same issue whose branch is its base, down to main."""
+    chain, seen = [], set()
+    while wt is not None and wt["branch"] not in seen:
+        chain.append(wt)
+        seen.add(wt["branch"])
+        base = wt.get("base")
+        wt = None if base in (None, "main") else next(
+            (w for w in wts if w.get("issue") == chain[0]["issue"] and w.get("branch") == base), None)
+    return chain
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("issue"); p.add_argument("unit"); p.add_argument("--dry-run", action="store_true")
     a = p.parse_args()
-    wt = next((w for w in load(WORKTREES, []) if w["issue"] == str(a.issue) and w["unit"] == a.unit), None)
+    wts = load(WORKTREES, [])
+    wt = next((w for w in wts if w["issue"] == str(a.issue) and w["unit"] == a.unit), None)
     if not wt:
         sys.exit(f"no registered worktree for issue {a.issue} unit {a.unit}")
     branch, path = wt["branch"], pathlib.Path(wt["path"])
@@ -77,6 +111,8 @@ def main():
     log(f"merge {a.issue} {a.unit} {branch} -> main {new[:9]}")
     flaky = f"; flaky in its check run: {', '.join(last['flaky'])} (file the flake, see .pm/run/flakes.jsonl)" if last.get("flaky") else ""
     print(f"merged {branch} into main at {new[:9]} (reviewed: {reviews[-1].name}){flaky}; units stacked on it must merge main into their branch")
+    for w in stack(wts, wt):
+        remove_emulator_dir(w)
 
 
 main()
