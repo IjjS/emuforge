@@ -15,6 +15,7 @@
 
 import type { CDPSession, Locator, Page } from '@playwright/test';
 
+import { connectedAt, expectLine } from './aws-area';
 import { expect } from './check';
 import { ACTION, BREADCRUMB_GROUP, SIDE_NAVIGATION } from './frame';
 
@@ -462,6 +463,16 @@ export async function recordFocusMoves(page: Page): Promise<void> {
 /** The elements that took focus in the current document since it loaded. */
 export async function focusMoves(page: Page): Promise<string[]> {
   return page.evaluate(() => window.__emuforgeFocusMoves ?? ['the recorder is not installed']);
+}
+
+/**
+ * On a page of the AWS area (`path` under `/aws`), waits until the emulator line shows its first answer, "Connected at
+ * <endpoint>" for the emulator on `emulatorPort`: the line's height is not fixed (issue 45, R4.7), so places on such
+ * a page are read after it. Returns at once on any other page.
+ */
+export async function lineAnswered(page: Page, path: string, emulatorPort: number): Promise<void> {
+  if (path !== '/aws' && !path.startsWith('/aws/')) return;
+  await expectLine(page, connectedAt(emulatorPort));
 }
 
 /** Resolves once the page has drawn two more frames: effects of the last render have run. */
