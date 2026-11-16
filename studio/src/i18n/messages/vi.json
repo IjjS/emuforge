@@ -15,7 +15,7 @@
   "connection.notChecked": "Chưa kiểm tra.",
   "connection.lastChecked": "Kiểm tra lần cuối lúc {time}.",
   "connection.lastCheckedEvery": {
-    "other": "Kiểm tra lần cuối lúc {time}. Kiểm tra mỗi {count} giây."
+    "other": "Kiểm tra lần cuối lúc {time}. Kiểm tra mỗi {count}\u00a0giây."
   },
   "connection.engine": "Engine",
   "connection.emulator": "Trình giả lập",
@@ -33,7 +33,7 @@
   "announce.engineErrorCode": "Lỗi engine: {code}.",
   "announce.engineErrorStatus": "Lỗi engine: trạng thái HTTP {status}.",
   "notice.recheck": {
-    "other": "Studio kiểm tra lại mỗi {count} giây; trang này tự cập nhật."
+    "other": "Studio kiểm tra lại mỗi {count}\u00a0giây; trang này tự cập nhật."
   },
   "notice.refresh": "Làm mới",
   "notice.refreshName": "Làm mới trạng thái kết nối",
@@ -74,7 +74,7 @@
   "copy.failed": "Chưa sao chép được lệnh",
   "providers.title": "Nhà cung cấp",
   "providers.services": {
-    "other": "{count} dịch vụ · chưa có màn hình Studio"
+    "other": "{count}\u00a0dịch vụ · chưa có màn hình Studio"
   },
   "notFound.title": "Không tìm thấy trang",
   "notFound.statement": "Studio không có trang nào tại {path}.",

@@ -94,6 +94,20 @@ function pluralProblems(tag: string, key: string, message: Message): string[] {
     .map((category) => `${tag}: "${key}" lacks the plural form "${category}".`);
 }
 
+/**
+ * A form of a counted message in which an ordinary space (U+0020) directly follows `{count}` (requirement R4.2): a line
+ * may break there and part the count from its unit. The space there is U+00A0 NO-BREAK SPACE, or there is none.
+ */
+function countSpaceProblems(tag: string, key: string, message: Message): string[] {
+  if (typeof message === 'string') {
+    return [];
+  }
+  return PLURAL_CATEGORIES.filter((category) => message[category]?.includes('{count} ') === true).map(
+    (category) =>
+      `${tag}: "${key}" form "${category}" has an ordinary space after {count}; it is U+00A0 NO-BREAK SPACE there.`,
+  );
+}
+
 /** Whether a text of `message` is identical to the English one of the same form. */
 function sameAsEnglish(message: Message, english: Message): boolean {
   if (typeof message === 'string' || typeof english === 'string') {
@@ -137,9 +151,9 @@ function glossaryProblems(
 /**
  * Every problem of `catalogue` against `source` (English) and `glossary`: a key of English it lacks, a key English
  * lacks, a placeholder dropped or renamed, a counted message that is not one or lacks a plural category of its
- * language, a text identical to English whose key is not listed as intentionally the same, a glossary term without
- * the language's stem. English itself is checked for its plural categories only. An empty list: the catalogue
- * passes.
+ * language, a form of a counted message with an ordinary space after `{count}`, a text identical to English whose key
+ * is not listed as intentionally the same, a glossary term without the language's stem. English itself is checked for
+ * its plural categories and the space after `{count}` only. An empty list: the catalogue passes.
  */
 export function catalogueProblems(
   source: Catalogue,
@@ -148,7 +162,10 @@ export function catalogueProblems(
 ): string[] {
   const tag = catalogue.tag;
   if (catalogue === source || tag === source.tag) {
-    return [...catalogue.messages].flatMap(([key, message]) => pluralProblems(tag, key, message));
+    return [...catalogue.messages].flatMap(([key, message]) => [
+      ...pluralProblems(tag, key, message),
+      ...countSpaceProblems(tag, key, message),
+    ]);
   }
   const problems: string[] = [];
   const unknownStems = new Set<string>();
@@ -170,6 +187,7 @@ export function catalogueProblems(
       problems.push(`${tag}: "${key}" does not hold the placeholders of English, ${expected.join(', ') || 'none'}.`);
     }
     problems.push(...pluralProblems(tag, key, message));
+    problems.push(...countSpaceProblems(tag, key, message));
     if (!catalogue.sameAsEnglish.includes(key) && sameAsEnglish(message, english)) {
       problems.push(`${tag}: "${key}" is the same as English and not listed in "${SAME_AS_ENGLISH_ENTRY}".`);
     }

@@ -15,8 +15,8 @@
   "connection.notChecked": "Noch nicht geprüft.",
   "connection.lastChecked": "Zuletzt geprüft um {time}.",
   "connection.lastCheckedEvery": {
-    "one": "Zuletzt geprüft um {time}. Geprüft wird im Abstand von {count} Sekunde.",
-    "other": "Zuletzt geprüft um {time}. Geprüft wird alle {count} Sekunden."
+    "one": "Zuletzt geprüft um {time}. Geprüft wird im Abstand von {count}\u00a0Sekunde.",
+    "other": "Zuletzt geprüft um {time}. Geprüft wird alle {count}\u00a0Sekunden."
   },
   "connection.engine": "Engine",
   "connection.emulator": "Emulator",
@@ -34,8 +34,8 @@
   "announce.engineErrorCode": "Engine-Fehler: {code}.",
   "announce.engineErrorStatus": "Engine-Fehler: HTTP-Status {status}.",
   "notice.recheck": {
-    "one": "Studio prüft im Abstand von {count} Sekunde erneut; diese Seite aktualisiert sich von selbst.",
-    "other": "Studio prüft alle {count} Sekunden erneut; diese Seite aktualisiert sich von selbst."
+    "one": "Studio prüft im Abstand von {count}\u00a0Sekunde erneut; diese Seite aktualisiert sich von selbst.",
+    "other": "Studio prüft alle {count}\u00a0Sekunden erneut; diese Seite aktualisiert sich von selbst."
   },
   "notice.refresh": "Aktualisieren",
   "notice.refreshName": "Verbindungsstatus aktualisieren",
@@ -56,7 +56,7 @@
   "notice.buildOnce": "Erster Start? Erstellen Sie das Image einmalig im Stammverzeichnis Ihres EmuForge-Checkouts",
   "notice.buildImage": "Erstellen Sie das Image {image}",
   "notice.engineUnreachable": "Studio kann die Engine nicht erreichen",
-  "notice.noEngineAnswer": "Studio erhält von der Engine unter {origin} keine lesbare Antwort. Entweder läuft die Engine nicht auf diesem Port, oder sie wurde für einen anderen Studio-Ursprung gestartet.",
+  "notice.noEngineAnswer": "Studio erhält von der Engine unter {origin} keine lesbare Antwort. Entweder läuft die Engine nicht auf diesem Port, oder sie wurde für ein Studio unter einer anderen Adresse gestartet.",
   "notice.startEngine": "Ein einziger Befehl deckt beides ab, ausgeführt in {folder} Ihres EmuForge-Checkouts",
   "notice.lastEmulatorPort": "{option} ist der Emulator-Port, den die Engine zuletzt gemeldet hat.",
   "notice.addEmulatorPort": "Ergänzen Sie {option}, wenn Ihr Emulator nicht auf {port} läuft.",
@@ -76,8 +76,8 @@
   "copy.failed": "Befehl nicht kopiert",
   "providers.title": "Anbieter",
   "providers.services": {
-    "one": "{count} Dienst · noch keine Studio-Ansicht",
-    "other": "{count} Dienste · noch keine Studio-Ansicht"
+    "one": "{count}\u00a0Dienst · noch keine Studio-Ansicht",
+    "other": "{count}\u00a0Dienste · noch keine Studio-Ansicht"
   },
   "notFound.title": "Seite nicht gefunden",
   "notFound.statement": "Studio hat keine Seite unter {path}.",
