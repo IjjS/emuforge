@@ -60,14 +60,12 @@
         {"role": "StaticText", "name": "Name, review, and create", "parent": 14},
         {"role": "heading", "name": "Add permissions", "parent": 1},
         {"role": "StaticText", "name": "Add permissions", "parent": 16},
-        {"role": "heading", "name": "Permissions policies", "parent": 1},
-        {"role": "StaticText", "name": "Permissions policies", "parent": 18},
         {"role": "button", "name": "Cancel", "parent": 1},
-        {"role": "StaticText", "name": "Cancel", "parent": 20},
+        {"role": "StaticText", "name": "Cancel", "parent": 18},
         {"role": "button", "name": "Previous", "parent": 1},
-        {"role": "StaticText", "name": "Previous", "parent": 22},
+        {"role": "StaticText", "name": "Previous", "parent": 20},
         {"role": "button", "name": "Next", "parent": 1},
-        {"role": "StaticText", "name": "Next", "parent": 24}
+        {"role": "StaticText", "name": "Next", "parent": 22}
       ]
     },
     {
