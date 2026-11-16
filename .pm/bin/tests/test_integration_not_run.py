@@ -128,7 +128,7 @@ class Fixture:
     def report_path(self):
         return self.co / "output" / "integration" / "report.json"
 
-    def report(self, p):
+    def report(self):
         """report.json by check id, or None when there is none."""
         if not self.report_path.exists():
             return None
@@ -178,7 +178,7 @@ class Refused(unittest.TestCase):
                 path = fx.case / "list.json" if text is None else fx.file("list.json", text)
                 p = fx.run("--not-run", path)
                 self.assertEqual(p.returncode, 127, out(p))
-                report = fx.report(p)
+                report = fx.report()
                 self.assertIsNotNone(report, out(p))
                 self.assertEqual(sorted(report), sorted(IDS))
                 for check_id, c in report.items():
@@ -205,7 +205,7 @@ class Report(unittest.TestCase):
         fx.verdicts(passed_except=LIST)
         p = fx.run("--not-run", fx.file("list.json", list_text(LIST)))
         self.assertEqual(p.returncode, 0, out(p))
-        report = fx.report(p)
+        report = fx.report()
         self.assertIsNotNone(report, out(p))
         for check_id, reason in LIST.items():
             self.assertEqual((report[check_id]["verdict"], report[check_id]["message"]), ("not-run", reason))
@@ -221,7 +221,7 @@ class Report(unittest.TestCase):
         unlisted = next(i for i in ENGINE_IDS if i not in LIST)
         fx.verdicts(passed_except=LIST, extra={ENGINE_ID: "failed", unlisted: "failed"})
         p = fx.run("--not-run", fx.file("list.json", list_text(LIST)))
-        report = fx.report(p)
+        report = fx.report()
         self.assertIsNotNone(report, out(p))
         self.assertEqual(report[ENGINE_ID]["verdict"], "not-run")
         self.assertEqual(report[unlisted]["verdict"], "failed")
@@ -235,11 +235,10 @@ class Report(unittest.TestCase):
         self.assertEqual(p.returncode, 127, out(p))
 
     def test_without_the_option_the_environment_lists_nothing(self):
-        # guard: passes on main
         fx = Fixture("report-env")
         every = fx.file("every.txt", "".join(i + "\n" for i in IDS))
         p = fx.run(env={"EMUFORGE_IT_NOT_RUN": str(every)})
-        report = fx.report(p)
+        report = fx.report()
         self.assertIsNotNone(report, out(p))
         self.assertEqual([i for i, c in report.items() if c["verdict"] == "not-run"], [])
         tests = [c for c in fx.calls("cargo") if c["args"][:1] == ["test"]]
