@@ -1,0 +1,383 @@
+#!/usr/bin/env -S python3 -I
+"""Remove the port folders the emulator leaves under ~/.aws/emulator once nothing uses them.
+
+  pm-emulator-dir rm --worktree <path|name>     the folder of one registered worktree's emulator port
+  pm-emulator-dir rm --port <n>                 the folder of a port no registered worktree owns
+  pm-emulator-dir orphans [--remove]            list, or with --remove remove, the folders nobody owns
+
+A stopped emulator leaves ~/.aws/emulator/<port>: empty after a clean stop, with its key and certificate files after
+a kill. pm-merge runs `rm --worktree` for the merged unit and the units it is stacked on, pm-worktree rm for the
+worktree it removes (so pm-archive does too). A pane that started an emulator removes its folder once the emulator
+is stopped and its container removed: `<Root>/.pm/bin/pm-emulator-dir rm --worktree <your worktree>`, or
+`rm --port <port>` for a port outside a worktree; never rm or rmdir by hand. `orphans` is run by the PM on request.
+
+Refused, and nothing removed: port 9297 (the owner's); a port in use (something accepts on 127.0.0.1:<port>, or a
+Docker container in any state is bound to that host port); Docker not answering; an argument that is not a port
+from 1 to 65535 in plain digits, a worktree not in the registry or whose output/ports.json does not agree with it;
+a folder that is a symbolic link, not a directory or not a direct child of ~/.aws/emulator. `rm --port` refuses
+the port of a registered worktree (use --worktree). No file of a folder is opened, and no file's content or entry
+name is printed or logged. Every outcome is one stdout line starting with "pm-emulator-dir: "; removals, refusals
+and failures also go to .pm/run/events.log.
+
+Exit 0: removed, or nothing to remove (orphans: listed). Exit 1: refused, or a removal failed. Exit 2: usage.
+"""
+import argparse
+import errno
+import json
+import os
+import pathlib
+import re
+import shutil
+import socket
+import stat
+import subprocess
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _pmlib import WORKTREES, log
+
+PREFIX = "pm-emulator-dir: "
+OWNER = 9297
+PORT_RE = re.compile(r"[1-9][0-9]{0,4}")
+DOCKER_ENV = ("PATH", "HOME", "DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG", "XDG_RUNTIME_DIR", "TMPDIR")
+DOCKER_TIMEOUT = 10
+CONNECT_TIMEOUT = 1
+EMU = pathlib.Path.home() / ".aws" / "emulator"
+
+
+class Refused(Exception):
+    """A step decided: nothing is removed. `what` is `port <n>` or `worktree <argument>`."""
+
+    def __init__(self, what, reason):
+        super().__init__(reason)
+        self.what, self.reason = what, reason
+
+
+class NoAnswer(Exception):
+    """Docker did not answer; the text is the kind (`not found`, `exit <n>`, `timeout`, `unparsable output`)."""
+
+
+def say(text):
+    print(PREFIX + text, flush=True)
+
+
+def oserr(e):
+    """An OSError by errno name and strerror only: its filename and text may name an entry inside a folder."""
+    name = errno.errorcode.get(e.errno, "error") if e.errno else type(e).__name__
+    return f"{name} ({os.strerror(e.errno)})" if e.errno else name
+
+
+def shown(arg):
+    return repr(arg)[:40]
+
+
+def as_port(value):
+    """The port of a command-line argument, or None."""
+    if isinstance(value, str) and PORT_RE.fullmatch(value) and int(value) <= 65535:
+        return int(value)
+    return None
+
+
+def folder_of(port):
+    return EMU / str(int(port))
+
+
+# ------------------------------------------------------------------------------------------------- registry
+
+def registry():
+    """The registered worktrees: [] when the file is missing; None when it exists and is not a JSON list of objects."""
+    try:
+        data = json.loads(WORKTREES.read_text())
+    except FileNotFoundError:
+        return []
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, list) or not all(isinstance(w, dict) for w in data):
+        return None
+    return data
+
+
+def registered_port(entry):
+    """`ports.emulator` of a registry entry when it is there, else None."""
+    ports = entry.get("ports")
+    return ports.get("emulator") if isinstance(ports, dict) else None
+
+
+def same_port(value, port):
+    return not isinstance(value, bool) and isinstance(value, (int, str)) and str(value) == str(port)
+
+
+def owned_ports(wts):
+    return {int(str(p)) for p in map(registered_port, wts)
+            if not isinstance(p, bool) and isinstance(p, (int, str)) and as_port(str(p)) is not None}
+
+
+def worktree_port(arg):
+    """(entry, port) of a registered worktree named or located by `arg`; Refused otherwise (step 1)."""
+    what = f"worktree {arg}"
+    wts = registry()
+    if not arg:
+        raise Refused(what, "an empty worktree argument")
+    if wts is None:
+        raise Refused(what, f"not in the registry: {WORKTREES} is unreadable")
+    absolute = os.path.abspath(arg)
+    entry = next((w for w in wts if w.get("name") == arg), None) or next(
+        (w for w in wts if isinstance(w.get("path"), str) and os.path.abspath(w["path"]) == absolute), None)
+    if entry is None:
+        raise Refused(what, "not a registered worktree (.pm/run/worktrees.json of the main checkout)")
+    if not isinstance(entry.get("path"), str) or not entry["path"]:
+        raise Refused(what, "its registry entry has no path")
+    try:
+        data = json.loads((pathlib.Path(entry["path"]) / "output" / "ports.json").read_text())
+    except FileNotFoundError:
+        raise Refused(what, "its output/ports.json is missing")
+    except OSError as e:
+        raise Refused(what, f"its output/ports.json cannot be read: {oserr(e)}")
+    except ValueError:
+        raise Refused(what, "its output/ports.json is not JSON")
+    port = data.get("emulator") if isinstance(data, dict) else None
+    if type(port) is not int or not 1 <= port <= 65535:
+        raise Refused(what, "its output/ports.json has no emulator port that is a whole number from 1 to 65535")
+    held = registered_port(entry)
+    if held is not None and (type(held) is not int or held != port):
+        raise Refused(what, f"its output/ports.json names port {port}, the registry holds {shown(held)}")
+    return entry, port
+
+
+# --------------------------------------------------------------------------------------------------- in use
+
+def docker(*args):
+    env = {k: os.environ[k] for k in DOCKER_ENV if k in os.environ}
+    try:
+        r = subprocess.run(["docker", *args], capture_output=True, text=True, env=env, timeout=DOCKER_TIMEOUT)
+    except FileNotFoundError:
+        raise NoAnswer("not found")
+    except subprocess.TimeoutExpired:
+        raise NoAnswer("timeout")
+    except OSError as e:
+        raise NoAnswer(oserr(e))
+    return r
+
+
+def bindings_once():
+    """[(container name, {host port, ...})] of every container in any state; NoAnswer, or 'retry' on inspect."""
+    r = docker("ps", "-aq", "--no-trunc")
+    if r.returncode != 0:
+        raise NoAnswer(f"exit {r.returncode}")
+    ids = r.stdout.split()
+    if not ids:
+        return []
+    r = docker("inspect", "-f", "{{.Name}} {{.State.Status}} {{json .HostConfig.PortBindings}}", *ids)
+    if r.returncode != 0:
+        return "retry", f"exit {r.returncode}"
+    out = []
+    for line in r.stdout.splitlines():
+        if not line.strip():
+            continue
+        parts = line.split(" ", 2)
+        if len(parts) != 3:
+            raise NoAnswer("unparsable output")
+        name, _status, rest = parts
+        try:
+            pb = json.loads(rest)
+        except ValueError:
+            raise NoAnswer("unparsable output")
+        if pb is None:
+            pb = {}
+        if not isinstance(pb, dict):
+            raise NoAnswer("unparsable output")
+        ports = set()
+        for lst in pb.values():
+            if lst is None:
+                continue
+            if not isinstance(lst, list) or not all(isinstance(b, dict) for b in lst):
+                raise NoAnswer("unparsable output")
+            ports |= {str(b.get("HostPort")) for b in lst}
+        out.append((name.lstrip("/"), ports))
+    return out
+
+
+def container_bindings():
+    """The bindings of every container; a failed inspect (a container removed in between) is tried once more."""
+    for attempt in (1, 2):
+        got = bindings_once()
+        if isinstance(got, list):
+            return got
+        if attempt == 2:
+            raise NoAnswer(got[1])
+    raise AssertionError("unreachable")
+
+
+def listener(port):
+    """The reason when something on 127.0.0.1:<port> does not refuse a connection, else None. Nothing is sent."""
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=CONNECT_TIMEOUT):
+            return f"in use: something accepts on 127.0.0.1:{port}"
+    except ConnectionRefusedError:
+        return None
+    except OSError as e:
+        return f"in use: 127.0.0.1:{port} did not refuse a connection ({oserr(e) if e.errno else type(e).__name__})"
+
+
+def in_use(port, bindings):
+    """The reason the port is in use, else None."""
+    reason = listener(port)
+    if reason:
+        return reason
+    names = [n for n, ports in bindings if str(port) in ports]
+    if names:
+        return f"in use by container {', '.join(names)}"
+    return None
+
+
+# --------------------------------------------------------------------------------------------------- folders
+
+def unsafe(folder):
+    """Step 5: the reason a folder that exists may not be removed, else None."""
+    try:
+        st = os.lstat(folder)
+    except OSError as e:
+        return f"{folder} cannot be examined: {oserr(e)}"
+    if stat.S_ISLNK(st.st_mode):
+        return f"{folder} is a symbolic link"
+    if not stat.S_ISDIR(st.st_mode):
+        return f"{folder} is not a directory"
+    try:
+        if folder.resolve().parent != EMU.resolve():
+            return f"{folder} does not resolve to a direct child of {EMU}"
+    except (OSError, RuntimeError):
+        return f"{folder} does not resolve"
+    return None
+
+
+def emptiness(folder):
+    with os.scandir(folder) as it:
+        return "not empty" if any(True for _ in it) else "empty"
+
+
+def remove(folder):
+    """(True, line) after removing the folder, (False, line, errno name) when that failed."""
+    try:
+        kind = emptiness(folder)
+        shutil.rmtree(folder)
+    except OSError as e:
+        name = errno.errorcode.get(e.errno, type(e).__name__) if e.errno else type(e).__name__
+        return False, f"failed {folder}: {oserr(e)}; part of it may be left", name
+    return True, f"removed {folder} ({kind})", None
+
+
+# ------------------------------------------------------------------------------------------------------ modes
+
+def cmd_rm(a):
+    logged = None
+    try:
+        if a.worktree is not None:
+            entry, port = worktree_port(a.worktree)
+            logged = f"worktree {entry.get('name')} port {port}"
+        else:
+            port = as_port(a.port)
+            if port is None:
+                raise Refused(f"port {shown(a.port)}", "not a port number from 1 to 65535 in plain digits")
+            logged = f"port {port}"
+        what = f"port {port}"
+        if port == OWNER:
+            raise Refused(what, f"{OWNER} is the owner's port; it is never removed")
+        if a.port is not None:
+            wts = registry()
+            if wts is None:
+                raise Refused(what, f"registry unreadable: {WORKTREES} exists and is not a JSON list")
+            owner = next((w for w in wts if same_port(registered_port(w), port)), None)
+            if owner is not None:
+                raise Refused(what, f"it is the emulator port of worktree {owner.get('name')}; use --worktree")
+        folder = folder_of(port)
+        try:
+            os.lstat(folder)
+        except FileNotFoundError:
+            say(f"nothing to remove: {folder} does not exist")
+            return 0
+        except OSError as e:
+            raise Refused(what, f"{folder} cannot be examined: {oserr(e)}")
+        reason = unsafe(folder)
+        if reason:
+            raise Refused(what, reason)
+        try:
+            reason = in_use(port, container_bindings())
+        except NoAnswer as e:
+            reason = f"docker does not answer ({e})"
+        if reason:
+            raise Refused(what, reason)
+        ok, line, err = remove(folder)
+        say(line)
+        log(f"emulator-dir rm {logged} " + ("removed" if ok else f"failed: {err}"))
+        return 0 if ok else 1
+    except Refused as r:
+        say(f"refused {r.what}: {r.reason}")
+        log(f"emulator-dir rm {logged or r.what} refused: {r.reason}")
+        return 1
+
+
+def cmd_orphans(a):
+    def refuse(reason):
+        say(f"refused orphans: {reason}")
+        if a.remove:
+            log(f"emulator-dir orphans refused: {reason}")
+        return 1
+
+    none = f"no orphan folder under {EMU}"
+    try:
+        with os.scandir(EMU) as it:
+            entries = [e.name for e in it]
+    except FileNotFoundError:
+        say(none)
+        return 0
+    except OSError as e:
+        return refuse(f"{EMU} cannot be read: {oserr(e)}")
+    wts = registry()
+    if wts is None:
+        return refuse(f"registry unreadable: {WORKTREES} exists and is not a JSON list")
+    skip = {OWNER} | owned_ports(wts)
+    candidates = sorted(p for p in map(as_port, entries) if p is not None and p not in skip)
+    if not candidates:
+        say(none)
+        return 0
+    try:
+        bindings = container_bindings()
+    except NoAnswer as e:
+        return refuse(f"docker does not answer ({e})")
+    code = 0
+    for port in candidates:
+        folder = folder_of(port)
+        reason = unsafe(folder) or in_use(port, bindings)
+        if reason:
+            say(f"skipped {folder}: {reason}")
+            continue
+        if not a.remove:
+            try:
+                say(f"orphan {folder} ({emptiness(folder)})")
+            except OSError as e:
+                say(f"skipped {folder}: it cannot be read: {oserr(e)}")
+            continue
+        ok, line, err = remove(folder)
+        say(line)
+        log(f"emulator-dir orphans port {port} " + ("removed" if ok else f"failed: {err}"))
+        if not ok:
+            code = 1
+    return code
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sp = p.add_subparsers(dest="cmd", required=True)
+    r = sp.add_parser("rm", help="remove one port folder")
+    g = r.add_mutually_exclusive_group(required=True)
+    g.add_argument("--worktree", help="a registered worktree's path or name")
+    g.add_argument("--port", help="a port no registered worktree owns")
+    r.set_defaults(f=cmd_rm)
+    o = sp.add_parser("orphans", help="the folders of ports nobody owns")
+    o.add_argument("--remove", action="store_true", help="remove the listed folders")
+    o.set_defaults(f=cmd_orphans)
+    a = p.parse_args()
+    sys.exit(a.f(a))
+
+
+main()

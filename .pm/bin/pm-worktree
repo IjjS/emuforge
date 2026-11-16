@@ -10,7 +10,9 @@ The base is local main (or a parent unit's branch for a stacked unit); nothing i
 the line the PM maintains. Every worktree gets output/{captures,logs} and three ports in output/ports.json:
 studio (8100+), engine (8300+) and emulator (9300+), so parallel units never share a server or an emulator.
 When studio/package.json exists, `bun install` runs there (log in output/logs/install.log).
-rm removes the worktree, frees its ports and deletes the branch only when it is merged into local main.
+rm removes the worktree, frees its ports and deletes the branch only when it is merged into local main. Before
+that it runs `pm-emulator-dir rm --worktree` for the worktree, merged or not, and prints its line: the folder the
+worktree's emulator port left under ~/.aws/emulator. A refusal there does not stop the removal.
 """
 import argparse
 import json
@@ -19,10 +21,11 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _pmlib import PORTS, ROOT, WORKTREES, load, log, now, save
+from _pmlib import BIN, PORTS, ROOT, WORKTREES, load, log, now, save
 
 BRANCH_TYPES = ("feat", "refactor", "fix")
 PORT_BASES = {"studio": 8100, "engine": 8300, "emulator": 9300}
+EMULATOR_DIR = "pm-emulator-dir: "
 
 
 def run(cmd, cwd=None, out=None):
@@ -77,12 +80,28 @@ def cmd_new(a):
     print(f"{path} branch={branch} base={a.base} ports={ports}")
 
 
+def remove_emulator_dir(wt):
+    """Run pm-emulator-dir for the worktree and pass on its lines; nothing it does stops the removal."""
+    try:
+        r = subprocess.run([str(BIN / "pm-emulator-dir"), "rm", "--worktree", wt["path"]], capture_output=True,
+                           text=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        print(f"{EMULATOR_DIR}did not run for {wt['name']}: timeout after 60 s")
+        return
+    except OSError as e:
+        print(f"{EMULATOR_DIR}did not run for {wt['name']}: {type(e).__name__}")
+        return
+    lines = [ln for ln in r.stdout.splitlines() if ln.startswith(EMULATOR_DIR)]
+    print("\n".join(lines) if lines else f"{EMULATOR_DIR}no line for {wt['name']} (exit {r.returncode})")
+
+
 def cmd_rm(a):
     wts = load(WORKTREES, [])
     key = os.path.basename(os.path.abspath(a.target)) if "/" in a.target else a.target
     wt = next((w for w in wts if w["name"] == key), None)
     if not wt:
         sys.exit(f"{key} not in registry; remove it by hand with git worktree remove")
+    remove_emulator_dir(wt)
     run(["git", "-C", str(ROOT), "worktree", "remove", "--force", wt["path"]])
     run(["git", "-C", str(ROOT), "worktree", "prune"])
     merged = subprocess.run(["git", "-C", str(ROOT), "merge-base", "--is-ancestor", wt["branch"], "main"], capture_output=True).returncode == 0
