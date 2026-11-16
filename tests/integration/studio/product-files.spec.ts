@@ -506,8 +506,10 @@ test('engine.product-readme-gives-the-commands-the-checks-run', async ({ ctx }) 
   expect(introProse, '"Start" before the situations: starts one when there is none').toMatch(
     /\bstarts?\b[^.]*\b(none|no emulator)\b|\b(none|no emulator)\b[^.]*\bstarts?\b/i,
   );
-  expect(introProse, '"Start" before the situations: prints the command').toMatch(/\bprints?\b/i);
-  expect(intro, '"Start" before the situations: the docker compose command').toMatch(/docker compose/);
+  expect(
+    blocksOf(intro).some((b) => /\bprints?\b/i.test(b) && /docker compose/.test(b)),
+    '"Start" before the situations: a paragraph, item or row that says it prints the docker compose command it runs',
+  ).toBe(true);
 
   // Situations 3 and 4 → in code, the Docker Engine on Linux start and stop lines of the situation, and with them
   // the two preparatory lines, each exactly as the one place holds it (R16).
