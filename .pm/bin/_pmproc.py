@@ -14,7 +14,10 @@ way stays its own until the kill. Then every frozen group and process gets SIGKI
 ends when a level freezes nothing new, when `PS` fails, or at `WALK_TIMEOUT`; what is frozen by then is killed.
 
 The stop record (issue 12, design D2): a signal handler calls `stop(exc)`, which only records `exc` (the first
-call wins) and returns. The stop is delivered by `check()`, which raises it once: at the start of `run`, while
+call wins) and returns. `stop_on(stops)` installs such a handler for each signal of `stops` (pm-structure calls it
+once, from its main thread); once it has recorded the first stop, it sets every one of those signals to SIG_IGN, so
+a later signal interrupts no thread and runs no handler until the process exits, and a child started after that
+inherits the ignored signals (issue 50, design D1 to D3). The stop is delivered by `check()`, which raises it once: at the start of `run`, while
 `run` waits for its child (within one polling slice, after the child's tree is killed and the child reaped), and
 at the caller's own checkpoints. Code that runs after the delivery is not interrupted again. `stop_requested()` returns
 the recorded exception or None.
@@ -47,6 +50,27 @@ def stop(exc):
     global _stop
     if _stop is None:
         _stop = exc
+
+
+def stop_on(stops):
+    """Install one handler for every signal of `stops` ({signal: exception}); call it from the main thread.
+
+    The handler records `stops[signum]` with `stop`, then sets the signal it was called for to SIG_IGN, then every
+    signal of `stops`: a storm of any of them ends there (issue 50, design D2). It writes nothing, raises nothing
+    and allocates nothing that lasts (issue 25, C3). Never the default action: a late signal must not kill the run
+    after its report (issue 25, C2).
+    """
+    stops = dict(stops)
+    sigs = tuple(stops)
+
+    def on_signal(signum, _frame):
+        stop(stops[signum])
+        signal.signal(signum, signal.SIG_IGN)
+        for sig in sigs:
+            signal.signal(sig, signal.SIG_IGN)
+
+    for sig in sigs:
+        signal.signal(sig, on_signal)
 
 
 def stop_requested():
