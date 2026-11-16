@@ -146,6 +146,12 @@ export function LanguageControl() {
   );
   const nameOf = (of: string) => languages.find((language) => language.tag === of)?.name ?? of;
 
+  // The control is in the sticky bar, always in view: a browser that scrolls a sticky box's element to the box's own
+  // place in the page would otherwise move the page when focus comes back to it (issue 32, R3.3).
+  const focusControl = () => {
+    trigger.current?.focus({ preventScroll: true });
+  };
+
   // Opening puts focus on the checked option, so a reflexive Enter does not reset a stored choice (crit r2 P2).
   useLayoutEffect(() => {
     if (open) {
@@ -172,7 +178,7 @@ export function LanguageControl() {
       event.stopPropagation();
       endSwallow.current?.();
       endSwallow.current = swallowRestOfPress();
-      trigger.current?.focus();
+      focusControl();
       setOpen(false);
     };
     window.addEventListener('pointerdown', handlePointerDown, true);
@@ -197,9 +203,9 @@ export function LanguageControl() {
     loadFaces(holder.current, languages);
   };
 
-  const close = (focusControl: boolean) => {
-    if (focusControl) {
-      trigger.current?.focus();
+  const close = (withFocus: boolean) => {
+    if (withFocus) {
+      focusControl();
     }
     setOpen(false);
   };
