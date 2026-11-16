@@ -8,7 +8,8 @@ registered worktrees is an ancestor of main (--force overrides). Moves requireme
 test-criteria.md, critique-scores.json, structure-scores.json, cost.json and state.md to .pm/archive/<n>/ and
 deletes the rest of
 .pm/issue-<n>/ (drafts, review rounds, briefs) after their gist is written into .pm/archive/<n>.md. Worktrees and
-their output/ are removed with their local branches.
+their output/ are removed with their local branches. pm-worktree rm also removes each worktree's emulator port
+folder under ~/.aws/emulator (pm-emulator-dir); its "pm-emulator-dir: " lines are printed.
 """
 import argparse
 import json
@@ -67,7 +68,10 @@ def main():
     subprocess.run([str(BIN / "pm-pane"), "close", "--issue", a.issue], capture_output=True, text=True)
     # worktrees; a merged branch is deleted with its worktree, an unmerged one (--force) is kept
     for w in wts:
-        subprocess.run([str(BIN / "pm-worktree"), "rm", w["name"]], capture_output=True, text=True)
+        r = subprocess.run([str(BIN / "pm-worktree"), "rm", w["name"]], capture_output=True, text=True)
+        for line in r.stdout.splitlines():
+            if line.startswith("pm-emulator-dir: "):
+                print(line)
     # summary
     state = (d / "state.md").read_text(errors="replace") if (d / "state.md").exists() else ""
     decisions = (d / "decisions.md").read_text(errors="replace") if (d / "decisions.md").exists() else ""

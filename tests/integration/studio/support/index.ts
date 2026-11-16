@@ -68,6 +68,7 @@ export {
   type TileForm,
   type TileShot,
 } from './frame-logo';
+export { emulatorLine, expectLine, lineText, LINE_LABEL, type AreaBox, type WidthReport } from './aws-area';
 export { EnvError, expect, test, type Ctx } from './check';
 export { Engine, type EngineOptions } from './engine';
 export {

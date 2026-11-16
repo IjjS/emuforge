@@ -1,9 +1,14 @@
-"""pm-merge: which review lets a unit merge, and what it says about a flaky check run."""
+"""pm-merge: which review lets a unit merge, and what it says about a flaky check run.
+
+Every run has a made-up HOME inside the fixture (issue 49): pm-merge hands each merged unit to pm-emulator-dir,
+which works under HOME, so a case never reaches the real ~/.aws/emulator. The fixture holds pm-emulator-dir only
+when this checkout has it.
+"""
 import json
 import shutil
 import unittest
 
-from _fixture import git, make, run
+from _fixture import BIN, clean_env, git, make, run
 
 
 def unit(co, issue, name, review=None, verdict="pass", flaky=()):
@@ -30,17 +35,24 @@ def unit(co, issue, name, review=None, verdict="pass", flaky=()):
 
 
 def checkout(case):
-    co = make("merge-units", case, ("pm-merge", "_pmlib.py"))
+    scripts = ("pm-merge", "_pmlib.py") + (("pm-emulator-dir",) if (BIN / "pm-emulator-dir").exists() else ())
+    co = make("merge-units", case, scripts)
     for wt in co.parent.glob(f"{co.name}-*"):  # worktrees of an earlier run of this case
         shutil.rmtree(wt)
+    (co / "home").mkdir()
     return co
+
+
+def merge(co, *args):
+    """pm-merge in the fixture with HOME set to the fixture's made-up home."""
+    return run(co, "pm-merge", *args, env={**clean_env(), "HOME": str(co / "home")})
 
 
 class MergeUnits(unittest.TestCase):
     def test_test_unit_merges_on_its_checks_review(self):
         co = checkout("t-alone")
         unit(co, 3, "t1", review="checks")
-        p = run(co, "pm-merge", 3, "t1")
+        p = merge(co, 3, "t1")
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         self.assertIn("review-checks-t1-r1.md", p.stdout)
         self.assertIn("merge: #3 t1", git(co, "log", "-1", "--format=%s"))
@@ -48,19 +60,19 @@ class MergeUnits(unittest.TestCase):
     def test_test_unit_without_any_review_is_refused(self):
         co = checkout("t-none")
         unit(co, 3, "t1")
-        p = run(co, "pm-merge", 3, "t1", "--dry-run")
+        p = merge(co, 3, "t1", "--dry-run")
         self.assertNotEqual(p.returncode, 0)
         self.assertIn("review-checks-t1", p.stderr)
 
     def test_failed_checks_review_is_refused(self):
         co = checkout("t-revise")
         unit(co, 3, "t1", review="checks", verdict="revise")
-        self.assertIn("not verdict: pass", run(co, "pm-merge", 3, "t1", "--dry-run").stderr)
+        self.assertIn("not verdict: pass", merge(co, 3, "t1", "--dry-run").stderr)
 
     def test_implementation_unit_still_needs_its_impl_review(self):
         co = checkout("e-checks-only")
         unit(co, 3, "e1", review="checks")
-        p = run(co, "pm-merge", 3, "e1", "--dry-run")
+        p = merge(co, 3, "e1", "--dry-run")
         self.assertNotEqual(p.returncode, 0)
         self.assertIn("review-impl-e1", p.stderr)
         self.assertNotIn("review-checks", p.stderr)
@@ -68,6 +80,6 @@ class MergeUnits(unittest.TestCase):
     def test_flaky_run_merges_and_is_named(self):
         co = checkout("flaky")
         unit(co, 3, "e1", review="impl", flaky=["engine-test"])
-        p = run(co, "pm-merge", 3, "e1")
+        p = merge(co, 3, "e1")
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         self.assertIn("flaky in its check run: engine-test", p.stdout)

@@ -258,6 +258,7 @@ reporting line are logged in `.pm/run/events.log` and never delivered. Talk to a
 | `pm-ready` | the owner's READY comments: `poll`, `list`, `take`, `schedule` |
 | `pm-issue` | issue files: `new`, `list`, `show`, `close`, `commit` (commits the new issue files as `issue: file #<id> …`) |
 | `pm-worktree` | worktrees and their ports |
+| `pm-emulator-dir` | a port folder under `~/.aws/emulator` once nothing uses it: `rm --worktree` (run by `pm-merge` and `pm-worktree rm`), `rm --port`, `orphans [--remove]` on the owner's request |
 | `pm-brief` | a pane's brief from its template: `plan` (also writes rev's), `worker`, `crit`, `show` |
 | `pm-pane` | panes: `new`, `reset`, `close`, `list` |
 | `pm-report` | a pane's reporting line to you |
