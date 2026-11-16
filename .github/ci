@@ -268,11 +268,25 @@ def tails():
     sys.stdout.flush()
 
 
+OUTPUT = threading.Lock()  # held for every line passed on and for the closing token
+CLOSED = threading.Event()  # set, under OUTPUT, just before the closing token: no line of the command after it
+
+
 def pass_on(stream):
-    """Print each line of `stream` with keys replaced."""
+    """Print each line of `stream` with keys replaced, until the commands are resumed."""
     for raw in stream:
-        sys.stdout.write(redact(raw.decode("utf-8", errors="replace").rstrip("\r\n")) + "\n")
-        sys.stdout.flush()
+        with OUTPUT:
+            if CLOSED.is_set():
+                return
+            sys.stdout.write(redact(raw.decode("utf-8", errors="replace").rstrip("\r\n")) + "\n")
+            sys.stdout.flush()
+
+
+def close(token):
+    """Print the closing token; a line the command's output still holds after it is never printed."""
+    with OUTPUT:
+        CLOSED.set()
+        print(f"::{token}::", flush=True)
 
 
 def end_group(pgid, grace=2):
@@ -332,6 +346,9 @@ def cmd_run(args):
     code = child.wait()
     end_group(child.pid)  # as pm-check does: nothing the command started outlives it, nor holds its output open
     reader.join(timeout=10)
+    if reader.is_alive():  # a process outside the command's group still holds its output
+        with OUTPUT:
+            print("ci: the command has ended; output a process it left behind still writes is not shown", flush=True)
     if code < 0:
         code = 128 - code  # ended by a signal
     if want_tails and code != 0:
@@ -341,7 +358,7 @@ def cmd_run(args):
         flaky = f"{second} failed once, passed its second run"
         print(f"flaky  {second}  failed once, passed its second run", flush=True)
         summary(f"- **flaky**: `{second}` failed once, passed its second run\n")
-    print(f"::{token}::", flush=True)
+    close(token)
     if flaky:
         print(f"::warning title=flaky::{flaky}", flush=True)
     return code
