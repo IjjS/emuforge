@@ -7,7 +7,7 @@ breadcrumbs: [Amazon S3, Buckets]
 header:
   title: General purpose buckets
   counter: true
-  actions: [Copy ARN, Empty, Delete, Create bucket]   # in order
+  actions: [Empty, Delete, Create bucket]             # in order
   primary_action: Create bucket
 table:
   selection: single
@@ -17,7 +17,8 @@ table:
   empty:
     title: No buckets
     action: Create bucket
+tabs: [Directory buckets]
 
 omitted:                          # on the AWS screen, deliberately not in Studio
-  - item: header.actions[Copy ARN]
-    reason: emulator returns 501 for the operation behind it
+  - item: tabs
+    reason: the emulator has no directory buckets

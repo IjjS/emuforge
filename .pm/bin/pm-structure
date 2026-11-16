@@ -25,16 +25,20 @@ fails ends the run as an error. Each step's items are scored on that step's tree
 item or an extra starts with `step <k>: `. The scored snapshot is then one steps file (`pm-structure-steps/1`)
 holding every step's tree; --snapshot reads either format.
 
-Prints the score, the unmatched, matched, omitted, not-applicable, not-scored and extra items, the blocked requests,
-and the verdict. Exit 0 pass (score >= 90 and no critical item unmatched: header.title, header.primary_action,
-table.columns, a wizard's steps[<t>].title and submit), 1 fail, 2 error (usage, invalid spec, refused URL, page not
+The first line is `structure <screen> state=<state> score=<score> (<matched>/<total>) omitted=<o>/<n>
+verdict=<verdict>`: <o> of the spec's <n> items are omitted in this run. Then the reasons, the unmatched, matched,
+omitted, not-applicable, not-scored and extra items, and the blocked requests. An omitted item is still looked for:
+an omitted item the screen shows is a fail (`reason: omitted item shown: <ids>`), whatever the score. Exit 0 pass
+(score >= 90, no critical item unmatched: header.title, header.primary_action, table.columns, a wizard's
+steps[<t>].title and submit, and no omitted item shown), 1 fail, 2 error (usage, invalid spec, refused URL, page not
 reachable or not settled, page without exactly one AWS area root, toolchain missing, unreadable snapshot, another
 run of the same screen and state in progress, terminated by SIGTERM, SIGHUP or SIGINT); an error is never a pass or
-a fail. Result: <worktree>/output/structure/<screen>-<state>.json and the scored snapshot <screen>-<state>.ax.json,
-overwritten by the next run of the same screen and state. --record ISSUE POINT (POINT: baseline | final) also
-appends a row to .pm/issue-<ISSUE>/structure-scores.json of the checkout that holds this script. --table ISSUE
-prints those rows as a markdown table and one line per point and screen saying whether every state it requires
-passed.
+a fail. An omitted entry that covers the title, an action, a table column, submit or the empty title beside a scored
+empty action, or only order items, is an invalid spec. Result: <worktree>/output/structure/<screen>-<state>.json
+and the scored snapshot <screen>-<state>.ax.json, overwritten by the next run of the same screen and state.
+--record ISSUE POINT (POINT: baseline | final) also appends a row to .pm/issue-<ISSUE>/structure-scores.json of the
+checkout that holds this script. --table ISSUE prints those rows as a markdown table and one line per point and
+screen saying whether every state it requires passed.
 """
 import argparse
 import contextlib
@@ -307,6 +311,7 @@ def error_result(a, wt, spec, e, url=None, snapshot=None):
         try:
             append_row(a.record[0], {"point": a.record[1], "screen": screen, "state": a.state, "score": None,
                                      "matched": None, "total": None, "verdict": "error", "critical_unmatched": [],
+                                     "omitted": None, "spec_items": None, "omitted_shown": [],
                                      "requires": requires, "commit": commit, "dirty": dirty,
                                      "spec_sha256": spec.sha256 if spec else None, "result": path, "at": at})
         except Failure:
@@ -327,6 +332,8 @@ def scored_result(a, wt, spec, result, snapshot):
             append_row(a.record[0], {"point": a.record[1], "screen": spec.screen, "state": a.state,
                                      "score": result.score, "matched": result.matched, "total": result.total,
                                      "verdict": result.verdict, "critical_unmatched": result.critical_unmatched,
+                                     "omitted": result.omitted, "spec_items": result.spec_items,
+                                     "omitted_shown": list(result.omitted_shown),
                                      "requires": result.requires, "commit": commit, "dirty": dirty,
                                      "spec_sha256": spec.sha256, "result": path, "at": at})
         except Failure as e:

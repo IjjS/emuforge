@@ -66,10 +66,11 @@ table:
   empty:
     title: No buckets
     action: Create bucket
+tabs: [General purpose buckets, Directory buckets]
 
-omitted:                          # on the AWS screen, deliberately not in Studio
-  - item: header.actions[Copy ARN]
-    reason: emulator returns 501 for the operation behind it
+omitted:                          # on the console's screen, not in the emulator
+  - item: tabs[Directory buckets]
+    reason: "<operation> answers <status> <code> (aws-emulator <version>), so <what the part shows> cannot exist"
 ```
 
 `route` always starts with `/aws/`: the AWS area's segment followed by the service's route.
@@ -110,9 +111,30 @@ part of the steps' order.
 There is no `dashboard` kind. A dashboard screen (containers, each a header with key-value pairs or fields, as in
 the AWS console's service dashboards) is written as `kind: detail` with `header` and `sections`.
 
-`omitted` is for parts of the AWS screen Studio leaves out on purpose. Each needs a reason that can be checked:
-the emulator does not implement it, or it has no meaning without a real account (billing, cross-account,
-Region pickers). "Not built yet" is not a reason; that is a failing item.
+`omitted` marks a part of the console's screen that the emulator does not have: a tab, a panel (written as a
+section), a field, a wizard step, a section or field of a step, or a control of the table (its filter, pagination
+or selection). An entry names one item or a block of items, and a block covers every item under it. A marked item
+is not scored: it leaves the total and is listed in the report's `omitted` group with its reason.
+
+Some items can never be marked, and `pm-structure` refuses a spec whose `omitted` entry covers one of them, named
+or inside a block: the title; an action (`header.actions`, `header.primary_action`, `table.empty.action`); a table
+column or the columns' order; a wizard's `submit`; `table.empty.title` beside a `table.empty.action`, which is
+found only after it; and an entry of order items alone, since an order leaves the score only with its list (`tabs`
+covers `tabs.order`). A screen exists for a resource the emulator has, and every action of a spec acts on that
+resource, so an action is not a part the emulator lacks: an action the emulator answers 501 for stays on the
+screen and reports that answer.
+
+The mark is set by the spec's author at the Screen stage and reviewed by `rev`; a `worker` never sets it. Its
+reason shows that the emulator cannot produce what the part shows, and names each call made, the emulator's answer
+and the emulator's version. It is one of:
+
+- an operation the part needs answers 501 or is not served at all;
+- the operations answer, but hold nothing the part shows and the emulator offers no way to create it.
+
+A list operation that answers 200 with an empty list is not evidence by itself: most of the emulator's list
+operations answer that way, and whether the part can exist takes more calls than a list. A billing,
+cross-account or Region part is marked on the same evidence as any other. The example's reason is the form, to be
+filled with the calls actually made. "Not built yet" is not a reason; that is a failing item.
 
 ## Structure score
 
@@ -132,13 +154,19 @@ Computed from the running app, not from the code, by `.pm/bin/pm-structure`.
 3. An item **matches** when an element with the expected role and the same accessible name (trimmed, case
    insensitive) is present; an order item matches when the matched elements appear in the spec's order.
 4. Items under `omitted` are removed from the total, and so are the items that do not apply to the run's state
-   (`table.empty` in the seeded run, a `single` or `multi` `table.selection` in the empty run).
+   (`table.empty` in the seeded run, a `single` or `multi` `table.selection` in the empty run). An omitted item
+   is still looked for with the rule that would match it, in the states it applies to, passing over an element
+   that an item that is not omitted also claims; an omitted item the screen shows fails the run, whatever the
+   score, and is reported as `shown` with the element found. An order is never shown, and an omitted wizard step
+   is shown by its entry in the step navigation or a heading with its title.
 
 ```
 structure score = matched items / (all items - omitted items - not-applicable items) x 100
 ```
 
 - With two runs, each run has its own score, and the screen passes only when both runs pass.
+- Every run's first line says how many of the spec's items were omitted in it, as `omitted=<o>/<n>` beside the
+  score; no number of omitted items fails a run by itself.
 
 - The report lists every unmatched item, and separately every action, column, tab or field found on the screen
   that the spec does not have.

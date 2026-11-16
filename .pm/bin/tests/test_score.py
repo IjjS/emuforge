@@ -33,7 +33,11 @@ SNAPS = FIXTURES / "snapshots"
 WORK = CHECKOUT / "output" / "tests" / f"score-{os.getpid()}"
 BUCKET_LIST = (SPECS / "bucket-list.yaml").read_text()
 
-FIRST = re.compile(r"^structure (\S+) state=(\S+) score=(\d+\.\d) \((\d+)/(\d+)\) verdict=(pass|fail)$")
+# issue 46 (R4.1): ` omitted=<o>/<n>` before ` verdict=`; exposed as Report.omitted and Report.spec_items. The group
+# is optional only so the confirmed cases read through Report run on main; R4.1 itself is held by the cases that
+# compare the whole first line (OmittedShown, OmittedCount, WizardOmittedShown, test_records' texts).
+FIRST = re.compile(r"^structure (\S+) state=(\S+) score=(\d+\.\d) \((\d+)/(\d+)\)(?: omitted=(\d+)/(\d+))? "
+                   r"verdict=(pass|fail)$")
 GROUP = re.compile(r"^(unmatched|matched|omitted|not applicable|not scored|extra|blocked requests) \((\d+)\)$")
 
 
@@ -46,8 +50,10 @@ class Report:
         m = FIRST.match(lines[0])
         if not m:
             raise AssertionError(f"first line {lines[0]!r} is not the R3 form")
-        self.screen, self.state, self.score, matched, total, self.verdict = m.groups()
+        self.screen, self.state, self.score, matched, total, omitted, spec_items, self.verdict = m.groups()
         self.matched, self.total = int(matched), int(total)
+        self.omitted = None if omitted is None else int(omitted)
+        self.spec_items = None if spec_items is None else int(spec_items)
         self.reasons = [ln[len("reason: "):] for ln in lines if ln.startswith("reason: ")]
         self.groups, self.counts, current = {}, {}, None
         for ln in lines[1:]:
@@ -106,6 +112,34 @@ def variant(old, new):
     return BUCKET_LIST.replace(old, new)
 
 
+# Spec D of issue 46 (test criteria): 9 items, all matched on detail-fields.json.
+SPEC_D = """\
+screen: s3.bucket-detail
+service: s3
+kind: detail
+route: /s3/buckets/bucket-a
+header:
+  title: bucket-a
+tabs: [Objects, Properties]
+sections:
+  - title: General configuration
+    fields: [Bucket name, AWS Region]
+"""
+R = "fixture reason"
+
+
+def omit_entry(*paths, reason=R):
+    """An `omitted` block with one entry per path."""
+    return "omitted:\n" + "".join(f"  - item: {p}\n    reason: {reason}\n" for p in paths)
+
+
+def omit_more(*paths, reason=R):
+    """bucket-list.yaml with one more entry per path appended to its `omitted` block."""
+    if not BUCKET_LIST.endswith("    reason: the emulator has no directory buckets\n"):
+        raise AssertionError("bucket-list.yaml does not end with its omitted block")
+    return BUCKET_LIST + "".join(f"  - item: {p}\n    reason: {reason}\n" for p in paths)
+
+
 class BucketList(ScoreCase):
     def test_full_match(self):
         r = self.run_score("full-seeded")
@@ -152,15 +186,6 @@ class BucketList(ScoreCase):
         self.assertEqual(r.verdict, "fail")
         self.assertEqual(r.ids("unmatched"), ["table.columns.order"])
         self.assertEqual(r.reasons, ["critical item unmatched: table.columns.order"])
-
-    def test_omitted_copy_arn_absent_or_present(self):
-        absent = self.run_score("full-seeded")
-        present = self.run_score("copy-arn-present")
-        for r in (absent, present):
-            self.assertEqual(r.total, 17)
-            self.assertEqual(r.groups["omitted"],
-                             ["header.actions[Copy ARN]    emulator returns 501 for the operation behind it"])
-        self.assertEqual(present.groups["extra"], [])
 
     def test_not_applicable_empty_items_are_not_extras(self):
         r = self.run_score("seeded-with-empty-block")
@@ -297,7 +322,14 @@ class OrderItems(ScoreCase):
             "table.columns[AWS Region]": "unmatched", "table.columns[Creation date]": "unmatched"})
 
     def test_omitted_entry_out_of_order(self):
-        self.assertStatus(self.run_score("order-omitted-out-of-order"), {"header.actions.order": "matched"})
+        """Issue 46: the omitted tab Objects after Permissions does not break tabs.order; the screen shows it, so the
+        run fails for that (OmittedShown.test_tab_out_of_order_omitted_and_shown)."""
+        spec = self.spec(SPEC_D.replace("tabs: [Objects, Properties]", "tabs: [Objects, Properties, Permissions]")
+                         + omit_entry("tabs[Objects]"))
+        r = self.run_score("tabs-omitted-out-of-order", spec)
+        self.assertStatus(r, {"tabs.order": "matched"})
+        self.assertIn("tabs.order    in order", r.groups["matched"])
+        self.assertEqual(r.verdict, "fail")
 
 
 THREE_ITEMS = """\
@@ -313,25 +345,6 @@ omitted:
   - item: header.counter
     reason: the emulator returns no count for this list
 """
-
-NOTHING = """\
-screen: s3.nothing
-service: s3
-kind: table
-route: /s3/nothing
-header:
-  title: Nothing
-table:
-  columns: [Name]
-  empty:
-    title: No things
-omitted:
-  - item: header.title
-    reason: the emulator has no title for this view
-  - item: table.columns
-    reason: the emulator lists no columns for this view
-"""
-
 
 class PassLine(ScoreCase):
     def ten(self, snapshot):
@@ -350,13 +363,6 @@ class PassLine(ScoreCase):
     def test_two_of_three_truncated(self):
         r = self.run_score("three-two", self.spec(THREE_ITEMS))
         self.assertEqual((r.matched, r.total, r.score, r.verdict), (2, 3, "66.6", "fail"))
-
-    def test_nothing_to_score(self):
-        spec = self.spec(NOTHING)
-        snap = _pmscore.load_snapshot(str(SNAPS / "full-seeded.json"))
-        with self.assertRaises(_pmspec.SpecError) as cm:
-            _pmscore.score(spec, snap, "seeded")
-        self.assertIn("nothing to score", str(cm.exception))
 
 
 class Extras(ScoreCase):
@@ -672,7 +678,7 @@ class WizardReport(WizardCase):
                                              'step 2: button "Previous"'])
 
     def test_omitted_and_not_scored_lines_carry_no_step(self):
-        r, _ = self.wizard("wizard-full", SPECS / "wizard-omitted.yaml")
+        r, _ = self.wizard("wizard-section-absent", SPECS / "wizard-omitted.yaml")
         self.assertEqual(r.groups["omitted"], [
             f"steps[{T2}].sections[Permissions policies].title    the emulator has no managed policies to list"])
         self.assertEqual(r.groups["not scored"],
@@ -694,6 +700,256 @@ class WizardReport(WizardCase):
         for e in body["extras"]:
             self.assertIn("step", e, e)
         self.assertEqual(body["blocked"], ["http://example.com/a.js", "http://example.com/b.js"])
+
+
+# ---------------------------------------------------------------------------------------------------- issue 46
+
+GC = "sections[General configuration]"
+DIRECTORY = "the emulator has no directory buckets"
+SHOWN = "omitted item shown: "
+
+
+class OmittedCase(WizardCase):
+    def row(self, report, item_id, group="omitted"):
+        """The whole line of `item_id` in `group`, without its indent."""
+        rows = [row for row in report.groups[group] if row.split("    ")[0] == item_id]
+        self.assertEqual(len(rows), 1, f"{item_id} in {group}:\n{report.text}")
+        return rows[0]
+
+    def assertShown(self, report, item_id, node, reason=R):
+        """`item_id` is shown at `node` (`<role> "<name>"`, for a wizard with its `step <k>: `) and named by the
+        reason line."""
+        self.assertEqual(self.row(report, item_id), f"{item_id}    shown: {node}    {reason}")
+        self.assertEqual(report.reasons, [SHOWN + item_id], report.text)
+        self.assertEqual(report.verdict, "fail", report.text)
+
+    def assertNotShown(self, report, item_id, reason=R):
+        """`item_id` keeps today's omitted line and no reason line names it (true on main as well)."""
+        self.assertEqual(self.row(report, item_id), f"{item_id}    {reason}")
+        self.assertFalse([x for x in report.reasons if x.startswith(SHOWN)], report.text)
+
+
+class OmittedShown(OmittedCase):
+    """R3.1, R3.4, R3.5: an omitted item that the screen shows fails the run."""
+
+    def test_bucket_list_tab_absent(self):
+        r = self.run_score("full-seeded")
+        self.assertEqual(r.text.splitlines()[0],
+                         "structure s3.bucket-list state=seeded score=100.0 (17/17) omitted=2/21 verdict=pass")
+        self.assertEqual(r.reasons, [])
+        self.assertEqual(r.groups["omitted"], [f"tabs[Directory buckets]    {DIRECTORY}", f"tabs.order    {DIRECTORY}"])
+
+    def test_bucket_list_tab_shown(self):
+        r = self.run_score("tab-shown")
+        self.assertEqual(r.text.splitlines()[0],
+                         "structure s3.bucket-list state=seeded score=100.0 (17/17) omitted=2/21 verdict=fail")
+        self.assertEqual(r.reasons, ["omitted item shown: tabs[Directory buckets]"])
+        self.assertEqual(r.groups["omitted"], [
+            f'tabs[Directory buckets]    shown: tab "Directory buckets"    {DIRECTORY}', f"tabs.order    {DIRECTORY}"])
+        self.assertEqual(r.counts["extra"], 0)
+
+    def test_list_block_omitted_and_shown(self):
+        r = self.run_score("detail-fields", self.spec(SPEC_D + omit_entry("tabs")))
+        self.assertEqual(r.verdict, "fail")
+        self.assertEqual(r.reasons, ["omitted item shown: tabs[Objects], tabs[Properties]"])
+        self.assertEqual((r.matched, r.total), (6, 6))
+
+    def test_section_omitted_and_shown(self):
+        r = self.run_score("detail-fields", self.spec(SPEC_D + omit_entry(GC)))
+        self.assertEqual(r.reasons,
+                         [f"omitted item shown: {GC}.title, {GC}.fields[Bucket name], {GC}.fields[AWS Region]"])
+        self.assertEqual(self.row(r, f"{GC}.fields[Bucket name]"),
+                         f'{GC}.fields[Bucket name]    shown: LabelText "Bucket name"    {R}')
+        self.assertEqual(self.row(r, f"{GC}.fields[AWS Region]"),
+                         f'{GC}.fields[AWS Region]    shown: term "AWS Region"    {R}')
+
+    def test_field_claimed_by_a_scored_item_is_not_shown(self):
+        """Guard: passes on main (R3.2, third bullet)."""
+        spec = self.spec(SPEC_D + "  - title: Tags\n    fields: [AWS Region]\n" + omit_entry("sections[Tags]"))
+        r = self.run_score("detail-fields", spec)
+        self.assertEqual((r.verdict, r.reasons), ("pass", []), r.text)
+        self.assertNotShown(r, "sections[Tags].fields[AWS Region]")
+
+    def test_tab_out_of_order_omitted_and_shown(self):
+        spec = self.spec(SPEC_D.replace("tabs: [Objects, Properties]", "tabs: [Objects, Properties, Permissions]")
+                         + omit_entry("tabs[Objects]"))
+        r = self.run_score("tabs-omitted-out-of-order", spec)
+        self.assertStatus(r, {"tabs.order": "matched"})
+        self.assertShown(r, "tabs[Objects]", 'tab "Objects"')
+
+    def test_shown_reason_comes_after_todays_reasons(self):
+        more = "fields: [Bucket name, AWS Region, Owner, Size, Versioning]"
+        spec = self.spec(SPEC_D.replace("title: bucket-a", "title: other")
+                         .replace("fields: [Bucket name, AWS Region]", more) + omit_entry("tabs[Properties]"))
+        r = self.run_score("detail-fields", spec)
+        self.assertEqual(r.reasons, ["critical item unmatched: header.title", "score below 90",
+                                     "omitted item shown: tabs[Properties]"])
+        self.assertEqual(r.verdict, "fail")
+
+
+SPEC_F = """\
+screen: s3.bucket-create
+service: s3
+kind: form
+route: /s3/buckets/create
+header:
+  title: Create bucket
+sections:
+  - title: General configuration
+    fields: [Bucket name, Bucket kind]
+"""
+
+
+class OmittedShownByKind(OmittedCase):
+    """R3.1, D2.2: each kind of item is looked for where its rule looks."""
+
+    def test_label_with_an_empty_name(self):
+        item_id = f"{GC}.fields[Bucket kind]"
+        r = self.run_score("labeltext-empty-name", self.spec(SPEC_F + omit_entry(item_id)))
+        self.assertShown(r, item_id, 'LabelText ""')
+        claimed = self.spec(SPEC_F + "  - title: Other\n    fields: [Bucket kind]\n" + omit_entry(item_id))
+        self.assertNotShown(self.run_score("labeltext-empty-name", claimed), item_id)
+
+    def bucket_list(self, path, shown_on, node, absent_on, spec_text=None):
+        spec = self.spec(spec_text or omit_more(path))
+        with self.subTest(snapshot=shown_on):
+            self.assertShown(self.run_score(shown_on, spec), path, node)
+        with self.subTest(snapshot=absent_on):
+            self.assertNotShown(self.run_score(absent_on, spec), path)
+
+    def test_breadcrumb(self):
+        self.bucket_list("breadcrumbs[Amazon S3]", "full-seeded", 'link "Amazon S3"', "breadcrumbs-no-nav")
+
+    def test_pagination(self):
+        self.bucket_list("table.pagination", "full-seeded", 'button "Previous page"', "filter-pagination-missing")
+
+    def test_filter(self):
+        self.bucket_list("table.filter", "full-seeded", 'searchbox "Find buckets by name"',
+                         "filter-pagination-missing")
+
+    def test_counter(self):
+        self.bucket_list("header.counter", "full-seeded", 'heading "General purpose buckets (3)"', "heading-no-counter")
+
+    def test_selection(self):
+        r = self.run_score("full-seeded", self.spec(omit_more("table.selection")))
+        self.assertShown(r, "table.selection", 'radio "Select bucket-a"')
+        none = self.spec(omit_more("table.selection").replace("selection: single", "selection: none"))
+        self.assertNotShown(self.run_score("full-seeded", none), "table.selection")
+
+
+EMPTY_TITLE_ONLY = variant("    title: No buckets\n    action: Create bucket\n", "    title: No buckets\n")
+
+
+class OmittedShownStates(OmittedCase):
+    """R3.2: an item is looked for only in a state it applies to."""
+
+    def spec_title_omitted(self):
+        if not EMPTY_TITLE_ONLY.endswith(f"    reason: {DIRECTORY}\n"):
+            raise AssertionError("bucket-list.yaml does not end with its omitted block")
+        return self.spec(EMPTY_TITLE_ONLY + f"  - item: table.empty.title\n    reason: {R}\n")
+
+    def test_seeded_run_does_not_look_for_the_empty_title(self):
+        """Guard: passes on main."""
+        r = self.run_score("seeded-with-empty-block", self.spec_title_omitted())
+        self.assertStatus(r, {"table.empty.title": "omitted"})
+        self.assertNotShown(r, "table.empty.title")
+
+    def test_empty_run_finds_the_empty_title(self):
+        r = self.run_score("empty-full", self.spec_title_omitted(), state="empty")
+        self.assertEqual(r.verdict, "fail")
+        self.assertIn("omitted item shown: table.empty.title", r.reasons)
+        self.assertTrue(self.row(r, "table.empty.title").startswith("table.empty.title    shown: "), r.text)
+
+
+class OmittedCount(OmittedCase):
+    """R4.1, R4.5: the first line says how many of the spec's items were left out; no number fails by itself."""
+
+    def test_spec_without_omitted(self):
+        r = self.run_score("ten-nine", self.spec(path=SPECS / "ten-items.yaml"))
+        self.assertTrue(r.text.splitlines()[0].endswith(" score=90.0 (9/10) omitted=0/10 verdict=pass"), r.text)
+
+    def test_most_items_omitted_passes(self):
+        r = self.run_score("detail-title-only", self.spec(SPEC_D + omit_entry("tabs", "sections")))
+        self.assertTrue(r.text.splitlines()[0].endswith(" score=100.0 (1/1) omitted=8/9 verdict=pass"), r.text)
+
+
+class OmittedResultFile(OmittedCase):
+    """R4.2: the result file carries the counts and, per omitted item, whether it is shown."""
+
+    def body(self, snapshot):
+        snap = _pmscore.load_snapshot(str(SNAPS / f"{snapshot}.json"))
+        return _pmscore.result_json(_pmscore.score(self.spec(), snap, "seeded"), {})
+
+    def test_tab_shown(self):
+        body = self.body("tab-shown")
+        self.assertEqual((body["omitted"], body["spec_items"]), (2, 21))
+        self.assertEqual(body["omitted_shown"], ["tabs[Directory buckets]"])
+        items = {i["id"]: i for i in body["items"]}
+        tab = items["tabs[Directory buckets]"]
+        self.assertEqual((tab["status"], tab["shown"]), ("omitted", True))
+        self.assertEqual((tab["node"]["role"], tab["node"]["name"]), ("tab", "Directory buckets"))
+        self.assertIs(items["tabs.order"]["shown"], False)
+        self.assertIsNone(items["tabs.order"]["node"])
+        count = lambda s: sum(1 for i in body["items"] if i["status"] == s)
+        self.assertEqual(body["matched"] + count("unmatched") + body["omitted"] + count("not-applicable"),
+                         body["spec_items"])
+
+    def test_nothing_shown(self):
+        body = self.body("full-seeded")
+        self.assertEqual(body["omitted_shown"], [])
+        omitted = [i for i in body["items"] if i["status"] == "omitted"]
+        self.assertEqual(len(omitted), 2)
+        for i in omitted:
+            self.assertIs(i["shown"], False, i["id"])
+
+
+OMIT_STEP = SPECS / "wizard-omit-step.yaml"
+POLICIES = f"steps[{T2}].sections[Permissions policies].title"
+ATTACH = "the emulator has no managed policies to attach"
+
+
+class WizardOmittedShown(OmittedCase):
+    """R3.3: an omitted step is shown by its navigation entry or its heading; an omitted section of a shown step
+    is looked for on that step's tree."""
+
+    def test_omitted_section_shown_on_its_step(self):
+        r, body = self.wizard("wizard-full", SPECS / "wizard-omitted.yaml")
+        self.assertShown(r, POLICIES, 'step 2: heading "Permissions policies"',
+                         "the emulator has no managed policies to list")
+        self.assertEqual(self.node_step(body, POLICIES), 2)
+
+    def test_omitted_section_absent(self):
+        r, _ = self.wizard("wizard-section-absent", SPECS / "wizard-omitted.yaml")
+        self.assertTrue(r.text.splitlines()[0].endswith(" score=100.0 (15/15) omitted=1/16 verdict=pass"), r.text)
+
+    def test_omitted_step_absent(self):
+        r, _ = self.wizard("wizard-two-steps", OMIT_STEP)
+        self.assertIn(" (13/13) omitted=3/16 verdict=pass", r.text.splitlines()[0])
+
+    def test_omitted_step_in_the_navigation(self):
+        r, _ = self.wizard("wizard-omitted-step-in-nav", OMIT_STEP)
+        self.assertShown(r, f"steps[{T2}].title", 'step 1: button "Step 2: Add permissions"', ATTACH)
+        self.assertStatus(r, {"steps.order": "matched"})
+
+    def test_omitted_step_heading(self):
+        r, _ = self.wizard("wizard-omitted-step-heading", OMIT_STEP)
+        self.assertShown(r, f"steps[{T2}].title", 'step 2: heading "Add permissions"', ATTACH)
+
+    def test_omitted_steps_section_not_looked_for(self):
+        """Guard: passes on main."""
+        r, _ = self.wizard("wizard-omitted-step-section", OMIT_STEP)
+        self.assertEqual((r.verdict, r.reasons), ("pass", []), r.text)
+        self.assertNotShown(r, POLICIES, ATTACH)
+
+    def test_heading_claimed_by_a_scored_section(self):
+        """Guard: passes on main (R3.2, third bullet)."""
+        text = OMIT_STEP.read_text()
+        old = f"  - title: {T3}\n"
+        self.assertEqual(text.count(old), 1)
+        spec = text.replace(old, old + "    sections:\n      - title: Add permissions\n")
+        r, _ = self.wizard("wizard-omitted-step-heading", spec)
+        self.assertStatus(r, {f"steps[{T3}].sections[Add permissions].title": "matched"})
+        self.assertNotShown(r, f"steps[{T2}].title", ATTACH)
 
 
 if __name__ == "__main__":

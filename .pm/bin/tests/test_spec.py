@@ -118,10 +118,10 @@ class BucketList(SpecCase):
         spec = _pmspec.load(str(SPECS / "bucket-list.yaml"))
         self.assertEqual(ids(spec), [
             "breadcrumbs[Amazon S3]", "breadcrumbs[Buckets]", "breadcrumbs.order", "header.title", "header.counter",
-            "header.actions[Copy ARN]", "header.actions[Empty]", "header.actions[Delete]",
-            "header.actions[Create bucket]", "header.actions.order", "header.primary_action", "table.selection",
-            "table.filter", "table.pagination", "table.columns[Name]", "table.columns[AWS Region]",
-            "table.columns[Creation date]", "table.columns.order", "table.empty.title", "table.empty.action"])
+            "header.actions[Empty]", "header.actions[Delete]", "header.actions[Create bucket]",
+            "header.actions.order", "header.primary_action", "table.selection", "table.filter", "table.pagination",
+            "table.columns[Name]", "table.columns[AWS Region]", "table.columns[Creation date]", "table.columns.order",
+            "table.empty.title", "table.empty.action", "tabs[Directory buckets]", "tabs.order"])
         self.assertEqual(set(get(item(spec, "table.empty.title"), "states")), {"empty"})
         self.assertEqual(set(get(item(spec, "table.empty.action"), "states")), {"empty"})
         self.assertEqual(set(get(item(spec, "table.selection"), "states")), {"seeded"})
@@ -130,8 +130,9 @@ class BucketList(SpecCase):
                 self.assertEqual(set(get(i, "states")), {"seeded", "empty"}, get(i, "id"))
         entries = get(spec, "omitted")
         self.assertEqual(len(entries), 1)
-        self.assertEqual(list(get(entries[0], "items")), ["header.actions[Copy ARN]"])
-        self.assertEqual(get(entries[0], "reason"), "emulator returns 501 for the operation behind it")
+        self.assertEqual(get(entries[0], "path"), "tabs")
+        self.assertEqual(list(get(entries[0], "items")), ["tabs[Directory buckets]", "tabs.order"])
+        self.assertEqual(get(entries[0], "reason"), "the emulator has no directory buckets")
         self.assertEqual(total(spec, "seeded"), 17)
         self.assertEqual(total(spec, "empty"), 18)
 
@@ -384,21 +385,48 @@ class Files(SpecCase):
 
 DETAIL_OMIT = DETAIL + "omitted:\n  - item: {path}\n    reason: {reason}\n"
 
+# Spec D of issue 46 (test criteria): DETAIL without its section Tags, 9 items, all matched on detail-fields.json.
+SPEC_D = """\
+screen: s3.bucket-detail
+service: s3
+kind: detail
+route: /s3/buckets/bucket-a
+header:
+  title: bucket-a
+tabs: [Objects, Properties]
+sections:
+  - title: General configuration
+    fields: [Bucket name, AWS Region]
+"""
+
+
+def omit_entries(*entries):
+    """An `omitted` block, one entry per (path, reason) pair or path (reason: fixture text)."""
+    out = "omitted:\n"
+    for e in entries:
+        path, reason = e if isinstance(e, tuple) else (e, "fixture reason")
+        out += f"  - item: {path}\n    reason: {reason}\n"
+    return out
+
 
 class Omitted(SpecCase):
     def test_list_element_is_the_only_item_omitted(self):
-        spec = _pmspec.load(str(SPECS / "bucket-list.yaml"))
-        self.assertEqual(omitted_ids(spec), {"header.actions[Copy ARN]"})
-        self.assertNotIn("header.actions.order", omitted_ids(spec))
-        self.assertEqual(get(item(spec, "header.actions[Copy ARN]"), "list"), "header.actions")
+        spec = self.load_text(SPEC_D + omit_entries("tabs[Properties]"))
+        self.assertEqual(omitted_ids(spec), {"tabs[Properties]"})
+        self.assertNotIn("tabs.order", omitted_ids(spec))
+        self.assertEqual(get(item(spec, "tabs[Properties]"), "list"), "tabs")
 
     def test_list_element_is_left_out_of_the_order(self):
-        """Observed through the scorer: Copy ARN after Create bucket does not break header.actions.order."""
+        """Observed through the scorer: Objects after Permissions does not break tabs.order; the screen shows the
+        omitted tab, so the run fails for that (issue 46, R3)."""
         import _pmscore
-        spec = _pmspec.load(str(SPECS / "bucket-list.yaml"))
-        snap = _pmscore.load_snapshot(str(FIXTURES / "snapshots" / "order-omitted-out-of-order.json"))
+        spec = self.load_text(SPEC_D.replace("tabs: [Objects, Properties]", "tabs: [Objects, Properties, Permissions]")
+                              + omit_entries("tabs[Objects]"))
+        snap = _pmscore.load_snapshot(str(FIXTURES / "snapshots" / "tabs-omitted-out-of-order.json"))
         text = _pmscore.render_text(_pmscore.score(spec, snap, "seeded"))
-        self.assertIn("  header.actions.order    in order", text.splitlines())
+        self.assertIn("  tabs.order    in order", text.splitlines())
+        self.assertIn(" verdict=fail", text.splitlines()[0])
+        self.assertIn("reason: omitted item shown: tabs[Objects]", text.splitlines())
 
     def test_block_list_and_section(self):
         cases = {
@@ -430,6 +458,165 @@ class Omitted(SpecCase):
         for text in (missing, blank):
             with self.subTest(text=text.splitlines()[-1]):
                 self.refused(text, contains=("omitted tabs:",))
+
+
+# ---------------------------------------------------------------------------------------------------- issue 46
+
+TABLE_R2 = """\
+screen: s3.bucket-list
+service: s3
+kind: table
+route: /s3/buckets
+header:
+  title: General purpose buckets
+  actions: [Empty, Create bucket]
+  primary_action: Create bucket
+table:
+  columns: [Name, AWS Region]
+  empty:
+    title: No buckets
+    action: Create bucket
+"""
+TABLE_TITLE_ONLY = TABLE_R2.replace("    action: Create bucket\n", "")
+BUCKET_LIST_BARE = (SPECS / "bucket-list.yaml").read_text().split("\nomitted:", 1)[0] + "\n"
+WIZARD_TEXT = (SPECS / "wizard.yaml").read_text()
+
+# The spec NOTHING of issue 4's test_nothing_to_score (moved here from test_score.py by issue 46).
+NOTHING = """\
+screen: s3.nothing
+service: s3
+kind: table
+route: /s3/nothing
+header:
+  title: Nothing
+table:
+  columns: [Name]
+  empty:
+    title: No things
+omitted:
+  - item: header.title
+    reason: the emulator has no title for this view
+  - item: table.columns
+    reason: the emulator lists no columns for this view
+"""
+
+
+class Unmarkable(SpecCase):
+    """R2: an omitted entry that covers the title, an action, a table column, submit, the empty title beside a
+    scored empty action, or only order items is refused with `spec <path>: omitted <p>: <id> cannot be omitted:
+    <why>`, naming the first such item in spec order."""
+
+    def refused_exactly(self, text, path, item_id, why):
+        p = self.write(text)
+        with self.assertRaises(_pmspec.SpecError) as cm:
+            _pmspec.load(str(p))
+        self.assertEqual(str(cm.exception), f"spec {p}: omitted {path}: {item_id} cannot be omitted: {why}")
+        return cm.exception
+
+    def each_refused(self, base, cases):
+        for path, item_id, why in cases:
+            with self.subTest(item=path):
+                self.refused_exactly(base + omit_entries(path), path, item_id, why)
+
+    def test_title_refused(self):
+        self.refused_exactly(TABLE_R2 + omit_entries("header.title"), "header.title", "header.title", "the title")
+
+    def test_actions_refused(self):
+        self.each_refused(TABLE_R2, [(p, p, "an action") for p in
+                                     ("header.actions[Empty]", "header.primary_action", "table.empty.action")])
+
+    def test_table_columns_refused(self):
+        self.each_refused(TABLE_R2, [(p, p, "a table column") for p in ("table.columns[Name]", "table.columns.order")])
+
+    def test_empty_title_beside_a_scored_empty_action_refused(self):
+        self.refused_exactly(TABLE_R2 + omit_entries("table.empty.title"), "table.empty.title", "table.empty.title",
+                             "the empty title of a scored empty action")
+
+    def test_block_refused_naming_its_first_refused_item(self):
+        self.each_refused(TABLE_R2, [
+            ("header.actions", "header.actions[Empty]", "an action"),
+            ("table.columns", "table.columns[Name]", "a table column"),
+            ("header", "header.title", "the title"),
+            ("table.empty", "table.empty.title", "the empty title of a scored empty action"),
+        ])
+
+    def test_refused_entry_carries_the_screen(self):
+        e = self.refused_exactly(TABLE_R2 + omit_entries("header.title"), "header.title", "header.title", "the title")
+        self.assertEqual(e.screen, "s3.bucket-list")
+
+    def test_empty_title_without_an_empty_action_loads(self):
+        """Guard: passes on main."""
+        for path in ("table.empty.title", "table.empty"):
+            with self.subTest(item=path):
+                spec = self.load_text(TABLE_TITLE_ONLY + omit_entries(path))
+                self.assertEqual(omitted_ids(spec), {"table.empty.title"})
+
+    def test_wizard_submit_and_steps_order_refused(self):
+        self.each_refused(WIZARD_TEXT, [("submit", "submit", "the submit action"),
+                                        ("steps.order", "steps.order", "an order without its list")])
+
+    def test_wizard_whole_step_or_section_loads(self):
+        """Guard: passes on main (R2.3)."""
+        cases = {
+            "steps[Add permissions]": {"steps[Add permissions].title",
+                                       "steps[Add permissions].sections[Permissions policies].title",
+                                       "steps[Add permissions].sections.order"},
+            "steps[Add permissions].sections[Permissions policies]": {
+                "steps[Add permissions].sections[Permissions policies].title"},
+        }
+        for path, covered in cases.items():
+            with self.subTest(item=path):
+                self.assertEqual(omitted_ids(self.load_text(WIZARD_TEXT + omit_entries(path))), covered)
+
+    def test_order_alone_refused(self):
+        why = "an order without its list"
+        self.each_refused(SPEC_D, [(p, p, why) for p in
+                                   ("tabs.order", "sections.order", "sections[General configuration].fields.order")])
+        self.each_refused(BUCKET_LIST_BARE, [(p, p, why) for p in ("breadcrumbs.order", "header.actions.order")])
+
+    def test_list_with_its_order_loads(self):
+        """Guard: passes on main."""
+        spec = self.load_text(SPEC_D + omit_entries("tabs"))
+        self.assertEqual(omitted_ids(spec), {"tabs[Objects]", "tabs[Properties]", "tabs.order"})
+
+    def test_what_can_still_be_marked_loads(self):
+        """Guard: passes on main (R2.4)."""
+        gc = "sections[General configuration]"
+        cases = [
+            (BUCKET_LIST_BARE, "breadcrumbs[Amazon S3]", {"breadcrumbs[Amazon S3]"}),
+            (BUCKET_LIST_BARE, "header.counter", {"header.counter"}),
+            (BUCKET_LIST_BARE, "table.selection", {"table.selection"}),
+            (BUCKET_LIST_BARE, "table.filter", {"table.filter"}),
+            (BUCKET_LIST_BARE, "table.pagination", {"table.pagination"}),
+            (SPEC_D, "tabs[Properties]", {"tabs[Properties]"}),
+            (SPEC_D, gc,
+             {f"{gc}.title", f"{gc}.fields[Bucket name]", f"{gc}.fields[AWS Region]", f"{gc}.fields.order"}),
+            (SPEC_D, f"{gc}.fields[AWS Region]", {f"{gc}.fields[AWS Region]"}),
+        ]
+        for base, path, covered in cases:
+            with self.subTest(item=path):
+                self.assertEqual(omitted_ids(self.load_text(base + omit_entries(path))), covered)
+
+    def test_todays_checks_come_first(self):
+        """Guard: passes on main (R2.1)."""
+        no_reason = self.write(SPEC_D + "omitted:\n  - item: header.title\n")
+        blank = self.write(SPEC_D + omit_entries(("header.title", '"   "')))
+        for p, what in ((no_reason, "omitted header.title: no reason"),
+                        (blank, "omitted header.title: the reason is empty")):
+            with self.subTest(what=what):
+                with self.assertRaises(_pmspec.SpecError) as cm:
+                    _pmspec.load(str(p))
+                self.assertEqual(str(cm.exception), f"spec {p}: {what}")
+
+    def test_entries_checked_in_spec_order(self):
+        self.refused_exactly(SPEC_D + omit_entries("tabs[Properties]", "header.title"),
+                             "header.title", "header.title", "the title")
+        self.refused_exactly(SPEC_D + omit_entries("header.title", "tabs.order"),
+                             "header.title", "header.title", "the title")
+
+    def test_nothing_spec_refused_at_load(self):
+        """Replaces issue 4's test_nothing_to_score: no spec that loads reaches "nothing to score"."""
+        self.refused_exactly(NOTHING, "header.title", "header.title", "the title")
 
 
 class States(SpecCase):

@@ -1,0 +1,32 @@
+{
+  "format": "pm-structure-snapshot/1",
+  "url": "http://127.0.0.1:8103/s3/buckets/bucket-a",
+  "viewport": {"width": 1280, "height": 800},
+  "browser": "chromium 140.0.7339.16",
+  "blocked": [],
+  "nodes": [
+    {"role": "RootWebArea", "name": "bucket-a | EmuForge", "parent": null},
+    {"role": "main", "name": "", "parent": 0},
+    {"role": "heading", "name": "bucket-a", "parent": 1},
+    {"role": "StaticText", "name": "bucket-a", "parent": 2},
+    {"role": "tablist", "name": "", "parent": 1},
+    {"role": "tab", "name": "Properties", "parent": 4},
+    {"role": "StaticText", "name": "Properties", "parent": 5},
+    {"role": "tab", "name": "Permissions", "parent": 4},
+    {"role": "StaticText", "name": "Permissions", "parent": 7},
+    {"role": "tab", "name": "Objects", "parent": 4},
+    {"role": "StaticText", "name": "Objects", "parent": 9},
+    {"role": "tabpanel", "name": "Properties", "parent": 1},
+    {"role": "heading", "name": "General configuration", "parent": 11},
+    {"role": "StaticText", "name": "General configuration", "parent": 12},
+    {"role": "LabelText", "name": "Bucket name", "parent": 11},
+    {"role": "StaticText", "name": "Bucket name", "parent": 14},
+    {"role": "textbox", "name": "Bucket name", "parent": 11},
+    {"role": "term", "name": "AWS Region", "parent": 11},
+    {"role": "StaticText", "name": "AWS Region", "parent": 17},
+    {"role": "definition", "name": "", "parent": 11},
+    {"role": "StaticText", "name": "us-east-1", "parent": 19},
+    {"role": "StaticText", "name": "Created", "parent": 11},
+    {"role": "StaticText", "name": "November 14, 2026", "parent": 11}
+  ]
+}
