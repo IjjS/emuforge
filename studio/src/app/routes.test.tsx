@@ -156,6 +156,47 @@ describe('routes', () => {
     await expectNoScreenYet(label);
   });
 
+  it.each(['/aws/s3', '/aws/s3/buckets'])(
+    'opens %s as the S3 bucket list: the h1 "Buckets", the address unchanged, the title "Buckets | EmuForge Studio"',
+    async (path) => {
+      const router = createMemoryRouter(routes, { initialEntries: [path] });
+      render(
+        <Providers>
+          <RouterProvider router={router} />
+        </Providers>,
+      );
+
+      expect(inCloudscape(await heading('Buckets'))).toBe(true);
+      expect(router.state.location.pathname).toBe(path);
+      await waitFor(() => {
+        expect(document.title).toBe('Buckets | EmuForge Studio');
+      });
+    },
+  );
+
+  it.each(['/aws/s3/buckets/my-bucket', '/aws/s3/bucket/create', '/aws/s3/directory-buckets'])(
+    'opens %s as the "no screen yet" page of Amazon Simple Storage Service, with no ListBuckets request',
+    async (path) => {
+      const engine = new FakeEngine();
+      vi.stubGlobal('fetch', engine.fetch);
+      open(path);
+
+      await expectNoScreenYet('Amazon Simple Storage Service');
+      await waitFor(
+        () => {
+          expect(engine.healths.length).toBeGreaterThan(0);
+        },
+        { timeout: 2_000 },
+      );
+      const lists = engine.requests.filter((request) => {
+        const url = new URL(request.url, window.location.href);
+        return url.origin.startsWith('http://127.0.0.1:') && url.searchParams.get('x-id') === 'ListBuckets';
+      });
+      expect(lists).toEqual([]);
+      expect(engine.to('/')).toEqual([]);
+    },
+  );
+
   it('opens /aws/does-not-exist/today as the AWS area’s "Page not found", with the path as text', async () => {
     open('/aws/does-not-exist/today');
 
