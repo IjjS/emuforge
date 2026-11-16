@@ -34,14 +34,14 @@ From a clone, one command starts EmuForge and one stops it, on Docker Desktop an
 ./compose down
 ```
 
-`./compose` decides two things for you. It picks the platform: Docker Engine on Linux gets its own Compose file,
+`./compose up` decides two things for you. It picks the platform: Docker Engine on Linux gets its own Compose file,
 the folder `~/.aws/emulator` and your user and group ids (situations 3 and 4 below), anything else gets the root
 `docker-compose.yml`. And it picks the situation: it uses an emulator already running on `EMULATOR_PORT`, and
 starts one beside EmuForge when there is none. Before it runs anything it prints the docker compose command it
 runs, one of the lines below, so you can always run that line yourself. `./compose down` stops what
 `./compose up` started and leaves an emulator you run yourself running. Any other arguments are passed on with
-the platform's file, as in `./compose ps -a` and `./compose logs`. `./compose up` refuses to run as root, and
-so does every other line of it, also with `EMUFORGE_UID` or `EMUFORGE_GID` set to 0.
+the platform's file, as in `./compose ps -a` and `./compose logs`. It refuses to run as root: `./compose up`,
+`./compose down` and the rest exit 1 for uid 0, and also with `EMUFORGE_UID` or `EMUFORGE_GID` set to 0.
 
 What it needs: Docker with Compose and bash, nothing else on the host. The engine and Studio are built inside an
 image build, so no Rust or bun toolchain is used. It was verified on Docker Desktop for macOS (Docker Engine
