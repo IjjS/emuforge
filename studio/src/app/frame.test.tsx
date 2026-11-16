@@ -940,7 +940,7 @@ const NAMING = ['aria-label', 'aria-labelledby', 'aria-describedby', 'aria-descr
 
 /** The elements of `scope` in the accessibility tree that have a role, in document order. */
 function accessibleIn(scope: HTMLElement): Element[] {
-  const elements = new Set(Object.values(getRoles(scope)).flat());
+  const elements = new Set<Element>(Object.values(getRoles(scope)).flat());
   return [...scope.querySelectorAll('*')].filter((element) => elements.has(element));
 }
 
@@ -983,9 +983,8 @@ describe('a press outside the open menu only puts it away (issue 32, R2, R3.3, R
   }
 
   function areaService(): HTMLElement {
-    return present(document.querySelector('.st-area'), 'the AWS area').querySelector<HTMLElement>(
-      `a[href="${SERVICE.path}"]`,
-    ) as HTMLElement;
+    const area = present(document.querySelector('.st-area'), 'the AWS area');
+    return present(area.querySelector<HTMLElement>(`a[href="${SERVICE.path}"]`), `the area's link to ${SERVICE.path}`);
   }
 
   /** Records every event of `types` that reaches `element` or a listener below the window. */
