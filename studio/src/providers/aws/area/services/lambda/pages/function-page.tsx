@@ -16,8 +16,8 @@ import type { ScreenPageProps } from '../../../screens';
 import type { LambdaFunction } from '../api';
 import { readFailureState, useAnnouncer } from '../components/failure-states';
 import { ReadFailure } from '../components/failures';
-import { FunctionOverview, RuntimeSettings } from '../components/function-sections';
-import { functionStatus, FunctionStatusLine } from '../components/function-status';
+import { FunctionOverview, FunctionStatusLine, RuntimeSettings } from '../components/function-sections';
+import { functionStatus } from '../components/function-status';
 import { FUNCTIONS_PATH, functionPath, functionTabPath, type FunctionTab } from '../format';
 import { useFunctionReading } from '../queries';
 
@@ -139,10 +139,10 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
     }
   }
 
-  const handleRefresh = useCallback(() => {
+  const handleRefresh = () => {
     setRefreshing(true);
     refresh();
-  }, [refresh]);
+  };
 
   let content;
   if (failureState !== undefined) {

@@ -1,11 +1,9 @@
 import type { StatusIndicatorProps } from '@cloudscape-design/components/status-indicator';
-import StatusIndicator from '@cloudscape-design/components/status-indicator';
 
-import './function-sections.css';
 import type { LambdaFunction } from '../api';
 
 // The status of a function's page while the function is not ready (issue 84, requirement R5.2), in EmuForge's own
-// words. The reason is the emulator's, shown as it came, as text.
+// words. The reason is the emulator's, shown as it came, as text (`FunctionStatusLine` of `function-sections.tsx`).
 
 /** What the page shows under its description; none while the function is ready. */
 export interface FunctionStatus {
@@ -44,14 +42,4 @@ export function functionStatus(fn: LambdaFunction): FunctionStatus | undefined {
     default:
       return undefined;
   }
-}
-
-/** The status line: Cloudscape's status indicator, then the reason as text. */
-export function FunctionStatusLine({ status }: { status: FunctionStatus }) {
-  return (
-    <span className="aws-lambda-value">
-      <StatusIndicator type={status.type}>{status.text}</StatusIndicator>
-      {status.reason !== undefined && <> {status.reason}</>}
-    </span>
-  );
 }

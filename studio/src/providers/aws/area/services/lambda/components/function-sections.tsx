@@ -6,6 +6,7 @@ import type { ReactNode } from 'react';
 
 import './function-sections.css';
 import type { FunctionUrl, LambdaFunction } from '../api';
+import type { FunctionStatus } from './function-status';
 import { architecturesText, lastModifiedText, NONE, runtimeText, valueText } from '../format';
 
 // The sections of a function's page (issue 84, requirement R5.3, R5.5): "Function overview" and, under the tab
@@ -16,6 +17,16 @@ import { architecturesText, lastModifiedText, NONE, runtimeText, valueText } fro
 /** A value as text that breaks anywhere when it must. */
 function Value({ children }: { children: ReactNode }) {
   return <span className="aws-lambda-value">{children}</span>;
+}
+
+/** The status line of a function's page (R5.2): Cloudscape's status indicator, then the reason as text. */
+export function FunctionStatusLine({ status }: { status: FunctionStatus }) {
+  return (
+    <Value>
+      <StatusIndicator type={status.type}>{status.text}</StatusIndicator>
+      {status.reason !== undefined && <> {status.reason}</>}
+    </Value>
+  );
 }
 
 /** "Function URL" (R5.3): the URL as text, never a link; "-" for none; the reading's failure as a status. */
