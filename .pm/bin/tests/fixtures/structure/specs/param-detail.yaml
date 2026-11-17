@@ -1,0 +1,13 @@
+# Issue 302: a detail screen whose route holds a parameter the run fills (--param id=<value>).
+# Ten items, all matched by pages/param-detail at /aws/apigateway/apis/<segment> and by snapshots/param-detail.json.
+screen: apigateway.rest-api
+service: apigateway
+kind: detail
+route: /aws/apigateway/apis/{id}
+
+breadcrumbs: [API Gateway, APIs, p302-api]
+header:
+  title: p302-api
+sections:
+  - title: API details
+    fields: [API ID, Description]
