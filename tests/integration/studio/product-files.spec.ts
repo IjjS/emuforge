@@ -10,8 +10,8 @@
 // - A numbered situation is a heading below "Start" whose text begins with a number (`### 3. From a clone, …`,
 //   `### Situation 3: …`), or a table row whose first cell begins with one.
 // - "In code" is an inline code span or a line of a fenced code block (a leading `$ ` is not part of the line).
-// - A `docker compose` line is a line in code that runs `docker compose` with at least one argument, with or without
-//   variable assignments before it.
+// - A `docker compose` line is a line in code that holds `docker compose` followed by an argument anywhere in it
+//   (assignments, `cd … &&` or `$env:…;` before it included).
 // - A variable is named "with" its default when one paragraph, list item or table row holds both.
 // - A sentence is a run of prose, code removed, that ends with `.`, `!` or `?`, or at a blank line.
 //
@@ -468,8 +468,8 @@ function numberedSituations(
   return found;
 }
 
-/** A line in code that runs `docker compose` with an argument, assignments before it or not. */
-const COMPOSE_LINE = /^(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*docker compose\s+\S/;
+/** A line in code that holds `docker compose` followed by an argument, whatever comes before it. */
+const COMPOSE_LINE = /(^|[\s;&|(])docker compose\s+\S/;
 
 /** A bash line `NAME=value … <command>`: its assignments and its command, or `null`. */
 function assignedLine(line: string): { names: string[]; values: string[]; command: string } | null {
