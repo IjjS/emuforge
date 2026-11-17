@@ -176,6 +176,27 @@ describe('routes', () => {
     },
   );
 
+  it('opens /aws/lambda/functions/create as "Create Event Function", and /aws/lambda/functions/function/create as the page of a function named create', async () => {
+    const router = createMemoryRouter(routes, { initialEntries: ['/aws/lambda/functions/create'] });
+    const rendered = render(
+      <Providers>
+        <RouterProvider router={router} />
+      </Providers>,
+    );
+
+    expect(inCloudscape(await heading('Create Event Function'))).toBe(true);
+    expect(router.state.location.pathname).toBe('/aws/lambda/functions/create');
+    await waitFor(() => {
+      expect(document.title).toBe('Create Event Function | EmuForge Studio');
+    });
+    rendered.unmount();
+
+    open('/aws/lambda/functions/function/create');
+
+    expect(inCloudscape(await heading('create'))).toBe(true);
+    expect(screen.queryByRole('heading', { level: 1, name: 'Create Event Function' })).toBeNull();
+  });
+
   it.each(['/aws/lambda/functions/function/orders/test', '/aws/lambda/layers'])(
     'opens %s as the "no screen yet" page of AWS Lambda',
     async (path) => {

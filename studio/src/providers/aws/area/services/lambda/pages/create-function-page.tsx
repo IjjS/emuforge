@@ -55,7 +55,7 @@ const NAME_MAX = 64;
 const NAME_ALPHABET_PATTERN = /^[A-Za-z0-9_-]+$/;
 
 /** The message under "Function name" for `name` (R6.4), or `undefined` when the form lets it through. */
-export function nameMessage(name: string): string | undefined {
+function nameMessage(name: string): string | undefined {
   if (name === '') {
     return ENTER_NAME;
   }
@@ -187,12 +187,17 @@ export function CreateFunctionPage({ connection }: ScreenPageProps) {
     setExistingRole(option);
   }, []);
 
-  const failureItem =
-    failure === undefined ? undefined : actionFailureItem(failure.failure, failure.step, endpoint);
+  const failureItem = failure === undefined ? undefined : actionFailureItem(failure.failure, failure.step, endpoint);
 
   return (
     <>
-      <ContentLayout header={<Header variant="h1" description={DESCRIPTION}>{CREATE_FUNCTION_TITLE}</Header>}>
+      <ContentLayout
+        header={
+          <Header variant="h1" description={DESCRIPTION}>
+            {CREATE_FUNCTION_TITLE}
+          </Header>
+        }
+      >
         <form onSubmit={handleSubmit} noValidate>
           <Form
             actions={
@@ -288,4 +293,3 @@ export function CreateFunctionPage({ connection }: ScreenPageProps) {
     </>
   );
 }
-

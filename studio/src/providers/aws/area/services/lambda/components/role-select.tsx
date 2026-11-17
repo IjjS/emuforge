@@ -11,7 +11,7 @@ import { useRoleList } from '../queries';
 // with `ListRoles` page by page as Cloudscape's select asks for them, each shown by its name and, when it is not `/`,
 // its path. Its states are EmuForge's own words; every name and path is the emulator's, rendered as text.
 
-export const EXISTING_ROLE = 'Existing role';
+const EXISTING_ROLE = 'Existing role';
 const DESCRIPTION = "Roles in the emulator's IAM.";
 const PLACEHOLDER = 'Choose an existing role';
 const LOADING = 'Loading roles';
@@ -23,14 +23,16 @@ const NO_ROLES_SENTENCE =
  * A failed reading of the roles in the words of R10.3, as one line of text: the select's error status takes a string.
  * `engineOrigin` is the engine's address the page is configured with.
  */
-export function rolesFailureText(failure: LambdaFailure, engineOrigin: string | undefined): string {
+function rolesFailureText(failure: LambdaFailure, engineOrigin: string | undefined): string {
   switch (failure.kind) {
     case 'not-implemented':
       return `Not implemented by the emulator. The emulator answered 501 Not Implemented for ${failure.operation}.`;
     case 'access-denied':
       return `Access denied. ${failure.operation} was refused: ${failure.message}`;
     case 'emulator-did-not-answer':
-      return failure.message === '' ? 'The emulator did not answer.' : `The emulator did not answer. ${failure.message}`;
+      return failure.message === ''
+        ? 'The emulator did not answer.'
+        : `The emulator did not answer. ${failure.message}`;
     case 'engine-did-not-answer':
       return `The EmuForge engine at ${engineOrigin ?? ''} did not answer.`;
     case 'other':
