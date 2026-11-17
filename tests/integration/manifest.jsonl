@@ -134,3 +134,8 @@
 {"check_id": "engine.product-wrapper-starts-an-emulator-when-none-runs", "path": "tests/integration/studio/product-wrapper.spec.ts", "module": "engine", "operations": [], "labels": ["own-emulator", "lifecycle", "safety"], "issue": 54}
 {"check_id": "engine.product-wrapper-refuses-root-and-bad-ids", "path": "tests/integration/studio/product-wrapper.spec.ts", "module": "engine", "operations": [], "labels": ["safety"], "issue": 54}
 {"check_id": "studio.addresses-stay-whole-with-five-digit-ports", "path": "tests/integration/studio/addresses.spec.ts", "module": "studio", "operations": [], "labels": ["own-emulator", "regression"], "issue": 60}
+{"check_id": "engine.emulator-image-gives-its-files-to-the-folders-owner", "path": "tests/integration/engine/tests/emulator_image.rs", "module": "engine", "operations": [], "labels": ["own-emulator", "regression", "safety"], "issue": 55}
+{"check_id": "engine.emulator-image-stops-and-restarts-as-the-folders-owner", "path": "tests/integration/engine/tests/emulator_image.rs", "module": "engine", "operations": [], "labels": ["own-emulator", "lifecycle"], "issue": 55}
+{"check_id": "engine.emulator-image-never-runs-as-root", "path": "tests/integration/engine/tests/emulator_image.rs", "module": "engine", "operations": [], "labels": ["own-emulator", "safety"], "issue": 55}
+{"check_id": "engine.readme-run-the-emulator-creates-the-folder-first", "path": "tests/integration/engine/tests/emulator_image.rs", "module": "engine", "operations": [], "labels": [], "issue": 55}
+{"check_id": "engine.workflow-builds-the-emulator-image-as-the-repository-ships-it", "path": "tests/integration/engine/tests/emulator_image.rs", "module": "engine", "operations": [], "labels": [], "issue": 55}

@@ -12,7 +12,9 @@ RUN case "$TARGETARCH" in \
        "https://downloads.aws.com/aws-emulator/packages/aws-emulator/LTS/latest/aws-emulator-${ARCH}.rpm" \
     && rpm -i /tmp/aws-emulator.rpm && rm /tmp/aws-emulator.rpm \
     && mkdir -p /home/emulator && chown 1000 /home/emulator
-USER 1000
+# No USER: the container starts as root only to pick the emulator's user, the owner of the mounted
+# ~/.aws/emulator, and the entrypoint never runs the emulator as root (entrypoint.sh).
+COPY --chmod=755 entrypoint.sh /usr/local/bin/emulator-entrypoint
 ENV HOME=/home/emulator
 EXPOSE 9297
-ENTRYPOINT ["aws-emulator", "-b", "0.0.0.0"]
+ENTRYPOINT ["/usr/local/bin/emulator-entrypoint", "-b", "0.0.0.0"]
