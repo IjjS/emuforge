@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: bug
 Issue-Source: plan
 Issue-Key: studio|aws-area.no-screen-page|service-with-a-screen
-Issue-Check-Ids:
+Issue-Check-Ids: studio.aws-no-screen-part-says-what-is-missing studio.aws-no-screen-part-changes-nothing-in-the-emulator studio.aws-no-screen-part-same-page-at-every-unlisted-path studio.aws-no-screen-part-follows-emulator-stop-and-start studio.aws-no-screen-part-keyboard-and-layout
 Issue-Commit: 3fe1072bb359e60a3c71e72169eebb96dd1dc3a9
 
 # Say what is missing on the no-screen page below a service that has a screen
