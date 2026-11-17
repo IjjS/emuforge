@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: plan
 Issue-Key: studio|aws-area.screens|register-inside-service-folder
-Issue-Check-Ids:
+Issue-Check-Ids: studio.aws-clients-of-any-service-go-through-the-engine studio.aws-sqs-client-keeps-a-queue-url-on-the-engine
 Issue-Commit: 3002fc508f1ef0559c3cc63c7a3801b66cd34066
 
 # Register a service's screens from inside its own folder so a screen issue changes no file the services share
