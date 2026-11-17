@@ -1,0 +1,6 @@
+/* A value from the emulator in a cell of the IAM screens' tables (a role's name, its trusted entities) is one word as
+   often as not: with "Wrap lines" on it breaks inside its cell rather than widening the column and the page (issue
+   82, R4, R7, R11). The area's own element, not a Cloudscape component's; it sets no colour, spacing or font. */
+.aws-iam-cell-value {
+  overflow-wrap: anywhere;
+}

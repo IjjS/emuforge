@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -1121,6 +1124,32 @@ describe('preferences and wrapping', () => {
 
     expect(within(tableElement()).getByRole('link', { name: long }).textContent).toBe(long);
     expect(tableElement().querySelector('[class*="body-cell-wrap"]')).not.toBeNull();
+  });
+
+  it('a 64-character name and a long "Trusted entities": each in the element that breaks anywhere, so neither widens its cell', async () => {
+    const long = 'r' + 'x'.repeat(63);
+    const arn = `arn:aws:iam::000000000000:role/${long}`;
+    const trust = JSON.stringify({
+      Version: '2012-10-17',
+      Statement: [{ Effect: 'Allow', Principal: { AWS: arn }, Action: 'sts:AssumeRole' }],
+    });
+    await openLoaded([{ name: long, trust }]);
+
+    const link = within(tableElement()).getByRole('link', { name: long });
+    expect(link.closest('.aws-iam-cell-value')?.closest('th, td')).not.toBeNull();
+    const trusted = within(tableElement()).getByText(`AWS: ${arn}`);
+    expect(trusted).toHaveClass('aws-iam-cell-value');
+    expect(trusted.closest('th, td')).not.toBeNull();
+    const cellValueCss = readFileSync(
+      path.join(path.dirname(fileURLToPath(import.meta.url)), '../components/cell-value.css'),
+      'utf8',
+    );
+    expect(
+      cellValueCss
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/\s+/g, ' ')
+        .trim(),
+    ).toBe('.aws-iam-cell-value { overflow-wrap: anywhere; }');
   });
 
   it('unmounted after "10 roles", mounted again: 20 roles asked for', async () => {
