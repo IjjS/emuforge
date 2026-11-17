@@ -147,7 +147,10 @@ class FakeEngine {
       }
       case 'UpdateRole': {
         const held = role as FakeRole;
-        held.description = params.get('Description') ?? held.description;
+        const description = params.get('Description');
+        if (description !== null) {
+          held.description = description;
+        }
         const duration = params.get('MaxSessionDuration');
         if (duration !== null) {
           held.maxSessionDuration = Number(duration);
