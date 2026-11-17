@@ -1,6 +1,7 @@
 import type { ScreenNavigation, ServiceScreen } from '../../screens';
 import { IAM_PATH, ROLES_PATH } from './format';
 import { RoleListPage, ROLES_TITLE } from './pages/role-list-page';
+import { ROLE_NAME_PARAM, RolePage } from './pages/role-page';
 
 /**
  * The side navigation of every IAM screen (issue 82, requirement R6.1): the header, and the group "Access
@@ -27,5 +28,13 @@ export const SCREENS: readonly ServiceScreen[] = [
     crumbs: [{ text: 'Roles' }],
     navigation: IAM_NAVIGATION,
     Page: RoleListPage,
+  },
+  // S2, a role's page (R0, R5): the name as one segment below `details/`, so a role named `create` is not S3's route.
+  {
+    paths: [`${ROLES_PATH}/details/{${ROLE_NAME_PARAM}}`],
+    title: (params) => params[ROLE_NAME_PARAM] ?? '',
+    crumbs: (params) => [{ text: 'Roles', href: ROLES_PATH }, { text: params[ROLE_NAME_PARAM] ?? '' }],
+    navigation: IAM_NAVIGATION,
+    Page: RolePage,
   },
 ];
