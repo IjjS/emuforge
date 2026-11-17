@@ -498,6 +498,17 @@ function dialogAlert(dialog: HTMLElement): { type: string | undefined; text: str
   return { type, text };
 }
 
+/** What the field labelled `label` shows under it: its constraint text and its message, `null` for none. */
+function fieldTexts(dialog: HTMLElement, label: string): { constraint: string | null; error: string | null } {
+  const field = wrapperOf(dialog)
+    .findAllFormFields()
+    .find((found) => (found.findLabel()?.getElement().textContent ?? '').trim() === label);
+  expect(field, label).toBeDefined();
+  const text = (part: { getElement: () => HTMLElement } | null | undefined) =>
+    part === null || part === undefined ? null : (part.getElement().textContent ?? '').trim();
+  return { constraint: text(field?.findConstraint()), error: text(field?.findError()) };
+}
+
 const ROLE_D: FakeRole = { name: 'team-role', description: 'd', maxSessionDuration: 7200 };
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -526,6 +537,50 @@ describe('the dialog', () => {
     expect(secondsField(other.dialog)).toBeNull();
     chooseDuration(other.dialog, 'Custom duration');
     expect(secondsField(other.dialog)).not.toBeNull();
+  });
+});
+
+describe('the constraint texts (issue 467, R4)', () => {
+  it('as opened: under "Description" "Up to 1000 characters."; "Custom duration": under "Seconds" "A whole number from 3600 to 43200."; no message under either', async () => {
+    const { dialog } = await openDialog(ROLE_D);
+
+    expect(fieldTexts(dialog, 'Description')).toEqual({ constraint: 'Up to 1000 characters.', error: null });
+    chooseDuration(dialog, 'Custom duration');
+    expect(fieldTexts(dialog, 'Seconds')).toEqual({
+      constraint: 'A whole number from 3600 to 43200.',
+      error: null,
+    });
+    expect(fieldTexts(dialog, 'Maximum session duration').constraint).toBeNull();
+  });
+
+  it('"Save changes" with 1001 characters and with 3599 seconds: each field shows its message and its constraint text', async () => {
+    const { dialog } = await openDialog(ROLE_D);
+
+    typeDescription(dialog, 'x'.repeat(1001));
+    chooseDuration(dialog, 'Custom duration');
+    typeSeconds(dialog, '3599');
+    save(dialog);
+
+    await waitFor(() => {
+      expect(fieldTexts(dialog, 'Description')).toEqual({
+        constraint: 'Up to 1000 characters.',
+        error: 'The description can have up to 1000 characters.',
+      });
+    });
+    expect(fieldTexts(dialog, 'Seconds')).toEqual({
+      constraint: 'A whole number from 3600 to 43200.',
+      error: 'Enter a whole number from 3600 to 43200.',
+    });
+    expect(updates()).toEqual([]);
+  });
+
+  it('a description typed, the dialog’s "Cancel": the dialog closes and no "Discard what you entered?" opens (issue 467, R7)', async () => {
+    const { dialog } = await openDialog(ROLE_D);
+
+    typeDescription(dialog, 'typed and left');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await expectClosed('after Cancel');
+    expect(screen.queryByText('Discard what you entered?')).toBeNull();
   });
 });
 
