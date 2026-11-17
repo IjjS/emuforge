@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -348,13 +348,12 @@ function held(): { answer: Promise<Answer>; release: (answer: Answer) => void } 
 // ---------------------------------------------------------------------------------------------------------------
 
 describe('the create form, as opened', () => {
-  it('h1, description, the seven sections in order, every start value, the buttons; no request', async () => {
+  it('h1 with no description (issue 467, R3), the seven sections in order, every start value, the buttons; no request', async () => {
     await open();
 
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Create bucket');
-    expect(
-      within(main()).getByText('The bucket is created in your local emulator, not in an AWS account.'),
-    ).toBeInTheDocument();
+    expect(headerDescription()).toBeNull();
+    expect(within(theForm()).queryByText(/not in an AWS account/)).toBeNull();
     const headings = within(theForm())
       .getAllByRole('heading', { level: 2 })
       .map((heading) => heading.textContent.trim());
@@ -519,19 +518,35 @@ describe('the create form, its requests', () => {
     expect(engine.of('CreateBucket')).toEqual([]);
   });
 
-  it('a name the user gives sits in the area’s breaking element: the field’s message and the flash item', async () => {
+  it('a name the user gives is shown as a name, the words around it as free text: the field’s message and the flash item (issue 467, R6)', async () => {
     const long = 'a'.repeat(63);
     engine.buckets = [long];
     const router = await openWithName(long);
     create();
-    const message = await within(theForm()).findByText(`The emulator already holds a bucket named “${long}”.`);
-    expect(message.closest('.aws-s3-break-anywhere')).not.toBeNull();
+    await waitFor(() => {
+      expect(description(field('Bucket name'))).toContain(`The emulator already holds a bucket named “${long}”.`);
+    });
+    expect(messageOf('Bucket name')).toBe(`The emulator already holds a bucket named “${long}”.`);
+    const error = formField('Bucket name')?.findError()?.getElement();
+    expect(kindsIn(error)).toEqual([
+      ['text', 'The emulator already holds a bucket named “'],
+      ['name', long],
+      ['text', '”.'],
+    ]);
 
     engine.buckets = [];
     create();
     await expectList(router);
-    const item = await screen.findByText(`Bucket “${long}” was created in the local emulator.`);
-    expect(item.closest('.aws-s3-break-anywhere')).not.toBeNull();
+    await waitFor(() => {
+      expect(flashItems()).toEqual([`Bucket “${long}” was created in the local emulator.`]);
+    });
+    const item = createWrapper(document.body).findFlashbar()?.findItems()[0]?.getElement();
+    expect(kindsIn(item)).toEqual([
+      ['text', 'Bucket “'],
+      ['name', long],
+      ['text', '” was created in the local emulator.'],
+    ]);
+    expect(document.querySelector('.aws-s3-break-anywhere')).toBeNull();
   });
 
   it('the name check fails with another code → the form keeps its values, "Checking the bucket name failed"; no CreateBucket', async () => {
@@ -668,11 +683,171 @@ describe('the create form, its requests', () => {
     expect(engine.of('CreateBucket')).toHaveLength(1);
   });
 
-  it('"Cancel" → the list, and no request of the form was sent', async () => {
+  it('"Cancel", "Discard" → the list, and no request of the form was sent', async () => {
     const router = await openWithName();
-    fireEvent.click(button('Cancel'));
+    const dialog = await cancelAsks();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Discard' }));
     await expectList(router);
     expect(engine.of('CreateBucket')).toEqual([]);
     expect(engine.of('ListBuckets').some((sent) => sent.url.searchParams.get('prefix') === 'my-bucket')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// Issue 467: the `h1` has no description (R3), the name's rule before a submit (R4), "Cancel" asks (R7).
+// ---------------------------------------------------------------------------------------------------------------
+
+const NAME_RULE =
+  '3 to 63 characters: lowercase letters (a-z), digits, periods (.) and hyphens (-). Begins and ends with a letter or digit.';
+const DISCARD_HEADING = 'Discard what you entered?';
+
+const PAGE = createWrapper(document.body);
+const norm = (text: string | null | undefined) => (text ?? '').replace(/\s+/g, ' ').trim();
+
+/** The `h1`'s description, or `null` when the header that holds the `h1` has none. */
+function headerDescription(): string | null {
+  const h1 = screen.getByRole('heading', { level: 1 });
+  const header = PAGE.findAllHeaders().find((found) => found.getElement().contains(h1));
+  expect(header).toBeDefined();
+  const found = header?.findDescription();
+  return found === null || found === undefined ? null : norm(found.getElement().textContent);
+}
+
+function formField(label: string) {
+  return PAGE.findAllFormFields().find((found) => norm(found.findLabel()?.getElement().textContent) === label);
+}
+
+/** The constraint text under the field `label`; `undefined` when it shows none. */
+function constraintOf(label: string): string | undefined {
+  const constraint = formField(label)?.findConstraint();
+  return constraint === null || constraint === undefined ? undefined : norm(constraint.getElement().textContent);
+}
+
+/** The message under the field `label`; `undefined` when it shows none. */
+function messageOf(label: string): string | undefined {
+  const error = formField(label)?.findError();
+  return error === null || error === undefined ? undefined : norm(error.getElement().textContent);
+}
+
+/** The area's value elements inside `scope`, in order, each as its kind and its text (issue 467, R6). */
+function kindsIn(scope: Element | null | undefined): [string, string][] {
+  return [...(scope?.querySelectorAll('.aws-area-value') ?? [])].map((element) => [
+    [...element.classList]
+      .map((name) => /^aws-area-value-(address|name|fixed|text)$/.exec(name)?.[1])
+      .find((kind) => kind !== undefined) ?? '',
+    element.textContent,
+  ]);
+}
+
+/** The dialog "Discard what you entered?" while it is shown, or `null`. */
+function discardDialog(): HTMLElement | null {
+  return screen.queryByRole('dialog', { name: DISCARD_HEADING });
+}
+
+/** "Cancel" on a form that differs: the dialog opens and the form stays. */
+async function cancelAsks(): Promise<HTMLElement> {
+  // As a press does: "Cancel" takes focus, then is clicked.
+  button('Cancel').focus();
+  fireEvent.click(button('Cancel'));
+  const dialog = await waitFor(() => {
+    const found = discardDialog();
+    expect(found, `the dialog "${DISCARD_HEADING}"`).not.toBeNull();
+    return found as HTMLElement;
+  });
+  expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Create bucket');
+  return dialog;
+}
+
+/** "Cancel" on a form that does not differ: the list at once, no dialog. */
+async function cancelLeaves(router: Awaited<ReturnType<typeof open>>): Promise<void> {
+  fireEvent.click(button('Cancel'));
+  expect(discardDialog()).toBeNull();
+  await expectList(router);
+}
+
+describe('the create form, issue 467', () => {
+  it('as opened: under "Bucket name" its rule and no message; no constraint text under a tag’s "Key" or "Value", or under "AWS KMS key"', async () => {
+    await open('/aws/s3/bucket/create?encryption=sse-kms');
+
+    expect(headerDescription()).toBeNull();
+    expect(constraintOf('Bucket name')).toBe(NAME_RULE);
+    expect(messageOf('Bucket name')).toBeUndefined();
+    fireEvent.click(button('Add tag'));
+    await waitFor(() => {
+      expect(keys()).toHaveLength(1);
+    });
+    expect(constraintOf('AWS KMS key')).toBeUndefined();
+    for (const input of [keys()[0], values()[0], field('AWS KMS key')]) {
+      expect(description(input as HTMLElement)).not.toContain('characters');
+    }
+    // The rule is drawn once on the page, under "Bucket name".
+    expect(within(main()).getAllByText(NAME_RULE)).toHaveLength(1);
+    const constrained = PAGE.findAllFormFields()
+      .filter((found) => found.findConstraint() !== null)
+      .map((found) => norm(found.findLabel()?.getElement().textContent));
+    expect(constrained).toEqual(['Bucket name']);
+  });
+
+  it('"Create bucket" with `a..b`: the message "The name cannot have two periods in a row." and the constraint text, both under the field', async () => {
+    await openWithName('a..b');
+    create();
+
+    await waitFor(() => {
+      expect(messageOf('Bucket name')).toBe('The name cannot have two periods in a row.');
+    });
+    expect(constraintOf('Bucket name')).toBe(NAME_RULE);
+    expect(engine.sent).toEqual([]);
+  });
+
+  it('"Cancel" with nothing changed: the list, no dialog; opened with ?encryption=sse-kms and nothing changed: the same', async () => {
+    const first = await open();
+    await cancelLeaves(first);
+    cleanup();
+
+    const second = await open('/aws/s3/bucket/create?encryption=sse-kms');
+    expect(chosenLabel('Encryption type')).toBe(SSE_KMS);
+    await cancelLeaves(second);
+  });
+
+  it('a name typed, "Cancel": the dialog; "Keep editing": the form with the name, focus on "Cancel"; "Cancel", "Discard": the list', async () => {
+    const router = await openWithName('my-bucket');
+
+    const dialog = await cancelAsks();
+    expect(within(dialog).getByText('What you entered on this page is not kept.')).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Keep editing' }));
+    await waitFor(() => {
+      expect(discardDialog()).toBeNull();
+    });
+    expect(field('Bucket name').value).toBe('my-bucket');
+    await waitFor(() => {
+      expect(document.activeElement).toBe(button('Cancel'));
+    });
+    expect(router.state.location.pathname).toBe(CREATE_PATH);
+
+    const again = await cancelAsks();
+    fireEvent.click(within(again).getByRole('button', { name: 'Discard' }));
+    await expectList(router);
+    expect(engine.of('CreateBucket')).toEqual([]);
+  });
+
+  it('one "Block Public Access" box cleared, "Cancel": the dialog; set again, "Cancel": the list, no dialog; "Add tag" with nothing typed, "Cancel": the dialog', async () => {
+    const first = await open();
+    fireEvent.click(checkbox('BlockPublicPolicy'));
+    const dialog = await cancelAsks();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Keep editing' }));
+    await waitFor(() => {
+      expect(discardDialog()).toBeNull();
+    });
+    fireEvent.click(checkbox('BlockPublicPolicy'));
+    expect(checkbox('BlockPublicPolicy').checked).toBe(true);
+    await cancelLeaves(first);
+    cleanup();
+
+    await open();
+    fireEvent.click(button('Add tag'));
+    await waitFor(() => {
+      expect(keys()).toHaveLength(1);
+    });
+    await cancelAsks();
   });
 });
