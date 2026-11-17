@@ -359,7 +359,11 @@ export async function waitHealth(enginePort: number, status: number, boundMs = U
 }
 
 /** Waits, at most `boundMs`, until health says `reachable: <reachable>`; the last answer either way. */
-export async function waitReachable(enginePort: number, reachable: boolean, boundMs = UP_BOUND_MS): Promise<HealthResult> {
+export async function waitReachable(
+  enginePort: number,
+  reachable: boolean,
+  boundMs = UP_BOUND_MS,
+): Promise<HealthResult> {
   let last = { error: 'not asked' } as HealthResult;
   await waitFor(boundMs, async () => {
     last = await health(enginePort);
@@ -600,7 +604,13 @@ export class Form {
 
   private constructor(
     private readonly ctx: Ctx,
-    ports: { emulatorPort: number; enginePort: number; studioPort: number; directPort: number | null; deafPort: number | null },
+    ports: {
+      emulatorPort: number;
+      enginePort: number;
+      studioPort: number;
+      directPort: number | null;
+      deafPort: number | null;
+    },
     home: string | null,
     files: CheckFile[],
     extraEnv: Record<string, string>,

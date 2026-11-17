@@ -36,12 +36,14 @@ export async function runAt(
   boundMs: number,
 ): Promise<CommandResult> {
   const line = commandLine(args);
+  const began = Date.now();
   const proc = Proc.spawn(ctx, line, args[0], args.slice(1), cwd, env);
   const exit = await proc.waitExit(boundMs);
   const { stdout, stderr } = await proc.stop();
+  const ms = Date.now() - began;
   if (!exit) throw new Error(`${line} did not exit within ${boundMs / 1000}s`);
-  ctx.log(`${line}: exit ${String(exit.code)}${exit.signal ? ` signal ${exit.signal}` : ''}`);
-  return { line, code: exit.code, stdout, stderr };
+  ctx.log(`${line}: exit ${String(exit.code)}${exit.signal ? ` signal ${exit.signal}` : ''} after ${ms} ms`);
+  return { line, code: exit.code, stdout, stderr, ms };
 }
 
 /** `docker <args>` with the test process's environment: whether it exited 0, and both streams. */

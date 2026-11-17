@@ -109,7 +109,8 @@ test('engine.product-holds-no-key-and-one-read-only-mount', async ({ ctx }) => {
     mounts[service] = await inspectJson<Mount[]>(container.id, '.Mounts');
   }
   ctx.log(`mounts: ${JSON.stringify(mounts)}`);
-  const shown = (list: Mount[]) => list.map((m) => ({ type: m.Type, name: m.Name, destination: m.Destination, rw: m.RW }));
+  const shown = (list: Mount[]) =>
+    list.map((m) => ({ type: m.Type, name: m.Name, destination: m.Destination, rw: m.RW }));
   expect(shown(mounts.engine), "the engine's mounts").toEqual([
     { type: 'volume', name: volume, destination: ENGINE_FILES_DIR, rw: false },
   ]);
@@ -162,10 +163,15 @@ test('engine.product-holds-no-key-and-one-read-only-mount', async ({ ctx }) => {
       const status = await docker(['exec', container.id, 'cat', '/proc/1/status']);
       expect(status.ok ? '' : status.stderr, "cat /proc/1/status in the emulator's container").toBe('');
       const caps = Object.fromEntries(
-        [...status.stdout.matchAll(/^(Cap(?:Inh|Prm|Eff|Bnd|Amb)):\s*([0-9a-f]+)$/gm)].map((m) => [m[1], BigInt(`0x${m[2]}`)]),
+        [...status.stdout.matchAll(/^(Cap(?:Inh|Prm|Eff|Bnd|Amb)):\s*([0-9a-f]+)$/gm)].map((m) => [
+          m[1],
+          BigInt(`0x${m[2]}`),
+        ]),
       );
       expect(
-        Object.entries(caps).filter(([, value]) => value !== 0n).map(([set]) => set),
+        Object.entries(caps)
+          .filter(([, value]) => value !== 0n)
+          .map(([set]) => set),
         "the emulator's capability sets that are not empty",
       ).toEqual([]);
       expect(Object.keys(caps).length, "the emulator's capability sets read").toBe(5);
@@ -183,9 +189,7 @@ test('engine.product-holds-no-key-and-one-read-only-mount', async ({ ctx }) => {
   ];
   const images = [
     ...new Set(
-      await Promise.all(
-        Object.values(services).map((c) => dockerRead(['inspect', '-f', '{{.Config.Image}}', c.id])),
-      ),
+      await Promise.all(Object.values(services).map((c) => dockerRead(['inspect', '-f', '{{.Config.Image}}', c.id]))),
     ),
   ];
   expect(images.sort(), 'the images of the form').toEqual([ctx.productImage, ctx.emulatorImage].sort());

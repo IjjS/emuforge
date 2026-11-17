@@ -122,7 +122,9 @@ test('engine.product-start-connects-to-its-own-emulator', async ({ ctx, page }) 
   // healthy.
   const ps = await composePs(form);
   expect(
-    ps.map((c) => ({ service: c.Service, state: c.State })).sort((a, b) => String(a.service).localeCompare(String(b.service))),
+    ps
+      .map((c) => ({ service: c.Service, state: c.State }))
+      .sort((a, b) => String(a.service).localeCompare(String(b.service))),
     `docker compose ps of ${form.project}`,
   ).toEqual([...SERVICES].sort().map((service) => ({ service, state: 'running' })));
   expect(ps.find((c) => c.Service === 'aws-emulator')?.Health, "the emulator's health in docker compose ps").toBe(
@@ -148,7 +150,10 @@ test('engine.product-start-without-home-leaves-nothing-on-the-host', async ({ ct
   // container of the project is left.
   const without = await Form.create(ctx, { home: null });
   const env = without.env();
-  expect(['HOME', 'USERPROFILE'].filter((name) => name in env), 'HOME or USERPROFILE in the environment').toEqual([]);
+  expect(
+    ['HOME', 'USERPROFILE'].filter((name) => name in env),
+    'HOME or USERPROFILE in the environment',
+  ).toEqual([]);
   expectExit(await without.start(), 'zero');
   await expectReachable(without);
   expectExit(await without.stop(), 'zero');
@@ -254,7 +259,10 @@ test('engine.product-stop-leaves-only-the-volume-and-a-users-emulator-untouched'
     'f',
   ]);
   expect(found.ok ? '' : found.stderr, `find /v -type f in a container that mounts ${volumes[0]} read-only`).toBe('');
-  expect(found.stdout.split('\n').filter((l) => l !== ''), `the regular files in ${volumes[0]}`).toEqual([]);
+  expect(
+    found.stdout.split('\n').filter((l) => l !== ''),
+    `the regular files in ${volumes[0]}`,
+  ).toEqual([]);
 
   // The user's emulator after the stop → the same container, running, answering on P, the same file names.
   await untouched('after the stop line');

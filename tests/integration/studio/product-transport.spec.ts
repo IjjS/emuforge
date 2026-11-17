@@ -211,22 +211,27 @@ test('engine.product-relay-signs-a-made-up-key-with-the-emulators-key', async ({
 
   // The made-up key directly → 403.
   const refused = answered(await directSigned(direct, files, madeUp, 'GET', '/'), 'ListBuckets directly, made-up key');
-  expect(refused.status, `ListBuckets directly with the made-up key: status, body ${refused.body.toString('utf8')}`).toBe(
-    403,
-  );
+  expect(
+    refused.status,
+    `ListBuckets directly with the made-up key: status, body ${refused.body.toString('utf8')}`,
+  ).toBe(403);
 
   // No Authorization through the form → the status and body the emulator gives directly to the same unsigned
   // request, and not a ListAllMyBucketsResult.
   const unsignedDirect = answered(await directRequest(direct, files.ca, 'GET', '/', directHost), 'unsigned directly');
   const unsignedThrough = answered(await request(form.enginePort, 'GET', '/', throughHost), 'unsigned through');
-  expect(pair('unsigned GET / through the form', unsignedThrough)).toEqual(pair('unsigned GET / through the form', unsignedDirect));
+  expect(pair('unsigned GET / through the form', unsignedThrough)).toEqual(
+    pair('unsigned GET / through the form', unsignedDirect),
+  );
   expect(unsignedThrough.body.toString('utf8'), 'unsigned GET / through the form: body').not.toContain(
     'ListAllMyBucketsResult',
   );
 
   // An Authorization that is not SigV4 through the form → the status and body the emulator gives directly to the
   // same request, and not a ListAllMyBucketsResult.
-  const notSigV4 = { authorization: `Basic ${Buffer.from(`${madeUp.accessKeyId}:${madeUp.secretAccessKey}`).toString('base64')}` };
+  const notSigV4 = {
+    authorization: `Basic ${Buffer.from(`${madeUp.accessKeyId}:${madeUp.secretAccessKey}`).toString('base64')}`,
+  };
   const basicDirect = answered(
     await directRequest(direct, files.ca, 'GET', '/', { ...directHost, ...notSigV4 }),
     'Basic directly',

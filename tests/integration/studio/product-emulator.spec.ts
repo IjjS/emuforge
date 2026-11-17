@@ -80,9 +80,11 @@ test('engine.product-connects-when-the-emulator-starts-later', async ({ ctx, pag
   // `docker compose stop aws-emulator` → health `reachable: false`, and Studio shows the emulator not connected,
   // the engine connected.
   expectExit(await form.run(form.compose('stop', 'aws-emulator'), STOP_BOUND_MS), 'zero');
-  expect(await waitReachable(form.enginePort, false), 'GET /__emuforge/health with the emulator stopped').toMatchObject({
-    body: { emulator: { reachable: false } },
-  });
+  expect(await waitReachable(form.enginePort, false), 'GET /__emuforge/health with the emulator stopped').toMatchObject(
+    {
+      body: { emulator: { reachable: false } },
+    },
+  );
   await expect
     .poll(
       async () => {
