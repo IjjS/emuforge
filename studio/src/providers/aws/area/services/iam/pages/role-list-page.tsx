@@ -19,7 +19,7 @@ import type { Role } from '../api';
 import { CREATE_ROLE_PATH, lastActivityText, rolePath, trustedEntitiesText } from '../format';
 import { useRoleListing, type Listing, type ListingCount } from '../queries';
 import { DeleteRolesDialog } from '../components/delete-roles-dialog';
-import { CellValue } from '../components/cell-value';
+import { Value } from '../components/role-sections';
 import { useAnnouncer, useAreaModalRoot } from '../components/page-parts';
 import { readFailureState, type ReadFailureState } from '../components/failures';
 import { Code, ReadFailure } from '../components/states';
@@ -277,17 +277,17 @@ export function RoleListPage({ connection }: ScreenPageProps) {
       header: 'Role name',
       isRowHeader: true,
       cell: (role) => (
-        <CellValue>
+        <Value>
           <Link href={rolePath(role.name)} onFollow={handleFollow}>
             {role.name}
           </Link>
-        </CellValue>
+        </Value>
       ),
     },
     {
       id: 'trusted',
       header: 'Trusted entities',
-      cell: (role) => <CellValue>{trustedEntitiesText(role.trustPolicy, role.path)}</CellValue>,
+      cell: (role) => <Value>{trustedEntitiesText(role.trustPolicy, role.path)}</Value>,
     },
     { id: 'lastActivity', header: 'Last activity', cell: (role) => lastActivityText(role.lastUsed) },
   ];

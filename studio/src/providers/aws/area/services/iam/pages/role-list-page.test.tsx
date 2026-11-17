@@ -1136,12 +1136,12 @@ describe('preferences and wrapping', () => {
     await openLoaded([{ name: long, trust }]);
 
     const link = within(tableElement()).getByRole('link', { name: long });
-    expect(link.closest('.aws-iam-cell-value')?.closest('th, td')).not.toBeNull();
+    expect(link.closest('.aws-iam-value')?.closest('th, td')).not.toBeNull();
     const trusted = within(tableElement()).getByText(`AWS: ${arn}`);
-    expect(trusted).toHaveClass('aws-iam-cell-value');
+    expect(trusted).toHaveClass('aws-iam-value');
     expect(trusted.closest('th, td')).not.toBeNull();
     const cellValueCss = readFileSync(
-      path.join(path.dirname(fileURLToPath(import.meta.url)), '../components/cell-value.css'),
+      path.join(path.dirname(fileURLToPath(import.meta.url)), '../components/role-sections.css'),
       'utf8',
     );
     expect(
@@ -1149,7 +1149,7 @@ describe('preferences and wrapping', () => {
         .replace(/\/\*[\s\S]*?\*\//g, '')
         .replace(/\s+/g, ' ')
         .trim(),
-    ).toBe('.aws-iam-cell-value { overflow-wrap: anywhere; }');
+    ).toBe('.aws-iam-value { overflow-wrap: anywhere; }');
   });
 
   it('unmounted after "10 roles", mounted again: 20 roles asked for', async () => {

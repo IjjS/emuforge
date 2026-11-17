@@ -440,7 +440,7 @@ describe('the dialog', () => {
     const { dialog } = await openDialog([{ name: long }]);
 
     const row = within(dialog).getAllByRole('row')[1];
-    const value = row?.querySelector('th .aws-iam-cell-value, td .aws-iam-cell-value');
+    const value = row?.querySelector('th .aws-iam-value, td .aws-iam-value');
     expect(value?.textContent).toBe(long);
   });
 
