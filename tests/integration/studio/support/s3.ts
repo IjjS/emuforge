@@ -105,11 +105,6 @@ export const ABOUT = 'About the local emulator';
 export const HELP_OPEN = 'Open help panel';
 export const HELP_CLOSE = 'Close help panel';
 
-/** The description under the table's heading, connected, for the emulator at `endpoint` (R8.2). */
-export function descriptionAt(endpoint: string): string {
-  return `Buckets in your local emulator at ${endpoint}, not in an AWS account.`;
-}
-
 /** The preferences (R8.4). */
 export const PAGE_SIZE = 'Page size';
 export const WRAP_LINES = 'Wrap lines';
