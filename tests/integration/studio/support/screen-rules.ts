@@ -527,3 +527,74 @@ export async function directlyBeforeProblems(control: Locator, scope: Locator, v
     ACTION,
   );
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Added by issue 467's S3 unit (t3): what S3's screens need beside the readers above.
+// ---------------------------------------------------------------------------------------------------------------
+
+/**
+ * The descriptions of every Cloudscape `Header` in the page's main, as shown, white space collapsed; empty when no
+ * header there shows one. On a list whose table holds its own header (the S3 bucket list), the table's description
+ * stands between the page's `h1` and the table's controls, which `pageHeader` does not read. Never waits.
+ */
+export async function headerDescriptions(page: Page): Promise<string[]> {
+  // The selector is rooted at the document (`createWrapper()`), so it is matched from the page and kept inside the main.
+  return page.evaluate((description) => {
+    const norm = (s: string) => s.replace(/\s+/g, ' ').trim();
+    const main = document.querySelector('main, [role="main"]');
+    if (!main) return [];
+    return [...document.querySelectorAll(description)]
+      .filter((d) => main.contains(d) && (d as HTMLElement).getClientRects().length > 0)
+      .map((d) => norm((d as HTMLElement).innerText))
+      .filter((t) => t !== '');
+  }, HEADER_DESCRIPTION);
+}
+
+/**
+ * The cell under the column headed `column` of the body row of `table` that has a cell reading exactly `text` (a row
+ * without a link, such as a tag's). Cells are counted as `cellUnder` counts them, `th` and `td` together. Fails the
+ * check, naming the headings read, when the table has no such column.
+ */
+export async function cellUnderRowWith(table: Locator, text: string, column: string): Promise<Locator> {
+  const headings = (await table.locator('thead tr').first().locator('th').allInnerTexts()).map((t) =>
+    t.replace(/\s+/g, ' ').trim(),
+  );
+  if (!headings.includes(column)) {
+    throw new Error(`the table has no column "${column}"; its headings: ${JSON.stringify(headings)}`);
+  }
+  const exactly = new RegExp(`^\\s*${escapeRegExp(text)}\\s*$`);
+  return table
+    .locator('tbody tr')
+    .filter({ has: table.locator('td, th').filter({ hasText: exactly }) })
+    .locator('td, th')
+    .nth(headings.indexOf(column));
+}
+
+/** What a table's box does against the element it scrolls in: the table's width and that element's. */
+export interface TableFit {
+  tableWidth: number;
+  /** The width of the nearest element around the table that scrolls sideways or clips, else the table's parent. */
+  boxWidth: number;
+}
+
+/** How wide `table`'s first element is drawn against the box it scrolls in; `null` when there is no table. */
+export async function tableFit(table: Locator): Promise<TableFit | null> {
+  if ((await table.count()) === 0) return null;
+  return table.first().evaluate(
+    (el) => {
+      let box: Element | null = el.parentElement;
+      for (let a = el.parentElement; a && a !== document.body; a = a.parentElement) {
+        if (['auto', 'scroll', 'hidden', 'clip'].includes(getComputedStyle(a).overflowX)) {
+          box = a;
+          break;
+        }
+      }
+      return {
+        tableWidth: el.getBoundingClientRect().width,
+        boxWidth: (box ?? el).getBoundingClientRect().width,
+      };
+    },
+    undefined,
+    ACTION,
+  );
+}
