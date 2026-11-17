@@ -367,13 +367,18 @@ function header(): HTMLElement {
   return (found as NonNullable<typeof found>).getElement();
 }
 
-function description(): string {
-  return norm(
+/** The `h1`'s description element, or `null` when the `h1` has none. */
+function descriptionElement(): HTMLElement | null {
+  return (
     PAGE.findAllHeaders()
       .find((h) => h.getElement() === header())
       ?.findDescription()
-      ?.getElement().textContent,
+      ?.getElement() ?? null
   );
+}
+
+function description(): string {
+  return norm(descriptionElement()?.textContent);
 }
 
 const ORDERS: FakeFunction = {
@@ -458,7 +463,6 @@ describe('a function loaded', () => {
     // Studio's frame writes it as "orders | EmuForge Studio" (app/routes.test.tsx).
     expect(titles.at(-1)).toBe('orders');
     expect(screen.getByText('These functions are in your local emulator')).toBeInTheDocument();
-    expect(description()).toBe('This function is in your local emulator, not in an AWS account.');
     expect(PAGE.findSideNavigation()?.findActiveLink()?.getElement()).toHaveAttribute('href', '/aws/lambda/functions');
   });
 
@@ -527,7 +531,8 @@ describe('the status line', () => {
   it('State Active, last update Successful: no status under the description', async () => {
     await openLoaded();
 
-    expect(description()).toBe('This function is in your local emulator, not in an AWS account.');
+    // Without a status the `h1` has no description (issue 467, R3).
+    expect(descriptionElement()).toBeNull();
     expect(statusIn(header()).type).toBeNull();
   });
 
@@ -577,12 +582,8 @@ describe('the status line', () => {
       // Repeated, so a re-reading of a function being updated answers the same.
       const opened = await openLoaded({ ...ORDERS, moments: [moment] });
       expect(statusIn(header())).toEqual(status);
-      // The status is a line of its own under the description, its reason after it as text.
-      expect(description()).toBe(
-        `This function is in your local emulator, not in an AWS account.${status.text}${
-          reason === undefined ? '' : ` ${reason}`
-        }`,
-      );
+      // The status line is the `h1`'s description alone (issue 467, R3), its reason after it as text.
+      expect(description()).toBe(`${status.text}${reason === undefined ? '' : ` ${reason}`}`);
       opened.unmount();
     }
   });
@@ -631,18 +632,16 @@ describe('a function the emulator does not hold', () => {
 
     await screen.findByText('Function not found');
     expect(headingText()).toBe('gone');
-    expect(
-      screen.getByText(
-        'The emulator holds no function named “gone”. It may have been deleted, or the emulator restarted.',
-      ),
-    ).toBeInTheDocument();
+    const content = PAGE.findAllContainers().find((found) =>
+      found.getElement().textContent.includes('Function not found'),
+    );
+    expect(content?.getElement()).toHaveTextContent(
+      'The emulator holds no function named “gone”. It may have been deleted, or the emulator restarted.',
+    );
     expect(tabs()).toBeNull();
     expect(screen.queryByRole('heading', { name: 'Function overview' })).toBeNull();
     expect(screen.queryByRole('heading', { name: 'Runtime settings' })).toBeNull();
     // The content's link, not the crumb's or the side navigation's.
-    const content = PAGE.findAllContainers().find((found) =>
-      found.getElement().textContent.includes('Function not found'),
-    );
     const link = within(content?.getElement() as HTMLElement).getByRole('link', { name: 'Event Functions' });
     expect(link).toHaveAttribute('href', '/aws/lambda/functions');
     fireEvent.click(link);
@@ -739,5 +738,131 @@ describe('loading and failure states', () => {
     engine.answerFunction = (request) => engine.emulator(request);
     connection.set(connectedResult());
     await screen.findByRole('heading', { level: 2, name: 'Function overview' });
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// Issue 467: the `h1`'s description (R3), the copy controls (R5), each value as its kind (R6).
+// ---------------------------------------------------------------------------------------------------------------
+
+/** The value element of the pair `label` of the section `title`. */
+function valueElement(title: string, label: string): HTMLElement {
+  const item = (createWrapper(section(title)).findKeyValuePairs()?.findItems() ?? []).find(
+    (found) => norm(found.findLabel()?.getElement().textContent) === label,
+  );
+  expect(item, `the pair "${label}"`).toBeDefined();
+  return item?.findValue()?.getElement() as HTMLElement;
+}
+
+/** The kinds of the area's value elements inside `element`, in order. */
+function kindsIn(element: Element): string[] {
+  return [...element.querySelectorAll('.aws-area-value')].map(
+    (found) =>
+      [...found.classList].find((name) => /^aws-area-value-[a-z]+$/.test(name))?.replace('aws-area-value-', '') ?? '',
+  );
+}
+
+/** The copy control "Copy {label}" inside `element` directly before its address, or `null` when it has none. */
+function copyBefore(element: HTMLElement, label: string): HTMLElement | null {
+  const button = within(element).queryByRole('button', { name: `Copy ${label}` });
+  if (button === null) {
+    return null;
+  }
+  const address = element.querySelector('.aws-area-value-address');
+  expect(address, `the address of "${label}"`).not.toBeNull();
+  expect(button.compareDocumentPosition(address as Node) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+  // Nothing of text stands between the control and the value.
+  const range = document.createRange();
+  range.setStartAfter(button);
+  range.setEndBefore(address as Node);
+  expect(norm(range.toString())).toBe('');
+  return button;
+}
+
+describe('issue 467', () => {
+  it("a loaded function with a status: the `h1`'s description is the status line alone; without a status: no description", async () => {
+    const first = await openLoaded({ ...ORDERS, moments: [{ state: 'Failed', stateReason: 'It broke' }] });
+    expect(description()).toBe('Failed It broke');
+    expect(kindsIn(descriptionElement() as HTMLElement)).toEqual(['fixed', 'text']);
+    first.unmount();
+
+    await openLoaded();
+    expect(descriptionElement()).toBeNull();
+  });
+
+  it('"Function not found" and a failed load: the `h1` has no description', async () => {
+    const first = open(pagePath('gone'));
+    await screen.findByText('Function not found');
+    expect(descriptionElement()).toBeNull();
+    first.unmount();
+
+    engine.answerFunction = () => errorAnswer(500, 'ServiceException', 'broken');
+    open(pagePath('orders'));
+    await screen.findByRole('button', { name: 'Retry' });
+    expect(descriptionElement()).toBeNull();
+  });
+
+  it('"Function overview" of a function with a URL: "Copy Function ARN" before the ARN and "Copy Function URL" before the URL, both addresses; "Description" free text', async () => {
+    await openLoaded();
+
+    const arn = valueElement('Function overview', 'Function ARN');
+    expect(copyBefore(arn, 'Function ARN')).not.toBeNull();
+    expect(kindsIn(arn)).toEqual(['address']);
+    expect(norm(arn.querySelector('.aws-area-value-address')?.textContent)).toBe(`${ACCOUNT_ARN}:orders`);
+    const url = valueElement('Function overview', 'Function URL');
+    expect(copyBefore(url, 'Function URL')).not.toBeNull();
+    expect(kindsIn(url)).toEqual(['address']);
+    expect(norm(url.querySelector('.aws-area-value-address')?.textContent)).toBe(ORDERS.url);
+    expect(kindsIn(valueElement('Function overview', 'Description'))).toEqual(['text']);
+    expect(kindsIn(valueElement('Function overview', 'Last modified'))).toEqual(['fixed']);
+  });
+
+  it('without a URL, a URL the emulator answers 501 for and a URL that was not read: no "Copy Function URL"; the field shows what it did', async () => {
+    const cases: [() => void, FakeFunction, string][] = [
+      [() => undefined, withoutUrl(ORDERS), '-'],
+      [
+        () => {
+          engine.answerUrl = () => errorAnswer(501, 'NotImplemented', 'GetFunctionUrlConfig is not implemented');
+        },
+        ORDERS,
+        'Not implemented by the emulator',
+      ],
+      [
+        () => {
+          engine.answerUrl = () => errorAnswer(500, 'ServiceException', 'broken');
+        },
+        ORDERS,
+        'Not read',
+      ],
+    ];
+    for (const [arrange, fn, shown] of cases) {
+      arrange();
+      const opened = await openLoaded(fn);
+      const url = valueElement('Function overview', 'Function URL');
+      expect(within(url).queryByRole('button')).toBeNull();
+      expect(norm(url.textContent)).toBe(shown);
+      expect(copyBefore(valueElement('Function overview', 'Function ARN'), 'Function ARN')).not.toBeNull();
+      opened.unmount();
+    }
+  });
+
+  it('"Runtime settings": "Runtime" and "Architecture" fixed words, "Handler" a name', async () => {
+    await openLoaded();
+
+    expect(kindsIn(valueElement('Runtime settings', 'Runtime'))).toEqual(['fixed']);
+    expect(kindsIn(valueElement('Runtime settings', 'Handler'))).toEqual(['name']);
+    expect(kindsIn(valueElement('Runtime settings', 'Architecture'))).toEqual(['fixed']);
+  });
+
+  it('a loaded function: the `h1` shows its name as a name; the last crumb its whole name', async () => {
+    const name = 'x'.repeat(64);
+    await openLoaded({ ...ORDERS, name });
+
+    const h1 = screen.getByRole('heading', { level: 1 });
+    expect(kindsIn(h1)).toEqual(['name']);
+    expect(norm(h1.querySelector('.aws-area-value-name')?.textContent)).toBe(name);
+    // The crumb is Cloudscape's, a text the area's layout gives it (decisions-needed.md, worker s2).
+    const crumbs = PAGE.findBreadcrumbGroup()?.findBreadcrumbLinks() ?? [];
+    expect(norm(crumbs.at(-1)?.getElement().textContent)).toBe(name);
   });
 });

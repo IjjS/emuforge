@@ -518,7 +518,7 @@ describe('the function list, loaded', () => {
     const description = (): string => {
       const h1 = screen.getByRole('heading', { level: 1 });
       const header = PAGE.findAllHeaders().find((found) => found.getElement().contains(h1));
-      return norm(header?.findDescription()?.getElement().textContent);
+      return norm(header?.findDescription()?.getElement().textContent ?? null);
     };
     expect(screen.getByText('These functions are in your local emulator')).toBeInTheDocument();
     expect(description()).toBe(DESCRIPTION);
@@ -839,7 +839,7 @@ describe('preferences', () => {
     const nameValue = (): Element | null => tableElement().querySelector('tbody th .aws-area-value-name');
 
     expect(kinds()).toEqual(KINDS);
-    expect(norm(nameValue()?.textContent)).toBe(name);
+    expect(norm(nameValue()?.textContent ?? null)).toBe(name);
     expect(nameValue()?.closest('a')).toBe(within(tableElement()).getByRole('link', { name }));
     expect(rows()[0]?.description).toBe(description);
 
