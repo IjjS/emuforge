@@ -195,10 +195,12 @@ def ci_path(folder):
 
 def expected_run(name, folder, argv):
     """The one-line `run:` of one of the nine: the path to .github/ci, ` run -- ` and pm-check's command; for
-    integration ` run --tails -- ./run --not-run ` and the path to .github/not-run.json."""
+    integration ` run --tails -- ./run --not-run ` and the path to .github/not-run.json, then ` --services ` and
+    the path to output/ci/services.json (issue 327, the pm's decision in its decisions.md)."""
     if name == "integration":
         return (f"{ci_path(folder)} run --tails -- {shlex.join(argv)} --not-run "
-                f"{os.path.relpath('.github/not-run.json', folder)}")
+                f"{os.path.relpath('.github/not-run.json', folder)} --services "
+                f"{os.path.relpath('output/ci/services.json', folder)}")
     return f"{ci_path(folder)} run -- {shlex.join(argv)}"
 
 
