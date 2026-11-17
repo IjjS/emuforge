@@ -1,6 +1,9 @@
 // The product checks that inspect a running form (issue 34, test-criteria.md): what it publishes and where, and what
 // its image, its containers' output, environment, command lines, mounts and processes hold.
 //
+// On Docker Engine on Linux the form is the host form (issue 54 R2): no gateway, `engine` and `studio` in the host's
+// network namespace publishing nothing, running as the user's ids. The lines that differ there are marked.
+//
 // `engine.product-ports-are-published-on-loopback-only`, `engine.product-holds-no-key-and-one-read-only-mount`.
 
 import fs from 'node:fs';
@@ -8,7 +11,6 @@ import path from 'node:path';
 
 import { EnvError, expect, registerSecret, requireRunEmulator, test } from './support';
 import {
-  composeArgs,
   docker,
   emulatorKey,
   findSecrets,
@@ -24,18 +26,27 @@ import {
   bindings,
   dockerRead,
   Form,
+  platform,
   productTimeout,
   request,
   STOP_BOUND_MS,
   tail,
   waitHealth,
   type CommandResult,
+  userIds,
   type ContainerState,
+  type Platform,
 } from './support/product';
 import { SESSION_PATH } from './support/traffic';
 
-/** The services of the image the form builds; `aws-emulator` (situation 4) runs the emulator's image. */
-const FORM_SERVICES = ['gateway', 'engine', 'studio'];
+/**
+ * The services of the image the form builds; `aws-emulator` (situation 4) runs the emulator's image. The host form of
+ * Docker Engine on Linux has no gateway.
+ */
+const FORM_SERVICES: Record<Platform, string[]> = {
+  desktop: ['gateway', 'engine', 'studio'],
+  linux: ['engine', 'studio'],
+};
 
 function expectStarted(result: CommandResult) {
   expect(result.code, `${result.line}: exit code; output:\n${tail(result)}`).toBe(0);
@@ -83,9 +94,27 @@ test('engine.product-ports-are-published-on-loopback-only', async ({ ctx }) => {
     published.filter((b) => b.hostIp !== '127.0.0.1'),
     'published ports whose host address is not 127.0.0.1',
   ).toEqual([]);
-  expect(published.map((b) => b.hostPort).sort(), 'the published host ports').toEqual(
-    [form.studioPort, form.enginePort, form.emulatorPort].map(String).sort(),
-  );
+  if ((await platform()) === 'linux') {
+    // On Docker Engine on Linux → `engine` and `studio` publish none, and the published host ports are exactly the
+    // emulator port (issue 54 R2).
+    const services = await byService(form, FORM_SERVICES.linux);
+    const names = FORM_SERVICES.linux.map((s) => services[s].name);
+    expect(
+      published.filter((b) => names.includes(b.container)),
+      'ports published by the containers of engine and studio',
+    ).toEqual([]);
+    expect(published.map((b) => b.hostPort), 'the published host ports').toEqual([String(form.emulatorPort)]);
+
+    // A TCP connection to the Studio port and the engine port at 127.0.0.1 → both accepted (the host's own
+    // listeners).
+    for (const port of [form.studioPort, form.enginePort]) {
+      expect(await probeAt('127.0.0.1', port), `a TCP connection to 127.0.0.1:${String(port)}`).toBe('open');
+    }
+  } else {
+    expect(published.map((b) => b.hostPort).sort(), 'the published host ports').toEqual(
+      [form.studioPort, form.enginePort, form.emulatorPort].map(String).sort(),
+    );
+  }
 
   // A TCP connection to each of the three ports at a non-loopback IPv4 address of the host → none is accepted.
   const addresses = hostIPv4();
@@ -130,12 +159,14 @@ test('engine.product-holds-no-key-and-one-read-only-mount', async ({ ctx }) => {
   expect(statusOf(session), `the Given: GET ${SESSION_PATH} with Origin ${studioOrigin}`).toBe(200);
   expect(token, `the Given: the token of GET ${SESSION_PATH}`).not.toBe('');
   expect(statusOf(await signedVia(form.enginePort, files, 'GET', '/')), 'the Given: s3:ListBuckets').toBe(200);
-  const services = await byService(form, FORM_SERVICES);
+  const on = await platform();
+  const formServices = FORM_SERVICES[on];
+  const services = await byService(form, formServices);
 
   // The form's image, every layer → none of the emulator's secret values.
   const images = [
     ...new Set(
-      await Promise.all(FORM_SERVICES.map((s) => dockerRead(['inspect', '-f', '{{.Config.Image}}', services[s].id]))),
+      await Promise.all(formServices.map((s) => dockerRead(['inspect', '-f', '{{.Config.Image}}', services[s].id]))),
     ),
   ];
   for (const image of images) {
@@ -145,7 +176,7 @@ test('engine.product-holds-no-key-and-one-read-only-mount', async ({ ctx }) => {
   }
 
   // `docker compose logs` → none of the emulator's secret values, and not the session token.
-  const logs = await form.run(composeArgs(form.situation, 'logs', '--no-color'), STOP_BOUND_MS);
+  const logs = await form.run(form.compose('logs', '--no-color'), STOP_BOUND_MS);
   expect(logs.code, `${logs.line}: exit code`).toBe(0);
   expect(
     findSecrets('docker compose logs', `${logs.stdout}\n${logs.stderr}`, [...secrets, ['the session token', token]]),
@@ -165,7 +196,9 @@ test('engine.product-holds-no-key-and-one-read-only-mount', async ({ ctx }) => {
   }
   expect(inConfig, "the emulator's secret values in the containers' environment and command lines").toEqual([]);
 
-  // The mounts → `engine` has exactly one, a read-only bind of $HOME/.aws/emulator; `gateway` and `studio` none.
+  // The mounts → `engine` has exactly one, a read-only bind of $HOME/.aws/emulator; `gateway` and `studio` none. On
+  // Docker Engine on Linux there is no gateway, and the form has no container but `engine` and `studio` (issue 54
+  // R2).
   type Mount = {
     Type?: string;
     Source?: string;
@@ -173,15 +206,21 @@ test('engine.product-holds-no-key-and-one-read-only-mount', async ({ ctx }) => {
     RW?: boolean;
   };
   const mounts: Record<string, Mount[]> = {};
-  for (const service of FORM_SERVICES) mounts[service] = await inspectJson<Mount[]>(services[service].id, '.Mounts');
+  for (const service of formServices) mounts[service] = await inspectJson<Mount[]>(services[service].id, '.Mounts');
   ctx.log(`mounts: ${JSON.stringify(mounts)}`);
   const hostDir = path.join(form.home, '.aws', 'emulator');
   expect(
     mounts.engine.map((m) => ({ type: m.Type, source: m.Source, rw: m.RW })),
     "the engine's mounts",
   ).toEqual([{ type: 'bind', source: hostDir, rw: false }]);
-  expect(mounts.gateway, "the gateway's mounts").toEqual([]);
+  if (on === 'desktop') expect(mounts.gateway, "the gateway's mounts").toEqual([]);
   expect(mounts.studio, "Studio's mounts").toEqual([]);
+  if (on === 'linux') {
+    expect(
+      (await form.containers()).map((c) => c.service).sort(),
+      `the services of the containers of ${form.project}`,
+    ).toEqual(['engine', 'studio']);
+  }
 
   // A file created in the engine's container under its mount → a read-only error, nothing new on the host.
   const target = mounts.engine[0]?.Destination ?? '';
@@ -206,9 +245,11 @@ test('engine.product-holds-no-key-and-one-read-only-mount', async ({ ctx }) => {
     `${home}/.aws in the engine's container`,
   ).toEqual(['emulator']);
 
-  // The user id of the processes of gateway, engine and studio → none is 0.
-  for (const service of FORM_SERVICES) {
-    const top = await dockerRead(['top', services[service].id, '-eo', 'uid,pid,args']);
+  // The user id of the processes of gateway, engine and studio → none is 0. On Docker Engine on Linux the user id
+  // and group id of the processes of engine and studio → the user's ids, neither 0 (issue 54 R2, R7).
+  const user = on === 'linux' ? await userIds() : null;
+  for (const service of formServices) {
+    const top = await dockerRead(['top', services[service].id, '-eo', user ? 'uid,gid,pid,args' : 'uid,pid,args']);
     const rows = top
       .split('\n')
       .slice(1)
@@ -220,5 +261,15 @@ test('engine.product-holds-no-key-and-one-read-only-mount', async ({ ctx }) => {
       rows.filter((row) => ['0', 'root'].includes(row.split(/\s+/)[0])),
       `processes of ${service} with user id 0`,
     ).toEqual([]);
+    if (user) {
+      expect(
+        rows.filter((row) => {
+          const [uid, gid] = row.split(/\s+/);
+          return uid !== user.uid || gid !== user.gid;
+        }),
+        `processes of ${service} whose ids are not ${user.uid}:${user.gid}`,
+      ).toEqual([]);
+      expect([user.uid, user.gid], 'the user ids, neither 0').not.toContain('0');
+    }
   }
 });
