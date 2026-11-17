@@ -19,12 +19,17 @@ const BELOW = `${NO_SCREEN_SERVICE.below}/my-stream`;
 const SERVICES = serviceLinks();
 
 /**
- * Every service but Amazon Simple Storage Service, whose route has a screen of its own (issue 56), and AWS Lambda,
- * whose route is the function list from issue 84 on.
+ * The services whose route has a screen of its own: Amazon S3 (issue 56), AWS Identity and Access Management
+ * (issue 82) and AWS Lambda, whose route is the function list (issue 84).
  */
-const WITHOUT_SCREEN = SERVICES.filter(
-  ([label]) => label !== 'Amazon Simple Storage Service' && label !== 'AWS Lambda',
-);
+const WITH_SCREEN: readonly string[] = [
+  'Amazon Simple Storage Service',
+  'AWS Identity and Access Management',
+  'AWS Lambda',
+];
+
+/** Every other service. */
+const WITHOUT_SCREEN = SERVICES.filter(([label]) => !WITH_SCREEN.includes(label));
 
 /** The AWS area's first import is real work (Cloudscape's modules), not a timer; a cold run takes a while. */
 const AREA_LOAD_MS = 10_000;
@@ -88,6 +93,56 @@ async function expectNoScreenYet(label: string) {
   expect(within(main()).getByRole('link', { name: 'Go to Home' })).toHaveAttribute('href', '/');
 }
 
+/**
+ * An engine for the role page's cases: the area's own requests answered by the home kit's fake engine, and IAM's
+ * Query requests answered as an emulator that holds the roles `roles`. Returns the IAM requests, `<Action> <RoleName>`,
+ * and the kit's engine.
+ */
+function stubRoleEngine(roles: readonly string[]): { sent: string[]; engine: FakeEngine } {
+  const engine = new FakeEngine();
+  const sent: string[] = [];
+  const xml = (action: string, result: string) =>
+    new Response(
+      `<${action}Response xmlns="https://iam.amazonaws.com/doc/2010-05-08/"><${action}Result>${result}</${action}Result></${action}Response>`,
+      { status: 200, headers: { 'content-type': 'text/xml' } },
+    );
+  vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+    const request = input instanceof Request ? input : new Request(String(input), init);
+    const url = new URL(request.url, window.location.href);
+    if (!url.origin.startsWith('http://127.0.0.1:') || url.pathname !== '/' || request.method !== 'POST') {
+      return engine.fetch(request.url, { headers: request.headers, signal: request.signal, method: request.method });
+    }
+    const params = new URLSearchParams(await request.text());
+    const action = params.get('Action') ?? '';
+    const name = params.get('RoleName') ?? '';
+    sent.push(`${action} ${name}`);
+    if (!roles.includes(name)) {
+      return new Response(
+        `<ErrorResponse><Error><Type>Sender</Type><Code>NoSuchEntity</Code><Message>no role</Message></Error></ErrorResponse>`,
+        { status: 404, headers: { 'content-type': 'text/xml' } },
+      );
+    }
+    switch (action) {
+      case 'GetRole':
+        return xml(
+          action,
+          `<Role><Path>/</Path><RoleName>${name.replace(/&/g, '&amp;')}</RoleName><RoleId>AROA1</RoleId><Arn>arn:aws:iam::000000000000:role/${name.replace(/&/g, '&amp;')}</Arn><CreateDate>2026-11-17T09:05:03Z</CreateDate><MaxSessionDuration>3600</MaxSessionDuration><RoleLastUsed/></Role>`,
+        );
+      case 'ListAttachedRolePolicies':
+        return xml(action, '<AttachedPolicies/><IsTruncated>false</IsTruncated>');
+      default:
+        return xml(action, '<PolicyNames/><IsTruncated>false</IsTruncated>');
+    }
+  });
+  return { sent, engine };
+}
+
+/** The crumbs' texts, in order. */
+function crumbTexts(): string[] {
+  const group = createWrapper(document.body).findBreadcrumbGroup();
+  return (group?.findBreadcrumbLinks() ?? []).map((crumb) => (crumb.getElement().textContent ?? '').trim());
+}
+
 describe('routes', () => {
   it('opens Home at /', () => {
     open('/');
@@ -141,6 +196,72 @@ describe('routes', () => {
     open(path);
 
     await expectNoScreenYet(label);
+  });
+
+  it.each([
+    ['/aws/iam', 'Roles'],
+    ['/aws/iam/roles', 'Roles'],
+    ['/aws/iam/roles/create', 'Select trusted entity'],
+    ['/aws/iam/roles/details/abc', 'abc'],
+  ])('opens %s as its IAM screen (its h1 "%s"), not the "no screen yet" page', async (path, title) => {
+    stubRoleEngine(['abc']);
+    open(path);
+
+    expect(inCloudscape(await heading(title))).toBe(true);
+    expect(main()).not.toHaveTextContent('Studio has no screen for AWS Identity and Access Management yet.');
+  });
+
+  it('leaves AWS Identity and Access Management out of the services opened as a "no screen yet" page, and keeps every other', () => {
+    expect(WITHOUT_SCREEN.map(([label]) => label)).not.toContain('AWS Identity and Access Management');
+    expect(WITHOUT_SCREEN).toHaveLength(SERVICES.length - WITH_SCREEN.length);
+  });
+
+  it.each(['/aws/iam/policies', '/aws/iam/roles/details/abc/tags'])(
+    'opens %s as the "no screen yet" page of AWS Identity and Access Management',
+    async (path) => {
+      open(path);
+
+      await expectNoScreenYet('AWS Identity and Access Management');
+    },
+  );
+
+  it('opens /aws/iam/roles/details/create as the page of a role named create, not the wizard', async () => {
+    const { sent } = stubRoleEngine(['create']);
+    open('/aws/iam/roles/details/create');
+
+    expect(inCloudscape(await heading('create'))).toBe(true);
+    await waitFor(() => {
+      expect(within(main()).getByRole('heading', { level: 2, name: 'Summary' })).toBeInTheDocument();
+    });
+    expect(sent).toContain('GetRole create');
+  });
+
+  it('opens /aws/iam/roles/details/a%2Bb%3Dc as the page of the role a+b=c: its h1 and last crumb, and the role read', async () => {
+    const { sent } = stubRoleEngine(['a+b=c']);
+    open('/aws/iam/roles/details/a%2Bb%3Dc');
+
+    expect(inCloudscape(await heading('a+b=c'))).toBe(true);
+    await waitFor(() => {
+      expect(within(main()).getByRole('heading', { level: 2, name: 'Summary' })).toBeInTheDocument();
+    });
+    expect(crumbTexts().at(-1)).toBe('a+b=c');
+    expect(sent.filter((request) => request.startsWith('GetRole '))).toEqual(['GetRole a+b=c']);
+  });
+
+  it('opens /aws/iam/roles/details/%E0%A4%A, a segment that is not valid percent-encoding, as the area’s "Page not found", with no request for a role', async () => {
+    const { sent, engine } = stubRoleEngine([]);
+    open('/aws/iam/roles/details/%E0%A4%A');
+
+    expect(inCloudscape(await heading('Page not found'))).toBe(true);
+    expect(main()).toHaveTextContent('/aws/iam/roles/details/%E0%A4%A');
+    // The area has asked for its connection, and still nothing for a role.
+    await waitFor(
+      () => {
+        expect(engine.healths.length).toBeGreaterThan(0);
+      },
+      { timeout: 2_000 },
+    );
+    expect(sent).toEqual([]);
   });
 
   it.each(['/aws/s3', '/aws/s3/buckets'])(

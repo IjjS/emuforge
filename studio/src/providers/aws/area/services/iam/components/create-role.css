@@ -1,0 +1,7 @@
+/* The trust policy step 3 of "Create role" shows (issue 82, requirement R6.5, R11): its lines are kept as they will be
+   sent and a long line breaks inside its box rather than widening the page. The area's own element inside a
+   Cloudscape code box; it sets no colour, spacing or font. */
+.aws-area-policy-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

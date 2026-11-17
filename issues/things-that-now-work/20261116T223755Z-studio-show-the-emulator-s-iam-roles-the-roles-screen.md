@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: studio|iam|roles-list
-Issue-Check-Ids:
+Issue-Check-Ids: studio.iam-role-create-appears-in-the-emulator studio.iam-role-create-refusals-create-nothing studio.iam-role-create-repeated-and-abandoned studio.iam-role-delete-removes-roles-from-the-emulator studio.iam-role-edit-summary-changes-the-emulator studio.iam-role-list-empty-emulator-says-no-roles studio.iam-role-list-filter-matches-part-of-a-name studio.iam-role-list-pages-follow-the-emulator studio.iam-role-list-rereads-on-open-and-refresh studio.iam-role-list-shows-loading-until-the-answer studio.iam-role-list-shows-what-the-emulator-holds studio.iam-role-page-of-a-missing-role-says-not-found studio.iam-role-page-shows-the-role studio.iam-role-screens-actions-lead-to-their-routes studio.iam-role-screens-follow-emulator-stop-and-restart studio.iam-role-screens-keyboard-and-layout studio.iam-role-screens-say-when-the-engine-stops-answering studio.iam-role-screens-talk-only-to-the-engine
 Issue-Commit: fe28fb4faecc4a824bf214f5b547ac759ca7f7aa
 
 # Show the emulator's IAM roles: the Roles screen
