@@ -18,8 +18,15 @@ const BELOW = `${NO_SCREEN_SERVICE.below}/my-stream`;
 // requirement R13.2, each under /aws.
 const SERVICES = serviceLinks();
 
-/** The services whose route has a screen of its own: Amazon S3 (issue 56) and AWS Identity and Access Management (issue 82). */
-const WITH_SCREEN: readonly string[] = ['Amazon Simple Storage Service', 'AWS Identity and Access Management'];
+/**
+ * The services whose route has a screen of its own: Amazon S3 (issue 56), AWS Identity and Access Management
+ * (issue 82) and AWS Lambda, whose route is the function list (issue 84).
+ */
+const WITH_SCREEN: readonly string[] = [
+  'Amazon Simple Storage Service',
+  'AWS Identity and Access Management',
+  'AWS Lambda',
+];
 
 /** Every other service. */
 const WITHOUT_SCREEN = SERVICES.filter(([label]) => !WITH_SCREEN.includes(label));
@@ -272,6 +279,51 @@ describe('routes', () => {
       await waitFor(() => {
         expect(document.title).toBe('Buckets | EmuForge Studio');
       });
+    },
+  );
+
+  it.each(['/aws/lambda', '/aws/lambda/functions'])(
+    'opens %s as the Lambda function list: the h1 "Event Functions", the address unchanged',
+    async (path) => {
+      const router = createMemoryRouter(routes, { initialEntries: [path] });
+      render(
+        <Providers>
+          <RouterProvider router={router} />
+        </Providers>,
+      );
+
+      expect(inCloudscape(await heading('Event Functions'))).toBe(true);
+      expect(router.state.location.pathname).toBe(path);
+    },
+  );
+
+  it('opens /aws/lambda/functions/create as "Create Event Function", and /aws/lambda/functions/function/create as the page of a function named create', async () => {
+    const router = createMemoryRouter(routes, { initialEntries: ['/aws/lambda/functions/create'] });
+    const rendered = render(
+      <Providers>
+        <RouterProvider router={router} />
+      </Providers>,
+    );
+
+    expect(inCloudscape(await heading('Create Event Function'))).toBe(true);
+    expect(router.state.location.pathname).toBe('/aws/lambda/functions/create');
+    await waitFor(() => {
+      expect(document.title).toBe('Create Event Function | EmuForge Studio');
+    });
+    rendered.unmount();
+
+    open('/aws/lambda/functions/function/create');
+
+    expect(inCloudscape(await heading('create'))).toBe(true);
+    expect(screen.queryByRole('heading', { level: 1, name: 'Create Event Function' })).toBeNull();
+  });
+
+  it.each(['/aws/lambda/functions/function/orders/test', '/aws/lambda/layers'])(
+    'opens %s as the "no screen yet" page of AWS Lambda',
+    async (path) => {
+      open(path);
+
+      await expectNoScreenYet('AWS Lambda');
     },
   );
 

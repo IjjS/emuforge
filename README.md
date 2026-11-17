@@ -2,7 +2,7 @@
 
 A local workbench on top of the official [aws-emulator](https://github.com/aws/aws-emulator): a web console
 (Studio), a CLI, IAM policy evaluation and IaC verification. EmuForge does not reimplement the emulator; it
-calls one that is already running.
+calls one it does not write: the one it starts beside itself, or, in the developer's start, one you run.
 
 ## Independence and trademarks
 
@@ -27,104 +27,52 @@ Apache License 2.0, and is not a copy of the AWS console.
 
 ## Start
 
-From a clone, one command starts EmuForge and one stops it, on Docker Desktop and on Docker Engine on Linux alike:
-
-```bash
-./compose up
-./compose down
-```
-
-`./compose up` decides two things for you. It picks the platform: Docker Engine on Linux gets its own Compose file,
-the folder `~/.aws/emulator` and your user and group ids (situations 3 and 4 below), anything else gets the root
-`docker-compose.yml`. And it picks the situation: it uses an emulator already running on `EMULATOR_PORT`, and
-starts one beside EmuForge when there is none. Before it runs anything it prints the docker compose command it
-runs, one of the lines below, so you can always run that line yourself. `./compose down` stops what
-`./compose up` started and leaves an emulator you run yourself running. Any other arguments are passed on with
-the platform's file, as in `./compose ps -a` and `./compose logs`. It refuses to run as root: `./compose up`,
-`./compose down` and the rest exit 1 for uid 0, also with `EMUFORGE_UID` or `EMUFORGE_GID` set to 0, and on Docker Engine on Linux
-when your group id is 0.
-
-What it needs: Docker with Compose and bash, nothing else on the host. The engine and Studio are built inside an
-image build, so no Rust or bun toolchain is used. It was verified on Docker Desktop for macOS (Docker Engine
-29.4.3, Compose 5.1.4) and on Docker Engine on Linux (Ubuntu, the runner of the checks of `main`). On Docker
-Engine on Linux the file `docker-compose.linux.yml` needs Docker Compose 2.24 or later. EmuForge is reached from
-the same machine only: on Docker Desktop every port is published on `127.0.0.1`, and on Docker Engine on Linux
-EmuForge's containers share the host's network, where the engine and Studio listen on `127.0.0.1` and nothing
-else, and only the emulator of situation 4 publishes a port, on `127.0.0.1`.
-
-Each start command builds before it runs (`--build`). A first build downloads base images, locked crates and
-packages; a later one may still ask the base images' registries whether their tags moved. Once started, nothing
-of EmuForge sends a request anywhere but to the emulator. Typed a second time while EmuForge runs, a plain start
-line below recreates its containers, the emulator of situation 4 too, because each build gets a new image id from
-its provenance attestation; `./compose up` builds without it, so a second `./compose up` keeps them running.
-
-There are six ways to start, by situation. Two of them work today.
-
-### 1. A released version, with an emulator already running
-
-Not available yet. A released version installed with a shell command, which uses the emulator you already run.
-
-### 2. A released version, without an emulator
-
-Not available yet. A released version installed with a shell command, which also starts an emulator.
-
-### 3. From a clone, with an emulator already running
-
-At the root of a clone, with an emulator answering on `EMULATOR_PORT` (9297 unless you set it; see
-[Run the emulator](#run-the-emulator)). On Docker Desktop:
+From a clone, one line starts EmuForge and one stops it, the same on every platform and in every shell:
 
 ```bash
 docker compose up -d --build
 docker compose down
 ```
 
-On Docker Engine on Linux, after the two lines that create the emulators' folder as you and run EmuForge with
-your ids:
+Then open http://127.0.0.1:8296/ in a browser.
+
+The start line brings up the engine, Studio and an emulator of EmuForge's own, which it starts beside them. It
+returns once that emulator accepts connections, so Studio opened right after shows it connected. When the
+emulator exits or does not accept a connection within a minute, the start line exits non-zero and names the
+emulator's container; `docker compose logs aws-emulator` shows why.
+
+What it needs: Docker with Compose, nothing else on the host: no bash, and no Rust or bun toolchain, because the
+engine and Studio are built inside an image build. It was run on Docker Desktop for macOS (Docker Engine 29.4.3,
+Compose 5.1.4) and on Docker Engine on Linux (Ubuntu, the runner of the checks of `main`). On Windows it was not
+run yet.
+
+Nothing of EmuForge is on the host. The emulator's files, its keys among them, are in a Docker volume of the form,
+which only the emulator and the engine mount (the engine read-only), and the emulator's port is not published.
+The stop line leaves the volume, which then holds no key; `docker compose down -v` removes it too.
+
+An AWS client on the host uses the engine: endpoint http://127.0.0.1:8297 and any access key and secret. The
+engine signs each request again with the emulator's own key, which a client does not need and which is not
+available on the host. This is how requests reach the emulator, not access control: a client that reaches the
+engine's port is answered as the emulator's caller.
+
+The start line builds before it runs (`--build`). A first build downloads base images, the emulator's package,
+locked crates and packages; a later one may still ask the base images' registries whether their tags moved. Once
+started, nothing of EmuForge sends a request anywhere but to the emulator. Typed a second time while EmuForge
+runs, the start line can recreate its containers, the emulator too, so EmuForge starts afresh and what the
+emulator held is gone: each build gets a new image id from its provenance attestation. This line builds without
+it and keeps the running containers (for PowerShell, see [Ports](#ports)):
 
 ```bash
-mkdir -p ~/.aws/emulator
-export EMUFORGE_UID="$(id -u)" EMUFORGE_GID="$(id -g)"
-docker compose -f docker-compose.linux.yml up -d --build
-docker compose -f docker-compose.linux.yml down
+BUILDX_NO_DEFAULT_ATTESTATIONS=1 docker compose up -d --build
 ```
 
-The start line starts EmuForge, the stop line stops it and leaves the emulator running. Open
-http://127.0.0.1:8296/ in a browser. Started before the emulator, EmuForge shows it as not connected and connects
-once it answers; it reconnects by itself after the emulator restarts. To change the ports, see
-[Ports](#ports).
+An emulator you already run, on any port, is neither used nor touched by EmuForge: using one that is already
+running is not part of this form for now. A form started from a clone before this change, which could use such
+an emulator or start one under its own name, leaves that emulator running as an orphan after you update the
+clone; the stop line with `--remove-orphans` added removes it.
 
-### 4. From a clone, without an emulator
-
-At the root of a clone, with nothing on `EMULATOR_PORT`. On Docker Desktop:
-
-```bash
-docker compose --profile emulator up -d --build
-docker compose --profile emulator down
-```
-
-On Docker Engine on Linux, after the same two lines as in situation 3:
-
-```bash
-mkdir -p ~/.aws/emulator
-export EMUFORGE_UID="$(id -u)" EMUFORGE_GID="$(id -g)"
-docker compose -f docker-compose.linux.yml --profile emulator up -d --build
-docker compose -f docker-compose.linux.yml --profile emulator down
-```
-
-The start line starts EmuForge and an emulator beside it, the stop line stops both. Open http://127.0.0.1:8296/
-in a browser. This form is stopped with its own command: the stop command of situation 3 leaves its emulator
-running. The emulator writes its files to `~/.aws/emulator/<port>/` as in [Run the emulator](#run-the-emulator),
-so `source infra/aws-emulator/env.sh` points a shell at it. The start fails when an emulator already runs on that
-port; use situation 3 then. On Docker Engine on Linux the start fails, naming the folder, when `~/.aws/emulator`
-does not exist: Docker would create it as root. To change the ports, see [Ports](#ports).
-
-### 5. The CLI, with an emulator already running
-
-Not available yet. The emuforge CLI, downloaded on its own, which uses the emulator you already run.
-
-### 6. The CLI, without an emulator
-
-Not available yet. The emuforge CLI, downloaded on its own, which also starts an emulator.
+The other ways to get EmuForge are not available yet: a released version, installed with a shell command; and
+the emuforge CLI, downloaded on its own.
 
 ### Ports
 
@@ -132,27 +80,39 @@ Three variables set the ports, given to the start command and the same values to
 
 | Variable | Default | Port of |
 | --- | --- | --- |
-| `EMULATOR_PORT` | 9297 | the emulator EmuForge connects to; in situation 4 the one it starts |
-| `EMUFORGE_ENGINE_PORT` | 8297 | the engine, where Studio and any AWS client send requests |
 | `EMUFORGE_STUDIO_PORT` | 8296 | Studio, the address you open |
+| `EMUFORGE_ENGINE_PORT` | 8297 | the engine, where Studio and any AWS client send requests |
+| `EMULATOR_PORT` | 9297 | the emulator inside EmuForge; not published; set it only to free the number for one of the other two |
+
+In bash:
 
 ```bash
-EMULATOR_PORT=9298 EMUFORGE_ENGINE_PORT=8397 EMUFORGE_STUDIO_PORT=8396 docker compose up -d --build
-EMULATOR_PORT=9298 EMUFORGE_ENGINE_PORT=8397 EMUFORGE_STUDIO_PORT=8396 docker compose down
+EMUFORGE_ENGINE_PORT=8397 EMUFORGE_STUDIO_PORT=8396 docker compose up -d --build
+EMUFORGE_ENGINE_PORT=8397 EMUFORGE_STUDIO_PORT=8396 docker compose down
 ```
 
-Each Studio port is its own Compose project, so two EmuForge instances with different Studio and engine ports run
-side by side, and may share one emulator. The three ports must differ from each other. 18296 and 18297 are
-reserved on Docker Desktop only, where EmuForge uses them inside its own containers; on Docker Engine on Linux
-they are ordinary ports. When a port is wrong the engine's own message names its flag: `--port` for
-`EMUFORGE_ENGINE_PORT`, `--emulator-port` for `EMULATOR_PORT` and `--studio-port` for `EMUFORGE_STUDIO_PORT`;
-`./compose logs` shows it.
+In PowerShell, where a variable set so stays set for the rest of that window, the same two lines and the start
+line that keeps the running containers:
 
-On Docker Desktop a start whose published port is taken (the Studio port, the engine port, or in situation 4
-the emulator's), or whose Studio and engine ports are equal, exits non-zero and names the port. Any other wrong
-port is seen as on Docker Engine on Linux, where nothing is published, so every such start can exit 0 and
-EmuForge still does not come up: `./compose ps -a` shows the service that is not running, and `./compose logs`
-shows the line with the port's number.
+```powershell
+$env:EMUFORGE_ENGINE_PORT=8397; $env:EMUFORGE_STUDIO_PORT=8396; docker compose up -d --build
+$env:EMUFORGE_ENGINE_PORT=8397; $env:EMUFORGE_STUDIO_PORT=8396; docker compose down
+$env:BUILDX_NO_DEFAULT_ATTESTATIONS=1; docker compose up -d --build
+```
+
+Each Studio port is its own Compose project, with its own emulator and its own volume, so two EmuForge instances
+with different Studio and engine ports run side by side. The three ports must differ from each other. 18296 and
+18297 are reserved on every platform: EmuForge uses them inside its own containers. When a port is wrong the
+engine's own message names its flag: `--port` for `EMUFORGE_ENGINE_PORT`, `--emulator-port` for `EMULATOR_PORT`
+and `--studio-port` for `EMUFORGE_STUDIO_PORT`.
+
+A start whose Studio or engine port is taken on the host, or whose two ports are equal, exits non-zero and names
+the port. With `EMULATOR_PORT` equal to the engine's or Studio's port the start exits non-zero, Docker's message
+names the gateway's container, and `docker compose logs gateway` shows the line that names both variables. With
+`EMULATOR_PORT` 18296 or 18297 the emulator cannot listen, and the start exits non-zero naming the emulator's
+container. With the engine's or Studio's port 18296 or 18297 the start can exit 0 and EmuForge still does not
+come up: `docker compose ps -a` shows the service that is not running, and `docker compose logs` shows the line
+with the port's number.
 
 ## Develop
 
@@ -190,6 +150,9 @@ each in its folder. What it does not run there is listed, each with its reason, 
 [.github/not-run.json](.github/not-run.json).
 
 ## Run the emulator
+
+This is the emulator run by itself, for the developer's start and for an AWS CLI pointed straight at an
+emulator; it was run on macOS and Linux.
 
 ```bash
 mkdir -p ~/.aws/emulator              # the emulator's folder, made by you before the first start

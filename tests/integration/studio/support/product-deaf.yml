@@ -1,0 +1,8 @@
+# The checks' own means for one case (issue 437, test criteria of
+# engine.product-start-says-when-the-emulator-did-not-come-up), never part of the shipped form: given beside the
+# root file (`-f docker-compose.yml -f <this file>`), it starts the form's emulator on another port than the one its
+# healthcheck asks (EMULATOR_PORT), so the emulator runs and accepts no connection there.
+services:
+  aws-emulator:
+    # Telemetry off, as every emulator this repository starts.
+    command: ["-p", "${EMUFORGE_IT_DEAF_PORT:?the run's deaf port}", "-t", "off"]

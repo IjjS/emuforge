@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: studio|lambda|functions-list
-Issue-Check-Ids:
+Issue-Check-Ids: studio.lambda-function-create-appears-in-the-emulator studio.lambda-function-create-lists-the-roles-of-the-emulator studio.lambda-function-create-refusals-create-nothing studio.lambda-function-create-repeated-and-abandoned studio.lambda-function-delete-removes-functions-from-the-emulator studio.lambda-function-list-actions-lead-to-their-routes studio.lambda-function-list-empty-emulator-says-no-functions studio.lambda-function-list-filter-matches-the-start-of-a-name studio.lambda-function-list-pages-follow-the-emulator studio.lambda-function-list-rereads-on-open-and-refresh studio.lambda-function-list-shows-loading-until-the-answer studio.lambda-function-list-shows-what-the-emulator-holds studio.lambda-function-page-of-a-missing-function-says-not-found studio.lambda-function-page-shows-the-function studio.lambda-function-screens-follow-emulator-stop-and-restart studio.lambda-function-screens-keyboard-and-layout studio.lambda-function-screens-say-when-the-engine-stops-answering studio.lambda-function-screens-talk-only-to-the-engine
 Issue-Commit: fe28fb4faecc4a824bf214f5b547ac759ca7f7aa
 
 # Show the emulator's Lambda functions: the Functions screen

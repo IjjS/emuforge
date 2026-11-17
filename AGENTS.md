@@ -82,9 +82,13 @@ token rate for the day; over it, no new pane is opened.
 - On `main` the `pm` commits only issue files it created and merges made by `.pm/bin/pm-merge`.
 - The `pm` pushes `main` to `origin` each time an issue is finished: merged into `main` on its own passing
   check (its issue branch's whole check, or its unit's check). Only `main`, never forced, never an issue branch.
-- Every push of `main` is checked on GitHub Actions, on Ubuntu, by `.github/workflows/main.yml`; the `pm` reads
-  the run of the pushed commit with `gh` and writes nothing to GitHub. A failed run becomes an issue file that
-  waits for the owner's signal; other work goes on.
+- Every push of `main` is checked on GitHub Actions, on Ubuntu, by `.github/workflows/main.yml`, with every
+  check of no service and the browser checks of the services the push touched (every service's when a shared
+  path changed); the `pm` reads the run of the pushed commit with `gh` and writes nothing to GitHub. A failed run
+  becomes an issue file that waits for the owner's signal; other work goes on.
+- The whole set of checks runs in `.github/workflows/full.yml`, which only the owner starts, by hand; the `pm`
+  never starts it and reads a run of it on the owner's word. The push run takes the checks of the services the
+  push touched, so between two runs of `full` a service no change touched is not checked.
 - Any other push, releases and deleting remote branches need the owner's explicit word.
 
 ## Checks decide, not agents

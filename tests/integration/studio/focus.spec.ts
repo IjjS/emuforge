@@ -66,7 +66,6 @@ const SERVICE_PAGE: PageOf = { path: NO_SCREEN_SERVICE.path, h1: SERVICE, firstS
 const SERVICE_BELOW: PageOf = { path: NO_SCREEN_SERVICE.below, h1: SERVICE, firstStop: GO_HOME };
 const DYNAMODB: PageOf = { path: '/aws/dynamodb', h1: 'Amazon DynamoDB', firstStop: GO_HOME };
 const API_GATEWAY: PageOf = { path: '/aws/apigateway', h1: 'Amazon API Gateway', firstStop: GO_HOME };
-const LAMBDA: PageOf = { path: '/aws/lambda', h1: 'AWS Lambda', firstStop: GO_HOME };
 const AREA_NOT_FOUND: PageOf = { path: '/aws/does-not-exist', h1: NOT_FOUND, firstStop: GO_HOME };
 const STUDIO_NOT_FOUND: PageOf = { path: '/does-not-exist', h1: NOT_FOUND, firstStop: GO_HOME };
 
@@ -417,11 +416,11 @@ test('studio.route-change-focuses-new-page-content', async ({ ctx, page }) => {
   );
 
   await lines.line(
-    'Fresh load of `/aws`, focus "AWS Lambda" in the side navigation, Enter → the address is `/aws/lambda`, focus is on the content target named "AWS Lambda", and the next Tab reaches "Go to Home" (regression)',
+    '(changed, issue 84) Fresh load of `/aws`, focus "Amazon Kinesis" in the side navigation, Enter → the address is `/aws/kinesis`, focus is on the content target named "Amazon Kinesis", and the next Tab reaches "Go to Home" (regression)',
     async () => {
       await openFresh(page, INDEX);
-      await follow(page, sideNavigationLink(page, LAMBDA.h1));
-      expectArrived(await arrive('/aws → "AWS Lambda" in the side navigation', LAMBDA), true);
+      await follow(page, sideNavigationLink(page, SERVICE_PAGE.h1));
+      expectArrived(await arrive(`/aws → "${SERVICE}" in the side navigation`, SERVICE_PAGE), true);
     },
   );
 

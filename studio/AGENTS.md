@@ -144,6 +144,10 @@ studio/src/
   in its folder under `providers/aws/area/services/`. Query keys include every filter, sort and page token.
   Requests take the `AbortSignal`. A mutation invalidates the list and the detail it changed. A late response
   never overwrites a newer one.
+- A service's `api.ts` sends every command through `sendRequest` of `src/lib/aws/request.ts`, with the
+  operation's name. It maps a failed request to the kinds the states below are shown from (not implemented,
+  access denied, the emulator did not answer, the engine did not answer, any other code or status line) and
+  ends a request at once when its signal aborts. No service folder maps a failure or awaits a signal itself.
 - Pagination follows the API's own tokens. Never load "everything" to page on the client.
 
 ## Errors and states

@@ -1,7 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { useCallback, useEffect, useState } from 'react';
 
-import { listBuckets, S3ReadError, type Bucket, type BucketPage, type ReadFailure } from './api';
+import { RequestError, type RequestFailure } from '../../../../../lib/aws/request';
+import { LIST_BUCKETS, listBuckets, type Bucket, type BucketPage } from './api';
 
 // The bucket list's listing (issue 56, requirement R4.1, R4.4, R4.5, R4.7, R4.9): pages that follow the API's
 // tokens, a filter sent as `prefix`, and a new listing at page 1 on every refresh, filter and page size. Nothing is
@@ -32,7 +33,7 @@ export interface BucketListing {
   /** The shown page's buckets, in the answer's order; `undefined` until its answer arrives or when it failed. */
   buckets: Bucket[] | undefined;
   /** Why the shown page could not be read; `undefined` while it is read or once it is. */
-  failure: ReadFailure | undefined;
+  failure: RequestFailure | undefined;
   /** A read of the shown page is in flight. */
   loading: boolean;
   /** `undefined` while no page of this listing has been read. */
@@ -97,8 +98,10 @@ function withRead(reads: readonly PageRead[], page: number, answer: BucketPage):
   return [...reads.slice(0, page), read, ...later];
 }
 
-function failureOf(error: unknown): ReadFailure {
-  return error instanceof S3ReadError ? error.failure : { kind: 'other', code: String(error) };
+function failureOf(error: unknown): RequestFailure {
+  return error instanceof RequestError
+    ? error.failure
+    : { kind: 'other', operation: LIST_BUCKETS, code: String(error) };
 }
 
 /**
