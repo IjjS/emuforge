@@ -99,7 +99,7 @@
 {"check_id": "engine.product-browser-rules-hold", "path": "tests/integration/studio/product-transport.spec.ts", "module": "engine", "operations": ["s3:CreateBucket", "s3:ListBuckets", "s3:DeleteBucket"], "labels": ["safety"], "issue": 34}
 {"check_id": "engine.product-ports-are-published-on-loopback-only", "path": "tests/integration/studio/product-safety.spec.ts", "module": "engine", "operations": [], "labels": ["safety", "own-emulator"], "issue": 34}
 {"check_id": "engine.product-holds-no-key-and-one-read-only-mount", "path": "tests/integration/studio/product-safety.spec.ts", "module": "engine", "operations": ["s3:ListBuckets"], "labels": ["safety"], "issue": 34}
-{"check_id": "engine.product-does-not-come-up-on-a-port-collision", "path": "tests/integration/studio/product-failures.spec.ts", "module": "engine", "operations": [], "labels": ["own-emulator"], "issue": 34}
+{"check_id": "engine.product-does-not-come-up-on-a-port-collision", "path": "tests/integration/studio/product-failures.spec.ts", "module": "engine", "operations": [], "labels": ["own-emulator", "on-request"], "issue": 34}
 {"check_id": "engine.product-start-fails-when-the-image-does-not-build", "path": "tests/integration/studio/product-failures.spec.ts", "module": "engine", "operations": [], "labels": [], "issue": 34}
 {"check_id": "engine.product-configuration-names-loopback-and-the-emulator-only", "path": "tests/integration/studio/product-files.spec.ts", "module": "engine", "operations": [], "labels": ["safety"], "issue": 34}
 {"check_id": "engine.product-readme-gives-the-commands-the-checks-run", "path": "tests/integration/studio/product-files.spec.ts", "module": "engine", "operations": [], "labels": [], "issue": 34}
@@ -119,7 +119,7 @@
 {"check_id": "studio.frame-tile-stays-while-engine-and-emulator-are-away", "path": "tests/integration/studio/frame-logo.spec.ts", "module": "studio", "operations": [], "labels": ["lifecycle", "own-emulator"], "issue": 36}
 {"check_id": "studio.frame-bar-fits-with-the-tile-in-every-language", "path": "tests/integration/studio/frame-logo.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 36}
 {"check_id": "studio.korean-words-stay-whole", "path": "tests/integration/studio/wrapping.spec.ts", "module": "studio", "operations": [], "labels": ["own-emulator", "regression"], "issue": 32}
-{"check_id": "studio.count-and-unit-stay-on-one-line", "path": "tests/integration/studio/wrapping.spec.ts", "module": "studio", "operations": [], "labels": ["own-emulator", "regression"], "issue": 32}
+{"check_id": "studio.count-and-unit-stay-on-one-line", "path": "tests/integration/studio/wrapping.spec.ts", "module": "studio", "operations": [], "labels": ["own-emulator", "regression", "on-request"], "issue": 32}
 {"check_id": "studio.language-menu-dismissing-press-does-nothing-else", "path": "tests/integration/studio/language-menu.spec.ts", "module": "studio", "operations": [], "labels": ["own-emulator", "regression"], "issue": 32}
 {"check_id": "studio.language-menu-is-veiled-at-480-and-below", "path": "tests/integration/studio/language-menu.spec.ts", "module": "studio", "operations": [], "labels": ["own-emulator", "regression"], "issue": 32}
 {"check_id": "studio.aws-area-breadcrumbs-start-at-emuforge", "path": "tests/integration/studio/aws-area-frame.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 45}
