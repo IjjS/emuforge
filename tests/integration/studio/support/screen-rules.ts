@@ -592,31 +592,48 @@ export async function cellUnderRowWith(table: Locator, text: string, column: str
   );
 }
 
-/** What a table's box does against the element it scrolls in: the table's width and that element's. */
-export interface TableFit {
-  tableWidth: number;
-  /** The width of the nearest element around the table that scrolls sideways or clips, else the table's parent. */
-  boxWidth: number;
-}
-
-/** How wide `table`'s first element is drawn against the box it scrolls in; `null` when there is no table. */
-export async function tableFit(table: Locator): Promise<TableFit | null> {
-  if ((await table.count()) === 0) return null;
-  return table.first().evaluate(
-    (el) => {
-      let box: Element | null = el.parentElement;
-      for (let a = el.parentElement; a && a !== document.body; a = a.parentElement) {
-        if (['auto', 'scroll', 'hidden', 'clip'].includes(getComputedStyle(a).overflowX)) {
-          box = a;
+/**
+ * Where `cell` lies against the table's own sideways scroll region: the nearest ancestor of the cell inside `root`
+ * (the table component's root) whose `overflow-x` scrolls. Problems: no such region, a region that reaches past the
+ * viewport, or a cell outside the region's scrollable width, whatever the region is scrolled to (decisions.md, PM
+ * 2026-11-18 05:40, item 12, as 04:40 item 9). An empty list when the cell lies whole inside the region.
+ */
+export async function scrollRegionProblems(cell: Locator, root: Locator): Promise<string[]> {
+  if ((await cell.count()) === 0) return ['no cell'];
+  if ((await root.count()) === 0) return ['no table'];
+  const rootHandle = await root.first().elementHandle(ACTION);
+  return cell.first().evaluate(
+    (el, handle) => {
+      const top = handle as Element;
+      if (!top.contains(el)) return ["the cell is not inside the table's root"];
+      let region: Element | null = null;
+      for (let at = el.parentElement; at && at !== top.parentElement; at = at.parentElement) {
+        if (/auto|scroll/.test(getComputedStyle(at).overflowX)) {
+          region = at;
           break;
         }
       }
-      return {
-        tableWidth: el.getBoundingClientRect().width,
-        boxWidth: (box ?? el).getBoundingClientRect().width,
-      };
+      if (region === null) return ["no sideways scroll region inside the table's root"];
+      const found: string[] = [];
+      const viewport = document.documentElement.clientWidth;
+      const r = region.getBoundingClientRect();
+      if (r.left < -0.5 || r.right > viewport + 0.5) {
+        found.push(
+          `its scroll region spans ${r.left.toFixed(1)}..${r.right.toFixed(1)}, past the viewport's ${String(viewport)}`,
+        );
+      }
+      // The cell's place in the region's scrollable content, whatever the region is scrolled to.
+      const box = el.getBoundingClientRect();
+      const left = box.left - r.left - region.clientLeft + region.scrollLeft;
+      const right = box.right - r.left - region.clientLeft + region.scrollLeft;
+      if (left < -0.5 || right > region.scrollWidth + 0.5) {
+        found.push(
+          `the cell lies at ${left.toFixed(1)}..${right.toFixed(1)}, outside its scroll region's ${String(region.scrollWidth)}`,
+        );
+      }
+      return found;
     },
-    undefined,
+    rootHandle,
     ACTION,
   );
 }
