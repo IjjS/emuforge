@@ -601,3 +601,57 @@ export async function tableFit(table: Locator): Promise<TableFit | null> {
     ACTION,
   );
 }
+
+/**
+ * The visible texts of the page's main drawn in the band from the bottom of `above` to the top of the highest of
+ * `below` (viewport coordinates, as the page is scrolled now), leaving out the texts of headings (a title with its
+ * counter), links, buttons and tab lists: what stands between two parts of a page besides their own controls. Each
+ * text node is one entry, white space collapsed. `null` when `above` or every `below` is not shown. Never waits.
+ */
+export async function textsBetween(page: Page, above: Locator, below: Locator[]): Promise<string[] | null> {
+  const top =
+    (await above
+      .first()
+      .boundingBox()
+      .catch(() => null)) ?? null;
+  const bottoms: number[] = [];
+  for (const b of below) {
+    const box = await b
+      .first()
+      .boundingBox()
+      .catch(() => null);
+    if (box) bottoms.push(box.y);
+  }
+  if (top === null || bottoms.length === 0) return null;
+  return page.evaluate(
+    ([from, to]) => {
+      const hidden = (el: Element): boolean => {
+        for (let a: Element | null = el; a; a = a.parentElement) {
+          const cs = getComputedStyle(a);
+          if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') return true;
+          if (cs.clip !== 'auto' && cs.clip !== '' && /absolute|fixed/.test(cs.position)) return true;
+          if (/inset\(\s*50%/.test(cs.clipPath)) return true;
+          const box = a.getBoundingClientRect();
+          if (cs.overflow !== 'visible' && (box.width <= 1 || box.height <= 1)) return true;
+        }
+        return false;
+      };
+      const main = document.querySelector('main, [role="main"]');
+      if (!main) return [];
+      const own = 'h1, h2, h3, h4, h5, h6, a, button, [role="button"], [role="link"], [role="tablist"]';
+      const found: string[] = [];
+      const walker = document.createTreeWalker(main, NodeFilter.SHOW_TEXT);
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        const text = (n as Text).data.replace(/\s+/g, ' ').trim();
+        const el = n.parentElement;
+        if (text === '' || !el || el.closest(`script, style, template, noscript, ${own}`) || hidden(el)) continue;
+        const range = document.createRange();
+        range.selectNodeContents(n);
+        const rects = [...range.getClientRects()].filter((r) => r.width > 0 && r.height > 0);
+        if (rects.some((r) => r.top >= from - 1 && r.bottom <= to + 1)) found.push(text);
+      }
+      return found;
+    },
+    [top.y + top.height, Math.min(...bottoms)] as const,
+  );
+}

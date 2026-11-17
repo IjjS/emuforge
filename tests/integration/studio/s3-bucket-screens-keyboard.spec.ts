@@ -24,11 +24,12 @@ import { areaImages, currentCrumb, documentIcons, emulatorLine, expectLine, notS
 import { focusedAx, focusRing } from './support/focus';
 import { ACTION, addressOf, heading, NAVIGATION_TOGGLE, SIDE_NAVIGATION } from './support/frame';
 import { Lines } from './support/lines';
-import { copyControl, pairValueOf } from './support/screen-rules';
+import { copyControl, directlyBeforeProblems, pairValueOf } from './support/screen-rules';
 import {
   ABOUT,
   BUCKETS_PATH,
   bucketNamesDirect,
+  bucketPropertiesDirect,
   checkPrefix,
   H1,
   LONGEST_NAME,
@@ -351,7 +352,27 @@ test('studio.s3-bucket-screens-keyboard-and-layout', async ({ ctx, page, context
       ];
       const stops = await walk(page);
       ctx.log(`Tab stops in the area: ${stops.map(shown).join(', ')}`);
-      expect(orderProblems(stops, expected), 'the order of the Tab stops').toEqual([]);
+      // At its value's place: each copy control directly before its value's text, inside the value's element.
+      const arn = (await listBucketsDirect(ctx, port, kms)).find((b) => b.name === kms)?.arn ?? null;
+      const keyId = (await bucketPropertiesDirect(ctx, port, kms)).encryption?.keyId ?? null;
+      expect({ arn, keyId }, `a direct ListBuckets and GetBucketEncryption of ${kms}`).toEqual({
+        arn: expect.any(String),
+        keyId: expect.any(String),
+      });
+      const places: string[] = [];
+      for (const [label, value] of [
+        ['Bucket ARN', arn ?? ''],
+        ['AWS KMS key', keyId ?? ''],
+      ] as const) {
+        const control = page.getByRole('main').getByRole('button', { name: copyControl(label), exact: true });
+        for (const problem of await directlyBeforeProblems(control, pairValueOf(page, label), value)) {
+          places.push(`"${copyControl(label)}": ${problem}`);
+        }
+      }
+      expect(
+        { order: orderProblems(stops, expected), places },
+        "the order of the Tab stops, and each copy control at its value's place",
+      ).toEqual({ order: [], places: [] });
       expect(withoutRing(stops), 'stops without a visible focus indicator').toEqual([]);
     },
   );

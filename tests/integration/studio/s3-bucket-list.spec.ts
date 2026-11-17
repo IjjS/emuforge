@@ -39,6 +39,7 @@ import {
   DELETE,
   EMPTY,
   expectNames,
+  FILTER,
   filterFor,
   H1,
   HELP_CLOSE,
@@ -69,7 +70,15 @@ import {
   TOOLS,
   watchText,
 } from './support/s3';
-import { headerDescriptions, NOTICE_BODY, noticeBody, pageHeader, timesOnPage } from './support/screen-rules';
+import {
+  HEADER,
+  headerDescriptions,
+  NOTICE_BODY,
+  noticeBody,
+  pageHeader,
+  textsBetween,
+  timesOnPage,
+} from './support/screen-rules';
 
 const AWS = 'Amazon Web Services';
 
@@ -177,14 +186,23 @@ test.describe(() => {
           .toEqual({ links: [NAV_HEADER, NAV_GENERAL, NAV_DIRECTORY], current: [NAV_GENERAL] });
         await expectLine(page, connectedAt(port));
         await expect(screen(page).notice, `the notice "${NOTICE}"`).toBeVisible();
-        await expect.poll(() => noticeBody(page), { message: "the notice's body" }).toBe(NOTICE_BODY);
+        const s = screen(page);
+        await expect(s.filter, `the table's filter "${FILTER}"`).toBeVisible();
         const header = await pageHeader(page);
         const descriptions = await headerDescriptions(page);
+        // From the bottom of the h1's header row to the top of the filter and the preferences: the tabs and the
+        // table's own header (its title, counter, Info and actions) are the page's controls, anything else stands
+        // between.
+        const h1Header = page.locator(HEADER).filter({ has: page.getByRole('heading', { level: 1 }) });
+        const between = await textsBetween(page, h1Header, [s.filter, s.preferences]);
         ctx.log(
-          `the h1's header ${JSON.stringify(header)}; the descriptions in the main ${JSON.stringify(descriptions)}`,
+          `the h1's header ${JSON.stringify(header)}; the descriptions in the main ${JSON.stringify(descriptions)}; the texts between the h1 and the table's controls ${JSON.stringify(between)}`,
         );
-        expect(header?.description ?? null, 'the description under the h1').toBeNull();
-        expect(descriptions, "the descriptions between the h1 and the table's controls").toEqual([]);
+        expect(
+          { description: header?.description ?? null, descriptions, between },
+          "the description under the h1, and what stands between the h1 and the table's controls",
+        ).toEqual({ description: null, descriptions: [], between: [] });
+        await expect.poll(() => noticeBody(page), { message: "the notice's body" }).toBe(NOTICE_BODY);
         expect(
           await timesOnPage(page, endpointPattern(port)),
           `how often https://127.0.0.1:${String(port)} is on the page`,
