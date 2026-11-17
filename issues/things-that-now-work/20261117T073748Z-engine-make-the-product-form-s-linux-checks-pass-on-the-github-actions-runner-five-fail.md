@@ -4,7 +4,7 @@ Issue-Module: engine
 Issue-Kind: bug
 Issue-Source: finder
 Issue-Key: engine|product-form|linux-first-run-on-actions
-Issue-Check-Ids:
+Issue-Check-Ids: engine.product-linux-file-renders-the-host-form
 Issue-Commit: bf1146fe00065575b8ed64395c0ba815f8ba6dea
 
 # Make the product form's Linux checks pass on the GitHub Actions runner: five fail in their first run there

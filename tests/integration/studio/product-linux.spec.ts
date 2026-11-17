@@ -29,7 +29,7 @@ interface Volume {
   source?: string;
   target?: string;
   read_only?: boolean;
-  bind?: { create_host_path?: boolean };
+  bind?: unknown;
 }
 
 interface Service {
@@ -54,6 +54,40 @@ const SAME_KEYS = ['image', 'build', 'pull_policy', 'command', 'environment', 'i
 /** Two numbers of the check's own for `EMUFORGE_UID` and `EMUFORGE_GID`: different, and neither 0 nor 1000. */
 const SET_IDS = { EMUFORGE_UID: '54001', EMUFORGE_GID: '54002' };
 
+/** What a mount says of `bind`: the rendered value of its `bind` key as it is, or this when it has none (#438 E2). */
+const NO_BIND_KEY = '(no bind key)';
+
+/** The rendered `bind` of a mount: its value, or `NO_BIND_KEY` when the mount has no `bind` key. */
+function bindOf(v: Volume): unknown {
+  return Object.prototype.hasOwnProperty.call(v, 'bind') ? v.bind : NO_BIND_KEY;
+}
+
+/**
+ * A Compose file of the check's own (#438 design 2.1): a `name:`, one service with an `image` nothing pulls and two
+ * long-form binds, one saying `create_host_path: false` and one `true`. Sources and targets are paths nothing
+ * creates or opens; `config` does not touch them.
+ */
+function bindFixture(dir: string): string {
+  return [
+    'name: emuforge-check-bind-fixture',
+    'services:',
+    '  fixture:',
+    '    image: emuforge-check-bind-fixture',
+    '    volumes:',
+    '      - type: bind',
+    `        source: ${JSON.stringify(path.join(dir, 'false-source'))}`,
+    '        target: /false-target',
+    '        bind:',
+    '          create_host_path: false',
+    '      - type: bind',
+    `        source: ${JSON.stringify(path.join(dir, 'true-source'))}`,
+    '        target: /true-target',
+    '        bind:',
+    '          create_host_path: true',
+    '',
+  ].join('\n');
+}
+
 /** The entries of a map or a list that Compose rendered, `[]` when it rendered none. */
 function keysOf(value: unknown): string[] {
   return value && typeof value === 'object' ? Object.keys(value) : [];
@@ -68,14 +102,8 @@ test('engine.product-linux-file-renders-the-host-form', async ({ ctx }) => {
   delete unset.EMUFORGE_GID;
   const withIds = { ...unset, ...SET_IDS };
   // Compose's own message is in the report when it cannot read the file (the failure case of every line below).
-  const render = async (on: Platform, situation: Situation, env: Record<string, string>) => {
-    const result = await runAt(
-      ctx,
-      ctx.checkout,
-      composeArgs(on, situation, 'config', '--format', 'json'),
-      env,
-      STOP_BOUND_MS,
-    );
+  const renderAt = async (cwd: string, args: string[], env: Record<string, string>) => {
+    const result = await runAt(ctx, cwd, args, env, STOP_BOUND_MS);
     let rendered: Rendered | null = null;
     try {
       rendered = result.code === 0 ? (JSON.parse(result.stdout) as Rendered) : null;
@@ -85,6 +113,8 @@ test('engine.product-linux-file-renders-the-host-form', async ({ ctx }) => {
     expect(rendered, `${result.line}: the rendered configuration; output:\n${tail(result)}`).not.toBeNull();
     return rendered ?? {};
   };
+  const render = (on: Platform, situation: Situation, env: Record<string, string>) =>
+    renderAt(ctx.checkout, composeArgs(on, situation, 'config', '--format', 'json'), env);
   const plain = await render('linux', 3, withIds);
   const profiled = await render('linux', 4, withIds);
   const plainUnset = await render('linux', 3, unset);
@@ -158,16 +188,42 @@ test('engine.product-linux-file-renders-the-host-form', async ({ ctx }) => {
     withoutVolumes(rootEmulator),
   );
 
-  // The volumes → `engine` has one, a read-only bind of $HOME/.aws/emulator to /home/emuforge/.aws/emulator with
-  // `create_host_path: false`; `studio` none; `aws-emulator` one, a bind of $HOME/.aws/emulator to the root file's
-  // target with `create_host_path: false`.
+  // The fixture (#438 design 2.1), rendered by the same `docker compose` with the same environment → exits 0 and
+  // prints JSON holding the service's two mounts. `F` and `T` are what its `false` and `true` mounts render.
+  const fixtureDir = path.join(ctx.tmp, `bind-fixture-${ctx.id}-${String(Date.now())}`);
+  fs.mkdirSync(fixtureDir, { recursive: true });
+  ctx.own({ dispose: async () => fs.rmSync(fixtureDir, { recursive: true, force: true }) });
+  const fixtureFile = path.join(fixtureDir, 'compose.yml');
+  fs.writeFileSync(fixtureFile, bindFixture(fixtureDir));
+  const fixture = await renderAt(
+    fixtureDir,
+    ['docker', 'compose', '-f', fixtureFile, 'config', '--format', 'json'],
+    withIds,
+  );
+  const fixtureMounts = fixture.services?.fixture?.volumes ?? [];
+  expect(
+    fixtureMounts.map((v) => v.target),
+    `the mounts of the fixture's service; rendered:\n${JSON.stringify(fixture)}`,
+  ).toEqual(['/false-target', '/true-target']);
+  const doNotCreate = bindOf(fixtureMounts[0] ?? {});
+  const create = bindOf(fixtureMounts[1] ?? {});
+
+  // The fixture's `false` and `true` → render different `bind` values; equal, this Compose does not tell them apart.
+  expect(
+    doNotCreate,
+    `this Compose renders create_host_path: false and true alike: ${JSON.stringify(doNotCreate)}`,
+  ).not.toEqual(create);
+
+  // The volumes → `engine` has one, a read-only bind of $HOME/.aws/emulator to /home/emuforge/.aws/emulator whose
+  // `bind` is the fixture's `false` one; `studio` none; `aws-emulator` one, a bind of $HOME/.aws/emulator to the
+  // root file's target whose `bind` is the fixture's `false` one (#438 E2).
   const hostDir = path.join(form.home, '.aws', 'emulator');
   const shown = (v: Volume) => ({
     type: v.type,
     source: v.source,
     target: v.target,
     read_only: v.read_only === true,
-    create_host_path: v.bind?.create_host_path ?? null,
+    bind: bindOf(v),
   });
   expect((services.engine?.volumes ?? []).map(shown), "the engine's volumes").toEqual([
     {
@@ -175,7 +231,7 @@ test('engine.product-linux-file-renders-the-host-form', async ({ ctx }) => {
       source: hostDir,
       target: '/home/emuforge/.aws/emulator',
       read_only: true,
-      create_host_path: false,
+      bind: doNotCreate,
     },
   ]);
   expect(services.studio?.volumes ?? [], "Studio's volumes").toEqual([]);
@@ -187,7 +243,7 @@ test('engine.product-linux-file-renders-the-host-form', async ({ ctx }) => {
       return rest;
     }),
     "aws-emulator's volumes",
-  ).toEqual([{ type: 'bind', source: hostDir, target: rootTarget, create_host_path: false }]);
+  ).toEqual([{ type: 'bind', source: hostDir, target: rootTarget, bind: doNotCreate }]);
 
   // The project name and the emulator's container name → those of the root file for the same ports.
   expect(
