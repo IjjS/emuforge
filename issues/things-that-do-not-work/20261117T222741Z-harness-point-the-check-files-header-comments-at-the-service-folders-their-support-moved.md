@@ -15,7 +15,7 @@ Issue-Commit: ca5dd1ecf6a004a09c33ba21479cf962ec114aa1
 
 Issue 402 moved the support files of S3, Lambda and IAM from `tests/integration/studio/support/` to
 `tests/integration/studio/services/<service>/` under their names. In the check files only import lines could change
-(decisions of issue 402, 2 and 7), so the header comments of 33 check files still name the old places
+(decisions of issue 402, 2 and 7), so the header comments of 28 check files still name the old places
 (`support/s3.ts`, `support/iam.ts`, `support/lambda-list.ts`, …), and so does the head comment of
 `support/screen-rules.ts` (`checkPrefix` of `support/s3.ts`; it is now in `support/service-screens.ts`). A reader
 who follows such a comment finds no file there.
