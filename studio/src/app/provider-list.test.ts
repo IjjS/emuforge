@@ -3,6 +3,7 @@ import path from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
 
+import { serviceLinks } from '../test/service-files';
 import { PROVIDERS } from './provider-list';
 
 // The area module, watched: the factory runs when, and only when, something imports the area.
@@ -12,28 +13,9 @@ vi.mock('../providers/aws/area', () => {
   return { default: area.Component };
 });
 
-// providers/aws/services.ts, in label order, each under /aws.
-const SERVICES: [string, string][] = [
-  ['Amazon API Gateway', '/aws/apigateway'],
-  ['Amazon CloudWatch', '/aws/cloudwatch'],
-  ['Amazon CloudWatch Logs', '/aws/logs'],
-  ['Amazon DynamoDB', '/aws/dynamodb'],
-  ['Amazon Elastic Compute Cloud', '/aws/ec2'],
-  ['Amazon Elastic Container Registry', '/aws/ecr'],
-  ['Amazon EventBridge', '/aws/events'],
-  ['Amazon Kinesis', '/aws/kinesis'],
-  ['Amazon Route 53', '/aws/route53'],
-  ['Amazon Simple Notification Service', '/aws/sns'],
-  ['Amazon Simple Queue Service', '/aws/sqs'],
-  ['Amazon Simple Storage Service', '/aws/s3'],
-  ['Amazon Simple Systems Manager (SSM)', '/aws/ssm'],
-  ['AWS CloudFormation', '/aws/cloudformation'],
-  ['AWS Identity and Access Management', '/aws/iam'],
-  ['AWS Key Management Service', '/aws/kms'],
-  ['AWS Lambda', '/aws/lambda'],
-  ['AWS Secrets Manager', '/aws/secretsmanager'],
-  ['AWS Step Functions', '/aws/states'],
-];
+// The services as their folders give them (providers/aws/area/services/*/service.json), in the order of issue 386's
+// requirement R13.2, each under /aws.
+const SERVICES = serviceLinks();
 
 const SRC = path.resolve(import.meta.dirname, '..');
 const AREA = path.join(SRC, 'providers/aws/area');
@@ -92,7 +74,7 @@ describe('the providers list', () => {
     ]);
   });
 
-  it("gives the AWS entry's 19 services in label order, each at /aws/<route>", () => {
+  it("gives the AWS entry's services in label order, each at /aws/<route>", () => {
     const aws = PROVIDERS[0];
     expect(aws?.services.map(({ label, path }) => [label, path])).toEqual(SERVICES);
   });

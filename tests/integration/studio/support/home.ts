@@ -3,6 +3,9 @@
 // and "Emulator" rows (the row's status text and all its text) and the notices under the rows, each named by its
 // heading. Used by the Home checks of issues 3 and 16 (`home.spec.ts`, `safety.spec.ts`).
 
+import fs from 'node:fs';
+import path from 'node:path';
+
 import type { Page } from '@playwright/test';
 
 /** The status texts a row shows (requirement R9.1). */
@@ -112,28 +115,27 @@ export async function stillSamePage(page: Page): Promise<boolean> {
   return page.evaluate(() => (window as unknown as { __emuforgeItMark?: boolean }).__emuforgeItMark === true);
 }
 
-/** The 19 service labels (requirement R5.2, R9.2), in label order, as the AWS area and Home's "Providers" list them. */
-export const SERVICE_LABELS = [
-  'Amazon API Gateway',
-  'Amazon CloudWatch',
-  'Amazon CloudWatch Logs',
-  'Amazon DynamoDB',
-  'Amazon Elastic Compute Cloud',
-  'Amazon Elastic Container Registry',
-  'Amazon EventBridge',
-  'Amazon Kinesis',
-  'Amazon Route 53',
-  'Amazon Simple Notification Service',
-  'Amazon Simple Queue Service',
-  'Amazon Simple Storage Service',
-  'Amazon Simple Systems Manager (SSM)',
-  'AWS CloudFormation',
-  'AWS Identity and Access Management',
-  'AWS Key Management Service',
-  'AWS Lambda',
-  'AWS Secrets Manager',
-  'AWS Step Functions',
-];
+/** `studio/src/providers/aws/area/services/` of the checkout under test, beside this file. */
+const SERVICES_DIR = path.resolve(__dirname, '../../../../studio/src/providers/aws/area/services');
+
+/** The order of the services list (issue 386, requirement R13.2): by label, English, ignoring case. */
+const compareLabels = new Intl.Collator('en', { sensitivity: 'base' }).compare;
+
+/**
+ * The service labels (requirement R5.2, R9.2), in label order, as the AWS area and Home's "Providers" list them: the
+ * `label` of each folder's `service.json` under `SERVICES_DIR`, read at run time when this file loads, sorted by
+ * `compareLabels` (issue 386, R13.5). A folder without a `service.json` gives no label.
+ */
+export const SERVICE_LABELS: string[] = fs
+  .readdirSync(SERVICES_DIR, { withFileTypes: true })
+  .filter((entry) => entry.isDirectory() && fs.existsSync(path.join(SERVICES_DIR, entry.name, 'service.json')))
+  .map((entry) => {
+    const file = JSON.parse(fs.readFileSync(path.join(SERVICES_DIR, entry.name, 'service.json'), 'utf8')) as {
+      label?: unknown;
+    };
+    return typeof file.label === 'string' ? file.label : '';
+  })
+  .sort(compareLabels);
 
 /** The lines of the start command for `port` (requirement 3.3), trimmed. */
 export function startCommandLines(port: number): string[] {
