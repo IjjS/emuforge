@@ -1,9 +1,9 @@
 /* The cell of "Description" in the function list (issue 467, requirement R6; issue 84, R11). Its text is free text and
    breaks the area's way; this rule only keeps the text's longest word out of the column's width, so a description of
-   256 characters without a space does not widen its column past the viewport. The column keeps room for a word of 8
+   256 characters without a space does not widen its column past the viewport. The column keeps room for a word of 10
    characters, so a shorter word is never broken. The area's own element, not a Cloudscape component's; it sets no
    colour, spacing or font. */
 .aws-lambda-description-cell {
   contain: inline-size;
-  min-inline-size: 8ch;
+  min-inline-size: 10ch;
 }
