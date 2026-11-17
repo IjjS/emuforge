@@ -17,7 +17,7 @@ import { emulatorDir, EnvError, expect, readEmulatorFiles, startStack, test, typ
 import { crumbLink } from './support/aws-area';
 import { ACTION, addressOf, heading, SIDE_NAVIGATION } from './support/frame';
 import { markPage, stillSamePage } from './support/home';
-import { getRoleDirect, IamSeeded, roleIsGone, serviceTrust } from './support/iam';
+import { getRoleDirect, IamSeeded, roleIsGone, serviceTrust } from './services/iam/iam';
 import { Lines } from './support/lines';
 import { expectNoScreenPart } from './support/no-screen-part';
 import { Traffic } from './support/traffic';

@@ -21,7 +21,7 @@ import {
   getFunctionDirect,
   getRoleDirect,
   LambdaSeeded,
-} from './support/lambda';
+} from './services/lambda/lambda';
 import {
   ACTIONS,
   applyFilter,
@@ -40,9 +40,9 @@ import {
   openList,
   screen,
   tokenTexts,
-} from './support/lambda-list';
+} from './services/lambda/lambda-list';
 import { Lines } from './support/lines';
-import { checkPrefix } from './support/s3';
+import { checkPrefix } from './support/service-screens';
 
 /** Waits until one of the area's Flashbar items holds every one of `parts`. */
 async function expectFlash(page: Page, parts: string[], message: string): Promise<void> {

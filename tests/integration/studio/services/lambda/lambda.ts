@@ -22,9 +22,9 @@ import fs from 'node:fs';
 import https from 'node:https';
 import path from 'node:path';
 
-import { EnvError, expect, type Ctx } from './check';
-import { emulatorDir, readEmulatorFiles } from './emulator';
-import { waitFor } from './wait';
+import { EnvError, expect, type Ctx } from '../../support/check';
+import { emulatorDir, readEmulatorFiles } from '../../support/emulator';
+import { waitFor } from '../../support/wait';
 
 const REGION = 'us-east-1';
 
@@ -606,7 +606,7 @@ export function checkCode(runtime: string): {
       text: `export const handler = async () => ({ statusCode: 200, body: JSON.stringify(${JSON.stringify(CHECK_ANSWER)}) });\n`,
     };
   }
-  throw new Error(`support/lambda.ts has no check code for the runtime ${runtime}`);
+  throw new Error(`services/lambda/lambda.ts has no check code for the runtime ${runtime}`);
 }
 
 /** What a function a check makes directly has; everything but `role` has a default. */

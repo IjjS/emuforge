@@ -9,7 +9,7 @@
 // The `pm` runs it at `final`, from the repository root, against the emulator of the run that serves the build being
 // scored, before `pm-structure` opens the specs under `studio/references/console/iam/`:
 //
-//   NODE_PATH=studio/node_modules bun tests/integration/studio/support/iam-seed-structure.ts --port <emulator port>
+//   NODE_PATH=studio/node_modules bun tests/integration/studio/services/iam/iam-seed-structure.ts --port <emulator port>
 //
 // The role list is scored once against a fresh emulator before this runs (its empty run) and once after (its seeded
 // run); a role's page and "Create role" are scored seeded only. Requests go to `127.0.0.1:<port>` only, signed with
@@ -28,7 +28,7 @@ import {
   READ_ONLY_ACCESS,
   type Caller,
 } from './iam';
-import { redact } from './secrets';
+import { redact } from '../../support/secrets';
 
 /** The names and values of the seed (R12); `role-detail.yaml`'s route names `STRUCTURE_ROLE`. */
 const STRUCTURE_ROLE = 'structure-role';

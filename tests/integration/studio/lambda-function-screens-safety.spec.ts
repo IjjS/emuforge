@@ -13,7 +13,7 @@ import type { Page } from '@playwright/test';
 
 import { emulatorDir, EnvError, expect, readEmulatorFiles, startStack, test } from './support';
 import { ACTION, addressOf, heading } from './support/frame';
-import { getFunctionDirect, LambdaSeeded } from './support/lambda';
+import { getFunctionDirect, LambdaSeeded } from './services/lambda/lambda';
 import {
   applyFilter,
   CONFIRM_WORD,
@@ -27,10 +27,10 @@ import {
   openList,
   screen,
   shownRows,
-} from './support/lambda-list';
-import { createForm, DESCRIPTION, openFunction, OVERVIEW, pairFirstLine } from './support/lambda-page';
+} from './services/lambda/lambda-list';
+import { createForm, DESCRIPTION, openFunction, OVERVIEW, pairFirstLine } from './services/lambda/lambda-page';
 import { Lines } from './support/lines';
-import { checkPrefix } from './support/s3';
+import { checkPrefix } from './support/service-screens';
 import { Traffic } from './support/traffic';
 
 /** Every stored value of Studio's origin: `localStorage`, `sessionStorage`, IndexedDB rows, and cookies. */

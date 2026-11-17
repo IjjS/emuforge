@@ -18,7 +18,8 @@ import { connectedAt, engineNotAnswering, expectLine, LINE_CHANGE_BOUND_MS, notS
 import { ACTION, addressOf, heading } from './support/frame';
 import { markPage, stillSamePage } from './support/home';
 import { Lines } from './support/lines';
-import { BUCKETS_PATH, bucketNamesDirect, checkPrefix, H1, Seeded } from './support/s3';
+import { checkPrefix } from './support/service-screens';
+import { BUCKETS_PATH, bucketNamesDirect, H1, Seeded } from './services/s3/s3';
 import {
   bucketPath,
   createdItem,
@@ -30,7 +31,7 @@ import {
   REFRESH,
   SECTIONS,
   shownSectionTitles,
-} from './support/s3-bucket-page';
+} from './services/s3/s3-bucket-page';
 import {
   CONNECTION_STATUS,
   deletedCount,
@@ -50,7 +51,7 @@ import {
   openEmptyPage,
   pageControl,
   RETRY,
-} from './support/s3-bucket-actions';
+} from './services/s3/s3-bucket-actions';
 
 /** How long a screen may take to read again by itself once the connection is back: the line's bound, twice. */
 const BACK_BOUND_MS = 2 * LINE_CHANGE_BOUND_MS;

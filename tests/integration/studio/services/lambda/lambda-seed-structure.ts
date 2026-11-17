@@ -10,7 +10,7 @@
 // The `pm` runs it from the checkout's root against the emulator of a run, before `pm-structure` scores the specs
 // under `studio/references/console/lambda/`:
 //
-//   NODE_PATH=studio/node_modules bun tests/integration/studio/support/lambda-seed-structure.ts --port <emulator port>
+//   NODE_PATH=studio/node_modules bun tests/integration/studio/services/lambda/lambda-seed-structure.ts --port <emulator port>
 //
 // It talks only to `https://127.0.0.1:<port>`, signs with that emulator's own files under
 // `$HOME/.aws/emulator/<port>/`, verifies TLS against its `ca.pem` and prints no key: each line it prints is an
@@ -30,7 +30,7 @@ import {
   type Caller,
   type FunctionOptions,
 } from './lambda';
-import { redact } from './secrets';
+import { redact } from '../../support/secrets';
 
 const ROLE = 'structure-role';
 

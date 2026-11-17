@@ -25,7 +25,7 @@ import {
   READ_ONLY_ACCESS,
   roleIsGone,
   SERVICE_ROLE_PATH,
-} from './support/iam';
+} from './services/iam/iam';
 import { Lines } from './support/lines';
 
 // ---------------------------------------------------------------------------------------------------------------

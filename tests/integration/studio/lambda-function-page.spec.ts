@@ -16,8 +16,8 @@ import {
   getFunctionDirect,
   LambdaSeeded,
   updateDescriptionDirect,
-} from './support/lambda';
-import { functionPath, FUNCTIONS_PATH, listHeading, runtimeText } from './support/lambda-list';
+} from './services/lambda/lambda';
+import { functionPath, FUNCTIONS_PATH, listHeading, runtimeText } from './services/lambda/lambda-list';
 import {
   ARCHITECTURE,
   contentLink,
@@ -36,9 +36,9 @@ import {
   pairValue,
   RUNTIME,
   RUNTIME_SETTINGS,
-} from './support/lambda-page';
+} from './services/lambda/lambda-page';
 import { Lines } from './support/lines';
-import { checkPrefix, creationDateText, SEOUL } from './support/s3';
+import { checkPrefix, creationDateText, SEOUL } from './support/service-screens';
 
 // "Last modified" is written in the zone the check sets on its browser context (R4.2).
 test.use({ timezoneId: SEOUL.timeZone });

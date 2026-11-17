@@ -36,10 +36,10 @@ import {
   roleIsGone,
   roleNamesDirect,
   type DirectRole,
-} from './support/iam';
+} from './services/iam/iam';
 import { markPage, stillSamePage } from './support/home';
 import { Lines } from './support/lines';
-import { appeared, watchText } from './support/s3';
+import { appeared, watchText } from './support/service-screens';
 import { DISCARD, DISCARD_HEADING, discardDialog, KEEP_EDITING } from './support/screen-rules';
 
 // ---------------------------------------------------------------------------------------------------------------

@@ -33,7 +33,7 @@ import {
   serviceTrust,
   SERVICE_ROLE_PATH,
   shownRead,
-} from './support/iam';
+} from './services/iam/iam';
 import { Lines } from './support/lines';
 
 // ---------------------------------------------------------------------------------------------------------------

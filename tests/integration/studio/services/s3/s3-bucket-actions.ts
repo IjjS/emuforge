@@ -3,8 +3,8 @@
 // and of all four screens; requirement R5.5, R7, R8, R9.4, R9.5, R11, R12). Imported directly by
 // `s3-delete-bucket.spec.ts`, `s3-empty-bucket.spec.ts`, `s3-bucket-screens.spec.ts`,
 // `s3-bucket-screens-states.spec.ts` and `s3-bucket-screens-keyboard.spec.ts`; the words of a bucket's page and of
-// the create form, `EngineHold` and the flash are `support/s3-bucket-page.ts`'s, the direct calls and `Seeded`
-// `support/s3.ts`'s.
+// the create form, `EngineHold` and the flash are `services/s3/s3-bucket-page.ts`'s, the direct calls and `Seeded`
+// `services/s3/s3.ts`'s.
 //
 // - The words: English, word for word from the requirement (R5.5, R7, R8, R9.4, R9.5, R11.1, R11.4).
 // - Text "shown by the page" is text outside the emulator line, the side navigation and the area's flash, so the
@@ -21,9 +21,9 @@
 import createWrapper from '@cloudscape-design/components/test-utils/selectors';
 import type { BrowserContext, Locator, Page } from '@playwright/test';
 
-import { endpointPattern, emulatorLine, LINE_LABEL } from './aws-area';
-import { expect, type Ctx } from './check';
-import { ACTION, heading, SIDE_NAVIGATION } from './frame';
+import { endpointPattern, emulatorLine, LINE_LABEL } from '../../support/aws-area';
+import { expect, type Ctx } from '../../support/check';
+import { ACTION, heading, SIDE_NAVIGATION } from '../../support/frame';
 import { operationOf } from './s3-bucket-page';
 
 /** The area's `Flashbar` (rooted at the page: the selector starts with `body `). */

@@ -19,10 +19,9 @@ import { connectedAt, engineNotAnswering, expectLine, LINE_CHANGE_BOUND_MS, notS
 import { ACTION, addressOf, expectHome } from './support/frame';
 import { markPage, stillSamePage } from './support/home';
 import { Lines } from './support/lines';
+import { appeared, checkPrefix, watchText } from './support/service-screens';
 import {
-  appeared,
   bucketNamesDirect,
-  checkPrefix,
   counter,
   CREATE,
   expectNames,
@@ -42,8 +41,7 @@ import {
   pageSizeOption,
   TABLE_TITLE,
   titleText,
-  watchText,
-} from './support/s3';
+} from './services/s3/s3';
 
 /** The emulator line's "Connection status" link, here the one inside the table. */
 const CONNECTION_STATUS = 'Connection status';

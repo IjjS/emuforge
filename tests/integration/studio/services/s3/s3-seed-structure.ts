@@ -2,7 +2,7 @@
 // bucket" (issue 256, requirement R13): what the four specs under `studio/references/console/s3/` name by their routes.
 // Not a check: the `pm` runs it against the emulator of a run, from the repository root, before `pm-structure`:
 //
-//   NODE_PATH=studio/node_modules bun tests/integration/studio/support/s3-seed-structure.ts <emulator port> [--empty]
+//   NODE_PATH=studio/node_modules bun tests/integration/studio/services/s3/s3-seed-structure.ts <emulator port> [--empty]
 //
 // - Seeded (default): `structure-bucket`, made with Object Lock (so versioning `Enabled`), two tags, ABAC `Enabled`,
 //   default encryption `aws:kms` with the ARN of a KMS key the seed makes and the bucket key on, one

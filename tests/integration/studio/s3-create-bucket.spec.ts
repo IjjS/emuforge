@@ -21,12 +21,11 @@ import { expect, startStack, test } from './support';
 import { crumbLink } from './support/aws-area';
 import { ACTION, addressOf, heading } from './support/frame';
 import { Lines } from './support/lines';
+import { appeared, checkPrefix, watchText } from './support/service-screens';
 import {
-  appeared,
   BUCKETS_PATH,
   bucketNamesDirect,
   bucketPropertiesDirect,
-  checkPrefix,
   CREATE,
   expectNames,
   filterFor,
@@ -36,8 +35,7 @@ import {
   openList,
   screen,
   Seeded,
-  watchText,
-} from './support/s3';
+} from './services/s3/s3';
 import {
   CREATE_H1,
   CREATE_PATH,
@@ -54,7 +52,7 @@ import {
   MESSAGES,
   openForm,
   SSE_KMS,
-} from './support/s3-bucket-page';
+} from './services/s3/s3-bucket-page';
 import { DISCARD, DISCARD_HEADING, discardDialog, KEEP_EDITING } from './support/screen-rules';
 
 /** Waits for the bucket list after the form. */

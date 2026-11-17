@@ -25,22 +25,21 @@ import { focusedAx, focusRing } from './support/focus';
 import { ACTION, addressOf, heading, NAVIGATION_TOGGLE, SIDE_NAVIGATION } from './support/frame';
 import { Lines } from './support/lines';
 import { copyControl, directlyBeforeProblems, pairValueOf } from './support/screen-rules';
+import { checkPrefix, scrollsSideways } from './support/service-screens';
 import {
   ABOUT,
   BUCKETS_PATH,
   bucketNamesDirect,
   bucketPropertiesDirect,
-  checkPrefix,
   H1,
   LONGEST_NAME,
   NAV_DIRECTORY,
   NAV_GENERAL,
   NAV_HEADER,
   NOTICE_CLOSE,
-  scrollsSideways,
   Seeded,
   listBucketsDirect,
-} from './support/s3';
+} from './services/s3/s3';
 import {
   BLOCK_SETTINGS,
   bucketPath,
@@ -61,7 +60,7 @@ import {
   SECTIONS,
   shownSectionTitles,
   TABS,
-} from './support/s3-bucket-page';
+} from './services/s3/s3-bucket-page';
 import {
   CANCEL,
   DELETE_BUTTON,
@@ -84,7 +83,7 @@ import {
   openEmptyPage,
   startEmptying,
   STATUS_H1,
-} from './support/s3-bucket-actions';
+} from './services/s3/s3-bucket-actions';
 
 // ---------------------------------------------------------------------------------------------------------------
 // The Tab walk.

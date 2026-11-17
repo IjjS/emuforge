@@ -27,7 +27,7 @@ import {
   functionNamesDirect,
   LambdaSeeded,
   listFunctionsDirect,
-} from './support/lambda';
+} from './services/lambda/lambda';
 import {
   applyFilter,
   CLEAR_FILTER,
@@ -54,10 +54,10 @@ import {
   shownRows,
   TAB_ROUTES,
   tokenTexts,
-} from './support/lambda-list';
+} from './services/lambda/lambda-list';
 import { Lines } from './support/lines';
 import { expectNoScreenPart } from './support/no-screen-part';
-import { checkPrefix, SEOUL } from './support/s3';
+import { checkPrefix, SEOUL } from './support/service-screens';
 import { NOTICE_BODY, noticeBody, pageHeader, timesOnPage } from './support/screen-rules';
 
 const AWS = 'Amazon Web Services';

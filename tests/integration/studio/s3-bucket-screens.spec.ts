@@ -15,7 +15,8 @@ import { emulatorDir, EnvError, expect, readEmulatorFiles, startStack, test } fr
 import { areaImages } from './support/aws-area';
 import { ACTION, addressOf, heading } from './support/frame';
 import { Lines } from './support/lines';
-import { BUCKETS_PATH, bucketNamesDirect, checkPrefix, H1, listBucketsDirect, Seeded } from './support/s3';
+import { checkPrefix } from './support/service-screens';
+import { BUCKETS_PATH, bucketNamesDirect, H1, listBucketsDirect, Seeded } from './services/s3/s3';
 import {
   bucketPath,
   createdItem,
@@ -28,7 +29,7 @@ import {
   SECTIONS,
   shownSectionTitles,
   WEBSITE,
-} from './support/s3-bucket-page';
+} from './services/s3/s3-bucket-page';
 import {
   deletedItem,
   deletePage,
@@ -44,7 +45,7 @@ import {
   openEmptyPage,
   pageControl,
   startEmptying,
-} from './support/s3-bucket-actions';
+} from './services/s3/s3-bucket-actions';
 import { Traffic } from './support/traffic';
 
 /** Waits for the bucket list. */

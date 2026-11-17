@@ -1,6 +1,6 @@
 // The Lambda function list ("Event Functions") and its delete dialog as a user meets them (test-criteria.md, issue
 // 84, Flow checks; requirement R4, R6.1, R7 to R10). Used by the `lambda-function-list*.spec.ts` and
-// `lambda-function-delete.spec.ts` checks. The emulator side (direct calls, `LambdaSeeded`) is `support/lambda.ts`.
+// `lambda-function-delete.spec.ts` checks. The emulator side (direct calls, `LambdaSeeded`) is `services/lambda/lambda.ts`.
 //
 // - The screen: its words (R4, R6.1, R7, R8, R9, R10; the console's words of `function-list.yaml` and Studio's own),
 //   and readers of what it shows: the table's rows by its column headings, the counter after the `h1`, the property
@@ -11,7 +11,7 @@
 // - `ListFunctionsRecord`: the page's `ListFunctions` requests to the engine (`GET /2015-03-31/functions/` on the
 //   engine's origin), from Playwright's request events; it only listens.
 // - `ListFunctionsHold`: holds the page's `ListFunctions` requests to the engine in the browser until the check lets
-//   them go, with a Chrome DevTools Protocol `Fetch` session on the page, as `ListBucketsHold` of `support/s3.ts`
+//   them go, with a Chrome DevTools Protocol `Fetch` session on the page, as `ListBucketsHold` of `services/s3/s3.ts`
 //   does. It answers nothing: every request it pauses is continued unchanged, a held one when it is let go, every
 //   other at once (CORS preflights included, so the engine answers them itself).
 //
@@ -21,10 +21,11 @@
 import createWrapper from '@cloudscape-design/components/test-utils/selectors';
 import type { BrowserContext, CDPSession, Locator, Page } from '@playwright/test';
 
-import { expect, type Ctx } from './check';
-import { ACTION } from './frame';
+import { expect, type Ctx } from '../../support/check';
+import { ACTION } from '../../support/frame';
+import { creationDateText } from '../../support/service-screens';
+
 import type { FunctionConfiguration } from './lambda';
-import { creationDateText } from './s3';
 
 // ---------------------------------------------------------------------------------------------------------------
 // The screen's words.
@@ -144,7 +145,7 @@ const RUNTIME_NAMES: Record<string, string> = {
 export function runtimeText(runtime: string | undefined): string {
   if (runtime === undefined || runtime === '') return '-';
   const name = RUNTIME_NAMES[runtime];
-  if (name === undefined) throw new Error(`no runtime name for ${runtime} in support/lambda-list.ts`);
+  if (name === undefined) throw new Error(`no runtime name for ${runtime} in services/lambda/lambda-list.ts`);
   return name;
 }
 

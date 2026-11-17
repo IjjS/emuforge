@@ -21,9 +21,9 @@ import { areaImages, documentIcons, emulatorLine, expectLine, connectedAt, notSt
 import { focusedAx, focusRing } from './support/focus';
 import { ACTION, addressOf, NAVIGATION_TOGGLE, SIDE_NAVIGATION } from './support/frame';
 import { Lines } from './support/lines';
+import { checkPrefix, scrollsSideways } from './support/service-screens';
 import {
   ABOUT,
-  checkPrefix,
   COPY_ARN,
   CREATE,
   DELETE,
@@ -46,12 +46,11 @@ import {
   PREFERENCES,
   REFRESH,
   screen,
-  scrollsSideways,
   Seeded,
   TAB_DIRECTORY,
   TAB_GENERAL,
   TABLE,
-} from './support/s3';
+} from './services/s3/s3';
 
 /** A Tab stop as the browser reports it. */
 interface Stop {
