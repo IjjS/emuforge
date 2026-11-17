@@ -4,6 +4,7 @@ import { BucketListHelp, BucketListPage } from './pages/bucket-list-page';
 import { BucketPage } from './pages/bucket-page';
 import { CreateBucketPage } from './pages/create-bucket-page';
 import { DeleteBucketPage } from './pages/delete-bucket-page';
+import { EmptyBucketPage } from './pages/empty-bucket-page';
 
 /** S3's own side navigation, "General purpose buckets" current on every screen of a general purpose bucket. */
 const NAVIGATION: ScreenNavigation = {
@@ -51,6 +52,15 @@ export const SCREENS: readonly ServiceScreen[] = [
     crumbs: [BUCKETS_CRUMB, { text: 'Create bucket' }],
     navigation: NAVIGATION,
     Page: CreateBucketPage,
+  },
+  // S3, "Empty bucket" (issue 256, R0, R4, R8): below the bucket's crumb, which leads to its page, without help. Its
+  // status ("Empty bucket: Status") is a state of the page at the same address, not a screen.
+  {
+    paths: [`${S3_PATH}/bucket/{name}/empty`],
+    title: 'Empty bucket',
+    crumbs: ({ name }) => [BUCKETS_CRUMB, { text: name ?? '', href: bucketPath(name ?? '') }, { text: 'Empty bucket' }],
+    navigation: NAVIGATION,
+    Page: EmptyBucketPage,
   },
   // S4, "Delete bucket" (issue 256, R0, R4, R7): below the bucket's crumb, which leads to its page, without help.
   {
