@@ -398,3 +398,132 @@ export async function fieldTexts(page: Page, label: string): Promise<FieldTexts>
     [FORM_FIELD, FORM_FIELD_LABEL, FORM_FIELD_CONSTRAINT, FORM_FIELD_ERROR, label],
   );
 }
+
+/**
+ * The constraint text and the message of the field whose label is exactly `label` inside `scope`'s first element: a
+ * dialog, which the area renders outside the page's main. The same reading as `fieldTexts`.
+ */
+export async function fieldTextsIn(scope: Locator, label: string): Promise<FieldTexts> {
+  if ((await scope.count()) === 0) return { fields: 0, constraint: null, error: null };
+  return scope.first().evaluate(
+    (root, [field, labelSel, constraintSel, errorSel, wanted]) => {
+      const norm = (s: string) => s.replace(/\s+/g, ' ').trim();
+      const own = (holder: Element, sel: string) =>
+        [...holder.querySelectorAll(sel)].find((el) => el.closest(field) === holder) ?? null;
+      const holders = [...root.querySelectorAll(field)].filter((f) => {
+        const l = own(f, labelSel);
+        return l !== null && norm((l as HTMLElement).innerText) === wanted;
+      });
+      const first = holders[0];
+      const text = (el: Element | null) => {
+        const t = el ? norm((el as HTMLElement).innerText) : '';
+        return t === '' ? null : t;
+      };
+      return {
+        fields: holders.length,
+        constraint: first ? text(own(first, constraintSel)) : null,
+        error: first ? text(own(first, errorSel)) : null,
+      };
+    },
+    [FORM_FIELD, FORM_FIELD_LABEL, FORM_FIELD_CONSTRAINT, FORM_FIELD_ERROR, label] as const,
+    ACTION,
+  );
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Key-value pairs and table cells.
+// ---------------------------------------------------------------------------------------------------------------
+
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** The value of the key-value pair labelled `label` in the page's main: the `dd` after the `dt` that is the label. */
+export function pairValueOf(page: Page, label: string): Locator {
+  return page
+    .getByRole('main')
+    .locator('dt')
+    .filter({ hasText: new RegExp(`^\\s*${escapeRegExp(label)}\\s*$`) })
+    .first()
+    .locator('xpath=following-sibling::dd[1]');
+}
+
+/**
+ * The cell under the column headed `column` of the body row of `table` that holds the link `row`. A row's cells are
+ * counted as the heading counts them, `th` and `td` together, since a name cell may be the row header. Fails the
+ * check, naming the headings read, when the table has no such column.
+ */
+export async function cellUnder(table: Locator, row: string, column: string): Promise<Locator> {
+  const headings = (await table.locator('thead tr').first().locator('th').allInnerTexts()).map((t) =>
+    t.replace(/\s+/g, ' ').trim(),
+  );
+  if (!headings.includes(column)) {
+    throw new Error(`the table has no column "${column}"; its headings: ${JSON.stringify(headings)}`);
+  }
+  return table
+    .locator('tbody tr')
+    .filter({ has: table.page().getByRole('link', { name: row, exact: true }) })
+    .locator('td, th')
+    .nth(headings.indexOf(column));
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// A copy control's place.
+// ---------------------------------------------------------------------------------------------------------------
+
+/**
+ * Problems with the place of the control `control` against the first visible occurrence of `value` in `scope` (the
+ * value's element): the control must come before the value in document order, inside the same scope, with no visible
+ * text between its end and the value's first character. Empty when the control is directly before the value.
+ */
+export async function directlyBeforeProblems(control: Locator, scope: Locator, value: string): Promise<string[]> {
+  if ((await control.count()) === 0) return ['the control is not shown'];
+  if ((await scope.count()) === 0) return ['the value is not shown'];
+  const handle = await control.first().elementHandle(ACTION);
+  return scope.first().evaluate(
+    (root, [button, wanted]) => {
+      const el = button as Element | null;
+      if (!el) return ['the control is not shown'];
+      if (!root.contains(el)) return ['the control is not inside the element that holds the value'];
+      const visible = (node: Element): boolean => {
+        for (let a: Element | null = node; a && a !== root.parentElement; a = a.parentElement) {
+          const cs = getComputedStyle(a);
+          if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') return false;
+          if (cs.clip !== 'auto' && cs.clip !== '' && /absolute|fixed/.test(cs.position)) return false;
+          if (/inset\(\s*50%/.test(cs.clipPath)) return false;
+        }
+        return true;
+      };
+      // Visible text of the scope in document order, and the offset at which the control ends.
+      let flat = '';
+      let controlEnd = -1;
+      let controlStart = -1;
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        const parent = n.parentElement;
+        if (!parent || parent.closest('script, style, template, noscript') || !visible(parent)) continue;
+        if (el.contains(n)) {
+          if (controlStart < 0) controlStart = flat.length;
+          flat += (n as Text).data;
+          controlEnd = flat.length;
+          continue;
+        }
+        if (controlStart < 0 && el.compareDocumentPosition(n) & Node.DOCUMENT_POSITION_FOLLOWING) {
+          controlStart = flat.length;
+          controlEnd = flat.length;
+        }
+        flat += (n as Text).data;
+      }
+      if (controlStart < 0) {
+        controlStart = flat.length;
+        controlEnd = flat.length;
+      }
+      const at = flat.indexOf(wanted, controlEnd);
+      const before = flat.indexOf(wanted);
+      if (before >= 0 && before < controlStart) return ['the value comes before the control'];
+      if (at < 0) return ['the value does not follow the control'];
+      const between = flat.slice(controlEnd, at);
+      return between.trim() === '' ? [] : [`text between the control and the value: ${JSON.stringify(between)}`];
+    },
+    [handle, value] as const,
+    ACTION,
+  );
+}
