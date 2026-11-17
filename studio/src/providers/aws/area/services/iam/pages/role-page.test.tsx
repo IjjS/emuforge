@@ -827,7 +827,9 @@ describe('not found and loading', () => {
       expect(within(main()).getByText('Role not found')).toBeInTheDocument();
     });
     expect(h1()).toHaveTextContent('gone-role');
-    const sentence = within(main()).getByText(/^The emulator holds no role named/).closest('p');
+    const sentence = within(main())
+      .getByText(/^The emulator holds no role named/)
+      .closest('p');
     expect(sentence).toHaveTextContent(
       'The emulator holds no role named “gone-role”. It may have been deleted, or the emulator restarted.',
     );

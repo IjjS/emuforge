@@ -1207,7 +1207,9 @@ describe('a created role handed over by the wizard', () => {
     expect(h1Text()).toMatch(/^Roles/);
     const [success, failure] = flashbar.findItems();
     expect(success?.getElement()).toHaveTextContent('Role “made-here” was created in the local emulator.');
-    expect(kindOf(success?.getElement() as HTMLElement, 'made-here'), 'the name as a name (issue 467, R6)').toBe('name');
+    expect(kindOf(success?.getElement() as HTMLElement, 'made-here'), 'the name as a name (issue 467, R6)').toBe(
+      'name',
+    );
     expect(kindOf(success?.getElement() as HTMLElement, '” was created in the local emulator.')).toBe('text');
     expect(success?.findContent()?.getElement().closest('[data-itemid]')).not.toBeNull();
     expect(failure?.getElement()).toHaveTextContent('Attaching ReadOnlyAccess to made-here failed');
