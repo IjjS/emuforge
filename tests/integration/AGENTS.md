@@ -50,6 +50,16 @@ The emulator has no reset and keeps everything in memory, so isolation is the ch
 - The emulator version is pinned for a run and recorded in the report. Releases arrive many times a day; a
   result without the version cannot be compared with another.
 
+## On request
+
+A check labelled `on-request` in the manifest is not part of a default run: `run` leaves it out and reports it
+`not-run` with the reason `on request: not part of a default run; run it with --on-request`. `run --on-request` and
+`pm-check --on-request` run it with the others, and `pm-check --checks <id>` runs it alone. The label is given and
+removed only by the `pm`, with the owner's word and the reason in the issue's `decisions.md`; a plan or a worker
+never labels a check to shorten a run. A check an open issue lists in `Issue-Check-Ids` is not on request: the
+issue that comes to list one takes the label off through its `t` unit, and runs it with `pm-check --checks` until
+then.
+
 ## Safety
 
 - The only endpoints are the engine and the emulator on a loopback IP address. A check that would reach any
@@ -67,7 +77,7 @@ One JSON object per line in `manifest.jsonl`:
 | `path` | file that holds the check |
 | `module` | `engine`, `cli`, `iam`, `verify`, `studio` |
 | `operations` | AWS operations it calls, as `<service>:<Operation>` |
-| `labels` | any of `transparency`, `own-emulator`, `safety`, `regression`, `lifecycle` |
+| `labels` | any of `transparency`, `own-emulator`, `safety`, `regression`, `lifecycle`, `on-request` |
 | `issue` | the `Issue-Id` it was written for |
 | `emulator_gap` | set when the reference behavior depends on an operation the emulator answers with 501; the check then asserts the 501 path |
 
@@ -78,7 +88,7 @@ One JSON object per line in `manifest.jsonl`:
 | `passed` | every assertion held |
 | `failed` | an assertion did not hold, or the check timed out |
 | `error` | anything else: the emulator would not start, a tool is missing |
-| `not-run` | listed in the file given to `run --not-run` (`.github/not-run.json`) and not executed; never counted as `passed` or `failed`. The list is changed only on the `pm`'s decision, with the reason in the issue's `decisions.md` |
+| `not-run` | not executed: listed in the file given to `run --not-run` (`.github/not-run.json`), or labelled `on-request` in a run without `--on-request`; never counted as `passed` or `failed`. The list and the label are changed only on the `pm`'s decision, with the reason in the issue's `decisions.md` |
 
 `error` is never counted as `failed` or `passed`; it is reported and the run is not used as evidence. A `not-run`
 check says nothing about the behavior it covers.

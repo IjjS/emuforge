@@ -18,6 +18,14 @@ called-for module with the rule's sentence, the number of paths and one of them.
          `; integration left to feat/<id>` and the module is `deferred` in the object, not called
   full   the changes cannot be read (not the top of a git work tree, no branch main or no issue branch, no commit
          shared with the target, git failed or took over 30 s): every module, with what failed, nothing deferred
+When harness is called for (kinds diff, unit and full) and the checkout holds at least one on-touch test file
+(_pmscope.ON_TOUCH), the module lines are followed by `  harness tests left out: <names or "none">`, the on-touch
+files that no changed path is a source of, and one line per called-for on-touch file with its entry's sentence,
+the number of its changed sources and one of them; or by `  harness tests every file: <why>` (--full, changes
+that cannot be read, a change of _pmscope.py or .pm/bin/tests/run, a path no rule knows). A checkout that holds no
+on-touch file prints no such line. The object holds the same under `harness_tests`: {all, why, left_out: [names],
+called: {name: [why]}, on_touch}, where on_touch is the number of on-touch files the checkout holds; the key is
+absent when harness is not called for.
 --json prints the same as the object pm-check records under `scope`, with `target` (main or feat/<id>). pm-check
 and pm-merge decide with the same code. Exit 0 for every answer; 2 for a command line it cannot parse or a
 checkout that is not a directory.

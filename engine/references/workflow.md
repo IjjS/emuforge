@@ -59,5 +59,6 @@ In the issue's worktree, on its branch, only the files the unit owns. Convention
 - Every integration check listed in stage 3 passes against a fresh emulator, and no check that passed on
   `main` now fails.
 - The relay fidelity score is not lower than on `main` (`references/relay-fidelity.md`).
-- Evidence paths for all of the above are in the unit's report. Then `rev` reviews the implementation, and the
-  `pm` merges.
+- Evidence paths for all of the above are in the unit's report; when the issue has an issue branch, the
+  evidence of the integration checks is the issue's check record, the whole check on the issue branch. Then
+  `rev` reviews the implementation, and the `pm` merges.
