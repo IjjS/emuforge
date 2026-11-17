@@ -1,0 +1,3 @@
+# Text is LF in every checkout, whatever the platform's git settings: files copied into an image or read inside a
+# container (shell scripts, haproxy.cfg, Dockerfiles) do not work with CRLF.
+* text=auto eol=lf
