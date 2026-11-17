@@ -18,9 +18,13 @@ You are prompted once per point with `SCORE <point> <paths or routes>`; points a
    against its reference spec under `{{root}}/studio/references/console/`:
    `{{root}}/.pm/bin/pm-structure {{capture_wt}} <spec> --serve <built app dir> --record {{issue}} <point>`
    with the emulator seeded (state `seeded`, the default), and when the spec needs both states (the run prints
-   `requires also: state=empty`) once more with the emulator empty and `--state empty`. The point's structure
-   passes only when every run it requires passes (`{{root}}/.pm/bin/pm-structure --table {{issue}}`). Exit 2 is
-   an error, not a score: report its message; never edit the spec to get past it.
+   `requires also: state=empty`) once more with the emulator empty and `--state empty`. When the spec's route
+   holds a parameter (`{id}`), add `--param <name>=<value>` for each, with the id the emulator answered when you
+   created that resource in that run's emulator. The `empty` run of such a spec is against an emulator that holds
+   the resource behind each parameter and nothing under it (`console-reference.md`, "Structure score"). The
+   point's structure passes only when every run it requires passes
+   (`{{root}}/.pm/bin/pm-structure --table {{issue}}`). Exit 2 is an error, not a score: report its message; never
+   edit the spec to get past it.
 3. Run the impeccable critique on the contact sheet with its two sub-agents; the snapshot lands under the
    worktree's `studio/.impeccable/critique/`.
 4. `{{root}}/.pm/bin/pm-critique record {{issue}} <point> <snapshot>`; at `final` also
