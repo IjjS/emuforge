@@ -121,6 +121,9 @@ export function CreateRolePage({ connection }: ScreenPageProps) {
   const [failure, setFailure] = useState<FlashItem>();
   const create = useCreateRole(engineOrigin);
   const pending = create.isPending;
+  // Set at the press, before `isPending` re-renders (TanStack notifies on a later task): a second press in between
+  // sends no second `CreateRole`. Cleared when the create fails; a created role leaves the page.
+  const submitting = useRef(false);
 
   const callerQuery = useCallerAccount({ endpoint: engineOrigin, enabled: values.entity.type === 'aws-account' });
   const caller: CallerAccount = {
@@ -203,7 +206,7 @@ export function CreateRolePage({ connection }: ScreenPageProps) {
   };
 
   const handleSubmit = () => {
-    if (pending) {
+    if (pending || submitting.current) {
       return;
     }
     const broken = STEPS.find(brokenStep);
@@ -217,6 +220,7 @@ export function CreateRolePage({ connection }: ScreenPageProps) {
     }
     setChecked(new Set(STEPS));
     setFailure(undefined);
+    submitting.current = true;
     create.mutate(
       {
         name: values.name,
@@ -230,6 +234,7 @@ export function CreateRolePage({ connection }: ScreenPageProps) {
           flash.handOver(ROLES_PATH, createdRoleResult(created, engineOrigin));
         },
         onError: (error) => {
+          submitting.current = false;
           setFailure(actionFailureItem(failureOf(error), 'Creating the role', engineOrigin));
         },
       },

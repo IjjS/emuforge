@@ -1084,6 +1084,8 @@ describe('"Create role"', () => {
     const submit = wizard().findPrimaryButton().getElement();
     submit.focus();
     fireEvent.click(submit);
+    // A double press sends one CreateRole.
+    fireEvent.click(submit);
 
     await waitFor(() => {
       expect(engine.of('CreateRole')).toHaveLength(1);
