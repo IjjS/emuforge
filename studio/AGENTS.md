@@ -127,9 +127,12 @@ studio/src/
 ## Talking to AWS
 
 - AWS SDK clients are created only in `src/lib/aws`, from one factory that sets the endpoint to the engine,
-  `disableHostPrefix: true`, and path-style addressing for S3. A component never constructs a client.
+  `disableHostPrefix: true`, and path-style addressing for S3. A component never constructs a client. A service
+  hands its SDK client class to the factory from its `api.ts`; the factory constructs it, and a setting of the
+  factory cannot be given.
 - The endpoint is the engine on `127.0.0.1`. Never `localhost` (the SDK then moves the bucket name into the
-  host name), and never an AWS host. The factory refuses any other endpoint.
+  host name), and never an AWS host. The factory refuses any other endpoint. The factory refuses, before it is
+  sent, any request whose address is not the engine's.
 - The browser holds no AWS key. The engine identifies the browser by its session and signs upstream itself.
 - A URL that arrives in a response (a queue URL, a presigned URL, an endpoint) is displayed, never fetched.
 - Each service has `api.ts` (SDK calls, mapped to plain typed results) and `queries.ts` (TanStack Query hooks),

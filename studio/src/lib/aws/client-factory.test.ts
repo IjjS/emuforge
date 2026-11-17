@@ -9,8 +9,21 @@ import {
   S3Client,
 } from '@aws-sdk/client-s3';
 import { ListStateMachinesCommand, SFNClient, StartSyncExecutionCommand } from '@aws-sdk/client-sfn';
+import { APIGatewayClient, GetRestApisCommand } from '@aws-sdk/client-api-gateway';
+import { DynamoDBClient, ListTablesCommand } from '@aws-sdk/client-dynamodb';
+import { ListTopicsCommand, SNSClient } from '@aws-sdk/client-sns';
+import { GetQueueAttributesCommand, SQSClient } from '@aws-sdk/client-sqs';
+import { FetchHttpHandler } from '@smithy/fetch-http-handler';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createS3Client, createSfnClient, EndpointRefusedError, engineEndpoint } from './client-factory';
+import {
+  createAwsClient,
+  createS3Client,
+  createSfnClient,
+  EndpointRefusedError,
+  engineEndpoint,
+  RequestRefusedError,
+  SettingRefusedError,
+} from './client-factory';
 
 // The request as it would leave the client, after every build, signing and finalize step.
 interface BuiltRequest {
@@ -649,4 +662,359 @@ describe('requests at the page fetch', () => {
     await expect(sent).rejects.toMatchObject({ name: 'AbortError' });
     expect(played.awsRequests[0]?.signal.aborted).toBe(true);
   });
+});
+
+// The factory's general function (issue 386, requirement R6.1 to R6.4, R6.7): clients of classes handed to it, each
+// sending at the page's `fetch` to an engine the test plays.
+
+const SESSION_PATH = '/__emuforge/session';
+const AMZ_JSON_1_0 = { 'content-type': 'application/x-amz-json-1.0' };
+const AWS_QUEUE_URL = 'https://sqs.us-east-1.amazonaws.com/000000000000/q';
+const QUEUE_ARN = 'arn:aws:sqs:us-east-1:000000000000:q';
+
+/** The engine played at the page's `fetch`: the n-th session request gets the n-th of `tokens` (the last again). */
+function playEngineTokens(tokens: string[], answer: AwsAnswer) {
+  const played = { sessionRequests: 0, awsRequests: [] as Request[], fetch: vi.fn() };
+  played.fetch.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+    const request = new Request(input, init);
+    if (new URL(request.url).pathname === SESSION_PATH) {
+      const token = tokens[Math.min(played.sessionRequests, tokens.length - 1)] ?? '';
+      played.sessionRequests += 1;
+      return Promise.resolve(
+        new Response(JSON.stringify({ token }), { status: 200, headers: { 'content-type': 'application/json' } }),
+      );
+    }
+    played.awsRequests.push(request);
+    return Promise.resolve(answer(request));
+  });
+  vi.stubGlobal('fetch', played.fetch);
+  return played;
+}
+
+// A plain success for each operation of the general clients, in the shape of its protocol.
+function answerGeneral(request: Request): Response {
+  const target = request.headers.get('x-amz-target') ?? '';
+  if (target === 'DynamoDB_20120810.ListTables') {
+    return new Response('{"TableNames":[]}', { status: 200, headers: AMZ_JSON_1_0 });
+  }
+  if (target === 'AmazonSQS.GetQueueAttributes') {
+    return new Response(JSON.stringify({ Attributes: { QueueArn: QUEUE_ARN } }), {
+      status: 200,
+      headers: AMZ_JSON_1_0,
+    });
+  }
+  if (target.startsWith('AWSStepFunctions.')) {
+    return new Response('{"stateMachines":[]}', { status: 200, headers: AMZ_JSON_1_0 });
+  }
+  if (new URL(request.url).pathname === '/restapis') {
+    return new Response('{"item":[]}', { status: 200, headers: { 'content-type': 'application/json' } });
+  }
+  if (request.method === 'POST') {
+    return new Response(
+      '<ListTopicsResponse><ListTopicsResult><Topics></Topics></ListTopicsResult></ListTopicsResponse>',
+      { status: 200, headers: XML },
+    );
+  }
+  return answerAsEmulator(request);
+}
+
+/** The URL `fetch` was called with. */
+function fetchedUrl(input: unknown): URL {
+  return new URL(input instanceof Request ? input.url : String(input));
+}
+
+function originOf(request: Request): string {
+  return new URL(request.url).origin;
+}
+
+/** The request as text: its URL, its headers and its body. */
+async function sentText(request: Request): Promise<string> {
+  return JSON.stringify({
+    url: request.url,
+    headers: [...request.headers.entries()],
+    body: await request.clone().text(),
+  });
+}
+
+describe('createAwsClient', () => {
+  const keyId = 'AKIAEMUFORGEGENERALTEST';
+  const envSecret = 'emuforge-general-test-secret-access-key';
+  const envSessionToken = 'emuforge-general-test-session-token';
+
+  it('sends SNS ListTopics, DynamoDB ListTables and API Gateway GetRestApis once each to the engine, with the session token, signed as emuforge-studio in us-east-1 and with no other key', async () => {
+    const token = 'b7e1d3f5a9c0b2d4e6f8a0c2e4b6d8f0a1c3e5b7d9f1a3c5e7b9d1f3a5c7e9b1';
+    const played = playEngineTokens([token], answerGeneral);
+    vi.stubEnv('AWS_ACCESS_KEY_ID', keyId);
+    vi.stubEnv('AWS_SECRET_ACCESS_KEY', envSecret);
+    vi.stubEnv('AWS_SESSION_TOKEN', envSessionToken);
+    for (const storage of [localStorage, sessionStorage]) {
+      storage.setItem('aws_access_key_id', keyId);
+      storage.setItem('aws_secret_access_key', envSecret);
+      storage.setItem('aws_session_token', envSessionToken);
+    }
+    const getItem = vi.spyOn(Storage.prototype, 'getItem');
+    const port = freshEndpoint();
+    const sns = createAwsClient(SNSClient, { endpoint: port });
+    const dynamodb = createAwsClient(DynamoDBClient, { endpoint: port });
+    const apigateway = createAwsClient(APIGatewayClient, { endpoint: port });
+    const sends: [string, () => Promise<unknown>][] = [
+      ['sns', () => sns.send(new ListTopicsCommand({}))],
+      ['dynamodb', () => dynamodb.send(new ListTablesCommand({}))],
+      ['apigateway', () => apigateway.send(new GetRestApisCommand({}))],
+    ];
+
+    for (const [service, send] of sends) {
+      const before = played.awsRequests.length;
+      await send();
+      const sent = played.awsRequests.slice(before);
+
+      expect(sent, service).toHaveLength(1);
+      const [request] = sent;
+      if (request === undefined) {
+        continue;
+      }
+      expect(originOf(request)).toBe(port);
+      expect(request.headers.get('x-emuforge-session')).toBe(token);
+      expect(request.headers.get('authorization')).toMatch(
+        new RegExp(`^AWS4-HMAC-SHA256 Credential=emuforge-studio/\\d{8}/us-east-1/${service}/aws4_request, `),
+      );
+      expect(request.headers.has('x-amz-security-token')).toBe(false);
+      const text = await sentText(request);
+      for (const value of [keyId, envSecret, envSessionToken]) {
+        expect(text).not.toContain(value);
+      }
+    }
+    expect(getItem).not.toHaveBeenCalled();
+  });
+
+  it('sends API Gateway GetRestApis as a GET with cache no-store, and SNS ListTopics as a POST with cache default', async () => {
+    const played = playEngine(SESSION_TOKEN, answerGeneral);
+    const apigateway = createAwsClient(APIGatewayClient, { endpoint });
+    const sns = createAwsClient(SNSClient, { endpoint });
+
+    await apigateway.send(new GetRestApisCommand({}));
+    await sns.send(new ListTopicsCommand({}));
+
+    const [get, post] = played.awsRequests;
+    expect(played.awsRequests).toHaveLength(2);
+    expect(get?.method).toBe('GET');
+    expect(get?.cache).toBe('no-store');
+    expect(post?.method).toBe('POST');
+    expect(post?.cache).toBe('default');
+  });
+
+  it('sends a Step Functions operation with a host prefix to the engine host without the prefix', async () => {
+    answerSessionRoute(SESSION_TOKEN);
+    const client = createAwsClient(SFNClient, { endpoint });
+
+    const request = await buildRequest(client, () =>
+      client.send(new StartSyncExecutionCommand({ stateMachineArn: 'arn:aws:states:us-east-1:000000000000:sm' })),
+    );
+
+    expect(request.hostname).toBe('127.0.0.1');
+    expect(request.headers['host']).toBe(`127.0.0.1:${String(ENGINE_PORT)}`);
+    expect(urlOf(request)).toBe(`http://127.0.0.1:${String(ENGINE_PORT)}/`);
+  });
+
+  it('answers a session refusal with one new session and one resend with the new token, and resolves', async () => {
+    const [first, second] = ['emuforge-general-token-1-5c2e', 'emuforge-general-token-2-9a4d'];
+    const played = playEngineTokens([first, second], (request) =>
+      request.headers.get('x-emuforge-session') === first
+        ? new Response(JSON.stringify({ __type: 'SessionInvalid', message: 'refused' }), {
+            status: 401,
+            headers: { ...AMZ_JSON_1_0, 'x-amzn-errortype': 'SessionInvalid', 'www-authenticate': 'EmuForge-Session' },
+          })
+        : answerGeneral(request),
+    );
+    const dynamodb = createAwsClient(DynamoDBClient, { endpoint: freshEndpoint() });
+
+    const output = await dynamodb.send(new ListTablesCommand({}));
+
+    expect(output.TableNames).toEqual([]);
+    expect(played.sessionRequests).toBe(2);
+    expect(played.awsRequests.map((request) => request.headers.get('x-emuforge-session'))).toEqual([first, second]);
+  });
+
+  it.each([
+    `http://localhost:${String(ENGINE_PORT)}`,
+    `https://127.0.0.1:${String(ENGINE_PORT)}`,
+    `http://127.0.0.1:${String(ENGINE_PORT)}/path`,
+    'https://sns.us-east-1.amazonaws.com',
+  ])('refuses the address %s, naming it, making no client and sending nothing', (refusedEndpoint) => {
+    const played = playEngine(SESSION_TOKEN, answerGeneral);
+    let client: unknown;
+    let thrown: unknown;
+    try {
+      client = createAwsClient(SNSClient, { endpoint: refusedEndpoint });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(client).toBeUndefined();
+    expect(thrown).toBeInstanceOf(EndpointRefusedError);
+    expect((thrown as EndpointRefusedError).message).toContain(`"${refusedEndpoint}"`);
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+    expect(played.awsRequests).toEqual([]);
+  });
+
+  it('makes an SQS client given useQueueUrlAsEndpoint false, whose request goes to the engine', async () => {
+    const played = playEngine(SESSION_TOKEN, answerGeneral);
+    const sqs = createAwsClient(SQSClient, { endpoint }, { useQueueUrlAsEndpoint: false });
+
+    const output = await sqs.send(
+      new GetQueueAttributesCommand({ QueueUrl: AWS_QUEUE_URL, AttributeNames: ['QueueArn'] }),
+    );
+
+    expect(output.Attributes?.QueueArn).toBe(QUEUE_ARN);
+    expect(played.awsRequests.map(originOf)).toEqual([endpoint]);
+  });
+
+  it('sends an SQS GetQueueAttributes by a queue URL on an AWS host to the engine, with no setting of its own', async () => {
+    const played = playEngine(SESSION_TOKEN, answerGeneral);
+    const port = freshEndpoint();
+    const sqs = createAwsClient(SQSClient, { endpoint: port });
+
+    const output = await sqs.send(
+      new GetQueueAttributesCommand({ QueueUrl: AWS_QUEUE_URL, AttributeNames: ['QueueArn'] }),
+    );
+
+    expect(output.Attributes?.QueueArn).toBe(QUEUE_ARN);
+    expect(played.awsRequests.map(originOf)).toEqual([port]);
+    // The session request and the command: nothing else was fetched.
+    expect(vi.mocked(fetch).mock.calls.map(([input]) => fetchedUrl(input).origin)).toEqual([port, port]);
+  });
+
+  const factorySettings: [string, unknown][] = [
+    ['endpoint', `http://127.0.0.1:${String(ENGINE_PORT + 1)}`],
+    ['endpointProvider', () => ({ url: new URL('https://sns.us-east-1.amazonaws.com') })],
+    ['region', 'eu-west-1'],
+    ['disableHostPrefix', false],
+    ['useDualstackEndpoint', true],
+    ['useFipsEndpoint', true],
+    ['credentials', { accessKeyId: 'fixture-key-id', secretAccessKey: 'fixture-secret' }],
+    ['requestHandler', new FetchHttpHandler()],
+  ];
+
+  it.each(factorySettings)('refuses the setting %s beside the class, naming it, and makes no client', (name, value) => {
+    let client: unknown;
+    let thrown: unknown;
+    try {
+      client = createAwsClient(SNSClient, { endpoint }, { [name]: value } as never);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(client).toBeUndefined();
+    expect(thrown).toBeInstanceOf(SettingRefusedError);
+    expect((thrown as SettingRefusedError).setting).toBe(name);
+    expect((thrown as SettingRefusedError).message).toContain(`"${name}"`);
+  });
+
+  it('takes no setting of the factory in its type', () => {
+    // @ts-expect-error -- the region is the factory's.
+    expect(() => createAwsClient(SNSClient, { endpoint }, { region: 'eu-west-1' })).toThrow(SettingRefusedError);
+  });
+});
+
+// A step added between the SDK and the send that moves the request elsewhere, as a client's own middleware could.
+type Move = (request: { protocol: string; hostname: string; port?: number }) => void;
+
+function moveRequest(client: { middlewareStack: unknown }, move: Move): void {
+  (client as SFNClient).middlewareStack.add(
+    (next) => (args) => {
+      move(args.request as { protocol: string; hostname: string; port?: number });
+      return next(args);
+    },
+    { step: 'deserialize', priority: 'low', name: 'moveRequest', override: true },
+  );
+}
+
+describe('requests that are not for the engine', () => {
+  const clients: [string, string, () => { client: { middlewareStack: unknown }; send: () => Promise<unknown> }][] = [
+    [
+      'a general client (SNS)',
+      'sns.us-east-1.amazonaws.com',
+      () => {
+        const client = createAwsClient(SNSClient, { endpoint });
+        return { client, send: () => client.send(new ListTopicsCommand({})) };
+      },
+    ],
+    [
+      'the S3 client',
+      's3.us-east-1.amazonaws.com',
+      () => {
+        const client = createS3Client({ endpoint });
+        return { client, send: () => client.send(new ListBucketsCommand({})) };
+      },
+    ],
+    [
+      'the Step Functions client',
+      'states.us-east-1.amazonaws.com',
+      () => {
+        const client = createSfnClient({ endpoint });
+        return { client, send: () => client.send(new ListStateMachinesCommand({})) };
+      },
+    ],
+  ];
+
+  it.each(clients)('%s moved to %s rejects, naming the host, and sends nothing', async (_, host, make) => {
+    const played = playEngine(SESSION_TOKEN, answerGeneral);
+    const { client, send } = make();
+    moveRequest(client, (request) => {
+      request.protocol = 'https:';
+      request.hostname = host;
+      request.port = 443;
+    });
+
+    const error: unknown = await send().then(
+      () => undefined,
+      (rejected: unknown) => rejected,
+    );
+
+    expect(error).toBeInstanceOf(RequestRefusedError);
+    expect((error as RequestRefusedError).host).toBe(host);
+    expect((error as RequestRefusedError).message).toContain(host);
+    expect(played.awsRequests).toEqual([]);
+    for (const [input] of vi.mocked(fetch).mock.calls) {
+      expect(fetchedUrl(input).pathname).toBe(SESSION_PATH);
+    }
+  });
+
+  const moves: [string, string, Move][] = [
+    [
+      'only the scheme',
+      `https://127.0.0.1:${String(ENGINE_PORT)}`,
+      (request) => {
+        request.protocol = 'https:';
+      },
+    ],
+    [
+      'only the port',
+      `http://127.0.0.1:${String(ENGINE_PORT + 1)}`,
+      (request) => {
+        request.port = ENGINE_PORT + 1;
+      },
+    ],
+  ];
+
+  for (const [what, origin, move] of moves) {
+    it.each(clients)(`%s with ${what} changed rejects, naming ${origin}, and sends nothing`, async (_, __, make) => {
+      const played = playEngine(SESSION_TOKEN, answerGeneral);
+      const { client, send } = make();
+      moveRequest(client, move);
+
+      const error: unknown = await send().then(
+        () => undefined,
+        (rejected: unknown) => rejected,
+      );
+
+      expect(error).toBeInstanceOf(RequestRefusedError);
+      expect((error as RequestRefusedError).origin).toBe(origin);
+      expect((error as RequestRefusedError).message).toContain(origin);
+      expect(played.awsRequests).toEqual([]);
+      for (const [input] of vi.mocked(fetch).mock.calls) {
+        expect(fetchedUrl(input).pathname).toBe(SESSION_PATH);
+      }
+    });
+  }
 });
