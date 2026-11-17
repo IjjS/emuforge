@@ -125,7 +125,9 @@ class EngineRequestHandler extends FetchHttpHandler {
 
 // The settings the factory gives every client. A client's own settings may name none of them (requirement R6.3):
 // each decides where a request goes or how it is authenticated. `endpointProvider` would decide the address in the
-// endpoint's place.
+// endpoint's place, and `extensions` run after the constructor has read the settings and can set the request handler,
+// the region and the credential (`setHttpHandler`, `setRegion`, `setCredentials`). A service that needs an extension
+// is a decision of its own issue.
 const FACTORY_SETTINGS = [
   'endpoint',
   'endpointProvider',
@@ -135,6 +137,7 @@ const FACTORY_SETTINGS = [
   'useFipsEndpoint',
   'credentials',
   'requestHandler',
+  'extensions',
 ] as const;
 
 type FactorySetting = (typeof FACTORY_SETTINGS)[number];
@@ -151,7 +154,7 @@ function commonConfig({ endpoint }: AwsClientOptions) {
     useFipsEndpoint: false,
     credentials: PLACEHOLDER_CREDENTIAL,
     requestHandler: new EngineRequestHandler(checked),
-  } satisfies Record<Exclude<FactorySetting, 'endpointProvider'>, unknown>;
+  } satisfies Record<Exclude<FactorySetting, 'endpointProvider' | 'extensions'>, unknown>;
 }
 
 /** What the factory reaches of any SDK client: its middleware stack. */

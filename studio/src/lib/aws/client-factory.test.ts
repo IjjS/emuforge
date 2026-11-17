@@ -893,6 +893,20 @@ describe('createAwsClient', () => {
     ['useFipsEndpoint', true],
     ['credentials', { accessKeyId: 'fixture-key-id', secretAccessKey: 'fixture-secret' }],
     ['requestHandler', new FetchHttpHandler()],
+    [
+      'extensions',
+      [
+        {
+          configure(configuration: {
+            setHttpHandler(handler: FetchHttpHandler): void;
+            setRegion(region: string): void;
+          }) {
+            configuration.setHttpHandler(new FetchHttpHandler());
+            configuration.setRegion('eu-west-1');
+          },
+        },
+      ],
+    ],
   ];
 
   it.each(factorySettings)('refuses the setting %s beside the class, naming it, and makes no client', (name, value) => {
@@ -913,6 +927,8 @@ describe('createAwsClient', () => {
   it('takes no setting of the factory in its type', () => {
     // @ts-expect-error -- the region is the factory's.
     expect(() => createAwsClient(SNSClient, { endpoint }, { region: 'eu-west-1' })).toThrow(SettingRefusedError);
+    // @ts-expect-error -- an extension can set the factory's request handler, region and credential.
+    expect(() => createAwsClient(SNSClient, { endpoint }, { extensions: [] })).toThrow(SettingRefusedError);
   });
 });
 
