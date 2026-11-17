@@ -10,10 +10,9 @@ import Pagination from '@cloudscape-design/components/pagination';
 import PropertyFilter, { type PropertyFilterProps } from '@cloudscape-design/components/property-filter';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Table, { type TableProps } from '@cloudscape-design/components/table';
-import { useCallback, useContext, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 
-import { AreaRootContext } from '../../../area-root';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
@@ -21,6 +20,7 @@ import type { FunctionSummary } from '../api';
 import { DeleteFunctionsDialog } from '../components/delete-functions-dialog';
 import { readFailureState, useAnnouncer, type ReadFailureState } from '../components/failure-states';
 import { Code, ReadFailure } from '../components/failures';
+import { useAreaModalRoot } from '../components/modal-root';
 import { CREATE_FUNCTION_PATH, functionPath, lastModifiedText, runtimeText, typeText, valueText } from '../format';
 import { useFunctionListing, type FunctionCount, type FunctionListing } from '../queries';
 
@@ -81,26 +81,6 @@ function filterQuery(filter: string): PropertyFilterProps.Query {
 
 /** The control whose use started the listing being read: it stays enabled, so it keeps focus (R10.1). */
 type Starter = 'filter' | 'pagination' | 'preferences' | null;
-
-/** Cloudscape's modal root for "Preferences" in the area's root, never under `document.body` (`AreaModal`). */
-function useAreaModalRoot(): Pick<CollectionPreferencesProps, 'getModalRoot' | 'removeModalRoot'> {
-  const root = useContext(AreaRootContext);
-  return {
-    getModalRoot: () =>
-      Promise.resolve().then(() => {
-        const area = root.current;
-        if (area === null) {
-          throw new Error('A modal of the AWS area opened outside the area.');
-        }
-        const container = document.createElement('div');
-        area.appendChild(container);
-        return container;
-      }),
-    removeModalRoot: (container: HTMLElement | null) => {
-      container?.remove();
-    },
-  };
-}
 
 interface TableBodyProps {
   state: BodyState;

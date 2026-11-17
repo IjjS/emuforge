@@ -2,16 +2,17 @@ import Box from '@cloudscape-design/components/box';
 import Button from '@cloudscape-design/components/button';
 import FormField from '@cloudscape-design/components/form-field';
 import Input from '@cloudscape-design/components/input';
+import Modal from '@cloudscape-design/components/modal';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import { useCallback, useState } from 'react';
 
-import { AreaModal } from '../../../components/area-modal';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { usePageFlash, type FlashItem, type FlashResult } from '../../../components/page-flash';
 import type { DeleteResult } from '../api';
 import { useDeleteFunctions } from '../queries';
 import { actionFailureItem } from './failure-states';
 import { Code } from './failures';
+import { useAreaModalRoot } from './modal-root';
 
 // "Delete functions" of the function list (issue 84, requirement R7, R10.3): the capture's title, field label and
 // placeholder, and "Cancel" and "Delete"; the body and the results in EmuForge's own words.
@@ -56,6 +57,7 @@ export interface DeleteFunctionsDialogProps {
  */
 export function DeleteFunctionsDialog({ names, connection, onClose }: DeleteFunctionsDialogProps) {
   const flash = usePageFlash();
+  const modalRoot = useAreaModalRoot();
   const { remove, pending } = useDeleteFunctions(connection.engineOrigin);
   const [typed, setTyped] = useState('');
   const visible = names.length > 0;
@@ -104,7 +106,8 @@ export function DeleteFunctionsDialog({ names, connection, onClose }: DeleteFunc
     );
 
   return (
-    <AreaModal
+    <Modal
+      {...modalRoot}
       visible={visible}
       header={DELETE_FUNCTIONS_TITLE}
       closeAriaLabel="Close modal"
@@ -115,7 +118,7 @@ export function DeleteFunctionsDialog({ names, connection, onClose }: DeleteFunc
             <Button variant="link" onClick={handleDismiss}>
               Cancel
             </Button>
-            <Button variant="primary" disabled={!confirmed} loading={pending} onClick={handleDelete}>
+            <Button variant="primary" disabled={!confirmed || pending} loading={pending} onClick={handleDelete}>
               Delete
             </Button>
           </SpaceBetween>
@@ -144,6 +147,6 @@ export function DeleteFunctionsDialog({ names, connection, onClose }: DeleteFunc
           />
         </FormField>
       </SpaceBetween>
-    </AreaModal>
+    </Modal>
   );
 }
