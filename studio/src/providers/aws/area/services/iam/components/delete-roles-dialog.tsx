@@ -10,17 +10,18 @@ import { useState } from 'react';
 import type { AreaConnection } from '../../../components/emulator-line';
 import type { FlashItem, FlashResult } from '../../../components/page-flash';
 import { usePageFlash } from '../../../components/page-flash';
+import { ValueText } from '../../../components/value-text';
 import type { DeleteResult, Role } from '../api';
 import { lastActivityText } from '../format';
 import { failureOf, useDeleteRoles } from '../queries';
 import { actionFailureItem } from './failures';
-import { Value } from './role-sections';
-import { useAreaModalRoot } from './page-parts';
+import { NAME_COLUMN_MIN_WIDTH, useAreaModalRoot } from './page-parts';
 import { Code } from './states';
 
 // "Delete" of the role list (issue 82, requirement R7, R10.3): the console's dialog "Delete … roles?" without "Learn
-// more", its sentence in EmuForge's own words. The roles are deleted one after another in the order given; the
-// result is shown in the area's Flashbar once every role is finished, never before.
+// more", its sentence in EmuForge's own words, each cell as the kind of value it is (issue 467, requirement R6). The
+// roles are deleted one after another in the order given; the result is shown in the area's Flashbar once every role
+// is finished, never before.
 
 /** The word the field must hold exactly. */
 const CONFIRM_WORD = 'delete';
@@ -50,8 +51,18 @@ function deleteResult({ deleted, failed }: DeleteResult, engineOrigin: string | 
 }
 
 const COLUMNS: TableProps.ColumnDefinition<Role>[] = [
-  { id: 'name', header: 'Role name', isRowHeader: true, cell: (role) => <Value>{role.name}</Value> },
-  { id: 'lastActivity', header: 'Last activity', cell: (role) => lastActivityText(role.lastUsed) },
+  {
+    id: 'name',
+    header: 'Role name',
+    isRowHeader: true,
+    minWidth: NAME_COLUMN_MIN_WIDTH,
+    cell: (role) => <ValueText kind="name" value={role.name} />,
+  },
+  {
+    id: 'lastActivity',
+    header: 'Last activity',
+    cell: (role) => <ValueText kind="fixed" value={lastActivityText(role.lastUsed)} />,
+  },
 ];
 
 export interface DeleteRolesDialogProps {

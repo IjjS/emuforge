@@ -3,9 +3,10 @@ import type { AutosuggestProps } from '@cloudscape-design/components/autosuggest
 import type { InputProps } from '@cloudscape-design/components/input';
 import type { TextareaProps } from '@cloudscape-design/components/textarea';
 import Wizard, { type WizardProps } from '@cloudscape-design/components/wizard';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 
+import { DiscardDialog, type DiscardAnswer } from '../../../components/discard-dialog';
 import type { FlashItem } from '../../../components/page-flash';
 import { usePageFlash } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
@@ -39,12 +40,12 @@ import { TrustedEntityStep } from '../components/trusted-entity-step';
 // IAM's "Create role" (issue 82, requirement R6, R9.4, R10.3): a Cloudscape wizard of the console's three steps in
 // the console's words, at `/aws/iam/roles/create`, its step `k` at `?step=<k>`. What is typed lives in this page
 // alone and is gone once it is left (R6.8). The rules decide at "Next" for the step shown and at "Create role" for
-// all three; nothing counts as passed by the address alone (R6.2, R6.6).
+// all three; nothing counts as passed by the address alone (R6.2, R6.6). Issue 467: the steps carry no description,
+// the area's frame says where the role is made (requirement R3); each checked field states its rule from the start
+// (R4); and "Cancel" asks before it discards what was entered on any step (R7).
 
 /** The page's title, and its last crumb. */
 export const CREATE_ROLE_TITLE = 'Create role';
-
-const DESCRIPTION = 'The role is created in your local emulator, not in an AWS account.';
 
 const STEP_TITLES: Record<WizardStep, string> = {
   1: 'Select trusted entity',
@@ -68,6 +69,30 @@ const START: WizardValues = {
   description: '',
   tags: [],
 };
+
+/**
+ * Whether anything differs from what the wizard showed when it opened (issue 467, R7), on any step: a field, a choice
+ * or a row. A value typed and removed again does not differ; one kept by a type or a box no longer shown still does,
+ * since choosing it again shows it.
+ */
+function differsFromStart(values: WizardValues): boolean {
+  const entity = values.entity;
+  const start = START.entity;
+  return (
+    entity.type !== start.type ||
+    entity.principal !== start.principal ||
+    entity.account !== start.account ||
+    entity.accountId !== start.accountId ||
+    entity.requireExternalId !== start.requireExternalId ||
+    entity.externalId !== start.externalId ||
+    entity.requireMfa !== start.requireMfa ||
+    entity.document !== start.document ||
+    values.policies.length > 0 ||
+    values.name !== START.name ||
+    values.description !== START.description ||
+    values.tags.length > 0
+  );
+}
 
 const I18N_STRINGS: WizardProps.I18nStrings = {
   stepNumberLabel: (stepNumber) => `Step ${String(stepNumber)}`,
@@ -251,7 +276,6 @@ export function CreateRolePage({ connection }: ScreenPageProps) {
   const steps: WizardProps.Step[] = [
     {
       title: STEP_TITLES[1],
-      description: DESCRIPTION,
       content: (
         <TrustedEntityStep
           values={values.entity}
@@ -271,7 +295,6 @@ export function CreateRolePage({ connection }: ScreenPageProps) {
     },
     {
       title: STEP_TITLES[2],
-      description: DESCRIPTION,
       content: (
         <PermissionsStep
           connection={connection}
@@ -285,7 +308,6 @@ export function CreateRolePage({ connection }: ScreenPageProps) {
     },
     {
       title: STEP_TITLES[3],
-      description: DESCRIPTION,
       content: (
         <ReviewStep
           name={values.name}
@@ -315,18 +337,38 @@ export function CreateRolePage({ connection }: ScreenPageProps) {
 
   const waitingForAccount = step === 1 && values.entity.type === 'aws-account' && caller.loading;
 
-  return (
-    <Wizard
-      steps={steps}
-      activeStepIndex={step - 1}
-      i18nStrings={I18N_STRINGS}
-      isLoadingNextStep={pending || waitingForAccount}
-      onNavigate={handleNavigate}
-      onSubmit={handleSubmit}
-      onCancel={() => {
+  // "Cancel" leaves at once while nothing differs from what the wizard showed when it opened; otherwise it asks (R7).
+  const [asking, setAsking] = useState(false);
+  const handleCancel = () => {
+    if (differsFromStart(values)) {
+      setAsking(true);
+      return;
+    }
+    void navigate(ROLES_PATH);
+  };
+  const handleDiscardAnswer = useCallback(
+    (answer: DiscardAnswer) => {
+      setAsking(false);
+      if (answer === 'discard') {
         void navigate(ROLES_PATH);
-      }}
-    />
+      }
+    },
+    [navigate],
+  );
+
+  return (
+    <>
+      <Wizard
+        steps={steps}
+        activeStepIndex={step - 1}
+        i18nStrings={I18N_STRINGS}
+        isLoadingNextStep={pending || waitingForAccount}
+        onNavigate={handleNavigate}
+        onSubmit={handleSubmit}
+        onCancel={handleCancel}
+      />
+      <DiscardDialog visible={asking} onAnswer={handleDiscardAnswer} />
+    </>
   );
 }
 

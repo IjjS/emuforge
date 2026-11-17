@@ -6,10 +6,11 @@ import KeyValuePairs from '@cloudscape-design/components/key-value-pairs';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Table, { type TableProps } from '@cloudscape-design/components/table';
-import type { ReactNode, Ref } from 'react';
+import type { Ref } from 'react';
 
-import './role-sections.css';
+import { CopyValue } from '../../../components/copy-value';
 import type { AreaConnection } from '../../../components/emulator-line';
+import { ValueText } from '../../../components/value-text';
 import type { Role, RolePolicies } from '../api';
 import {
   descriptionText,
@@ -22,19 +23,16 @@ import {
   type PolicyRef,
 } from '../format';
 import { readFailureState } from './failures';
+import { NAME_COLUMN_MIN_WIDTH } from './page-parts';
 import { ReadFailure } from './states';
 
 // The three sections of a role's page (issue 82, requirement R5.3): "Summary" with its "Edit" (R5.5), "Permissions
 // policies" and "Permissions boundary", in the console's words; their empty and failure texts in EmuForge's own.
-// Every value from the emulator is rendered as text.
+// Every value from the emulator is rendered as text, each as the kind of value it is, and the ARN with its copy control
+// (issue 467, requirement R5, R6).
 
 /** What a failed policy list names (R10.1). */
 const POLICIES_THING = 'policies';
-
-/** A value from the emulator as text that breaks anywhere when it must (R11): a word without a space stays in its box. */
-export function Value({ children }: { children: ReactNode }) {
-  return <span className="aws-iam-value">{children}</span>;
-}
 
 export interface SummarySectionProps {
   role: Role;
@@ -64,12 +62,15 @@ export function SummarySection({ role, onEdit, editRef }: SummarySectionProps) {
         <KeyValuePairs
           columns={3}
           items={[
-            { label: 'Creation date', value: <Value>{utcDateText(role.createDate)}</Value> },
-            { label: 'ARN', value: <Value>{role.arn ?? NO_VALUE}</Value> },
-            { label: 'Last activity', value: lastActivityText(role.lastUsed) },
-            { label: 'Maximum session duration', value: maxSessionDurationText(role.maxSessionDuration) },
-            { label: 'Description', value: <Value>{descriptionText(role.description)}</Value> },
-            { label: 'Path', value: <Value>{role.path ?? NO_VALUE}</Value> },
+            { label: 'Creation date', value: <ValueText kind="fixed" value={utcDateText(role.createDate)} /> },
+            { label: 'ARN', value: <CopyValue label="ARN" value={role.arn} none={NO_VALUE} /> },
+            { label: 'Last activity', value: <ValueText kind="fixed" value={lastActivityText(role.lastUsed)} /> },
+            {
+              label: 'Maximum session duration',
+              value: <ValueText kind="fixed" value={maxSessionDurationText(role.maxSessionDuration)} />,
+            },
+            { label: 'Description', value: <ValueText kind="text" value={descriptionText(role.description)} /> },
+            { label: 'Path', value: <ValueText kind="address" value={role.path} none={NO_VALUE} /> },
           ]}
         />
         {isServiceLinked(role.path) && <StatusIndicator type="info">Service-linked role</StatusIndicator>}
@@ -79,8 +80,14 @@ export function SummarySection({ role, onEdit, editRef }: SummarySectionProps) {
 }
 
 const POLICY_COLUMNS: TableProps.ColumnDefinition<PolicyRef>[] = [
-  { id: 'name', header: 'Policy name', isRowHeader: true, cell: (policy) => <Value>{policy.name}</Value> },
-  { id: 'type', header: 'Type', cell: (policy) => policyTypeText(policy) },
+  {
+    id: 'name',
+    header: 'Policy name',
+    isRowHeader: true,
+    minWidth: NAME_COLUMN_MIN_WIDTH,
+    cell: (policy) => <ValueText kind="name" value={policy.name} />,
+  },
+  { id: 'type', header: 'Type', cell: (policy) => <ValueText kind="fixed" value={policyTypeText(policy)} /> },
 ];
 
 export interface PoliciesSectionProps {
@@ -137,7 +144,7 @@ export function BoundarySection({ role }: { role: Role }) {
   return (
     <Container header={<Header variant="h2">Permissions boundary</Header>}>
       <Box variant="p">
-        <Value>{role.permissionsBoundary ?? 'Not set'}</Value>
+        <ValueText kind="address" value={role.permissionsBoundary} none="Not set" />
       </Box>
     </Container>
   );

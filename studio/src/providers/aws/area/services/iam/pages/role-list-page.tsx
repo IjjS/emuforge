@@ -14,21 +14,25 @@ import { useNavigate } from 'react-router';
 
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
+import { ValueText } from '../../../components/value-text';
 import type { ScreenPageProps } from '../../../screens';
 import type { Role } from '../api';
 import { CREATE_ROLE_PATH, lastActivityText, rolePath, trustedEntitiesText } from '../format';
 import { useRoleListing, type Listing, type ListingCount } from '../queries';
 import { DeleteRolesDialog } from '../components/delete-roles-dialog';
-import { Value } from '../components/role-sections';
-import { useAnnouncer, useAreaModalRoot } from '../components/page-parts';
+import { NAME_COLUMN_MIN_WIDTH, useAnnouncer, useAreaModalRoot } from '../components/page-parts';
 import { readFailureState, type ReadFailureState } from '../components/failures';
-import { Code, ReadFailure } from '../components/states';
+import { ReadFailure } from '../components/states';
 
 // IAM's role list (issue 82, requirement R3, R4, R7 to R10): the console's "Roles" page in the console's words; its
-// description and states in EmuForge's own. Every value from the engine or the emulator is rendered as text.
+// description and states in EmuForge's own. Every value from the engine or the emulator is rendered as text, each cell
+// as the kind of value it is (issue 467, requirement R6).
 
 /** The page's title, its `h1` without the counter. */
 export const ROLES_TITLE = 'Roles';
+
+/** The `h1`'s description in every state of the connection: what a column reports (issue 467, R3). */
+const DESCRIPTION = 'Last activity is what the emulator reports for a role.';
 
 const SELECT_FIRST = 'Select a role first';
 const REFRESHED = 'Role list refreshed';
@@ -260,36 +264,28 @@ export function RoleListPage({ connection }: ScreenPageProps) {
     deleteRef.current?.focus();
   }, []);
 
-  const result = connection.result;
-  const description =
-    result?.kind === 'connected' ? (
-      <>
-        Roles in your local emulator at <Code>{result.emulator.endpoint}</Code>, not in an AWS account. Last activity is
-        what the emulator reports for a role.
-      </>
-    ) : (
-      'Roles in your local emulator, not in an AWS account. Last activity is what the emulator reports for a role.'
-    );
-
   const columns: TableProps.ColumnDefinition<Role>[] = [
     {
       id: 'name',
       header: 'Role name',
       isRowHeader: true,
+      minWidth: NAME_COLUMN_MIN_WIDTH,
       cell: (role) => (
-        <Value>
-          <Link href={rolePath(role.name)} onFollow={handleFollow}>
-            {role.name}
-          </Link>
-        </Value>
+        <Link href={rolePath(role.name)} onFollow={handleFollow}>
+          <ValueText kind="name" value={role.name} />
+        </Link>
       ),
     },
     {
       id: 'trusted',
       header: 'Trusted entities',
-      cell: (role) => <Value>{trustedEntitiesText(role.trustPolicy, role.path)}</Value>,
+      cell: (role) => <ValueText kind="text" value={trustedEntitiesText(role.trustPolicy, role.path)} />,
     },
-    { id: 'lastActivity', header: 'Last activity', cell: (role) => lastActivityText(role.lastUsed) },
+    {
+      id: 'lastActivity',
+      header: 'Last activity',
+      cell: (role) => <ValueText kind="fixed" value={lastActivityText(role.lastUsed)} />,
+    },
   ];
 
   const count = loaded ? listing.count : undefined;
@@ -321,7 +317,7 @@ export function RoleListPage({ connection }: ScreenPageProps) {
           <Header
             variant="awsui-h1-sticky"
             counter={count === undefined ? undefined : `(${countText(count)})`}
-            description={description}
+            description={DESCRIPTION}
             actions={
               <SpaceBetween direction="horizontal" size="xs">
                 <Button iconName="refresh" ariaLabel="Refresh roles" onClick={handleRefresh} />
