@@ -518,9 +518,10 @@ describe('the delete page of a bucket that is not empty', () => {
     expect(alert.compareDocumentPosition(field()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it('"Empty bucket" leads to the empty page of this bucket, with no request', async () => {
+  it('"Empty bucket" leads to the empty page of this bucket; nothing is listed or deleted', async () => {
     const router = await openNotEmpty();
     const sent = engine.sent.length;
+    const lists = engine.of('ListBuckets').length;
     const empty = within(notEmptyAlert() as HTMLElement)
       .getByText('Empty bucket')
       .closest('a, button') as HTMLElement;
@@ -531,8 +532,16 @@ describe('the delete page of a bucket that is not empty', () => {
     await waitFor(() => {
       expect(router.state.location.pathname).toBe(`/aws/s3/bucket/${NAME}/empty`);
     });
-    expect(engine.of('DeleteBucket')).toHaveLength(0);
-    expect(engine.sent.length).toBe(sent);
+    // The empty page reads its bucket on opening (R8.1); once it has, nothing after the route change listed or
+    // deleted anything (decisions.md, 2026-11-17 23:40).
+    await waitFor(() => {
+      expect(engine.of('ListBuckets').length).toBeGreaterThan(lists);
+    });
+    const after = engine.sent.slice(sent);
+    expect(after.filter(({ operation }) => operation === 'DeleteBucket' || operation === 'ListObjectVersions')).toEqual(
+      [],
+    );
+    expect(after.filter(({ url }) => queryKeys(url).includes('delete'))).toEqual([]);
   });
 
   it('Enter in the disabled field sends nothing', async () => {
