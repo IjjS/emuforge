@@ -1,6 +1,10 @@
 import type { SideNavigationProps } from '@cloudscape-design/components/side-navigation';
 import type { ComponentType } from 'react';
 
+import type { AreaConnection } from './components/emulator-line';
+import { BucketListHelp, BucketListPage } from './services/s3/pages/bucket-list-page';
+import { BUCKETS_PATH, DIRECTORY_BUCKETS_PATH, S3_PATH } from './services/s3/format';
+
 /** A screen's own side navigation, which replaces the area's services list on the screen's paths (requirement R5.1). */
 export interface ScreenNavigation {
   /** The navigation's header: the service's name and the address it leads to. */
@@ -9,6 +13,11 @@ export interface ScreenNavigation {
   items: readonly SideNavigationProps.Item[];
   /** The link shown current on every path of the screen. */
   activeHref: string;
+}
+
+/** What the area's layout hands a screen's page: the connection Studio hands the area, as it last read it. */
+export interface ScreenPageProps {
+  connection: AreaConnection;
 }
 
 /**
@@ -30,11 +39,35 @@ export interface AreaScreen {
   /** The help panel's content (a Cloudscape `HelpPanel`); a screen without it shows no help toggle. */
   help?: ComponentType;
   /** The page. */
-  Page: ComponentType;
+  Page: ComponentType<ScreenPageProps>;
 }
 
 /**
  * The area's `console` screens. A path that no screen lists shows the area's own page for it, as before: the index,
  * the "no screen yet" page of its service, or the area's "Page not found".
  */
-export const SCREENS: readonly AreaScreen[] = [];
+export const SCREENS: readonly AreaScreen[] = [
+  // S3's general purpose bucket list (issue 56): at the service's route and at its own, neither redirecting.
+  {
+    service: '/s3',
+    paths: [S3_PATH, BUCKETS_PATH],
+    title: 'Buckets',
+    crumb: 'Buckets',
+    navigation: {
+      header: { text: 'Amazon S3', href: S3_PATH },
+      items: [
+        {
+          type: 'section',
+          text: 'Buckets',
+          items: [
+            { type: 'link', text: 'General purpose buckets', href: BUCKETS_PATH },
+            { type: 'link', text: 'Directory buckets', href: DIRECTORY_BUCKETS_PATH },
+          ],
+        },
+      ],
+      activeHref: BUCKETS_PATH,
+    },
+    help: BucketListHelp,
+    Page: BucketListPage,
+  },
+];

@@ -101,12 +101,12 @@ function navigation(page: AreaPage): SideNavigationProps {
   };
 }
 
-function PageContent({ page }: { page: AreaPage }) {
+function PageContent({ page, connection }: { page: AreaPage; connection: AreaConnection }) {
   switch (page.kind) {
     case 'index':
       return <IndexPage />;
     case 'screen':
-      return <page.screen.Page />;
+      return <page.screen.Page connection={connection} />;
     case 'service':
       return <NoScreenPage service={page.service} />;
     case 'not-found':
@@ -234,7 +234,7 @@ export function AreaLayout({
                   <EmulatorLineAndNotice connection={connection} resources={resources} />
                   <PageResourcesContext value={setResources}>
                     <PageHelpContext value={openHelp}>
-                      <PageContent page={page} />
+                      <PageContent page={page} connection={connection} />
                     </PageHelpContext>
                   </PageResourcesContext>
                 </SpaceBetween>

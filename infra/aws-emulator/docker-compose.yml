@@ -21,6 +21,6 @@ services:
       # /home/emulator: the paths in the emulator's config are then the container's, not the host's.
       HOME: ${HOME:-/home/emulator}
     volumes:
-      - ${HOME:-${USERPROFILE}}/.aws/emulator:${HOME:-/home/emulator}/.aws/emulator
+      - ${HOME:-${USERPROFILE:-}}/.aws/emulator:${HOME:-/home/emulator}/.aws/emulator
     mem_limit: 2g
     memswap_limit: 2g
