@@ -29,6 +29,7 @@ Events, each delivered as one prompt line to the PM:
   EVENT cpu ok <pct>%                                           back under after a cpu event (once)
   EVENT tokens over <rate> target <rate>                        the last hour's Claude token rate passed today's target (pm-tokens)
   EVENT tokens ok <rate>                                        back under the target (once)
+  EVENT check still <worktree> <step> <minutes>m                a pm-check step has run for an hour (again every hour)
 Panes report with `pm-report "<line>"` (file channel .pm/run/reports.jsonl, exact and agent-independent); the
 terminal is scraped only as a fallback, where a reporting line counts only when it is the pane's last reply (no
 newer prompt echo below it). REVIEWED and turns without a line are logged only. Lines that cannot be delivered (PM blocked, PM pane missing, herdr down) are queued
@@ -256,6 +257,8 @@ def run(a):
             watch_ids = {r["pane_id"] for r in reg} | ({pm_a["pane_id"]} if pm_a else set())
             from _pmquota import tick as quota_tick
             events.extend(quota_tick(ags_list))
+            from _pmstill import tick as still_tick
+            events.extend(still_tick(st))
             seen = st["seen"]
             # primary channel: lines the panes reported through pm-report (exact, agent-independent)
             events.extend(inbox_lines(st))
