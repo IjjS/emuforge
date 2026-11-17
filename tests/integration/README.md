@@ -28,29 +28,35 @@ loopback port.
 
 ## Product stage
 
-`run` also builds the product form of issue 34: the image of the root `docker-compose.yml`, once per run, with
-`docker compose --progress plain build` at the checkout's root under the run's own name (`EMUFORGE_IMAGE` set to
-`emuforge-it-product-<run id>`; log `output/logs/integration-product-build.log`). It tags the run's pinned emulator
-image under the run's own name too (`EMUFORGE_EMULATOR_IMAGE` set to `emuforge-it-emulator-<run id>`), so a
-situation 4 start in a check never rebuilds or retags `aws-emulator`. The checks never use the names `emuforge` or
-`aws-emulator` and never port 9297. Each form writes its Compose project to `output/integration/tmp/product-projects`;
-when it ends, `run` removes, of those projects, the containers created under one of the run's two image names and
-the networks no container uses any more, logs each removal, then removes both names (`docker image rm`, which only
-untags an image that has another name). The build has a bound of 600 seconds (`product_build_bound`): a build that
-has not ended by then, such as one that waits for a registry that does not answer, is ended with its whole process
-group (SIGTERM, SIGKILL 10 seconds later) and is the environment's failure, so every check is `error` with the reason
+`run` also builds the product form of issues 34 and 437: the images of the root `docker-compose.yml`, once per run,
+with `docker compose --progress plain build` at the checkout's root under the run's own names (`EMUFORGE_IMAGE` set
+to `emuforge-it-product-<run id>`, `EMUFORGE_EMULATOR_IMAGE` to `emuforge-it-emulator-<run id>`, which `run` first
+tags from the run's pinned emulator image; log `output/logs/integration-product-build.log`). The checks never use the
+names `emuforge` or `aws-emulator` and never port 9297. Each form writes its Compose project to
+`output/integration/tmp/product-projects`; when it ends, `run` removes, of those projects, the containers created
+under one of the run's two image names, the networks no container uses any more and the volumes the removed
+containers mounted, logs each removal, then removes both names (`docker image rm`, which only untags an image that
+has another name). The build has a bound of 600 seconds (`product_build_bound`): a build that has not ended by then,
+such as one that waits for a registry that does not answer, is ended with its whole process group (SIGTERM, SIGKILL
+10 seconds later) and is the environment's failure, so every check is `error` with the reason
 `the product image build did not end within 600 s, see <log>` and the run exits 127 before it starts its emulator.
 
 The product checks (`studio/product-*.spec.ts`, ids `engine.product-…`) start a form each through
-`studio/support/product.ts`, which holds the start and stop command lines of each situation (the README check
-compares the README with them). A form runs at the checkout's root on free ports of its own, with an environment of
-exactly `HOME`, the three ports, the two image names and a `PATH` on which `cargo`, `rustc`, `bun` and `node` are not
-found (the Docker client's own `DOCKER_CONFIG`, `DOCKER_HOST` and `DOCKER_CONTEXT` are passed on when set). Its
-containers are those that carry its Compose project's label, `emuforge-app-<studio port>`. Each check stops its form
-with the stop command and removes whatever is left, whatever its verdict.
+`studio/support/product.ts`, which holds the command lines of the one form: the start line, the stop line, the line
+that shows the emulator's log, the line that removes the volume too and the start line that keeps the running
+containers (the README check compares the README's "Start" with them). A form runs at the checkout's root on free
+ports of its own, with an emulator of its own whose files are in the form's Docker volume, and with an environment of
+exactly `HOME` (the run's, another folder or none), the three ports, the two image names and a `PATH` on which
+`cargo`, `rustc`, `bun` and `node` are not found (the Docker client's own `DOCKER_CONFIG`, `DOCKER_HOST` and
+`DOCKER_CONTEXT` are passed on when set). Its containers, networks and volumes are those that carry its Compose
+project's label, `emuforge-app-<studio port>`. Each check stops its form, removes its volume and removes whatever is
+left, whatever its verdict. Two Compose files of the checks' own, never part of the shipped form, are given beside
+the root file where a check needs them: `studio/support/product-direct.yml` publishes the form's emulator on a
+loopback port of the run, so a check can send the same request directly, and `studio/support/product-deaf.yml`
+starts the emulator on another port than its healthcheck asks.
 
-When `docker-compose.yml` is missing or the image does not build, every product check still runs and fails at its
-start command, as the engine checks do without an engine.
+When `docker-compose.yml` is missing or an image does not build, every product check still runs and fails at its
+start line, as the engine checks do without an engine.
 
 ## Checks not run
 
