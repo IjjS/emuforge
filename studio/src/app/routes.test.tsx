@@ -86,6 +86,22 @@ function main(): HTMLElement {
   return screen.getByRole('main');
 }
 
+/**
+ * The "no screen yet" page for a part of a service that has screens (issue 57, requirement R4): the `h1` "No screen
+ * yet" inside the AWS area, the statement for that part of `label` and not the sentence that the service has no
+ * screen, the path as it was opened, and the document title "No screen yet | EmuForge Studio".
+ */
+async function expectNoScreenPart(label: string, path: string) {
+  const h1 = await heading('No screen yet');
+  expect(inCloudscape(h1)).toBe(true);
+  expect(main()).toHaveTextContent(`Studio has no screen for this part of ${label} yet.`);
+  expect(main()).not.toHaveTextContent(`Studio has no screen for ${label} yet.`);
+  expect(main()).toHaveTextContent(path);
+  await waitFor(() => {
+    expect(document.title).toBe('No screen yet | EmuForge Studio');
+  });
+}
+
 async function expectNoScreenYet(label: string) {
   const h1 = await heading(label);
   expect(inCloudscape(h1)).toBe(true);
@@ -216,12 +232,14 @@ describe('routes', () => {
     expect(WITHOUT_SCREEN).toHaveLength(SERVICES.length - WITH_SCREEN.length);
   });
 
+  // Issue 57 (test-criteria.md, "Unit — app/routes.test.tsx", rewritten): a path below a service that has screens,
+  // which no screen matches, shows the "no screen yet" page for that part of the service.
   it.each(['/aws/iam/policies', '/aws/iam/roles/details/abc/tags'])(
-    'opens %s as the "no screen yet" page of AWS Identity and Access Management',
+    'opens %s as the "no screen yet" page for that part of AWS Identity and Access Management',
     async (path) => {
       open(path);
 
-      await expectNoScreenYet('AWS Identity and Access Management');
+      await expectNoScreenPart('AWS Identity and Access Management', path);
     },
   );
 
@@ -445,29 +463,31 @@ describe('routes', () => {
     expect(screen.queryByRole('heading', { level: 1, name: 'Create Event Function' })).toBeNull();
   });
 
+  // Issue 57 (test-criteria.md, "Unit — app/routes.test.tsx", rewritten).
   it.each(['/aws/lambda/functions/function/orders/test', '/aws/lambda/layers'])(
-    'opens %s as the "no screen yet" page of AWS Lambda',
+    'opens %s as the "no screen yet" page for that part of AWS Lambda',
     async (path) => {
       open(path);
 
-      await expectNoScreenYet('AWS Lambda');
+      await expectNoScreenPart('AWS Lambda', path);
     },
   );
 
   // Issue 256 gives /aws/s3/buckets/my-bucket and /aws/s3/bucket/create their screens; these three paths have none
-  // before or after (test-criteria.md, "Existing checks and cases").
+  // before or after. Issue 57 (test-criteria.md, "Unit — app/routes.test.tsx", rewritten): the page for that part of
+  // the service, and no request for an AWS operation.
   it.each([
     '/aws/s3/buckets/my-bucket/objects',
     '/aws/s3/bucket/my-bucket/property/versioning/edit',
     '/aws/s3/directory-buckets',
   ])(
-    'opens %s as the "no screen yet" page of Amazon Simple Storage Service, with no ListBuckets request',
+    'opens %s as the "no screen yet" page for that part of Amazon Simple Storage Service, with no request for an AWS operation',
     async (path) => {
       const engine = new FakeEngine();
       vi.stubGlobal('fetch', engine.fetch);
       open(path);
 
-      await expectNoScreenYet('Amazon Simple Storage Service');
+      await expectNoScreenPart('Amazon Simple Storage Service', path);
       await waitFor(
         () => {
           expect(engine.healths.length).toBeGreaterThan(0);
@@ -480,6 +500,11 @@ describe('routes', () => {
       });
       expect(lists).toEqual([]);
       expect(engine.to('/')).toEqual([]);
+      const awsRequests = engine.requests
+        .filter((request) => request.origin.startsWith('http://127.0.0.1:'))
+        .filter((request) => request.path !== '/__emuforge/session' && request.path !== '/__emuforge/health')
+        .map((request) => request.url);
+      expect(awsRequests).toEqual([]);
     },
   );
 

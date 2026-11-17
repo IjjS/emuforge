@@ -47,6 +47,8 @@ vi.mock('./screens', () => ({ SCREENS: registry.screens }));
 
 const AWS = 'Amazon Web Services';
 const NO_SCREEN = NO_SCREEN_SERVICE.label;
+/** The `h1` and title of the "no screen yet" page below a service that has screens (issue 57, requirement R4.2). */
+const NO_SCREEN_PART = 'No screen yet';
 
 // The services as their folders give them (providers/aws/area/services/*/service.json), in the order of issue 386's
 // requirement R13.2, each under /aws.
@@ -1012,16 +1014,15 @@ describe('a console screen in the AWS area (issue 56, R5)', () => {
     },
   );
 
-  it('on /aws/dynamodb/other-things, a path of the service no screen lists: the "no screen yet" page with the services list, as before', () => {
-    const { wrapper } = open('/aws/dynamodb/other-things');
+  // Issue 57 (test-criteria.md, "Unit — providers/aws/area/area-layout.test.tsx", rewritten): the page says that
+  // this part of the service has no screen, not the service.
+  it('on /aws/dynamodb/other-things, a path of the service no screen matches: the "no screen yet" page for this part of the service', () => {
+    open('/aws/dynamodb/other-things');
 
-    expect(screen.getByRole('heading', { level: 1, name: 'Amazon DynamoDB' })).toBeInTheDocument();
-    expect(screen.getByRole('main')).toHaveTextContent('Studio has no screen for Amazon DynamoDB yet.');
-    expect(wrapper.findSideNavigation()?.findHeaderLink()?.getElement()).toHaveTextContent(AWS);
-    expect(navigationLinks(wrapper)).toEqual(SERVICES);
-    expect(wrapper.findSideNavigation()?.findActiveLink()?.getElement()).toHaveAttribute('href', '/aws/dynamodb');
-    expect(breadcrumbs(wrapper).map(([text]) => text)).toEqual(['EmuForge', 'AWS', 'DynamoDB']);
-    expect(titles.at(-1)).toBe('Amazon DynamoDB');
+    expect(screen.getByRole('heading', { level: 1, name: NO_SCREEN_PART })).toBeInTheDocument();
+    expect(screen.getByRole('main')).toHaveTextContent('Studio has no screen for this part of Amazon DynamoDB yet.');
+    expect(screen.getByRole('main')).not.toHaveTextContent('Studio has no screen for Amazon DynamoDB yet.');
+    expect(titles.at(-1)).toBe(NO_SCREEN_PART);
   });
 
   it.each(['/aws', NO_SCREEN_SERVICE.path, '/aws/does-not-exist'])(
@@ -1037,7 +1038,7 @@ describe('a console screen in the AWS area (issue 56, R5)', () => {
   );
 
   it.each([
-    ['/aws/dynamodb/things', '/aws/dynamodb/other-things', 'Amazon DynamoDB', 'Go to Home'],
+    ['/aws/dynamodb/things', '/aws/dynamodb/other-things', NO_SCREEN_PART, 'Go to Things'],
     ['/aws/dynamodb', '/aws/dynamodb/things', 'Things', INFO_TEXT],
   ])(
     'on %s, %s chosen in the screen\'s navigation: the path changes without a document load, focus on the content target "%s"',
@@ -1117,7 +1118,7 @@ describe('a console screen in the AWS area (issue 56, R5)', () => {
   });
 
   it.each([
-    ['/aws/dynamodb/other-things', 'Amazon DynamoDB'],
+    ['/aws/dynamodb/other-things', NO_SCREEN_PART],
     ['/aws/dynamodb/widgets', 'Widgets'],
   ])('the panel open, then %s chosen, a page without help: no panel and no toggle', (href, h1) => {
     const { wrapper, router } = open('/aws/dynamodb/things');
@@ -1282,14 +1283,25 @@ const KINESIS_CRUMBS: [string, string | null][] = [
   ['Kinesis', '/aws/kinesis'],
 ];
 
-/** Expects the "no screen yet" page of Amazon Kinesis, with the services list as navigation. */
-function expectNoScreenPage(wrapper: ReturnType<typeof createWrapper>) {
-  expect(screen.getByRole('heading', { level: 1, name: NO_SCREEN })).toBeInTheDocument();
-  expect(screen.getByRole('main')).toHaveTextContent(NO_SCREEN_SENTENCE);
-  expect(wrapper.findSideNavigation()?.findHeaderLink()?.getElement()).toHaveTextContent(AWS);
-  expect(sideLinks(wrapper)).toEqual(SERVICES);
-  expect(breadcrumbs(wrapper)).toEqual(KINESIS_CRUMBS.map(([text, href], index) => [text, index === 2 ? null : href]));
-  expect(titles.at(-1)).toBe(NO_SCREEN);
+/**
+ * Expects the "no screen yet" page for a part of Amazon Kinesis, which has the test screens here (issue 57,
+ * requirement R4): no screen opened (the `h1` and the reported title "No screen yet"), the statement for this part of
+ * the service and not the sentence that it has none, the navigation of the screens ("Things of Kinesis") and none of
+ * the services, and the crumbs EmuForge, AWS, Kinesis, then `above` (the crumbs of the screen above the path, every
+ * one a link), then "No screen yet", not a link.
+ */
+function expectNoScreenPart(wrapper: ReturnType<typeof createWrapper>, above: [string, string][] = []) {
+  expect(screen.getByRole('heading', { level: 1, name: NO_SCREEN_PART })).toBeInTheDocument();
+  expect(titles.at(-1)).toBe(NO_SCREEN_PART);
+  expect(screen.getByRole('main')).toHaveTextContent(`Studio has no screen for this part of ${NO_SCREEN} yet.`);
+  expect(screen.getByRole('main')).not.toHaveTextContent(NO_SCREEN_SENTENCE);
+  expect(wrapper.findSideNavigation()?.findHeaderLink()?.getElement()).toHaveTextContent('Things of Kinesis');
+  const links = sideLinks(wrapper);
+  for (const [label, route] of SERVICES) {
+    expect(links.map(([text]) => text)).not.toContain(label);
+    expect(links.map(([, href]) => href)).not.toContain(route);
+  }
+  expect(breadcrumbs(wrapper)).toEqual([...KINESIS_CRUMBS, ...above, [NO_SCREEN_PART, null]]);
 }
 
 describe('paths and parameters (issue 386, R4.1 to R4.5, R4.7, R4.9)', () => {
@@ -1403,10 +1415,23 @@ describe('paths and parameters (issue 386, R4.1 to R4.5, R4.7, R4.9)', () => {
     },
   );
 
-  it('/aws/kinesis/%zz, which no pattern matches: the "no screen yet" page of the service, as before', () => {
-    const { wrapper } = open('/aws/kinesis/%zz');
+  // Issue 57 (test-criteria.md, "Unit — providers/aws/area/area-layout.test.tsx", the Kinesis lines rewritten): each
+  // path below opens no screen, as issue 386 asks, and shows the "no screen yet" page for that part of the service.
+  it.each(['/aws/kinesis/%zz', '/aws/kinesis/gadget', NO_SCREEN_SERVICE.below])(
+    '%s, which no pattern matches and no screen is above: the "no screen yet" page for this part of the service, no navigation link current',
+    (address) => {
+      const { wrapper } = open(address);
 
-    expectNoScreenPage(wrapper);
+      expectNoScreenPart(wrapper);
+      expect(wrapper.findSideNavigation()?.findActiveLink()).toBeNull();
+    },
+  );
+
+  it(`${THINGS_PATH}, which no pattern matches, the address of the navigation's "Things": the same page, "Things" current`, () => {
+    const { wrapper } = open(THINGS_PATH);
+
+    expectNoScreenPart(wrapper);
+    expect(wrapper.findSideNavigation()?.findActiveLink()?.getElement()).toHaveAttribute('href', THINGS_PATH);
   });
 
   it('with screens at …/things/create and …/things/{name}: …/things/create opens the first, …/things/other the second with the name "other"', () => {
@@ -1420,18 +1445,35 @@ describe('paths and parameters (issue 386, R4.1 to R4.5, R4.7, R4.9)', () => {
     expect(titles.at(-1)).toBe('Thing other');
   });
 
-  it.each([
-    // One fewer than …/things/{name}, one more than …/thing/{name} and …/things/{name}, and an empty parameter.
-    THINGS_PATH,
-    `${THINGS_PATH}/thing/a/b`,
-    `${THINGS_PATH}/a/b`,
-    `${THINGS_PATH}/thing/`,
+  it.each<[string, [string, string][]]>([
+    // One more than …/thing/{name} and …/things/{name}, and an empty parameter (one fewer is the case above).
+    [
+      `${THINGS_PATH}/thing/a/b`,
+      [
+        ['Things', THINGS_PATH],
+        ['a', `${THINGS_PATH}/thing/a`],
+      ],
+    ],
+    [
+      `${THINGS_PATH}/a/b`,
+      [
+        ['Things', THINGS_PATH],
+        ['a', `${THINGS_PATH}/a`],
+      ],
+    ],
+    [
+      `${THINGS_PATH}/thing/`,
+      [
+        ['Things', THINGS_PATH],
+        ['thing', `${THINGS_PATH}/thing`],
+      ],
+    ],
   ])(
-    '%s, one segment more or fewer than a pattern with a parameter, or an empty one: the "no screen yet" page',
-    (address) => {
+    '%s, one segment more than a pattern with a parameter, or an empty one: the "no screen yet" page with the crumbs of the screen above',
+    (address, above) => {
       const { wrapper } = open(address);
 
-      expectNoScreenPage(wrapper);
+      expectNoScreenPart(wrapper, above);
     },
   );
 
@@ -1453,21 +1495,17 @@ describe('paths and parameters (issue 386, R4.1 to R4.5, R4.7, R4.9)', () => {
     expect(sideLinks(wrapper)).toEqual([['Things', '/aws/kinesis/things']]);
   });
 
-  it.each(['/aws/kinesis/gadgets/other', '/aws/kinesis/gadgets/all/more', '/aws/kinesis/gadget'])(
-    'a screen with fixed paths is at no other path: %s shows the "no screen yet" page',
-    (address) => {
+  it.each<[string, [string, string][]]>([
+    ['/aws/kinesis/gadgets/other', [['Gadgets', '/aws/kinesis/gadgets']]],
+    ['/aws/kinesis/gadgets/all/more', [['Gadgets', '/aws/kinesis/gadgets/all']]],
+  ])(
+    'a screen with fixed paths is at no other path: %s shows the "no screen yet" page with the crumbs of the screen above',
+    (address, above) => {
       const { wrapper } = open(address);
 
-      expectNoScreenPage(wrapper);
+      expectNoScreenPart(wrapper, above);
     },
   );
-
-  it('a path below the same service that no screen matches: the "no screen yet" page with the services list as navigation, as before', () => {
-    const { wrapper } = open(NO_SCREEN_SERVICE.below);
-
-    expectNoScreenPage(wrapper);
-    expect(wrapper.findSideNavigation()?.findActiveLink()?.getElement()).toHaveAttribute('href', '/aws/kinesis');
-  });
 
   it("a screen whose title is a function of the name: the title reported to Studio's frame is its text for the decoded name", () => {
     open(`${thingPath('a/b c')}/edit`);
@@ -1858,7 +1896,8 @@ describe('the flash (issue 386, R5)', () => {
     choose('Act');
     for (const [path, name] of PAGES) {
       await act(() => router.navigate(path));
-      expect(h1()).toHaveTextContent(name);
+      // Issue 57: with the flash's screens of Amazon Kinesis registered, its route shows the page for that part of it.
+      expect(h1()).toHaveTextContent(path === NO_SCREEN_SERVICE.path ? NO_SCREEN_PART : name);
       expectNoFlash(wrapper);
     }
     // Nor does a result handed to one of them.
