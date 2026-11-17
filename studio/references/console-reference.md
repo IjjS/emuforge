@@ -73,7 +73,11 @@ omitted:                          # on the console's screen, not in the emulator
     reason: "<operation> answers <status> <code> (aws-emulator <version>), so <what the part shows> cannot exist"
 ```
 
-`route` always starts with `/aws/`: the AWS area's segment followed by the service's route.
+`route` always starts with `/aws/`: the AWS area's segment followed by the service's route. A screen of one
+resource has that resource's id in its route. Where the emulator assigns the id, the spec writes a parameter in its
+place, a whole path segment `{<name>}` (a lower-case letter, then lower-case letters, digits or `_`):
+`route: /aws/apigateway/apis/{id}`. A route may hold several, each name once. A brace anywhere else in a route is an
+invalid spec. An id the caller chooses (a bucket's name) is written out, with the name the seed uses.
 
 `breadcrumbs` are the area's crumbs (`studio/AGENTS.md`, "AWS screen policy", point 8): `EmuForge`, `AWS`, the
 service's short name, then the console's crumbs below the service. They never start with "Amazon Web Services" or
@@ -142,13 +146,20 @@ Computed from the running app, not from the code, by `.pm/bin/pm-structure`.
 
 1. Open the spec's `route` in the built app at 1280x800 against a seeded emulator, and take the accessibility
    tree (roles and accessible names) of the AWS area: everything under the area's root, its `AppLayout` with the
-   breadcrumbs included. The area's root is the element with class `aws-area` (Studio's `AREA_ROOT_CLASS`), and
-   the tree scored is that element's subtree of the accessibility tree. Studio's frame around the area is not part
-   of the screen and is not scored, so its language does not count either. A page with no element of class
-   `aws-area`, more than one, or one that is not in the accessibility tree is an error, not a score: the screen
-   must have exactly one. A spec with items that exist in only one data state (`table.empty`, which needs an empty
-   table, or a `single` or `multi` `table.selection`, which needs rows) is scored in two runs of the same build: one
-   against a seeded emulator and one against an empty one.
+   breadcrumbs included. A route parameter is filled by the run: `pm-structure … --param <name>=<value>`, once per
+   parameter, with the id the emulator answered when the seed created the resource. The screen's requirement says
+   which resource the seed creates for each parameter. The value is taken from the answer of that create call,
+   never looked up by name, since a name does not identify a resource. It is put into the route percent-encoded, as
+   one segment. A parameter without a value, or a value for a parameter the route does not have, is an error
+   (exit 2), never a score. The report's second line names the route that was opened. The area's root is the element
+   with class `aws-area` (Studio's `AREA_ROOT_CLASS`), and the tree scored is that element's subtree of the
+   accessibility tree. Studio's frame around the area is not part of the screen and is not scored, so its language
+   does not count either. A page with no element of class `aws-area`, more than one, or one that is not in the
+   accessibility tree is an error, not a score: the screen must have exactly one. A spec with items that exist in
+   only one data state (`table.empty`, which needs an empty table, or a `single` or `multi` `table.selection`, which
+   needs rows) is scored in two runs of the same build: one against a seeded emulator and one against an empty one.
+   For a spec whose route holds a parameter, the emulator of the `empty` run is not empty: it holds the resource
+   behind each parameter and nothing under it, and the run is given that resource's id as the seeded run is.
 2. Every leaf of the spec is one **item**: a breadcrumb, the title, each action, each column, each tab, each
    field label, each step. Each ordered list adds one more item for its order.
 3. An item **matches** when an element with the expected role and the same accessible name (trimmed, case
@@ -170,7 +181,8 @@ structure score = matched items / (all items - omitted items - not-applicable it
 
 - The report lists every unmatched item, and separately every action, column, tab or field found on the screen
   that the spec does not have.
-- The same build, seed and spec always give the same score.
+- The same build, seed and spec always give the same score. Two seeds are the same when they hold the same
+  resources; the ids the emulator assigned may differ, and the score does not depend on them.
 
 A wizard is opened once per shown step (its steps that are not omitted, in order): step `k` is the spec's route
 opened with `?step=<k>`, each a fresh page, nothing on it operated (no click, no typing). A Studio wizard screen
