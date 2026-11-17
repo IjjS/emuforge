@@ -21,7 +21,7 @@ interface CopyValueProps {
 }
 
 /** "Copy {label}", and what a press shows: "{label} copied" or "{label} could not be copied". */
-export function copyTexts(label: string): { button: string; copied: string; notCopied: string } {
+function copyTexts(label: string): { button: string; copied: string; notCopied: string } {
   return { button: `Copy ${label}`, copied: `${label} copied`, notCopied: `${label} could not be copied` };
 }
 

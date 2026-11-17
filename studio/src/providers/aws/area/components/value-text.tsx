@@ -17,7 +17,7 @@ import type { ReactNode } from 'react';
 export type ValueKind = 'address' | 'name' | 'fixed' | 'text';
 
 /** The class each kind's element carries; every one also carries `aws-area-value`. */
-export const VALUE_CLASS: Readonly<Record<ValueKind, string>> = {
+const VALUE_CLASS: Readonly<Record<ValueKind, string>> = {
   address: 'aws-area-value-address',
   name: 'aws-area-value-name',
   fixed: 'aws-area-value-fixed',
@@ -28,7 +28,7 @@ export const VALUE_CLASS: Readonly<Record<ValueKind, string>> = {
 const ADDRESS_BREAKS = /[^:/?&]*[:/?&]|[^:/?&]+$/g;
 
 /** An address's parts, each but the last ending with one of `:`, `/`, `?` and `&`. */
-export function addressParts(value: string): string[] {
+function addressParts(value: string): string[] {
   return value.match(ADDRESS_BREAKS) ?? [];
 }
 

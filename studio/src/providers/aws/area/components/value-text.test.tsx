@@ -4,7 +4,15 @@ import path from 'node:path';
 import { render } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
-import { ValueText, VALUE_CLASS, type ValueKind } from './value-text';
+import { ValueText, type ValueKind } from './value-text';
+
+/** The area's class for each kind of value. */
+const VALUE_CLASS: Record<ValueKind, string> = {
+  address: 'aws-area-value-address',
+  name: 'aws-area-value-name',
+  fixed: 'aws-area-value-fixed',
+  text: 'aws-area-value-text',
+};
 
 const ARN = 'arn:aws:iam::000000000000:role/team/app-role';
 const URL = 'https://127.0.0.1:39823/_aws/lambda-url/abc/?a=1&b=2';
