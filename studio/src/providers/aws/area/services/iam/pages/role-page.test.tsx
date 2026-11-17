@@ -683,7 +683,7 @@ describe('a loaded role', () => {
     expect(kindOf(lastActivity, (lastActivity.textContent ?? '').trim())).toBe('fixed');
   });
 
-  it('the table under the tab: a policy’s name as a name, its type as a fixed word (issue 467, R6)', async () => {
+  it('the table under the tab: a policy’s name as a name, its type as a fixed word; no tag case, the page shows no tag table (Tags is a tab IAM does not render) (issue 467, R6)', async () => {
     await openLoaded({ name: 'team-role', attached: [READ_ONLY], inline: ['inline-one'] });
 
     const table = policiesTable().getElement();
