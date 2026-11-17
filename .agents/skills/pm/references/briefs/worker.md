@@ -14,22 +14,26 @@ Conventions: {{conventions}}. Match the sibling files on `main` before writing n
 {{work}}
 
 Dependencies on another unit: `BLOCKED i{{issue}}-worker-{{unit}} depends <unit> <what you need>`; never edit
-another unit's files. Merge `main` or your base branch into yours only when the PM tells you it moved. Keep
-`output/state.md` current after each step; the PM resets your context from it past 300K.
+another unit's files. Merge a branch into yours only when the PM names it and tells you it moved: the issue
+branch, your base branch or `main`. Keep `output/state.md` current after each step; the PM resets your context
+from it past 300K.
 
 <!-- block: tests (unit t<n>) -->
 Steps:
 1. Write one integration check per `Integration` or `Flow` line of `test-criteria.md`, and nothing the criteria
    do not list, with a `manifest.jsonl` row each. For a studio `console` issue, commit each file under
    `.pm/issue-{{issue}}/specs/` to `studio/references/console/<service>/` unchanged.
-2. Run each check against a fresh emulator on your `emulator` port. Every one must fail now, for the reason its
+2. Run your checks against a fresh emulator with `{{root}}/.pm/bin/pm-check {{worktree}} --checks <id>…`: it
+   starts the suite with only those checks and records them in `output/checks/checks.json`, with the log in
+   `output/logs/checks-integration.log`; it is never a gate. Every one must fail now, for the reason its
    criteria line names. A check that passes before the implementation exists proves nothing: say so in
-   `decisions-needed.md` and stop with `BLOCKED … decision-needed`. Save the output under `output/logs/`.
-3. Commit in small steps on your branch. `REVIEW checks-{{unit}} r1 <paths> output/logs/` to rev, end your turn;
-   fix P1s when `REVIEWED` arrives; up to three rounds.
+   `decisions-needed.md` and stop with `BLOCKED … decision-needed`.
+3. Commit in small steps on your branch. `REVIEW checks-{{unit}} r1 <paths> output/checks/checks.json
+   output/logs/checks-integration.log` to rev, end your turn; fix P1s when `REVIEWED` arrives; up to three rounds.
 4. `{{root}}/.pm/bin/pm-report "UNIT READY i{{issue}}-worker-{{unit}} {{branch}}"`, print the same line, stop.
-   A branch that is red by design is not merged by itself; it arrives through the unit stacked on it. You do not
-   read or touch any implementation branch.
+   When your base is the issue branch, the PM merges your branch into it on your checks review, red or not;
+   otherwise a branch that is red by design is not merged by itself and arrives through the unit stacked on it.
+   You do not read or touch any implementation branch.
 
 <!-- block: implementation (unit e<n>, s<n>, h<n>) -->
 Steps:
