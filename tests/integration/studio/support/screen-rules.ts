@@ -527,3 +527,131 @@ export async function directlyBeforeProblems(control: Locator, scope: Locator, v
     ACTION,
   );
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Added by issue 467's S3 unit (t3): what S3's screens need beside the readers above.
+// ---------------------------------------------------------------------------------------------------------------
+
+/**
+ * The descriptions of every Cloudscape `Header` in the page's main, as shown, white space collapsed; empty when no
+ * header there shows one. On a list whose table holds its own header (the S3 bucket list), the table's description
+ * stands between the page's `h1` and the table's controls, which `pageHeader` does not read. Never waits.
+ */
+export async function headerDescriptions(page: Page): Promise<string[]> {
+  // The selector is rooted at the document (`createWrapper()`), so it is matched from the page and kept inside the main.
+  return page.evaluate((description) => {
+    const norm = (s: string) => s.replace(/\s+/g, ' ').trim();
+    const main = document.querySelector('main, [role="main"]');
+    if (!main) return [];
+    return [...document.querySelectorAll(description)]
+      .filter((d) => main.contains(d) && (d as HTMLElement).getClientRects().length > 0)
+      .map((d) => norm((d as HTMLElement).innerText))
+      .filter((t) => t !== '');
+  }, HEADER_DESCRIPTION);
+}
+
+/**
+ * The cell under the column headed `column` of the body row of `table` that has a cell reading exactly `text` (a row
+ * without a link, such as a tag's). Cells are counted as `cellUnder` counts them, `th` and `td` together. Fails the
+ * check, naming the headings read, when the table has no such column.
+ */
+export async function cellUnderRowWith(table: Locator, text: string, column: string): Promise<Locator> {
+  const headings = (await table.locator('thead tr').first().locator('th').allInnerTexts()).map((t) =>
+    t.replace(/\s+/g, ' ').trim(),
+  );
+  if (!headings.includes(column)) {
+    throw new Error(`the table has no column "${column}"; its headings: ${JSON.stringify(headings)}`);
+  }
+  const exactly = new RegExp(`^\\s*${escapeRegExp(text)}\\s*$`);
+  return (
+    table
+      .locator('tbody tr')
+      // An inner locator of `has` is matched inside each row, so it is rooted at the page as `cellUnder`'s is.
+      .filter({ has: table.page().locator('td, th').filter({ hasText: exactly }) })
+      .locator('td, th')
+      .nth(headings.indexOf(column))
+  );
+}
+
+/** What a table's box does against the element it scrolls in: the table's width and that element's. */
+export interface TableFit {
+  tableWidth: number;
+  /** The width of the nearest element around the table that scrolls sideways or clips, else the table's parent. */
+  boxWidth: number;
+}
+
+/** How wide `table`'s first element is drawn against the box it scrolls in; `null` when there is no table. */
+export async function tableFit(table: Locator): Promise<TableFit | null> {
+  if ((await table.count()) === 0) return null;
+  return table.first().evaluate(
+    (el) => {
+      let box: Element | null = el.parentElement;
+      for (let a = el.parentElement; a && a !== document.body; a = a.parentElement) {
+        if (['auto', 'scroll', 'hidden', 'clip'].includes(getComputedStyle(a).overflowX)) {
+          box = a;
+          break;
+        }
+      }
+      return {
+        tableWidth: el.getBoundingClientRect().width,
+        boxWidth: (box ?? el).getBoundingClientRect().width,
+      };
+    },
+    undefined,
+    ACTION,
+  );
+}
+
+/**
+ * The visible texts of the page's main drawn in the band from the bottom of `above` to the top of the highest of
+ * `below` (viewport coordinates, as the page is scrolled now), leaving out the texts of headings (a title with its
+ * counter), links, buttons and tab lists: what stands between two parts of a page besides their own controls. Each
+ * text node is one entry, white space collapsed. `null` when `above` or every `below` is not shown. Never waits.
+ */
+export async function textsBetween(page: Page, above: Locator, below: Locator[]): Promise<string[] | null> {
+  const top =
+    (await above
+      .first()
+      .boundingBox()
+      .catch(() => null)) ?? null;
+  const bottoms: number[] = [];
+  for (const b of below) {
+    const box = await b
+      .first()
+      .boundingBox()
+      .catch(() => null);
+    if (box) bottoms.push(box.y);
+  }
+  if (top === null || bottoms.length === 0) return null;
+  return page.evaluate(
+    ([from, to]) => {
+      const hidden = (el: Element): boolean => {
+        for (let a: Element | null = el; a; a = a.parentElement) {
+          const cs = getComputedStyle(a);
+          if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') return true;
+          if (cs.clip !== 'auto' && cs.clip !== '' && /absolute|fixed/.test(cs.position)) return true;
+          if (/inset\(\s*50%/.test(cs.clipPath)) return true;
+          const box = a.getBoundingClientRect();
+          if (cs.overflow !== 'visible' && (box.width <= 1 || box.height <= 1)) return true;
+        }
+        return false;
+      };
+      const main = document.querySelector('main, [role="main"]');
+      if (!main) return [];
+      const own = 'h1, h2, h3, h4, h5, h6, a, button, [role="button"], [role="link"], [role="tablist"]';
+      const found: string[] = [];
+      const walker = document.createTreeWalker(main, NodeFilter.SHOW_TEXT);
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        const text = (n as Text).data.replace(/\s+/g, ' ').trim();
+        const el = n.parentElement;
+        if (text === '' || !el || el.closest(`script, style, template, noscript, ${own}`) || hidden(el)) continue;
+        const range = document.createRange();
+        range.selectNodeContents(n);
+        const rects = [...range.getClientRects()].filter((r) => r.width > 0 && r.height > 0);
+        if (rects.some((r) => r.top >= from - 1 && r.bottom <= to + 1)) found.push(text);
+      }
+      return found;
+    },
+    [top.y + top.height, Math.min(...bottoms)] as const,
+  );
+}

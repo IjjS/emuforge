@@ -10,6 +10,10 @@
 // make is tracked by `Seeded` so it is emptied and removed when the check ends, whatever the check found. The page's
 // requests to the engine are listened to (`EngineRecord`), never changed. Words and readers:
 // `support/s3-bucket-page.ts`; direct calls and `Seeded`: `support/s3.ts`.
+//
+// Issue 467 rewrote one step of `studio.s3-create-bucket-repeated-and-abandoned` (its test-criteria.md, "Flow checks,
+// changed"; requirement R9, rule 5): what "Cancel" does once the form holds something. The dialog's words:
+// `support/screen-rules.ts`.
 
 import type { Page } from '@playwright/test';
 
@@ -18,6 +22,7 @@ import { crumbLink } from './support/aws-area';
 import { ACTION, addressOf, heading } from './support/frame';
 import { Lines } from './support/lines';
 import {
+  appeared,
   BUCKETS_PATH,
   bucketNamesDirect,
   bucketPropertiesDirect,
@@ -31,6 +36,7 @@ import {
   openList,
   screen,
   Seeded,
+  watchText,
 } from './support/s3';
 import {
   CREATE_H1,
@@ -44,10 +50,12 @@ import {
   form,
   FORM_AT_START,
   formState,
+  type FormState,
   MESSAGES,
   openForm,
   SSE_KMS,
 } from './support/s3-bucket-page';
+import { DISCARD, DISCARD_HEADING, discardDialog, KEEP_EDITING } from './support/screen-rules';
 
 /** Waits for the bucket list after the form. */
 async function expectList(page: Page): Promise<void> {
@@ -375,20 +383,68 @@ test('studio.s3-create-bucket-repeated-and-abandoned', async ({ ctx, page, conte
     },
   );
 
+  // Issue 467 (requirement R9, rule 5) replaced the line 'Fill the form, choose "Cancel" → the list, and no bucket of
+  // that name exists; "Create bucket" again → the form as at start' with the three lines below: "Cancel" asks once the
+  // form holds something.
+  const d = discardDialog(page);
+  const cancelled = `${p}-cancel`;
+  seeded.track(cancelled);
+
+  /** The form's values as shown, with the texts typed into it. */
+  async function filledState(): Promise<FormState & { tagKey: string | null; kmsKey: string | null }> {
+    return {
+      ...(await formState(page)),
+      tagKey: (await f.keys.count()) > 0 ? await f.key(0).inputValue(ACTION) : null,
+      kmsKey: (await f.kmsKey.count()) > 0 ? await f.kmsKey.inputValue(ACTION) : null,
+    };
+  }
+
+  await lines.line('Open the form, "Cancel" → the list at once, no dialog', async () => {
+    await openForm(page);
+    await watchText(page, DISCARD_HEADING);
+    await f.cancel.click(ACTION);
+    await expectList(page);
+    expect(await appeared(page, DISCARD_HEADING), `"${DISCARD_HEADING}" was shown`).toBe(false);
+  });
+
   await lines.line(
-    'Fill the form, choose "Cancel" → the list, and no bucket of that name exists; "Create bucket" again → the form as at start',
+    'Fill the form, "Cancel" → the dialog; "Keep editing" → the form with every value, focus on "Cancel"',
     async () => {
-      const name = `${p}-cancel`;
-      seeded.track(name);
       await openForm(page);
-      await fill(name);
+      await fill(cancelled);
+      const filled = await filledState();
+      ctx.log(`the form filled: ${JSON.stringify(filled)}`);
       await f.cancel.click(ACTION);
+      await expect(d.dialog, `the dialog "${DISCARD_HEADING}"`).toBeVisible();
+      await expect(page, 'the form stays while the dialog is open').toHaveURL(addressOf(CREATE_PATH));
+      await d.keepEditing.click(ACTION);
+      await expect(d.dialog, `"${KEEP_EDITING}" closes the dialog`).toHaveCount(0);
+      await expectFormStays(page);
+      await expect.poll(() => filledState(), { message: `the form after "${KEEP_EDITING}"` }).toEqual(filled);
+      await expect(f.cancel, `focus on "Cancel" after "${KEEP_EDITING}"`).toBeFocused();
+    },
+  );
+
+  await lines.line(
+    '"Cancel", "Discard" → the list, and a direct `ListBuckets` holds no bucket of that name; "Create bucket" again → the form as at start',
+    async () => {
+      // The Given: the form holds what was entered, whether or not the line before held.
+      const holds =
+        new URL(page.url()).pathname === CREATE_PATH && (await f.name.inputValue(ACTION).catch(() => '')) === cancelled;
+      if (!holds) {
+        await openForm(page);
+        await fill(cancelled);
+      }
+      await f.cancel.click(ACTION);
+      await expect(d.dialog, `the dialog "${DISCARD_HEADING}"`).toBeVisible();
+      await d.discard.click(ACTION);
+      await expect(d.dialog, `"${DISCARD}" closes the dialog`).toHaveCount(0);
       await expectList(page);
-      expect(await bucketNamesDirect(ctx, port, name), `a direct ListBuckets of ${name}`).toEqual([]);
-      expect(record.of('CreateBucket', name), `CreateBucket requests of ${name}`).toEqual([]);
+      expect(await bucketNamesDirect(ctx, port, cancelled), `a direct ListBuckets of ${cancelled}`).toEqual([]);
+      expect(record.of('CreateBucket', cancelled), `CreateBucket requests of ${cancelled}`).toEqual([]);
       await screen(page).action(CREATE).click(ACTION);
       await expect(page).toHaveURL(addressOf(CREATE_PATH));
-      await expectAtStart('opened again after "Cancel"');
+      await expectAtStart('opened again after "Discard"');
     },
   );
 
