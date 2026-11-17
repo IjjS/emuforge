@@ -18,6 +18,7 @@ import { useNavigate } from 'react-router';
 import '../../../styles/emulator-line.css';
 import { AreaRootContext } from '../../../area-root';
 import type { AreaConnection } from '../../../components/emulator-line';
+import { creationDateText } from '../../../components/format-date';
 import { usePageHelp } from '../../../components/page-help';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
@@ -26,7 +27,6 @@ import {
   bucketPath,
   BUCKETS_PATH,
   CREATE_BUCKET_PATH,
-  creationDateText,
   deleteBucketPath,
   DIRECTORY_BUCKETS_PATH,
   emptyBucketPath,

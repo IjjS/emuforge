@@ -18,6 +18,7 @@ import type { AreaConnection } from './components/emulator-line';
 import { EmulatorLineAndNotice } from './components/local-notice';
 import { PageHelpContext } from './components/page-help';
 import { PageResourcesContext, type PageResources } from './components/page-resources';
+import { screenCrumbs } from './screen-paths';
 import { useFollow } from './components/use-follow';
 import { IndexPage } from './pages/index-page';
 import { NoScreenPage } from './pages/no-screen-page';
@@ -70,17 +71,26 @@ const AREA_CRUMBS: BreadcrumbGroupProps.Item[] = [
   { text: AWS_SHORT_NAME, href: AWS_PATH },
 ];
 
-/** `EmuForge > AWS > <service's crumb> > …`; the last crumb is the current page, which Cloudscape shows as no link. */
+/**
+ * `EmuForge > AWS > <service's crumb> > …`; the last crumb is the current page, which Cloudscape shows as no link,
+ * whatever address a screen gave it (issue 386, R4.6).
+ */
 function breadcrumbs(page: AreaPage, pathname: string): BreadcrumbGroupProps.Item[] {
   switch (page.kind) {
     case 'index':
       return AREA_CRUMBS;
-    case 'screen':
+    case 'screen': {
+      // The screen's crumbs in order, each but the last to the address it gives; the last always the current page.
+      const crumbs = screenCrumbs(page.screen, page.params);
       return [
         ...AREA_CRUMBS,
         { text: page.service.crumb, href: servicePath(page.service) },
-        { text: page.screen.crumb, href: pathname },
+        ...crumbs.map(({ text, href }, index) => ({
+          text,
+          href: index === crumbs.length - 1 ? pathname : (href ?? pathname),
+        })),
       ];
+    }
     case 'service':
       return [...AREA_CRUMBS, { text: page.service.crumb, href: servicePath(page.service) }];
     case 'not-found':
@@ -106,7 +116,7 @@ function PageContent({ page, connection }: { page: AreaPage; connection: AreaCon
     case 'index':
       return <IndexPage />;
     case 'screen':
-      return <page.screen.Page connection={connection} />;
+      return <page.screen.Page connection={connection} params={page.params} />;
     case 'service':
       return <NoScreenPage service={page.service} />;
     case 'not-found':
@@ -116,7 +126,7 @@ function PageContent({ page, connection }: { page: AreaPage; connection: AreaCon
 
 /**
  * The AWS area, at `/aws` and below, as the AWS console: an `AppLayout` with the side navigation of the services
- * and breadcrumbs from EmuForge. A `console` screen (`screens.ts`) brings its own title, crumb and side navigation,
+ * and breadcrumbs from EmuForge. A `console` screen (`screens.ts`) brings its own title, crumbs and side navigation,
  * and its help, which the layout's tools region shows as the help panel; a page that gives no help has no panel and
  * no toggle for one (requirement R5 of issue 56). Its root element carries Cloudscape's mode and scopes Cloudscape's
  * base. It names its content target to Studio and moves focus to it after a route change. The content target holds
