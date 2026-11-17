@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: feature
 Issue-Source: plan
 Issue-Key: harness|pm-structure|route-parameter-from-seeded-emulator
-Issue-Check-Ids:
+Issue-Check-Ids: harness.route-param
 Issue-Commit: a6081efbb405b164c3ca6cc05231ccf318eaefa7
 
 # Let pm-structure score a screen whose route holds an id the emulator assigns
