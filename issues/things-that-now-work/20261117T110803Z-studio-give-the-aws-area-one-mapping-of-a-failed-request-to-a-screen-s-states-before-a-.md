@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: gap
 Issue-Source: finder
 Issue-Key: studio|aws-area|shared-request-states
-Issue-Check-Ids:
+Issue-Check-Ids: studio-unit:src/lib/aws/request.test.ts studio-unit:src/test/request-module.test.ts studio.s3-bucket-list-follows-emulator-stop-and-restart studio.s3-bucket-list-says-when-the-engine-stops-answering
 Issue-Commit: 8accb905bed54bd6e4e266c14fc562b0755591a8
 
 # Give the AWS area one mapping of a failed request to a screen's states, before a third service copies it
