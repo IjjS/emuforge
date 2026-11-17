@@ -101,8 +101,9 @@ test('engine.product-linux-file-renders-the-host-form', async ({ ctx }) => {
     'studio',
   ]);
 
-  // `engine` and `studio` → `network_mode: host`, no `ports`, no `depends_on`, no `extra_hosts`; `aws-emulator` → no
-  // `network_mode`, each of its `ports` entries on host address 127.0.0.1 with the published port EMULATOR_PORT.
+  // `engine` and `studio` → `network_mode: host`, no `ports`, no `extra_hosts`; `engine` → no `depends_on`, `studio` →
+  // `depends_on` on `engine` alone (decisions.md 2026-11-17 14:40); `aws-emulator` → no `network_mode`, each of its
+  // `ports` entries on host address 127.0.0.1 with the published port EMULATOR_PORT.
   for (const [which, rendered] of [
     ['without the profile', services],
     ['with the profile', profiledServices],
@@ -117,7 +118,12 @@ test('engine.product-linux-file-renders-the-host-form', async ({ ctx }) => {
           extra_hosts: keysOf(service.extra_hosts),
         },
         `${which}: ${name}`,
-      ).toEqual({ network_mode: 'host', ports: [], depends_on: [], extra_hosts: [] });
+      ).toEqual({
+        network_mode: 'host',
+        ports: [],
+        depends_on: name === 'studio' ? ['engine'] : [],
+        extra_hosts: [],
+      });
     }
   }
   const emulator = profiledServices['aws-emulator'] ?? {};
