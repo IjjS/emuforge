@@ -409,7 +409,10 @@ test('studio.lambda-values-break-where-they-can-be-read', async ({ ctx, page, co
     await applyFilter(page, p);
     await expectNames(page, [name], 'the rows under the filter <p>');
     const headings = await columnHeadings(page);
-    const at = (column: string) => headings.findIndex((h) => h === column);
+    const at = (column: string) => {
+      expect(headings, `the list's column headings hold "${column}"`).toContain(column);
+      return headings.indexOf(column);
+    };
     return {
       name: cellOf(page, name, at('Function name')),
       description: cellOf(page, name, at('Description')),
