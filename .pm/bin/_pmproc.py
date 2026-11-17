@@ -13,15 +13,22 @@ descendant leads that group, else alone. A frozen process can neither start nor 
 way stays its own until the kill. Then every frozen group and process gets SIGKILL, the child's group last. The walk
 ends when a level freezes nothing new, when `PS` fails, or at `WALK_TIMEOUT`; what is frozen by then is killed.
 
-The stop record (issue 12, design D2): a signal handler calls `stop(exc)`, which only records `exc` (the first
-call wins) and returns. The stop is delivered by `check()`, which raises it once: at the start of `run`, while
-`run` waits for its child (within one polling slice, after the child's tree is killed and the child reaped), and
-at the caller's own checkpoints. Code that runs after the delivery is not interrupted again. `stop_requested()` returns
-the recorded exception or None.
+The stop record (issue 12, design D2): a signal handler calls `stop(exc)`, which only records `exc` (the first call
+wins) and returns. `stop_on(stops)` installs such a handler for each signal of `stops` (pm-structure calls it once, from
+its main thread); once it has recorded the first stop, it sets every one of those signals to SIG_IGN, so a later signal
+interrupts no thread and runs no handler until the process exits, and a child started after that inherits the ignored
+signals (issue 50, design D1 to D3). A signal Python had already caught when its handler became SIG_IGN is dropped by
+CPython with an unraisable `OSError: Signal <n> ignored due to race condition`; once a stop is recorded, `stop_on`'s
+unraisable hook drops exactly that report for its signals, so nothing reaches stderr for a signal that was meant to be
+ignored, and passes every other report to the hook it replaced. The stop is delivered by `check()`, which raises it
+once: at the start of `run`, while `run` waits for its child (within one polling slice, after the child's tree is killed
+and the child reaped), and at the caller's own checkpoints. Code that runs after the delivery is not interrupted again.
+`stop_requested()` returns the recorded exception or None.
 """
 import os
 import signal
 import subprocess
+import sys
 import time
 
 # the only variables copied from the caller's environment
@@ -47,6 +54,40 @@ def stop(exc):
     global _stop
     if _stop is None:
         _stop = exc
+
+
+def stop_on(stops):
+    """Install one handler for every signal of `stops` ({signal: exception}); call it from the main thread.
+
+    The handler records `stops[signum]` with `stop`, then sets the signal it was called for to SIG_IGN, then every
+    signal of `stops`: a storm of any of them ends there (issue 50, design D2). It writes nothing, raises nothing
+    and allocates nothing that lasts (issue 25, C3). Never the default action: a late signal must not kill the run
+    after its report (issue 25, C2).
+
+    It also replaces sys.unraisablehook: after a stop, CPython's report of a signal of `stops` that it had caught
+    before the handler became SIG_IGN (two kinds caught in one pass, or one caught while `signal.signal` changes
+    the handler) is dropped; every other report goes to the hook that was installed before.
+    """
+    stops = dict(stops)
+    sigs = tuple(stops)
+    dropped = frozenset(f"Signal {int(sig)} ignored due to race condition" for sig in sigs)
+    previous = sys.unraisablehook
+
+    def unraisable(report):
+        if _stop is not None and report.exc_type is OSError and str(report.exc_value) in dropped:
+            return
+        previous(report)
+
+    sys.unraisablehook = unraisable
+
+    def on_signal(signum, _frame):
+        stop(stops[signum])
+        signal.signal(signum, signal.SIG_IGN)
+        for sig in sigs:
+            signal.signal(sig, signal.SIG_IGN)
+
+    for sig in sigs:
+        signal.signal(sig, on_signal)
 
 
 def stop_requested():
