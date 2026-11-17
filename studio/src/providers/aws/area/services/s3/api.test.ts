@@ -915,18 +915,21 @@ describe('a failed call names the operation that was sent', () => {
     expect(await failure(call(signal()))).toEqual(expected);
   });
 
-  it.each([...CALLS, ...SENDS])('%s answered 501 or another code → that kind, naming the operation', async (operation, call) => {
-    engine.aws = () => errorAnswer(501, 'NotImplemented', 'scaffolded');
-    expect(await failure(call(signal()))).toEqual({ kind: 'not-implemented', operation });
+  it.each([...CALLS, ...SENDS])(
+    '%s answered 501 or another code → that kind, naming the operation',
+    async (operation, call) => {
+      engine.aws = () => errorAnswer(501, 'NotImplemented', 'scaffolded');
+      expect(await failure(call(signal()))).toEqual({ kind: 'not-implemented', operation });
 
-    engine.aws = () => errorAnswer(400, 'InvalidRequest', 'The request is not valid');
-    expect(await failure(call(signal()))).toEqual({
-      kind: 'other',
-      operation,
-      code: 'InvalidRequest',
-      message: 'The request is not valid',
-    });
-  });
+      engine.aws = () => errorAnswer(400, 'InvalidRequest', 'The request is not valid');
+      expect(await failure(call(signal()))).toEqual({
+        kind: 'other',
+        operation,
+        code: 'InvalidRequest',
+        message: 'The request is not valid',
+      });
+    },
+  );
 });
 
 describe('the caller’s abort signal', () => {
