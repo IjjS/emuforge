@@ -7,18 +7,29 @@
 # version and commit, the checkout's commit, the verdict of every manifest check (passed, failed, error, not-run)
 # and the relay fidelity figure.
 #
-# Usage: run [--not-run <file>] [--on-request], in either order. The file is a not-run list (.github/not-run.json,
-# issue 53): its `checks` name manifest ids, each with a `reason`; its other keys are not read. A check is on
-# request when its manifest row is labelled `on-request` (issue 315); without --on-request every such check is left
-# out with the reason "on request: not part of a default run; run it with --on-request", and with it they run like
-# every other check. A check that is listed and on request has the list's reason, with or without --on-request. A
+# Usage: run [--not-run <file>] [--on-request] [--services <file>], in any order. The --not-run file is a not-run list
+# (.github/not-run.json, issue 53): its `checks` name manifest ids, each with a `reason`; its other keys are not read. A
+# check is on request when its manifest row is labelled `on-request` (issue 315); without --on-request every such check
+# is left out with the reason "on request: not part of a default run; run it with --on-request", and with it they run
+# like every other check. A check that is listed and on request has the list's reason, with or without --on-request. A
 # check left out is not executed: the engine checks get EMUFORGE_IT_NOT_RUN naming a file of the left-out ids, so
 # support::check::check returns at once, and Playwright gets one --grep-invert pattern of the left-out Studio and
-# product ids. Each is reported `not-run` with its reason and counts neither as passed nor as failed; everything
-# else, the builds included, runs as when nothing is left out. A list that cannot be read, is not that shape or
-# names an id twice or one the manifest does not hold makes every check `error` (exit 127) before anything is built
-# or started. Any other argument, or either option twice, is refused with a usage line (exit 2). Only the list and
-# the label turn this on; EMUFORGE_IT_NOT_RUN from the caller is unset.
+# product ids. Each is reported `not-run` with its reason and counts neither as passed nor as failed; everything else,
+# the builds included, runs as when nothing is left out. A list that cannot be read, is not that shape or names an id
+# twice or one the manifest does not hold makes every check `error` (exit 127) before anything is built or started.
+#
+# A check of a service is a manifest row whose `service` is a service name, the name of its folder under
+# studio/src/providers/aws/area/services/ (issue 327); every other row is a check of no service and always runs.
+# The --services file is JSON {"services": [<service name>, ...]} or {"services": null}; its other keys are not
+# read. null is every service: nothing more is left out. With a list, every check of a service not in the list is
+# left out as a listed check is, with the reason "service <s> not touched: its checks are not part of this run"; a
+# name no row has selects nothing. When more than one reason applies, the list's comes first, then on request, then
+# the service. report.json says `services`: the file's list, sorted without repeats, or null when every service's
+# checks were part of the run (without the option, with null, and in a report of a run that did not get to its
+# checks). A services file that cannot be read, is not that shape or holds an entry that is not a service name makes
+# every check `error` (exit 127) before anything is built or started. Any other argument, or any option twice, is
+# refused with a usage line (exit 2). Only the list, the label and the services file turn this on;
+# EMUFORGE_IT_NOT_RUN from the caller is unset.
 #
 # Relay fidelity (engine/references/relay-fidelity.md): passed / total over the manifest rows labelled
 # `transparency` whose verdict is passed or failed (`error` counts in neither). It is written into report.json as
@@ -35,10 +46,10 @@
 # the checks recorded and could not remove.
 #
 # Exit, over the checks that are not `not-run`: 0 when every one passed; 1 when any failed; 127 when there are only
-# errors (the environment failed: Docker, the image, cargo, bun; pm-check records 127 as `error`) or every check is
-# `not-run` (nothing was checked); 2 for a usage error. The engine and Studio are the subject, not the
-# environment: when engine/ or studio/ does not exist or does not build, every check still runs and fails at its
-# first engine or Studio step.
+# errors (the environment failed: Docker, the image, cargo, bun, a product image build that has not ended within
+# product_build_bound seconds; pm-check records 127 as `error`) or every check is `not-run` (nothing was checked); 2 for
+# a usage error. The engine and Studio are the subject, not the environment: when engine/ or studio/ does not exist or
+# does not build, every check still runs and fails at its first engine or Studio step.
 set -euo pipefail
 
 # Real AWS credentials, profiles and proxy settings never reach a check.
@@ -55,12 +66,14 @@ unset NODE_OPTIONS NODE_PATH
 export AWS_EC2_METADATA_DISABLED=true
 
 usage() {
-  echo "usage: tests/integration/run [--not-run <file>] [--on-request]" >&2
+  echo "usage: tests/integration/run [--not-run <file>] [--on-request] [--services <file>]" >&2
   exit 2
 }
 not_run=no
 not_run_file=
 on_request=no
+services=no
+services_file=
 while (($#)); do
   case "$1" in
     --not-run)
@@ -69,6 +82,9 @@ while (($#)); do
     --on-request)
       [[ "$on_request" == no ]] || usage
       on_request=yes; shift ;;
+    --services)
+      [[ "$services" == no && $# -ge 2 ]] || usage
+      services=yes; services_file="$2"; shift 2 ;;
     *) usage ;;
   esac
 done
@@ -79,7 +95,7 @@ checkout="$(cd ../.. && pwd)"
 out="$checkout/output/integration"
 logs="$checkout/output/logs"
 rm -rf "$out/verdicts" "$out/logs" "$out/tmp" "$out/playwright" "$out/report.json" "$out/not-run.ids" \
-  "$out/not-run.json"
+  "$out/not-run.json" "$out/services.json"
 mkdir -p "$out/verdicts" "$logs"
 run_id="$(date +%s)-$$"
 product_image="emuforge-it-product-$run_id"
@@ -87,16 +103,23 @@ emulator_image="emuforge-it-emulator-$run_id"
 commit="$(git -C "$checkout" rev-parse HEAD 2>/dev/null || echo unknown)"
 emulator_version=unknown
 emulator_commit=unknown
+# Seconds the product image build may take (issue 293). A cached build takes seconds and an uncached one on a runner
+# a few minutes; one that waits for a registry that does not answer never ends by itself.
+product_build_bound=600
 
 # report <reason>: writes report.json from the manifest and the verdict files and prints the exit code. With a
 # reason, the run did not get to its checks and every check is `error` with that reason.
 report() {
   python3 -I - "$here/manifest.jsonl" "$out/verdicts" "$out/report.json" \
-    "$emulator_version" "$emulator_commit" "$commit" "$out/not-run.json" "${1:-}" <<'PY'
+    "$emulator_version" "$emulator_commit" "$commit" "$out/not-run.json" "$out/services.json" "${1:-}" <<'PY'
 import json, pathlib, sys
-manifest, verdicts, report, version, emulator_commit, commit, not_run, reason = sys.argv[1:]
-# {id: reason} of the checks left out (the validated not-run list, the rows on request); absent when none is.
+manifest, verdicts, report, version, emulator_commit, commit, not_run, services, reason = sys.argv[1:]
+# {id: reason} of the checks left out (the validated not-run list, the rows on request, the checks of the services
+# not touched); absent when none is.
 listed = json.loads(pathlib.Path(not_run).read_text()) if pathlib.Path(not_run).exists() else {}
+# The accepted services file's list, sorted without repeats, or null; absent without --services. A run that did not
+# get to its checks left nothing out by service.
+touched = json.loads(pathlib.Path(services).read_text()) if pathlib.Path(services).exists() and not reason else None
 checks = []
 transparency = set()
 for line in pathlib.Path(manifest).read_text().splitlines():
@@ -121,7 +144,7 @@ counted = [c for c in checks if c["check_id"] in transparency and c["verdict"] i
 fidelity = dict(passed=sum(c["verdict"] == "passed" for c in counted), total=len(counted))
 pathlib.Path(report).write_text(json.dumps(dict(
     emulator_version=version, emulator_commit=emulator_commit, commit=commit, relay_fidelity=fidelity,
-    checks=checks), indent=1) + "\n")
+    services=touched, checks=checks), indent=1) + "\n")
 for c in checks:
     print(f"  {c['verdict']:7} {c['check_id']}  {c['message'].splitlines()[0][:160] if c['message'] else ''}", file=sys.stderr)
 verdicts = {c["verdict"] for c in checks if c["verdict"] != "not-run"}
@@ -147,28 +170,133 @@ preflight_error() {
   exit 127
 }
 
+# bounded <seconds> <command...>: runs the command in a session of its own (so its process group holds everything it
+# starts), standard input from /dev/null, the rest inherited. Exits with the command's code (128 + n for signal n, 127
+# when it cannot be started) after ending what is left of its group (SIGTERM, SIGKILL 3 s later). At the bound it ends
+# the group (SIGTERM, SIGKILL 10 s later) and exits 124. On SIGTERM, SIGINT or SIGHUP to itself (pm-check ends the
+# run's group) it ends the group by itself (SIGTERM, SIGKILL 3 s later) and exits 128 + n; a later signal does not
+# restart that. A command that exits 124 by itself is taken for the bound: an `error`, never a wrong verdict
+# (docker compose build has no such code of its own).
+bounded() {
+  python3 -I - "$@" <<'PY'
+import os, signal, subprocess, sys, time
+seconds, cmd = float(sys.argv[1]), sys.argv[2:]
+proc = None
+stopping = None
+code = None
+
+
+def reap():
+    # The command's exit code once it has ended (and is reaped), else None.
+    global code
+    if code is None:
+        try:
+            pid, status = os.waitpid(proc.pid, os.WNOHANG)
+        except ChildProcessError:  # not ours to wait for any more: nothing to report but that it ended
+            code = 127
+            return code
+        if pid:
+            code = 128 + os.WTERMSIG(status) if os.WIFSIGNALED(status) else os.WEXITSTATUS(status)
+    return code
+
+
+def end_group(grace):
+    # SIGTERM to the command's group, SIGKILL to what is left of it after `grace` seconds.
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        return
+    until = time.monotonic() + grace
+    while time.monotonic() < until:
+        reap()
+        try:
+            os.killpg(proc.pid, 0)
+        except (ProcessLookupError, PermissionError):
+            return
+        time.sleep(0.05)
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+    until = time.monotonic() + 5
+    while reap() is None and time.monotonic() < until:
+        time.sleep(0.05)
+
+
+def on_signal(n, frame):
+    global stopping
+    if stopping is not None:
+        return
+    stopping = n
+    if proc is not None:
+        end_group(3)
+        os._exit(128 + n)
+
+
+for n in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+    signal.signal(n, on_signal)
+try:
+    proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, start_new_session=True)
+except OSError as e:
+    print(f"bounded: cannot start {cmd[0]}: {e.strerror or e}", file=sys.stderr)
+    sys.exit(128 + stopping if stopping is not None else 127)
+if stopping is not None:  # a signal came while the command was being started
+    end_group(3)
+    os._exit(128 + stopping)
+started = time.monotonic()
+while reap() is None:
+    if time.monotonic() - started >= seconds:
+        end_group(10)
+        os._exit(124)
+    time.sleep(0.1)
+end_group(3)
+os._exit(code)
+PY
+}
+
 free_port() {
   python3 -I -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])'
 }
 
-# What is left out, before anything is built or started: the not-run list given to --not-run and, without
-# --on-request, every manifest row labelled `on-request` (each with the fixed reason ON_REQUEST below); an id that
-# is both has the list's reason. When anything is left out, or a list was given, it writes $out/not-run.json
-# ({id: reason}) for report and $out/not-run.ids (one id per line) for the engine checks, and prints the Playwright
-# pattern of the left-out .spec.ts ids (nothing when there is none); on a refusal of the list it prints the reason.
-# Only ids that have the form of a manifest id are used further. A manifest that cannot be read, when no list was
-# given, leaves nothing out: the run ends at its report as it would without this block. (Its output goes through a
-# file: bash 3.2 cannot parse a heredoc inside $(...).)
+# What is left out, before anything is built or started: the not-run list given to --not-run, without
+# --on-request every manifest row labelled `on-request` (each with the fixed reason ON_REQUEST below) and, with a
+# --services list, every check of a service not in it (each with the reason of service_reason below); an id left out
+# for more than one reason has the list's, then on request's. When anything is left out, or a list was given, it
+# writes $out/not-run.json ({id: reason}) for report and $out/not-run.ids (one id per line) for the engine checks,
+# and prints the Playwright pattern of the left-out .spec.ts ids (nothing when there is none); an accepted services
+# file is written as $out/services.json (its list sorted without repeats, or null) for report. On a refusal of the
+# list or of the services file it prints the reason. Only ids that have the form of a manifest id are used further,
+# and a service name is only compared with manifest values. A manifest that cannot be read, when no list was given,
+# leaves nothing out: the run ends at its report as it would without this block. (Its output goes through a file:
+# bash 3.2 cannot parse a heredoc inside $(...).)
 grep_invert=
-if python3 -I - "$not_run" "$not_run_file" "$here/manifest.jsonl" "$out" "$on_request" >"$out/not-run.out" <<'PY'
+if python3 -I - "$not_run" "$not_run_file" "$here/manifest.jsonl" "$out" "$on_request" "$services" \
+  "$services_file" >"$out/not-run.out" <<'PY'
 import json, pathlib, re, sys
-has_list, path, manifest, out, on_request = sys.argv[1:]
+has_list, path, manifest, out, on_request, has_services, services_path = sys.argv[1:]
 ON_REQUEST = "on request: not part of a default run; run it with --on-request"
 ID = re.compile(r"[a-z]+\.[a-z0-9-]+")
+SERVICE = re.compile(r"[a-z][a-z0-9]*(-[a-z0-9]+)*")
+
+
+def service_reason(service):
+    """The reason of a check of `service` when `service` is not in the services file's list."""
+    return f"service {service} not touched: its checks are not part of this run"
+
 
 def refuse(what):
     print(f"not-run list {path}: {what}")
     sys.exit(1)
+
+
+def refuse_services(what):
+    print(f"services file {services_path}: {what}")
+    sys.exit(1)
+
+
+def read_rows():
+    return [json.loads(line) for line in pathlib.Path(manifest).read_text().splitlines() if line.strip()]
+
 
 listed = {}
 if has_list == "yes":
@@ -180,7 +308,7 @@ if has_list == "yes":
         refuse(f"is not JSON: {e}")
     if not isinstance(data, dict) or not isinstance(data.get("checks"), list):
         refuse('has no list "checks"')
-    rows = [json.loads(line) for line in pathlib.Path(manifest).read_text().splitlines() if line.strip()]
+    rows = read_rows()
     paths = {row["check_id"]: row["path"] for row in rows}
     for n, entry in enumerate(data["checks"]):
         if not isinstance(entry, dict) or not isinstance(entry.get("id"), str):
@@ -193,25 +321,58 @@ if has_list == "yes":
         if check_id in listed:
             refuse(f"checks[{n}] {check_id!r} is listed twice")
         listed[check_id] = entry["reason"]
-elif on_request == "yes":
-    sys.exit(0)
 else:
     try:
-        rows = [json.loads(line) for line in pathlib.Path(manifest).read_text().splitlines() if line.strip()]
+        rows = read_rows()
     except (OSError, ValueError):
-        sys.exit(0)
+        rows = []
     paths = {}
-# A row is on request when its `labels` is a list that holds `on-request`, its `check_id` has the form of an id and
-# its `path` is a string; any other row is not, and nothing of it reaches a command line.
+# The services file: {"services": null} or {"services": [<service name>, ...]}; its other keys are not read.
+touched = None
+if has_services == "yes":
+    try:
+        data = json.loads(pathlib.Path(services_path).read_text())
+    except OSError as e:
+        refuse_services(f"cannot be read: {e.strerror or e}")
+    except ValueError as e:
+        refuse_services(f"is not JSON: {e}")
+    if not isinstance(data, dict) or "services" not in data:
+        refuse_services('is not an object with the key "services"')
+    names = data["services"]
+    if names is not None:
+        if not isinstance(names, list):
+            refuse_services('"services" is neither null nor a list')
+        for n, name in enumerate(names):
+            if not isinstance(name, str) or not SERVICE.fullmatch(name):
+                refuse_services(f"services[{n}] {name!r} is not a service name")
+        touched = sorted(set(names))
+    pathlib.Path(out, "services.json").write_text(json.dumps(touched) + "\n")
+
+
+# Only a row whose `check_id` has the form of an id and whose `path` is a string can be left out by its label or its
+# service; nothing of any other row reaches a command line.
+def usable(row):
+    return (isinstance(row, dict) and isinstance(row.get("check_id"), str) and ID.fullmatch(row["check_id"])
+            and isinstance(row.get("path"), str))
+
+
+# A row is on request when its `labels` is a list that holds `on-request`.
 asked = {}
 if on_request != "yes":
     for row in rows:
-        if (isinstance(row, dict) and isinstance(row.get("labels"), list) and "on-request" in row["labels"]
-                and isinstance(row.get("check_id"), str) and ID.fullmatch(row["check_id"])
-                and isinstance(row.get("path"), str)):
+        if usable(row) and isinstance(row.get("labels"), list) and "on-request" in row["labels"]:
             asked[row["check_id"]] = ON_REQUEST
             paths.setdefault(row["check_id"], row["path"])
-left_out = {**asked, **listed}
+# A row is a check of a service when its `service` is a service name; any other row is a check of no service.
+by_service = {}
+if touched is not None:
+    for row in rows:
+        service = row.get("service") if isinstance(row, dict) else None
+        if (usable(row) and isinstance(service, str) and SERVICE.fullmatch(service)
+                and service not in touched):
+            by_service[row["check_id"]] = service_reason(service)
+            paths.setdefault(row["check_id"], row["path"])
+left_out = {**by_service, **asked, **listed}
 if not left_out and has_list != "yes":
     sys.exit(0)
 pathlib.Path(out, "not-run.json").write_text(json.dumps(left_out, indent=1) + "\n")
@@ -325,6 +486,13 @@ cleanup() {
       fi
     done
   fi
+  # The Docker volumes a check made and could not remove (support/volume.rs, issue 55). Each carries the run's
+  # label; the containers that mounted them are gone by now, so Docker lets them go.
+  local volumes
+  volumes="$(docker volume ls -q --filter "label=emuforge-it-run=$run_id" 2>/dev/null || true)"
+  if [[ -n "$volumes" ]]; then
+    docker volume rm -f $volumes >/dev/null 2>&1 || true
+  fi
   # A clean stop deletes the files; a kill would leave them. The directory did not exist before this run.
   if [[ -e "$emulator_dir" ]]; then
     rm -rf "$emulator_dir"
@@ -366,13 +534,18 @@ trap cleanup EXIT
 docker tag aws-emulator "$emulator_image" || preflight_error "cannot tag aws-emulator as $emulator_image"
 product_log="$logs/integration-product-build.log"
 if [[ -f "$checkout/docker-compose.yml" ]]; then
-  if (cd "$checkout" && EMUFORGE_IMAGE="$product_image" EMUFORGE_EMULATOR_IMAGE="$emulator_image" \
-    docker compose --progress plain build) >"$product_log" 2>&1; then
-    product_build=ok
-  else
-    product_build=failed
-    echo "integration: product image build failed, see $product_log" >&2
-  fi
+  # Bounded (issue 293): a build that has not ended within product_build_bound seconds is the environment's failure.
+  build_code=0
+  (cd "$checkout" && EMUFORGE_IMAGE="$product_image" EMUFORGE_EMULATOR_IMAGE="$emulator_image" \
+    bounded "$product_build_bound" docker compose --progress plain build) >"$product_log" 2>&1 || build_code=$?
+  case "$build_code" in
+    0) product_build=ok ;;
+    124) preflight_error "the product image build did not end within $product_build_bound s, see $product_log" ;;
+    *)
+      product_build=failed
+      echo "integration: product image build failed, see $product_log" >&2
+      ;;
+  esac
 else
   product_build=absent
   echo "integration: $checkout/docker-compose.yml does not exist; every product check will fail at its start" >&2

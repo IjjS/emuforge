@@ -31,6 +31,16 @@ says run pm-check again. A `left_out` that is not a list of file names is refuse
 read. A step without the key was written before the option and ran every file: accepted. This is asked in each of
 the three judgements below (a unit into main, a unit into its issue branch, the issue branch into main), each of the
 branch's own paths against its target; the record's `scope` is not trusted for it.
+Services (issue 327). For a unit into main and for the issue branch into main, and only when the branch's paths
+against main call for integration, it decides the branch's selection of services again itself (_pmscope.select of
+the same paths, with the manifests of the merge base and of the branch's head, by the rules of this main
+checkout), and refuses unless the record's integration step that ran (passed or flaky) ran at least that: its
+`services` is null (every service's checks), or the branch's selection is a set and every name of it is in the
+step's list. The refusal names what the record ran and what the branch touches and says run pm-check again. A step
+without `services` in a record whose `scope` has no `services` was written before this question and ran every
+check: accepted. A step without it in a record whose `scope` has it is refused (the record does not say). A unit
+into its issue branch (a deferred step), an integration module that is absent, or paths that do not call for
+integration ask nothing. What main gained since the branch left it is still judged by module, below.
 The main it merges into. Either main's commit is an ancestor of the branch's head, or what main gained since the
 branch left it calls for no module that the branch's own paths call for (main gaining only issue files is always
 this case); then the output says the branch is behind main and by how many paths. Otherwise it refuses, names the
@@ -79,7 +89,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _pmlib import BIN, PM, ROOT, WORKTREES, load, log
-from _pmscope import MODULES, Unreadable, between, decide, harness_tests, merge_base, run_git, target_of
+from _pmscope import (MODULES, Unreadable, between, decide, harness_tests, manifest_at, merge_base, run_git, select,
+                      target_of)
 from _pmscope import git as read_git
 
 EMULATOR_DIR = "pm-emulator-dir: "
@@ -140,6 +151,43 @@ def left_out_problems(last, ht):
             f"run pm-check again"]
 
 
+def services_problems(last, need):
+    """Whether the record's integration step ran the checks of the services the branch touches (`need`, the
+    services object of its paths). Asks nothing of a step that did not run (absent, failed, not-needed)."""
+    ran = []
+    for s in last.get("steps") or []:
+        if s.get("module") != "integration" or s.get("status") not in ("passed", "flaky"):
+            continue
+        if "services" in s:
+            v = s["services"]
+        elif "services" not in (last.get("scope") or {}):
+            v = None  # a record from before the question, which ran every check
+        else:
+            return ["the pm-check record does not say which services' checks ran; run pm-check again"]
+        if v is not None and not (isinstance(v, list) and all(isinstance(n, str) for n in v)):
+            return ["the pm-check record's services cannot be read; run pm-check again"]
+        ran.append(v)
+    if not ran or any(v is None for v in ran):
+        return []
+    have = sorted({n for v in ran for n in v})
+    if not need["all"] and all(n in have for n in need["names"]):
+        return []
+    touch = f"every service: {need['why']}" if need["all"] else ", ".join(need["names"])
+    return [f"the pm-check record ran the checks of {', '.join(have) or 'no service'}, and this branch's changes "
+            f"touch {touch}; run pm-check again"]
+
+
+def branch_services(base, head, paths):
+    """The selection of the branch's paths, with the manifests of the merge base and the head; a manifest that
+    cannot be read is passed as None, which select answers with every service where it matters."""
+    def at(commit):
+        try:
+            return manifest_at(ROOT, commit)
+        except Unreadable:
+            return None
+    return select(paths, at(head), at(base))
+
+
 def judge(branch, head, last, target="main", defer=False, remedy=None):
     """Coverage (R7) and the target the branch merges into (R8), decided from git with this checkout's rules.
     `target` is main or an issue branch; `defer` (a unit into its issue branch only) lets a deferred integration
@@ -152,9 +200,11 @@ def judge(branch, head, last, target="main", defer=False, remedy=None):
         base = merge_base(ROOT, head, tip, target)
         paths = between(ROOT, base, head)
         own, ht = decide(paths), harness_tests(paths)
+        need = None if defer or "integration" not in own else branch_services(base, head, paths)
     except Unreadable as e:
         own = {m: [f"the branch's changes cannot be read: {e}"] for m in MODULES}
         ht = dict(all=True, why=f"the branch's changes cannot be read: {e}", called={}, left_out=[])
+        need = None if defer else dict(all=True, names=[], why=f"the branch's changes cannot be read: {e}")
     problems = []
     statuses = {}
     for s in last.get("steps") or []:
@@ -169,6 +219,8 @@ def judge(branch, head, last, target="main", defer=False, remedy=None):
         problems.append(f"the pm-check record does not cover {', '.join(missing)}, which this branch's changes call "
                         f"for ({own[missing[0]][0]}); run pm-check again")
     problems += left_out_problems(last, ht)
+    if need is not None:
+        problems += services_problems(last, need)
     if base is not None and base == tip:
         return problems, None
     gained = None

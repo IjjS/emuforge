@@ -3,6 +3,10 @@
 // not found (`support/product.ts`), observes it from the host and the check's browser, and stops it with the stop
 // command. A user's emulator is one the check started outside the form (`OwnEmulator`).
 //
+// On Docker Engine on Linux each form takes that platform's command lines and has the preparatory lines done first
+// (issue 54, `support/product.ts`); `engine.product-first-start-without-aws-directory` also asserts who owns the
+// emulator's files there.
+//
 // `engine.product-start-with-running-emulator-connects`, `engine.product-first-start-without-aws-directory`,
 // `engine.product-emulator-profile-starts-and-stops-an-emulator`,
 // `engine.product-stop-leaves-nothing-and-a-users-emulator-untouched`,
@@ -21,7 +25,6 @@ import {
   readEmulatorFiles,
   requireRunEmulator,
   test,
-  type Ctx,
 } from './support';
 import { connectionView } from './support/home';
 import {
@@ -40,8 +43,10 @@ import {
   waitAnswer,
   waitHealth,
   waitRefused,
+  userIds,
   type CommandResult,
 } from './support/product';
+import { entries, freshHome } from './support/product-wrapper';
 
 function expectExit(result: CommandResult, code: 'zero' | 'non-zero') {
   const message = `${result.line}: exit code; output:\n${tail(result)}`;
@@ -104,28 +109,6 @@ async function expectGone(form: Form) {
   expect(await form.waitGone(), `what is left of ${form.project}`).toEqual({ containers: [], networks: [] });
 }
 
-/** A new, empty directory under the run's output, removed when the check ends (after its form). */
-function freshHome(ctx: Ctx): string {
-  const home = path.join(ctx.tmp, `home-${ctx.id}-${String(Date.now())}`);
-  fs.mkdirSync(home, { recursive: true });
-  ctx.own({ dispose: async () => fs.rmSync(home, { recursive: true, force: true }) });
-  return home;
-}
-
-/** Every path under `root`, relative and sorted. */
-function entries(root: string): string[] {
-  const out: string[] = [];
-  const walk = (dir: string) => {
-    for (const name of fs.readdirSync(dir)) {
-      const full = path.join(dir, name);
-      out.push(path.relative(root, full));
-      if (fs.lstatSync(full).isDirectory()) walk(full);
-    }
-  };
-  walk(root);
-  return out.sort();
-}
-
 test('engine.product-start-with-running-emulator-connects', async ({ ctx, page }) => {
   test.setTimeout(productTimeout(1, 2));
   await requireRunEmulator(ctx);
@@ -147,9 +130,12 @@ test('engine.product-start-with-running-emulator-connects', async ({ ctx, page }
 test('engine.product-first-start-without-aws-directory', async ({ ctx }) => {
   test.setTimeout(productTimeout(1, 2));
   const home = freshHome(ctx);
+  // On Docker Engine on Linux the preparatory lines are done in that HOME when the form is created (issue 54 R16,
+  // R20): it holds `.aws/emulator`, made by the user, before the start. On Docker Desktop it stays empty.
   const form = await Form.create(ctx, { situation: 4, home });
 
-  // The start command → exits 0; within the bound health 200 and reachable; nothing was restarted.
+  // The start command → exits 0; within the bound health 200 and reachable; nothing was restarted (on both
+  // platforms; on Docker Engine on Linux from the prepared HOME).
   expectExit(await form.start(), 'zero');
   const afterStart = identities(await form.containers());
   const result = await waitHealth(form.enginePort, 200);
@@ -165,6 +151,20 @@ test('engine.product-first-start-without-aws-directory', async ({ ctx }) => {
   expect(underAws, `the entries under ${path.join(home, '.aws')}`).toEqual(
     ['.aws', '.aws/emulator', port, ...EMULATOR_FILES.map((f) => `${port}/${f}`)].sort(),
   );
+
+  // On Docker Engine on Linux → `.aws/emulator`, the port's directory and the emulator's four files belong to the
+  // user's uid (issue 54 R4).
+  if (form.ids) {
+    const { uid } = await userIds();
+    const owned = ['.aws/emulator', port, ...EMULATOR_FILES.map((f) => `${port}/${f}`)].map((entry) => ({
+      entry,
+      uid: fs.existsSync(path.join(home, entry)) ? String(fs.statSync(path.join(home, entry)).uid) : 'missing',
+    }));
+    expect(
+      owned.filter((o) => o.uid !== uid),
+      `entries under ${path.join(home, '.aws')} that do not belong to uid ${uid}`,
+    ).toEqual([]);
+  }
 
   // The stop command → exits 0; no container and no network of the form is left.
   expectExit(await form.stop(), 'zero');

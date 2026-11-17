@@ -336,6 +336,7 @@ flow step 1:
 | `EVENT cpu <pct>% top=…` | the CPU has been over 90% for a minute and a half: open no new pane and start no check yourself until `EVENT cpu ok`; running panes carry on (`pm-check` queues itself) |
 | `EVENT cpu ok …` | prompt every pane that reported `BLOCKED cpu` to retry; resume queued `pm-pane new` calls |
 | `EVENT stale <pane>` | `herdr agent read`; if looping, `pm-pane reset <pane>` |
+| `EVENT check still <worktree> <step> <n>m` | read the end of `<worktree>/output/logs/check-<step>.log` (for `integration` also `output/logs/integration-*.log`); a step that still writes is left alone; a hung one: `pm-check <worktree> --stop`, tell its pane in one line, and file what held it |
 | `EVENT gone <pane>` | reopen with the same brief; the worktree and its `output/state.md` are still there |
 
 Only `STAGE READY`, `UNIT READY`, `DONE` and `BLOCKED` lines wake you. `REVIEWED` lines and turns without a

@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: bug
 Issue-Source: finder
 Issue-Key: studio|home|address-cut-with-five-digit-port
-Issue-Check-Ids:
+Issue-Check-Ids: studio.addresses-stay-whole-with-five-digit-ports studio.korean-words-stay-whole
 Issue-Commit: 3fe1072bb359e60a3c71e72169eebb96dd1dc3a9
 
 # Keep the engine and emulator addresses whole at 320 wide when the port has five digits
