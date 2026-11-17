@@ -191,6 +191,19 @@ describe('routes', () => {
     await expectNoScreenYet(label);
   });
 
+  it.each([
+    ['/aws/iam', 'Roles'],
+    ['/aws/iam/roles', 'Roles'],
+    ['/aws/iam/roles/create', 'Select trusted entity'],
+    ['/aws/iam/roles/details/abc', 'abc'],
+  ])('opens %s as its IAM screen (its h1 "%s"), not the "no screen yet" page', async (path, title) => {
+    stubRoleEngine(['abc']);
+    open(path);
+
+    expect(inCloudscape(await heading(title))).toBe(true);
+    expect(main()).not.toHaveTextContent('Studio has no screen for AWS Identity and Access Management yet.');
+  });
+
   it('leaves AWS Identity and Access Management out of the services opened as a "no screen yet" page, and keeps every other', () => {
     expect(WITHOUT_SCREEN.map(([label]) => label)).not.toContain('AWS Identity and Access Management');
     expect(WITHOUT_SCREEN).toHaveLength(SERVICES.length - WITH_SCREEN.length);
