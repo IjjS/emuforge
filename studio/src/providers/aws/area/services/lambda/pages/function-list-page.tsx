@@ -179,6 +179,19 @@ export function FunctionListPage({ connection }: { connection: AreaConnection })
     refresh();
   }, [refresh]);
 
+  // "Retry" reads the page that failed again, with the marker it was asked with: it starts no new listing (R10.2).
+  const { currentPage, goToPage } = listing;
+  const handleRetry = useCallback(() => {
+    setStarter(null);
+    goToPage(currentPage);
+  }, [goToPage, currentPage]);
+
+  // A loaded listing ends what its control started; a later listing no control starts (after a delete, or the re-read
+  // after a reconnect) keeps every control disabled until it is loaded (R10.1).
+  if (loaded && starter !== null) {
+    setStarter(null);
+  }
+
   // Kept from the previous render, as React's own pattern for it: what was last seen of the listing, so each change
   // is acted on once, in the render that first shows it.
   const [refreshing, setRefreshing] = useState(false);
@@ -317,7 +330,7 @@ export function FunctionListPage({ connection }: { connection: AreaConnection })
         loading={state.kind === 'loading'}
         loadingText="Loading functions"
         empty={
-          <TableBody state={state} onCreate={handleCreate} onClearFilter={handleClearFilter} onRetry={startListing} />
+          <TableBody state={state} onCreate={handleCreate} onClearFilter={handleClearFilter} onRetry={handleRetry} />
         }
         header={
           <Header

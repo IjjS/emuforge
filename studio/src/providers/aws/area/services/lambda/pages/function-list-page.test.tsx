@@ -681,6 +681,30 @@ describe('pages', () => {
     },
   );
 
+  it('page 2 fails: "Retry" asks for page 2 again with its marker, and page 2 is shown', async () => {
+    engine.functions = many(30);
+    open();
+    await expectNames(many(25).map((fn) => fn.name));
+
+    engine.answer = () => errorAnswer(500, 'ServiceException', 'broken');
+    fireEvent.click(nextPage());
+    await waitFor(() => {
+      expect(within(slot()).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    });
+    expect(engine.lists.at(-1)?.searchParams.get('Marker')).toBe('f-25');
+
+    const sent = engine.lists.length;
+    engine.answer = (request) => engine.emulator(request);
+    fireEvent.click(within(slot()).getByRole('button', { name: 'Retry' }));
+    await expectNames(
+      many(30)
+        .slice(25)
+        .map((fn) => fn.name),
+    );
+    expect(engine.lists).toHaveLength(sent + 1);
+    expect(engine.lists.at(-1)?.searchParams.get('Marker')).toBe('f-25');
+  });
+
   it('"Next page" answered with no function: the page shown stays, "Next page" disabled, no "+", "No more functions" announced once', async () => {
     engine.functions = many(30);
     open();
@@ -846,6 +870,46 @@ describe('loading and empty', () => {
     await expectNames(['orders']);
     expect(filterInput()).not.toBeDisabled();
     expect(headingText()).toBe('Event Functions (1)');
+  });
+  it('a filter applied, then a delete: while the listing after the delete is awaited, the filter is disabled too', async () => {
+    await openLoaded();
+    applyFilter('o');
+    await expectNames(['orders']);
+    expect(filterInput()).not.toBeDisabled();
+
+    select('orders');
+    const dialog = await openDeleteDialog();
+    let release: (answer: Answer) => void = () => undefined;
+    engine.answer = (request) =>
+      request.method === 'GET'
+        ? new Promise<Answer>((resolve) => {
+            release = resolve;
+          })
+        : engine.emulator(request);
+    const sent = engine.lists.length;
+    fireEvent.change(within(dialog).getByLabelText('To confirm deletion, type "confirm" in the field.'), {
+      target: { value: 'confirm' },
+    });
+    fireEvent.click(
+      within(dialog)
+        .getAllByRole('button', { name: 'Delete' })
+        .find((button) => norm(button.textContent) === 'Delete') as HTMLElement,
+    );
+    await waitFor(() => {
+      expect(engine.lists.length).toBeGreaterThan(sent);
+    });
+    await waitFor(() => {
+      expect(tableElement()).toHaveTextContent('Loading functions');
+    });
+    expect(filterInput()).toBeDisabled();
+    expect(isDisabled(nextPage())).toBe(true);
+    expect(isDisabled(screen.getByRole('button', { name: 'Preferences' }))).toBe(true);
+
+    release(engine.emulator({ method: 'GET', url: engine.lists.at(-1) as URL }));
+    await waitFor(() => {
+      expect(emptySlot()).toHaveTextContent('No matches');
+    });
+    expect(filterInput()).not.toBeDisabled();
   });
 });
 
