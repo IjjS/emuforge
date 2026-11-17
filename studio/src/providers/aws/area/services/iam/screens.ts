@@ -1,0 +1,31 @@
+import type { ScreenNavigation, ServiceScreen } from '../../screens';
+import { IAM_PATH, ROLES_PATH } from './format';
+import { RoleListPage, ROLES_TITLE } from './pages/role-list-page';
+
+/**
+ * The side navigation of every IAM screen (issue 82, requirement R6.1): the header, and the group "Access
+ * Management" with its one link "Roles", current on every screen of this issue.
+ */
+export const IAM_NAVIGATION: ScreenNavigation = {
+  header: { text: 'Identity and Access Management (IAM)', href: IAM_PATH },
+  items: [
+    {
+      type: 'section',
+      text: 'Access Management',
+      items: [{ type: 'link', text: 'Roles', href: ROLES_PATH }],
+    },
+  ],
+  activeHref: ROLES_PATH,
+};
+
+/** IAM's screens, which the area collects (issue 386, R3.1). */
+export const SCREENS: readonly ServiceScreen[] = [
+  // S1, the role list (issue 82, R0, R4): at the service's route and at its own, neither redirecting.
+  {
+    paths: [IAM_PATH, ROLES_PATH],
+    title: ROLES_TITLE,
+    crumbs: [{ text: 'Roles' }],
+    navigation: IAM_NAVIGATION,
+    Page: RoleListPage,
+  },
+];
