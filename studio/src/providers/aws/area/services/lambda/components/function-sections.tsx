@@ -32,6 +32,9 @@ export function FunctionStatusLine({ status }: { status: FunctionStatus }) {
   );
 }
 
+/** The narrowest column of "Function overview", in pixels, as Cloudscape's `minColumnWidth` takes it. */
+const OVERVIEW_MIN_COLUMN_WIDTH = 300;
+
 const FUNCTION_ARN = 'Function ARN';
 const FUNCTION_URL = 'Function URL';
 
@@ -58,6 +61,8 @@ export function FunctionOverview({ fn }: { fn: LambdaFunction }) {
     <Container header={<Header variant="h2">Function overview</Header>}>
       <KeyValuePairs
         columns={2}
+        // One column where two would leave an address less than a line of its parts (issue 467, R6): at 390 wide.
+        minColumnWidth={OVERVIEW_MIN_COLUMN_WIDTH}
         items={[
           { label: 'Description', value: <ValueText kind="text" value={fn.description} none={NONE} /> },
           { label: 'Last modified', value: <ValueText kind="fixed" value={lastModifiedText(fn.lastModified)} /> },

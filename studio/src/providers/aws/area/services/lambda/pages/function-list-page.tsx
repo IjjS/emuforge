@@ -21,6 +21,7 @@ import type { FunctionSummary } from '../api';
 import { DeleteFunctionsDialog } from '../components/delete-functions-dialog';
 import { readFailureState, useAnnouncer, type ReadFailureState } from '../components/failure-states';
 import { ReadFailure } from '../components/failures';
+import './function-list-page.css';
 import { useAreaModalRoot } from '../components/modal-root';
 import { CREATE_FUNCTION_PATH, functionPath, lastModifiedText, NONE, runtimeText, typeText } from '../format';
 import { useFunctionListing, type FunctionCount, type FunctionListing } from '../queries';
@@ -37,10 +38,12 @@ export const FUNCTIONS_TITLE = 'Event Functions';
 const DESCRIPTION = 'The filter matches the start of a name and is case-sensitive.';
 
 /**
- * The room a name's column keeps, so a name of up to 24 characters is on one line (issue 467, R6): 24 characters of
- * the cell's text and the cell's own padding. A size, in the text's own unit; no spacing of Cloudscape's is set.
+ * The room a column keeps (issue 467, R6), in characters of the heading's text, the cell's padding included: a name's
+ * column, so a name of up to 24 characters is on one line; "Runtime", so a runtime's name ("Node.js 24.x", "OS-only
+ * Runtime") is; "Description", so a word of free text up to 10 characters is whole. A size; no spacing is set.
  */
-const NAME_COLUMN_MIN_WIDTH = '28ch';
+const NAME_MIN_WIDTH = '26ch';
+const RUNTIME_MIN_WIDTH = '18ch';
 
 const FILTER_LABEL = 'Search by attributes or search by keyword';
 const SELECT_FIRST = 'Select a function first';
@@ -298,7 +301,7 @@ export function FunctionListPage({ connection }: { connection: AreaConnection })
       id: 'name',
       header: 'Function name',
       isRowHeader: true,
-      minWidth: NAME_COLUMN_MIN_WIDTH,
+      minWidth: NAME_MIN_WIDTH,
       cell: (fn) => (
         <Link href={functionPath(fn.name)} onFollow={handleFollow}>
           <ValueText kind="name" value={fn.name} />
@@ -308,14 +311,25 @@ export function FunctionListPage({ connection }: { connection: AreaConnection })
     {
       id: 'description',
       header: 'Description',
-      cell: (fn) => <ValueText kind="text" value={fn.description} none={NONE} />,
+      // The cell's width is the table's to give, never its longest word's: a word longer than the column breaks inside
+      // it instead of widening it past the viewport (issue 84, R11).
+      cell: (fn) => (
+        <div className="aws-lambda-description-cell">
+          <ValueText kind="text" value={fn.description} none={NONE} />
+        </div>
+      ),
     },
     {
       id: 'packageType',
       header: 'Package type',
       cell: (fn) => <ValueText kind="fixed" value={fn.packageType} none={NONE} />,
     },
-    { id: 'runtime', header: 'Runtime', cell: (fn) => <ValueText kind="fixed" value={runtimeText(fn.runtime)} /> },
+    {
+      id: 'runtime',
+      header: 'Runtime',
+      minWidth: RUNTIME_MIN_WIDTH,
+      cell: (fn) => <ValueText kind="fixed" value={runtimeText(fn.runtime)} />,
+    },
     { id: 'type', header: 'Type', cell: (fn) => <ValueText kind="fixed" value={typeText(fn.durable)} /> },
     {
       id: 'lastModified',

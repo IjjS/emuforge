@@ -1,6 +1,6 @@
 import Alert from '@cloudscape-design/components/alert';
 import Box from '@cloudscape-design/components/box';
-import Button from '@cloudscape-design/components/button';
+import Button, { type ButtonProps } from '@cloudscape-design/components/button';
 import Container from '@cloudscape-design/components/container';
 import ContentLayout from '@cloudscape-design/components/content-layout';
 import Form from '@cloudscape-design/components/form';
@@ -234,7 +234,15 @@ export function CreateFunctionPage({ connection }: ScreenPageProps) {
   };
 
   // "Cancel" leaves at once while nothing differs from what the form showed when it opened; otherwise it asks (R7).
+  // The dialog is on the page only while it asks; once it is answered "keep", focus is back on "Cancel".
   const [asking, setAsking] = useState(false);
+  const cancelRef = useRef<ButtonProps.Ref>(null);
+  const [kept, setKept] = useState(0);
+  useEffect(() => {
+    if (kept > 0) {
+      cancelRef.current?.focus();
+    }
+  }, [kept]);
   const handleCancel = () => {
     if (differs({ name, runtime, architecture, roleChoice, existingRole }, opened)) {
       setAsking(true);
@@ -248,6 +256,8 @@ export function CreateFunctionPage({ connection }: ScreenPageProps) {
       setAsking(false);
       if (answer === 'discard') {
         void navigate(FUNCTIONS_PATH);
+      } else {
+        setKept((count) => count + 1);
       }
     },
     [navigate],
@@ -272,7 +282,7 @@ export function CreateFunctionPage({ connection }: ScreenPageProps) {
           <Form
             actions={
               <SpaceBetween direction="horizontal" size="xs">
-                <Button variant="link" formAction="none" onClick={handleCancel}>
+                <Button ref={cancelRef} variant="link" formAction="none" onClick={handleCancel}>
                   Cancel
                 </Button>
                 <Button variant="primary" loading={pending} loadingText="Creating the function">
@@ -359,7 +369,7 @@ export function CreateFunctionPage({ connection }: ScreenPageProps) {
           </Form>
         </form>
       </ContentLayout>
-      <DiscardDialog visible={asking} onAnswer={handleDiscardAnswer} />
+      {asking && <DiscardDialog visible onAnswer={handleDiscardAnswer} />}
       {announcement}
     </>
   );
