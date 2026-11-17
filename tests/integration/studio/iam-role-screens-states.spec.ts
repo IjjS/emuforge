@@ -117,6 +117,19 @@ async function expectNames(page: Page, names: string[], message: string, timeout
 }
 
 /** The list's failure state in the table: `status`, "The role list could not be read." and "Retry". */
+/**
+ * A role's page's failure state: the innermost block in `main` that holds "The role could not be read." and "Retry".
+ * The line's status is also in the emulator line and its live region, so the page's own status is read here, as the
+ * list's is read in its table.
+ */
+function roleFailure(page: Page) {
+  return screen(page)
+    .main.locator('*')
+    .filter({ hasText: ROLE_NOT_READ })
+    .filter({ has: page.getByRole('button', { name: RETRY, exact: true }) })
+    .last();
+}
+
 async function expectListFailure(page: Page, status: RegExp, withConnectionStatus: boolean): Promise<void> {
   const table = screen(page).table;
   await expect(table.getByText(status), `the table shows ${String(status)}`).toBeVisible({
@@ -250,7 +263,7 @@ test('studio.iam-role-screens-follow-emulator-stop-and-restart', async ({ ctx, p
       await expect(s.main.getByText(ROLE_NOT_READ, { exact: true }), `"${ROLE_NOT_READ}"`).toBeVisible({
         timeout: LINE_CHANGE_BOUND_MS,
       });
-      await expect(s.main.getByText(notStartedOn(port)), "the line's status in the page").toBeVisible();
+      await expect(roleFailure(page).getByText(notStartedOn(port)), "the line's status in the page").toBeVisible();
       await emulator.startAgain();
       running = true;
       await expect(s.main.getByText(NOT_FOUND, { exact: true }), `"${NOT_FOUND}" by itself`).toBeVisible({
