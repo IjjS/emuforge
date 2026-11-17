@@ -138,17 +138,12 @@ def need_pmscope(case, name):
     return fn
 
 
-def link_folder(co, rel, away):
-    """Move the folder `rel` of `co` to `away` and leave a symbolic link to it at `rel`."""
+def link(co, rel, away):
+    """Move the file or folder `rel` of `co` to `away` and leave a symbolic link to it at `rel`."""
     src, dst = co / rel, co / away
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(src), str(dst))
     os.symlink(os.path.relpath(dst, src.parent), src)
-
-
-def link_file(co, rel, away):
-    """Move the file `rel` of `co` to `away` and leave a symbolic link to it at `rel`."""
-    link_folder(co, rel, away)
 
 
 # ---------------------------------------------------------------------------------------------------- R2
@@ -281,14 +276,14 @@ class Manifest(unittest.TestCase):
             self.assertIsNone(self.of(co))
         with self.subTest("a link to a file of rows"):
             co = self.fixture()
-            link_file(co, ALPHA_M, "elsewhere/alpha.jsonl")
+            link(co, ALPHA_M, "elsewhere/alpha.jsonl")
             self.assertIsNone(self.of(co))
 
     def test_a_service_folder_or_the_folder_that_is_a_link_cannot_be_read(self):
         for rel in (SVC + "alpha", SVC.rstrip("/")):
             with self.subTest(rel):
                 co = self.fixture()
-                link_folder(co, rel, "elsewhere/" + rel.rsplit("/", 1)[1])
+                link(co, rel, "elsewhere/" + rel.rsplit("/", 1)[1])
                 self.assertIsNone(self.of(co))
 
     def test_guard_f0_is_its_main_manifest(self):
@@ -327,7 +322,7 @@ class Manifest(unittest.TestCase):
         for name, rel in (("manifest", ALPHA_M), ("alpha", SVC + "alpha"), ("services", SVC.rstrip("/"))):
             with self.subTest(name):
                 co = self.fixture()
-                link_folder(co, rel, "elsewhere/" + name)
+                link(co, rel, "elsewhere/" + name)
                 git(co, "add", "-A")
                 git(co, "commit", "-q", "-m", "a link")
                 need_pmscope(self, "manifest_at")
@@ -422,7 +417,7 @@ class Scope(unittest.TestCase):
 
     def test_push_with_a_manifest_that_is_a_link(self):
         co = self.fixture()
-        link_file(co, ALPHA_M, "elsewhere/alpha.jsonl")
+        link(co, ALPHA_M, "elsewhere/alpha.jsonl")
         git(co, "add", "-A")
         git(co, "commit", "-q", "-m", "a link")
         before = git(co, "rev-parse", "main")
@@ -636,7 +631,7 @@ class Ci(test_ci.Case):
         self.assertRegex(table, r"(?m)^\| not run \| `beta` \| 1 \|$", table)
 
     def test_services_with_a_service_s_manifest_that_is_a_link(self):
-        link_file(self.co, BETA_M, "elsewhere/beta.jsonl")
+        link(self.co, BETA_M, "elsewhere/beta.jsonl")
         git(self.co, "add", "-A")
         git(self.co, "commit", "-q", "-m", "a link")
         p = self.services(*self.push(S + "alpha/x.tsx"))
@@ -815,7 +810,7 @@ class Run(RunCase):
         for name, rel in (("manifest", BETA_M), ("folder", SVC + "beta")):
             with self.subTest(name):
                 fx = FFixture(f"beta-link-{name}")
-                link_folder(fx.co, rel, "elsewhere/" + name)
+                link(fx.co, rel, "elsewhere/" + name)
                 p = fx.run()
                 # The last line names the file that could not be read, so it is not compared (decisions-needed).
                 self.same_as_f0_with_a_bad_line(fx, p, last_line=False)
