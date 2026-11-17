@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: bug
 Issue-Source: plan
 Issue-Key: harness|integration-run|unbounded-image-build
-Issue-Check-Ids:
+Issue-Check-Ids: harness.integration-build-bound harness.check-still
 Issue-Commit: af97792e05500143d002b02804cb9acab9fa882e
 
 # Bound the image builds of the integration run so a build that hangs cannot hold a check slot
