@@ -1,0 +1,9 @@
+/* The requested path on the "no screen yet" page below a service that has screens (issue 57, requirement R4.6). A
+   line breaks after a `/` first (the page puts a break opportunity there); a segment breaks inside only when it does
+   not fit a line by itself, such as a 63-character bucket name at 390 wide, so the page never scrolls sideways.
+   `anywhere`, not `break-word`: only `anywhere` lowers the box's smallest width, which keeps the centred block that
+   holds the label and the path from growing past the container. Set on Cloudscape's code text element itself; it
+   sets no colour, spacing or font. */
+.aws-area-no-screen-path {
+  overflow-wrap: anywhere;
+}

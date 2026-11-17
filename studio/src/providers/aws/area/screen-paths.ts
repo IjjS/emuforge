@@ -145,3 +145,99 @@ export function matchingScreens(
       screen.paths.filter((pattern) => matchesPattern(pattern, pathname)).map((pattern) => ({ screen, pattern })),
     );
 }
+
+/** The screen a path no screen matches is below (issue 57, requirement R4.11), with what the page reads of it. */
+export interface ScreenAbove {
+  screen: AreaScreen;
+  /** The values of its parameters in the path, each decoded once. */
+  params: ScreenParams;
+  /**
+   * The address its last crumb leads to: for a path below one of the screen's own paths, the leading part of the path
+   * that the screen matches, exactly as the address carries it; for a path below a pattern the screen leads to, the
+   * screen's first path with each parameter's value percent-encoded once (R4.3).
+   */
+  address: string;
+}
+
+/** `pattern` with each parameter replaced by its value in `params`, percent-encoded once. */
+export function fillPattern(pattern: string, params: ScreenParams): string {
+  return `/${patternSegments(pattern)
+    .map((segment) => ('literal' in segment ? segment.literal : encodeURIComponent(params[segment.param] ?? '')))
+    .join('/')}`;
+}
+
+/** One way a screen is above a path: by one of its own patterns or one it leads to, through `segments` segments. */
+interface AboveMatch extends ScreenAbove {
+  pattern: string;
+  segments: number;
+  leads: boolean;
+}
+
+/**
+ * The screen of `service` (its route, `/s3`) that `pathname`, which no screen matches, is below (R4.11), or
+ * `undefined` when there is none. Below one of a screen's own paths: a leading part of the path, of whole segments,
+ * shorter than the path and longer than the service's route, matches one of its patterns. Below a path it leads to:
+ * the path or such a leading part of it matches one of its `leadsTo` patterns. Of several, the one that matches the
+ * most segments, then the pattern with a literal segment first (`comparePatterns`), then a screen's own path before
+ * one it leads to. A match whose parameter is not valid percent-encoding is no match.
+ */
+export function screenAbove(
+  screens: readonly AreaScreen[],
+  service: string,
+  pathname: string,
+): ScreenAbove | undefined {
+  const parts = pathname.slice(1).split('/');
+  // `aws` and the service's own segments: a leading part must be longer than the service's route.
+  const routeSegments = 1 + service.slice(1).split('/').length;
+  const matches: AboveMatch[] = [];
+  for (const screen of screens.filter((entry) => entry.service === service)) {
+    const ways = [
+      ...screen.paths.map((pattern) => ({ pattern, leads: false })),
+      ...(screen.leadsTo ?? []).map((pattern) => ({ pattern, leads: true })),
+    ];
+    for (const { pattern, leads } of ways) {
+      const segments = patternSegments(pattern).length;
+      if (segments <= routeSegments || segments > parts.length || (!leads && segments === parts.length)) continue;
+      const leading = `/${parts.slice(0, segments).join('/')}`;
+      if (!matchesPattern(pattern, leading)) continue;
+      const params = patternParams(pattern, leading);
+      if (params === undefined) continue;
+      const address = leads ? fillPattern(screen.paths[0] ?? pattern, params) : leading;
+      matches.push({ screen, params, address, pattern, segments, leads });
+    }
+  }
+  const [best] = matches.sort(
+    (a, b) => b.segments - a.segments || comparePatterns(a.pattern, b.pattern) || Number(a.leads) - Number(b.leads),
+  );
+  return best === undefined ? undefined : { screen: best.screen, params: best.params, address: best.address };
+}
+
+/** A service's first screen (R4.1): the screen, the address the page's first action leads to, and its title there. */
+export interface FirstScreen {
+  screen: AreaScreen;
+  address: string;
+  title: string;
+}
+
+/**
+ * The first screen of `service` (its route, `/s3`), whose route is `route` (`/aws/s3`), as R4.1 gives it: the screen
+ * shown at the route; else the first screen of the service the registry lists that has a path without a parameter,
+ * at the first such path; `undefined` when every screen of the service is at paths with a parameter.
+ */
+export function firstScreen(
+  screens: readonly AreaScreen[],
+  service: string,
+  route: string,
+): FirstScreen | undefined {
+  const [atRoute] = matchingScreens(screens, service, route).sort((a, b) => comparePatterns(a.pattern, b.pattern));
+  if (atRoute !== undefined) {
+    return { screen: atRoute.screen, address: route, title: screenTitle(atRoute.screen, {}) };
+  }
+  for (const screen of screens.filter((entry) => entry.service === service)) {
+    const address = screen.paths.find((pattern) => patternSegments(pattern).every((segment) => 'literal' in segment));
+    if (address !== undefined) {
+      return { screen, address, title: screenTitle(screen, {}) };
+    }
+  }
+  return undefined;
+}

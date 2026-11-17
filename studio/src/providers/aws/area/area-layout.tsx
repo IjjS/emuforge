@@ -96,15 +96,33 @@ function breadcrumbs(page: AreaPage, pathname: string): BreadcrumbGroupProps.Ite
     }
     case 'service':
       return [...AREA_CRUMBS, { text: page.service.crumb, href: servicePath(page.service) }];
+    case 'part': {
+      // Issue 57, R4.3: the crumbs of the screen above the path, every one a link (the last to the address the
+      // screen is above at), then "No screen yet", the current page.
+      const above = page.above;
+      const crumbs = above === undefined ? [] : screenCrumbs(above.screen, above.params);
+      return [
+        ...AREA_CRUMBS,
+        { text: page.service.crumb, href: servicePath(page.service) },
+        ...crumbs.map(({ text, href }, index) => ({
+          text,
+          href: index === crumbs.length - 1 ? (above?.address ?? pathname) : (href ?? pathname),
+        })),
+        { text: areaPageTitle(page), href: pathname },
+      ];
+    }
     case 'not-found':
       return [...AREA_CRUMBS, { text: areaPageTitle(page), href: pathname }];
   }
 }
 
-/** The side navigation: a screen's own (R5.1), or the area's header and services with the page's service active. */
+/**
+ * The side navigation: a screen's own (R5.1); below a service that has screens, the one the page chose (issue 57,
+ * R4.4); else the area's header and services with the page's service active.
+ */
 function navigation(page: AreaPage): SideNavigationProps {
-  if (page.kind === 'screen') {
-    const { header, items, activeHref } = page.screen.navigation;
+  if (page.kind === 'screen' || page.kind === 'part') {
+    const { header, items, activeHref } = page.kind === 'screen' ? page.screen.navigation : page.navigation;
     return { header, items, activeHref };
   }
   return {
@@ -114,7 +132,15 @@ function navigation(page: AreaPage): SideNavigationProps {
   };
 }
 
-function PageContent({ page, connection }: { page: AreaPage; connection: AreaConnection }) {
+function PageContent({
+  page,
+  pathname,
+  connection,
+}: {
+  page: AreaPage;
+  pathname: string;
+  connection: AreaConnection;
+}) {
   switch (page.kind) {
     case 'index':
       return <IndexPage />;
@@ -122,6 +148,16 @@ function PageContent({ page, connection }: { page: AreaPage; connection: AreaCon
       return <page.screen.Page connection={connection} params={page.params} />;
     case 'service':
       return <NoScreenPage service={page.service} />;
+    case 'part':
+      return (
+        <NoScreenPage
+          service={page.service}
+          part={{
+            path: pathname,
+            first: page.first === undefined ? undefined : { title: page.first.title, href: page.first.address },
+          }}
+        />
+      );
     case 'not-found':
       return <NotFoundPage />;
   }
@@ -259,7 +295,7 @@ export function AreaLayout({
                     <PageResourcesContext value={setResources}>
                       <PageFlashContext value={flash.pageFlash}>
                         <PageHelpContext value={openHelp}>
-                          <PageContent page={page} connection={connection} />
+                          <PageContent page={page} pathname={pathname} connection={connection} />
                         </PageHelpContext>
                       </PageFlashContext>
                     </PageResourcesContext>

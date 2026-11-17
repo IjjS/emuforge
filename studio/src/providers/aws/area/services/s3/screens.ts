@@ -40,6 +40,7 @@ export const SCREENS: readonly ServiceScreen[] = [
   // neither redirecting. Its title and last crumb are the bucket's name; it gives no help.
   {
     paths: [`${BUCKETS_PATH}/{name}`, `${BUCKETS_PATH}/{name}/properties`],
+    leadsTo: [`${S3_PATH}/bucket/{name}/property`],
     title: ({ name }) => name ?? '',
     crumbs: ({ name }) => [BUCKETS_CRUMB, { text: name ?? '' }],
     navigation: NAVIGATION,
