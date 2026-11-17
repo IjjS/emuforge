@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: bug
 Issue-Source: worker
 Issue-Key: studio|s3-api-test-abort-signal|flaky
-Issue-Check-Ids:
+Issue-Check-Ids: studio-unit:src/providers/aws/area/services/s3/api.test.ts
 Issue-Commit: ad891af82adfea87e250b0b7501b7a0679bf73df
 
 # Wait for the aborted signal in the S3 api case of GetBucketVersioning's abort
