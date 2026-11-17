@@ -18,8 +18,13 @@ const BELOW = `${NO_SCREEN_SERVICE.below}/my-stream`;
 // requirement R13.2, each under /aws.
 const SERVICES = serviceLinks();
 
-/** Every service but Amazon Simple Storage Service, whose route has a screen of its own (issue 56). */
-const WITHOUT_SCREEN = SERVICES.filter(([label]) => label !== 'Amazon Simple Storage Service');
+/**
+ * Every service but Amazon Simple Storage Service, whose route has a screen of its own (issue 56), and AWS Lambda,
+ * whose route is the function list from issue 84 on.
+ */
+const WITHOUT_SCREEN = SERVICES.filter(
+  ([label]) => label !== 'Amazon Simple Storage Service' && label !== 'AWS Lambda',
+);
 
 /** The AWS area's first import is real work (Cloudscape's modules), not a timer; a cold run takes a while. */
 const AREA_LOAD_MS = 10_000;
