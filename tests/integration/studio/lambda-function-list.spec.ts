@@ -19,7 +19,7 @@ import type { Page } from '@playwright/test';
 
 import { expect, startStack, test } from './support';
 import { connectedAt, crumbLink, crumbs, endpointPattern, expectLine } from './support/aws-area';
-import { ACTION, addressOf, expectNoScreenYet, heading } from './support/frame';
+import { ACTION, addressOf, heading } from './support/frame';
 import { markPage, stillSamePage } from './support/home';
 import {
   deleteFunctionDirect,
@@ -56,6 +56,7 @@ import {
   tokenTexts,
 } from './support/lambda-list';
 import { Lines } from './support/lines';
+import { expectNoScreenPart } from './support/no-screen-part';
 import { checkPrefix, SEOUL } from './support/s3';
 import { NOTICE_BODY, noticeBody, pageHeader, timesOnPage } from './support/screen-rules';
 
@@ -303,7 +304,7 @@ test('studio.lambda-function-list-actions-lead-to-their-routes', async ({ ctx, p
   );
 
   await lines.line(
-    'A function\'s name → `/aws/lambda/functions/function/<name>` with `h1` the name; each of the tabs "Test", "Monitor", "Configuration", "Aliases", "Versions" → its route of R8 and the "no screen yet" page of AWS Lambda',
+    'A function\'s name → `/aws/lambda/functions/function/<name>` with `h1` the name; each of the tabs "Test", "Monitor", "Configuration", "Aliases", "Versions" → its route of R8 and the "no screen yet" page for that part of AWS Lambda',
     async () => {
       await openList(page);
       await listed();
@@ -318,7 +319,8 @@ test('studio.lambda-function-list-actions-lead-to-their-routes', async ({ ctx, p
           .or(main.getByRole('link', { name: tab, exact: true }))
           .first()
           .click(ACTION);
-        await expectNoScreenYet(page, SERVICE_LABEL, `${functionPath(one)}/${segment}`);
+        // Issue 57 (test-criteria.md, "Existing checks rewritten"): the page for that part of the service.
+        await expectNoScreenPart(page, SERVICE_LABEL, `${functionPath(one)}/${segment}`);
         await page.goBack();
         await expect(page).toHaveURL(addressOf(functionPath(one)));
         await expect(heading(page, one), `the h1 "${one}" after Back`).toBeVisible();

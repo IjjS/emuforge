@@ -15,10 +15,11 @@ import type { BrowserContext, Page } from '@playwright/test';
 
 import { emulatorDir, EnvError, expect, readEmulatorFiles, startStack, test, type Ctx } from './support';
 import { crumbLink } from './support/aws-area';
-import { ACTION, addressOf, expectNoScreenYet, heading, SIDE_NAVIGATION } from './support/frame';
+import { ACTION, addressOf, heading, SIDE_NAVIGATION } from './support/frame';
 import { markPage, stillSamePage } from './support/home';
 import { getRoleDirect, IamSeeded, roleIsGone, serviceTrust } from './support/iam';
 import { Lines } from './support/lines';
+import { expectNoScreenPart } from './support/no-screen-part';
 import { Traffic } from './support/traffic';
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -243,7 +244,8 @@ test('studio.iam-role-screens-actions-lead-to-their-routes', async ({ ctx, page 
           await expect(heading(page, one), `the role's page with the h1 "${one}"`).toBeVisible();
           await markPage(page);
           await s.tab(tab).click(ACTION);
-          await expectNoScreenYet(page, SERVICE_LABEL, `${rolePath(one)}/${end}`);
+          // Issue 57 (test-criteria.md, "Existing checks rewritten"): the page for that part of the service.
+          await expectNoScreenPart(page, SERVICE_LABEL, `${rolePath(one)}/${end}`);
           expect(await stillSamePage(page), `"${tab}": no document was loaded`).toBe(true);
           await page.goBack();
           await expect(page).toHaveURL(addressOf(rolePath(one)));

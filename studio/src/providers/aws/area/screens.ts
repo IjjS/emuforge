@@ -2,7 +2,14 @@ import type { SideNavigationProps } from '@cloudscape-design/components/side-nav
 import type { ComponentType } from 'react';
 
 import type { AreaConnection } from './components/emulator-line';
-import { patternFault, sampleParams, samePatterns, screenCrumbs, type ScreenParams } from './screen-paths';
+import {
+  patternFault,
+  patternSegments,
+  sampleParams,
+  samePatterns,
+  screenCrumbs,
+  type ScreenParams,
+} from './screen-paths';
 
 export type { ScreenParams } from './screen-paths';
 
@@ -51,6 +58,13 @@ export interface ServiceScreen {
    * whole-segment parameter `{name}` (`/aws/cloudwatch/alarms/{name}`).
    */
   paths: readonly string[];
+  /**
+   * Patterns of paths the screen's controls lead to that are not below its own paths, in the form of `paths`, each
+   * below the service's route and naming exactly the parameters of the first path (issue 57, requirement R4.11): a path
+   * at or below one that no screen matches is below this screen, and its "no screen yet" page keeps the screen's
+   * crumbs, the last leading to the first path for the same values.
+   */
+  leadsTo?: readonly string[];
   /** The title reported to Studio's frame, or a function from the parameters' values to it. */
   title: string | ((params: ScreenParams) => string);
   /** The crumbs below the service's, or a function from the parameters' values to them. */
@@ -100,7 +114,9 @@ function screenName(folder: string, screen: ServiceScreen): string {
  * What breaks the registry's rules (R3.4) among `folders`, one sentence per fault, naming the folder, the path or
  * the screen: a folder for which `hasServiceFile` is false; a path not `/aws/<folder>` or below it, or not well
  * formed (R4.1); a screen without a path, or whose crumbs, written or returned by its function for sample values,
- * are none (R4.6); two paths, of one screen or of two, that match the same addresses (R4.3).
+ * are none (R4.6); two paths, of one screen or of two, that match the same addresses (R4.3); a `leadsTo` pattern not
+ * well formed, not below `/aws/<folder>`, or whose parameters are not exactly those of the screen's first path (issue
+ * 57, R4.11).
  */
 export function registryFaults(
   folders: readonly ScreenFolder[],
@@ -129,9 +145,43 @@ export function registryFaults(
           faults.push(`${screenName(folder, screen)}: its crumbs at ${path} are none`);
         }
       }
+      faults.push(...leadsToFaults(folder, screen));
     }
   }
   return faults;
+}
+
+/** The parameters' names of a well formed pattern, in order. */
+function paramNames(pattern: string): string[] {
+  return patternSegments(pattern).flatMap((segment) => ('param' in segment ? [segment.param] : []));
+}
+
+/** What breaks the rules of a screen's `leadsTo` patterns (R4.11), one sentence per fault, naming the pattern. */
+function leadsToFaults(folder: string, screen: ServiceScreen): string[] {
+  const route = `/aws/${folder}`;
+  const first = screen.paths[0];
+  const firstNames = first === undefined || patternFault(first) !== undefined ? [] : paramNames(first);
+  return (screen.leadsTo ?? []).flatMap((pattern) => {
+    const fault = patternFault(pattern);
+    if (fault !== undefined) return [fault];
+    const faults: string[] = [];
+    if (!pattern.startsWith(`${route}/`)) {
+      faults.push(`${pattern}: a path the screen of ${folder} leads to is below ${route}`);
+    }
+    const names = paramNames(pattern);
+    const extra = names.filter((name) => !firstNames.includes(name));
+    const missing = firstNames.filter((name) => !names.includes(name));
+    if (extra.length > 0 || missing.length > 0) {
+      faults.push(
+        `${pattern}: a path ${screenName(folder, screen)} leads to names exactly the parameters of its first path` +
+          [
+            extra.length > 0 ? `, not ${extra.map((name) => `{${name}}`).join(', ')}` : '',
+            missing.length > 0 ? `, and ${missing.map((name) => `{${name}}`).join(', ')} too` : '',
+          ].join(''),
+      );
+    }
+    return faults;
+  });
 }
 
 /** Every service folder's `screens.ts`, collected at build time (R3.2), each by its folder's name. */
