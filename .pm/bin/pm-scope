@@ -31,10 +31,15 @@ Services (issue 327). When integration is called for or deferred, a last line sa
 the integration step holds, as _pmscope.select decides it from the changed paths and the manifests:
 `  services     every service: <why>` or `  services     <names, or "none"> (<n> paths touch a service)`. A service
 is a folder under studio/src/providers/aws/area/services/ (or studio/references/console/), and a check is a
-service's when its manifest row has `service`; the checks of no service are part of every run. A path shared by
-the services (the engine, shared Studio code, the checks' support, .github/, .pm/bin/, a path no rule knows), a
-`service` given, taken away or changed in the manifest, or a manifest that cannot be read gives every service. The
-manifest read for the head is the work tree's, uncommitted changes included; for the base, the merge base's.
+service's when its manifest row has `service`; the checks of no service are part of every run. A path under one of
+the folders of line 1 of the selection, studio/src/providers/aws/area/services/<service>/,
+studio/references/console/<service>/ and tests/integration/studio/services/<service>/ (the service's folder of
+checks: its support, its seed script, its manifest), gives that service. A path shared by the services (the engine,
+shared Studio code, the checks' shared support under tests/integration/studio/support/, .github/, .pm/bin/, a path
+no rule knows), a `service` given, taken away or changed in the manifest, or a manifest that cannot be read gives
+every service. The manifest is the rows of tests/integration/manifest.jsonl, then those of each
+tests/integration/studio/services/<service>/manifest.jsonl, the services in name order (issue 402). The manifest
+read for the head is the work tree's, uncommitted changes included; for the base, the merge base's.
 Kinds main, full, only (and pm-check's checks) say every service with the kind as the reason. The object always
 holds `services`: {all, names: [sorted names], why}.
 --json prints the same as the object pm-check records under `scope`, with `target` (main or feat/<id>). pm-check
