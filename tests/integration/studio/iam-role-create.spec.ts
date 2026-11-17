@@ -13,7 +13,7 @@
 // nothing (requirement R2, `CreateRole`).
 
 import createWrapper from '@cloudscape-design/components/test-utils/selectors';
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 
 import { expect, startStack, test, type Ctx } from './support';
 import { crumbLink } from './support/aws-area';
@@ -252,6 +252,15 @@ async function applyListFilter(page: Page, text: string): Promise<void> {
   await s.filter.press('Enter', ACTION);
 }
 
+/**
+ * The body cell of a table that holds exactly `text`, whatever its element: one of a row's `cells`, a `td` or the
+ * `th` of a row header (the "Policy name" cell of "Permissions policies" is the row header).
+ */
+function bodyCell(table: Locator, text: string): Locator {
+  const exact = new RegExp(`^\\s*${text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`);
+  return table.locator('tbody > tr > td, tbody > tr > th').filter({ hasText: exact });
+}
+
 /** The role list's rows as shown: name and trusted entities. */
 async function listRows(page: Page): Promise<{ name: string; trusted: string }[]> {
   const s = screen(page);
@@ -435,7 +444,7 @@ test('studio.iam-role-create-appears-in-the-emulator', async ({ ctx, page }) => 
     await expect(s.main, 'the description').toContainText(fullDescription);
     const table = s.main.getByRole('table', { name: POLICIES, exact: true });
     for (const a of attached) {
-      await expect(table.getByRole('cell', { name: a.name, exact: true }), `the row of ${a.name}`).toBeVisible();
+      await expect(bodyCell(table, a.name), `the row of ${a.name}`).toBeVisible();
     }
     expect(attached.length, 'a direct ListAttachedRolePolicies').toBe(2);
   });
