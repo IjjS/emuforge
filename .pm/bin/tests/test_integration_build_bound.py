@@ -116,6 +116,10 @@ def manifest_ids():
 
 
 IDS = manifest_ids()
+# The rows a default run leaves out since issue 315, and the reason it reports for each (decisions.md, 15:10).
+ON_REQUEST = {json.loads(line)["check_id"] for line in MANIFEST.read_text().splitlines()
+              if line.strip() and "on-request" in (json.loads(line).get("labels") or [])}
+ON_REQUEST_REASON = "on request: not part of a default run; run it with --on-request"
 LISTED = {"engine.health-reports-emulator-reachable": "listed engine check: reason one",
           "studio.home-shows-connected": "listed studio check: reason two"}
 BOUND_SETTING = re.compile(r"(?m)^[ \t]*(?:readonly[ \t]+)?product_build_bound=(\S*)")
@@ -428,7 +432,10 @@ class Ended_in_time(unittest.TestCase):
         self.assertEqual(code, 0, fx.why())
         report = fx.report()
         self.assertIsNotNone(report, fx.why())
-        self.assertEqual({i: c["verdict"] for i, c in report.items() if c["verdict"] != "passed"}, {})
+        self.assertEqual({i: c["verdict"] for i, c in report.items()
+                          if i not in ON_REQUEST and c["verdict"] != "passed"}, {})
+        self.assertEqual({i: (c["verdict"], c["message"]) for i, c in report.items() if i in ON_REQUEST},
+                         {i: ("not-run", ON_REQUEST_REASON) for i in ON_REQUEST})
         self.assertEqual(sorted(report), sorted(IDS))
         # the fixture's own path holds the word "bound", so the line is looked for by the bound's wording
         named = [line for line in fx.lines() if re.search(rf"did not end within|within {LOWERED} s\b", line)]
