@@ -500,26 +500,25 @@ cleanup() {
   # The product forms a check started and could not remove (the test process was killed). Each form records its
   # Compose project in $out/tmp/product-projects (support/product.ts); of those projects' containers, only the ones
   # created under one of the run's own image names are removed, so a project of the same name started elsewhere
-  # (another worktree's form on a port this run let go) is left alone. Then the networks of those projects that no
-  # container uses any more, and the files a killed situation 4 emulator of the run left under the run's HOME.
-  local projects project id image cname source port
+  # (another worktree's form on a port this run let go) is left alone. Then the networks and the volumes of those
+  # projects that no container uses any more: the volume holds the files of the form's emulator, its keys among them
+  # after a kill (issue 437).
+  local projects project id image cname
   if [[ -f "$out/tmp/product-projects" ]]; then
     projects="$(sort -u "$out/tmp/product-projects")"
     for project in $projects; do
-      while read -r id image cname source; do
+      while read -r id image cname; do
         [[ "$image" == "$product_image" || "$image" == "$emulator_image" ]] || continue
-        port="${cname##*-}"
-        if [[ "$image" == "$emulator_image" && "$cname" == /emuforge-app-aws-emulator-* && "$port" =~ ^[0-9]+$ \
-          && "$source" == "$HOME/.aws/emulator" && -e "$HOME/.aws/emulator/$port" ]]; then
-          rm -rf "$HOME/.aws/emulator/$port"
-          echo "integration: cleanup removed $HOME/.aws/emulator/$port of ${cname#/}" >&2
-        fi
         docker rm -f "$id" >/dev/null 2>&1 && echo "integration: cleanup removed container ${cname#/}" >&2
-      done < <(docker inspect -f '{{.Id}} {{.Config.Image}} {{.Name}} {{range .Mounts}}{{.Source}}{{end}}' \
+      done < <(docker inspect -f '{{.Id}} {{.Config.Image}} {{.Name}}' \
         $(docker ps -aq --filter "label=com.docker.compose.project=$project" 2>/dev/null) 2>/dev/null || true)
       for id in $(docker network ls -q --filter "label=com.docker.compose.project=$project" 2>/dev/null); do
         # A network still in use by a container is refused by Docker and kept.
         docker network rm "$id" >/dev/null 2>&1 && echo "integration: cleanup removed network $id of $project" >&2
+      done
+      for id in $(docker volume ls -q --filter "label=com.docker.compose.project=$project" 2>/dev/null); do
+        # A volume still used by a container, running or not, is refused by Docker and kept.
+        docker volume rm "$id" >/dev/null 2>&1 && echo "integration: cleanup removed volume $id of $project" >&2
       done
     done
   fi

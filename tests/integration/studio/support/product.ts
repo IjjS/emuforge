@@ -1,180 +1,95 @@
-// The product form of issue 34: EmuForge built into an image and started by Docker Compose from the checkout's root
-// (requirement section 1), on Docker Desktop and, by issue 54, on Docker Engine on Linux. This file is the one place
-// the product checks take their command lines from: the plain commands of both platforms (`COMMANDS`), the two
-// preparatory lines of Docker Engine on Linux (`PREPARATORY_LINES`) and the wrapper's lines (`WRAPPER`);
-// `engine.product-readme-gives-the-commands-the-checks-run` compares the README with them (#34 R20, #54 R16).
-//
-// The platform (`platform()`) is decided once, by the wrapper's own rule: Docker Engine on Linux when this process
-// runs on Linux and `docker info --format '{{.OperatingSystem}}'` does not print `Docker Desktop`; Docker Desktop
-// otherwise. No check takes it from a variable.
+// The product form (issues 34 and 437): EmuForge built into an image and started by Docker Compose from the
+// checkout's root, with an emulator of its own, the same on every platform and in every shell. This file is the one
+// place the product checks take their command lines from (`LINES`): the start line, the stop line, the line that
+// shows the emulator's log, the line that removes the volume too, and the start line that keeps the running
+// containers. `engine.product-readme-gives-the-commands-the-checks-run` compares the README with them (#437 R16).
 //
 // A check's form (`Form`) runs on free loopback ports of its own, under the run's own image names
-// (`EMUFORGE_IMAGE`, `EMUFORGE_EMULATOR_IMAGE`, set by `run`), with an environment of exactly: `HOME`, a `PATH` on
-// which `cargo`, `rustc`, `bun` and `node` are not found (R1), the three ports and the two image names, and on
-// Docker Engine on Linux `EMUFORGE_UID` and `EMUFORGE_GID` as the preparatory lines set them. The Docker client's
-// own settings (`DOCKER_CONFIG`, `DOCKER_HOST`, `DOCKER_CONTEXT`) are passed on when the run has them, so the
-// command talks to the same daemon the support inspects; a form with a fresh `HOME` keeps `DOCKER_CONFIG` at the
-// run's own, where the Compose plugin and the Docker context live (`probe/fresh-home.log`).
+// (`EMUFORGE_IMAGE`, `EMUFORGE_EMULATOR_IMAGE`, set by `run`), with an environment of exactly: `HOME` (the run's,
+// another folder, or none at all), a `PATH` on which `cargo`, `rustc`, `bun` and `node` are not found, the three
+// ports and the two image names, and the variables a form of the checks' own needs (below). The Docker client's own
+// settings (`DOCKER_CONFIG`, `DOCKER_HOST`, `DOCKER_CONTEXT`) are passed on when the run has them, so the command
+// talks to the same daemon the support inspects; a form with another `HOME`, or none, keeps `DOCKER_CONFIG` at the
+// run's own, where the Compose plugin and the Docker context live.
 //
-// On Docker Engine on Linux a form started with the plain commands has the preparatory lines done first, in its own
-// `HOME`, as the user running the check: the support runs their text in `/bin/sh` and takes the two ids from what
-// the shell set (#54 R16). On Docker Desktop they are not done.
+// The checks' own means (#437 design section 6), never part of the shipped form:
+// - `product-direct.yml`, given beside the root file, publishes the form's emulator port on a loopback port of the
+//   run (`EMUFORGE_IT_DIRECT_PORT`), so a check can send the same request directly. The emulator's key and `ca.pem`
+//   are read inside its container (`Form.emulatorFiles`) into memory, registered for redaction, never written or
+//   printed.
+// - `product-deaf.yml`, given beside the root file, starts the emulator on another port (`EMUFORGE_IT_DEAF_PORT`)
+//   than the one its healthcheck asks (`EMULATOR_PORT`).
 //
-// The form's containers and networks are those that carry its Compose project's label. The project is
-// `emuforge-app-<studio port>` (design D6). `dispose` runs the situation 4 stop command, which removes the form
-// whether it was started with the profile or not, then removes by label whatever is still there, and the emulator
-// directory of a situation 4 form whose port the form chose itself.
+// The form's containers, networks and volumes are those that carry its Compose project's label. The project is
+// `emuforge-app-<studio port>`. `dispose` runs the line that removes the volume too, with the form's files, then
+// removes by label whatever is still there.
 
 import { execFile } from 'node:child_process';
-import { createHash, createHmac } from 'node:crypto';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 
 import { EnvError, expect, type Ctx } from './check';
-import { emulatorDir, type EmulatorFiles } from './emulator';
+import type { EmulatorFiles } from './emulator';
 import { freePortExcept, probe } from './net';
 import { Proc } from './process';
+import { register } from './secrets';
 import { HEALTH_PATH } from './traffic';
 import { waitFor } from './wait';
 
-/** A situation of the README's "Start" part that the product form covers (requirement section 1). */
-export type Situation = 3 | 4;
-
-/** The platform of the run (shared terms of #54's test criteria). */
-export type Platform = 'desktop' | 'linux';
-
-/** The second Compose file, the host form of Docker Engine on Linux (#54 requirement section 1). */
-export const LINUX_FILE = 'docker-compose.linux.yml';
-
-const LINUX_ARGS = ['-f', LINUX_FILE];
-
-/** The plain start and stop command lines of each platform and situation, as argument arrays, run at the root. */
-export const COMMANDS: Record<Platform, Record<Situation, { start: string[]; stop: string[] }>> = {
-  desktop: {
-    3: {
-      start: ['docker', 'compose', 'up', '-d', '--build'],
-      stop: ['docker', 'compose', 'down'],
-    },
-    4: {
-      start: ['docker', 'compose', '--profile', 'emulator', 'up', '-d', '--build'],
-      stop: ['docker', 'compose', '--profile', 'emulator', 'down'],
-    },
-  },
-  linux: {
-    3: {
-      start: ['docker', 'compose', ...LINUX_ARGS, 'up', '-d', '--build'],
-      stop: ['docker', 'compose', ...LINUX_ARGS, 'down'],
-    },
-    4: {
-      start: ['docker', 'compose', ...LINUX_ARGS, '--profile', 'emulator', 'up', '-d', '--build'],
-      stop: ['docker', 'compose', ...LINUX_ARGS, '--profile', 'emulator', 'down'],
-    },
-  },
+/** The command lines of the one form, as argument arrays, run at the checkout's root (#437 R9, R10, R5, T10). */
+export const LINES = {
+  start: ['docker', 'compose', 'up', '-d', '--build'],
+  stop: ['docker', 'compose', 'down'],
+  emulatorLogs: ['docker', 'compose', 'logs', 'aws-emulator'],
+  removeVolume: ['docker', 'compose', 'down', '-v'],
 };
 
-/**
- * The two lines that go before the plain commands on Docker Engine on Linux (#54 R16), as text: the README holds
- * them exactly so, and the support runs exactly this text.
- */
-export const PREPARATORY_LINES = ['mkdir -p ~/.aws/emulator', 'export EMUFORGE_UID="$(id -u)" EMUFORGE_GID="$(id -g)"'];
+/** The variable that keeps the running containers on a second start line (#437 requirement T10). */
+export const KEEP_VARIABLE = 'BUILDX_NO_DEFAULT_ATTESTATIONS';
 
-/** The wrapper's lines, as argument arrays, run at the checkout's root (#54 R9, R14). */
-export const WRAPPER = {
-  up: ['./compose', 'up'],
-  down: ['./compose', 'down'],
-  ps: ['./compose', 'ps', '-a'],
-  logs: ['./compose', 'logs'],
-};
+/** The start line that keeps the running containers, as the README writes it. */
+export const KEEP_START_LINE = `${KEEP_VARIABLE}=1 ${LINES.start.join(' ')}`;
 
 /** A command line as the README writes it: the arguments joined by one space. */
 export function commandLine(args: string[]): string {
   return args.join(' ');
 }
 
-/** Every command line of the one place: the plain commands of both platforms and the wrapper's lines. */
-export function onePlaceLines(): string[] {
-  const out: string[] = [];
-  for (const byPlatform of Object.values(COMMANDS)) {
-    for (const { start, stop } of Object.values(byPlatform)) out.push(commandLine(start), commandLine(stop));
-  }
-  out.push(...Object.values(WRAPPER).map(commandLine));
-  return out;
+/** Every `docker compose` line of the README's "Start" as text, each one a line the product checks run. */
+export function startLines(): string[] {
+  return [...Object.values(LINES).map(commandLine), KEEP_START_LINE];
 }
 
-/**
- * `docker compose` with the options the platform's situation start command puts before `up` (the platform's file,
- * and for situation 4 `--profile emulator`), then `rest`: the same file and profile for `ps`, `logs` or `config`.
- */
-export function composeArgs(on: Platform, situation: Situation, ...rest: string[]): string[] {
-  const start = COMMANDS[on][situation].start;
-  return [...start.slice(0, start.indexOf('up')), ...rest];
-}
+/** The services of the one form (#437 R1). */
+export const SERVICES = ['gateway', 'aws-emulator', 'engine', 'studio'];
 
-let decided: Promise<Platform> | undefined;
+/** The checks' own Compose files, beside this file, as the checkout's relative paths. */
+export const CHECK_FILES = {
+  direct: 'tests/integration/studio/support/product-direct.yml',
+  deaf: 'tests/integration/studio/support/product-deaf.yml',
+};
 
-/** The platform of the run, decided once by the wrapper's rule (this file's header). */
-export function platform(): Promise<Platform> {
-  decided ??= (async (): Promise<Platform> => {
-    if (os.platform() !== 'linux') return 'desktop';
-    const name = await dockerRead(['info', '--format', '{{.OperatingSystem}}']);
-    return name === 'Docker Desktop' ? 'desktop' : 'linux';
-  })();
-  return decided;
-}
+export type CheckFile = keyof typeof CHECK_FILES;
 
-/** The user's ids: what `id -u` and `id -g` print. */
-export interface UserIds {
-  uid: string;
-  gid: string;
-}
+/** Where the form's emulator keeps its files inside its container (#437 R3). */
+export const EMULATOR_FILES_DIR = '/home/emulator/.aws/emulator';
 
-let users: Promise<UserIds> | undefined;
+/** Where the engine's container mounts the volume, read-only (#437 R3). */
+export const ENGINE_FILES_DIR = '/home/emuforge/.aws/emulator';
 
-/** The ids of the user running the check, from `id -u` and `id -g`. */
-export function userIds(): Promise<UserIds> {
-  const id = (flag: string) =>
-    new Promise<string>((resolve, reject) => {
-      execFile('id', [flag], { encoding: 'utf8' }, (error, stdout) => {
-        if (error) reject(new EnvError(`id ${flag}: ${error.message}`));
-        else resolve(stdout.trim());
-      });
-    });
-  users ??= (async () => ({ uid: await id('-u'), gid: await id('-g') }))();
-  return users;
-}
-
-/**
- * Does the preparatory lines in `home`: their text in `/bin/sh` with that `HOME`, as the user running the check,
- * then the two variables as the shell set them. `EnvError` when the shell fails or sets anything but two numbers.
- */
-export async function prepare(ctx: Ctx, home: string): Promise<UserIds> {
-  const script = [...PREPARATORY_LINES, 'printf \'%s %s\\n\' "$EMUFORGE_UID" "$EMUFORGE_GID"'].join(' && ');
-  const proc = Proc.spawn(ctx, 'the preparatory lines', '/bin/sh', ['-c', script], ctx.checkout, {
-    HOME: home,
-    PATH: '/usr/bin:/bin',
-  });
-  const exit = await proc.waitExit(10_000);
-  const { stdout, stderr } = await proc.stop();
-  const [uid, gid] = stdout.trim().split(' ');
-  if (exit?.code !== 0 || !/^\d+$/.test(uid ?? '') || !/^\d+$/.test(gid ?? '')) {
-    throw new EnvError(`the preparatory lines in ${home}: exit ${String(exit?.code)}, ${stdout.trim()} ${stderr.trim()}`);
-  }
-  ctx.log(`the preparatory lines in ${home}: EMUFORGE_UID=${uid} EMUFORGE_GID=${gid}`);
-  return { uid, gid };
-}
-
-/** The files an emulator writes into `~/.aws/emulator/<port>/` (requirement section 2). */
+/** The files an emulator writes into `<files dir>/<port>/`. */
 export const EMULATOR_FILES = ['ca.pem', 'config', 'emulator_credentials', 'truststore.p12'];
 
-/** The tools the start command must not need on the host (R1). */
+/** The tools the start line must not need on the host. */
 const HOST_TOOLS = ['cargo', 'rustc', 'bun', 'node'];
 
-/** How long a start command may take: the run built the image, so `--build` is a cache hit. */
+/** How long a start line may take: the run built the images, so `--build` is a cache hit. */
 export const START_BOUND_MS = 300_000;
 
-/** How long a stop command may take: Compose's own stop timeout is 10 s per container. */
+/** How long a stop line may take: Compose's own stop timeout is 10 s per container. */
 export const STOP_BOUND_MS = 60_000;
 
 /** How long a started form may take to answer on its ports. */
@@ -187,20 +102,21 @@ export const CHANGE_BOUND_MS = 10_000;
 const RELEASE_BOUND_MS = 10_000;
 
 /**
- * A test timeout for a product check that runs `starts` start commands and `stops` stop commands (its cleanup
- * included), plus two minutes for its waits, browser and emulators. Playwright's 180 s default is too short for a
- * form's start and stop; each product spec file sets its own.
+ * A test timeout for a product check that runs `starts` start lines and `stops` stop lines (its cleanup included),
+ * plus two minutes for its waits, browser and emulators. Playwright's 180 s default is too short for a form's start
+ * and stop; each product spec file sets its own.
  */
 export function productTimeout(starts: number, stops: number): number {
   return starts * START_BOUND_MS + stops * STOP_BOUND_MS + 120_000;
 }
 
-/** What a command gave: its exit code (`null` when killed by a signal) and its output, both streams together. */
+/** What a command gave: its exit code (`null` when killed by a signal), its output, and how long it took. */
 export interface CommandResult {
   line: string;
   code: number | null;
   stdout: string;
   stderr: string;
+  ms: number;
 }
 
 /** The output of a command for an assertion message, its last 4000 characters. */
@@ -209,10 +125,17 @@ export function tail(result: CommandResult): string {
   return all.length > 4000 ? `…${all.slice(-4000)}` : all;
 }
 
+/** A command's exit code asserted, with its output in the message. */
+export function expectExit(result: CommandResult, code: 'zero' | 'non-zero') {
+  const message = `${result.line}: exit code; output:\n${tail(result)}`;
+  if (code === 'zero') expect(result.code, message).toBe(0);
+  else expect(result.code, message).not.toBe(0);
+}
+
 let restrictedPath: string | undefined;
 
 /**
- * A `PATH` for the start command: a directory of the run's scratch space holding links to `docker` and the
+ * A `PATH` for the start line: a directory of the run's scratch space holding links to `docker` and the
  * `docker-credential-*` helpers found on the run's `PATH`, then `/usr/bin:/bin:/usr/sbin:/sbin`. `EnvError` when
  * `docker` is not found, or when `cargo`, `rustc`, `bun` or `node` would still be found on it.
  */
@@ -244,12 +167,12 @@ export function productPath(ctx: Ctx): string {
       }
     }
   }
-  ctx.log(`the start command's PATH: ${value}`);
+  ctx.log(`the start line's PATH: ${value}`);
   restrictedPath = value;
   return value;
 }
 
-/** `docker <args>`: the output, or the error with Docker's message. */
+/** `docker <args>` with the test process's environment: the output, or the error with Docker's message. */
 function dockerOut(args: string[]): Promise<{ ok: boolean; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     execFile('docker', args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }, (error, stdout, stderr) => {
@@ -265,15 +188,26 @@ export async function dockerRead(args: string[]): Promise<string> {
   return out.stdout;
 }
 
+/** `docker inspect -f '{{json <field>}}' <id>`, parsed. */
+export async function inspectJson<T>(id: string, field: string): Promise<T> {
+  return JSON.parse(await dockerRead(['inspect', '-f', `{{json ${field}}}`, id])) as T;
+}
+
 /** One container as a check compares it: who it is, when it started, and whether it runs. */
 export interface ContainerState {
   id: string;
   name: string;
   /** Its Compose service, `''` for a container that has none. */
   service: string;
+  /** The image it was created from, as named (`.Config.Image`). */
+  image: string;
+  /** `0001-01-01T00:00:00Z` for a container that was never started. */
   startedAt: string;
   running: boolean;
 }
+
+/** Docker's start time of a container that was never started. */
+export const NEVER_STARTED = '0001-01-01T00:00:00Z';
 
 /**
  * Inspects containers by id or name; a container that is gone by then is left out (Docker inspects the others and
@@ -282,39 +216,20 @@ export interface ContainerState {
 export async function inspectContainers(refs: string[]): Promise<ContainerState[]> {
   if (refs.length === 0) return [];
   const format =
-    '{{.Id}}\t{{.Name}}\t{{index .Config.Labels "com.docker.compose.service"}}\t{{.State.StartedAt}}\t{{.State.Running}}';
+    '{{.Id}}\t{{.Name}}\t{{index .Config.Labels "com.docker.compose.service"}}\t{{.Config.Image}}\t{{.State.StartedAt}}\t{{.State.Running}}';
   const out = await dockerOut(['inspect', '-f', format, ...refs]);
   return out.stdout
     .split('\n')
     .filter((line) => line.includes('\t'))
     .map((line) => {
-      const [id, name, service, startedAt, running] = line.split('\t');
-      return { id, name: name.replace(/^\//, ''), service, startedAt, running: running === 'true' };
+      const [id, name, service, image, startedAt, running] = line.split('\t');
+      return { id, name: name.replace(/^\//, ''), service, image, startedAt, running: running === 'true' };
     });
 }
 
 /** The id and start time of each container, sorted by id: what "nothing was restarted" compares. */
 export function identities(containers: ContainerState[]): { id: string; startedAt: string }[] {
   return containers.map((c) => ({ id: c.id, startedAt: c.startedAt })).sort((a, b) => a.id.localeCompare(b.id));
-}
-
-/**
- * Every running container on the machine that publishes host port `port` (`NetworkSettings.Ports`). A container
- * that only declares the port and was never started (Compose creates one before Docker refuses its publish)
- * publishes nothing and is not counted. Read-only.
- */
-export async function containersPublishing(port: number): Promise<ContainerState[]> {
-  const running = (await dockerRead(['ps', '-q', '--no-trunc'])).split('\n').filter((id) => id !== '');
-  if (running.length === 0) return [];
-  const format = '{{.Id}}\t{{json .NetworkSettings.Ports}}';
-  const out = await dockerOut(['inspect', '-f', format, ...running]);
-  const ids: string[] = [];
-  for (const line of out.stdout.split('\n')) {
-    const [id, published] = line.split('\t');
-    if (!id || published === undefined) continue;
-    if (bindings(published).some((b) => b.hostPort === String(port))) ids.push(id);
-  }
-  return (await inspectContainers(ids)).filter((c) => c.running);
 }
 
 /** A host binding of a published port. */
@@ -343,7 +258,31 @@ export function bindings(json: string): Binding[] {
   return out;
 }
 
-/** The id and start time of a container the check started itself (a user's emulator), for R6. */
+/** What a container publishes: its running bindings and the bindings its configuration asks for. */
+export async function publishedBy(id: string): Promise<{ running: Binding[]; configured: Binding[] }> {
+  const running = bindings(await dockerRead(['inspect', '-f', '{{json .NetworkSettings.Ports}}', id]));
+  const configured = bindings(await dockerRead(['inspect', '-f', '{{json .HostConfig.PortBindings}}', id]));
+  return { running, configured };
+}
+
+/**
+ * Every running container on the machine that publishes host port `port` (`NetworkSettings.Ports`). Read-only.
+ */
+export async function containersPublishing(port: number): Promise<ContainerState[]> {
+  const running = (await dockerRead(['ps', '-q', '--no-trunc'])).split('\n').filter((id) => id !== '');
+  if (running.length === 0) return [];
+  const format = '{{.Id}}\t{{json .NetworkSettings.Ports}}';
+  const out = await dockerOut(['inspect', '-f', format, ...running]);
+  const ids: string[] = [];
+  for (const line of out.stdout.split('\n')) {
+    const [id, published] = line.split('\t');
+    if (!id || published === undefined) continue;
+    if (bindings(published).some((b) => b.hostPort === String(port))) ids.push(id);
+  }
+  return (await inspectContainers(ids)).filter((c) => c.running);
+}
+
+/** The id and start time of a container the check started itself (a user's emulator). */
 export async function containerIdentity(name: string): Promise<{ id: string; startedAt: string; running: boolean }> {
   const [found] = await inspectContainers([name]);
   if (!found) throw new EnvError(`container ${name} does not exist`);
@@ -419,6 +358,30 @@ export async function waitHealth(enginePort: number, status: number, boundMs = U
   return last;
 }
 
+/** Waits, at most `boundMs`, until health says `reachable: <reachable>`; the last answer either way. */
+export async function waitReachable(enginePort: number, reachable: boolean, boundMs = UP_BOUND_MS): Promise<HealthResult> {
+  let last = { error: 'not asked' } as HealthResult;
+  await waitFor(boundMs, async () => {
+    last = await health(enginePort);
+    return 'status' in last && last.body?.emulator?.reachable === reachable ? true : undefined;
+  });
+  return last;
+}
+
+/**
+ * The first answer health gives within `boundMs`: the request is repeated only while the connection is refused,
+ * reset or closed before an answer (the published port's forwarder is up before the engine listens).
+ */
+export async function firstHealth(enginePort: number, boundMs = UP_BOUND_MS): Promise<HealthResult> {
+  let last = { error: 'not asked' } as HealthResult;
+  await waitFor(boundMs, async () => {
+    last = await health(enginePort);
+    if (!('error' in last)) return true;
+    return /ECONNREFUSED|ECONNRESET|socket hang up|EPIPE/.test(last.error) ? undefined : true;
+  });
+  return last;
+}
+
 /** Waits, at most `boundMs`, until `GET <path>` on `port` gets any HTTP answer; the last answer or error. */
 export async function waitAnswer(
   port: number,
@@ -452,9 +415,9 @@ function hmac(key: string | Buffer, data: string): Buffer {
 }
 
 /**
- * An S3 request over plain HTTP to `127.0.0.1:<port>` (the form's engine port), header-signed with the emulator's
- * key `key` over `host`, `x-amz-content-sha256`, `x-amz-date` and the `extra` headers, as the suite's transparency
- * checks sign (path style: `/`, `/<bucket>`, `/<bucket>/<key>`).
+ * An S3 request over plain HTTP to `127.0.0.1:<port>` (the form's engine port), header-signed with `key` over
+ * `host`, `x-amz-content-sha256`, `x-amz-date` and the `extra` headers, as the suite's transparency checks sign
+ * (path style: `/`, `/<bucket>`, `/<bucket>/<key>`).
  */
 export function signedS3(
   port: number,
@@ -503,21 +466,106 @@ export function xmlElements(body: Buffer, name: string): string[] {
   return [...body.toString('utf8').matchAll(new RegExp(`<${name}>([^<]*)</${name}>`, 'g'))].map((m) => m[1]);
 }
 
+/**
+ * A made-up key: an access key id and secret that no emulator issued, new for each call. Its values are not the
+ * emulator's and are not redacted; `caLines` is empty.
+ */
+export function madeUpKey(): EmulatorFiles {
+  const id = randomBytes(8).toString('hex').toUpperCase();
+  return {
+    accessKeyId: `AKIAMADEUP${id.slice(0, 10)}`,
+    secretAccessKey: `made-up-${randomBytes(16).toString('hex')}`,
+    caLines: [],
+  };
+}
+
+/** The emulator's files as read inside its container: the key and `ca.pem`, held in memory only. */
+export interface FormEmulatorFiles extends EmulatorFiles {
+  /** `ca.pem` as read, to verify TLS of a direct request. */
+  ca: Buffer;
+}
+
+/**
+ * The `[default]` access key id and secret of an emulator's credentials file, or `null` when either is missing.
+ * Every value is registered for redaction.
+ */
+export function parseCredentials(text: string): { accessKeyId: string; secretAccessKey: string } | null {
+  let section = '';
+  let accessKeyId: string | undefined;
+  let secretAccessKey: string | undefined;
+  for (const raw of text.split('\n')) {
+    const line = raw.trim();
+    const header = /^\[(.*)\]$/.exec(line);
+    if (header) {
+      section = header[1].trim();
+      continue;
+    }
+    const eq = line.indexOf('=');
+    if (eq < 0) continue;
+    const name = line.slice(0, eq).trim();
+    const value = line.slice(eq + 1).trim();
+    register([value]);
+    if (section === 'default' && name === 'aws_access_key_id') accessKeyId = value;
+    if (section === 'default' && name === 'aws_secret_access_key') secretAccessKey = value;
+  }
+  return accessKeyId && secretAccessKey ? { accessKeyId, secretAccessKey } : null;
+}
+
+/** The base64 lines of every block of a PEM text, trimmed. */
+function pemLines(text: string): string[] {
+  return text
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l !== '' && !l.startsWith('-----'));
+}
+
+/** `cat <file>` in container `id`, with the test process's environment; never logged. */
+function catIn(id: string, file: string): Promise<{ ok: boolean; data: Buffer; stderr: string }> {
+  return new Promise((resolve) => {
+    execFile(
+      'docker',
+      ['exec', id, 'cat', file],
+      { encoding: 'buffer', maxBuffer: 4 * 1024 * 1024, timeout: 30_000 },
+      (error, stdout, stderr) => {
+        resolve({ ok: !error, data: stdout, stderr: (stderr.toString('utf8') || error?.message || '').trim() });
+      },
+    );
+  });
+}
+
+/** A new, empty directory under the run's scratch space, removed when the check ends (after the forms it holds). */
+export function freshHome(ctx: Ctx): string {
+  const home = path.join(ctx.tmp, `home-${ctx.id}-${String(Date.now())}`);
+  fs.mkdirSync(home, { recursive: true });
+  ctx.own({ dispose: async () => fs.rmSync(home, { recursive: true, force: true }) });
+  return home;
+}
+
+/** Every path under `root`, relative and sorted. */
+export function entries(root: string): string[] {
+  const out: string[] = [];
+  const walk = (dir: string) => {
+    for (const name of fs.readdirSync(dir)) {
+      const full = path.join(dir, name);
+      out.push(path.relative(root, full));
+      if (fs.lstatSync(full).isDirectory()) walk(full);
+    }
+  };
+  if (fs.existsSync(root)) walk(root);
+  return out.sort();
+}
+
 export interface FormOptions {
-  situation: Situation;
-  /** Default: a free port, never the run's; a situation 4 form then owns that port's emulator directory. */
+  /** `EMULATOR_PORT`, the emulator's port inside the form; default a free port of the host, never the run's. */
   emulatorPort?: number;
   enginePort?: number;
   studioPort?: number;
-  /** `HOME` of the command; default the run's. */
-  home?: string;
-  /** Whose plain commands start and stop the form; default the run's platform. */
-  commands?: Platform;
-  /**
-   * Whether the preparatory lines are done when the run is on Docker Engine on Linux and the form takes the Linux
-   * commands; default true. On Docker Desktop they are never done.
-   */
-  prepared?: boolean;
+  /** `HOME` of the form's commands: default the run's; `null` for an environment without `HOME`. */
+  home?: string | null;
+  /** More variables of the form's commands (`USERPROFILE`, `BUILDX_NO_DEFAULT_ATTESTATIONS`). */
+  env?: Record<string, string>;
+  /** The checks' own Compose files given beside the root file. */
+  files?: CheckFile[];
 }
 
 /** Ports the forms of this process chose, so two forms of one check never get the same one. */
@@ -538,78 +586,78 @@ export function refusedBrowserRequests(ctx: Ctx): string[] {
 
 /** One product form a check started on free ports of its own. */
 export class Form {
-  readonly situation: Situation;
   readonly emulatorPort: number;
   readonly enginePort: number;
   readonly studioPort: number;
-  readonly home: string;
-  /** Whose plain commands the form takes. */
-  readonly commands: Platform;
-  /** The ids the preparatory lines set, `null` when they were not done. */
-  readonly ids: UserIds | null;
-  private readonly ownsEmulatorDir: boolean;
+  /** `HOME` of the form's commands, `null` when they run without one. */
+  readonly home: string | null;
+  /** The loopback port `product-direct.yml` publishes the emulator on, `null` without that file. */
+  readonly directPort: number | null;
+  /** The port `product-deaf.yml` starts the emulator on, `null` without that file. */
+  readonly deafPort: number | null;
+  readonly files: CheckFile[];
+  private readonly extraEnv: Record<string, string>;
 
   private constructor(
     private readonly ctx: Ctx,
-    options: Required<Omit<FormOptions, 'prepared'>>,
-    ids: UserIds | null,
-    ownsEmulatorDir: boolean,
+    ports: { emulatorPort: number; enginePort: number; studioPort: number; directPort: number | null; deafPort: number | null },
+    home: string | null,
+    files: CheckFile[],
+    extraEnv: Record<string, string>,
   ) {
-    this.situation = options.situation;
-    this.commands = options.commands;
-    this.ids = ids;
-    this.emulatorPort = options.emulatorPort;
-    this.enginePort = options.enginePort;
-    this.studioPort = options.studioPort;
-    this.home = options.home;
-    this.ownsEmulatorDir = ownsEmulatorDir;
+    this.emulatorPort = ports.emulatorPort;
+    this.enginePort = ports.enginePort;
+    this.studioPort = ports.studioPort;
+    this.directPort = ports.directPort;
+    this.deafPort = ports.deafPort;
+    this.home = home;
+    this.files = files;
+    this.extraEnv = extraEnv;
   }
 
   /**
-   * A form on free ports (those not given), owned by the check: it is stopped and removed when the check ends.
-   * Nothing is started yet. `EnvError` when the run did not name its images.
+   * A form on free ports (those not given), owned by the check: it is stopped and removed, its volume too, when
+   * the check ends. Nothing is started yet. `EnvError` when the run did not name its images.
    */
-  static async create(ctx: Ctx, options: FormOptions): Promise<Form> {
+  static async create(ctx: Ctx, options: FormOptions = {}): Promise<Form> {
     if (!ctx.productImage || !ctx.emulatorImage) {
       throw new EnvError(
         'EMUFORGE_IT_PRODUCT_IMAGE and EMUFORGE_IT_EMULATOR_IMAGE are not set; run the suite with tests/integration/run',
       );
     }
-    // The run's ports, the defaults (the owner's form and emulator), and every port a form of this process took.
-    const taken = [ctx.emulatorPort, ctx.enginePort, ctx.studioPort, 9297, 8296, 8297, ...picked];
-    if (options.emulatorPort !== undefined) taken.push(options.emulatorPort);
-    if (options.enginePort !== undefined) taken.push(options.enginePort);
-    if (options.studioPort !== undefined) taken.push(options.studioPort);
+    // The run's ports, the defaults (the owner's form and emulator), the gateway's own, and every port a form of
+    // this process took.
+    const taken = [ctx.emulatorPort, ctx.enginePort, ctx.studioPort, 9297, 8296, 8297, 18296, 18297, ...picked];
+    for (const given of [options.emulatorPort, options.enginePort, options.studioPort]) {
+      if (given !== undefined) taken.push(given);
+    }
     const pick = async () => {
       const port = await freePortExcept(ctx.home, taken);
       taken.push(port);
       picked.push(port);
       return port;
     };
-    const emulatorPort = options.emulatorPort ?? (await pick());
-    const enginePort = options.enginePort ?? (await pick());
-    const studioPort = options.studioPort ?? (await pick());
-    const home = options.home ?? ctx.home;
-    const on = await platform();
-    const commands = options.commands ?? on;
-    const ids = on === 'linux' && commands === 'linux' && options.prepared !== false ? await prepare(ctx, home) : null;
-    const form = new Form(
-      ctx,
-      { situation: options.situation, emulatorPort, enginePort, studioPort, home, commands },
-      ids,
-      options.emulatorPort === undefined && options.situation === 4,
-    );
+    const files = options.files ?? [];
+    const ports = {
+      emulatorPort: options.emulatorPort ?? (await pick()),
+      enginePort: options.enginePort ?? (await pick()),
+      studioPort: options.studioPort ?? (await pick()),
+      directPort: files.includes('direct') ? await pick() : null,
+      deafPort: files.includes('deaf') ? await pick() : null,
+    };
+    const home = options.home === undefined ? ctx.home : options.home;
+    const form = new Form(ctx, ports, home, files, options.env ?? {});
     ctx.own(form);
     // `run` removes, at its end, what a killed check left of the projects listed here.
     fs.mkdirSync(ctx.tmp, { recursive: true });
     fs.appendFileSync(path.join(ctx.tmp, 'product-projects'), `${form.project}\n`);
     ctx.log(
-      `form ${form.project}: ${commands} commands, situation ${options.situation}, emulator port ${emulatorPort}, engine port ${enginePort}, studio port ${studioPort}, HOME ${form.home}`,
+      `form ${form.project}: emulator port ${ports.emulatorPort}, engine port ${ports.enginePort}, studio port ${ports.studioPort}, HOME ${home ?? '(none)'}, files ${files.join(' ') || '(root only)'}${ports.directPort ? `, direct port ${ports.directPort}` : ''}${ports.deafPort ? `, deaf port ${ports.deafPort}` : ''}`,
     );
     return form;
   }
 
-  /** The form's Compose project (design D6). */
+  /** The form's Compose project. */
   get project(): string {
     return `emuforge-app-${String(this.studioPort)}`;
   }
@@ -618,10 +666,14 @@ export class Form {
     return `http://127.0.0.1:${String(this.studioPort)}/`;
   }
 
+  /** The name Compose gives the emulator's container: no name is set by the file (#437 R13). */
+  get emulatorContainerName(): string {
+    return `${this.project}-aws-emulator-1`;
+  }
+
   /** The environment of the form's commands: exactly the variables the header of this file names. */
   env(): Record<string, string> {
     const env: Record<string, string> = {
-      HOME: this.home,
       PATH: productPath(this.ctx),
       EMULATOR_PORT: String(this.emulatorPort),
       EMUFORGE_ENGINE_PORT: String(this.enginePort),
@@ -629,16 +681,27 @@ export class Form {
       EMUFORGE_IMAGE: this.ctx.productImage,
       EMUFORGE_EMULATOR_IMAGE: this.ctx.emulatorImage,
     };
-    if (this.ids) {
-      env.EMUFORGE_UID = this.ids.uid;
-      env.EMUFORGE_GID = this.ids.gid;
-    }
+    if (this.home !== null) env.HOME = this.home;
+    if (this.directPort !== null) env.EMUFORGE_IT_DIRECT_PORT = String(this.directPort);
+    if (this.deafPort !== null) env.EMUFORGE_IT_DEAF_PORT = String(this.deafPort);
     for (const name of ['DOCKER_CONFIG', 'DOCKER_HOST', 'DOCKER_CONTEXT']) {
       const value = process.env[name];
       if (value) env[name] = value;
     }
     if (this.home !== this.ctx.home && !env.DOCKER_CONFIG) env.DOCKER_CONFIG = path.join(this.ctx.home, '.docker');
-    return env;
+    return { ...env, ...this.extraEnv };
+  }
+
+  /** `line` with the form's own Compose files: `-f docker-compose.yml -f <file>…` after `docker compose`. */
+  withFiles(line: string[]): string[] {
+    if (this.files.length === 0) return [...line];
+    const files = ['docker-compose.yml', ...this.files.map((f) => CHECK_FILES[f])].flatMap((f) => ['-f', f]);
+    return [line[0], line[1], ...files, ...line.slice(2)];
+  }
+
+  /** `docker compose` with the form's files, then `rest`. */
+  compose(...rest: string[]): string[] {
+    return this.withFiles(['docker', 'compose', ...rest]);
   }
 
   /**
@@ -647,34 +710,43 @@ export class Form {
    */
   async run(args: string[], boundMs: number, env: Record<string, string> = this.env()): Promise<CommandResult> {
     const line = commandLine(args);
+    const began = Date.now();
     const proc = Proc.spawn(this.ctx, line, args[0], args.slice(1), this.ctx.checkout, env);
     const exit = await proc.waitExit(boundMs);
     const { stdout, stderr } = await proc.stop();
+    const ms = Date.now() - began;
     if (!exit) throw new Error(`${line} did not exit within ${boundMs / 1000}s`);
-    this.ctx.log(`${line}: exit ${String(exit.code)}${exit.signal ? ` signal ${exit.signal}` : ''}`);
-    return { line, code: exit.code, stdout, stderr };
+    this.ctx.log(`${line}: exit ${String(exit.code)}${exit.signal ? ` signal ${exit.signal}` : ''} after ${ms} ms`);
+    return { line, code: exit.code, stdout, stderr, ms };
   }
 
-  /** The start command of the form's situation. */
+  /** The start line. */
   start(): Promise<CommandResult> {
-    return this.run(COMMANDS[this.commands][this.situation].start, START_BOUND_MS);
+    return this.run(this.withFiles(LINES.start), START_BOUND_MS);
   }
 
-  /** The stop command of `situation` (default the form's). */
-  stop(situation: Situation = this.situation): Promise<CommandResult> {
-    return this.run(COMMANDS[this.commands][situation].stop, STOP_BOUND_MS);
+  /** The stop line. */
+  stop(): Promise<CommandResult> {
+    return this.run(this.withFiles(LINES.stop), STOP_BOUND_MS);
   }
 
-  /** `docker compose` with the file and profile of the form's start command, then `rest` (`ps`, `logs`). */
-  compose(...rest: string[]): string[] {
-    return composeArgs(this.commands, this.situation, ...rest);
+  /** The line that removes the volume too. */
+  removeVolume(): Promise<CommandResult> {
+    return this.run(this.withFiles(LINES.removeVolume), STOP_BOUND_MS);
+  }
+
+  /** The line that shows the emulator's log. */
+  emulatorLogs(): Promise<CommandResult> {
+    return this.run(this.withFiles(LINES.emulatorLogs), STOP_BOUND_MS);
+  }
+
+  private label(): string {
+    return `label=com.docker.compose.project=${this.project}`;
   }
 
   /** The form's containers: those that carry its project's label, running or not. */
   async containers(): Promise<ContainerState[]> {
-    const ids = (
-      await dockerRead(['ps', '-aq', '--no-trunc', '--filter', `label=com.docker.compose.project=${this.project}`])
-    )
+    const ids = (await dockerRead(['ps', '-aq', '--no-trunc', '--filter', this.label()]))
       .split('\n')
       .filter((id) => id !== '');
     return inspectContainers(ids);
@@ -682,21 +754,19 @@ export class Form {
 
   /** The names of the form's networks: those that carry its project's label. */
   async networks(): Promise<string[]> {
-    return (
-      await dockerRead([
-        'network',
-        'ls',
-        '--format',
-        '{{.Name}}',
-        '--filter',
-        `label=com.docker.compose.project=${this.project}`,
-      ])
-    )
+    return (await dockerRead(['network', 'ls', '--format', '{{.Name}}', '--filter', this.label()]))
       .split('\n')
       .filter((name) => name !== '');
   }
 
-  /** The form's container of `service`; fails the check when there is none. */
+  /** The names of the form's volumes: those that carry its project's label. */
+  async volumes(): Promise<string[]> {
+    return (await dockerRead(['volume', 'ls', '--format', '{{.Name}}', '--filter', this.label()]))
+      .split('\n')
+      .filter((name) => name !== '');
+  }
+
+  /** The form's container of `service`; fails the check when there is none, or more than one. */
   async container(service: string): Promise<ContainerState> {
     const found = (await this.containers()).filter((c) => c.service === service);
     expect(
@@ -704,6 +774,48 @@ export class Form {
       `the containers of service ${service} of ${this.project}`,
     ).toHaveLength(1);
     return found[0];
+  }
+
+  /** One container of the form per service of `services`, failing the check when one is missing or doubled. */
+  async byService(services: string[] = SERVICES): Promise<Record<string, ContainerState>> {
+    const out: Record<string, ContainerState> = {};
+    for (const service of services) out[service] = await this.container(service);
+    return out;
+  }
+
+  /**
+   * The emulator's key and `ca.pem`, read inside its container from `<files dir>/<EMULATOR_PORT>/`, held in memory
+   * and registered for redaction; `{ error }` naming what could not be read. Waits, at most the bound, for the files
+   * of an emulator that has just started.
+   */
+  async emulatorFiles(boundMs = UP_BOUND_MS): Promise<FormEmulatorFiles | { error: string }> {
+    const dir = `${EMULATOR_FILES_DIR}/${String(this.emulatorPort)}`;
+    let last: FormEmulatorFiles | { error: string } = { error: 'not read' };
+    await waitFor(boundMs, async () => {
+      const emulator = (await this.containers()).filter((c) => c.service === 'aws-emulator' && c.running);
+      if (emulator.length !== 1) {
+        last = { error: `${String(emulator.length)} running containers of service aws-emulator in ${this.project}` };
+        return undefined;
+      }
+      const [credentials, ca] = await Promise.all([
+        catIn(emulator[0].id, `${dir}/emulator_credentials`),
+        catIn(emulator[0].id, `${dir}/ca.pem`),
+      ]);
+      if (!credentials.ok || !ca.ok) {
+        last = { error: `cat in ${emulator[0].name}: ${credentials.stderr} ${ca.stderr}`.trim() };
+        return undefined;
+      }
+      const caLines = pemLines(ca.data.toString('utf8'));
+      register(caLines);
+      const key = parseCredentials(credentials.data.toString('utf8'));
+      if (!key || caLines.length === 0) {
+        last = { error: `the files under ${dir} in ${emulator[0].name} are incomplete` };
+        return undefined;
+      }
+      last = { ...key, caLines, ca: ca.data };
+      return true;
+    });
+    return last;
   }
 
   /** Waits, at most the bound, until the form has no container and no network; what is left either way. */
@@ -717,9 +829,11 @@ export class Form {
   }
 
   async dispose(): Promise<void> {
-    if ((await this.containers()).length > 0 || (await this.networks()).length > 0) {
+    const left = async () =>
+      (await this.containers()).length + (await this.networks()).length + (await this.volumes()).length;
+    if ((await left()) > 0) {
       try {
-        await this.stop(4);
+        await this.removeVolume();
       } catch (e) {
         this.ctx.log(`cleanup: ${(e as Error).message}`);
       }
@@ -728,9 +842,103 @@ export class Form {
     if (ids.length > 0) await dockerOut(['rm', '-f', ...ids]);
     const networks = await this.networks();
     if (networks.length > 0) await dockerOut(['network', 'rm', ...networks]);
-    if (this.ownsEmulatorDir) {
-      const dir = emulatorDir(this.home, this.emulatorPort);
-      if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
-    }
+    const volumes = await this.volumes();
+    if (volumes.length > 0) await dockerOut(['volume', 'rm', '-f', ...volumes]);
   }
+}
+
+// The command lines of the forms before issue 437 (the profile, the Linux file, the wrapper), read only by the
+// product checks of the files, the failures, the Linux file and the wrapper until they are rewritten or removed
+// for the one form; they go with them.
+
+/** A situation of the README's "Start" part before issue 437. */
+export type Situation = 3 | 4;
+
+/** The platform of a run before issue 437. */
+export type Platform = 'desktop' | 'linux';
+
+/** The second Compose file of Docker Engine on Linux before issue 437. */
+export const LINUX_FILE = 'docker-compose.linux.yml';
+
+const LINUX_ARGS = ['-f', LINUX_FILE];
+
+/** The plain start and stop command lines of each platform and situation before issue 437. */
+export const COMMANDS: Record<Platform, Record<Situation, { start: string[]; stop: string[] }>> = {
+  desktop: {
+    3: { start: ['docker', 'compose', 'up', '-d', '--build'], stop: ['docker', 'compose', 'down'] },
+    4: {
+      start: ['docker', 'compose', '--profile', 'emulator', 'up', '-d', '--build'],
+      stop: ['docker', 'compose', '--profile', 'emulator', 'down'],
+    },
+  },
+  linux: {
+    3: {
+      start: ['docker', 'compose', ...LINUX_ARGS, 'up', '-d', '--build'],
+      stop: ['docker', 'compose', ...LINUX_ARGS, 'down'],
+    },
+    4: {
+      start: ['docker', 'compose', ...LINUX_ARGS, '--profile', 'emulator', 'up', '-d', '--build'],
+      stop: ['docker', 'compose', ...LINUX_ARGS, '--profile', 'emulator', 'down'],
+    },
+  },
+};
+
+/** The two lines that went before the plain commands on Docker Engine on Linux before issue 437. */
+export const PREPARATORY_LINES = ['mkdir -p ~/.aws/emulator', 'export EMUFORGE_UID="$(id -u)" EMUFORGE_GID="$(id -g)"'];
+
+/** The wrapper's lines before issue 437. */
+export const WRAPPER = {
+  up: ['./compose', 'up'],
+  down: ['./compose', 'down'],
+  ps: ['./compose', 'ps', '-a'],
+  logs: ['./compose', 'logs'],
+};
+
+/** Every command line of the plain commands of both platforms and the wrapper's lines before issue 437. */
+export function onePlaceLines(): string[] {
+  const out: string[] = [];
+  for (const byPlatform of Object.values(COMMANDS)) {
+    for (const { start, stop } of Object.values(byPlatform)) out.push(commandLine(start), commandLine(stop));
+  }
+  out.push(...Object.values(WRAPPER).map(commandLine));
+  return out;
+}
+
+/** `docker compose` with the options of a situation's start command before issue 437, then `rest`. */
+export function composeArgs(on: Platform, situation: Situation, ...rest: string[]): string[] {
+  const start = COMMANDS[on][situation].start;
+  return [...start.slice(0, start.indexOf('up')), ...rest];
+}
+
+let decided: Promise<Platform> | undefined;
+
+/** The platform of the run by the rule of the wrapper before issue 437. */
+export function platform(): Promise<Platform> {
+  decided ??= (async (): Promise<Platform> => {
+    if (os.platform() !== 'linux') return 'desktop';
+    const name = await dockerRead(['info', '--format', '{{.OperatingSystem}}']);
+    return name === 'Docker Desktop' ? 'desktop' : 'linux';
+  })();
+  return decided;
+}
+
+/** The user's ids: what `id -u` and `id -g` print. */
+export interface UserIds {
+  uid: string;
+  gid: string;
+}
+
+let users: Promise<UserIds> | undefined;
+
+/** The ids of the user running the check, from `id -u` and `id -g`. */
+export function userIds(): Promise<UserIds> {
+  const id = (flag: string) =>
+    new Promise<string>((resolve, reject) => {
+      execFile('id', [flag], { encoding: 'utf8' }, (error, stdout) => {
+        if (error) reject(new EnvError(`id ${flag}: ${error.message}`));
+        else resolve(stdout.trim());
+      });
+    });
+  users ??= (async () => ({ uid: await id('-u'), gid: await id('-g') }))();
+  return users;
 }

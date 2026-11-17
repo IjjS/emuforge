@@ -1,127 +1,85 @@
-// The product checks that inspect a running form (issue 34, test-criteria.md): what it publishes and where, and what
-// its image, its containers' output, environment, command lines, mounts and processes hold.
-//
-// On Docker Engine on Linux the form is the host form (issue 54 R2): no gateway, `engine` and `studio` in the host's
-// network namespace publishing nothing, running as the user's ids. The lines that differ there are marked.
+// The product checks that inspect a running one form (issue 437, test-criteria.md): what it publishes and where, and
+// what its images, its containers' output, environment, command lines, mounts, users and capabilities hold. One
+// case each, the same on every platform. Each form is started with the start line alone, without the checks' own
+// files.
 //
 // `engine.product-ports-are-published-on-loopback-only`, `engine.product-holds-no-key-and-one-read-only-mount`.
 
-import fs from 'node:fs';
-import path from 'node:path';
-
-import { EnvError, expect, registerSecret, requireRunEmulator, test } from './support';
+import { EnvError, expect, probe, test } from './support';
 import {
   docker,
-  emulatorKey,
   findSecrets,
   hostIPv4,
   probeAt,
   SAVE_BOUND_MS,
   searchImage,
-  secretValues,
   signedVia,
   statusOf,
 } from './support/product-inspect';
 import {
-  bindings,
   dockerRead,
+  ENGINE_FILES_DIR,
+  EMULATOR_FILES_DIR,
+  expectExit,
+  firstHealth,
   Form,
-  platform,
+  inspectJson,
+  madeUpKey,
   productTimeout,
-  request,
+  publishedBy,
   STOP_BOUND_MS,
-  tail,
-  waitHealth,
-  type CommandResult,
-  userIds,
-  type ContainerState,
-  type Platform,
+  waitReachable,
+  type FormEmulatorFiles,
 } from './support/product';
-import { SESSION_PATH } from './support/traffic';
 
-/**
- * The services of the image the form builds; `aws-emulator` (situation 4) runs the emulator's image. The host form of
- * Docker Engine on Linux has no gateway.
- */
-const FORM_SERVICES: Record<Platform, string[]> = {
-  desktop: ['gateway', 'engine', 'studio'],
-  linux: ['engine', 'studio'],
-};
-
-function expectStarted(result: CommandResult) {
-  expect(result.code, `${result.line}: exit code; output:\n${tail(result)}`).toBe(0);
-}
-
-/** One container of the form per service of `services`, failing the check when one is missing or doubled. */
-async function byService(form: Form, services: string[]): Promise<Record<string, ContainerState>> {
-  const containers = await form.containers();
-  const out: Record<string, ContainerState> = {};
-  for (const service of services) {
-    const found = containers.filter((c) => c.service === service);
-    expect(
-      found.map((c) => c.name),
-      `the containers of service ${service} of ${form.project}`,
-    ).toHaveLength(1);
-    out[service] = found[0];
-  }
-  return out;
-}
-
-async function inspectJson<T>(id: string, field: string): Promise<T> {
-  return JSON.parse(await dockerRead(['inspect', '-f', `{{json ${field}}}`, id])) as T;
-}
+type Mount = { Type?: string; Name?: string; Source?: string; Destination?: string; RW?: boolean };
 
 test('engine.product-ports-are-published-on-loopback-only', async ({ ctx }) => {
   test.setTimeout(productTimeout(1, 2));
-  const form = await Form.create(ctx, { situation: 4 });
-  expectStarted(await form.start());
-  expect(await waitHealth(form.enginePort, 200), 'the Given: GET /__emuforge/health').toMatchObject({ status: 200 });
+  // The Given: a form whose EMULATOR_PORT the check found closed on the host's 127.0.0.1 before the start.
+  const form = await Form.create(ctx);
+  if ((await probe(form.emulatorPort)) !== 'refused') {
+    throw new EnvError(`127.0.0.1:${String(form.emulatorPort)} does not refuse connections before the start`);
+  }
+  expectExit(await form.start(), 'zero');
+  const first = await firstHealth(form.enginePort);
+  expect('error' in first ? first.error : '', 'the Given: the engine answers on its published port').toBe('');
 
-  // Every published port of every container of the form, the emulator's included → host address 127.0.0.1, and the
-  // published host ports are exactly the Studio, engine and emulator ports.
-  const published: {
-    container: string;
-    containerPort: string;
-    hostIp: string;
-    hostPort: string;
-  }[] = [];
+  // The project's containers' published ports → exactly two, Studio's and the engine's, both on host address
+  // 127.0.0.1, both on the gateway's container.
+  const published: { service: string; hostIp: string; hostPort: string }[] = [];
   for (const container of await form.containers()) {
-    const ports = await dockerRead(['inspect', '-f', '{{json .NetworkSettings.Ports}}', container.id]);
-    for (const b of bindings(ports)) published.push({ container: container.name, ...b });
+    const { running } = await publishedBy(container.id);
+    for (const b of running) published.push({ service: container.service, hostIp: b.hostIp, hostPort: b.hostPort });
   }
   ctx.log(`published: ${JSON.stringify(published)}`);
   expect(
-    published.filter((b) => b.hostIp !== '127.0.0.1'),
-    'published ports whose host address is not 127.0.0.1',
-  ).toEqual([]);
-  if ((await platform()) === 'linux') {
-    // On Docker Engine on Linux → `engine` and `studio` publish none, and the published host ports are exactly the
-    // emulator port (issue 54 R2).
-    const services = await byService(form, FORM_SERVICES.linux);
-    const names = FORM_SERVICES.linux.map((s) => services[s].name);
-    expect(
-      published.filter((b) => names.includes(b.container)),
-      'ports published by the containers of engine and studio',
-    ).toEqual([]);
-    expect(published.map((b) => b.hostPort), 'the published host ports').toEqual([String(form.emulatorPort)]);
+    published.sort((a, b) => a.hostPort.localeCompare(b.hostPort)),
+    `the published ports of ${form.project}`,
+  ).toEqual(
+    [form.studioPort, form.enginePort]
+      .map(String)
+      .sort()
+      .map((hostPort) => ({ service: 'gateway', hostIp: '127.0.0.1', hostPort })),
+  );
 
-    // A TCP connection to the Studio port and the engine port at 127.0.0.1 → both accepted (the host's own
-    // listeners).
-    for (const port of [form.studioPort, form.enginePort]) {
-      expect(await probeAt('127.0.0.1', port), `a TCP connection to 127.0.0.1:${String(port)}`).toBe('open');
-    }
-  } else {
-    expect(published.map((b) => b.hostPort).sort(), 'the published host ports').toEqual(
-      [form.studioPort, form.enginePort, form.emulatorPort].map(String).sort(),
-    );
+  // The emulator's, the engine's and Studio's containers → none publishes a port and none has host networking.
+  const services = await form.byService(['aws-emulator', 'engine', 'studio']);
+  for (const [service, container] of Object.entries(services)) {
+    expect(await publishedBy(container.id), `the ports ${service} publishes`).toEqual({ running: [], configured: [] });
+    const mode = await dockerRead(['inspect', '-f', '{{.HostConfig.NetworkMode}}', container.id]);
+    expect(mode, `the network mode of ${service}`).not.toBe('host');
   }
 
-  // A TCP connection to each of the three ports at a non-loopback IPv4 address of the host → none is accepted.
+  // 127.0.0.1:<EMULATOR_PORT> on the host while the form runs → still refused.
+  expect(await probe(form.emulatorPort), `a connection to 127.0.0.1:${String(form.emulatorPort)}`).toBe('refused');
+
+  // The two published ports at a non-loopback address of the host → refused.
   const addresses = hostIPv4();
   if (addresses.length === 0) throw new EnvError('the host has no non-loopback IPv4 address to connect from');
   const accepted: string[] = [];
   for (const address of addresses) {
-    for (const port of [form.studioPort, form.enginePort, form.emulatorPort]) {
+    for (const port of [form.studioPort, form.enginePort]) {
       const result = await probeAt(address, port);
       ctx.log(`a TCP connection to ${address}:${String(port)}: ${result}`);
       if (result === 'open') accepted.push(`${address}:${String(port)}`);
@@ -131,59 +89,111 @@ test('engine.product-ports-are-published-on-loopback-only', async ({ ctx }) => {
 });
 
 test('engine.product-holds-no-key-and-one-read-only-mount', async ({ ctx }) => {
-  test.setTimeout(productTimeout(1, 2) + SAVE_BOUND_MS);
-  await requireRunEmulator(ctx);
-  const files = emulatorKey(ctx, ctx.emulatorPort);
-  const secrets = secretValues(files);
-  const form = await Form.create(ctx, {
-    situation: 3,
-    emulatorPort: ctx.emulatorPort,
+  test.setTimeout(productTimeout(1, 2) + 2 * SAVE_BOUND_MS);
+  // The Given: a started form that has served a ListBuckets signed with a made-up key.
+  const form = await Form.create(ctx);
+  expectExit(await form.start(), 'zero');
+  expect(await waitReachable(form.enginePort, true), 'the Given: GET /__emuforge/health').toMatchObject({
+    status: 200,
+    body: { emulator: { reachable: true } },
   });
-  const studioOrigin = `http://127.0.0.1:${String(form.studioPort)}`;
+  expect(statusOf(await signedVia(form.enginePort, madeUpKey(), 'GET', '/')), 'the Given: s3:ListBuckets').toBe(200);
+  const services = await form.byService();
+  const volume = (await form.volumes())[0] ?? '';
+  expect(volume, `the Given: the volume of ${form.project}`).not.toBe('');
 
-  // The Given: started, health 200, a session request and a signed s3:ListBuckets through the form.
-  expectStarted(await form.start());
-  expect(await waitHealth(form.enginePort, 200), 'the Given: GET /__emuforge/health').toMatchObject({ status: 200 });
-  const session = await request(form.enginePort, 'GET', SESSION_PATH, {
-    origin: studioOrigin,
-  });
-  let token = '';
-  if (!('error' in session)) {
-    try {
-      token = String((JSON.parse(session.body.toString('utf8')) as { token?: unknown }).token ?? '');
-    } catch {
-      token = '';
+  // The engine's mounts → one: the project's volume at /home/emuforge/.aws/emulator, read-only; a write there from
+  // inside the container is refused.
+  const mounts: Record<string, Mount[]> = {};
+  for (const [service, container] of Object.entries(services)) {
+    mounts[service] = await inspectJson<Mount[]>(container.id, '.Mounts');
+  }
+  ctx.log(`mounts: ${JSON.stringify(mounts)}`);
+  const shown = (list: Mount[]) => list.map((m) => ({ type: m.Type, name: m.Name, destination: m.Destination, rw: m.RW }));
+  expect(shown(mounts.engine), "the engine's mounts").toEqual([
+    { type: 'volume', name: volume, destination: ENGINE_FILES_DIR, rw: false },
+  ]);
+  const name = `emuforge-it-write-${ctx.runId}`;
+  const write = await docker(['exec', services.engine.id, 'touch', `${ENGINE_FILES_DIR}/${name}`]);
+  ctx.log(`touch ${ENGINE_FILES_DIR}/${name} in the engine's container: ok ${String(write.ok)} ${write.stderr}`);
+  expect(write.ok, `touch ${ENGINE_FILES_DIR}/${name} in the engine's container succeeded`).toBe(false);
+  expect(write.stderr, `touch ${ENGINE_FILES_DIR}/${name}: the error`).toMatch(/read-only file system/i);
+
+  // The emulator's mounts → one: the same volume at /home/emulator/.aws/emulator.
+  expect(
+    shown(mounts['aws-emulator']).map(({ type, name: n, destination }) => ({ type, name: n, destination })),
+    "the emulator's mounts",
+  ).toEqual([{ type: 'volume', name: volume, destination: EMULATOR_FILES_DIR }]);
+
+  // The gateway's and Studio's containers → no mount; no container of the project has a mount of type bind.
+  expect(mounts.gateway, "the gateway's mounts").toEqual([]);
+  expect(mounts.studio, "Studio's mounts").toEqual([]);
+  const binds: string[] = [];
+  for (const container of await form.containers()) {
+    for (const m of await inspectJson<Mount[]>(container.id, '.Mounts')) {
+      if (m.Type === 'bind') binds.push(`${container.name}: ${String(m.Destination)}`);
     }
   }
-  registerSecret([token]);
-  expect(statusOf(session), `the Given: GET ${SESSION_PATH} with Origin ${studioOrigin}`).toBe(200);
-  expect(token, `the Given: the token of GET ${SESSION_PATH}`).not.toBe('');
-  expect(statusOf(await signedVia(form.enginePort, files, 'GET', '/')), 'the Given: s3:ListBuckets').toBe(200);
-  const on = await platform();
-  const formServices = FORM_SERVICES[on];
-  const services = await byService(form, formServices);
+  expect(binds, `bind mounts in ${form.project}`).toEqual([]);
 
-  // The form's image, every layer → none of the emulator's secret values.
+  // Every process of every container → none is uid 0; the emulator's are 1000:0 and hold no capability.
+  for (const [service, container] of Object.entries(services)) {
+    const top = await dockerRead(['top', container.id, '-eo', 'pid,uid,gid,args']);
+    const rows = top
+      .split('\n')
+      .slice(1)
+      .map((line) => line.trim())
+      .filter((line) => line !== '')
+      .map((line) => {
+        const [pid, uid, gid] = line.split(/\s+/);
+        return { pid, uid, gid, row: line };
+      });
+    ctx.log(`processes of ${service}: ${rows.map((r) => r.row).join(' | ')}`);
+    expect(rows.length, `processes of ${service}`).toBeGreaterThan(0);
+    expect(
+      rows.filter((r) => ['0', 'root'].includes(r.uid)).map((r) => r.row),
+      `processes of ${service} with user id 0`,
+    ).toEqual([]);
+    if (service === 'aws-emulator') {
+      expect(
+        rows.filter((r) => r.uid !== '1000' || r.gid !== '0').map((r) => r.row),
+        'processes of the emulator whose ids are not 1000:0',
+      ).toEqual([]);
+      const status = await docker(['exec', container.id, 'cat', '/proc/1/status']);
+      expect(status.ok ? '' : status.stderr, "cat /proc/1/status in the emulator's container").toBe('');
+      const caps = Object.fromEntries(
+        [...status.stdout.matchAll(/^(Cap(?:Inh|Prm|Eff|Bnd|Amb)):\s*([0-9a-f]+)$/gm)].map((m) => [m[1], BigInt(`0x${m[2]}`)]),
+      );
+      expect(
+        Object.entries(caps).filter(([, value]) => value !== 0n).map(([set]) => set),
+        "the emulator's capability sets that are not empty",
+      ).toEqual([]);
+      expect(Object.keys(caps).length, "the emulator's capability sets read").toBe(5);
+    }
+  }
+
+  // The emulator's access key id and secret, read inside its container → in neither image's layers or
+  // configuration, no container's environment or command line, and not in `docker compose logs`.
+  const read = await form.emulatorFiles();
+  expect('error' in read ? read.error : '', "the emulator's files read inside its container").toBe('');
+  const files = read as FormEmulatorFiles;
+  const secrets: [string, string][] = [
+    ['the access key id', files.accessKeyId],
+    ['the secret access key', files.secretAccessKey],
+  ];
   const images = [
     ...new Set(
-      await Promise.all(formServices.map((s) => dockerRead(['inspect', '-f', '{{.Config.Image}}', services[s].id]))),
+      await Promise.all(
+        Object.values(services).map((c) => dockerRead(['inspect', '-f', '{{.Config.Image}}', c.id])),
+      ),
     ),
   ];
+  expect(images.sort(), 'the images of the form').toEqual([ctx.productImage, ctx.emulatorImage].sort());
   for (const image of images) {
     const searched = await searchImage(ctx, image, form.env(), secrets);
     expect(searched.files, `files in the saved ${image}`).toBeGreaterThan(0);
-    expect(searched.findings, `the emulator's secret values in the saved ${image}`).toEqual([]);
+    expect(searched.findings, `the emulator's key in the saved ${image}`).toEqual([]);
   }
-
-  // `docker compose logs` → none of the emulator's secret values, and not the session token.
-  const logs = await form.run(form.compose('logs', '--no-color'), STOP_BOUND_MS);
-  expect(logs.code, `${logs.line}: exit code`).toBe(0);
-  expect(
-    findSecrets('docker compose logs', `${logs.stdout}\n${logs.stderr}`, [...secrets, ['the session token', token]]),
-    'secret values in the output of the form',
-  ).toEqual([]);
-
-  // The environment and the command line of each container → none of the emulator's secret values.
   const inConfig: string[] = [];
   for (const container of await form.containers()) {
     const config = await dockerRead([
@@ -194,82 +204,20 @@ test('engine.product-holds-no-key-and-one-read-only-mount', async ({ ctx }) => {
     ]);
     inConfig.push(...findSecrets(`the environment or command line of ${container.name}`, config, secrets));
   }
-  expect(inConfig, "the emulator's secret values in the containers' environment and command lines").toEqual([]);
-
-  // The mounts → `engine` has exactly one, a read-only bind of $HOME/.aws/emulator; `gateway` and `studio` none. On
-  // Docker Engine on Linux there is no gateway, and the form has no container but `engine` and `studio` (issue 54
-  // R2).
-  type Mount = {
-    Type?: string;
-    Source?: string;
-    Destination?: string;
-    RW?: boolean;
-  };
-  const mounts: Record<string, Mount[]> = {};
-  for (const service of formServices) mounts[service] = await inspectJson<Mount[]>(services[service].id, '.Mounts');
-  ctx.log(`mounts: ${JSON.stringify(mounts)}`);
-  const hostDir = path.join(form.home, '.aws', 'emulator');
+  expect(inConfig, "the emulator's key in the containers' environment and command lines").toEqual([]);
+  const logs = await form.run(form.compose('logs', '--no-color'), STOP_BOUND_MS);
+  expectExit(logs, 'zero');
   expect(
-    mounts.engine.map((m) => ({ type: m.Type, source: m.Source, rw: m.RW })),
-    "the engine's mounts",
-  ).toEqual([{ type: 'bind', source: hostDir, rw: false }]);
-  if (on === 'desktop') expect(mounts.gateway, "the gateway's mounts").toEqual([]);
-  expect(mounts.studio, "Studio's mounts").toEqual([]);
-  if (on === 'linux') {
-    expect(
-      (await form.containers()).map((c) => c.service).sort(),
-      `the services of the containers of ${form.project}`,
-    ).toEqual(['engine', 'studio']);
-  }
+    findSecrets('docker compose logs', `${logs.stdout}\n${logs.stderr}`, secrets),
+    "the emulator's key in the output of the form",
+  ).toEqual([]);
 
-  // A file created in the engine's container under its mount → a read-only error, nothing new on the host.
-  const target = mounts.engine[0]?.Destination ?? '';
-  const name = `emuforge-it-write-${ctx.runId}`;
-  ctx.own({
-    dispose: async () => fs.rmSync(path.join(hostDir, name), { force: true }),
-  });
-  const write = await docker(['exec', services.engine.id, 'touch', `${target}/${name}`]);
-  ctx.log(`touch ${target}/${name} in the engine's container: ok ${String(write.ok)} ${write.stderr}`);
-  expect(write.ok, `touch ${target}/${name} in the engine's container succeeded`).toBe(false);
-  expect(write.stderr, `touch ${target}/${name}: the error`).toMatch(/read-only file system/i);
-  expect(fs.existsSync(path.join(hostDir, name)), `${path.join(hostDir, name)} on the host`).toBe(false);
-
-  // $HOME/.aws as the engine's container sees its own → `emulator` and nothing else.
-  const env = await inspectJson<string[]>(services.engine.id, '.Config.Env');
-  const home = env.find((e) => e.startsWith('HOME='))?.slice('HOME='.length) ?? '';
-  expect(home, "HOME in the engine's container").not.toBe('');
-  const listed = await docker(['exec', services.engine.id, 'ls', '-A', `${home}/.aws`]);
-  expect(listed.ok ? '' : listed.stderr, `ls -A ${home}/.aws in the engine's container`).toBe('');
+  // The emulator's configuration → every capability dropped and no-new-privileges.
+  const capDrop = await inspectJson<string[] | null>(services['aws-emulator'].id, '.HostConfig.CapDrop');
+  const securityOpt = await inspectJson<string[] | null>(services['aws-emulator'].id, '.HostConfig.SecurityOpt');
+  expect(capDrop ?? [], "the emulator's dropped capabilities").toContain('ALL');
   expect(
-    listed.stdout.split('\n').filter((l) => l !== ''),
-    `${home}/.aws in the engine's container`,
-  ).toEqual(['emulator']);
-
-  // The user id of the processes of gateway, engine and studio → none is 0. On Docker Engine on Linux the user id
-  // and group id of the processes of engine and studio → the user's ids, neither 0 (issue 54 R2, R7).
-  const user = on === 'linux' ? await userIds() : null;
-  for (const service of formServices) {
-    const top = await dockerRead(['top', services[service].id, '-eo', user ? 'uid,gid,pid,args' : 'uid,pid,args']);
-    const rows = top
-      .split('\n')
-      .slice(1)
-      .map((line) => line.trim())
-      .filter((line) => line !== '');
-    ctx.log(`processes of ${service}: ${rows.join(' | ')}`);
-    expect(rows.length, `processes of ${service}`).toBeGreaterThan(0);
-    expect(
-      rows.filter((row) => ['0', 'root'].includes(row.split(/\s+/)[0])),
-      `processes of ${service} with user id 0`,
-    ).toEqual([]);
-    if (user) {
-      expect(
-        rows.filter((row) => {
-          const [uid, gid] = row.split(/\s+/);
-          return uid !== user.uid || gid !== user.gid;
-        }),
-        `processes of ${service} whose ids are not ${user.uid}:${user.gid}`,
-      ).toEqual([]);
-      expect([user.uid, user.gid], 'the user ids, neither 0').not.toContain('0');
-    }
-  }
+    (securityOpt ?? []).some((o) => o === 'no-new-privileges' || o === 'no-new-privileges:true'),
+    `no-new-privileges in the emulator's security options ${JSON.stringify(securityOpt)}`,
+  ).toBe(true);
 });
