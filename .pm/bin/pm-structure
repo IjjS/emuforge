@@ -2,7 +2,7 @@
 """Score a console screen against its reference spec (studio/references/console-reference.md, "Structure score").
 
   pm-structure <worktree> <spec.yaml> (--url BASE | --serve DIR [--port N] | --snapshot FILE)
-               [--state seeded|empty] [--storage-state FILE] [--record ISSUE POINT]
+               [--state seeded|empty] [--storage-state FILE] [--record ISSUE POINT] [--param NAME=VALUE]...
   pm-structure --table ISSUE
 
 --url BASE opens BASE + the spec's route; BASE must be a loopback IP address (127.0.0.0/8 or [::1]; `localhost` and
@@ -25,12 +25,21 @@ fails ends the run as an error. Each step's items are scored on that step's tree
 item or an extra starts with `step <k>: `. The scored snapshot is then one steps file (`pm-structure-steps/1`)
 holding every step's tree; --snapshot reads either format.
 
+A path segment `{NAME}` of the spec's route is a route parameter (console-reference.md, "Format"). --param
+NAME=VALUE, once per parameter, fills the route's {NAME} with VALUE percent-encoded, as one segment: every byte of
+its UTF-8 form but A-Z a-z 0-9 - . _ ~ becomes %XX; VALUE is 1 to 256 printable characters and not . or .. (the text
+is split at its first =). --param needs --url or --serve; a --snapshot run needs no value and takes none. A
+parameter without a value and a value without a parameter are errors (exit 2), found before anything is started. The
+page opened is BASE + the filled route (+ ?step=<k>); the second line of the report is then `route: <filled route>`,
+the result file has `route` and `params`, and a recorded row has `route`.
+
 The first line is `structure <screen> state=<state> score=<score> (<matched>/<total>) omitted=<o>/<n>
 verdict=<verdict>`: <o> of the spec's <n> items are omitted in this run. Then the reasons, the unmatched, matched,
 omitted, not-applicable, not-scored and extra items, and the blocked requests. An omitted item is still looked for:
 an omitted item the screen shows is a fail (`reason: omitted item shown: <ids>`), whatever the score. Exit 0 pass
 (score >= 90, no critical item unmatched: header.title, header.primary_action, table.columns, a wizard's
-steps[<t>].title and submit, and no omitted item shown), 1 fail, 2 error (usage, invalid spec, refused URL, page not
+steps[<t>].title and submit, and no omitted item shown), 1 fail, 2 error (usage, invalid spec, refused URL, route
+parameters and values that do not pair up, page not
 reachable or not settled, page without exactly one AWS area root, toolchain missing, unreadable snapshot, another
 run of the same screen and state in progress, terminated by SIGTERM, SIGHUP or SIGINT); an error is never a pass or
 a fail. An omitted entry that covers the title, an action, a table column, submit or the empty title beside a scored
@@ -59,6 +68,7 @@ from _pmlib import PM, now
 
 USAGE = ("pm-structure <worktree> <spec.yaml> (--url BASE | --serve DIR [--port N] | --snapshot FILE)\n"
          "                    [--state seeded|empty] [--storage-state FILE] [--record ISSUE POINT]\n"
+         "                    [--param NAME=VALUE]...\n"
          "       pm-structure --table ISSUE")
 POINTS = ("baseline", "final")
 GIT_TIMEOUT = 10
@@ -157,9 +167,37 @@ def serve_port(a, wt):
     return FIRST_FREE, 100
 
 
-def first_url(base, spec):
-    """The page opened first: the route, or a wizard's step 1 (issue 8, requirement 4)."""
-    url = _pmbrowse.page_url(base, spec.route)
+def param_values(p, args):
+    """The --param arguments as a dict name -> value in the order given; a malformed one is a usage error (R2.2)."""
+    values = {}
+    for arg in args:
+        name, eq, value = arg.partition("=")
+        if not eq or not _pmspec.PARAM_NAME.fullmatch(name):
+            p.error(f"--param must be <name>=<value>, not {arg!r}")
+        if not 0 < len(value) <= _pmspec.MAX_PARAM_VALUE or not value.isprintable() or value in (".", ".."):
+            p.error(f"--param {name}: the value must be 1 to {_pmspec.MAX_PARAM_VALUE} printable characters "
+                    f"and not . or ..")  # never the value itself
+        if name in values:
+            p.error(f"--param {name} is given twice")
+        values[name] = value
+    return values
+
+
+def pair(spec, values):
+    """Every parameter of the route has a value and every value a parameter (issue 302, R2.3), else SpecError."""
+    braced = lambda names: " ".join(f"{{{n}}}" for n in names)
+    missing = [n for n in spec.params if n not in values]
+    if missing:
+        raise _pmspec.SpecError(f"spec {spec.path}: route parameter without a value: {braced(missing)} "
+                                f"(give --param <name>=<value>)", spec.screen)
+    unknown = [n for n in values if n not in spec.params]
+    if unknown:
+        raise _pmspec.SpecError(f"spec {spec.path}: the route has no parameter {braced(unknown)}", spec.screen)
+
+
+def first_url(base, spec, route):
+    """The page opened first: the filled route, or a wizard's step 1 (issue 8, requirement 4)."""
+    url = _pmbrowse.page_url(base, route)
     return f"{url}?step=1" if spec.kind == "wizard" else url
 
 
@@ -178,7 +216,7 @@ def read_step(path, ax, k):
             raise bad("not JSON") from None
 
 
-def capture_steps(a, wt, spec, base, ax, job, logs):
+def capture_steps(a, wt, spec, route, base, ax, job, logs):
     """A wizard (issue 8, design 2.5): capture every shown step k at <base><route>?step=<k> into its own temp file,
     in order, then write the steps file onto `ax`. Every temp file goes in the `finally`, on success, on an error and
     on a stop; after an error or a stop no `ax` is written."""
@@ -189,7 +227,7 @@ def capture_steps(a, wt, spec, base, ax, job, logs):
             _pmproc.check()  # no new step's capture starts after a stop (issue 12 model)
             tmp = os.path.join(out_dir, f"{spec.screen}-{a.state}.step{k}.{os.getpid()}.tmp.json")
             tmps.append(tmp)
-            url = f"{_pmbrowse.page_url(base, spec.route)}?step={k}"
+            url = f"{_pmbrowse.page_url(base, route)}?step={k}"
             log = os.path.join(logs, f"structure-capture-{spec.screen}-{a.state}-step{k}.log")
             _pmbrowse.capture(wt, url, tmp, job, a.storage_state, log)
         _pmproc.check()
@@ -209,9 +247,9 @@ def capture_steps(a, wt, spec, base, ax, job, logs):
                 os.unlink(t)
 
 
-def take_snapshot(a, wt, spec, out_dir):
-    """Run the browser and return the path of the settled snapshot (requirement 4; a wizard's steps file, issue 8
-    requirement 4)."""
+def take_snapshot(a, wt, spec, route, out_dir):
+    """Run the browser on the filled `route` and return the path of the settled snapshot (requirement 4; a wizard's
+    steps file, issue 8 requirement 4)."""
     ax = os.path.join(out_dir, f"{spec.screen}-{a.state}.ax.json")
     with contextlib.suppress(FileNotFoundError):  # an error run leaves no snapshot of an earlier run behind
         os.unlink(ax)
@@ -224,9 +262,9 @@ def take_snapshot(a, wt, spec, out_dir):
 
     def capture(base):
         if spec.kind == "wizard":
-            capture_steps(a, wt, spec, base, ax, job, logs)
+            capture_steps(a, wt, spec, route, base, ax, job, logs)
         else:
-            _pmbrowse.capture(wt, _pmbrowse.page_url(base, spec.route), ax, job, a.storage_state, capture_log)
+            _pmbrowse.capture(wt, _pmbrowse.page_url(base, route), ax, job, a.storage_state, capture_log)
 
     if a.url is not None:
         capture(a.url)
@@ -241,15 +279,20 @@ def take_snapshot(a, wt, spec, out_dir):
 def score_run(a, wt):
     """One scored run; returns the exit status."""
     out_dir = os.path.join(wt, "output", "structure")
-    spec = None
-    url = None
+    spec = url = route = None
     try:
         spec = _pmspec.load(a.spec)
         if a.url is not None:
             _pmbrowse.check_url(a.url)
-            url = first_url(a.url, spec)
+        if a.snapshot is None:
+            pair(spec, a.params)  # after the spec and BASE, before anything is started (issue 302, R2.3)
+            route = _pmspec.fill_route(spec.route, a.params)
+        if a.url is not None:
+            url = first_url(a.url, spec, route)
     except (_pmspec.SpecError, _pmbrowse.BrowseError) as e:
         return error_result(a, wt, spec, e, url)
+    # the route is named in the report, the result and the row only for a run that filled parameters (R4, R5)
+    named = {"route": route, "values": a.params} if a.snapshot is None and spec.params else {}
     _pmproc.check()  # C0: a stop before the lock exits 2 with nothing written
     try:
         held = _pmbrowse.lock(out_dir, spec.screen, a.state)
@@ -265,7 +308,7 @@ def score_run(a, wt):
             snapshot = a.snapshot
             if snapshot is None:
                 try:
-                    snapshot = take_snapshot(a, wt, spec, out_dir)
+                    snapshot = take_snapshot(a, wt, spec, route, out_dir)
                 except _pmbrowse.BrowseError as e:
                     browse_error = e
             _pmproc.check()  # C1: checks, server start, capture cleanup
@@ -278,19 +321,20 @@ def score_run(a, wt):
                     score_error = e
                 _pmproc.check()  # C2: after the scoring, before the report
         except Terminated as e:
-            return error_result(a, wt, spec, e, url)
+            return error_result(a, wt, spec, e, url, **named)
         if browse_error is not None:
-            return error_result(a, wt, spec, browse_error, url)
+            return error_result(a, wt, spec, browse_error, url, **named)
         if score_error is not None:
-            return error_result(a, wt, spec, score_error, url, snapshot)
-        return scored_result(a, wt, spec, result, snapshot)
+            return error_result(a, wt, spec, score_error, url, snapshot, **named)
+        return scored_result(a, wt, spec, result, snapshot, **named)
     finally:
         held.__exit__(None, None, None)
 
 
-def error_result(a, wt, spec, e, url=None, snapshot=None):
+def error_result(a, wt, spec, e, url=None, snapshot=None, route=None, values=None):
     """Report an error: one stderr line; once the screen is known also the error result file and, with --record,
-    an error row (design 2.6)."""
+    an error row (design 2.6). After the route was filled (`route` given) the result also has `route` and `params`,
+    the row `route` (issue 302, R4.3, R4.4)."""
     screen = spec.screen if spec is not None else getattr(e, "screen", None)
     if screen is None:  # nothing to file the error under: no result file, no row
         say_error(str(e))
@@ -301,46 +345,57 @@ def error_result(a, wt, spec, e, url=None, snapshot=None):
     requires = list(spec.needs_states) if spec is not None else [a.state]
     at = now()
     os.makedirs(out_dir, exist_ok=True)
-    write_json(path, {"screen": screen, "state": a.state, "verdict": "error", "error": str(e),
-                      "spec": os.path.abspath(a.spec), "spec_sha256": spec.sha256 if spec else None,
-                      "snapshot": os.path.abspath(snapshot) if snapshot else None, "url": url,
-                      "requires": requires, "commit": commit, "dirty": dirty, "at": at})
+    body = {"screen": screen, "state": a.state, "verdict": "error", "error": str(e),
+            "spec": os.path.abspath(a.spec), "spec_sha256": spec.sha256 if spec else None,
+            "snapshot": os.path.abspath(snapshot) if snapshot else None, "url": url,
+            "requires": requires, "commit": commit, "dirty": dirty, "at": at}
+    if route is not None:
+        body.update(route=route, params=values)
+    write_json(path, body)
     sys.stdout.write(f"result: {path}\n")
     say_error(str(e))
     if a.record:
+        row = {"point": a.record[1], "screen": screen, "state": a.state, "score": None, "matched": None,
+               "total": None, "verdict": "error", "critical_unmatched": [], "omitted": None, "spec_items": None,
+               "omitted_shown": [], "requires": requires, "commit": commit, "dirty": dirty,
+               "spec_sha256": spec.sha256 if spec else None, "result": path, "at": at}
+        if route is not None:
+            row["route"] = route
         try:
-            append_row(a.record[0], {"point": a.record[1], "screen": screen, "state": a.state, "score": None,
-                                     "matched": None, "total": None, "verdict": "error", "critical_unmatched": [],
-                                     "omitted": None, "spec_items": None, "omitted_shown": [],
-                                     "requires": requires, "commit": commit, "dirty": dirty,
-                                     "spec_sha256": spec.sha256 if spec else None, "result": path, "at": at})
+            append_row(a.record[0], row)
         except Failure:
             pass  # the run's own error is the one line on stderr
     return 2
 
 
-def scored_result(a, wt, spec, result, snapshot):
+def scored_result(a, wt, spec, result, snapshot, route=None, values=None):
+    """Report a scored run; with `route` (a filled route, issue 302 R4) the `route:` line, the result's `route` and
+    `params` and the row's `route`."""
     out_dir = os.path.join(wt, "output", "structure")
     commit, dirty = git_state(wt)
     at = now()
     path = os.path.join(out_dir, f"{spec.screen}-{a.state}.json")
     os.makedirs(out_dir, exist_ok=True)
-    write_json(path, _pmscore.result_json(result, {"commit": commit, "dirty": dirty, "at": at,
-                                                   "snapshot": os.path.abspath(snapshot)}))
+    extra = {"commit": commit, "dirty": dirty, "at": at, "snapshot": os.path.abspath(snapshot)}
+    if route is not None:
+        extra.update(route=route, params=values)
+    write_json(path, _pmscore.result_json(result, extra))
     if a.record:
+        row = {"point": a.record[1], "screen": spec.screen, "state": a.state, "score": result.score,
+               "matched": result.matched, "total": result.total, "verdict": result.verdict,
+               "critical_unmatched": result.critical_unmatched, "omitted": result.omitted,
+               "spec_items": result.spec_items, "omitted_shown": list(result.omitted_shown),
+               "requires": result.requires, "commit": commit, "dirty": dirty, "spec_sha256": spec.sha256,
+               "result": path, "at": at}
+        if route is not None:
+            row["route"] = route
         try:
-            append_row(a.record[0], {"point": a.record[1], "screen": spec.screen, "state": a.state,
-                                     "score": result.score, "matched": result.matched, "total": result.total,
-                                     "verdict": result.verdict, "critical_unmatched": result.critical_unmatched,
-                                     "omitted": result.omitted, "spec_items": result.spec_items,
-                                     "omitted_shown": list(result.omitted_shown),
-                                     "requires": result.requires, "commit": commit, "dirty": dirty,
-                                     "spec_sha256": spec.sha256, "result": path, "at": at})
+            append_row(a.record[0], row)
         except Failure as e:
             sys.stdout.write(f"result: {path}\n")
             say_error(str(e))
             return 2
-    sys.stdout.write(_pmscore.render_text(result, path))
+    sys.stdout.write(_pmscore.render_text(result, path, route))
     return 0 if result.verdict == "pass" else 1
 
 
@@ -370,6 +425,7 @@ def main(argv):
     p.add_argument("--storage-state", metavar="FILE")
     p.add_argument("--state", choices=_pmspec.STATES, default="seeded")
     p.add_argument("--record", nargs=2, metavar=("ISSUE", "POINT"))
+    p.add_argument("--param", action="append", default=[], metavar="NAME=VALUE")
     a = p.parse_args(argv)
     if a.record:
         if positive(a.record[0]) is None:
@@ -380,6 +436,9 @@ def main(argv):
         p.error("--port needs --serve")
     if a.storage_state is not None and a.snapshot is not None:
         p.error("--storage-state needs --url or --serve")
+    if a.param and a.snapshot is not None:
+        p.error("--param needs --url or --serve")
+    a.params = param_values(p, a.param)
     wt = os.path.abspath(a.worktree)
     if not os.path.isdir(wt):
         p.error(f"worktree {a.worktree} is not a directory")
