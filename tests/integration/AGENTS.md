@@ -60,6 +60,13 @@ never labels a check to shorten a run. A check an open issue lists in `Issue-Che
 issue that comes to list one takes the label off through its `t` unit, and runs it with `pm-check --checks` until
 then.
 
+## Safety
+
+- The only endpoints are the engine and the emulator on a loopback IP address. A check that would reach any
+  other host is refused before it runs.
+- Checks run without the AWS credentials, profiles and proxy settings of the environment.
+- Signing uses the keys the emulator wrote for this run and nothing else.
+
 ## Service checks
 
 A check that drives the screens of one service has the field `service` in the manifest: the name of that
@@ -73,13 +80,6 @@ service's when a shared path changed. So a service no change touched is not chec
 again in `.github/workflows/full.yml`, which the owner starts by hand: until then a change inside one service
 that breaks another service's screen, or a service check that depends on a shared path no other check covers, is
 not seen.
-
-## Safety
-
-- The only endpoints are the engine and the emulator on a loopback IP address. A check that would reach any
-  other host is refused before it runs.
-- Checks run without the AWS credentials, profiles and proxy settings of the environment.
-- Signing uses the keys the emulator wrote for this run and nothing else.
 
 ## Manifest
 
