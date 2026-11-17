@@ -128,3 +128,136 @@ describe('overlays stay in the AWS area', () => {
     expect(await boundaryErrors('providers/aws/area/x.tsx', code)).toHaveLength(1);
   });
 });
+
+describe("import boundaries: a service's folder (issue 386, R3.2, R3.5)", () => {
+  const S3_FILE = 'providers/aws/area/services/s3/format';
+
+  /** A file at `file` re-exporting from `source`. */
+  function reExporting(source: string): string {
+    return `export { thing } from '${source}';\n`;
+  }
+
+  /** A file at `file` loading `source` with `import()`. */
+  function loading(source: string): string {
+    return `export const load = () => import('${source}');\n`;
+  }
+
+  it.each(['providers/aws/area/x.tsx', 'providers/aws/area/pages/x.tsx', 'providers/aws/area/components/x.ts'])(
+    '%s importing, re-exporting or loading with import() a file of area/services/s3/ → an error',
+    async (file) => {
+      const source = from(file, S3_FILE);
+      for (const code of [importing(source), reExporting(source), loading(source)]) {
+        expect(await boundaryErrors(file, code)).toHaveLength(1);
+      }
+    },
+  );
+
+  it('providers/aws/area/x.test.tsx importing a file of area/services/s3/ → no error', async () => {
+    const file = 'providers/aws/area/x.test.tsx';
+    expect(await boundaryErrors(file, importing(from(file, S3_FILE)))).toEqual([]);
+  });
+
+  it.each(['providers/aws/area/services/s3/x.ts', 'providers/aws/area/services/s3/x.test.ts'])(
+    '%s importing from area/services/sqs/ → an error',
+    async (file) => {
+      expect(await boundaryErrors(file, importing(from(file, 'providers/aws/area/services/sqs/api')))).toHaveLength(1);
+    },
+  );
+
+  it.each([
+    'providers/aws/area/services/s3/format',
+    'providers/aws/area/services/s3/pages/bucket-list-page',
+    'providers/aws/area/components/format-date',
+    'providers/aws/area/screens',
+    'lib/aws/client-factory',
+  ])('area/services/s3/x.ts importing from %s → no error', async (target) => {
+    const file = 'providers/aws/area/services/s3/x.ts';
+    expect(await boundaryErrors(file, importing(from(file, target)))).toEqual([]);
+  });
+});
+
+describe('SDK clients are constructed only in lib/aws (issue 386, R6.8)', () => {
+  /** A file constructing `name`, imported from `@aws-sdk/client-sns` as named or through a namespace. */
+  function constructing(name: string, namespace = false): string {
+    return namespace
+      ? `import * as sns from '@aws-sdk/client-sns';\n\nexport const made = new sns.${name}({});\n`
+      : `import { ${name} } from '@aws-sdk/client-sns';\n\nexport const made = new ${name}({});\n`;
+  }
+
+  it.each([
+    ['providers/aws/area/services/sns/api.ts', 'SNSClient'],
+    ['providers/aws/area/services/sns/api.ts', 'SNS'],
+    ['providers/aws/area/x.tsx', 'SNSClient'],
+    ['providers/aws/area/x.tsx', 'SNS'],
+    ['app/x.ts', 'SNSClient'],
+    ['app/x.ts', 'SNS'],
+  ])('%s: new %s imported from @aws-sdk/client-sns → an error', async (file, name) => {
+    expect(await boundaryErrors(file, constructing(name))).toHaveLength(1);
+    expect(await boundaryErrors(file, constructing(name, true))).toHaveLength(1);
+  });
+
+  it.each([
+    ['the client class of client-api-gateway, APIGatewayClient', 'APIGatewayClient', 'client-api-gateway'],
+    ['the aggregated class of client-cloudwatch-logs, CloudWatchLogs', 'CloudWatchLogs', 'client-cloudwatch-logs'],
+  ])('area/services/x/api.ts: new of %s → an error', async (_what, name, id) => {
+    const code = `import { ${name} } from '@aws-sdk/${id}';\n\nexport const made = new ${name}({});\n`;
+    expect(await boundaryErrors('providers/aws/area/services/x/api.ts', code)).toHaveLength(1);
+  });
+
+  it.each(['lib/aws/x.ts', 'providers/aws/area/services/sns/api.test.ts', 'app/x.test.tsx'])(
+    '%s: new SNSClient and new SNS → no error',
+    async (file) => {
+      expect(await boundaryErrors(file, constructing('SNSClient'))).toEqual([]);
+      expect(await boundaryErrors(file, constructing('SNS'))).toEqual([]);
+    },
+  );
+
+  it('area/services/s3/api.ts: new ListBucketsCommand → no error', async () => {
+    const code =
+      "import { ListBucketsCommand } from '@aws-sdk/client-s3';\n\nexport const made = new ListBucketsCommand({});\n";
+    expect(await boundaryErrors('providers/aws/area/services/s3/api.ts', code)).toEqual([]);
+  });
+});
+
+describe('file patterns (issue 386, R8.1)', () => {
+  /** A file using the file pattern `pattern`. */
+  function globbing(pattern: string): string {
+    return `export const files = import.meta.glob('${pattern}', { eager: true });\n`;
+  }
+
+  it.each(['app/x.ts', 'features/home/x.tsx', 'ui/x.tsx', 'lib/x.ts', 'providers/aws/provider.ts'])(
+    '%s: import.meta.glob → an error',
+    async (file) => {
+      expect(await boundaryErrors(file, globbing('./x/*.ts'))).toHaveLength(1);
+    },
+  );
+
+  it('providers/aws/services.ts with the one pattern ./area/services/*/service.json → no error', async () => {
+    expect(await boundaryErrors('providers/aws/services.ts', globbing('./area/services/*/service.json'))).toEqual([]);
+  });
+
+  it('providers/aws/services.ts with ./area/services/*/*.ts → an error', async () => {
+    expect(await boundaryErrors('providers/aws/services.ts', globbing('./area/services/*/*.ts'))).toHaveLength(1);
+  });
+
+  it("i18n/bundled.ts with the catalogues' ./messages/*.json → no error; another file of i18n/ with it → an error", async () => {
+    expect(await boundaryErrors('i18n/bundled.ts', globbing('./messages/*.json'))).toEqual([]);
+    expect(await boundaryErrors('i18n/x.ts', globbing('./messages/*.json'))).toHaveLength(1);
+  });
+
+  it('providers/aws/area/screens.ts with ./services/*/screens.ts → no error', async () => {
+    expect(await boundaryErrors('providers/aws/area/screens.ts', globbing('./services/*/screens.ts'))).toEqual([]);
+  });
+
+  it.each([
+    ['providers/aws/area/x.ts', './services/s3/*.ts'],
+    ['providers/aws/area/pages/x.tsx', '../services/s3/*.ts'],
+    ['providers/aws/area/x.ts', '/src/providers/aws/area/services/s3/*.ts'],
+  ])('%s with %s, a pattern that names a service folder → an error', async (file, pattern) => {
+    expect(await boundaryErrors(file, globbing(pattern))).toHaveLength(1);
+  });
+
+  it.each(['providers/aws/area/x.test.ts', 'app/x.test.tsx'])('%s: import.meta.glob → no error', async (file) => {
+    expect(await boundaryErrors(file, globbing('./services/s3/*.ts'))).toEqual([]);
+  });
+});
