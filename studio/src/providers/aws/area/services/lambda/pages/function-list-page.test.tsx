@@ -2,9 +2,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { useState, useSyncExternalStore } from 'react';
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -315,14 +312,6 @@ async function expectNames(expected: string[]) {
   });
 }
 
-/** Matches the element whose whole text is `text`, and none of its children alone. */
-function byWholeText(text: string) {
-  return (_: string, element: Element | null): boolean =>
-    element !== null &&
-    norm(element.textContent) === text &&
-    [...element.children].every((child) => norm(child.textContent) !== text);
-}
-
 function emptySlot(): HTMLElement | null {
   return table().findEmptySlot()?.getElement() ?? null;
 }
@@ -522,26 +511,29 @@ describe('the function list, loaded', () => {
     expect(navigation?.getElement().querySelectorAll('a[href]')).toHaveLength(2);
   });
 
-  it('the notice "These functions are in your local emulator"; the description names the endpoint while connected and no endpoint otherwise', async () => {
+  it('the notice "These functions are in your local emulator"; the description is the filter\'s rule with no endpoint, connected, not started and before the first answer (issue 467, R3)', async () => {
     await openLoaded();
 
+    const DESCRIPTION = 'The filter matches the start of a name and is case-sensitive.';
+    const description = (): string => {
+      const h1 = screen.getByRole('heading', { level: 1 });
+      const header = PAGE.findAllHeaders().find((found) => found.getElement().contains(h1));
+      return norm(header?.findDescription()?.getElement().textContent);
+    };
     expect(screen.getByText('These functions are in your local emulator')).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        byWholeText(
-          `Functions in your local emulator at ${EMULATOR_ENDPOINT}, not in an AWS account. The filter matches the start of a name, upper and lower case told apart.`,
-        ),
-      ),
-    ).toBeInTheDocument();
+    expect(description()).toBe(DESCRIPTION);
 
     connection.set(notStartedResult());
-    expect(
-      screen.getByText(
-        byWholeText(
-          'Functions in your local emulator, not in an AWS account. The filter matches the start of a name, upper and lower case told apart.',
-        ),
-      ),
-    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getAllByText(/^Not started on port/).length).toBeGreaterThan(0);
+    });
+    expect(description()).toBe(DESCRIPTION);
+
+    connection.set(undefined);
+    await waitFor(() => {
+      expect(screen.getAllByText('Checking').length).toBeGreaterThan(0);
+    });
+    expect(description()).toBe(DESCRIPTION);
     expect(within(tableElement()).queryByText(new RegExp(EMULATOR_ENDPOINT.replace(/\./g, '\\.')))).toBeNull();
   });
 
@@ -827,23 +819,29 @@ describe('preferences', () => {
     expect(engine.lists.at(-1)?.searchParams.get('MaxItems')).toBe('10');
     expect(engine.lists.at(-1)?.searchParams.get('Marker')).toBeNull();
   });
-  it('"Wrap lines" on (the start): a 64-character name and a 256-character description without a space each sit in the area’s `aws-lambda-value`, a word that breaks anywhere; off: neither does', async () => {
+  it('a row\'s cells, each as its kind of value (issue 467, R6): the name a name inside its link, the description free text, "Package type", "Runtime", "Type" and "Last modified" fixed words; with "Wrap lines" off the same kinds', async () => {
     const name = 'x'.repeat(64);
     const description = 'd'.repeat(256);
     await openLoaded([{ ...NODE, name, description }]);
 
-    // The area's own rule, as the browser applies it (jsdom computes no style sheet).
-    const css = readFileSync(
-      path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'components', 'function-sections.css'),
-      'utf8',
-    );
-    expect(css).toMatch(/\.aws-lambda-value\s*\{[^}]*overflow-wrap:\s*anywhere;/);
+    const KINDS = ['name', 'text', 'fixed', 'fixed', 'fixed', 'fixed'];
+    /** The kind each data cell's value is shown as, in the columns' order. */
+    const kinds = (): string[] => {
+      const row = table().findRows()[0]?.getElement();
+      // The first cell holds the check box.
+      return [...(row?.querySelectorAll('td, th') ?? [])].slice(1).map((cell) => {
+        const values = [...cell.querySelectorAll('.aws-area-value')];
+        expect(values, `one value in "${norm(cell.textContent)}"`).toHaveLength(1);
+        const kind = [...(values[0]?.classList ?? [])].find((found) => /^aws-area-value-[a-z]+$/.test(found));
+        return kind?.replace('aws-area-value-', '') ?? '';
+      });
+    };
+    const nameValue = (): Element | null => tableElement().querySelector('tbody th .aws-area-value-name');
 
-    const wrapped = (): Element[] => [...tableElement().querySelectorAll('tbody .aws-lambda-value')];
-    const nameCell = (): Element | null => tableElement().querySelector('tbody th');
-    expect(wrapped().map((element) => norm(element.textContent))).toEqual([name, description]);
-    expect(nameCell()?.contains(wrapped()[0] ?? null)).toBe(true);
-    expect(within(wrapped()[0] as HTMLElement).getByRole('link', { name })).toBeInTheDocument();
+    expect(kinds()).toEqual(KINDS);
+    expect(norm(nameValue()?.textContent)).toBe(name);
+    expect(nameValue()?.closest('a')).toBe(within(tableElement()).getByRole('link', { name }));
+    expect(rows()[0]?.description).toBe(description);
 
     fireEvent.click(screen.getByRole('button', { name: 'Preferences' }));
     const dialog = await screen.findByRole('dialog', { name: 'Preferences' });
@@ -854,8 +852,9 @@ describe('preferences', () => {
         .find((button) => button.textContent === 'Confirm') as HTMLElement,
     );
     await waitFor(() => {
-      expect(wrapped()).toHaveLength(0);
+      expect(table().getElement().querySelector('[class*="body-cell-wrap"]')).toBeNull();
     });
+    expect(kinds()).toEqual(KINDS);
     expect(rows()[0]?.name).toBe(name);
     expect(rows()[0]?.description).toBe(description);
   });
