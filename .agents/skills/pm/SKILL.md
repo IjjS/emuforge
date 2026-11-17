@@ -184,7 +184,10 @@ An issue with an issue branch:
   which. On a conflict it names the paths:
   send them to the unit that owns them, which merges `main` into its own branch, checks, and is merged again.
 - Then the whole check, in the issue's worktree: `pm-check <the issue's worktree>` (`emuforge-<id>`) runs every
-  step the issue branch's paths against `main` call for, `integration` included.
+  step the issue branch's paths against `main` call for, `integration` included. In the whole check the
+  integration step of the issue branch runs every check of no service and the browser checks of the services its
+  paths touch, every service's when a shared path changed; the `services` line of `pm-scope` and `pm-check` names
+  them, and `pm-merge` refuses a record that ran fewer.
 - A failed whole check names the failed checks. Find the unit that owns those checks in `breakdown.md` and send
   it their ids; it fixes them on its own branch, merges the issue branch into its own when `pm-merge` asks,
   passes its fast check, and is merged into the issue branch again with `pm-merge <id> <unit>`. The issue branch has then moved, so the whole check runs again.
@@ -245,7 +248,9 @@ finished issue, whatever else is still in flight (other issues' merged work goes
 yours to resolve: leave `main` as it is and tell the owner.
 
 Then read the run the push started. The workflow `main` (`.github/workflows/main.yml`) checks every push of `main`
-on GitHub Actions, on Ubuntu; what it does not run there is listed in `.github/not-run.json`. You only read runs
+on GitHub Actions, on Ubuntu; what it does not run there is listed in `.github/not-run.json`. Its integration
+steps hold every check of no service and the browser checks of the services the push touched, as its step
+`services` prints them (every service's when a shared path changed, or on a first or forced push). You only read runs
 with `gh`: never re-run, cancel or delete one, and write nothing to GitHub. With `<sha>` the pushed commit and
 `<sha9>` its first nine characters:
 
@@ -261,7 +266,8 @@ with `gh`: never re-run, cancel or delete one, and write nothing to GitHub. With
 - A failed run becomes an issue file: `pm-issue new --source finder --kind bug` with the run's url and the
   failing lines of `.pm/run/ci-<sha9>.log` as evidence, unless an open issue already lists the failing check in
   `Issue-Check-Ids` or names the failing step; then add the run's url to that issue instead. Tell the owner in
-  one line (the run's url and the issue's id). The issue waits for the owner's signal like an issue from outside:
+  one line (the run's url and the issue's id). The issue file of a failed run names the services the run
+  selected, as its step `services` printed them, so a failure is read against what ran. The issue waits for the owner's signal like an issue from outside:
   you do not start it yourself, and other work goes on.
 - A successful run with a step named `<step> (second run)` holds a flake: file it as flow step 5 says for flakes,
   with the run's url in place of the first log; it waits for the owner's signal too.
@@ -271,6 +277,18 @@ with `gh`: never re-run, cancel or delete one, and write nothing to GitHub. With
 `gh workflow run main.yml --ref <branch>` tries a correction of the workflow on a pushed branch. Starting that
 run writes to GitHub and pushing that branch is a push other than `main`'s: each needs the owner's word for that
 issue.
+
+**The whole set.** `.github/workflows/full.yml`, the workflow `full`, runs every integration check but those of
+`.github/not-run.json` and those on request, the checks of every service. Only the owner starts `full`; you never
+start it (`gh workflow run` writes to GitHub). On the owner's word, read its latest run with
+`gh run list --workflow full.yml --json databaseId,status,conclusion,url` and the steps above, and file a failure
+as a push's. Between two runs of `full` a service no change touched is not checked: name this gap in the report
+of an issue whose whole check left services out.
+
+**Bounds.** A workflow's bounds are fixed numbers set from a measured time. When you read a run of `main` or
+`full` whose first integration step took more than half its bound (`timeout-minutes`), file a harness issue with
+the run as evidence to raise that bound. When the integration step of `full` takes more than 150 minutes, two
+runs of it no longer fit in a hosted job's six hours, and the issue you file is to split the job instead.
 
 ### Next issue
 

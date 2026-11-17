@@ -123,7 +123,6 @@ export {
 } from './iam';
 export { ensurePortFree, freePort, freePortExcept, isLoopback, probe } from './net';
 export {
-  COMMANDS,
   EMULATOR_FILES,
   Form,
   commandLine,
@@ -134,9 +133,8 @@ export {
   signedS3,
   waitHealth,
   type FormOptions,
-  type Situation,
 } from './product';
-export { composeArgs, directS3, runAt, searchImage, signedVia, transparencyDiff } from './product-inspect';
+export { directS3, runAt, searchImage, signedVia, transparencyDiff } from './product-inspect';
 export {
   aim,
   borderProblems,
@@ -178,6 +176,50 @@ export {
   type PressKind,
   type VeilLook,
 } from './language-menu';
+export {
+  attachedPoliciesDirect as lambdaAttachedPoliciesDirect,
+  attachRolePolicyDirect,
+  BASIC_EXECUTION_POLICY,
+  CHECK_ANSWER,
+  checkCode,
+  createFunctionDirect,
+  createFunctionUrlDirect,
+  createRoleDirect,
+  deleteFunctionDirect,
+  endpointOf,
+  functionConfigurationDirect,
+  functionNamesDirect,
+  functionUrlDirect,
+  getFunctionDirect,
+  getRoleDirect as lambdaGetRoleDirect,
+  GREETING,
+  iamDirect,
+  invokeDirect,
+  isGreeting,
+  LAMBDA_TRUST_POLICY,
+  lambdaDirect,
+  LambdaSeeded,
+  listFunctionsDirect,
+  listFunctionsPage,
+  listRolesDirect as lambdaListRolesDirect,
+  listRolesPage,
+  removeRoleDirect,
+  roleArnOf,
+  shownDirect as shownLambdaDirect,
+  STATE_BOUND_MS,
+  storedZip,
+  updateDescriptionDirect,
+  waitForState as waitForFunctionState,
+  type Caller,
+  type Direct as LambdaDirect,
+  type DirectRole as LambdaDirectRole,
+  type FunctionConfiguration,
+  type FunctionOptions,
+  type FunctionRead,
+  type FunctionsPage,
+  type Invoked,
+  type RolesPage,
+} from './lambda';
 export {
   bucketNamesDirect,
   checkPrefix,
