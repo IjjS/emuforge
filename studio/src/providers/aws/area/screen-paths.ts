@@ -224,11 +224,7 @@ export interface FirstScreen {
  * shown at the route; else the first screen of the service the registry lists that has a path without a parameter,
  * at the first such path; `undefined` when every screen of the service is at paths with a parameter.
  */
-export function firstScreen(
-  screens: readonly AreaScreen[],
-  service: string,
-  route: string,
-): FirstScreen | undefined {
+export function firstScreen(screens: readonly AreaScreen[], service: string, route: string): FirstScreen | undefined {
   const [atRoute] = matchingScreens(screens, service, route).sort((a, b) => comparePatterns(a.pattern, b.pattern));
   if (atRoute !== undefined) {
     return { screen: atRoute.screen, address: route, title: screenTitle(atRoute.screen, {}) };

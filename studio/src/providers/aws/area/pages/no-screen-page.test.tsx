@@ -37,8 +37,7 @@ function openPart(path: string) {
 /** The label "Path": the innermost element whose text is exactly "Path". */
 function pathLabel(container: HTMLElement): HTMLElement | undefined {
   return [...container.querySelectorAll<HTMLElement>('*')].find(
-    (element) =>
-      element.textContent === 'Path' && ![...element.children].some((child) => child.textContent === 'Path'),
+    (element) => element.textContent === 'Path' && ![...element.children].some((child) => child.textContent === 'Path'),
   );
 }
 

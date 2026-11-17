@@ -35,17 +35,15 @@ const BREAK_AFTER = /([-!].)/u;
  * the next one (`no-screen-path.css`), so the segment breaks only where it does not fit a line by itself (R4.6).
  */
 function Segment({ text }: { text: string }) {
-  return text
-    .split(BREAK_AFTER)
-    .map((part, index) =>
-      index % 2 === 1 ? (
-        <span key={index} className="aws-area-no-screen-path-joined">
-          {part}
-        </span>
-      ) : (
-        part
-      ),
-    );
+  return text.split(BREAK_AFTER).map((part, index) =>
+    index % 2 === 1 ? (
+      <span key={index} className="aws-area-no-screen-path-joined">
+        {part}
+      </span>
+    ) : (
+      part
+    ),
+  );
 }
 
 /**

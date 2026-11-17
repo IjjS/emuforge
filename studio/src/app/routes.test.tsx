@@ -1,5 +1,5 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { createMemoryRouter, RouterProvider } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -516,6 +516,79 @@ describe('routes', () => {
     },
     NO_SCREEN_PART_TEST_MS,
   );
+
+  // Issue 57 (test-criteria.md, "Unit — app/routes.test.tsx", New): the crumbs of the screen above the path, and the
+  // first action.
+  it.each<[string, [string, string | null][]]>([
+    [
+      '/aws/s3/buckets/my-bucket/objects',
+      [
+        ['Buckets', '/aws/s3/buckets'],
+        ['my-bucket', '/aws/s3/buckets/my-bucket'],
+      ],
+    ],
+    [
+      '/aws/s3/bucket/my-bucket/property/versioning/edit',
+      [
+        ['Buckets', '/aws/s3/buckets'],
+        ['my-bucket', '/aws/s3/buckets/my-bucket'],
+      ],
+    ],
+    ['/aws/s3/directory-buckets', []],
+  ])(
+    'opens %s as the "no screen yet" page with the crumbs EmuForge, AWS, S3, those of the screen above, then "No screen yet"',
+    async (path, above) => {
+      open(path);
+
+      await heading('No screen yet');
+      const crumbs = (createWrapper(document.body).findBreadcrumbGroup()?.findBreadcrumbLinks() ?? []).map((item) => {
+        const element = item.getElement();
+        const link = element.closest('a[href]') ?? element.querySelector('a[href]');
+        return [(element.textContent ?? '').trim(), link?.getAttribute('href') ?? null];
+      });
+      expect(crumbs).toEqual([
+        ['EmuForge', '/'],
+        ['AWS', '/aws'],
+        ['S3', '/aws/s3'],
+        ...above,
+        ['No screen yet', null],
+      ]);
+    },
+    NO_SCREEN_PART_TEST_MS,
+  );
+
+  it(
+    'opens /aws/s3/directory-buckets, then "Go to Buckets": the address /aws/s3 and the h1 "Buckets", without a document load',
+    async () => {
+      const router = createMemoryRouter(routes, { initialEntries: ['/aws/s3/directory-buckets'] });
+      render(
+        <Providers>
+          <RouterProvider router={router} />
+        </Providers>,
+      );
+      await heading('No screen yet');
+
+      let followed = true;
+      act(() => {
+        followed = fireEvent.click(within(main()).getByRole('link', { name: 'Go to Buckets' }));
+      });
+
+      expect(followed).toBe(false);
+      expect(router.state.location.pathname).toBe('/aws/s3');
+      expect(inCloudscape(await heading('Buckets'))).toBe(true);
+    },
+    NO_SCREEN_PART_TEST_MS,
+  );
+
+  it('opens /aws/kinesis: the document title "Amazon Kinesis | EmuForge Studio" and the sentence that Studio has no screen for it, as before', async () => {
+    open('/aws/kinesis');
+
+    await heading('Amazon Kinesis');
+    expect(main()).toHaveTextContent('Studio has no screen for Amazon Kinesis yet.');
+    await waitFor(() => {
+      expect(document.title).toBe('Amazon Kinesis | EmuForge Studio');
+    });
+  });
 
   it('opens /aws/does-not-exist/today as the AWS area’s "Page not found", with the path as text', async () => {
     open('/aws/does-not-exist/today');

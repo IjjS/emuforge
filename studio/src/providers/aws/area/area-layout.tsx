@@ -132,15 +132,7 @@ function navigation(page: AreaPage): SideNavigationProps {
   };
 }
 
-function PageContent({
-  page,
-  pathname,
-  connection,
-}: {
-  page: AreaPage;
-  pathname: string;
-  connection: AreaConnection;
-}) {
+function PageContent({ page, pathname, connection }: { page: AreaPage; pathname: string; connection: AreaConnection }) {
   switch (page.kind) {
     case 'index':
       return <IndexPage />;
