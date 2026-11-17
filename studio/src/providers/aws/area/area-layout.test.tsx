@@ -417,18 +417,18 @@ describe('the AWS area', () => {
     expect(contentTargetProblems(document.activeElement, name, firstStop)).toEqual([]);
   });
 
-  it('on /aws, AWS Lambda chosen in the side navigation: focus on the content target named AWS Lambda', async () => {
+  it(`on /aws, ${NO_SCREEN} chosen in the side navigation: focus on the content target named ${NO_SCREEN}`, async () => {
     const { wrapper } = open('/aws');
-    const lambda = wrapper.findSideNavigation()?.findLinkByHref('/aws/lambda')?.getElement();
-    expect(lambda).toBeDefined();
+    const service = wrapper.findSideNavigation()?.findLinkByHref(NO_SCREEN_SERVICE.path)?.getElement();
+    expect(service).toBeDefined();
 
     act(() => {
-      (lambda as HTMLElement).focus();
-      fireEvent.click(lambda as HTMLElement);
+      (service as HTMLElement).focus();
+      fireEvent.click(service as HTMLElement);
     });
 
-    await expectFocusOnTarget('AWS Lambda', 'Go to Home');
-    expect(wrapper.findSideNavigation()?.findActiveLink()?.getElement()).toHaveTextContent('AWS Lambda');
+    await expectFocusOnTarget(NO_SCREEN, 'Go to Home');
+    expect(wrapper.findSideNavigation()?.findActiveLink()?.getElement()).toHaveTextContent(NO_SCREEN);
   });
 
   it('on /aws/kinesis, AWS chosen in the breadcrumbs: /aws and focus on the content target named Amazon Web Services', async () => {
