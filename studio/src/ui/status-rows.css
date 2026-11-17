@@ -1,5 +1,6 @@
-/* Studio's status rows (DESIGN.md, Status rows): side by side with a hairline between them; below 640px stacked, each
-   compact, its label and status on one line and the address under the status. */
+/* Studio's status rows (DESIGN.md, Status rows): side by side with a hairline between them; at 640px and below
+   stacked, each in two lines, its label and status on the first and the address on a line of its own across the row.
+   An address is never cut: one line while it fits, broken before its port and, failing that, inside its box. */
 
 @layer studio {
   .st-rows {
@@ -57,15 +58,17 @@
     color: var(--st-info);
   }
 
+  /* A 20px line for an address and for "-" alike, so a row is as tall either way. The address breaks before its port
+     (the row's `<wbr>`) and, when even that does not fit, at any character; it is literal text, never hyphenated. */
   .st-addr {
     display: block;
     margin-top: 4px;
-    overflow: hidden;
     font-family: var(--st-font-code);
     font-size: 13px;
+    line-height: 20px;
     color: var(--st-text-2);
-    white-space: nowrap;
-    text-overflow: ellipsis;
+    overflow-wrap: anywhere;
+    hyphens: manual;
   }
 
   .st-addr.none {
@@ -98,6 +101,33 @@
 
     .st-addr {
       margin-top: 2px;
+    }
+
+    /* The address on a line of its own, from the row's left edge and across the row. `dd` lies across both columns
+       and takes the row's columns as its own (subgrid): the status in the second, beside the label, the address under
+       both, 4px below. The label is drawn above `dd`'s box, which lies over it. Where subgrid is missing the row keeps
+       the address under the status, and it breaks there instead of being cut. */
+    @supports (grid-template-columns: subgrid) {
+      .st-row dt {
+        position: relative;
+        grid-area: 1 / 1;
+      }
+
+      .st-row dd {
+        display: grid;
+        grid-area: 1 / 1 / auto / -1;
+        grid-template-columns: subgrid;
+      }
+
+      .st-status {
+        grid-area: 1 / 2;
+        justify-self: start;
+      }
+
+      .st-addr {
+        grid-area: 2 / 1 / auto / -1;
+        margin-top: 4px;
+      }
     }
   }
 }
