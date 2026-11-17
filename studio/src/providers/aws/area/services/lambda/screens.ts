@@ -1,5 +1,6 @@
 import type { ServiceScreen } from '../../screens';
-import { FUNCTIONS_PATH, LAMBDA_PATH } from './format';
+import { CREATE_FUNCTION_PATH, FUNCTIONS_PATH, LAMBDA_PATH } from './format';
+import { CREATE_FUNCTION_TITLE, CreateFunctionPage } from './pages/create-function-page';
 import { FUNCTIONS_TITLE, FunctionListPage } from './pages/function-list-page';
 import { FunctionPage } from './pages/function-page';
 
@@ -27,5 +28,13 @@ export const SCREENS: readonly ServiceScreen[] = [
     crumbs: ({ name }) => [{ text: FUNCTIONS_TITLE, href: FUNCTIONS_PATH }, { text: name ?? '' }],
     navigation: NAVIGATION,
     Page: FunctionPage,
+  },
+  // S3, "Create Event Function" (R0, R6.1).
+  {
+    paths: [CREATE_FUNCTION_PATH],
+    title: CREATE_FUNCTION_TITLE,
+    crumbs: [{ text: FUNCTIONS_TITLE, href: FUNCTIONS_PATH }, { text: CREATE_FUNCTION_TITLE }],
+    navigation: NAVIGATION,
+    Page: CreateFunctionPage,
   },
 ];
