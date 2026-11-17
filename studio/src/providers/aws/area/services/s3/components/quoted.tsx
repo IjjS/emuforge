@@ -16,16 +16,3 @@ export function Quoted({ before, name, after }: { before: string; name: string; 
     </>
   );
 }
-
-/**
- * A sentence written elsewhere that quotes `name` between “ and ”: shown as `Quoted`, split at the first quoted
- * occurrence of the name; as free text when it quotes none.
- */
-export function QuotedIn({ text, name }: { text: string; name: string }) {
-  const quoted = `“${name}”`;
-  const at = text.indexOf(quoted);
-  if (at < 0) {
-    return <ValueText kind="text" value={text} />;
-  }
-  return <Quoted before={text.slice(0, at + 1)} name={name} after={text.slice(at + 1 + name.length)} />;
-}

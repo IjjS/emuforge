@@ -518,7 +518,7 @@ describe('the create form, its requests', () => {
     expect(engine.of('CreateBucket')).toEqual([]);
   });
 
-  it('a name the user gives is shown as a name, the words around it as free text: the field’s message and the flash item (issue 467, R6)', async () => {
+  it('the field’s message is free text, the name it quotes included; the flash item shows the name as a name (issue 467, R6)', async () => {
     const long = 'a'.repeat(63);
     engine.buckets = [long];
     const router = await openWithName(long);
@@ -528,11 +528,7 @@ describe('the create form, its requests', () => {
     });
     expect(messageOf('Bucket name')).toBe(`The emulator already holds a bucket named “${long}”.`);
     const error = formField('Bucket name')?.findError()?.getElement();
-    expect(kindsIn(error)).toEqual([
-      ['text', 'The emulator already holds a bucket named “'],
-      ['name', long],
-      ['text', '”.'],
-    ]);
+    expect(kindsIn(error)).toEqual([['text', `The emulator already holds a bucket named “${long}”.`]]);
 
     engine.buckets = [];
     create();

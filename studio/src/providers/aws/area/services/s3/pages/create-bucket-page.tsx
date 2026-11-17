@@ -38,7 +38,7 @@ import {
   type MessageField,
 } from '../bucket-form';
 import { actionFailure, type ActionFailure } from '../components/action-failure';
-import { Quoted, QuotedIn } from '../components/quoted';
+import { Quoted } from '../components/quoted';
 import { useAnnouncer } from '../components/use-announcer';
 import { BUCKETS_PATH, encryptionTypeLabel } from '../format';
 import { useCreateBucket } from '../queries';
@@ -316,13 +316,9 @@ export function CreateBucketPage({ connection }: ScreenPageProps) {
   );
 
   const nameMessage = nameTaken === undefined ? messages.name : nameTakenMessage(nameTaken);
-  // The message that quotes the name typed shows it as a name; the form's own messages are free text (issue 467, R6).
-  const nameMessageShown =
-    nameMessage === undefined ? undefined : nameTaken === undefined ? (
-      <ValueText kind="text" value={nameMessage} />
-    ) : (
-      <QuotedIn text={nameMessage} name={nameTaken} />
-    );
+  // A field's message is free text, the name it quotes included, as on Lambda's and IAM's forms (issue 467, R6): the
+  // field is described by the message's sentence as it is written.
+  const nameMessageShown = nameMessage === undefined ? undefined : <ValueText kind="text" value={nameMessage} />;
   const locked = form.objectLock;
 
   return (
