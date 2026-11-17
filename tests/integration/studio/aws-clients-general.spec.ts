@@ -77,8 +77,9 @@ async function directRestApis(ctx: Ctx, port: number): Promise<RestApiEntry[]> {
     200,
     'direct GetRestApis',
   );
-  const { items = [] } = JSON.parse(body) as { items?: { id: string; name: string }[] };
-  return items.map((a) => ({ id: a.id, name: a.name }));
+  // On the wire the list is `item` (the SDK reads it into `items`).
+  const { item = [] } = JSON.parse(body) as { item?: { id: string; name: string }[] };
+  return item.map((a) => ({ id: a.id, name: a.name }));
 }
 
 async function directQueueUrls(ctx: Ctx, port: number, prefix: string): Promise<string[]> {
@@ -168,7 +169,7 @@ test('studio.aws-clients-of-any-service-go-through-the-engine', async ({ ctx, co
             `cleanup DeleteTopic ${topic} directly: ${shown(await directSns(ctx, port, 'DeleteTopic', { TopicArn: arn }))}`,
           );
         }
-      }
+      } else ctx.log(`cleanup ListTopics directly: ${shown(topics)}`);
       if ((await tableStatus(ctx, port, table)) !== null) {
         ctx.log(`cleanup: table ${table} reads ACTIVE: ${String(await untilActive(ctx, port, table))}`);
         ctx.log(
@@ -177,13 +178,13 @@ test('studio.aws-clients-of-any-service-go-through-the-engine', async ({ ctx, co
       }
       const apis = await directApiGateway(ctx, port, 'GET', '/restapis', { limit: String(PAGE_SIZE) });
       if (!('error' in apis) && apis.status === 200) {
-        const { items = [] } = JSON.parse(apis.body) as { items?: { id: string; name: string }[] };
-        for (const a of items.filter((i) => i.name === api)) {
+        const { item = [] } = JSON.parse(apis.body) as { item?: { id: string; name: string }[] };
+        for (const a of item.filter((i) => i.name === api)) {
           ctx.log(
             `cleanup DeleteRestApi ${api} directly: ${shown(await directApiGateway(ctx, port, 'DELETE', `/restapis/${a.id}`))}`,
           );
         }
-      }
+      } else ctx.log(`cleanup GetRestApis directly: ${shown(apis)}`);
     },
   });
 
@@ -294,7 +295,10 @@ test('studio.aws-sqs-client-keeps-a-queue-url-on-the-engine', async ({ ctx, cont
   ctx.own({
     async dispose() {
       const listed = await directSqs(ctx, port, 'ListQueues', { QueueNamePrefix: queue });
-      if ('error' in listed || listed.status !== 200) return;
+      if ('error' in listed || listed.status !== 200) {
+        ctx.log(`cleanup ListQueues directly: ${shown(listed)}`);
+        return;
+      }
       const { QueueUrls = [] } = JSON.parse(listed.body) as { QueueUrls?: string[] };
       for (const url of QueueUrls.filter((u) => u.endsWith(`/${queue}`))) {
         ctx.log(
