@@ -27,18 +27,18 @@ import {
   LAMBDA_TRUST,
   READ_ONLY_ACCESS,
   type Caller,
-} from "./iam";
-import { redact } from "./secrets";
+} from './iam';
+import { redact } from './secrets';
 
 /** The names and values of the seed (R12); `role-detail.yaml`'s route names `STRUCTURE_ROLE`. */
-const STRUCTURE_ROLE = "structure-role";
-const STRUCTURE_ADMIN = "structure-admin";
-const STRUCTURE_INLINE = "structure-inline";
-const STRUCTURE_DESCRIPTION = "Role of the structure score seed";
-const STRUCTURE_TAG = { key: "purpose", value: "structure-score" };
+const STRUCTURE_ROLE = 'structure-role';
+const STRUCTURE_ADMIN = 'structure-admin';
+const STRUCTURE_INLINE = 'structure-inline';
+const STRUCTURE_DESCRIPTION = 'Role of the structure score seed';
+const STRUCTURE_TAG = { key: 'purpose', value: 'structure-score' };
 
 function portArgument(argv: string[]): number | null {
-  const at = argv.indexOf("--port");
+  const at = argv.indexOf('--port');
   const value = at >= 0 ? argv[at + 1] : undefined;
   if (value === undefined || !/^\d+$/.test(value)) return null;
   const port = Number(value);
@@ -66,30 +66,22 @@ async function seedStructure(caller: Caller, port: number): Promise<void> {
 async function main(): Promise<number> {
   const port = portArgument(process.argv.slice(2));
   if (port === null) {
-    console.error("usage: iam-seed-structure.ts --port <emulator port>");
+    console.error('usage: iam-seed-structure.ts --port <emulator port>');
     return 2;
   }
   const home = process.env.HOME;
-  if (home === undefined || home === "") {
-    console.error(
-      "HOME is not set: the emulator files are under $HOME/.aws/emulator/<port>/",
-    );
+  if (home === undefined || home === '') {
+    console.error('HOME is not set: the emulator files are under $HOME/.aws/emulator/<port>/');
     return 2;
   }
   const caller: Caller = { home, log: (line) => console.log(redact(line)) };
   try {
     await seedStructure(caller, port);
   } catch (e) {
-    console.error(
-      redact(
-        `the seed is not in place: ${e instanceof Error ? e.message : String(e)}`,
-      ),
-    );
+    console.error(redact(`the seed is not in place: ${e instanceof Error ? e.message : String(e)}`));
     return 1;
   }
-  console.log(
-    `seeded ${STRUCTURE_ROLE} and ${STRUCTURE_ADMIN} in the emulator on 127.0.0.1:${String(port)}`,
-  );
+  console.log(`seeded ${STRUCTURE_ROLE} and ${STRUCTURE_ADMIN} in the emulator on 127.0.0.1:${String(port)}`);
   return 0;
 }
 
