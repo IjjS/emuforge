@@ -27,7 +27,6 @@ import {
   REFRESH,
   SECTIONS,
   shownSectionTitles,
-  TAGS,
   WEBSITE,
 } from './support/s3-bucket-page';
 import {
@@ -248,19 +247,15 @@ test('studio.s3-bucket-screens-talk-only-to-the-engine', async ({ ctx, page, con
   await lines.line(
     'A bucket made directly with the tag value `<img src=x onerror=alert(1)>` and a website index document of the same text → both are shown as text on its page, the page holds no image made from them and no dialog opened',
     async () => {
+      // PM decision of 2026-11-17 21:55 (decisions-needed 12, option a): the emulator refuses a tag value with `<`
+      // (400 `InvalidTag`, as AWS does), so the tag part of the Given is dropped; the website index document of that
+      // text, which it stores, carries the case alone.
       const name = `${p}-markup`;
       await seeded.bucket(name);
-      await seeded.configure(name, { tags: [['markup', MARKUP]], website: { indexDocument: MARKUP } });
+      await seeded.configure(name, { website: { indexDocument: MARKUP } });
       dialogs.length = 0;
       await openBucketPage(page, name);
-      await expectSections(
-        page,
-        {
-          [TAGS]: { rows: [{ Key: 'markup', Value: MARKUP }] },
-          [WEBSITE]: { fields: { 'Index document': MARKUP } },
-        },
-        'the tag value and the index document as text',
-      );
+      await expectSections(page, { [WEBSITE]: { fields: { 'Index document': MARKUP } } }, 'the index document as text');
       expect(await page.locator('img[src="x"]').count(), 'images made from the text').toBe(0);
       expect(await areaImages(page), 'images inside the area').toEqual([]);
       expect(dialogs, 'dialogs opened').toEqual([]);
