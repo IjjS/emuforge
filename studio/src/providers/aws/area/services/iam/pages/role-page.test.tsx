@@ -1,7 +1,3 @@
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -16,7 +12,8 @@ import AwsArea from '../../../index';
 
 // A role's page rendered inside the area's layout at `/aws/iam/roles/details/<name>`, as Studio's frame renders the
 // area, against a fake engine behind the page's `fetch` (test-criteria.md, issue 82, "Unit —
-// services/iam/pages/role-page.test.tsx"; requirement R5.1 to R5.4, R6.1, R8, R10).
+// services/iam/pages/role-page.test.tsx"; requirement R5.1 to R5.4, R6.1, R8, R10; and issue 467's changed cases,
+// requirement R3, R5, R6).
 
 // ---------------------------------------------------------------------------------------------------------------
 // The fake engine: IAM's Query protocol over the roles it holds.
@@ -407,6 +404,35 @@ function policiesSlot(): HTMLElement {
   return found as HTMLElement;
 }
 
+/** The `h1`'s description, or `null` when the `h1` has none (issue 467, R3). */
+function h1Description(): string | null {
+  const header = PAGE.findAllHeaders().find((found) => found.getElement().querySelector('h1') !== null);
+  expect(header).toBeDefined();
+  const description = header?.findDescription();
+  return description === null || description === undefined ? null : (description.getElement().textContent ?? '');
+}
+
+/**
+ * The kind of value (issue 467, R6) the area's element whose text is exactly `text` inside `scope` shows: `address`,
+ * `name`, `fixed` or `text`; `undefined` when no such element holds it.
+ */
+function kindOf(scope: Element, text: string): string | undefined {
+  const element = [...scope.querySelectorAll('.aws-area-value')].find((found) => found.textContent === text);
+  return [...(element?.classList ?? [])]
+    .map((name) => /^aws-area-value-(address|name|fixed|text)$/.exec(name)?.[1])
+    .find((kind) => kind !== undefined);
+}
+
+/** The value element of the pair labelled `label` of "Summary". */
+function pairValue(label: string): HTMLElement {
+  const item = PAGE.findKeyValuePairs()
+    ?.findItems()
+    .find((found) => (found.findLabel()?.getElement().textContent ?? '').trim() === label);
+  const value = item?.findValue()?.getElement();
+  expect(value, label).toBeDefined();
+  return value as HTMLElement;
+}
+
 /** The status indicator inside `scope`: its Cloudscape type and its text. */
 function status(scope: HTMLElement): { type: string | undefined; text: string } {
   const indicator = [...scope.querySelectorAll('[class*="status-"]')].find((element) =>
@@ -602,10 +628,10 @@ describe('a loaded role', () => {
 
     const heading = within(main()).getByRole('heading', { level: 2, name: 'Permissions boundary' });
     expect(heading).toBeInTheDocument();
-    expect(within(main()).getByText(boundary)).toBeInTheDocument();
-    expect(
-      heading.compareDocumentPosition(within(main()).getByText(boundary)) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).not.toBe(0);
+    const value = [...main().querySelectorAll('.aws-area-value')].find((found) => found.textContent === boundary);
+    expect(value, 'the boundary’s ARN, shown as an address').toBeDefined();
+    expect(kindOf(main(), boundary)).toBe('address');
+    expect(heading.compareDocumentPosition(value as Element) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
   });
 
   it('no permissions boundary: "Not set"', async () => {
@@ -625,10 +651,46 @@ describe('a loaded role', () => {
     }
   });
 
-  it('the description of R9.3', async () => {
+  it('a loaded role: the h1 has no description (issue 467, R3)', async () => {
     await openLoaded(PLAIN);
 
-    expect(within(main()).getByText('This role is in your local emulator, not in an AWS account.')).toBeInTheDocument();
+    expect(h1Description()).toBeNull();
+  });
+
+  it('"Summary": "Copy ARN" directly before the ARN, shown as an address; "Path" as an address; "Description" as free text; the dates and the duration as fixed words (issue 467, R5, R6)', async () => {
+    const role: FakeRole = {
+      name: 'team-role',
+      path: '/team/',
+      description: 'Runs the team’s jobs',
+      maxSessionDuration: 7200,
+      lastUsed: '2026-11-17T10:00:00Z',
+    };
+    await openLoaded(role);
+
+    const arnValue = pairValue('ARN');
+    const copy = within(arnValue).getByRole('button', { name: 'Copy ARN' });
+    const arn = arnOf(role);
+    expect(kindOf(arnValue, arn)).toBe('address');
+    const arnText = [...arnValue.querySelectorAll('.aws-area-value')].find((found) => found.textContent === arn);
+    expect(copy.compareDocumentPosition(arnText as Element) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+    expect(within(main()).getAllByRole('button', { name: /^Copy / })).toEqual([copy]);
+
+    expect(kindOf(pairValue('Path'), '/team/')).toBe('address');
+    expect(kindOf(pairValue('Description'), 'Runs the team’s jobs')).toBe('text');
+    expect(kindOf(pairValue('Creation date'), '2026-11-17 09:05:03 UTC')).toBe('fixed');
+    expect(kindOf(pairValue('Maximum session duration'), '2 hours')).toBe('fixed');
+    const lastActivity = pairValue('Last activity');
+    expect(kindOf(lastActivity, (lastActivity.textContent ?? '').trim())).toBe('fixed');
+  });
+
+  it('the table under the tab: a policy’s name as a name, its type as a fixed word (issue 467, R6)', async () => {
+    await openLoaded({ name: 'team-role', attached: [READ_ONLY], inline: ['inline-one'] });
+
+    const table = policiesTable().getElement();
+    expect(kindOf(table, 'ReadOnlyAccess')).toBe('name');
+    expect(kindOf(table, 'inline-one')).toBe('name');
+    expect(kindOf(table, 'AWS managed')).toBe('fixed');
+    expect(kindOf(table, 'Customer inline')).toBe('fixed');
   });
 
   it('an ARN, a description, a path and a policy name with markup are shown as text, no element made from them', async () => {
@@ -649,15 +711,18 @@ describe('a loaded role', () => {
     expect(document.querySelector('img')).toBeNull();
   });
 
-  it('a name of 64 characters: the h1 and the last crumb hold the whole name', async () => {
+  it('a name of 64 characters: the h1 shows the whole name as a name, and the last crumb holds the whole name (issue 467, R6)', async () => {
     const name = `r${'x'.repeat(63)}`;
     await openLoaded({ name });
 
     expect(h1()).toHaveTextContent(name);
+    expect(kindOf(h1(), name)).toBe('name');
+    // The last crumb is the area's `BreadcrumbGroup` item, a string `area-layout.tsx` renders: its whole name, as
+    // Cloudscape renders it (decisions-needed.md, the crumb's line).
     expect(crumbs().at(-1)?.text).toBe(name);
   });
 
-  it('a 64-character name, a long path, a 256-character description, a long policy name and boundary, none with a space: each sits in the area’s `aws-iam-value`, a word that breaks anywhere', async () => {
+  it('a 64-character name, a long path, a 256-character description, a long policy name and boundary, none with a space: each in the area’s element of its kind, and no service class (issue 467, R6)', async () => {
     const name = `r${'x'.repeat(63)}`;
     const rolePath = `/${'p'.repeat(100)}/`;
     const description = 'd'.repeat(256);
@@ -665,20 +730,12 @@ describe('a loaded role', () => {
     const boundary = `arn:aws:iam::000000000000:policy/B${'b'.repeat(127)}`;
     await openLoaded({ name, path: rolePath, description, attached: [policy], boundary });
 
-    // The area's own rule, as the browser applies it (jsdom computes no style sheet).
-    const css = readFileSync(
-      path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'components', 'role-sections.css'),
-      'utf8',
-    );
-    expect(css).toMatch(/\.aws-iam-value\s*\{[^}]*overflow-wrap:\s*anywhere;/);
-
-    const wrapped = [...main().querySelectorAll('.aws-iam-value')].map((element) => element.textContent ?? '');
-    const arn = arnOf({ name, path: rolePath });
-    for (const value of [arn, description, rolePath, policy.name, boundary]) {
-      expect(wrapped, value.slice(0, 40)).toContain(value);
-    }
-    const nameCell = policiesTable().findRows()[0]?.getElement().querySelector('th');
-    expect(nameCell?.querySelector('.aws-iam-value')?.textContent).toBe(policy.name);
+    expect(kindOf(main(), arnOf({ name, path: rolePath }))).toBe('address');
+    expect(kindOf(main(), rolePath)).toBe('address');
+    expect(kindOf(main(), description)).toBe('text');
+    expect(kindOf(main(), policy.name)).toBe('name');
+    expect(kindOf(main(), boundary)).toBe('address');
+    expect(document.querySelector('.aws-iam-value')).toBeNull();
   });
 });
 
@@ -770,20 +827,15 @@ describe('not found and loading', () => {
       expect(within(main()).getByText('Role not found')).toBeInTheDocument();
     });
     expect(h1()).toHaveTextContent('gone-role');
-    expect(
-      within(main()).getByText(
-        'The emulator holds no role named “gone-role”. It may have been deleted, or the emulator restarted.',
-      ),
-    ).toBeInTheDocument();
+    const sentence = within(main()).getByText(/^The emulator holds no role named/).closest('p');
+    expect(sentence).toHaveTextContent(
+      'The emulator holds no role named “gone-role”. It may have been deleted, or the emulator restarted.',
+    );
     expect(tabs()).toEqual([]);
     expect(sectionHeadings()).toEqual([]);
     expect(within(main()).queryByRole('button', { name: 'Edit' })).toBeNull();
-    expect(
-      within(main())
-        .getByText(/^The emulator holds no role named/)
-        .closest('.aws-iam-value'),
-      'the sentence breaks a long name inside its box',
-    ).not.toBeNull();
+    expect(h1Description(), 'no description under the h1 (issue 467, R3)').toBeNull();
+    expect(kindOf(main(), 'gone-role'), 'the sentence shows the name as a name (issue 467, R6)').toBe('name');
 
     // The page's own link, not the side navigation's or the crumb's.
     const links = within(main())
@@ -840,6 +892,12 @@ describe('failure states', () => {
       'The emulator answered 501 Not Implemented for GetRole, so Studio cannot show the role.',
     );
     expect(h1()).toHaveTextContent(PLAIN.name);
+  });
+
+  it('a failed load: the h1 has no description (issue 467, R3)', async () => {
+    await openFailing(() => errorAnswer(400, 'ValidationError', 'bad'));
+
+    expect(h1Description()).toBeNull();
   });
 
   it('AccessDenied: "Access denied" with "GetRole was refused: " and the message', async () => {
