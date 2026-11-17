@@ -15,6 +15,10 @@
 // names. The walk ends at the first name link. A tab list is one Tab stop whose tabs are reached with the arrow keys
 // (the WAI-ARIA tabs pattern, Cloudscape's `Tabs`), so on a function's page the next tab is reached with Arrow Right
 // while focus is on a tab and with Tab otherwise; reaching a tab does not leave the page.
+//
+// Issue 467 rewrote one step (its test-criteria.md, "Flow checks, changed"; requirement R9, rule 3): the walk on a
+// function's page reaches the copy controls of "Function ARN" and "Function URL" between "Refresh" and the tabs. The
+// check grants its page the clipboard for that step.
 
 import createWrapper from '@cloudscape-design/components/test-utils/selectors';
 import type { Locator, Page, Request } from '@playwright/test';
@@ -31,7 +35,7 @@ import {
 } from './support/aws-area';
 import { focusedAx, focusRing, hasFocus } from './support/focus';
 import { ACTION, addressOf, heading, NAVIGATION_TOGGLE, SIDE_NAVIGATION } from './support/frame';
-import { LambdaSeeded } from './support/lambda';
+import { functionUrlDirect, LambdaSeeded } from './support/lambda';
 import {
   ABOUT,
   ACTIONS,
@@ -56,17 +60,22 @@ import {
 import {
   createForm,
   EVENT_FUNCTIONS,
+  FUNCTION_ARN,
+  FUNCTION_URL,
   LIST_NOT_READ,
   NOT_FOUND,
   openCreateForm,
   openFunction,
+  OVERVIEW,
   PAGE_TABS,
+  pairValue,
   USE_ANOTHER_ROLE,
   EXISTING_ROLE,
   CANCEL,
 } from './support/lambda-page';
 import { Lines } from './support/lines';
 import { checkPrefix, scrollsSideways } from './support/s3';
+import { copiedText, copyControl, grantClipboard } from './support/screen-rules';
 
 const PAGINATION = createWrapper().findTable().findPagination().toSelector();
 
@@ -273,12 +282,25 @@ test('studio.lambda-function-screens-keyboard-and-layout', async ({ ctx, page, c
     },
   );
 
+  // Issue 467 (requirement R9, rule 3) replaced 'on a function\'s page → "Refresh" and the six tabs are reached in that
+  // order' with the walk below, on the page of a function with a URL: the two copy controls come between "Refresh"
+  // and the tabs, and Enter on "Copy Function ARN" copies it.
+  const withUrl = `${p}-url`;
+  await seeded.function(withUrl, { url: true });
+  await grantClipboard(context, stack.studio.origin);
+
   await lines.line(
-    'With the keyboard only on a function\'s page → "Refresh" and the six tabs are reached in that order; on the create form with "Use another role" → the fields in visible order, then "Cancel", "Create Event Function"',
+    'With the keyboard only on the page of a function with a URL → "Refresh", "Copy Function ARN", "Copy Function URL" and the six tabs are reached in that order, focus visible on each; Enter on "Copy Function ARN" shows "Function ARN copied" and focus stays on the control; on the create form with "Use another role" → the fields in visible order, then "Cancel", "Create Event Function"',
     async () => {
       const found: string[] = [];
-      const name = two[0];
+      const name = withUrl;
+      const url = await functionUrlDirect(ctx, port, name);
+      expect(url, `a direct GetFunctionUrlConfig ${name} gives a URL`).not.toBeNull();
       await openFunction(page, name);
+      // The page is read in parts: the URL arrives after the tabs show, and the next step Tabs through its control.
+      await expect
+        .poll(() => pairValue(page, OVERVIEW, FUNCTION_URL), { message: `"${FUNCTION_URL}" shows the URL` })
+        .toContain(url ?? '');
       await focusDocumentStart(page);
       let stop: Stop | null = null;
       for (let i = 0; i < 60; i++) {
@@ -288,20 +310,55 @@ test('studio.lambda-function-screens-keyboard-and-layout', async ({ ctx, page, c
       }
       if (stop === null || !named(REFRESH, 'button')(stop)) found.push(`the Tab never reached "${REFRESH}"`);
       else {
+        if (stop.ring === null) found.push(`"${REFRESH}" draws no focus indicator`);
         const reached: string[] = [];
-        for (const tab of PAGE_TABS) {
-          await page.keyboard.press(stop?.role === 'tab' ? 'ArrowRight' : 'Tab');
+        for (const control of [copyControl(FUNCTION_ARN), copyControl(FUNCTION_URL)]) {
+          await page.keyboard.press('Tab');
           stop = await focusedStop(page);
           reached.push(shown(stop));
-          if (stop === null || stop.name !== tab || (stop.role !== 'tab' && stop.role !== 'link')) {
-            found.push(`expected the tab "${tab}" next, reached ${shown(stop)}`);
+          if (stop === null || !named(control, 'button')(stop)) {
+            found.push(`expected "${control}" next, reached ${shown(stop)}`);
             break;
           }
-          if (stop.ring === null) found.push(`the tab "${tab}" draws no focus indicator`);
+          if (stop.ring === null) found.push(`"${control}" draws no focus indicator`);
+        }
+        if (found.length === 0) {
+          for (const tab of PAGE_TABS) {
+            await page.keyboard.press(stop?.role === 'tab' ? 'ArrowRight' : 'Tab');
+            stop = await focusedStop(page);
+            reached.push(shown(stop));
+            if (stop === null || stop.name !== tab || (stop.role !== 'tab' && stop.role !== 'link')) {
+              found.push(`expected the tab "${tab}" next, reached ${shown(stop)}`);
+              break;
+            }
+            if (stop.ring === null) found.push(`the tab "${tab}" draws no focus indicator`);
+          }
         }
         ctx.log(`after "${REFRESH}": ${reached.join(', ')}`);
         if (!addressOf(functionPath(name)).test(page.url()))
           found.push(`reaching the tabs left the page for ${page.url()}`);
+      }
+
+      // Enter on "Copy Function ARN", reached with Tab from the document's start.
+      const copyArn = page.getByRole('main').getByRole('button', { name: copyControl(FUNCTION_ARN), exact: true });
+      await focusDocumentStart(page);
+      let onCopy = false;
+      for (let i = 0; i < 60 && !onCopy; i++) {
+        await page.keyboard.press('Tab');
+        const at = await focusedStop(page);
+        if (at === null) break;
+        onCopy = named(copyControl(FUNCTION_ARN), 'button')(at);
+      }
+      if (!onCopy) found.push(`the Tab never reached "${copyControl(FUNCTION_ARN)}"`);
+      else {
+        await page.keyboard.press('Enter');
+        const copied = page.getByText(copiedText(FUNCTION_ARN), { exact: true });
+        await expect(copied.first())
+          .toBeVisible({ timeout: 5_000 })
+          .catch(() =>
+            found.push(`Enter on "${copyControl(FUNCTION_ARN)}" did not show "${copiedText(FUNCTION_ARN)}"`),
+          );
+        if (!(await hasFocus(copyArn))) found.push(`focus left "${copyControl(FUNCTION_ARN)}" after Enter`);
       }
 
       await openCreateForm(page, '?role=existing');
