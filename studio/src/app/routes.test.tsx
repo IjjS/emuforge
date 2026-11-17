@@ -161,6 +161,30 @@ describe('routes', () => {
     },
   );
 
+  it.each(['/aws/lambda', '/aws/lambda/functions'])(
+    'opens %s as the Lambda function list: the h1 "Event Functions", the address unchanged',
+    async (path) => {
+      const router = createMemoryRouter(routes, { initialEntries: [path] });
+      render(
+        <Providers>
+          <RouterProvider router={router} />
+        </Providers>,
+      );
+
+      expect(inCloudscape(await heading('Event Functions'))).toBe(true);
+      expect(router.state.location.pathname).toBe(path);
+    },
+  );
+
+  it.each(['/aws/lambda/functions/function/orders/test', '/aws/lambda/layers'])(
+    'opens %s as the "no screen yet" page of AWS Lambda',
+    async (path) => {
+      open(path);
+
+      await expectNoScreenYet('AWS Lambda');
+    },
+  );
+
   it.each(['/aws/s3/buckets/my-bucket', '/aws/s3/bucket/create', '/aws/s3/directory-buckets'])(
     'opens %s as the "no screen yet" page of Amazon Simple Storage Service, with no ListBuckets request',
     async (path) => {
