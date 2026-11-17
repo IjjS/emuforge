@@ -1,0 +1,17 @@
+# Issue 302: a wizard whose route holds a parameter; step k is opened at <route>?step=<k>.
+screen: apigateway.edit-api
+service: apigateway
+kind: wizard
+route: /aws/apigateway/apis/{id}/edit
+
+breadcrumbs: [API Gateway, APIs, Edit API]
+steps:
+  - title: API details
+    sections:
+      - title: Settings
+        fields: [Name]
+  - title: Endpoint
+    sections:
+      - title: Endpoint type
+  - title: Review and save
+submit: Save changes
