@@ -69,16 +69,16 @@ cannot be combined with --on-request; --stop and --list ignore it.
 Services (issue 327). The decision ends with the services line of pm-scope (`  services     every service: <why>` or
 `  services     <names, or "none"> (<why>)`), the selection _pmscope.select makes of the same paths with the work
 tree's manifest and the merge base's, each the main manifest's rows and then each service's (issue 402). A path
-under tests/integration/studio/services/<service>/ gives that service, as a path of its screens does. For kind diff, when the selection is a set of services, the integration
-step writes it to <checkout>/output/checks/services.json ({"services": [names], "why": why}) and starts
-./run --services <that file>, after --on-request when both, the retry the same way: run then leaves out every check
-whose manifest row names a service not in the set (`not-run`, counted in `checks.not_run`). When the selection is
-every service (a shared path, the kinds main, full and only, a unit's deferred step) it starts ./run as without the
-option and removes a services.json of an earlier run. The integration step's entry of last.json gets `services`,
-copied from the run's report.json of this run (null when every service's checks were part of the run, else the
-sorted list); the key is absent when there is no such report. The record's `scope` holds `services` as pm-scope
---json prints it. pm-merge holds the entry's `services` against the branch's own selection. --checks runs every id
-it names whatever its service, without --services.
+under tests/integration/studio/services/<service>/ gives that service, as a path of its screens does. For kind diff,
+when the selection is a set of services, the integration step writes it to <checkout>/output/checks/services.json
+({"services": [names], "why": why}) and starts ./run --services <that file>, after --on-request when both, the retry
+the same way: run then leaves out every check whose manifest row names a service not in the set (`not-run`, counted
+in `checks.not_run`). When the selection is every service (a shared path, the kinds main, full and only, a unit's
+deferred step) it starts ./run as without the option and removes a services.json of an earlier run. The integration
+step's entry of last.json gets `services`, copied from the run's report.json of this run (null when every service's
+checks were part of the run, else the sorted list); the key is absent when there is no such report. The record's
+`scope` holds `services` as pm-scope --json prints it. pm-merge holds the entry's `services` against the branch's
+own selection. --checks runs every id it names whatever its service, without --services.
 
 Failed checks named. After the integration step ran, pm-check reads <checkout>/output/integration/report.json
 when that step wrote it for the record's commit, and puts `checks` {passed, failed: [ids], error: [ids], not_run}
@@ -89,10 +89,11 @@ status still comes from its exit code alone, and `failed` stays the list of step
 Single checks. --checks runs only the integration step, limited to the named manifest ids: the suite starts with
 --not-run and output/checks/checks-not-run.json, which lists every other id of the checkout's manifest, and
 --on-request, so an asked check that is on request runs. --checks takes an id of the main manifest
-(tests/integration/manifest.jsonl) or of a service's manifest (tests/integration/studio/services/<service>/manifest.jsonl),
-the manifest every reader reads, main manifest first (issue 402). It is refused (exit 2, nothing written) for an id
-that is in neither, a part of the manifest that cannot be read (named), a checkout without the main manifest or
-tests/integration/run, and with --full, --only or --on-request. It takes a check slot like every run that starts
+(tests/integration/manifest.jsonl) or of a service's manifest
+(tests/integration/studio/services/<service>/manifest.jsonl), the manifest every reader reads, main manifest first
+(issue 402). It is refused (exit 2, nothing written) for an id that is in neither, a part of the manifest that
+cannot be read (named), a checkout without the main manifest or tests/integration/run, and with --full, --only or
+--on-request. It takes a check slot like every run that starts
 the suite, runs the step once (no retry, no flakes.jsonl line), logs to output/logs/checks-integration.log and
 records to output/checks/checks.json and a timestamped *-checks.json (kind checks, passed false, the step's
 `asked` {id: verdict}); last.json and the check-<step>.log files are not touched. Each asked check is printed

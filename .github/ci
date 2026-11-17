@@ -162,7 +162,7 @@ def manifest_rows():
     out = []
     for f in manifest_files():
         try:
-            if f.is_symlink() or not f.is_file():
+            if f != MANIFEST and (f.is_symlink() or not f.is_file()):  # the main manifest is read as before
                 raise OSError(f"{f.relative_to(CHECKOUT)} is not a regular file")
             for line in f.read_text().splitlines():
                 if line.strip():

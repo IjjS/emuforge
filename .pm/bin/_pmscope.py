@@ -456,9 +456,11 @@ def _joined(parts):
 def manifest_at(top, commit):
     """The text of the manifest (R3.2) at `commit` of the repository at `top`: the main manifest's ("" when the
     commit has none), then each service's manifest the commit holds, in name order; "" when it holds none of them.
-    Raises Unreadable when git fails or does not answer, and when the commit holds a service's manifest, the folder
-    tests/integration/studio/services or a folder <s> of it as anything but a regular file and real folders (a
-    symbolic link, a submodule); a caller that catches it passes None to select()."""
+    Raises Unreadable when git fails or does not answer, and when the commit holds a service's manifest as anything
+    but a regular file reached through real folders: the folder tests/integration/studio/services or a folder <s>
+    of it a symbolic link or a submodule, the manifest one or a folder. A regular file in the place of the folder
+    services or of a folder <s> adds no row, as in the work tree. A caller that catches Unreadable passes None to
+    select()."""
     parts = [git(top, "show", f"{commit}:{MANIFEST}") if git(top, "ls-tree", commit, "--", MANIFEST).strip() else ""]
     folder = SERVICE_CHECKS.rstrip("/")
     found = {}
@@ -466,8 +468,13 @@ def manifest_at(top, commit):
         meta, _, path = entry.partition("\t")
         mode = meta.split(" ", 1)[0]
         s = service_of_manifest(path)
-        if path == folder or (path.startswith(SERVICE_CHECKS) and SERVICE.fullmatch(path[len(SERVICE_CHECKS):])):
-            raise Unreadable(f"{path} is not a folder at {commit}")
+        rest = path[len(SERVICE_CHECKS):].split("/") if path.startswith(SERVICE_CHECKS) else []
+        if path == folder or (len(rest) == 1 and SERVICE.fullmatch(rest[0])):
+            if mode not in ("100644", "100755"):
+                raise Unreadable(f"{path} is not a folder at {commit}")
+            continue
+        if len(rest) > 2 and SERVICE.fullmatch(rest[0]) and rest[1] == SERVICE_MANIFEST:
+            raise Unreadable(f"{SERVICE_CHECKS}{rest[0]}/{SERVICE_MANIFEST} is a folder at {commit}")
         if s is not None:
             if mode not in ("100644", "100755"):
                 raise Unreadable(f"{path} is not a regular file at {commit}")
