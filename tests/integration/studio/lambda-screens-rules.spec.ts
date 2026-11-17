@@ -55,6 +55,7 @@ import {
   copyControl,
   drawnLines,
   fieldTexts,
+  firstContainerTop,
   grantClipboard,
   nameOfLength,
   oneLineProblems,
@@ -63,7 +64,6 @@ import {
   setClipboard,
   shortPrefix,
   timesOnPage,
-  topOf,
   whereWords,
 } from './support/screen-rules';
 
@@ -75,7 +75,7 @@ const CREATE_BOUND_MS = 20_000;
 
 /** The measures of R11 at 390 by 844, light, the notice open. */
 const FIRST_ROW_AT_MOST = 730;
-const TAB_LIST_AT_MOST = 800;
+const FIRST_CONTAINER_AT_MOST = 800;
 
 async function sizeTo(page: Page, width: number): Promise<void> {
   await page.setViewportSize({ width, height: width === 390 ? 844 : 800 });
@@ -228,17 +228,17 @@ test('studio.lambda-screens-say-where-once', async ({ ctx, page }) => {
   );
 
   await lines.line(
-    'The page of a function made directly, the notice open → the tab list begins at y 800 or above — 390 wide, light',
+    "The page of a function made directly, the notice open → the first container of the page's content begins at y 800 or above — 390 wide, light",
     async () => {
       await sizeTo(page, 390);
       await page.emulateMedia({ colorScheme: 'light' });
       await openRead(page, first, null);
       await expectLine(page, connectedAt(port), 20_000);
       await expect(s.notice, 'the notice is open').toBeVisible();
-      const top = await topOf(page.getByRole('main').getByRole('tablist'));
-      ctx.log(`the tab list begins at y ${String(top)}`);
-      expect(top, 'the top of the tab list').not.toBeNull();
-      expect(top ?? Infinity, 'the top of the tab list').toBeLessThanOrEqual(TAB_LIST_AT_MOST);
+      const top = await firstContainerTop(page);
+      ctx.log(`the first container of the page's content begins at y ${String(top)}`);
+      expect(top, 'the top of the first container').not.toBeNull();
+      expect(top ?? Infinity, 'the top of the first container').toBeLessThanOrEqual(FIRST_CONTAINER_AT_MOST);
     },
   );
 

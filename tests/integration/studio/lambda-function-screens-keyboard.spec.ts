@@ -184,11 +184,20 @@ async function focusDocumentStart(page: Page): Promise<void> {
   });
 }
 
-/** The text of `locator` against its own box: whole (its text is `text`), not clipped, inside the viewport's width. */
-async function wholeIn(locator: Locator, text: string): Promise<string[]> {
+/**
+ * The text of `locator` against its own box: whole (its text is `text`), not clipped, and inside `bound`: the
+ * viewport's width, or (`'scroll region'`) the table's own sideways scroll region, the nearest ancestor inside the
+ * table's root that scrolls sideways, whose box ends inside the viewport and whose scrollable width holds the element
+ * (decisions.md, PM 2026-11-18 04:40, item 9). Without such a region the viewport's width bounds it.
+ */
+async function wholeIn(
+  locator: Locator,
+  text: string,
+  bound: 'viewport' | 'scroll region' = 'viewport',
+): Promise<string[]> {
   if ((await locator.count()) === 0) return [`no element for "${text.slice(0, 20)}…"`];
   return locator.first().evaluate(
-    (el, wanted) => {
+    (el, { wanted, within }) => {
       const found: string[] = [];
       const norm = (s: string) => s.replace(/\s+/g, '').trim();
       if (norm((el as HTMLElement).innerText) !== norm(wanted)) {
@@ -203,11 +212,34 @@ async function wholeIn(locator: Locator, text: string): Promise<string[]> {
         }
         if (at.tagName === 'TD' || at.tagName === 'TH') break;
       }
-      if (box.right > document.documentElement.clientWidth + 0.5)
-        found.push(`ends at ${box.right.toFixed(1)}, past the viewport`);
+      const viewport = document.documentElement.clientWidth;
+      let region: Element | null = null;
+      const table = within === null ? null : el.closest(within);
+      if (table !== null) {
+        for (let at = el.parentElement; at && at !== table.parentElement; at = at.parentElement) {
+          if (/auto|scroll/.test(getComputedStyle(at).overflowX)) {
+            region = at;
+            break;
+          }
+        }
+      }
+      if (region === null) {
+        if (box.right > viewport + 0.5) found.push(`ends at ${box.right.toFixed(1)}, past the viewport`);
+        return found;
+      }
+      const r = region.getBoundingClientRect();
+      if (r.right > viewport + 0.5) found.push(`its scroll region ends at ${r.right.toFixed(1)}, past the viewport`);
+      // The element's place in the region's scrollable content, whatever the region is scrolled to.
+      const left = box.left - r.left - region.clientLeft + region.scrollLeft;
+      const right = box.right - r.left - region.clientLeft + region.scrollLeft;
+      if (left < -0.5 || right > region.scrollWidth + 0.5) {
+        found.push(
+          `lies at ${left.toFixed(1)}..${right.toFixed(1)}, outside its scroll region's ${String(region.scrollWidth)}`,
+        );
+      }
       return found;
     },
-    text,
+    { wanted: text, within: bound === 'scroll region' ? TABLE : null },
     ACTION,
   );
 }
@@ -514,7 +546,7 @@ test('studio.lambda-function-screens-keyboard-and-layout', async ({ ctx, page, c
   await seeded.function(longest, { description: longDescription });
 
   await lines.line(
-    'With a function whose name is 64 characters without a hyphen (starting with `<p>`) and whose description is 256 characters without a space made directly, under the filter, "Wrap lines" on as at the start → the whole name and description are visible inside their cells and the page does not scroll sideways; on its page the `h1` and the crumb hold the whole name without the page scrolling sideways — 1280 and 390 wide',
+    'With a function whose name is 64 characters without a hyphen (starting with `<p>`) and whose description is 256 characters without a space made directly, under the filter, "Wrap lines" on as at the start → the whole name and description are visible inside their cells (at 390 the description\'s cell inside the table\'s own scroll region) and the page does not scroll sideways; on its page the `h1` and the crumb hold the whole name without the page scrolling sideways — 1280 and 390 wide',
     async () => {
       expect(longest.length, 'the name is 64 characters long').toBe(64);
       const found: string[] = [];
@@ -538,7 +570,9 @@ test('studio.lambda-function-screens-keyboard-and-layout', async ({ ctx, page, c
         }
         if (descriptionAt < 0) found.push(`${String(width)}: no column "Description"`);
         else {
-          for (const problem of await wholeIn(cellOf(page, longest, descriptionAt), longDescription)) {
+          // At 390 the table scrolls within itself (decisions.md, PM 2026-11-18 04:40, item 9); at 1280 the viewport.
+          const bound = width === 390 ? 'scroll region' : 'viewport';
+          for (const problem of await wholeIn(cellOf(page, longest, descriptionAt), longDescription, bound)) {
             found.push(`${String(width)}: the description's cell ${problem}`);
           }
         }
