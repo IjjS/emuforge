@@ -1,18 +1,66 @@
 #!/usr/bin/env -S python3 -I
 """Run the tests of the .pm/bin tools: unittest discovery of test_*.py in this directory, verbosity 2.
 
-  .pm/bin/tests/run
+  .pm/bin/tests/run [--leave-out <test file> ...]
 
 pm-check's harness step runs it from .pm/bin/tests. .pm/bin is put on sys.path so a test imports the module it
-tests. Exit code 0 only when every test passed; 1 on any failure or error, or when no test was found.
+tests. Without arguments it runs every test file, as discovery finds them. Exit code 0 only when every test passed;
+1 on any failure or error, or when no test was found.
+
+--leave-out names test files not to run: pm-check gives it the on-touch files that no changed path is a source of
+(_pmscope.ON_TOUCH). Before the tests' output it prints one line per left-out file, in name order:
+`left out: <file> (no changed path is one of its sources; .pm/bin/tests/run without arguments runs every file)`.
+Every other test file is loaded and run, one file at a time in today's order of discovery, and a left-out file is
+not loaded by the runner (a remaining file may still import it for a helper or a base class). The exit code is
+taken over the tests that ran. Refused before any test is loaded, with the usage line on stderr and exit 2: a name
+that is not of the form test_[a-z0-9_]+.py, a name with no such file beside the runner, --leave-out without a
+name, any other argument. A name is only compared with the file names found beside the runner; it is never
+joined to a path, imported by its text or given to a shell.
 """
 import os
+import re
 import sys
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+USAGE = "usage: .pm/bin/tests/run [--leave-out <test file> ...]"
+NAME = re.compile(r"test_[a-z0-9_]+\.py")
+LEFT_OUT = "left out: {} (no changed path is one of its sources; .pm/bin/tests/run without arguments runs every file)"
+
+
+def refuse(why):
+    print(USAGE, file=sys.stderr)
+    print(f"run: {why}", file=sys.stderr)
+    sys.exit(2)
+
+
+def leave_out(args):
+    """The sorted set of test files the arguments name; refuses anything else."""
+    if args[0] != "--leave-out":
+        refuse(f"unknown argument {args[0]!r}")
+    if len(args) == 1:
+        refuse("--leave-out names no test file")
+    here = {n for n in os.listdir(HERE) if n.startswith("test_") and n.endswith(".py")}
+    for name in args[1:]:
+        if not NAME.fullmatch(name):
+            refuse(f"{name!r} is not a test file name (test_[a-z0-9_]+.py)")
+        if name not in here:
+            refuse(f"{name!r} is not a test file beside the runner")
+    return sorted(set(args[1:]))
+
+
+left = leave_out(sys.argv[1:]) if sys.argv[1:] else []
 sys.path.insert(0, os.path.dirname(HERE))
-suite = unittest.defaultTestLoader.discover(HERE, pattern="test_*.py", top_level_dir=HERE)
+loader = unittest.defaultTestLoader
+if left:
+    for name in left:
+        print(LEFT_OUT.format(name), flush=True)
+    suite = unittest.TestSuite()
+    for name in sorted(n for n in os.listdir(HERE) if n.startswith("test_") and n.endswith(".py")):
+        if name not in left:
+            suite.addTests(loader.discover(HERE, pattern=name, top_level_dir=HERE))
+else:
+    suite = loader.discover(HERE, pattern="test_*.py", top_level_dir=HERE)
 result = unittest.TextTestRunner(stream=sys.stdout, verbosity=2).run(suite)
 if not result.testsRun:
     print("no test_*.py test found in", HERE)
