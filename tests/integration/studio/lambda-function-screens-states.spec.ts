@@ -295,7 +295,12 @@ test('studio.lambda-function-screens-say-when-the-engine-stops-answering', async
       await expectLine(page, connectedAt(port), BACK_BOUND_MS);
       const direct = await functionNamesDirect(ctx, port, p);
       expect([...direct].sort(), 'a direct ListFunctions under <p>').toEqual([listed, kept].sort());
-      await underPrefix();
+      // No input: the filter `<p>` applied before the engine stopped is still the one token, and the screen reads
+      // again by itself once the connection is back (R10.2).
+      const tokens = await tokenTexts(page);
+      expect(tokens.length === 1 && tokens[0].includes(p), `the filter's token ${JSON.stringify(tokens)} is <p>`).toBe(
+        true,
+      );
       await expectNames(page, direct, 'the rows under the filter <p> once the engine answers', BACK_BOUND_MS);
       expect(await stillSamePage(page), 'the document was not reloaded').toBe(true);
     },

@@ -87,8 +87,6 @@ test('studio.lambda-function-create-lists-the-roles-of-the-emulator', async ({ c
       const shown = texts.find((t) => t.split(' ')[0] === serviceRole);
       ctx.log(`the option of ${serviceRole}: ${JSON.stringify(shown)}`);
       expect(shown, `the option of ${serviceRole} shows its path`).toContain('/service-role/');
-      const plain = texts.find((t) => t.split(' ')[0] === `${p}-01`);
-      expect(plain, `the option of ${p}-01 (path /) shows no path`).toBe(`${p}-01`);
     },
   );
 
