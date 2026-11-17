@@ -35,7 +35,7 @@ import {
 } from './support/aws-area';
 import { focusedAx, focusRing, hasFocus } from './support/focus';
 import { ACTION, addressOf, heading, NAVIGATION_TOGGLE, SIDE_NAVIGATION } from './support/frame';
-import { functionUrlDirect, LambdaSeeded } from './support/lambda';
+import { functionUrlDirect, LambdaSeeded } from './services/lambda/lambda';
 import {
   ABOUT,
   ACTIONS,
@@ -56,7 +56,7 @@ import {
   REFRESH,
   screen,
   TABLE,
-} from './support/lambda-list';
+} from './services/lambda/lambda-list';
 import {
   createForm,
   EVENT_FUNCTIONS,
@@ -72,9 +72,9 @@ import {
   USE_ANOTHER_ROLE,
   EXISTING_ROLE,
   CANCEL,
-} from './support/lambda-page';
+} from './services/lambda/lambda-page';
 import { Lines } from './support/lines';
-import { checkPrefix, scrollsSideways } from './support/s3';
+import { checkPrefix, scrollsSideways } from './support/service-screens';
 import { copiedText, copyControl, grantClipboard } from './support/screen-rules';
 
 const PAGINATION = createWrapper().findTable().findPagination().toSelector();

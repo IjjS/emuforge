@@ -22,7 +22,7 @@ import {
   inlinePolicyNamesDirect,
   READ_ONLY_ACCESS,
   type DirectRole,
-} from './support/iam';
+} from './services/iam/iam';
 import { Lines } from './support/lines';
 
 // ---------------------------------------------------------------------------------------------------------------

@@ -23,7 +23,7 @@ import {
   getFunctionDirect,
   LambdaSeeded,
   type FunctionConfiguration,
-} from './support/lambda';
+} from './services/lambda/lambda';
 import {
   applyFilter,
   CREATE_PATH,
@@ -33,7 +33,7 @@ import {
   runtimeText,
   screen,
   TABLE,
-} from './support/lambda-list';
+} from './services/lambda/lambda-list';
 import {
   createForm,
   FUNCTION_ARN,
@@ -44,9 +44,9 @@ import {
   openFunction,
   OVERVIEW,
   pairValue,
-} from './support/lambda-page';
+} from './services/lambda/lambda-page';
 import { Lines } from './support/lines';
-import { checkPrefix, scrollsSideways } from './support/s3';
+import { checkPrefix, scrollsSideways } from './support/service-screens';
 import {
   breakAfterProblems,
   breakAtSpacesProblems,

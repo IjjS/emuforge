@@ -1,6 +1,6 @@
 // The S3 bucket list screen as a user meets it, and the emulator it is compared with (test-criteria.md, issue 56,
 // Flow checks; requirement R3 to R9), and the direct calls of the checks of a bucket's page, create, empty and delete
-// (issue 256). Used by the `s3-*.spec.ts` checks, `safety.spec.ts` and `s3-seed-structure.ts`.
+// (issue 256). Used by S3's check files (`s3-*.spec.ts`, `aws-no-screen-part.spec.ts`) and `s3-seed-structure.ts`.
 //
 // - Direct calls: S3 operations straight to the emulator, SigV4-signed with the key it wrote for this run, TLS
 //   verified against its `ca.pem`, never through the engine. Unlike `directS3` of `aws-clients.ts` they carry a query
@@ -34,10 +34,11 @@ import fs from 'node:fs';
 import https from 'node:https';
 import path from 'node:path';
 
-import { directSqs } from './aws-clients-general';
-import { EnvError, expect, type Ctx } from './check';
-import { emulatorDir, readEmulatorFiles } from './emulator';
-import { ACTION, heading } from './frame';
+import { directSqs } from '../../support/aws-clients-general';
+import { EnvError, expect, type Ctx } from '../../support/check';
+import { emulatorDir, readEmulatorFiles } from '../../support/emulator';
+import { ACTION, heading } from '../../support/frame';
+import { isListBuckets } from '../../support/service-screens';
 
 // ---------------------------------------------------------------------------------------------------------------
 // The screen's words.
@@ -122,14 +123,6 @@ export const LONGEST_NAME = 63;
 // ---------------------------------------------------------------------------------------------------------------
 
 /**
- * The check's own prefix `<p>`: `efit-<run id>-<tag>`. Each check passes its own `tag`, none of which starts with
- * another, so a filter on one check's prefix never lists another check's bucket on the run's shared emulator.
- */
-export function checkPrefix(ctx: Ctx, tag: string): string {
-  return `efit-${ctx.runId.toLowerCase().replace(/[^a-z0-9]/g, '-')}-${tag}`;
-}
-
-/**
  * AWS's public names of the Regions the checks make buckets in (AWS General Reference, "AWS Regions"). A check
  * reads the code of each bucket from a direct answer and looks its name up here.
  */
@@ -142,39 +135,8 @@ const REGION_NAMES: Record<string, string> = {
 export function regionText(code: string | null): string {
   if (code === null) return '-';
   const name = REGION_NAMES[code];
-  if (name === undefined) throw new Error(`no Region name for ${code} in support/s3.ts`);
+  if (name === undefined) throw new Error(`no Region name for ${code} in services/s3/s3.ts`);
   return `${name} ${code}`;
-}
-
-/** The browser time zone the date check sets on its context, and its fixed offset (Korea keeps no summer time). */
-export const SEOUL = { timeZone: 'Asia/Seoul', offsetMinutes: 9 * 60, label: 'UTC+09:00' };
-
-const MONTHS = [
-  'January',
-  'February',
-  'March',
-  'April',
-  'May',
-  'June',
-  'July',
-  'August',
-  'September',
-  'October',
-  'November',
-  'December',
-];
-
-/**
- * The "Creation date" cell for the `CreationDate` `iso` of a direct answer, in a zone `offsetMinutes` east of UTC
- * named `label` (R4.2): "October 30, 2026, 23:18:34 (UTC+09:00)"; "-" without a date.
- */
-export function creationDateText(iso: string | null, zone: { offsetMinutes: number; label: string }): string {
-  if (iso === null) return '-';
-  const at = new Date(Date.parse(iso) + zone.offsetMinutes * 60_000);
-  if (Number.isNaN(at.getTime())) throw new Error(`the direct answer's CreationDate ${iso} is not a date`);
-  const two = (n: number) => String(n).padStart(2, '0');
-  const time = `${two(at.getUTCHours())}:${two(at.getUTCMinutes())}:${two(at.getUTCSeconds())}`;
-  return `${MONTHS[at.getUTCMonth()]} ${String(at.getUTCDate())}, ${String(at.getUTCFullYear())}, ${time} (${zone.label})`;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1400,45 +1362,9 @@ export async function shownPreferences(page: Page): Promise<{ pageSize: string |
   return { pageSize, wrapLines };
 }
 
-/**
- * From now on, in the current document, records whether `text` appears anywhere in it (`appeared`). Survives the
- * area's route changes, which load no document.
- */
-export async function watchText(page: Page, text: string): Promise<void> {
-  await page.evaluate((wanted) => {
-    const w = window as unknown as { __emuforgeItSeen?: Record<string, boolean> };
-    w.__emuforgeItSeen = { ...w.__emuforgeItSeen, [wanted]: false };
-    const look = () => {
-      if ((document.body.textContent ?? '').includes(wanted)) w.__emuforgeItSeen![wanted] = true;
-    };
-    new MutationObserver(look).observe(document.body, { subtree: true, childList: true, characterData: true });
-    look();
-  }, text);
-}
-
-/** Whether `text` appeared since `watchText`; `null` when it is not watched in the current document. */
-export async function appeared(page: Page, text: string): Promise<boolean | null> {
-  return page.evaluate(
-    (wanted) =>
-      (window as unknown as { __emuforgeItSeen?: Record<string, boolean> }).__emuforgeItSeen?.[wanted] ?? null,
-    text,
-  );
-}
-
-/** Whether the page scrolls sideways now. */
-export async function scrollsSideways(page: Page): Promise<boolean> {
-  return page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
-}
-
 // ---------------------------------------------------------------------------------------------------------------
 // The page's ListBuckets requests.
 // ---------------------------------------------------------------------------------------------------------------
-
-/** True when `url` with `method` is a `ListBuckets` to the engine at `engineOrigin`: `GET /` (path style). */
-export function isListBuckets(url: string, method: string, engineOrigin: string): boolean {
-  const u = new URL(url);
-  return u.origin === engineOrigin && method === 'GET' && u.pathname === '/';
-}
 
 /** One `ListBuckets` request of the page, with its query and its answer's status once it came. */
 export interface ListRequest {

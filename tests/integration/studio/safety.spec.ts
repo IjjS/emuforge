@@ -11,7 +11,7 @@ import path from 'node:path';
 
 import { emulatorDir, EnvError, expect, readEmulatorFiles, startStack, test } from './support';
 import { connectionView } from './support/home';
-import { isListBuckets } from './support/s3';
+import { isListBuckets } from './support/service-screens';
 import { HEALTH_PATH, Traffic } from './support/traffic';
 
 /** Every file under `dir`, recursively. */

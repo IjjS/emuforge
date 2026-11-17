@@ -37,7 +37,7 @@ import {
   listRolesDirect,
   shownDirect,
   waitForState,
-} from './support/lambda';
+} from './services/lambda/lambda';
 import {
   applyFilter,
   CREATE,
@@ -49,7 +49,7 @@ import {
   listHeading,
   openList,
   screen,
-} from './support/lambda-list';
+} from './services/lambda/lambda-list';
 import {
   BEING_CREATED,
   CANCEL,
@@ -70,9 +70,9 @@ import {
   shownAboveButtons,
   USE_ANOTHER_ROLE,
   type FormValues,
-} from './support/lambda-page';
+} from './services/lambda/lambda-page';
 import { Lines } from './support/lines';
-import { checkPrefix, appeared, watchText } from './support/s3';
+import { checkPrefix, appeared, watchText } from './support/service-screens';
 import { DISCARD, DISCARD_HEADING, discardDialog, KEEP_EDITING } from './support/screen-rules';
 
 /** How long the form may take from "Create Event Function" to the function's page (three requests in order). */

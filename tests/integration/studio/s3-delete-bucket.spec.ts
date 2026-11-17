@@ -14,10 +14,10 @@ import { expect, startStack, test } from './support';
 import { connectedAt, emulatorLine, endpointPattern, expectLine } from './support/aws-area';
 import { ACTION, addressOf, heading } from './support/frame';
 import { Lines } from './support/lines';
+import { checkPrefix } from './support/service-screens';
 import {
   BUCKETS_PATH,
   bucketNamesDirect,
-  checkPrefix,
   DELETE,
   deleteObjectDirect,
   expectNames,
@@ -29,7 +29,7 @@ import {
   screen,
   Seeded,
   shownDirect,
-} from './support/s3';
+} from './services/s3/s3';
 import {
   DELETE_H1,
   deletedItem,
@@ -43,7 +43,7 @@ import {
   NOT_EMPTY,
   NOT_EMPTY_TEXT,
   openDeletePage,
-} from './support/s3-bucket-actions';
+} from './services/s3/s3-bucket-actions';
 
 /** Waits for the bucket list. */
 async function expectList(page: Page): Promise<void> {

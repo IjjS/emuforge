@@ -24,17 +24,15 @@ import { hasFocus } from './support/focus';
 import { ACTION, addressOf, heading, providersSection, SIDE_NAVIGATION, SIDE_NAVIGATION_ACTIVE } from './support/frame';
 import { markPage, stillSamePage } from './support/home';
 import { Lines } from './support/lines';
+import { appeared, checkPrefix, creationDateText, SEOUL, watchText } from './support/service-screens';
 import {
   ABOUT,
-  appeared,
   ARN_COPIED,
   BUCKETS_PATH,
   bucketNamesDirect,
   CLEAR_FILTER,
-  checkPrefix,
   COPY_ARN,
   CREATE,
-  creationDateText,
   CRUMBS,
   DELETE,
   EMPTY,
@@ -61,15 +59,13 @@ import {
   screen,
   Seeded,
   SELECTION_ACTIONS,
-  SEOUL,
   SERVICE_LABEL,
   shownNames,
   shownRows,
   TAB_DIRECTORY,
   TABLE_TITLE,
   TOOLS,
-  watchText,
-} from './support/s3';
+} from './services/s3/s3';
 import {
   HEADER,
   headerDescriptions,

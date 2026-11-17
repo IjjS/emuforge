@@ -24,7 +24,7 @@ import {
 } from './support/aws-area';
 import { ACTION, addressOf, heading } from './support/frame';
 import { markPage, stillSamePage } from './support/home';
-import { functionNamesDirect, getFunctionDirect, LambdaSeeded, listRolesDirect } from './support/lambda';
+import { functionNamesDirect, getFunctionDirect, LambdaSeeded, listRolesDirect } from './services/lambda/lambda';
 import {
   ACTIONS,
   applyFilter,
@@ -45,7 +45,7 @@ import {
   screen,
   shownNames,
   tokenTexts,
-} from './support/lambda-list';
+} from './services/lambda/lambda-list';
 import {
   CONNECTION_STATUS,
   createForm,
@@ -64,9 +64,9 @@ import {
   ROLE_STILL_THERE,
   shownAboveButtons,
   type FormValues,
-} from './support/lambda-page';
+} from './services/lambda/lambda-page';
 import { Lines } from './support/lines';
-import { checkPrefix } from './support/s3';
+import { checkPrefix } from './support/service-screens';
 
 /** How long a screen may take to read again by itself once the connection is back: the line's bound, twice. */
 const BACK_BOUND_MS = 2 * LINE_CHANGE_BOUND_MS;

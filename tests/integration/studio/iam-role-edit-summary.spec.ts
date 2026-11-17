@@ -16,7 +16,7 @@ import type { Page } from '@playwright/test';
 
 import { expect, startStack, test, type Ctx } from './support';
 import { ACTION, heading } from './support/frame';
-import { containing, getRoleDirect, iamAnswer, IamSeeded, roleNamesDirect, SERVICE_ROLE_PATH } from './support/iam';
+import { containing, getRoleDirect, iamAnswer, IamSeeded, roleNamesDirect, SERVICE_ROLE_PATH } from './services/iam/iam';
 import { Lines } from './support/lines';
 
 // ---------------------------------------------------------------------------------------------------------------

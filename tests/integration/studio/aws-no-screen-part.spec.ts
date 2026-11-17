@@ -77,8 +77,8 @@ import {
   pathLayout,
   pathPlaceProblems,
 } from './support/no-screen-part';
+import { checkPrefix, scrollsSideways } from './support/service-screens';
 import {
-  checkPrefix,
   H1 as BUCKETS_H1,
   LONGEST_NAME,
   NAV_DIRECTORY,
@@ -89,10 +89,9 @@ import {
   objectKeysDirect,
   openList,
   screen,
-  scrollsSideways,
   Seeded,
   TAB_DIRECTORY,
-} from './support/s3';
+} from './services/s3/s3';
 import {
   bucketPath,
   EngineRecord,
@@ -103,7 +102,7 @@ import {
   tabPath,
   TIERING,
   VERSIONING,
-} from './support/s3-bucket-page';
+} from './services/s3/s3-bucket-page';
 
 const S3 = PART_SERVICES.s3;
 const LAMBDA = PART_SERVICES.lambda;

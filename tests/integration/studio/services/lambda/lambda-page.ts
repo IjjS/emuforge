@@ -1,7 +1,7 @@
 // A Lambda function's page and the form "Create Event Function" as a user meets them (test-criteria.md, issue 84,
 // Flow checks; requirement R5, R6, R9, R10). Used by the `lambda-function-page*.spec.ts`,
 // `lambda-function-create*.spec.ts` and `lambda-function-screens*.spec.ts` checks. The list and its delete dialog
-// are `support/lambda-list.ts`; the emulator side (direct calls, `LambdaSeeded`) is `support/lambda.ts`.
+// are `services/lambda/lambda-list.ts`; the emulator side (direct calls, `LambdaSeeded`) is `services/lambda/lambda.ts`.
 //
 // - The screens' words: R5 (the page), R6.2 to R6.5 (the form), R9.3, R9.4 and R10 (states and failures).
 // - Readers: a section's key-value pair (the label's `dt` and its `dd`, the pattern of a container of key-value pairs;
@@ -16,8 +16,8 @@
 
 import type { BrowserContext, Locator, Page } from '@playwright/test';
 
-import { expect, type Ctx } from './check';
-import { ACTION, BREADCRUMB_GROUP, SIDE_NAVIGATION, heading } from './frame';
+import { expect, type Ctx } from '../../support/check';
+import { ACTION, BREADCRUMB_GROUP, SIDE_NAVIGATION, heading } from '../../support/frame';
 import { CREATE, CREATE_PATH, functionPath } from './lambda-list';
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -214,7 +214,7 @@ export const RUNTIMES: { label: string; id: string; handler: string }[] = [
 ];
 export function runtimeOf(label: string): { label: string; id: string; handler: string } {
   const r = RUNTIMES.find((x) => x.label === label);
-  if (!r) throw new Error(`no runtime ${label} in support/lambda-page.ts`);
+  if (!r) throw new Error(`no runtime ${label} in services/lambda/lambda-page.ts`);
   return r;
 }
 

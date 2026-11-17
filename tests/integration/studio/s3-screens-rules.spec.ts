@@ -21,22 +21,21 @@ import { expect, startStack, test } from './support';
 import { connectedAt, emulatorLine, endpointPattern, expectLine } from './support/aws-area';
 import { ACTION, addressOf, heading } from './support/frame';
 import { Lines } from './support/lines';
+import { checkPrefix, scrollsSideways } from './support/service-screens';
 import {
   BUCKETS_PATH,
   bucketNamesDirect,
   bucketPropertiesDirect,
-  checkPrefix,
   expectNames,
   filterFor,
   H1,
   listBucketsDirect,
   openList,
   screen,
-  scrollsSideways,
   Seeded,
   shownPreferences,
-} from './support/s3';
-import { emptySentence, deleteSentence, openDeletePage, openEmptyPage, pageShows } from './support/s3-bucket-actions';
+} from './services/s3/s3';
+import { emptySentence, deleteSentence, openDeletePage, openEmptyPage, pageShows } from './services/s3/s3-bucket-actions';
 import {
   bucketPath,
   ENCRYPTION,
@@ -48,7 +47,7 @@ import {
   SSE_S3,
   TAGS,
   VERSIONING,
-} from './support/s3-bucket-page';
+} from './services/s3/s3-bucket-page';
 import {
   breakAfterProblems,
   breakAtSpacesProblems,
