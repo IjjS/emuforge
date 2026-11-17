@@ -110,33 +110,36 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
   const failureState = failure === undefined ? undefined : readFailureState(failure, connection, 'function');
 
   // Kept from the previous render, as React's own pattern for it, so each change is announced once, in the render
-  // that first shows it.
+  // that first shows it. What one render has to say is said as one announcement, since a newer one replaces it.
   const [refreshing, setRefreshing] = useState(false);
   const [seenStatus, setSeenStatus] = useState<{ text: string | undefined } | undefined>(undefined);
   const [seenFailureLine, setSeenFailureLine] = useState<string>();
   const failureLine = failureState?.firstText;
-  // A change of the status, once (R5.2): its new text, or "Function ready" when it clears.
-  if (fn !== undefined && seenStatus?.text !== status?.text) {
-    setSeenStatus({ text: status?.text });
-    if (seenStatus !== undefined) {
-      announce(status?.text ?? READY);
-    }
-  } else if (fn !== undefined && seenStatus === undefined) {
-    setSeenStatus({ text: undefined });
-  }
+  const toSay: string[] = [];
   // "Function refreshed", once the refreshed reading is shown (R8).
   if (refreshing && read !== undefined) {
     setRefreshing(false);
-    announce(REFRESHED);
+    toSay.push(REFRESHED);
   } else if (refreshing && failure !== undefined) {
     setRefreshing(false);
+  }
+  // A change of the status, once (R5.2): its new text, or "Function ready" when it clears; the first status read is
+  // shown, not announced.
+  if (fn !== undefined && (seenStatus === undefined || seenStatus.text !== status?.text)) {
+    setSeenStatus({ text: status?.text });
+    if (seenStatus !== undefined) {
+      toSay.push(status?.text ?? READY);
+    }
   }
   // A failure state is announced once, with its first line (R10.2).
   if (failureLine !== seenFailureLine) {
     setSeenFailureLine(failureLine);
     if (failureLine !== undefined) {
-      announce(failureLine);
+      toSay.push(failureLine);
     }
+  }
+  if (toSay.length > 0) {
+    announce(toSay.join('. '));
   }
 
   const handleRefresh = () => {

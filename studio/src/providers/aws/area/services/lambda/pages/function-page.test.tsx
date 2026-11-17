@@ -608,6 +608,21 @@ describe('"Refresh"', () => {
     });
     expect(said.filter((text) => text === 'Function refreshed')).toHaveLength(1);
   });
+  it('"Refresh" while "Being created", answered Active: one announcement says the page was refreshed and that the function is ready', async () => {
+    const said = recordAnnouncements();
+    await openLoaded({ ...ORDERS, moments: [{ state: 'Pending' }, { state: 'Active' }] });
+    expect(statusIn(header())).toEqual({ type: 'in-progress', text: 'Being created' });
+
+    fireEvent.click(within(header()).getByRole('button', { name: 'Refresh' }));
+    await waitFor(() => {
+      expect(statusIn(header()).type).toBeNull();
+    });
+    await waitFor(() => {
+      expect(said).toContain('Function refreshed. Function ready');
+    });
+    expect(said.filter((text) => text.includes('Function ready'))).toHaveLength(1);
+    expect(said.filter((text) => text.includes('Function refreshed'))).toHaveLength(1);
+  });
 });
 
 describe('a function the emulator does not hold', () => {
