@@ -7,18 +7,30 @@
 # version and commit, the checkout's commit, the verdict of every manifest check (passed, failed, error, not-run)
 # and the relay fidelity figure.
 #
-# Usage: run [--not-run <file>] [--on-request], in either order. The file is a not-run list (.github/not-run.json,
-# issue 53): its `checks` name manifest ids, each with a `reason`; its other keys are not read. A check is on
-# request when its manifest row is labelled `on-request` (issue 315); without --on-request every such check is left
-# out with the reason "on request: not part of a default run; run it with --on-request", and with it they run like
-# every other check. A check that is listed and on request has the list's reason, with or without --on-request. A
+# Usage: run [--not-run <file>] [--on-request] [--services <file>], in any order. The --not-run file is a not-run
+# list (.github/not-run.json, issue 53): its `checks` name manifest ids, each with a `reason`; its other keys are not
+# read. A check is on request when its manifest row is labelled `on-request` (issue 315); without --on-request every
+# such check is left out with the reason "on request: not part of a default run; run it with --on-request", and with
+# it they run like every other check. A check that is listed and on request has the list's reason, with or without --on-request. A
 # check left out is not executed: the engine checks get EMUFORGE_IT_NOT_RUN naming a file of the left-out ids, so
 # support::check::check returns at once, and Playwright gets one --grep-invert pattern of the left-out Studio and
 # product ids. Each is reported `not-run` with its reason and counts neither as passed nor as failed; everything
 # else, the builds included, runs as when nothing is left out. A list that cannot be read, is not that shape or
 # names an id twice or one the manifest does not hold makes every check `error` (exit 127) before anything is built
-# or started. Any other argument, or either option twice, is refused with a usage line (exit 2). Only the list and
-# the label turn this on; EMUFORGE_IT_NOT_RUN from the caller is unset.
+# or started.
+#
+# A check of a service is a manifest row whose `service` is a service name, the name of its folder under
+# studio/src/providers/aws/area/services/ (issue 327); every other row is a check of no service and always runs.
+# The --services file is JSON {"services": [<service name>, ...]} or {"services": null}; its other keys are not
+# read. null is every service: nothing more is left out. With a list, every check of a service not in the list is
+# left out as a listed check is, with the reason "service <s> not touched: its checks are not part of this run"; a
+# name no row has selects nothing. When more than one reason applies, the list's comes first, then on request, then
+# the service. report.json says `services`: the file's list, sorted without repeats, or null when every service's
+# checks were part of the run (without the option, with null, and in a report of a run that did not get to its
+# checks). A services file that cannot be read, is not that shape or holds an entry that is not a service name makes
+# every check `error` (exit 127) before anything is built or started. Any other argument, or any option twice, is
+# refused with a usage line (exit 2). Only the list, the label and the services file turn this on;
+# EMUFORGE_IT_NOT_RUN from the caller is unset.
 #
 # Relay fidelity (engine/references/relay-fidelity.md): passed / total over the manifest rows labelled
 # `transparency` whose verdict is passed or failed (`error` counts in neither). It is written into report.json as
@@ -55,12 +67,14 @@ unset NODE_OPTIONS NODE_PATH
 export AWS_EC2_METADATA_DISABLED=true
 
 usage() {
-  echo "usage: tests/integration/run [--not-run <file>] [--on-request]" >&2
+  echo "usage: tests/integration/run [--not-run <file>] [--on-request] [--services <file>]" >&2
   exit 2
 }
 not_run=no
 not_run_file=
 on_request=no
+services=no
+services_file=
 while (($#)); do
   case "$1" in
     --not-run)
@@ -69,6 +83,9 @@ while (($#)); do
     --on-request)
       [[ "$on_request" == no ]] || usage
       on_request=yes; shift ;;
+    --services)
+      [[ "$services" == no && $# -ge 2 ]] || usage
+      services=yes; services_file="$2"; shift 2 ;;
     *) usage ;;
   esac
 done
@@ -79,7 +96,7 @@ checkout="$(cd ../.. && pwd)"
 out="$checkout/output/integration"
 logs="$checkout/output/logs"
 rm -rf "$out/verdicts" "$out/logs" "$out/tmp" "$out/playwright" "$out/report.json" "$out/not-run.ids" \
-  "$out/not-run.json"
+  "$out/not-run.json" "$out/services.json"
 mkdir -p "$out/verdicts" "$logs"
 run_id="$(date +%s)-$$"
 product_image="emuforge-it-product-$run_id"
@@ -92,11 +109,15 @@ emulator_commit=unknown
 # reason, the run did not get to its checks and every check is `error` with that reason.
 report() {
   python3 -I - "$here/manifest.jsonl" "$out/verdicts" "$out/report.json" \
-    "$emulator_version" "$emulator_commit" "$commit" "$out/not-run.json" "${1:-}" <<'PY'
+    "$emulator_version" "$emulator_commit" "$commit" "$out/not-run.json" "$out/services.json" "${1:-}" <<'PY'
 import json, pathlib, sys
-manifest, verdicts, report, version, emulator_commit, commit, not_run, reason = sys.argv[1:]
-# {id: reason} of the checks left out (the validated not-run list, the rows on request); absent when none is.
+manifest, verdicts, report, version, emulator_commit, commit, not_run, services, reason = sys.argv[1:]
+# {id: reason} of the checks left out (the validated not-run list, the rows on request, the checks of the services
+# not touched); absent when none is.
 listed = json.loads(pathlib.Path(not_run).read_text()) if pathlib.Path(not_run).exists() else {}
+# The accepted services file's list, sorted without repeats, or null; absent without --services. A run that did not
+# get to its checks left nothing out by service.
+touched = json.loads(pathlib.Path(services).read_text()) if pathlib.Path(services).exists() and not reason else None
 checks = []
 transparency = set()
 for line in pathlib.Path(manifest).read_text().splitlines():
@@ -121,7 +142,7 @@ counted = [c for c in checks if c["check_id"] in transparency and c["verdict"] i
 fidelity = dict(passed=sum(c["verdict"] == "passed" for c in counted), total=len(counted))
 pathlib.Path(report).write_text(json.dumps(dict(
     emulator_version=version, emulator_commit=emulator_commit, commit=commit, relay_fidelity=fidelity,
-    checks=checks), indent=1) + "\n")
+    services=touched, checks=checks), indent=1) + "\n")
 for c in checks:
     print(f"  {c['verdict']:7} {c['check_id']}  {c['message'].splitlines()[0][:160] if c['message'] else ''}", file=sys.stderr)
 verdicts = {c["verdict"] for c in checks if c["verdict"] != "not-run"}
@@ -151,24 +172,45 @@ free_port() {
   python3 -I -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])'
 }
 
-# What is left out, before anything is built or started: the not-run list given to --not-run and, without
-# --on-request, every manifest row labelled `on-request` (each with the fixed reason ON_REQUEST below); an id that
-# is both has the list's reason. When anything is left out, or a list was given, it writes $out/not-run.json
-# ({id: reason}) for report and $out/not-run.ids (one id per line) for the engine checks, and prints the Playwright
-# pattern of the left-out .spec.ts ids (nothing when there is none); on a refusal of the list it prints the reason.
-# Only ids that have the form of a manifest id are used further. A manifest that cannot be read, when no list was
-# given, leaves nothing out: the run ends at its report as it would without this block. (Its output goes through a
-# file: bash 3.2 cannot parse a heredoc inside $(...).)
+# What is left out, before anything is built or started: the not-run list given to --not-run, without
+# --on-request every manifest row labelled `on-request` (each with the fixed reason ON_REQUEST below) and, with a
+# --services list, every check of a service not in it (each with the reason of service_reason below); an id left out
+# for more than one reason has the list's, then on request's. When anything is left out, or a list was given, it
+# writes $out/not-run.json ({id: reason}) for report and $out/not-run.ids (one id per line) for the engine checks,
+# and prints the Playwright pattern of the left-out .spec.ts ids (nothing when there is none); an accepted services
+# file is written as $out/services.json (its list sorted without repeats, or null) for report. On a refusal of the
+# list or of the services file it prints the reason. Only ids that have the form of a manifest id are used further,
+# and a service name is only compared with manifest values. A manifest that cannot be read, when no list was given,
+# leaves nothing out: the run ends at its report as it would without this block. (Its output goes through a file:
+# bash 3.2 cannot parse a heredoc inside $(...).)
 grep_invert=
-if python3 -I - "$not_run" "$not_run_file" "$here/manifest.jsonl" "$out" "$on_request" >"$out/not-run.out" <<'PY'
+if python3 -I - "$not_run" "$not_run_file" "$here/manifest.jsonl" "$out" "$on_request" "$services" \
+  "$services_file" >"$out/not-run.out" <<'PY'
 import json, pathlib, re, sys
-has_list, path, manifest, out, on_request = sys.argv[1:]
+has_list, path, manifest, out, on_request, has_services, services_path = sys.argv[1:]
 ON_REQUEST = "on request: not part of a default run; run it with --on-request"
 ID = re.compile(r"[a-z]+\.[a-z0-9-]+")
+SERVICE = re.compile(r"[a-z][a-z0-9]*(-[a-z0-9]+)*")
+
+
+def service_reason(service):
+    """The reason of a check of `service` when `service` is not in the services file's list."""
+    return f"service {service} not touched: its checks are not part of this run"
+
 
 def refuse(what):
     print(f"not-run list {path}: {what}")
     sys.exit(1)
+
+
+def refuse_services(what):
+    print(f"services file {services_path}: {what}")
+    sys.exit(1)
+
+
+def read_rows():
+    return [json.loads(line) for line in pathlib.Path(manifest).read_text().splitlines() if line.strip()]
+
 
 listed = {}
 if has_list == "yes":
@@ -180,7 +222,7 @@ if has_list == "yes":
         refuse(f"is not JSON: {e}")
     if not isinstance(data, dict) or not isinstance(data.get("checks"), list):
         refuse('has no list "checks"')
-    rows = [json.loads(line) for line in pathlib.Path(manifest).read_text().splitlines() if line.strip()]
+    rows = read_rows()
     paths = {row["check_id"]: row["path"] for row in rows}
     for n, entry in enumerate(data["checks"]):
         if not isinstance(entry, dict) or not isinstance(entry.get("id"), str):
@@ -193,25 +235,58 @@ if has_list == "yes":
         if check_id in listed:
             refuse(f"checks[{n}] {check_id!r} is listed twice")
         listed[check_id] = entry["reason"]
-elif on_request == "yes":
-    sys.exit(0)
 else:
     try:
-        rows = [json.loads(line) for line in pathlib.Path(manifest).read_text().splitlines() if line.strip()]
+        rows = read_rows()
     except (OSError, ValueError):
-        sys.exit(0)
+        rows = []
     paths = {}
-# A row is on request when its `labels` is a list that holds `on-request`, its `check_id` has the form of an id and
-# its `path` is a string; any other row is not, and nothing of it reaches a command line.
+# The services file: {"services": null} or {"services": [<service name>, ...]}; its other keys are not read.
+touched = None
+if has_services == "yes":
+    try:
+        data = json.loads(pathlib.Path(services_path).read_text())
+    except OSError as e:
+        refuse_services(f"cannot be read: {e.strerror or e}")
+    except ValueError as e:
+        refuse_services(f"is not JSON: {e}")
+    if not isinstance(data, dict) or "services" not in data:
+        refuse_services('is not an object with the key "services"')
+    names = data["services"]
+    if names is not None:
+        if not isinstance(names, list):
+            refuse_services('"services" is neither null nor a list')
+        for n, name in enumerate(names):
+            if not isinstance(name, str) or not SERVICE.fullmatch(name):
+                refuse_services(f"services[{n}] {name!r} is not a service name")
+        touched = sorted(set(names))
+    pathlib.Path(out, "services.json").write_text(json.dumps(touched) + "\n")
+
+
+# Only a row whose `check_id` has the form of an id and whose `path` is a string can be left out by its label or its
+# service; nothing of any other row reaches a command line.
+def usable(row):
+    return (isinstance(row, dict) and isinstance(row.get("check_id"), str) and ID.fullmatch(row["check_id"])
+            and isinstance(row.get("path"), str))
+
+
+# A row is on request when its `labels` is a list that holds `on-request`.
 asked = {}
 if on_request != "yes":
     for row in rows:
-        if (isinstance(row, dict) and isinstance(row.get("labels"), list) and "on-request" in row["labels"]
-                and isinstance(row.get("check_id"), str) and ID.fullmatch(row["check_id"])
-                and isinstance(row.get("path"), str)):
+        if usable(row) and isinstance(row.get("labels"), list) and "on-request" in row["labels"]:
             asked[row["check_id"]] = ON_REQUEST
             paths.setdefault(row["check_id"], row["path"])
-left_out = {**asked, **listed}
+# A row is a check of a service when its `service` is a service name; any other row is a check of no service.
+by_service = {}
+if touched is not None:
+    for row in rows:
+        service = row.get("service") if isinstance(row, dict) else None
+        if (usable(row) and isinstance(service, str) and SERVICE.fullmatch(service)
+                and service not in touched):
+            by_service[row["check_id"]] = service_reason(service)
+            paths.setdefault(row["check_id"], row["path"])
+left_out = {**by_service, **asked, **listed}
 if not left_out and has_list != "yes":
     sys.exit(0)
 pathlib.Path(out, "not-run.json").write_text(json.dumps(left_out, indent=1) + "\n")
