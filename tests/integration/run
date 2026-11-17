@@ -7,17 +7,16 @@
 # version and commit, the checkout's commit, the verdict of every manifest check (passed, failed, error, not-run)
 # and the relay fidelity figure.
 #
-# Usage: run [--not-run <file>] [--on-request] [--services <file>], in any order. The --not-run file is a not-run
-# list (.github/not-run.json, issue 53): its `checks` name manifest ids, each with a `reason`; its other keys are not
-# read. A check is on request when its manifest row is labelled `on-request` (issue 315); without --on-request every
-# such check is left out with the reason "on request: not part of a default run; run it with --on-request", and with
-# it they run like every other check. A check that is listed and on request has the list's reason, with or without --on-request. A
+# Usage: run [--not-run <file>] [--on-request] [--services <file>], in any order. The --not-run file is a not-run list
+# (.github/not-run.json, issue 53): its `checks` name manifest ids, each with a `reason`; its other keys are not read. A
+# check is on request when its manifest row is labelled `on-request` (issue 315); without --on-request every such check
+# is left out with the reason "on request: not part of a default run; run it with --on-request", and with it they run
+# like every other check. A check that is listed and on request has the list's reason, with or without --on-request. A
 # check left out is not executed: the engine checks get EMUFORGE_IT_NOT_RUN naming a file of the left-out ids, so
 # support::check::check returns at once, and Playwright gets one --grep-invert pattern of the left-out Studio and
-# product ids. Each is reported `not-run` with its reason and counts neither as passed nor as failed; everything
-# else, the builds included, runs as when nothing is left out. A list that cannot be read, is not that shape or
-# names an id twice or one the manifest does not hold makes every check `error` (exit 127) before anything is built
-# or started.
+# product ids. Each is reported `not-run` with its reason and counts neither as passed nor as failed; everything else,
+# the builds included, runs as when nothing is left out. A list that cannot be read, is not that shape or names an id
+# twice or one the manifest does not hold makes every check `error` (exit 127) before anything is built or started.
 #
 # A check of a service is a manifest row whose `service` is a service name, the name of its folder under
 # studio/src/providers/aws/area/services/ (issue 327); every other row is a check of no service and always runs.

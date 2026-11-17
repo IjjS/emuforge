@@ -51,12 +51,12 @@ start command, as the engine checks do without an engine.
 
 ## Checks not run
 
-`run` takes `--not-run <file>`, `--on-request` and `--services <file>`, each at most once, in any order; with any
-other argument, or an option without its file, it prints the usage line
-`usage: tests/integration/run [--not-run <file>] [--on-request] [--services <file>]` and exits 2. Without `--on-request` it runs every check that is not labelled `on-request` in the
-manifest, and reports each labelled one `not-run` with the message
-`on request: not part of a default run; run it with --on-request`. With `--on-request` those run like every other
-check.
+`run` takes `--not-run <file>`, `--on-request` and `--services <file>`, each at most once, in any order; with any other
+argument, or an option without its file, it prints the usage line
+`usage: tests/integration/run [--not-run <file>] [--on-request] [--services <file>]` and exits 2. Without
+`--on-request` it runs every check that is not labelled `on-request` in the manifest, and reports each labelled one
+`not-run` with the message `on request: not part of a default run; run it with --on-request`. With `--on-request`
+those run like every other check.
 
 `run --not-run <file>` leaves out the checks a not-run list names; the workflow on GitHub Actions passes it
 `.github/not-run.json`. Only the list's `checks` are read: each entry's `id` must be a manifest id, listed once,
@@ -77,9 +77,9 @@ list's comes first, then on request, then the service: with `--on-request`, a ch
 the list is `not-run` with the service's message. `report.json` holds `services`: the file's list, sorted without
 repeats, or `null` when every service's checks were part of the run.
 
-The checks on request and those of the services not touched are left out the way the listed ones are, by the same ids file and the same pattern. A
-left-out engine check returns at once: `run` gives `cargo test` `EMUFORGE_IT_NOT_RUN` naming
-`output/integration/not-run.ids`, and `support::check::check` prints `not-run <id>` and writes no verdict, so
+The checks on request and those of the services not touched are left out the way the listed ones are, by the same ids
+file and the same pattern. A left-out engine check returns at once: `run` gives `cargo test` `EMUFORGE_IT_NOT_RUN`
+naming `output/integration/not-run.ids`, and `support::check::check` prints `not-run <id>` and writes no verdict, so
 `cargo test` shows that test as `ok`. A left-out Studio or product check is left out of the Playwright run with one
 `--grep-invert` pattern of the left-out ids. `report.json` is the record: each left-out check is `not-run` with its
 reason as its message, and counts neither as passed nor as failed; the exit code and relay fidelity are computed
