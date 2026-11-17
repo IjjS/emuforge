@@ -64,9 +64,9 @@ import {
   oneLineProblems,
   pageHeader,
   pairValueOf,
+  scrollRegionProblems,
   setClipboard,
   shortPrefix,
-  tableFit,
   timesOnPage,
 } from './support/screen-rules';
 
@@ -397,7 +397,7 @@ test('studio.s3-values-break-where-they-can-be-read', async ({ ctx, page }) => {
   );
 
   await lines.line(
-    'The bucket list under the filter of a bucket made directly whose name is 63 characters without a hyphen, "Wrap lines" on as at the start → the name is drawn on more than one line inside its cell, the table is not wider than the box it scrolls in, and the page does not scroll sideways — 390 wide',
+    'The bucket list under the filter of a bucket made directly whose name is 63 characters without a hyphen, "Wrap lines" on as at the start → the name is drawn on more than one line inside its cell, the cell inside the table\'s own scroll region, and the page does not scroll sideways — 390 wide',
     async () => {
       expect({ length: hyphenless.length, hyphen: hyphenless.includes('-') }, `${hyphenless}`).toEqual({
         length: 63,
@@ -408,16 +408,14 @@ test('studio.s3-values-break-where-they-can-be-read', async ({ ctx, page }) => {
       expect((await shownPreferences(page)).wrapLines, '"Wrap lines" as at the start').toBe(true);
       const cell = await cellUnder(screen(page).table, hyphenless, COL_NAME);
       const drawn = await drawnLines(cell, hyphenless);
-      const fit = await tableFit(screen(page).table.locator('table').first());
-      ctx.log(`the name drawn ${JSON.stringify(drawn)}; the table ${JSON.stringify(fit)}`);
+      // The table scrolls within itself at 390 (decisions.md, PM 2026-11-18 05:40, item 12).
+      const region = await scrollRegionProblems(cell, screen(page).table);
+      ctx.log(`the name drawn ${JSON.stringify(drawn)}; against the table's scroll region ${JSON.stringify(region)}`);
       const found: string[] = [];
       if (drawn === null) found.push('the name: not shown');
       else if (drawn.lines.length < 2) found.push(`the name is drawn on one line: ${JSON.stringify(drawn.lines)}`);
       if (await widerThanItsCell(cell)) found.push('the name is wider than its cell');
-      if (fit === null) found.push('no table');
-      else if (fit.tableWidth > fit.boxWidth + 1) {
-        found.push(`the table is ${String(fit.tableWidth)} wide in a box of ${String(fit.boxWidth)}`);
-      }
+      found.push(...region);
       if (await scrollsSideways(page)) found.push('the page scrolls sideways');
       await sizeTo(page, 1280);
       expect(found).toEqual([]);
