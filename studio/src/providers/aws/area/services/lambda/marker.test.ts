@@ -43,9 +43,12 @@ describe('the marker of a filtered first page', () => {
     expect(firstPageMarker(LONG_B)).toBe(`${LONG_B.slice(0, 63)}a~`);
   });
 
-  it.each([['y'.repeat(65)], ['a b'], ['a.b'], ['a/b'], ['café'], ['함수']])('is "matches nothing" for %s', (text) => {
-    expect(firstPageMarker(text)).toBeUndefined();
-  });
+  it.each([['y'.repeat(65)], ['a b'], ['a.b'], ['a/b'], ['café'], ['함수'], ['a한']])(
+    'is "matches nothing" for %s',
+    (text) => {
+      expect(firstPageMarker(text)).toBeUndefined();
+    },
+  );
 });
 
 describe('the run of names a marker starts', () => {
