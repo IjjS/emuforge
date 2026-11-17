@@ -20,6 +20,7 @@ import type { FunctionSummary } from '../api';
 import { DeleteFunctionsDialog } from '../components/delete-functions-dialog';
 import { readFailureState, useAnnouncer, type ReadFailureState } from '../components/failure-states';
 import { Code, ReadFailure } from '../components/failures';
+import '../components/function-sections.css';
 import { useAreaModalRoot } from '../components/modal-root';
 import { CREATE_FUNCTION_PATH, functionPath, lastModifiedText, runtimeText, typeText, valueText } from '../format';
 import { useFunctionListing, type FunctionCount, type FunctionListing } from '../queries';
@@ -291,18 +292,27 @@ export function FunctionListPage({ connection }: { connection: AreaConnection })
       'Functions in your local emulator, not in an AWS account. The filter matches the start of a name, upper and lower case told apart.'
     );
 
+  // With "Wrap lines" on, a long word of a name or a description (64 or 256 characters without a space) breaks
+  // inside its cell instead of widening its column past the viewport (R11), with the area's own class.
+  const wrapClass = preferences.wrapLines ? 'aws-lambda-value' : undefined;
   const columns: TableProps.ColumnDefinition<FunctionSummary>[] = [
     {
       id: 'name',
       header: 'Function name',
       isRowHeader: true,
       cell: (fn) => (
-        <Link href={functionPath(fn.name)} onFollow={handleFollow}>
-          {fn.name}
-        </Link>
+        <span className={wrapClass}>
+          <Link href={functionPath(fn.name)} onFollow={handleFollow}>
+            {fn.name}
+          </Link>
+        </span>
       ),
     },
-    { id: 'description', header: 'Description', cell: (fn) => valueText(fn.description) },
+    {
+      id: 'description',
+      header: 'Description',
+      cell: (fn) => <span className={wrapClass}>{valueText(fn.description)}</span>,
+    },
     { id: 'packageType', header: 'Package type', cell: (fn) => valueText(fn.packageType) },
     { id: 'runtime', header: 'Runtime', cell: (fn) => runtimeText(fn.runtime) },
     { id: 'type', header: 'Type', cell: (fn) => typeText(fn.durable) },
