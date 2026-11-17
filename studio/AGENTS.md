@@ -477,8 +477,8 @@ the value element (`value-text.tsx`), the value with its copy control (`copy-val
    label; a press puts the value, exactly as the emulator gave it, on the clipboard and shows "{label} copied", or
    "{label} could not be copied" when the browser refuses. A value that is absent ("-"), a status or a failed read
    has no control. The value's text follows entry 4; the popover stays inside the area (no portal). In a table,
-   values are not given a control each: where the console's screen has an action for it, an action the screen's
-   reference spec lists (the S3 bucket list's "Copy ARN"), that action is the way.
+   values are not given a control each: where the console's screen has an action for it (an action the screen's
+   reference spec lists, such as the S3 bucket list's "Copy ARN"), that action is the way.
    Reason: an ARN or a URL is read here to be used in a terminal or an IaC file, and selecting by hand a value that
    wraps over five lines at 390 wide is the slow path.
 4. **How a long value breaks.** At 1280 and 390 wide no page scrolls sideways, no value is cut or clipped, and a
