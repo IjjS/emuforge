@@ -1,0 +1,13 @@
+# Issue 302: specs/param-detail.yaml with its route written out (requirement R3.3).
+# Ten items, all matched by pages/param-detail at this route.
+screen: apigateway.rest-api
+service: apigateway
+kind: detail
+route: /aws/apigateway/apis/abc123
+
+breadcrumbs: [API Gateway, APIs, p302-api]
+header:
+  title: p302-api
+sections:
+  - title: API details
+    fields: [API ID, Description]

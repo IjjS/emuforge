@@ -1,9 +1,16 @@
 #!/usr/bin/env -S python3 -I
-"""Merge a unit's branch into local main. Only the PM runs this; there are no pull requests.
+"""Merge a unit's branch into its target, main into an issue branch, or an issue branch into local main. Only the
+PM runs this; there are no pull requests.
 
-  pm-merge <issue> <unit> [--dry-run]
+  pm-merge <issue> <unit> [--dry-run]      a unit into its target: main, or the issue branch feat/<issue>
+  pm-merge <issue> --take-main [--dry-run] local main into the issue branch, in the issue's worktree
+  pm-merge <issue> [--dry-run]             the issue branch into local main
 
-Refuses unless: the main checkout is on main with a clean tree; the unit's worktree has nothing uncommitted; the
+The target of a unit is decided from git as pm-scope decides it (_pmscope.target_of): feat/<issue> for a branch
+<feat|refactor|fix>/<issue>-<rest> when that local branch exists, else main. A unit whose target is main is merged
+as described next, word for word as before the issue branch existed.
+
+A unit into main. Refuses unless: the main checkout is on main with a clean tree; the unit's worktree has nothing uncommitted; the
 unit's last pm-check run passed on the commit being merged; and rev passed the unit: the newest
 review-impl-<unit>-r<k>.md in .pm/issue-<n>/ says verdict: pass. A test unit (t<n>) that is merged by itself has
 no implementation review; its newest review-checks-<unit>-r<k>.md counts instead. (A test unit whose checks are
@@ -28,6 +35,30 @@ After the merge commit it runs `pm-emulator-dir rm --worktree` for the unit's wo
 worktree of the issue it is stacked on (the chain of base branches down to main), and prints their lines: the
 emulator port folders those units leave under ~/.aws/emulator. A refusal or a failure there does not change the
 merge or the exit code. A refused merge, --dry-run and an aborted merge remove nothing.
+
+A unit into its issue branch. Merged with --no-ff into feat/<issue> in the issue's worktree (the registry entry
+with unit "issue"); main and the main checkout are not touched or asked. Refuses unless: the issue's worktree is
+registered, on feat/<issue> and clean; the unit's worktree is clean; the unit's last pm-check run passed on the
+commit being merged; its steps cover every module the unit's own paths against feat/<issue> call for, where an
+integration step recorded "deferred" (the fast check) also covers integration, here only; feat/<issue> holds what
+the unit was cut from, or what it gained since calls for no module but integration that the unit's paths call
+for (otherwise: merge feat/<issue> into the unit's branch, pm-check, rerun); and the review rule above holds. On a
+conflict the merge is aborted and the issue branch is left as it was. After the merge it removes the emulator
+port folders of the unit and of the units it is stacked on, not the issue's worktree's. A unit is merged into its
+issue branch as many times as it is fixed.
+--take-main. Merges local main into feat/<issue> in the issue's worktree, which must be registered, on its branch
+and clean. When main is already an ancestor it says so and changes nothing. On a conflict it aborts, leaves the
+issue branch as it was and names the conflicting paths: the unit that owns them merges main into its branch.
+The issue branch into main. Merged with --no-ff in the main checkout. Refuses unless: the main checkout is on main
+and clean; the issue's worktree is on feat/<issue> and clean; the branch of every registered unit of the issue is
+an ancestor of feat/<issue>; the review rule holds for each of them; the issue's worktree's last pm-check run
+(the whole check) passed on the head of feat/<issue> and covers every module the branch's paths against main call
+for, a "deferred" step covering nothing; and the branch holds main as a unit must above (otherwise:
+pm-merge <issue> --take-main, the whole check, rerun). After the merge it removes the emulator port folders of the
+issue's worktree and of every unit's, and names the units and the record it merged on.
+`pm-merge <issue> issue` is refused: the issue branch is not a unit. --dry-run checks every condition of its form,
+lists every problem, and merges nothing. The new forms time their merges out after 120 s (the merge is then
+aborted) and every read of git after 30 s.
 Never pushes; the PM pushes main when an issue is finished (pm skill, flow step 6).
 """
 import argparse
@@ -40,10 +71,13 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _pmlib import BIN, PM, ROOT, WORKTREES, load, log
-from _pmscope import MODULES, Unreadable, between, decide, merge_base
+from _pmscope import MODULES, Unreadable, between, decide, merge_base, run_git, target_of
 from _pmscope import git as read_git
 
 EMULATOR_DIR = "pm-emulator-dir: "
+ISSUE = "issue"  # the registry's unit of an issue branch (pm-worktree new <issue>)
+MERGE_TIMEOUT = 120  # seconds a merge of a new form may take before it is aborted
+ABORT_TIMEOUT = 30
 
 
 def git(*args, cwd=ROOT):
@@ -78,13 +112,16 @@ def plural(n):
     return f"{n} path" if n == 1 else f"{n} paths"
 
 
-def judge(branch, head, last):
-    """Coverage (R7) and the main the branch merges into (R8), decided from git with this checkout's rules.
+def judge(branch, head, last, target="main", defer=False, remedy=None):
+    """Coverage (R7) and the target the branch merges into (R8), decided from git with this checkout's rules.
+    `target` is main or an issue branch; `defer` (a unit into its issue branch only) lets a deferred integration
+    step cover integration and leaves integration out of the modules both sides call for. `remedy` is what the
+    behind problem tells the PM to do. With the defaults it answers as before the issue branch, word for word.
     Returns (problems, note)."""
-    main = base = None
+    tip = base = None
     try:
-        main = read_git(ROOT, "rev-parse", "--verify", "--quiet", "refs/heads/main^{commit}").strip()
-        base = merge_base(ROOT, head, main)
+        tip = read_git(ROOT, "rev-parse", "--verify", "--quiet", f"refs/heads/{target}^{{commit}}").strip()
+        base = merge_base(ROOT, head, tip, target)
         own = decide(between(ROOT, base, head))
     except Unreadable as e:
         own = {m: [f"the branch's changes cannot be read: {e}"] for m in MODULES}
@@ -92,39 +129,45 @@ def judge(branch, head, last):
     statuses = {}
     for s in last.get("steps") or []:
         statuses.setdefault(s.get("module"), []).append(s.get("status"))
-    missing = [m for m in MODULES if m in own and not covered(statuses.get(m))]
+
+    def holds(m):
+        st = statuses.get(m)
+        return covered(st) or (defer and m == "integration" and bool(st) and all(s == "deferred" for s in st))
+
+    missing = [m for m in MODULES if m in own and not holds(m)]
     if missing:
         problems.append(f"the pm-check record does not cover {', '.join(missing)}, which this branch's changes call "
                         f"for ({own[missing[0]][0]}); run pm-check again")
-    if base is not None and base == main:
+    if base is not None and base == tip:
         return problems, None
     gained = None
     try:
         if base is None:
-            raise Unreadable("the branch's merge base with main cannot be read")
-        gained = sorted(set(between(ROOT, base, main)))
+            raise Unreadable(f"the branch's merge base with {target} cannot be read")
+        gained = sorted(set(between(ROOT, base, tip)))
         theirs = decide(gained)
     except Unreadable as e:
         theirs = {m: [str(e)] for m in MODULES}
-    both = [m for m in MODULES if m in own and m in theirs]
+    both = [m for m in MODULES if m in own and m in theirs and not (defer and m == "integration")]
     if both:
         if gained is None:
-            what = (f"what main gained since this branch left it cannot be read ({theirs[both[0]][0]}), so both "
+            what = (f"what {target} gained since this branch left it cannot be read ({theirs[both[0]][0]}), so both "
                     f"call for {', '.join(both)}")
         else:
             eg = ", ".join(f"{m}: {next(p for p in gained if m in decide([p]))}" for m in both)
-            what = f"main gained {plural(len(gained))} since this branch left it; both call for {', '.join(both)} (e.g. {eg})"
-        problems.append(f"{what}; merge main into {branch} and run pm-check again")
+            what = f"{target} gained {plural(len(gained))} since this branch left it; both call for {', '.join(both)} (e.g. {eg})"
+        problems.append(f"{what}; {remedy or f'merge {target} into {branch} and run pm-check again'}")
         return problems, None
-    note = (f"behind main by {plural(len(gained))} that call for {', '.join(theirs) or 'nothing'}; "
+    note = (f"behind {target} by {plural(len(gained))} that call for {', '.join(theirs) or 'nothing'}; "
             f"this branch's changes call for none of them")
     return problems, note
 
 
 def stack(wts, wt):
-    """The unit's entry, then the entry of the same issue whose branch is its base, down to main."""
+    """The unit's entry, then the entry of the same issue whose branch is its base, down to main or to the issue
+    branch, whose own entry is not in the chain."""
     chain, seen = [], set()
-    while wt is not None and wt["branch"] not in seen:
+    while wt is not None and wt.get("unit") != ISSUE and wt["branch"] not in seen:
         chain.append(wt)
         seen.add(wt["branch"])
         base = wt.get("base")
@@ -133,14 +176,145 @@ def stack(wts, wt):
     return chain
 
 
+def review(issue, unit):
+    """The review rule: the newest review-impl-<unit>-r<k>.md (for a test unit without one, its newest
+    review-checks-<unit>-r<k>.md) says verdict: pass. Returns (problems, the newest review file or None)."""
+    def rounds(stage):
+        return sorted((PM / f"issue-{issue}").glob(f"review-{stage}-{unit}-r*.md"),
+                      key=lambda f: int(re.search(r"-r(\d+)\.md$", f.name).group(1)))
+
+    reviews = rounds("impl")
+    if not reviews and unit.startswith("t"):
+        reviews = rounds("checks")
+    if not reviews:
+        want = f"review-impl-{unit}-r<k>.md" + (f" or review-checks-{unit}-r<k>.md" if unit.startswith("t") else "")
+        return [f"no {want}; rev has not reviewed this unit"], None
+    if not re.search(r"^verdict:\s*pass\s*$", reviews[-1].read_text(errors="replace")[:400], re.M):
+        return [f"{reviews[-1].name} is not verdict: pass"], reviews[-1]
+    return [], reviews[-1]
+
+
+def record_problems(last, head):
+    """Today's three questions of a record: it exists, it is of the head, it passed."""
+    if not last:
+        return ["no pm-check run recorded for this worktree"]
+    if last.get("commit") != head:
+        return [f"pm-check ran on {str(last.get('commit'))[:9]}, the branch is at {head[:9]}; run pm-check again"]
+    if not last.get("passed"):
+        return [f"pm-check failed: {', '.join(last.get('failed', []))}"]
+    return []
+
+
+def issue_entry(wts, issue):
+    """The registry entry of the issue's branch (unit "issue"), or None."""
+    return next((w for w in wts if w.get("issue") == str(issue) and w.get("unit") == ISSUE), None)
+
+
+def units(wts, issue):
+    """The registry entries of the issue's units: every entry of the issue but the issue branch's own."""
+    return [w for w in wts if w.get("issue") == str(issue) and w.get("unit") != ISSUE]
+
+
+def ancestor(a, b):
+    """Whether commit `a` is an ancestor of `b` in the main checkout; raises Unreadable when git cannot say."""
+    r = run_git(ROOT, "merge-base", "--is-ancestor", a, b)
+    if r.returncode not in (0, 1):
+        raise Unreadable(f"git merge-base --is-ancestor exited {r.returncode}")
+    return r.returncode == 0
+
+
+def tip(ref):
+    """The commit of a local branch; raises Unreadable when it does not exist."""
+    return read_git(ROOT, "rev-parse", "--verify", "--quiet", f"refs/heads/{ref}^{{commit}}").strip()
+
+
+def clean(path, what=None):
+    """[] when the worktree at `path` has nothing uncommitted, else the problem; unreadable is a problem too."""
+    what = what or path.name
+    try:
+        return [f"{what} has uncommitted changes"] if read_git(path, "status", "--porcelain").strip() else []
+    except Unreadable as e:
+        return [f"{what} cannot be read: {e}"]
+
+
+def issue_checkout(entry, branch):
+    """The problems of the issue's worktree: registered, on its branch, clean."""
+    if entry is None:
+        return [f"{branch} exists but the issue's worktree is not registered"]
+    path = pathlib.Path(entry["path"])
+    try:
+        r = run_git(path, "symbolic-ref", "--quiet", "--short", "HEAD")
+    except Unreadable as e:
+        return [f"{path.name} cannot be read: {e}"]
+    on = r.stdout.strip() if r.returncode == 0 else None
+    if r.returncode not in (0, 1):
+        return [f"{path.name} cannot be read: git symbolic-ref exited {r.returncode}"]
+    problems = [] if on == branch else [f"{path.name} is not on {branch} ({on or 'a detached head'})"]
+    return problems + clean(path)
+
+
+def merge(cwd, ref, message, dest):
+    """`git merge --no-ff` in `cwd`, bounded; on a conflict or a timeout the merge is aborted and the process exits
+    non-zero, naming `dest` and the conflicting paths. Returns the new head."""
+    try:
+        r = subprocess.run(["git", "-C", str(cwd), "merge", "--no-ff", "-m", message, ref], capture_output=True,
+                           text=True, stdin=subprocess.DEVNULL, timeout=MERGE_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        sys.exit(f"merge did not finish in {MERGE_TIMEOUT} s; {left(cwd, dest)}")
+    if r.returncode != 0:
+        try:
+            conflicts = [x for x in read_git(cwd, "diff", "--name-only", "--diff-filter=U", "-z").split("\0") if x]
+        except Unreadable:
+            conflicts = []
+        what = f"merge conflict in {plural(len(conflicts))}" if conflicts else f"merge failed (exit {r.returncode})"
+        named = f": {', '.join(conflicts)}" if conflicts else ""
+        sys.exit(f"{what}; {left(cwd, dest)}{named}\n{(r.stdout + r.stderr).strip()[-600:]}")
+    return read_git(cwd, "rev-parse", "HEAD").strip()
+
+
+def left(cwd, dest):
+    """Abort the merge in `cwd`; say whether `dest` was left unchanged."""
+    try:
+        ok = subprocess.run(["git", "-C", str(cwd), "merge", "--abort"], capture_output=True, text=True,
+                            stdin=subprocess.DEVNULL, timeout=ABORT_TIMEOUT).returncode == 0
+    except (subprocess.TimeoutExpired, OSError):
+        ok = False
+    return f"{dest} left unchanged" if ok else f"{dest} may hold an unfinished merge: run git merge --abort in {cwd}"
+
+
+def flaky_note(last):
+    return f"; flaky in its check run: {', '.join(last['flaky'])} (file the flake, see .pm/run/flakes.jsonl)" if last.get("flaky") else ""
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("issue"); p.add_argument("unit"); p.add_argument("--dry-run", action="store_true")
+    p.add_argument("issue"); p.add_argument("unit", nargs="?")
+    p.add_argument("--take-main", action="store_true", help="merge local main into the issue branch")
+    p.add_argument("--dry-run", action="store_true")
     a = p.parse_args()
+    if a.take_main and a.unit is not None:
+        p.error("--take-main takes no unit")
+    if a.unit == ISSUE:
+        sys.exit(f"{ISSUE} is not a unit; the issue branch is merged with pm-merge {a.issue}")
     wts = load(WORKTREES, [])
+    if a.take_main:
+        return take_main(a, wts)
+    if a.unit is None:
+        return into_main_whole(a, wts)
     wt = next((w for w in wts if w["issue"] == str(a.issue) and w["unit"] == a.unit), None)
     if not wt:
         sys.exit(f"no registered worktree for issue {a.issue} unit {a.unit}")
+    try:
+        target = target_of(ROOT, wt["branch"])
+    except Unreadable as e:
+        sys.exit(f"cannot merge:\n- the target of {wt['branch']} cannot be read: {e}")
+    if target == "main":
+        return into_main(a, wts, wt)
+    return into_issue_branch(a, wts, wt, target)
+
+
+def into_main(a, wts, wt):
+    """A unit whose target is main: as before the issue branch."""
     branch, path = wt["branch"], pathlib.Path(wt["path"])
     problems = []
     if git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip() != "main":
@@ -161,18 +335,8 @@ def main():
     if last and last.get("commit") == head and last.get("passed") and not earlier(last):
         found, note = judge(branch, head, last)
         problems += found
-    def rounds(stage):
-        return sorted((PM / f"issue-{a.issue}").glob(f"review-{stage}-{a.unit}-r*.md"),
-                      key=lambda f: int(re.search(r"-r(\d+)\.md$", f.name).group(1)))
-
-    reviews = rounds("impl")
-    if not reviews and a.unit.startswith("t"):
-        reviews = rounds("checks")
-    if not reviews:
-        want = f"review-impl-{a.unit}-r<k>.md" + (f" or review-checks-{a.unit}-r<k>.md" if a.unit.startswith("t") else "")
-        problems.append(f"no {want}; rev has not reviewed this unit")
-    elif not re.search(r"^verdict:\s*pass\s*$", reviews[-1].read_text(errors="replace")[:400], re.M):
-        problems.append(f"{reviews[-1].name} is not verdict: pass")
+    found, reviewed = review(a.issue, a.unit)
+    problems += found
     if problems:
         sys.exit("cannot merge:\n- " + "\n- ".join(problems))
     if note:
@@ -187,8 +351,120 @@ def main():
     new = git("rev-parse", "HEAD").stdout.strip()
     log(f"merge {a.issue} {a.unit} {branch} -> main {new[:9]}")
     flaky = f"; flaky in its check run: {', '.join(last['flaky'])} (file the flake, see .pm/run/flakes.jsonl)" if last.get("flaky") else ""
-    print(f"merged {branch} into main at {new[:9]} (reviewed: {reviews[-1].name}){flaky}; units stacked on it must merge main into their branch")
+    print(f"merged {branch} into main at {new[:9]} (reviewed: {reviewed.name}){flaky}; units stacked on it must merge main into their branch")
     for w in stack(wts, wt):
+        remove_emulator_dir(w)
+
+
+def into_issue_branch(a, wts, wt, target):
+    """A unit into its issue branch, in the issue's worktree (R4.2)."""
+    branch, path = wt["branch"], pathlib.Path(wt["path"])
+    entry = next((w for w in wts if w.get("unit") == ISSUE and w.get("branch") == target), None)
+    problems = issue_checkout(entry, target) + clean(path)
+    try:
+        head = tip(branch)
+    except Unreadable as e:
+        sys.exit(f"cannot merge:\n- {branch} cannot be read: {e}")
+    last = load(path / "output" / "checks" / "last.json", {})
+    found = record_problems(last, head)
+    problems += found
+    note = None
+    if not found:
+        more, note = judge(branch, head, last, target, defer=True)
+        problems += more
+    more, reviewed = review(a.issue, a.unit)
+    problems += more
+    if problems:
+        sys.exit("cannot merge:\n- " + "\n- ".join(problems))
+    if note:
+        print(note)
+    if a.dry_run:
+        print(f"ok to merge {branch} ({head[:9]}) into {target}")
+        return
+    new = merge(entry["path"], branch, f"merge: #{a.issue} {a.unit} ({branch}) into {target}", target)
+    log(f"merge {a.issue} {a.unit} {branch} -> {target} {new[:9]}")
+    print(f"merged {branch} into {target} at {new[:9]} (reviewed: {reviewed.name}){flaky_note(last)}; "
+          f"units cut from {target} must merge it into their branch")
+    for w in stack(wts, wt):
+        remove_emulator_dir(w)
+
+
+def take_main(a, wts):
+    """Local main into the issue branch, in the issue's worktree (R4.4)."""
+    branch = f"feat/{a.issue}"
+    entry = issue_entry(wts, a.issue)
+    if entry is None:
+        sys.exit(f"cannot merge:\n- issue {a.issue} has no registered issue branch (pm-worktree new {a.issue})")
+    problems = issue_checkout(entry, branch)
+    try:
+        main_at, held = tip("main"), None
+        if not problems:
+            held = ancestor(main_at, tip(branch))
+    except Unreadable as e:
+        problems.append(f"the branches cannot be read: {e}")
+    if problems:
+        sys.exit("cannot merge:\n- " + "\n- ".join(problems))
+    if held:
+        print(f"{branch} already holds main ({main_at[:9]})")
+        return
+    if a.dry_run:
+        print(f"would merge main ({main_at[:9]}) into {branch}")
+        return
+    new = merge(entry["path"], main_at, f"merge: main into {branch} (#{a.issue})", branch)
+    log(f"merge main {main_at[:9]} -> {branch} {new[:9]}")
+    print(f"merged main ({main_at[:9]}) into {branch} at {new[:9]}; run the whole check: pm-check {entry['path']}")
+
+
+def into_main_whole(a, wts):
+    """The issue branch into local main, on the whole check (R4.5)."""
+    branch = f"feat/{a.issue}"
+    entry = issue_entry(wts, a.issue)
+    if entry is None:
+        sys.exit(f"cannot merge:\n- issue {a.issue} has no registered issue branch; merge its units with "
+                 f"pm-merge {a.issue} <unit>")
+    path = pathlib.Path(entry["path"])
+    problems = []
+    try:
+        if read_git(ROOT, "rev-parse", "--abbrev-ref", "HEAD").strip() != "main":
+            problems.append("the main checkout is not on main")
+    except Unreadable as e:
+        problems.append(f"the main checkout cannot be read: {e}")
+    problems += clean(ROOT, "the main checkout")
+    problems += issue_checkout(entry, branch)
+    try:
+        head = tip(branch)
+    except Unreadable as e:
+        sys.exit(f"cannot merge:\n- {branch} cannot be read: {e}")
+    mine = units(wts, a.issue)
+    try:
+        out = [w["branch"] for w in mine if not ancestor(w["branch"], head)]
+        if out:
+            problems.append(f"not in {branch}: {', '.join(out)}; merge them with pm-merge {a.issue} <unit>")
+    except Unreadable as e:
+        problems.append(f"the units' branches cannot be read: {e}")
+    record = path / "output" / "checks" / "last.json"
+    last = load(record, {})
+    found = record_problems(last, head)
+    problems += found
+    note = None
+    if not found:
+        more, note = judge(branch, head, last, "main", defer=False,
+                           remedy=f"run pm-merge {a.issue} --take-main, then pm-check again")
+        problems += more
+    for w in mine:
+        problems += review(a.issue, w["unit"])[0]
+    if problems:
+        sys.exit("cannot merge:\n- " + "\n- ".join(problems))
+    if note:
+        print(note)
+    if a.dry_run:
+        print(f"ok to merge {branch} ({head[:9]}) into main")
+        return
+    new = merge(ROOT, branch, f"merge: #{a.issue} ({branch})", "main")
+    log(f"merge {a.issue} {branch} -> main {new[:9]}")
+    names = ", ".join(w["unit"] for w in mine) or "none"
+    print(f"merged {branch} into main at {new[:9]} (units: {names}; whole check: {record}){flaky_note(last)}")
+    for w in [entry, *mine]:
         remove_emulator_dir(w)
 
 

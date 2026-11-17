@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Edit API | EmuForge</title>
+<!-- renders step <k> of specs/param-wizard.yaml at /aws/apigateway/apis/<segment>/edit?step=<k>; a heading
+     "Not found" at any other path -->
+</head>
+<body>
+<div class="aws-area">
+<main id="main">
+  <nav aria-label="Breadcrumbs">
+    <ol>
+      <li><a href="/aws/apigateway">API Gateway</a></li>
+      <li><a href="/aws/apigateway/apis">APIs</a></li>
+      <li><span>Edit API</span></li>
+    </ol>
+  </nav>
+  <nav aria-label="Steps"><ol id="steps"></ol></nav>
+  <form id="step" novalidate></form>
+</main>
+</div>
+<script>
+  // the markup of pages/wizard-full: one button per step named "Step <n>: <title>" in the navigation Steps, the
+  // active step's title as a heading, its sections as headings with labelled inputs, the form's buttons
+  const STEPS = [
+    { title: "API details", sections: [["Settings", ["Name"]]], buttons: ["Cancel", "Next"] },
+    { title: "Endpoint", sections: [["Endpoint type", []]], buttons: ["Cancel", "Previous", "Next"] },
+    { title: "Review and save", sections: [], buttons: ["Cancel", "Previous", "Save changes"] },
+  ];
+  if (!/^\/aws\/apigateway\/apis\/[^/]+\/edit$/.test(location.pathname)) {
+    document.getElementById("main").innerHTML = "<h1>Not found</h1>";
+  } else {
+    const asked = parseInt(new URLSearchParams(location.search).get("step") || "1", 10) || 1;
+    const step = STEPS[Math.max(1, Math.min(STEPS.length, asked)) - 1];
+    const nav = document.getElementById("steps");
+    STEPS.forEach((s, i) => {
+      const li = document.createElement("li");
+      const n = document.createElement("span");
+      n.textContent = "Step " + (i + 1);
+      const b = document.createElement("button");
+      b.type = "button";
+      b.setAttribute("aria-label", "Step " + (i + 1) + ": " + s.title);
+      b.textContent = s.title;
+      li.append(n, b);
+      nav.appendChild(li);
+    });
+    const form = document.getElementById("step");
+    const h1 = document.createElement("h1");
+    h1.textContent = step.title;
+    form.appendChild(h1);
+    step.sections.forEach(([title, fields], si) => {
+      const h2 = document.createElement("h2");
+      h2.textContent = title;
+      form.appendChild(h2);
+      fields.forEach((label, fi) => {
+        const id = "f" + si + "-" + fi;
+        const l = document.createElement("label");
+        l.htmlFor = id;
+        l.textContent = label;
+        const input = document.createElement("input");
+        input.id = id;
+        form.append(l, input);
+      });
+    });
+    step.buttons.forEach((name) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = name;
+      form.appendChild(b);
+    });
+  }
+</script>
+</body>
+</html>

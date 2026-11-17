@@ -21,9 +21,6 @@ const ANSWER: Duration = Duration::from_secs(5);
 /// sockets' buffers while the check reads none of it, and within the emulator's 16 MiB `PutObject` limit.
 const HELD_OBJECT: usize = 16 * 1024 * 1024;
 
-/// The endpoint address emulator v1.0.364 answers to DynamoDB `DescribeEndpoints` (requirement §E-H).
-const DESCRIBE_ENDPOINTS_ADDRESS: &str = "dynamodb.us-east-1.localhost:9297";
-
 fn through_engine(ctx: &Ctx, what: &str, call: &Call, key: &Key) -> Response {
     call.send(ctx, &Endpoint::engine(ctx), key)
         .unwrap_or_else(|e| panic!("{what}: the engine gave no answer: {e}"))
@@ -273,15 +270,30 @@ fn relay_stays_on_loopback() {
         bucket.put("held", seeded(0x5eed_0201, HELD_OBJECT))?;
 
         let describe = Call::json("dynamodb", "DynamoDB_20120810.DescribeEndpoints", "{}");
-        let endpoints = direct.ok("DescribeEndpoints", &describe)?;
+        // The Given names no emulator version's address: `200`, a non-empty `Endpoints[0].Address`, and not
+        // the engine's own address, so that an equal body through the engine is the emulator's.
+        let endpoints = direct.send("DescribeEndpoints", &describe)?;
+        if endpoints.status != 200 {
+            return Err(Env::new(format!(
+                "DescribeEndpoints sent directly answered {}: {}; the Given does not hold",
+                endpoints.status,
+                snippet(&endpoints)
+            )));
+        }
         let address = serde_json::from_slice::<serde_json::Value>(&endpoints.body)
             .ok()
             .and_then(|b| b["Endpoints"][0]["Address"].as_str().map(str::to_owned))
-            .ok_or_else(|| Env::new("DescribeEndpoints sent directly names no endpoint address"))?;
+            .filter(|a| !a.is_empty())
+            .ok_or_else(|| {
+                Env::new(format!(
+                    "DescribeEndpoints sent directly names no endpoint address: {}; the Given does not hold",
+                    snippet(&endpoints)
+                ))
+            })?;
         ctx.log(format!("DescribeEndpoints sent directly names {address}"));
-        if address != DESCRIBE_ENDPOINTS_ADDRESS {
+        if address == format!("127.0.0.1:{}", ctx.engine_port) {
             return Err(Env::new(format!(
-                "DescribeEndpoints sent directly names {address}, not {DESCRIBE_ENDPOINTS_ADDRESS} (§E-H); the Given does not hold"
+                "DescribeEndpoints sent directly names {address}, the engine's own address; the Given does not hold"
             )));
         }
 
