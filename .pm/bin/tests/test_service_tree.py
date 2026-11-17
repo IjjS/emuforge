@@ -71,11 +71,17 @@ def rows_of(path):
 
 def service_manifests():
     """(service, path) of each service's manifest, in name order: a folder of the form of a service under
-    `T/services/` that holds a file `manifest.jsonl`."""
-    if not SERVICES.is_dir():
+    `T/services/` that holds a file `manifest.jsonl`. A symbolic link, as the folder `services/`, a service's folder or
+    its manifest, adds none: every reader takes it for a manifest that cannot be read."""
+    if SERVICES.is_symlink() or not SERVICES.is_dir():
         return []
-    return [(d.name, d / "manifest.jsonl") for d in sorted(SERVICES.iterdir(), key=lambda d: d.name)
-            if d.is_dir() and SERVICE.fullmatch(d.name) and (d / "manifest.jsonl").is_file()]
+    found = []
+    for d in sorted(SERVICES.iterdir(), key=lambda d: d.name):
+        m = d / "manifest.jsonl"
+        if (SERVICE.fullmatch(d.name) and not d.is_symlink() and d.is_dir()
+                and not m.is_symlink() and m.is_file()):
+            found.append((d.name, m))
+    return found
 
 
 def manifest():
@@ -240,7 +246,8 @@ class Guides(unittest.TestCase):
         text = part(self.agents, "## Service checks")
         place = re.escape("tests/integration/studio/" + FOLDER)
         self.assertSentence(text, place, r"\bsupport\b", r"\bseed\b", r"manifest\.jsonl", where="Service checks")
-        self.assertSentence(text, r"\bpaths?\b", r"\b(alone|only)\b", r"\bservice'?s?\b", where="Service checks")
+        self.assertSentence(text, r"\bpaths?\b", re.escape(FOLDER) + r"|\bthere\b|\b(that|its|the) folder\b",
+                            r"\bcalls? for\b", r"\b(alone|only)\b", r"\bservice'?s?\b", where="Service checks")
         self.assertSentence(text, r"`(tests/integration/studio/)?support/`", r"\bevery service",
                             where="Service checks")
         self.assertSentence(text, r"\brun\b", r"\brefuse", r"\bimport", r"\bcheck files?\b", where="Service checks")
