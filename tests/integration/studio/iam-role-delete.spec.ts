@@ -71,7 +71,7 @@ function screen(page: Page) {
   const main = page.getByRole('main');
   return {
     h1: main.getByRole('heading', { level: 1, name: new RegExp(`^${H1}(\\s|$)`) }),
-    table: main.locator(TABLE).first(),
+    table: page.locator(TABLE).first(),
     filter: main.getByRole('searchbox', { name: FILTER, exact: true }),
     deleteAction: main.getByRole('button', { name: DELETE, exact: true }).first(),
     checkbox: (role: string) => main.getByRole('checkbox', { name: role, exact: true }),
