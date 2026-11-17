@@ -1,0 +1,55 @@
+# Reference spec of a general purpose bucket's own page with its tab "Properties" open, reached from the bucket
+# list by the bucket's name.
+# Sources: no capture shows this page. The AWS user guide (Amazon S3 User Guide) gives the six tabs, the sections
+# and most fields; the capture docs/aws-console/s3/02-general-purpose-buckets gives the crumb "Buckets" and the
+# labels the list shares with this page; the fields no page of the guide names come from the API's model written
+# the console's way. Each item's source: bucket-properties.sources.md.
+# Provisional until the owner adds a capture of a bucket's page (decisions-needed.md, questions 2 and 3): the order
+# of the tabs, the order of the sections beyond the guide's own list, the fields marked in the sources file.
+# The route names the seeded bucket `structure-bucket` (requirement R13). Every item is shown whatever the bucket
+# holds, so the spec is scored in the seeded run alone.
+# "AWS CloudTrail data events" is an item: the emulator holds a trail's data event selector for a bucket. This
+# issue leaves it unbuilt (one unmatched item); requirement R14 item 6 builds it.
+# "Amazon EventBridge" is a subsection of "Event notifications" in the guide; a spec has no subsection, so it is
+# the section after it.
+# The page's header has no action in any source; Studio's "Refresh" is its own (requirement R3) and not an item.
+screen: s3.bucket-properties
+service: s3
+kind: detail
+route: /aws/s3/buckets/structure-bucket/properties
+
+breadcrumbs: [EmuForge, AWS, S3, Buckets, structure-bucket]
+header:
+  title: structure-bucket
+tabs: [Objects, Metadata, Properties, Permissions, Metrics, Management]
+sections:
+  - title: Bucket overview
+    fields: [AWS Region, Bucket ARN, Creation date]
+  - title: Bucket Versioning
+    fields: [Bucket Versioning]
+  - title: Bucket ABAC
+    fields: [Bucket ABAC]
+  - title: Tags
+  - title: Default encryption
+    fields: [Encryption type, AWS KMS key, Bucket Key]
+  - title: S3 Intelligent-Tiering Archive configurations
+  - title: Server access logging
+    fields: [Server access logging, Destination bucket]
+  - title: AWS CloudTrail data events
+  - title: Event notifications
+  - title: Amazon EventBridge
+    fields: [Send notifications to Amazon EventBridge for all events in this bucket]
+  - title: Transfer acceleration
+    fields: [Transfer acceleration, Accelerated endpoint]
+  - title: Object Lock
+    fields: [Object Lock, Default retention, Retention mode, Default retention period]
+  - title: Requester pays
+    fields: [Requester pays]
+  - title: Static website hosting
+    fields: [Static website hosting, Index document, Error document, Endpoint]
+
+omitted:
+  - item: sections[Transfer acceleration].fields[Accelerated endpoint]
+    reason: "The field shows the bucket's accelerate endpoint. GetBucketAccelerateConfiguration answers 200 with no Status on a fresh bucket and with Status Enabled after PutBucketAccelerateConfiguration (200), and holds no endpoint either time (aws-emulator 1.0.481, .pm/issue-256/probe/probe-1.log, sections 1 and 3); no other S3 operation called there (the reads of a bucket's every property) returns one, and the emulator offers no call that creates one, so the endpoint the field shows cannot exist: the console writes an AWS host name there, which the emulator does not serve and Studio never names (an endpoint comes only from the engine's connection status)"
+  - item: sections[Static website hosting].fields[Endpoint]
+    reason: "The field shows the bucket's website endpoint. GetBucketWebsite answers 200 with IndexDocument and ErrorDocument and no endpoint after PutBucketWebsite (200), and 404 NoSuchWebsiteConfiguration before it (aws-emulator 1.0.481, .pm/issue-256/probe/probe-1.log, sections 1 and 3); no other S3 operation called there (the reads of a bucket's every property) returns one, and the emulator offers no call that creates one, so the endpoint the field shows cannot exist: the console writes an AWS host name there, which the emulator does not serve and Studio never names (an endpoint comes only from the engine's connection status)"
