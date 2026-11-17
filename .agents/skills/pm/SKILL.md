@@ -159,6 +159,19 @@ A unit is merged on its own passing record: `pm-merge` takes a branch only when 
 pass on the commit being merged and covers what the branch changes against `main` as it is. Nothing else is run
 at a merge; `main` is checked on GitHub Actions after its push (flow step 6).
 
+**Harness test files.** The harness step leaves out a slow test file that no changed path touches: each on-touch
+file has an entry in the map of `.pm/bin/_pmscope.py` with its sources (the scripts, helpers, fixtures and other
+files its cases run or read), and runs only when a changed path matches one of them; every other test file runs
+on every harness change. `pm-scope` and `pm-check` name the left-out files (`harness tests left out: …`), the
+record's `harness-test` step holds them as `left_out`, and `pm-merge` refuses a record that left out a file the
+branch's paths call for. A change of `_pmscope.py` or the runner runs every file. `pm-check --full` runs every
+harness test file, as does `pm-check --only harness` (a partial run) or `.pm/bin/tests/run` by hand. A new slow
+test file gets its entry in `_pmscope.py`; adding a source needs no decision, but a new entry or a source taken
+away changes what a run checks and is made only on the `pm`'s decision, recorded in the issue's `decisions.md`.
+What a left-out file leaves unseen until a run calls for it: a case that depends on a file the map does not name
+as its source, and a break from outside the repository (a new emulator image, a new Chromium, the machine). Name
+this in the report of an issue whose units left files out, and run `pm-check --full` when in doubt.
+
 **Intermittent failures.** `pm-check` runs a failed test step once more; when the second run passes, the step is
 `flaky`, the run passes and the unit is not held up. Every flake is a line in `.pm/run/flakes.jsonl` (step,
 commit, the first run's log). After a merge, read the new lines: file each as
@@ -301,7 +314,7 @@ reporting line are logged in `.pm/run/events.log` and never delivered. Talk to a
 | `pm-brief` | a pane's brief from its template: `plan` (also writes rev's), `worker`, `crit`, `show` |
 | `pm-pane` | panes: `new`, `reset`, `close`, `list` |
 | `pm-report` | a pane's reporting line to you |
-| `pm-check` | the checks of a checkout, recorded; retries a failed test step once (`flaky`), at most two heavy runs at a time, `--stop` ends one worktree's run |
+| `pm-check` | the checks of a checkout, recorded; retries a failed test step once (`flaky`), at most two heavy runs at a time, `--stop` ends one worktree's run; the harness step leaves out the on-touch test files no changed path touches (`left_out`), `--full` runs every file |
 | `pm-capture` | screen captures and contact sheets |
 | `pm-critique` | impeccable scores: `record`, `table`, `check` |
 | `pm-structure` | the structure score of a `console` screen against its reference spec: `--serve`, `--url` or `--snapshot`, `--record`, `--table` |
