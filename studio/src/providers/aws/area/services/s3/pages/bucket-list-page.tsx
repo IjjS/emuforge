@@ -12,9 +12,10 @@ import StatusIndicator, { type StatusIndicatorProps } from '@cloudscape-design/c
 import Table, { type TableProps } from '@cloudscape-design/components/table';
 import Tabs, { type TabsProps } from '@cloudscape-design/components/tabs';
 import TextFilter, { type TextFilterProps } from '@cloudscape-design/components/text-filter';
-import { useCallback, useContext, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
 
+import '../../../styles/emulator-line.css';
 import { AreaRootContext } from '../../../area-root';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { usePageHelp } from '../../../components/page-help';
@@ -55,16 +56,6 @@ const COPY_RESULT_MS = 3_000;
 const START_PREFERENCES = { pageSize: 25, wrapLines: true };
 
 const PAGE_SIZES = [10, 25, 50] as const;
-
-/** The page's live region is read, not drawn: visually hidden, never `display: none`. */
-const VISUALLY_HIDDEN: CSSProperties = {
-  position: 'absolute',
-  inlineSize: '1px',
-  blockSize: '1px',
-  overflow: 'hidden',
-  clipPath: 'inset(50%)',
-  whiteSpace: 'nowrap',
-};
 
 /**
  * The emulator line's status for a connection, in the same words and with the same Cloudscape status type
@@ -243,7 +234,8 @@ function useAnnouncer(): [ReactNode, (text: string) => void] {
     setSaid((current) => ({ text, id: current.id + 1 }));
   }, []);
   const region = (
-    <div aria-live="polite" aria-atomic="true" style={VISUALLY_HIDDEN}>
+    // The area's visually hidden live region, as the emulator line's.
+    <div className="aws-area-announcer" aria-live="polite" aria-atomic="true">
       {said.text !== '' && <span key={said.id}>{said.text}</span>}
     </div>
   );
@@ -405,6 +397,13 @@ export function BucketListPage({ connection }: { connection: AreaConnection }) {
   const [seenFailureLine, setSeenFailureLine] = useState<string>();
   const connected = connection.result?.kind === 'connected';
   const [seenConnected, setSeenConnected] = useState(connected);
+  // Whether the connection was not connected (a state other than "Checking") since the page last read: the emulator
+  // may have restarted then, so what the page shows may be gone.
+  const down = connection.result !== undefined && !connected;
+  const [wasDown, setWasDown] = useState(down);
+  if (down && !wasDown) {
+    setWasDown(true);
+  }
   // "Bucket list refreshed", once the refreshed listing's first page is shown (R6).
   if (refreshing && buckets !== undefined) {
     setRefreshing(false);
@@ -419,10 +418,12 @@ export function BucketListPage({ connection }: { connection: AreaConnection }) {
       announce(failureLine);
     }
   }
-  // A failed read is read again by itself once the connection becomes connected (R7).
+  // Once the connection becomes connected again, a failed read, or a list shown while the connection was not
+  // connected, is read again by itself (R7, the restart rule; decisions-needed 19, provisional a).
   if (connected !== seenConnected) {
     setSeenConnected(connected);
-    if (connected && listing.failure !== undefined) {
+    if (connected && (listing.failure !== undefined || wasDown)) {
+      setWasDown(false);
       startListing();
     }
   }

@@ -665,6 +665,160 @@ describe('loading, empty and no match', () => {
   });
 });
 
+describe('the control that started a listing (decisions-needed 12)', () => {
+  const THIRTY = Array.from({ length: 30 }, (_, index) => bucket(`b-${String(index + 10)}`));
+
+  /** Holds the answers to the requests `when` picks until the returned release; every other is answered at once. */
+  function holdAnswers(when: (url: URL) => boolean): () => void {
+    const held: (() => void)[] = [];
+    engine.answer = (url) =>
+      when(url)
+        ? new Promise<Answer>((resolve) => {
+            held.push(() => {
+              resolve(engine.listing(url));
+            });
+          })
+        : engine.listing(url);
+    return () => {
+      act(() => {
+        for (const release of held.splice(0)) {
+          release();
+        }
+      });
+    };
+  }
+
+  /** Opens on thirty buckets: the first page of 25 shown, a next page known. */
+  async function openThirty() {
+    engine.buckets = THIRTY;
+    open();
+    await waitFor(() => {
+      expect(names()).toHaveLength(25);
+    });
+  }
+
+  const nextPage = () => screen.getByRole('button', { name: 'Next page' });
+  const previousPage = () => screen.getByRole('button', { name: 'Previous page' });
+  const preferencesButton = () => screen.getByRole('button', { name: 'Preferences' });
+
+  async function sent(count: number) {
+    await waitFor(() => {
+      expect(engine.lists).toHaveLength(count);
+    });
+  }
+
+  it('typing in the filter: while the filtered listing is in flight the filter stays enabled and focused; pagination and "Preferences" are disabled', async () => {
+    await openThirty();
+    expect(isDisabled(nextPage())).toBe(false);
+    const release = holdAnswers((url) => url.searchParams.has('prefix'));
+    const before = engine.lists.length;
+
+    filterInput().focus();
+    typeFilter('b-1');
+    await sent(before + 1);
+
+    expect(filterInput()).toBeEnabled();
+    expect(filterInput()).toHaveFocus();
+    expect(isDisabled(nextPage())).toBe(true);
+    expect(isDisabled(preferencesButton())).toBe(true);
+
+    release();
+    await waitFor(() => {
+      expect(names()).toHaveLength(10);
+    });
+    expect(isDisabled(preferencesButton())).toBe(false);
+  });
+
+  it('"Next page": while the page is in flight the pagination stays enabled; the filter and "Preferences" are disabled', async () => {
+    await openThirty();
+    const release = holdAnswers((url) => url.searchParams.has('continuation-token'));
+    const before = engine.lists.length;
+
+    fireEvent.click(nextPage());
+    await sent(before + 1);
+
+    expect(isDisabled(previousPage())).toBe(false);
+    expect(filterInput()).toBeDisabled();
+    expect(isDisabled(preferencesButton())).toBe(true);
+
+    release();
+    await waitFor(() => {
+      expect(names()[0]).toBe('b-35');
+    });
+  });
+
+  it('a new page size: while its listing is in flight "Preferences" stays enabled; the filter and pagination are disabled', async () => {
+    await openThirty();
+    const release = holdAnswers((url) => url.searchParams.get('max-buckets') === '10');
+    const before = engine.lists.length;
+
+    fireEvent.click(preferencesButton());
+    const dialog = await screen.findByRole('dialog', { name: 'Preferences' });
+    fireEvent.click(within(dialog).getByRole('radio', { name: '10 buckets' }));
+    const confirm = within(dialog)
+      .getAllByRole('button', { name: 'Confirm' })
+      .find((button) => button.textContent === 'Confirm');
+    fireEvent.click(confirm as HTMLElement);
+    await sent(before + 1);
+
+    expect(isDisabled(preferencesButton())).toBe(false);
+    expect(filterInput()).toBeDisabled();
+    expect(isDisabled(nextPage())).toBe(true);
+
+    release();
+    await waitFor(() => {
+      expect(names()).toHaveLength(10);
+    });
+  });
+
+  it('"Refresh Buckets" after paging: all three are disabled while the refreshed listing is in flight', async () => {
+    await openThirty();
+    fireEvent.click(nextPage());
+    await waitFor(() => {
+      expect(names()[0]).toBe('b-35');
+    });
+    const release = holdAnswers(() => true);
+    const before = engine.lists.length;
+
+    fireEvent.click(action('Refresh Buckets'));
+    await sent(before + 1);
+
+    expect(filterInput()).toBeDisabled();
+    expect(isDisabled(previousPage())).toBe(true);
+    expect(isDisabled(nextPage())).toBe(true);
+    expect(isDisabled(preferencesButton())).toBe(true);
+
+    release();
+    await waitFor(() => {
+      expect(names()[0]).toBe('b-10');
+    });
+  });
+
+  it('"Retry" after a filtered read failed: all three are disabled while the retried listing is in flight', async () => {
+    await openThirty();
+    engine.answer = (url) =>
+      url.searchParams.has('prefix') ? errorAnswer(500, 'InternalError', 'boom') : engine.listing(url);
+    typeFilter('b-1');
+    await waitFor(() => {
+      expect(emptySlot()).toHaveTextContent('InternalError: boom');
+    });
+    const release = holdAnswers(() => true);
+    const before = engine.lists.length;
+
+    fireEvent.click(within(slot()).getByRole('button', { name: 'Retry' }));
+    await sent(before + 1);
+
+    expect(filterInput()).toBeDisabled();
+    expect(isDisabled(nextPage())).toBe(true);
+    expect(isDisabled(preferencesButton())).toBe(true);
+
+    release();
+    await waitFor(() => {
+      expect(names()).toHaveLength(10);
+    });
+  });
+});
+
 describe('failure states', () => {
   async function openFailing(answer: EngineAnswer | (() => EngineAnswer)) {
     engine.answer = typeof answer === 'function' ? answer : () => answer;
@@ -843,6 +997,31 @@ describe('failure states', () => {
 
     await expectNames(['alpha']);
     expect(engine.lists).toHaveLength(before + 1);
+  });
+
+  it('a list shown, the connection not started and then connected again (the emulator restarted): a new request without any action, and what the emulator holds now', async () => {
+    await openLoaded([bucket('alpha')]);
+    const before = engine.lists.length;
+
+    connection.set(notStartedResult());
+    expect(engine.lists).toHaveLength(before);
+    engine.buckets = [bucket('beta')];
+    connection.set(connectedResult());
+
+    await expectNames(['beta']);
+    expect(engine.lists).toHaveLength(before + 1);
+  });
+
+  it('opened while the connection says "Checking", then connected: one request only', async () => {
+    connection.value = { result: undefined, engineOrigin };
+    engine.buckets = [bucket('alpha')];
+    open();
+    await expectNames(['alpha']);
+
+    connection.set(connectedResult());
+
+    await expectNames(['alpha']);
+    expect(engine.lists).toHaveLength(1);
   });
 
   it('a failed read shown as an error, then the connection becomes not started: the "not connected" state, no new request', async () => {
