@@ -37,9 +37,8 @@
 # Exit, over the checks that are not `not-run`: 0 when every one passed; 1 when any failed; 127 when there are only
 # errors (the environment failed: Docker, the image, cargo, bun, a product image build that has not ended within
 # product_build_bound seconds; pm-check records 127 as `error`) or every check is `not-run` (nothing was checked); 2 for
-# a usage error. The engine and Studio are the subject, not the
-# environment: when engine/ or studio/ does not exist or does not build, every check still runs and fails at its
-# first engine or Studio step.
+# a usage error. The engine and Studio are the subject, not the environment: when engine/ or studio/ does not exist or
+# does not build, every check still runs and fails at its first engine or Studio step.
 set -euo pipefail
 
 # Real AWS credentials, profiles and proxy settings never reach a check.
