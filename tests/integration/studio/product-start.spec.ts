@@ -40,6 +40,17 @@ import {
   type HealthResult,
 } from './support/product';
 
+/**
+ * What Docker Desktop's client writes into the HOME of any `docker` build: `Library/Containers/com.docker.docker/Data`
+ * and the folders above it. The Docker client's, not the form's (decisions.md, PM decisions 2026-11-17 22:05).
+ */
+const DOCKER_DESKTOP_CLIENT_PATHS = [
+  'Library',
+  'Library/Containers',
+  'Library/Containers/com.docker.docker',
+  'Library/Containers/com.docker.docker/Data',
+];
+
 /** Health within the bound → `reachable: true`. */
 async function expectReachable(form: Form, what = 'GET /__emuforge/health') {
   const result = await waitReachable(form.enginePort, true);
@@ -144,7 +155,19 @@ test('engine.product-start-without-home-leaves-nothing-on-the-host', async ({ ct
   expectExit(await withHome.start(), 'zero');
   await expectReachable(withHome);
   expectExit(await withHome.stop(), 'zero');
-  expect(entries(home), `the entries under ${home} after the stop line`).toEqual([]);
+  // One path is left out, and only that one: Docker Desktop's own client writes this folder (and the folders above
+  // it) into the HOME of any `docker` build, whatever builds; it is the Docker client's, not the form's
+  // (decisions.md, PM decisions 2026-11-17 22:05). Every other entry fails the check.
+  const left = entries(home);
+  expect(
+    left.filter((entry) => !DOCKER_DESKTOP_CLIENT_PATHS.includes(entry)),
+    `the entries under ${home} after the stop line, but Docker Desktop's client's own`,
+  ).toEqual([]);
+  // Nothing the form names is there: no `.aws`, no emulator folder.
+  expect(
+    left.filter((entry) => entry.split('/').some((part) => part === '.aws' || /emulator/i.test(part))),
+    `the entries under ${home} the form names`,
+  ).toEqual([]);
 
   // Neither HOME nor USERPROFILE → the start line exits 0 and health reachable; the stop line exits 0 and no
   // container of the project is left.
@@ -241,8 +264,9 @@ test('engine.product-stop-leaves-only-the-volume-and-a-users-emulator-untouched'
   const volumes = await form.volumes();
   expect(volumes, `the volumes of ${form.project}`).toHaveLength(1);
 
-  // The volume left, listed from a container that mounts it read-only → no regular file.
-  const found = await docker([
+  // The volume left, listed from a container that mounts it read-only → no regular file. The emulator's image has
+  // `sh` and `ls` and no `find`, so the listing is `ls -AlR`, and a regular file is a line whose mode starts with `-`.
+  const listing = await docker([
     'run',
     '--rm',
     '--network',
@@ -250,17 +274,16 @@ test('engine.product-stop-leaves-only-the-volume-and-a-users-emulator-untouched'
     '--user',
     '1000:0',
     '--entrypoint',
-    'find',
+    'sh',
     '-v',
     `${volumes[0]}:/v:ro`,
     ctx.emulatorImage,
-    '/v',
-    '-type',
-    'f',
+    '-c',
+    'ls -AlR /v',
   ]);
-  expect(found.ok ? '' : found.stderr, `find /v -type f in a container that mounts ${volumes[0]} read-only`).toBe('');
+  expect(listing.ok ? '' : listing.stderr, `ls -AlR /v in a container that mounts ${volumes[0]} read-only`).toBe('');
   expect(
-    found.stdout.split('\n').filter((l) => l !== ''),
+    listing.stdout.split('\n').filter((line) => line.startsWith('-')),
     `the regular files in ${volumes[0]}`,
   ).toEqual([]);
 
