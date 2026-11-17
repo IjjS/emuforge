@@ -17,7 +17,7 @@
 # 127.0.0.1 in their own code, and the engine reaches the emulator at 127.0.0.1:EMULATOR_PORT like the developer's
 # start does. Nothing of the form publishes a port but the emulator of the profile, on 127.0.0.1 only. 18296 and
 # 18297 are ordinary ports here. Every service takes what it shares with the root file's service of the same name
-# by `extends` and states only what differs. `!reset` needs Docker Compose 2.24 or later.
+# by `extends` and states only what differs. `!reset` and `!override` need Docker Compose 2.24 or later.
 #
 # EMUFORGE_UID and EMUFORGE_GID (1000 each when unset, the image's own user) are the ids the form's processes run
 # as: the user's, so the engine can read the emulator's 0600 files. Never 0.
@@ -53,7 +53,9 @@ services:
       file: docker-compose.yml
       service: studio
     network_mode: host
-    depends_on: !reset []
+    # In place of the gateway: the engine, so Compose creates Studio only after the engine's container. Without it
+    # both are created at once, and a start refused for a missing folder would still leave a Studio container.
+    depends_on: !override [engine]
     user: "${EMUFORGE_UID:-1000}:${EMUFORGE_GID:-1000}"
 
   aws-emulator:
