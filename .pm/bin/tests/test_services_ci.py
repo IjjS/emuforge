@@ -13,6 +13,8 @@ and `GITHUB_SHA` is the new commit. The case writes the event file `{"before": <
 and sets `GITHUB_EVENT_NAME`, `GITHUB_EVENT_PATH`, `GITHUB_SHA` and `GITHUB_STEP_SUMMARY` itself; nothing reaches
 GitHub. `F` is <fixture>/output/ci/services.json.
 
+`.github/ci` is committed on `main` with the rest, so a push changes only the case's paths.
+
 `Workflow`, `Form` and `Guides` read the checkout's own files as text; the sentence helpers are those of
 `test_ci_docs.py`, the workflow helpers those of `test_ci.py`.
 
@@ -85,6 +87,8 @@ class Services(test_ci.Case):
         (self.co / ".github").mkdir(exist_ok=True)
         shutil.copy2(test_ci.CI, self.co / ".github" / "ci")
         (self.co / ".github" / "ci").chmod(0o755)
+        git(self.co, "add", ".github/ci")  # on main, so a case's push changes only the case's paths
+        git(self.co, "commit", "-q", "-m", "fixture: .github/ci")
         self.dir = self.co / "output" / "case"
         self.dir.mkdir(parents=True)
         self.F = self.co / "output" / "ci" / "services.json"
