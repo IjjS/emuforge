@@ -11,14 +11,21 @@ import Textarea, { type TextareaProps } from '@cloudscape-design/components/text
 import type { ReactNode, RefObject } from 'react';
 
 import './create-role.css';
+import { ValueText } from '../../../components/value-text';
 import type { Policy } from '../api';
 import { TAGS_MAX, type EditorTag, type Messages } from './create-role-rules';
+import { NAME_COLUMN_MIN_WIDTH } from './page-parts';
 
 // Step 3 of "Create role", "Name, review, and create" (issue 82, requirement R6.5): "Role details", the review of
 // the two earlier steps with "Edit", and "Add tags" with Cloudscape's tag editor. The trust policy is the text that
-// will be sent; every value is rendered as text.
+// will be sent; every value is rendered as text. The two fields of "Role details" state their rule from the start
+// (issue 467, requirement R4).
 
 const STEP_1_INCOMPLETE = 'Step 1 is not complete.';
+
+/** The constraint texts of "Role details" (issue 467, requirement R4): what `create-role-rules.ts` lets through. */
+export const NAME_RULE = '1 to 64 characters: letters (A-Z, a-z), digits and the characters + = , . @ _ -.';
+export const DESCRIPTION_RULE = 'Up to 1000 characters.';
 
 export interface ReviewStepProps {
   name: string;
@@ -57,7 +64,7 @@ export function ReviewStep({
     <SpaceBetween size="l">
       <Container header={<Header variant="h2">Role details</Header>}>
         <SpaceBetween size="l">
-          <FormField label="Role name" errorText={messages.name}>
+          <FormField label="Role name" constraintText={NAME_RULE} errorText={messages.name}>
             <Input
               ref={nameRef}
               value={name}
@@ -66,7 +73,7 @@ export function ReviewStep({
               }}
             />
           </FormField>
-          <FormField label="Description" errorText={messages.description}>
+          <FormField label="Description" constraintText={DESCRIPTION_RULE} errorText={messages.description}>
             <Textarea
               ref={descriptionRef}
               value={description}
@@ -108,8 +115,14 @@ export function ReviewStep({
         items={[...policies]}
         trackBy="arn"
         columnDefinitions={[
-          { id: 'name', header: 'Policy name', isRowHeader: true, cell: (policy) => policy.name },
-          { id: 'type', header: 'Type', cell: (policy) => policy.type },
+          {
+            id: 'name',
+            header: 'Policy name',
+            isRowHeader: true,
+            minWidth: NAME_COLUMN_MIN_WIDTH,
+            cell: (policy) => <ValueText kind="name" value={policy.name} />,
+          },
+          { id: 'type', header: 'Type', cell: (policy) => <ValueText kind="fixed" value={policy.type} /> },
         ]}
         ariaLabels={{ tableLabel: 'Chosen policies' }}
         empty={

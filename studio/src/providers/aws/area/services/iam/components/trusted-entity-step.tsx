@@ -37,6 +37,8 @@ const ENTITY_TYPES: readonly { value: EntityType; label: string }[] = [
 const SERVICE_HELP =
   'Enter the principal of the service that may assume the role. The emulator accepts a principal that names no service.';
 const CUSTOM_HELP = 'The emulator refuses a document that is not JSON or has no statement list.';
+/** The constraint text of "Account ID" (issue 467, requirement R4): the form's own rule, narrower than the emulator's. */
+export const ACCOUNT_ID_RULE = '12 digits.';
 
 export interface TrustedEntityStepProps {
   values: TrustedEntityValues;
@@ -114,7 +116,7 @@ export function TrustedEntityStep({
                 }}
               />
               {accountChoice === 'another' && (
-                <FormField label="Account ID" errorText={messages.accountId}>
+                <FormField label="Account ID" constraintText={ACCOUNT_ID_RULE} errorText={messages.accountId}>
                   <Input
                     ref={accountIdRef}
                     value={values.accountId}

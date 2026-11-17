@@ -1,6 +1,0 @@
-/* A value of a role's page from the emulator (an ARN, a description, a path, a policy's name, a role's name) is one
-   word as often as not: it breaks inside its column or cell rather than widening the page at 390 wide (issue 82,
-   requirement R11). The area's own element, not a Cloudscape component's; it sets no colour, spacing or font. */
-.aws-iam-value {
-  overflow-wrap: anywhere;
-}

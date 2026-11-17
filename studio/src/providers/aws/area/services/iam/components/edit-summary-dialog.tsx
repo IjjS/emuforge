@@ -15,6 +15,7 @@ import type { Role } from '../api';
 import { failureOf, useUpdateRole } from '../queries';
 import { actionFailureItem } from './failures';
 import { useAreaModalRoot } from './page-parts';
+import { Quoted } from './quoted';
 
 // "Edit" of a role's "Summary" (issue 82, requirement R5.5, R10.3): the dialog "Edit summary", in EmuForge's words
 // where no source shows the console's, with the guide's "Description", "Maximum session duration" and "Custom
@@ -25,6 +26,10 @@ const DESCRIPTION_MAX = 1000;
 /** The bounds of a maximum session duration, in seconds: the API model's lower one, the emulator's upper one. */
 const SECONDS_MIN = 3600;
 const SECONDS_MAX = 43200;
+
+/** The constraint texts of the two checked fields (issue 467, requirement R4): what "Save changes" lets through. */
+export const DESCRIPTION_RULE = 'Up to 1000 characters.';
+export const SECONDS_RULE = 'A whole number from 3600 to 43200.';
 
 const DESCRIPTION_TOO_LONG = 'The description can have up to 1000 characters.';
 const SECONDS_OUT_OF_RANGE = 'Enter a whole number from 3600 to 43200.';
@@ -116,7 +121,12 @@ export function EditSummaryDialog({ role, engineOrigin, onClose }: EditSummaryDi
       { name: role.name, description, maxSessionDuration: chosen, readMaxSessionDuration: role.maxSessionDuration },
       {
         onSuccess: () => {
-          flash.show([{ type: 'success', content: `Role “${role.name}” was updated in the local emulator.` }]);
+          flash.show([
+            {
+              type: 'success',
+              content: <Quoted before="Role “" name={role.name} after="” was updated in the local emulator." />,
+            },
+          ]);
           onClose();
         },
         onError: (error) => {
@@ -147,7 +157,7 @@ export function EditSummaryDialog({ role, engineOrigin, onClose }: EditSummaryDi
       }
     >
       <SpaceBetween size="m">
-        <FormField label="Description" errorText={errors.description}>
+        <FormField label="Description" constraintText={DESCRIPTION_RULE} errorText={errors.description}>
           <Textarea
             value={description}
             onChange={({ detail }) => {
@@ -165,7 +175,7 @@ export function EditSummaryDialog({ role, engineOrigin, onClose }: EditSummaryDi
           />
         </FormField>
         {choice === CUSTOM && (
-          <FormField label="Seconds" errorText={errors.seconds}>
+          <FormField label="Seconds" constraintText={SECONDS_RULE} errorText={errors.seconds}>
             <Input
               value={seconds}
               inputMode="numeric"
