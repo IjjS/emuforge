@@ -6,8 +6,9 @@ import KeyValuePairs from '@cloudscape-design/components/key-value-pairs';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Table, { type TableProps } from '@cloudscape-design/components/table';
-import type { Ref } from 'react';
+import type { ReactNode, Ref } from 'react';
 
+import './role-sections.css';
 import type { AreaConnection } from '../../../components/emulator-line';
 import type { Role, RolePolicies } from '../api';
 import {
@@ -29,6 +30,11 @@ import { ReadFailure } from './states';
 
 /** What a failed policy list names (R10.1). */
 const POLICIES_THING = 'policies';
+
+/** A value from the emulator as text that breaks anywhere when it must (R11): a word without a space stays in its box. */
+export function Value({ children }: { children: ReactNode }) {
+  return <span className="aws-iam-value">{children}</span>;
+}
 
 export interface SummarySectionProps {
   role: Role;
@@ -58,12 +64,12 @@ export function SummarySection({ role, onEdit, editRef }: SummarySectionProps) {
         <KeyValuePairs
           columns={3}
           items={[
-            { label: 'Creation date', value: utcDateText(role.createDate) },
-            { label: 'ARN', value: role.arn ?? NO_VALUE },
+            { label: 'Creation date', value: <Value>{utcDateText(role.createDate)}</Value> },
+            { label: 'ARN', value: <Value>{role.arn ?? NO_VALUE}</Value> },
             { label: 'Last activity', value: lastActivityText(role.lastUsed) },
             { label: 'Maximum session duration', value: maxSessionDurationText(role.maxSessionDuration) },
-            { label: 'Description', value: descriptionText(role.description) },
-            { label: 'Path', value: role.path ?? NO_VALUE },
+            { label: 'Description', value: <Value>{descriptionText(role.description)}</Value> },
+            { label: 'Path', value: <Value>{role.path ?? NO_VALUE}</Value> },
           ]}
         />
         {isServiceLinked(role.path) && <StatusIndicator type="info">Service-linked role</StatusIndicator>}
@@ -73,7 +79,7 @@ export function SummarySection({ role, onEdit, editRef }: SummarySectionProps) {
 }
 
 const POLICY_COLUMNS: TableProps.ColumnDefinition<PolicyRef>[] = [
-  { id: 'name', header: 'Policy name', isRowHeader: true, cell: (policy) => policy.name },
+  { id: 'name', header: 'Policy name', isRowHeader: true, cell: (policy) => <Value>{policy.name}</Value> },
   { id: 'type', header: 'Type', cell: (policy) => policyTypeText(policy) },
 ];
 
@@ -130,7 +136,9 @@ export function PoliciesSection({ policies, connection, onRetry }: PoliciesSecti
 export function BoundarySection({ role }: { role: Role }) {
   return (
     <Container header={<Header variant="h2">Permissions boundary</Header>}>
-      <Box variant="p">{role.permissionsBoundary ?? 'Not set'}</Box>
+      <Box variant="p">
+        <Value>{role.permissionsBoundary ?? 'Not set'}</Value>
+      </Box>
     </Container>
   );
 }
