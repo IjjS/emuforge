@@ -29,8 +29,9 @@ import tseslint from 'typescript-eslint';
 //   constructed with `new` only under `lib/aws/` or in a test (R6.8); a command, an error or a paginator may be;
 // - a file pattern (`import.meta.glob`) is no import to the rules above, so it has its own (R8.1): none outside
 //   `providers/<id>/area/` but the one pattern `./area/services/*/service.json` of `providers/aws/services.ts` (data
-//   only, R13.3) and the catalogues' `./messages/*.json` of `i18n/bundled.ts`; inside the area outside `services/`, none that names a service's folder rather than `services/*`;
-//   inside a service folder, none that leaves it. A test may use any.
+//   only, R13.3) and the catalogues' `./messages/*.json` of `i18n/bundled.ts`; inside the area outside `services/`,
+//   none that names a service's folder rather than `services/*`; inside a service folder, none that leaves it. A test
+//   may use any.
 
 const SRC = path.join(import.meta.dirname, 'src');
 const CLOUDSCAPE = '@cloudscape-design/';
