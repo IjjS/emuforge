@@ -9,11 +9,11 @@
 // check's prefix `<p>`, and each line works under its own filter `<p>-<line>-`. Words and readers:
 // `support/lambda-list.ts`; direct calls: `support/lambda.ts`.
 
-import type { Page } from "@playwright/test";
+import type { Page } from '@playwright/test';
 
-import { expect, startStack, test } from "./support";
-import { hasFocus } from "./support/focus";
-import { ACTION, addressOf, heading } from "./support/frame";
+import { expect, startStack, test } from './support';
+import { hasFocus } from './support/focus';
+import { ACTION, addressOf, heading } from './support/frame';
 import {
   deleteFunctionDirect,
   endpointOf,
@@ -21,7 +21,7 @@ import {
   getFunctionDirect,
   getRoleDirect,
   LambdaSeeded,
-} from "./support/lambda";
+} from './support/lambda';
 import {
   ACTIONS,
   applyFilter,
@@ -40,35 +40,22 @@ import {
   openList,
   screen,
   tokenTexts,
-} from "./support/lambda-list";
-import { Lines } from "./support/lines";
-import { checkPrefix } from "./support/s3";
+} from './support/lambda-list';
+import { Lines } from './support/lines';
+import { checkPrefix } from './support/s3';
 
 /** Waits until one of the area's Flashbar items holds every one of `parts`. */
-async function expectFlash(
-  page: Page,
-  parts: string[],
-  message: string,
-): Promise<void> {
+async function expectFlash(page: Page, parts: string[], message: string): Promise<void> {
   await expect
-    .poll(
-      async () =>
-        (await flashTexts(page)).some((t) =>
-          parts.every((part) => t.includes(part)),
-        ),
-      { message },
-    )
+    .poll(async () => (await flashTexts(page)).some((t) => parts.every((part) => t.includes(part))), { message })
     .toBe(true);
 }
 
-test("studio.lambda-function-delete-removes-functions-from-the-emulator", async ({
-  ctx,
-  page,
-}) => {
+test('studio.lambda-function-delete-removes-functions-from-the-emulator', async ({ ctx, page }) => {
   const stack = await startStack(ctx);
   const port = stack.emulatorPort;
   const lines = new Lines(ctx);
-  const p = checkPrefix(ctx, "lfl-delete");
+  const p = checkPrefix(ctx, 'lfl-delete');
   const seeded = new LambdaSeeded(ctx, port, p);
   const s = screen(page);
   const d = deleteDialog(page);
@@ -80,11 +67,9 @@ test("studio.lambda-function-delete-removes-functions-from-the-emulator", async 
 
   /** The list under the filter `text`. */
   async function listedUnder(text: string, names: string[]): Promise<void> {
-    if (!/\/aws\/lambda\/functions$/.test(new URL(page.url()).pathname))
-      await openList(page);
+    if (!/\/aws\/lambda\/functions$/.test(new URL(page.url()).pathname)) await openList(page);
     const tokens = await tokenTexts(page);
-    if (tokens.length !== 1 || !tokens[0].includes(text))
-      await applyFilter(page, text);
+    if (tokens.length !== 1 || !tokens[0].includes(text)) await applyFilter(page, text);
     await expectNames(page, names, `the rows under the filter ${text}`);
   }
 
@@ -94,19 +79,11 @@ test("studio.lambda-function-delete-removes-functions-from-the-emulator", async 
       await openList(page);
       await listedUnder(one, [first, second, third]);
       await openDeleteDialog(page, [first, second]);
-      await expect
-        .poll(() => d.names(), { message: "the names the dialog lists" })
-        .toEqual([first, second]);
-      await expect(
-        d.dialog,
-        "the dialog names the emulator's endpoint",
-      ).toContainText(endpointOf(port));
+      await expect.poll(() => d.names(), { message: 'the names the dialog lists' }).toEqual([first, second]);
+      await expect(d.dialog, "the dialog names the emulator's endpoint").toContainText(endpointOf(port));
       await expect(d.delete, '"Delete" with the field empty').toBeDisabled();
       await d.field.fill(CONFIRM_WORD, ACTION);
-      await expect(
-        d.delete,
-        `"Delete" with "${CONFIRM_WORD}" typed`,
-      ).toBeEnabled();
+      await expect(d.delete, `"Delete" with "${CONFIRM_WORD}" typed`).toBeEnabled();
     },
   );
 
@@ -120,26 +97,12 @@ test("studio.lambda-function-delete-removes-functions-from-the-emulator", async 
       }
       await d.field.fill(CONFIRM_WORD, ACTION);
       await d.delete.click(ACTION);
-      await expect(
-        d.dialog,
-        `the dialog "${DELETE_DIALOG}" closes`,
-      ).toHaveCount(0);
-      await expectFlash(
-        page,
-        [deletedText(2)],
-        `the success item "${deletedText(2)}"`,
-      );
-      await expectNames(
-        page,
-        [third],
-        "the rows under the filter <p>-one- after the delete",
-      );
+      await expect(d.dialog, `the dialog "${DELETE_DIALOG}" closes`).toHaveCount(0);
+      await expectFlash(page, [deletedText(2)], `the success item "${deletedText(2)}"`);
+      await expectNames(page, [third], 'the rows under the filter <p>-one- after the delete');
       for (const name of [first, second]) {
         const read = await getFunctionDirect(ctx, port, name);
-        expect(
-          read.found ? "found" : read.errorType,
-          `a direct GetFunction ${name}`,
-        ).toBe("ResourceNotFoundException");
+        expect(read.found ? 'found' : read.errorType, `a direct GetFunction ${name}`).toBe('ResourceNotFoundException');
       }
       const kept = await getFunctionDirect(ctx, port, third);
       expect(kept.found, `a direct GetFunction ${third} returns it`).toBe(true);
@@ -156,35 +119,24 @@ test("studio.lambda-function-delete-removes-functions-from-the-emulator", async 
       await listedUnder(two, [gone]);
       await openDeleteDialog(page, [gone]);
       const deleted = await deleteFunctionDirect(ctx, port, gone);
-      expect(
-        "error" in deleted ? deleted.error : deleted.status,
-        `direct DeleteFunction ${gone}`,
-      ).toBe(204);
+      expect('error' in deleted ? deleted.error : deleted.status, `direct DeleteFunction ${gone}`).toBe(204);
       // What the emulator answers a DeleteFunction of a function it no longer holds: the code and message the error
       // item is to show. The function is already gone, so this changes nothing.
       const refused = await deleteFunctionDirect(ctx, port, gone);
-      expect(
-        "error" in refused ? refused.error : refused.errorType,
-        `a second direct DeleteFunction ${gone}`,
-      ).toBe("ResourceNotFoundException");
-      const message = "error" in refused ? "" : (refused.message ?? "");
-      expect(message, "the emulator's message for it").not.toBe("");
+      expect('error' in refused ? refused.error : refused.errorType, `a second direct DeleteFunction ${gone}`).toBe(
+        'ResourceNotFoundException',
+      );
+      const message = 'error' in refused ? '' : (refused.message ?? '');
+      expect(message, "the emulator's message for it").not.toBe('');
       await d.field.fill(CONFIRM_WORD, ACTION);
       await d.delete.click(ACTION);
-      await expect(
-        d.dialog,
-        `the dialog "${DELETE_DIALOG}" closes`,
-      ).toHaveCount(0);
+      await expect(d.dialog, `the dialog "${DELETE_DIALOG}" closes`).toHaveCount(0);
       await expectFlash(
         page,
-        [deleteFailedText(gone), "ResourceNotFoundException", message],
+        [deleteFailedText(gone), 'ResourceNotFoundException', message],
         `an error item "${deleteFailedText(gone)}" with ResourceNotFoundException and "${message}"`,
       );
-      await expectNames(
-        page,
-        [],
-        "the rows under the filter <p>-two- after the delete",
-      );
+      await expectNames(page, [], 'the rows under the filter <p>-two- after the delete');
     },
   );
 
@@ -197,11 +149,8 @@ test("studio.lambda-function-delete-removes-functions-from-the-emulator", async 
       await openList(page);
       await listedUnder(three, [kept]);
       await openDeleteDialog(page, [kept]);
-      await page.keyboard.press("Escape");
-      await expect(
-        d.dialog,
-        `the dialog "${DELETE_DIALOG}" closes`,
-      ).toHaveCount(0);
+      await page.keyboard.press('Escape');
+      await expect(d.dialog, `the dialog "${DELETE_DIALOG}" closes`).toHaveCount(0);
       await expect
         .poll(() => hasFocus(s.action(ACTIONS)), {
           message: `focus is on "${ACTIONS}"`,
@@ -209,10 +158,7 @@ test("studio.lambda-function-delete-removes-functions-from-the-emulator", async 
         .toBe(true);
       const read = await getFunctionDirect(ctx, port, kept);
       expect(read.found, `a direct GetFunction ${kept} returns it`).toBe(true);
-      expect(
-        await functionNamesDirect(ctx, port, three),
-        "a direct ListFunctions under <p>-three-",
-      ).toEqual([kept]);
+      expect(await functionNamesDirect(ctx, port, three), 'a direct ListFunctions under <p>-three-').toEqual([kept]);
     },
   );
 
@@ -223,58 +169,33 @@ test("studio.lambda-function-delete-removes-functions-from-the-emulator", async 
       const made = `${four}made`;
       await page.goto(CREATE_PATH);
       await expect(heading(page, CREATE), `the h1 "${CREATE}"`).toBeVisible();
-      await page
-        .getByRole("main")
-        .getByLabel(FUNCTION_NAME_FIELD, { exact: true })
-        .fill(made, ACTION);
+      await page.getByRole('main').getByLabel(FUNCTION_NAME_FIELD, { exact: true }).fill(made, ACTION);
       // "Create default role" is the execution role's choice at start (R6.2).
-      await page
-        .getByRole("main")
-        .getByRole("button", { name: CREATE, exact: true })
-        .click(ACTION);
+      await page.getByRole('main').getByRole('button', { name: CREATE, exact: true }).click(ACTION);
       await expect(page).toHaveURL(addressOf(functionPath(made)), {
         timeout: 15_000,
       });
       const created = await getFunctionDirect(ctx, port, made);
-      expect(created.found, `a direct GetFunction ${made} after the form`).toBe(
-        true,
-      );
+      expect(created.found, `a direct GetFunction ${made} after the form`).toBe(true);
       if (!created.found) return;
       const roleArn = created.configuration.Role;
-      const roleName = roleArn.split("/").pop() ?? "";
+      const roleName = roleArn.split('/').pop() ?? '';
       ctx.log(`the role Studio made for ${made}: ${roleArn}`);
-      expect(
-        roleName.startsWith(`${made}-role-`),
-        `the role ${roleName} is the one "Create default role" made`,
-      ).toBe(true);
-      expect(
-        await getRoleDirect(ctx, port, roleName),
-        `a direct GetRole ${roleName} before the delete`,
-      ).not.toBeNull();
+      expect(roleName.startsWith(`${made}-role-`), `the role ${roleName} is the one "Create default role" made`).toBe(
+        true,
+      );
+      expect(await getRoleDirect(ctx, port, roleName), `a direct GetRole ${roleName} before the delete`).not.toBeNull();
       await openList(page);
       await listedUnder(four, [made]);
       await openDeleteDialog(page, [made]);
       await d.field.fill(CONFIRM_WORD, ACTION);
       await d.delete.click(ACTION);
-      await expect(
-        d.dialog,
-        `the dialog "${DELETE_DIALOG}" closes`,
-      ).toHaveCount(0);
-      await expectFlash(
-        page,
-        [deletedText(1)],
-        `the success item "${deletedText(1)}"`,
-      );
+      await expect(d.dialog, `the dialog "${DELETE_DIALOG}" closes`).toHaveCount(0);
+      await expectFlash(page, [deletedText(1)], `the success item "${deletedText(1)}"`);
       const read = await getFunctionDirect(ctx, port, made);
-      expect(
-        read.found ? "found" : read.errorType,
-        `a direct GetFunction ${made}`,
-      ).toBe("ResourceNotFoundException");
+      expect(read.found ? 'found' : read.errorType, `a direct GetFunction ${made}`).toBe('ResourceNotFoundException');
       const role = await getRoleDirect(ctx, port, roleName);
-      expect(
-        role?.arn,
-        `a direct GetRole ${roleName} after the delete returns the role`,
-      ).toBe(roleArn);
+      expect(role?.arn, `a direct GetRole ${roleName} after the delete returns the role`).toBe(roleArn);
     },
   );
 

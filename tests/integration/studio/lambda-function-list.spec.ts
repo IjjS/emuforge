@@ -11,19 +11,19 @@
 // prefix `<p>` and compares the screen with a direct `ListFunctions` under the filter `<p>`. Words and readers:
 // `support/lambda-list.ts`; direct calls and the functions a check makes: `support/lambda.ts`.
 
-import type { Page } from "@playwright/test";
+import type { Page } from '@playwright/test';
 
-import { expect, startStack, test } from "./support";
-import { connectedAt, crumbLink, crumbs, expectLine } from "./support/aws-area";
-import { ACTION, addressOf, expectNoScreenYet, heading } from "./support/frame";
-import { markPage, stillSamePage } from "./support/home";
+import { expect, startStack, test } from './support';
+import { connectedAt, crumbLink, crumbs, expectLine } from './support/aws-area';
+import { ACTION, addressOf, expectNoScreenYet, heading } from './support/frame';
+import { markPage, stillSamePage } from './support/home';
 import {
   deleteFunctionDirect,
   endpointOf,
   functionNamesDirect,
   LambdaSeeded,
   listFunctionsDirect,
-} from "./support/lambda";
+} from './support/lambda';
 import {
   applyFilter,
   CLEAR_FILTER,
@@ -49,11 +49,11 @@ import {
   shownRows,
   TAB_ROUTES,
   tokenTexts,
-} from "./support/lambda-list";
-import { Lines } from "./support/lines";
-import { checkPrefix, SEOUL } from "./support/s3";
+} from './support/lambda-list';
+import { Lines } from './support/lines';
+import { checkPrefix, SEOUL } from './support/s3';
 
-const AWS = "Amazon Web Services";
+const AWS = 'Amazon Web Services';
 
 /** The list's frame at `path`: the address and the `h1` "Event Functions". */
 async function expectListAt(page: Page, path: string): Promise<void> {
@@ -67,22 +67,19 @@ test.describe(() => {
   // "Last modified" is written in the zone the check sets on its browser context.
   test.use({ timezoneId: SEOUL.timeZone });
 
-  test("studio.lambda-function-list-shows-what-the-emulator-holds", async ({
-    ctx,
-    page,
-  }) => {
+  test('studio.lambda-function-list-shows-what-the-emulator-holds', async ({ ctx, page }) => {
     const stack = await startStack(ctx);
     const port = stack.emulatorPort;
     const lines = new Lines(ctx);
-    const p = checkPrefix(ctx, "lfl-shows");
+    const p = checkPrefix(ctx, 'lfl-shows');
     const seeded = new LambdaSeeded(ctx, port, p);
     await seeded.function(`${p}-node`, {
-      runtime: "nodejs22.x",
+      runtime: 'nodejs22.x',
       description: `Made by ${p} for the list`,
     });
     await seeded.function(`${p}-py`, {
-      runtime: "python3.13",
-      architecture: "arm64",
+      runtime: 'python3.13',
+      architecture: 'arm64',
     });
     await seeded.function(`${p}-durable`, { durable: true });
     const s = screen(page);
@@ -98,27 +95,22 @@ test.describe(() => {
         );
         expect(
           [...direct.map((f) => f.FunctionName)].sort(),
-          "a direct ListFunctions lists the three functions",
+          'a direct ListFunctions lists the three functions',
         ).toEqual([`${p}-durable`, `${p}-node`, `${p}-py`]);
         expect(
           direct.find((f) => f.FunctionName === `${p}-durable`)?.DurableConfig,
-          "the direct answer carries DurableConfig for the durable function",
+          'the direct answer carries DurableConfig for the durable function',
         ).toBeDefined();
         const expected = direct.map((f) => expectedRow(f, SEOUL));
         await expect
           .poll(() => shownRows(page), {
-            message:
-              "the rows: name, description, package type, runtime, type, last modified",
+            message: 'the rows: name, description, package type, runtime, type, last modified',
           })
           .toEqual(expected);
         expect(
           expected.map((r) => r.type),
-          "the types of the rows in the direct order",
-        ).toEqual(
-          direct.map((f) =>
-            f.FunctionName === `${p}-durable` ? "Durable" : "Standard",
-          ),
-        );
+          'the types of the rows in the direct order',
+        ).toEqual(direct.map((f) => (f.FunctionName === `${p}-durable` ? 'Durable' : 'Standard')));
       },
     );
 
@@ -126,39 +118,26 @@ test.describe(() => {
       'The crumbs read EmuForge, AWS, Lambda, Event Functions; the notice reads "These functions are in your local emulator" and names the endpoint the emulator line shows; closing it and choosing the (i) control brings it back',
       async () => {
         await expectListAt(page, FUNCTIONS_PATH);
-        await expect
-          .poll(() => crumbs(page), { message: "the crumbs" })
-          .toEqual(CRUMBS);
+        await expect.poll(() => crumbs(page), { message: 'the crumbs' }).toEqual(CRUMBS);
         await expectLine(page, connectedAt(port));
-        await expect(s.notice, "the notice").toBeVisible();
-        await expect(
-          s.noticeRegion,
-          "the notice names the endpoint",
-        ).toContainText(endpointOf(port));
+        await expect(s.notice, 'the notice').toBeVisible();
+        await expect(s.noticeRegion, 'the notice names the endpoint').toContainText(endpointOf(port));
         await s.noticeClose.click(ACTION);
-        await expect(s.notice, "the notice once closed").toHaveCount(0);
+        await expect(s.notice, 'the notice once closed').toHaveCount(0);
         await s.about.click(ACTION);
-        await expect(
-          s.notice,
-          "the notice once the (i) control is chosen",
-        ).toBeVisible();
+        await expect(s.notice, 'the notice once the (i) control is chosen').toBeVisible();
         await expect(s.noticeRegion).toContainText(endpointOf(port));
       },
     );
 
-    await lines.line(
-      "Open `/aws/lambda` → the same screen, and the address stays `/aws/lambda`",
-      async () => {
-        await page.goto(LAMBDA_PATH);
-        await expectListAt(page, LAMBDA_PATH);
-        await expect(s.action(REFRESH), `"${REFRESH}"`).toBeVisible();
-        await expect(s.filter, "the filter").toBeVisible();
-        await expect
-          .poll(() => crumbs(page), { message: "the crumbs" })
-          .toEqual(CRUMBS);
-        await expect(page).toHaveURL(addressOf(LAMBDA_PATH));
-      },
-    );
+    await lines.line('Open `/aws/lambda` → the same screen, and the address stays `/aws/lambda`', async () => {
+      await page.goto(LAMBDA_PATH);
+      await expectListAt(page, LAMBDA_PATH);
+      await expect(s.action(REFRESH), `"${REFRESH}"`).toBeVisible();
+      await expect(s.filter, 'the filter').toBeVisible();
+      await expect.poll(() => crumbs(page), { message: 'the crumbs' }).toEqual(CRUMBS);
+      await expect(page).toHaveURL(addressOf(LAMBDA_PATH));
+    });
 
     lines.end();
   });
@@ -166,77 +145,50 @@ test.describe(() => {
 
 // ---------------------------------------------------------------------------------------------------------------
 
-test("studio.lambda-function-list-rereads-on-open-and-refresh", async ({
-  ctx,
-  page,
-  context,
-}) => {
+test('studio.lambda-function-list-rereads-on-open-and-refresh', async ({ ctx, page, context }) => {
   const stack = await startStack(ctx);
   const port = stack.emulatorPort;
   const lines = new Lines(ctx);
-  const p = checkPrefix(ctx, "lfl-reread");
+  const p = checkPrefix(ctx, 'lfl-reread');
   const seeded = new LambdaSeeded(ctx, port, p);
   await seeded.function(`${p}-first`);
   const late = `${p}-late`;
   const record = ListFunctionsRecord.attach(ctx, context, stack.engine.url);
 
   await lines.line(
-    "With the list shown under the filter `<p>`, make a function `<p>-late` directly, leave for `/aws` and come back, apply the filter → the row is there",
+    'With the list shown under the filter `<p>`, make a function `<p>-late` directly, leave for `/aws` and come back, apply the filter → the row is there',
     async () => {
       await openList(page);
       await applyFilter(page, p);
-      await expectNames(page, [`${p}-first`], "the rows under the filter <p>");
+      await expectNames(page, [`${p}-first`], 'the rows under the filter <p>');
       await seeded.function(late);
-      await crumbLink(page, "AWS").click(ACTION);
+      await crumbLink(page, 'AWS').click(ACTION);
       await expect(heading(page, AWS)).toBeVisible();
       const n = record.answered();
       await page.goBack();
       await expect(listHeading(page)).toBeVisible();
-      await record.answeredAfter(
-        n,
-        "coming back sent a ListFunctions the engine answered",
-      );
+      await record.answeredAfter(n, 'coming back sent a ListFunctions the engine answered');
       await applyFilter(page, p);
       const direct = await functionNamesDirect(ctx, port, p);
-      expect(direct, "a direct ListFunctions lists <p>-late").toContain(late);
-      await expectNames(
-        page,
-        direct,
-        "the rows under the filter <p> after coming back",
-      );
+      expect(direct, 'a direct ListFunctions lists <p>-late').toContain(late);
+      await expectNames(page, direct, 'the rows under the filter <p> after coming back');
     },
   );
 
-  await lines.line(
-    'Delete it directly and choose "Refresh" → the row is gone',
-    async () => {
-      // The Given: the function of the line before exists and the list is shown under the filter, whether or not
-      // that line held.
-      if (!(await functionNamesDirect(ctx, port, p)).includes(late))
-        await seeded.function(late);
-      if ((await tokenTexts(page)).length === 0) await applyFilter(page, p);
-      const deleted = await deleteFunctionDirect(ctx, port, late);
-      expect(
-        "error" in deleted ? deleted.error : deleted.status,
-        `direct DeleteFunction ${late}`,
-      ).toBe(204);
-      const n = record.answered();
-      await screen(page).action(REFRESH).click(ACTION);
-      await record.answeredAfter(
-        n,
-        "the refresh sent a ListFunctions the engine answered",
-      );
-      const direct = await functionNamesDirect(ctx, port, p);
-      expect(direct, "a direct ListFunctions no longer lists <p>-late").toEqual(
-        [`${p}-first`],
-      );
-      await expectNames(
-        page,
-        direct,
-        'the rows under the filter <p> after "Refresh"',
-      );
-    },
-  );
+  await lines.line('Delete it directly and choose "Refresh" → the row is gone', async () => {
+    // The Given: the function of the line before exists and the list is shown under the filter, whether or not
+    // that line held.
+    if (!(await functionNamesDirect(ctx, port, p)).includes(late)) await seeded.function(late);
+    if ((await tokenTexts(page)).length === 0) await applyFilter(page, p);
+    const deleted = await deleteFunctionDirect(ctx, port, late);
+    expect('error' in deleted ? deleted.error : deleted.status, `direct DeleteFunction ${late}`).toBe(204);
+    const n = record.answered();
+    await screen(page).action(REFRESH).click(ACTION);
+    await record.answeredAfter(n, 'the refresh sent a ListFunctions the engine answered');
+    const direct = await functionNamesDirect(ctx, port, p);
+    expect(direct, 'a direct ListFunctions no longer lists <p>-late').toEqual([`${p}-first`]);
+    await expectNames(page, direct, 'the rows under the filter <p> after "Refresh"');
+  });
 
   record.log();
   lines.end();
@@ -244,48 +196,29 @@ test("studio.lambda-function-list-rereads-on-open-and-refresh", async ({
 
 // ---------------------------------------------------------------------------------------------------------------
 
-test("studio.lambda-function-list-filter-matches-the-start-of-a-name", async ({
-  ctx,
-  page,
-}) => {
+test('studio.lambda-function-list-filter-matches-the-start-of-a-name', async ({ ctx, page }) => {
   const stack = await startStack(ctx);
   const port = stack.emulatorPort;
   const lines = new Lines(ctx);
-  const p = checkPrefix(ctx, "lfl-filter");
+  const p = checkPrefix(ctx, 'lfl-filter');
   const seeded = new LambdaSeeded(ctx, port, p);
-  const made = [
-    `${p}-ab-`,
-    `${p}-abb`,
-    `${p}-abc`,
-    `${p}-abc-x`,
-    `${p}-abd`,
-    `${p}-Abc`,
-  ];
+  const made = [`${p}-ab-`, `${p}-abb`, `${p}-abc`, `${p}-abc-x`, `${p}-abd`, `${p}-Abc`];
   for (const name of made) await seeded.function(name);
   const s = screen(page);
   await openList(page);
 
   /** The direct `ListFunctions` names that start with `text`, in its order. */
-  const startingWith = async (text: string) =>
-    functionNamesDirect(ctx, port, text);
+  const startingWith = async (text: string) => functionNamesDirect(ctx, port, text);
 
   await lines.line(
     'With `<p>-ab-`, `<p>-abb`, `<p>-abc`, `<p>-abc-x`, `<p>-abd` and `<p>-Abc` made directly, apply the filter `<p>-abc` → `<p>-abc`, `<p>-abc-x` and "2 matches"; a direct `ListFunctions` holds the others',
     async () => {
       const all = await startingWith(p);
-      expect(
-        [...all].sort(),
-        "a direct ListFunctions holds the six functions",
-      ).toEqual([...made].sort());
+      expect([...all].sort(), 'a direct ListFunctions holds the six functions').toEqual([...made].sort());
       await applyFilter(page, `${p}-abc`);
-      await expectNames(
-        page,
-        [`${p}-abc`, `${p}-abc-x`],
-        "the rows under the filter <p>-abc",
-      );
-      await expect(s.resultsCount, "the count beside the filter").toHaveText(
-        matchesText(2),
-      );
+      await expectNames(page, [`${p}-abc`, `${p}-abc-x`], 'the rows under the filter <p>-abc');
+      await expect(s.resultsCount, 'the count beside the filter').toHaveText(matchesText(2));
+      await expect(s.resultsCount).toBeVisible();
     },
   );
 
@@ -293,79 +226,46 @@ test("studio.lambda-function-list-filter-matches-the-start-of-a-name", async ({
     'Apply `<p>-ab-` → the one row `<p>-ab-` and "1 match"; apply `<p>-a` → the five lower-case names and not `<p>-Abc`',
     async () => {
       await applyFilter(page, `${p}-ab-`);
-      await expectNames(
-        page,
-        [`${p}-ab-`],
-        "the rows under the filter <p>-ab-",
-      );
-      await expect(s.resultsCount, "the count beside the filter").toHaveText(
-        matchesText(1),
-      );
-      expect(await tokenTexts(page), "the filter holds one token").toHaveLength(
-        1,
-      );
+      await expectNames(page, [`${p}-ab-`], 'the rows under the filter <p>-ab-');
+      await expect(s.resultsCount, 'the count beside the filter').toHaveText(matchesText(1));
+      await expect(s.resultsCount).toBeVisible();
+      expect(await tokenTexts(page), 'the filter holds one token').toHaveLength(1);
       await applyFilter(page, `${p}-a`);
       const lower = await startingWith(`${p}-a`);
-      expect(
-        lower,
-        "a direct ListFunctions: the names that start with <p>-a",
-      ).toHaveLength(5);
-      expect(
-        lower,
-        "a direct ListFunctions: <p>-Abc does not start with <p>-a",
-      ).not.toContain(`${p}-Abc`);
-      await expectNames(page, lower, "the rows under the filter <p>-a");
-      await expect(s.resultsCount, "the count beside the filter").toHaveText(
-        matchesText(5),
-      );
-      expect(await tokenTexts(page), "the filter holds one token").toHaveLength(
-        1,
-      );
+      expect(lower, 'a direct ListFunctions: the names that start with <p>-a').toHaveLength(5);
+      expect(lower, 'a direct ListFunctions: <p>-Abc does not start with <p>-a').not.toContain(`${p}-Abc`);
+      await expectNames(page, lower, 'the rows under the filter <p>-a');
+      await expect(s.resultsCount, 'the count beside the filter').toHaveText(matchesText(5));
+      await expect(s.resultsCount).toBeVisible();
+      expect(await tokenTexts(page), 'the filter holds one token').toHaveLength(1);
     },
   );
 
-  await lines.line(
-    'Apply `<p>-zz` → "No matches"; "Clear filter" → the unfiltered list',
-    async () => {
-      await applyFilter(page, `${p}-zz`);
-      await expect(
-        s.empty.getByText(NO_MATCHES, { exact: true }),
-        `"${NO_MATCHES}"`,
-      ).toBeVisible();
-      await expect(
-        s.empty.getByText(noMatchSentence(`${p}-zz`), { exact: true }),
-      ).toBeVisible();
-      await s.empty
-        .getByRole("button", { name: CLEAR_FILTER, exact: true })
-        .click(ACTION);
-      await expect
-        .poll(() => tokenTexts(page), { message: "the filter holds no token" })
-        .toEqual([]);
-      // The run's emulator holds at least this check's six functions, so the unfiltered list has rows.
-      await expect
-        .poll(async () => (await shownNames(page)).length, {
-          message: "rows are shown",
-        })
-        .toBeGreaterThan(0);
-      await expect(s.empty.getByText(NO_MATCHES, { exact: true })).toHaveCount(
-        0,
-      );
-    },
-  );
+  await lines.line('Apply `<p>-zz` → "No matches"; "Clear filter" → the unfiltered list', async () => {
+    await applyFilter(page, `${p}-zz`);
+    await expect(s.empty.getByText(NO_MATCHES, { exact: true }), `"${NO_MATCHES}"`).toBeVisible();
+    await expect(s.empty.getByText(noMatchSentence(`${p}-zz`), { exact: true })).toBeVisible();
+    await s.empty.getByRole('button', { name: CLEAR_FILTER, exact: true }).click(ACTION);
+    await expect.poll(() => tokenTexts(page), { message: 'the filter holds no token' }).toEqual([]);
+    // The run's emulator holds at least this check's six functions, so the unfiltered list has rows.
+    await expect
+      .poll(async () => (await shownNames(page)).length, {
+        message: 'rows are shown',
+      })
+      .toBeGreaterThan(0);
+    await expect(s.empty.getByText(NO_MATCHES, { exact: true })).toHaveCount(0);
+  });
 
   lines.end();
 });
 
 // ---------------------------------------------------------------------------------------------------------------
 
-test("studio.lambda-function-list-actions-lead-to-their-routes", async ({
-  ctx,
-  page,
-}) => {
+test('studio.lambda-function-list-actions-lead-to-their-routes', async ({ ctx, page }) => {
   const stack = await startStack(ctx);
   const port = stack.emulatorPort;
   const lines = new Lines(ctx);
-  const p = checkPrefix(ctx, "lfl-actions");
+  const p = checkPrefix(ctx, 'lfl-actions');
   const one = `${p}-one`;
   const seeded = new LambdaSeeded(ctx, port, p);
   await seeded.function(one);
@@ -375,7 +275,7 @@ test("studio.lambda-function-list-actions-lead-to-their-routes", async ({
   async function listed(): Promise<void> {
     await expect(listHeading(page)).toBeVisible();
     if ((await tokenTexts(page)).length === 0) await applyFilter(page, p);
-    await expectNames(page, [one], "the rows under the filter <p>");
+    await expectNames(page, [one], 'the rows under the filter <p>');
   }
 
   await lines.line(
@@ -386,7 +286,7 @@ test("studio.lambda-function-list-actions-lead-to-their-routes", async ({
       await s.create.click(ACTION);
       await expect(page).toHaveURL(addressOf(CREATE_PATH));
       await expect(heading(page, CREATE), `the h1 "${CREATE}"`).toBeVisible();
-      expect(await stillSamePage(page), "no document was loaded").toBe(true);
+      expect(await stillSamePage(page), 'no document was loaded').toBe(true);
     },
   );
 
@@ -400,25 +300,18 @@ test("studio.lambda-function-list-actions-lead-to-their-routes", async ({
       await expect(page).toHaveURL(addressOf(functionPath(one)));
       await expect(heading(page, one), `the h1 "${one}"`).toBeVisible();
       for (const { tab, segment } of TAB_ROUTES) {
-        const main = page.getByRole("main");
+        const main = page.getByRole('main');
         await main
-          .getByRole("tab", { name: tab, exact: true })
-          .or(main.getByRole("link", { name: tab, exact: true }))
+          .getByRole('tab', { name: tab, exact: true })
+          .or(main.getByRole('link', { name: tab, exact: true }))
           .first()
           .click(ACTION);
-        await expectNoScreenYet(
-          page,
-          SERVICE_LABEL,
-          `${functionPath(one)}/${segment}`,
-        );
+        await expectNoScreenYet(page, SERVICE_LABEL, `${functionPath(one)}/${segment}`);
         await page.goBack();
         await expect(page).toHaveURL(addressOf(functionPath(one)));
-        await expect(
-          heading(page, one),
-          `the h1 "${one}" after Back`,
-        ).toBeVisible();
+        await expect(heading(page, one), `the h1 "${one}" after Back`).toBeVisible();
       }
-      expect(await stillSamePage(page), "no document was loaded").toBe(true);
+      expect(await stillSamePage(page), 'no document was loaded').toBe(true);
     },
   );
 
