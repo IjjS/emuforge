@@ -383,6 +383,18 @@ export interface RoleUpdateRequest extends RoleUpdate {
 }
 
 /**
+ * Reads again every open page of the role `name`, whatever the case of the name it was opened with: a page's address
+ * may differ in case from the emulator's `RoleName`, and the emulator matches names ignoring case (R2, R5.1).
+ */
+function invalidateRole(client: QueryClient, endpoint: string | undefined, name: string): Promise<void> {
+  const wanted = name.toLowerCase();
+  return client.invalidateQueries({
+    queryKey: [...iamKey(endpoint), 'role'],
+    predicate: ({ queryKey }) => typeof queryKey[4] === 'string' && queryKey[4].toLowerCase() === wanted,
+  });
+}
+
+/**
  * "Save changes" of "Edit summary" (R5.5). Once it is finished the role is read again; a listing started afterwards
  * asks the engine again, as every listing does. Rejects with `IamError`.
  */
@@ -393,19 +405,19 @@ export function useUpdateRole(endpoint: string | undefined) {
       await updateRole(knownEndpoint(endpoint), update, readMaxSessionDuration, new AbortController().signal);
       return undefined;
     },
-    onSettled: (_data, _error, { name }) => client.invalidateQueries({ queryKey: [...iamKey(endpoint), 'role', name] }),
+    onSettled: (_data, _error, { name }) => invalidateRole(client, endpoint, name),
   });
 }
 
 /**
  * "Create role" (R6.7); resolves with what was created and which attachments failed, rejects with `IamError`. A page
- * of the role open for that name reads it again.
+ * of the role open for that name, in any case, reads it again.
  */
 export function useCreateRole(endpoint: string | undefined) {
   const client = useQueryClient();
   return useMutation<CreatedRole, unknown, NewRole>({
     mutationFn: (role) => createRole(knownEndpoint(endpoint), role, new AbortController().signal),
-    onSettled: (_data, _error, { name }) => client.invalidateQueries({ queryKey: [...iamKey(endpoint), 'role', name] }),
+    onSettled: (_data, _error, { name }) => invalidateRole(client, endpoint, name),
   });
 }
 

@@ -399,6 +399,30 @@ describe('late and unwanted answers', () => {
 });
 
 describe('a finished update of a role', () => {
+  it('reads again a page opened with the name in another case than the RoleName the update gives', async () => {
+    const page = renderHook(() => ({ role: useRole({ endpoint, name: 'R' }), update: useUpdateRole(endpoint) }), {
+      wrapper,
+    });
+    await waitFor(() => {
+      expect(page.result.current.role.read?.kind).toBe('found');
+    });
+    expect(engine.of('GetRole')).toHaveLength(1);
+
+    await act(async () => {
+      await page.result.current.update.mutateAsync({
+        name: 'r',
+        description: 'new',
+        maxSessionDuration: 3600,
+        readMaxSessionDuration: 3600,
+      });
+    });
+
+    await waitFor(() => {
+      expect(engine.of('GetRole')).toHaveLength(2);
+    });
+    expect(engine.of('GetRole')[1]?.params.get('RoleName')).toBe('R');
+  });
+
   it('reads the role again, and a listing started afterwards asks the engine again', async () => {
     const page = renderHook(() => ({ role: useRole({ endpoint, name: 'r' }), update: useUpdateRole(endpoint) }), {
       wrapper,

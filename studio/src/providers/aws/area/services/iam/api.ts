@@ -409,7 +409,28 @@ export async function listRoles(endpoint: string, page: PageRequest, signal: Abo
     (role) => role.name,
     page,
   );
-  const roles = await Promise.all(read.items.map((role) => lastUsedOf(endpoint, role, signal)));
+  // The page's `GetRole` requests share a controller joined to `signal`: once one fails, the others are no longer
+  // wanted and are aborted (R4.9).
+  const reads = new AbortController();
+  const abort = () => {
+    reads.abort(signal.reason);
+  };
+  signal.addEventListener('abort', abort, { once: true });
+  let roles: (Role | undefined)[];
+  try {
+    roles = await Promise.all(
+      read.items.map((role) =>
+        lastUsedOf(endpoint, role, reads.signal).catch((error: unknown) => {
+          if (!reads.signal.aborted) {
+            reads.abort(error);
+          }
+          throw error;
+        }),
+      ),
+    );
+  } finally {
+    signal.removeEventListener('abort', abort);
+  }
   const result: RolePage = { roles: roles.filter((role): role is Role => role !== undefined) };
   if (read.next !== undefined) result.next = read.next;
   return result;

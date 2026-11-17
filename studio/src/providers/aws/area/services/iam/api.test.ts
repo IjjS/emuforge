@@ -26,6 +26,8 @@ interface Answer {
   status: number;
   statusText?: string;
   body?: string;
+  /** Headers of the answer; `Content-Type: text/xml` when none is given. */
+  headers?: Record<string, string>;
 }
 
 type EngineAnswer = Answer | 'network-error' | 'hold';
@@ -39,6 +41,7 @@ interface Sent {
   action: string;
   session: string | null;
   authorization: string | null;
+  signal: AbortSignal;
 }
 
 type Handler = (request: Sent) => EngineAnswer;
@@ -75,6 +78,7 @@ class FakeEngine {
         action,
         session: request.headers.get('x-emuforge-session'),
         authorization: request.headers.get('authorization'),
+        signal: request.signal,
       };
       this.sent.push(sent);
       this.log.push(`sent ${action}`);
@@ -96,7 +100,7 @@ class FakeEngine {
     }
     return new Response(answer.body ?? '', {
       status: answer.status,
-      headers: { 'content-type': 'text/xml' },
+      headers: answer.headers ?? { 'content-type': 'text/xml' },
       ...(answer.statusText === undefined ? {} : { statusText: answer.statusText }),
     });
   };
@@ -127,6 +131,19 @@ function errorAnswer(status: number, code: string, message: string): Answer {
   return {
     status,
     body: `<ErrorResponse xmlns="https://iam.amazonaws.com/doc/2010-05-08/"><Error><Type>Sender</Type><Code>${code}</Code><Message>${esc(message)}</Message></Error><RequestId>r</RequestId></ErrorResponse>`,
+  };
+}
+
+/**
+ * A refusal of the engine's own, in the shape the engine writes for the Query protocol
+ * (`engine/crates/emuforge-server/src/aws_error.rs`, `render`): `text/xml`, an XML declaration, no namespace and no
+ * `RequestId`, the type `Receiver` for a 5xx status and `Sender` otherwise.
+ */
+function engineRefusal(status: number, code: string, message: string, headers: Record<string, string> = {}): Answer {
+  return {
+    status,
+    headers: { 'content-type': 'text/xml', ...headers },
+    body: `<?xml version="1.0"?><ErrorResponse><Error><Type>${status >= 500 ? 'Receiver' : 'Sender'}</Type><Code>${code}</Code><Message>${esc(message)}</Message></Error></ErrorResponse>`,
   };
 }
 
@@ -287,7 +304,9 @@ describe('the IAM client (test criteria: Unit — lib/aws/client-factory.test.ts
     engine.handlers.ListRoles = (request) => {
       if (!refused && request.session === 'token-1') {
         refused = true;
-        return errorAnswer(401, 'SessionInvalid', 'The session is not valid.');
+        return engineRefusal(401, 'SessionInvalid', 'The session is not valid.', {
+          'www-authenticate': 'EmuForge-Session',
+        });
       }
       return listRolesAnswer(['after-renewal']);
     };
@@ -312,7 +331,7 @@ describe('the IAM client (test criteria: Unit — lib/aws/client-factory.test.ts
     [503, 'EmulatorUnavailable', 'The emulator at https://127.0.0.1:9411 could not be reached: connection refused'],
     [504, 'EmulatorTimeout', 'The emulator at https://127.0.0.1:9411 did not answer within 30 seconds'],
   ])('rejects with the name and message of the engine’s own %i %s', async (status, code, message) => {
-    engine.handlers.ListRoles = () => errorAnswer(status, code, message);
+    engine.handlers.ListRoles = () => engineRefusal(status, code, message);
 
     await expect(iamClient(endpoint).send(new ListRolesCommand({}))).rejects.toMatchObject({ name: code, message });
   });
@@ -382,6 +401,19 @@ describe('the role list', () => {
       code: 'ValidationError',
       message: 'bad name',
     });
+  });
+
+  it('aborts the page’s other GetRole requests once one fails other than with NoSuchEntity', async () => {
+    engine.handlers.ListRoles = () => listRolesAnswer(['held', 'broken']);
+    engine.handlers.GetRole = (request) =>
+      request.params.get('RoleName') === 'broken' ? errorAnswer(400, 'ValidationError', 'bad name') : 'hold';
+
+    expect(await failure(listRoles(endpoint, { pageSize: 20 }, signal()))).toMatchObject({
+      operation: 'GetRole',
+      code: 'ValidationError',
+    });
+    const held = engine.of('GetRole').find((request) => request.params.get('RoleName') === 'held');
+    expect(held?.signal.aborted).toBe(true);
   });
 
   it('gives an empty page without a marker, and sends no GetRole, for an answer without roles', async () => {
@@ -963,7 +995,7 @@ describe('a failed request', () => {
     [503, 'EmulatorUnavailable', 'The emulator at https://127.0.0.1:9411 could not be reached: connection refused'],
     [504, 'EmulatorTimeout', 'The emulator at https://127.0.0.1:9411 did not answer within 30 seconds'],
   ])('is "emulator did not answer" with the engine’s message for %i %s', async (status, code, message) => {
-    engine.fallback = () => errorAnswer(status, code, message);
+    engine.fallback = () => engineRefusal(status, code, message);
 
     expect(
       await failure(updateRole(endpoint, { name: 'r', description: '', maxSessionDuration: 1 }, 1, signal())),
