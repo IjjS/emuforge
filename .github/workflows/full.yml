@@ -1,0 +1,116 @@
+# The whole set of integration checks, by hand (issue 327, R6). Only the owner starts this workflow, from the
+# Actions tab (`workflow_dispatch`); nothing else triggers it and the `pm` never starts it. It runs every check of
+# the manifest but those `.github/not-run.json` lists and those on request: the browser checks of every service,
+# without `--services`, so it sees what the push run of `main.yml` does not, a change of one service that breaks
+# another service's screen (R7).
+#
+# Its steps are the preparing steps of `main.yml`, the same text, and the integration step with its second run,
+# as `main.yml` ran it before issue 327. The eight engine and Studio steps are the push run's and are not here
+# (R6.2). A second run that passes is printed and summarized as flaky.
+#
+# Rights: as `main.yml`. The token reads the repository's contents and nothing else; no secret is named, nothing
+# is uploaded, cached or published, every action is one of GitHub's own, named by commit sha, and no text from
+# outside the repository is put into a `run:` line.
+#
+# Bounds (R6.4): set from a measured time, at least twice the longest the step took, in whole half hours. The
+# integration step took 8.7 minutes on the runner (run 43861083645) with every check; the whole set is what
+# grows, so each integration step has 60 minutes and the job 150. When a run's first integration step takes
+# more than half its bound, the `pm` files an issue to raise it; past 150 minutes two runs no longer fit in a
+# hosted job's six hours, and the issue is to split the job.
+name: full
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    env:
+      AWS_EC2_METADATA_DISABLED: "true"
+    steps:
+      - name: checkout
+        timeout-minutes: 10
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: node
+        timeout-minutes: 10
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: not-run
+        timeout-minutes: 5
+        run: .github/ci not-run
+
+      - name: versions
+        id: versions
+        timeout-minutes: 5
+        run: .github/ci versions >> "$GITHUB_OUTPUT"
+
+      - name: rust
+        timeout-minutes: 10
+        env:
+          RUST_VERSION: ${{ steps.versions.outputs.rust }}
+        run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal --component rustfmt --component clippy
+          rustup default "$RUST_VERSION"
+          cargo --version
+
+      - name: bun
+        timeout-minutes: 10
+        env:
+          BUN_VERSION: ${{ steps.versions.outputs.bun }}
+        run: |
+          npm install --global "bun@$BUN_VERSION"
+          bun --version
+
+      - name: tools
+        timeout-minutes: 10
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends lsof
+          for tool in lsof mkfifo shasum curl docker python3 cargo bun node; do
+            command -v "$tool" > /dev/null || { echo "missing tool: $tool"; exit 1; }
+          done
+          docker compose version
+
+      - name: studio dependencies
+        timeout-minutes: 10
+        working-directory: studio
+        run: bun install --frozen-lockfile
+
+      - name: chromium
+        timeout-minutes: 15
+        working-directory: studio
+        run: node_modules/.bin/playwright install --with-deps chromium
+
+      # The emulator runs as the owner of this folder (infra/aws-emulator/entrypoint.sh); made here so that it is
+      # the runner's and not root's, which Docker Engine would make it.
+      - name: emulator image
+        timeout-minutes: 15
+        run: |
+          mkdir -p "$HOME/.aws/emulator"
+          echo "runner uid $(id -u)"
+          docker compose -f infra/aws-emulator/docker-compose.yml build
+
+      - name: integration
+        id: integration
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 60
+        working-directory: tests/integration
+        run: ../../.github/ci run --tails -- ./run --not-run ../../.github/not-run.json
+
+      - name: integration (second run)
+        if: ${{ !cancelled() && steps.integration.outcome == 'failure' }}
+        timeout-minutes: 60
+        working-directory: tests/integration
+        run: ../../.github/ci run --second integration --tails -- ./run --not-run ../../.github/not-run.json

@@ -4,6 +4,14 @@
 # SCRUB names and replaces every run of a key's shape in what it prints (the repository is public, so is the log).
 # The integration step leaves out what `.github/not-run.json` lists; the step `not-run` prints that list.
 #
+# Services (issue 327, R5). The integration steps hold every check of no service and the browser checks of the
+# services the push touched: the step `services` (`.github/ci services`) reads the paths of every commit of the
+# push, from the commit `main` had before it to the pushed commit, decides them with `.pm/bin/pm-scope --push`
+# and writes `output/ci/services.json`, which both integration runs pass to `run --services`. A run not started by
+# a push, a first or forced push, or git that cannot answer is every service. The checkout fetches the whole
+# history so that the commit before the push is there. The checks of a service no push touches run only in
+# `full.yml`, which the owner starts by hand.
+#
 # A failed step does not stop the later ones of the nine. engine-test, studio-unit and integration (pm-check's
 # RETRY) run once more, as `<step> (second run)`, only when their first run failed; a second run that passes is
 # printed and summarized as flaky. The run is a success only when each of the nine exited 0, in its first run or,
@@ -17,7 +25,8 @@
 # steps 0.6, the Studio steps 0.7, integration 8.7 and its second run 7.5; 18.8 for the job with that second
 # run. The bounds stay above every figure with room for a slower runner: 80 minutes for the job, 30 for each
 # integration step and 15 for each other step of the nine, so one hung step cannot use up the time a second
-# run needs.
+# run needs. Every other step has a bound too (10 for checkout and node, as for the other preparing steps), so
+# that `full.yml` holds the same text for them.
 name: main
 
 on:
@@ -36,11 +45,14 @@ jobs:
       AWS_EC2_METADATA_DISABLED: "true"
     steps:
       - name: checkout
+        timeout-minutes: 10
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: node
+        timeout-minutes: 10
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
@@ -49,6 +61,10 @@ jobs:
       - name: not-run
         timeout-minutes: 5
         run: .github/ci not-run
+
+      - name: services
+        timeout-minutes: 5
+        run: .github/ci services
 
       - name: versions
         id: versions
@@ -171,10 +187,10 @@ jobs:
         continue-on-error: true
         timeout-minutes: 30
         working-directory: tests/integration
-        run: ../../.github/ci run --tails -- ./run --not-run ../../.github/not-run.json
+        run: ../../.github/ci run --tails -- ./run --not-run ../../.github/not-run.json --services ../../output/ci/services.json
 
       - name: integration (second run)
         if: ${{ !cancelled() && steps.integration.outcome == 'failure' }}
         timeout-minutes: 30
         working-directory: tests/integration
-        run: ../../.github/ci run --second integration --tails -- ./run --not-run ../../.github/not-run.json
+        run: ../../.github/ci run --second integration --tails -- ./run --not-run ../../.github/not-run.json --services ../../output/ci/services.json
