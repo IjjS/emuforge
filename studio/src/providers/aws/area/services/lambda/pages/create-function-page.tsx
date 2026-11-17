@@ -20,6 +20,7 @@ import { ValueText } from '../../../components/value-text';
 import type { ScreenPageProps } from '../../../screens';
 import type { CreateFunctionRequest, LambdaFailure } from '../api';
 import { actionFailureItem, useAnnouncer } from '../components/failure-states';
+import { quoting } from '../components/quoting';
 import { RoleSelect } from '../components/role-select';
 import { FUNCTIONS_PATH, functionPath } from '../format';
 import { useCreateFunction } from '../queries';
@@ -87,20 +88,6 @@ function failureHeadline(failure: LambdaFailure, what: string, engineOrigin: str
     case 'other':
       return `${what} failed`;
   }
-}
-
-/**
- * A sentence that quotes a name: the name as a name, the words around it as free text (issue 467, R6). Its text is
- * `before`, the name and `after`, character for character.
- */
-function quoting(before: string, name: string, after: string): ReactNode {
-  return (
-    <>
-      <ValueText kind="text" value={before} />
-      <ValueText kind="name" value={name} />
-      <ValueText kind="text" value={after} />
-    </>
-  );
 }
 
 /** The sentence that follows a failure when "Create default role" made a role before it (R6.5). */

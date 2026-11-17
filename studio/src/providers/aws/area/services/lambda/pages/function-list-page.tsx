@@ -21,6 +21,7 @@ import type { FunctionSummary } from '../api';
 import { DeleteFunctionsDialog } from '../components/delete-functions-dialog';
 import { readFailureState, useAnnouncer, type ReadFailureState } from '../components/failure-states';
 import { ReadFailure } from '../components/failures';
+import { quoting } from '../components/quoting';
 import './function-list-page.css';
 import { useAreaModalRoot } from '../components/modal-root';
 import { CREATE_FUNCTION_PATH, functionPath, lastModifiedText, NONE, runtimeText, typeText } from '../format';
@@ -134,7 +135,7 @@ function TableBody({ state, onCreate, onClearFilter, onRetry }: TableBodyProps) 
               No matches
             </Box>
             <Box variant="p" color="inherit">
-              {`No function name starts with “${state.text}”.`}
+              {quoting('No function name starts with “', state.text, '”.')}
             </Box>
           </SpaceBetween>
           <Box margin={{ top: 's' }}>

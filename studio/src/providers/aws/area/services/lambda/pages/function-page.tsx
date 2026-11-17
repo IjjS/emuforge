@@ -19,6 +19,7 @@ import { readFailureState, useAnnouncer } from '../components/failure-states';
 import { ReadFailure } from '../components/failures';
 import { FunctionOverview, FunctionStatusLine, RuntimeSettings } from '../components/function-sections';
 import { functionStatus } from '../components/function-status';
+import { quoting } from '../components/quoting';
 import { FUNCTIONS_PATH, functionPath, functionTabPath, type FunctionTab } from '../format';
 import { useFunctionReading } from '../queries';
 
@@ -78,9 +79,11 @@ function NotFound({ name }: { name: string }) {
             Function not found
           </Box>
           <Box variant="p" color="inherit">
-            <ValueText kind="text" value="The emulator holds no function named “" />
-            <ValueText kind="name" value={name} />
-            <ValueText kind="text" value="”. It may have been deleted, or the emulator restarted." />
+            {quoting(
+              'The emulator holds no function named “',
+              name,
+              '”. It may have been deleted, or the emulator restarted.',
+            )}
           </Box>
           <Link href={FUNCTIONS_PATH} onFollow={handleFollow}>
             Event Functions

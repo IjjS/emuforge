@@ -762,6 +762,8 @@ describe('the filter', () => {
       expect(emptySlot()).toHaveTextContent('No matches');
     });
     expect(slot()).toHaveTextContent('No function name starts with “ab”.');
+    // What the user typed is quoted as a name (issue 467, R6).
+    expect([...slot().querySelectorAll('.aws-area-value-name')].map((found) => found.textContent)).toEqual(['ab']);
     fireEvent.click(within(slot()).getByRole('button', { name: 'Clear filter' }));
     await expectNames(['orders']);
     expect(tokens()).toEqual([]);
