@@ -31,6 +31,12 @@ import { ReadFailure } from './states';
 // Every value from the emulator is rendered as text, each as the kind of value it is, and the ARN with its copy control
 // (issue 467, requirement R5, R6).
 
+/**
+ * The narrowest column of "Summary", in pixels: three columns where the page is wide, one at 390 wide, so the ARN has
+ * the section's width to break in at its `:` and `/` (issue 467, requirement R6) rather than a third of it.
+ */
+const SUMMARY_COLUMN_MIN_WIDTH = 240;
+
 /** What a failed policy list names (R10.1). */
 const POLICIES_THING = 'policies';
 
@@ -61,6 +67,7 @@ export function SummarySection({ role, onEdit, editRef }: SummarySectionProps) {
       <SpaceBetween size="m">
         <KeyValuePairs
           columns={3}
+          minColumnWidth={SUMMARY_COLUMN_MIN_WIDTH}
           items={[
             { label: 'Creation date', value: <ValueText kind="fixed" value={utcDateText(role.createDate)} /> },
             { label: 'ARN', value: <CopyValue label="ARN" value={role.arn} none={NO_VALUE} /> },
