@@ -124,10 +124,10 @@ function screen(page: Page) {
   return {
     main,
     h1: main.getByRole('heading', { level: 1, name: new RegExp(`^${H1}(\\s|$)`) }),
-    table: main.locator(TABLE).first(),
-    empty: main.locator(TABLE_EMPTY).first(),
+    table: page.locator(TABLE).first(),
+    empty: page.locator(TABLE_EMPTY).first(),
     filter: main.getByRole('searchbox', { name: FILTER, exact: true }),
-    resultsCount: main.locator(RESULTS_COUNT),
+    resultsCount: page.locator(RESULTS_COUNT),
     action: (name: string) => main.getByRole('button', { name, exact: true }).first(),
     nextPage: main.getByRole('button', { name: NEXT_PAGE, exact: true }),
     previousPage: main.getByRole('button', { name: PREVIOUS_PAGE, exact: true }),
