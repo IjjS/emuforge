@@ -53,7 +53,9 @@ else, and only the emulator of situation 4 publishes a port, on `127.0.0.1`.
 
 Each start command builds before it runs (`--build`). A first build downloads base images, locked crates and
 packages; a later one may still ask the base images' registries whether their tags moved. Once started, nothing
-of EmuForge sends a request anywhere but to the emulator.
+of EmuForge sends a request anywhere but to the emulator. Typed a second time while EmuForge runs, a plain start
+line below recreates its containers, the emulator of situation 4 too, because each build gets a new image id from
+its provenance attestation; `./compose up` builds without it, so a second `./compose up` keeps them running.
 
 There are six ways to start, by situation. Two of them work today.
 

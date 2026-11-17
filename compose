@@ -97,6 +97,9 @@ if [ "$1" = up ]; then
     profile=()
   fi
   cmd=(docker compose ${file_args[@]+"${file_args[@]}"} ${profile[@]+"${profile[@]}"} up -d --build "$@")
+  # Without it each build, even one that is all cache, gets a new image id from its provenance attestation, and
+  # Compose recreates every container of a running form, its emulator too, so a second `up` would restart them.
+  export BUILDX_NO_DEFAULT_ATTESTATIONS=1
 else
   # Anything else, `down` included: the platform's situation 4 command, which on a situation 3 form removes the
   # form alone.
