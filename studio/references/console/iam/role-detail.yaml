@@ -1,0 +1,25 @@
+# Reference spec of an IAM role's own page, opened from the role list by the role's name, with its tab
+# "Permissions" open.
+# Sources: no capture shows this page. The AWS user guide (IAM User Guide) gives the five tabs, the section
+# "Summary" with "Last activity", "Maximum session duration" and the description, and the section "Permissions
+# boundary"; the section "Permissions policies" is the guide's label of the same list in "Create role"; the other
+# fields come from the API's model (GetRole) written the console's way. Each item's source:
+# role-detail.sources.md.
+# The order of the tabs is in no source (decisions-needed.md, question 3): provisional.
+# No header action: no source shows one on a role's page that this issue builds (question 4).
+# The route names the seeded role `structure-role` (the seed of this issue's `t1` unit, requirement R12).
+# Nothing is omitted: the emulator (aws-emulator 1.0.481) holds everything these items show.
+screen: iam.role-detail
+service: iam
+kind: detail
+route: /aws/iam/roles/details/structure-role
+
+breadcrumbs: [EmuForge, AWS, IAM, Roles, structure-role]
+header:
+  title: structure-role
+tabs: [Permissions, Trust relationships, Tags, Last Accessed, Revoke sessions]
+sections:
+  - title: Summary
+    fields: [Creation date, ARN, Last activity, Maximum session duration, Description, Path]
+  - title: Permissions policies
+  - title: Permissions boundary
