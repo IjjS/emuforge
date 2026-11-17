@@ -68,6 +68,8 @@ IDS = [r["check_id"] for r in ROWS]
 ENGINE_IDS = [r["check_id"] for r in ROWS if r["path"].endswith(".rs")]
 SPEC_IDS = [r["check_id"] for r in ROWS if r["path"].endswith(".spec.ts")]
 PRODUCT_IDS = [i for i in IDS if i.startswith("engine.product-")]
+# the ids of the rows labelled `on-request` (issue 315): a run without --on-request leaves them out
+ON = [r["check_id"] for r in ROWS if isinstance(r.get("labels"), list) and "on-request" in r["labels"]]
 # one id of an engine test file and one of a .spec.ts file
 ENGINE_ID = "engine.health-reports-emulator-reachable"
 SPEC_ID = "studio.home-shows-connected"
@@ -214,7 +216,8 @@ class Report(unittest.TestCase):
             self.assertFalse(any(line.startswith("passed") for line in named), f"a passed line for {check_id}")
         others = {i: c["verdict"] for i, c in report.items() if i not in LIST}
         self.assertEqual(len(others), len(IDS) - 2)
-        self.assertEqual({i: v for i, v in others.items() if v != "passed"}, {})
+        self.assertEqual({i: v for i, v in others.items() if i not in ON and v != "passed"}, {})
+        self.assertEqual({i: v for i, v in others.items() if i in ON}, {i: "not-run" for i in ON if i not in LIST})
 
     def test_a_listed_check_stays_not_run_and_an_unlisted_failure_fails_the_run(self):
         fx = Fixture("report-failed")
@@ -240,14 +243,24 @@ class Report(unittest.TestCase):
         p = fx.run(env={"EMUFORGE_IT_NOT_RUN": str(every)})
         report = fx.report()
         self.assertIsNotNone(report, out(p))
-        self.assertEqual([i for i, c in report.items() if c["verdict"] == "not-run"], [])
+        self.assertEqual(sorted(i for i, c in report.items() if c["verdict"] == "not-run"), sorted(ON))
         tests = [c for c in fx.calls("cargo") if c["args"][:1] == ["test"]]
         self.assertTrue(tests, "cargo test was not started")
-        self.assertEqual([c["not_run"] for c in tests], [None] * len(tests),
-                         "EMUFORGE_IT_NOT_RUN reached cargo test")
+        for c in tests:
+            self.assertNotEqual(c["not_run"], str(every), "the caller's EMUFORGE_IT_NOT_RUN reached cargo test")
+            if not ON:
+                self.assertIsNone(c["not_run"], "EMUFORGE_IT_NOT_RUN reached cargo test")
+            elif c["not_run"] is not None:
+                self.assertEqual(sorted((c["not_run_text"] or "").splitlines()), sorted(ON))
         runs = fx.calls("playwright")
         self.assertTrue(runs, "playwright was not started")
-        self.assertEqual([c["args"] for c in runs if "--grep-invert" in c["args"]], [])
+        spec_on = [i for i in ON if i in SPEC_IDS]
+        if not spec_on:
+            self.assertEqual([c["args"] for c in runs if "--grep-invert" in c["args"]], [])
+        else:
+            pattern = grep_invert(self, runs)
+            self.assertEqual([i for i in SPEC_IDS if bool(re.search(pattern, f"x.spec.ts {i}")) != (i in spec_on)],
+                             [], f"{pattern!r} does not match exactly the .spec.ts ids of {ON}")
 
 
 class Passed_on(unittest.TestCase):
@@ -261,7 +274,7 @@ class Passed_on(unittest.TestCase):
         text = tests[0]["not_run_text"]
         self.assertIsNotNone(text, f"EMUFORGE_IT_NOT_RUN={tests[0]['not_run']} named no file")
         lines = text.splitlines()
-        self.assertEqual(sorted(lines), sorted(LIST))
+        self.assertEqual(sorted(lines), sorted({*LIST, *ON}))
 
     def test_playwright_gets_one_pattern_that_matches_the_listed_id_only(self):
         fx = Fixture("passed-playwright")
@@ -293,7 +306,8 @@ class Passed_on(unittest.TestCase):
         self.assertEqual(p.returncode, 0, out(p))
         listed = set(re.findall(r"› (\S+)\s*$", p.stdout, re.M))
         self.assertEqual(sorted(set(PRODUCT_IDS) & listed), [])
-        self.assertEqual(sorted(set(SPEC_IDS) - set(PRODUCT_IDS) - listed), [])
+        self.assertEqual(sorted(set(SPEC_IDS) - set(PRODUCT_IDS) - set(ON) - listed), [])
+        self.assertEqual(sorted(set(SPEC_IDS) & set(ON) & listed), [])
 
 
 class Engine_check(unittest.TestCase):
