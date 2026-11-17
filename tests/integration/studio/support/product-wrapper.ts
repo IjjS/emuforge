@@ -45,16 +45,19 @@ export function printed(result: CommandResult): string[] {
   return result.stderr.split('\n').filter((line) => line.startsWith('+ '));
 }
 
-/** The user id and group id of every process of a container (`docker top`). */
+/**
+ * The user id and group id of every process of a container (`docker top`). The daemon refuses a `ps` format without
+ * a PID column, so the format asks for it first and the first column is dropped.
+ */
 export async function processIds(containerId: string): Promise<{ uid: string; gid: string; args: string }[]> {
-  const top = await dockerRead(['top', containerId, '-eo', 'uid,gid,args']);
+  const top = await dockerRead(['top', containerId, '-eo', 'pid,uid,gid,args']);
   return top
     .split('\n')
     .slice(1)
     .map((line) => line.trim())
     .filter((line) => line !== '')
     .map((line) => {
-      const [uid, gid, ...args] = line.split(/\s+/);
+      const [, uid, gid, ...args] = line.split(/\s+/);
       return { uid, gid, args: args.join(' ') };
     });
 }
