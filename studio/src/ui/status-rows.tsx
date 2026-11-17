@@ -28,22 +28,22 @@ interface StatusRowProps {
 const PORT_AT_END = /^(.+)(:\d+)$/;
 
 /**
- * An address as the row draws it: the host, a break point and the port, so a line that cannot hold it all breaks
- * before the port's ":" (DESIGN.md, Status rows). The `<wbr>` adds no text, so what is read and copied is the address
- * as it is; an address without a port at its end is drawn as it is.
+ * An address as the row draws it, as code (literal text, in the code face): the host, a break point and the port, so a
+ * line that cannot hold it all breaks before the port's ":" (DESIGN.md, Status rows). The `<wbr>` adds no text, so what
+ * is read and copied is the address as it is; an address without a port at its end is drawn as it is.
  */
 function Address({ address }: { address: string }) {
   const parts = PORT_AT_END.exec(address);
   if (parts === null) {
-    return <span className="st-addr">{address}</span>;
+    return <code className="st-addr">{address}</code>;
   }
   const [, host, port] = parts;
   return (
-    <span className="st-addr">
+    <code className="st-addr">
       {host}
       <wbr />
       {port}
-    </span>
+    </code>
   );
 }
 
