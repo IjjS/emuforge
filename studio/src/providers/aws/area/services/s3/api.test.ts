@@ -48,6 +48,12 @@ class FakeEngine {
   readonly awsRequests: string[] = [];
   /** Every AWS request, as it was sent, its body unread. */
   readonly sent: Request[] = [];
+  /**
+   * The signal of every AWS request the fetch received. A clone's signal is not read for an abort: Node's
+   * `Request.clone()` holds the controller of the clone's signal only weakly, so after a garbage collection the
+   * clone's signal never aborts (issue 463).
+   */
+  readonly signals: AbortSignal[] = [];
   session: () => EngineAnswer = () => ({ status: 200, body: JSON.stringify({ token: TOKEN }) });
   aws: () => EngineAnswer = () => bucketList([]);
 
@@ -60,6 +66,7 @@ class FakeEngine {
     } else {
       this.awsRequests.push(request.url);
       this.sent.push(request.clone());
+      this.signals.push(request.signal);
       answer = this.aws();
     }
     if (answer === 'network-error') {
@@ -947,11 +954,14 @@ describe('the caller’s abort signal', () => {
       await vi.waitFor(() => {
         expect(engine.sent).toHaveLength(1);
       });
-      expect(engine.sent[0]?.signal.aborted).toBe(false);
+      expect(engine.signals[0]?.aborted).toBe(false);
       controller.abort(reason);
 
       expect(await settled).toEqual({ rejected: reason });
-      expect(engine.sent[0]?.signal.aborted).toBe(true);
+      // The call ends with the reason at once; the abort reaches the request it sent on its own way.
+      await vi.waitFor(() => {
+        expect(engine.signals[0]?.aborted).toBe(true);
+      });
     },
   );
 });
