@@ -915,16 +915,16 @@ describe('a failed call names the operation that was sent', () => {
     expect(await failure(call(signal()))).toEqual(expected);
   });
 
-  it.each([...CALLS, ...SENDS])('%s answered 501 or another code → that kind with %s', async (operation, call) => {
+  it.each([...CALLS, ...SENDS])('%s answered 501 or another code → that kind, naming the operation', async (operation, call) => {
     engine.aws = () => errorAnswer(501, 'NotImplemented', 'scaffolded');
     expect(await failure(call(signal()))).toEqual({ kind: 'not-implemented', operation });
 
-    engine.aws = () => errorAnswer(500, 'InternalError', 'We encountered an internal error');
+    engine.aws = () => errorAnswer(400, 'InvalidRequest', 'The request is not valid');
     expect(await failure(call(signal()))).toEqual({
       kind: 'other',
       operation,
-      code: 'InternalError',
-      message: 'We encountered an internal error',
+      code: 'InvalidRequest',
+      message: 'The request is not valid',
     });
   });
 });
