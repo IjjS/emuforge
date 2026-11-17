@@ -91,7 +91,8 @@ own unit is not this: that is `BLOCKED`.
 
 Nothing goes to `/tmp` or the `.pm/` root. Do not create or edit GitHub issues, comments or labels. Do not merge,
 push, rebase, or touch `main`; bring your branch up to date only when the PM tells you that the branch it names
-moved, with `git merge <that branch>`: the issue branch `feat/<id>` for a unit cut from it, else `main`.
+moved, with `git merge <that branch>` (usually the issue branch `feat/<id>` for a unit cut from it, else
+`main`).
 
 ## Emulator
 

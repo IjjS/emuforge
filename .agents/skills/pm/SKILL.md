@@ -179,15 +179,17 @@ An issue with an issue branch:
   gate, and `pm-merge` does not take it.
 - After a unit's merge, tell each pane whose branch was cut from the issue branch:
   `herdr agent prompt <pane> "feat/<id> is at <sha>; merge it into your branch"`.
-- When the last unit is in: `pm-merge <id> --dry-run` says whether the issue branch holds `main`; when it does
-  not, `pm-merge <id> --take-main` brings local `main` into the issue branch. On a conflict it names the paths:
+- When the last unit is in: `pm-merge <id> --take-main` brings local `main` into the issue branch; it says
+  `feat/<id> already holds main` and changes nothing when there is nothing to take, and with `--dry-run` it says
+  which. On a conflict it names the paths:
   send them to the unit that owns them, which merges `main` into its own branch, checks, and is merged again.
 - Then the whole check, in the issue's worktree: `pm-check <the issue's worktree>` (`emuforge-<id>`) runs every
   step the issue branch's paths against `main` call for, `integration` included.
 - A failed whole check names the failed checks. Find the unit that owns those checks in `breakdown.md` and send
   it their ids; it fixes them on its own branch, merges the issue branch into its own when `pm-merge` asks,
   passes its fast check, and is merged into the issue branch again with `pm-merge <id> <unit>`. The issue branch has then moved, so the whole check runs again.
-- When the whole check passes on the issue branch's head: `pm-merge <id>`.
+- When the whole check passes on the issue branch's head: `pm-merge <id>`. When it refuses because `main` moved
+  since, in a way the issue branch's paths care about, `pm-merge <id> --take-main` and the whole check again.
 
 An issue without an issue branch (one unit, or begun before issue branches existed) is merged as before:
 

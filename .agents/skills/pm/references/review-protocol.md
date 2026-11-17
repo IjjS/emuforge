@@ -70,7 +70,8 @@ praise, no summaries. A finding without a location and a fix is not a finding.
   the lowest level that can prove it.
 - **breakdown**: every criteria line belongs to exactly one unit; integration checks are in a `t` unit and never
   in the unit that implements against them; owned files do not overlap between parallel units; the order leaves
-  every branch green at its merge; no unit is more than a day.
+  every branch that merges into `main` green at its merge (on an issue branch, the issue branch; its `t` units may
+  be merged into it red); no unit is more than a day.
 - **checks-<unit>**: `tests/integration/AGENTS.md`; one check per integration line of the criteria and nothing
   the criteria do not list; each fails now for the reason its line names, shown by the `--checks` record
   `output/checks/checks.json` and its log `output/logs/checks-integration.log`; a manifest row per
