@@ -466,13 +466,13 @@ One column inside a sticky bar.
   These are not inherited, so nothing reaches a provider area.
 - **Breakpoints:**
   - 900px: Home's services go from three columns to two, filled by row in label order.
-  - 640px: the bar shows the tile at 24px with a 5px gap and "EmuForge" without "Studio", which stays in the
-    link's accessible name; so at 481 to 640 wide the wordmark, every tab and the control fit in every language.
-    One column everywhere. The status rows stack, and each row is compact: the label and the status on one
-    line, the address on the line under it, so the first recovery command of a notice stays high on a 390x844
-    screen. A notice's icon moves into its heading so the text gets the full width. Services are one list. The
-    copied state of a command shows no text beside the step label: the check icon and green edge on the button and
-    the polite region carry it.
+  - 640px: the bar shows the tile at 24px with a 5px gap and "EmuForge" without "Studio", which stays in the link's
+    accessible name; so at 481 to 640 wide the wordmark, every tab and the control fit in every language. One column
+    everywhere. The status rows stack, and each row is compact: the label and the status on one line, the address on a
+    line of its own under them, across the row, so the first recovery command of a notice stays high on a 390x844
+    screen. A notice's icon moves into its heading so the text gets the full width. Services are one list. The copied
+    state of a command shows no text beside the step label: the check icon and green edge on the button and the polite
+    region carry it.
   - 480px: the bar's gap and the tabs' padding tighten (8px, 0 7px), and the language control is its globe alone,
     40px square, so the wordmark, every tab and the control fit at 390 in every language (Polish "Strona główna"
     with "Polski" would not).
@@ -679,14 +679,21 @@ tabs, with a control edge so it reads as something that opens.
 ### Status rows (Connection)
 
 - **Structure:** a description list of two rows, Engine and Emulator, side by side in the panel with a hairline
-  between them; stacked below 640px with a hairline above the second, each compact (label and status inline,
-  address under it).
+  between them, each with its label, status and address stacked from one left edge. At 640px and below they are
+  stacked with a hairline above the second, each compact and in two lines: the label with the status beside it;
+  then the address on a line of its own, from the row's left edge (under the label) and as wide as the row, 4px
+  under the first. The stacked layout needs subgrid (the value lies across both of the row's columns and takes them
+  as its own); a browser without it keeps the address under the status, beside the label, where it breaks rather
+  than being cut.
 - **Label:** 14px, 560, `text-2`.
 - **Status:** an 18px icon and the word, 16px, 650, in the status hue: a filled check circle for "Connected", a
   crossed circle for "Error" and "Unreachable", an open circle for "Not started" and "Unknown", a clock for
   "Checking". The busy Refresh's arc icon spins (0.9s, linear), and stops under `prefers-reduced-motion`.
-- **Address:** code font, 13px, `text-2`, one line, ellipsis when cut. An unknown address is "-" (hidden from
-  screen readers) with "Not known" for a screen reader, in the interface font at 14px.
+- **Address:** code font, 13px, `text-2`, on a 20px line (1.4 times the text when it is enlarged past that), never cut
+  and never hyphenated: one line while it fits; when it does not, it breaks just before the ":" of its port and,
+  failing that, at any character inside its box. The break point adds no text: what is read and copied is the address
+  as it is. An unknown address is "-" (hidden from screen readers) with "Not known" for a screen reader, in the
+  interface font at 14px, on the same 20px line.
 
 ### Notices
 
