@@ -27,9 +27,31 @@ interface NoScreenPageProps {
   part?: NoScreenPart | undefined;
 }
 
+/** A character after which a browser may break a line inside a word (a hyphen, `!`), with the character after it. */
+const BREAK_AFTER = /([-!].)/u;
+
 /**
- * The path as text, nothing decoded (R4.6), in Cloudscape's code text: a break opportunity after each `/`, and a
- * segment that does not fit a line by itself breaks inside (`no-screen-path.css`).
+ * One segment of the path as one word: each character after which a browser would break a line inside it is joined to
+ * the next one (`no-screen-path.css`), so the segment breaks only where it does not fit a line by itself (R4.6).
+ */
+function Segment({ text }: { text: string }) {
+  return text
+    .split(BREAK_AFTER)
+    .map((part, index) =>
+      index % 2 === 1 ? (
+        <span key={index} className="aws-area-no-screen-path-joined">
+          {part}
+        </span>
+      ) : (
+        part
+      ),
+    );
+}
+
+/**
+ * The path as text, nothing decoded (R4.6), in Cloudscape's code text: a break opportunity after each `/` and none
+ * inside a segment, so a line breaks after a `/` first, and a segment that does not fit a line by itself breaks
+ * inside (`no-screen-path.css`).
  */
 function RequestedPath({ path }: { path: string }) {
   return (
@@ -41,7 +63,7 @@ function RequestedPath({ path }: { path: string }) {
               /<wbr />
             </>
           )}
-          {segment}
+          <Segment text={segment} />
         </Fragment>
       ))}
     </Box>
