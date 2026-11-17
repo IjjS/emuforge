@@ -15,6 +15,7 @@ import AwsArea from './index';
 import type { AreaScreen } from './screens';
 import { AREA_ROOT_CLASS } from './styles/root-class';
 import { NO_SCREEN_SENTENCE, NO_SCREEN_SERVICE } from '../../../test/no-screen';
+import { serviceLinks } from '../../../test/service-files';
 
 /**
  * Whether the area's "no screen yet" page also renders a Cloudscape `Calendar` below its own content, so a case can
@@ -43,28 +44,9 @@ vi.mock('./screens', () => ({ SCREENS: registry.screens }));
 const AWS = 'Amazon Web Services';
 const NO_SCREEN = NO_SCREEN_SERVICE.label;
 
-// providers/aws/services.ts, in label order, each under /aws.
-const SERVICES: [string, string][] = [
-  ['Amazon API Gateway', '/aws/apigateway'],
-  ['Amazon CloudWatch', '/aws/cloudwatch'],
-  ['Amazon CloudWatch Logs', '/aws/logs'],
-  ['Amazon DynamoDB', '/aws/dynamodb'],
-  ['Amazon Elastic Compute Cloud', '/aws/ec2'],
-  ['Amazon Elastic Container Registry', '/aws/ecr'],
-  ['Amazon EventBridge', '/aws/events'],
-  ['Amazon Kinesis', '/aws/kinesis'],
-  ['Amazon Route 53', '/aws/route53'],
-  ['Amazon Simple Notification Service', '/aws/sns'],
-  ['Amazon Simple Queue Service', '/aws/sqs'],
-  ['Amazon Simple Storage Service', '/aws/s3'],
-  ['Amazon Simple Systems Manager (SSM)', '/aws/ssm'],
-  ['AWS CloudFormation', '/aws/cloudformation'],
-  ['AWS Identity and Access Management', '/aws/iam'],
-  ['AWS Key Management Service', '/aws/kms'],
-  ['AWS Lambda', '/aws/lambda'],
-  ['AWS Secrets Manager', '/aws/secretsmanager'],
-  ['AWS Step Functions', '/aws/states'],
-];
+// The services as their folders give them (providers/aws/area/services/*/service.json), in the order of issue 386's
+// requirement R13.2, each under /aws.
+const SERVICES = serviceLinks();
 
 const DARK_QUERY = '(prefers-color-scheme: dark)';
 
@@ -306,7 +288,7 @@ function cloudscapeElements(): Element[] {
 }
 
 describe('the AWS area', () => {
-  it('on /aws: the side navigation header and the 19 services in label order, crumbs EmuForge (to /) then AWS, nothing active', () => {
+  it('on /aws: the side navigation header and the services in label order, crumbs EmuForge (to /) then AWS, nothing active', () => {
     const { wrapper } = open('/aws');
     const navigation = wrapper.findSideNavigation();
 
@@ -657,7 +639,7 @@ describe('the AWS area from EmuForge (issue 45)', () => {
     },
   );
 
-  it('on /aws, connected: the description under the h1; "Services", "(19)", its line and the 19 links as on main', () => {
+  it('on /aws, connected: the description under the h1; "Services", the number of services, its line and the links as on main', () => {
     const { wrapper } = open('/aws');
 
     const header = wrapper.findContentLayout()?.findHeader()?.findHeader();
@@ -668,7 +650,7 @@ describe('the AWS area from EmuForge (issue 45)', () => {
     const container = wrapper.findContentLayout()?.findContent()?.findContainer();
     const services = container?.findHeader()?.findHeader();
     expect(services?.findHeadingText().getElement()).toHaveTextContent('Services');
-    expect(services?.findCounter()?.getElement()).toHaveTextContent('(19)');
+    expect(services?.findCounter()?.getElement()).toHaveTextContent(`(${String(SERVICES.length)})`);
     expect(services?.findDescription()?.getElement()).toHaveTextContent('No service has a Studio screen yet.');
     const links = within(container?.findContent().getElement() as HTMLElement)
       .getAllByRole('link')
@@ -932,7 +914,7 @@ describe('a console screen in the AWS area (issue 56, R5)', () => {
     service: '/dynamodb',
     paths: ['/aws/dynamodb', '/aws/dynamodb/things'],
     title: 'Things',
-    crumb: 'Things',
+    crumbs: [{ text: 'Things' }],
     navigation: NAVIGATION_OF_THINGS,
     help: ThingsHelp,
     Page: ThingsPage,
@@ -942,7 +924,7 @@ describe('a console screen in the AWS area (issue 56, R5)', () => {
     service: '/dynamodb',
     paths: ['/aws/dynamodb/widgets'],
     title: 'Widgets',
-    crumb: 'Widgets',
+    crumbs: [{ text: 'Widgets' }],
     navigation: { ...NAVIGATION_OF_THINGS, activeHref: '/aws/dynamodb/widgets' },
     Page: WidgetsPage,
   };
@@ -1002,7 +984,7 @@ describe('a console screen in the AWS area (issue 56, R5)', () => {
   );
 
   it.each(THINGS.paths)(
-    "on %s: the side navigation is the screen's header and links, All things current, none of the 19 services",
+    "on %s: the side navigation is the screen's header and links, All things current, none of the services",
     (path) => {
       const { wrapper } = open(path);
       const navigation = wrapper.findSideNavigation();

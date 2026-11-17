@@ -17,29 +17,11 @@ import {
   row,
   type FakeAnswer,
 } from '../../test/home-test-kit';
+import { serviceLinks } from '../../test/service-files';
 
-// Requirement R9.2: the AWS services, in label order, under the AWS area's segment.
-const SERVICES: [string, string][] = [
-  ['Amazon API Gateway', '/aws/apigateway'],
-  ['Amazon CloudWatch', '/aws/cloudwatch'],
-  ['Amazon CloudWatch Logs', '/aws/logs'],
-  ['Amazon DynamoDB', '/aws/dynamodb'],
-  ['Amazon Elastic Compute Cloud', '/aws/ec2'],
-  ['Amazon Elastic Container Registry', '/aws/ecr'],
-  ['Amazon EventBridge', '/aws/events'],
-  ['Amazon Kinesis', '/aws/kinesis'],
-  ['Amazon Route 53', '/aws/route53'],
-  ['Amazon Simple Notification Service', '/aws/sns'],
-  ['Amazon Simple Queue Service', '/aws/sqs'],
-  ['Amazon Simple Storage Service', '/aws/s3'],
-  ['Amazon Simple Systems Manager (SSM)', '/aws/ssm'],
-  ['AWS CloudFormation', '/aws/cloudformation'],
-  ['AWS Identity and Access Management', '/aws/iam'],
-  ['AWS Key Management Service', '/aws/kms'],
-  ['AWS Lambda', '/aws/lambda'],
-  ['AWS Secrets Manager', '/aws/secretsmanager'],
-  ['AWS Step Functions', '/aws/states'],
-];
+// The services as their folders give them (providers/aws/area/services/*/service.json), in the order of issue 386's
+// requirement R13.2, each under /aws.
+const SERVICES = serviceLinks();
 
 let engine: FakeEngine;
 
@@ -309,17 +291,17 @@ describe('Home: content', () => {
     }
   });
 
-  it('lists one provider: "Amazon Web Services" to /aws, "19 services · no Studio screen yet", every service link', async () => {
+  it('lists one provider: "Amazon Web Services" to /aws, "<number> services · no Studio screen yet", every service link', async () => {
     await openHome(connected());
     const providers = screen.getByRole('region', { name: 'Providers (1)' });
     const entry = within(providers).getByRole('link', { name: 'Amazon Web Services' });
     expect(entry).toHaveAttribute('href', '/aws');
-    expect(providers).toHaveTextContent('19 services · no Studio screen yet');
+    expect(providers).toHaveTextContent(`${String(SERVICES.length)} services · no Studio screen yet`);
     // As written in the page: U+00A0 between the count and its unit (issue 32, R4.1).
     const line = within(providers).getByText(
       (_content, element) => element?.tagName === 'P' && /services/.test(element.textContent ?? ''),
     );
-    expect(line.textContent).toBe('19\u00a0services · no Studio screen yet');
+    expect(line.textContent).toBe(`${String(SERVICES.length)}\u00a0services · no Studio screen yet`);
     const links = within(providers)
       .getAllByRole('link')
       .filter((link) => link !== entry)
