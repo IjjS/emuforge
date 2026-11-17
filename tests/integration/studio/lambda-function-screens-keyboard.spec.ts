@@ -203,13 +203,16 @@ async function wholeIn(locator: Locator, text: string): Promise<string[]> {
   );
 }
 
-/** The cell of the row `name` under the column `column`. */
+/**
+ * The cell of the row `name` under the column `column`. The row's cells are counted as the heading counts them,
+ * `td` and `th` alike, since the name cell is the row header (a `th`).
+ */
 function cellOf(page: Page, name: string, column: number): Locator {
   return page
     .locator(TABLE)
     .locator('tbody tr')
     .filter({ has: page.getByRole('link', { name, exact: true }) })
-    .locator('td')
+    .locator('td, th')
     .nth(column);
 }
 
