@@ -18,7 +18,7 @@ import { useRole } from '../queries';
 import { EditSummaryDialog } from '../components/edit-summary-dialog';
 import { readFailureState, type ReadFailureState } from '../components/failures';
 import { useAnnouncer } from '../components/page-parts';
-import { BoundarySection, PoliciesSection, SummarySection } from '../components/role-sections';
+import { BoundarySection, PoliciesSection, SummarySection, Value } from '../components/role-sections';
 import { ReadFailure } from '../components/states';
 
 // A role's own page (issue 82, requirement R5, R6.1, R8, R10): the tab "Permissions" with "Summary", "Permissions
@@ -75,7 +75,9 @@ function NotFound({ name }: { name: string }) {
             Role not found
           </Box>
           <Box variant="p" color="inherit">
-            {`The emulator holds no role named “${name}”. It may have been deleted, or the emulator restarted.`}
+            <Value>
+              {`The emulator holds no role named “${name}”. It may have been deleted, or the emulator restarted.`}
+            </Value>
           </Box>
           <Link href={ROLES_PATH} onFollow={handleFollow}>
             Roles
