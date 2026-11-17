@@ -1,7 +1,8 @@
 import type { ScreenNavigation, ServiceScreen } from '../../screens';
-import { BUCKETS_PATH, DIRECTORY_BUCKETS_PATH, S3_PATH } from './format';
+import { BUCKETS_PATH, CREATE_BUCKET_PATH, DIRECTORY_BUCKETS_PATH, S3_PATH } from './format';
 import { BucketListHelp, BucketListPage } from './pages/bucket-list-page';
 import { BucketPage } from './pages/bucket-page';
+import { CreateBucketPage } from './pages/create-bucket-page';
 
 /** S3's own side navigation, "General purpose buckets" current on every screen of a general purpose bucket. */
 const NAVIGATION: ScreenNavigation = {
@@ -41,5 +42,13 @@ export const SCREENS: readonly ServiceScreen[] = [
     crumbs: ({ name }) => [BUCKETS_CRUMB, { text: name ?? '' }],
     navigation: NAVIGATION,
     Page: BucketPage,
+  },
+  // S2, "Create bucket" (issue 256, R0, R4, R6): below "Buckets", without help.
+  {
+    paths: [CREATE_BUCKET_PATH],
+    title: 'Create bucket',
+    crumbs: [BUCKETS_CRUMB, { text: 'Create bucket' }],
+    navigation: NAVIGATION,
+    Page: CreateBucketPage,
   },
 ];
