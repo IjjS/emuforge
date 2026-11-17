@@ -1,8 +1,9 @@
 # Archive
 
-Run `.pm/bin/pm-archive <id> --yes` after every unit of the issue is merged into local `main`, each on its own
-passing record, and the final report went to the owner. The script refuses when a branch of one of the issue's
-registered worktrees is not an ancestor of `main`. `--force` overrides when the owner says the issue is finished
+Run `.pm/bin/pm-archive <id> --yes` after the issue is merged into local `main` on its own passing record (its
+issue branch, which holds its units, on the whole check; for an issue without an issue branch, the branches of its
+units, each on its own record) and the final report went to the owner. The script refuses when the issue branch or
+a branch of one of the issue's registered worktrees is not an ancestor of `main`. `--force` overrides when the owner says the issue is finished
 as it is. The PM's own session id comes from `.pm/run/pm.json` (written by `pm-watchd start`); `--pm-session`
 overrides it.
 
@@ -12,7 +13,8 @@ What it does, in order:
    sessions are included; they span issues, so their share is indicative. A pane without a local transcript is
    not counted).
 2. Closes every pane of the issue (`pm-pane close --issue <id>`), then the issue tab.
-3. Removes the issue's worktrees with their `output/`; a merged branch is deleted with its worktree.
+3. Removes the issue's worktrees with their `output/`, the issue branch's included; a merged branch is deleted
+   with its worktree.
 4. Writes `.pm/archive/<id>.md`: branches, `state.md`, `decisions.md`, the critique score table, the structure
    score table (`pm-structure --table <id>`), one line per review round (verdict, P1 count), the cost lines.
 5. Moves the keep list to `.pm/archive/<id>/` and deletes `.pm/issue-<id>/`, so an archived issue never shows up
