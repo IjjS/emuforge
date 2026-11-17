@@ -119,14 +119,7 @@ export function EmulatorLineAndNotice({ connection, resources }: LineAndNoticePr
   return (
     <SpaceBetween size="xs">
       <EmulatorLine connection={connection} about={{ open, noticeId, onToggle: handleToggle }} aboutRef={buttonRef} />
-      {open && (
-        <LocalNotice
-          id={noticeId}
-          resources={resources}
-          alertRef={alertRef}
-          onDismiss={handleDismiss}
-        />
-      )}
+      {open && <LocalNotice id={noticeId} resources={resources} alertRef={alertRef} onDismiss={handleDismiss} />}
     </SpaceBetween>
   );
 }
