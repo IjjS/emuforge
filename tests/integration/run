@@ -46,10 +46,10 @@
 # the checks recorded and could not remove.
 #
 # Exit, over the checks that are not `not-run`: 0 when every one passed; 1 when any failed; 127 when there are only
-# errors (the environment failed: Docker, the image, cargo, bun; pm-check records 127 as `error`) or every check is
-# `not-run` (nothing was checked); 2 for a usage error. The engine and Studio are the subject, not the
-# environment: when engine/ or studio/ does not exist or does not build, every check still runs and fails at its
-# first engine or Studio step.
+# errors (the environment failed: Docker, the image, cargo, bun, a product image build that has not ended within
+# product_build_bound seconds; pm-check records 127 as `error`) or every check is `not-run` (nothing was checked); 2 for
+# a usage error. The engine and Studio are the subject, not the environment: when engine/ or studio/ does not exist or
+# does not build, every check still runs and fails at its first engine or Studio step.
 set -euo pipefail
 
 # Real AWS credentials, profiles and proxy settings never reach a check.
@@ -103,6 +103,9 @@ emulator_image="emuforge-it-emulator-$run_id"
 commit="$(git -C "$checkout" rev-parse HEAD 2>/dev/null || echo unknown)"
 emulator_version=unknown
 emulator_commit=unknown
+# Seconds the product image build may take (issue 293). A cached build takes seconds and an uncached one on a runner
+# a few minutes; one that waits for a registry that does not answer never ends by itself.
+product_build_bound=600
 
 # report <reason>: writes report.json from the manifest and the verdict files and prints the exit code. With a
 # reason, the run did not get to its checks and every check is `error` with that reason.
@@ -165,6 +168,90 @@ preflight_error() {
   echo "integration: report $out/report.json" >&2
   fidelity_line
   exit 127
+}
+
+# bounded <seconds> <command...>: runs the command in a session of its own (so its process group holds everything it
+# starts), standard input from /dev/null, the rest inherited. Exits with the command's code (128 + n for signal n, 127
+# when it cannot be started) after ending what is left of its group (SIGTERM, SIGKILL 3 s later). At the bound it ends
+# the group (SIGTERM, SIGKILL 10 s later) and exits 124. On SIGTERM, SIGINT or SIGHUP to itself (pm-check ends the
+# run's group) it ends the group by itself (SIGTERM, SIGKILL 3 s later) and exits 128 + n; a later signal does not
+# restart that. A command that exits 124 by itself is taken for the bound: an `error`, never a wrong verdict
+# (docker compose build has no such code of its own).
+bounded() {
+  python3 -I - "$@" <<'PY'
+import os, signal, subprocess, sys, time
+seconds, cmd = float(sys.argv[1]), sys.argv[2:]
+proc = None
+stopping = None
+code = None
+
+
+def reap():
+    # The command's exit code once it has ended (and is reaped), else None.
+    global code
+    if code is None:
+        try:
+            pid, status = os.waitpid(proc.pid, os.WNOHANG)
+        except ChildProcessError:  # not ours to wait for any more: nothing to report but that it ended
+            code = 127
+            return code
+        if pid:
+            code = 128 + os.WTERMSIG(status) if os.WIFSIGNALED(status) else os.WEXITSTATUS(status)
+    return code
+
+
+def end_group(grace):
+    # SIGTERM to the command's group, SIGKILL to what is left of it after `grace` seconds.
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        return
+    until = time.monotonic() + grace
+    while time.monotonic() < until:
+        reap()
+        try:
+            os.killpg(proc.pid, 0)
+        except (ProcessLookupError, PermissionError):
+            return
+        time.sleep(0.05)
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+    until = time.monotonic() + 5
+    while reap() is None and time.monotonic() < until:
+        time.sleep(0.05)
+
+
+def on_signal(n, frame):
+    global stopping
+    if stopping is not None:
+        return
+    stopping = n
+    if proc is not None:
+        end_group(3)
+        os._exit(128 + n)
+
+
+for n in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+    signal.signal(n, on_signal)
+try:
+    proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, start_new_session=True)
+except OSError as e:
+    print(f"bounded: cannot start {cmd[0]}: {e.strerror or e}", file=sys.stderr)
+    sys.exit(128 + stopping if stopping is not None else 127)
+if stopping is not None:  # a signal came while the command was being started
+    end_group(3)
+    os._exit(128 + stopping)
+started = time.monotonic()
+while reap() is None:
+    if time.monotonic() - started >= seconds:
+        end_group(10)
+        os._exit(124)
+    time.sleep(0.1)
+end_group(3)
+os._exit(code)
+PY
 }
 
 free_port() {
@@ -399,6 +486,13 @@ cleanup() {
       fi
     done
   fi
+  # The Docker volumes a check made and could not remove (support/volume.rs, issue 55). Each carries the run's
+  # label; the containers that mounted them are gone by now, so Docker lets them go.
+  local volumes
+  volumes="$(docker volume ls -q --filter "label=emuforge-it-run=$run_id" 2>/dev/null || true)"
+  if [[ -n "$volumes" ]]; then
+    docker volume rm -f $volumes >/dev/null 2>&1 || true
+  fi
   # A clean stop deletes the files; a kill would leave them. The directory did not exist before this run.
   if [[ -e "$emulator_dir" ]]; then
     rm -rf "$emulator_dir"
@@ -440,13 +534,18 @@ trap cleanup EXIT
 docker tag aws-emulator "$emulator_image" || preflight_error "cannot tag aws-emulator as $emulator_image"
 product_log="$logs/integration-product-build.log"
 if [[ -f "$checkout/docker-compose.yml" ]]; then
-  if (cd "$checkout" && EMUFORGE_IMAGE="$product_image" EMUFORGE_EMULATOR_IMAGE="$emulator_image" \
-    docker compose --progress plain build) >"$product_log" 2>&1; then
-    product_build=ok
-  else
-    product_build=failed
-    echo "integration: product image build failed, see $product_log" >&2
-  fi
+  # Bounded (issue 293): a build that has not ended within product_build_bound seconds is the environment's failure.
+  build_code=0
+  (cd "$checkout" && EMUFORGE_IMAGE="$product_image" EMUFORGE_EMULATOR_IMAGE="$emulator_image" \
+    bounded "$product_build_bound" docker compose --progress plain build) >"$product_log" 2>&1 || build_code=$?
+  case "$build_code" in
+    0) product_build=ok ;;
+    124) preflight_error "the product image build did not end within $product_build_bound s, see $product_log" ;;
+    *)
+      product_build=failed
+      echo "integration: product image build failed, see $product_log" >&2
+      ;;
+  esac
 else
   product_build=absent
   echo "integration: $checkout/docker-compose.yml does not exist; every product check will fail at its start" >&2

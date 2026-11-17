@@ -192,6 +192,7 @@ each in its folder. What it does not run there is listed, each with its reason, 
 ## Run the emulator
 
 ```bash
+mkdir -p ~/.aws/emulator              # the emulator's folder, made by you before the first start
 docker compose -f infra/aws-emulator/docker-compose.yml up -d --build
 source infra/aws-emulator/env.sh      # point this shell's AWS CLI and SDKs at the emulator
 aws sts get-caller-identity           # Account 000000000000 means you reached the emulator
@@ -199,6 +200,10 @@ EMULATOR_PORT=9298 docker compose -f infra/aws-emulator/docker-compose.yml up -d
 EMULATOR_PORT=9298 docker compose -f infra/aws-emulator/docker-compose.yml down    # stops only that one
 docker compose -f infra/aws-emulator/docker-compose.yml down
 ```
+
+On Docker Engine on Linux the emulator runs as the owner of `~/.aws/emulator`, so the files it writes there are
+yours. A folder that Docker created itself, because it was missing at the first start, belongs to root, and the
+emulator refuses it with a message that says how to fix it.
 
 ## License
 

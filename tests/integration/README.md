@@ -36,7 +36,10 @@ situation 4 start in a check never rebuilds or retags `aws-emulator`. The checks
 `aws-emulator` and never port 9297. Each form writes its Compose project to `output/integration/tmp/product-projects`;
 when it ends, `run` removes, of those projects, the containers created under one of the run's two image names and
 the networks no container uses any more, logs each removal, then removes both names (`docker image rm`, which only
-untags an image that has another name).
+untags an image that has another name). The build has a bound of 600 seconds (`product_build_bound`): a build that
+has not ended by then, such as one that waits for a registry that does not answer, is ended with its whole process
+group (SIGTERM, SIGKILL 10 seconds later) and is the environment's failure, so every check is `error` with the reason
+`the product image build did not end within 600 s, see <log>` and the run exits 127 before it starts its emulator.
 
 The product checks (`studio/product-*.spec.ts`, ids `engine.product-…`) start a form each through
 `studio/support/product.ts`, which holds the start and stop command lines of each situation (the README check

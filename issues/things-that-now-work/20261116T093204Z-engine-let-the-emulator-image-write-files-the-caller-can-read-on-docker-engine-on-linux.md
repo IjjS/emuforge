@@ -4,7 +4,7 @@ Issue-Module: engine
 Issue-Kind: bug
 Issue-Source: plan
 Issue-Key: engine|emulator-image|fixed-uid-on-linux
-Issue-Check-Ids:
+Issue-Check-Ids: engine.emulator-image-gives-its-files-to-the-folders-owner engine.emulator-image-never-runs-as-root engine.emulator-image-stops-and-restarts-as-the-folders-owner engine.readme-run-the-emulator-creates-the-folder-first engine.workflow-builds-the-emulator-image-as-the-repository-ships-it
 Issue-Commit: f0bf02e915a04b2f17f1176275a3e00c75073aae
 
 # Let the emulator image write files the caller can read on Docker Engine on Linux
