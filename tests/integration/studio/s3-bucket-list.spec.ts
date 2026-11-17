@@ -10,12 +10,16 @@
 // Other checks make buckets on the run's emulator at the same time, so each check names its buckets with its own
 // prefix `<p>` and compares the screen with a direct `ListBuckets` under the filter `<p>`. Words and readers:
 // `support/s3.ts`.
+//
+// Issue 467 rewrote one step of `studio.s3-bucket-list-shows-what-the-emulator-holds` (its test-criteria.md, "Flow
+// checks, changed"; requirement R9, rule 1): what the notice, the description and the page say of where the buckets
+// are. Readers of those: `support/screen-rules.ts`.
 
 import type { Page } from '@playwright/test';
 
 import { expect, startStack, test } from './support';
 import { CacheRecord } from './support/aws-clients';
-import { connectedAt, crumbLink, crumbs, expectLine } from './support/aws-area';
+import { connectedAt, crumbLink, crumbs, endpointPattern, expectLine } from './support/aws-area';
 import { hasFocus } from './support/focus';
 import { ACTION, addressOf, heading, providersSection, SIDE_NAVIGATION, SIDE_NAVIGATION_ACTIVE } from './support/frame';
 import { markPage, stillSamePage } from './support/home';
@@ -33,7 +37,6 @@ import {
   creationDateText,
   CRUMBS,
   DELETE,
-  descriptionAt,
   EMPTY,
   expectNames,
   filterFor,
@@ -66,6 +69,7 @@ import {
   TOOLS,
   watchText,
 } from './support/s3';
+import { headerDescriptions, NOTICE_BODY, noticeBody, pageHeader, timesOnPage } from './support/screen-rules';
 
 const AWS = 'Amazon Web Services';
 
@@ -162,8 +166,10 @@ test.describe(() => {
       },
     );
 
+    // Issue 467 (requirement R9, rule 1) replaced "the notice reads …, and the description names the same endpoint"
+    // with the notice's body of R3, nothing between the `h1` and the table's controls, and the endpoint drawn once.
     await lines.line(
-      'On the screen → the side navigation has the header "Amazon S3" and the links "General purpose buckets" (current) and "Directory buckets"; the emulator line reads "Connected at `<endpoint>`", the notice reads "These buckets are in your local emulator", and the description names the same endpoint',
+      'On the screen → the side navigation has the header "Amazon S3" and the links "General purpose buckets" (current) and "Directory buckets"; the emulator line reads "Connected at `<endpoint>`"; the notice reads "These buckets are in your local emulator" with the body "They are not in an AWS account. EmuForge Studio is a stand-alone local tool, not an AWS feature."; nothing stands between the `h1` and the table\'s controls; the endpoint the emulator line shows is on the page once',
       async () => {
         await expectListAt(page, BUCKETS_PATH);
         await expect
@@ -171,7 +177,18 @@ test.describe(() => {
           .toEqual({ links: [NAV_HEADER, NAV_GENERAL, NAV_DIRECTORY], current: [NAV_GENERAL] });
         await expectLine(page, connectedAt(port));
         await expect(screen(page).notice, `the notice "${NOTICE}"`).toBeVisible();
-        await expect(page.getByText(descriptionAt(`https://127.0.0.1:${String(port)}`), { exact: true })).toBeVisible();
+        await expect.poll(() => noticeBody(page), { message: "the notice's body" }).toBe(NOTICE_BODY);
+        const header = await pageHeader(page);
+        const descriptions = await headerDescriptions(page);
+        ctx.log(
+          `the h1's header ${JSON.stringify(header)}; the descriptions in the main ${JSON.stringify(descriptions)}`,
+        );
+        expect(header?.description ?? null, 'the description under the h1').toBeNull();
+        expect(descriptions, "the descriptions between the h1 and the table's controls").toEqual([]);
+        expect(
+          await timesOnPage(page, endpointPattern(port)),
+          `how often https://127.0.0.1:${String(port)} is on the page`,
+        ).toBe(1);
       },
     );
 
