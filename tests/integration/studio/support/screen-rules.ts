@@ -279,9 +279,17 @@ export const ALERT_CONTENT = wrapper.findAlert().findContent().toSelector();
 
 /** The notice's body as shown, white space collapsed; `null` when the page shows no notice. */
 export async function noticeBody(page: Page): Promise<string | null> {
-  const body = page.getByRole('region', { name: NOTICE_REGION, exact: true }).locator(ALERT_CONTENT);
-  if ((await body.count()) === 0) return null;
-  return (await body.first().innerText(ACTION)).replace(/\s+/g, ' ').trim();
+  // The selector is rooted at the document (`createWrapper()`), so it is matched from the page and the content kept
+  // is the one inside the notice's region.
+  return page.evaluate(
+    ([content, region]) => {
+      const el = [...document.querySelectorAll(content)].find(
+        (c) => c.closest(`[role="region"][aria-label="${region}"]`) !== null,
+      );
+      return el ? (el as HTMLElement).innerText.replace(/\s+/g, ' ').trim() : null;
+    },
+    [ALERT_CONTENT, NOTICE_REGION],
+  );
 }
 
 // ---------------------------------------------------------------------------------------------------------------
