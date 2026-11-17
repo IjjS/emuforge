@@ -1,6 +1,7 @@
 import type { ServiceScreen } from '../../screens';
 import { FUNCTIONS_PATH, LAMBDA_PATH } from './format';
 import { FUNCTIONS_TITLE, FunctionListPage } from './pages/function-list-page';
+import { FunctionPage } from './pages/function-page';
 
 /** Lambda's side navigation on its screens (requirement R6.1): its header and the one entry "Event Functions". */
 const NAVIGATION: ServiceScreen['navigation'] = {
@@ -18,5 +19,13 @@ export const SCREENS: readonly ServiceScreen[] = [
     crumbs: [{ text: FUNCTIONS_TITLE }],
     navigation: NAVIGATION,
     Page: FunctionListPage,
+  },
+  // S2, a function's page (R0): its name one segment below `function/`, decoded once by the area.
+  {
+    paths: [`${FUNCTIONS_PATH}/function/{name}`],
+    title: ({ name }) => name ?? '',
+    crumbs: ({ name }) => [{ text: FUNCTIONS_TITLE, href: FUNCTIONS_PATH }, { text: name ?? '' }],
+    navigation: NAVIGATION,
+    Page: FunctionPage,
   },
 ];
