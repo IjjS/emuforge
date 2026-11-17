@@ -387,6 +387,12 @@ const ORDERS: FakeFunction = {
   environment: { SECRET: 'orders-secret-value' },
 };
 
+function withoutUrl(fn: FakeFunction): FakeFunction {
+  const copy = { ...fn };
+  delete copy.url;
+  return copy;
+}
+
 async function openLoaded(fn: FakeFunction = ORDERS) {
   engine.functions = [fn];
   const opened = open(pagePath(fn.name));
@@ -480,7 +486,7 @@ describe('a function loaded', () => {
     expect(within(section('Function overview')).queryByRole('link')).toBeNull();
     first.unmount();
 
-    const second = await openLoaded({ ...ORDERS, url: undefined });
+    const second = await openLoaded(withoutUrl(ORDERS));
     expect(value('Function overview', 'Function URL')).toBe('-');
     second.unmount();
 
