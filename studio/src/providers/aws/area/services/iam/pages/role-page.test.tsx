@@ -1,3 +1,7 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -652,6 +656,30 @@ describe('a loaded role', () => {
     expect(h1()).toHaveTextContent(name);
     expect(crumbs().at(-1)?.text).toBe(name);
   });
+
+  it('a 64-character name, a long path, a 256-character description, a long policy name and boundary, none with a space: each sits in the area’s `aws-iam-value`, a word that breaks anywhere', async () => {
+    const name = `r${'x'.repeat(63)}`;
+    const rolePath = `/${'p'.repeat(100)}/`;
+    const description = 'd'.repeat(256);
+    const policy = { name: `P${'q'.repeat(127)}`, arn: `arn:aws:iam::000000000000:policy/P${'q'.repeat(127)}` };
+    const boundary = `arn:aws:iam::000000000000:policy/B${'b'.repeat(127)}`;
+    await openLoaded({ name, path: rolePath, description, attached: [policy], boundary });
+
+    // The area's own rule, as the browser applies it (jsdom computes no style sheet).
+    const css = readFileSync(
+      path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'components', 'role-sections.css'),
+      'utf8',
+    );
+    expect(css).toMatch(/\.aws-iam-value\s*\{[^}]*overflow-wrap:\s*anywhere;/);
+
+    const wrapped = [...main().querySelectorAll('.aws-iam-value')].map((element) => element.textContent ?? '');
+    const arn = arnOf({ name, path: rolePath });
+    for (const value of [arn, description, rolePath, policy.name, boundary]) {
+      expect(wrapped, value.slice(0, 40)).toContain(value);
+    }
+    const nameCell = policiesTable().findRows()[0]?.getElement().querySelector('th');
+    expect(nameCell?.querySelector('.aws-iam-value')?.textContent).toBe(policy.name);
+  });
 });
 
 describe('the policies failing while the role does not', () => {
@@ -750,6 +778,12 @@ describe('not found and loading', () => {
     expect(tabs()).toEqual([]);
     expect(sectionHeadings()).toEqual([]);
     expect(within(main()).queryByRole('button', { name: 'Edit' })).toBeNull();
+    expect(
+      within(main())
+        .getByText(/^The emulator holds no role named/)
+        .closest('.aws-iam-value'),
+      'the sentence breaks a long name inside its box',
+    ).not.toBeNull();
 
     // The page's own link, not the side navigation's or the crumb's.
     const links = within(main())
