@@ -180,6 +180,24 @@ describe('routes', () => {
     },
   );
 
+  // Issue 256, test-criteria.md, "Unit — app/routes.test.tsx", case 2: the create form at its route.
+  it('opens /aws/s3/bucket/create as the create form: its h1 and the crumbs to it', async () => {
+    const path = '/aws/s3/bucket/create';
+    const router = createMemoryRouter(routes, { initialEntries: [path] });
+    render(
+      <Providers>
+        <RouterProvider router={router} />
+      </Providers>,
+    );
+
+    expect(inCloudscape(await heading('Create bucket'))).toBe(true);
+    const crumbs = (createWrapper(document.body).findBreadcrumbGroup()?.findBreadcrumbLinks() ?? []).map(
+      (item) => item.getElement().textContent,
+    );
+    expect(crumbs).toEqual(['EmuForge', 'AWS', 'S3', 'Buckets', 'Create bucket']);
+    expect(router.state.location.pathname).toBe(path);
+  });
+
   // Issue 256 gives /aws/s3/buckets/my-bucket and /aws/s3/bucket/create their screens; these three paths have none
   // before or after (test-criteria.md, "Existing checks and cases").
   it.each([
