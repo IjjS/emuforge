@@ -96,12 +96,12 @@ function screen(page: Page) {
   return {
     main,
     listH1: main.getByRole('heading', { level: 1, name: new RegExp(`^${LIST_H1}(\\s|$)`) }),
-    table: main.locator(LIST_TABLE).first(),
-    empty: main.locator(TABLE_EMPTY).first(),
+    table: page.locator(LIST_TABLE).first(),
+    empty: page.locator(TABLE_EMPTY).first(),
     filter: main.getByRole('searchbox', { name: FILTER, exact: true }),
     button: (name: string) => main.getByRole('button', { name, exact: true }).first(),
     checkbox: (name: string) => main.getByRole('checkbox', { name, exact: true }),
-    nameLink: (name: string) => main.locator(LIST_TABLE).first().getByRole('link', { name, exact: true }),
+    nameLink: (name: string) => page.locator(LIST_TABLE).first().getByRole('link', { name, exact: true }),
   };
 }
 

@@ -76,13 +76,13 @@ function screen(page: Page) {
     edit: main.getByRole('button', { name: EDIT, exact: true }),
     dialog,
     description: dialog.getByLabel(F_DESCRIPTION, { exact: true }),
-    duration: dialog.locator(SELECT_TRIGGER).first(),
+    duration: page.locator(SELECT_TRIGGER).first(),
     seconds: dialog.getByLabel(F_SECONDS, { exact: true }),
     save: dialog.getByRole('button', { name: SAVE, exact: true }),
     cancel: dialog.getByRole('button', { name: CANCEL, exact: true }),
     flashItems: page.locator(FLASH_ITEMS),
     listH1: main.getByRole('heading', { level: 1, name: new RegExp(`^${LIST_H1}(\\s|$)`) }),
-    listTable: main.locator(LIST_TABLE).first(),
+    listTable: page.locator(LIST_TABLE).first(),
     filter: main.getByRole('searchbox', { name: FILTER, exact: true }),
   };
 }
@@ -306,13 +306,19 @@ test('studio.iam-role-edit-summary-changes-the-emulator', async ({ ctx, page }) 
     "Open the list and apply the filter `<p>` after an update → the role's row is there, read again (data of the same role on both screens)",
     async () => {
       await seeded.update(plain, { description: `${typed} again` });
-      const listed = page.waitForRequest(
-        (r) => r.method() === 'POST' && new URLSearchParams(r.postData() ?? '').get('Action') === 'ListRoles',
-        ACTION,
-      );
+      // Settled either way, so a line that fails before awaiting it leaves no rejection behind.
+      const listed = page
+        .waitForRequest(
+          (r) => r.method() === 'POST' && new URLSearchParams(r.postData() ?? '').get('Action') === 'ListRoles',
+          ACTION,
+        )
+        .then(
+          () => true,
+          () => false,
+        );
       await page.goto(ROLES_PATH);
       await expect(s.listH1, `the role list's h1 "${LIST_H1}…"`).toBeVisible();
-      await listed;
+      expect(await listed, 'opening the list sent a ListRoles').toBe(true);
       await s.filter.fill(p, ACTION);
       await s.filter.press('Enter', ACTION);
       const direct = containing(await roleNamesDirect(ctx, port), p);

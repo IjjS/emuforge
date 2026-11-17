@@ -89,7 +89,7 @@ function screen(page: Page) {
   return {
     main,
     listH1: main.getByRole('heading', { level: 1, name: new RegExp(`^${LIST_H1}(\\s|$)`) }),
-    listTable: main.locator(LIST_TABLE).first(),
+    listTable: page.locator(LIST_TABLE).first(),
     filter: main.getByRole('searchbox', { name: FILTER, exact: true }),
     button: (name: string) => main.getByRole('button', { name, exact: true }).first(),
     tab: (name: string) => main.getByRole('tab', { name, exact: true }),
@@ -331,8 +331,8 @@ test('studio.iam-role-screens-talk-only-to-the-engine', async ({ ctx, page, cont
       await s.main.getByLabel(F_NAME, { exact: true }).fill(made, ACTION);
       await s.main.getByLabel(F_DESCRIPTION, { exact: true }).fill(firstDescription, ACTION);
       await s.button(ADD_TAG).click(ACTION);
-      await s.main.locator(TAG_KEY).fill(tag.key, ACTION);
-      await s.main.locator(TAG_VALUE).fill(tag.value, ACTION);
+      await page.locator(TAG_KEY).fill(tag.key, ACTION);
+      await page.locator(TAG_VALUE).fill(tag.value, ACTION);
       await s.button(CREATE).click(ACTION);
       await expectFlash(page, createdText(made));
       expect((await getRoleDirect(ctx, port, made)).tags, `a direct GetRole of ${made}: its tag`).toEqual([tag]);

@@ -117,11 +117,11 @@ function screen(page: Page) {
     filter: main.getByRole('searchbox', { name: FILTER, exact: true }),
     roleName: main.getByLabel(F_NAME, { exact: true }),
     description: main.getByLabel(F_DESCRIPTION, { exact: true }),
-    tagKey: main.locator(TAG_KEY),
-    tagValue: main.locator(TAG_VALUE),
+    tagKey: page.locator(TAG_KEY),
+    tagValue: page.locator(TAG_VALUE),
     flashItems: page.locator(FLASH_ITEMS),
     listH1: main.getByRole('heading', { level: 1, name: new RegExp(`^${LIST_H1}(\\s|$)`) }),
-    listTable: main.locator(LIST_TABLE).first(),
+    listTable: page.locator(LIST_TABLE).first(),
   };
 }
 
@@ -241,8 +241,8 @@ async function createAndExpectList(page: Page, name: string): Promise<void> {
   await expectFlash(page, [createdText(name)], `the Flashbar says "${createdText(name)}"`);
 }
 
-/** The role list's rows under the filter `text`: name and trusted entities. */
-async function listRowsUnder(page: Page, text: string): Promise<{ name: string; trusted: string }[]> {
+/** On the role list (opened when another page is shown): applies the filter `text`, typed, then Enter. */
+async function applyListFilter(page: Page, text: string): Promise<void> {
   const s = screen(page);
   if ((await s.listH1.count()) === 0) {
     await page.goto(ROLES_PATH);
@@ -250,6 +250,12 @@ async function listRowsUnder(page: Page, text: string): Promise<{ name: string; 
   }
   await s.filter.fill(text, ACTION);
   await s.filter.press('Enter', ACTION);
+}
+
+/** The role list's rows as shown: name and trusted entities. */
+async function listRows(page: Page): Promise<{ name: string; trusted: string }[]> {
+  const s = screen(page);
+  if ((await s.listTable.count()) === 0) return [];
   const read = () =>
     s.listTable.evaluate(
       (el, cols) => {
@@ -315,8 +321,9 @@ test('studio.iam-role-create-appears-in-the-emulator', async ({ ctx, page }) => 
     async () => {
       await completeWizard(page, { type: 'service', principal: 'lambda.amazonaws.com' }, names.new);
       await createAndExpectList(page, names.new);
+      await applyListFilter(page, p);
       await expect
-        .poll(async () => (await listRowsUnder(page, p)).find((r) => r.name === names.new)?.trusted ?? null, {
+        .poll(async () => (await listRows(page)).find((r) => r.name === names.new)?.trusted ?? null, {
           message: `the row of ${names.new} under the filter <p>`,
         })
         .toBe('AWS Service: lambda');
@@ -418,7 +425,10 @@ test('studio.iam-role-create-appears-in-the-emulator', async ({ ctx, page }) => 
     const attached = await attachedPoliciesDirect(ctx, port, names.full);
     await page.goto(ROLES_PATH);
     await expect(s.listH1).toBeVisible();
-    await listRowsUnder(page, names.full);
+    await applyListFilter(page, names.full);
+    await expect
+      .poll(async () => (await listRows(page)).map((r) => r.name), { message: `the row of ${names.full}` })
+      .toEqual([names.full]);
     await s.listTable.getByRole('link', { name: names.full, exact: true }).click(ACTION);
     await expect(heading(page, names.full), `the h1 "${names.full}"`).toBeVisible();
     await expect(s.main, 'the ARN').toContainText(direct.arn);

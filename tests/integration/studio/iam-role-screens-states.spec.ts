@@ -84,8 +84,8 @@ function screen(page: Page) {
   return {
     main,
     h1: main.getByRole('heading', { level: 1, name: new RegExp(`^${LIST_H1}(\\s|$)`) }),
-    table: main.locator(LIST_TABLE).first(),
-    empty: main.locator(TABLE_EMPTY).first(),
+    table: page.locator(LIST_TABLE).first(),
+    empty: page.locator(TABLE_EMPTY).first(),
     filter: main.getByRole('searchbox', { name: FILTER, exact: true }),
     button: (name: string) => main.getByRole('button', { name, exact: true }).first(),
     flashItems: page.locator(FLASH_ITEMS),
@@ -272,14 +272,19 @@ test('studio.iam-role-screens-follow-emulator-stop-and-restart', async ({ ctx, p
       await fillWizard(page, made, description);
       await emulator.stop();
       running = false;
-      const answered = page.waitForResponse(
-        (r) =>
-          r.url().startsWith(stack.engine.url) &&
-          new URLSearchParams(r.request().postData() ?? '').get('Action') === 'CreateRole',
-        { timeout: 20_000 },
-      );
+      // Settled either way, so a line that fails before awaiting it leaves no rejection behind.
+      const answered = page
+        .waitForResponse(
+          (r) =>
+            r.url().startsWith(stack.engine.url) &&
+            new URLSearchParams(r.request().postData() ?? '').get('Action') === 'CreateRole',
+          { timeout: 20_000 },
+        )
+        .catch(() => null);
       await s.button(CREATE).click(ACTION);
       const response = await answered;
+      expect(response, 'the page sent CreateRole to the engine and it answered').not.toBeNull();
+      if (response === null) return;
       const message = textAt(xmlTree(await response.text()), 'ErrorResponse', 'Error', 'Message') ?? '';
       ctx.log(`the engine answered CreateRole ${String(response.status())}: ${message}`);
       expect(response.status(), "the engine's answer to CreateRole").toBe(503);

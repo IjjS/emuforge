@@ -116,7 +116,7 @@ function screen(page: Page) {
   return {
     main,
     listH1: main.getByRole('heading', { level: 1, name: new RegExp(`^${LIST_H1}(\\s|$)`) }),
-    listTable: main.locator(LIST_TABLE).first(),
+    listTable: page.locator(LIST_TABLE).first(),
     filter: main.getByRole('searchbox', { name: FILTER, exact: true }),
     refreshRole: main.getByRole('button', { name: REFRESH_ROLE, exact: true }),
     policies: main.getByRole('table', { name: POLICIES, exact: true }),
