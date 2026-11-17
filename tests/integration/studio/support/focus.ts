@@ -64,6 +64,69 @@ function installProbe(selectors: { sideNavigation: string; breadcrumbs: string }
     const c = cs.outlineColor.replace(/\s+/g, '');
     return c !== 'transparent' && !/^rgba\(\d+,\d+,\d+,0\)$/.test(c);
   };
+  /** Splits a selector list or a box-shadow list at its top-level commas. */
+  const splitTop = (s: string) => {
+    const parts: string[] = [];
+    let depth = 0;
+    let from = 0;
+    for (let i = 0; i < s.length; i++) {
+      if (s[i] === '(') depth++;
+      else if (s[i] === ')') depth--;
+      else if (s[i] === ',' && depth === 0) {
+        parts.push(s.slice(from, i).trim());
+        from = i + 1;
+      }
+    }
+    parts.push(s.slice(from).trim());
+    return parts.filter((p) => p !== '');
+  };
+  /** The first shadow of a computed `box-shadow` that is a seen ring: a non-transparent color, a spread above 0. */
+  const seenShadow = (boxShadow: string) => {
+    if (boxShadow === 'none') return null;
+    for (const shadow of splitTop(boxShadow)) {
+      const color = /rgba?\([^)]*\)/.exec(shadow)?.[0].replace(/\s+/g, '') ?? '';
+      if (color === '' || color === 'transparent' || /^rgba\(\d+,\d+,\d+,0\)$/.test(color)) continue;
+      const lengths = shadow
+        .replace(/rgba?\([^)]*\)/, '')
+        .split(/\s+/)
+        .filter((t) => /^-?[\d.]+px$/.test(t))
+        .map(parseFloat);
+      if ((lengths[3] ?? 0) > 0) return shadow;
+    }
+    return null;
+  };
+  /** Every selector of the document's style rules that sets an outline or a box shadow and names a focus state. */
+  const focusSelectors = () => {
+    const found: string[] = [];
+    const walk = (rules: CSSRuleList) => {
+      for (const rule of [...rules]) {
+        if (rule instanceof CSSStyleRule) {
+          const s = rule.style;
+          const draws = s.boxShadow !== '' || s.outline !== '' || s.outlineStyle !== '' || s.outlineColor !== '';
+          if (draws && rule.selectorText.includes(':focus')) found.push(...splitTop(rule.selectorText));
+        }
+        if ('cssRules' in rule && (rule as CSSGroupingRule).cssRules) walk((rule as CSSGroupingRule).cssRules);
+      }
+    };
+    for (const sheet of [...document.styleSheets]) {
+      try {
+        walk(sheet.cssRules);
+      } catch {
+        // A sheet of another origin cannot be read; Studio serves its own styles.
+      }
+    }
+    return found;
+  };
+  /** Whether a focus selector that `pick` accepts matches `el` now (after `pseudo` is taken off its end). */
+  const focusRuleMatches = (selectors: string[], el: Element, pick: (part: string) => boolean, pseudo: string) =>
+    selectors.filter(pick).some((part) => {
+      const base = pseudo === '' ? part : part.slice(0, -pseudo.length).replace(/:$/, '');
+      try {
+        return el.matches(base);
+      } catch {
+        return false;
+      }
+    });
   /** The page's first content stop by name: the first visible Tab stop inside the page's `main`, outside every navigation. */
   const contentStop = (name: string) =>
     tabStops().find((el) => textOf(el) === name && !el.closest(NAVIGATION) && el.closest(MAIN) !== null) ?? null;
@@ -141,13 +204,54 @@ function installProbe(selectors: { sideNavigation: string; breadcrumbs: string }
       };
     },
 
-    /** The focus indicator the focused element draws: its outline, or a box shadow; `null` when it draws none. */
+    /**
+     * The focus indicator the focused element draws; `null` when it draws none. First its own outline, or a box
+     * shadow (as before issue 56). Then, as `::before …`, `::after …` or `wrapper <element> …`, a ring that a focus
+     * style rule draws for it (issue 56, decision of 2026-11-17 16:20): on its `::before` or `::after`, by a rule
+     * whose selector has `:focus` and matches it now, or on its nearest wrapper that holds no other Tab stop, by a
+     * rule whose selector has `:focus-within` and matches that wrapper now. Such a ring must be seen: a
+     * non-transparent outline of width above 0, or a non-transparent box shadow with a spread above 0.
+     */
     ring() {
       const el = document.activeElement;
       if (el === null || el === document.body) return null;
       const cs = getComputedStyle(el);
       if (drawsOutline(cs)) return `outline ${cs.outlineStyle} ${cs.outlineWidth} ${cs.outlineColor}`;
       if (cs.boxShadow !== 'none') return `box-shadow ${cs.boxShadow}`;
+      const seen = (style: CSSStyleDeclaration) => {
+        if (drawsOutline(style)) return `outline ${style.outlineStyle} ${style.outlineWidth} ${style.outlineColor}`;
+        const shadow = seenShadow(style.boxShadow);
+        return shadow === null ? null : `box-shadow ${shadow}`;
+      };
+      const selectors = focusSelectors();
+      for (const which of ['::before', '::after'] as const) {
+        if (!focusRuleMatches(selectors, el, (part) => part.includes(':focus') && part.endsWith(which), which))
+          continue;
+        const ps = getComputedStyle(el, which);
+        if (ps.content === 'none' || ps.display === 'none' || ps.visibility !== 'visible') continue;
+        const drawn = seen(ps);
+        if (drawn !== null) return `${which} ${drawn}`;
+      }
+      const others = tabStops().filter((stop) => stop !== el);
+      for (
+        let wrapper = el.parentElement;
+        wrapper !== null && wrapper !== document.body;
+        wrapper = wrapper.parentElement
+      ) {
+        const around = wrapper;
+        if (others.some((stop) => around.contains(stop))) break;
+        if (
+          !focusRuleMatches(
+            selectors,
+            wrapper,
+            (part) => part.includes(':focus-within') && !/::?(before|after)$/.test(part),
+            '',
+          )
+        )
+          continue;
+        const drawn = seen(getComputedStyle(wrapper));
+        if (drawn !== null) return `wrapper ${describe(wrapper)} ${drawn}`;
+      }
       return null;
     },
 
@@ -366,7 +470,11 @@ export async function expectNextContentStop(page: Page, name: string): Promise<v
   expect(contentStopProblems(stop, name), `the next Tab reaches "${name}"`).toEqual([]);
 }
 
-/** The focus indicator the focused element draws (outline or box shadow); `null` when none. */
+/**
+ * The focus indicator the focused element draws: its own outline or box shadow, else a seen ring a focus rule draws
+ * on its `::before` / `::after` or on its nearest wrapper under `:focus-within` (see the probe's `ring`); `null` when
+ * none.
+ */
 export async function focusRing(page: Page): Promise<string | null> {
   return call(page, 'ring');
 }
