@@ -195,6 +195,10 @@ export function CreateBucketPage({ connection }: ScreenPageProps) {
       if (controller.signal.aborted) {
         return;
       }
+      // Not a failed request (those are outcomes): the form is usable again before the error goes on.
+      inFlight.current = null;
+      busy.current = false;
+      setPending(false);
       throw error;
     }
     if (controller.signal.aborted) {
