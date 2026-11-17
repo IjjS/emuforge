@@ -79,10 +79,16 @@ export function functionPage(page: Page, name: string) {
   };
 }
 
-/** Opens the page of `name` and waits for its `h1`, the name. */
+/**
+ * Opens the page of `name` and waits for its `h1`, the name, and for the page to be read: the tab "Code" of a function
+ * the emulator holds, or "Function not found" or "The function could not be read." The `h1` is shown while "Loading
+ * function" is still up, before the tabs exist.
+ */
 export async function openFunction(page: Page, name: string): Promise<void> {
   await page.goto(functionPath(name));
   await expect(heading(page, name), `the function page's h1 "${name}"`).toBeVisible();
+  const f = functionPage(page, name);
+  await expect(f.tab('Code').or(f.notFound).or(f.notRead), `the function page of "${name}", read`).toBeVisible();
 }
 
 /**
