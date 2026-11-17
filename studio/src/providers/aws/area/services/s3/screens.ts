@@ -1,8 +1,9 @@
 import type { ScreenNavigation, ServiceScreen } from '../../screens';
-import { BUCKETS_PATH, CREATE_BUCKET_PATH, DIRECTORY_BUCKETS_PATH, S3_PATH } from './format';
+import { bucketPath, BUCKETS_PATH, CREATE_BUCKET_PATH, DIRECTORY_BUCKETS_PATH, S3_PATH } from './format';
 import { BucketListHelp, BucketListPage } from './pages/bucket-list-page';
 import { BucketPage } from './pages/bucket-page';
 import { CreateBucketPage } from './pages/create-bucket-page';
+import { DeleteBucketPage } from './pages/delete-bucket-page';
 
 /** S3's own side navigation, "General purpose buckets" current on every screen of a general purpose bucket. */
 const NAVIGATION: ScreenNavigation = {
@@ -50,5 +51,17 @@ export const SCREENS: readonly ServiceScreen[] = [
     crumbs: [BUCKETS_CRUMB, { text: 'Create bucket' }],
     navigation: NAVIGATION,
     Page: CreateBucketPage,
+  },
+  // S4, "Delete bucket" (issue 256, R0, R4, R7): below the bucket's crumb, which leads to its page, without help.
+  {
+    paths: [`${S3_PATH}/bucket/{name}/delete`],
+    title: 'Delete bucket',
+    crumbs: ({ name }) => [
+      BUCKETS_CRUMB,
+      { text: name ?? '', href: bucketPath(name ?? '') },
+      { text: 'Delete bucket' },
+    ],
+    navigation: NAVIGATION,
+    Page: DeleteBucketPage,
   },
 ];
