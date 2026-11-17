@@ -1929,3 +1929,361 @@ describe('the flash (issue 386, R5)', () => {
     expect(stored()).toEqual(before);
   });
 });
+
+// Issue 57 (test-criteria.md, "Unit — providers/aws/area/area-layout.test.tsx", New): the "no screen yet" page for a
+// part of a service that has screens, on test screens of Amazon DynamoDB of this block's own.
+describe('the "no screen yet" page for a part of a service that has screens (issue 57, R4)', () => {
+  const PART_STATEMENT = 'Studio has no screen for this part of Amazon DynamoDB yet.';
+  const PART_SENTENCE = 'Opening this page changed nothing in your local emulator.';
+
+  const NAVIGATION_OF_THINGS = {
+    header: { text: 'Things of DynamoDB', href: '/aws/dynamodb' },
+    items: [
+      {
+        type: 'section',
+        text: 'Things',
+        items: [
+          { type: 'link', text: 'All things', href: '/aws/dynamodb/things' },
+          { type: 'link', text: 'Widgets', href: '/aws/dynamodb/widgets' },
+          { type: 'link', text: 'Other things', href: '/aws/dynamodb/other-things' },
+        ],
+      },
+    ],
+    activeHref: '/aws/dynamodb/things',
+  } satisfies AreaScreen['navigation'];
+
+  const THINGS: AreaScreen = {
+    service: '/dynamodb',
+    paths: ['/aws/dynamodb', '/aws/dynamodb/things'],
+    title: 'Things',
+    crumbs: [{ text: 'Things' }],
+    navigation: NAVIGATION_OF_THINGS,
+    Page: () => <Header variant="h1">Things</Header>,
+  };
+
+  const WIDGETS: AreaScreen = {
+    service: '/dynamodb',
+    paths: ['/aws/dynamodb/widgets'],
+    title: 'Widgets',
+    crumbs: [{ text: 'Widgets' }],
+    navigation: {
+      ...NAVIGATION_OF_THINGS,
+      header: { text: 'Widgets of DynamoDB', href: '/aws/dynamodb' },
+      activeHref: '/aws/dynamodb/widgets',
+    },
+    Page: () => <Header variant="h1">Widgets</Header>,
+  };
+
+  /** An item's page: two crumbs below the service, the first with an address; it leads to an item's settings. */
+  const ITEM: AreaScreen = {
+    service: '/dynamodb',
+    paths: ['/aws/dynamodb/items/{name}'],
+    leadsTo: ['/aws/dynamodb/item/{name}/settings'],
+    title: (params) => params.name ?? '',
+    crumbs: (params) => [{ text: 'Items', href: '/aws/dynamodb/items' }, { text: params.name ?? '' }],
+    navigation: { ...NAVIGATION_OF_THINGS, activeHref: '/aws/dynamodb/widgets' },
+    Page: ({ params }) => <Header variant="h1">{params.name}</Header>,
+  };
+
+  const DYNAMODB_CRUMBS: [string, string | null][] = [
+    ['EmuForge', '/'],
+    ['AWS', '/aws'],
+    ['DynamoDB', '/aws/dynamodb'],
+  ];
+
+  afterEach(() => {
+    registry.screens.length = 0;
+  });
+
+  function register(...screens: AreaScreen[]) {
+    registry.screens.push(...screens);
+  }
+
+  function activeLink(wrapper: ReturnType<typeof createWrapper>): HTMLElement | undefined {
+    return wrapper.findSideNavigation()?.findActiveLink()?.getElement();
+  }
+
+  /** The page's actions, the links of its content whose names start "Go to ", in order, with their addresses. */
+  function actions(): [string | null, string | null][] {
+    return screen
+      .getAllByRole('link', { name: /^Go to / })
+      .map((link) => [link.textContent, link.getAttribute('href')]);
+  }
+
+  /** The path shown under "Path": the first `code` element after the label. */
+  function shownPath(): string | null {
+    const main = screen.getByRole('main');
+    const label = within(main).getByText('Path', { exact: true });
+    const code = [...main.querySelectorAll('code')].find((element) => follows(label, element));
+    return code?.textContent ?? null;
+  }
+
+  function expectPartPage() {
+    expect(screen.getByRole('heading', { level: 1, name: NO_SCREEN_PART })).toBeInTheDocument();
+    expect(screen.getByRole('main')).toHaveTextContent(PART_STATEMENT);
+    expect(titles.at(-1)).toBe(NO_SCREEN_PART);
+  }
+
+  it('on /aws/dynamodb/other-things: the crumbs EmuForge (/), AWS (/aws), DynamoDB to /aws/dynamodb, then "No screen yet", the current page and no link', () => {
+    register(THINGS, WIDGETS);
+    const { wrapper } = open('/aws/dynamodb/other-things');
+
+    expect(breadcrumbs(wrapper)).toEqual([...DYNAMODB_CRUMBS, [NO_SCREEN_PART, null]]);
+    expect(crumbLink(wrapper, NO_SCREEN_PART)).toBeUndefined();
+    expect(crumbLink(wrapper, 'DynamoDB')).toHaveAttribute('href', '/aws/dynamodb');
+  });
+
+  it('on that page: the first screen\'s navigation, its header and three links in order, none of the services, "Other things" current', () => {
+    register(THINGS, WIDGETS);
+    const { wrapper } = open('/aws/dynamodb/other-things');
+
+    expect(wrapper.findSideNavigation()?.findHeaderLink()?.getElement()).toHaveTextContent('Things of DynamoDB');
+    const links = sideLinks(wrapper);
+    expect(links).toEqual([
+      ['All things', '/aws/dynamodb/things'],
+      ['Widgets', '/aws/dynamodb/widgets'],
+      ['Other things', '/aws/dynamodb/other-things'],
+    ]);
+    for (const [label, route] of SERVICES) {
+      expect(links.map(([text]) => text)).not.toContain(label);
+      expect(links.map(([, href]) => href)).not.toContain(route);
+    }
+    expect(activeLink(wrapper)).toHaveTextContent('Other things');
+  });
+
+  it('on /aws/dynamodb/nothing-links-here: the same navigation, no link current', () => {
+    register(THINGS, WIDGETS);
+    const { wrapper } = open('/aws/dynamodb/nothing-links-here');
+
+    expectPartPage();
+    expect(wrapper.findSideNavigation()?.findHeaderLink()?.getElement()).toHaveTextContent('Things of DynamoDB');
+    expect(sideLinks(wrapper)).toHaveLength(3);
+    expect(activeLink(wrapper)).toBeUndefined();
+  });
+
+  it.each([
+    ['/aws/dynamodb/things/x', 'Things', '/aws/dynamodb/things', 'All things'],
+    ['/aws/dynamodb/widgets/x', 'Widgets', '/aws/dynamodb/widgets', 'Widgets'],
+  ])('on %s: after DynamoDB the crumb %s to %s, then "No screen yet"; %s current', (path, crumb, href, current) => {
+    register(THINGS, WIDGETS);
+    const { wrapper } = open(path);
+
+    expectPartPage();
+    expect(breadcrumbs(wrapper)).toEqual([...DYNAMODB_CRUMBS, [crumb, href], [NO_SCREEN_PART, null]]);
+    expect(activeLink(wrapper)).toHaveTextContent(current);
+  });
+
+  it('a screen above with two crumbs, the first with an address, at the name a/b (…/a%2Fb/more): both links, the second "a/b" to the leading part with a%2Fb; "No screen yet" the only crumb that is no link', () => {
+    register(THINGS, ITEM);
+    const { wrapper } = open('/aws/dynamodb/items/a%2Fb/more');
+
+    expectPartPage();
+    expect(breadcrumbs(wrapper)).toEqual([
+      ...DYNAMODB_CRUMBS,
+      ['Items', '/aws/dynamodb/items'],
+      ['a/b', '/aws/dynamodb/items/a%2Fb'],
+      [NO_SCREEN_PART, null],
+    ]);
+    expect(breadcrumbs(wrapper).filter(([, href]) => href === null)).toEqual([[NO_SCREEN_PART, null]]);
+  });
+
+  it("a screen that leads to a pattern, a path below that pattern: the screen's crumbs, the last to its first path for that name, and its navigation's current link", () => {
+    register(THINGS, ITEM);
+    const { wrapper } = open('/aws/dynamodb/item/my%20item/settings/edit');
+
+    expectPartPage();
+    expect(breadcrumbs(wrapper)).toEqual([
+      ...DYNAMODB_CRUMBS,
+      ['Items', '/aws/dynamodb/items'],
+      ['my item', '/aws/dynamodb/items/my%20item'],
+      [NO_SCREEN_PART, null],
+    ]);
+    expect(activeLink(wrapper)).toHaveTextContent('Widgets');
+  });
+
+  it.each(['/aws/dynamodb/nothing-links-here', '/aws/dynamodb/things/x'])(
+    'on %s, with and without a screen above: no help toggle, no local-emulator notice, no (i) control; the emulator line shown',
+    (path) => {
+      register({ ...THINGS, help: () => <HelpPanel header={<h2>Things</h2>}>Help</HelpPanel> }, WIDGETS);
+      const { wrapper } = open(path);
+
+      expectPartPage();
+      expect(wrapper.findAppLayout()?.findToolsToggle()).toBeNull();
+      expect(screen.queryByRole('button', { name: /help panel/i })).toBeNull();
+      expect(screen.queryByRole('region', { name: 'Local emulator notice' })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'About the local emulator' })).toBeNull();
+      expect(emulatorLine()).toBeInTheDocument();
+    },
+  );
+
+  it('the content target is named "No screen yet"; a route change to the page from a screen puts focus on it', async () => {
+    register(THINGS, WIDGETS);
+    const { router } = open('/aws/dynamodb/things');
+
+    await act(() => router.navigate('/aws/dynamodb/things/x'));
+
+    await expectFocusOnTarget(NO_SCREEN_PART, 'Go to Things');
+  });
+
+  it('on /aws/dynamodb/ (a trailing slash): the changed page, "Path" showing /aws/dynamodb/', () => {
+    register(THINGS, WIDGETS);
+    open('/aws/dynamodb/');
+
+    expectPartPage();
+    expect(shownPath()).toBe('/aws/dynamodb/');
+  });
+
+  it.each(['/aws/dynamodb', '/aws/dynamodb/x'])(
+    'with only "Widgets" registered (the route shows no screen), on %s: the changed page; "Go to Widgets" to /aws/dynamodb/widgets; the Widgets screen\'s navigation',
+    (path) => {
+      register(WIDGETS);
+      const { wrapper } = open(path);
+
+      expectPartPage();
+      expect(actions()).toEqual([
+        ['Go to Widgets', '/aws/dynamodb/widgets'],
+        ['Go to Home', '/'],
+      ]);
+      expect(wrapper.findSideNavigation()?.findHeaderLink()?.getElement()).toHaveTextContent('Widgets of DynamoDB');
+    },
+  );
+
+  it('with only screens at paths with a parameter: no "Go to …" before "Go to Home", its one action', () => {
+    register(ITEM);
+    open('/aws/dynamodb/x');
+
+    expectPartPage();
+    expect(actions()).toEqual([['Go to Home', '/']]);
+  });
+
+  it.each(['/aws/dynamodb/other-things', '/aws/dynamodb/widgets/x'])(
+    'with "Things" and "Widgets", on %s: the first action "Go to Things", to the service\'s route /aws/dynamodb',
+    (path) => {
+      register(THINGS, WIDGETS);
+      open(path);
+
+      expect(actions()).toEqual([
+        ['Go to Things', '/aws/dynamodb'],
+        ['Go to Home', '/'],
+      ]);
+    },
+  );
+
+  it.each([NO_SCREEN_SERVICE.path, NO_SCREEN_SERVICE.below])(
+    "with screens of DynamoDB only, on %s of a service without a screen: today's page in every part",
+    (path) => {
+      register(THINGS, WIDGETS);
+      const { wrapper } = open(path);
+
+      expect(screen.getByRole('heading', { level: 1, name: NO_SCREEN })).toBeInTheDocument();
+      expect(screen.getByRole('main')).toHaveTextContent(NO_SCREEN_SENTENCE);
+      expect(wrapper.findSideNavigation()?.findHeaderLink()?.getElement()).toHaveTextContent(AWS);
+      expect(sideLinks(wrapper)).toEqual(SERVICES);
+      expect(activeLink(wrapper)).toHaveAttribute('href', NO_SCREEN_SERVICE.path);
+      expect(breadcrumbs(wrapper)).toEqual([
+        ['EmuForge', '/'],
+        ['AWS', '/aws'],
+        [NO_SCREEN_SERVICE.crumb, null],
+      ]);
+      expect(actions()).toEqual([['Go to Home', '/']]);
+      expect(screen.queryByText('Path', { exact: true })).toBeNull();
+    },
+  );
+
+  it.each([
+    ['/aws', AWS],
+    ['/aws/does-not-exist', 'Page not found'],
+    ['/aws/dynamodb/items/%zz', 'Page not found'],
+  ])('with those screens, on %s: the h1 %s, as before', (path, h1) => {
+    register(THINGS, WIDGETS, ITEM);
+    open(path);
+
+    expect(screen.getByRole('heading', { level: 1, name: h1 })).toBeInTheDocument();
+    expect(screen.queryByText(PART_STATEMENT)).toBeNull();
+  });
+
+  const STATES: [string, CheckResult | undefined, string, boolean][] = [
+    ['no check has answered', undefined, 'Checking', false],
+    ['connected', connectedAt(9297), 'Connected at https://127.0.0.1:9297', false],
+    [
+      'emulator not started',
+      {
+        kind: 'emulator-unreachable',
+        checkedAt: 1,
+        emulator: { port: 9297, endpoint: 'https://127.0.0.1:9297' },
+        reason: 'not_started',
+        message: '',
+      },
+      'Not started on port 9297',
+      true,
+    ],
+    [
+      'emulator not answering',
+      {
+        kind: 'emulator-unreachable',
+        checkedAt: 1,
+        emulator: { port: 9297, endpoint: 'https://127.0.0.1:9297' },
+        reason: 'refused',
+        message: '',
+      },
+      'Not answering at https://127.0.0.1:9297',
+      true,
+    ],
+    [
+      'engine not answering',
+      { kind: 'engine-unreachable', checkedAt: 1, lastEmulatorPort: 9297 },
+      `The EmuForge engine at ${ENGINE_ORIGIN} is not answering`,
+      true,
+    ],
+    [
+      'engine error with a code',
+      { kind: 'engine-error', checkedAt: 1, status: 500, code: 'Boom', message: undefined },
+      'The EmuForge engine answered with an error: Boom',
+      true,
+    ],
+    [
+      'engine error without a code',
+      { kind: 'engine-error', checkedAt: 1, status: 502, code: undefined, message: undefined },
+      'The EmuForge engine answered with HTTP status 502',
+      true,
+    ],
+  ];
+
+  it.each(STATES)(
+    'in the state "%s": the line\'s text, the same h1, statement, path and sentence, both actions leading where R4.7 says; "Connection status" first when shown',
+    (_state, result, status, recovery) => {
+      register(THINGS, WIDGETS);
+      connection.value = { result, engineOrigin: ENGINE_ORIGIN };
+      const { router } = open('/aws/dynamodb/other-things');
+
+      expect(lineStatus()).toBe(status);
+      expectPartPage();
+      expect(shownPath()).toBe('/aws/dynamodb/other-things');
+      expect(screen.getByRole('main')).toHaveTextContent(PART_SENTENCE);
+      expect(actions()).toEqual([
+        ['Go to Things', '/aws/dynamodb'],
+        ['Go to Home', '/'],
+      ]);
+      const stops = tabStops().map((stop) => stop.textContent);
+      const goTo = stops.indexOf('Go to Things');
+      const connectionStatus = stops.indexOf('Connection status');
+      if (recovery) {
+        expect(connectionStatus).toBeGreaterThanOrEqual(0);
+        expect(connectionStatus).toBeLessThan(goTo);
+      } else {
+        expect(connectionStatus).toBe(-1);
+      }
+      act(() => {
+        fireEvent.click(screen.getByRole('link', { name: 'Go to Things' }));
+      });
+      expect(router.state.location.pathname).toBe('/aws/dynamodb');
+      act(() => {
+        void router.navigate('/aws/dynamodb/other-things');
+      });
+      act(() => {
+        fireEvent.click(screen.getByRole('link', { name: 'Go to Home' }));
+      });
+      expect(router.state.location.pathname).toBe('/');
+    },
+  );
+});
