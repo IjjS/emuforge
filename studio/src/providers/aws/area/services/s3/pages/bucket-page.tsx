@@ -6,8 +6,8 @@ import { useCallback, useState, type MouseEvent } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 
 import { useShowsResources } from '../../../components/page-resources';
+import { ValueText } from '../../../components/value-text';
 import type { ScreenPageProps } from '../../../screens';
-import { BreakAnywhere } from '../components/break-anywhere';
 import { lineText, pageState, type PageState } from '../components/bucket-read';
 import { BucketLoading, BucketNotFound, BucketReadFailure } from '../components/bucket-read-state';
 import { BucketSections } from '../components/bucket-sections';
@@ -18,10 +18,10 @@ import type { Bucket } from '../api';
 import { useBucketLookup } from '../queries';
 
 // S1, a general purpose bucket's own page with its tab "Properties" (issue 256, requirement R4, R5, R9.1, R10, R11):
-// the console's tabs, in the console's words; its description and states in EmuForge's own. Every value from the
-// engine or the emulator is rendered as text.
+// the console's tabs, in the console's words; its states in EmuForge's own. Every value from the engine or the
+// emulator is rendered as text, each as the kind of value it is (issue 467, requirement R6). The `h1` has no
+// description: the area's frame says where the bucket is (issue 467, R3).
 
-const DESCRIPTION = 'This bucket is in your local emulator, not in an AWS account.';
 const REFRESHED = 'Bucket refreshed';
 
 /** The tabs in the spec's order (R5.2); every one but "Properties" leads to its own route (R10). */
@@ -153,14 +153,13 @@ export function BucketPage({ connection, params }: ScreenPageProps) {
     <SpaceBetween size="l">
       <Header
         variant="h1"
-        {...(state.kind === 'loaded' && { description: DESCRIPTION })}
         actions={
           <Button iconName="refresh" onClick={handleRefresh}>
             Refresh
           </Button>
         }
       >
-        <BreakAnywhere>{name}</BreakAnywhere>
+        <ValueText kind="name" value={name} />
       </Header>
       <div>
         {state.kind === 'loading' && <BucketLoading />}

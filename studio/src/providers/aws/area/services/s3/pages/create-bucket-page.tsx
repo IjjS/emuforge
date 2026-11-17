@@ -1,6 +1,6 @@
 import Alert from '@cloudscape-design/components/alert';
 import AttributeEditor from '@cloudscape-design/components/attribute-editor';
-import Button from '@cloudscape-design/components/button';
+import Button, { type ButtonProps } from '@cloudscape-design/components/button';
 import Checkbox from '@cloudscape-design/components/checkbox';
 import Container from '@cloudscape-design/components/container';
 import ExpandableSection from '@cloudscape-design/components/expandable-section';
@@ -13,8 +13,10 @@ import SpaceBetween from '@cloudscape-design/components/space-between';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 
+import { DiscardDialog, type DiscardAnswer } from '../../../components/discard-dialog';
 import { usePageFlash, type FlashItem } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
+import { ValueText } from '../../../components/value-text';
 import type { ScreenPageProps } from '../../../screens';
 import type { ObjectOwnership, PublicAccessBlock, Tag } from '../api';
 import {
@@ -36,19 +38,26 @@ import {
   type MessageField,
 } from '../bucket-form';
 import { actionFailure, type ActionFailure } from '../components/action-failure';
-import { BreakAnywhere } from '../components/break-anywhere';
+import { Quoted, QuotedIn } from '../components/quoted';
 import { useAnnouncer } from '../components/use-announcer';
 import { BUCKETS_PATH, encryptionTypeLabel } from '../format';
 import { useCreateBucket } from '../queries';
 import { regionText } from '../regions';
 
 // S2, "Create bucket" (issue 256, requirement R6, R9.3, R11.4): the console's sections and fields in the console's
-// words (`studio/references/console/s3/create-bucket.yaml`), its description, field messages and failures in
-// EmuForge's own. Nothing is read on opening, and nothing typed is kept anywhere: the form lives as long as the page
-// is open. "Copy settings from existing bucket" and choosing a KMS key from a list are not built (R14 item 7).
+// words (`studio/references/console/s3/create-bucket.yaml`), its field messages and failures in EmuForge's own.
+// Nothing is read on opening, and nothing typed is kept anywhere: the form lives as long as the page is open. "Copy
+// settings from existing bucket" and choosing a KMS key from a list are not built (R14 item 7). Issue 467: the `h1` has
+// no description, the area's frame says where the bucket is made (requirement R3); "Bucket name" states its rule from
+// the start (R4); and "Cancel" asks before it discards what was entered (R7).
 
 const TITLE = 'Create bucket';
-const DESCRIPTION = 'The bucket is created in your local emulator, not in an AWS account.';
+/**
+ * The constraint text under "Bucket name" (issue 467, R4): what the form's own check lets through (`bucket-form.ts`);
+ * its rarer rules (two periods in a row, the form of an IP address, reserved prefixes and suffixes) stay messages.
+ */
+export const NAME_RULE =
+  '3 to 63 characters: lowercase letters (a-z), digits, periods (.) and hyphens (-). Begins and ends with a letter or digit.';
 /** Studio creates every bucket in this Region of the emulator: no `LocationConstraint` is sent (R6.4). */
 const REGION = 'us-east-1';
 const REGION_DESCRIPTION = 'Studio creates buckets in this Region of the emulator.';
@@ -88,11 +97,35 @@ const switchValue = (on: boolean) => (on ? ENABLE : DISABLE);
 
 const NO_MESSAGES: FormMessages = { tags: [] };
 
+/**
+ * Whether any field, choice or row differs from what the form showed when it opened, what its address preselected
+ * included (issue 467, R7). A value typed and removed again does not differ; one kept by a choice no longer shown (a
+ * KMS key under SSE-S3) still does, since choosing it again shows it.
+ */
+function differs(form: BucketForm, opened: BucketForm): boolean {
+  const access = form.publicAccess;
+  const start = opened.publicAccess;
+  return (
+    form.name !== opened.name ||
+    form.ownership !== opened.ownership ||
+    access.blockPublicAcls !== start.blockPublicAcls ||
+    access.ignorePublicAcls !== start.ignorePublicAcls ||
+    access.blockPublicPolicy !== start.blockPublicPolicy ||
+    access.restrictPublicBuckets !== start.restrictPublicBuckets ||
+    form.versioning !== opened.versioning ||
+    form.tags.length !== opened.tags.length ||
+    form.encryption !== opened.encryption ||
+    form.kmsKey !== opened.kmsKey ||
+    form.bucketKey !== opened.bucketKey ||
+    form.objectLock !== opened.objectLock
+  );
+}
+
 /** The result handed to the list once `CreateBucket` has succeeded and every setting has answered (R6.6). */
 function createdResult(name: string, outcome: Extract<CreateOutcome, { outcome: 'created' }>, origin?: string) {
   const success: FlashItem = {
     type: 'success',
-    content: <BreakAnywhere>{`Bucket “${name}” was created in the local emulator.`}</BreakAnywhere>,
+    content: <Quoted before="Bucket “" name={name} after="” was created in the local emulator." />,
   };
   const failures = outcome.settingFailures.map(({ setting, failure }): FlashItem => {
     const shown = actionFailure(failure, SETTING_WHAT[setting], origin);
@@ -125,7 +158,9 @@ export function CreateBucketPage({ connection }: ScreenPageProps) {
   const create = useCreateBucket(engineOrigin);
   const [announcement, announce] = useAnnouncer();
 
-  const [form, setForm] = useState<BucketForm>(() => initialBucketForm(new URLSearchParams(search)));
+  // What the address preselected, kept as the form opened with it (R6.2; issue 467, R7).
+  const [opened] = useState<BucketForm>(() => initialBucketForm(new URLSearchParams(search)));
+  const [form, setForm] = useState<BucketForm>(opened);
   const [messages, setMessages] = useState<FormMessages>(NO_MESSAGES);
   const [nameTaken, setNameTaken] = useState<string>();
   const [failure, setFailure] = useState<ActionFailure>();
@@ -227,9 +262,34 @@ export function CreateBucketPage({ connection }: ScreenPageProps) {
     }
   };
 
+  // "Cancel" leaves at once while nothing differs from what the form showed when it opened; otherwise it asks (R7).
+  // The dialog is on the page only while it asks; once it is answered "keep", focus is back on "Cancel".
+  const [asking, setAsking] = useState(false);
+  const cancelRef = useRef<ButtonProps.Ref>(null);
+  const [kept, setKept] = useState(0);
+  useEffect(() => {
+    if (kept > 0) {
+      cancelRef.current?.focus();
+    }
+  }, [kept]);
   const handleCancel = () => {
+    if (differs(form, opened)) {
+      setAsking(true);
+      return;
+    }
     void navigate(BUCKETS_PATH);
   };
+  const handleDiscardAnswer = useCallback(
+    (answer: DiscardAnswer) => {
+      setAsking(false);
+      if (answer === 'discard') {
+        void navigate(BUCKETS_PATH);
+      } else {
+        setKept((count) => count + 1);
+      }
+    },
+    [navigate],
+  );
 
   const setTags = (update: (tags: Tag[]) => Tag[]) => {
     change((current) => ({ ...current, tags: update(current.tags) }));
@@ -256,18 +316,23 @@ export function CreateBucketPage({ connection }: ScreenPageProps) {
   );
 
   const nameMessage = nameTaken === undefined ? messages.name : nameTakenMessage(nameTaken);
+  // The message that quotes the name typed shows it as a name; the form's own messages are free text (issue 467, R6).
+  const nameMessageShown =
+    nameMessage === undefined ? undefined : nameTaken === undefined ? (
+      <ValueText kind="text" value={nameMessage} />
+    ) : (
+      <QuotedIn text={nameMessage} name={nameTaken} />
+    );
   const locked = form.objectLock;
 
   return (
     <SpaceBetween size="l">
-      <Header variant="h1" description={DESCRIPTION}>
-        {TITLE}
-      </Header>
+      <Header variant="h1">{TITLE}</Header>
       <form onSubmit={(event) => void handleSubmit(event)} noValidate>
         <Form
           actions={
             <SpaceBetween direction="horizontal" size="xs">
-              <Button variant="link" formAction="none" onClick={handleCancel}>
+              <Button ref={cancelRef} variant="link" formAction="none" onClick={handleCancel}>
                 Cancel
               </Button>
               <Button variant="primary" loading={pending} loadingText={CREATING}>
@@ -282,10 +347,7 @@ export function CreateBucketPage({ connection }: ScreenPageProps) {
                 <FormField label="Region" description={REGION_DESCRIPTION}>
                   <Input value={regionText(REGION)} readOnly />
                 </FormField>
-                <FormField
-                  label="Bucket name"
-                  errorText={nameMessage === undefined ? undefined : <BreakAnywhere>{nameMessage}</BreakAnywhere>}
-                >
+                <FormField label="Bucket name" constraintText={NAME_RULE} errorText={nameMessageShown}>
                   <Input
                     ref={nameRef}
                     value={form.name}
@@ -434,6 +496,7 @@ export function CreateBucketPage({ connection }: ScreenPageProps) {
           </SpaceBetween>
         </Form>
       </form>
+      {asking && <DiscardDialog visible onAnswer={handleDiscardAnswer} />}
       {announcement}
     </SpaceBetween>
   );

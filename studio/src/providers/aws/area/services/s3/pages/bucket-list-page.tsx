@@ -22,6 +22,7 @@ import { creationDateText } from '../../../components/format-date';
 import { usePageHelp } from '../../../components/page-help';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
+import { ValueText, type ValueKind } from '../../../components/value-text';
 import type { RequestFailure } from '../../../../../../lib/aws/request';
 import { LIST_BUCKETS, type Bucket } from '../api';
 import {
@@ -32,12 +33,16 @@ import {
   DIRECTORY_BUCKETS_PATH,
   emptyBucketPath,
 } from '../format';
+import { NAME_COLUMN_MIN_WIDTH } from '../components/name-column';
+import { Quoted } from '../components/quoted';
 import { useBucketListing, type BucketCount, type BucketListing } from '../queries';
 import { regionText } from '../regions';
 
 // S3's general purpose bucket list (issue 56, requirement R3 to R8): the console's "Buckets" page with the tab
-// "General purpose buckets", in the console's words; its description, help and states in EmuForge's own. Every value
-// from the engine or the emulator is rendered as text.
+// "General purpose buckets", in the console's words; its help and states in EmuForge's own. Every value from the
+// engine or the emulator is rendered as text, each as the kind of value it is (issue 467, requirement R6). The table's
+// header has no description: the area's frame says where the buckets are, and the filter's rule is in the help panel
+// (issue 467, R3).
 
 /** The page's title, its `h1`. */
 export const BUCKETS_TITLE = 'Buckets';
@@ -67,6 +72,8 @@ interface ConnectionStatus {
   type: StatusIndicatorProps.Type;
   before: string;
   value: string;
+  /** How `value` breaks: a port or a status as a fixed word, an endpoint or an origin as an address, a code as a name. */
+  kind: ValueKind;
   after?: string;
 }
 
@@ -77,16 +84,27 @@ function connectionStatus({ result, engineOrigin }: AreaConnection): ConnectionS
       return undefined;
     case 'emulator-unreachable':
       return result.reason === 'not_started'
-        ? { type: 'stopped', before: 'Not started on port ', value: String(result.emulator.port) }
-        : { type: 'error', before: 'Not answering at ', value: result.emulator.endpoint };
+        ? { type: 'stopped', before: 'Not started on port ', value: String(result.emulator.port), kind: 'fixed' }
+        : { type: 'error', before: 'Not answering at ', value: result.emulator.endpoint, kind: 'address' };
     case 'engine-unreachable':
       return engineOrigin === undefined
         ? undefined
-        : { type: 'error', before: 'The EmuForge engine at ', value: engineOrigin, after: ' is not answering' };
+        : {
+            type: 'error',
+            before: 'The EmuForge engine at ',
+            value: engineOrigin,
+            kind: 'address',
+            after: ' is not answering',
+          };
     case 'engine-error':
       return result.code === undefined
-        ? { type: 'error', before: 'The EmuForge engine answered with HTTP status ', value: String(result.status) }
-        : { type: 'error', before: 'The EmuForge engine answered with an error: ', value: result.code };
+        ? {
+            type: 'error',
+            before: 'The EmuForge engine answered with HTTP status ',
+            value: String(result.status),
+            kind: 'fixed',
+          }
+        : { type: 'error', before: 'The EmuForge engine answered with an error: ', value: result.code, kind: 'name' };
   }
 }
 
@@ -108,12 +126,18 @@ type BodyState =
       recovery: boolean;
     };
 
-function Code({ children }: { children: ReactNode }) {
+/** A value of a state as code, breaking as the kind it is (R6). */
+function Code({ kind, value }: { kind: ValueKind; value: string }) {
   return (
     <Box variant="code" display="inline">
-      {children}
+      <ValueText kind={kind} value={value} />
     </Box>
   );
+}
+
+/** A sentence or a message as it came, as free text (R6). */
+function text(value: string): ReactNode {
+  return <ValueText kind="text" value={value} />;
 }
 
 /**
@@ -127,7 +151,9 @@ function failureState(failure: RequestFailure, connection: AreaConnection): Body
       type: 'info',
       first: 'Not implemented by the emulator',
       firstText: 'Not implemented by the emulator',
-      detail: `The emulator answered 501 Not Implemented for ${failure.operation}, so Studio cannot list buckets.`,
+      detail: text(
+        `The emulator answered 501 Not Implemented for ${failure.operation}, so Studio cannot list buckets.`,
+      ),
       recovery: false,
     };
   }
@@ -137,7 +163,7 @@ function failureState(failure: RequestFailure, connection: AreaConnection): Body
       type: 'error',
       first: 'Access denied',
       firstText: 'Access denied',
-      detail: `${LIST_BUCKETS} was refused: ${failure.message}`,
+      detail: text(`${LIST_BUCKETS} was refused: ${failure.message}`),
       recovery: false,
     };
   }
@@ -148,9 +174,9 @@ function failureState(failure: RequestFailure, connection: AreaConnection): Body
       type: status.type,
       first: (
         <>
-          {status.before}
-          <Code>{status.value}</Code>
-          {status.after}
+          {text(status.before)}
+          <Code kind={status.kind} value={status.value} />
+          {status.after !== undefined && text(status.after)}
         </>
       ),
       firstText: `${status.before}${status.value}${status.after ?? ''}`,
@@ -165,7 +191,7 @@ function failureState(failure: RequestFailure, connection: AreaConnection): Body
         type: 'error',
         first: 'The emulator did not answer',
         firstText: 'The emulator did not answer',
-        detail: failure.message,
+        detail: text(failure.message),
         recovery: false,
       };
     case 'engine-did-not-answer': {
@@ -175,7 +201,9 @@ function failureState(failure: RequestFailure, connection: AreaConnection): Body
         type: 'error',
         first: (
           <>
-            The EmuForge engine at <Code>{origin}</Code> did not answer
+            {text('The EmuForge engine at ')}
+            <Code kind="address" value={origin} />
+            {text(' did not answer')}
           </>
         ),
         firstText: `The EmuForge engine at ${origin} did not answer`,
@@ -191,10 +219,11 @@ function failureState(failure: RequestFailure, connection: AreaConnection): Body
         firstText: 'The bucket list could not be read',
         detail:
           failure.message === undefined ? (
-            <Code>{failure.code}</Code>
+            <Code kind="name" value={failure.code} />
           ) : (
             <>
-              <Code>{failure.code}</Code>: {failure.message}
+              <Code kind="name" value={failure.code} />
+              {text(`: ${failure.message}`)}
             </>
           ),
         recovery: false,
@@ -302,7 +331,7 @@ function TableBody({ state, onCreate, onClearFilter, onRetry }: TableBodyProps) 
               No matches
             </Box>
             <Box variant="p" color="inherit">
-              {`No bucket name starts with “${state.prefix}”.`}
+              <Quoted before="No bucket name starts with “" name={state.prefix} after="”." />
             </Box>
           </SpaceBetween>
           <Box margin={{ top: 's' }}>
@@ -515,29 +544,30 @@ export function BucketListPage({ connection }: { connection: AreaConnection }) {
     setSelectedName(detail.selectedItems[0]?.name);
   }, []);
 
-  const result = connection.result;
-  const description =
-    result?.kind === 'connected' ? (
-      <>
-        Buckets in your local emulator at <Code>{result.emulator.endpoint}</Code>, not in an AWS account.
-      </>
-    ) : (
-      'Buckets in your local emulator, not in an AWS account.'
-    );
-
+  // A name of up to 24 characters is on one line; a longer one breaks inside its cell rather than widening its column
+  // (R6; issue 464).
   const columns: TableProps.ColumnDefinition<Bucket>[] = [
     {
       id: 'name',
       header: 'Name',
       isRowHeader: true,
+      minWidth: NAME_COLUMN_MIN_WIDTH,
       cell: (bucket) => (
         <Link href={bucketPath(bucket.name)} onFollow={handleFollow}>
-          {bucket.name}
+          <ValueText kind="name" value={bucket.name} />
         </Link>
       ),
     },
-    { id: 'region', header: 'AWS Region', cell: (bucket) => regionText(bucket.region) },
-    { id: 'creationDate', header: 'Creation date', cell: (bucket) => creationDateText(bucket.creationDate) },
+    {
+      id: 'region',
+      header: 'AWS Region',
+      cell: (bucket) => <ValueText kind="fixed" value={regionText(bucket.region)} />,
+    },
+    {
+      id: 'creationDate',
+      header: 'Creation date',
+      cell: (bucket) => <ValueText kind="fixed" value={creationDateText(bucket.creationDate)} />,
+    },
   ];
 
   const noSelection = selected === undefined;
@@ -576,7 +606,6 @@ export function BucketListPage({ connection }: { connection: AreaConnection }) {
               Info
             </Link>
           }
-          description={description}
           actions={
             <SpaceBetween direction="horizontal" size="xs" alignItems="center">
               <Button iconName="refresh" ariaLabel="Refresh Buckets" onClick={handleRefresh} />

@@ -2,16 +2,23 @@ import type { StatusIndicatorProps } from '@cloudscape-design/components/status-
 
 import type { RequestFailure } from '../../../../../../lib/aws/request';
 import type { AreaConnection } from '../../../components/emulator-line';
+import type { ValueKind } from '../../../components/value-text';
 import { NO_SUCH_BUCKET, type NoSuchBucket } from '../api';
 
 // The states of a failed read of a bucket's screens (issue 256, requirement R11.1 to R11.3), as data: what a page
 // (S1, S3, S4) shows in place of its content, and what a section of S1 shows in place of its values. Codes, messages,
 // origins and ports are text as they came; the components of `bucket-read-state.tsx` render them.
 
-/** One line of a state: text, then a value shown as code (an origin, a port, a code), then text. */
+/**
+ * One line of a state: text, then a value shown as code (an origin, a port, a code), then text. The text around it is
+ * free text; the value breaks as the kind it is (issue 467, requirement R6): an origin or an endpoint as an address,
+ * a code as a name, a port or a status as a fixed word.
+ */
 export interface StateLine {
   before: string;
   code?: string;
+  /** How `code` breaks; a name when not given. */
+  codeKind?: ValueKind;
   after?: string;
 }
 
@@ -45,15 +52,26 @@ export function connectionStatus({ result, engineOrigin }: AreaConnection): Conn
       return undefined;
     case 'emulator-unreachable':
       return result.reason === 'not_started'
-        ? { type: 'stopped', before: 'Not started on port ', code: String(result.emulator.port) }
-        : { type: 'error', before: 'Not answering at ', code: result.emulator.endpoint };
+        ? { type: 'stopped', before: 'Not started on port ', code: String(result.emulator.port), codeKind: 'fixed' }
+        : { type: 'error', before: 'Not answering at ', code: result.emulator.endpoint, codeKind: 'address' };
     case 'engine-unreachable':
       return engineOrigin === undefined
         ? undefined
-        : { type: 'error', before: 'The EmuForge engine at ', code: engineOrigin, after: ' is not answering' };
+        : {
+            type: 'error',
+            before: 'The EmuForge engine at ',
+            code: engineOrigin,
+            codeKind: 'address',
+            after: ' is not answering',
+          };
     case 'engine-error':
       return result.code === undefined
-        ? { type: 'error', before: 'The EmuForge engine answered with HTTP status ', code: String(result.status) }
+        ? {
+            type: 'error',
+            before: 'The EmuForge engine answered with HTTP status ',
+            code: String(result.status),
+            codeKind: 'fixed',
+          }
         : { type: 'error', before: 'The EmuForge engine answered with an error: ', code: result.code };
   }
 }
@@ -104,7 +122,12 @@ export function pageFailure(failure: RequestFailure, connection: AreaConnection)
     case 'engine-did-not-answer':
       return {
         type: 'error',
-        first: { before: 'The EmuForge engine at ', code: connection.engineOrigin ?? '', after: ' did not answer' },
+        first: {
+          before: 'The EmuForge engine at ',
+          code: connection.engineOrigin ?? '',
+          codeKind: 'address',
+          after: ' did not answer',
+        },
         recovery: false,
       };
     case 'other':

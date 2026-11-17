@@ -13,14 +13,15 @@ import type { AreaConnection } from '../../../components/emulator-line';
 import { usePageFlash } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
+import { ValueText } from '../../../components/value-text';
 import type { ScreenPageProps } from '../../../screens';
 import { NO_SUCH_BUCKET, type DeleteBucketResult, type NoSuchBucket } from '../api';
 import { actionFailure, type ActionFailure } from '../components/action-failure';
-import { BreakAnywhere } from '../components/break-anywhere';
 import { BucketNameConfirmation } from '../components/bucket-name-confirmation';
 import { confirmsName } from '../components/confirms-name';
 import { lineText, pageState, type PageState } from '../components/bucket-read';
 import { BucketLoading, BucketNotFound, BucketReadFailure } from '../components/bucket-read-state';
+import { Quoted } from '../components/quoted';
 import { useAnnouncer } from '../components/use-announcer';
 import { BUCKETS_PATH, emptyBucketPath } from '../format';
 import { useBucketToDelete, useDeleteBucket, type BucketToDelete } from '../queries';
@@ -37,23 +38,24 @@ const NOT_EMPTY_TEXT =
   'A bucket can be deleted only when it holds no object, object version or delete marker. Empty it, then come back to this page.';
 const DELETING = 'Deleting the bucket';
 
-/** R9.5: the endpoint is named only while the connection is connected. */
+/**
+ * R9.5: the endpoint is named only while the connection is connected. The name is shown as a name, the endpoint as an
+ * address, the words around them as free text (issue 467, requirement R6).
+ */
 function DeleteSentence({ name, connection }: { name: string; connection: AreaConnection }) {
   const result = connection.result;
   return (
     <Box variant="p">
-      <BreakAnywhere>
-        {`Bucket “${name}” will be deleted from your local emulator`}
-        {result?.kind === 'connected' && (
-          <>
-            {' at '}
-            <Box variant="code" display="inline">
-              {result.emulator.endpoint}
-            </Box>
-          </>
-        )}
-        {'. This cannot be undone.'}
-      </BreakAnywhere>
+      <Quoted before="Bucket “" name={name} after="” will be deleted from your local emulator" />
+      {result?.kind === 'connected' && (
+        <>
+          <ValueText kind="text" value=" at " />
+          <Box variant="code" display="inline">
+            <ValueText kind="address" value={result.emulator.endpoint} />
+          </Box>
+        </>
+      )}
+      <ValueText kind="text" value=". This cannot be undone." />
     </Box>
   );
 }
@@ -190,7 +192,7 @@ export function DeleteBucketPage({ connection, params }: ScreenPageProps) {
       flash.handOver(BUCKETS_PATH, [
         {
           type: 'success',
-          content: <BreakAnywhere>{`Bucket “${name}” was deleted from the local emulator.`}</BreakAnywhere>,
+          content: <Quoted before="Bucket “" name={name} after="” was deleted from the local emulator." />,
         },
       ]);
       return;

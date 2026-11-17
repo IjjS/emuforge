@@ -9,14 +9,17 @@ import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Table, { type TableProps } from '@cloudscape-design/components/table';
 
 import { useFollow } from '../../../components/use-follow';
+import { ValueText } from '../../../components/value-text';
 import type { DeleteFailure } from '../api';
 import { BUCKETS_PATH, deleteBucketPath } from '../format';
-import { BreakAnywhere } from './break-anywhere';
 import { deletedText, emptyingResult, type EmptyingState } from './emptying-result';
+import { NAME_COLUMN_MIN_WIDTH } from './name-column';
+import { Quoted } from './quoted';
 
 // "Empty bucket: Status" (issue 256, requirement R8.4 to R8.6, R9.4): the state of the empty page from the press of
 // "Empty" on, at the same address. Its content is in no source, so every word of it is EmuForge's own; the counts,
-// keys, version ids, codes and messages are text as they came, and a long one breaks inside its box.
+// keys, version ids, codes and messages are text as they came, each breaking as the kind of value it is (issue 467,
+// requirement R6): a key, a version id and a code as names, a message as free text.
 
 /** The most failures the table shows (R8.5). */
 const FAILURES_SHOWN = 100;
@@ -25,18 +28,27 @@ const EMPTYING = 'Emptying the bucket';
 const ITEM_MEANS = 'An item is an object version or a delete marker.';
 
 const FAILURE_COLUMNS: TableProps.ColumnDefinition<DeleteFailure>[] = [
-  { id: 'key', header: 'Key', cell: ({ key }) => <BreakAnywhere>{key}</BreakAnywhere> },
-  { id: 'version', header: 'Version ID', cell: ({ versionId }) => <BreakAnywhere>{versionId ?? '-'}</BreakAnywhere> },
+  {
+    id: 'key',
+    header: 'Key',
+    minWidth: NAME_COLUMN_MIN_WIDTH,
+    cell: ({ key }) => <ValueText kind="name" value={key} />,
+  },
+  {
+    id: 'version',
+    header: 'Version ID',
+    cell: ({ versionId }) => <ValueText kind="name" value={versionId} none="-" />,
+  },
   {
     id: 'error',
     header: 'Error',
     cell: ({ code, message }) => (
-      <BreakAnywhere>
+      <>
         <Box variant="code" display="inline">
-          {code}
+          <ValueText kind="name" value={code} />
         </Box>
-        {`: ${message}`}
-      </BreakAnywhere>
+        <ValueText kind="text" value={`: ${message}`} />
+      </>
     ),
   },
 ];
@@ -85,7 +97,7 @@ export function EmptyingStatus({ name, state, onRetry }: EmptyingStatusProps) {
           {state.kind === 'running' && <StatusIndicator type="in-progress">{EMPTYING}</StatusIndicator>}
           {result !== undefined && (
             <StatusIndicator type={result.type}>
-              <BreakAnywhere>{result.text}</BreakAnywhere>
+              <Quoted before={result.before} name={result.name} after={result.after} />
             </StatusIndicator>
           )}
           {state.kind === 'failed' && (
