@@ -41,7 +41,8 @@ starts one beside EmuForge when there is none. Before it runs anything it prints
 runs, one of the lines below, so you can always run that line yourself. `./compose down` stops what
 `./compose up` started and leaves an emulator you run yourself running. Any other arguments are passed on with
 the platform's file, as in `./compose ps -a` and `./compose logs`. It refuses to run as root: `./compose up`,
-`./compose down` and the rest exit 1 for uid 0, and also with `EMUFORGE_UID` or `EMUFORGE_GID` set to 0.
+`./compose down` and the rest exit 1 for uid 0, also with `EMUFORGE_UID` or `EMUFORGE_GID` set to 0, and on Docker Engine on Linux
+when your group id is 0.
 
 What it needs: Docker with Compose and bash, nothing else on the host. The engine and Studio are built inside an
 image build, so no Rust or bun toolchain is used. It was verified on Docker Desktop for macOS (Docker Engine
@@ -147,9 +148,11 @@ they are ordinary ports. When a port is wrong the engine's own message names its
 `EMUFORGE_ENGINE_PORT`, `--emulator-port` for `EMULATOR_PORT` and `--studio-port` for `EMUFORGE_STUDIO_PORT`;
 `./compose logs` shows it.
 
-On Docker Desktop a start whose port is taken or used twice fails. On Docker Engine on Linux nothing is
-published, so such a start can exit 0 and EmuForge still does not come up: `./compose ps -a` shows the service
-that is not running, and `./compose logs` shows the line with the port's number.
+On Docker Desktop a start whose published port is taken (the Studio port, the engine port, or in situation 4
+the emulator's), or whose Studio and engine ports are equal, exits non-zero and names the port. Any other wrong
+port is seen as on Docker Engine on Linux, where nothing is published, so every such start can exit 0 and
+EmuForge still does not come up: `./compose ps -a` shows the service that is not running, and `./compose logs`
+shows the line with the port's number.
 
 ## Develop
 
