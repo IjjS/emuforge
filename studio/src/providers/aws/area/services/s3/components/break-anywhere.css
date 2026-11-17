@@ -1,0 +1,8 @@
+/* A value the user or the emulator gives (a bucket name, an ARN, a tag, a key) can be one long word without a space.
+   It breaks anywhere inside its box rather than widening a cell, a field or a heading and scrolling the page sideways
+   (issue 256, requirement R12; decisions.md, 2026-11-17 22:10). `anywhere`, not `break-word`: only `anywhere` lowers
+   the box's smallest width, which is what keeps a table's column from growing. The area's own element, not a
+   Cloudscape component's; it sets no colour, spacing or font. */
+.aws-s3-break-anywhere {
+  overflow-wrap: anywhere;
+}

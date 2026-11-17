@@ -156,6 +156,30 @@ describe('routes', () => {
     },
   );
 
+  // Issue 256, test-criteria.md, "Unit — app/routes.test.tsx", case 1: a bucket's page at its two routes.
+  it.each(['/aws/s3/buckets/my-bucket', '/aws/s3/buckets/my-bucket/properties'])(
+    'opens %s as the page of the bucket my-bucket: its h1, the crumbs to it, S3’s navigation, the address unchanged',
+    async (path) => {
+      const router = createMemoryRouter(routes, { initialEntries: [path] });
+      render(
+        <Providers>
+          <RouterProvider router={router} />
+        </Providers>,
+      );
+
+      expect(inCloudscape(await heading('my-bucket'))).toBe(true);
+      const wrapper = createWrapper(document.body);
+      const crumbs = (wrapper.findBreadcrumbGroup()?.findBreadcrumbLinks() ?? []).map(
+        (item) => item.getElement().textContent,
+      );
+      expect(crumbs).toEqual(['EmuForge', 'AWS', 'S3', 'Buckets', 'my-bucket']);
+      const navigation = wrapper.findSideNavigation();
+      expect(navigation?.findHeaderLink()?.getElement()).toHaveTextContent('Amazon S3');
+      expect(navigation?.findActiveLink()?.getElement()).toHaveTextContent('General purpose buckets');
+      expect(router.state.location.pathname).toBe(path);
+    },
+  );
+
   // Issue 256 gives /aws/s3/buckets/my-bucket and /aws/s3/bucket/create their screens; these three paths have none
   // before or after (test-criteria.md, "Existing checks and cases").
   it.each([
