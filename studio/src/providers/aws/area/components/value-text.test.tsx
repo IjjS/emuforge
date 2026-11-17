@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { render } from '@testing-library/react';
@@ -64,6 +64,32 @@ function stylesheet(): Map<string, Map<string, string>> {
     }
   }
   return rules;
+}
+
+/** Every stylesheet under `providers/aws/area/services/`, as its path relative to that folder. */
+function serviceStylesheets(): string[] {
+  const root = path.join(import.meta.dirname, '..', 'services');
+  return readdirSync(root, { recursive: true, encoding: 'utf8' })
+    .filter((file) => /\.(css|scss)$/.test(file))
+    .sort();
+}
+
+/** The rules of a stylesheet that declare `overflow-wrap` or `word-break`, each as its selectors and the declaration. */
+function breakingRules(file: string): string[] {
+  const css = readFileSync(path.join(import.meta.dirname, '..', 'services', file), 'utf8').replace(
+    /\/\*[\s\S]*?\*\//g,
+    '',
+  );
+  const found: string[] = [];
+  for (const [, selectors = '', body = ''] of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    for (const declaration of body.split(';')) {
+      const property = declaration.split(':')[0]?.trim() ?? '';
+      if (property === 'overflow-wrap' || property === 'word-break') {
+        found.push(`${selectors.trim()} { ${declaration.trim()} }`);
+      }
+    }
+  }
+  return found;
 }
 
 /** What the stylesheet sets for elements of `className`. */
@@ -139,4 +165,16 @@ describe("ValueText, the area's one way of breaking a value", () => {
       expect(shown('text', value).innerHTML).toBe('');
     },
   );
+
+  it('every stylesheet under services/, read from disk: none declares `overflow-wrap` or `word-break`, but for the rule of `.aws-area-policy-text` (the preformatted trust policy text)', () => {
+    const files = serviceStylesheets();
+    // The three services' stylesheets are found: the walk reads the folder, not a list of names.
+    expect(files.length).toBeGreaterThan(0);
+    expect(files.some((file) => file.startsWith(`iam${path.sep}`))).toBe(true);
+
+    const found = files.flatMap((file) => breakingRules(file).map((rule) => `${file}: ${rule}`));
+    expect(found).toEqual([
+      `${path.join('iam', 'components', 'create-role.css')}: .aws-area-policy-text { overflow-wrap: anywhere }`,
+    ]);
+  });
 });

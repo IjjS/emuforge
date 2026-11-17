@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: bug
 Issue-Source: finder
 Issue-Key: studio|s3-bucket-list|long-word
-Issue-Check-Ids:
+Issue-Check-Ids: studio.s3-values-break-where-they-can-be-read
 Issue-Commit: 5ee0aa6a06a0762eabff61024e68bceeb35040fe
 
 # Break a long bucket name inside its cell on the S3 bucket list

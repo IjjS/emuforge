@@ -273,14 +273,6 @@ async function expectNames(expected: string[]) {
   });
 }
 
-/** Matches the element whose whole text is `text`, and none of its children alone. */
-function byWholeText(text: string) {
-  return (_: string, element: Element | null): boolean =>
-    element !== null &&
-    element.textContent === text &&
-    [...element.children].every((child) => child.textContent !== text);
-}
-
 /** The table's empty slot, which a case expects to be there. */
 function slot(): HTMLElement {
   const found = emptySlot();
@@ -586,19 +578,54 @@ describe('selection and the actions', () => {
   });
 });
 
-describe('the description and the notice', () => {
-  it('connected: the description with the connection’s endpoint; otherwise without one', async () => {
-    await openLoaded();
+/** The descriptions of the page's headers: the `h1`'s and the table's (issue 467, R3). */
+function headerDescriptions(): string[] {
+  return PAGE.findAllHeaders()
+    .map((header) => header.findDescription())
+    .filter((description) => description !== null)
+    .map((description) => description.getElement().textContent ?? '');
+}
 
-    expect(
-      screen.getByText(byWholeText(`Buckets in your local emulator at ${EMULATOR_ENDPOINT}, not in an AWS account.`)),
-    ).toBeInTheDocument();
+/**
+ * The kind of value (issue 467, R6) the area's element whose text is exactly `text` inside `scope` shows: `address`,
+ * `name`, `fixed` or `text`; `undefined` when no such element holds it.
+ */
+function kindOf(scope: Element, text: string): string | undefined {
+  const element = [...scope.querySelectorAll('.aws-area-value')].find((found) => found.textContent === text);
+  return [...(element?.classList ?? [])]
+    .map((name) => /^aws-area-value-(address|name|fixed|text)$/.exec(name)?.[1])
+    .find((kind) => kind !== undefined);
+}
+
+describe('the description and the notice', () => {
+  it('connected, not started, and before the first answer: the h1 and the table’s header have no description (issue 467, R3)', async () => {
+    connection.set(undefined);
+    engine.buckets = THREE;
+    open();
+    expect(PAGE.findAllHeaders().length).toBeGreaterThan(0);
+    expect(headerDescriptions()).toEqual([]);
+
+    connection.set(connectedResult());
+    await expectNames(THREE.map((b) => b.name));
+    expect(headerDescriptions()).toEqual([]);
 
     connection.set(notStartedResult());
-    expect(screen.getByText(byWholeText('Buckets in your local emulator, not in an AWS account.'))).toBeInTheDocument();
-    expect(
-      screen.queryByText(byWholeText(`Buckets in your local emulator at ${EMULATOR_ENDPOINT}, not in an AWS account.`)),
-    ).toBeNull();
+    expect(headerDescriptions()).toEqual([]);
+    expect(screen.queryByText(/^Buckets in your local emulator/)).toBeNull();
+  });
+
+  it('a row’s cells: "Name" as a name, "AWS Region" and "Creation date" as fixed words (issue 467, R6)', async () => {
+    await openLoaded([ALPHA]);
+
+    const row = (table().findRows() ?? [])[0]?.getElement() as HTMLElement;
+    const [, name, region, date] = [...row.querySelectorAll('td, th')].map((cell) =>
+      (cell.textContent ?? '').replace(/\s+/g, ' ').trim(),
+    );
+    expect(kindOf(row, name ?? '')).toBe('name');
+    expect(kindOf(row, region ?? '')).toBe('fixed');
+    expect(kindOf(row, date ?? '')).toBe('fixed');
+    expect(name).toBe('alpha');
+    expect(within(row).getByRole('link', { name: 'alpha' })).toHaveAttribute('href', '/aws/s3/buckets/alpha');
   });
 
   it('the notice "These buckets are in your local emulator" and the (i) control are shown', async () => {

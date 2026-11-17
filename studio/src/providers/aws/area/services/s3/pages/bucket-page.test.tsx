@@ -1,3 +1,4 @@
+import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState, useSyncExternalStore } from 'react';
@@ -415,6 +416,46 @@ function statusType(text: string): string | undefined {
   return undefined;
 }
 
+/**
+ * The kind of value (issue 467, R6) the area's element whose text is exactly `text` inside `scope` shows: `address`,
+ * `name`, `fixed` or `text`; `undefined` when no such element holds it.
+ */
+function kindOf(scope: Element, text: string): string | undefined {
+  const element = [...scope.querySelectorAll('.aws-area-value')].find((found) => found.textContent === text);
+  return [...(element?.classList ?? [])]
+    .map((name) => /^aws-area-value-(address|name|fixed|text)$/.exec(name)?.[1])
+    .find((kind) => kind !== undefined);
+}
+
+/** The `h1`'s description, or `null` when the `h1` has none (issue 467, R3). */
+function h1Description(): string | null {
+  const header = createWrapper(document.body)
+    .findAllHeaders()
+    .find((found) => found.getElement().querySelector('h1') !== null);
+  expect(header).toBeDefined();
+  const description = header?.findDescription();
+  return description === null || description === undefined ? null : (description.getElement().textContent ?? '');
+}
+
+/** The crumbs' texts, in order. */
+function crumbs(): string[] {
+  const group = createWrapper(document.body).findBreadcrumbGroup();
+  expect(group).not.toBeNull();
+  return (group as NonNullable<typeof group>)
+    .findBreadcrumbLinks()
+    .map((crumb) => (crumb.getElement().textContent ?? '').trim());
+}
+
+/** The copy controls inside `scope`: the buttons named "Copy …". */
+function copyControls(scope: HTMLElement): HTMLElement[] {
+  return within(scope).queryAllByRole('button', { name: /^Copy / });
+}
+
+/** Whether `first` comes before `second` in the document. */
+function before(first: Element, second: Element): boolean {
+  return (first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+}
+
 const TABS = ['Objects', 'Metadata', 'Properties', 'Permissions', 'Metrics', 'Management'];
 
 const ALPHA: FakeBucket = {
@@ -443,11 +484,11 @@ function held(): { answer: Promise<Answer>; release: (answer: Answer) => void } 
 // ---------------------------------------------------------------------------------------------------------------
 
 describe('a bucket’s page, loaded', () => {
-  it('the h1 is the name, with the description; six tabs in the spec’s order, "Properties" selected', async () => {
+  it('the h1 is the name, with no description (issue 467, R3); six tabs in the spec’s order, "Properties" selected', async () => {
     await openLoaded();
 
     expect(h1()).toHaveTextContent(/^alpha$/);
-    expect(screen.getByText('This bucket is in your local emulator, not in an AWS account.')).toBeInTheDocument();
+    expect(h1Description()).toBeNull();
     expect(tabNames()).toEqual(TABS);
     for (const tab of screen.getAllByRole('tab')) {
       expect(tab).toHaveAttribute('aria-selected', tab.textContent === 'Properties' ? 'true' : 'false');
@@ -465,14 +506,18 @@ describe('a bucket’s page, loaded', () => {
     },
   );
 
-  it('the name sits in the area’s breaking element, so a long word breaks inside the h1', async () => {
+  it('a loaded bucket of a 63-character name: the h1 shows the whole name as a name, and the last crumb holds the whole name (issue 467, R6)', async () => {
     const long = 'a'.repeat(63);
     engine.buckets = [{ name: long }];
     open(`/aws/s3/buckets/${long}`);
     await expectTabs();
 
-    const breaking = within(h1()).getByText(long);
-    expect(breaking).toHaveClass('aws-s3-break-anywhere');
+    expect(h1()).toHaveTextContent(long);
+    expect(kindOf(h1(), long)).toBe('name');
+    // The last crumb is the area's `BreadcrumbGroup` item, a string `area-layout.tsx` renders: its whole name, as
+    // Cloudscape renders it (decisions.md, 2026-11-18 04:00).
+    expect(crumbs().at(-1)).toBe(long);
+    expect(document.querySelector('.aws-s3-break-anywhere')).toBeNull();
   });
 
   it('the notice reads "These buckets are in your local emulator", with the (i) control', async () => {
@@ -550,11 +595,10 @@ describe('a bucket’s page, its read', () => {
     open();
 
     expect(await screen.findByText('Bucket not found')).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        'The emulator holds no bucket named “alpha”. It may have been deleted, or the emulator restarted.',
-      ),
-    ).toBeInTheDocument();
+    const sentence = onPage(
+      'The emulator holds no bucket named “alpha”. It may have been deleted, or the emulator restarted.',
+    );
+    expect(kindOf(sentence, 'alpha')).toBe('name');
     expect(screen.getByRole('link', { name: 'General purpose buckets', current: false })).toBeInTheDocument();
     const links = screen.getAllByRole('link', { name: 'General purpose buckets' });
     expect(links.some((link) => link.closest('nav') === null && link.getAttribute('href') === '/aws/s3/buckets')).toBe(
@@ -562,7 +606,7 @@ describe('a bucket’s page, its read', () => {
     );
     expect(tabNames()).toEqual([]);
     expect(h1()).toHaveTextContent(/^alpha$/);
-    expect(screen.queryByText('This bucket is in your local emulator, not in an AWS account.')).toBeNull();
+    expect(h1Description()).toBeNull();
   });
 
   it('a bucket whose name starts with the name asked, first under that prefix → "Bucket not found"', async () => {
@@ -651,6 +695,7 @@ describe('a bucket’s page, a failed read', () => {
 
     expect(await findOnPage('The bucket could not be read')).toBeInTheDocument();
     expect(screen.getByText(byWholeText('InternalError: something broke'))).toBeInTheDocument();
+    expect(h1Description()).toBeNull();
   });
 
   it('"Retry" reads the page again; the failure is announced once', async () => {
@@ -959,21 +1004,87 @@ describe('a bucket’s page, its sections', () => {
     expect(screen.getByRole('main').querySelector('img')).toBeNull();
   });
 
-  it('values the user or the emulator gives sit in the area’s breaking element: the ARN, a key, a tag key and value', async () => {
-    const key = 'k'.repeat(128);
+  it('"Bucket overview": "Copy Bucket ARN" directly before the ARN, shown as an address; "AWS Region" and "Creation date" as fixed words (issue 467, R5, R6)', async () => {
+    await openBucket(FULL);
+
+    const overview = section('Bucket overview');
+    const copy = within(overview).getByRole('button', { name: 'Copy Bucket ARN' });
+    expect(copyControls(overview)).toEqual([copy]);
+    expect(kindOf(overview, 'arn:aws:s3:::alpha')).toBe('address');
+    const arn = [...overview.querySelectorAll('.aws-area-value')].find(
+      (found) => found.textContent === 'arn:aws:s3:::alpha',
+    );
+    expect(before(copy, arn as Element)).toBe(true);
+    expect(kindOf(overview, 'Asia Pacific (Seoul) ap-northeast-2')).toBe('fixed');
+    expect(kindOf(overview, field('Bucket overview', 'Creation date') ?? '')).toBe('fixed');
+  });
+
+  it('"Default encryption" of a bucket with a KMS key → "Copy AWS KMS key" directly before the key, shown as an address; without one → "-" and no copy control (issue 467, R5)', async () => {
+    const { unmount } = await openBucket(FULL);
+
+    const encryption = section('Default encryption');
+    const copy = within(encryption).getByRole('button', { name: 'Copy AWS KMS key' });
+    expect(copyControls(encryption)).toEqual([copy]);
+    expect(kindOf(encryption, KMS_KEY)).toBe('address');
+    const key = [...encryption.querySelectorAll('.aws-area-value')].find((found) => found.textContent === KMS_KEY);
+    expect(before(copy, key as Element)).toBe(true);
+    unmount();
+
+    await openBucket();
+    expect(field('Default encryption', 'AWS KMS key')).toBe('-');
+    expect(copyControls(section('Default encryption'))).toEqual([]);
+    expect(copyControls(screen.getByRole('main')).map((button) => button.getAttribute('aria-label'))).toEqual([
+      'Copy Bucket ARN',
+    ]);
+  });
+
+  it('a section whose read failed or is loading → no copy control in it (issue 467, R5)', async () => {
+    const { unmount } = await openBucket({
+      ...FULL,
+      encryption: () => errorAnswer(500, 'InternalError', 'something broke'),
+    });
+    expect(sectionText('Default encryption')).toContain('InternalError: something broke');
+    expect(copyControls(section('Default encryption'))).toEqual([]);
+    unmount();
+
+    const answer = held();
+    engine.buckets = [ALPHA];
+    engine.parts = { ...FULL, encryption: () => answer.answer };
+    open();
+    await waitFor(() => {
+      expect(field('Bucket Versioning', 'Bucket Versioning')).toBe('Enabled');
+    });
+    expect(sectionText('Default encryption')).toContain('Loading');
+    expect(copyControls(section('Default encryption'))).toEqual([]);
+    answer.release(FULL.encryption() as Answer);
+    await waitFor(() => {
+      expect(copyControls(section('Default encryption'))).toHaveLength(1);
+    });
+  });
+
+  it('the tables of the sections: a tag’s key and a configuration’s and a notification’s name as names; a status, a tier and a destination type as fixed words; a tag’s value, a prefix and a suffix as free text; a destination ARN as an address (issue 467, R6)', async () => {
     await openBucket({
       ...FULL,
-      tagging: () => ok(`<Tagging><TagSet><Tag><Key>${key}</Key><Value>v</Value></Tag></TagSet></Tagging>`),
+      tagging: () =>
+        ok('<Tagging><TagSet><Tag><Key>archive-reports</Key><Value>kept for one year</Value></Tag></TagSet></Tagging>'),
     });
 
-    for (const [title, text] of [
-      ['Bucket overview', 'arn:aws:s3:::alpha'],
-      ['Default encryption', KMS_KEY],
-      ['Tags', key],
-      ['Event notifications', QUEUE],
-    ] as const) {
-      expect(within(section(title)).getByText(text)).toHaveClass('aws-s3-break-anywhere');
-    }
+    const tags = section('Tags');
+    expect(kindOf(tags, 'archive-reports')).toBe('name');
+    expect(kindOf(tags, 'kept for one year')).toBe('text');
+    const tiering = section('S3 Intelligent-Tiering Archive configurations');
+    expect(kindOf(tiering, 'archive-logs')).toBe('name');
+    expect(kindOf(tiering, 'Enabled')).toBe('fixed');
+    expect(kindOf(tiering, 'logs/')).toBe('text');
+    expect(kindOf(tiering, '90 days')).toBe('fixed');
+    expect(kindOf(tiering, '180 days')).toBe('fixed');
+    const notifications = section('Event notifications');
+    expect(kindOf(notifications, 'to-queue')).toBe('name');
+    expect(kindOf(notifications, 'in/')).toBe('text');
+    expect(kindOf(notifications, '.csv')).toBe('text');
+    expect(kindOf(notifications, 'SQS queue')).toBe('fixed');
+    expect(kindOf(notifications, QUEUE)).toBe('address');
+    expect(document.querySelector('.aws-s3-break-anywhere')).toBeNull();
   });
 });
 
@@ -1009,11 +1120,15 @@ describe('a bucket’s page, its sections’ buttons', () => {
     });
   });
 
-  it('"Bucket overview" has no button', async () => {
+  it('"Bucket overview" has no button but the ARN’s copy control', async () => {
     await openBucket();
 
     expect(within(section('Bucket overview')).queryAllByRole('link')).toEqual([]);
-    expect(within(section('Bucket overview')).queryAllByRole('button')).toEqual([]);
+    expect(
+      within(section('Bucket overview'))
+        .queryAllByRole('button')
+        .map((button) => button.getAttribute('aria-label')),
+    ).toEqual(['Copy Bucket ARN']);
   });
 });
 

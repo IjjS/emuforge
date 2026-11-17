@@ -367,6 +367,16 @@ function flashItems(): string[] {
   return (flashbar?.findItems() ?? []).map((item) => item.getElement().textContent);
 }
 
+/** The area's value elements inside `scope`, in order, each as its kind and its text (issue 467, R6). */
+function kindsIn(scope: Element | null | undefined): [string, string][] {
+  return [...(scope?.querySelectorAll('.aws-area-value') ?? [])].map((element) => [
+    [...element.classList]
+      .map((name) => /^aws-area-value-(address|name|fixed|text)$/.exec(name)?.[1])
+      .find((kind) => kind !== undefined) ?? '',
+    element.textContent,
+  ]);
+}
+
 /** An answer held until the case lets it go. */
 function held(): { answer: Promise<Answer>; release: (answer: Answer) => void } {
   let release: (answer: Answer) => void = () => undefined;
@@ -438,10 +448,23 @@ describe('the delete page of an empty bucket', () => {
     expect(engine.of('DeleteBucket')).toHaveLength(0);
   });
 
-  it('the name in the sentence sits in the area’s breaking element, so a long word breaks inside its box', async () => {
+  it('the sentence that names the bucket shows the name as a name, the endpoint as an address, the rest as free text; no constraint text under the field (issue 467, R4, R6)', async () => {
     await openEmpty();
 
-    expect(onPage(SENTENCE).closest('.aws-s3-break-anywhere')).not.toBeNull();
+    expect(kindsIn(onPage(SENTENCE))).toEqual([
+      ['text', 'Bucket “'],
+      ['name', NAME],
+      ['text', '” will be deleted from your local emulator'],
+      ['text', ' at '],
+      ['address', EMULATOR_ENDPOINT],
+      ['text', '. This cannot be undone.'],
+    ]);
+    const confirmation = createWrapper(main())
+      .findAllFormFields()
+      .find((found) => found.findLabel()?.getElement().textContent === FIELD);
+    expect(confirmation).toBeDefined();
+    expect(confirmation?.findConstraint()).toBeNull();
+    expect(document.querySelector('.aws-s3-break-anywhere')).toBeNull();
   });
 });
 
@@ -567,6 +590,12 @@ describe('"Delete bucket"', () => {
     await waitFor(() => {
       expect(flashItems()).toEqual([`Bucket “${NAME}” was deleted from the local emulator.`]);
     });
+    // The name as a name, the rest as free text (issue 467, R6).
+    expect(kindsIn(createWrapper(document.body).findFlashbar()?.findItems()[0]?.getElement())).toEqual([
+      ['text', 'Bucket “'],
+      ['name', NAME],
+      ['text', '” was deleted from the local emulator.'],
+    ]);
     expect(engine.of('DeleteBucket')).toHaveLength(1);
     expect(engine.buckets).toEqual([]);
   });
@@ -693,10 +722,14 @@ describe('the delete page, its read', () => {
 
     expect(await findOnPage('Bucket not found')).toBeInTheDocument();
     expect(
-      screen.getByText(
-        `The emulator holds no bucket named “${NAME}”. It may have been deleted, or the emulator restarted.`,
+      kindsIn(
+        onPage(`The emulator holds no bucket named “${NAME}”. It may have been deleted, or the emulator restarted.`),
       ),
-    ).toBeInTheDocument();
+    ).toEqual([
+      ['text', 'The emulator holds no bucket named “'],
+      ['name', NAME],
+      ['text', '”. It may have been deleted, or the emulator restarted.'],
+    ]);
     expect(queryField()).toBeNull();
     expect(engine.of('ListObjectVersions')).toHaveLength(0);
   });
@@ -836,15 +869,17 @@ describe('the delete page, its read', () => {
 });
 
 describe('"Cancel"', () => {
-  it('opens the list; no DeleteBucket was sent', async () => {
+  it('the name typed, "Cancel": the list as before, no dialog; no DeleteBucket was sent (issue 467, R7)', async () => {
     const router = await openEmpty();
     type(NAME);
 
     fireEvent.click(button('Cancel'));
+    expect(screen.queryByRole('dialog')).toBeNull();
 
     await waitFor(() => {
       expect(router.state.location.pathname).toBe(LIST_PATH);
     });
+    expect(screen.queryByRole('dialog')).toBeNull();
     expect(engine.of('DeleteBucket')).toHaveLength(0);
     expect(engine.buckets).toEqual([NAME]);
   });

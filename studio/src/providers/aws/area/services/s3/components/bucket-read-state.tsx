@@ -6,24 +6,28 @@ import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 
 import { useFollow } from '../../../components/use-follow';
+import { ValueText } from '../../../components/value-text';
 import { BUCKETS_PATH } from '../format';
-import { BreakAnywhere } from './break-anywhere';
 import type { FailureView, StateLine } from './bucket-read';
+import { Quoted } from './quoted';
 
 // The states of a bucket's screens in place of their content (issue 256, requirement R5.5, R11.1): S1, S3 and S4
 // show them as they are. EmuForge's own words, with Cloudscape's patterns: a status with a retry for a failed read.
 
-/** A line of a state, its value as code; every value is text, and a long one breaks inside the box. */
+/**
+ * A line of a state, its value as code; every value is text, the words as free text and the value as the kind it is
+ * (issue 467, requirement R6).
+ */
 export function StateLineText({ line }: { line: StateLine }) {
   return (
     <>
-      {line.before}
+      <ValueText kind="text" value={line.before} />
       {line.code !== undefined && (
         <Box variant="code" display="inline">
-          <BreakAnywhere>{line.code}</BreakAnywhere>
+          <ValueText kind={line.codeKind ?? 'name'} value={line.code} />
         </Box>
       )}
-      {line.after}
+      <ValueText kind="text" value={line.after} />
     </>
   );
 }
@@ -49,9 +53,7 @@ export function BucketReadFailure({ view, onRetry }: { view: FailureView; onRetr
           </StatusIndicator>
           {view.detail !== undefined && (
             <Box variant="p">
-              <BreakAnywhere>
-                <StateLineText line={view.detail} />
-              </BreakAnywhere>
+              <StateLineText line={view.detail} />
             </Box>
           )}
           {view.recovery && (
@@ -76,9 +78,11 @@ export function BucketNotFound({ name }: { name: string }) {
       <SpaceBetween size="xxs">
         <Box variant="strong">Bucket not found</Box>
         <Box variant="p">
-          <BreakAnywhere>
-            {`The emulator holds no bucket named “${name}”. It may have been deleted, or the emulator restarted.`}
-          </BreakAnywhere>
+          <Quoted
+            before="The emulator holds no bucket named “"
+            name={name}
+            after="”. It may have been deleted, or the emulator restarted."
+          />
         </Box>
         <Link href={BUCKETS_PATH} onFollow={handleFollow}>
           General purpose buckets
