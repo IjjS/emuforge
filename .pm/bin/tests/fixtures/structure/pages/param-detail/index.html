@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>p302-api | EmuForge</title>
+<!-- every item of specs/param-detail.yaml at /aws/apigateway/apis/<segment> when the decoded segment is not
+     "missing"; for "missing", and at any other path, a heading "Not found" and no item of the spec -->
+</head>
+<body>
+<div class="aws-area" id="area"></div>
+<script>
+  const FOUND = `
+<nav aria-label="Breadcrumbs">
+  <ol>
+    <li><a href="/aws/apigateway">API Gateway</a></li>
+    <li><a href="/aws/apigateway/apis">APIs</a></li>
+    <li><span>p302-api</span></li>
+  </ol>
+</nav>
+<main>
+  <h1>p302-api</h1>
+  <section>
+    <h2>API details</h2>
+    <dl>
+      <dt>API ID</dt><dd>fixture-id</dd>
+      <dt>Description</dt><dd>A fixture API</dd>
+    </dl>
+  </section>
+</main>`;
+  const NOT_FOUND = `
+<main>
+  <h1>Not found</h1>
+</main>`;
+  const m = /^\/aws\/apigateway\/apis\/([^/]+)$/.exec(location.pathname);
+  let found = false;
+  if (m) {
+    try {
+      found = decodeURIComponent(m[1]) !== "missing";
+    } catch (e) {
+      found = false;
+    }
+  }
+  document.getElementById("area").innerHTML = found ? FOUND : NOT_FOUND;
+</script>
+</body>
+</html>

@@ -7,14 +7,18 @@
 # version and commit, the checkout's commit, the verdict of every manifest check (passed, failed, error, not-run)
 # and the relay fidelity figure.
 #
-# Usage: run [--not-run <file>]. The file is a not-run list (.github/not-run.json, issue 53): its `checks` name
-# manifest ids, each with a `reason`; its other keys are not read. A listed check is not executed: the engine
-# checks get EMUFORGE_IT_NOT_RUN naming a file of the listed ids, so support::check::check returns at once, and
-# Playwright gets one --grep-invert pattern of the listed Studio and product ids. Each listed check is reported
-# `not-run` with its reason and counts neither as passed nor as failed; everything else, the builds included, runs
-# as without the option. A list that cannot be read, is not that shape or names an id twice or one the manifest
-# does not hold makes every check `error` (exit 127) before anything is built or started. Any other argument is
-# refused with a usage line (exit 2). Only the option turns this on; EMUFORGE_IT_NOT_RUN from the caller is unset.
+# Usage: run [--not-run <file>] [--on-request], in either order. The file is a not-run list (.github/not-run.json,
+# issue 53): its `checks` name manifest ids, each with a `reason`; its other keys are not read. A check is on
+# request when its manifest row is labelled `on-request` (issue 315); without --on-request every such check is left
+# out with the reason "on request: not part of a default run; run it with --on-request", and with it they run like
+# every other check. A check that is listed and on request has the list's reason, with or without --on-request. A
+# check left out is not executed: the engine checks get EMUFORGE_IT_NOT_RUN naming a file of the left-out ids, so
+# support::check::check returns at once, and Playwright gets one --grep-invert pattern of the left-out Studio and
+# product ids. Each is reported `not-run` with its reason and counts neither as passed nor as failed; everything
+# else, the builds included, runs as when nothing is left out. A list that cannot be read, is not that shape or
+# names an id twice or one the manifest does not hold makes every check `error` (exit 127) before anything is built
+# or started. Any other argument, or either option twice, is refused with a usage line (exit 2). Only the list and
+# the label turn this on; EMUFORGE_IT_NOT_RUN from the caller is unset.
 #
 # Relay fidelity (engine/references/relay-fidelity.md): passed / total over the manifest rows labelled
 # `transparency` whose verdict is passed or failed (`error` counts in neither). It is written into report.json as
@@ -51,16 +55,23 @@ unset NODE_OPTIONS NODE_PATH
 export AWS_EC2_METADATA_DISABLED=true
 
 usage() {
-  echo "usage: tests/integration/run [--not-run <file>]" >&2
+  echo "usage: tests/integration/run [--not-run <file>] [--on-request]" >&2
   exit 2
 }
 not_run=no
 not_run_file=
-case "$#" in
-  0) ;;
-  2) [[ "$1" == "--not-run" ]] || usage; not_run=yes; not_run_file="$2" ;;
-  *) usage ;;
-esac
+on_request=no
+while (($#)); do
+  case "$1" in
+    --not-run)
+      [[ "$not_run" == no && $# -ge 2 ]] || usage
+      not_run=yes; not_run_file="$2"; shift 2 ;;
+    --on-request)
+      [[ "$on_request" == no ]] || usage
+      on_request=yes; shift ;;
+    *) usage ;;
+  esac
+done
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$here"
@@ -84,7 +95,7 @@ report() {
     "$emulator_version" "$emulator_commit" "$commit" "$out/not-run.json" "${1:-}" <<'PY'
 import json, pathlib, sys
 manifest, verdicts, report, version, emulator_commit, commit, not_run, reason = sys.argv[1:]
-# {id: reason} of the validated not-run list; written only when --not-run was given and the list held.
+# {id: reason} of the checks left out (the validated not-run list, the rows on request); absent when none is.
 listed = json.loads(pathlib.Path(not_run).read_text()) if pathlib.Path(not_run).exists() else {}
 checks = []
 transparency = set()
@@ -140,59 +151,87 @@ free_port() {
   python3 -I -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])'
 }
 
-# The not-run list, before anything is built or started. On success it writes $out/not-run.json ({id: reason}) for
-# report and $out/not-run.ids (one id per line) for the engine checks, and prints the Playwright pattern of the
-# listed .spec.ts ids (nothing when there is none); on a refusal it prints the reason. Only ids that are manifest
-# ids are used further. (Its output goes through a file: bash 3.2 cannot parse a heredoc inside $(...).)
+# What is left out, before anything is built or started: the not-run list given to --not-run and, without
+# --on-request, every manifest row labelled `on-request` (each with the fixed reason ON_REQUEST below); an id that
+# is both has the list's reason. When anything is left out, or a list was given, it writes $out/not-run.json
+# ({id: reason}) for report and $out/not-run.ids (one id per line) for the engine checks, and prints the Playwright
+# pattern of the left-out .spec.ts ids (nothing when there is none); on a refusal of the list it prints the reason.
+# Only ids that have the form of a manifest id are used further. A manifest that cannot be read, when no list was
+# given, leaves nothing out: the run ends at its report as it would without this block. (Its output goes through a
+# file: bash 3.2 cannot parse a heredoc inside $(...).)
 grep_invert=
-if [[ "$not_run" == yes ]]; then
-  if python3 -I - "$not_run_file" "$here/manifest.jsonl" "$out" >"$out/not-run.out" <<'PY'
+if python3 -I - "$not_run" "$not_run_file" "$here/manifest.jsonl" "$out" "$on_request" >"$out/not-run.out" <<'PY'
 import json, pathlib, re, sys
-path, manifest, out = sys.argv[1:]
+has_list, path, manifest, out, on_request = sys.argv[1:]
+ON_REQUEST = "on request: not part of a default run; run it with --on-request"
+ID = re.compile(r"[a-z]+\.[a-z0-9-]+")
 
 def refuse(what):
     print(f"not-run list {path}: {what}")
     sys.exit(1)
 
-try:
-    data = json.loads(pathlib.Path(path).read_text())
-except OSError as e:
-    refuse(f"cannot be read: {e.strerror or e}")
-except ValueError as e:
-    refuse(f"is not JSON: {e}")
-if not isinstance(data, dict) or not isinstance(data.get("checks"), list):
-    refuse('has no list "checks"')
-rows = [json.loads(line) for line in pathlib.Path(manifest).read_text().splitlines() if line.strip()]
-paths = {row["check_id"]: row["path"] for row in rows}
 listed = {}
-for n, entry in enumerate(data["checks"]):
-    if not isinstance(entry, dict) or not isinstance(entry.get("id"), str):
-        refuse(f'checks[{n}] has no string "id"')
-    check_id = entry["id"]
-    if not isinstance(entry.get("reason"), str) or not entry["reason"].strip():
-        refuse(f"checks[{n}] {check_id!r} has no reason")
-    if not re.fullmatch(r"[a-z]+\.[a-z0-9-]+", check_id) or check_id not in paths:
-        refuse(f"checks[{n}] {check_id!r} is not a check id of the manifest")
-    if check_id in listed:
-        refuse(f"checks[{n}] {check_id!r} is listed twice")
-    listed[check_id] = entry["reason"]
-pathlib.Path(out, "not-run.json").write_text(json.dumps(listed, indent=1) + "\n")
-pathlib.Path(out, "not-run.ids").write_text("".join(i + "\n" for i in listed))
+if has_list == "yes":
+    try:
+        data = json.loads(pathlib.Path(path).read_text())
+    except OSError as e:
+        refuse(f"cannot be read: {e.strerror or e}")
+    except ValueError as e:
+        refuse(f"is not JSON: {e}")
+    if not isinstance(data, dict) or not isinstance(data.get("checks"), list):
+        refuse('has no list "checks"')
+    rows = [json.loads(line) for line in pathlib.Path(manifest).read_text().splitlines() if line.strip()]
+    paths = {row["check_id"]: row["path"] for row in rows}
+    for n, entry in enumerate(data["checks"]):
+        if not isinstance(entry, dict) or not isinstance(entry.get("id"), str):
+            refuse(f'checks[{n}] has no string "id"')
+        check_id = entry["id"]
+        if not isinstance(entry.get("reason"), str) or not entry["reason"].strip():
+            refuse(f"checks[{n}] {check_id!r} has no reason")
+        if not ID.fullmatch(check_id) or check_id not in paths:
+            refuse(f"checks[{n}] {check_id!r} is not a check id of the manifest")
+        if check_id in listed:
+            refuse(f"checks[{n}] {check_id!r} is listed twice")
+        listed[check_id] = entry["reason"]
+elif on_request == "yes":
+    sys.exit(0)
+else:
+    try:
+        rows = [json.loads(line) for line in pathlib.Path(manifest).read_text().splitlines() if line.strip()]
+    except (OSError, ValueError):
+        sys.exit(0)
+    paths = {}
+# A row is on request when its `labels` is a list that holds `on-request`, its `check_id` has the form of an id and
+# its `path` is a string; any other row is not, and nothing of it reaches a command line.
+asked = {}
+if on_request != "yes":
+    for row in rows:
+        if (isinstance(row, dict) and isinstance(row.get("labels"), list) and "on-request" in row["labels"]
+                and isinstance(row.get("check_id"), str) and ID.fullmatch(row["check_id"])
+                and isinstance(row.get("path"), str)):
+            asked[row["check_id"]] = ON_REQUEST
+            paths.setdefault(row["check_id"], row["path"])
+left_out = {**asked, **listed}
+if not left_out and has_list != "yes":
+    sys.exit(0)
+pathlib.Path(out, "not-run.json").write_text(json.dumps(left_out, indent=1) + "\n")
+pathlib.Path(out, "not-run.ids").write_text("".join(i + "\n" for i in left_out))
 # A Playwright test's title is its check id; the pattern matches a title path that ends in one of them. An id is
 # [a-z0-9-] around one `.`, so escaping the `.` is all a regular expression of Python or JavaScript needs.
-specs = [i.replace(".", "\\.") for i in listed if paths[i].endswith(".spec.ts")]
+specs = [i.replace(".", "\\.") for i in left_out if paths[i].endswith(".spec.ts")]
 if specs:
     print("(^| )(" + "|".join(specs) + ")$")
 PY
-  then
-    grep_invert="$(cat "$out/not-run.out")"
-    rm -f "$out/not-run.out"
-  else
-    reason="$(cat "$out/not-run.out")"
-    rm -f "$out/not-run.out"
-    preflight_error "${reason:-not-run list $not_run_file: cannot be checked}"
-  fi
+then
+  grep_invert="$(cat "$out/not-run.out")"
+  rm -f "$out/not-run.out"
+else
+  reason="$(cat "$out/not-run.out")"
+  rm -f "$out/not-run.out"
+  preflight_error "${reason:-not-run list $not_run_file: cannot be checked}"
 fi
+left_out=no
+[[ -f "$out/not-run.ids" ]] && left_out=yes
 
 # Ports.
 if [[ "${EMULATOR_PORT:-}" == "9297" ]]; then
@@ -355,8 +394,8 @@ health="$(curl -q -fsS --noproxy '*' --retry-all-errors --retry 60 --retry-delay
 [[ "$health" == "ok" ]] || preflight_error "the run's emulator did not answer 200 ok within 30 s"
 echo "integration: emulator $emulator_version ($emulator_commit) answers on 127.0.0.1:$EMULATOR_PORT" >&2
 
-# The checks, one at a time. A listed engine check returns at once (support::check::check reads the ids file).
-if [[ "$not_run" == yes ]]; then
+# The checks, one at a time. A left-out engine check returns at once (support::check::check reads the ids file).
+if [[ "$left_out" == yes ]]; then
   export EMUFORGE_IT_NOT_RUN="$out/not-run.ids"
 fi
 EMUFORGE_IT_ENGINE_BIN="$engine_bin" EMUFORGE_IT_ENGINE_BUILD="$engine_build" \
@@ -367,8 +406,8 @@ unset EMUFORGE_IT_NOT_RUN
 
 # The Studio flow checks, one at a time, with Studio's own pinned Playwright (no second package). Without it
 # (no studio/ package, or its install failed) there is nothing to run them with, and each Studio check is
-# `failed` with that reason, as an engine check is without an engine. Listed Studio and product checks are left out
-# with one --grep-invert pattern.
+# `failed` with that reason, as an engine check is without an engine. Left-out Studio and product checks are left
+# out with one --grep-invert pattern.
 playwright="$checkout/studio/node_modules/.bin/playwright"
 grep_args=()
 if [[ -n "$grep_invert" ]]; then

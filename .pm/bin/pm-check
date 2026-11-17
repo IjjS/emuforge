@@ -1,7 +1,7 @@
 #!/usr/bin/env -S python3 -I
 """Run the checks of a checkout and record the result. The record, not an agent's word, is the evidence.
 
-  pm-check <worktree|.> [--full | --only engine|studio|integration|harness...] [--no-retry] [--list]
+  pm-check <worktree|.> [--full | --only engine|studio|integration|harness...] [--on-request] [--no-retry] [--list]
   pm-check <worktree|.> --checks ID [ID ...]
   pm-check <worktree|.> --stop
 
@@ -34,12 +34,20 @@ A module whose manifest is missing (engine/Cargo.toml, studio/package.json, test
 .pm/bin/tests/run) is reported as "absent" and does not count as a failure, called for or not. A checkout where
 every module is absent, or where nothing was called for (only issue files changed), passes on a clean tree.
 Each step's output goes to <checkout>/output/logs/check-<step>.log. The summary goes to
-<checkout>/output/checks/last.json: {commit, dirty, full, passed, failed: [steps], scope, steps: [{name, module,
-status, seconds, log}]}. `scope` is what `pm-scope <checkout> --json` prints: kind, reason, main's commit, the
+<checkout>/output/checks/last.json: {commit, dirty, full, on_request, passed, failed: [steps], scope, steps: [{name,
+module, status, seconds, log}]}. `scope` is what `pm-scope <checkout> --json` prints: kind, reason, main's commit, the
 merge base, the number of changed paths, and per module whether it was called for and why. `full` is true only
 when every module was called for. pm-merge refuses a unit whose last.json is not a pass on the branch's current
 commit, or whose steps do not cover every module the branch's changes call for (it decides that again itself).
 Exit code 0 only when no step that ran failed, the tree was clean and the run was not --only.
+
+On request. A check whose manifest row is labelled `on-request` is not part of a default run: the suite reports it
+`not-run` with the reason "on request: not part of a default run; run it with --on-request" and counts it in
+`checks.not_run`. --on-request starts the integration step, when the scope calls for it, as ./run --on-request, and
+its retry the same way, so those checks run with the others; last.json records on_request true (false without the
+option). It changes nothing else: not the scope, not which steps run, not what pm-merge accepts (a pass with the
+option is a pass). --checks runs every id it names, on request or not (the suite starts with --on-request), and
+cannot be combined with --on-request; --stop and --list ignore it.
 
 Failed checks named. After the integration step ran, pm-check reads <checkout>/output/integration/report.json
 when that step wrote it for the record's commit, and puts `checks` {passed, failed: [ids], error: [ids], not_run}
@@ -48,9 +56,10 @@ run`); the last lines before the verdict name the failed and the error checks, t
 status still comes from its exit code alone, and `failed` stays the list of step names.
 
 Single checks. --checks runs only the integration step, limited to the named manifest ids: the suite starts with
---not-run and output/checks/checks-not-run.json, which lists every other id of the checkout's manifest. It is
-refused (exit 2, nothing written) for an id that is not in tests/integration/manifest.jsonl, a checkout without
-that file or tests/integration/run, and with --full or --only. It takes a check slot like every run that starts
+--not-run and output/checks/checks-not-run.json, which lists every other id of the checkout's manifest, and
+--on-request, so an asked check that is on request runs. It is refused (exit 2, nothing written) for an id that is
+not in tests/integration/manifest.jsonl, a checkout without that file or tests/integration/run, and with --full,
+--only or --on-request. It takes a check slot like every run that starts
 the suite, runs the step once (no retry, no flakes.jsonl line), logs to output/logs/checks-integration.log and
 records to output/checks/checks.json and a timestamped *-checks.json (kind checks, passed false, the step's
 `asked` {id: verdict}); last.json and the check-<step>.log files are not touched. Each asked check is printed
@@ -290,11 +299,14 @@ def main():
     p.add_argument("--full", action="store_true", help="run every module whatever changed")
     p.add_argument("--checks", nargs="+", metavar="ID", help="run only these integration checks; never a gate")
     p.add_argument("--no-retry", action="store_true"); p.add_argument("--stop", action="store_true")
+    p.add_argument("--on-request", action="store_true", help="run the checks labelled on-request with the others")
     a = p.parse_args()
     if a.full and a.only:
         p.error("--full and --only cannot be combined")
     if a.checks and (a.full or a.only):
         p.error("--checks cannot be combined with --full or --only")
+    if a.checks and a.on_request:
+        p.error("--checks cannot be combined with --on-request")
     co = pathlib.Path(a.checkout).resolve()
     if a.stop:
         stop(co)
@@ -336,7 +348,7 @@ def main():
         record.unlink(missing_ok=True)
         if slot:
             slot.close()
-    finish(co, out, commit, dirty, ports, sc, results, flaky, cpu)
+    finish(co, out, commit, dirty, ports, sc, results, flaky, cpu, bool(a.on_request))
 
 
 def run_all(a, co, mods, calls, env, logs, record, commit, held=(), target="main"):
@@ -358,6 +370,8 @@ def run_all(a, co, mods, calls, env, logs, record, commit, held=(), target="main
                 print(f"  {name:18} not needed", flush=True)
             continue
         for name, cmd in steps:
+            if mod == "integration" and a.on_request:
+                cmd = cmd + ["--on-request"]  # the first run and the retry alike
             log = logs / f"check-{name}.log"
             t = started = time.time()
             code = run_step(cmd, str(co / sub), env, log, record, name)
@@ -410,7 +424,7 @@ def checks_run(co, out, logs, env, record, commit, dirty, ports, sc, asked, ids)
     try:
         cpu = wait_for_cpu()
         t = time.time()
-        code = run_step(["./run", "--not-run", str(listed)], str(suite), env, log, record, "integration")
+        code = run_step(["./run", "--not-run", str(listed), "--on-request"], str(suite), env, log, record, "integration")
     finally:
         record.unlink(missing_ok=True)
         slot.close()
@@ -441,15 +455,15 @@ def checks_run(co, out, logs, env, record, commit, dirty, ports, sc, asked, ids)
     sys.exit(0 if ok else 1)
 
 
-def finish(co, out, commit, dirty, ports, sc, results, flaky, cpu):
+def finish(co, out, commit, dirty, ports, sc, results, flaky, cpu, on_request=False):
     failed = [r["name"] for r in results if r["status"] in ("failed", "error")]
     present = [r for r in results if r["status"] != "absent"]
     ran = [r for r in present if r["status"] not in ("not-needed", "deferred")]
     full = sc["kind"] == "full"
     partial = sc["kind"] == "only"
     passed = not failed and not dirty and not partial  # a run that called for nothing passes on a clean tree
-    summary = dict(at=now(), commit=commit, dirty=dirty, full=full, passed=passed, failed=failed, flaky=flaky,
-                   cpu_at_start=cpu, ports=ports, scope=sc, steps=results)
+    summary = dict(at=now(), commit=commit, dirty=dirty, full=full, on_request=on_request, passed=passed, failed=failed,
+                   flaky=flaky, cpu_at_start=cpu, ports=ports, scope=sc, steps=results)
     (out / "last.json").write_text(json.dumps(summary, indent=1))
     (out / f"{now()[:19].replace(':', '')}.json").write_text(json.dumps(summary, indent=1))
     notes = []

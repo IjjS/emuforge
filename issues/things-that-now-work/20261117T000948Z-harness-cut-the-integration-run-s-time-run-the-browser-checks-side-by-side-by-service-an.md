@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: harness|integration|run-time
-Issue-Check-Ids:
+Issue-Check-Ids: harness.on-request
 Issue-Commit: c1407f817d80566da76599230303a02165011615
 
 # Cut the integration run's time: run the browser checks side by side by service and the two slowest checks' cases in parallel

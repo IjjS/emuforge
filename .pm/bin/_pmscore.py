@@ -558,11 +558,14 @@ def _at(step):
     return "" if step is None else f"step {step}: "
 
 
-def render_text(result, result_path=None):
-    """The standard output of a scored run (requirement 3); the `result:` line when `result_path` is given."""
+def render_text(result, result_path=None, route=None):
+    """The standard output of a scored run (requirement 3); the `result:` line when `result_path` is given, and the
+    `route:` line second when `route` (the filled route of a spec with route parameters, issue 302 R4.1) is."""
     spec = result.spec
     out = [f"structure {spec.screen} state={result.state} score={score_text(result)} "
            f"({result.matched}/{result.total}) omitted={result.omitted}/{result.spec_items} verdict={result.verdict}"]
+    if route is not None:
+        out.append(f"route: {route}")
     others = [s for s in spec.needs_states if s != result.state]
     if len(spec.needs_states) > 1 and others:
         out.append("requires also: " + " ".join(f"state={s}" for s in others))
