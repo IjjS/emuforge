@@ -12,7 +12,7 @@ import type { AreaConnection } from './components/emulator-line';
 import { usePageHelp } from './components/page-help';
 import { useShowsResources } from './components/page-resources';
 import AwsArea from './index';
-import type { AreaScreen } from './screens';
+import type { AreaScreen, ScreenPageProps } from './screens';
 import { AREA_ROOT_CLASS } from './styles/root-class';
 import { NO_SCREEN_SENTENCE, NO_SCREEN_SERVICE } from '../../../test/no-screen';
 import { serviceLinks } from '../../../test/service-files';
@@ -1147,5 +1147,369 @@ describe('a console screen in the AWS area (issue 56, R5)', () => {
     expect(target).toContainElement(heading);
     expect(follows(emulatorLine(), notice)).toBe(true);
     expect(follows(notice, heading)).toBe(true);
+  });
+});
+
+// Test screens of issue 386 (requirement R4), under Amazon Kinesis, a service of the list with no product screen.
+const KINESIS_NAVIGATION = {
+  header: { text: 'Things of Kinesis', href: '/aws/kinesis' },
+  items: [{ type: 'link', text: 'Things', href: '/aws/kinesis/things' }],
+  activeHref: '/aws/kinesis/things',
+} satisfies AreaScreen['navigation'];
+
+const THINGS_PATH = '/aws/kinesis/things';
+
+/** A thing's page, its name as one segment, percent-encoded once, as a screen writes a crumb's address. */
+function thingPath(name: string): string {
+  return `${THINGS_PATH}/thing/${encodeURIComponent(name)}`;
+}
+
+/** What the page reads of its address: the query. */
+function QueryText() {
+  const { search } = useLocation();
+  return <p data-testid="query">{search}</p>;
+}
+
+/** A thing's page: its name as the `h1`, then the query it reads. Names no resources; gives no help. */
+function ThingPage({ params }: ScreenPageProps) {
+  return (
+    <>
+      <Header variant="h1">{params.name}</Header>
+      <QueryText />
+    </>
+  );
+}
+
+/** A thing's edit page: an `h1` of its own, not the title. */
+function EditThingPage({ params }: ScreenPageProps) {
+  return (
+    <>
+      <Header variant="h1">Step 1: Edit settings</Header>
+      <p data-testid="editing">{params.name}</p>
+    </>
+  );
+}
+
+const THING: AreaScreen = {
+  service: '/kinesis',
+  paths: ['/aws/kinesis/things/thing/{name}'],
+  title: (params) => params.name ?? '',
+  crumbs: (params) => [{ text: 'Things', href: THINGS_PATH }, { text: params.name ?? '' }],
+  navigation: KINESIS_NAVIGATION,
+  Page: ThingPage,
+};
+
+const EDIT_THING: AreaScreen = {
+  service: '/kinesis',
+  paths: ['/aws/kinesis/things/thing/{name}/edit'],
+  title: (params) => `Edit ${params.name ?? ''}`,
+  crumbs: (params) => [
+    { text: 'Things', href: THINGS_PATH },
+    { text: params.name ?? '', href: thingPath(params.name ?? '') },
+    { text: 'Edit' },
+  ],
+  navigation: KINESIS_NAVIGATION,
+  Page: EditThingPage,
+};
+
+/** `…/things/create` and `…/things/{name}`: two patterns that both match `…/things/create`. */
+const CREATE_THING: AreaScreen = {
+  service: '/kinesis',
+  paths: ['/aws/kinesis/things/create'],
+  title: 'Create thing',
+  crumbs: [{ text: 'Things', href: THINGS_PATH }, { text: 'Create thing' }],
+  navigation: KINESIS_NAVIGATION,
+  Page: () => <Header variant="h1">Create thing</Header>,
+};
+
+const NAMED_THING: AreaScreen = {
+  service: '/kinesis',
+  paths: ['/aws/kinesis/things/{name}'],
+  title: (params) => `Thing ${params.name ?? ''}`,
+  crumbs: (params) => [{ text: 'Things', href: THINGS_PATH }, { text: params.name ?? '' }],
+  navigation: KINESIS_NAVIGATION,
+  Page: ({ params }) => <Header variant="h1">{`Thing ${params.name ?? ''}`}</Header>,
+};
+
+/** A screen at two fixed paths, as before issue 386. */
+const GADGETS: AreaScreen = {
+  service: '/kinesis',
+  paths: ['/aws/kinesis/gadgets', '/aws/kinesis/gadgets/all'],
+  title: 'Gadgets',
+  crumbs: [{ text: 'Gadgets' }],
+  navigation: { ...KINESIS_NAVIGATION, activeHref: '/aws/kinesis/gadgets' },
+  Page: () => <Header variant="h1">Gadgets</Header>,
+};
+
+/** Two crumbs below the service, the first with an address. */
+const PAIR: AreaScreen = {
+  service: '/kinesis',
+  paths: ['/aws/kinesis/pairs/one'],
+  title: 'One pair',
+  crumbs: [{ text: 'Pairs', href: '/aws/kinesis/pairs' }, { text: 'One pair' }],
+  navigation: KINESIS_NAVIGATION,
+  Page: () => <Header variant="h1">One pair</Header>,
+};
+
+/** A last crumb given an address. */
+const LAST_WITH_ADDRESS: AreaScreen = {
+  service: '/kinesis',
+  paths: ['/aws/kinesis/last'],
+  title: 'Last',
+  crumbs: [{ text: 'Last', href: '/aws/kinesis/elsewhere' }],
+  navigation: KINESIS_NAVIGATION,
+  Page: () => <Header variant="h1">Last</Header>,
+};
+
+/** The side navigation's links, the header's left out. */
+function sideLinks(wrapper: ReturnType<typeof createWrapper>): [string | null, string | null][] {
+  const navigation = wrapper.findSideNavigation()?.getElement() as HTMLElement;
+  const header = wrapper.findSideNavigation()?.findHeaderLink()?.getElement();
+  return within(navigation)
+    .getAllByRole('link')
+    .filter((link) => link !== header)
+    .map((link) => [link.textContent, link.getAttribute('href')]);
+}
+
+/** The crumbs every page of the area starts with, then Kinesis. */
+const KINESIS_CRUMBS: [string, string | null][] = [
+  ['EmuForge', '/'],
+  ['AWS', '/aws'],
+  ['Kinesis', '/aws/kinesis'],
+];
+
+/** Expects the "no screen yet" page of Amazon Kinesis, with the services list as navigation. */
+function expectNoScreenPage(wrapper: ReturnType<typeof createWrapper>) {
+  expect(screen.getByRole('heading', { level: 1, name: NO_SCREEN })).toBeInTheDocument();
+  expect(screen.getByRole('main')).toHaveTextContent(NO_SCREEN_SENTENCE);
+  expect(wrapper.findSideNavigation()?.findHeaderLink()?.getElement()).toHaveTextContent(AWS);
+  expect(sideLinks(wrapper)).toEqual(SERVICES);
+  expect(breadcrumbs(wrapper)).toEqual(KINESIS_CRUMBS.map(([text, href], index) => [text, index === 2 ? null : href]));
+  expect(titles.at(-1)).toBe(NO_SCREEN);
+}
+
+describe('paths and parameters (issue 386, R4.1 to R4.5, R4.7, R4.9)', () => {
+  beforeEach(() => {
+    registry.screens.push(THING, EDIT_THING, CREATE_THING, NAMED_THING, GADGETS);
+  });
+
+  afterEach(() => {
+    registry.screens.length = 0;
+  });
+
+  function h1(): HTMLElement {
+    return screen.getByRole('heading', { level: 1 });
+  }
+
+  it('a screen at /aws/kinesis/things/thing/{name}, opened with "my thing" percent-encoded: the h1, the content target and the title are "my thing"; the crumbs end with Things as a link, then "my thing", not a link', () => {
+    const { wrapper } = open(thingPath('my thing'));
+    act(() => {
+      focusContent?.();
+    });
+
+    expect(h1()).toHaveTextContent(/^my thing$/);
+    expect(document.activeElement).toHaveAccessibleName('my thing');
+    expect(titles.at(-1)).toBe('my thing');
+    expect(breadcrumbs(wrapper)).toEqual([...KINESIS_CRUMBS, ['Things', THINGS_PATH], ['my thing', null]]);
+  });
+
+  it('the screen below it, …/{name}/edit: the crumbs end with "my thing" as a link to the first screen, then "Edit", not a link; the title "Edit my thing", the h1 the page\'s own', () => {
+    const { wrapper } = open(`${thingPath('my thing')}/edit`);
+
+    expect(breadcrumbs(wrapper)).toEqual([
+      ...KINESIS_CRUMBS,
+      ['Things', THINGS_PATH],
+      ['my thing', thingPath('my thing')],
+      ['Edit', null],
+    ]);
+    expect(titles.at(-1)).toBe('Edit my thing');
+    expect(h1()).toHaveTextContent(/^Step 1: Edit settings$/);
+  });
+
+  it('a name that holds /, ?, #, % and a space, each percent-encoded: shown decoded once, as text, in the h1 and the crumb', () => {
+    const name = 'a/b?c#d%e f';
+    const { wrapper } = open(`${THINGS_PATH}/thing/a%2Fb%3Fc%23d%25e%20f`);
+
+    expect(h1()).toHaveTextContent(name, { normalizeWhitespace: false });
+    expect(h1().textContent).toBe(name);
+    expect(breadcrumbs(wrapper).at(-1)).toEqual([name, null]);
+  });
+
+  it('the name %2541: the h1 reads %41', () => {
+    open(`${THINGS_PATH}/thing/%2541`);
+
+    expect(h1().textContent).toBe('%41');
+  });
+
+  it("on the screen below such a name, the name's crumb followed: its address holds the name percent-encoded once as one segment, and the first screen shows the same name", async () => {
+    const name = 'a/b?c#d%e f';
+    const { wrapper, router } = open(`${thingPath(name)}/edit`);
+    const link = crumbLink(wrapper, name);
+    expect(link).toHaveAttribute('href', `${THINGS_PATH}/thing/a%2Fb%3Fc%23d%25e%20f`);
+
+    act(() => {
+      fireEvent.click(link as HTMLElement);
+    });
+
+    expect(router.state.location.pathname).toBe(`${THINGS_PATH}/thing/a%2Fb%3Fc%23d%25e%20f`);
+    await waitFor(() => {
+      expect(h1().textContent).toBe(name);
+    });
+    expect(titles.at(-1)).toBe(name);
+  });
+
+  it('a name of 255 characters without a space: the h1 and the crumb hold the whole name', () => {
+    const name = 'x'.repeat(255);
+    const { wrapper } = open(thingPath(name));
+
+    expect(h1().textContent).toBe(name);
+    expect(breadcrumbs(wrapper).at(-1)).toEqual([name, null]);
+  });
+
+  it('a name that holds markup: the title, the h1 and the crumb show it as text; no element is created from it', () => {
+    const name = '<img src=x onerror=alert(1)><b>bold</b>';
+    const { wrapper, container } = open(thingPath(name));
+
+    expect(titles.at(-1)).toBe(name);
+    expect(h1().textContent).toBe(name);
+    expect(breadcrumbs(wrapper).at(-1)).toEqual([name, null]);
+    expect(container.querySelector('img')).toBeNull();
+    expect(container.querySelector('b')).toBeNull();
+  });
+
+  it.each(['%zz', '%E0%A4%A'])(
+    'a name that is not valid percent-encoding (%s): the area\'s "Page not found", its h1, crumbs, navigation and title, and the address as text',
+    (segment) => {
+      const address = `${THINGS_PATH}/thing/${segment}`;
+      const { wrapper } = open(address);
+
+      expect(screen.getByRole('heading', { level: 1, name: 'Page not found' })).toBeInTheDocument();
+      expect(breadcrumbs(wrapper)).toEqual([
+        ['EmuForge', '/'],
+        ['AWS', '/aws'],
+        ['Page not found', null],
+      ]);
+      expect(wrapper.findSideNavigation()?.findHeaderLink()?.getElement()).toHaveTextContent(AWS);
+      expect(sideLinks(wrapper)).toEqual(SERVICES);
+      expect(wrapper.findSideNavigation()?.findActiveLink()).toBeNull();
+      expect(titles.at(-1)).toBe('Page not found');
+      expect(screen.getByRole('main').textContent?.replace(/\s/g, '')).toContain(
+        `Studio has no page at ${address}.`.replace(/\s/g, ''),
+      );
+    },
+  );
+
+  it('/aws/kinesis/%zz, which no pattern matches: the "no screen yet" page of the service, as before', () => {
+    const { wrapper } = open('/aws/kinesis/%zz');
+
+    expectNoScreenPage(wrapper);
+  });
+
+  it('with screens at …/things/create and …/things/{name}: …/things/create opens the first, …/things/other the second with the name "other"', () => {
+    const first = open(`${THINGS_PATH}/create`);
+    expect(h1().textContent).toBe('Create thing');
+    expect(titles.at(-1)).toBe('Create thing');
+    first.unmount();
+
+    open(`${THINGS_PATH}/other`);
+    expect(h1().textContent).toBe('Thing other');
+    expect(titles.at(-1)).toBe('Thing other');
+  });
+
+  it.each([
+    // One fewer than …/things/{name}, one more than …/thing/{name} and …/things/{name}, and an empty parameter.
+    THINGS_PATH,
+    `${THINGS_PATH}/thing/a/b`,
+    `${THINGS_PATH}/a/b`,
+    `${THINGS_PATH}/thing/`,
+  ])(
+    '%s, one segment more or fewer than a pattern with a parameter, or an empty one: the "no screen yet" page',
+    (address) => {
+      const { wrapper } = open(address);
+
+      expectNoScreenPage(wrapper);
+    },
+  );
+
+  it("a screen's route with a query: the same screen; the name does not hold the query, and the page reads it", () => {
+    open(`${thingPath('my thing')}?tab=tags&sort=name`);
+
+    expect(h1().textContent).toBe('my thing');
+    expect(titles.at(-1)).toBe('my thing');
+    expect(screen.getByTestId('query')).toHaveTextContent('?tab=tags&sort=name');
+  });
+
+  it.each(GADGETS.paths)('a screen with fixed paths, on %s: its title, crumbs and navigation as before', (path) => {
+    const { wrapper } = open(path);
+
+    expect(h1().textContent).toBe('Gadgets');
+    expect(titles.at(-1)).toBe('Gadgets');
+    expect(breadcrumbs(wrapper)).toEqual([...KINESIS_CRUMBS, ['Gadgets', null]]);
+    expect(wrapper.findSideNavigation()?.findHeaderLink()?.getElement()).toHaveTextContent('Things of Kinesis');
+    expect(sideLinks(wrapper)).toEqual([['Things', '/aws/kinesis/things']]);
+  });
+
+  it.each(['/aws/kinesis/gadgets/other', '/aws/kinesis/gadgets/all/more', '/aws/kinesis/gadget'])(
+    'a screen with fixed paths is at no other path: %s shows the "no screen yet" page',
+    (address) => {
+      const { wrapper } = open(address);
+
+      expectNoScreenPage(wrapper);
+    },
+  );
+
+  it('a path below the same service that no screen matches: the "no screen yet" page with the services list as navigation, as before', () => {
+    const { wrapper } = open(NO_SCREEN_SERVICE.below);
+
+    expectNoScreenPage(wrapper);
+    expect(wrapper.findSideNavigation()?.findActiveLink()?.getElement()).toHaveAttribute('href', '/aws/kinesis');
+  });
+
+  it("a screen whose title is a function of the name: the title reported to Studio's frame is its text for the decoded name", () => {
+    open(`${thingPath('a/b c')}/edit`);
+
+    expect(titles.at(-1)).toBe('Edit a/b c');
+    expect(screen.getByTestId('editing').textContent).toBe('a/b c');
+  });
+});
+
+describe('crumbs and resources (issue 386, R4.6, R4.8)', () => {
+  beforeEach(() => {
+    registry.screens.push(THING, PAIR, LAST_WITH_ADDRESS);
+  });
+
+  afterEach(() => {
+    registry.screens.length = 0;
+  });
+
+  it('a screen that gives two crumbs below its service, the first with an address: EmuForge, AWS, Kinesis, then the two in order, the first a link to its address, the last no link', () => {
+    const { wrapper } = open('/aws/kinesis/pairs/one');
+
+    expect(breadcrumbs(wrapper)).toEqual([...KINESIS_CRUMBS, ['Pairs', '/aws/kinesis/pairs'], ['One pair', null]]);
+    expect(crumbLink(wrapper, 'Pairs')).toHaveAttribute('href', '/aws/kinesis/pairs');
+    expect(crumbLink(wrapper, 'One pair')).toBeUndefined();
+  });
+
+  it('a screen whose last crumb was given an address: the last crumb is still not a link', () => {
+    const { wrapper } = open('/aws/kinesis/last');
+
+    expect(breadcrumbs(wrapper)).toEqual([...KINESIS_CRUMBS, ['Last', null]]);
+    expect(crumbLink(wrapper, 'Last')).toBeUndefined();
+    expect(document.querySelector('a[href="/aws/kinesis/elsewhere"]')).toBeNull();
+  });
+
+  it('a screen that names no resources: the emulator line, and neither the notice nor the (i) control', () => {
+    open(thingPath('my thing'));
+
+    expect(emulatorLine()).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Local emulator notice' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'About the local emulator' })).toBeNull();
+  });
+
+  it('a screen without help: no help panel and no toggle, as before', () => {
+    const { wrapper } = open(thingPath('my thing'));
+
+    expect(wrapper.findAppLayout()?.findToolsToggle()).toBeNull();
+    expect(screen.queryByRole('button', { name: /help panel/i })).toBeNull();
   });
 });

@@ -134,11 +134,13 @@ export function registryFaults(
   return faults;
 }
 
-/**
- * The area's `console` screens, collected from every service's `services/*\/screens.ts` at build time (R3.2), each
- * service's from its own folder. A path that no screen matches shows the area's own page for it, as before: the
- * index, the "no screen yet" page of its service, or the area's "Page not found".
- */
-export const SCREENS: readonly AreaScreen[] = collectScreens(
-  screenFolders(import.meta.glob<ScreensFile>('./services/*/screens.ts', { eager: true })),
+/** Every service folder's `screens.ts`, collected at build time (R3.2), each by its folder's name. */
+export const SCREEN_FOLDERS: readonly ScreenFolder[] = screenFolders(
+  import.meta.glob<ScreensFile>('./services/*/screens.ts', { eager: true }),
 );
+
+/**
+ * The area's `console` screens, each service's from its own folder. A path that no screen matches shows the area's
+ * own page for it, as before: the index, the "no screen yet" page of its service, or the area's "Page not found".
+ */
+export const SCREENS: readonly AreaScreen[] = collectScreens(SCREEN_FOLDERS);
