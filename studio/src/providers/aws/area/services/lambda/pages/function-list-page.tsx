@@ -42,7 +42,7 @@ const DESCRIPTION = 'The filter matches the start of a name and is case-sensitiv
  * column, so a name of up to 24 characters is on one line; "Runtime", so a runtime's name ("Node.js 24.x", "OS-only
  * Runtime") is; "Description", so a word of free text up to 10 characters is whole. A size; no spacing is set.
  */
-const NAME_MIN_WIDTH = '26ch';
+const NAME_MIN_WIDTH = '28ch';
 const RUNTIME_MIN_WIDTH = '18ch';
 
 const FILTER_LABEL = 'Search by attributes or search by keyword';
