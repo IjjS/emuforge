@@ -14,6 +14,7 @@ import type { DeleteResult, Role } from '../api';
 import { lastActivityText } from '../format';
 import { failureOf, useDeleteRoles } from '../queries';
 import { actionFailureItem } from './failures';
+import { Value } from './role-sections';
 import { useAreaModalRoot } from './page-parts';
 import { Code } from './states';
 
@@ -49,7 +50,7 @@ function deleteResult({ deleted, failed }: DeleteResult, engineOrigin: string | 
 }
 
 const COLUMNS: TableProps.ColumnDefinition<Role>[] = [
-  { id: 'name', header: 'Role name', isRowHeader: true, cell: (role) => role.name },
+  { id: 'name', header: 'Role name', isRowHeader: true, cell: (role) => <Value>{role.name}</Value> },
   { id: 'lastActivity', header: 'Last activity', cell: (role) => lastActivityText(role.lastUsed) },
 ];
 
