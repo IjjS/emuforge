@@ -29,17 +29,33 @@ for integration. The steps, for each module that exists in the checkout:
                (a check's result is evidence about the commit, and Vitest's cache of transformed modules is
                keyed by each module's own text, so it can hold the result of an earlier tree)
   integration  tests/integration/run (the suite's own entry point), given the worktree's engine and emulator ports
-  harness      .pm/bin/tests/run (unittest discovery of the .pm/bin tools' tests)
+  harness      .pm/bin/tests/run [--leave-out <test file> ...] (unittest discovery of the .pm/bin tools' tests)
 A module whose manifest is missing (engine/Cargo.toml, studio/package.json, tests/integration/run,
 .pm/bin/tests/run) is reported as "absent" and does not count as a failure, called for or not. A checkout where
 every module is absent, or where nothing was called for (only issue files changed), passes on a clean tree.
 Each step's output goes to <checkout>/output/logs/check-<step>.log. The summary goes to
 <checkout>/output/checks/last.json: {commit, dirty, full, on_request, passed, failed: [steps], scope, steps: [{name,
-module, status, seconds, log}]}. `scope` is what `pm-scope <checkout> --json` prints: kind, reason, main's commit, the
-merge base, the number of changed paths, and per module whether it was called for and why. `full` is true only
-when every module was called for. pm-merge refuses a unit whose last.json is not a pass on the branch's current
+module, status, seconds, log}]}, with `left_out` on a harness-test step that ran. `scope` is what `pm-scope
+<checkout> --json` prints: kind, reason, main's commit, the merge base, the number of changed paths, per module
+whether it was called for and why, and `harness_tests` when harness is. `full` is true only when every module was
+called for. pm-merge refuses a unit whose last.json is not a pass on the branch's current
 commit, or whose steps do not cover every module the branch's changes call for (it decides that again itself).
 Exit code 0 only when no step that ran failed, the tree was clean and the run was not --only.
+
+Harness test files. The harness step leaves out the slow test files that no changed path touches: for kinds diff
+and unit, the scope's `harness_tests` (_pmscope.harness_tests of the same paths, a unit's against feat/<id>, the
+issue branch's against main, so the whole check of an issue runs every on-touch file any of its units called for)
+names the on-touch files of _pmscope.ON_TOUCH whose sources no changed path matches, and pm-check prints them with
+the decision (`  harness tests left out: …`, or `  harness tests every file: <why>`). It gives them to the runner
+as ./run --leave-out <file> ..., in name order, for the first run of the step and its retry alike, and only those
+that exist in the checkout and only to a runner whose text (read up to 1 MiB, as UTF-8) names --leave-out: a
+checkout cut before this option has a runner that ignores arguments, and gets none. A change of _pmscope.py or
+.pm/bin/tests/run, or a path no rule knows, runs every file. The harness-test entry of a step that ran gets
+`left_out`: the file names given to the runner, [] when none; the runner's log names each left-out file, and its
+cases are in no count. Kind main and --checks do not run the harness step. On request, every harness test file
+runs with pm-check <worktree> --full (every module and every file, a record pm-merge accepts), pm-check <worktree>
+--only harness (every file, a partial run that never passes), or .pm/bin/tests/run by hand without arguments; the
+scope of --full and --only harness says `every file` with the option as the reason.
 
 On request. A check whose manifest row is labelled `on-request` is not part of a default run: the suite reports it
 `not-run` with the reason "on request: not part of a default run; run it with --on-request" and counts it in
@@ -129,6 +145,7 @@ current = None  # the running step's Popen
 CHECK_ID = re.compile(r"[a-z]+\.[a-z0-9-]+")  # the form of a manifest id; nothing else reaches a file
 NAMED = 10  # failed or error checks named in the output, per verdict
 MTIME_SLACK = 1  # seconds: a file's time can lag the clock by a tick; a report older than that is not this run's
+RUNNER_MAX = 1024 * 1024  # bytes of the harness runner read to see whether it takes --leave-out
 
 
 def take_slot():
@@ -263,6 +280,23 @@ def read_report(co, commit, started):
                 error=[i for i, v, _ in found if v == "error"], not_run=sum(v == "not-run" for _, v, _ in found))
 
 
+def leave_out(co, sc):
+    """The test files the harness step leaves out: the scope's `harness_tests` left_out when the checkout's runner
+    names --leave-out, else []. A runner over RUNNER_MAX bytes, or one that cannot be read as UTF-8, is taken not to
+    know the option."""
+    ht = sc.get("harness_tests")
+    if not ht or ht.get("all") or not ht.get("left_out"):
+        return []
+    try:
+        with open(co / STEPS["harness"][0] / STEPS["harness"][1], "rb") as f:
+            data = f.read(RUNNER_MAX + 1)
+        if len(data) > RUNNER_MAX or "--leave-out" not in data.decode("utf-8"):
+            return []
+    except (OSError, UnicodeDecodeError):
+        return []
+    return list(ht["left_out"])
+
+
 def manifest_ids(co):
     """The check ids of the checkout's manifest, in its order; refuses (exit 2) when it or the suite is missing."""
     suite = co / "tests" / "integration"
@@ -343,7 +377,8 @@ def main():
         cpu = wait_for_cpu()
     results, flaky = [], []
     try:
-        results, flaky = run_all(a, co, mods, calls, env, logs, record, commit, deferred(sc), sc["target"])
+        results, flaky = run_all(a, co, mods, calls, env, logs, record, commit, deferred(sc), sc["target"],
+                                 leave_out(co, sc))
     finally:
         record.unlink(missing_ok=True)
         if slot:
@@ -351,7 +386,7 @@ def main():
     finish(co, out, commit, dirty, ports, sc, results, flaky, cpu, bool(a.on_request))
 
 
-def run_all(a, co, mods, calls, env, logs, record, commit, held=(), target="main"):
+def run_all(a, co, mods, calls, env, logs, record, commit, held=(), target="main", left=()):
     results, flaky = [], []
     for mod in mods:
         sub, manifest, steps = STEPS[mod]
@@ -372,6 +407,8 @@ def run_all(a, co, mods, calls, env, logs, record, commit, held=(), target="main
         for name, cmd in steps:
             if mod == "integration" and a.on_request:
                 cmd = cmd + ["--on-request"]  # the first run and the retry alike
+            if mod == "harness" and left:
+                cmd = cmd + ["--leave-out", *left]  # the first run and the retry alike
             log = logs / f"check-{name}.log"
             t = started = time.time()
             code = run_step(cmd, str(co / sub), env, log, record, name)
@@ -388,6 +425,8 @@ def run_all(a, co, mods, calls, env, logs, record, commit, held=(), target="main
                 results[-1]["first_log"] = str(first)
             if mod == "integration":
                 results[-1]["checks"] = read_report(co, commit, started)  # of its last run
+            if mod == "harness":
+                results[-1]["left_out"] = list(left)
             if status == "flaky":
                 flaky.append(name)
                 with open(RUN / "flakes.jsonl", "a") as f:
