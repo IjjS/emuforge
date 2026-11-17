@@ -270,14 +270,14 @@ test('studio.lambda-function-screens-say-when-the-engine-stops-answering', async
     if (tokens.length !== 1 || !tokens[0].includes(p)) await applyFilter(page, p);
   }
 
-  await openList(page);
-  await underPrefix();
-  await expectNames(page, await functionNamesDirect(ctx, port, p), 'the rows under the filter <p>');
-  await markPage(page);
-
   await lines.line(
     'Stop the engine and choose "Refresh" on the function list → within two connection checks the table shows "The EmuForge engine at `<engine origin>` is not answering", as the emulator line does, with "The function list could not be read." and "Retry"',
     async () => {
+      // The Given: the list under the filter `<p>` with its rows, in a document marked to prove no reload later.
+      await openList(page);
+      await underPrefix();
+      await expectNames(page, await functionNamesDirect(ctx, port, p), 'the rows under the filter <p>');
+      await markPage(page);
       await engine.stop();
       running = false;
       await s.action(REFRESH).click(ACTION);
