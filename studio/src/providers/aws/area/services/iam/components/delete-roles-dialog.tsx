@@ -1,12 +1,12 @@
 import Box from '@cloudscape-design/components/box';
 import Button from '@cloudscape-design/components/button';
 import FormField from '@cloudscape-design/components/form-field';
+import Modal from '@cloudscape-design/components/modal';
 import Input from '@cloudscape-design/components/input';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Table, { type TableProps } from '@cloudscape-design/components/table';
 import { useState } from 'react';
 
-import { AreaModal } from '../../../components/area-modal';
 import type { AreaConnection } from '../../../components/emulator-line';
 import type { FlashItem, FlashResult } from '../../../components/page-flash';
 import { usePageFlash } from '../../../components/page-flash';
@@ -14,6 +14,7 @@ import type { DeleteResult, Role } from '../api';
 import { lastActivityText } from '../format';
 import { failureOf, useDeleteRoles } from '../queries';
 import { actionFailureItem } from './failures';
+import { useAreaModalRoot } from './page-parts';
 import { Code } from './states';
 
 // "Delete" of the role list (issue 82, requirement R7, R10.3): the console's dialog "Delete … roles?" without "Learn
@@ -71,6 +72,8 @@ export function DeleteRolesDialog({ roles, connection, onClose }: DeleteRolesDia
   const engineOrigin = connection.engineOrigin;
   const remove = useDeleteRoles(engineOrigin);
   const pending = remove.isPending;
+  // In the area's root, with a root that stays the same while the dialog is open (`useAreaModalRoot`).
+  const modalRoot = useAreaModalRoot();
 
   const handleDismiss = () => {
     if (!pending) {
@@ -106,7 +109,8 @@ export function DeleteRolesDialog({ roles, connection, onClose }: DeleteRolesDia
     'profiles first; a service-linked role is deleted by the emulator as a whole. This cannot be undone.';
 
   return (
-    <AreaModal
+    <Modal
+      {...modalRoot}
       visible
       header={deleteDialogTitle(roles.length)}
       closeAriaLabel="Close modal"
@@ -158,6 +162,6 @@ export function DeleteRolesDialog({ roles, connection, onClose }: DeleteRolesDia
           />
         </FormField>
       </SpaceBetween>
-    </AreaModal>
+    </Modal>
   );
 }
