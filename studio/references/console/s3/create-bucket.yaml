@@ -1,0 +1,72 @@
+# Reference spec of "Create bucket": the AWS console's form that "Create bucket" on the bucket list opens, with
+# the encryption type SSE-KMS chosen.
+# Sources: no capture shows the form. The AWS user guide (Amazon S3 User Guide) gives the title, the sections,
+# the fields and the button; the four settings of "Block Public Access settings for this bucket" are named as the
+# guide names the settings, since no page of it gives the form's labels for them. Each item's source:
+# create-bucket.sources.md.
+# Provisional until the owner adds a capture of the form (decisions-needed.md, questions 3 and 5): those four
+# labels, and "Object Ownership" as one choice.
+# The route opens the form with SSE-KMS chosen (requirement R6.2), since the score operates nothing and "AWS KMS
+# key" and "Bucket Key" are shown only then.
+# "Tags" has no field item: "Key" and "Value" are shown only once "Add tag" was pressed (requirement R13).
+# "Copy settings from existing bucket" is an item: the emulator answers every read it needs. This issue leaves it
+# unbuilt (one unmatched item); requirement R14 item 7 builds it.
+# "Cancel" is on Studio's form and in no source, so it is not an item.
+# Nothing is omitted: the emulator (aws-emulator 1.0.481) stores everything these items set.
+screen: s3.create-bucket
+service: s3
+kind: form
+route: /aws/s3/bucket/create?encryption=sse-kms
+
+breadcrumbs: [EmuForge, AWS, S3, Buckets, Create bucket]
+header:
+  title: Create bucket
+  actions: [Create bucket]
+  primary_action: Create bucket
+sections:
+  - title: General configuration
+    fields:
+      - label: Region
+        control: text
+      - label: Bucket name
+        control: text
+        required: true
+      - label: Copy settings from existing bucket
+        control: button
+  - title: Object Ownership
+    fields:
+      - label: Object Ownership
+        control: choice
+        required: true
+  - title: Block Public Access settings for this bucket
+    fields:
+      - label: BlockPublicAcls
+        control: checkbox
+      - label: IgnorePublicAcls
+        control: checkbox
+      - label: BlockPublicPolicy
+        control: checkbox
+      - label: RestrictPublicBuckets
+        control: checkbox
+  - title: Bucket Versioning
+    fields:
+      - label: Bucket Versioning
+        control: choice
+        required: true
+  - title: Tags
+  - title: Default encryption
+    fields:
+      - label: Encryption type
+        control: choice
+        required: true
+      - label: AWS KMS key
+        control: text
+        required: true
+      - label: Bucket Key
+        control: choice
+        required: true
+  - title: Advanced settings
+    fields:
+      - label: Object Lock
+        control: choice
+        required: true

@@ -282,6 +282,133 @@ describe('routes', () => {
     },
   );
 
+  // Issue 256, test-criteria.md, "Unit — app/routes.test.tsx", case 1: a bucket's page at its two routes.
+  it.each(['/aws/s3/buckets/my-bucket', '/aws/s3/buckets/my-bucket/properties'])(
+    'opens %s as the page of the bucket my-bucket: its h1, the crumbs to it, S3’s navigation, the address unchanged',
+    async (path) => {
+      const router = createMemoryRouter(routes, { initialEntries: [path] });
+      render(
+        <Providers>
+          <RouterProvider router={router} />
+        </Providers>,
+      );
+
+      expect(inCloudscape(await heading('my-bucket'))).toBe(true);
+      const wrapper = createWrapper(document.body);
+      const crumbs = (wrapper.findBreadcrumbGroup()?.findBreadcrumbLinks() ?? []).map(
+        (item) => item.getElement().textContent,
+      );
+      expect(crumbs).toEqual(['EmuForge', 'AWS', 'S3', 'Buckets', 'my-bucket']);
+      const navigation = wrapper.findSideNavigation();
+      expect(navigation?.findHeaderLink()?.getElement()).toHaveTextContent('Amazon S3');
+      expect(navigation?.findActiveLink()?.getElement()).toHaveTextContent('General purpose buckets');
+      expect(router.state.location.pathname).toBe(path);
+    },
+  );
+
+  // Issue 256, test-criteria.md, "Unit — app/routes.test.tsx", case 2: the create form at its route.
+  it('opens /aws/s3/bucket/create as the create form: its h1 and the crumbs to it', async () => {
+    const path = '/aws/s3/bucket/create';
+    const router = createMemoryRouter(routes, { initialEntries: [path] });
+    render(
+      <Providers>
+        <RouterProvider router={router} />
+      </Providers>,
+    );
+
+    expect(inCloudscape(await heading('Create bucket'))).toBe(true);
+    const crumbs = (createWrapper(document.body).findBreadcrumbGroup()?.findBreadcrumbLinks() ?? []).map(
+      (item) => item.getElement().textContent,
+    );
+    expect(crumbs).toEqual(['EmuForge', 'AWS', 'S3', 'Buckets', 'Create bucket']);
+    expect(router.state.location.pathname).toBe(path);
+  });
+
+  // Issue 256, test-criteria.md, "Unit — app/routes.test.tsx", case 3: the empty page and the delete page.
+  it.each([
+    ['/aws/s3/bucket/my-bucket/empty', 'Empty bucket'],
+    ['/aws/s3/bucket/my-bucket/delete', 'Delete bucket'],
+  ])(
+    'opens %s with the h1 "%s" and the crumbs …, Buckets, my-bucket (to the bucket’s page), then the page’s name',
+    async (path, title) => {
+      const router = createMemoryRouter(routes, { initialEntries: [path] });
+      render(
+        <Providers>
+          <RouterProvider router={router} />
+        </Providers>,
+      );
+
+      expect(inCloudscape(await heading(title))).toBe(true);
+      expect(crumbTexts()).toEqual(['EmuForge', 'AWS', 'S3', 'Buckets', 'my-bucket', title]);
+      const bucketCrumb = (createWrapper(document.body).findBreadcrumbGroup()?.findBreadcrumbLinks() ?? [])
+        .map((item) => item.getElement())
+        .find((element) => element.textContent === 'my-bucket')
+        ?.closest('a');
+      expect(bucketCrumb).toHaveAttribute('href', '/aws/s3/buckets/my-bucket');
+      expect(router.state.location.pathname).toBe(path);
+    },
+  );
+
+  // Issue 256, test-criteria.md, "Unit — app/routes.test.tsx", case 4: a bucket named `create`.
+  it.each([
+    ['/aws/s3/buckets/create', 'create', ['EmuForge', 'AWS', 'S3', 'Buckets', 'create']],
+    ['/aws/s3/bucket/create/empty', 'Empty bucket', ['EmuForge', 'AWS', 'S3', 'Buckets', 'create', 'Empty bucket']],
+  ])('opens %s as a screen of the bucket named create: the h1 "%s"', async (path, title, crumbs) => {
+    const router = createMemoryRouter(routes, { initialEntries: [path] });
+    render(
+      <Providers>
+        <RouterProvider router={router} />
+      </Providers>,
+    );
+
+    expect(inCloudscape(await heading(title))).toBe(true);
+    expect(crumbTexts()).toEqual(crumbs);
+    expect(router.state.location.pathname).toBe(path);
+  });
+
+  /** The four screens of a bucket, at each of their routes, with their h1 and document title. */
+  const BUCKET_SCREENS: [path: string, h1: string, title: string][] = [
+    ['/aws/s3/buckets/my-bucket', 'my-bucket', 'my-bucket | EmuForge Studio'],
+    ['/aws/s3/buckets/my-bucket/properties', 'my-bucket', 'my-bucket | EmuForge Studio'],
+    ['/aws/s3/bucket/create', 'Create bucket', 'Create bucket | EmuForge Studio'],
+    ['/aws/s3/bucket/my-bucket/empty', 'Empty bucket', 'Empty bucket | EmuForge Studio'],
+    ['/aws/s3/bucket/my-bucket/delete', 'Delete bucket', 'Delete bucket | EmuForge Studio'],
+  ];
+
+  // Issue 256, test-criteria.md, "Unit — app/routes.test.tsx", case 6: the notice, the (i) control, the navigation.
+  it.each(BUCKET_SCREENS)(
+    'opens %s with the notice for buckets, the (i) control, and S3’s navigation with "General purpose buckets" current',
+    async (path, h1) => {
+      open(path);
+
+      await heading(h1);
+      expect(within(main()).getByText('These buckets are in your local emulator')).toBeInTheDocument();
+      expect(within(main()).getByRole('button', { name: 'About the local emulator' })).toBeInTheDocument();
+      const navigation = createWrapper(document.body).findSideNavigation();
+      expect(navigation?.findHeaderLink()?.getElement()).toHaveTextContent('Amazon S3');
+      expect(navigation?.findActiveLink()?.getElement()).toHaveTextContent('General purpose buckets');
+    },
+  );
+
+  // Issue 256, test-criteria.md, "Unit — app/routes.test.tsx", case 7: the document titles.
+  it.each(BUCKET_SCREENS)('opens %s with the h1 "%s" and the document title "%s"', async (path, h1, title) => {
+    open(path);
+
+    await heading(h1);
+    await waitFor(() => {
+      expect(document.title).toBe(title);
+    });
+  });
+
+  // Issue 256, test-criteria.md, "Unit — app/routes.test.tsx", case 8: none of the four gives help.
+  it.each(BUCKET_SCREENS)('opens %s without the help toggle', async (path, h1) => {
+    open(path);
+
+    await heading(h1);
+    expect(createWrapper(document.body).findAppLayout()?.findToolsToggle()).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Open help panel' })).toBeNull();
+  });
+
   it.each(['/aws/lambda', '/aws/lambda/functions'])(
     'opens %s as the Lambda function list: the h1 "Event Functions", the address unchanged',
     async (path) => {
@@ -327,7 +454,13 @@ describe('routes', () => {
     },
   );
 
-  it.each(['/aws/s3/buckets/my-bucket', '/aws/s3/bucket/create', '/aws/s3/directory-buckets'])(
+  // Issue 256 gives /aws/s3/buckets/my-bucket and /aws/s3/bucket/create their screens; these three paths have none
+  // before or after (test-criteria.md, "Existing checks and cases").
+  it.each([
+    '/aws/s3/buckets/my-bucket/objects',
+    '/aws/s3/bucket/my-bucket/property/versioning/edit',
+    '/aws/s3/directory-buckets',
+  ])(
     'opens %s as the "no screen yet" page of Amazon Simple Storage Service, with no ListBuckets request',
     async (path) => {
       const engine = new FakeEngine();

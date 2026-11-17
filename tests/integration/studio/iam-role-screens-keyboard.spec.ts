@@ -139,10 +139,15 @@ async function listUnder(page: Page, text: string, names?: string[]): Promise<vo
   }
 }
 
+/**
+ * Opens the page of `name` and waits for it to be read. The tabs are shown while "Loading role" is still up, the four
+ * after "Permissions" disabled until the role is read: a Tab walk started then meets only "Refresh role" and
+ * "Permissions". The page is read once "Trust relationships" is enabled.
+ */
 async function openRole(page: Page, name: string): Promise<void> {
   await page.goto(rolePath(name));
   await expect(heading(page, name), `the role's page with the h1 "${name}"`).toBeVisible();
-  await expect(screen(page).main.getByRole('tab').first(), 'the role is loaded').toBeVisible();
+  await expect(screen(page).main.getByRole('tab', { name: TABS[1], exact: true }), 'the role is read').toBeEnabled();
 }
 
 async function openWizard(page: Page, step: 1 | 2 | 3): Promise<void> {
