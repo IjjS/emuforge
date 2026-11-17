@@ -74,7 +74,9 @@ studio/src/
                                its frame parts (the emulator line, the local-emulator notice and its (i) control),
                                its pages (index, "no screen yet", "Page not found"), components/ shared inside it
   providers/aws/area/services/<service>/
-                               one folder per AWS service: api.ts, queries.ts, pages/, components/
+                               one folder per AWS service, named for its route: service.json (its label and
+                               crumb), screens.ts (its screens, which the area collects), api.ts, queries.ts,
+                               pages/, components/
   lib/                         aws client factory, engine client, errors, env; no UI
   test/                        test setup, and the support several test files share
 ```
@@ -82,7 +84,9 @@ studio/src/
 - File names are kebab-case, components PascalCase, functions and variables camelCase. Event handlers are
   `handle*`, event props `on*`.
 - A service folder imports nothing from another service folder. What two AWS services share moves to
-  `providers/aws/area/components/` or `lib/`.
+  `providers/aws/area/components/` or `lib/`. A service's screens are registered in its own `screens.ts`; the area
+  collects every `services/*/screens.ts` by pattern, and no file of the area outside `services/` names a service's
+  folder. `bun run lint` enforces both.
 - Screen state that one screen owns stays local. There is no global store.
 - `bun run brand` (`scripts/brand.ts`) writes every file of `brand/` and `public/` from `src/ui/brand-paths.ts` and
   the `--st-*` tokens, and draws the rasters with the headless Chromium of `@playwright/test`. Rerun it after a
@@ -115,6 +119,7 @@ studio/src/
 - `providers/<id>/area/` imports nothing from `app/`, `ui/`, `features/` or another provider's folder.
 - `ui/` and `features/` import nothing from `providers/*/area/`.
 - Outside `providers/<id>/area/` nothing imports it statically; only its `provider.ts` loads it, with `import()`.
+  The one exception is data: `providers/aws/services.ts` collects each service's `service.json`.
 - `lib/` imports nothing from any UI folder (`app/`, `ui/`, `features/`, `providers/`). Every folder may import
   `lib/`.
 - `i18n/` is Studio's own layer's only source of text. `app/`, `ui/` and `features/` may import it. `i18n/` imports
@@ -420,10 +425,11 @@ AWS screen to look like, mirror or copy the AWS console.
 
 - Both are inside the area's content target, before the page's `h1`: the content target holds the line, the
   notice when the page carries it, then the `h1` and the page's controls, and is still named by the `h1`. "Skip to
-  content" and every route change therefore put focus where the next thing read is "Local emulator, not AWS".
+  content" and every route change therefore put focus where the next thing read is "Local emulator, not AWS". A
+  result of an action (the area's `Flashbar`) sits after the notice and before the `h1`.
 - Tab order: the breadcrumbs, then the line's controls ("Connection status" when shown, then the (i) control when
-  the page has it), then the notice's close control when it is open, then the page's content. While connected on
-  a page without the notice the line adds no Tab stop.
+  the page has it), then the notice's close control when it is open, then a flash's "Dismiss" when one is shown,
+  then the page's content. While connected on a page without the notice the line adds no Tab stop.
 - They are Cloudscape components styled with Cloudscape tokens only, inside the area's root, under every rule of
   "Inside a provider area" below. At 1280 and 390 wide, light and dark, the line wraps inside the page (a long
   endpoint breaks rather than overflowing) and stays visible at 390 with the side navigation closed.

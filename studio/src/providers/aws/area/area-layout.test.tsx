@@ -1,14 +1,18 @@
+import Button from '@cloudscape-design/components/button';
 import Header from '@cloudscape-design/components/header';
 import HelpPanel from '@cloudscape-design/components/help-panel';
 import Link from '@cloudscape-design/components/link';
+import SpaceBetween from '@cloudscape-design/components/space-between';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { useState, useSyncExternalStore } from 'react';
-import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
+import { createMemoryRouter, RouterProvider, useLocation, useNavigate } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { CheckResult } from '../../../lib/engine/engine-client';
 import type { AreaConnection } from './components/emulator-line';
+import { usePageFlash, type FlashResult } from './components/page-flash';
 import { usePageHelp } from './components/page-help';
 import { useShowsResources } from './components/page-resources';
 import AwsArea from './index';
@@ -1511,5 +1515,378 @@ describe('crumbs and resources (issue 386, R4.6, R4.8)', () => {
 
     expect(wrapper.findAppLayout()?.findToolsToggle()).toBeNull();
     expect(screen.queryByRole('button', { name: /help panel/i })).toBeNull();
+  });
+});
+
+// Test screens of the area's flash (issue 386, R5), under Amazon Kinesis.
+const FLASHES_PATH = '/aws/kinesis/flashes';
+const TARGET_PATH = '/aws/kinesis/flashes/target';
+const ELSEWHERE_PATH = '/aws/kinesis/flashes/elsewhere';
+
+/** What the page's controls do: the result "Act" shows or "Hand over" hands, where to, and a path to go to after. */
+const flashCase = {
+  result: [{ type: 'success', content: 'Thing created' }] as FlashResult,
+  handTo: TARGET_PATH,
+  thenTo: undefined as string | undefined,
+  /** The fresh area's `usePageFlash`, after a fresh load of the document; the one imported above otherwise. */
+  usePageFlash,
+};
+
+/** A screen's page that names its resources (so the notice is open) and shows or hands a result on its controls. */
+function FlashPage({ title }: { title: string }) {
+  useShowsResources('things');
+  const flash = flashCase.usePageFlash();
+  const navigate = useNavigate();
+  return (
+    <>
+      <Header variant="h1">{title}</Header>
+      <SpaceBetween direction="horizontal" size="xs">
+        <Button
+          onClick={() => {
+            flash.show(flashCase.result);
+          }}
+        >
+          Act
+        </Button>
+        <Button
+          onClick={() => {
+            flash.handOver(flashCase.handTo, flashCase.result);
+            if (flashCase.thenTo !== undefined) {
+              void navigate(flashCase.thenTo);
+            }
+          }}
+        >
+          Hand over
+        </Button>
+      </SpaceBetween>
+      <QueryText />
+    </>
+  );
+}
+
+function flashScreen(path: string, title: string): AreaScreen {
+  return {
+    service: '/kinesis',
+    paths: [path],
+    title,
+    crumbs: [{ text: title }],
+    navigation: KINESIS_NAVIGATION,
+    Page: () => <FlashPage title={title} />,
+  };
+}
+
+const FLASHES = flashScreen(FLASHES_PATH, 'Flashes');
+const TARGET = flashScreen(TARGET_PATH, 'Target');
+const ELSEWHERE = flashScreen(ELSEWHERE_PATH, 'Elsewhere');
+
+describe('the flash (issue 386, R5)', () => {
+  beforeEach(() => {
+    registry.screens.push(FLASHES, TARGET, ELSEWHERE);
+    flashCase.result = [{ type: 'success', content: 'Thing created' }];
+    flashCase.handTo = TARGET_PATH;
+    flashCase.thenTo = undefined;
+    flashCase.usePageFlash = usePageFlash;
+    // Reduced motion, a setting of the user's: Cloudscape then adds and removes an item at once, where it otherwise
+    // waits for the end of a CSS transition, which jsdom never runs. What is shown afterwards is the same.
+    vi.stubGlobal('matchMedia', (query: string) => {
+      const list = scheme.matchMedia(query);
+      return query === '(prefers-reduced-motion: reduce)' ? { ...list, matches: true } : list;
+    });
+  });
+
+  afterEach(() => {
+    registry.screens.length = 0;
+    Area = AwsArea;
+  });
+
+  function choose(name: 'Act' | 'Hand over', result?: FlashResult) {
+    if (result !== undefined) {
+      flashCase.result = result;
+    }
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name }));
+    });
+  }
+
+  function flashbar(wrapper: ReturnType<typeof createWrapper>) {
+    return wrapper.findFlashbar();
+  }
+
+  /** The items shown: each one's header and content as text, `null` for no header. */
+  function items(wrapper: ReturnType<typeof createWrapper>): [string | null, string][] {
+    return (flashbar(wrapper)?.findItems() ?? []).map((item) => [
+      item.findHeader()?.getElement().textContent || null,
+      item.findContent()?.getElement().textContent ?? '',
+    ]);
+  }
+
+  function expectNoFlash(wrapper: ReturnType<typeof createWrapper>) {
+    expect(flashbar(wrapper)).toBeNull();
+    expect(document.querySelector('.aws-area-content [data-itemid]')).toBeNull();
+    expect(screen.queryByRole('list', { name: 'Notifications' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull();
+    expect(screen.getByRole('status').textContent).toBe('');
+  }
+
+  function notice(): HTMLElement {
+    return screen.getByRole('region', { name: 'Local emulator notice' });
+  }
+
+  function h1(): HTMLElement {
+    return screen.getByRole('heading', { level: 1 });
+  }
+
+  /** The accessible name of a Tab stop: its `aria-label`, else its text. */
+  function stopName(stop: HTMLElement): string {
+    return stop.getAttribute('aria-label') ?? (stop.textContent ?? '').trim();
+  }
+
+  it("a screen that shows no result: no flash region, no element of it, no landmark and no Tab stop between the notice's close control and the page", () => {
+    const { wrapper } = open(FLASHES_PATH);
+    const close = within(notice()).getByRole('button', { name: 'Close the local emulator notice' });
+
+    expectNoFlash(wrapper);
+    const stops = tabStops();
+    expect(stops[stops.indexOf(close) + 1]).toBe(screen.getByRole('button', { name: 'Act' }));
+    // Between the notice and the h1 lies no element of any flash: the notice's holder is followed by the page's.
+    const between = [...document.querySelectorAll('*')].filter(
+      (element) =>
+        follows(notice(), element) &&
+        follows(element, h1()) &&
+        !element.contains(notice()) &&
+        !element.contains(h1()) &&
+        !notice().contains(element),
+    );
+    expect(between).toEqual([]);
+    const landmarks = screen.queryAllByRole('region').map((region) => region.getAttribute('aria-label') ?? '');
+    expect(landmarks.filter((name) => name !== 'Local emulator notice')).toHaveLength(1);
+  });
+
+  it('a screen shows a success result of one item: inside the content target, after the emulator line and the notice and before the h1, with a control named "Dismiss"', () => {
+    const { wrapper } = open(FLASHES_PATH);
+    choose('Act');
+    act(() => {
+      focusContent?.();
+    });
+    const target = document.activeElement as HTMLElement;
+    const flash = flashbar(wrapper)?.getElement() as HTMLElement;
+
+    expect(items(wrapper)).toEqual([[null, 'Thing created']]);
+    expect(flashbar(wrapper)?.findItems()[0]?.findDismissButton()?.getElement()).toHaveAccessibleName('Dismiss');
+    expect(target).toHaveAccessibleName('Flashes');
+    expect(target).toContainElement(flash);
+    expect(follows(emulatorLine(), flash)).toBe(true);
+    expect(follows(notice(), flash)).toBe(true);
+    expect(follows(flash, h1())).toBe(true);
+  });
+
+  it("Tab from the breadcrumbs while a flash is shown, the notice open: the line's controls, the notice's close control, the flash's \"Dismiss\", then the page's first control", async () => {
+    const user = userEvent.setup();
+    const { wrapper } = open(FLASHES_PATH);
+    choose('Act');
+    const crumbs = wrapper.findBreadcrumbGroup()?.getElement() as HTMLElement;
+    const lastCrumbLink = [...crumbs.querySelectorAll<HTMLElement>('a[href]')].at(-1) as HTMLElement;
+    lastCrumbLink.focus();
+
+    const names: string[] = [];
+    for (let step = 0; step < 4; step += 1) {
+      await user.tab();
+      names.push(stopName(document.activeElement as HTMLElement));
+    }
+    expect(names).toEqual(['About the local emulator', 'Close the local emulator notice', 'Dismiss', 'Act']);
+  });
+
+  it('"Dismiss" chosen: the flash is gone and the region with it', () => {
+    const { wrapper } = open(FLASHES_PATH);
+    choose('Act');
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    });
+
+    expectNoFlash(wrapper);
+  });
+
+  const THREE: FlashResult = [
+    { type: 'success', content: 'Deleted 1 thing' },
+    { type: 'error', header: 'Failed to delete thing-a', content: 'AccessDenied' },
+    { type: 'error', header: 'Failed to delete thing-b', content: 'NotFound' },
+  ];
+
+  it('a result of three items of one action, one success and two errors: the three in the order given', () => {
+    const { wrapper } = open(FLASHES_PATH);
+    choose('Act', THREE);
+
+    expect(items(wrapper)).toEqual([
+      [null, 'Deleted 1 thing'],
+      ['Failed to delete thing-a', 'AccessDenied'],
+      ['Failed to delete thing-b', 'NotFound'],
+    ]);
+    expect(screen.getAllByRole('button', { name: 'Dismiss' })).toHaveLength(3);
+  });
+
+  it('"Dismiss" on the second of them: that item alone is gone', () => {
+    const { wrapper } = open(FLASHES_PATH);
+    choose('Act', THREE);
+    act(() => {
+      fireEvent.click(screen.getAllByRole('button', { name: 'Dismiss' })[1] as HTMLElement);
+    });
+
+    expect(items(wrapper)).toEqual([
+      [null, 'Deleted 1 thing'],
+      ['Failed to delete thing-b', 'NotFound'],
+    ]);
+  });
+
+  it("a second result while a result of several items is shown: only the second result's items", () => {
+    const { wrapper } = open(FLASHES_PATH);
+    choose('Act', THREE);
+    choose('Act', [{ type: 'info', content: 'Nothing to delete' }]);
+
+    expect(items(wrapper)).toEqual([[null, 'Nothing to delete']]);
+  });
+
+  it('an item with a header and a content shows both; an item without a header shows its content alone', () => {
+    const { wrapper } = open(FLASHES_PATH);
+    choose('Act', [
+      { type: 'success', header: 'Thing created', content: 'thing-a is ready' },
+      { type: 'success', content: 'thing-b is ready' },
+    ]);
+
+    const [first, second] = flashbar(wrapper)?.findItems() ?? [];
+    expect(first?.findHeader()?.getElement()).toHaveTextContent('Thing created');
+    expect(first?.findContent()?.getElement()).toHaveTextContent('thing-a is ready');
+    expect(second?.findHeader()?.getElement().textContent ?? '').toBe('');
+    expect(second?.findContent()?.getElement()).toHaveTextContent('thing-b is ready');
+  });
+
+  it('an item of each type: the error item is announced once as an alert, each other one once as a status', () => {
+    const { wrapper } = open(FLASHES_PATH);
+    choose('Act', [
+      { type: 'success', content: 'Saved one' },
+      { type: 'error', content: 'Failed two' },
+      { type: 'info', content: 'Noted three' },
+      { type: 'warning', content: 'Careful four' },
+    ]);
+
+    const alerts = screen.getAllByRole('alert');
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toHaveTextContent('Failed two');
+    expect(flashbar(wrapper)?.getElement()).toContainElement(alerts[0] as HTMLElement);
+    const status = screen.getByRole('status');
+    const said = status.textContent ?? '';
+    expect(said).toBe('Success Saved one Info Noted three Warning Careful four');
+    expect(said).not.toContain('Failed two');
+    // Said once: a later render of the same result, a dismissal, says nothing more.
+    act(() => {
+      fireEvent.click(screen.getAllByRole('button', { name: 'Dismiss' })[0] as HTMLElement);
+    });
+    expect(screen.getByRole('status').textContent).toBe(said);
+    expect(screen.getAllByRole('alert')).toHaveLength(1);
+  });
+
+  it('an item whose header and content hold markup from the emulator: shown as text, no element created from it', () => {
+    const { wrapper } = open(FLASHES_PATH);
+    choose('Act', [
+      { type: 'error', header: '<b>bold</b>', content: '<img src=x onerror=alert(1)>' },
+      { type: 'success', header: '<i>it</i>', content: '<script>x</script>' },
+    ]);
+
+    expect(items(wrapper)).toEqual([
+      ['<b>bold</b>', '<img src=x onerror=alert(1)>'],
+      ['<i>it</i>', '<script>x</script>'],
+    ]);
+    const flash = flashbar(wrapper)?.getElement() as HTMLElement;
+    expect(flash.querySelector('b, i, img, script')).toBeNull();
+    expect(screen.getByRole('status').querySelector('b, i, img, script')).toBeNull();
+  });
+
+  it('only the query of the address changed while a result is shown: the result is still shown', async () => {
+    const { wrapper, router } = open(FLASHES_PATH);
+    choose('Act');
+    await act(() => router.navigate(`${FLASHES_PATH}?sort=name`));
+
+    expect(screen.getByTestId('query')).toHaveTextContent('?sort=name');
+    expect(items(wrapper)).toEqual([[null, 'Thing created']]);
+  });
+
+  it('the screen that shows a result left for another path of the area and opened again: no flash', async () => {
+    const { wrapper, router } = open(FLASHES_PATH);
+    choose('Act');
+    await act(() => router.navigate(ELSEWHERE_PATH));
+    expectNoFlash(wrapper);
+    await act(() => router.navigate(FLASHES_PATH));
+
+    expect(h1()).toHaveTextContent('Flashes');
+    expectNoFlash(wrapper);
+  });
+
+  it("a screen hands a result to another screen's path and leads there: the result is shown on that screen", () => {
+    const { wrapper, router } = open(FLASHES_PATH);
+    choose('Hand over');
+
+    expect(router.state.location.pathname).toBe(TARGET_PATH);
+    expect(h1()).toHaveTextContent('Target');
+    expect(items(wrapper)).toEqual([[null, 'Thing created']]);
+    expect(screen.getByRole('status')).toHaveTextContent('Success Thing created');
+  });
+
+  it('a result handed to a path, and the next change of path goes to a different one: no flash there, and none on the handed path opened afterwards', async () => {
+    const { wrapper, router } = open(FLASHES_PATH);
+    flashCase.thenTo = ELSEWHERE_PATH;
+    choose('Hand over');
+
+    expect(router.state.location.pathname).toBe(ELSEWHERE_PATH);
+    expectNoFlash(wrapper);
+    await act(() => router.navigate(TARGET_PATH));
+    expect(h1()).toHaveTextContent('Target');
+    expectNoFlash(wrapper);
+  });
+
+  it('after a handed result was shown, that screen left and opened again: no flash', async () => {
+    const { wrapper, router } = open(FLASHES_PATH);
+    choose('Hand over');
+    expect(items(wrapper)).toHaveLength(1);
+    await act(() => router.navigate(ELSEWHERE_PATH));
+    await act(() => router.navigate(TARGET_PATH));
+
+    expect(h1()).toHaveTextContent('Target');
+    expectNoFlash(wrapper);
+  });
+
+  it('the area\'s index, a "no screen yet" page and the area\'s "Page not found" after a screen showed a result: none shows a flash', async () => {
+    const { wrapper, router } = open(FLASHES_PATH);
+    choose('Act');
+    for (const [path, name] of PAGES) {
+      await act(() => router.navigate(path));
+      expect(h1()).toHaveTextContent(name);
+      expectNoFlash(wrapper);
+    }
+    // Nor does a result handed to one of them.
+    await act(() => router.navigate(FLASHES_PATH));
+    flashCase.handTo = '/aws';
+    choose('Hand over');
+    expect(h1()).toHaveTextContent(AWS);
+    expectNoFlash(wrapper);
+  });
+
+  it('a screen shows a result, then the app rendered afresh at the same path, as a reload of the document: no flash, and local and session storage hold nothing new', async () => {
+    const stored = () => [
+      Object.keys(localStorage).map((key) => [key, localStorage.getItem(key)]),
+      Object.keys(sessionStorage).map((key) => [key, sessionStorage.getItem(key)]),
+    ];
+    const before = stored();
+    const first = open(FLASHES_PATH);
+    choose('Act');
+    expect(items(first.wrapper)).toHaveLength(1);
+    first.unmount();
+
+    vi.resetModules();
+    flashCase.usePageFlash = (await import('./components/page-flash')).usePageFlash;
+    Area = (await import('./index')).default;
+    const { wrapper } = open(FLASHES_PATH);
+
+    expect(h1()).toHaveTextContent('Flashes');
+    expectNoFlash(wrapper);
+    expect(stored()).toEqual(before);
   });
 });

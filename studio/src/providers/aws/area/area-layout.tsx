@@ -13,12 +13,15 @@ import { areaPage, areaPageTitle, type AreaPage } from './area-page';
 import { AreaRootContext } from './area-root';
 import { AREA_ROOT_CLASS } from './styles/root-class';
 import { useColourMode } from './colour-mode';
+import { AreaFlash, FlashAnnouncer } from './components/area-flash';
 import { ContentTarget } from './components/content-target';
 import type { AreaConnection } from './components/emulator-line';
 import { EmulatorLineAndNotice } from './components/local-notice';
+import { PageFlashContext } from './components/page-flash';
 import { PageHelpContext } from './components/page-help';
 import { PageResourcesContext, type PageResources } from './components/page-resources';
 import { screenCrumbs } from './screen-paths';
+import { useAreaFlash } from './components/use-area-flash';
 import { useFollow } from './components/use-follow';
 import { IndexPage } from './pages/index-page';
 import { NoScreenPage } from './pages/no-screen-page';
@@ -132,7 +135,9 @@ function PageContent({ page, connection }: { page: AreaPage; connection: AreaCon
  * base. It names its content target to Studio and moves focus to it after a route change. The content target holds
  * the emulator line, the local-emulator notice when the page names its resources, then the page (requirement R4.8),
  * so what is read first after a move is that this is a local emulator and not AWS. A page names its resources with
- * `useShowsResources` (R5); the area's own pages name none and carry neither the notice nor the (i) control.
+ * `useShowsResources` (R5); the area's own pages name none and carry neither the notice nor the (i) control. After
+ * the notice and before the page, the area's flash shows the result of an action a screen's page gives it with
+ * `usePageFlash`, or hands to the page it leads to; with no result it renders nothing (issue 386, R5).
  *
  * The area is English in every language of Studio (issue #17, R7): its root says so with `lang="en"`, and Cloudscape's
  * locale is `en` for everything it renders, whatever the document's `lang` and the browser's languages, so a date, a
@@ -176,6 +181,9 @@ export function AreaLayout({
 
   // What the page shows of the emulator, as it names it; the notice's open state outlives the page (R5.3).
   const [resources, setResources] = useState<PageResources | null>(null);
+
+  // The result a screen's page shows of an action, or hands to the page it leads to (issue 386, R5).
+  const flash = useAreaFlash(pathname, routeChanges, page.kind === 'screen');
 
   // The help panel of a screen that gives help (issue 56, R5.6): open for the visit it was opened on, so a route
   // change closes it. Opened by the screen ("Info"), it takes focus and gives it back to the opener when closed;
@@ -238,17 +246,26 @@ export function AreaLayout({
             }
             navigation={<SideNavigation {...navigation(page)} onFollow={handleFollow} />}
             content={
-              // One target per path, so a route change between two paths of the same page focuses a new element.
-              <ContentTarget key={pathname} targetRef={target}>
-                <SpaceBetween size="m">
-                  <EmulatorLineAndNotice connection={connection} resources={resources} />
-                  <PageResourcesContext value={setResources}>
-                    <PageHelpContext value={openHelp}>
-                      <PageContent page={page} connection={connection} />
-                    </PageHelpContext>
-                  </PageResourcesContext>
-                </SpaceBetween>
-              </ContentTarget>
+              <>
+                {/* The flash's announcer outlives the path, so a result handed over is heard on the page it leads to. */}
+                <FlashAnnouncer announcement={flash.announcement} />
+                {/* One target per path, so a route change between two paths of the same page focuses a new element. */}
+                <ContentTarget key={pathname} targetRef={target}>
+                  <SpaceBetween size="m">
+                    <EmulatorLineAndNotice connection={connection} resources={resources} />
+                    {flash.shown !== null && (
+                      <AreaFlash result={flash.shown} onDismiss={flash.dismiss} onAnnounce={flash.announce} />
+                    )}
+                    <PageResourcesContext value={setResources}>
+                      <PageFlashContext value={flash.pageFlash}>
+                        <PageHelpContext value={openHelp}>
+                          <PageContent page={page} connection={connection} />
+                        </PageHelpContext>
+                      </PageFlashContext>
+                    </PageResourcesContext>
+                  </SpaceBetween>
+                </ContentTarget>
+              </>
             }
           />
         </AreaRootContext>
