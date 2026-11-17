@@ -304,31 +304,48 @@ test('studio.s3-bucket-page-controls-lead-to-their-routes', async ({ ctx, page }
     await expectBucketPage(page, name);
   }
 
+  /** Every control of the first line: the five tabs, the twelve section buttons, then "Properties". */
+  const controls = OTHER_TABS.length + SECTION_BUTTONS.length + 1;
+  /** The controls pressed by the last `pressEach`, so the second line knows its Given held. */
+  let pressed = 0;
+
+  /** Presses each control in turn from the bucket's page, `check` after each press, and goes back after each. */
+  async function pressEach(check: (what: string, path: string) => Promise<void>): Promise<void> {
+    pressed = 0;
+    await openBucketPage(page, name);
+    await markPage(page);
+    for (const { tab: label, slug } of OTHER_TABS) {
+      await tab(page, label).click(ACTION);
+      pressed++;
+      await check(`the tab "${label}"`, tabPath(name, slug));
+      await back();
+    }
+    for (const { section, button, path } of SECTION_BUTTONS) {
+      await sectionButton(page, section, button).click(ACTION);
+      pressed++;
+      await check(`"${button}" of "${section}"`, path(name));
+      await back();
+    }
+    await tab(page, PROPERTIES).click(ACTION);
+    pressed++;
+    await check(`the tab "${PROPERTIES}"`, propertiesPath(name));
+    await expectBucketPage(page, name);
+  }
+
   await lines.line(
     'On a bucket\'s page, each of the tabs "Objects", "Metadata", "Permissions", "Metrics", "Management", each "Edit", "Create configuration" and "Create event notification" → the address of R10 for that bucket, without a document reload; "Properties" → `/aws/s3/buckets/<name>/properties` and the page',
     async () => {
-      await openBucketPage(page, name);
-      await markPage(page);
-      for (const { tab: label, slug } of OTHER_TABS) {
-        await tab(page, label).click(ACTION);
-        await expect(page, `the tab "${label}"`).toHaveURL(addressOf(tabPath(name, slug)));
-        expect(await stillSamePage(page), `"${label}": no document was loaded`).toBe(true);
-        await back();
-      }
-      for (const { section, button, path } of SECTION_BUTTONS) {
-        await sectionButton(page, section, button).click(ACTION);
-        await expect(page, `"${button}" of "${section}"`).toHaveURL(addressOf(path(name)));
-        expect(await stillSamePage(page), `"${button}" of "${section}": no document was loaded`).toBe(true);
-        await back();
-      }
-      await tab(page, PROPERTIES).click(ACTION);
-      await expect(page, `the tab "${PROPERTIES}"`).toHaveURL(addressOf(propertiesPath(name)));
-      await expectBucketPage(page, name);
-      expect(await stillSamePage(page), `"${PROPERTIES}": no document was loaded`).toBe(true);
+      await pressEach(async (what, path) => {
+        await expect(page, what).toHaveURL(addressOf(path));
+        expect(await stillSamePage(page), `${what}: no document was loaded`).toBe(true);
+      });
     },
   );
 
   await lines.line("Afterwards direct reads of the bucket's properties return what they returned before", async () => {
+    // The Given: every control was pressed, whether or not the line before held.
+    if (pressed < controls) await pressEach(async () => undefined);
+    expect(pressed, 'controls pressed').toBe(controls);
     expect(await bucketPropertiesDirect(ctx, port, name), `direct reads of ${name}`).toEqual(before);
   });
 

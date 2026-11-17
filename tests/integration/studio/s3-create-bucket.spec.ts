@@ -218,7 +218,10 @@ test('studio.s3-create-bucket-stores-every-setting', async ({ ctx, page }) => {
 
   await lines.line('Each ends on the list with the success item alone', async () => {
     for (const name of [full, lock]) {
-      expect(ended.get(name), `the flash on the list after creating ${name}`).toEqual([createdItem(name)]);
+      expect(
+        ended.get(name) ?? '(the form did not end on the list)',
+        `the flash on the list after creating ${name}`,
+      ).toEqual([createdItem(name)]);
     }
   });
 
