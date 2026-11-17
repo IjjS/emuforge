@@ -1,46 +1,51 @@
-// The product checks that read files and start no form (issue 34, test-criteria.md): Compose's rendered configuration
-// of the product form, the gateway's configuration file and the image's build context; and the README's "Start" and
-// "Develop" parts against the command lines the product checks run (`COMMANDS` in `support/product.ts`, R20).
+// The product checks that read files and start no form (issues 34 and 437, test-criteria.md): Compose's rendered
+// configuration of the one form and the gateway's configuration file; the README's "Start", "Ports" and "Run the
+// emulator" parts against the command lines the product checks run (`LINES` and `KEEP_START_LINE` in
+// `support/product.ts`, #437 R16); and the line endings of the tracked files an image copies or a container reads.
 //
 // How the README check reads `README.md`:
-// - A part is a heading and everything up to the next heading of the same or a higher level.
-// - In the part headed "Start", a situation is either a heading below "Start" whose text begins with its number
-//   (`### 3. From a clone, …`, `### Situation 3: …`), its part being its text, or a table row whose first cell
-//   begins with its number, the row being its text.
+// - A part is a heading and everything up to the next heading of the same or a higher level. "Start" is read without
+//   the part headed "Ports" when that part is below it, so "Ports" is read on its own and the lines that set the
+//   ports are not lines of "Start".
+// - A numbered situation is a heading below "Start" whose text begins with a number (`### 3. From a clone, …`,
+//   `### Situation 3: …`), or a table row whose first cell begins with one.
 // - "In code" is an inline code span or a line of a fenced code block (a leading `$ ` is not part of the line).
+// - A `docker compose` line is a line in code that holds `docker compose` followed by an argument anywhere in it
+//   (assignments, `cd … &&` or `$env:…;` before it included).
 // - A variable is named "with" its default when one paragraph, list item or table row holds both.
-// - A path is a word of code that holds a `/`, is relative (no leading `/`, `~` or `$`) and holds no `<`, `:` or
-//   `=`; it and every relative link target are resolved from the checkout's root.
-//
-// The configuration check reads the root file, on both platforms (issue 54 R1). The README check compares the README
-// with the one place of `support/product.ts`: the plain commands of both platforms, the preparatory lines and the
-// wrapper's lines (issue 54 R15 to R17).
+// - A sentence is a run of prose, code removed, that ends with `.`, `!` or `?`, or at a blank line.
 //
 // `engine.product-configuration-names-loopback-and-the-emulator-only`,
-// `engine.product-readme-gives-the-commands-the-checks-run`.
+// `engine.product-readme-gives-the-commands-the-checks-run`, `engine.product-tracked-files-are-lf-in-every-checkout`.
 
+import { execFile } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { expect, test } from './support';
+import { EnvError, expect, test } from './support';
 import { runAt } from './support/product-inspect';
 import {
-  COMMANDS,
   commandLine,
-  composeArgs,
+  ENGINE_FILES_DIR,
+  EMULATOR_FILES_DIR,
   Form,
-  onePlaceLines,
-  PREPARATORY_LINES,
-  START_BOUND_MS,
+  KEEP_START_LINE,
+  LINES,
+  SERVICES,
+  startLines,
   STOP_BOUND_MS,
   tail,
-  WRAPPER,
-  type Situation,
 } from './support/product';
 
-/** The gateway's configuration file and the image's ignore file (design section 2). */
+/** The gateway's configuration file (design section 2.2). */
 const HAPROXY_CFG = 'infra/emuforge/haproxy.cfg';
-const DOCKERFILE_IGNORE = 'infra/emuforge/Dockerfile.dockerignore';
+
+/** The files of the forms before issue 437, which the one form removes (#437 R13). */
+const REMOVED_FILES = ['docker-compose.linux.yml', 'compose'];
+
+/** The gateway's own ports inside the form (#437 R12). */
+const GATEWAY_PORTS = [18296, 18297];
 
 const PORT_VARIABLES: [string, string][] = [
   ['EMULATOR_PORT', '9297'],
@@ -50,17 +55,18 @@ const PORT_VARIABLES: [string, string][] = [
 
 interface Service {
   command?: string[] | null;
-  entrypoint?: string[] | null;
   environment?: Record<string, string | null>;
-  ports?: { host_ip?: string; published?: string | number; target?: number }[];
+  ports?: { host_ip?: string; published?: string | number; target?: number }[] | null;
   pull_policy?: string;
-  volumes?: {
-    type?: string;
-    source?: string;
-    target?: string;
-    read_only?: boolean;
-  }[];
+  volumes?: { type?: string; source?: string; target?: string; read_only?: boolean }[] | null;
   container_name?: string;
+  profiles?: string[] | null;
+  user?: string;
+  network_mode?: string;
+  healthcheck?: { test?: string[] | null; disable?: boolean } | null;
+  cap_drop?: string[] | null;
+  security_opt?: string[] | null;
+  depends_on?: Record<string, { condition?: string }> | null;
 }
 
 interface Rendered {
@@ -68,123 +74,235 @@ interface Rendered {
   services?: Record<string, Service>;
 }
 
-function base(file: string | undefined): string {
-  return path.basename(file ?? '');
-}
-
 test('engine.product-configuration-names-loopback-and-the-emulator-only', async ({ ctx }) => {
-  test.setTimeout(START_BOUND_MS);
-  // The ports and names of a form; nothing is started. The root file's commands on both platforms (issue 54 R1).
-  const form = await Form.create(ctx, { situation: 3, commands: 'desktop' });
+  test.setTimeout(10 * STOP_BOUND_MS);
+  // The ports and names of a form; nothing is started.
+  const form = await Form.create(ctx);
   const env = form.env();
-  const run = (args: string[], e: Record<string, string>) => runAt(ctx, ctx.checkout, args, e, STOP_BOUND_MS);
-  const renderAt = async (args: string[], e: Record<string, string>) => {
-    const result = await run(args, e);
+  const render = async (what: string, args: string[], e: Record<string, string>) => {
+    const result = await runAt(ctx, ctx.checkout, args, e, STOP_BOUND_MS);
     let rendered: Rendered | null = null;
     try {
       rendered = result.code === 0 ? (JSON.parse(result.stdout) as Rendered) : null;
     } catch {
       rendered = null;
     }
-    expect(rendered, `${result.line}: the rendered configuration; output:\n${tail(result)}`).not.toBeNull();
-    return rendered ?? {};
+    expect(
+      rendered,
+      `${what}: ${result.line}: exit 0 and a rendered configuration; output:\n${tail(result)}`,
+    ).not.toBeNull();
+    return { rendered: rendered ?? {}, stdout: result.stdout };
   };
-  const configOf = (situation: Situation) => composeArgs('desktop', situation, 'config', '--format', 'json');
-  const plain = await renderAt(configOf(3), env);
-  const profiled = await renderAt(configOf(4), env);
+  const config = ['docker', 'compose', 'config', '--format', 'json'];
 
-  // Every `ports` entry of every service, with and without the profile → host address 127.0.0.1.
-  const off: string[] = [];
-  for (const [which, rendered] of [
-    ['without the profile', plain],
-    ['with the profile', profiled],
-  ] as const) {
-    for (const [name, service] of Object.entries(rendered.services ?? {})) {
-      for (const p of service.ports ?? []) {
-        if (p.host_ip !== '127.0.0.1') off.push(`${which}: ${name} ${JSON.stringify(p)}`);
-      }
-    }
-  }
-  expect(off, 'ports entries whose host address is not 127.0.0.1').toEqual([]);
-
-  // The services: gateway, engine, studio, and with the profile aws-emulator; each `pull_policy: build`.
-  expect(Object.keys(plain.services ?? {}).sort(), 'the services without the profile').toEqual([
-    'engine',
-    'gateway',
-    'studio',
-  ]);
-  expect(Object.keys(profiled.services ?? {}).sort(), 'the services with the profile').toEqual([
-    'aws-emulator',
-    'engine',
-    'gateway',
-    'studio',
-  ]);
-  for (const [name, service] of Object.entries(profiled.services ?? {})) {
-    expect(service.pull_policy, `pull_policy of ${name}`).toBe('build');
-  }
-
-  // The commands of design 2.2, as argument arrays in the Compose file and with no entrypoint of their own: the
-  // gateway runs haproxy on haproxy.cfg, the engine emuforge-server, Studio `bun --no-install …/scripts/serve.ts`.
+  // `docker compose config` with the form's variables → exit 0; the services are exactly gateway, aws-emulator,
+  // engine and studio, none with a profile (a rendering with every profile holds no other service).
+  const { rendered: plain } = await render("the form's variables", config, env);
   const services = plain.services ?? {};
-  const gateway = services.gateway?.command ?? [];
-  const at = gateway.indexOf('-f');
+  expect(Object.keys(services).sort(), 'the services of the rendering').toEqual([...SERVICES].sort());
+  const { rendered: everyProfile } = await render(
+    'every profile',
+    ['docker', 'compose', '--profile', '*', 'config', '--format', 'json'],
+    env,
+  );
+  expect(Object.keys(everyProfile.services ?? {}).sort(), 'the services of the rendering with every profile').toEqual(
+    [...SERVICES].sort(),
+  );
   expect(
-    {
-      program: base(gateway[0]),
-      config: at >= 0 ? base(gateway[at + 1]) : null,
-    },
-    `the gateway's command ${JSON.stringify(gateway)}`,
-  ).toEqual({ program: 'haproxy', config: 'haproxy.cfg' });
-  const engine = services.engine?.command ?? [];
-  expect(engine.map(base), `the engine's command ${JSON.stringify(engine)}`).toEqual(['emuforge-server']);
-  const studio = services.studio?.command ?? [];
-  expect(
-    {
-      program: base(studio[0]),
-      noInstall: studio[1],
-      script: studio.length === 3 && studio[2].endsWith('/scripts/serve.ts'),
-    },
-    `Studio's command ${JSON.stringify(studio)}`,
-  ).toEqual({ program: 'bun', noInstall: '--no-install', script: true });
-  for (const name of ['gateway', 'engine', 'studio']) {
-    expect(services[name]?.entrypoint ?? null, `the entrypoint of ${name}`).toBeNull();
-  }
-  const composeFile = fs.existsSync(path.join(ctx.checkout, 'docker-compose.yml'))
-    ? fs.readFileSync(path.join(ctx.checkout, 'docker-compose.yml'), 'utf8')
-    : '';
-  const commandLines = composeFile
-    .split('\n')
-    .map((line, i) => ({
-      line: line.replace(/\s+#.*$/, ''),
-      next: composeFile.split('\n')[i + 1] ?? '',
-    }))
-    .filter(({ line }) => /^\s*command:/.test(line));
-  expect(commandLines.length, 'command keys in docker-compose.yml').toBeGreaterThan(0);
-  expect(
-    commandLines
-      .filter(({ line, next }) => {
-        const value = line.replace(/^\s*command:\s*/, '');
-        return !(value.startsWith('[') || (value === '' && /^\s*-\s/.test(next)));
-      })
-      .map(({ line }) => line.trim()),
-    'command keys of docker-compose.yml that are not an argument array',
+    Object.entries(everyProfile.services ?? {})
+      .filter(([, s]) => (s.profiles ?? []).length > 0)
+      .map(([name, s]) => `${name}: ${JSON.stringify(s.profiles)}`),
+    'services with a profile',
   ).toEqual([]);
 
-  // No host path but engine's one: a read-only bind of $HOME/.aws/emulator.
-  const hostDir = path.join(form.home, '.aws', 'emulator');
-  expect(services.gateway?.volumes ?? [], "the gateway's volumes").toEqual([]);
-  expect(services.studio?.volumes ?? [], "Studio's volumes").toEqual([]);
-  const volumes = services.engine?.volumes ?? [];
-  expect(
-    volumes.map((v) => ({
+  // The mounts → the engine one, the volume `emulator`, read-only, at its files' folder; the emulator one, the same
+  // volume, at its files' folder; the others none; no mount of type bind.
+  const mounts = (name: string) =>
+    (services[name]?.volumes ?? []).map((v) => ({
       type: v.type,
       source: v.source,
+      target: v.target,
       read_only: v.read_only === true,
-    })),
-    "the engine's volumes",
-  ).toEqual([{ type: 'bind', source: hostDir, read_only: true }]);
+    }));
+  expect(mounts('engine'), "the engine's mounts").toEqual([
+    { type: 'volume', source: 'emulator', target: ENGINE_FILES_DIR, read_only: true },
+  ]);
+  expect(
+    mounts('aws-emulator').map(({ type, source, target }) => ({ type, source, target })),
+    "the emulator's mounts",
+  ).toEqual([{ type: 'volume', source: 'emulator', target: EMULATOR_FILES_DIR }]);
+  expect(mounts('gateway'), "the gateway's mounts").toEqual([]);
+  expect(mounts('studio'), "Studio's mounts").toEqual([]);
+  expect(
+    Object.entries(services).flatMap(([name, s]) =>
+      (s.volumes ?? []).filter((v) => v.type === 'bind').map((v) => `${name}: ${JSON.stringify(v)}`),
+    ),
+    'mounts of type bind',
+  ).toEqual([]);
 
-  // The environment of gateway, engine and studio → the three ports and the container's HOME, nothing else.
+  // The ports → exactly two, on the gateway, host address 127.0.0.1, to 18296 and 18297.
+  const ports = Object.entries(services).flatMap(([name, s]) =>
+    (s.ports ?? []).map((p) => ({ service: name, host_ip: p.host_ip ?? '', target: p.target })),
+  );
+  expect(
+    ports.sort((a, b) => (a.target ?? 0) - (b.target ?? 0)),
+    'the published ports of the rendering',
+  ).toEqual(GATEWAY_PORTS.map((target) => ({ service: 'gateway', host_ip: '127.0.0.1', target })));
+
+  // The emulator's service → user 1000:0, command `-p <EMULATOR_PORT> -t off`, the gateway's network namespace, a
+  // healthcheck, every capability dropped, no-new-privileges, no container_name, pull_policy build.
+  const emulator = services['aws-emulator'] ?? {};
+  expect(
+    {
+      user: emulator.user ?? null,
+      command: emulator.command ?? null,
+      network_mode: emulator.network_mode ?? null,
+      healthcheck:
+        !!emulator.healthcheck && emulator.healthcheck.disable !== true && (emulator.healthcheck.test ?? []).length > 0,
+      cap_drop: emulator.cap_drop ?? null,
+      no_new_privileges: (emulator.security_opt ?? []).includes('no-new-privileges:true'),
+      container_name: emulator.container_name ?? null,
+      pull_policy: emulator.pull_policy ?? null,
+    },
+    "the emulator's service",
+  ).toEqual({
+    user: '1000:0',
+    command: ['-p', String(form.emulatorPort), '-t', 'off'],
+    network_mode: 'service:gateway',
+    healthcheck: true,
+    cap_drop: ['ALL'],
+    no_new_privileges: true,
+    container_name: null,
+    pull_policy: 'build',
+  });
+
+  // The engine's service → it depends on aws-emulator being healthy.
+  expect(
+    services.engine?.depends_on?.['aws-emulator']?.condition ?? null,
+    "the engine's dependency on aws-emulator",
+  ).toBe('service_healthy');
+
+  // HOME removed and USERPROFILE a Windows path → exit 0 and the same rendering, in which that path does not occur.
+  // Without HOME, Docker's own settings are where they are with it (DOCKER_CONFIG).
+  const withoutHome: Record<string, string> = {
+    ...env,
+    DOCKER_CONFIG: env.DOCKER_CONFIG ?? path.join(ctx.home, '.docker'),
+  };
+  delete withoutHome.HOME;
+  const profileName = `emuforge-it-userprofile-${randomBytes(4).toString('hex')}`;
+  const windows = await render('HOME removed, USERPROFILE a Windows path', config, {
+    ...withoutHome,
+    USERPROFILE: `C:\\Users\\${profileName}`,
+  });
+  expect(windows.rendered, 'the rendering with USERPROFILE a Windows path and no HOME').toEqual(plain);
+  expect(windows.stdout.includes(profileName), `the rendering names the USERPROFILE folder ${profileName}`).toBe(false);
+
+  // Neither HOME nor USERPROFILE → exit 0 and the same rendering.
+  const neither = await render('neither HOME nor USERPROFILE', config, withoutHome);
+  expect(neither.rendered, 'the rendering with neither HOME nor USERPROFILE').toEqual(plain);
+
+  // The gateway's configuration file → no host.docker.internal, no resolvers section, no host name in a server line,
+  // exactly the two frontends on 18296 and 18297; and as the check asserts it otherwise (issue 34): the server lines
+  // to 127.0.0.1, each on a port of one of the three variables; mode tcp throughout; no ssl, verify or resolvers;
+  // noreuseport in global.
+  const cfgPath = path.join(ctx.checkout, HAPROXY_CFG);
+  expect(fs.existsSync(cfgPath), `${HAPROXY_CFG} exists`).toBe(true);
+  const cfg = fs.existsSync(cfgPath) ? fs.readFileSync(cfgPath, 'utf8') : '';
+  expect(cfg.includes('host.docker.internal'), `${HAPROXY_CFG} names host.docker.internal`).toBe(false);
+  const lines = cfg
+    .split('\n')
+    .map((l) => l.replace(/#.*$/, '').trim())
+    .filter((l) => l !== '');
+  expect(
+    lines.filter((l) => /^resolvers\b/.test(l)),
+    `resolvers sections of ${HAPROXY_CFG}`,
+  ).toEqual([]);
+  const servers = lines
+    .filter((l) => /^server\s/.test(l))
+    .map((l) => {
+      const address = (l.split(/\s+/)[2] ?? '').replace(/"/g, '');
+      const colon = address.lastIndexOf(':');
+      return { host: address.slice(0, colon), port: address.slice(colon + 1) };
+    });
+  expect(
+    servers.filter((s) => !/^\d{1,3}(\.\d{1,3}){3}$/.test(s.host)).map((s) => `${s.host}:${s.port}`),
+    `server lines of ${HAPROXY_CFG} whose address is a host name`,
+  ).toEqual([]);
+  expect(
+    servers.map((s) => s.host),
+    `the server lines of ${HAPROXY_CFG}`,
+  ).toEqual(['127.0.0.1', '127.0.0.1']);
+  const variable = /^\$\{(EMULATOR_PORT|EMUFORGE_ENGINE_PORT|EMUFORGE_STUDIO_PORT)\}$/;
+  expect(
+    servers.filter((s) => !variable.test(s.port)).map((s) => `${s.host}:${s.port}`),
+    `server lines of ${HAPROXY_CFG} whose port is not one of the three variables`,
+  ).toEqual([]);
+  // Sections, the binds of each frontend, and the mode each proxy runs in (its own `mode`, else that of the
+  // `defaults` before it).
+  let section = '';
+  let defaultsMode = '';
+  const modes: { section: string; mode: string }[] = [];
+  const frontends: { section: string; binds: string[] }[] = [];
+  let current: { section: string; mode: string } | null = null;
+  let frontend: { section: string; binds: string[] } | null = null;
+  const globalLines: string[] = [];
+  for (const l of lines) {
+    const header = /^(global|defaults|frontend|backend|listen|resolvers|peers|userlist)\b/.exec(l);
+    if (header) {
+      section = l;
+      current = null;
+      frontend = null;
+      if (header[1] === 'defaults') defaultsMode = '';
+      if (['frontend', 'backend', 'listen'].includes(header[1])) {
+        current = { section: l, mode: defaultsMode };
+        modes.push(current);
+      }
+      if (['frontend', 'listen'].includes(header[1])) {
+        frontend = { section: l, binds: [] };
+        frontends.push(frontend);
+      }
+      continue;
+    }
+    const mode = /^mode\s+(\S+)/.exec(l)?.[1];
+    if (mode && section.startsWith('defaults')) defaultsMode = mode;
+    if (mode && current) current.mode = mode;
+    const bind = /^bind\s+"?([^"\s]+)"?/.exec(l)?.[1];
+    if (bind && frontend) frontend.binds.push(bind.slice(bind.lastIndexOf(':') + 1));
+    if (section === 'global') globalLines.push(l);
+  }
+  expect(
+    frontends.map((f) => f.binds.join(',')).sort(),
+    `the frontends of ${HAPROXY_CFG}, by the ports they bind (${JSON.stringify(frontends)})`,
+  ).toEqual(GATEWAY_PORTS.map(String));
+  expect(modes.length, `proxies in ${HAPROXY_CFG}`).toBeGreaterThan(0);
+  expect(
+    modes.filter((m) => m.mode !== 'tcp').map((m) => `${m.section}: ${m.mode || 'no mode'}`),
+    `proxies of ${HAPROXY_CFG} not in mode tcp`,
+  ).toEqual([]);
+  expect(
+    lines.filter((l) => /(^|\s)(ssl|verify|resolvers)(\s|$)/.test(l)),
+    `lines of ${HAPROXY_CFG} with ssl, verify or resolvers`,
+  ).toEqual([]);
+  expect(globalLines, `the global section of ${HAPROXY_CFG}`).toContain('noreuseport');
+
+  // The checkout's files → no docker-compose.linux.yml and no compose.
+  expect(
+    REMOVED_FILES.filter((f) => fs.existsSync(path.join(ctx.checkout, f))),
+    'files of the forms before issue 437 in the checkout',
+  ).toEqual([]);
+
+  // EMULATOR_PORT, EMUFORGE_ENGINE_PORT and EMUFORGE_STUDIO_PORT set (the form's own free ports) → the project's name,
+  // the published ports and the three services' environment follow them, as the check asserts it (issue 34): the
+  // environment of gateway, engine and studio is the three ports and the container's HOME, the same HOME in the
+  // three, and the engine's mount is under that HOME.
+  expect(plain.name ?? null, 'the project name').toBe(form.project);
+  expect(
+    (services.gateway?.ports ?? []).map((p) => ({ target: p.target, published: String(p.published ?? '') })),
+    "the gateway's published ports",
+  ).toEqual([
+    { target: 18296, published: String(form.studioPort) },
+    { target: 18297, published: String(form.enginePort) },
+  ]);
   const homes = new Set<string>();
   for (const name of ['gateway', 'engine', 'studio']) {
     const environment = services[name]?.environment ?? {};
@@ -197,148 +315,12 @@ test('engine.product-configuration-names-loopback-and-the-emulator-only', async 
     ).toEqual([form.emulatorPort, form.enginePort, form.studioPort].map(String));
     homes.add(environment.HOME ?? '');
   }
-  const [home] = [...homes];
   expect([...homes], 'HOME of the three services').toHaveLength(1);
-  expect(volumes[0]?.target, "the target of the engine's bind: the container's HOME/.aws/emulator").toBe(
-    `${home}/.aws/emulator`,
-  );
-
-  // The gateway's configuration file: exactly three `server` lines, two to 127.0.0.1 and one to
-  // host.docker.internal, each on a port of one of the three variables; `mode tcp` throughout; no `ssl`, `verify` or
-  // `resolvers`; `noreuseport` in `global`.
-  const cfgPath = path.join(ctx.checkout, HAPROXY_CFG);
-  expect(fs.existsSync(cfgPath), `${HAPROXY_CFG} exists`).toBe(true);
-  const cfg = fs.existsSync(cfgPath) ? fs.readFileSync(cfgPath, 'utf8') : '';
-  const lines = cfg
-    .split('\n')
-    .map((l) => l.replace(/#.*$/, '').trim())
-    .filter((l) => l !== '');
-  const servers = lines
-    .filter((l) => /^server\s/.test(l))
-    .map((l) => {
-      const address = (l.split(/\s+/)[2] ?? '').replace(/"/g, '');
-      const colon = address.lastIndexOf(':');
-      return { host: address.slice(0, colon), port: address.slice(colon + 1) };
-    });
-  expect(servers.map((s) => s.host).sort(), `the server lines of ${HAPROXY_CFG}`).toEqual([
-    '127.0.0.1',
-    '127.0.0.1',
-    'host.docker.internal',
-  ]);
-  const variable = /^\$\{(EMULATOR_PORT|EMUFORGE_ENGINE_PORT|EMUFORGE_STUDIO_PORT)\}$/;
+  const [home] = [...homes];
   expect(
-    servers.filter((s) => !variable.test(s.port)).map((s) => `${s.host}:${s.port}`),
-    `server lines of ${HAPROXY_CFG} whose port is not one of the three variables`,
-  ).toEqual([]);
-  // Sections and the mode each proxy runs in (its own `mode`, else that of the `defaults` before it).
-  let section = '';
-  let defaultsMode = '';
-  const modes: { section: string; mode: string }[] = [];
-  let current: { section: string; mode: string } | null = null;
-  const globalLines: string[] = [];
-  for (const l of lines) {
-    const header = /^(global|defaults|frontend|backend|listen)\b/.exec(l);
-    if (header) {
-      section = l;
-      current = null;
-      if (header[1] === 'defaults') defaultsMode = '';
-      if (['frontend', 'backend', 'listen'].includes(header[1])) {
-        current = { section: l, mode: defaultsMode };
-        modes.push(current);
-      }
-      continue;
-    }
-    const mode = /^mode\s+(\S+)/.exec(l)?.[1];
-    if (mode && section.startsWith('defaults')) defaultsMode = mode;
-    if (mode && current) current.mode = mode;
-    if (section === 'global') globalLines.push(l);
-  }
-  expect(modes.length, `proxies in ${HAPROXY_CFG}`).toBeGreaterThan(0);
-  expect(
-    modes.filter((m) => m.mode !== 'tcp').map((m) => `${m.section}: ${m.mode || 'no mode'}`),
-    `proxies of ${HAPROXY_CFG} not in mode tcp`,
-  ).toEqual([]);
-  expect(
-    lines.filter((l) => /(^|\s)(ssl|verify|resolvers)(\s|$)/.test(l)),
-    `lines of ${HAPROXY_CFG} with ssl, verify or resolvers`,
-  ).toEqual([]);
-  expect(globalLines, `the global section of ${HAPROXY_CFG}`).toContain('noreuseport');
-
-  // The image's build context: a build with the checkout's root as its context and the form's ignore file lists
-  // what it received → every path under engine/ or studio/, none under engine/target, studio/node_modules,
-  // studio/dist or an output directory.
-  const ignore = path.join(ctx.checkout, DOCKERFILE_IGNORE);
-  expect(fs.existsSync(ignore), `${DOCKERFILE_IGNORE} exists`).toBe(true);
-  if (fs.existsSync(ignore)) {
-    const scratch = path.join(ctx.tmp, `context-${String(Date.now())}`);
-    const out = path.join(scratch, 'received');
-    fs.mkdirSync(scratch, { recursive: true });
-    ctx.own({
-      dispose: async () => fs.rmSync(scratch, { recursive: true, force: true }),
-    });
-    // A Dockerfile-specific ignore file is `<Dockerfile>.dockerignore` beside the Dockerfile, as the form's is.
-    const dockerfile = path.join(scratch, 'context.Dockerfile');
-    fs.writeFileSync(dockerfile, 'FROM scratch\nCOPY . /\n');
-    fs.copyFileSync(ignore, `${dockerfile}.dockerignore`);
-    const listed = await run(
-      ['docker', 'build', '--progress', 'plain', '-f', dockerfile, '--output', `type=local,dest=${out}`, ctx.checkout],
-      env,
-    );
-    expect(listed.code, `${listed.line}: exit code; output:\n${tail(listed)}`).toBe(0);
-    const received: string[] = [];
-    const walk = (dir: string) => {
-      if (!fs.existsSync(dir)) return;
-      for (const name of fs.readdirSync(dir)) {
-        const full = path.join(dir, name);
-        received.push(path.relative(out, full).split(path.sep).join('/'));
-        if (fs.lstatSync(full).isDirectory()) walk(full);
-      }
-    };
-    walk(out);
-    ctx.log(`the build context holds ${String(received.length)} paths`);
-    // A context that received nothing would hold no wrong path either; the image is built from these two.
-    expect(received, 'the build context').toEqual(expect.arrayContaining(['engine/Cargo.toml', 'studio/package.json']));
-    const under = (p: string, dir: string) => p === dir || p.startsWith(`${dir}/`);
-    expect(
-      received.filter(
-        (p) =>
-          !(under(p, 'engine') || under(p, 'studio')) ||
-          under(p, 'engine/target') ||
-          under(p, 'studio/node_modules') ||
-          under(p, 'studio/dist') ||
-          p.split('/').includes('output'),
-      ),
-      'paths of the build context outside engine/ and studio/ or under what a host build writes',
-    ).toEqual([]);
-  }
-
-  // With EMULATOR_PORT=9298 → the project name and the emulator's container name differ from those of the
-  // emulator's own Compose file for 9298.
-  const at9298: Record<string, string> = { ...env, EMULATOR_PORT: '9298' };
-  delete at9298.EMUFORGE_ENGINE_PORT;
-  delete at9298.EMUFORGE_STUDIO_PORT;
-  const product9298 = await renderAt(configOf(4), at9298);
-  const emulator9298 = await renderAt(
-    ['docker', 'compose', '-f', 'infra/aws-emulator/docker-compose.yml', 'config', '--format', 'json'],
-    Object.fromEntries(Object.entries(at9298).filter(([name]) => !name.startsWith('EMUFORGE_'))) as Record<
-      string,
-      string
-    >,
-  );
-  const names = (r: Rendered) => ({
-    project: r.name ?? '',
-    emulator: r.services?.['aws-emulator']?.container_name ?? '',
-  });
-  const [mine, theirs] = [names(product9298), names(emulator9298)];
-  ctx.log(
-    `EMULATOR_PORT=9298: the product form ${JSON.stringify(mine)}, the emulator's file ${JSON.stringify(theirs)}`,
-  );
-  expect(mine.project, 'the product form project name for 9298').not.toBe('');
-  expect(mine.emulator, "the product form's emulator container name for 9298").not.toBe('');
-  expect(mine.project, "the project name for 9298, against the emulator's file").not.toBe(theirs.project);
-  expect(mine.emulator, "the emulator's container name for 9298, against the emulator's file").not.toBe(
-    theirs.emulator,
-  );
+    services.engine?.volumes?.[0]?.target,
+    "the target of the engine's mount: the container's HOME/.aws/emulator",
+  ).toBe(`${home}/.aws/emulator`);
 });
 
 // --- README ---
@@ -362,17 +344,32 @@ function headings(lines: string[]): Heading[] {
 }
 
 /** The lines of a heading's part: from the heading to the next heading of the same or a higher level. */
-function partOf(lines: string[], all: Heading[], heading: Heading): { from: number; to: number; text: string } {
+function partOf(lines: string[], all: Heading[], heading: Heading): { from: number; to: number } {
   const next = all.find((h) => h.line > heading.line && h.level <= heading.level);
-  const to = next ? next.line : lines.length;
-  return {
-    from: heading.line,
-    to,
-    text: lines.slice(heading.line, to).join('\n'),
-  };
+  return { from: heading.line, to: next ? next.line : lines.length };
 }
 
-/** What is in code: inline code spans and the lines of fenced code blocks (a leading `$ ` dropped). */
+/** A fenced code line as the README check reads it: trimmed, a leading `$ ` dropped. */
+function codeLine(line: string): string {
+  return line.trim().replace(/^\$\s+/, '');
+}
+
+/** The fenced code blocks of a text: the non-empty lines of each. */
+function fencedBlocks(text: string): string[][] {
+  const out: string[][] = [];
+  let block: string[] | null = null;
+  for (const line of text.split('\n')) {
+    if (/^\s*(```|~~~)/.test(line)) {
+      if (block) out.push(block);
+      block = block ? null : [];
+      continue;
+    }
+    if (block && codeLine(line) !== '') block.push(codeLine(line));
+  }
+  return out;
+}
+
+/** What is in code: inline code spans and the lines of fenced code blocks. */
 function codeOf(text: string): string[] {
   const out: string[] = [];
   let fenced = false;
@@ -382,8 +379,7 @@ function codeOf(text: string): string[] {
       continue;
     }
     if (fenced) {
-      const code = line.trim().replace(/^\$\s+/, '');
-      if (code !== '') out.push(code);
+      if (codeLine(line) !== '') out.push(codeLine(line));
       continue;
     }
     for (const m of line.matchAll(/(`+)([^`]+?)\1/g)) out.push(m[2].trim());
@@ -407,20 +403,21 @@ function proseOf(text: string): string {
     .join('\n');
 }
 
-function hasFence(text: string): boolean {
-  return text.split('\n').some((line) => /^\s*(```|~~~)/.test(line));
-}
-
-/** Paragraphs, list items and table rows: the blocks a variable is named "with" its default in. */
+/** Paragraphs, list items and table rows, backticks removed: the blocks prose is read in. */
 function blocksOf(text: string): string[] {
   const out: string[] = [];
   let paragraph: string[] = [];
+  let fenced = false;
   const flush = () => {
     if (paragraph.length > 0) out.push(paragraph.join(' '));
     paragraph = [];
   };
   for (const line of text.split('\n')) {
-    if (line.trim() === '' || /^\s*(```|~~~)/.test(line)) flush();
+    if (/^\s*(```|~~~)/.test(line)) {
+      flush();
+      fenced = !fenced;
+    } else if (fenced) continue;
+    else if (line.trim() === '' || /^\s*#/.test(line)) flush();
     else if (/^\s*\|/.test(line) || /^\s*([-*+]|\d+[.)])\s/.test(line)) {
       flush();
       if (/^\s*\|/.test(line)) out.push(line);
@@ -431,245 +428,308 @@ function blocksOf(text: string): string[] {
   return out.map((b) => b.replace(/`/g, ''));
 }
 
+/** The sentences of a text's prose. */
+function sentencesOf(text: string): string[] {
+  return proseOf(text)
+    .split(/\n\s*\n/)
+    .flatMap((paragraph) => paragraph.replace(/\s+/g, ' ').split(/(?<=[.!?])\s+/))
+    .map((s) => s.trim())
+    .filter((s) => s !== '');
+}
+
 function namesVariableWithDefault(text: string, variable: string, value: string): boolean {
   return blocksOf(text).some(
     (b) => new RegExp(`\\b${variable}\\b`).test(b) && new RegExp(`(^|\\D)${value}(\\D|$)`).test(b),
   );
 }
 
-/** The situations of the "Start" part, in the order they appear: their number and their text. */
-function situationsOf(lines: string[], all: Heading[], start: Heading): { n: number; line: number; text: string }[] {
-  const part = partOf(lines, all, start);
-  const found: { n: number; line: number; text: string }[] = [];
-  const numbered = /^(?:\*\*|_)?(?:situation\s+)?([1-9])\b/i;
-  for (const h of all.filter((h) => h.line > part.from && h.line < part.to && h.level > start.level)) {
-    const m = numbered.exec(h.text);
-    if (m)
-      found.push({
-        n: Number(m[1]),
-        line: h.line,
-        text: partOf(lines, all, h).text,
-      });
+/**
+ * The numbered situations of a part, the lines of `skip` left out: headings below the part's own and table rows whose
+ * text begins with a number.
+ */
+function numberedSituations(
+  lines: string[],
+  all: Heading[],
+  start: Heading,
+  part: { from: number; to: number },
+  skip: { from: number; to: number },
+): string[] {
+  const numbered = /^(?:\*\*|_)?(?:situation\s+)?[1-9]\b/i;
+  const inPart = (i: number) => i > part.from && i < part.to && !(i >= skip.from && i < skip.to);
+  const found: string[] = [];
+  for (const h of all.filter((h) => inPart(h.line) && h.level > start.level)) {
+    if (numbered.test(h.text)) found.push(`heading: ${h.text}`);
   }
   for (let i = part.from; i < part.to; i++) {
+    if (!inPart(i)) continue;
     const row = /^\s*\|([^|]*)\|/.exec(lines[i]);
-    if (!row) continue;
-    const m = numbered.exec(row[1].trim().replace(/`/g, ''));
-    if (m) found.push({ n: Number(m[1]), line: i, text: lines[i] });
+    if (row && numbered.test(row[1].trim().replace(/`/g, ''))) found.push(`row: ${lines[i].trim()}`);
   }
-  return found.sort((a, b) => a.line - b.line);
+  return found;
 }
 
+/** A line in code that holds `docker compose` followed by an argument, whatever comes before it. */
+const COMPOSE_LINE = /(^|[\s;&|(])docker compose\s+\S/;
+
+/** A bash line `NAME=value … <command>`: its assignments and its command, or `null`. */
+function assignedLine(line: string): { names: string[]; values: string[]; command: string } | null {
+  const m = /^((?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)+)(\S.*)$/.exec(line);
+  if (!m) return null;
+  const pairs = m[1]
+    .trim()
+    .split(/\s+/)
+    .map((a) => [a.slice(0, a.indexOf('=')), a.slice(a.indexOf('=') + 1)]);
+  return { names: pairs.map((p) => p[0]), values: pairs.map((p) => p[1]), command: m[2].trim() };
+}
+
+/** A line of a code block without its trailing comment; `''` for a comment line. */
+function withoutComment(line: string): string {
+  return line.startsWith('#') ? '' : line.replace(/\s+#.*$/, '').trim();
+}
+
+/** A bash line with each leading assignment `NAME=value` spelled `$env:NAME=value;`, as PowerShell sets it. */
+function powerShellOf(line: string): string {
+  const parsed = assignedLine(line);
+  if (!parsed) return line;
+  const assignments = parsed.names.map((name, i) => `$env:${name}=${parsed.values[i]};`);
+  return [...assignments, parsed.command].join(' ');
+}
+
+/** The runtimes "Start" may not name outside its sentence on Windows (#437 R17). */
+const OTHER_RUNTIMES = [
+  /Rancher/i,
+  /Colima/i,
+  /OrbStack/i,
+  /Podman/i,
+  /nerdctl/i,
+  /containerd/i,
+  /\bLima\b/,
+  /minikube/i,
+  /Docker Desktop for (?!macOS)/,
+];
+
+/** The code lines of "Run the emulator" as they are before issue 437, which it keeps (design section 2.5). */
+const RUN_THE_EMULATOR_LINES = [
+  "mkdir -p ~/.aws/emulator              # the emulator's folder, made by you before the first start",
+  'docker compose -f infra/aws-emulator/docker-compose.yml up -d --build',
+  "source infra/aws-emulator/env.sh      # point this shell's AWS CLI and SDKs at the emulator",
+  'aws sts get-caller-identity           # Account 000000000000 means you reached the emulator',
+  'EMULATOR_PORT=9298 docker compose -f infra/aws-emulator/docker-compose.yml up -d   # a second emulator beside it',
+  'EMULATOR_PORT=9298 docker compose -f infra/aws-emulator/docker-compose.yml down    # stops only that one',
+  'docker compose -f infra/aws-emulator/docker-compose.yml down',
+];
+
 test('engine.product-readme-gives-the-commands-the-checks-run', async ({ ctx }) => {
-  const readmePath = path.join(ctx.checkout, 'README.md');
-  const readme = fs.readFileSync(readmePath, 'utf8');
+  const readme = fs.readFileSync(path.join(ctx.checkout, 'README.md'), 'utf8');
   const lines = readme.split('\n');
   const all = headings(lines);
   const headed = (text: string) => all.find((h) => h.text === text);
 
-  // The part headed "Start" → six situations in the owner's order; 3 and 4 hold, in code, the start and stop command
-  // lines of the product checks, and http://127.0.0.1:8296/.
   const start = headed('Start');
   expect(start?.text ?? null, 'a part of README.md headed "Start"').toBe('Start');
-  const startPart = start ? partOf(lines, all, start).text : '';
-  const situations = start ? situationsOf(lines, all, start) : [];
-  expect(
-    situations.map((s) => s.n),
-    'the situations of "Start", in order',
-  ).toEqual([1, 2, 3, 4, 5, 6]);
-  const situation = (n: number) => situations.find((s) => s.n === n)?.text ?? '';
-  for (const n of [3, 4] as const) {
-    const code = codeOf(situation(n));
-    for (const which of ['start', 'stop'] as const) {
-      const line = commandLine(COMMANDS.desktop[n][which]);
-      expect(code, `situation ${String(n)}: the ${which} command line in code`).toContain(line);
-    }
-    expect(situation(n), `situation ${String(n)}: the address`).toContain('http://127.0.0.1:8296/');
-  }
-
-  // Issue 54. The "Start" part before the first situation → `./compose up` and `./compose down` in code, and that
-  // this starts and stops EmuForge on Docker Desktop and on Docker Engine on Linux, uses an emulator already running
-  // on EMULATOR_PORT and starts one when there is none, and prints the `docker compose` command it runs (R15).
-  const intro =
-    start && situations.length > 0 ? lines.slice(start.line, situations[0].line).join('\n') : startPart;
-  const introCode = codeOf(intro);
-  const introProse = proseOf(intro);
-  for (const line of [WRAPPER.up, WRAPPER.down].map(commandLine)) {
-    expect(introCode, `"Start" before the situations: ${line} in code`).toContain(line);
-  }
-  expect(introProse, '"Start" before the situations: starts and stops').toMatch(/\bstart[\s\S]*\bstop/i);
-  for (const runtime of ['Docker Desktop', 'Docker Engine on Linux']) {
-    expect(introProse, `"Start" before the situations: ${runtime}`).toContain(runtime);
-  }
-  expect(intro, '"Start" before the situations: EMULATOR_PORT').toMatch(/\bEMULATOR_PORT\b/);
-  expect(introProse, '"Start" before the situations: an emulator already running').toMatch(/already running/i);
-  expect(introProse, '"Start" before the situations: starts one when there is none').toMatch(
-    /\bstarts?\b[^.]*\b(none|no emulator)\b|\b(none|no emulator)\b[^.]*\bstarts?\b/i,
+  const ports = headed('Ports');
+  expect(ports?.text ?? null, 'a part of README.md headed "Ports"').toBe('Ports');
+  const startRange = start ? partOf(lines, all, start) : { from: 0, to: 0 };
+  const portsRange = ports ? partOf(lines, all, ports) : { from: 0, to: 0 };
+  const startLinesOfReadme = lines.slice(startRange.from, startRange.to).filter((_, i) => {
+    const at = startRange.from + i;
+    return !(ports && at >= portsRange.from && at < portsRange.to);
+  });
+  const startPart = startLinesOfReadme.join('\n');
+  const portsPart = lines.slice(portsRange.from, portsRange.to).join('\n');
+  ctx.log(
+    `"Start" lines ${String(startRange.from + 1)}-${String(startRange.to)}, "Ports" lines ${String(portsRange.from + 1)}-${String(portsRange.to)}`,
   );
+
+  // "Start", its code → the start line and the stop line in one block, http://127.0.0.1:8296/, and of docker compose
+  // lines exactly those the product checks run: the start line, the stop line, the emulator's log, the line that
+  // removes the volume too and the start line with the variable.
+  const startLine = commandLine(LINES.start);
+  const stopLine = commandLine(LINES.stop);
   expect(
-    blocksOf(intro).some((b) => /\bprints?\b/i.test(b) && /docker compose/.test(b)),
-    '"Start" before the situations: a paragraph, item or row that says it prints the docker compose command it runs',
+    fencedBlocks(startPart).some((block) => block.includes(startLine) && block.includes(stopLine)),
+    `"Start": one code block that holds ${startLine} and ${stopLine}`,
   ).toBe(true);
-
-  // Situations 3 and 4 → in code, the Docker Engine on Linux start and stop lines of the situation, and with them
-  // the two preparatory lines, each exactly as the one place holds it (R16).
-  for (const n of [3, 4] as const) {
-    const code = codeOf(situation(n));
-    for (const which of ['start', 'stop'] as const) {
-      const line = commandLine(COMMANDS.linux[n][which]);
-      expect(code, `situation ${String(n)}: the Docker Engine on Linux ${which} command line in code`).toContain(line);
-    }
-    for (const line of PREPARATORY_LINES) {
-      expect(code, `situation ${String(n)}: the preparatory line in code`).toContain(line);
-    }
-  }
-
-  // Every line in code in "Start" that begins with `docker compose` or `./compose` → one of the lines of the one
-  // place (R16; #34 R20).
-  const held = onePlaceLines();
-  expect(
-    codeOf(startPart).filter((c) => /^(docker compose|\.\/compose)(\s|$)/.test(c) && !held.includes(c)),
-    '"Start": command lines in code that the checks do not run',
-  ).toEqual([]);
-
-  // "Start" → Docker Desktop for macOS and Docker Engine on Linux as the runtimes it was verified on, and nowhere
-  // that Docker Engine on Linux is not supported (R17).
-  const startProseAll = proseOf(startPart);
-  expect(startProseAll, '"Start": verified on').toMatch(/verified/i);
-  for (const runtime of ['Docker Desktop for macOS', 'Docker Engine on Linux']) {
-    expect(startProseAll, `"Start": ${runtime}`).toContain(runtime);
-  }
-  const sentences = startProseAll.split(/(?<=[.!?])\s+|\n\s*\n/);
-  expect(
-    sentences.filter((t) => /Linux/.test(t) && /\bnot\s+(yet\s+)?supported\b|\bunsupported\b/i.test(t)),
-    '"Start": sentences that say Docker Engine on Linux is not supported',
-  ).toEqual([]);
-
-  // "Start" → 18296 and 18297 reserved on Docker Desktop only; on Docker Engine on Linux a start with a port taken
-  // or used twice can exit 0 and is seen with `./compose ps -a` and `./compose logs`, both in code; the Linux file
-  // needs Docker Compose 2.24 or later; there EmuForge's containers share the host's network; `./compose` refuses
-  // to run as root (R17; design sections 5 and 8, T1).
-  const startBlocks = blocksOf(startPart);
+  expect(startPart, '"Start": the address').toContain('http://127.0.0.1:8296/');
   const startCode = codeOf(startPart);
+  const composeLines = [...new Set(startCode.filter((c) => COMPOSE_LINE.test(c)))];
+  expect(composeLines.sort(), '"Start": the docker compose lines in code').toEqual([...startLines()].sort());
+  expect(startLines(), 'the line with the variable is among the lines the checks run').toContain(KEEP_START_LINE);
+
+  // "Start" → no ./compose, no --profile, no docker-compose.linux.yml, no mkdir, no EMUFORGE_UID, no numbered situation.
+  for (const word of ['./compose', '--profile', 'docker-compose.linux.yml', 'mkdir', 'EMUFORGE_UID']) {
+    expect(startPart.includes(word), `"Start" holds ${word}`).toBe(false);
+  }
+  expect(
+    start ? numberedSituations(lines, all, start, startRange, portsRange) : [],
+    '"Start": numbered situations',
+  ).toEqual([]);
+
+  // "Start", its prose → an emulator of its own is started; its files are in a Docker volume; an AWS client uses the
+  // engine's address with any key; a second start line starts afresh; an emulator already running is not used;
+  // --remove-orphans for a form of an older clone.
+  const startBlocks = blocksOf(startPart);
   const aBlock = (what: string, ...tests: RegExp[]) =>
     expect(
       startBlocks.some((b) => tests.every((t) => t.test(b))),
       `"Start": a paragraph, item or row that says ${what}`,
     ).toBe(true);
+  aBlock('an emulator of its own is started', /\bemulator\b/i, /\bown\b/i, /\bstart/i);
+  aBlock("the emulator's files are in a Docker volume", /\bemulator/i, /\bfiles?\b/i, /\bDocker volume\b/i);
   aBlock(
-    '18296 and 18297 are reserved on Docker Desktop only',
-    /(^|\D)18296(\D|$)/,
-    /(^|\D)18297(\D|$)/,
-    /reserved/i,
-    /Docker Desktop/,
-    /\bonly\b/i,
+    "an AWS client uses the engine's address http://127.0.0.1:8297 with any key",
+    /\bAWS\b/,
+    /http:\/\/127\.0\.0\.1:8297(?!\d)/,
+    /\bany\b[^.]*\bkey/i,
   );
-  for (const line of [WRAPPER.ps, WRAPPER.logs].map(commandLine)) {
-    expect(startCode, `"Start": ${line} in code`).toContain(line);
-  }
+  aBlock('a second start line starts afresh', /\b(second|again|twice)\b/i, /\b(afresh|fresh|recreate[sd]?)\b/i);
   aBlock(
-    'a start on Docker Engine on Linux with a port taken or used twice can exit 0, seen with ./compose ps -a and logs',
-    /Linux/,
-    /\bport/i,
-    /\bexits?\b[^.]*(^|\D)0(\D|$)/i,
-    /\.\/compose ps -a/,
-    /\.\/compose logs/,
+    'an emulator already running is not used',
+    /\balready (running|runs?)\b/i,
+    /\b(not|neither|never)\b[^.]*\bused\b/i,
   );
-  aBlock('the Linux file needs Docker Compose 2.24 or later', /Compose/, /2\.24/, /\blater\b|\bnewer\b|\bat least\b/i);
-  aBlock("EmuForge's containers share the host's network on Docker Engine on Linux", /Linux/, /host['’]?s network/i);
-  aBlock('./compose refuses to run as root', /\.\/compose/, /\brefuses?\b/i, /\broot\b/i);
+  aBlock('--remove-orphans for a form of an older clone', /--remove-orphans/, /\b(older|before)\b/i, /\bclone\b/i);
 
-  // Situations 1, 2, 5 and 6 → not available yet, one line on what each will be, and no command.
-  for (const n of [1, 2, 5, 6]) {
-    const text = situation(n);
-    const prose = proseOf(text);
-    expect(prose, `situation ${String(n)}: says it is not available yet`).toMatch(/not available yet/i);
-    if (n <= 2) {
-      expect(prose, `situation ${String(n)}: a released version`).toMatch(/releas/i);
-      expect(prose, `situation ${String(n)}: installed with a shell command`).toMatch(/shell command/i);
-    } else {
-      expect(prose, `situation ${String(n)}: the CLI`).toMatch(/\bCLI\b/);
-      expect(text, `situation ${String(n)}: the emuforge CLI`).toMatch(/\bemuforge\b/);
-    }
-    expect(hasFence(text), `situation ${String(n)}: a code block`).toBe(false);
-    expect(
-      codeOf(text).filter((c) => /\s/.test(c)),
-      `situation ${String(n)}: command lines in code`,
-    ).toEqual([]);
-  }
-
-  // Situation 4 → it is stopped with its own command.
-  expect(proseOf(situation(4)), 'situation 4: stopped with its own command').toMatch(/\bown\b[^.]*\bcommand\b/i);
-
-  // "Start" → the three variables with their defaults, 18296 and 18297, Docker with Compose as what it needs,
-  // Docker Desktop as the runtime it was verified on, reached from the same machine only.
-  for (const [variable, value] of PORT_VARIABLES) {
-    expect(namesVariableWithDefault(startPart, variable, value), `"Start" names ${variable} with ${value}`).toBe(true);
-  }
-  for (const reserved of ['18296', '18297']) {
-    expect(startPart, `"Start" names ${reserved}`).toMatch(new RegExp(`(^|\\D)${reserved}(\\D|$)`));
-  }
+  // "Start", the runtimes it names → Docker Desktop for macOS and Docker Engine on Linux, and a sentence on Windows
+  // (not run yet, or the run's runtime, version and date); no other runtime's name outside that sentence.
   const startProse = proseOf(startPart);
-  expect(startProse, '"Start": what it needs').toMatch(/\bneed/i);
-  expect(startPart, '"Start": Docker with Compose').toMatch(/Docker\b[\s\S]*\bCompose\b/);
-  expect(startProse, '"Start": verified on Docker Desktop').toMatch(
-    /verified[\s\S]*Docker Desktop|Docker Desktop[\s\S]*verified/i,
-  );
-  expect(startProse, '"Start": reached from the same machine only').toMatch(/same machine/i);
+  for (const runtime of ['Docker Desktop for macOS', 'Docker Engine on Linux']) {
+    expect(startProse, `"Start": ${runtime}`).toContain(runtime);
+  }
+  const sentences = sentencesOf(startPart);
+  const onWindows = sentences.filter((s) => /\bWindows\b/.test(s));
+  ctx.log(`"Start": the sentences on Windows: ${JSON.stringify(onWindows)}`);
+  expect(
+    onWindows.some(
+      (s) => /\bnot\s+(been\s+)?run\s+yet\b/i.test(s) || (/\d+\.\d+/.test(s) && /\b\d{4}-\d{2}-\d{2}\b/.test(s)),
+    ),
+    '"Start": a sentence that says Windows was not run yet, or names the run\'s runtime, version and date',
+  ).toBe(true);
+  expect(
+    sentences.filter((s) => !/\bWindows\b/.test(s)).filter((s) => OTHER_RUNTIMES.some((r) => r.test(s))),
+    '"Start": sentences, other than those on Windows, that name another runtime',
+  ).toEqual([]);
 
-  // The part headed "Develop" → a separate part with `cargo run --bin emuforge-server` and `bun run serve`, the three
-  // variables with their defaults and the engine's flags; "Run the emulator" is still there.
-  const develop = headed('Develop');
-  expect(develop?.text ?? null, 'a part of README.md headed "Develop"').toBe('Develop');
-  if (develop && start) {
-    const [s, d] = [partOf(lines, all, start), partOf(lines, all, develop)];
-    expect(
-      {
-        developInStart: develop.line > s.from && develop.line < s.to,
-        startInDevelop: start.line > d.from && start.line < d.to,
-      },
-      '"Develop" and "Start" are separate parts',
-    ).toEqual({ developInStart: false, startInDevelop: false });
+  // "Ports" → the three variables with their defaults; a bash block that sets the two published ports for the start
+  // line and for the stop line; a PowerShell block whose lines are those bash lines with each assignment spelled
+  // `$env:NAME=value;`, and the line with the variable; 18296 and 18297 as reserved; docker compose logs gateway; no
+  // ./compose.
+  for (const [name, value] of PORT_VARIABLES) {
+    expect(namesVariableWithDefault(portsPart, name, value), `"Ports" names ${name} with ${value}`).toBe(true);
   }
-  const developPart = develop ? partOf(lines, all, develop).text : '';
-  const developCode = codeOf(developPart);
-  for (const command of ['cargo run --bin emuforge-server', 'bun run serve']) {
-    expect(
-      developCode.some((c) => c.includes(command)),
-      `"Develop" holds ${command} in code`,
-    ).toBe(true);
-  }
-  for (const [variable, value] of PORT_VARIABLES) {
-    expect(namesVariableWithDefault(developPart, variable, value), `"Develop" names ${variable} with ${value}`).toBe(
-      true,
+  const blocks = fencedBlocks(portsPart).map((block) => block.map(withoutComment).filter((l) => l !== ''));
+  const setsPorts = (line: string, command: string) => {
+    const parsed = assignedLine(line);
+    return (
+      parsed !== null &&
+      [...parsed.names].sort().join(' ') === 'EMUFORGE_ENGINE_PORT EMUFORGE_STUDIO_PORT' &&
+      parsed.command === command
     );
-  }
-  for (const flag of ['--port', '--emulator-port', '--studio-port']) {
-    expect(developPart, `"Develop" names ${flag}`).toMatch(new RegExp(`(^|[^\\w-])${flag}(?![\\w-])`));
-  }
-  expect(headed('Run the emulator')?.text ?? null, 'a part of README.md headed "Run the emulator"').toBe(
-    'Run the emulator',
+  };
+  const bash = blocks.find(
+    (block) => block.some((l) => setsPorts(l, startLine)) && block.some((l) => setsPorts(l, stopLine)),
   );
+  expect(
+    bash ?? null,
+    '"Ports": a code block that sets the two published ports for the start line and the stop line',
+  ).not.toBeNull();
+  if (bash) {
+    const [up, down] = [bash.find((l) => setsPorts(l, startLine)), bash.find((l) => setsPorts(l, stopLine))];
+    expect(
+      assignedLine(down ?? '')
+        ?.names.map((n, i) => `${n}=${assignedLine(down ?? '')?.values[i] ?? ''}`)
+        .sort(),
+      '"Ports": the stop line sets the ports the start line sets',
+    ).toEqual(
+      assignedLine(up ?? '')
+        ?.names.map((n, i) => `${n}=${assignedLine(up ?? '')?.values[i] ?? ''}`)
+        .sort(),
+    );
+    const keepLine = powerShellOf(KEEP_START_LINE);
+    const wanted = [...new Set([...bash.map(powerShellOf), keepLine])].sort();
+    const powerShell = blocks.find((block) => block !== bash && block.includes(keepLine));
+    expect(powerShell ?? null, `"Ports": a code block that holds ${keepLine}`).not.toBeNull();
+    expect(
+      [...new Set(powerShell ?? [])].sort(),
+      '"Ports": the PowerShell block, the bash lines with $env:NAME=value; and the line with the variable',
+    ).toEqual(wanted);
+  }
+  const portsBlocks = blocksOf(portsPart);
+  expect(
+    portsBlocks.some((b) => /(^|\D)18296(\D|$)/.test(b) && /(^|\D)18297(\D|$)/.test(b) && /reserved/i.test(b)),
+    '"Ports": a paragraph, item or row that says 18296 and 18297 are reserved',
+  ).toBe(true);
+  expect(codeOf(portsPart), '"Ports": docker compose logs gateway in code').toContain('docker compose logs gateway');
+  expect(portsPart.includes('./compose'), '"Ports" holds ./compose').toBe(false);
 
-  // Every link and path in README.md → exists in the checkout, and none points under docs/.
-  const targets: string[] = [];
-  for (const m of proseOf(readme).matchAll(/\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g)) targets.push(m[1]);
-  for (const m of readme.matchAll(/^\s*\[[^\]]+\]:\s*(\S+)/gm)) targets.push(m[1]);
-  const links = targets
-    .filter((t) => !/^[a-z][a-z0-9+.-]*:/i.test(t) && !t.startsWith('#'))
-    .map((t) => t.split('#')[0]);
-  const paths = codeOf(readme)
-    .flatMap((c) => c.split(/\s+/))
-    .map((w) => w.replace(/^["'(]+|["'),;.]+$/g, ''))
-    .filter((w) => w.includes('/') && !/^[/~$]/.test(w) && !/[<:=]/.test(w));
-  const checked = [...new Set([...links, ...paths])];
-  ctx.log(`README.md links and paths: ${checked.join(' ')}`);
+  // "Run the emulator" → its lines as before issue 437, and a sentence that it is for the developer's start and was
+  // run on macOS and Linux.
+  const emulator = headed('Run the emulator');
+  expect(emulator?.text ?? null, 'a part of README.md headed "Run the emulator"').toBe('Run the emulator');
+  const emulatorRange = emulator ? partOf(lines, all, emulator) : { from: 0, to: 0 };
+  const emulatorPart = lines.slice(emulatorRange.from, emulatorRange.to).join('\n');
+  expect(fencedBlocks(emulatorPart).flat(), '"Run the emulator": its code lines').toEqual(RUN_THE_EMULATOR_LINES);
   expect(
-    checked.filter((p) => !fs.existsSync(path.join(ctx.checkout, p))),
-    'links and paths of README.md that do not exist in the checkout',
+    sentencesOf(emulatorPart).some(
+      (s) => /\bdevelop/i.test(s) && /\bmacOS\b/.test(s) && /\bLinux\b/.test(s) && /\b(run|ran)\b/i.test(s),
+    ),
+    '"Run the emulator": a sentence that it is for the developer\'s start and was run on macOS and Linux',
+  ).toBe(true);
+});
+
+// --- Line endings ---
+
+/** What is copied into an image or read in a container (#437 R11). */
+const LF_PATHS = ['infra/', 'docker-compose.yml', 'engine/', 'studio/'];
+
+/** The attributes that keep a text file LF in every checkout. */
+const LF_ATTRIBUTES = ['text=auto eol=lf', 'text eol=lf'];
+
+test('engine.product-tracked-files-are-lf-in-every-checkout', async ({ ctx }) => {
+  // git with the test process's environment, its output not logged (a line per tracked file).
+  const git = (args: string[]) =>
+    new Promise<string>((resolve, reject) => {
+      execFile(
+        'git',
+        args,
+        { cwd: ctx.checkout, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: STOP_BOUND_MS },
+        (error, stdout, stderr) => {
+          if (error) reject(new EnvError(`git ${args.join(' ')} in ${ctx.checkout}: ${stderr || error.message}`));
+          else resolve(stdout);
+        },
+      );
+    });
+
+  // `git ls-files --eol` for every tracked file under infra/, docker-compose.yml, engine/ and studio/ → each text file
+  // `i/lf` with the attribute text=auto eol=lf (or text eol=lf); none `i/crlf` or `i/mixed`.
+  const listed = (await git(['ls-files', '--eol', '--', ...LF_PATHS]))
+    .split('\n')
+    .filter((l) => l.trim() !== '')
+    .map((l) => {
+      const m = /^i\/(\S*)\s+w\/(\S*)\s+attr\/(.*?)\s*\t(.*)$/.exec(l);
+      return m ? { index: m[1], attr: m[3].trim(), path: m[4] } : { index: '?', attr: '?', path: l };
+    });
+  ctx.log(`git ls-files --eol: ${String(listed.length)} tracked files`);
+  expect(listed.length, 'tracked files under the paths').toBeGreaterThan(0);
+  expect(
+    listed.filter((f) => f.index === '?').map((f) => f.path),
+    'lines of git ls-files --eol the check cannot read',
   ).toEqual([]);
   expect(
-    checked.filter((p) => /^(\.\/)?docs(\/|$)/.test(p)),
-    'links and paths of README.md under docs/',
+    listed.filter((f) => f.index === 'crlf' || f.index === 'mixed').map((f) => `${f.path}: i/${f.index}`),
+    'tracked files stored with CRLF or mixed line endings',
   ).toEqual([]);
+  expect(
+    listed.filter((f) => f.index === 'lf' && !LF_ATTRIBUTES.includes(f.attr)).map((f) => `${f.path}: attr/${f.attr}`),
+    'tracked text files without text=auto eol=lf (or text eol=lf)',
+  ).toEqual([]);
+
+  // `git check-attr text eol` for a path that does not exist yet under infra/ → text: auto and eol: lf.
+  const fresh = `infra/emuforge-it-new-${randomBytes(4).toString('hex')}`;
+  expect(fs.existsSync(path.join(ctx.checkout, fresh)), `${fresh} exists`).toBe(false);
+  const attrs = (await git(['check-attr', 'text', 'eol', '--', fresh]))
+    .split('\n')
+    .filter((l) => l.trim() !== '')
+    .map((l) => l.slice(l.indexOf(': ') + 2));
+  expect(attrs, `git check-attr text eol -- ${fresh}`).toEqual(['text: auto', 'eol: lf']);
 });

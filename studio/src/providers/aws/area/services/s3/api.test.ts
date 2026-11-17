@@ -1,7 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 
 import { engineEndpoint } from '../../../../../lib/aws/client-factory';
-import { listBuckets, S3ReadError, type ReadFailure } from './api';
+import { RequestError, type RequestFailure } from '../../../../../lib/aws/request';
+import { listBuckets } from './api';
+// @ts-expect-error -- the S3 folder keeps no failure of its own (issue 445, R8): the shared module's is the one.
+import type { ReadFailure as GoneReadFailure, S3ReadError as GoneS3ReadError } from './api';
 
 // The test plays the engine behind the page's `fetch`: its session route, and every AWS request as it leaves the
 // browser, with the URL the SDK built.
@@ -94,12 +97,12 @@ function rawQuery(url: string): Map<string, string> {
   );
 }
 
-async function failure(promise: Promise<unknown>): Promise<ReadFailure> {
+async function failure(promise: Promise<unknown>): Promise<RequestFailure> {
   try {
     await promise;
   } catch (error) {
-    expect(error).toBeInstanceOf(S3ReadError);
-    return (error as S3ReadError).failure;
+    expect(error).toBeInstanceOf(RequestError);
+    return (error as RequestError).failure;
   }
   throw new Error('the read resolved');
 }
@@ -227,6 +230,21 @@ describe('the answer', () => {
 });
 
 describe('a failed read', () => {
+  it('rejects with a RequestError of the shared module, and the S3 folder exports no failure of its own', async () => {
+    engine.aws = () => errorAnswer(400, 'InvalidArgument', 'The continuation token provided is incorrect');
+
+    const error = await list({ pageSize: 25 }).then(
+      () => undefined,
+      (rejection: unknown) => rejection,
+    );
+
+    expect(error).toBeInstanceOf(RequestError);
+    expect((error as RequestError).name).toBe('RequestError');
+    // Each is `any` only while its import is the type error the directive above it expects.
+    expectTypeOf<GoneReadFailure>().toBeAny();
+    expectTypeOf<GoneS3ReadError>().toBeAny();
+  });
+
   it('is "not implemented", naming ListBuckets, when the engine answers 501', async () => {
     engine.aws = () =>
       errorAnswer(501, 'NotImplemented', 'operation ListBuckets is scaffolded but not implemented in this emulator');
@@ -234,11 +252,12 @@ describe('a failed read', () => {
     expect(await failure(list({ pageSize: 25 }))).toEqual({ kind: 'not-implemented', operation: 'ListBuckets' });
   });
 
-  it('is "access denied" with the message returned for AccessDenied', async () => {
+  it('is "access denied" with ListBuckets and the message returned for AccessDenied', async () => {
     engine.aws = () => errorAnswer(403, 'AccessDenied', 'User is not allowed to list buckets');
 
     expect(await failure(list({ pageSize: 25 }))).toEqual({
       kind: 'access-denied',
+      operation: 'ListBuckets',
       message: 'User is not allowed to list buckets',
     });
   });
@@ -246,45 +265,61 @@ describe('a failed read', () => {
   it.each([
     [503, 'EmulatorUnavailable', 'The emulator at https://127.0.0.1:9411 could not be reached: connection refused'],
     [504, 'EmulatorTimeout', 'The emulator at https://127.0.0.1:9411 did not answer within 30 seconds'],
-  ])('is "emulator did not answer" with the engine’s message for %i %s', async (status, code, message) => {
-    engine.aws = () => errorAnswer(status, code, message);
+  ])(
+    'is "emulator did not answer" with ListBuckets and the engine’s message for %i %s',
+    async (status, code, message) => {
+      engine.aws = () => errorAnswer(status, code, message);
 
-    expect(await failure(list({ pageSize: 25 }))).toEqual({ kind: 'emulator-did-not-answer', message });
-  });
+      expect(await failure(list({ pageSize: 25 }))).toEqual({
+        kind: 'emulator-did-not-answer',
+        operation: 'ListBuckets',
+        message,
+      });
+    },
+  );
 
-  it('is "engine did not answer" when the request fails at the network level', async () => {
+  it('is "engine did not answer", naming ListBuckets, when the request fails at the network level', async () => {
     engine.aws = () => 'network-error';
 
-    expect(await failure(list({ pageSize: 25 }))).toEqual({ kind: 'engine-did-not-answer' });
+    expect(await failure(list({ pageSize: 25 }))).toEqual({ kind: 'engine-did-not-answer', operation: 'ListBuckets' });
   });
 
-  it('is "engine did not answer" when the session request fails at the network level', async () => {
+  it('is "engine did not answer", naming ListBuckets, when the session request fails at the network level', async () => {
     engine.session = () => 'network-error';
 
-    expect(await failure(list({ pageSize: 25 }))).toEqual({ kind: 'engine-did-not-answer' });
+    expect(await failure(list({ pageSize: 25 }))).toEqual({ kind: 'engine-did-not-answer', operation: 'ListBuckets' });
     expect(engine.awsRequests).toHaveLength(0);
   });
 
-  it('gives any other error answer’s code and message', async () => {
+  it('gives ListBuckets and any other error answer’s code and message', async () => {
     engine.aws = () => errorAnswer(400, 'InvalidArgument', 'The continuation token provided is incorrect');
 
     expect(await failure(list({ pageSize: 25, token: 'not-issued' }))).toEqual({
       kind: 'other',
+      operation: 'ListBuckets',
       code: 'InvalidArgument',
       message: 'The continuation token provided is incorrect',
     });
   });
 
-  it('gives the answer’s status line in the code’s place for an error answer without a code', async () => {
+  it('gives ListBuckets and the answer’s status line in the code’s place for an error answer without a code', async () => {
     engine.aws = () => ({ status: 418, statusText: "I'm a teapot", body: '' });
 
-    expect(await failure(list({ pageSize: 25 }))).toEqual({ kind: 'other', code: "HTTP 418 I'm a teapot" });
+    expect(await failure(list({ pageSize: 25 }))).toEqual({
+      kind: 'other',
+      operation: 'ListBuckets',
+      code: "HTTP 418 I'm a teapot",
+    });
   });
 
-  it('gives the status alone in the code’s place when the answer has neither a code nor a reason', async () => {
+  it('gives ListBuckets and the status alone in the code’s place when the answer has neither a code nor a reason', async () => {
     engine.aws = () => ({ status: 409, body: 'not xml' });
 
-    expect(await failure(list({ pageSize: 25 }))).toEqual({ kind: 'other', code: 'HTTP 409' });
+    expect(await failure(list({ pageSize: 25 }))).toEqual({
+      kind: 'other',
+      operation: 'ListBuckets',
+      code: 'HTTP 409',
+    });
   });
 });
 

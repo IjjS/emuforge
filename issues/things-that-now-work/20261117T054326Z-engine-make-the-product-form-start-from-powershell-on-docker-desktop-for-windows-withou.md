@@ -4,7 +4,7 @@ Issue-Module: engine
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: engine|product-form|windows-powershell
-Issue-Check-Ids:
+Issue-Check-Ids: engine.product-start-connects-to-its-own-emulator engine.product-start-without-home-leaves-nothing-on-the-host engine.product-start-has-one-unpublished-emulator engine.product-stop-leaves-only-the-volume-and-a-users-emulator-untouched engine.product-start-says-when-the-emulator-did-not-come-up engine.product-repeated-start-with-the-variable-keeps-the-containers engine.product-relay-signs-a-made-up-key-with-the-emulators-key engine.product-tracked-files-are-lf-in-every-checkout
 Issue-Commit: 6acea5285d981b812a09bdd9ce6e7b4ac9794d58
 
 # Make the product form start from PowerShell on Docker Desktop for Windows, without WSL

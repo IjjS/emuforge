@@ -22,7 +22,8 @@ import { creationDateText } from '../../../components/format-date';
 import { usePageHelp } from '../../../components/page-help';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
-import { LIST_BUCKETS, type Bucket, type ReadFailure } from '../api';
+import type { RequestFailure } from '../../../../../../lib/aws/request';
+import { LIST_BUCKETS, type Bucket } from '../api';
 import {
   bucketPath,
   BUCKETS_PATH,
@@ -119,7 +120,7 @@ function Code({ children }: { children: ReactNode }) {
  * The state of a failed read (R7), tried top to bottom: the answer's own meaning first, then the connection, then the
  * kinds of failure while the line says connected or "Checking".
  */
-function failureState(failure: ReadFailure, connection: AreaConnection): BodyState {
+function failureState(failure: RequestFailure, connection: AreaConnection): BodyState {
   if (failure.kind === 'not-implemented') {
     return {
       kind: 'failure',

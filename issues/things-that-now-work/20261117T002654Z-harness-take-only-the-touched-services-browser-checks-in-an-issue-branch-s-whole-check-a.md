@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: feature
 Issue-Source: plan
 Issue-Key: harness|integration|checks-by-touched-service
-Issue-Check-Ids:
+Issue-Check-Ids: harness.services-run harness.services-scope harness.services-ci
 Issue-Commit: 13dbdefb1fbda957737b6b2390491c5044dad104
 
 # Take only the touched services' browser checks in an issue branch's whole check, and the full set on the push of main
