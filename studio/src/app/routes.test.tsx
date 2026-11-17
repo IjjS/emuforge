@@ -34,6 +34,12 @@ const WITHOUT_SCREEN = SERVICES.filter(([label]) => !WITH_SCREEN.includes(label)
 /** The AWS area's first import is real work (Cloudscape's modules), not a timer; a cold run takes a while. */
 const AREA_LOAD_MS = 10_000;
 
+/**
+ * The test timeout of a case that waits for the "no screen yet" page for a part of a service: above `AREA_LOAD_MS`, so
+ * that the page's find reports what is missing before the test is ended.
+ */
+const NO_SCREEN_PART_TEST_MS = AREA_LOAD_MS + 5_000;
+
 let fetchSpy: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
@@ -241,6 +247,7 @@ describe('routes', () => {
 
       await expectNoScreenPart('AWS Identity and Access Management', path);
     },
+    NO_SCREEN_PART_TEST_MS,
   );
 
   it('opens /aws/iam/roles/details/create as the page of a role named create, not the wizard', async () => {
@@ -471,6 +478,7 @@ describe('routes', () => {
 
       await expectNoScreenPart('AWS Lambda', path);
     },
+    NO_SCREEN_PART_TEST_MS,
   );
 
   // Issue 256 gives /aws/s3/buckets/my-bucket and /aws/s3/bucket/create their screens; these three paths have none
@@ -506,6 +514,7 @@ describe('routes', () => {
         .map((request) => request.url);
       expect(awsRequests).toEqual([]);
     },
+    NO_SCREEN_PART_TEST_MS,
   );
 
   it('opens /aws/does-not-exist/today as the AWS area’s "Page not found", with the path as text', async () => {
