@@ -1,14 +1,13 @@
-// What the product checks of unit t2 (issue 34) need besides `product.ts`: a command run in any directory with an
-// environment the check gives, Compose's arguments of a situation for a command other than start and stop (held in
-// `product.ts` with the command lines since issue 54, and passed on here), S3
-// requests signed with the emulator's key (straight to the emulator over TLS verified against its `ca.pem`, or to a
-// form's engine port with headers the signature does not cover), the transparency comparison of
-// `engine/references/relay-fidelity.md`, the host's non-loopback IPv4 addresses and a TCP probe at one of them, and
-// a search of an image's saved content and of any text for the emulator's secret values.
+// What the product checks need besides `product.ts`: a command run in any directory with an environment the check
+// gives, S3 requests signed with a key the check holds (to a form's engine port with headers the signature does not
+// cover, or directly to the form's own emulator over TLS verified against its `ca.pem`, through the direct side of
+// `product-direct.yml`), the transparency comparison of `engine/references/relay-fidelity.md`, the host's
+// non-loopback IPv4 addresses and a TCP probe at one of them, and a search of an image's saved content and of any
+// text for the emulator's secret values.
 //
-// The emulator's secret values (test-criteria.md, shared terms) are its access key id, its secret access key and
-// each base64 body line of its `ca.pem`. They are registered for redaction when they are read
-// (`readEmulatorFiles`), and a finding names which value and where, never the value.
+// The emulator's secret values are its access key id and its secret access key (and, where a check asks, each base64
+// body line of its `ca.pem`). They are registered for redaction when they are read, and a finding names which value
+// and where, never the value.
 
 import { execFile } from 'node:child_process';
 import { createHash, createHmac } from 'node:crypto';
@@ -22,9 +21,7 @@ import zlib from 'node:zlib';
 import { EnvError, type Ctx } from './check';
 import { emulatorDir, readEmulatorFiles, type EmulatorFiles } from './emulator';
 import { Proc } from './process';
-import { commandLine, request, type CommandResult, type HttpAnswer } from './product';
-
-export { composeArgs } from './product';
+import { commandLine, request, type CommandResult, type FormEmulatorFiles, type HttpAnswer } from './product';
 
 const REGION = 'us-east-1';
 
@@ -37,12 +34,14 @@ export async function runAt(
   boundMs: number,
 ): Promise<CommandResult> {
   const line = commandLine(args);
+  const began = Date.now();
   const proc = Proc.spawn(ctx, line, args[0], args.slice(1), cwd, env);
   const exit = await proc.waitExit(boundMs);
   const { stdout, stderr } = await proc.stop();
+  const ms = Date.now() - began;
   if (!exit) throw new Error(`${line} did not exit within ${boundMs / 1000}s`);
-  ctx.log(`${line}: exit ${String(exit.code)}${exit.signal ? ` signal ${exit.signal}` : ''}`);
-  return { line, code: exit.code, stdout, stderr };
+  ctx.log(`${line}: exit ${String(exit.code)}${exit.signal ? ` signal ${exit.signal}` : ''} after ${ms} ms`);
+  return { line, code: exit.code, stdout, stderr, ms };
 }
 
 /** `docker <args>` with the test process's environment: whether it exited 0, and both streams. */
@@ -206,6 +205,66 @@ export function directS3(
     req.on('error', (e) => resolve({ error: e.message }));
     req.end(body.length > 0 ? body : undefined);
   });
+}
+
+/**
+ * `method https://127.0.0.1:<port><path>` with exactly `headers` (`host` included), TLS verified against `ca`, no
+ * proxy, no keep-alive: a request straight to the form's own emulator through the direct side. The answer or the
+ * error.
+ */
+export function directRequest(
+  port: number,
+  ca: Buffer,
+  method: string,
+  pathname: string,
+  headers: Record<string, string>,
+  body: Buffer = Buffer.alloc(0),
+): Promise<HttpAnswer | { error: string }> {
+  const sent = { ...headers };
+  if (body.length > 0) sent['content-length'] = String(body.length);
+  return new Promise((resolve) => {
+    const req = https.request(
+      { host: '127.0.0.1', port, method, path: pathname, ca, agent: false, timeout: 30_000, headers: sent },
+      (response) => {
+        const chunks: Buffer[] = [];
+        response.on('data', (chunk: Buffer) => chunks.push(chunk));
+        response.on('end', () =>
+          resolve({ status: response.statusCode ?? 0, headers: response.headers, body: Buffer.concat(chunks) }),
+        );
+        response.on('error', (e) => resolve({ error: e.message }));
+      },
+    );
+    req.on('timeout', () => req.destroy(new Error('no answer within 30 s')));
+    req.on('error', (e) => resolve({ error: e.message }));
+    req.end(body.length > 0 ? body : undefined);
+  });
+}
+
+/**
+ * An S3 request straight to the form's own emulator on the direct port, signed with `key` (the emulator's own, or a
+ * made-up one), TLS verified against the `ca.pem` read inside the emulator's container.
+ */
+export function directSigned(
+  port: number,
+  files: FormEmulatorFiles,
+  key: EmulatorFiles,
+  method: string,
+  pathname: string,
+  body: Buffer = Buffer.alloc(0),
+): Promise<HttpAnswer | { error: string }> {
+  const headers = signS3(`127.0.0.1:${String(port)}`, method, pathname, body, key);
+  return directRequest(port, files.ca, method, pathname, headers, body);
+}
+
+/**
+ * A body with the values the emulator generates fresh per request replaced by placeholders, as
+ * `engine/references/relay-fidelity.md` compares bodies: the text of `<RequestId>` and `<HostId>`.
+ */
+export function placeheld(body: Buffer): string {
+  return body
+    .toString('utf8')
+    .replace(/<RequestId>[^<]*<\/RequestId>/g, '<RequestId>…</RequestId>')
+    .replace(/<HostId>[^<]*<\/HostId>/g, '<HostId>…</HostId>');
 }
 
 /** The status of an answer, or its error, for an assertion. */

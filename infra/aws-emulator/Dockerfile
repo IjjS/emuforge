@@ -12,6 +12,9 @@ RUN case "$TARGETARCH" in \
        "https://downloads.aws.com/aws-emulator/packages/aws-emulator/LTS/latest/aws-emulator-${ARCH}.rpm" \
     && rpm -i /tmp/aws-emulator.rpm && rm /tmp/aws-emulator.rpm \
     && mkdir -p /home/emulator && chown 1000 /home/emulator
+# The folder a Docker volume is mounted on in the product form (root docker-compose.yml): an empty volume takes
+# its owner, so the emulator can write it as 1000:0 without starting as root.
+RUN mkdir -p /home/emulator/.aws/emulator && chown -R 1000:0 /home/emulator/.aws
 # No USER: the container starts as root only to pick the emulator's user, the owner of the mounted
 # ~/.aws/emulator, and the entrypoint never runs the emulator as root (entrypoint.sh).
 COPY --chmod=755 entrypoint.sh /usr/local/bin/emulator-entrypoint
