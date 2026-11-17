@@ -116,7 +116,6 @@ async function expectNames(page: Page, names: string[], message: string, timeout
   await expect.poll(() => shownNames(page), { timeout, message }).toEqual(names);
 }
 
-/** The list's failure state in the table: `status`, "The role list could not be read." and "Retry". */
 /**
  * A role's page's failure state: the innermost block in `main` that holds "The role could not be read." and "Retry".
  * The line's status is also in the emulator line and its live region, so the page's own status is read here, as the
@@ -130,6 +129,7 @@ function roleFailure(page: Page) {
     .last();
 }
 
+/** The list's failure state in the table: `status`, "The role list could not be read." and "Retry". */
 async function expectListFailure(page: Page, status: RegExp, withConnectionStatus: boolean): Promise<void> {
   const table = screen(page).table;
   await expect(table.getByText(status), `the table shows ${String(status)}`).toBeVisible({
