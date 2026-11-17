@@ -178,7 +178,7 @@ class Told(unittest.TestCase):
         self.assertEqual(c.driver().tick(now), ["EVENT check still wt-a integration 61m"])
 
     def test_59_minutes_and_one_second_under_60_minutes_is_no_line(self):
-        c, pid, now = self.live("59")
+        c, pid, now = self.live("59", minutes=59)
         d = c.driver()
         self.assertEqual(d.tick(now), [])
         c.record("wt-a", record(pid, started=iso(now - 60 * MIN + 1)))
