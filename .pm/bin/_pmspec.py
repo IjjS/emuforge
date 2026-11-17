@@ -12,12 +12,16 @@ list, critical flag (5.5) and the states they apply to (5.3); `omitted` entries 
 cover, and an entry that covers the title, an action, a table column, `submit`, the empty title beside a scored
 empty action, or only order items is refused (issue 46, R2). A `wizard` spec (issue 8, requirement 3) also gives
 its shown steps, and each of its items the position of the shown step whose tree it is scored on.
+
+A route may hold route parameters (issue 302, R1): a whole path segment `{<name>}`, `<name>` matching PARAM_NAME,
+each name once; `Spec.params` lists them in route order and `fill_route` puts each value in, percent-encoded.
 """
 import dataclasses
 import hashlib
 import os
 import re
 import stat
+import urllib.parse
 
 MAX_BYTES = 1024 * 1024
 STATES = ("seeded", "empty")
@@ -34,6 +38,8 @@ EMPTY_KEYS = ("title", "action")
 SECTION_KEYS = ("title", "fields")
 FIELD_KEYS = ("label", "control", "required", "constraint")
 OMITTED_KEYS = ("item", "reason")
+PARAM_NAME = re.compile(r"[a-z][a-z0-9_]{0,31}")
+MAX_PARAM_VALUE = 256
 SELECTIONS = ("single", "multi", "none")
 FILTERS = ("text", "property")
 
@@ -83,6 +89,7 @@ class Spec:
     not_scored: list           # (field item id, key, value)
     needs_states: tuple
     steps: tuple = ()          # kind wizard: the shown step titles, in order
+    params: tuple = ()         # the route's parameter names, in route order (issue 302, R1)
 
     def omitted_reason(self, item_id):
         for e in self.omitted:
@@ -93,6 +100,48 @@ class Spec:
 
 def norm(s):
     return s.strip().casefold()
+
+
+def _split_path(route):
+    """(path, rest): the route up to its first `?` or `#`, and the rest from there."""
+    m = re.search(r"[?#]", route)
+    return (route, "") if m is None else (route[:m.start()], route[m.start():])
+
+
+def _param_name(segment):
+    """The name of a path segment that is exactly `{<name>}`, else None."""
+    m = re.fullmatch(r"\{(.*)\}", segment)
+    return m.group(1) if m and PARAM_NAME.fullmatch(m.group(1)) else None
+
+
+def route_params(route):
+    """The route's parameter names in route order; ValueError with the R1.2 text for any other brace."""
+    path, rest = _split_path(route)
+    if "{" in rest or "}" in rest:
+        raise ValueError("route: { and } are only for a whole path segment {name}")
+    names = []
+    for segment in path.split("/"):
+        if "{" not in segment and "}" not in segment:
+            continue
+        name = _param_name(segment)
+        if name is None:
+            raise ValueError("route: { and } are only for a whole path segment {name}")
+        if name in names:
+            raise ValueError(f"route: parameter {{{name}}} is used twice")
+        names.append(name)
+    return tuple(names)
+
+
+def fill_route(route, values):
+    """The route with each whole-segment `{name}` of its path replaced by values[name], percent-encoded as one
+    segment (every byte of the UTF-8 form but `A-Z a-z 0-9 - . _ ~` as `%XX`); the rest of the route as written.
+    A route without parameters comes back as it is."""
+    path, rest = _split_path(route)
+    segments = []
+    for segment in path.split("/"):
+        name = _param_name(segment)
+        segments.append(segment if name is None else urllib.parse.quote(values[name], safe=""))
+    return "/".join(segments) + rest
 
 
 # ---------------------------------------------------------------------------------------------------- YAML subset
@@ -369,6 +418,7 @@ class _Builder:
         self.path, self.doc = path, doc
         self.items, self.not_scored, self.screen = [], [], None
         self.step_items = []   # kind wizard: (title, ids of the step's items), in spec order
+        self.params = ()
 
     def fail(self, what):
         raise SpecError(f"spec {self.path}: {what}", self.screen)
@@ -450,6 +500,10 @@ class _Builder:
             self.fail("route must start with /")
         if wizard and ("?" in route or "#" in route):  # the tool adds ?step=<k> (requirement 4)
             self.fail("route of kind wizard must not hold ? or #")
+        try:
+            self.params = route_params(route)
+        except ValueError as e:
+            self.fail(str(e))
         service = self.string(doc["service"], "service") if "service" in doc else None
         header = self.mapping(doc.get("header", {}), "header")
         if not wizard and "title" not in header:
@@ -698,4 +752,4 @@ def load(path):
     screen, service, kind, route, omitted, needs, shown = b.build()
     return Spec(path=path, sha256=hashlib.sha256(data).hexdigest(), screen=screen, service=service, kind=kind,
                 route=route, items=b.items, omitted=omitted, not_scored=b.not_scored, needs_states=needs,
-                steps=shown)
+                steps=shown, params=b.params)
