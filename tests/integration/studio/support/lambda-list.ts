@@ -49,6 +49,9 @@ export const H1 = 'Event Functions';
 /** The crumbs of the list (R6.1). */
 export const CRUMBS = ['EmuForge', 'AWS', 'Lambda', 'Event Functions'];
 
+/** The description under the `h1`, in every state of the connection (issue 467, requirement R3). */
+export const LIST_DESCRIPTION = 'The filter matches the start of a name and is case-sensitive.';
+
 /** The header's actions, in order (R8). */
 export const REFRESH = 'Refresh';
 export const ACTIONS = 'Actions';

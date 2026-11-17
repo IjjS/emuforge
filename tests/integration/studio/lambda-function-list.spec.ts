@@ -7,6 +7,10 @@
 // `studio.lambda-function-list-filter-matches-the-start-of-a-name`,
 // `studio.lambda-function-list-actions-lead-to-their-routes`.
 //
+// Issue 467 rewrote one step of `studio.lambda-function-list-shows-what-the-emulator-holds` (its test-criteria.md,
+// "Flow checks, changed"; requirement R9, rule 1): what the notice, the `h1`'s description and the page say of where
+// the functions are. Readers of those: `support/screen-rules.ts`.
+//
 // Other checks make functions on the run's emulator at the same time, so each check names its functions with its own
 // prefix `<p>` and compares the screen with a direct `ListFunctions` under the filter `<p>`. Words and readers:
 // `support/lambda-list.ts`; direct calls and the functions a check makes: `support/lambda.ts`.
@@ -14,7 +18,7 @@
 import type { Page } from '@playwright/test';
 
 import { expect, startStack, test } from './support';
-import { connectedAt, crumbLink, crumbs, expectLine } from './support/aws-area';
+import { connectedAt, crumbLink, crumbs, endpointPattern, expectLine } from './support/aws-area';
 import { ACTION, addressOf, heading } from './support/frame';
 import { markPage, stillSamePage } from './support/home';
 import {
@@ -36,6 +40,7 @@ import {
   FUNCTIONS_PATH,
   H1,
   LAMBDA_PATH,
+  LIST_DESCRIPTION,
   listHeading,
   ListFunctionsRecord,
   matchesText,
@@ -53,6 +58,7 @@ import {
 import { Lines } from './support/lines';
 import { expectNoScreenPart } from './support/no-screen-part';
 import { checkPrefix, SEOUL } from './support/s3';
+import { NOTICE_BODY, noticeBody, pageHeader, timesOnPage } from './support/screen-rules';
 
 const AWS = 'Amazon Web Services';
 
@@ -115,19 +121,25 @@ test.describe(() => {
       },
     );
 
+    // Issue 467 (requirement R9, rule 1) replaced "the notice … names the endpoint the emulator line shows" with the
+    // notice's body of R3, the description under the `h1` and the endpoint drawn once.
     await lines.line(
-      'The crumbs read EmuForge, AWS, Lambda, Event Functions; the notice reads "These functions are in your local emulator" and names the endpoint the emulator line shows; closing it and choosing the (i) control brings it back',
+      'The crumbs read EmuForge, AWS, Lambda, Event Functions; the notice reads "These functions are in your local emulator" with the body of R3; under the `h1`: "The filter matches the start of a name and is case-sensitive."; the endpoint the emulator line shows is on the page once; closing the notice and choosing the (i) control brings it back',
       async () => {
         await expectListAt(page, FUNCTIONS_PATH);
         await expect.poll(() => crumbs(page), { message: 'the crumbs' }).toEqual(CRUMBS);
         await expectLine(page, connectedAt(port));
         await expect(s.notice, 'the notice').toBeVisible();
-        await expect(s.noticeRegion, 'the notice names the endpoint').toContainText(endpointOf(port));
+        await expect.poll(() => noticeBody(page), { message: "the notice's body" }).toBe(NOTICE_BODY);
+        await expect
+          .poll(async () => (await pageHeader(page))?.description ?? null, { message: 'the description under the h1' })
+          .toBe(LIST_DESCRIPTION);
+        expect(await timesOnPage(page, endpointPattern(port)), `how often ${endpointOf(port)} is on the page`).toBe(1);
         await s.noticeClose.click(ACTION);
         await expect(s.notice, 'the notice once closed').toHaveCount(0);
         await s.about.click(ACTION);
         await expect(s.notice, 'the notice once the (i) control is chosen').toBeVisible();
-        await expect(s.noticeRegion).toContainText(endpointOf(port));
+        await expect.poll(() => noticeBody(page), { message: "the notice's body once brought back" }).toBe(NOTICE_BODY);
       },
     );
 

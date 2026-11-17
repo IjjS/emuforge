@@ -10,16 +10,17 @@ import { useNavigate } from 'react-router';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { usePageFlash } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
+import { ValueText } from '../../../components/value-text';
 import type { ScreenPageProps } from '../../../screens';
 import { OPERATIONS } from '../api';
 import { actionFailure } from '../components/action-failure';
-import { BreakAnywhere } from '../components/break-anywhere';
 import { BucketNameConfirmation } from '../components/bucket-name-confirmation';
 import { lineText, pageState } from '../components/bucket-read';
 import { BucketLoading, BucketNotFound, BucketReadFailure } from '../components/bucket-read-state';
 import { confirmsName } from '../components/confirms-name';
 import { emptyingResult, type EmptyingState } from '../components/emptying-result';
 import { EmptyingStatus } from '../components/emptying-status';
+import { Quoted } from '../components/quoted';
 import { useAnnouncer } from '../components/use-announcer';
 import { useStatusTitle } from '../components/use-status-title';
 import { emptyBucket, type EmptyingCounts, type EmptyingResult } from '../empty-bucket';
@@ -40,23 +41,28 @@ const EMPTYING = 'Emptying the bucket';
 
 const NO_COUNTS: EmptyingCounts = { deleted: 0, failures: [] };
 
-/** R9.4: the endpoint is named only while the connection is connected. */
+/**
+ * R9.4: the endpoint is named only while the connection is connected. The name is shown as a name, the endpoint as an
+ * address, the words around them as free text (issue 467, requirement R6).
+ */
 function EmptySentence({ name, connection }: { name: string; connection: AreaConnection }) {
   const result = connection.result;
   return (
     <Box variant="p">
-      <BreakAnywhere>
-        {`Every object, object version and delete marker in bucket “${name}” will be deleted from your local emulator`}
-        {result?.kind === 'connected' && (
-          <>
-            {' at '}
-            <Box variant="code" display="inline">
-              {result.emulator.endpoint}
-            </Box>
-          </>
-        )}
-        {'. This cannot be undone.'}
-      </BreakAnywhere>
+      <Quoted
+        before="Every object, object version and delete marker in bucket “"
+        name={name}
+        after="” will be deleted from your local emulator"
+      />
+      {result?.kind === 'connected' && (
+        <>
+          <ValueText kind="text" value=" at " />
+          <Box variant="code" display="inline">
+            <ValueText kind="address" value={result.emulator.endpoint} />
+          </Box>
+        </>
+      )}
+      <ValueText kind="text" value=". This cannot be undone." />
     </Box>
   );
 }
@@ -190,7 +196,9 @@ export function EmptyBucketPage({ connection, params }: ScreenPageProps) {
       case 'finished': {
         setStatus({ kind: 'finished', counts });
         const shown = emptyingResult(name, counts);
-        flash.show([{ type: shown.type, content: <BreakAnywhere>{shown.text}</BreakAnywhere> }]);
+        flash.show([
+          { type: shown.type, content: <Quoted before={shown.before} name={shown.name} after={shown.after} /> },
+        ]);
         return;
       }
       case 'no-such-bucket':

@@ -15,6 +15,10 @@
 // compared, by role and name, other stops Cloudscape adds (the wizard's step navigation, a tab panel, the current
 // crumb) being allowed between them; Cloudscape's tabs are one Tab stop whose tabs the arrow keys reach, so the walk
 // goes through them with the right arrow.
+//
+// Issue 467 rewrote one step (its test-criteria.md, "Flow checks, changed"; requirement R9, rule 3): the walk on a
+// role's page reaches "Copy ARN" after "Edit", directly before the ARN's text, with a visible focus indicator on each
+// control it names.
 
 import createWrapper from '@cloudscape-design/components/test-utils/selectors';
 import type { Locator, Page, Request } from '@playwright/test';
@@ -33,6 +37,7 @@ import { focusedAx, focusRing } from './support/focus';
 import { ACTION, heading, NAVIGATION_TOGGLE, SIDE_NAVIGATION } from './support/frame';
 import { getRoleDirect, IamSeeded } from './support/iam';
 import { Lines } from './support/lines';
+import { copyControl, directlyBeforeProblems, pairValueOf } from './support/screen-rules';
 
 // ---------------------------------------------------------------------------------------------------------------
 // The screen's words (requirement R3, R4, R5, R6, R7, R11; English).
@@ -398,24 +403,38 @@ test('studio.iam-role-screens-keyboard-and-layout', async ({ ctx, page, context 
     },
   );
 
+  // Issue 467 (requirement R9, rule 3) replaced 'on a role\'s page → "Refresh role", the five tabs and "Edit" are
+  // reached in that order' with the walk below: "Copy ARN" follows "Edit", directly before the ARN's text, and each of
+  // them draws a focus indicator.
+  const copyArn = copyControl(F_ARN);
+
   await lines.line(
-    'With the keyboard only on a role\'s page → "Refresh role", the five tabs and "Edit" are reached in that order; on the wizard\'s step 1 → the entity types, "Service or use case", then "Cancel", "Next"; on step 3 → "Role name", "Description", the two "Edit" buttons, "Add new tag", then "Cancel", "Previous", "Create role"',
+    'With the keyboard only on a role\'s page → "Refresh role", the five tabs, "Edit" and "Copy ARN" are reached in that order, "Copy ARN" directly before the ARN\'s text, focus visible on each; on the wizard\'s step 1 → the entity types, "Service or use case", then "Cancel", "Next"; on step 3 → "Role name", "Description", the two "Edit" buttons, "Add new tag", then "Cancel", "Previous", "Create role"',
     async () => {
       const problems: string[] = [];
 
+      // The page is read in parts: the ARN the walk ends at is in "Summary" once the role is read.
+      const arn = (await getRoleDirect(ctx, port, two[0])).arn;
       await openRole(page, two[0]);
-      const onPage = await keyboardWalk(page, named(EDIT, 'button'));
+      await expect(pairValueOf(page, F_ARN), `"${F_ARN}" of ${two[0]}`).toContainText(arn);
+      const onPage = await keyboardWalk(page, named(copyArn, 'button'));
       ctx.log(`a role's page, reached: ${onPage.map(shown).join(', ')}`);
-      const pageWanted = [REFRESH_ROLE, ...TABS, EDIT];
-      const pageSeen = among(
-        onPage,
-        (stop) =>
-          named(REFRESH_ROLE, 'button')(stop) ||
-          named(EDIT, 'button')(stop) ||
-          (stop.role === 'tab' && TABS.includes(stop.name)),
-      );
+      const pageWanted = [REFRESH_ROLE, ...TABS, EDIT, copyArn];
+      const wantedOnPage = (stop: Stop) =>
+        named(REFRESH_ROLE, 'button')(stop) ||
+        named(EDIT, 'button')(stop) ||
+        named(copyArn, 'button')(stop) ||
+        (stop.role === 'tab' && TABS.includes(stop.name));
+      const pageSeen = among(onPage, wantedOnPage);
       if (JSON.stringify(pageSeen) !== JSON.stringify(pageWanted)) {
         problems.push(`a role's page: reached ${JSON.stringify(pageSeen)}, wanted ${JSON.stringify(pageWanted)}`);
+      }
+      for (const stop of onPage.filter(wantedOnPage)) {
+        if (stop.ring === null) problems.push(`a role's page: ${shown(stop)} draws no focus indicator`);
+      }
+      const copyButton = s.main.getByRole('button', { name: copyArn, exact: true });
+      for (const problem of await directlyBeforeProblems(copyButton, pairValueOf(page, F_ARN), arn)) {
+        problems.push(`a role's page, "${copyArn}": ${problem}`);
       }
 
       await openWizard(page, 1);

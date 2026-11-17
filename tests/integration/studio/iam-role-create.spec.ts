@@ -6,6 +6,10 @@
 // `studio.iam-role-create-appears-in-the-emulator`, `studio.iam-role-create-refusals-create-nothing`,
 // `studio.iam-role-create-repeated-and-abandoned`.
 //
+// Issue 467 rewrote one step of `studio.iam-role-create-repeated-and-abandoned` (its test-criteria.md, "Flow checks,
+// changed"; requirement R9, rule 5): what "Cancel" does once the wizard holds something. The dialog's words:
+// `support/screen-rules.ts`.
+//
 // Other checks make roles on the run's emulator at the same time, so each check names its roles with its own prefix
 // `<p>` (lower-case letters and digits). Roles and policies are made and read directly with `support/iam.ts`; every
 // role Studio may have made is adopted, so it is taken apart when the check ends. An emulator's refusal the wizard
@@ -35,6 +39,8 @@ import {
 } from './support/iam';
 import { markPage, stillSamePage } from './support/home';
 import { Lines } from './support/lines';
+import { appeared, watchText } from './support/s3';
+import { DISCARD, DISCARD_HEADING, discardDialog, KEEP_EDITING } from './support/screen-rules';
 
 // ---------------------------------------------------------------------------------------------------------------
 // The screen's words (requirement R6, R9.4, R10.3; English).
@@ -650,11 +656,50 @@ test('studio.iam-role-create-repeated-and-abandoned', async ({ ctx, page }) => {
     },
   );
 
+  // Issue 467 (requirement R9, rule 5) replaced the line 'Complete the wizard up to step 3, "Cancel" → the list; a
+  // direct `GetRole` of the name answers that the role cannot be found; open the wizard again → step 1, every field
+  // empty, "AWS service" chosen' with the three lines below: "Cancel" asks once the wizard holds something.
+  const d = discardDialog(page);
+  const principal = 'lambda.amazonaws.com';
+
+  await lines.line('Open the wizard, "Cancel" → the list at once, no dialog', async () => {
+    await openWizard(page);
+    await watchText(page, DISCARD_HEADING);
+    await s.button(CANCEL).click(ACTION);
+    await expect(page).toHaveURL(addressOf(ROLES_PATH));
+    await expect(s.listH1, `the role list's h1 "${LIST_H1}…"`).toBeVisible();
+    expect(await appeared(page, DISCARD_HEADING), `"${DISCARD_HEADING}" was shown`).toBe(false);
+  });
+
   await lines.line(
-    'Complete the wizard up to step 3, "Cancel" → the list; a direct `GetRole` of the name answers that the role cannot be found; open the wizard again → step 1, every field empty, "AWS service" chosen',
+    'Complete the wizard up to step 3 with a name typed, "Cancel" → the dialog; "Keep editing" → step 3 with the name, and "Previous" twice shows the principal still on step 1',
     async () => {
       await completeWizard(page, lambda, dropped, { description: `Dropped ${p}` });
       await s.button(CANCEL).click(ACTION);
+      await expect(d.dialog, `the dialog "${DISCARD_HEADING}"`).toBeVisible();
+      await expect(page, 'the wizard stays while the dialog is open').toHaveURL(/\?step=3$/);
+      await d.keepEditing.click(ACTION);
+      await expect(d.dialog, `"${KEEP_EDITING}" closes the dialog`).toHaveCount(0);
+      await expect(s.step(3), `step 3 after "${KEEP_EDITING}"`).toBeVisible();
+      await expect(s.roleName, `"${F_NAME}" after "${KEEP_EDITING}"`).toHaveValue(dropped);
+      await s.button(PREVIOUS).click(ACTION);
+      await expect(s.step(2), `step 2 after "${PREVIOUS}"`).toBeVisible();
+      await s.button(PREVIOUS).click(ACTION);
+      await expect(s.step(1), `step 1 after "${PREVIOUS}" twice`).toBeVisible();
+      await expect(s.service, `"${F_SERVICE}" still holds the principal`).toHaveValue(principal);
+    },
+  );
+
+  await lines.line(
+    '"Cancel", "Discard" → the list; a direct `GetRole` of the name answers that the role cannot be found; open the wizard again → step 1, every field empty, "AWS service" chosen',
+    async () => {
+      // The Given: the wizard holds the principal and the name, whether or not the line before held.
+      const holds = (await s.step(1).count()) > 0 && (await s.service.inputValue(ACTION).catch(() => '')) === principal;
+      if (!holds) await completeWizard(page, lambda, dropped, { description: `Dropped ${p}` });
+      await s.button(CANCEL).click(ACTION);
+      await expect(d.dialog, `the dialog "${DISCARD_HEADING}"`).toBeVisible();
+      await d.discard.click(ACTION);
+      await expect(d.dialog, `"${DISCARD}" closes the dialog`).toHaveCount(0);
       await expect(page).toHaveURL(addressOf(ROLES_PATH));
       await expect(s.listH1, `the role list's h1 "${LIST_H1}…"`).toBeVisible();
       expect(await roleIsGone(ctx, port, dropped), `a direct GetRole of ${dropped}`).toBe(true);

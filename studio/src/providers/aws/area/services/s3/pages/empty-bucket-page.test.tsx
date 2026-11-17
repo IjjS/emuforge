@@ -402,6 +402,16 @@ function flashHolds(type: 'success' | 'error', text: string): boolean {
   return typed.length === 1 && typed[0]?.getElement().textContent === text;
 }
 
+/** The area's value elements inside `scope`, in order, each as its kind and its text (issue 467, R6). */
+function kindsIn(scope: Element | null | undefined): [string, string][] {
+  return [...(scope?.querySelectorAll('.aws-area-value') ?? [])].map((element) => [
+    [...element.classList]
+      .map((name) => /^aws-area-value-(address|name|fixed|text)$/.exec(name)?.[1])
+      .find((kind) => kind !== undefined) ?? '',
+    element.textContent,
+  ]);
+}
+
 /** An answer held until the case lets it go. */
 function held(): { answer: Promise<Answer>; release: (answer: Answer) => void } {
   let release: (answer: Answer) => void = () => undefined;
@@ -488,10 +498,23 @@ describe('the empty page as opened', () => {
     expect(queryOnPage(SENTENCE)).toBeNull();
   });
 
-  it('the name in the sentence sits in the area’s breaking element', async () => {
+  it('the sentence that names the bucket shows the name as a name, the endpoint as an address, the rest as free text; no constraint text under the field (issue 467, R4, R6)', async () => {
     await openBucket();
 
-    expect(onPage(SENTENCE).closest('.aws-s3-break-anywhere')).not.toBeNull();
+    expect(kindsIn(onPage(SENTENCE))).toEqual([
+      ['text', 'Every object, object version and delete marker in bucket “'],
+      ['name', NAME],
+      ['text', '” will be deleted from your local emulator'],
+      ['text', ' at '],
+      ['address', EMULATOR_ENDPOINT],
+      ['text', '. This cannot be undone.'],
+    ]);
+    const confirmation = createWrapper(main())
+      .findAllFormFields()
+      .find((found) => found.findLabel()?.getElement().textContent === FIELD);
+    expect(confirmation).toBeDefined();
+    expect(confirmation?.findConstraint()).toBeNull();
+    expect(document.querySelector('.aws-s3-break-anywhere')).toBeNull();
   });
 });
 
@@ -675,12 +698,21 @@ describe('the result', () => {
       ['held-1', 'v1', `AccessDenied: ${refused.message}`],
       ['held-2', 'v2', `AccessDenied: ${refused.message}`],
     ]);
-    // The code as code, the cells in the area's breaking element.
+    // The code as code; a key, a version id and a code as names, the message as free text (issue 467, R6).
     const errorCell = table?.findBodyCell(1, 3)?.getElement() as HTMLElement;
     expect(within(errorCell).getByText('AccessDenied').closest('code, [class*="awsui_code"]')).not.toBeNull();
-    expect(within(table?.findBodyCell(1, 1)?.getElement() as HTMLElement).getByText('held-1')).toHaveClass(
-      'aws-s3-break-anywhere',
-    );
+    expect(kindsIn(errorCell)).toEqual([
+      ['name', 'AccessDenied'],
+      ['text', `: ${refused.message}`],
+    ]);
+    expect(kindsIn(table?.findBodyCell(1, 1)?.getElement())).toEqual([['name', 'held-1']]);
+    expect(kindsIn(table?.findBodyCell(1, 2)?.getElement())).toEqual([['name', 'v1']]);
+    // The result's sentence quotes the name as a name, in the status and in the flash.
+    expect(kindsIn(onPage(result))).toEqual([
+      ['text', '2 items could not be deleted from bucket “'],
+      ['name', NAME],
+      ['text', '”. 5 items deleted.'],
+    ]);
     // A failed item is not sent again in the same run.
     expect(engine.of('DeleteObjects')).toHaveLength(1);
   });
@@ -948,15 +980,17 @@ describe('the empty page, its read', () => {
 });
 
 describe('"Cancel"', () => {
-  it('opens the list; no request of the emptying was sent', async () => {
+  it('the name typed, "Cancel": the list as before, no dialog; no request of the emptying was sent (issue 467, R7)', async () => {
     const router = await openBucket(objects(2));
     type(NAME);
 
     fireEvent.click(button('Cancel'));
+    expect(screen.queryByRole('dialog')).toBeNull();
 
     await waitFor(() => {
       expect(router.state.location.pathname).toBe(LIST_PATH);
     });
+    expect(screen.queryByRole('dialog')).toBeNull();
     expect(engine.of('ListObjectVersions')).toHaveLength(0);
     expect(engine.of('DeleteObjects')).toHaveLength(0);
     expect(engine.contents[NAME]).toHaveLength(2);

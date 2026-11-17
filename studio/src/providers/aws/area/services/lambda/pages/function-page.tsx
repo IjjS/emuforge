@@ -12,21 +12,23 @@ import { useNavigate } from 'react-router';
 
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
+import { ValueText } from '../../../components/value-text';
 import type { ScreenPageProps } from '../../../screens';
 import type { LambdaFunction } from '../api';
 import { readFailureState, useAnnouncer } from '../components/failure-states';
 import { ReadFailure } from '../components/failures';
 import { FunctionOverview, FunctionStatusLine, RuntimeSettings } from '../components/function-sections';
 import { functionStatus } from '../components/function-status';
+import { quoting } from '../components/quoting';
 import { FUNCTIONS_PATH, functionPath, functionTabPath, type FunctionTab } from '../format';
 import { useFunctionReading } from '../queries';
 
 // A Lambda function's own page with its tab "Code" (issue 84, requirement R5, R6.1, R8, R10): the console's parts in
 // the console's words (`studio/references/console/lambda/function-detail.yaml`); its description, status and states
-// in EmuForge's own. Every value from the engine or the emulator is rendered as text. "Code source" is not built
-// (R13 item 1).
+// in EmuForge's own. Every value from the engine or the emulator is rendered as text, each as the kind of value it is
+// (issue 467, requirement R6). The `h1` has no description but the status line (issue 467, R3): the area's frame says
+// where the function is. "Code source" is not built (R13 item 1).
 
-const DESCRIPTION = 'This function is in your local emulator, not in an AWS account.';
 const REFRESHED = 'Function refreshed';
 const READY = 'Function ready';
 
@@ -77,9 +79,11 @@ function NotFound({ name }: { name: string }) {
             Function not found
           </Box>
           <Box variant="p" color="inherit">
-            <span className="aws-lambda-value">
-              {`The emulator holds no function named “${name}”. It may have been deleted, or the emulator restarted.`}
-            </span>
+            {quoting(
+              'The emulator holds no function named “',
+              name,
+              '”. It may have been deleted, or the emulator restarted.',
+            )}
           </Box>
           <Link href={FUNCTIONS_PATH} onFollow={handleFollow}>
             Event Functions
@@ -179,20 +183,11 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
         header={
           <Header
             variant="h1"
-            description={
-              <>
-                {DESCRIPTION}
-                {status !== undefined && (
-                  // The header's description is a paragraph: the status is a line of it.
-                  <Box variant="span" display="block" margin={{ top: 'xxs' }}>
-                    <FunctionStatusLine status={status} />
-                  </Box>
-                )}
-              </>
-            }
+            // The status line alone; nothing while there is no status (issue 467, R3).
+            description={status === undefined ? undefined : <FunctionStatusLine status={status} />}
             actions={<Button iconName="refresh" ariaLabel="Refresh" onClick={handleRefresh} />}
           >
-            {name}
+            <ValueText kind="name" value={name} />
           </Header>
         }
       >

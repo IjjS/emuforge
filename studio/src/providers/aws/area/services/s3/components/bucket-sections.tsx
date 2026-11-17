@@ -8,9 +8,11 @@ import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Table, { type TableProps } from '@cloudscape-design/components/table';
 import type { ReactNode } from 'react';
 
+import { CopyValue } from '../../../components/copy-value';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { creationDateText } from '../../../components/format-date';
 import { useFollow } from '../../../components/use-follow';
+import { ValueText, type ValueKind } from '../../../components/value-text';
 import {
   NO_SUCH_BUCKET,
   type Bucket,
@@ -30,21 +32,26 @@ import {
 } from '../format';
 import type { BucketRead } from '../queries';
 import { regionText } from '../regions';
-import { BreakAnywhere } from './break-anywhere';
 import { sectionFailure } from './bucket-read';
 import { StateLineText } from './bucket-read-state';
+import { NAME_COLUMN_MIN_WIDTH } from './name-column';
 import type { BucketSectionReads } from './use-bucket-sections';
 
 // The sections of a bucket's tab "Properties" (issue 256, requirement R5.3, R5.4, R9.2, R10, R11.3), in the spec's
 // order, each a container with its heading (level 2) and key-value pairs or a table, in the console's words. Each
 // shows its own read's state in place of its values, its heading and button staying. A value the answer lacks is "-";
-// every value from the emulator is text that breaks inside its box. "AWS CloudTrail data events" is not built (R14
-// item 6).
+// every value from the emulator is text, each shown as the kind of value it is, and the bucket's ARN and its KMS key
+// with their copy controls (issue 467, requirement R5, R6). "AWS CloudTrail data events" is not built (R14 item 6).
 
 /** A value the answer lacks (R5.3). */
 const NONE = '-';
 
-const or = (value: string | undefined): string => value ?? NONE;
+/**
+ * The narrowest column of a section that holds an address, in pixels: as many columns as the page has room for where
+ * it is wide, one at 390 wide, so the ARN has the section's width to break in at its `:` and `/` (issue 467, R6)
+ * rather than a part of it.
+ */
+const ADDRESS_COLUMN_MIN_WIDTH = 240;
 
 /** A section's button: a link to its route (R10). */
 interface SectionAction {
@@ -88,9 +95,7 @@ function SectionFailure({ read, connection }: { read: BucketRead<unknown>; conne
         </StatusIndicator>
         {view.detail !== undefined && (
           <Box variant="p">
-            <BreakAnywhere>
-              <StateLineText line={view.detail} />
-            </BreakAnywhere>
+            <StateLineText line={view.detail} />
           </Box>
         )}
       </SpaceBetween>
@@ -101,17 +106,30 @@ function SectionFailure({ read, connection }: { read: BucketRead<unknown>; conne
   );
 }
 
-/** One label and its value as text. */
+/** One label and its value as text, of the kind it is; "-" where the answer lacks it. */
 interface Field {
   label: string;
-  value: string;
+  kind: ValueKind;
+  value: string | undefined;
+  /** The value is taken to another tool: it has its copy control, "Copy {label}" (R5). */
+  copy?: boolean;
+}
+
+function FieldValue({ label, kind, value, copy = false }: Field) {
+  return copy ? (
+    <CopyValue label={label} value={value} kind={kind} none={NONE} />
+  ) : (
+    <ValueText kind={kind} value={value} none={NONE} />
+  );
 }
 
 function Fields({ fields }: { fields: readonly Field[] }) {
+  const holdsAddress = fields.some(({ kind }) => kind === 'address');
   return (
     <KeyValuePairs
       columns={Math.min(fields.length, 4) as 1 | 2 | 3 | 4}
-      items={fields.map(({ label, value }) => ({ label, value: <BreakAnywhere>{value}</BreakAnywhere> }))}
+      {...(holdsAddress && { minColumnWidth: ADDRESS_COLUMN_MIN_WIDTH })}
+      items={fields.map((field) => ({ label: field.label, value: <FieldValue {...field} /> }))}
     />
   );
 }
@@ -145,11 +163,12 @@ function FieldsSection<T>({ title, action, read, connection, fields }: FieldsSec
   );
 }
 
-/** A column of a section's table: its heading and each row's value as text. */
+/** A column of a section's table: its heading and each row's value as text, of the kind it is; "-" where it lacks. */
 interface Column<Row> {
   id: string;
   header: string;
-  cell: (row: Row) => string;
+  kind: ValueKind;
+  cell: (row: Row) => string | undefined;
 }
 
 interface TableSectionProps<T, Row> {
@@ -178,10 +197,12 @@ function TableSection<T, Row>({
 }: TableSectionProps<T, Row>) {
   const value = answered(read);
   const footerText = value === undefined ? undefined : footer?.(value);
-  const columnDefinitions: TableProps.ColumnDefinition<Row>[] = columns.map(({ id, header, cell }) => ({
+  // A name's column keeps room for a name of 24 characters on one line (R6).
+  const columnDefinitions: TableProps.ColumnDefinition<Row>[] = columns.map(({ id, header, kind, cell }) => ({
     id,
     header,
-    cell: (row) => <BreakAnywhere>{cell(row)}</BreakAnywhere>,
+    ...(kind === 'name' && { minWidth: NAME_COLUMN_MIN_WIDTH }),
+    cell: (row) => <ValueText kind={kind} value={cell(row)} none={NONE} />,
   }));
   return (
     <Table<Row>
@@ -214,35 +235,47 @@ function TableSection<T, Row>({
 }
 
 const TAG_COLUMNS: readonly Column<Tag>[] = [
-  { id: 'key', header: 'Key', cell: (tag) => tag.key },
-  { id: 'value', header: 'Value', cell: (tag) => tag.value },
+  { id: 'key', header: 'Key', kind: 'name', cell: (tag) => tag.key },
+  { id: 'value', header: 'Value', kind: 'text', cell: (tag) => tag.value },
 ];
 
-const days = (count: number | undefined): string => (count === undefined ? NONE : formatDays(count));
+const days = (count: number | undefined): string | undefined => (count === undefined ? undefined : formatDays(count));
 
 const TIERING_COLUMNS: readonly Column<TieringConfiguration>[] = [
-  { id: 'name', header: 'Name', cell: (configuration) => or(configuration.name) },
-  { id: 'status', header: 'Status', cell: (configuration) => or(configuration.status) },
-  { id: 'prefix', header: 'Prefix', cell: (configuration) => or(configuration.prefix) },
-  { id: 'archive', header: 'Archive Access tier', cell: (configuration) => days(configuration.archiveDays) },
+  { id: 'name', header: 'Name', kind: 'name', cell: (configuration) => configuration.name },
+  { id: 'status', header: 'Status', kind: 'fixed', cell: (configuration) => configuration.status },
+  { id: 'prefix', header: 'Prefix', kind: 'text', cell: (configuration) => configuration.prefix },
+  {
+    id: 'archive',
+    header: 'Archive Access tier',
+    kind: 'fixed',
+    cell: (configuration) => days(configuration.archiveDays),
+  },
   {
     id: 'deep-archive',
     header: 'Deep Archive Access tier',
+    kind: 'fixed',
     cell: (configuration) => days(configuration.deepArchiveDays),
   },
 ];
 
 const NOTIFICATION_COLUMNS: readonly Column<EventNotification>[] = [
-  { id: 'name', header: 'Event name', cell: (notification) => or(notification.name) },
+  { id: 'name', header: 'Event name', kind: 'name', cell: (notification) => notification.name },
   {
     id: 'events',
     header: 'Event types',
-    cell: (notification) => (notification.events.length === 0 ? NONE : notification.events.join(', ')),
+    kind: 'fixed',
+    cell: (notification) => (notification.events.length === 0 ? undefined : notification.events.join(', ')),
   },
-  { id: 'prefix', header: 'Prefix', cell: (notification) => or(notification.prefix) },
-  { id: 'suffix', header: 'Suffix', cell: (notification) => or(notification.suffix) },
-  { id: 'destination-type', header: 'Destination type', cell: (notification) => notification.destinationType },
-  { id: 'destination', header: 'Destination', cell: (notification) => or(notification.destination) },
+  { id: 'prefix', header: 'Prefix', kind: 'text', cell: (notification) => notification.prefix },
+  { id: 'suffix', header: 'Suffix', kind: 'text', cell: (notification) => notification.suffix },
+  {
+    id: 'destination-type',
+    header: 'Destination type',
+    kind: 'fixed',
+    cell: (notification) => notification.destinationType,
+  },
+  { id: 'destination', header: 'Destination', kind: 'address', cell: (notification) => notification.destination },
 ];
 
 interface BucketSectionsProps {
@@ -260,9 +293,9 @@ export function BucketSections({ bucket, reads, connection }: BucketSectionsProp
       <Container header={<SectionHeader title="Bucket overview" />}>
         <Fields
           fields={[
-            { label: 'AWS Region', value: regionText(bucket.region) },
-            { label: 'Bucket ARN', value: or(bucket.arn) },
-            { label: 'Creation date', value: creationDateText(bucket.creationDate) },
+            { label: 'AWS Region', kind: 'fixed', value: regionText(bucket.region) },
+            { label: 'Bucket ARN', kind: 'address', value: bucket.arn, copy: true },
+            { label: 'Creation date', kind: 'fixed', value: creationDateText(bucket.creationDate) },
           ]}
         />
       </Container>
@@ -271,14 +304,14 @@ export function BucketSections({ bucket, reads, connection }: BucketSectionsProp
         action={edit(name, 'versioning')}
         read={reads.versioning}
         connection={connection}
-        fields={({ status }) => [{ label: 'Bucket Versioning', value: status }]}
+        fields={({ status }) => [{ label: 'Bucket Versioning', kind: 'fixed', value: status }]}
       />
       <FieldsSection
         title="Bucket ABAC"
         action={edit(name, 'abac')}
         read={reads.abac}
         connection={connection}
-        fields={({ status }) => [{ label: 'Bucket ABAC', value: or(status) }]}
+        fields={({ status }) => [{ label: 'Bucket ABAC', kind: 'fixed', value: status }]}
       />
       <TableSection
         title="Tags"
@@ -295,9 +328,13 @@ export function BucketSections({ bucket, reads, connection }: BucketSectionsProp
         read={reads.encryption}
         connection={connection}
         fields={({ algorithm, kmsKey, bucketKey }) => [
-          { label: 'Encryption type', value: algorithm === undefined ? NONE : encryptionTypeLabel(algorithm) },
-          { label: 'AWS KMS key', value: or(kmsKey) },
-          { label: 'Bucket Key', value: bucketKey },
+          {
+            label: 'Encryption type',
+            kind: 'fixed',
+            value: algorithm === undefined ? undefined : encryptionTypeLabel(algorithm),
+          },
+          { label: 'AWS KMS key', kind: 'address', value: kmsKey, copy: true },
+          { label: 'Bucket Key', kind: 'fixed', value: bucketKey },
         ]}
       />
       <TableSection
@@ -316,10 +353,11 @@ export function BucketSections({ bucket, reads, connection }: BucketSectionsProp
         read={reads.logging}
         connection={connection}
         fields={({ status, targetBucket, targetPrefix }) => [
-          { label: 'Server access logging', value: status },
+          { label: 'Server access logging', kind: 'fixed', value: status },
           {
             label: 'Destination bucket',
-            value: targetPrefix === undefined ? or(targetBucket) : `${or(targetBucket)}/${targetPrefix}`,
+            kind: 'address',
+            value: targetPrefix === undefined ? targetBucket : `${targetBucket ?? NONE}/${targetPrefix}`,
           },
         ]}
       />
@@ -338,7 +376,11 @@ export function BucketSections({ bucket, reads, connection }: BucketSectionsProp
         read={reads.notifications}
         connection={connection}
         fields={({ eventBridge }) => [
-          { label: 'Send notifications to Amazon EventBridge for all events in this bucket', value: eventBridge },
+          {
+            label: 'Send notifications to Amazon EventBridge for all events in this bucket',
+            kind: 'fixed',
+            value: eventBridge,
+          },
         ]}
       />
       <FieldsSection
@@ -346,7 +388,7 @@ export function BucketSections({ bucket, reads, connection }: BucketSectionsProp
         action={edit(name, 'transfer-acceleration')}
         read={reads.acceleration}
         connection={connection}
-        fields={({ status }) => [{ label: 'Transfer acceleration', value: status }]}
+        fields={({ status }) => [{ label: 'Transfer acceleration', kind: 'fixed', value: status }]}
       />
       <FieldsSection
         title="Object Lock"
@@ -354,10 +396,14 @@ export function BucketSections({ bucket, reads, connection }: BucketSectionsProp
         read={reads['object-lock']}
         connection={connection}
         fields={({ status, defaultRetention, mode, period }) => [
-          { label: 'Object Lock', value: or(status) },
-          { label: 'Default retention', value: defaultRetention },
-          { label: 'Retention mode', value: or(mode) },
-          { label: 'Default retention period', value: period === undefined ? NONE : formatRetentionPeriod(period) },
+          { label: 'Object Lock', kind: 'fixed', value: status },
+          { label: 'Default retention', kind: 'fixed', value: defaultRetention },
+          { label: 'Retention mode', kind: 'fixed', value: mode },
+          {
+            label: 'Default retention period',
+            kind: 'fixed',
+            value: period === undefined ? undefined : formatRetentionPeriod(period),
+          },
         ]}
       />
       <FieldsSection
@@ -365,7 +411,7 @@ export function BucketSections({ bucket, reads, connection }: BucketSectionsProp
         action={edit(name, 'requester-pays')}
         read={reads['request-payment']}
         connection={connection}
-        fields={({ status }) => [{ label: 'Requester pays', value: or(status) }]}
+        fields={({ status }) => [{ label: 'Requester pays', kind: 'fixed', value: status }]}
       />
       <FieldsSection
         title="Static website hosting"
@@ -373,9 +419,9 @@ export function BucketSections({ bucket, reads, connection }: BucketSectionsProp
         read={reads.website}
         connection={connection}
         fields={({ status, indexDocument, errorDocument }) => [
-          { label: 'Static website hosting', value: status },
-          { label: 'Index document', value: or(indexDocument) },
-          { label: 'Error document', value: or(errorDocument) },
+          { label: 'Static website hosting', kind: 'fixed', value: status },
+          { label: 'Index document', kind: 'name', value: indexDocument },
+          { label: 'Error document', kind: 'name', value: errorDocument },
         ]}
       />
     </SpaceBetween>

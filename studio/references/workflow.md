@@ -46,7 +46,9 @@ An issue that touches both a `console` and a `native` screen is split.
   emulator has is not left out; its 501, if the emulator answers one, is named here (point 5).
 - For a `console` screen, the screen's EmuForge-own text, in English (point 3): its description, help, and empty,
   loading and error states, and the resource word of its local-emulator notice ("buckets": "These buckets are in
-  your local emulator"). Each says only what the engine knows.
+  your local emulator"). Each says only what the engine knows. They follow `studio/AGENTS.md`, "What every AWS screen
+  does": what a description says, each checked field's constraint text, the values with a copy control, and what
+  "Cancel" does on a form.
 - For a screen of Studio's own layer, its text in English: every visible text, accessible name and announcement, as
   it will read in the English catalogue. The requirement does not give the other languages.
 

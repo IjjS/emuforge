@@ -11,6 +11,7 @@ import { useNavigate } from 'react-router';
 
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
+import { ValueText } from '../../../components/value-text';
 import type { ScreenPageProps } from '../../../screens';
 import type { Role, RoleRead } from '../api';
 import { ROLES_PATH, roleTabPath, type RoleTab } from '../format';
@@ -18,12 +19,14 @@ import { useRole } from '../queries';
 import { EditSummaryDialog } from '../components/edit-summary-dialog';
 import { readFailureState, type ReadFailureState } from '../components/failures';
 import { useAnnouncer } from '../components/page-parts';
-import { BoundarySection, PoliciesSection, SummarySection, Value } from '../components/role-sections';
+import { Quoted } from '../components/quoted';
+import { BoundarySection, PoliciesSection, SummarySection } from '../components/role-sections';
 import { ReadFailure } from '../components/states';
 
 // A role's own page (issue 82, requirement R5, R6.1, R8, R10): the tab "Permissions" with "Summary", "Permissions
-// policies" and "Permissions boundary", in the console's words; its description, states and Studio's own "Refresh
-// role" in EmuForge's. Every value from the engine or the emulator is rendered as text.
+// policies" and "Permissions boundary", in the console's words; its states and Studio's own "Refresh role" in
+// EmuForge's. Every value from the engine or the emulator is rendered as text, each as the kind of value it is (issue
+// 467, requirement R6). The `h1` has no description: the area's frame says where the role is (issue 467, R3).
 
 /** The path parameter that holds the role's name, decoded once by the area (R0). */
 export const ROLE_NAME_PARAM = 'name';
@@ -75,9 +78,11 @@ function NotFound({ name }: { name: string }) {
             Role not found
           </Box>
           <Box variant="p" color="inherit">
-            <Value>
-              {`The emulator holds no role named “${name}”. It may have been deleted, or the emulator restarted.`}
-            </Value>
+            <Quoted
+              before="The emulator holds no role named “"
+              name={name}
+              after="”. It may have been deleted, or the emulator restarted."
+            />
           </Box>
           <Link href={ROLES_PATH} onFollow={handleFollow}>
             Roles
@@ -224,12 +229,8 @@ export function RolePage({ connection, params }: ScreenPageProps) {
   return (
     <>
       <SpaceBetween size="m">
-        <Header
-          variant="h1"
-          description="This role is in your local emulator, not in an AWS account."
-          actions={<Button iconName="refresh" ariaLabel="Refresh role" onClick={handleRefresh} />}
-        >
-          {role?.name ?? name}
+        <Header variant="h1" actions={<Button iconName="refresh" ariaLabel="Refresh role" onClick={handleRefresh} />}>
+          <ValueText kind="name" value={role?.name ?? name} />
         </Header>
         {content}
       </SpaceBetween>

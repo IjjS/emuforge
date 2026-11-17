@@ -9,6 +9,10 @@
 // Other checks make buckets on the run's emulator at the same time, so each check names its buckets with its own
 // prefix `<p>` and reads them by name. What a section should show is written from direct reads of the same bucket
 // (`expectedSections`). Words and readers: `support/s3-bucket-page.ts`; direct calls and `Seeded`: `support/s3.ts`.
+//
+// Issue 467 rewrote one step of `studio.s3-bucket-page-shows-the-bucket-properties` (its test-criteria.md, "Flow checks,
+// changed"; requirement R9, rule 1): what the notice, the `h1`'s description and the page say of where the bucket is.
+// Readers of those: `support/screen-rules.ts`.
 
 import { expect, startStack, test } from './support';
 import { connectedAt, crumbLink, crumbs, emulatorLine, endpointPattern, expectLine } from './support/aws-area';
@@ -65,6 +69,7 @@ import {
   VERSIONING,
   WEBSITE,
 } from './support/s3-bucket-page';
+import { NOTICE_BODY, noticeBody, pageHeader, pairValueOf, timesOnPage } from './support/screen-rules';
 
 /** The page's notice region, as the area names it. */
 const NOTICE_REGION = 'Local emulator notice';
@@ -132,8 +137,10 @@ test.describe(() => {
       },
     );
 
+    // Issue 467 (requirement R9, rule 1) replaced "the notice … names the endpoint the emulator line shows" with the
+    // notice's body of R3, no description under the `h1`, and the endpoint drawn once.
     await lines.line(
-      'The crumbs read EmuForge, AWS, S3, Buckets and the name; the notice reads "These buckets are in your local emulator" and names the endpoint the emulator line shows',
+      'The crumbs read EmuForge, AWS, S3, Buckets and the name; the notice reads "These buckets are in your local emulator" with the body of R3; the `h1` has no description; the endpoint the emulator line shows is on the page once',
       async () => {
         await openBucketPage(page, name);
         await expect
@@ -143,9 +150,16 @@ test.describe(() => {
         const notice = page.getByRole('region', { name: NOTICE_REGION, exact: true });
         await expect(notice.getByText(NOTICE, { exact: true }), `the notice "${NOTICE}"`).toBeVisible();
         await expect(emulatorLine(page)).toContainText(new RegExp(endpointPattern(port)));
-        await expect(notice, 'the notice names the endpoint the line shows').toContainText(
-          new RegExp(endpointPattern(port)),
-        );
+        await expect.poll(() => noticeBody(page), { message: "the notice's body" }).toBe(NOTICE_BODY);
+        // The bucket is read (its ARN shown), so the header shows what it shows for a loaded bucket.
+        await expect(pairValueOf(page, 'Bucket ARN'), '"Bucket ARN" shows the bucket\'s ARN').toContainText(name);
+        const header = await pageHeader(page);
+        ctx.log(`the h1's header ${JSON.stringify(header)}`);
+        expect(header?.description ?? null, 'the description under the h1').toBeNull();
+        expect(
+          await timesOnPage(page, endpointPattern(port)),
+          `how often https://127.0.0.1:${String(port)} is on the page`,
+        ).toBe(1);
       },
     );
 
