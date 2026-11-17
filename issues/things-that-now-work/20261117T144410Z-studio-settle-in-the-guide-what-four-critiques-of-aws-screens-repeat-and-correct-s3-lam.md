@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: gap
 Issue-Source: finder
 Issue-Key: studio|aws-area|critique-repeats
-Issue-Check-Ids:
+Issue-Check-Ids: studio.lambda-screens-say-where-once studio.lambda-function-create-states-the-name-rules studio.lambda-function-page-copies-arn-and-url studio.lambda-values-break-where-they-can-be-read studio.iam-screens-say-where-once studio.iam-role-create-states-the-field-rules studio.iam-role-page-copies-the-arn studio.iam-values-break-where-they-can-be-read studio.s3-screens-say-where-once studio.s3-create-bucket-states-the-name-rules studio.s3-bucket-page-copies-arn-and-kms-key studio.s3-values-break-where-they-can-be-read studio.lambda-function-list-shows-what-the-emulator-holds studio.lambda-function-create-repeated-and-abandoned studio.lambda-function-screens-keyboard-and-layout studio.iam-role-create-repeated-and-abandoned studio.iam-role-screens-keyboard-and-layout studio.s3-bucket-list-shows-what-the-emulator-holds studio.s3-bucket-page-shows-the-bucket-properties studio.s3-create-bucket-repeated-and-abandoned studio.s3-bucket-screens-keyboard-and-layout
 Issue-Commit: da8a77f737cfd63121821cc5e1f63d0e962b2152
 
 # Settle in the guide what four critiques of AWS screens repeat, and correct S3, Lambda and IAM to it

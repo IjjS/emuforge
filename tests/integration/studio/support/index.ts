@@ -71,6 +71,23 @@ export {
 export { emulatorLine, expectLine, lineText, LINE_LABEL, type AreaBox, type WidthReport } from './aws-area';
 export { EnvError, expect, test, type Ctx } from './check';
 export { NO_SCREEN_SENTENCE, NO_SCREEN_SERVICE } from './no-screen';
+export {
+  actions as noScreenPartActions,
+  crumbTrail,
+  expectCrumbs,
+  expectNoScreenPart,
+  expectPath,
+  NO_SCREEN_PART_H1,
+  NOTHING_CHANGED,
+  PART_SERVICES,
+  partShown,
+  partStatement,
+  pathLayout,
+  shownPath,
+  type PartShown,
+  type PathLayout,
+  type ShownCrumb,
+} from './no-screen-part';
 export { Engine, type EngineOptions } from './engine';
 export {
   OwnEmulator,
@@ -222,13 +239,42 @@ export {
 } from './lambda';
 export {
   bucketNamesDirect,
+  bucketPropertiesDirect,
   checkPrefix,
+  configureBucketDirect,
+  createBucketDirect,
+  createKeyDirect,
+  deleteItemsDirect,
+  deleteObjectDirect,
+  emptyBucketDirect,
+  errorCodeOf,
+  kmsDirect,
+  legalHoldDirect,
   ListBucketsHold,
   ListBucketsRecord,
   listBucketsDirect,
   objectKeysDirect,
+  objectPath,
+  objectVersionsDirect,
+  putLegalHoldDirect,
+  putObjectDirect,
+  s3Direct,
   Seeded,
+  shownDirect,
+  type BucketProperties,
+  type BucketSettings,
+  type CreateOptions,
+  type DeleteFailure,
+  type Direct,
   type DirectBucket,
+  type DirectEnv,
+  type DirectItem,
+  type EncryptionSetting,
+  type ObjectOwnership,
+  type PublicAccessBlock,
+  type QueueNotification,
+  type RetentionSetting,
+  type TieringConfiguration,
 } from './s3';
 export { register as registerSecret, redact } from './secrets';
 export { startStack, type Stack, type StackOptions } from './stack';

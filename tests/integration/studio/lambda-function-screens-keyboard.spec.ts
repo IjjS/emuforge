@@ -15,6 +15,10 @@
 // names. The walk ends at the first name link. A tab list is one Tab stop whose tabs are reached with the arrow keys
 // (the WAI-ARIA tabs pattern, Cloudscape's `Tabs`), so on a function's page the next tab is reached with Arrow Right
 // while focus is on a tab and with Tab otherwise; reaching a tab does not leave the page.
+//
+// Issue 467 rewrote one step (its test-criteria.md, "Flow checks, changed"; requirement R9, rule 3): the walk on a
+// function's page reaches the copy controls of "Function ARN" and "Function URL" between "Refresh" and the tabs. The
+// check grants its page the clipboard for that step.
 
 import createWrapper from '@cloudscape-design/components/test-utils/selectors';
 import type { Locator, Page, Request } from '@playwright/test';
@@ -31,7 +35,7 @@ import {
 } from './support/aws-area';
 import { focusedAx, focusRing, hasFocus } from './support/focus';
 import { ACTION, addressOf, heading, NAVIGATION_TOGGLE, SIDE_NAVIGATION } from './support/frame';
-import { LambdaSeeded } from './support/lambda';
+import { functionUrlDirect, LambdaSeeded } from './support/lambda';
 import {
   ABOUT,
   ACTIONS,
@@ -56,17 +60,22 @@ import {
 import {
   createForm,
   EVENT_FUNCTIONS,
+  FUNCTION_ARN,
+  FUNCTION_URL,
   LIST_NOT_READ,
   NOT_FOUND,
   openCreateForm,
   openFunction,
+  OVERVIEW,
   PAGE_TABS,
+  pairValue,
   USE_ANOTHER_ROLE,
   EXISTING_ROLE,
   CANCEL,
 } from './support/lambda-page';
 import { Lines } from './support/lines';
 import { checkPrefix, scrollsSideways } from './support/s3';
+import { copiedText, copyControl, grantClipboard } from './support/screen-rules';
 
 const PAGINATION = createWrapper().findTable().findPagination().toSelector();
 
@@ -175,11 +184,20 @@ async function focusDocumentStart(page: Page): Promise<void> {
   });
 }
 
-/** The text of `locator` against its own box: whole (its text is `text`), not clipped, inside the viewport's width. */
-async function wholeIn(locator: Locator, text: string): Promise<string[]> {
+/**
+ * The text of `locator` against its own box: whole (its text is `text`), not clipped, and inside `bound`: the
+ * viewport's width, or (`'scroll region'`) the table's own sideways scroll region, the nearest ancestor inside the
+ * table's root that scrolls sideways, whose box ends inside the viewport and whose scrollable width holds the element
+ * (decisions.md, PM 2026-11-18 04:40, item 9). Without such a region the viewport's width bounds it.
+ */
+async function wholeIn(
+  locator: Locator,
+  text: string,
+  bound: 'viewport' | 'scroll region' = 'viewport',
+): Promise<string[]> {
   if ((await locator.count()) === 0) return [`no element for "${text.slice(0, 20)}…"`];
   return locator.first().evaluate(
-    (el, wanted) => {
+    (el, { wanted, within }) => {
       const found: string[] = [];
       const norm = (s: string) => s.replace(/\s+/g, '').trim();
       if (norm((el as HTMLElement).innerText) !== norm(wanted)) {
@@ -194,11 +212,34 @@ async function wholeIn(locator: Locator, text: string): Promise<string[]> {
         }
         if (at.tagName === 'TD' || at.tagName === 'TH') break;
       }
-      if (box.right > document.documentElement.clientWidth + 0.5)
-        found.push(`ends at ${box.right.toFixed(1)}, past the viewport`);
+      const viewport = document.documentElement.clientWidth;
+      let region: Element | null = null;
+      const table = within === null ? null : el.closest(within);
+      if (table !== null) {
+        for (let at = el.parentElement; at && at !== table.parentElement; at = at.parentElement) {
+          if (/auto|scroll/.test(getComputedStyle(at).overflowX)) {
+            region = at;
+            break;
+          }
+        }
+      }
+      if (region === null) {
+        if (box.right > viewport + 0.5) found.push(`ends at ${box.right.toFixed(1)}, past the viewport`);
+        return found;
+      }
+      const r = region.getBoundingClientRect();
+      if (r.right > viewport + 0.5) found.push(`its scroll region ends at ${r.right.toFixed(1)}, past the viewport`);
+      // The element's place in the region's scrollable content, whatever the region is scrolled to.
+      const left = box.left - r.left - region.clientLeft + region.scrollLeft;
+      const right = box.right - r.left - region.clientLeft + region.scrollLeft;
+      if (left < -0.5 || right > region.scrollWidth + 0.5) {
+        found.push(
+          `lies at ${left.toFixed(1)}..${right.toFixed(1)}, outside its scroll region's ${String(region.scrollWidth)}`,
+        );
+      }
       return found;
     },
-    text,
+    { wanted: text, within: bound === 'scroll region' ? TABLE : null },
     ACTION,
   );
 }
@@ -273,12 +314,25 @@ test('studio.lambda-function-screens-keyboard-and-layout', async ({ ctx, page, c
     },
   );
 
+  // Issue 467 (requirement R9, rule 3) replaced 'on a function\'s page → "Refresh" and the six tabs are reached in that
+  // order' with the walk below, on the page of a function with a URL: the two copy controls come between "Refresh"
+  // and the tabs, and Enter on "Copy Function ARN" copies it.
+  const withUrl = `${p}-url`;
+  await seeded.function(withUrl, { url: true });
+  await grantClipboard(context, stack.studio.origin);
+
   await lines.line(
-    'With the keyboard only on a function\'s page → "Refresh" and the six tabs are reached in that order; on the create form with "Use another role" → the fields in visible order, then "Cancel", "Create Event Function"',
+    'With the keyboard only on the page of a function with a URL → "Refresh", "Copy Function ARN", "Copy Function URL" and the six tabs are reached in that order, focus visible on each; Enter on "Copy Function ARN" shows "Function ARN copied" and focus stays on the control; on the create form with "Use another role" → the fields in visible order, then "Cancel", "Create Event Function"',
     async () => {
       const found: string[] = [];
-      const name = two[0];
+      const name = withUrl;
+      const url = await functionUrlDirect(ctx, port, name);
+      expect(url, `a direct GetFunctionUrlConfig ${name} gives a URL`).not.toBeNull();
       await openFunction(page, name);
+      // The page is read in parts: the URL arrives after the tabs show, and the next step Tabs through its control.
+      await expect
+        .poll(() => pairValue(page, OVERVIEW, FUNCTION_URL), { message: `"${FUNCTION_URL}" shows the URL` })
+        .toContain(url ?? '');
       await focusDocumentStart(page);
       let stop: Stop | null = null;
       for (let i = 0; i < 60; i++) {
@@ -288,20 +342,55 @@ test('studio.lambda-function-screens-keyboard-and-layout', async ({ ctx, page, c
       }
       if (stop === null || !named(REFRESH, 'button')(stop)) found.push(`the Tab never reached "${REFRESH}"`);
       else {
+        if (stop.ring === null) found.push(`"${REFRESH}" draws no focus indicator`);
         const reached: string[] = [];
-        for (const tab of PAGE_TABS) {
-          await page.keyboard.press(stop?.role === 'tab' ? 'ArrowRight' : 'Tab');
+        for (const control of [copyControl(FUNCTION_ARN), copyControl(FUNCTION_URL)]) {
+          await page.keyboard.press('Tab');
           stop = await focusedStop(page);
           reached.push(shown(stop));
-          if (stop === null || stop.name !== tab || (stop.role !== 'tab' && stop.role !== 'link')) {
-            found.push(`expected the tab "${tab}" next, reached ${shown(stop)}`);
+          if (stop === null || !named(control, 'button')(stop)) {
+            found.push(`expected "${control}" next, reached ${shown(stop)}`);
             break;
           }
-          if (stop.ring === null) found.push(`the tab "${tab}" draws no focus indicator`);
+          if (stop.ring === null) found.push(`"${control}" draws no focus indicator`);
+        }
+        if (found.length === 0) {
+          for (const tab of PAGE_TABS) {
+            await page.keyboard.press(stop?.role === 'tab' ? 'ArrowRight' : 'Tab');
+            stop = await focusedStop(page);
+            reached.push(shown(stop));
+            if (stop === null || stop.name !== tab || (stop.role !== 'tab' && stop.role !== 'link')) {
+              found.push(`expected the tab "${tab}" next, reached ${shown(stop)}`);
+              break;
+            }
+            if (stop.ring === null) found.push(`the tab "${tab}" draws no focus indicator`);
+          }
         }
         ctx.log(`after "${REFRESH}": ${reached.join(', ')}`);
         if (!addressOf(functionPath(name)).test(page.url()))
           found.push(`reaching the tabs left the page for ${page.url()}`);
+      }
+
+      // Enter on "Copy Function ARN", reached with Tab from the document's start.
+      const copyArn = page.getByRole('main').getByRole('button', { name: copyControl(FUNCTION_ARN), exact: true });
+      await focusDocumentStart(page);
+      let onCopy = false;
+      for (let i = 0; i < 60 && !onCopy; i++) {
+        await page.keyboard.press('Tab');
+        const at = await focusedStop(page);
+        if (at === null) break;
+        onCopy = named(copyControl(FUNCTION_ARN), 'button')(at);
+      }
+      if (!onCopy) found.push(`the Tab never reached "${copyControl(FUNCTION_ARN)}"`);
+      else {
+        await page.keyboard.press('Enter');
+        const copied = page.getByText(copiedText(FUNCTION_ARN), { exact: true });
+        await expect(copied.first())
+          .toBeVisible({ timeout: 5_000 })
+          .catch(() =>
+            found.push(`Enter on "${copyControl(FUNCTION_ARN)}" did not show "${copiedText(FUNCTION_ARN)}"`),
+          );
+        if (!(await hasFocus(copyArn))) found.push(`focus left "${copyControl(FUNCTION_ARN)}" after Enter`);
       }
 
       await openCreateForm(page, '?role=existing');
@@ -457,7 +546,7 @@ test('studio.lambda-function-screens-keyboard-and-layout', async ({ ctx, page, c
   await seeded.function(longest, { description: longDescription });
 
   await lines.line(
-    'With a function whose name is 64 characters without a hyphen (starting with `<p>`) and whose description is 256 characters without a space made directly, under the filter, "Wrap lines" on as at the start → the whole name and description are visible inside their cells and the page does not scroll sideways; on its page the `h1` and the crumb hold the whole name without the page scrolling sideways — 1280 and 390 wide',
+    'With a function whose name is 64 characters without a hyphen (starting with `<p>`) and whose description is 256 characters without a space made directly, under the filter, "Wrap lines" on as at the start → the whole name and description are visible inside their cells (at 390 the description\'s cell inside the table\'s own scroll region) and the page does not scroll sideways; on its page the `h1` and the crumb hold the whole name without the page scrolling sideways — 1280 and 390 wide',
     async () => {
       expect(longest.length, 'the name is 64 characters long').toBe(64);
       const found: string[] = [];
@@ -481,7 +570,9 @@ test('studio.lambda-function-screens-keyboard-and-layout', async ({ ctx, page, c
         }
         if (descriptionAt < 0) found.push(`${String(width)}: no column "Description"`);
         else {
-          for (const problem of await wholeIn(cellOf(page, longest, descriptionAt), longDescription)) {
+          // At 390 the table scrolls within itself (decisions.md, PM 2026-11-18 04:40, item 9); at 1280 the viewport.
+          const bound = width === 390 ? 'scroll region' : 'viewport';
+          for (const problem of await wholeIn(cellOf(page, longest, descriptionAt), longDescription, bound)) {
             found.push(`${String(width)}: the description's cell ${problem}`);
           }
         }

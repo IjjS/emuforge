@@ -8,6 +8,7 @@ import { useCallback, useState } from 'react';
 
 import type { AreaConnection } from '../../../components/emulator-line';
 import { usePageFlash, type FlashItem, type FlashResult } from '../../../components/page-flash';
+import { ValueText } from '../../../components/value-text';
 import type { DeleteResult } from '../api';
 import { useDeleteFunctions } from '../queries';
 import { actionFailureItem } from './failure-states';
@@ -128,7 +129,9 @@ export function DeleteFunctionsDialog({ names, connection, onClose }: DeleteFunc
       <SpaceBetween size="m">
         <ul>
           {names.map((name) => (
-            <li key={name}>{name}</li>
+            <li key={name}>
+              <ValueText kind="name" value={name} />
+            </li>
           ))}
         </ul>
         <Box variant="p">{sentence}</Box>

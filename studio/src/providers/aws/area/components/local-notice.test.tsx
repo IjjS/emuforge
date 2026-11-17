@@ -12,7 +12,8 @@ const ENGINE_ORIGIN = 'http://127.0.0.1:8297';
 const ABOUT = 'About the local emulator';
 const NOTICE = 'Local emulator notice';
 const CLOSE = 'Close the local emulator notice';
-const STANDALONE = 'EmuForge Studio is a stand-alone local tool, not an AWS feature.';
+/** The notice's one body (issue 467, R3). */
+const BODY = 'They are not in an AWS account. EmuForge Studio is a stand-alone local tool, not an AWS feature.';
 
 /** The connection Studio hands the area, as a test sets it; each change re-renders as Studio's frame does. */
 class Connection {
@@ -108,6 +109,14 @@ function noticeHeading(): string {
   return text(within(notice() as HTMLElement).getByText(/^These .+ are in your local emulator$/));
 }
 
+/** The notice's body: all of the notice's text after its heading (the close control is named, not written). */
+function noticeBody(): string {
+  const all = text(notice());
+  const heading = noticeHeading();
+  expect(all.startsWith(heading)).toBe(true);
+  return all.slice(heading.length).trim();
+}
+
 /** What both storages hold, key by key. */
 function storages(): [string, string | null][] {
   return [localStorage, sessionStorage].flatMap((storage) =>
@@ -119,30 +128,39 @@ function storages(): [string, string | null][] {
 }
 
 describe('the local-emulator notice', () => {
-  it('connected, resources "buckets": the heading and the body with the endpoint', () => {
+  it('connected, resources "buckets": the heading and the one body, with no endpoint in the notice', () => {
     connection.value = { result: connected(9411), engineOrigin: ENGINE_ORIGIN };
     open({ word: 'buckets' });
 
     expect(noticeHeading()).toBe('These buckets are in your local emulator');
-    expect(text(notice())).toContain(
-      `They are in the emulator at ${endpoint(9411)}, not in an AWS account. ${STANDALONE}`,
-    );
+    expect(noticeBody()).toBe(BODY);
+    expect(text(notice())).not.toContain(endpoint(9411));
+    expect(text(notice())).not.toContain('9411');
   });
 
   it.each([
-    ['checking', undefined],
+    ['before the first answer', undefined],
     ['not started', emulatorDown('not_started')],
     ['not answering', emulatorDown('timeout')],
     ['engine not answering', { kind: 'engine-unreachable', checkedAt: 0, lastEmulatorPort: 9411 } as CheckResult],
     ['engine error', { kind: 'engine-error', checkedAt: 0, status: 403, code: 'OriginNotAllowed' } as CheckResult],
-  ])('%s: the same heading and the body without an endpoint or a port', (_name, result) => {
+  ])('%s: the same heading and the same body, without an endpoint or a port', (_name, result) => {
     connection.value = { result, engineOrigin: ENGINE_ORIGIN };
     open({ word: 'buckets' });
 
     expect(noticeHeading()).toBe('These buckets are in your local emulator');
-    expect(text(notice())).toContain(`They are not in an AWS account. ${STANDALONE}`);
+    expect(noticeBody()).toBe(BODY);
     expect(text(notice())).not.toContain('https://');
     expect(text(notice())).not.toContain('9411');
+  });
+
+  it('connected: the endpoint is on the page once, in the emulator line', () => {
+    connection.value = { result: connected(9411), engineOrigin: ENGINE_ORIGIN };
+    const { container } = open({ word: 'buckets' });
+
+    const page = text(container);
+    expect(page.split(endpoint(9411)).length - 1).toBe(1);
+    expect(text(screen.getByRole('group', { name: 'Local emulator, not AWS' }))).toContain(endpoint(9411));
   });
 
   it('open: a region named "Local emulator notice" with its close control; "About the local emulator" says expanded', () => {
@@ -241,15 +259,15 @@ describe('the local-emulator notice', () => {
     expect(document.activeElement).toBe(about());
   });
 
-  it('connected, then not started while open: the notice stays open and its body loses the endpoint', () => {
+  it('connected, then not started while open: the notice stays open with the same body', () => {
     connection.value = { result: connected(9411), engineOrigin: ENGINE_ORIGIN };
     open();
-    expect(text(notice())).toContain(`They are in the emulator at ${endpoint(9411)}, not in an AWS account.`);
+    expect(noticeBody()).toBe(BODY);
 
     connection.answer(emulatorDown('not_started'));
 
     expect(notice()).not.toBeNull();
-    expect(text(notice())).toContain(`They are not in an AWS account. ${STANDALONE}`);
+    expect(noticeBody()).toBe(BODY);
     expect(text(notice())).not.toContain('https://');
   });
 });

@@ -1,6 +1,3 @@
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -19,7 +16,7 @@ import { IAM_NAVIGATION } from '../screens';
 
 // The role list rendered inside the area's layout, as Studio's frame renders the area, against a fake engine behind
 // the page's `fetch` (test-criteria.md, issue 82, "Unit — services/iam/pages/role-list-page.test.tsx"; requirement
-// R3, R4, R6.1, R8 to R10).
+// R3, R4, R6.1, R8 to R10; and issue 467's changed cases, requirement R3, R6).
 
 // A screen of this file only, beside IAM's own: it hands the result of a created role to the role list, as the
 // wizard does (R6.7).
@@ -388,6 +385,25 @@ function rows(): { name: string; trusted: string; last: string }[] {
     // The first cell holds the check box.
     return { name: cells[1] ?? '', trusted: cells[2] ?? '', last: cells[3] ?? '' };
   });
+}
+
+/** The `h1`'s description, or `null` when the `h1` has none. */
+function h1Description(): string | null {
+  const header = PAGE.findAllHeaders().find((found) => found.getElement().querySelector('h1') !== null);
+  expect(header).toBeDefined();
+  const description = header?.findDescription();
+  return description === null || description === undefined ? null : (description.getElement().textContent ?? '');
+}
+
+/**
+ * The kind of value (issue 467, R6) the area's element whose text is exactly `text` inside `scope` shows: `address`,
+ * `name`, `fixed` or `text`; `undefined` when no such element holds it.
+ */
+function kindOf(scope: Element, text: string): string | undefined {
+  const element = [...scope.querySelectorAll('.aws-area-value')].find((found) => found.textContent === text);
+  return [...(element?.classList ?? [])]
+    .map((name) => /^aws-area-value-(address|name|fixed|text)$/.exec(name)?.[1])
+    .find((kind) => kind !== undefined);
 }
 
 function names(): string[] {
@@ -765,20 +781,19 @@ describe('the counter, the description, the notice and the layout', () => {
     expect(h1Text()).toBe('Roles (20+)');
   });
 
-  it('connected: the description with the connection’s endpoint; otherwise without one', async () => {
-    await openLoaded();
+  it('connected, not started, and before the first answer: the description reads "Last activity is what the emulator reports for a role." with no endpoint (issue 467, R3)', async () => {
+    const description = 'Last activity is what the emulator reports for a role.';
+    connection.value = { result: undefined, engineOrigin };
+    engine.roles = [LAMBDA_ROLE];
+    open();
+    expect(h1Description()).toBe(description);
 
-    const connected = `Roles in your local emulator at ${EMULATOR_ENDPOINT}, not in an AWS account. Last activity is what the emulator reports for a role.`;
-    expect(
-      screen.getByText((_, element) => element?.textContent === connected && element.tagName !== 'BODY'),
-    ).toBeInTheDocument();
+    connection.set(connectedResult());
+    await expectNames([LAMBDA_ROLE.name]);
+    expect(h1Description()).toBe(description);
 
     connection.set(notStartedResult());
-    expect(
-      screen.getByText(
-        'Roles in your local emulator, not in an AWS account. Last activity is what the emulator reports for a role.',
-      ),
-    ).toBeInTheDocument();
+    expect(h1Description()).toBe(description);
   });
 
   it.each(['/aws/iam', '/aws/iam/roles'])(
@@ -1126,30 +1141,38 @@ describe('preferences and wrapping', () => {
     expect(tableElement().querySelector('[class*="body-cell-wrap"]')).not.toBeNull();
   });
 
-  it('a 64-character name and a long "Trusted entities": each in the element that breaks anywhere, so neither widens its cell', async () => {
+  it('a row’s cells: "Role name" as a name, "Trusted entities" as free text, "Last activity" as a fixed word; no service class (issue 467, R6)', async () => {
     const long = 'r' + 'x'.repeat(63);
     const arn = `arn:aws:iam::000000000000:role/${long}`;
     const trust = JSON.stringify({
       Version: '2012-10-17',
       Statement: [{ Effect: 'Allow', Principal: { AWS: arn }, Action: 'sts:AssumeRole' }],
     });
-    await openLoaded([{ name: long, trust }]);
+    await openLoaded([{ name: long, trust, lastUsed: '2026-11-17T10:00:00Z' }]);
 
-    const link = within(tableElement()).getByRole('link', { name: long });
-    expect(link.closest('.aws-iam-value')?.closest('th, td')).not.toBeNull();
-    const trusted = within(tableElement()).getByText(`AWS: ${arn}`);
-    expect(trusted).toHaveClass('aws-iam-value');
-    expect(trusted.closest('th, td')).not.toBeNull();
-    const cellValueCss = readFileSync(
-      path.join(path.dirname(fileURLToPath(import.meta.url)), '../components/role-sections.css'),
-      'utf8',
-    );
-    expect(
-      cellValueCss
-        .replace(/\/\*[\s\S]*?\*\//g, '')
-        .replace(/\s+/g, ' ')
-        .trim(),
-    ).toBe('.aws-iam-value { overflow-wrap: anywhere; }');
+    const row = table().findRows()[0]?.getElement() as HTMLElement;
+    const link = within(row).getByRole('link', { name: long });
+    expect(kindOf(link, long)).toBe('name');
+    expect(kindOf(row, `AWS: ${arn}`)).toBe('text');
+    const last = rows()[0]?.last ?? '';
+    expect(last).not.toBe('');
+    expect(kindOf(row, last)).toBe('fixed');
+    expect(document.querySelector('.aws-iam-value')).toBeNull();
+  });
+
+  it('with "Wrap lines" off: each cell is the same kind as before (issue 467, R6)', async () => {
+    await openLoaded([LAMBDA_ROLE]);
+    const modal = await preferencesModal();
+    const wrap = modal.findWrapLinesPreference()?.findNativeInput().getElement() as HTMLInputElement;
+    fireEvent.click(wrap);
+    confirmPreferences(modal);
+    await waitFor(() => {
+      expect(tableElement().querySelector('[class*="body-cell-wrap"]')).toBeNull();
+    });
+
+    const row = table().findRows()[0]?.getElement() as HTMLElement;
+    expect(kindOf(row, LAMBDA_ROLE.name)).toBe('name');
+    expect(kindOf(row, rows()[0]?.trusted ?? '')).toBe('text');
   });
 
   it('unmounted after "10 roles", mounted again: 20 roles asked for', async () => {
@@ -1184,6 +1207,10 @@ describe('a created role handed over by the wizard', () => {
     expect(h1Text()).toMatch(/^Roles/);
     const [success, failure] = flashbar.findItems();
     expect(success?.getElement()).toHaveTextContent('Role “made-here” was created in the local emulator.');
+    expect(kindOf(success?.getElement() as HTMLElement, 'made-here'), 'the name as a name (issue 467, R6)').toBe(
+      'name',
+    );
+    expect(kindOf(success?.getElement() as HTMLElement, '” was created in the local emulator.')).toBe('text');
     expect(success?.findContent()?.getElement().closest('[data-itemid]')).not.toBeNull();
     expect(failure?.getElement()).toHaveTextContent('Attaching ReadOnlyAccess to made-here failed');
     expect(failure?.getElement()).toHaveTextContent('LimitExceeded: too many');

@@ -12,7 +12,8 @@ import AwsArea from '../../../index';
 
 // "Create role" rendered inside the area's layout at `/aws/iam/roles/create`, as Studio's frame renders the area,
 // against a fake engine behind the page's `fetch` (test-criteria.md, issue 82, "Unit —
-// services/iam/pages/create-role-page.test.tsx"; requirement R6, R9.4, R10).
+// services/iam/pages/create-role-page.test.tsx"; requirement R6, R9.4, R10; and issue 467's changed cases,
+// requirement R3, R4, R7).
 
 // ---------------------------------------------------------------------------------------------------------------
 // The fake engine: IAM's Query protocol over the policies and roles it holds.
@@ -446,6 +447,59 @@ function crumbs(): { text: string; href: string | null }[] {
   });
 }
 
+/** The description under the `h1` (the step's title), or `null` when there is none (issue 467, R3). */
+function h1Description(): string | null {
+  const header = PAGE.findAllHeaders().find((found) => found.getElement().querySelector('h1') !== null);
+  expect(header).toBeDefined();
+  const description = header?.findDescription();
+  return description === null || description === undefined ? null : (description.getElement().textContent ?? '');
+}
+
+/** What the field labelled `label` shows under it: its constraint text and its message, `null` for none. */
+function fieldTexts(label: string): { constraint: string | null; error: string | null } {
+  const found = PAGE.findAllFormFields().find(
+    (formField) => (formField.findLabel()?.getElement().textContent ?? '').trim() === label,
+  );
+  expect(found, label).toBeDefined();
+  const text = (part: { getElement: () => HTMLElement } | null | undefined) =>
+    part === null || part === undefined ? null : (part.getElement().textContent ?? '').trim();
+  return { constraint: text(found?.findConstraint()), error: text(found?.findError()) };
+}
+
+/**
+ * The kind of value (issue 467, R6) the area's element whose text is exactly `text` inside `scope` shows: `address`,
+ * `name`, `fixed` or `text`; `undefined` when no such element holds it.
+ */
+function kindOf(scope: Element, text: string): string | undefined {
+  const element = [...scope.querySelectorAll('.aws-area-value')].find((found) => found.textContent === text);
+  return [...(element?.classList ?? [])]
+    .map((name) => /^aws-area-value-(address|name|fixed|text)$/.exec(name)?.[1])
+    .find((kind) => kind !== undefined);
+}
+
+/** The wizard's "Cancel", focused first as a press of it in a browser does, then pressed. */
+function cancel(): HTMLElement {
+  const found = wizard().findCancelButton().getElement();
+  act(() => {
+    found.focus();
+  });
+  fireEvent.click(found);
+  return found;
+}
+
+/** The dialog "Discard what you entered?", or `null`. */
+function discardDialog(): HTMLElement | null {
+  return screen.queryByRole('dialog', { name: 'Discard what you entered?' });
+}
+
+async function expectDiscardDialog(): Promise<HTMLElement> {
+  return waitFor(() => {
+    const found = discardDialog();
+    expect(found, 'the dialog "Discard what you entered?"').not.toBeNull();
+    return found as HTMLElement;
+  });
+}
+
 /** Each Flashbar item as "<header> <content>", or its content alone. */
 function flashTexts(): string[] {
   const text = (element: { getElement: () => HTMLElement } | null) =>
@@ -503,7 +557,7 @@ describe('step 1, "Select trusted entity"', () => {
     expect(shown.map((crumb) => crumb.text)).toEqual(['EmuForge', 'AWS', 'IAM', 'Roles', 'Create role']);
     expect(shown[3]?.href).toBe('/aws/iam/roles');
     expect(shown[4]?.href).toBeNull();
-    expect(main()).toHaveTextContent('The role is created in your local emulator, not in an AWS account.');
+    expect(h1Description(), 'no description under the step’s title (issue 467, R3)').toBeNull();
     expect(screen.getByText('These roles are in your local emulator')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'About the local emulator' })).toBeInTheDocument();
     const side = PAGE.findSideNavigation();
@@ -891,7 +945,8 @@ describe('step 3, "Name, review, and create"', () => {
       .getAllByRole('rowheader')
       .map((cell) => (cell.textContent ?? '').trim());
     expect(names).toEqual(['AdministratorAccess', 'team-policy']);
-    expect(within(chosen).getByText('Customer managed')).toBeInTheDocument();
+    expect(kindOf(chosen, 'Customer managed')).toBe('fixed');
+    expect(kindOf(chosen, 'team-policy')).toBe('name');
     expect(button('Add new tag')).toBeInTheDocument();
   });
 
@@ -1255,7 +1310,7 @@ describe('"Create role"', () => {
     expect(notImplemented).not.toBeNull();
   });
 
-  it('"Cancel" on any step: the list’s route, no request; opened again, an empty wizard on step 1', async () => {
+  it('"Discard" on any step: the list’s route, no request; opened again, an empty wizard on step 1', async () => {
     for (const k of [1, 2, 3] as const) {
       const { router, unmount } = await openWizard();
       service('lambda.amazonaws.com');
@@ -1268,7 +1323,8 @@ describe('"Create role"', () => {
         await onStep(3);
         type('Role name', 'dropped');
       }
-      fireEvent.click(wizard().findCancelButton().getElement());
+      cancel();
+      fireEvent.click(within(await expectDiscardDialog()).getByRole('button', { name: 'Discard' }));
       await waitFor(() => {
         expect(router.state.location.pathname).toBe('/aws/iam/roles');
       });
@@ -1282,5 +1338,190 @@ describe('"Create role"', () => {
       expect(radio('AWS service').checked).toBe(true);
       unmount();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// Issue 467: no description, the fields' rules, and "Cancel" before it discards.
+// ---------------------------------------------------------------------------------------------------------------
+
+describe('the steps’ headers and the fields’ rules (issue 467, R3, R4)', () => {
+  it('steps 1, 2 and 3: none has a description under its title', async () => {
+    await openWizard();
+    expect(h1Description()).toBeNull();
+    await toStep2();
+    expect(h1Description()).toBeNull();
+    next();
+    await onStep(3);
+    expect(h1Description()).toBeNull();
+  });
+
+  it('step 1 with "AWS account" and "Another AWS account": under "Account ID" "12 digits."; no constraint text under "External ID"', async () => {
+    await openWizard();
+    choose('AWS account');
+    choose('Another AWS account');
+
+    expect(fieldTexts('Account ID')).toEqual({ constraint: '12 digits.', error: null });
+    fireEvent.click(checkbox('Require external ID'));
+    expect(fieldTexts('External ID').constraint).toBeNull();
+  });
+
+  it('step 3 as opened: the rules under "Role name" and "Description", no message under either; no constraint text under a tag’s "Key" or "Value"', async () => {
+    await openWizard();
+    await toStep3();
+
+    expect(fieldTexts('Role name')).toEqual({
+      constraint: '1 to 64 characters: letters (A-Z, a-z), digits and the characters + = , . @ _ -.',
+      error: null,
+    });
+    expect(fieldTexts('Description')).toEqual({ constraint: 'Up to 1000 characters.', error: null });
+    addTag('k', 'v');
+    const editor = PAGE.findTagEditor()?.getElement() as HTMLElement;
+    const tagFields = createWrapper(editor).findAllFormFields();
+    expect(tagFields.length).toBeGreaterThan(0);
+    expect(tagFields.map((tagField) => tagField.findConstraint())).toEqual(tagFields.map(() => null));
+  });
+
+  it('"Create role" with a name holding a space: the message "Use only letters, digits and +=,.@_-" and the constraint text, both under the field', async () => {
+    await openWizard();
+    await toStep3();
+    type('Role name', 'with space');
+    press('Create role');
+
+    await waitFor(() => {
+      expect(fieldTexts('Role name')).toEqual({
+        constraint: '1 to 64 characters: letters (A-Z, a-z), digits and the characters + = , . @ _ -.',
+        error: 'Use only letters, digits and +=,.@_-',
+      });
+    });
+    expect(engine.changes()).toEqual([]);
+  });
+
+  it('a role made: in the flash "Role “{name}” was created in the local emulator." the name is shown as a name and the rest as free text (R6)', async () => {
+    const { router } = await openWizard();
+    await toStep3();
+    type('Role name', 'made');
+    press('Create role');
+
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe('/aws/iam/roles');
+    });
+    const success = await waitFor(() => {
+      const found = PAGE.findFlashbar()?.findItemsByType('success')[0]?.getElement();
+      expect(found).toBeDefined();
+      return found as HTMLElement;
+    });
+    expect(kindOf(success, 'made')).toBe('name');
+    expect(kindOf(success, 'Role “')).toBe('text');
+    expect(kindOf(success, '” was created in the local emulator.')).toBe('text');
+  });
+});
+
+describe('"Cancel" (issue 467, R7)', () => {
+  it('on step 1 with nothing changed: the list, no dialog', async () => {
+    const { router } = await openWizard();
+    cancel();
+
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe('/aws/iam/roles');
+    });
+    expect(discardDialog()).toBeNull();
+  });
+
+  it('a principal typed, "Next", "Next", "Cancel" on step 3: the dialog; "Keep editing": step 3, the principal still on step 1, focus on "Cancel"; "Cancel", "Discard": the list', async () => {
+    const { router } = await openWizard();
+    await toStep3();
+    const cancelButton = cancel();
+
+    const dialog = await expectDiscardDialog();
+    expect(within(dialog).getByText('What you entered on this page is not kept.')).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Keep editing' }));
+    await waitFor(() => {
+      expect(discardDialog()).toBeNull();
+    });
+    expect(location(router)).toBe(`${CREATE_PATH}?step=3`);
+    await waitFor(() => {
+      expect(document.activeElement).toBe(cancelButton);
+    });
+    previous();
+    await onStep(2);
+    previous();
+    await onStep(1);
+    expect(field('Service or use case')).toHaveValue('lambda.amazonaws.com');
+
+    cancel();
+    fireEvent.click(within(await expectDiscardDialog()).getByRole('button', { name: 'Discard' }));
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe('/aws/iam/roles');
+    });
+    expect(engine.changes()).toEqual([]);
+  });
+
+  it('Esc and "Close" answer as "Keep editing": the wizard stays with what was entered', async () => {
+    const { router } = await openWizard();
+    service('lambda.amazonaws.com');
+
+    cancel();
+    const dialog = await expectDiscardDialog();
+    fireEvent.keyDown(within(dialog).getByRole('button', { name: 'Keep editing' }), {
+      key: 'Escape',
+      code: 'Escape',
+      keyCode: 27,
+    });
+    await waitFor(() => {
+      expect(discardDialog()).toBeNull();
+    });
+    cancel();
+    fireEvent.click(within(await expectDiscardDialog()).getByRole('button', { name: 'Close' }));
+    await waitFor(() => {
+      expect(discardDialog()).toBeNull();
+    });
+    expect(location(router)).toBe(CREATE_PATH);
+    expect(field('Service or use case')).toHaveValue('lambda.amazonaws.com');
+  });
+
+  it('a principal typed and removed again: the list, no dialog', async () => {
+    const { router } = await openWizard();
+    service('lambda.amazonaws.com');
+    service('');
+    cancel();
+
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe('/aws/iam/roles');
+    });
+    expect(discardDialog()).toBeNull();
+  });
+
+  it('"Custom trust policy" chosen and nothing else: the dialog; "AWS service" chosen again with nothing typed: the list, no dialog', async () => {
+    const { router } = await openWizard();
+    choose('Custom trust policy');
+    cancel();
+    fireEvent.click(within(await expectDiscardDialog()).getByRole('button', { name: 'Keep editing' }));
+    await waitFor(() => {
+      expect(discardDialog()).toBeNull();
+    });
+
+    choose('AWS service');
+    cancel();
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe('/aws/iam/roles');
+    });
+    expect(discardDialog()).toBeNull();
+  });
+
+  it('a policy selected on step 2: the dialog; a tag added on step 3: the dialog', async () => {
+    // Each opened at its step by the address, so the policy or the tag is the one thing entered.
+    const first = await openWizard(`${CREATE_PATH}?step=2`, 2);
+    await policyRows();
+    await select('ReadOnlyAccess');
+    cancel();
+    await expectDiscardDialog();
+    first.unmount();
+
+    await openWizard(`${CREATE_PATH}?step=3`, 3);
+    leaveField();
+    press('Add new tag');
+    cancel();
+    await expectDiscardDialog();
   });
 });

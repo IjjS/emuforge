@@ -56,9 +56,11 @@ describe('the registry of the AWS area', () => {
   });
 
   it('the real registry: the S3 bucket list for the folder s3, at /aws/s3 and /aws/s3/buckets, titled "Buckets" with the one crumb "Buckets"', () => {
-    const buckets = SCREENS.filter(({ service }) => service === '/s3');
-    expect(buckets).toHaveLength(1);
-    expect(buckets[0]).toMatchObject({
+    // Found by its paths among the folder's screens, which issue 256 makes more than one.
+    const list = SCREENS.find(
+      ({ service, paths }) => service === '/s3' && paths.includes('/aws/s3') && paths.includes('/aws/s3/buckets'),
+    );
+    expect(list).toMatchObject({
       service: '/s3',
       paths: ['/aws/s3', '/aws/s3/buckets'],
       title: 'Buckets',
@@ -155,6 +157,35 @@ describe('the registry of the AWS area', () => {
       vi.doUnmock('./screens');
       vi.resetModules();
     }
+  });
+
+  // Issue 57 (requirement R4.11): the patterns of paths a screen leads to.
+  it('the rules: a screen that leads to /aws/x/thing/{name}/property, its first path /aws/x/things/{name} → accepted', () => {
+    expect(faultsOf('x', { ...screenAt(['/aws/x/things/{name}']), leadsTo: ['/aws/x/thing/{name}/property'] })).toEqual(
+      [],
+    );
+  });
+
+  it.each([
+    ['not well formed', '/aws/x/thing/{name}/Property'],
+    ["under another service's route", '/aws/y/thing/{name}/property'],
+    ["naming a parameter the screen's first path does not have", '/aws/x/thing/{name}/{tab}'],
+    ['lacking a parameter the first path has', '/aws/x/thing/property'],
+  ])('the rules: a leadsTo pattern %s → refused, naming the pattern', (_what, pattern) => {
+    const faults = faultsOf('x', { ...screenAt(['/aws/x/things/{name}']), leadsTo: [pattern] });
+    expect(faults).toHaveLength(1);
+    expect(faults[0]).toContain(pattern);
+  });
+
+  it("the real registry: S3's bucket page leads to /aws/s3/bucket/{name}/property; no other screen of S3, Lambda or IAM leads anywhere; the registry has no fault", () => {
+    const leading = SCREENS.filter((screen) => screen.leadsTo !== undefined && screen.leadsTo.length > 0);
+    expect(leading.map(({ service, paths, leadsTo }) => ({ service, first: paths[0], leadsTo }))).toEqual([
+      { service: '/s3', first: '/aws/s3/buckets/{name}', leadsTo: ['/aws/s3/bucket/{name}/property'] },
+    ]);
+    for (const service of ['/s3', '/lambda', '/iam']) {
+      expect(SCREENS.some((screen) => screen.service === service)).toBe(true);
+    }
+    expect(registryFaults(SCREEN_FOLDERS, hasServiceFile)).toEqual([]);
   });
 
   it("the collection: a folder's screens carry the folder's route as their service", () => {

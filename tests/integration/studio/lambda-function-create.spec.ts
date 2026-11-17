@@ -7,6 +7,10 @@
 // `studio.lambda-function-create-appears-in-the-emulator`, `studio.lambda-function-create-refusals-create-nothing`,
 // `studio.lambda-function-create-repeated-and-abandoned`.
 //
+// Issue 467 rewrote one step of `studio.lambda-function-create-repeated-and-abandoned` (its test-criteria.md, "Flow
+// checks, changed"; requirement R9, rule 5): what "Cancel" does once the form holds a name. The dialog's words:
+// `support/screen-rules.ts`.
+//
 // Other checks make functions and roles on the run's emulator at the same time, so every name here is under the
 // check's prefix `<p>`, and "nothing new in the emulator" compares the functions and roles a refused form could
 // have made: those under `<p>`, and roles whose name starts with "-role-" (what "Create default role" would name for
@@ -37,15 +41,18 @@ import {
 import {
   applyFilter,
   CREATE,
+  CREATE_PATH,
   expectNames,
   flashTexts,
   functionPath,
   FUNCTIONS_PATH,
+  listHeading,
   openList,
   screen,
 } from './support/lambda-list';
 import {
   BEING_CREATED,
+  CANCEL,
   CREATE_DEFAULT_ROLE,
   CREATE_FAILED,
   createdFlash,
@@ -66,6 +73,7 @@ import {
 } from './support/lambda-page';
 import { Lines } from './support/lines';
 import { checkPrefix, appeared, watchText } from './support/s3';
+import { DISCARD, DISCARD_HEADING, discardDialog, KEEP_EDITING } from './support/screen-rules';
 
 /** How long the form may take from "Create Event Function" to the function's page (three requests in order). */
 const CREATE_BOUND_MS = 20_000;
@@ -391,23 +399,78 @@ test('studio.lambda-function-create-repeated-and-abandoned', async ({ ctx, page 
     },
   );
 
+  // Issue 467 (requirement R9, rule 5) replaced the line 'Type a name, "Cancel", open the form again → an empty form;
+  // no function of that name exists' with the three lines below: "Cancel" asks once the form holds something.
+  const cancelled = `${p}-cancelled`;
+  const d = discardDialog(page);
+
+  /** The form opened from the list, without a reload since `markPage`. */
+  async function formFromList(): Promise<void> {
+    await openList(page);
+    await markPage(page);
+    await screen(page).create.click(ACTION);
+    await expect(f.h1, `the h1 "${CREATE}"`).toBeVisible();
+    await expect(f.name, `"${FUNCTION_NAME}"`).toBeVisible();
+  }
+
+  await lines.line('Open the form, "Cancel" → the list at once, no dialog', async () => {
+    await formFromList();
+    await watchText(page, DISCARD_HEADING);
+    await f.cancel.click(ACTION);
+    await expect(page).toHaveURL(addressOf(FUNCTIONS_PATH));
+    await expect(listHeading(page), 'the list').toBeVisible();
+    expect(await appeared(page, DISCARD_HEADING), `"${DISCARD_HEADING}" was shown`).toBe(false);
+  });
+
   await lines.line(
-    'Type a name, "Cancel", open the form again → an empty form; no function of that name exists',
+    'Type a name, "Cancel" → the dialog "Discard what you entered?"; "Keep editing" → the form with the name, focus on "Cancel"; "Cancel", Esc → the same',
     async () => {
-      const name = `${p}-cancelled`;
-      await openList(page);
-      await markPage(page);
-      await screen(page).create.click(ACTION);
-      await expect(f.h1, `the h1 "${CREATE}"`).toBeVisible();
-      await f.name.fill(name, ACTION);
+      await formFromList();
+      await f.name.fill(cancelled, ACTION);
       await f.cancel.click(ACTION);
+      await expect(d.dialog, `the dialog "${DISCARD_HEADING}"`).toBeVisible();
+      await expect(page, 'the form stays while the dialog is open').toHaveURL(addressOf(CREATE_PATH));
+      await d.keepEditing.click(ACTION);
+      await expect(d.dialog, `"${KEEP_EDITING}" closes the dialog`).toHaveCount(0);
+      await expect(page).toHaveURL(addressOf(CREATE_PATH));
+      await expect(f.name, `"${FUNCTION_NAME}" after "${KEEP_EDITING}"`).toHaveValue(cancelled);
+      await expect
+        .poll(() => hasFocus(f.cancel), { message: `focus on "${CANCEL}" after "${KEEP_EDITING}"` })
+        .toBe(true);
+      await f.cancel.click(ACTION);
+      await expect(d.dialog, `the dialog "${DISCARD_HEADING}" again`).toBeVisible();
+      await page.keyboard.press('Escape');
+      await expect(d.dialog, 'Esc closes the dialog').toHaveCount(0);
+      await expect(page).toHaveURL(addressOf(CREATE_PATH));
+      await expect(f.name, `"${FUNCTION_NAME}" after Esc`).toHaveValue(cancelled);
+      await expect.poll(() => hasFocus(f.cancel), { message: `focus on "${CANCEL}" after Esc` }).toBe(true);
+    },
+  );
+
+  await lines.line(
+    '"Cancel", "Discard" → the list; a direct `GetFunction` of the name answers that it does not exist; open the form again → an empty form',
+    async () => {
+      // The Given: the form opened from the list holds the name, whether or not the line before held.
+      if (!addressOf(CREATE_PATH).test(page.url()) || (await f.name.inputValue(ACTION).catch(() => '')) !== cancelled) {
+        await formFromList();
+        await f.name.fill(cancelled, ACTION);
+      }
+      await f.cancel.click(ACTION);
+      await expect(d.dialog, `the dialog "${DISCARD_HEADING}"`).toBeVisible();
+      await d.discard.click(ACTION);
+      await expect(d.dialog, `"${DISCARD}" closes the dialog`).toHaveCount(0);
       await expect(page).toHaveURL(addressOf(FUNCTIONS_PATH));
+      await expect(listHeading(page), 'the list').toBeVisible();
+      const read = await getFunctionDirect(ctx, port, cancelled);
+      expect(read.found ? 'found' : read.errorType, `a direct GetFunction ${cancelled}`).toBe(
+        'ResourceNotFoundException',
+      );
       await screen(page).create.click(ACTION);
       await expect(f.h1, `the h1 "${CREATE}" again`).toBeVisible();
       expect(await stillSamePage(page), 'the form was opened again without a reload').toBe(true);
       await expect(f.name, `"${FUNCTION_NAME}" of the form opened again`).toHaveValue('');
       await expect(f.radio(CREATE_DEFAULT_ROLE), `"${CREATE_DEFAULT_ROLE}" of the form opened again`).toBeChecked();
-      expect(await functionNamesDirect(ctx, port, name), `functions named ${name}`).toEqual([]);
+      expect(await functionNamesDirect(ctx, port, cancelled), `functions named ${cancelled}`).toEqual([]);
     },
   );
 

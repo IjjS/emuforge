@@ -346,9 +346,10 @@ AWS screen to look like, mirror or copy the AWS console.
    names, action names, navigation entries, and their arrangement and order. They are not paraphrased. A `console`
    screen's reference spec records them (`references/console-reference.md`).
 3. **EmuForge's own words.** Descriptions, help, guidance, and the empty, loading and error states are EmuForge's
-   own words, never the console's. They always say that this is a stand-alone local emulator and not AWS or an AWS
-   feature, and they say only what the engine knows: an endpoint comes from the engine's connection status, never
-   from a constant, and a claim about the emulator's behavior needs a check that shows it.
+   own words, never the console's. The area's frame says on every page that this is a stand-alone local emulator
+   and not AWS or an AWS feature (point 7); a page's own words say it again only where a sentence needs it ("What
+   every AWS screen does"), and they say only what the engine knows: an endpoint comes from the engine's connection
+   status, never from a constant, and a claim about the emulator's behavior needs a check that shows it.
 4. **Only the parts the emulator has.** A part (a panel, a tab, a navigation entry, a badge) is on a screen only if
    the emulator really has it, shown by calling the emulator at the Requirement stage. A part it lacks is left out
    and recorded in the screen's reference spec under `omitted` with that reason.
@@ -413,9 +414,8 @@ AWS screen to look like, mirror or copy the AWS console.
   worded for its resources: "These {resources} are in your local emulator", with the plural word the screen gives
   ("These buckets are in your local emulator"), or "These resources are in your local emulator" when it gives
   none. A screen turns the notice on by naming its resources to the area's frame.
-- Its body says only what is known in the connection's state: connected, "They are in the emulator at
-  `{endpoint}`, not in an AWS account. EmuForge Studio is a stand-alone local tool, not an AWS feature."; in any
-  other state, "They are not in an AWS account. EmuForge Studio is a stand-alone local tool, not an AWS feature."
+- Its body is the same in every state of the connection: "They are not in an AWS account. EmuForge Studio is a
+  stand-alone local tool, not an AWS feature." The endpoint is written once on a page, in the emulator line.
 - It is an informational Cloudscape notice with a close control (X) named "Close the local emulator notice".
   Closing it removes it from every page of the area until the document is reloaded; nothing is stored.
 - On a page that carries the notice the emulator line ends with an (i) control, a button named "About the local
@@ -437,6 +437,83 @@ AWS screen to look like, mirror or copy the AWS console.
 - They are Cloudscape components styled with Cloudscape tokens only, inside the area's root, under every rule of
   "Inside a provider area" below. At 1280 and 390 wide, light and dark, the line wraps inside the page (a long
   endpoint breaks rather than overflowing) and stays visible at 390 with the side navigation closed.
+
+### What every AWS screen does
+
+Five rules every screen of the area follows, settled on 2026-11-18 from what four critiques of AWS screens repeated.
+Each is followed by its reason. The area's shared parts that carry them are in `providers/aws/area/components/`:
+the value element (`value-text.tsx`), the value with its copy control (`copy-value.tsx`) and the discard dialog
+(`discard-dialog.tsx`).
+
+1. **The frame says where the resources are; the page's own text does not say it again.** On a page of the area,
+   that what it shows is in the local emulator and not in AWS is said in one place, the area's frame, and the
+   emulator's endpoint is written in one place, the emulator line. The line is the statement, always there; the
+   local-emulator notice is the line's own explanation, opened and closed from the line's (i) control, and it does
+   not write the endpoint again: its body is the same in every state of the connection. So with the notice closed a
+   page says it once, in the line, and with the notice open the line is followed by its explanation, whose heading
+   and body say what the line's four words mean, and the endpoint is written once, in the line. Text of the page
+   above its content (the `h1`'s description, a wizard step's description, a section header's description) does not
+   say it again: it does not say where the resources are or that they are not in an AWS account, and it names no
+   endpoint. A description says what the page is for or what is particular to it (a filter's rule, what a column
+   reports, what a form creates besides the resource), in one or two sentences of EmuForge's words, and is left out
+   when it would only repeat the title. Below the header, a sentence names the local emulator or its endpoint only
+   where it would be unclear without it: the sentence that says what a destructive action removes, the result of an
+   action, and an empty, not-found or failure state. The help panel, opened on demand, is not such text.
+   Reason: the line cannot be closed and is the first thing read after the crumbs, so the same statement said again
+   by each page becomes boilerplate that hides it, and at 390 wide pushes the page's content down.
+2. **A field's rule is shown before the first submit.** A single text field of a form, a wizard or a dialog whose
+   value is checked against a length, an alphabet or a number range shows that rule under it from the start, as
+   Cloudscape constraint text, in EmuForge's words: the length first, then the characters, then what a name must
+   begin or end with. It states what the form itself lets through, and each of its limits is one the emulator's
+   answer found at the Requirement stage was seen to enforce, or a narrower one the form already keeps. The message a
+   field shows after a failed check stays and still names the rule that failed; the constraint text stays beside it.
+   A field checked only for being filled, a field of a row that repeats (a tag editor's key and value) and a
+   confirmation field (a name or a word typed to confirm) carry no constraint text.
+   Reason: a rule learned by failing costs a round trip, and the names of the services have unlike rules (a bucket's
+   lower case, a function's `_`, a role's `+=,.@`).
+3. **A value taken elsewhere has a copy control.** On a page of one resource, a value that names a resource to
+   another tool (an ARN, a URL, an id the emulator assigned) is shown with Cloudscape's `CopyToClipboard`, variant
+   `inline`: an icon button directly before the value's text. The button is named "Copy {label}" with the field's
+   label; a press puts the value, exactly as the emulator gave it, on the clipboard and shows "{label} copied", or
+   "{label} could not be copied" when the browser refuses. A value that is absent ("-"), a status or a failed read
+   has no control. The value's text follows entry 4; the popover stays inside the area (no portal). In a table,
+   values are not given a control each: where the console's screen has an action for it (an action the screen's
+   reference spec lists, such as the S3 bucket list's "Copy ARN"), that action is the way.
+   Reason: an ARN or a URL is read here to be used in a terminal or an IaC file, and selecting by hand a value that
+   wraps over five lines at 390 wide is the slow path.
+4. **How a long value breaks.** At 1280 and 390 wide no page scrolls sideways, no value is cut or clipped, and a
+   table may scroll inside itself. Within that, a value is never broken inside while it fits the line it is on. What
+   happens when it does not depends on what it is:
+
+   | Kind | Values | Breaks |
+   |---|---|---|
+   | An address | an ARN, a URL, a path | only directly after `:` or `/` (a URL also after `?` and `&`), so each line but the last ends with one of them, while every part between two of them fits a line; a part longer than a line breaks anywhere |
+   | A name | a resource's name, a key, an id | whole on one line where the line is wide enough for it; longer than its line, anywhere. In a table a name's column keeps room for 24 characters, so a name of up to 24 is on one line at 1280 and 390 |
+   | A fixed word | a status, an enumerated value ("Enabled", "Zip"), a Region, a date, a number | never inside a word; in a table its column is as wide as its longest word |
+   | Free text | a description, a reason, a message, a tag's value | at spaces; a word longer than its line breaks anywhere |
+
+   Nothing is added to a value to make it break: its text is the emulator's value character for character, and
+   selecting it copies exactly that. The one way of breaking is the area's (`providers/aws/area/components/`), used
+   by every service, and a page states for each value which of the four kinds it is; a service keeps no breaking
+   rule of its own. A table's name column follows it too: a name longer than its cell breaks inside the cell instead
+   of widening its column. Preformatted text (a trust policy's lines, kept as sent) keeps its own rule.
+   Reason: `overflow-wrap: anywhere` on every value (2026-11-17) stopped pages scrolling sideways by letting any
+   column shrink to one character, so short values broke mid-word and an ARN broke inside its name, while an ARN is
+   read part by part and a name is compared whole.
+5. **"Cancel" asks before it discards what was entered.** On a create form or wizard, "Cancel" leaves at once while
+   nothing differs from what the form showed when it opened (what its address preselected included). Once any
+   field, choice or row differs, on any step, "Cancel" opens a Cloudscape `Modal` (the area's `AreaModal`) and
+   nothing else happens until it is answered:
+   - header "Discard what you entered?"; body "What you entered on this page is not kept.";
+   - "Keep editing" (link) closes it, the form as it was, focus on "Cancel"; so do Esc and the close control, named
+     "Close";
+   - "Discard" (primary) leaves as "Cancel" did before, to the same page, and nothing is created.
+
+   A value typed and removed again does not differ. A form that holds only a confirmation field and a dialog's own
+   "Cancel" are not asked about. Leaving another way (a crumb, the side navigation, the browser's back, a reload) is
+   not asked about.
+   Reason: "Cancel" sits beside the submit button and is one press, and a wizard holds steps of work, a create form
+   many sections.
 
 ## Inside a provider area: AWS and Cloudscape
 
@@ -462,8 +539,8 @@ Applies to everything under `providers/aws/area/`, at `/aws` and below.
 - Overlays stay in the area: no component uses `expandToViewport`, and a `Modal` renders into the area's root
   (`getModalRoot`), so no Cloudscape element is rendered outside the area. `bun run lint` fails on a use of
   `expandToViewport` under `providers/aws/area/`.
-- A destructive action is confirmed in a `Modal`; where the AWS console asks the user to type a word or the
-  resource name, so does Studio.
+- A destructive action is confirmed in a `Modal`, or on the console's own confirmation page where the console has
+  one; where the AWS console asks the user to type a word or the resource name, so does Studio.
 - The result of an action is announced in the `Flashbar`. A save in progress disables its button and keeps
   focus where it was.
 - Fill every `ariaLabel` and `i18nStrings` a component asks for. A dialog traps focus, closes on Esc, and
