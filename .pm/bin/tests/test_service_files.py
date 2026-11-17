@@ -17,8 +17,9 @@ main manifest.
 - `Manifest` calls `_pmscope.manifest_of`, `manifest_paths`, `manifest_at` and `service_of_manifest` on a git
   repository whose `main` holds `F` (made with `_fixture.make` under <checkout>/output/tests/service-files/).
 - `Scope` runs the fixture's own `pm-scope` on such a repository; a branch is a branch from `main` with one commit.
-- `Check` is `CheckCase` of `test_check_issue.py` with the integration stand-in of `test_services_scope.py`, its
-  `main` holding `F` (or `F0`).
+- `Check` is `CheckCase` of `test_check_issue.py` with the integration stand-in of `test_services_scope.py`, whose
+  report here holds the ids of the manifest of R3.2 (main, then each service's) and not the main manifest's alone
+  (`CHECK_STANDIN_R32`), its `main` holding `F` (or `F0`).
 - `Merge` is the unit of `test_merge_scope.py` with the record of `test_services_scope.py`, its `main` holding `F`.
 - `Ci` is `Case` of `test_ci.py` with `.github/ci`, `pm-scope` and `pm-check` committed on `main` with `F`.
 - `Run`, `Rows` and `Imports` start `tests/integration/run` in a fixture checkout of `F` with the stand-ins of
@@ -127,6 +128,19 @@ def manifest_ids(files):
         if re.fullmatch(r"[a-z][a-z0-9]*(-[a-z0-9]+)*", s):
             ids += ids_of(files[f"{SVC}{s}/manifest.jsonl"])
     return ids
+
+
+MAIN_ONLY = ('rows = [json.loads(x) for x in (co / "tests" / "integration" / "manifest.jsonl").read_text()'
+             '.splitlines() if x.strip()]\n')
+CHECK_STANDIN_R32 = CHECK_STANDIN.replace(MAIN_ONLY, MAIN_ONLY + r'''import re
+svc = co / "tests" / "integration" / "studio" / "services"
+for d in sorted(svc.iterdir()) if svc.is_dir() else []:
+    if re.fullmatch(r"[a-z][a-z0-9]*(-[a-z0-9]+)*", d.name) and (d / "manifest.jsonl").is_file():
+        rows += [json.loads(x) for x in (d / "manifest.jsonl").read_text().splitlines() if x.strip()]
+''')
+"""The integration stand-in of `test_services_scope.py`, its report written over the manifest of R3.2 (the main
+manifest, then each service's in name order) in place of the main manifest alone."""
+assert CHECK_STANDIN_R32 != CHECK_STANDIN, "the stand-in of test_services_scope.py no longer reads its manifest so"
 
 
 def need_pmscope(case, name):
@@ -434,7 +448,8 @@ class Check(CheckCase):
     group = "service-files-check"
 
     def fixture(self, row=None, extra=None, f0=False, **kw):
-        co = super().fixture(row, {**f_files(f0), "tests/integration/run": CHECK_STANDIN, **(extra or {})}, **kw)
+        co = super().fixture(row, {**f_files(f0), "tests/integration/run": CHECK_STANDIN_R32, **(extra or {})},
+                             **kw)
         (self.stub / "bun").write_text(BUN)
         (self.stub / "bun").chmod(0o755)
         return co
