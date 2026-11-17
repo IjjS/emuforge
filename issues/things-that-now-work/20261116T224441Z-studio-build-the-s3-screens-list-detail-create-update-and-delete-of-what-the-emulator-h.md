@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: studio|s3|service-screens
-Issue-Check-Ids:
+Issue-Check-Ids: studio.s3-bucket-page-controls-lead-to-their-routes studio.s3-bucket-page-of-a-plain-bucket-shows-nothing-set studio.s3-bucket-page-rereads-on-open-and-refresh studio.s3-bucket-page-shows-loading-until-the-answer studio.s3-bucket-page-shows-the-bucket-properties studio.s3-bucket-screens-follow-emulator-stop-and-restart studio.s3-bucket-screens-keyboard-and-layout studio.s3-bucket-screens-of-a-missing-bucket-say-not-found studio.s3-bucket-screens-say-when-the-engine-stops-answering studio.s3-bucket-screens-talk-only-to-the-engine studio.s3-create-bucket-appears-in-the-emulator studio.s3-create-bucket-refusals-create-nothing studio.s3-create-bucket-repeated-and-abandoned studio.s3-create-bucket-stores-every-setting studio.s3-delete-bucket-refuses-a-bucket-that-is-not-empty studio.s3-delete-bucket-removes-the-bucket studio.s3-empty-bucket-deletes-everything studio.s3-empty-bucket-reports-what-could-not-be-deleted studio.s3-empty-bucket-stops-when-the-page-is-left
 Issue-Commit: a90c718db39c8be1555ceb5aa4d341463e7341fb
 
 # Build the S3 screens: list, detail, create, update and delete of what the emulator holds
