@@ -51,16 +51,24 @@ start command, as the engine checks do without an engine.
 
 ## Checks not run
 
+`run` takes `--not-run <file>` and `--on-request`, each at most once, in either order; with any other argument it
+prints a usage line and exits 2. Without `--on-request` it runs every check that is not labelled `on-request` in the
+manifest, and reports each labelled one `not-run` with the message
+`on request: not part of a default run; run it with --on-request`. With `--on-request` those run like every other
+check.
+
 `run --not-run <file>` leaves out the checks a not-run list names; the workflow on GitHub Actions passes it
 `.github/not-run.json`. Only the list's `checks` are read: each entry's `id` must be a manifest id, listed once,
 with a non-empty `reason`. A list that cannot be read or breaks one of these makes every check `error` (exit 127)
-before anything is built or started. `run` with any other argument prints a usage line and exits 2; without
-arguments it runs every check.
+before anything is built or started. A check that is both listed and labelled `on-request` is `not-run` with the
+list's reason, with or without `--on-request`.
 
-A listed engine check returns at once: `run` gives `cargo test` `EMUFORGE_IT_NOT_RUN` naming
+The checks on request are left out the way the listed ones are, by the same ids file and the same pattern. A
+left-out engine check returns at once: `run` gives `cargo test` `EMUFORGE_IT_NOT_RUN` naming
 `output/integration/not-run.ids`, and `support::check::check` prints `not-run <id>` and writes no verdict, so
-`cargo test` shows that test as `ok`. A listed Studio or product check is left out of the Playwright run with one
-`--grep-invert` pattern of the listed ids. `report.json` is the record: each listed check is `not-run` with the
-list's reason as its message, and counts neither as passed nor as failed; the exit code and relay fidelity are
-computed over the other checks, and a list that names every check gives 127. Everything else runs as without the
-option, the product image's build included.
+`cargo test` shows that test as `ok`. A left-out Studio or product check is left out of the Playwright run with one
+`--grep-invert` pattern of the left-out ids. `report.json` is the record: each left-out check is `not-run` with its
+reason as its message, and counts neither as passed nor as failed; the exit code and relay fidelity are computed
+over the other checks, and a run that leaves out every check gives 127. Everything else runs as when nothing is
+left out, the product image's build included. When nothing is left out and no list is given, `run` writes neither
+file and passes neither the variable nor the pattern.
