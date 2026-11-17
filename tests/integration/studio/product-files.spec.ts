@@ -12,6 +12,10 @@
 // - A path is a word of code that holds a `/`, is relative (no leading `/`, `~` or `$`) and holds no `<`, `:` or
 //   `=`; it and every relative link target are resolved from the checkout's root.
 //
+// The configuration check reads the root file, on both platforms (issue 54 R1). The README check compares the README
+// with the one place of `support/product.ts`: the plain commands of both platforms, the preparatory lines and the
+// wrapper's lines (issue 54 R15 to R17).
+//
 // `engine.product-configuration-names-loopback-and-the-emulator-only`,
 // `engine.product-readme-gives-the-commands-the-checks-run`.
 
@@ -19,8 +23,20 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { expect, test } from './support';
-import { composeArgs, runAt } from './support/product-inspect';
-import { COMMANDS, commandLine, Form, START_BOUND_MS, STOP_BOUND_MS, tail, type Situation } from './support/product';
+import { runAt } from './support/product-inspect';
+import {
+  COMMANDS,
+  commandLine,
+  composeArgs,
+  Form,
+  onePlaceLines,
+  PREPARATORY_LINES,
+  START_BOUND_MS,
+  STOP_BOUND_MS,
+  tail,
+  WRAPPER,
+  type Situation,
+} from './support/product';
 
 /** The gateway's configuration file and the image's ignore file (design section 2). */
 const HAPROXY_CFG = 'infra/emuforge/haproxy.cfg';
@@ -58,8 +74,8 @@ function base(file: string | undefined): string {
 
 test('engine.product-configuration-names-loopback-and-the-emulator-only', async ({ ctx }) => {
   test.setTimeout(START_BOUND_MS);
-  // The ports and names of a form; nothing is started.
-  const form = await Form.create(ctx, { situation: 3 });
+  // The ports and names of a form; nothing is started. The root file's commands on both platforms (issue 54 R1).
+  const form = await Form.create(ctx, { situation: 3, commands: 'desktop' });
   const env = form.env();
   const run = (args: string[], e: Record<string, string>) => runAt(ctx, ctx.checkout, args, e, STOP_BOUND_MS);
   const renderAt = async (args: string[], e: Record<string, string>) => {
@@ -73,7 +89,7 @@ test('engine.product-configuration-names-loopback-and-the-emulator-only', async 
     expect(rendered, `${result.line}: the rendered configuration; output:\n${tail(result)}`).not.toBeNull();
     return rendered ?? {};
   };
-  const configOf = (situation: Situation) => composeArgs(situation, 'config', '--format', 'json');
+  const configOf = (situation: Situation) => composeArgs('desktop', situation, 'config', '--format', 'json');
   const plain = await renderAt(configOf(3), env);
   const profiled = await renderAt(configOf(4), env);
 
@@ -422,7 +438,7 @@ function namesVariableWithDefault(text: string, variable: string, value: string)
 }
 
 /** The situations of the "Start" part, in the order they appear: their number and their text. */
-function situationsOf(lines: string[], all: Heading[], start: Heading): { n: number; text: string }[] {
+function situationsOf(lines: string[], all: Heading[], start: Heading): { n: number; line: number; text: string }[] {
   const part = partOf(lines, all, start);
   const found: { n: number; line: number; text: string }[] = [];
   const numbered = /^(?:\*\*|_)?(?:situation\s+)?([1-9])\b/i;
@@ -441,7 +457,7 @@ function situationsOf(lines: string[], all: Heading[], start: Heading): { n: num
     const m = numbered.exec(row[1].trim().replace(/`/g, ''));
     if (m) found.push({ n: Number(m[1]), line: i, text: lines[i] });
   }
-  return found.sort((a, b) => a.line - b.line).map(({ n, text }) => ({ n, text }));
+  return found.sort((a, b) => a.line - b.line);
 }
 
 test('engine.product-readme-gives-the-commands-the-checks-run', async ({ ctx }) => {
@@ -465,11 +481,103 @@ test('engine.product-readme-gives-the-commands-the-checks-run', async ({ ctx }) 
   for (const n of [3, 4] as const) {
     const code = codeOf(situation(n));
     for (const which of ['start', 'stop'] as const) {
-      const line = commandLine(COMMANDS[n][which]);
+      const line = commandLine(COMMANDS.desktop[n][which]);
       expect(code, `situation ${String(n)}: the ${which} command line in code`).toContain(line);
     }
     expect(situation(n), `situation ${String(n)}: the address`).toContain('http://127.0.0.1:8296/');
   }
+
+  // Issue 54. The "Start" part before the first situation → `./compose up` and `./compose down` in code, and that
+  // this starts and stops EmuForge on Docker Desktop and on Docker Engine on Linux, uses an emulator already running
+  // on EMULATOR_PORT and starts one when there is none, and prints the `docker compose` command it runs (R15).
+  const intro =
+    start && situations.length > 0 ? lines.slice(start.line, situations[0].line).join('\n') : startPart;
+  const introCode = codeOf(intro);
+  const introProse = proseOf(intro);
+  for (const line of [WRAPPER.up, WRAPPER.down].map(commandLine)) {
+    expect(introCode, `"Start" before the situations: ${line} in code`).toContain(line);
+  }
+  expect(introProse, '"Start" before the situations: starts and stops').toMatch(/\bstart[\s\S]*\bstop/i);
+  for (const runtime of ['Docker Desktop', 'Docker Engine on Linux']) {
+    expect(introProse, `"Start" before the situations: ${runtime}`).toContain(runtime);
+  }
+  expect(intro, '"Start" before the situations: EMULATOR_PORT').toMatch(/\bEMULATOR_PORT\b/);
+  expect(introProse, '"Start" before the situations: an emulator already running').toMatch(/already running/i);
+  expect(introProse, '"Start" before the situations: starts one when there is none').toMatch(
+    /\bstarts?\b[^.]*\b(none|no emulator)\b|\b(none|no emulator)\b[^.]*\bstarts?\b/i,
+  );
+  expect(
+    blocksOf(intro).some((b) => /\bprints?\b/i.test(b) && /docker compose/.test(b)),
+    '"Start" before the situations: a paragraph, item or row that says it prints the docker compose command it runs',
+  ).toBe(true);
+
+  // Situations 3 and 4 → in code, the Docker Engine on Linux start and stop lines of the situation, and with them
+  // the two preparatory lines, each exactly as the one place holds it (R16).
+  for (const n of [3, 4] as const) {
+    const code = codeOf(situation(n));
+    for (const which of ['start', 'stop'] as const) {
+      const line = commandLine(COMMANDS.linux[n][which]);
+      expect(code, `situation ${String(n)}: the Docker Engine on Linux ${which} command line in code`).toContain(line);
+    }
+    for (const line of PREPARATORY_LINES) {
+      expect(code, `situation ${String(n)}: the preparatory line in code`).toContain(line);
+    }
+  }
+
+  // Every line in code in "Start" that begins with `docker compose` or `./compose` → one of the lines of the one
+  // place (R16; #34 R20).
+  const held = onePlaceLines();
+  expect(
+    codeOf(startPart).filter((c) => /^(docker compose|\.\/compose)(\s|$)/.test(c) && !held.includes(c)),
+    '"Start": command lines in code that the checks do not run',
+  ).toEqual([]);
+
+  // "Start" → Docker Desktop for macOS and Docker Engine on Linux as the runtimes it was verified on, and nowhere
+  // that Docker Engine on Linux is not supported (R17).
+  const startProseAll = proseOf(startPart);
+  expect(startProseAll, '"Start": verified on').toMatch(/verified/i);
+  for (const runtime of ['Docker Desktop for macOS', 'Docker Engine on Linux']) {
+    expect(startProseAll, `"Start": ${runtime}`).toContain(runtime);
+  }
+  const sentences = startProseAll.split(/(?<=[.!?])\s+|\n\s*\n/);
+  expect(
+    sentences.filter((t) => /Linux/.test(t) && /\bnot\s+(yet\s+)?supported\b|\bunsupported\b/i.test(t)),
+    '"Start": sentences that say Docker Engine on Linux is not supported',
+  ).toEqual([]);
+
+  // "Start" → 18296 and 18297 reserved on Docker Desktop only; on Docker Engine on Linux a start with a port taken
+  // or used twice can exit 0 and is seen with `./compose ps -a` and `./compose logs`, both in code; the Linux file
+  // needs Docker Compose 2.24 or later; there EmuForge's containers share the host's network; `./compose` refuses
+  // to run as root (R17; design sections 5 and 8, T1).
+  const startBlocks = blocksOf(startPart);
+  const startCode = codeOf(startPart);
+  const aBlock = (what: string, ...tests: RegExp[]) =>
+    expect(
+      startBlocks.some((b) => tests.every((t) => t.test(b))),
+      `"Start": a paragraph, item or row that says ${what}`,
+    ).toBe(true);
+  aBlock(
+    '18296 and 18297 are reserved on Docker Desktop only',
+    /(^|\D)18296(\D|$)/,
+    /(^|\D)18297(\D|$)/,
+    /reserved/i,
+    /Docker Desktop/,
+    /\bonly\b/i,
+  );
+  for (const line of [WRAPPER.ps, WRAPPER.logs].map(commandLine)) {
+    expect(startCode, `"Start": ${line} in code`).toContain(line);
+  }
+  aBlock(
+    'a start on Docker Engine on Linux with a port taken or used twice can exit 0, seen with ./compose ps -a and logs',
+    /Linux/,
+    /\bport/i,
+    /\bexits?\b[^.]*(^|\D)0(\D|$)/i,
+    /\.\/compose ps -a/,
+    /\.\/compose logs/,
+  );
+  aBlock('the Linux file needs Docker Compose 2.24 or later', /Compose/, /2\.24/, /\blater\b|\bnewer\b|\bat least\b/i);
+  aBlock("EmuForge's containers share the host's network on Docker Engine on Linux", /Linux/, /host['’]?s network/i);
+  aBlock('./compose refuses to run as root', /\.\/compose/, /\brefuses?\b/i, /\broot\b/i);
 
   // Situations 1, 2, 5 and 6 → not available yet, one line on what each will be, and no command.
   for (const n of [1, 2, 5, 6]) {

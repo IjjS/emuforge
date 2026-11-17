@@ -1,13 +1,24 @@
 // The product form of issue 34: EmuForge built into an image and started by Docker Compose from the checkout's root
-// (requirement section 1). This file is the one place the product checks take the start and stop command lines
-// from; `engine.product-readme-gives-the-commands-the-checks-run` compares the README with `COMMANDS` (R20).
+// (requirement section 1), on Docker Desktop and, by issue 54, on Docker Engine on Linux. This file is the one place
+// the product checks take their command lines from: the plain commands of both platforms (`COMMANDS`), the two
+// preparatory lines of Docker Engine on Linux (`PREPARATORY_LINES`) and the wrapper's lines (`WRAPPER`);
+// `engine.product-readme-gives-the-commands-the-checks-run` compares the README with them (#34 R20, #54 R16).
+//
+// The platform (`platform()`) is decided once, by the wrapper's own rule: Docker Engine on Linux when this process
+// runs on Linux and `docker info --format '{{.OperatingSystem}}'` does not print `Docker Desktop`; Docker Desktop
+// otherwise. No check takes it from a variable.
 //
 // A check's form (`Form`) runs on free loopback ports of its own, under the run's own image names
 // (`EMUFORGE_IMAGE`, `EMUFORGE_EMULATOR_IMAGE`, set by `run`), with an environment of exactly: `HOME`, a `PATH` on
-// which `cargo`, `rustc`, `bun` and `node` are not found (R1), the three ports and the two image names. The Docker
-// client's own settings (`DOCKER_CONFIG`, `DOCKER_HOST`, `DOCKER_CONTEXT`) are passed on when the run has them, so
-// the command talks to the same daemon the support inspects; a form with a fresh `HOME` keeps `DOCKER_CONFIG` at the
+// which `cargo`, `rustc`, `bun` and `node` are not found (R1), the three ports and the two image names, and on
+// Docker Engine on Linux `EMUFORGE_UID` and `EMUFORGE_GID` as the preparatory lines set them. The Docker client's
+// own settings (`DOCKER_CONFIG`, `DOCKER_HOST`, `DOCKER_CONTEXT`) are passed on when the run has them, so the
+// command talks to the same daemon the support inspects; a form with a fresh `HOME` keeps `DOCKER_CONFIG` at the
 // run's own, where the Compose plugin and the Docker context live (`probe/fresh-home.log`).
+//
+// On Docker Engine on Linux a form started with the plain commands has the preparatory lines done first, in its own
+// `HOME`, as the user running the check: the support runs their text in `/bin/sh` and takes the two ids from what
+// the shell set (#54 R16). On Docker Desktop they are not done.
 //
 // The form's containers and networks are those that carry its Compose project's label. The project is
 // `emuforge-app-<studio port>` (design D6). `dispose` runs the situation 4 stop command, which removes the form
@@ -18,6 +29,7 @@ import { execFile } from 'node:child_process';
 import { createHash, createHmac } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
 
 import { EnvError, expect, type Ctx } from './check';
@@ -30,21 +42,127 @@ import { waitFor } from './wait';
 /** A situation of the README's "Start" part that the product form covers (requirement section 1). */
 export type Situation = 3 | 4;
 
-/** The start and stop command lines of each situation, as argument arrays, run at the checkout's root. */
-export const COMMANDS: Record<Situation, { start: string[]; stop: string[] }> = {
-  3: {
-    start: ['docker', 'compose', 'up', '-d', '--build'],
-    stop: ['docker', 'compose', 'down'],
+/** The platform of the run (shared terms of #54's test criteria). */
+export type Platform = 'desktop' | 'linux';
+
+/** The second Compose file, the host form of Docker Engine on Linux (#54 requirement section 1). */
+export const LINUX_FILE = 'docker-compose.linux.yml';
+
+const LINUX_ARGS = ['-f', LINUX_FILE];
+
+/** The plain start and stop command lines of each platform and situation, as argument arrays, run at the root. */
+export const COMMANDS: Record<Platform, Record<Situation, { start: string[]; stop: string[] }>> = {
+  desktop: {
+    3: {
+      start: ['docker', 'compose', 'up', '-d', '--build'],
+      stop: ['docker', 'compose', 'down'],
+    },
+    4: {
+      start: ['docker', 'compose', '--profile', 'emulator', 'up', '-d', '--build'],
+      stop: ['docker', 'compose', '--profile', 'emulator', 'down'],
+    },
   },
-  4: {
-    start: ['docker', 'compose', '--profile', 'emulator', 'up', '-d', '--build'],
-    stop: ['docker', 'compose', '--profile', 'emulator', 'down'],
+  linux: {
+    3: {
+      start: ['docker', 'compose', ...LINUX_ARGS, 'up', '-d', '--build'],
+      stop: ['docker', 'compose', ...LINUX_ARGS, 'down'],
+    },
+    4: {
+      start: ['docker', 'compose', ...LINUX_ARGS, '--profile', 'emulator', 'up', '-d', '--build'],
+      stop: ['docker', 'compose', ...LINUX_ARGS, '--profile', 'emulator', 'down'],
+    },
   },
+};
+
+/**
+ * The two lines that go before the plain commands on Docker Engine on Linux (#54 R16), as text: the README holds
+ * them exactly so, and the support runs exactly this text.
+ */
+export const PREPARATORY_LINES = ['mkdir -p ~/.aws/emulator', 'export EMUFORGE_UID="$(id -u)" EMUFORGE_GID="$(id -g)"'];
+
+/** The wrapper's lines, as argument arrays, run at the checkout's root (#54 R9, R14). */
+export const WRAPPER = {
+  up: ['./compose', 'up'],
+  down: ['./compose', 'down'],
+  ps: ['./compose', 'ps', '-a'],
+  logs: ['./compose', 'logs'],
 };
 
 /** A command line as the README writes it: the arguments joined by one space. */
 export function commandLine(args: string[]): string {
   return args.join(' ');
+}
+
+/** Every command line of the one place: the plain commands of both platforms and the wrapper's lines. */
+export function onePlaceLines(): string[] {
+  const out: string[] = [];
+  for (const byPlatform of Object.values(COMMANDS)) {
+    for (const { start, stop } of Object.values(byPlatform)) out.push(commandLine(start), commandLine(stop));
+  }
+  out.push(...Object.values(WRAPPER).map(commandLine));
+  return out;
+}
+
+/**
+ * `docker compose` with the options the platform's situation start command puts before `up` (the platform's file,
+ * and for situation 4 `--profile emulator`), then `rest`: the same file and profile for `ps`, `logs` or `config`.
+ */
+export function composeArgs(on: Platform, situation: Situation, ...rest: string[]): string[] {
+  const start = COMMANDS[on][situation].start;
+  return [...start.slice(0, start.indexOf('up')), ...rest];
+}
+
+let decided: Promise<Platform> | undefined;
+
+/** The platform of the run, decided once by the wrapper's rule (this file's header). */
+export function platform(): Promise<Platform> {
+  decided ??= (async (): Promise<Platform> => {
+    if (os.platform() !== 'linux') return 'desktop';
+    const name = await dockerRead(['info', '--format', '{{.OperatingSystem}}']);
+    return name === 'Docker Desktop' ? 'desktop' : 'linux';
+  })();
+  return decided;
+}
+
+/** The user's ids: what `id -u` and `id -g` print. */
+export interface UserIds {
+  uid: string;
+  gid: string;
+}
+
+let users: Promise<UserIds> | undefined;
+
+/** The ids of the user running the check, from `id -u` and `id -g`. */
+export function userIds(): Promise<UserIds> {
+  const id = (flag: string) =>
+    new Promise<string>((resolve, reject) => {
+      execFile('id', [flag], { encoding: 'utf8' }, (error, stdout) => {
+        if (error) reject(new EnvError(`id ${flag}: ${error.message}`));
+        else resolve(stdout.trim());
+      });
+    });
+  users ??= (async () => ({ uid: await id('-u'), gid: await id('-g') }))();
+  return users;
+}
+
+/**
+ * Does the preparatory lines in `home`: their text in `/bin/sh` with that `HOME`, as the user running the check,
+ * then the two variables as the shell set them. `EnvError` when the shell fails or sets anything but two numbers.
+ */
+export async function prepare(ctx: Ctx, home: string): Promise<UserIds> {
+  const script = [...PREPARATORY_LINES, 'printf \'%s %s\\n\' "$EMUFORGE_UID" "$EMUFORGE_GID"'].join(' && ');
+  const proc = Proc.spawn(ctx, 'the preparatory lines', '/bin/sh', ['-c', script], ctx.checkout, {
+    HOME: home,
+    PATH: '/usr/bin:/bin',
+  });
+  const exit = await proc.waitExit(10_000);
+  const { stdout, stderr } = await proc.stop();
+  const [uid, gid] = stdout.trim().split(' ');
+  if (exit?.code !== 0 || !/^\d+$/.test(uid ?? '') || !/^\d+$/.test(gid ?? '')) {
+    throw new EnvError(`the preparatory lines in ${home}: exit ${String(exit?.code)}, ${stdout.trim()} ${stderr.trim()}`);
+  }
+  ctx.log(`the preparatory lines in ${home}: EMUFORGE_UID=${uid} EMUFORGE_GID=${gid}`);
+  return { uid, gid };
 }
 
 /** The files an emulator writes into `~/.aws/emulator/<port>/` (requirement section 2). */
@@ -393,6 +511,13 @@ export interface FormOptions {
   studioPort?: number;
   /** `HOME` of the command; default the run's. */
   home?: string;
+  /** Whose plain commands start and stop the form; default the run's platform. */
+  commands?: Platform;
+  /**
+   * Whether the preparatory lines are done when the run is on Docker Engine on Linux and the form takes the Linux
+   * commands; default true. On Docker Desktop they are never done.
+   */
+  prepared?: boolean;
 }
 
 /** Ports the forms of this process chose, so two forms of one check never get the same one. */
@@ -418,14 +543,21 @@ export class Form {
   readonly enginePort: number;
   readonly studioPort: number;
   readonly home: string;
+  /** Whose plain commands the form takes. */
+  readonly commands: Platform;
+  /** The ids the preparatory lines set, `null` when they were not done. */
+  readonly ids: UserIds | null;
   private readonly ownsEmulatorDir: boolean;
 
   private constructor(
     private readonly ctx: Ctx,
-    options: Required<FormOptions>,
+    options: Required<Omit<FormOptions, 'prepared'>>,
+    ids: UserIds | null,
     ownsEmulatorDir: boolean,
   ) {
     this.situation = options.situation;
+    this.commands = options.commands;
+    this.ids = ids;
     this.emulatorPort = options.emulatorPort;
     this.enginePort = options.enginePort;
     this.studioPort = options.studioPort;
@@ -457,9 +589,14 @@ export class Form {
     const emulatorPort = options.emulatorPort ?? (await pick());
     const enginePort = options.enginePort ?? (await pick());
     const studioPort = options.studioPort ?? (await pick());
+    const home = options.home ?? ctx.home;
+    const on = await platform();
+    const commands = options.commands ?? on;
+    const ids = on === 'linux' && commands === 'linux' && options.prepared !== false ? await prepare(ctx, home) : null;
     const form = new Form(
       ctx,
-      { situation: options.situation, emulatorPort, enginePort, studioPort, home: options.home ?? ctx.home },
+      { situation: options.situation, emulatorPort, enginePort, studioPort, home, commands },
+      ids,
       options.emulatorPort === undefined && options.situation === 4,
     );
     ctx.own(form);
@@ -467,7 +604,7 @@ export class Form {
     fs.mkdirSync(ctx.tmp, { recursive: true });
     fs.appendFileSync(path.join(ctx.tmp, 'product-projects'), `${form.project}\n`);
     ctx.log(
-      `form ${form.project}: situation ${options.situation}, emulator port ${emulatorPort}, engine port ${enginePort}, studio port ${studioPort}, HOME ${form.home}`,
+      `form ${form.project}: ${commands} commands, situation ${options.situation}, emulator port ${emulatorPort}, engine port ${enginePort}, studio port ${studioPort}, HOME ${form.home}`,
     );
     return form;
   }
@@ -492,6 +629,10 @@ export class Form {
       EMUFORGE_IMAGE: this.ctx.productImage,
       EMUFORGE_EMULATOR_IMAGE: this.ctx.emulatorImage,
     };
+    if (this.ids) {
+      env.EMUFORGE_UID = this.ids.uid;
+      env.EMUFORGE_GID = this.ids.gid;
+    }
     for (const name of ['DOCKER_CONFIG', 'DOCKER_HOST', 'DOCKER_CONTEXT']) {
       const value = process.env[name];
       if (value) env[name] = value;
@@ -500,10 +641,13 @@ export class Form {
     return env;
   }
 
-  /** Runs `args` at the checkout's root with the form's environment and waits for its exit within `boundMs`. */
-  async run(args: string[], boundMs: number): Promise<CommandResult> {
+  /**
+   * Runs `args` at the checkout's root with `env` (default the form's environment) and waits for its exit within
+   * `boundMs`.
+   */
+  async run(args: string[], boundMs: number, env: Record<string, string> = this.env()): Promise<CommandResult> {
     const line = commandLine(args);
-    const proc = Proc.spawn(this.ctx, line, args[0], args.slice(1), this.ctx.checkout, this.env());
+    const proc = Proc.spawn(this.ctx, line, args[0], args.slice(1), this.ctx.checkout, env);
     const exit = await proc.waitExit(boundMs);
     const { stdout, stderr } = await proc.stop();
     if (!exit) throw new Error(`${line} did not exit within ${boundMs / 1000}s`);
@@ -513,12 +657,17 @@ export class Form {
 
   /** The start command of the form's situation. */
   start(): Promise<CommandResult> {
-    return this.run(COMMANDS[this.situation].start, START_BOUND_MS);
+    return this.run(COMMANDS[this.commands][this.situation].start, START_BOUND_MS);
   }
 
   /** The stop command of `situation` (default the form's). */
   stop(situation: Situation = this.situation): Promise<CommandResult> {
-    return this.run(COMMANDS[situation].stop, STOP_BOUND_MS);
+    return this.run(COMMANDS[this.commands][situation].stop, STOP_BOUND_MS);
+  }
+
+  /** `docker compose` with the file and profile of the form's start command, then `rest` (`ps`, `logs`). */
+  compose(...rest: string[]): string[] {
+    return composeArgs(this.commands, this.situation, ...rest);
   }
 
   /** The form's containers: those that carry its project's label, running or not. */

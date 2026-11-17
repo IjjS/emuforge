@@ -2,6 +2,9 @@
 // is not there at the start, and one whose emulator is killed, stopped and started again with new keys, each
 // observed through the form's engine port and Studio's home without restarting anything of the form.
 //
+// On Docker Engine on Linux the form has no gateway (issue 54 R5): with the emulator killed health's reason is
+// `connection_refused` there, as in the developer's start; `connection_failed` stays the gateway form's.
+//
 // `engine.product-connects-when-the-emulator-starts-later`, `engine.product-reconnects-after-the-emulator-restarts`.
 
 import type { Page } from '@playwright/test';
@@ -14,6 +17,7 @@ import {
   Form,
   health,
   identities,
+  platform,
   productTimeout,
   signedS3,
   tail,
@@ -109,12 +113,14 @@ test('engine.product-reconnects-after-the-emulator-restarts', async ({ ctx }) =>
   // A signed s3:ListBuckets with the emulator up → 200.
   expect(await listBuckets(form, filesOf(emulator)), 's3:ListBuckets with the emulator up').toBe(200);
 
-  // The emulator killed, its files left → health 503, not reachable, reason `connection_failed` (design D7).
+  // The emulator killed, its files left → health 503, not reachable, reason `connection_failed` (design D7); on
+  // Docker Engine on Linux `connection_refused` (issue 54 R5).
   const killedKey = filesOf(emulator);
   await emulator.kill();
+  const killedReason = (await platform()) === 'linux' ? 'connection_refused' : 'connection_failed';
   expect(await health(form.enginePort), 'GET /__emuforge/health with the emulator killed').toMatchObject({
     status: 503,
-    body: { emulator: { reachable: false, reason: 'connection_failed' } },
+    body: { emulator: { reachable: false, reason: killedReason } },
   });
 
   // A signed s3:ListBuckets with the emulator killed → 503, `EmulatorUnavailable` in S3's error shape, the engine's

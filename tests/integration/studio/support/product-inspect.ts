@@ -1,5 +1,6 @@
 // What the product checks of unit t2 (issue 34) need besides `product.ts`: a command run in any directory with an
-// environment the check gives, Compose's arguments of a situation for a command other than start and stop, S3
+// environment the check gives, Compose's arguments of a situation for a command other than start and stop (held in
+// `product.ts` with the command lines since issue 54, and passed on here), S3
 // requests signed with the emulator's key (straight to the emulator over TLS verified against its `ca.pem`, or to a
 // form's engine port with headers the signature does not cover), the transparency comparison of
 // `engine/references/relay-fidelity.md`, the host's non-loopback IPv4 addresses and a TCP probe at one of them, and
@@ -21,7 +22,9 @@ import zlib from 'node:zlib';
 import { EnvError, type Ctx } from './check';
 import { emulatorDir, readEmulatorFiles, type EmulatorFiles } from './emulator';
 import { Proc } from './process';
-import { COMMANDS, commandLine, request, type CommandResult, type HttpAnswer, type Situation } from './product';
+import { commandLine, request, type CommandResult, type HttpAnswer } from './product';
+
+export { composeArgs } from './product';
 
 const REGION = 'us-east-1';
 
@@ -40,15 +43,6 @@ export async function runAt(
   if (!exit) throw new Error(`${line} did not exit within ${boundMs / 1000}s`);
   ctx.log(`${line}: exit ${String(exit.code)}${exit.signal ? ` signal ${exit.signal}` : ''}`);
   return { line, code: exit.code, stdout, stderr };
-}
-
-/**
- * `docker compose` with the options the situation's start command puts before `up` (for situation 4,
- * `--profile emulator`), then `rest`: the same project and profile for `ps`, `logs` or `config`.
- */
-export function composeArgs(situation: Situation, ...rest: string[]): string[] {
-  const start = COMMANDS[situation].start;
-  return [...start.slice(0, start.indexOf('up')), ...rest];
 }
 
 /** `docker <args>` with the test process's environment: whether it exited 0, and both streams. */

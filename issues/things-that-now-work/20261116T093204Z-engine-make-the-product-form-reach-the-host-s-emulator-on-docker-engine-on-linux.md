@@ -4,7 +4,7 @@ Issue-Module: engine
 Issue-Kind: feature
 Issue-Source: plan
 Issue-Key: engine|product-form|docker-engine-on-linux
-Issue-Check-Ids:
+Issue-Check-Ids: engine.product-browser-rules-hold engine.product-configuration-names-loopback-and-the-emulator-only engine.product-connects-when-the-emulator-starts-later engine.product-does-not-come-up-on-a-port-collision engine.product-emulator-profile-starts-and-stops-an-emulator engine.product-first-start-without-aws-directory engine.product-holds-no-key-and-one-read-only-mount engine.product-ports-are-published-on-loopback-only engine.product-profile-start-refuses-the-port-of-a-running-emulator engine.product-readme-gives-the-commands-the-checks-run engine.product-reconnects-after-the-emulator-restarts engine.product-relay-s3-get-object-8mib-is-transparent engine.product-start-fails-when-the-image-does-not-build engine.product-start-with-running-emulator-connects engine.product-stop-leaves-nothing-and-a-users-emulator-untouched engine.product-two-forms-side-by-side engine.product-linux-file-renders-the-host-form engine.product-linux-start-refuses-a-missing-emulator-folder engine.product-wrapper-refuses-root-and-bad-ids engine.product-wrapper-starts-an-emulator-when-none-runs engine.product-wrapper-uses-a-running-emulator
 Issue-Commit: f0bf02e915a04b2f17f1176275a3e00c75073aae
 
 # Make the product form reach the host's emulator on Docker Engine on Linux
