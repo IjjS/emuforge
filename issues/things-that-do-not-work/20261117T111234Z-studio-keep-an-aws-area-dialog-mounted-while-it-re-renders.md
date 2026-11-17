@@ -50,8 +50,10 @@ and returns focus to what opened it").
 - A dialog of `AreaModal` that re-renders while open keeps the same `role="dialog"` element and the same field
   element, and focus stays in the field while keys are typed.
 - The S3 bucket list's "Preferences" dialog keeps the same `role="dialog"` element while a page size is chosen in it.
+- Once `AreaModal` keeps its identity, the IAM dialogs (the role list's "Delete", and any later one built on
+  `services/iam/components/page-parts.tsx` `useAreaModalRoot`) and the S3 "Preferences" dialog use `AreaModal`, and
+  the service folders' own `useAreaModalRoot` copies are removed; each dialog's own cases still pass.
 
 ## Out of scope
 
 - Any change of what a dialog shows or of where its root is (the area's root, never `document.body`).
-- IAM's dialogs, whose root already keeps its identity.
