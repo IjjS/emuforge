@@ -563,11 +563,14 @@ export async function cellUnderRowWith(table: Locator, text: string, column: str
     throw new Error(`the table has no column "${column}"; its headings: ${JSON.stringify(headings)}`);
   }
   const exactly = new RegExp(`^\\s*${escapeRegExp(text)}\\s*$`);
-  return table
-    .locator('tbody tr')
-    .filter({ has: table.locator('td, th').filter({ hasText: exactly }) })
-    .locator('td, th')
-    .nth(headings.indexOf(column));
+  return (
+    table
+      .locator('tbody tr')
+      // An inner locator of `has` is matched inside each row, so it is rooted at the page as `cellUnder`'s is.
+      .filter({ has: table.page().locator('td, th').filter({ hasText: exactly }) })
+      .locator('td, th')
+      .nth(headings.indexOf(column))
+  );
 }
 
 /** What a table's box does against the element it scrolls in: the table's width and that element's. */
