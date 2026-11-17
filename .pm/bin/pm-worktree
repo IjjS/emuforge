@@ -1,13 +1,23 @@
 #!/usr/bin/env -S python3 -I
 """Create and remove sibling worktrees for worker panes.
 
-  pm-worktree new <issue> <unit> [--type feat|refactor|fix] [--branch NAME] [--base main]
+  pm-worktree new <issue>
+  pm-worktree new <issue> <unit> [--type feat|refactor|fix] [--branch NAME] [--base BRANCH]
   pm-worktree rm <path|name> [--keep-branch | --delete-branch]
   pm-worktree list
 
-Path: <parent of the main checkout>/emuforge-<issue>-<unit>, a sibling of the main checkout, never inside it.
-The base is local main (or a parent unit's branch for a stacked unit); nothing is fetched, because local main is
-the line the PM maintains. Every worktree gets output/{captures,logs} and three ports in output/ports.json:
+new <issue> (no unit) makes the issue branch: the branch feat/<issue> from local main and its worktree
+<parent of the main checkout>/emuforge-<issue>, registered with unit "issue" and base main. It refuses, and makes
+nothing, when <issue> is not digits, when --base, --branch or --type is given (an issue branch is always
+feat/<issue> from main), when any worktree of the issue is registered (an issue in flight finishes without an
+issue branch), or when a branch feat/<issue> exists that is not registered (it is never reopened). A worktree add
+that does not finish in 120 s is undone and nothing is registered.
+new <issue> <unit>: path <parent of the main checkout>/emuforge-<issue>-<unit>, a sibling of the main checkout,
+never inside it. The base is the issue branch feat/<issue> when it is registered, else local main; --base gives a
+parent unit's branch for a stacked unit. Nothing is fetched, because local main is the line the PM maintains. The
+unit "issue" and a branch <feat|refactor|fix>/<digits> (the name of an issue branch) are refused; while the issue
+has an issue branch, so is a --branch that is not <feat|refactor|fix>/<issue>-<name>, so every unit of the issue
+has a branch whose target is the issue branch. Every worktree gets output/{captures,logs} and three ports in output/ports.json:
 studio (8100+), engine (8300+) and emulator (9300+), so parallel units never share a server or an emulator.
 When studio/package.json exists, `bun install` runs there (log in output/logs/install.log).
 rm removes the worktree, frees its ports and deletes the branch only when it is merged into local main. Before
@@ -17,13 +27,18 @@ worktree's emulator port left under ~/.aws/emulator. A refusal there does not st
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _pmlib import BIN, PORTS, ROOT, WORKTREES, load, log, now, save
+from _pmscope import Unreadable, run_git
 
 BRANCH_TYPES = ("feat", "refactor", "fix")
+ISSUE = "issue"  # the registry's unit of an issue branch; no unit can be called so
+ISSUE_BRANCH = re.compile(r"(feat|refactor|fix)/\d+")  # the name of an issue branch, matched whole
+ADD_TIMEOUT = 120  # seconds the issue branch's `git worktree add` may take
 PORT_BASES = {"studio": 8100, "engine": 8300, "emulator": 9300}
 EMULATOR_DIR = "pm-emulator-dir: "
 
@@ -47,23 +62,102 @@ def alloc_slot(path):
     sys.exit("no free port slot (100 worktrees registered?)")
 
 
+def issue_entry(wts, issue):
+    """The registry entry of the issue's branch, or None."""
+    return next((w for w in wts if w.get("issue") == str(issue) and w.get("unit") == ISSUE), None)
+
+
 def cmd_new(a):
+    if a.unit is None:
+        return cmd_new_issue(a)
+    if a.unit == ISSUE:
+        sys.exit(f"{ISSUE} is the name of an issue branch, not of a unit; the issue branch is made with "
+                 f"pm-worktree new {a.issue}")
     name = f"{ROOT.name}-{a.issue}-{a.unit}"
     path = ROOT.parent / name
     if path.exists():
         sys.exit(f"{path} exists")
-    branch = a.branch or f"{a.type}/{a.issue}-{a.unit}"
+    branch = a.branch or f"{a.type or 'feat'}/{a.issue}-{a.unit}"
     head, _, tail = branch.partition("/")
     if head not in BRANCH_TYPES or not tail:
         sys.exit(f"branch {branch} must be <feat|refactor|fix>/<name>")
-    if subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--verify", "--quiet", a.base], capture_output=True).returncode != 0:
-        sys.exit(f"base {a.base} does not exist; the repository needs at least one commit on main")
+    if ISSUE_BRANCH.fullmatch(branch):
+        sys.exit(f"{branch} is the name of an issue branch")
+    has_issue_branch = issue_entry(load(WORKTREES, []), a.issue) is not None
+    if has_issue_branch and not re.fullmatch(rf"(feat|refactor|fix)/{re.escape(str(a.issue))}-.+", branch):
+        sys.exit(f"branch {branch} must be <feat|refactor|fix>/{a.issue}-<name>: issue {a.issue} has an issue branch")
+    base = a.base or (f"feat/{a.issue}" if has_issue_branch else "main")
+    if subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--verify", "--quiet", base], capture_output=True).returncode != 0:
+        sys.exit(f"base {base} does not exist; the repository needs at least one commit on main")
     exists = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"], capture_output=True).returncode == 0
-    add = ["git", "-C", str(ROOT), "worktree", "add", str(path), branch] if exists else ["git", "-C", str(ROOT), "worktree", "add", "-b", branch, str(path), a.base]
+    add = ["git", "-C", str(ROOT), "worktree", "add", str(path), branch] if exists else ["git", "-C", str(ROOT), "worktree", "add", "-b", branch, str(path), base]
     if exists:
         print(f"branch {branch} exists; reopening it (post-processing)")
     if run(add) != 0:
         sys.exit("worktree add failed")
+    register(path, name, a.issue, a.unit, branch, base)
+
+
+def cmd_new_issue(a):
+    """The issue branch feat/<issue> from main and its worktree, registered with unit "issue" (R1.1, R1.2)."""
+    issue = str(a.issue)
+    if not issue.isdigit():
+        sys.exit(f"issue {issue} is not a number; an issue branch is feat/<digits>")
+    if a.base or a.branch or a.type:
+        sys.exit(f"an issue branch is always feat/{issue} from main; drop --base, --branch and --type")
+    mine = [w["name"] for w in load(WORKTREES, []) if w.get("issue") == issue]
+    if mine:
+        sys.exit(f"issue {issue} already has worktrees ({', '.join(mine)}); an issue in flight finishes without an "
+                 f"issue branch")
+    branch, name = f"feat/{issue}", f"{ROOT.name}-{issue}"
+    path = ROOT.parent / name
+    try:
+        known = run_git(ROOT, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}^{{commit}}").returncode == 0
+        main = run_git(ROOT, "rev-parse", "--verify", "--quiet", "refs/heads/main^{commit}")
+    except Unreadable as e:
+        sys.exit(f"cannot read the branches: {e}")
+    if known:
+        sys.exit(f"branch {branch} exists and is not registered as the issue's branch")
+    if main.returncode != 0:
+        sys.exit("main does not exist; the repository needs at least one commit on main")
+    if path.exists():
+        sys.exit(f"{path} exists")
+    start = main.stdout.strip()
+    add = ["git", "-C", str(ROOT), "worktree", "add", "-b", branch, str(path), start]
+    print("$", " ".join(add))
+    try:
+        code = subprocess.run(add, stdin=subprocess.DEVNULL, timeout=ADD_TIMEOUT).returncode
+    except subprocess.TimeoutExpired:
+        sys.exit(f"worktree add did not finish in {ADD_TIMEOUT} s; {undo_add(path, branch, start)}")
+    if code != 0:
+        sys.exit("worktree add failed")
+    register(path, name, issue, ISSUE, branch, "main")
+
+
+def undo_add(path, branch, start):
+    """Take back what an unfinished `worktree add` left; say what was left behind. Nothing is registered."""
+    left = []
+    for args in (("worktree", "remove", "--force", str(path)), ("worktree", "prune")):
+        try:
+            run_git(ROOT, *args)
+        except Unreadable:
+            left.append(f"git {' '.join(args[:2])} did not answer")
+    try:
+        at = run_git(ROOT, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}^{{commit}}")
+        if at.returncode == 0 and at.stdout.strip() == start:
+            if run_git(ROOT, "branch", "-D", branch).returncode != 0:
+                left.append(f"branch {branch} left behind (it could not be deleted)")
+        elif at.returncode == 0:
+            left.append(f"branch {branch} left behind (it is not at {start[:9]})")
+    except Unreadable as e:
+        left.append(f"branch {branch} may be left behind ({e})")
+    if path.exists():
+        left.append(f"{path} left behind")
+    return "nothing registered" + (": " + "; ".join(left) if left else "")
+
+
+def register(path, name, issue, unit, branch, base):
+    """What every new worktree gets after `worktree add`: folders, ports, Studio's install, its registry entry."""
     for d in ("output/captures", "output/logs"):
         (path / d).mkdir(parents=True, exist_ok=True)
     slot = alloc_slot(path)
@@ -74,10 +168,10 @@ def cmd_new(a):
         if run(["bun", "install"], cwd=str(path / "studio"), out=str(path / "output/logs/install.log")) != 0:
             print("WARN bun install failed; see output/logs/install.log")
     wts = load(WORKTREES, [])
-    wts.append(dict(name=name, path=str(path), issue=str(a.issue), unit=a.unit, branch=branch, base=a.base, slot=slot, ports=ports, created=now()))
+    wts.append(dict(name=name, path=str(path), issue=str(issue), unit=unit, branch=branch, base=base, slot=slot, ports=ports, created=now()))
     save(WORKTREES, wts)
     log(f"worktree new {name} {branch} slot={slot}")
-    print(f"{path} branch={branch} base={a.base} ports={ports}")
+    print(f"{path} branch={branch} base={base} ports={ports}")
 
 
 def remove_emulator_dir(wt):
@@ -124,8 +218,9 @@ def cmd_list(a):
 
 p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 sp = p.add_subparsers(dest="cmd", required=True)
-n = sp.add_parser("new"); n.add_argument("issue"); n.add_argument("unit")
-n.add_argument("--type", choices=BRANCH_TYPES, default="feat"); n.add_argument("--branch"); n.add_argument("--base", default="main")
+n = sp.add_parser("new"); n.add_argument("issue"); n.add_argument("unit", nargs="?")
+n.add_argument("--type", choices=BRANCH_TYPES, help="default feat"); n.add_argument("--branch")
+n.add_argument("--base", help="default: the issue branch when it is registered, else main")
 n.set_defaults(f=cmd_new)
 r = sp.add_parser("rm"); r.add_argument("target"); r.add_argument("--keep-branch", action="store_true")
 r.add_argument("--delete-branch", action="store_true", help="delete the local branch even when it is not merged"); r.set_defaults(f=cmd_rm)

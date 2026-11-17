@@ -2,21 +2,28 @@
 """Run the checks of a checkout and record the result. The record, not an agent's word, is the evidence.
 
   pm-check <worktree|.> [--full | --only engine|studio|integration|harness...] [--no-retry] [--list]
+  pm-check <worktree|.> --checks ID [ID ...]
   pm-check <worktree|.> --stop
 
 Runs the steps of the modules the checkout's changes call for, as pm-scope decides them (the same code,
-_pmscope.py): the paths that differ between the checkout's commit and its merge base with main, plus every
-uncommitted change, each decided by the first rule it matches. Before the first step it prints the decision: one
-line with the kind of run and the modules called for, one line per called-for module with the reason. Kinds:
+_pmscope.py): the paths that differ between the checkout's commit and its merge base with its target (main, or
+the issue branch feat/<id> for a unit of an issue that has one), plus every uncommitted change, each decided by
+the first rule it matches. Before the first step it prints the decision: one line with the kind of run and the
+modules called for, one line per called-for module with the reason. Kinds:
   diff   the branch has commits of its own: what its paths call for (a path no rule knows: every module)
   main   the head is main's commit or an ancestor (the main checkout, a new branch): the product modules
          engine, studio and integration; the harness tests are left out
-  full   --full, or the changes cannot be read (no branch main, no commit shared with main, git failed):
-         every module
+  unit   the fast check of a unit of an issue branch: what its own paths against feat/<id> call for, except
+         integration, which is left to the issue branch: its step is recorded "deferred" (0 s, no log)
+  full   --full, or the changes cannot be read (no branch main, no commit shared with the target, git failed):
+         every module, nothing deferred
   only   --only: the named modules; a partial run, which never passes
---full runs every module whatever changed; it cannot be combined with --only.
+  checks --checks: single integration checks; never a gate (below)
+--full runs every module whatever changed; it cannot be combined with --only. The whole check of an issue is
+pm-check on the issue branch's worktree: its paths against main, integration included.
 A step of a module that exists and was not called for is recorded "not-needed" (0 s, no log); it never counts as
-passed. The steps, for each module that exists in the checkout:
+passed. A "deferred" step counts neither as passed nor as failed; only pm-merge into the issue branch accepts it
+for integration. The steps, for each module that exists in the checkout:
   engine       cargo fmt --all --check; cargo clippy --workspace --all-targets -- -D warnings; cargo test --workspace
   studio       bun run typecheck; lint; format:check; test:unit --fsModuleCache=false; build
                (a check's result is evidence about the commit, and Vitest's cache of transformed modules is
@@ -33,6 +40,22 @@ merge base, the number of changed paths, and per module whether it was called fo
 when every module was called for. pm-merge refuses a unit whose last.json is not a pass on the branch's current
 commit, or whose steps do not cover every module the branch's changes call for (it decides that again itself).
 Exit code 0 only when no step that ran failed, the tree was clean and the run was not --only.
+
+Failed checks named. After the integration step ran, pm-check reads <checkout>/output/integration/report.json
+when that step wrote it for the record's commit, and puts `checks` {passed, failed: [ids], error: [ids], not_run}
+in the step's entry (null when there is no such report: then the output says `integration: no report of this
+run`); the last lines before the verdict name the failed and the error checks, the first ten of each. The step's
+status still comes from its exit code alone, and `failed` stays the list of step names.
+
+Single checks. --checks runs only the integration step, limited to the named manifest ids: the suite starts with
+--not-run and output/checks/checks-not-run.json, which lists every other id of the checkout's manifest. It is
+refused (exit 2, nothing written) for an id that is not in tests/integration/manifest.jsonl, a checkout without
+that file or tests/integration/run, and with --full or --only. It takes a check slot like every run that starts
+the suite, runs the step once (no retry, no flakes.jsonl line), logs to output/logs/checks-integration.log and
+records to output/checks/checks.json and a timestamped *-checks.json (kind checks, passed false, the step's
+`asked` {id: verdict}); last.json and the check-<step>.log files are not touched. Each asked check is printed
+with its verdict, and the last line says it is a partial run pm-merge does not accept. Exit 0 when every asked
+check passed, else 1.
 
 Intermittent failures. A test step that fails (engine-test, studio-unit, integration, harness-test) is run once
 more. When the second run passes, the step is recorded as "flaky": the run still passes, the first run's log is
@@ -55,6 +78,7 @@ import fcntl
 import json
 import os
 import pathlib
+import re
 import signal
 import subprocess
 import sys
@@ -62,7 +86,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _pmlib import LIMITS, ROOT, RUN, cpu_pct, now
-from _pmscope import called, lines, scope
+from _pmscope import called, deferred, lines, scope
 
 STEPS = {
     "engine": ("engine", "Cargo.toml", [
@@ -93,6 +117,9 @@ RETRY = ("engine-test", "studio-unit", "integration", "harness-test")  # steps w
 HEAVY = ("engine", "studio", "integration")  # modules whose steps load the machine
 CPU_WAIT = 300  # seconds a heavy run waits for the CPU to drop under the limit before it starts anyway
 current = None  # the running step's Popen
+CHECK_ID = re.compile(r"[a-z]+\.[a-z0-9-]+")  # the form of a manifest id; nothing else reaches a file
+NAMED = 10  # failed or error checks named in the output, per verdict
+MTIME_SLACK = 1  # seconds: a file's time can lag the clock by a tick; a report older than that is not this run's
 
 
 def take_slot():
@@ -198,14 +225,76 @@ def run_step(cmd, cwd, env, log, record, name):
             current = None
 
 
+def report_checks(co, commit, started):
+    """The checks of <co>/output/integration/report.json as [(id, verdict, message)], when the file was written
+    after `started` for `commit` and has the suite's shape; else None. Nothing is guessed from another file."""
+    rep = co / "output" / "integration" / "report.json"
+    try:
+        if rep.stat().st_mtime < started - MTIME_SLACK:
+            return None
+        data = json.loads(rep.read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or data.get("commit") != commit or not isinstance(data.get("checks"), list):
+        return None
+    out = []
+    for c in data["checks"]:
+        if not isinstance(c, dict) or not isinstance(c.get("check_id"), str) or not isinstance(c.get("verdict"), str):
+            return None
+        out.append((c["check_id"], c["verdict"], c.get("message") if isinstance(c.get("message"), str) else ""))
+    return out
+
+
+def read_report(co, commit, started):
+    """{passed, failed: [ids], error: [ids], not_run} of the integration step's report of this run, or None."""
+    found = report_checks(co, commit, started)
+    if found is None:
+        return None
+    return dict(passed=sum(v == "passed" for _, v, _ in found), failed=[i for i, v, _ in found if v == "failed"],
+                error=[i for i, v, _ in found if v == "error"], not_run=sum(v == "not-run" for _, v, _ in found))
+
+
+def manifest_ids(co):
+    """The check ids of the checkout's manifest, in its order; refuses (exit 2) when it or the suite is missing."""
+    suite = co / "tests" / "integration"
+    for f in (suite / "run", suite / "manifest.jsonl"):
+        if not f.exists():
+            print(f"pm-check --checks: {f} does not exist", file=sys.stderr)
+            sys.exit(2)
+    ids = []
+    try:
+        for ln in (suite / "manifest.jsonl").read_text().splitlines():
+            if ln.strip():
+                ids.append(json.loads(ln)["check_id"])
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        print(f"pm-check --checks: {suite / 'manifest.jsonl'} cannot be read ({type(e).__name__})", file=sys.stderr)
+        sys.exit(2)
+    return ids
+
+
+def refuse_checks(co, asked):
+    """Every manifest id of the checkout; exits 2 before anything is written when an asked id is not one of them."""
+    ids = manifest_ids(co)
+    known = set(ids)
+    for i in asked:
+        if not CHECK_ID.fullmatch(i) or i not in known:
+            print(f"pm-check --checks: {i} is not a check of {co / 'tests' / 'integration' / 'manifest.jsonl'}",
+                  file=sys.stderr)
+            sys.exit(2)
+    return ids
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("checkout"); p.add_argument("--only", action="append", choices=list(STEPS)); p.add_argument("--list", action="store_true")
     p.add_argument("--full", action="store_true", help="run every module whatever changed")
+    p.add_argument("--checks", nargs="+", metavar="ID", help="run only these integration checks; never a gate")
     p.add_argument("--no-retry", action="store_true"); p.add_argument("--stop", action="store_true")
     a = p.parse_args()
     if a.full and a.only:
         p.error("--full and --only cannot be combined")
+    if a.checks and (a.full or a.only):
+        p.error("--checks cannot be combined with --full or --only")
     co = pathlib.Path(a.checkout).resolve()
     if a.stop:
         stop(co)
@@ -214,6 +303,7 @@ def main():
         for mod, (sub, manifest, steps) in STEPS.items():
             print(f"{mod:12} {'present' if (co / sub / manifest).exists() else 'absent ':7} {', '.join(n for n, _ in steps)}")
         return
+    ids = refuse_checks(co, a.checks) if a.checks else None
     logs = co / "output" / "logs"; logs.mkdir(parents=True, exist_ok=True)
     out = co / "output" / "checks"; out.mkdir(parents=True, exist_ok=True)
     env = {k: v for k, v in os.environ.items() if k not in SCRUB}
@@ -227,8 +317,11 @@ def main():
     record = out / "running.json"
     for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(s, on_signal)
-    sc = scope(co, full=a.full, only=a.only)
+    sc = scope(co, full=a.full, only=a.only, checks=a.checks)
     print("\n".join(lines(sc)), flush=True)
+    if a.checks:
+        checks_run(co, out, logs, env, record, commit, dirty, ports, sc, a.checks, ids)
+        return
     calls = called(sc)
     mods = a.only or list(STEPS)
     cpu = None
@@ -238,7 +331,7 @@ def main():
         cpu = wait_for_cpu()
     results, flaky = [], []
     try:
-        results, flaky = run_all(a, co, mods, calls, env, logs, record, commit)
+        results, flaky = run_all(a, co, mods, calls, env, logs, record, commit, deferred(sc), sc["target"])
     finally:
         record.unlink(missing_ok=True)
         if slot:
@@ -246,13 +339,18 @@ def main():
     finish(co, out, commit, dirty, ports, sc, results, flaky, cpu)
 
 
-def run_all(a, co, mods, calls, env, logs, record, commit):
+def run_all(a, co, mods, calls, env, logs, record, commit, held=(), target="main"):
     results, flaky = [], []
     for mod in mods:
         sub, manifest, steps = STEPS[mod]
         if not (co / sub / manifest).exists():
             results.append(dict(name=mod, module=mod, status="absent", seconds=0, log=None))
             print(f"  {mod:18} absent")
+            continue
+        if mod in held:
+            for name, _ in steps:
+                results.append(dict(name=name, module=mod, status="deferred", seconds=0, log=None))
+                print(f"  {name:18} deferred  left to {target}", flush=True)
             continue
         if mod not in calls:
             for name, _ in steps:
@@ -261,18 +359,21 @@ def run_all(a, co, mods, calls, env, logs, record, commit):
             continue
         for name, cmd in steps:
             log = logs / f"check-{name}.log"
-            t = time.time()
+            t = started = time.time()
             code = run_step(cmd, str(co / sub), env, log, record, name)
             first = None
             if code not in (0, 127) and name in RETRY and not a.no_retry:
                 first = logs / f"check-{name}.attempt1.log"
                 log.replace(first)
                 print(f"  {name:18} failed once; running it again (first log: {first})", flush=True)
+                started = time.time()
                 code = run_step(cmd, str(co / sub), env, log, record, name)
             status = "error" if code == 127 else "failed" if code != 0 else "flaky" if first else "passed"
             results.append(dict(name=name, module=mod, status=status, seconds=round(time.time() - t, 1), log=str(log)))
             if first:
                 results[-1]["first_log"] = str(first)
+            if mod == "integration":
+                results[-1]["checks"] = read_report(co, commit, started)  # of its last run
             if status == "flaky":
                 flaky.append(name)
                 with open(RUN / "flakes.jsonl", "a") as f:
@@ -281,10 +382,69 @@ def run_all(a, co, mods, calls, env, logs, record, commit):
     return results, flaky
 
 
+def named_lines(results):
+    """The lines that name the failed and error checks of each integration step that ran, or say it has no report."""
+    out = []
+    for r in results:
+        if "checks" not in r:
+            continue
+        if r["checks"] is None:
+            out.append(f"{r['module']}: no report of this run")
+            continue
+        for verdict in ("failed", "error"):
+            ids = r["checks"][verdict]
+            if ids:
+                more = f" and {len(ids) - NAMED} more" if len(ids) > NAMED else ""
+                out.append(f"{verdict} checks ({len(ids)}): {', '.join(ids[:NAMED])}{more}")
+    return out
+
+
+def checks_run(co, out, logs, env, record, commit, dirty, ports, sc, asked, ids):
+    """--checks: the integration step once, limited to the asked ids; its record is checks.json, never a gate."""
+    suite = co / "tests" / "integration"
+    listed = out / "checks-not-run.json"
+    listed.write_text(json.dumps(dict(checks=[dict(id=i, reason="not asked for (pm-check --checks)")
+                                              for i in ids if i not in asked]), indent=1))
+    log = logs / "checks-integration.log"
+    slot = take_slot()  # the suite builds and starts an emulator, whatever it is asked
+    try:
+        cpu = wait_for_cpu()
+        t = time.time()
+        code = run_step(["./run", "--not-run", str(listed)], str(suite), env, log, record, "integration")
+    finally:
+        record.unlink(missing_ok=True)
+        slot.close()
+    status = "error" if code == 127 else "failed" if code != 0 else "passed"
+    entry = dict(name="integration", module="integration", status=status, seconds=round(time.time() - t, 1),
+                 log=str(log))
+    found = report_checks(co, commit, t)
+    entry["checks"] = read_report(co, commit, t)
+    verdicts = {i: (v, m) for i, v, m in found or []}
+    entry["asked"] = {i: verdicts[i][0] if i in verdicts else None for i in asked}
+    entry["messages"] = {i: verdicts[i][1] for i in asked if i in verdicts and verdicts[i][0] != "passed"}
+    print(f"  {'integration':18} {status:7} {entry['seconds']:>7}s  {log}", flush=True)
+    summary = dict(at=now(), commit=commit, dirty=dirty, full=False, passed=False,
+                   failed=["integration"] if status in ("failed", "error") else [], flaky=[], cpu_at_start=cpu,
+                   ports=ports, scope=sc, steps=[entry])
+    (out / "checks.json").write_text(json.dumps(summary, indent=1))
+    (out / f"{now()[:19].replace(':', '')}-checks.json").write_text(json.dumps(summary, indent=1))
+    if found is None:
+        print("integration: no report of this run")
+    for i in asked if found is not None else ():
+        verdict = entry["asked"][i] or "missing from the report"
+        first = (entry["messages"].get(i) or "").strip().splitlines()
+        print(f"  {verdict:8} {i}{'  ' + first[0] if first else ''}")
+    ok = found is not None and all(entry["asked"][i] == "passed" for i in asked)
+    good = sum(entry["asked"][i] == "passed" for i in asked)
+    print(f"CHECKS {'ok' if ok else 'not ok'} commit={commit[:9]} asked={len(asked)} passed={good}; "
+          f"partial run (--checks): not accepted by pm-merge")
+    sys.exit(0 if ok else 1)
+
+
 def finish(co, out, commit, dirty, ports, sc, results, flaky, cpu):
     failed = [r["name"] for r in results if r["status"] in ("failed", "error")]
     present = [r for r in results if r["status"] != "absent"]
-    ran = [r for r in present if r["status"] != "not-needed"]
+    ran = [r for r in present if r["status"] not in ("not-needed", "deferred")]
     full = sc["kind"] == "full"
     partial = sc["kind"] == "only"
     passed = not failed and not dirty and not partial  # a run that called for nothing passes on a clean tree
@@ -303,6 +463,8 @@ def finish(co, out, commit, dirty, ports, sc, results, flaky, cpu):
         notes.append("nothing was called for")
     if flaky:
         notes.append(f"flaky (failed once, passed on the second run): {', '.join(flaky)}; recorded in .pm/run/flakes.jsonl")
+    for ln in named_lines(results):
+        print(ln)
     print(f"{'PASSED' if passed else 'NOT PASSED'} commit={commit[:9]} scope={sc['kind']} failed={failed or '-'} {'; '.join(notes)}")
     sys.exit(0 if passed else 1)
 
