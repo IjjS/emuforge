@@ -1,6 +1,10 @@
+/// <reference types="node" />
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { useState, useSyncExternalStore } from 'react';
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -822,6 +826,38 @@ describe('preferences', () => {
     });
     expect(engine.lists.at(-1)?.searchParams.get('MaxItems')).toBe('10');
     expect(engine.lists.at(-1)?.searchParams.get('Marker')).toBeNull();
+  });
+  it('"Wrap lines" on (the start): a 64-character name and a 256-character description without a space each sit in the area’s `aws-lambda-value`, a word that breaks anywhere; off: neither does', async () => {
+    const name = 'x'.repeat(64);
+    const description = 'd'.repeat(256);
+    await openLoaded([{ ...NODE, name, description }]);
+
+    // The area's own rule, as the browser applies it (jsdom computes no style sheet).
+    const css = readFileSync(
+      path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'components', 'function-sections.css'),
+      'utf8',
+    );
+    expect(css).toMatch(/\.aws-lambda-value\s*\{[^}]*overflow-wrap:\s*anywhere;/);
+
+    const wrapped = (): Element[] => [...tableElement().querySelectorAll('tbody .aws-lambda-value')];
+    const nameCell = (): Element | null => tableElement().querySelector('tbody th');
+    expect(wrapped().map((element) => norm(element.textContent))).toEqual([name, description]);
+    expect(nameCell()?.contains(wrapped()[0] ?? null)).toBe(true);
+    expect(within(wrapped()[0] as HTMLElement).getByRole('link', { name })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Preferences' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Preferences' });
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: /Wrap lines/ }));
+    fireEvent.click(
+      within(dialog)
+        .getAllByRole('button', { name: 'Confirm' })
+        .find((button) => button.textContent === 'Confirm') as HTMLElement,
+    );
+    await waitFor(() => {
+      expect(wrapped()).toHaveLength(0);
+    });
+    expect(rows()[0]?.name).toBe(name);
+    expect(rows()[0]?.description).toBe(description);
   });
 });
 
