@@ -255,12 +255,6 @@ export async function timesOnPage(page: Page, pattern: string): Promise<number> 
   }, pattern);
 }
 
-/** The top of `locator`'s first element in the document's coordinates, in CSS pixels; `null` when there is none. */
-export async function topOf(locator: Locator): Promise<number | null> {
-  if ((await locator.count()) === 0) return null;
-  return locator.first().evaluate((el) => el.getBoundingClientRect().top + window.scrollY, undefined, ACTION);
-}
-
 // ---------------------------------------------------------------------------------------------------------------
 // The local-emulator notice.
 // ---------------------------------------------------------------------------------------------------------------
@@ -289,6 +283,31 @@ export async function noticeBody(page: Page): Promise<string | null> {
       return el ? (el as HTMLElement).innerText.replace(/\s+/g, ' ').trim() : null;
     },
     [ALERT_CONTENT, NOTICE_REGION],
+  );
+}
+
+/** Cloudscape's `Container`. */
+export const CONTAINER = wrapper.findContainer().toSelector();
+
+/**
+ * The top, in the document's coordinates, of the first container of the page's content: the first Cloudscape
+ * `Container` in the main's document order that is shown and is not in the notice's region; `null` when there is
+ * none (decisions.md, PM 2026-11-18 04:40, item 10).
+ */
+export async function firstContainerTop(page: Page): Promise<number | null> {
+  // The selector is rooted at the document (`createWrapper()`), so it is matched from the page and kept inside the main.
+  return page.evaluate(
+    ([container, region]) => {
+      const main = document.querySelector('main, [role="main"]');
+      if (!main) return null;
+      const el = [...main.querySelectorAll(container)].find((c) => {
+        if (c.closest(`[role="region"][aria-label="${region}"]`) !== null) return false;
+        const box = c.getBoundingClientRect();
+        return box.width > 0 && box.height > 0 && getComputedStyle(c).visibility !== 'hidden';
+      });
+      return el ? el.getBoundingClientRect().top + window.scrollY : null;
+    },
+    [CONTAINER, NOTICE_REGION],
   );
 }
 
