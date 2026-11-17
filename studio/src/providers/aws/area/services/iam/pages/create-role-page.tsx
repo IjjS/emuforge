@@ -367,7 +367,8 @@ export function CreateRolePage({ connection }: ScreenPageProps) {
         onSubmit={handleSubmit}
         onCancel={handleCancel}
       />
-      <DiscardDialog visible={asking} onAnswer={handleDiscardAnswer} />
+      {/* Mounted only while it asks, so nothing of it is in the page before "Cancel" is pressed. */}
+      {asking && <DiscardDialog visible onAnswer={handleDiscardAnswer} />}
     </>
   );
 }
