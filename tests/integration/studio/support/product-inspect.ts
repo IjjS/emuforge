@@ -23,8 +23,6 @@ import { emulatorDir, readEmulatorFiles, type EmulatorFiles } from './emulator';
 import { Proc } from './process';
 import { commandLine, request, type CommandResult, type FormEmulatorFiles, type HttpAnswer } from './product';
 
-export { composeArgs } from './product';
-
 const REGION = 'us-east-1';
 
 /** Runs `args` in `cwd` with exactly `env` and waits for its exit within `boundMs` (as `Form.run`, any directory). */

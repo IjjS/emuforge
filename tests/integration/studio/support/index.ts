@@ -83,7 +83,6 @@ export {
 } from './emulator';
 export { ensurePortFree, freePort, freePortExcept, isLoopback, probe } from './net';
 export {
-  COMMANDS,
   EMULATOR_FILES,
   Form,
   commandLine,
@@ -94,9 +93,8 @@ export {
   signedS3,
   waitHealth,
   type FormOptions,
-  type Situation,
 } from './product';
-export { composeArgs, directS3, runAt, searchImage, signedVia, transparencyDiff } from './product-inspect';
+export { directS3, runAt, searchImage, signedVia, transparencyDiff } from './product-inspect';
 export {
   aim,
   borderProblems,

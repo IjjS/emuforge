@@ -28,7 +28,6 @@ import { execFile } from 'node:child_process';
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
-import os from 'node:os';
 import path from 'node:path';
 
 import { EnvError, expect, type Ctx } from './check';
@@ -855,100 +854,4 @@ export class Form {
     const volumes = await this.volumes();
     if (volumes.length > 0) await dockerOut(['volume', 'rm', '-f', ...volumes]);
   }
-}
-
-// The command lines of the forms before issue 437 (the profile, the Linux file, the wrapper), read only by the
-// product checks of the files, the failures, the Linux file and the wrapper until they are rewritten or removed
-// for the one form; they go with them.
-
-/** A situation of the README's "Start" part before issue 437. */
-export type Situation = 3 | 4;
-
-/** The platform of a run before issue 437. */
-export type Platform = 'desktop' | 'linux';
-
-/** The second Compose file of Docker Engine on Linux before issue 437. */
-export const LINUX_FILE = 'docker-compose.linux.yml';
-
-const LINUX_ARGS = ['-f', LINUX_FILE];
-
-/** The plain start and stop command lines of each platform and situation before issue 437. */
-export const COMMANDS: Record<Platform, Record<Situation, { start: string[]; stop: string[] }>> = {
-  desktop: {
-    3: { start: ['docker', 'compose', 'up', '-d', '--build'], stop: ['docker', 'compose', 'down'] },
-    4: {
-      start: ['docker', 'compose', '--profile', 'emulator', 'up', '-d', '--build'],
-      stop: ['docker', 'compose', '--profile', 'emulator', 'down'],
-    },
-  },
-  linux: {
-    3: {
-      start: ['docker', 'compose', ...LINUX_ARGS, 'up', '-d', '--build'],
-      stop: ['docker', 'compose', ...LINUX_ARGS, 'down'],
-    },
-    4: {
-      start: ['docker', 'compose', ...LINUX_ARGS, '--profile', 'emulator', 'up', '-d', '--build'],
-      stop: ['docker', 'compose', ...LINUX_ARGS, '--profile', 'emulator', 'down'],
-    },
-  },
-};
-
-/** The two lines that went before the plain commands on Docker Engine on Linux before issue 437. */
-export const PREPARATORY_LINES = ['mkdir -p ~/.aws/emulator', 'export EMUFORGE_UID="$(id -u)" EMUFORGE_GID="$(id -g)"'];
-
-/** The wrapper's lines before issue 437. */
-export const WRAPPER = {
-  up: ['./compose', 'up'],
-  down: ['./compose', 'down'],
-  ps: ['./compose', 'ps', '-a'],
-  logs: ['./compose', 'logs'],
-};
-
-/** Every command line of the plain commands of both platforms and the wrapper's lines before issue 437. */
-export function onePlaceLines(): string[] {
-  const out: string[] = [];
-  for (const byPlatform of Object.values(COMMANDS)) {
-    for (const { start, stop } of Object.values(byPlatform)) out.push(commandLine(start), commandLine(stop));
-  }
-  out.push(...Object.values(WRAPPER).map(commandLine));
-  return out;
-}
-
-/** `docker compose` with the options of a situation's start command before issue 437, then `rest`. */
-export function composeArgs(on: Platform, situation: Situation, ...rest: string[]): string[] {
-  const start = COMMANDS[on][situation].start;
-  return [...start.slice(0, start.indexOf('up')), ...rest];
-}
-
-let decided: Promise<Platform> | undefined;
-
-/** The platform of the run by the rule of the wrapper before issue 437. */
-export function platform(): Promise<Platform> {
-  decided ??= (async (): Promise<Platform> => {
-    if (os.platform() !== 'linux') return 'desktop';
-    const name = await dockerRead(['info', '--format', '{{.OperatingSystem}}']);
-    return name === 'Docker Desktop' ? 'desktop' : 'linux';
-  })();
-  return decided;
-}
-
-/** The user's ids: what `id -u` and `id -g` print. */
-export interface UserIds {
-  uid: string;
-  gid: string;
-}
-
-let users: Promise<UserIds> | undefined;
-
-/** The ids of the user running the check, from `id -u` and `id -g`. */
-export function userIds(): Promise<UserIds> {
-  const id = (flag: string) =>
-    new Promise<string>((resolve, reject) => {
-      execFile('id', [flag], { encoding: 'utf8' }, (error, stdout) => {
-        if (error) reject(new EnvError(`id ${flag}: ${error.message}`));
-        else resolve(stdout.trim());
-      });
-    });
-  users ??= (async () => ({ uid: await id('-u'), gid: await id('-g') }))();
-  return users;
 }
