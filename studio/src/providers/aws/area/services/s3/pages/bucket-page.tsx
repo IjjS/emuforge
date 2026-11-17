@@ -79,8 +79,9 @@ export function BucketPage({ connection, params }: ScreenPageProps) {
   if (down && !wasDown) {
     setWasDown(true);
   }
-  // "Bucket refreshed", once the refreshed read has answered (R5.6).
-  if (refreshing && state.kind !== 'loading') {
+  // "Bucket refreshed", once the page's read and, on a page shown, every section's read have answered again (R5.6).
+  const sectionsReading = state.kind === 'loaded' && Object.values(sections).some((read) => read.loading);
+  if (refreshing && state.kind !== 'loading' && !sectionsReading) {
     setRefreshing(false);
     if (state.kind !== 'failure') {
       announce(REFRESHED);

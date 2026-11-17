@@ -1158,4 +1158,28 @@ describe('a bucket’s page, "Refresh" and its sections', () => {
       expect(engine.reads(part), part).toHaveLength(2);
     }
   });
+
+  it('"Bucket refreshed" is announced only once every section’s read has answered again', async () => {
+    await openBucket();
+    const said = recordAnnouncements();
+    const answer = held();
+    const reads = engine.reads('versioning').length;
+    engine.parts.versioning = () => answer.answer;
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+
+    await waitFor(() => {
+      expect(engine.reads('versioning')).toHaveLength(reads + 1);
+      expect(sectionText('Bucket Versioning')).toContain('Loading');
+    });
+    await waitFor(() => {
+      expect(field('Bucket ABAC', 'Bucket ABAC')).not.toBeNull();
+    });
+    expect(said).not.toContain('Bucket refreshed');
+    answer.release(ok('<VersioningConfiguration><Status>Suspended</Status></VersioningConfiguration>'));
+
+    await waitFor(() => {
+      expect(said).toContain('Bucket refreshed');
+    });
+    expect(field('Bucket Versioning', 'Bucket Versioning')).toBe('Suspended');
+  });
 });
