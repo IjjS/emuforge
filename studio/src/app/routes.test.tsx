@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { FakeEngine } from '../test/home-test-kit';
 import { NO_SCREEN_SERVICE } from '../test/no-screen';
+import { serviceLinks } from '../test/service-files';
 import { Providers } from './providers';
 import { routes } from './routes';
 
@@ -13,28 +14,9 @@ const NO_SCREEN = NO_SCREEN_SERVICE.label;
 /** A path two segments below the route of the service without a screen. */
 const BELOW = `${NO_SCREEN_SERVICE.below}/my-stream`;
 
-// providers/aws/services.ts, in label order, each under /aws.
-const SERVICES: [string, string][] = [
-  ['Amazon API Gateway', '/aws/apigateway'],
-  ['Amazon CloudWatch', '/aws/cloudwatch'],
-  ['Amazon CloudWatch Logs', '/aws/logs'],
-  ['Amazon DynamoDB', '/aws/dynamodb'],
-  ['Amazon Elastic Compute Cloud', '/aws/ec2'],
-  ['Amazon Elastic Container Registry', '/aws/ecr'],
-  ['Amazon EventBridge', '/aws/events'],
-  ['Amazon Kinesis', '/aws/kinesis'],
-  ['Amazon Route 53', '/aws/route53'],
-  ['Amazon Simple Notification Service', '/aws/sns'],
-  ['Amazon Simple Queue Service', '/aws/sqs'],
-  ['Amazon Simple Storage Service', '/aws/s3'],
-  ['Amazon Simple Systems Manager (SSM)', '/aws/ssm'],
-  ['AWS CloudFormation', '/aws/cloudformation'],
-  ['AWS Identity and Access Management', '/aws/iam'],
-  ['AWS Key Management Service', '/aws/kms'],
-  ['AWS Lambda', '/aws/lambda'],
-  ['AWS Secrets Manager', '/aws/secretsmanager'],
-  ['AWS Step Functions', '/aws/states'],
-];
+// The services as their folders give them (providers/aws/area/services/*/service.json), in the order of issue 386's
+// requirement R13.2, each under /aws.
+const SERVICES = serviceLinks();
 
 /** Every service but Amazon Simple Storage Service, whose route has a screen of its own (issue 56). */
 const WITHOUT_SCREEN = SERVICES.filter(([label]) => label !== 'Amazon Simple Storage Service');
@@ -108,7 +90,7 @@ describe('routes', () => {
     expect(within(main()).getByRole('heading', { level: 1, name: 'Home' })).toBeInTheDocument();
   });
 
-  it('opens /aws as the AWS area index: "Services" (19), its line, and the 19 services in label order', async () => {
+  it('opens /aws as the AWS area index: "Services" (the number of services), its line, and the services in label order', async () => {
     open('/aws');
 
     expect(inCloudscape(await heading(AWS))).toBe(true);
@@ -116,7 +98,7 @@ describe('routes', () => {
     expect(container).not.toBeNull();
     const header = container?.findHeader()?.getElement();
     expect(header).toHaveTextContent('Services');
-    expect(header).toHaveTextContent('(19)');
+    expect(header).toHaveTextContent(`(${String(SERVICES.length)})`);
     expect(header).toHaveTextContent('No service has a Studio screen yet.');
     const links = within(container?.findContent().getElement() as HTMLElement)
       .getAllByRole('link')
@@ -155,6 +137,47 @@ describe('routes', () => {
 
     await expectNoScreenYet(label);
   });
+
+  it.each(['/aws/s3', '/aws/s3/buckets'])(
+    'opens %s as the S3 bucket list: the h1 "Buckets", the address unchanged, the title "Buckets | EmuForge Studio"',
+    async (path) => {
+      const router = createMemoryRouter(routes, { initialEntries: [path] });
+      render(
+        <Providers>
+          <RouterProvider router={router} />
+        </Providers>,
+      );
+
+      expect(inCloudscape(await heading('Buckets'))).toBe(true);
+      expect(router.state.location.pathname).toBe(path);
+      await waitFor(() => {
+        expect(document.title).toBe('Buckets | EmuForge Studio');
+      });
+    },
+  );
+
+  it.each(['/aws/s3/buckets/my-bucket', '/aws/s3/bucket/create', '/aws/s3/directory-buckets'])(
+    'opens %s as the "no screen yet" page of Amazon Simple Storage Service, with no ListBuckets request',
+    async (path) => {
+      const engine = new FakeEngine();
+      vi.stubGlobal('fetch', engine.fetch);
+      open(path);
+
+      await expectNoScreenYet('Amazon Simple Storage Service');
+      await waitFor(
+        () => {
+          expect(engine.healths.length).toBeGreaterThan(0);
+        },
+        { timeout: 2_000 },
+      );
+      const lists = engine.requests.filter((request) => {
+        const url = new URL(request.url, window.location.href);
+        return url.origin.startsWith('http://127.0.0.1:') && url.searchParams.get('x-id') === 'ListBuckets';
+      });
+      expect(lists).toEqual([]);
+      expect(engine.to('/')).toEqual([]);
+    },
+  );
 
   it('opens /aws/does-not-exist/today as the AWS area’s "Page not found", with the path as text', async () => {
     open('/aws/does-not-exist/today');

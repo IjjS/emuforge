@@ -55,7 +55,7 @@ services:
       # The one host path of the form: the emulators' directory, read-only. The parent, not the port's own
       # directory, so the engine sees the emulator's files after every start, stop and restart.
       - type: bind
-        source: ${HOME:-${USERPROFILE}}/.aws/emulator
+        source: ${HOME:-${USERPROFILE:-}}/.aws/emulator
         target: /home/emuforge/.aws/emulator
         read_only: true
         bind:

@@ -138,6 +138,16 @@ export {
   type PressKind,
   type VeilLook,
 } from './language-menu';
+export {
+  bucketNamesDirect,
+  checkPrefix,
+  ListBucketsHold,
+  ListBucketsRecord,
+  listBucketsDirect,
+  objectKeysDirect,
+  Seeded,
+  type DirectBucket,
+} from './s3';
 export { register as registerSecret, redact } from './secrets';
 export { startStack, type Stack, type StackOptions } from './stack';
 export { StudioServer, type StudioOptions } from './studio';

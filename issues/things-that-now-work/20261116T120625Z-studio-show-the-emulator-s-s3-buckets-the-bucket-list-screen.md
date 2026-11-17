@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: studio|s3|bucket-list
-Issue-Check-Ids:
+Issue-Check-Ids: studio.s3-bucket-list-actions-lead-to-their-routes studio.s3-bucket-list-copy-arn-copies-the-emulators-arn studio.s3-bucket-list-empty-emulator-says-no-buckets studio.s3-bucket-list-filter-matches-the-start-of-a-name studio.s3-bucket-list-follows-emulator-stop-and-restart studio.s3-bucket-list-help-and-notice studio.s3-bucket-list-keyboard-and-layout studio.s3-bucket-list-pages-follow-the-emulator studio.s3-bucket-list-rereads-on-open-and-refresh studio.s3-bucket-list-says-when-the-engine-stops-answering studio.s3-bucket-list-shows-loading-until-the-answer studio.s3-bucket-list-shows-what-the-emulator-holds studio.app-talks-only-to-engine-and-own-origin
 Issue-Commit: 12978b702e88db1ab72091b0c578094467eb8c53
 
 # Show the emulator's S3 buckets: the bucket list screen

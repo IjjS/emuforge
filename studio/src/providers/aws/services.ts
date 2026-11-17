@@ -1,6 +1,8 @@
-// The AWS services Studio will cover: the AWS area's navigation and Home's list, not data read from the emulator. Each
-// label is the service's `serviceFullName` from the AWS CLI service model, verbatim; the list is sorted by label.
-// The issue that builds a service's first screen turns its entry into that screen.
+// The AWS services Studio will cover: the AWS area's navigation and Home's list, not data read from the emulator. A
+// service's entry lives in its own folder of the area, `area/services/<route>/service.json` (its label, the service's
+// `serviceFullName` from the AWS CLI service model, verbatim, and its crumb); its route is the folder's name. This file
+// collects every such file at build time, as data only (issue 386, R13), and sorts them by label, so a service is
+// added, and its first screen built, inside its own folder with no change here.
 
 export interface Service {
   label: string;
@@ -13,24 +15,18 @@ export interface Service {
   route: string;
 }
 
-export const SERVICES: readonly Service[] = [
-  { label: 'Amazon API Gateway', crumb: 'API Gateway', route: '/apigateway' },
-  { label: 'Amazon CloudWatch', crumb: 'CloudWatch', route: '/cloudwatch' },
-  { label: 'Amazon CloudWatch Logs', crumb: 'CloudWatch Logs', route: '/logs' },
-  { label: 'Amazon DynamoDB', crumb: 'DynamoDB', route: '/dynamodb' },
-  { label: 'Amazon Elastic Compute Cloud', crumb: 'EC2', route: '/ec2' },
-  { label: 'Amazon Elastic Container Registry', crumb: 'ECR', route: '/ecr' },
-  { label: 'Amazon EventBridge', crumb: 'EventBridge', route: '/events' },
-  { label: 'Amazon Kinesis', crumb: 'Kinesis', route: '/kinesis' },
-  { label: 'Amazon Route 53', crumb: 'Route 53', route: '/route53' },
-  { label: 'Amazon Simple Notification Service', crumb: 'SNS', route: '/sns' },
-  { label: 'Amazon Simple Queue Service', crumb: 'SQS', route: '/sqs' },
-  { label: 'Amazon Simple Storage Service', crumb: 'S3', route: '/s3' },
-  { label: 'Amazon Simple Systems Manager (SSM)', crumb: 'Systems Manager', route: '/ssm' },
-  { label: 'AWS CloudFormation', crumb: 'CloudFormation', route: '/cloudformation' },
-  { label: 'AWS Identity and Access Management', crumb: 'IAM', route: '/iam' },
-  { label: 'AWS Key Management Service', crumb: 'KMS', route: '/kms' },
-  { label: 'AWS Lambda', crumb: 'Lambda', route: '/lambda' },
-  { label: 'AWS Secrets Manager', crumb: 'Secrets Manager', route: '/secretsmanager' },
-  { label: 'AWS Step Functions', crumb: 'Step Functions', route: '/states' },
-];
+/** A service's `service.json`, by the path the file pattern gives it (`./area/services/<folder>/service.json`). */
+export type ServiceFiles = Readonly<Record<string, Pick<Service, 'label' | 'crumb'>>>;
+
+const compareLabels = new Intl.Collator('en', { sensitivity: 'base' }).compare;
+
+/** The services `files` give, each with its file's label and crumb and its folder's route, sorted by label. */
+export function collectServices(files: ServiceFiles): Service[] {
+  return Object.entries(files)
+    .map(([file, { label, crumb }]) => ({ label, crumb, route: `/${file.split('/').at(-2) ?? ''}` }))
+    .sort((a, b) => compareLabels(a.label, b.label));
+}
+
+export const SERVICES: readonly Service[] = collectServices(
+  import.meta.glob<ServiceFiles[string]>('./area/services/*/service.json', { eager: true, import: 'default' }),
+);
