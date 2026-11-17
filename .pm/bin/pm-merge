@@ -23,12 +23,20 @@ record's steps show, for every module those paths call for, that the module is a
 passed or was flaky. A step recorded not-needed, failed or missing does not cover its module. What the record's
 `scope` says is not trusted for this; only its steps are. Paths that cannot be read (say, a branch that shares no
 commit with main) call for every module.
+Harness test files. The same paths are asked which on-touch harness test files they call for (_pmscope.harness_tests,
+with the map of this main checkout). It refuses when a harness-test step of the record that ran (passed or flaky)
+has `left_out` holding a file those paths call for, or holding any file when they give every file (a change of
+_pmscope.py or .pm/bin/tests/run, a path no rule knows, changes that cannot be read): the refusal names the files and
+says run pm-check again. A `left_out` that is not a list of file names is refused the same way, as one that cannot be
+read. A step without the key was written before the option and ran every file: accepted. This is asked in each of
+the three judgements below (a unit into main, a unit into its issue branch, the issue branch into main), each of the
+branch's own paths against its target; the record's `scope` is not trusted for it.
 The main it merges into. Either main's commit is an ancestor of the branch's head, or what main gained since the
 branch left it calls for no module that the branch's own paths call for (main gaining only issue files is always
 this case); then the output says the branch is behind main and by how many paths. Otherwise it refuses, names the
 modules both sides call for and one gained path for each: merge main into the branch, run pm-check, then rerun.
 A record without `scope` and without `module` on its steps was written by the pm-check before issue 52, which
-passed only after running every module: it is judged as before, and neither question is asked of it.
+passed only after running every module: it is judged as before, and none of these questions is asked of it.
 Merges with --no-ff so every unit is one merge commit on main. On a conflict the merge is aborted and main is left
 as it was: send the unit back to its worker to merge main into its branch, check again, then rerun.
 After the merge commit it runs `pm-emulator-dir rm --worktree` for the unit's worktree and for each registered
@@ -71,7 +79,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _pmlib import BIN, PM, ROOT, WORKTREES, load, log
-from _pmscope import MODULES, Unreadable, between, decide, merge_base, run_git, target_of
+from _pmscope import MODULES, Unreadable, between, decide, harness_tests, merge_base, run_git, target_of
 from _pmscope import git as read_git
 
 EMULATOR_DIR = "pm-emulator-dir: "
@@ -112,6 +120,26 @@ def plural(n):
     return f"{n} path" if n == 1 else f"{n} paths"
 
 
+def left_out_problems(last, ht):
+    """The harness test files the record's harness-test steps that ran (passed or flaky) left out and that the
+    branch's paths call for (`ht`, harness_tests of those paths): every one of them when the paths give every file.
+    A step without `left_out` was written before the option existed and ran every file."""
+    left = set()
+    for s in last.get("steps") or []:
+        if s.get("name") != "harness-test" or s.get("status") not in ("passed", "flaky") or "left_out" not in s:
+            continue
+        lo = s["left_out"]
+        if not isinstance(lo, list) or not all(isinstance(t, str) for t in lo):
+            return ["the pm-check record's left_out cannot be read; run pm-check again"]
+        left.update(lo)
+    bad = sorted(left) if ht["all"] else sorted(t for t in left if t in ht["called"])
+    if not bad:
+        return []
+    why = ht["why"] if ht["all"] else ht["called"][bad[0]][0]
+    return [f"the pm-check record left out {', '.join(bad)}, which this branch's changes call for ({why}); "
+            f"run pm-check again"]
+
+
 def judge(branch, head, last, target="main", defer=False, remedy=None):
     """Coverage (R7) and the target the branch merges into (R8), decided from git with this checkout's rules.
     `target` is main or an issue branch; `defer` (a unit into its issue branch only) lets a deferred integration
@@ -122,9 +150,11 @@ def judge(branch, head, last, target="main", defer=False, remedy=None):
     try:
         tip = read_git(ROOT, "rev-parse", "--verify", "--quiet", f"refs/heads/{target}^{{commit}}").strip()
         base = merge_base(ROOT, head, tip, target)
-        own = decide(between(ROOT, base, head))
+        paths = between(ROOT, base, head)
+        own, ht = decide(paths), harness_tests(paths)
     except Unreadable as e:
         own = {m: [f"the branch's changes cannot be read: {e}"] for m in MODULES}
+        ht = dict(all=True, why=f"the branch's changes cannot be read: {e}", called={}, left_out=[])
     problems = []
     statuses = {}
     for s in last.get("steps") or []:
@@ -138,6 +168,7 @@ def judge(branch, head, last, target="main", defer=False, remedy=None):
     if missing:
         problems.append(f"the pm-check record does not cover {', '.join(missing)}, which this branch's changes call "
                         f"for ({own[missing[0]][0]}); run pm-check again")
+    problems += left_out_problems(last, ht)
     if base is not None and base == tip:
         return problems, None
     gained = None
