@@ -8,8 +8,11 @@
 //
 // The Tab walk: Cloudscape's layout adds stops of its own that R9 does not name — "Close navigation" before the side
 // navigation's header, and the toggle of the navigation's section after it — and its pagination and tabs decide
-// themselves which of their buttons are stops; each of those is allowed where Cloudscape places it and nowhere else.
-// Every other stop must be the next one R9 names.
+// themselves which of their buttons are stops, and its `Tabs` make the tab panel a stop after the tabs; each of those
+// is allowed where Cloudscape places it and nowhere else. The help toggle R9 names after the crumbs is allowed there
+// or where Cloudscape's layout places it, after the content, and must be a stop exactly once (PM decision on
+// decisions-needed 17). Every other stop must be the next one R9 names. The walk ends at the help toggle after the
+// content, or where the focus leaves the area; a stop after the last expected one is reported too.
 
 import type { Page, Request } from '@playwright/test';
 
@@ -90,8 +93,10 @@ const named =
   (stop: Stop): boolean =>
     stop.name === name && (role === undefined || stop.role === role);
 
-/** The stops of R9 in order, for a list whose first bucket is `first`. */
-function r9Order(first: string): Expected[] {
+/** The stops of R9 in order, for a list whose buckets are `names`, then the other rows and the content's end. */
+function r9Order(names: string[]): Expected[] {
+  const first = names[0];
+  const rest = names.slice(1);
   return [
     { what: '"Close navigation" (Cloudscape\'s layout)', match: named('Close navigation', 'button'), optional: true },
     { what: `the side navigation's header "${NAV_HEADER}"`, match: named(NAV_HEADER, 'link') },
@@ -106,11 +111,12 @@ function r9Order(first: string): Expected[] {
     { what: 'the crumb "AWS"', match: named('AWS', 'link') },
     { what: 'the crumb "S3"', match: named('S3', 'link') },
     { what: 'the current crumb "Buckets"', match: named(H1) },
-    { what: `the help toggle "${HELP_OPEN}"`, match: named(HELP_OPEN, 'button') },
+    { what: `the help toggle "${HELP_OPEN}" (after the crumbs)`, match: named(HELP_OPEN, 'button'), optional: true },
     { what: `the (i) control "${ABOUT}"`, match: named(ABOUT, 'button') },
     { what: `the notice's close "${NOTICE_CLOSE}"`, match: named(NOTICE_CLOSE, 'button') },
     { what: `the tab "${TAB_GENERAL}"`, match: named(TAB_GENERAL, 'tab') },
     { what: `the tab "${TAB_DIRECTORY}"`, match: named(TAB_DIRECTORY, 'tab'), optional: true },
+    { what: `the tab panel "${TAB_GENERAL}" (Cloudscape's)`, match: named(TAB_GENERAL, 'tabpanel'), optional: true },
     { what: `"${INFO}"`, match: named(INFO) },
     { what: `"${REFRESH}"`, match: named(REFRESH, 'button') },
     { what: `"${COPY_ARN}" (disabled)`, match: named(COPY_ARN, 'button'), optional: true },
@@ -122,6 +128,17 @@ function r9Order(first: string): Expected[] {
     { what: `"${PREFERENCES}"`, match: named(PREFERENCES, 'button') },
     { what: `the first radio "Select ${first}"`, match: named(`Select ${first}`, 'radio') },
     { what: `the first name link "${first}"`, match: named(first, 'link') },
+    {
+      what: "the other rows' radios and name links",
+      match: (stop) => rest.some((name) => named(`Select ${name}`, 'radio')(stop) || named(name, 'link')(stop)),
+      optional: true,
+      many: true,
+    },
+    {
+      what: `the help toggle "${HELP_OPEN}" (after the content, where Cloudscape's layout places it)`,
+      match: named(HELP_OPEN, 'button'),
+      optional: true,
+    },
   ];
 }
 
@@ -138,7 +155,7 @@ function orderProblems(stops: Stop[], expected: Expected[]): string[] {
     if (want.optional) continue;
     return [`expected ${want.what}, the Tab reached ${stop === undefined ? 'nothing more' : shown(stop)}`];
   }
-  return [];
+  return stops.slice(at).map((stop) => `${shown(stop)} after the last expected stop`);
 }
 
 /** The 63-character name's link against its cell, as drawn now; `null` when the link is not on the page. */
@@ -203,10 +220,15 @@ test('studio.s3-bucket-list-keyboard-and-layout', async ({ ctx, page, context })
           continue;
         }
         stops.push(stop);
-        if (stop.role === 'link' && stop.name === two[0]) break;
+        // The help toggle after the content is the area's last stop R9 names; the walk ends there.
+        if (named(HELP_OPEN, 'button')(stop) && stops.some(named(two[0], 'link'))) break;
       }
       ctx.log(`Tab stops in the area: ${stops.map(shown).join(', ')}`);
-      expect(orderProblems(stops, r9Order(two[0])), 'the order of the Tab stops').toEqual([]);
+      expect(orderProblems(stops, r9Order(two)), 'the order of the Tab stops').toEqual([]);
+      expect(
+        stops.filter(named(HELP_OPEN, 'button')).length,
+        `stops on the help toggle "${HELP_OPEN}", after the crumbs or after the content`,
+      ).toBe(1);
       expect(stops.filter((stop) => stop.ring === null).map(shown), 'stops without a visible focus indicator').toEqual(
         [],
       );

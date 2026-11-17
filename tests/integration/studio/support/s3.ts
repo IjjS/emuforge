@@ -411,6 +411,11 @@ const wrapper = createWrapper();
 export const TABLE = wrapper.findTable().toSelector();
 /** The table's empty slot, where the empty, no-match and failure states are shown (R7). */
 export const TABLE_EMPTY = wrapper.findTable().findEmptySlot().toSelector();
+/**
+ * The visible match count of the table's text filter (R4.7). Cloudscape's `TextFilter` also renders the same text in a
+ * hidden live region, so the count is matched here only (PM decision on decisions-needed 15).
+ */
+export const RESULTS_COUNT = wrapper.findTable().findTextFilter().findResultsCount().toSelector();
 /** The table's pagination. */
 export const PAGINATION = wrapper.findTable().findPagination().toSelector();
 /** The area layout's tools region, which holds the help panel (R5.6). */
@@ -425,6 +430,7 @@ export function screen(page: Page) {
     /** The table's own heading (level 2), its counter included in its name. */
     title: page.getByRole('heading', { level: 2, name: new RegExp(`^${TABLE_TITLE}(\\s|$)`) }),
     filter: page.getByRole('searchbox', { name: FILTER, exact: true }),
+    resultsCount: page.locator(RESULTS_COUNT),
     action: (name: string) => table.getByRole('button', { name, exact: true }).first(),
     nextPage: page.getByRole('button', { name: NEXT_PAGE, exact: true }),
     previousPage: page.getByRole('button', { name: PREVIOUS_PAGE, exact: true }),

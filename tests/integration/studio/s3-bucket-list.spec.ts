@@ -202,6 +202,13 @@ test('studio.s3-bucket-list-rereads-on-open-and-refresh', async ({ ctx, page, co
       openings++;
       await record.answeredAfter(before, 'the opening sent a ListBuckets the engine answered');
       await filterFor(page, p);
+      // The filter's own ListBuckets is answered before the bucket is made, so the rows on screen are that answer's
+      // and the line does not depend on timing (PM decision on decisions-needed 16).
+      await expect
+        .poll(() => record.requests.some((r) => r.query.prefix === p && r.status !== null), {
+          message: 'a ListBuckets with the prefix <p> was answered',
+        })
+        .toBe(true);
       await expectNames(page, [`${p}-first`], 'the rows under the filter <p>');
       await seeded.bucket(fresh);
       // A condition, not a time: two of the emulator line's health checks (every 5 s, R4.4 of issue 45) pass.
@@ -275,7 +282,9 @@ test('studio.s3-bucket-list-filter-matches-the-start-of-a-name', async ({ ctx, p
     async () => {
       await filterFor(page, `${p}-al`);
       await expectNames(page, [`${p}-alpha`, `${p}-alto`], 'the rows under the filter <p>-al');
-      await expect(page.getByText('2 matches', { exact: true })).toBeVisible();
+      // The visible count only: the filter also holds the same text in a hidden live region (decisions-needed 15).
+      await expect(screen(page).resultsCount).toHaveText('2 matches');
+      await expect(screen(page).resultsCount).toBeVisible();
     },
   );
 
