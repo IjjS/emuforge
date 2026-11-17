@@ -138,6 +138,31 @@ describe('the emptying', () => {
     expect(result).toEqual({ outcome: 'finished', deleted: 3, failures: [error] });
   });
 
+  it('matches an error without a version id to the sent item of its key, which is then not counted and not sent again', async () => {
+    const [a, held] = versions(2) as [ObjectVersionId, ObjectVersionId];
+    const script = new Script(
+      [() => page([a, held]), () => page([held])],
+      [() => ({ errors: [{ key: held.key, code: 'AccessDenied', message: 'held' }] })],
+    );
+
+    const result = await run(script);
+
+    expect(script.deleteCalls).toEqual([[a, held]]);
+    expect(result).toEqual({
+      outcome: 'finished',
+      deleted: 1,
+      failures: [{ ...held, code: 'AccessDenied', message: 'held' }],
+    });
+  });
+
+  it('records an error of a key the request did not send as it came, and counts every sent item as deleted', async () => {
+    const [a] = versions(1) as [ObjectVersionId];
+    const stray = { key: 'not-sent', versionId: 'v-x', code: 'InternalError', message: 'odd' };
+    const script = new Script([() => page([a]), empty], [() => ({ errors: [stray] })]);
+
+    expect(await run(script)).toEqual({ outcome: 'finished', deleted: 1, failures: [stray] });
+  });
+
   it('finishes when every version left has failed and the listing is not truncated, never sending an empty delete', async () => {
     const [held] = versions(1) as [ObjectVersionId];
     const error = { ...held, code: 'AccessDenied', message: 'held' };

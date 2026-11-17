@@ -89,14 +89,24 @@ export async function emptyBucket(
         if (answer === NO_SUCH_BUCKET) {
           return { outcome: 'no-such-bucket', ...counts() };
         }
-        const sent = new Set(left.map(idOf));
+        // Each error is the sent item of its key and version id; an error that names no version the request sent
+        // (none, or another spelling) is the first sent item of its key not matched yet, so that item is never
+        // counted as deleted and never sent again; an error of a key the request did not send is recorded as it came.
+        const unmatched = new Map(left.map((item) => [idOf(item), item]));
         let notDeleted = 0;
         for (const error of answer.errors) {
-          const id = idOf(error);
-          if (sent.has(id) && !failed.has(id)) {
-            failed.add(id);
-            failures.push(error);
+          const item =
+            unmatched.get(idOf(error)) ?? [...unmatched.values()].find((candidate) => candidate.key === error.key);
+          if (item !== undefined) {
+            unmatched.delete(idOf(item));
             notDeleted += 1;
+          }
+          const recorded: DeleteFailure =
+            item === undefined ? error : { ...item, code: error.code, message: error.message };
+          const id = idOf(recorded);
+          if (!failed.has(id)) {
+            failed.add(id);
+            failures.push(recorded);
           }
         }
         deleted += left.length - notDeleted;
