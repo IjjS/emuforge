@@ -9,11 +9,12 @@
 //
 // The Tab walk on the list: Cloudscape's layout adds stops of its own that R11 does not name — "Close navigation"
 // before the side navigation's header, the toggle of the navigation's section after it, the help toggle after the
-// crumbs or after the content — and its pagination decides itself which of its buttons are stops; each of those is
-// allowed where Cloudscape places it and nowhere else. Every other stop must be the next one R11 names. On a role's
-// page and on the wizard only the order of the controls R11 names is compared, other stops Cloudscape adds (the
-// wizard's step navigation, a tab panel) being allowed between them; Cloudscape's tabs are one Tab stop whose tabs
-// the arrow keys reach, so the walk goes through them with the right arrow.
+// crumbs or after the content, the filter's own "Clear" while it holds text — and its pagination decides itself which
+// of its buttons are stops; each of those is allowed where Cloudscape places it and nowhere else. Every other stop
+// must be the next one R11 names. On a role's page and on the wizard only the order of the controls R11 names is
+// compared, by role and name, other stops Cloudscape adds (the wizard's step navigation, a tab panel, the current
+// crumb) being allowed between them; Cloudscape's tabs are one Tab stop whose tabs the arrow keys reach, so the walk
+// goes through them with the right arrow.
 
 import createWrapper from '@cloudscape-design/components/test-utils/selectors';
 import type { Locator, Page, Request } from '@playwright/test';
@@ -49,6 +50,8 @@ const REFRESH = 'Refresh roles';
 const DELETE = 'Delete';
 const CREATE = 'Create role';
 const FILTER = 'Search items';
+/** The clear button Cloudscape's text filter shows while it holds text (its default label). */
+const FILTER_CLEAR = 'Clear';
 const PREFERENCES = 'Preferences';
 const ALL_ITEMS = 'All items';
 const COL_NAME = 'Role name';
@@ -218,6 +221,11 @@ function listOrder(names: string[]): Expected[] {
     { what: `"${DELETE}" (disabled)`, match: named(DELETE, 'button'), optional: true },
     { what: `"${CREATE}"`, match: named(CREATE, 'button') },
     { what: `the filter "${FILTER}"`, match: named(FILTER) },
+    {
+      what: `the filter's "${FILTER_CLEAR}" (Cloudscape's, while the filter holds text)`,
+      match: named(FILTER_CLEAR, 'button'),
+      optional: true,
+    },
     { what: 'the pagination', match: (stop) => stop.inPagination, many: true },
     { what: `"${PREFERENCES}"`, match: named(PREFERENCES, 'button') },
     { what: `the heading's check box "${ALL_ITEMS}"`, match: named(ALL_ITEMS, 'checkbox') },
@@ -254,12 +262,14 @@ function orderProblems(stops: Stop[], expected: Expected[]): string[] {
 }
 
 /**
- * From the document's start, with Tab (and, on a tab, the right arrow through the other tabs), the names of the
- * focused controls inside the area, until one matches `last` or the focus leaves the area.
+ * From the document's start, with Tab (and, on a tab, the right arrow through the other tabs), the focused controls
+ * inside the area, until one matches `last` or the focus leaves the area. A control is matched by its role as well as
+ * its name: a crumb and a button may share a name ("Create role"), and Cloudscape's tab panel, a Tab stop of its own,
+ * is named after its tab ("Permissions").
  */
-async function keyboardWalk(page: Page, last: (name: string) => boolean): Promise<string[]> {
+async function keyboardWalk(page: Page, last: (stop: Stop) => boolean): Promise<Stop[]> {
   await focusDocumentStart(page);
-  const reached: string[] = [];
+  const reached: Stop[] = [];
   for (let i = 0; i < 100; i++) {
     await page.keyboard.press('Tab');
     const stop = await focusedStop(page);
@@ -268,24 +278,24 @@ async function keyboardWalk(page: Page, last: (name: string) => boolean): Promis
       if (reached.length > 0) break;
       continue;
     }
-    reached.push(stop.name);
-    if (last(stop.name)) break;
+    reached.push(stop);
+    if (last(stop)) break;
     if (stop.role === 'tab') {
       for (let k = 0; k < TABS.length - 1; k++) {
         await page.keyboard.press('ArrowRight');
         const tab = await focusedStop(page);
-        if (tab === null || tab.role !== 'tab' || reached.includes(tab.name)) break;
-        reached.push(tab.name);
+        if (tab === null || tab.role !== 'tab' || reached.some((r) => r.role === 'tab' && r.name === tab.name)) break;
+        reached.push(tab);
       }
     }
   }
   return reached;
 }
 
-/** The names of `walk` that are in `wanted`, in the order reached, each kept once. */
-function among(walk: string[], wanted: (name: string) => boolean): string[] {
+/** The names of the stops of `walk` that are `wanted`, in the order reached, each kept once. */
+function among(walk: Stop[], wanted: (stop: Stop) => boolean): string[] {
   const out: string[] = [];
-  for (const name of walk) if (wanted(name) && out[out.length - 1] !== name) out.push(name);
+  for (const stop of walk) if (wanted(stop) && out[out.length - 1] !== stop.name) out.push(stop.name);
   return out;
 }
 
@@ -389,18 +399,27 @@ test('studio.iam-role-screens-keyboard-and-layout', async ({ ctx, page, context 
       const problems: string[] = [];
 
       await openRole(page, two[0]);
-      const onPage = await keyboardWalk(page, (n) => n === EDIT);
-      ctx.log(`a role's page, reached: ${onPage.join(', ')}`);
+      const onPage = await keyboardWalk(page, named(EDIT, 'button'));
+      ctx.log(`a role's page, reached: ${onPage.map(shown).join(', ')}`);
       const pageWanted = [REFRESH_ROLE, ...TABS, EDIT];
-      const pageSeen = among(onPage, (n) => pageWanted.includes(n));
+      const pageSeen = among(
+        onPage,
+        (stop) =>
+          named(REFRESH_ROLE, 'button')(stop) ||
+          named(EDIT, 'button')(stop) ||
+          (stop.role === 'tab' && TABS.includes(stop.name)),
+      );
       if (JSON.stringify(pageSeen) !== JSON.stringify(pageWanted)) {
         problems.push(`a role's page: reached ${JSON.stringify(pageSeen)}, wanted ${JSON.stringify(pageWanted)}`);
       }
 
       await openWizard(page, 1);
-      const step1 = await keyboardWalk(page, (n) => n === NEXT);
-      ctx.log(`step 1, reached: ${step1.join(', ')}`);
-      const step1Seen = among(step1, (n) => ENTITY_TYPES.includes(n) || [F_SERVICE, CANCEL, NEXT].includes(n));
+      const step1 = await keyboardWalk(page, (stop) => stop.name === NEXT);
+      ctx.log(`step 1, reached: ${step1.map(shown).join(', ')}`);
+      const step1Seen = among(
+        step1,
+        ({ name: n }) => ENTITY_TYPES.includes(n) || [F_SERVICE, CANCEL, NEXT].includes(n),
+      );
       const types = step1Seen.filter((n) => ENTITY_TYPES.includes(n));
       const rest1 = step1Seen.filter((n) => !ENTITY_TYPES.includes(n));
       const firstOther = step1Seen.findIndex((n) => !ENTITY_TYPES.includes(n));
@@ -413,14 +432,17 @@ test('studio.iam-role-screens-keyboard-and-layout', async ({ ctx, page, context 
       }
 
       await openWizard(page, 3);
-      const step3 = await keyboardWalk(page, (n) => n === 'Create role');
-      ctx.log(`step 3, reached: ${step3.join(', ')}`);
-      const step3Wanted = [F_NAME, F_DESCRIPTION, EDIT, EDIT, ADD_TAG, CANCEL, PREVIOUS, 'Create role'];
+      const step3 = await keyboardWalk(page, named(CREATE, 'button'));
+      ctx.log(`step 3, reached: ${step3.map(shown).join(', ')}`);
+      const step3Wanted = [F_NAME, F_DESCRIPTION, EDIT, EDIT, ADD_TAG, CANCEL, PREVIOUS, CREATE];
       const step3Seen = step3
         .filter(
-          (n) => [F_NAME, F_DESCRIPTION, ADD_TAG, CANCEL, PREVIOUS, 'Create role'].includes(n) || /^Edit\b/.test(n),
+          (stop) =>
+            [F_NAME, F_DESCRIPTION, ADD_TAG, CANCEL, PREVIOUS].includes(stop.name) ||
+            /^Edit\b/.test(stop.name) ||
+            named(CREATE, 'button')(stop),
         )
-        .map((n) => (/^Edit\b/.test(n) ? EDIT : n));
+        .map((stop) => (/^Edit\b/.test(stop.name) ? EDIT : stop.name));
       if (JSON.stringify(step3Seen) !== JSON.stringify(step3Wanted)) {
         problems.push(`step 3: reached ${JSON.stringify(step3Seen)}, wanted ${JSON.stringify(step3Wanted)}`);
       }
@@ -551,6 +573,8 @@ test('studio.iam-role-screens-keyboard-and-layout', async ({ ctx, page, context 
 
   const longest = `${p}-${'x'.repeat(LONGEST_NAME - p.length - 1)}`;
   await seeded.role(longest);
+  /** The check's roles under the filter `<p>` from here on: the two and the longest name, in the list's order. */
+  const all = [...two, longest];
 
   await lines.line(
     'With a role whose name is 64 characters without a space (starting with `<p>`) made directly, under the filter, "Wrap lines" on as at the start → the whole name is visible inside its cell and the page does not scroll sideways; on its page the `h1`, the crumb and the ARN hold their whole text without the page scrolling sideways — 1280 and 390 wide',
@@ -591,7 +615,7 @@ test('studio.iam-role-screens-keyboard-and-layout', async ({ ctx, page, context 
     async () => {
       const found: string[] = [];
       const screens: [string, () => Promise<void>][] = [
-        ['the role list', () => listUnder(page, p, two)],
+        ['the role list', () => listUnder(page, p, all)],
         ["a role's page", () => openRole(page, two[0])],
         ['the wizard', () => openWizard(page, 1)],
       ];
@@ -628,7 +652,7 @@ test('studio.iam-role-screens-keyboard-and-layout', async ({ ctx, page, context 
       });
       const found: string[] = [];
       const screens: [string, () => Promise<void>][] = [
-        ['the role list', () => listUnder(page, p, two)],
+        ['the role list', () => listUnder(page, p, all)],
         ["a role's page", () => openRole(page, two[0])],
         ['the wizard', () => openWizard(page, 1)],
       ];
