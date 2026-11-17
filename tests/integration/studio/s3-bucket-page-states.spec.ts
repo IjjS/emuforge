@@ -48,7 +48,7 @@ test('studio.s3-bucket-page-shows-loading-until-the-answer', async ({ ctx, page,
       try {
         await page.goto(bucketPath(name));
         await expect(page.getByText(LOADING_BUCKET, { exact: true }), `"${LOADING_BUCKET}"`).toBeVisible();
-        expect(hold.count(), 'a ListBuckets request is held').toBeGreaterThan(0);
+        await expect.poll(() => hold.count(), { message: 'a ListBuckets request is held' }).toBeGreaterThan(0);
         for (const t of TABS) await expect(tab(page, t), `the tab "${t}" while loading`).toHaveCount(0);
         expect(await shownSectionTitles(page), 'sections while loading').toEqual([]);
         await hold.release();
