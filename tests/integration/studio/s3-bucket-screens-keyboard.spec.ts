@@ -12,6 +12,10 @@
 // an expandable section — and its tabs and radio groups decide themselves which of their items are stops; each of
 // those is allowed where Cloudscape places it and nowhere else. Every other stop must be the next one R12 names. A
 // section button is known by its section: the level-2 heading of the nearest element around it that holds exactly one.
+//
+// Issue 467 rewrote one step (its test-criteria.md, "Flow checks, changed"; requirement R9, rule 3): the walk on a
+// bucket's page reaches the copy controls of "Bucket ARN" and "AWS KMS key" at their values' places, on the page of a
+// bucket with a KMS key. A copy control is known by its section as a section button is.
 
 import type { Locator, Page, Request } from '@playwright/test';
 
@@ -20,10 +24,12 @@ import { areaImages, currentCrumb, documentIcons, emulatorLine, expectLine, notS
 import { focusedAx, focusRing } from './support/focus';
 import { ACTION, addressOf, heading, NAVIGATION_TOGGLE, SIDE_NAVIGATION } from './support/frame';
 import { Lines } from './support/lines';
+import { copyControl, directlyBeforeProblems, pairValueOf } from './support/screen-rules';
 import {
   ABOUT,
   BUCKETS_PATH,
   bucketNamesDirect,
+  bucketPropertiesDirect,
   checkPrefix,
   H1,
   LONGEST_NAME,
@@ -38,6 +44,7 @@ import {
 import {
   BLOCK_SETTINGS,
   bucketPath,
+  ENCRYPTION,
   CREATE_BUTTON,
   CREATE_H1,
   CREATE_PATH,
@@ -48,6 +55,7 @@ import {
   MESSAGES,
   openBucketPage,
   openForm,
+  OVERVIEW,
   OWNERSHIP_CHOICES,
   SECTION_BUTTONS,
   SECTIONS,
@@ -295,25 +303,76 @@ test('studio.s3-bucket-screens-keyboard-and-layout', async ({ ctx, page, context
   await seeded.object(holding, 'kept.txt', 'kept');
   await seeded.bucket(empty);
 
+  // Issue 467 (requirement R9, rule 3) replaced the stops '"Refresh", the tabs, then each section's button in the
+  // sections' order' with the walk below, on the page of a bucket with a KMS key: each section's copy control comes at
+  // its value's place, after the section's button.
+  const kms = `${p}-kms`;
+  await seeded.bucket(kms);
+  const kmsKey = await seeded.kmsKey();
+  await seeded.configure(kms, { encryption: { algorithm: 'aws:kms', keyId: kmsKey } });
+  /** The copy control of each section that has one (R5), with its field's label. */
+  const COPY_CONTROLS: Record<string, string> = { [OVERVIEW]: 'Bucket ARN', [ENCRYPTION]: 'AWS KMS key' };
+
   await lines.line(
-    "Fresh load of a bucket's page, Tab from the document start, past Studio's frame → the stops inside the area come in the order of R12: the side navigation, the crumbs, the (i) control, the notice's close, \"Refresh\", the tabs, then each section's button in the sections' order; focus is visible on each",
+    'Fresh load of the page of a bucket with a KMS key, Tab from the document start, past Studio\'s frame → the side navigation, the crumbs, the (i) control, the notice\'s close, "Refresh", the tabs, then in the sections\' order each section\'s button and, where the section has one, its copy control at its value\'s place ("Copy Bucket ARN" in "Bucket overview", "Copy AWS KMS key" in "Default encryption"); focus is visible on each',
     async () => {
-      await openBucketPage(page, plain);
-      await expectAllSections(page, plain);
-      const buttons = [...SECTION_BUTTONS].sort((a, b) => SECTIONS.indexOf(a.section) - SECTIONS.indexOf(b.section));
+      await openBucketPage(page, kms);
+      await expectAllSections(page, kms);
+      // The sections are read one by one after their headings show: the walk needs both values on the page.
+      await expect(pairValueOf(page, 'Bucket ARN'), '"Bucket ARN" shows the ARN').toContainText(kms);
+      await expect(pairValueOf(page, 'AWS KMS key'), '"AWS KMS key" shows the key').toContainText(kmsKey);
+      const stopsOf = (section: string): Expected[] => {
+        const button = SECTION_BUTTONS.find((b) => b.section === section);
+        const copy = COPY_CONTROLS[section];
+        return [
+          ...(button === undefined
+            ? []
+            : [
+                {
+                  what: `"${button.button}" of "${section}"`,
+                  match: (s: Stop) => named(button.button, 'link', 'button')(s) && s.section === section,
+                },
+              ]),
+          ...(copy === undefined
+            ? []
+            : [
+                {
+                  what: `"${copyControl(copy)}" of "${section}"`,
+                  match: (s: Stop) => named(copyControl(copy), 'button')(s) && s.section === section,
+                },
+              ]),
+        ];
+      };
       const expected: Expected[] = [
-        ...frameStops(['EmuForge', 'AWS', 'S3', 'Buckets', plain]),
+        ...frameStops(['EmuForge', 'AWS', 'S3', 'Buckets', kms]),
         { what: '"Refresh"', match: named('Refresh', 'button') },
         { what: 'the tabs', match: (s) => s.role === 'tab' && TABS.includes(s.name), many: true },
         { what: "the tab panel (Cloudscape's)", match: (s) => s.role === 'tabpanel', optional: true },
-        ...buttons.map(({ section, button }) => ({
-          what: `"${button}" of "${section}"`,
-          match: (s: Stop) => named(button, 'link', 'button')(s) && s.section === section,
-        })),
+        ...SECTIONS.flatMap(stopsOf),
       ];
       const stops = await walk(page);
       ctx.log(`Tab stops in the area: ${stops.map(shown).join(', ')}`);
-      expect(orderProblems(stops, expected), 'the order of the Tab stops').toEqual([]);
+      // At its value's place: each copy control directly before its value's text, inside the value's element.
+      const arn = (await listBucketsDirect(ctx, port, kms)).find((b) => b.name === kms)?.arn ?? null;
+      const keyId = (await bucketPropertiesDirect(ctx, port, kms)).encryption?.keyId ?? null;
+      expect({ arn, keyId }, `a direct ListBuckets and GetBucketEncryption of ${kms}`).toEqual({
+        arn: expect.any(String),
+        keyId: expect.any(String),
+      });
+      const places: string[] = [];
+      for (const [label, value] of [
+        ['Bucket ARN', arn ?? ''],
+        ['AWS KMS key', keyId ?? ''],
+      ] as const) {
+        const control = page.getByRole('main').getByRole('button', { name: copyControl(label), exact: true });
+        for (const problem of await directlyBeforeProblems(control, pairValueOf(page, label), value)) {
+          places.push(`"${copyControl(label)}": ${problem}`);
+        }
+      }
+      expect(
+        { order: orderProblems(stops, expected), places },
+        "the order of the Tab stops, and each copy control at its value's place",
+      ).toEqual({ order: [], places: [] });
       expect(withoutRing(stops), 'stops without a visible focus indicator').toEqual([]);
     },
   );
