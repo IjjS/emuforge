@@ -17,8 +17,10 @@ services:
       - "127.0.0.1:${EMULATOR_PORT:-9297}:${EMULATOR_PORT:-9297}"
     environment:
       # Same HOME inside and outside the container, so the paths the emulator writes into its config are valid on the host.
-      HOME: ${HOME}
+      # Where HOME is not set (PowerShell, cmd) the folder is the one under USERPROFILE and the container's HOME is
+      # /home/emulator: the paths in the emulator's config are then the container's, not the host's.
+      HOME: ${HOME:-/home/emulator}
     volumes:
-      - ${HOME}/.aws/emulator:${HOME}/.aws/emulator
+      - ${HOME:-${USERPROFILE}}/.aws/emulator:${HOME:-/home/emulator}/.aws/emulator
     mem_limit: 2g
     memswap_limit: 2g

@@ -36,7 +36,10 @@ situation 4 start in a check never rebuilds or retags `aws-emulator`. The checks
 `aws-emulator` and never port 9297. Each form writes its Compose project to `output/integration/tmp/product-projects`;
 when it ends, `run` removes, of those projects, the containers created under one of the run's two image names and
 the networks no container uses any more, logs each removal, then removes both names (`docker image rm`, which only
-untags an image that has another name).
+untags an image that has another name). The build has a bound of 600 seconds (`product_build_bound`): a build that
+has not ended by then, such as one that waits for a registry that does not answer, is ended with its whole process
+group (SIGTERM, SIGKILL 10 seconds later) and is the environment's failure, so every check is `error` with the reason
+`the product image build did not end within 600 s, see <log>` and the run exits 127 before it starts its emulator.
 
 The product checks (`studio/product-*.spec.ts`, ids `engine.product-…`) start a form each through
 `studio/support/product.ts`, which holds the start and stop command lines of each situation (the README check
@@ -51,11 +54,12 @@ start command, as the engine checks do without an engine.
 
 ## Checks not run
 
-`run` takes `--not-run <file>` and `--on-request`, each at most once, in either order; with any other argument it
-prints a usage line and exits 2. Without `--on-request` it runs every check that is not labelled `on-request` in the
-manifest, and reports each labelled one `not-run` with the message
-`on request: not part of a default run; run it with --on-request`. With `--on-request` those run like every other
-check.
+`run` takes `--not-run <file>`, `--on-request` and `--services <file>`, each at most once, in any order; with any other
+argument, or an option without its file, it prints the usage line
+`usage: tests/integration/run [--not-run <file>] [--on-request] [--services <file>]` and exits 2. Without
+`--on-request` it runs every check that is not labelled `on-request` in the manifest, and reports each labelled one
+`not-run` with the message `on request: not part of a default run; run it with --on-request`. With `--on-request`
+those run like every other check.
 
 `run --not-run <file>` leaves out the checks a not-run list names; the workflow on GitHub Actions passes it
 `.github/not-run.json`. Only the list's `checks` are read: each entry's `id` must be a manifest id, listed once,
@@ -63,9 +67,22 @@ with a non-empty `reason`. A list that cannot be read or breaks one of these mak
 before anything is built or started. A check that is both listed and labelled `on-request` is `not-run` with the
 list's reason, with or without `--on-request`.
 
-The checks on request are left out the way the listed ones are, by the same ids file and the same pattern. A
-left-out engine check returns at once: `run` gives `cargo test` `EMUFORGE_IT_NOT_RUN` naming
-`output/integration/not-run.ids`, and `support::check::check` prints `not-run <id>` and writes no verdict, so
+`run --services <file>` leaves out the checks of the services a change does not touch. A check of a service is a
+manifest row whose `service` is a service name (`[a-z][a-z0-9]*(-[a-z0-9]+)*`, the name of its folder under
+`studio/src/providers/aws/area/services/`); a row without the field, or with any other value, is a check of no
+service and is part of every run. The file is JSON `{"services": [<service name>, …]}` or `{"services": null}`; its
+other keys are not read. `null` is every service, and the run is as without the option. With a list, every check of
+a service not in the list is `not-run` with the message
+`service <s> not touched: its checks are not part of this run`; a name that no row has selects nothing and is not an
+error. A file that cannot be read, is not that shape or holds an entry that is not a service name makes every check
+`error` (exit 127) before anything is built or started. When more than one reason applies to a check, the not-run
+list's comes first, then on request, then the service: with `--on-request`, a check on request of a service not in
+the list is `not-run` with the service's message. `report.json` holds `services`: the file's list, sorted without
+repeats, or `null` when every service's checks were part of the run.
+
+The checks on request and those of the services not touched are left out the way the listed ones are, by the same ids
+file and the same pattern. A left-out engine check returns at once: `run` gives `cargo test` `EMUFORGE_IT_NOT_RUN`
+naming `output/integration/not-run.ids`, and `support::check::check` prints `not-run <id>` and writes no verdict, so
 `cargo test` shows that test as `ok`. A left-out Studio or product check is left out of the Playwright run with one
 `--grep-invert` pattern of the left-out ids. `report.json` is the record: each left-out check is `not-run` with its
 reason as its message, and counts neither as passed nor as failed; the exit code and relay fidelity are computed

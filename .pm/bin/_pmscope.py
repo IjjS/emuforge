@@ -13,8 +13,26 @@ paths call for are left to the issue branch (deferred) instead of run.
 A changed path is only ever compared as text with the patterns below: it is never opened, joined to a directory
 or put on a command line. git is started as an argument list, without the caller's GIT_* and AWS_* variables and
 with a timeout; whatever it cannot answer means every module.
+
+Which harness test files a run leaves out. The harness step runs every test file under .pm/bin/tests/ but the
+on-touch files: the slow ones that have an entry in ON_TOUCH below. An on-touch file runs only when a changed path
+matches one of its sources and is left out otherwise; every other test file (an always file, a new one included)
+runs whenever the harness is called for. A source of an on-touch file is a tracked file that its cases run or read:
+the test file itself and the modules under .pm/bin/tests/ it imports, in turn; the fixture folders its cases read;
+every script of .pm/bin/ its cases start, from this checkout or from a copy in a fixture checkout, the scripts
+those start and the helpers _pm* any of them imports, directly or through another helper; and any other tracked
+file its cases read or execute. A stand-in the test writes itself and a program outside the repository are not
+sources. Every entry is asked about every path; no entry hides a path from another. A change of one of EVERY_FILE
+(this file, which holds the map and its rules, or the runner .pm/bin/tests/run) or a path no rule of RULES knows
+runs every file. A test (test_on_touch.Map) fails when the map is behind what a program can see: a test module or
+helper an on-touch file reaches that is not among its sources, a script a source script starts that is not
+among them, a name that does not exist. What a program cannot see (which scripts the cases start, which fixtures
+and files they read) is written into the entry by the unit that changes the test file and read by rev. Adding a
+source needs no decision; adding an entry or taking a source away changes what a run checks and is only done on
+the `pm`'s decision, recorded in the issue's decisions.md.
 """
 import fnmatch
+import json
 import os
 import re
 import subprocess
@@ -25,6 +43,15 @@ HARNESS = ("harness",)
 GIT_TIMEOUT = 30  # seconds; a git that does not answer in time is a change that cannot be read
 UNIT_BRANCH = re.compile(r"(feat|refactor|fix)/(\d+)-.+")  # a unit's branch: its issue branch is feat/<id>
 DEFERRED = ("integration",)  # what a unit leaves to its issue branch
+
+# The selection of the touched services (select below). A service name is the name of a service's folder; it is
+# only ever written into JSON and compared with manifest values, never joined to a path or put on a command line.
+SERVICE = re.compile(r"[a-z][a-z0-9]*(-[a-z0-9]+)*")  # matched with fullmatch
+SERVICE_FOLDERS = ("studio/src/providers/aws/area/services/", "studio/references/console/")
+MANIFEST = "tests/integration/manifest.jsonl"
+UNIT_TESTS = ("studio/src/*.test.ts", "studio/src/*.test.tsx")  # "*" crosses "/": not part of the built Studio
+TOOLS = (".github/", ".pm/bin/")  # the workflow, the selection and its rules: every service where integration runs
+COMMIT = re.compile(r"[0-9a-f]{40}")  # the only form of a push's commit id that reaches git
 
 # The first rule a path matches decides it; a checkout's answer is the union over its paths. A pattern that ends
 # in "/" matches every path under that folder; one that holds "*" is matched with fnmatch against the whole path
@@ -55,6 +82,46 @@ RULES = [
     dict(paths=[".github/"], calls=HARNESS,
          why="the workflow, its not-run list and its runner helper under .github/, which a harness test reads; "
              "no pm-check step on this machine reads the folder"),
+]
+
+
+# The paths whose change runs every harness test file: the map and the rules above, and the runner.
+EVERY_FILE = (".pm/bin/_pmscope.py", ".pm/bin/tests/run")
+
+# The on-touch files: one entry per slow test file, with its sources in the pattern forms of RULES (and `outside` as
+# there) and why it runs when one of them changes. A test file without an entry is an always file. Adding an entry
+# or taking a source away is the `pm`'s decision, recorded in the issue's decisions.md; adding a source is not.
+_T, _B = ".pm/bin/tests/", ".pm/bin/"
+_SCORE = [_B + "_pmbrowse.py", _B + "_pmproc.py", _B + "_pmscore.py", _B + "_pmspec.py"]
+_ARCHIVE = [_B + "pm-archive", _B + "pm-cost", _B + "pm-pane", _B + "pm-critique", _B + "pm-structure",
+            _B + "_pmlib.py", _B + "_pmquota.py", _B + "_pmtokens.py", *_SCORE]
+ON_TOUCH = [
+    dict(test="test_capture.py",
+         why="pm-structure captures its fixture pages with the Playwright, Vite and Cloudscape Studio installs",
+         sources=[_T + "test_capture.py", _T + "fixtures/structure/", _B + "pm-structure",
+                  _B + "_pmstructure_capture.mjs", *_SCORE, _B + "_pmlib.py", "studio/package.json",
+                  "studio/bun.lock"]),
+    dict(test="test_hang.py",
+         why="the stand-ins of a capture that hangs and the ending of their process groups",
+         sources=[_T + "test_hang.py", _T + "_hang.py", _T + "test_terminate.py", _T + "fixtures/hang/"]),
+    dict(test="test_emulator_dir.py",
+         why="pm-emulator-dir and the scripts that remove an emulator's port folder, on fixture checkouts",
+         sources=[_T + "test_emulator_dir.py", _T + "_fixture.py", _B + "pm-emulator-dir", _B + "pm-merge",
+                  _B + "pm-worktree", *_ARCHIVE]),
+    dict(test="test_check_issue.py",
+         why="pm-check and pm-merge on the issue branch of a fixture checkout",
+         sources=[_T + "test_check_issue.py", _T + "test_issue_branch.py", _T + "_fixture.py", _B + "pm-check",
+                  _B + "pm-merge", _B + "pm-worktree", _B + "pm-emulator-dir", _B + "_pmlib.py"]),
+    dict(test="test_emulator_telemetry.py",
+         why="an emulator started from the compose files, and their telemetry setting",
+         sources=[_T + "test_emulator_telemetry.py", _T + "_emulator_telemetry.py", _T + "fixtures/emulator-telemetry/",
+                  "infra/", "docker-compose.yml", "*compose*.yml", "*compose*.yaml"],
+         outside=[".pm/bin/"]),
+    dict(test="test_issue_branch.py",
+         why="the issue branch and its units through the scripts of a fixture checkout, and the briefs",
+         sources=[_T + "test_issue_branch.py", _T + "_fixture.py", _B + "pm-worktree", _B + "pm-scope",
+                  _B + "pm-check", _B + "pm-merge", _B + "pm-emulator-dir", _B + "pm-brief", *_ARCHIVE,
+                  ".agents/skills/pm/references/briefs/"]),
 ]
 
 
@@ -102,6 +169,164 @@ def decide(paths):
         for m in MODULES:
             answer.setdefault(m, []).append(f"the rules do not know {unknown[0]} ({_count(len(unknown))})")
     return {m: answer[m] for m in MODULES if m in answer}
+
+
+def _of(entry, path):
+    return any(_matches(pat, path, entry.get("outside", ())) for pat in entry["sources"])
+
+
+def harness_tests(paths):
+    """{all, why, called: {test: [why]}, left_out: [tests]} for a set of changed paths, from the map alone. `all` is
+    true (with `why`, `called` and `left_out` empty) when a path is one of EVERY_FILE or no rule of RULES knows it;
+    else each on-touch file is called for, with its entry's sentence, the number of its changed sources and the
+    first of them, or left out, in name order. Opens nothing and starts nothing."""
+    paths = sorted(set(paths))
+    every = next((p for p in paths if p in EVERY_FILE), None)
+    if every is not None:
+        return dict(all=True, why=f"{every} changed: the map or the runner", called={}, left_out=[])
+    unknown = next((p for p in paths if rule_of(p) is None), None)
+    if unknown is not None:
+        return dict(all=True, why=f"the rules do not know {unknown}", called={}, left_out=[])
+    called_for, left_out = {}, []
+    for e in ON_TOUCH:
+        found = [p for p in paths if _of(e, p)]
+        if found:
+            called_for[e["test"]] = [f"{e['why']} ({_count(len(found))}, e.g. {found[0]})"]
+        else:
+            left_out.append(e["test"])
+    return dict(all=False, why="", called=called_for, left_out=sorted(left_out))
+
+
+def _held(checkout, ht):
+    """`ht` held to the on-touch files the checkout holds, with their number as `on_touch`. The names come from the
+    map, never from a changed path; a file that cannot be seen counts as missing."""
+    tests = os.path.join(str(checkout), ".pm", "bin", "tests")
+    have = {e["test"] for e in ON_TOUCH if os.path.isfile(os.path.join(tests, e["test"]))}
+    return dict(all=ht["all"], why=ht["why"], called={t: w for t, w in ht["called"].items() if t in have},
+                left_out=[t for t in ht["left_out"] if t in have], on_touch=len(have))
+
+
+def _rows(text):
+    """The rows of a manifest's text, one JSON object per non-empty line; ValueError on any other line."""
+    out = []
+    for ln in text.splitlines():
+        if not ln.strip():
+            continue
+        row = json.loads(ln)
+        if not isinstance(row, dict):
+            raise ValueError("a manifest line is not a JSON object")
+        out.append(row)
+    return out
+
+
+def _service(row):
+    """The service of a manifest row: its `service` when that is a string of the form of a service name, else None
+    (a check of no service)."""
+    s = row.get("service")
+    return s if isinstance(s, str) and SERVICE.fullmatch(s) else None
+
+
+def _by_id(rows):
+    """{check id: (services of its rows, paths of its rows)}; a row whose id is not a string is not counted."""
+    out = {}
+    for row in rows:
+        cid = row.get("check_id")
+        if isinstance(cid, str):
+            services, paths = out.setdefault(cid, (set(), set()))
+            services.add(_service(row))
+            paths.add(row.get("path"))
+    return out
+
+
+def _manifest_change(paths, head_rows, base):
+    """Line 3 of the selection: the reason a change of the manifest gives every service, or None (it gives
+    nothing)."""
+    try:
+        base_rows = [] if base == "" else _rows(base) if base is not None else None
+    except (ValueError, RecursionError):
+        base_rows = None
+    if base_rows is None:
+        return "the base's manifest cannot be read"
+    old, new, changed_paths = _by_id(base_rows), _by_id(head_rows), set(paths)
+    for cid in sorted(new):
+        services, files = new[cid]
+        if cid in old:
+            if old[cid][0] != services:
+                return f"the manifest's service of {cid} changed"
+        elif services - {None} and not files & changed_paths:
+            return f"{cid} is new and its file did not change"
+    return None
+
+
+def select(paths, head, base):
+    """The selection of the touched services (issue 327, requirement R2): which services' checks a run must hold
+    for these changed paths. Pure: no git, no file. `head` is the text of the head's manifest (the one `run` will
+    read), None when it cannot be read; `base` the text of the manifest the paths are measured from, "" when that
+    commit has none, None when it exists and cannot be read. Returns the services object {all, names, why}:
+    `all` true (every service, `names` []) or a sorted list of names, which may be empty.
+
+    Each path is compared as text, never opened, and decided by the first line it matches:
+      1 under one of SERVICE_FOLDERS, a folder segment <s> followed by "/": the service <s>, or every service
+        when <s> is not of the form SERVICE (a file directly under the folder falls to line 6)
+      2 the `path` of one or more rows of `head` (a file of checks): the services those rows name, none for
+        rows of no service
+      3 the manifest: every service when a check id both manifests hold has another service in the two, an id
+        only `head` holds has a service and its path is not among the changed paths, or `base` cannot be read;
+        else nothing
+      4 studio/src/*.test.ts or *.test.tsx (unit tests, not part of the built Studio): nothing
+      5 a path whose rule in RULES calls for no product module, outside .github/ and .pm/bin/: nothing
+      6 any other path (the engine, shared Studio code, the checks' support, the workflow, the harness, a path
+        no rule knows): every service
+    A head manifest that cannot be read, or a line of it that is not a JSON object, gives every service."""
+    def every(why):
+        return dict(all=True, names=[], why=why)
+
+    try:
+        head_rows = _rows(head) if head is not None else None
+    except (ValueError, RecursionError):
+        head_rows = None
+    if head_rows is None:
+        return every("the manifest cannot be read")
+    of_file = {}
+    for row in head_rows:
+        if isinstance(row.get("path"), str):
+            of_file.setdefault(row["path"], set()).add(_service(row))
+    names, touching, shared, reasons = set(), 0, [], []
+    for path in sorted(set(paths)):
+        folder = next((f for f in SERVICE_FOLDERS if path.startswith(f) and "/" in path[len(f):]), None)
+        if folder is not None:
+            s = path[len(folder):].split("/", 1)[0]
+            if SERVICE.fullmatch(s):
+                names.add(s)
+                touching += 1
+            else:
+                reasons.append((path, f"{path} is under a folder that is not a service name"))
+            continue
+        if path in of_file:
+            given = of_file[path] - {None}
+            names |= given
+            touching += bool(given)
+            continue
+        if path == MANIFEST:
+            why = _manifest_change(paths, head_rows, base)
+            if why:
+                reasons.append((path, why))
+            continue
+        if any(fnmatch.fnmatchcase(path, p) for p in UNIT_TESTS):
+            continue
+        i = rule_of(path)
+        if i is not None and not set(RULES[i]["calls"]) & set(PRODUCT) and not path.startswith(TOOLS):
+            continue
+        shared.append(path)
+        reasons.append((path, None))
+    if reasons:
+        path, why = min(reasons, key=lambda r: r[0])
+        return every(why or f"{path} is shared by the services ({_count(len(shared))})")
+    if touching:
+        why = f"{_count(touching)} touch a service" if touching != 1 else "1 path touches a service"
+    else:
+        why = "no path touches a service"
+    return dict(all=False, names=sorted(names), why=why)
 
 
 def run_git(top, *args):
@@ -190,12 +415,58 @@ def changed(checkout, target="main"):
     return sorted(paths), head, main, base
 
 
+def manifest_at(top, commit):
+    """The text of the manifest at `commit` of the repository at `top`: "" when the commit has none. Raises
+    Unreadable when git fails or does not answer; a caller that catches it passes None to select()."""
+    if not git(top, "ls-tree", commit, "--", MANIFEST).strip():
+        return ""
+    return git(top, "show", f"{commit}:{MANIFEST}")
+
+
+def manifest_of(checkout):
+    """The text of the work tree's manifest, the file `run` reads, uncommitted changes included; None when it
+    cannot be read (missing too)."""
+    try:
+        with open(os.path.join(str(checkout), MANIFEST), encoding="utf-8") as f:
+            return f.read()
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def push(top, before, after):
+    """The selection of a push of main, for `pm-scope --push`: {"services": <services object>, "paths": n}, where n
+    is the number of paths that differ between `before` (the commit main had before the push) and `after` (the
+    pushed commit). Every service, with the reason, when either id is not 40 hexadecimal digits, `before` is all
+    zeros (a first push), is not a commit of the clone or not an ancestor of `after` (a forced history), or git
+    cannot answer. Both ids are held to their form before git sees them, so neither can be read as an option."""
+    def every(why, n=0):
+        return {"services": dict(all=True, names=[], why=why), "paths": n}
+
+    if not (COMMIT.fullmatch(before) and COMMIT.fullmatch(after)):
+        return every("the commit before the push is not a commit id" if not COMMIT.fullmatch(before)
+                     else "the pushed commit is not a commit id")
+    if before == "0" * 40:
+        return every("the push has no commit before it")
+    try:
+        if run_git(top, "rev-parse", "--verify", "--quiet", f"{before}^{{commit}}").returncode != 0:
+            return every("the commit before the push is not in the clone")
+        if run_git(top, "merge-base", "--is-ancestor", before, after).returncode != 0:
+            return every("the commit before the push is not an ancestor of the pushed commit")
+        paths = between(top, before, after)
+        head, base = manifest_at(top, after), manifest_at(top, before)
+    except Unreadable as e:
+        return every(str(e))
+    return {"services": select(paths, head, base), "paths": len(set(paths))}
+
+
 def scope(checkout, full=False, only=None, checks=None):
     """The `scope` object of a pm-check record: kind (checks, only, full, main, diff or unit) and reason, main's
     commit and the merge base when they could be read, the number of changed paths, the target, and per module
     whether it was called for and why. On a unit of an issue branch (kind unit) the integration module its paths
     call for is not called but `deferred`, with the same reasons; the key `deferred` exists on no other module and
-    in no other kind. Never raises."""
+    in no other kind. When harness is called for, `harness_tests` holds the selection of its test files:
+    harness_tests() of the paths for kinds diff and unit, every file for full and only, held to the on-touch files
+    the checkout holds, with their number as `on_touch`. Never raises."""
     target, failed = "main", None
     try:
         target = target_of(os.path.realpath(str(checkout)))
@@ -228,7 +499,24 @@ def scope(checkout, full=False, only=None, checks=None):
         calls = decide(paths)
     modules = {m: dict(called=False, deferred=True, why=held[m]) if m in held else
                dict(called=m in calls, why=calls.get(m, [])) for m in MODULES}
-    return dict(kind=kind, reason=reason, main=main, base=base, paths=len(paths), target=target, modules=modules)
+    sc = dict(kind=kind, reason=reason, main=main, base=base, paths=len(paths), target=target, modules=modules)
+    if modules["harness"]["called"]:
+        if kind in ("diff", "unit"):
+            ht = harness_tests(paths)
+        else:
+            why = "--only harness" if kind == "only" else reason
+            ht = dict(all=True, why=why, called={}, left_out=[])
+        sc["harness_tests"] = _held(checkout, ht)
+    if kind in ("diff", "unit"):
+        try:
+            at_base = manifest_at(os.path.realpath(str(checkout)), base)
+        except Unreadable:
+            at_base = None
+        sc["services"] = select(paths, manifest_of(checkout), at_base)
+    else:
+        why = "main: the head has no commit of its own against main" if kind == "main" else reason
+        sc["services"] = dict(all=True, names=[], why=why)
+    return sc
 
 
 def called(sc):
@@ -241,10 +529,28 @@ def deferred(sc):
     return [m for m in MODULES if sc["modules"][m].get("deferred")]
 
 
+def services_line(sv):
+    """The services line of a services object: `  services     every service: <why>` or
+    `  services     <names joined by ", ", or "none"> (<why>)`."""
+    if sv["all"]:
+        return f"  {'services':12} every service: {sv['why']}"
+    return f"  {'services':12} {', '.join(sv['names']) or 'none'} ({sv['why']})"
+
+
+def services_file(sc):
+    """What pm-check writes as the services file of `run --services`: None when the scope's selection is every
+    service (the run is then started without the option), else {"services": [names], "why": why}."""
+    sv = sc["services"]
+    return None if sv["all"] else {"services": list(sv["names"]), "why": sv["why"]}
+
+
 def lines(sc):
     """The scope as text: `scope: <kind>, <reason> (base <sha>): <modules>`, then one line per called-for module.
     A unit's first line ends `; <modules> left to <target>` when something is deferred, with one line per deferred
-    module after the called-for ones."""
+    module after the called-for ones. When the scope holds `harness_tests` and the checkout holds an on-touch file,
+    one line `  harness tests every file: <why>` or `  harness tests left out: <names or "none">` follows, then one
+    line per called-for on-touch file with its reason. Last, when integration is called for or deferred, the
+    services line (services_line) of the scope's `services`."""
     base = f" (base {sc['base'][:9]})" if sc.get("base") and sc["kind"] in ("diff", "unit") else ""
     held = deferred(sc)
     left = f"; {', '.join(held)} left to {sc['target']}" if held else ""
@@ -253,4 +559,15 @@ def lines(sc):
         out.append(f"  {m:12} {'; '.join(sc['modules'][m]['why'])}")
     for m in held:
         out.append(f"  {m:12} left to {sc['target']}: {'; '.join(sc['modules'][m]['why'])}")
+    ht = sc.get("harness_tests")
+    if ht and ht.get("on_touch"):
+        if ht["all"]:
+            out.append(f"  harness tests every file: {ht['why']}")
+        else:
+            out.append(f"  harness tests left out: {', '.join(ht['left_out']) or 'none'}")
+            for t, why in ht["called"].items():
+                out.append(f"    {t}  {'; '.join(why)}")
+    integration = sc["modules"]["integration"]
+    if sc.get("services") and (integration["called"] or integration.get("deferred")):
+        out.append(services_line(sc["services"]))
     return out

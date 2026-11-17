@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: feature
 Issue-Source: plan
 Issue-Key: harness|harness-tests|run-time
-Issue-Check-Ids:
+Issue-Check-Ids: harness.on-touch
 Issue-Commit: 13dbdefb1fbda957737b6b2390491c5044dad104
 
 # Cut the harness tests' time: five test files hold three quarters of seven minutes

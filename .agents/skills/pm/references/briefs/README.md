@@ -12,7 +12,7 @@ everything it can and fails when a placeholder would be left unfilled.
 | `{{module}}`, `{{kind}}` | `Issue-Module` and `Issue-Kind` |
 | `{{grade}}` | studio only: `console`, `native`, `none`; else empty |
 | `{{unit}}`, `{{unit_summary}}`, `{{owned_files}}` | from `breakdown.md` |
-| `{{worktree}}`, `{{branch}}`, `{{base}}` | from `pm-worktree new` output; `{{base}}` is `main` or the parent unit's branch when stacked |
+| `{{worktree}}`, `{{branch}}`, `{{base}}` | from `pm-worktree new` output; `{{base}}` is the unit's registered base: the issue branch `feat/<id>` for a unit cut from it, the parent unit's branch when stacked, else `main` |
 | `{{conventions}}` | `t` unit: `tests/integration/AGENTS.md`. `e` unit: `engine/AGENTS.md, engine/references/security-review.md, relay-fidelity.md`. `s` unit: `studio/AGENTS.md`. `h` unit: `AGENTS.md` |
 | `{{inputs}}` | `t` unit: `requirement.md, test-criteria.md` and, for studio `console`, `specs/`. `e` unit: `requirement.md, decisions.md, design.md, test-criteria.md`. `s` unit: `requirement.md, decisions.md, test-criteria.md` and `specs/` or `mocks/` by grade |
 | `{{work}}` | `t` unit: the template's `tests` block. Any other unit: the `implementation` block |

@@ -22,6 +22,7 @@ mod pair;
 mod recorder;
 pub mod secrets;
 pub mod studio;
+pub mod volume;
 mod wait;
 
 pub use aws::{Auth, CHECK_ACCESS_KEY_ID, Call, Endpoint, Key, Payload, percent_encode};

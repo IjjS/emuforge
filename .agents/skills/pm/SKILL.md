@@ -1,6 +1,6 @@
 ---
 name: pm
-description: Act as the EmuForge PM. Invoke at the start of every session in the main checkout. The PM turns a request or a READY GitHub issue into an issue file, orchestrates herdr panes (plan, worker, rev, crit), gates each phase, runs the checks, merges unit branches into local main, picks the next open issue and reports to the owner. Examples - "run issue 12", "continue #12", "EVENT go github#7", "add a bucket list screen to Studio", "run the full checks and file what fails".
+description: Act as the EmuForge PM. Invoke at the start of every session in the main checkout. The PM turns a request or a READY GitHub issue into an issue file, orchestrates herdr panes (plan, worker, rev, crit), gates each phase, runs the checks, merges unit branches into their issue branch and each issue into local main, picks the next open issue and reports to the owner. Examples - "run issue 12", "continue #12", "EVENT go github#7", "add a bucket list screen to Studio", "run the full checks and file what fails".
 ---
 
 # PM
@@ -111,16 +111,21 @@ Check the breakdown against these rules; they are yours to enforce:
 
 | Unit | Side | Does |
 |---|---|---|
-| `t<n>` | tests | Writes the integration checks of `test-criteria.md` and commits the reference specs, before any implementation. Never merged by itself |
+| `t<n>` | tests | Writes the integration checks of `test-criteria.md` and commits the reference specs, before any implementation. On an issue branch, merged into it on its checks review; without one, never merged by itself while its checks are red |
 | `e<n>` | engine | Implements engine, CLI, IAM or Verify code with its unit tests |
 | `s<n>` | studio | Implements Studio code with its unit tests |
 | `h<n>` | harness | Changes guides, references or `.pm/bin` scripts |
 
 - The worker that writes the checks is never the worker that implements against them.
-- Implementation units are **stacked** on the `t` unit that holds their checks
-  (`pm-worktree new <id> e1 --base feat/<id>-t1`), so the checks arrive on `main` with the code that passes them.
-- Every branch is fully green when it merges. A unit that would leave a check red on `main` is stacked under the
-  unit that turns it green instead.
+- An issue with more than one unit collects its units on its issue branch `feat/<id>` (flow step 3).
+  Implementation units are cut from the issue branch once the `t` unit that holds their checks is merged into it,
+  or **stacked** on that unit (`pm-worktree new <id> e1 --base feat/<id>-t1`).
+- The issue branch is fully green when it merges into `main`: its whole check passes (flow step 5). Until then it
+  may hold red checks. A `t` unit may be merged into the issue branch on its checks review (`review-checks-<unit>`
+  pass), red or not; the units that turn its checks green follow it there.
+- An issue without an issue branch (one unit, or begun before issue branches existed) keeps the earlier rule:
+  every branch is fully green when it merges into `main`, so a unit that would leave a check red there is stacked
+  under the unit that turns it green instead.
 - No unit takes more than a day. Units with overlapping files are sequential.
 
 Then `pm-pane close i<id>-plan` and update `state.md`. The plan pane is reopened with the same brief when a
@@ -128,36 +133,91 @@ later phase needs the plan changed.
 
 ### 3. Build (worker panes and rev)
 
-For each unit: `pm-worktree new <id> <unit> [--base <branch>]`, then
+An issue with more than one unit gets its issue branch first: `pm-worktree new <id>` makes `feat/<id>` from
+`main` and its worktree `emuforge-<id>` (the issue's worktree), before any unit. An issue of one unit gets none and
+is run as before.
+
+For each unit: `pm-worktree new <id> <unit> [--base <branch>]` (without `--base`, the base is the issue branch
+when the issue has one, else `main`), then
 `pm-brief worker <id> <unit> --summary "<the unit's line in breakdown.md>" [--close "<check ids>"]` (the unit
 that closes the issue gets `--close`), then
 `pm-pane new <id> worker --unit <unit> --cwd <worktree> --brief .pm/issue-<id>/brief-<unit>.md`. `pm-pane` refuses
 over the limits and answers `QUEUE`; start the rest when a pane closes. Worker panes are counted per side:
 studio 8, engine 8, tests 8, harness 8. A test unit's pane mostly waits for the next check fix, so leave it open
-until its issue is merged instead of closing and reopening it; close one early only when memory is short. A worker implements, runs `pm-check`,
-gets `REVIEWED … pass` from rev, and reports `UNIT READY <name> <branch>`. You react only to events.
+until its issue is merged instead of closing and reopening it; close one early only when memory is short. A worker implements, runs `pm-check` (for a unit of an
+issue branch that is its fast check, which leaves `integration` to the issue branch), gets `REVIEWED … pass` from
+rev, and reports `UNIT READY <name> <branch>`. You react only to events.
 
 ### 4. Critique (studio units, grade not `none`)
 
-After the last studio unit's `UNIT READY`: `pm-brief crit <id> --targets "<routes>" --capture-wt <worktree>`, then
+After the last studio unit's `UNIT READY`: `pm-brief crit <id> --targets "<routes>" --capture-wt <worktree>`, where
+`<worktree>` holds every Studio unit of the issue: the issue's worktree `emuforge-<id>` when the issue has an issue
+branch (once its studio units are merged into it, flow step 5, and before the whole check), else the worktree of
+the last studio unit, stacked on the others. Then
 `pm-pane new <id> crit --brief .pm/issue-<id>/brief-crit.md` (or prompt the one already open). It captures the built app, scores
 `final`, records with `pm-critique record`. `pm-critique check <id>` failing means one rework prompt to the
-owning worker, then one re-run; after that `studio/references/critique.md` `Below the pass line` applies.
+owning worker (on an issue branch its fix is merged into it again with `pm-merge <id> <unit>`), then one re-run; after that `studio/references/critique.md` `Below the pass line` applies.
 
 ### 5. Gate review 2 and merge (you)
 
-Per unit, in breakdown order: read `git diff main...<branch> --stat` and the rev header once against
-`requirement.md`, `decisions.md` and `test-criteria.md`; fix through the owning worker. Read the issue files the
-unit filed (`git diff main...<branch> --stat -- issues/`): they arrive with the merge. `pm-merge <id> <unit>`.
-A `t` unit whose checks are red by design is not merged; it arrives through the units stacked on it. A `t` unit
-that stands alone (its checks pass on `main` as it is) is merged like any other, on its `review-checks-<unit>`
-pass; no separate implementation review is asked of rev. After a merge tell every pane whose
-base moved: `herdr agent prompt <pane> "main is at <sha>; merge it into your branch"`. The unit that closes the
+Per unit, in breakdown order: read `git diff <target>...<branch> --stat` (the target is the issue branch
+`feat/<id>`, or `main` for an issue without one) and the rev header once against `requirement.md`, `decisions.md`
+and `test-criteria.md`; fix through the owning worker. Read the issue files the unit filed
+(`git diff <target>...<branch> --stat -- issues/`): they reach `main` with the issue. The unit that closes the
 issue runs `pm-issue close` in its worktree, so the issue file moves in the fixing commit.
 
-A unit is merged on its own passing record: `pm-merge` takes a branch only when its last `pm-check` record is a
-pass on the commit being merged and covers what the branch changes against `main` as it is. Nothing else is run
-at a merge; `main` is checked on GitHub Actions after its push (flow step 6).
+An issue with an issue branch:
+
+- `pm-merge <id> <unit>` merges the unit's branch into the issue branch `feat/<id>`, in the issue's worktree, on
+  the unit's review pass and its fast check. A unit may be merged into the issue branch any number of times.
+- The fast check is the unit's own `pm-check`: it runs what the unit's own paths against the issue branch call
+  for and leaves `integration` to the issue branch (its step is recorded `deferred`).
+- A `t` unit is merged into the issue branch on its `review-checks-<unit>` pass, red or not; no separate
+  implementation review is asked of rev.
+- Single checks, `pm-check <worktree> --checks <id>…`, are how a `t` unit shows that its checks fail now and how
+  an implementing unit tries the checks it turns green. Their record is `output/checks/checks.json`; it is never a
+  gate, and `pm-merge` does not take it.
+- After a unit's merge, tell each pane whose branch was cut from the issue branch:
+  `herdr agent prompt <pane> "feat/<id> is at <sha>; merge it into your branch"`.
+- When the last unit is in: `pm-merge <id> --take-main` brings local `main` into the issue branch; it says
+  `feat/<id> already holds main` and changes nothing when there is nothing to take, and with `--dry-run` it says
+  which. On a conflict it names the paths:
+  send them to the unit that owns them, which merges `main` into its own branch, checks, and is merged again.
+- Then the whole check, in the issue's worktree: `pm-check <the issue's worktree>` (`emuforge-<id>`) runs every
+  step the issue branch's paths against `main` call for, `integration` included.
+- A failed whole check names the failed checks. Find the unit that owns those checks in `breakdown.md` and send
+  it their ids; it fixes them on its own branch, merges the issue branch into its own when `pm-merge` asks,
+  passes its fast check, and is merged into the issue branch again with `pm-merge <id> <unit>`. The issue branch has then moved, so the whole check runs again.
+- When the whole check passes on the issue branch's head: `pm-merge <id>`. When it refuses because `main` moved
+  since, in a way the issue branch's paths care about, `pm-merge <id> --take-main` and the whole check again.
+
+An issue without an issue branch (one unit, or begun before issue branches existed) is merged as before:
+
+- `pm-merge <id> <unit>` merges the unit's branch into local `main`. A `t` unit whose checks are red by design is
+  not merged; it arrives through the units stacked on it. A `t` unit that stands alone (its checks pass on `main`
+  as it is) is merged like any other, on its `review-checks-<unit>` pass.
+- After a merge tell every pane whose base moved:
+  `herdr agent prompt <pane> "main is at <sha>; merge it into your branch"`.
+
+Every merge is made on the merged branch's own passing record: `pm-merge` takes a unit's branch into the issue
+branch only when its last `pm-check` record is a pass on the commit being merged and covers what its own paths
+against the issue branch call for; it takes the issue branch, or a unit of an issue without one, into `main` only
+when the record is a pass on that commit and covers what the branch changes against `main` as it is, `integration`
+included, so a `deferred` step never reaches `main`. Nothing else is run at a merge; `main` is checked on GitHub
+Actions after its push (flow step 6).
+
+**Harness test files.** The harness step leaves out a slow test file that no changed path touches: each on-touch
+file has an entry in the map of `.pm/bin/_pmscope.py` with its sources (the scripts, helpers, fixtures and other
+files its cases run or read), and runs only when a changed path matches one of them; every other test file runs
+on every harness change. `pm-scope` and `pm-check` name the left-out files (`harness tests left out: …`), the
+record's `harness-test` step holds them as `left_out`, and `pm-merge` refuses a record that left out a file the
+branch's paths call for. A change of `_pmscope.py` or the runner runs every file. `pm-check --full` runs every
+harness test file, as does `pm-check --only harness` (a partial run) or `.pm/bin/tests/run` by hand. A new slow
+test file gets its entry in `_pmscope.py`; adding a source needs no decision, but a new entry or a source taken
+away changes what a run checks and is made only on the `pm`'s decision, recorded in the issue's `decisions.md`.
+What a left-out file leaves unseen until a run calls for it: a case that depends on a file the map does not name
+as its source, and a break from outside the repository (a new emulator image, a new Chromium, the machine). Name
+this in the report of an issue whose units left files out, and run `pm-check --full` when in doubt.
 
 **Intermittent failures.** `pm-check` runs a failed test step once more; when the second run passes, the step is
 `flaky`, the run passes and the unit is not held up. Every flake is a line in `.pm/run/flakes.jsonl` (step,
@@ -171,14 +231,17 @@ it passes without recording why the earlier run failed.
 
 ### 6. Report and archive
 
-Touchpoint ②, in this order: what merged (branches, `main` sha), the record each unit merged on with its path,
+Touchpoint ②, in this order: what merged (the issue branch and its units' branches, or the branch of an issue
+without one, and the `main` sha), the record `main` took them on with its path (the whole check's record,
+`output/checks/last.json` of the issue's worktree, or for an issue without an issue branch the records of its
+units),
 the score tables (`pm-critique table <id>`, and `pm-structure --table <id>` for `console` screens), where each owner decision landed, review rounds per unit, what was not done,
 and what is waiting for the owner's word (a reply on the GitHub issue, closing it). Then
 `pm-archive <id> --yes` per `references/archive.md`.
 
 Then push: the issue is finished, so with `git status` on `main` clean, `git push origin main`. One push per
-finished issue, whatever else is still in flight (other issues' merged units go along; that is fine, each was
-merged on a passing check). Never force and never push an issue branch. A rejected push (the remote moved) is not
+finished issue, whatever else is still in flight (other issues' merged work goes along; that is fine, everything on
+`main` was merged on its own passing record). Never force and never push an issue branch. A rejected push (the remote moved) is not
 yours to resolve: leave `main` as it is and tell the owner.
 
 Then read the run the push started. The workflow `main` (`.github/workflows/main.yml`) checks every push of `main`
@@ -232,13 +295,14 @@ flow step 1:
   - The oldest issue of the batch is its host. Its `.pm/issue-<host>/` holds the batch's stage documents, and
     `decisions.md` names the other issue files. One `plan` pane plans all five in one requirement, one set of
     test criteria and one breakdown, and one `rev` pane reviews each stage once for the whole batch.
-  - Units belong to the host (`pm-worktree new <host> <unit>`) and are cut as for one issue: a unit may fix
+  - The batch is one issue branch of its host: `pm-worktree new <host>` makes it, and the units belong to the host
+    (`pm-worktree new <host> <unit>`) and are cut as for one issue: a unit may fix
     several of the five and names the ones it fixes; `rev` reviews a unit once. The unit that fixes an issue runs
     `pm-issue close` for that issue, so each issue file moves in the commit that fixes it.
   - Studio screens of the batch are scored together: one `crit` pane, one mock round and one `final` for all the
     screens the batch changes.
-  - The batch is finished as one: when its last unit is merged, report the five together, archive the host and
-    push once.
+  - The batch is finished as one: when its last unit is merged into the host's issue branch, run the whole check
+    there and `pm-merge <host>`, report the five together, archive the host and push once.
   A `LOW` issue is not started outside a batch, and the next batch starts only when the one before it is pushed.
   An issue of any other severity, or one the owner asks for, is taken ahead of the next batch and is finished by
   itself as flow step 6 says.
@@ -272,6 +336,7 @@ flow step 1:
 | `EVENT cpu <pct>% top=…` | the CPU has been over 90% for a minute and a half: open no new pane and start no check yourself until `EVENT cpu ok`; running panes carry on (`pm-check` queues itself) |
 | `EVENT cpu ok …` | prompt every pane that reported `BLOCKED cpu` to retry; resume queued `pm-pane new` calls |
 | `EVENT stale <pane>` | `herdr agent read`; if looping, `pm-pane reset <pane>` |
+| `EVENT check still <worktree> <step> <n>m` | read the end of `<worktree>/output/logs/check-<step>.log` (for `integration` also `output/logs/integration-*.log`); a step that still writes is left alone; a hung one: `pm-check <worktree> --stop`, tell its pane in one line, and file what held it |
 | `EVENT gone <pane>` | reopen with the same brief; the worktree and its `output/state.md` are still there |
 
 Only `STAGE READY`, `UNIT READY`, `DONE` and `BLOCKED` lines wake you. `REVIEWED` lines and turns without a
@@ -296,16 +361,16 @@ reporting line are logged in `.pm/run/events.log` and never delivered. Talk to a
 | `pm-watchd` | the event daemon |
 | `pm-ready` | the owner's READY comments: `poll`, `list`, `take`, `schedule` |
 | `pm-issue` | issue files: `new`, `list`, `show`, `close`, `commit` (commits the new issue files as `issue: file #<id> …`) |
-| `pm-worktree` | worktrees and their ports |
+| `pm-worktree` | worktrees and their ports: `new <id>` an issue's issue branch `feat/<id>` and its worktree, `new <id> <unit>` a unit (based on the issue branch when the issue has one), `rm`, `list` |
 | `pm-emulator-dir` | a port folder under `~/.aws/emulator` once nothing uses it: `rm --worktree` (run by `pm-merge` and `pm-worktree rm`), `rm --port`, `orphans [--remove]` on the owner's request |
 | `pm-brief` | a pane's brief from its template: `plan` (also writes rev's), `worker`, `crit`, `show` |
 | `pm-pane` | panes: `new`, `reset`, `close`, `list` |
 | `pm-report` | a pane's reporting line to you |
-| `pm-check` | the checks of a checkout, recorded; retries a failed test step once (`flaky`), at most two heavy runs at a time, `--stop` ends one worktree's run |
+| `pm-check` | the checks of a checkout, recorded; on a unit of an issue branch the fast check (`integration` left to the issue branch), on the issue's worktree the whole check; `--checks <id>…` single integration checks, never a gate; retries a failed test step once (`flaky`), at most two heavy runs at a time, `--stop` ends one worktree's run; the harness step leaves out the on-touch test files no changed path touches (`left_out`), `--full` runs every file |
 | `pm-capture` | screen captures and contact sheets |
 | `pm-critique` | impeccable scores: `record`, `table`, `check` |
 | `pm-structure` | the structure score of a `console` screen against its reference spec: `--serve`, `--url` or `--snapshot`, `--record`, `--table` |
-| `pm-merge` | a unit's branch into local `main` |
+| `pm-merge` | `<id> <unit>` a unit's branch into its target (the issue branch, or local `main` for an issue without one); `<id> --take-main` local `main` into the issue branch; `<id>` the issue branch into local `main` |
 | `pm-archive`, `pm-cost` | clean-up and cost |
 | `pm-tokens` | Claude token use against today's target: status, `target <rate>`, `check` |
 | `pm-mem`, `pm-quota` | memory and CPU against the limits (`--check`, `--wait`), Codex quota |

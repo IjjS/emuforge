@@ -6,6 +6,12 @@
 // shows a service of the form that is not running, and `docker compose logs` holds an error line with the port's
 // number.
 //
+// On Docker Engine on Linux (issue 54, requirement 3.4) the form has no gateway and publishes nothing, so Docker refuses
+// no port: "does not come up" there is `docker compose ps -a` showing a service that is not running and
+// `docker compose logs` holding an error line with the port's number, the start command's exit code is not asserted
+// for a collision, and health is asserted only where the case names it. 18296 and 18297 are ordinary ports there.
+// The Docker Desktop cases are those of issue 34, unchanged.
+//
 // `engine.product-does-not-come-up-on-a-port-collision`, `engine.product-start-fails-when-the-image-does-not-build`.
 
 import fs from 'node:fs';
@@ -13,20 +19,24 @@ import net from 'node:net';
 import path from 'node:path';
 
 import { emulatorDir, expect, freePortExcept, test, waitFor, type Ctx } from './support';
-import { composeArgs, docker, runAt } from './support/product-inspect';
+import { docker, runAt } from './support/product-inspect';
 import {
   COMMANDS,
   Form,
   health,
+  LINUX_FILE,
+  platform,
   productTimeout,
   shownHealth,
   START_BOUND_MS,
   STOP_BOUND_MS,
   tail,
   UP_BOUND_MS,
+  waitHealth,
   type CommandResult,
   type FormOptions,
   type HealthResult,
+  type Platform,
 } from './support/product';
 
 /** The port as a whole number in a text (not part of a longer number). */
@@ -74,10 +84,19 @@ interface Case {
   situation: 3 | 4;
   /** The form's ports, from free ports the case takes. */
   options(take: () => Promise<number>): Promise<{ options: FormOptions; port: number }>;
-  /** `down`: the form does not come up; `refused`: the start command exits non-zero and names the port. */
-  expect: 'down' | 'refused';
+  /**
+   * `down`: the form does not come up; `refused`: the start command exits non-zero and names the port; `ordinary`
+   * (Docker Engine on Linux): it exits 0, health answers `503` `not_started`, every container runs.
+   */
+  expect: 'down' | 'refused' | 'ordinary';
   /** A listener of the check holds the Studio port on `127.0.0.1` before the start. */
   holdStudioPort?: boolean;
+  /** A listener of the check holds the engine port on `127.0.0.1` before the start. */
+  holdEnginePort?: boolean;
+  /** Docker Engine on Linux, `down`: whether health is part of the case (not answered within the bound). */
+  health?: boolean;
+  /** Docker Engine on Linux, `down`: the one service that is not running, when the case names it. */
+  service?: string;
 }
 
 const CASES: Case[] = [
@@ -152,6 +171,85 @@ const CASES: Case[] = [
   },
 ];
 
+/**
+ * The cases on Docker Engine on Linux (issue 54 test criteria), each in place of the issue 34 case for the same
+ * ports; the last one has no Docker Desktop counterpart.
+ */
+const LINUX_CASES: Case[] = [
+  {
+    what: 'EMULATOR_PORT and EMUFORGE_ENGINE_PORT one free port',
+    situation: 3,
+    expect: 'down',
+    health: true,
+    async options(take) {
+      const port = await take();
+      return { options: { situation: 3, emulatorPort: port, enginePort: port }, port };
+    },
+  },
+  {
+    what: 'EMULATOR_PORT and EMUFORGE_STUDIO_PORT one free port',
+    situation: 3,
+    expect: 'down',
+    health: true,
+    async options(take) {
+      const port = await take();
+      return { options: { situation: 3, emulatorPort: port, studioPort: port }, port };
+    },
+  },
+  ...[18296, 18297].map((reserved): Case => ({
+    what: `EMULATOR_PORT ${String(reserved)}, nothing on it`,
+    situation: 3,
+    expect: 'ordinary',
+    async options() {
+      return { options: { situation: 3, emulatorPort: reserved }, port: reserved };
+    },
+  })),
+  {
+    what: 'situation 4, EMULATOR_PORT equal to EMUFORGE_ENGINE_PORT',
+    situation: 4,
+    expect: 'down',
+    health: true,
+    async options(take) {
+      const port = await take();
+      return { options: { situation: 4, emulatorPort: port, enginePort: port }, port };
+    },
+  },
+  {
+    what: 'EMUFORGE_STUDIO_PORT equal to EMUFORGE_ENGINE_PORT',
+    situation: 3,
+    expect: 'down',
+    health: true,
+    async options(take) {
+      const port = await take();
+      return { options: { situation: 3, enginePort: port, studioPort: port }, port };
+    },
+  },
+  {
+    what: 'a listener of the check on the Studio port',
+    situation: 3,
+    expect: 'down',
+    holdStudioPort: true,
+    service: 'studio',
+    async options(take) {
+      const port = await take();
+      return { options: { situation: 3, studioPort: port }, port };
+    },
+  },
+  {
+    what: 'a listener of the check on the engine port',
+    situation: 3,
+    expect: 'down',
+    holdEnginePort: true,
+    service: 'engine',
+    async options(take) {
+      const port = await take();
+      return { options: { situation: 3, enginePort: port }, port };
+    },
+  },
+];
+
+const CASES_OF: Record<Platform, Case[]> = { desktop: CASES, linux: LINUX_CASES };
+
 /** Health on the engine port answered at any time within the bound: the first answer, or `null`. */
 async function healthWithinBound(enginePort: number): Promise<HealthResult | null> {
   const first = await waitFor(UP_BOUND_MS, async () => {
@@ -166,7 +264,7 @@ async function composeServices(form: Form): Promise<{
   services: { service: string; state: string }[];
   result: CommandResult;
 }> {
-  const result = await form.run(composeArgs(form.situation, 'ps', '-a', '--format', 'json'), STOP_BOUND_MS);
+  const result = await form.run(form.compose('ps', '-a', '--format', 'json'), STOP_BOUND_MS);
   const text = result.stdout.trim();
   let rows: { Service?: string; State?: string }[] = [];
   try {
@@ -203,7 +301,7 @@ async function expectDoesNotComeUp(ctx: Ctx, form: Form, port: number, what: str
     `${what}: services of ${form.project} not running, by docker compose ps (${JSON.stringify(ps.services)}; output:\n${tail(ps.result)})`,
   ).not.toEqual([]);
 
-  const logs = await form.run(composeArgs(form.situation, 'logs', '--no-color'), STOP_BOUND_MS);
+  const logs = await form.run(form.compose('logs', '--no-color'), STOP_BOUND_MS);
   const lines = `${logs.stdout}\n${logs.stderr}`.split('\n');
   expect(
     lines.filter((line) => namesPort(line, port) && ERROR_WORDS.test(line)),
@@ -211,23 +309,79 @@ async function expectDoesNotComeUp(ctx: Ctx, form: Form, port: number, what: str
   ).not.toEqual([]);
 }
 
+/**
+ * Docker Engine on Linux: the form does not come up, with `port`'s number (the shared term of issue 54's test
+ * criteria). `up -d` returns before a process that cannot bind has exited, so `ps -a` and `logs` are read again
+ * until both show it, within the bound; then asserted. Health, when the case names it, is not answered within the
+ * bound; the one service not running, when the case names it, is that service.
+ */
+async function expectDoesNotComeUpOnLinux(ctx: Ctx, form: Form, port: number, what: string, c: Case) {
+  if (c.health) {
+    const answered = await healthWithinBound(form.enginePort);
+    expect(
+      answered ? shownHealth(answered) : null,
+      `${what}: an answer to GET /__emuforge/health within ${String(UP_BOUND_MS / 1000)}s`,
+    ).toBeNull();
+  }
+  let seen = { notRunning: [] as string[], errorLines: [] as string[], ps: '', logs: '' };
+  await waitFor(UP_BOUND_MS, async () => {
+    const ps = await composeServices(form);
+    const logs = await form.run(form.compose('logs', '--no-color'), STOP_BOUND_MS);
+    seen = {
+      notRunning: ps.services.filter((s) => s.state !== 'running').map((s) => s.service),
+      errorLines: `${logs.stdout}\n${logs.stderr}`
+        .split('\n')
+        .filter((line) => namesPort(line, port) && ERROR_WORDS.test(line)),
+      ps: `${JSON.stringify(ps.services)}; output:\n${tail(ps.result)}`,
+      logs: tail(logs),
+    };
+    return seen.notRunning.length > 0 && seen.errorLines.length > 0 ? true : undefined;
+  });
+  ctx.log(`${what}: not running ${JSON.stringify(seen.notRunning)}`);
+  const notRunning = `${what}: services of ${form.project} not running, by docker compose ps -a (${seen.ps})`;
+  if (c.service) expect(seen.notRunning, notRunning).toEqual([c.service]);
+  else expect(seen.notRunning, notRunning).not.toEqual([]);
+  expect(
+    seen.errorLines,
+    `${what}: error lines with ${String(port)} in docker compose logs (output:\n${seen.logs})`,
+  ).not.toEqual([]);
+}
+
 test('engine.product-does-not-come-up-on-a-port-collision', async ({ ctx }) => {
-  const waits = CASES.filter((c) => c.expect === 'down').length;
-  // Each case: one start, its stop and the cleanup's stop; each "down" case also waits out the health bound.
-  test.setTimeout(productTimeout(CASES.length, 2 * CASES.length) + waits * UP_BOUND_MS);
+  const on = await platform();
+  const cases = CASES_OF[on];
+  const waits = cases.filter((c) => c.expect !== 'refused').length;
+  // Each case: one start, its stop and the cleanup's stop; each "down" case also waits out the health bound (on
+  // Docker Engine on Linux, a "down" case may wait out a second bound for ps and logs).
+  test.setTimeout(productTimeout(cases.length, 2 * cases.length) + 2 * waits * UP_BOUND_MS);
   const taken: number[] = [];
 
-  for (const c of CASES) {
+  for (const c of cases) {
     const what = `situation ${String(c.situation)}, ${c.what}`;
     const { options, port } = await c.options(() => ownFreePort(ctx, taken));
     const form = await Form.create(ctx, options);
     taken.push(form.emulatorPort, form.enginePort, form.studioPort);
     if (c.holdStudioPort) await holdPort(ctx, form.studioPort);
+    if (c.holdEnginePort) await holdPort(ctx, form.enginePort);
     ctx.log(`case: ${what}, port ${String(port)}`);
 
     const started = await form.start();
-    if (c.expect === 'down') {
+    if (c.expect === 'down' && on === 'linux') {
+      await expectDoesNotComeUpOnLinux(ctx, form, port, what, c);
+    } else if (c.expect === 'down') {
       await expectDoesNotComeUp(ctx, form, port, what);
+    } else if (c.expect === 'ordinary') {
+      expect(started.code, `${what}: ${started.line}: exit code; output:\n${tail(started)}`).toBe(0);
+      expect(await waitHealth(form.enginePort, 503), `${what}: GET /__emuforge/health`).toMatchObject({
+        status: 503,
+        body: { emulator: { reason: 'not_started' } },
+      });
+      const containers = await form.containers();
+      expect(containers.length, `${what}: containers of ${form.project}`).toBeGreaterThan(0);
+      expect(
+        containers.filter((container) => !container.running).map((container) => container.name),
+        `${what}: containers of ${form.project} not running`,
+      ).toEqual([]);
     } else {
       expect(started.code, `${what}: ${started.line}: exit code; output:\n${tail(started)}`).not.toBe(0);
       expect(
@@ -258,6 +412,8 @@ test('engine.product-start-fails-when-the-image-does-not-build', async ({ ctx })
   const from = (rel: string) => path.join(ctx.checkout, rel);
   if (fs.existsSync(from('docker-compose.yml')))
     fs.copyFileSync(from('docker-compose.yml'), path.join(dir, 'docker-compose.yml'));
+  // The Linux file too, when the checkout has one (issue 54): the start command below is the platform's.
+  if (fs.existsSync(from(LINUX_FILE))) fs.copyFileSync(from(LINUX_FILE), path.join(dir, LINUX_FILE));
   fs.cpSync(from('infra'), path.join(dir, 'infra'), { recursive: true });
   const built = new Set(['node_modules', 'dist', 'output', 'target', '.impeccable']);
   fs.cpSync(from('studio'), path.join(dir, 'studio'), {
@@ -273,9 +429,10 @@ test('engine.product-start-fails-when-the-image-does-not-build', async ({ ctx })
   const image = `${ctx.productImage}-no-build`;
   const form = await Form.create(ctx, { situation: 3 });
   const env = { ...form.env(), EMUFORGE_IMAGE: image };
+  const commands = COMMANDS[form.commands][3];
   ctx.own({
     async dispose() {
-      const stop = await runAt(ctx, dir, COMMANDS[3].stop, env, STOP_BOUND_MS).catch((e: Error) => e.message);
+      const stop = await runAt(ctx, dir, commands.stop, env, STOP_BOUND_MS).catch((e: Error) => e.message);
       ctx.log(`cleanup: ${typeof stop === 'string' ? stop : `${stop.line}: exit ${String(stop.code)}`}`);
       await docker(['image', 'rm', image]);
     },
@@ -283,7 +440,7 @@ test('engine.product-start-fails-when-the-image-does-not-build', async ({ ctx })
 
   // The situation 3 start command in that directory → exits non-zero, its output holds the failed build step's
   // output (which names the missing Cargo.toml).
-  const started = await runAt(ctx, dir, COMMANDS[3].start, env, START_BOUND_MS);
+  const started = await runAt(ctx, dir, commands.start, env, START_BOUND_MS);
   const output = `${started.stdout}\n${started.stderr}`;
   expect(started.code, `${started.line} in ${dir}: exit code; output:\n${tail(started)}`).not.toBe(0);
   expect(
