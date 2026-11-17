@@ -1,0 +1,6 @@
+/* A value of a function's page from the emulator (an ARN, a URL, a description, a reason) is one word as often as
+   not: it breaks inside its column rather than widening the page at 390 wide (issue 84, requirement R11). The area's
+   own element, not a Cloudscape component's; it sets no colour, spacing or font. */
+.aws-lambda-value {
+  overflow-wrap: anywhere;
+}

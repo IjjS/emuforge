@@ -1,0 +1,29 @@
+# Reference spec of a Lambda function's own page, opened from the Event Functions list by the function's name,
+# with its tab "Code" open.
+# Sources: no capture shows this page. The AWS user guide (AWS Lambda Developer Guide) gives the six tabs, the
+# sections "Function overview", "Code source" and "Runtime settings" and the fields "Function URL", "Handler" and
+# "Architecture"; the capture docs/aws-console/lambda/03-event-functions gives "Refresh" and the labels the list
+# shares with this page; "Function ARN" comes from the API's model (GetFunction) written the console's way. Each
+# item's source: function-detail.sources.md.
+# The order of the tabs is in no source (decisions-needed.md, question 8): provisional. So is the header's one
+# action (question 7).
+# The route names the seeded function `structure-function` (the seed of this issue's `t1` unit, requirement R12).
+# "Code source" is an item: the emulator holds a function's code. This issue leaves it unbuilt (one unmatched
+# item); the code issue builds it (requirement R13 item 1).
+# Nothing is omitted: the emulator (aws-emulator 1.0.481) holds everything these items show.
+screen: lambda.function-detail
+service: lambda
+kind: detail
+route: /aws/lambda/functions/function/structure-function
+
+breadcrumbs: [EmuForge, AWS, Lambda, Event Functions, structure-function]
+header:
+  title: structure-function
+  actions: [Refresh]
+tabs: [Code, Test, Monitor, Configuration, Aliases, Versions]
+sections:
+  - title: Function overview
+    fields: [Description, Last modified, Function ARN, Function URL]
+  - title: Code source
+  - title: Runtime settings
+    fields: [Runtime, Handler, Architecture]

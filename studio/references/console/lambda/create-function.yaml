@@ -1,0 +1,44 @@
+# Reference spec of "Create Event Function": the AWS console's form that "Create Event Function" on the Event
+# Functions page opens, with "Author from scratch" and, under "Permissions", "Use another role" chosen.
+# Sources: no capture shows the form. The AWS user guide (AWS Lambda Developer Guide) gives the title, the
+# sections "Basic information", "Permissions" and "Advanced settings", the fields "Function name", "Runtime" and
+# "Architecture", "Execution role" with its
+# choices and the button; the field "Existing role" and the action "Cancel" are not the guide's. Each item's source: create-function.sources.md.
+# The route opens the form with "Use another role" chosen (requirement R6.3), since the score operates nothing and
+# "Existing role" is shown only then.
+# The console's choice "Author from scratch", "Use a blueprint", "Container image" is not an item (a form's spec
+# has no item for a choice's options); Studio's form is "Author from scratch" (requirement R3).
+# "Advanced settings" is an item: the emulator stores tags and code signing configurations. This issue leaves it
+# unbuilt (one unmatched item); requirement R13 item 9 builds it.
+# Nothing is omitted: the emulator (aws-emulator 1.0.481) holds everything these items show.
+screen: lambda.create-function
+service: lambda
+kind: form
+route: /aws/lambda/functions/create?role=existing
+
+breadcrumbs: [EmuForge, AWS, Lambda, Event Functions, Create Event Function]
+header:
+  title: Create Event Function
+  actions: [Cancel, Create Event Function]
+  primary_action: Create Event Function
+sections:
+  - title: Basic information
+    fields:
+      - label: Function name
+        control: text
+        required: true
+      - label: Runtime
+        control: select
+        required: true
+      - label: Architecture
+        control: choice
+        required: true
+  - title: Permissions
+    fields:
+      - label: Execution role
+        control: choice
+        required: true
+      - label: Existing role
+        control: select
+        required: true
+  - title: Advanced settings
