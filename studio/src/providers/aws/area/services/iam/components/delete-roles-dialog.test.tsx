@@ -435,6 +435,15 @@ describe('the dialog', () => {
     expect(dialog).not.toHaveTextContent(EMULATOR_ENDPOINT);
   });
 
+  it('a 64-character name: its cell holds it in the element that breaks anywhere', async () => {
+    const long = 'r' + 'x'.repeat(63);
+    const { dialog } = await openDialog([{ name: long }]);
+
+    const row = within(dialog).getAllByRole('row')[1];
+    const value = row?.querySelector('th .aws-iam-value, td .aws-iam-value');
+    expect(value?.textContent).toBe(long);
+  });
+
   it.each(['', 'Delete', 'delete ', 'delet'])('the field holding "%s": "Delete" is disabled', async (word) => {
     const { dialog } = await openDialog([{ name: 'solo' }]);
 
