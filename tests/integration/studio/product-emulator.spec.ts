@@ -1,160 +1,151 @@
-// The emulator-state checks of the product form (issue 34, test-criteria.md): a situation 3 form whose emulator
-// is not there at the start, and one whose emulator is killed, stopped and started again with new keys, each
-// observed through the form's engine port and Studio's home without restarting anything of the form.
-//
-// On Docker Engine on Linux the form has no gateway (issue 54 R5): with the emulator killed health's reason is
-// `connection_refused` there, as in the developer's start; `connection_failed` stays the gateway form's.
+// The emulator-state checks of the one product form (issue 437, test-criteria.md): the form's own emulator stopped
+// and started again, and killed, restarted in place and replaced, each observed through the form's engine port and
+// Studio's home without restarting anything else of the form. Requests through the form are signed with a made-up
+// key; the engine signs them again with the emulator's key of the moment.
 //
 // `engine.product-connects-when-the-emulator-starts-later`, `engine.product-reconnects-after-the-emulator-restarts`.
 
 import type { Page } from '@playwright/test';
-import fs from 'node:fs';
 
-import { EnvError, expect, OwnEmulator, probe, test, type EmulatorFiles } from './support';
+import { expect, test } from './support';
 import { connectionView, markPage, stillSamePage } from './support/home';
+import { docker } from './support/product-inspect';
 import {
   CHANGE_BOUND_MS,
+  expectExit,
   Form,
-  health,
   identities,
-  platform,
+  madeUpKey,
   productTimeout,
   signedS3,
-  tail,
-  waitAnswer,
-  waitHealth,
+  STOP_BOUND_MS,
+  UP_BOUND_MS,
+  waitReachable,
   xmlElements,
-  type CommandResult,
+  type HttpAnswer,
 } from './support/product';
-
-function expectStarted(result: CommandResult) {
-  expect(result.code, `${result.line}: exit code; output:\n${tail(result)}`).toBe(0);
-}
+import { waitFor } from './support/wait';
 
 async function rows(page: Page) {
   const view = await connectionView(page);
   return { engine: view.engine?.status ?? null, emulator: view.emulator?.status ?? null };
 }
 
-/** The emulator's current files; `EnvError` when it has none (it was just seen to answer 200 ok). */
-function filesOf(emulator: OwnEmulator): EmulatorFiles {
-  const files = emulator.files();
-  if (!files) throw new EnvError(`emulator ${emulator.name} answers but its files are incomplete`);
-  return files;
+/** The Given of both checks: a started form whose health is reachable. */
+async function started(form: Form) {
+  expectExit(await form.start(), 'zero');
+  expect(await waitReachable(form.enginePort, true), 'the Given: GET /__emuforge/health').toMatchObject({
+    status: 200,
+    body: { emulator: { reachable: true } },
+  });
 }
 
-/** A signed `s3:ListBuckets` to the form's engine port, with `key`; its status, or the error. */
-async function listBuckets(form: Form, key: EmulatorFiles) {
-  const answer = await signedS3(form.enginePort, key, 'GET', '/');
-  return 'error' in answer ? answer.error : answer.status;
+/** The gateway's, the engine's and Studio's containers, by id and start time. */
+async function others(form: Form) {
+  return identities((await form.containers()).filter((c) => c.service !== 'aws-emulator'));
+}
+
+/** The emulator's access key id, read inside its container; `''` when it cannot be read. */
+async function emulatorKeyId(form: Form): Promise<string> {
+  const files = await form.emulatorFiles();
+  return 'error' in files ? '' : files.accessKeyId;
+}
+
+/** A signed s3:ListBuckets through the form with a made-up key: the answer, or the error. */
+function listBuckets(form: Form): Promise<HttpAnswer | { error: string }> {
+  return signedS3(form.enginePort, madeUpKey(), 'GET', '/');
+}
+
+/** Waits, at most the bound, until a ListBuckets through the form answers `status`; the last answer or error. */
+async function waitList(form: Form, status: number): Promise<number | string> {
+  let last: number | string = 'not sent';
+  await waitFor(UP_BOUND_MS, async () => {
+    const answer = await listBuckets(form);
+    last = 'error' in answer ? answer.error : answer.status;
+    return last === status ? true : undefined;
+  });
+  return last;
 }
 
 test('engine.product-connects-when-the-emulator-starts-later', async ({ ctx, page }) => {
   test.setTimeout(productTimeout(1, 2));
-  // P: a port whose emulator the check starts later. `OwnEmulator` chooses its port and keeps it across a stop and
-  // a start, so it is started, stopped cleanly (its files are deleted and nothing listens on P), and its port's
-  // directory is removed: the form starts with no emulator on P and no `~/.aws/emulator/<P>/` (R8).
-  const emulator = await OwnEmulator.start(ctx);
-  await emulator.stop();
-  fs.rmSync(emulator.dir, { recursive: true, force: true });
-  if ((await probe(emulator.port)) !== 'refused') {
-    throw new EnvError(`127.0.0.1:${emulator.port} does not refuse connections after the emulator stopped`);
-  }
-  const form = await Form.create(ctx, { situation: 3, emulatorPort: emulator.port });
-
-  // The start command → exits 0, and `GET /` on the Studio port answers 200 within the bound.
-  expectStarted(await form.start());
-  const afterStart = identities(await form.containers());
-  const studio = await waitAnswer(form.studioPort, '/');
-  expect('error' in studio ? studio.error : studio.status, `GET ${form.studioUrl}`).toBe(200);
-
-  // Health with no emulator on P → 503, not reachable, reason `not_started`.
-  expect(await waitHealth(form.enginePort, 503), 'GET /__emuforge/health').toMatchObject({
-    status: 503,
-    body: { emulator: { reachable: false, reason: 'not_started' } },
-  });
-
-  // Studio's home → "Connected" for the engine, and not "Connected" for the emulator.
+  const form = await Form.create(ctx);
+  await started(form);
   await page.goto(form.studioUrl);
+  await expect
+    .poll(async () => (await rows(page)).emulator, { timeout: CHANGE_BOUND_MS, message: 'the Given: the Emulator row' })
+    .toBe('Connected');
+  const before = await others(form);
+
+  // `docker compose stop aws-emulator` → health `reachable: false`, and Studio shows the emulator not connected,
+  // the engine connected.
+  expectExit(await form.run(form.compose('stop', 'aws-emulator'), STOP_BOUND_MS), 'zero');
+  expect(await waitReachable(form.enginePort, false), 'GET /__emuforge/health with the emulator stopped').toMatchObject(
+    {
+      body: { emulator: { reachable: false } },
+    },
+  );
   await expect
     .poll(
       async () => {
         const shown = await rows(page);
-        return { engine: shown.engine, emulatorSettled: shown.emulator !== null && shown.emulator !== 'Checking' };
+        return { engine: shown.engine, emulatorConnected: shown.emulator === 'Connected' };
       },
-      { timeout: CHANGE_BOUND_MS, message: 'the Engine row "Connected" and the Emulator row settled' },
+      { timeout: CHANGE_BOUND_MS, message: 'the Engine row "Connected", the Emulator row not' },
     )
-    .toEqual({ engine: 'Connected', emulatorSettled: true });
-  expect((await rows(page)).emulator, 'the Emulator row with no emulator').not.toBe('Connected');
+    .toEqual({ engine: 'Connected', emulatorConnected: false });
   await markPage(page);
 
-  // An emulator then started on P → health 200 within the bound, and nothing was restarted.
-  await emulator.startAgain();
-  const up = await waitHealth(form.enginePort, 200);
-  expect(up, 'GET /__emuforge/health after the emulator started').toMatchObject({ status: 200 });
-  expect(identities(await form.containers()), `the containers of ${form.project}`).toEqual(afterStart);
-
-  // The same page, left open → "Connected" for the emulator within the bound.
+  // `docker compose start aws-emulator` → within the bound health `reachable: true`, and Studio shows the emulator
+  // connected without a reload by the check.
+  expectExit(await form.run(form.compose('start', 'aws-emulator'), STOP_BOUND_MS), 'zero');
+  expect(await waitReachable(form.enginePort, true), 'GET /__emuforge/health after the start').toMatchObject({
+    status: 200,
+    body: { emulator: { reachable: true } },
+  });
   await expect
     .poll(async () => (await rows(page)).emulator, { timeout: CHANGE_BOUND_MS, message: 'the Emulator row' })
     .toBe('Connected');
   expect(await stillSamePage(page), 'the page was not reloaded').toBe(true);
+
+  // The gateway's, the engine's and Studio's containers → the same ids and start times.
+  expect(await others(form), `the other containers of ${form.project}`).toEqual(before);
 });
 
 test('engine.product-reconnects-after-the-emulator-restarts', async ({ ctx }) => {
-  test.setTimeout(productTimeout(1, 2));
-  const emulator = await OwnEmulator.start(ctx);
-  const P = emulator.port;
-  const form = await Form.create(ctx, { situation: 3, emulatorPort: P });
-  expectStarted(await form.start());
-  const afterStart = identities(await form.containers());
-  expect(await waitHealth(form.enginePort, 200), 'the Given: health 200').toMatchObject({ status: 200 });
+  test.setTimeout(productTimeout(2, 2));
+  const form = await Form.create(ctx);
+  await started(form);
+  const engineBefore = identities([await form.container('engine')]);
+  const keyBefore = await emulatorKeyId(form);
+  expect(keyBefore, "the Given: the emulator's access key id read inside its container").not.toBe('');
 
-  // A signed s3:ListBuckets with the emulator up → 200.
-  expect(await listBuckets(form, filesOf(emulator)), 's3:ListBuckets with the emulator up').toBe(200);
-
-  // The emulator killed, its files left → health 503, not reachable, reason `connection_failed` (design D7); on
-  // Docker Engine on Linux `connection_refused` (issue 54 R5).
-  const killedKey = filesOf(emulator);
-  await emulator.kill();
-  const killedReason = (await platform()) === 'linux' ? 'connection_refused' : 'connection_failed';
-  expect(await health(form.enginePort), 'GET /__emuforge/health with the emulator killed').toMatchObject({
-    status: 503,
-    body: { emulator: { reachable: false, reason: killedReason } },
-  });
-
-  // A signed s3:ListBuckets with the emulator killed → 503, `EmulatorUnavailable` in S3's error shape, the engine's
-  // message naming the emulator's endpoint.
-  const refused = await signedS3(form.enginePort, killedKey, 'GET', '/');
+  // The emulator's container killed → a ListBuckets through the form is 503 with code `EmulatorUnavailable`.
+  const emulator = await form.container('aws-emulator');
+  const killed = await docker(['kill', emulator.id]);
+  expect(killed.ok ? '' : killed.stderr, `docker kill ${emulator.name}`).toBe('');
+  expect(await waitList(form, 503), 's3:ListBuckets through the form with the emulator killed').toBe(503);
+  const refused = await listBuckets(form);
   expect('error' in refused ? refused.error : refused.status, 's3:ListBuckets with the emulator killed').toBe(503);
   if (!('error' in refused)) {
-    const text = refused.body.toString('utf8');
-    expect(String(refused.headers['content-type'] ?? ''), 'Content-Type').toMatch(/^application\/xml/);
-    expect(text, 'an S3 <Error> body').toContain('<Error>');
-    expect(xmlElements(refused.body, 'Code'), `Code in ${text}`).toEqual(['EmulatorUnavailable']);
-    expect(xmlElements(refused.body, 'Message').join(' '), 'Message').toContain(`https://127.0.0.1:${P}`);
+    expect(xmlElements(refused.body, 'Code'), `Code in ${refused.body.toString('utf8')}`).toEqual([
+      'EmulatorUnavailable',
+    ]);
   }
 
-  // The emulator stopped cleanly → health 503, reason `not_started`.
-  await emulator.startAgain();
-  const beforeRestart = filesOf(emulator);
-  await emulator.stop();
-  expect(await health(form.enginePort), 'GET /__emuforge/health with the emulator stopped').toMatchObject({
-    status: 503,
-    body: { emulator: { reason: 'not_started' } },
-  });
+  // Started again in place → 200 within the bound, and the emulator's access key id differs from the one before
+  // the kill.
+  expectExit(await form.run(form.compose('start', 'aws-emulator'), STOP_BOUND_MS), 'zero');
+  expect(await waitList(form, 200), 's3:ListBuckets through the form after the restart in place').toBe(200);
+  const keyAfter = await emulatorKeyId(form);
+  expect(keyAfter, "the emulator's access key id after the restart").not.toBe('');
+  expect(keyAfter === keyBefore, "the emulator's access key id is the one before the kill").toBe(false);
 
-  // Started again with a new ca.pem → health 200 within the bound, and nothing was restarted.
-  await emulator.startAgain();
-  const after = filesOf(emulator);
-  if (after.caLines.join('') === beforeRestart.caLines.join('')) {
-    throw new EnvError(`emulator ${emulator.name} did not write a new ca.pem when it started again`);
-  }
-  expect(await waitHealth(form.enginePort, 200), 'GET /__emuforge/health after the restart').toMatchObject({
-    status: 200,
-  });
-  expect(identities(await form.containers()), `the containers of ${form.project}`).toEqual(afterStart);
+  // Removed and created again → 200 within the bound.
+  expectExit(await form.run(form.compose('rm', '-sf', 'aws-emulator'), STOP_BOUND_MS), 'zero');
+  expectExit(await form.run(form.compose('up', '-d', '--no-build', 'aws-emulator'), STOP_BOUND_MS * 2), 'zero');
+  expect(await waitList(form, 200), 's3:ListBuckets through the form after the emulator was replaced').toBe(200);
 
-  // A signed s3:ListBuckets with the new key → 200.
-  expect(await listBuckets(form, after), 's3:ListBuckets with the new key').toBe(200);
+  // The engine's container → the same id and start time.
+  expect(identities([await form.container('engine')]), "the engine's container").toEqual(engineBefore);
 });
