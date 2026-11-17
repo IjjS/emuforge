@@ -1,0 +1,34 @@
+/* The area's one way of breaking a value from the emulator or the user (issue 467, requirement R6;
+   `studio/AGENTS.md`, "What every AWS screen does", entry 4), used by every service; a service keeps no breaking rule
+   of its own. A value is never broken inside while it fits the line it is on, and its text is the value character for
+   character: nothing is added to it but `<wbr>` elements, which hold no character. The area's own elements, not a
+   Cloudscape component's; they set no colour, spacing or font. */
+
+/* Every kind. `word-break` is reset because Cloudscape's inline copy control sets `break-all` on its container, and
+   the value inside it decides its own breaking; `hyphens` because a value is never hyphenated by a language's rules. */
+.aws-area-value {
+  word-break: normal;
+  hyphens: manual;
+}
+
+/* An address breaks only at the `<wbr>` after a `:` or a `/` (a URL's `?` and `&` too): each part between two of them
+   is one box that is never split while it fits a line, and only a part longer than its line breaks, anywhere. A name
+   is one such box. `anywhere` rather than `break-word` so that a part's box can be narrower than its longest word. */
+.aws-area-value-part,
+.aws-area-value-name {
+  display: inline-block;
+  max-inline-size: 100%;
+  overflow-wrap: anywhere;
+}
+
+/* A fixed word (a status, an enumerated value, a Region, a date, a number) never breaks inside a word; between its
+   words, at a space, it may. */
+.aws-area-value-whole {
+  white-space: nowrap;
+}
+
+/* Free text breaks at spaces; a word longer than its line breaks anywhere. `break-word` rather than `anywhere`, so a
+   table's column is never narrower than the text's longest word and short words are never split. */
+.aws-area-value-text {
+  overflow-wrap: break-word;
+}

@@ -1,5 +1,4 @@
 import Alert, { type AlertProps } from '@cloudscape-design/components/alert';
-import Box from '@cloudscape-design/components/box';
 import type { ButtonProps } from '@cloudscape-design/components/button';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import { useCallback, useEffect, useId, useRef, useSyncExternalStore, type RefObject } from 'react';
@@ -10,6 +9,9 @@ import type { PageResources } from './page-resources';
 /** The notice's region name and its close control's name (requirement R5.3). */
 const NOTICE_NAME = 'Local emulator notice';
 const CLOSE_NAME = 'Close the local emulator notice';
+
+/** The notice's body, one text in every state of the connection (issue 467, R3). */
+const BODY = 'They are not in an AWS account. EmuForge Studio is a stand-alone local tool, not an AWS feature.';
 
 /** "These {resources} are in your local emulator", with the page's word or "resources" (R5.1). */
 function heading(resources: PageResources): string {
@@ -44,18 +46,16 @@ const noticeOpen = {
 interface LocalNoticeProps {
   id: string;
   resources: PageResources;
-  connection: AreaConnection;
   alertRef: RefObject<AlertProps.Ref | null>;
   onDismiss: () => void;
 }
 
 /**
  * The local-emulator notice (R5.1 to R5.3): an informational Cloudscape `Alert` with its close control, in a region
- * named "Local emulator notice". Its body says only what the connection's state knows: the emulator's endpoint when
- * connected, as text, and no endpoint or port otherwise.
+ * named "Local emulator notice". It is the emulator line's own explanation, so its body is the same in every state
+ * of the connection and writes no endpoint: the endpoint is written once on a page, in the line (issue 467, R3).
  */
-function LocalNotice({ id, resources, connection, alertRef, onDismiss }: LocalNoticeProps) {
-  const { result } = connection;
+function LocalNotice({ id, resources, alertRef, onDismiss }: LocalNoticeProps) {
   return (
     <div id={id} role="region" aria-label={NOTICE_NAME}>
       <Alert
@@ -66,17 +66,7 @@ function LocalNotice({ id, resources, connection, alertRef, onDismiss }: LocalNo
         header={heading(resources)}
         onDismiss={onDismiss}
       >
-        {result?.kind === 'connected' ? (
-          <>
-            They are in the emulator at{' '}
-            <Box variant="code" display="inline">
-              {result.emulator.endpoint}
-            </Box>
-            , not in an AWS account. EmuForge Studio is a stand-alone local tool, not an AWS feature.
-          </>
-        ) : (
-          'They are not in an AWS account. EmuForge Studio is a stand-alone local tool, not an AWS feature.'
-        )}
+        {BODY}
       </Alert>
     </div>
   );
@@ -129,15 +119,7 @@ export function EmulatorLineAndNotice({ connection, resources }: LineAndNoticePr
   return (
     <SpaceBetween size="xs">
       <EmulatorLine connection={connection} about={{ open, noticeId, onToggle: handleToggle }} aboutRef={buttonRef} />
-      {open && (
-        <LocalNotice
-          id={noticeId}
-          resources={resources}
-          connection={connection}
-          alertRef={alertRef}
-          onDismiss={handleDismiss}
-        />
-      )}
+      {open && <LocalNotice id={noticeId} resources={resources} alertRef={alertRef} onDismiss={handleDismiss} />}
     </SpaceBetween>
   );
 }
