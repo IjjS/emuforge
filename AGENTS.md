@@ -38,7 +38,7 @@ Five roles, no more. A role is a separation of duty, not a head count.
 
 | Role | Does | Never does |
 |---|---|---|
-| `pm` | Manages the work: turns a request or GitHub issue into an issue file, opens and answers panes, gates each phase, merges unit branches into local `main`, reads the GitHub Actions run of each push of `main`, picks the next issue, talks to the owner | Edits product code, writes the plan |
+| `pm` | Manages the work: turns a request or GitHub issue into an issue file, opens and answers panes, gates each phase, collects an issue's units on its issue branch, checks the issue branch whole once and merges it into local `main` (an issue of one unit: its unit's branch), reads the GitHub Actions run of each push of `main`, picks the next issue, talks to the owner | Edits product code, writes the plan |
 | `plan` | Plans one issue: requirement, design or screen, test criteria, breakdown into units | Edits product code, talks to the owner |
 | `worker` | Implements one unit in its own worktree against the confirmed test criteria | Changes a confirmed check, touches files outside its unit, merges |
 | `rev` | Reviews every deliverable of an issue from files only: requirement, design, test criteria, checks, implementation | Edits anything, sees the author's reasoning |
@@ -71,12 +71,17 @@ token rate for the day; over it, no new pane is opened.
 
 ## Branches and main
 
-- Work happens on issue branches in worktrees, never on `main`.
-- There are no pull requests. When an issue's checks pass and `rev` has passed it, the `pm` merges its branch
-  into local `main`; with several worktrees open, the `pm` decides the order.
+- Work happens on branches in worktrees (an issue's issue branch and its units' branches), never on `main`.
+- There are no pull requests. An issue with more than one unit collects its units on its issue branch
+  `feat/<id>`: the `pm` merges a unit's branch into the issue branch when `rev` has passed the unit and its fast
+  check passes, which leaves the integration checks to the issue branch.
+- The issue branch is checked whole once, integration checks included, and then the `pm` merges it into local
+  `main`.
+- An issue of one unit has no issue branch: the `pm` merges its unit's branch into local `main` when its checks
+  pass and `rev` has passed it. With several worktrees open, the `pm` decides the order.
 - On `main` the `pm` commits only issue files it created and merges made by `.pm/bin/pm-merge`.
-- The `pm` pushes `main` to `origin` each time an issue is finished: all its units merged, each on its own
-  passing check. Only `main`, never forced, never an issue branch.
+- The `pm` pushes `main` to `origin` each time an issue is finished: merged into `main` on its own passing
+  check (its issue branch's whole check, or its unit's check). Only `main`, never forced, never an issue branch.
 - Every push of `main` is checked on GitHub Actions, on Ubuntu, by `.github/workflows/main.yml`; the `pm` reads
   the run of the pushed commit with `gh` and writes nothing to GitHub. A failed run becomes an issue file that
   waits for the owner's signal; other work goes on.

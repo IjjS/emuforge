@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: harness|issue-branch|integration-once-per-issue
-Issue-Check-Ids:
+Issue-Check-Ids: harness.issue-branch harness.check-issue harness.issue-branch-docs
 Issue-Commit: e3e2027757e708c29b88927fb2c504a3fa4b1eda
 
 # Collect an issue's units on one issue branch and run the integration checks once, before it merges into main
