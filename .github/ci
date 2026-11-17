@@ -1,9 +1,10 @@
 #!/usr/bin/env -S python3 -I
-"""The runner helper of .github/workflows/main.yml (issue 53). Python 3 standard library only; imports nothing of
+"""The runner helper of .github/workflows/main.yml and full.yml (issues 53, 327). Python 3 standard library only; imports nothing of
 .pm/bin. <checkout> is the parent of the folder this file is in.
 
   .github/ci not-run
   .github/ci versions
+  .github/ci services
   .github/ci run [--second <step>] [--tails] -- <command> [<argument>...]
 
 not-run   Reads .github/not-run.json, tests/integration/manifest.jsonl and the step names `.pm/bin/pm-check
@@ -17,6 +18,21 @@ not-run   Reads .github/not-run.json, tests/integration/manifest.jsonl and the s
 versions  Prints `rust=<v>` and `bun=<v>`, the tags of `FROM rust:<v>-...` and `FROM oven/bun:<v>-...` in
           infra/emuforge/Dockerfile. Exit 1, with nothing on standard output, when a line is missing or a
           version is not n.n.n; so only such a version reaches a `run:` line of the workflow.
+services  The selection of the push this run checks (issue 327, R5): which services' browser checks the
+          integration steps hold. Not a push (GITHUB_EVENT_NAME is not `push`; the name itself is never printed):
+          every service. Else `before` is the key `before` of the JSON file GITHUB_EVENT_PATH names and `after` is
+          GITHUB_SHA, each used only when it is 40 hexadecimal digits (otherwise every service), and the answer is
+          `.pm/bin/pm-scope <checkout> --push <before> <after> --json` (an argument array, 120 s, the environment
+          of `run`): the paths of every commit of the push, decided by _pmscope.select. pm-scope failing, timing
+          out or answering out of shape: every service. A service name of its answer is used only when it is of
+          the form [a-z][a-z0-9]*(-[a-z0-9]+)*. Writes <checkout>/output/ci/services.json as {"services": null |
+          [names], "why": <why>}, the file the integration steps pass to `run --services`; prints the services
+          line `  services     every service: <why>` or `  services     <names, or "none"> (<why>)`, then
+          `not run  service <s>  <n> checks` for each service a manifest row names that is not selected, and
+          appends the same as a table "Services" to the run summary. Everything is printed between
+          ::stop-commands::<token> and ::<token>::. Exit 0 for every selection; 1, with one line naming the
+          file, when the file cannot be written (then `run` finds no file and makes every check `error`: a
+          failure that shows, never a narrower run).
 run       Starts <command> as given (an argument array, no shell) without the names of pm-check's SCRUB in its
           environment (read from the tuple literal in .pm/bin/pm-check), with its standard output and error
           joined, and passes every line on with keys replaced: a run of exactly 40 of [A-Za-z0-9/+] becomes
@@ -50,6 +66,8 @@ CHECKOUT = pathlib.Path(__file__).resolve().parent.parent
 NOT_RUN = CHECKOUT / ".github" / "not-run.json"
 MANIFEST = CHECKOUT / "tests" / "integration" / "manifest.jsonl"
 PM_CHECK = CHECKOUT / ".pm" / "bin" / "pm-check"
+PM_SCOPE = CHECKOUT / ".pm" / "bin" / "pm-scope"
+SERVICES = CHECKOUT / "output" / "ci" / "services.json"
 DOCKERFILE = CHECKOUT / "infra" / "emuforge" / "Dockerfile"
 REPORT = CHECKOUT / "output" / "integration" / "report.json"
 
@@ -62,7 +80,11 @@ TAIL = 200  # lines of a failed or errored check's log printed by --tails
 KEY40 = re.compile(r"(?<![A-Za-z0-9/+])[A-Za-z0-9/+]{40}(?![A-Za-z0-9/+])")
 KEY20 = re.compile(r"(?<![A-Z0-9])[A-Z0-9]{20}(?![A-Z0-9])")
 VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
-USAGE = "usage: .github/ci not-run | versions | run [--second <step>] [--tails] -- <command> [<argument>...]"
+# The form of a service name; the same literal as _pmscope.SERVICE and the Python of tests/integration/run.
+SERVICE = re.compile(r"[a-z][a-z0-9]*(-[a-z0-9]+)*")  # matched with fullmatch
+COMMIT = re.compile(r"[0-9a-f]{40}")  # matched with fullmatch
+SCOPE_TIMEOUT = 120  # seconds pm-scope has to answer
+USAGE = "usage: .github/ci not-run | versions | services | run [--second <step>] [--tails] -- <command> [<argument>...]"
 
 
 def usage(why):
@@ -229,6 +251,108 @@ def cmd_versions():
     return 0
 
 
+# ---------------------------------------------------------------------------------------------- services
+
+def every(why):
+    return {"all": True, "names": [], "why": why}
+
+
+def line_of(sv):
+    """The services line, the shape of _pmscope.services_line."""
+    if sv["all"]:
+        return f"  {'services':12} every service: {sv['why']}"
+    return f"  {'services':12} {', '.join(sv['names']) or 'none'} ({sv['why']})"
+
+
+def push_commits():
+    """(before, after) of the push, or None when the run was not started by a push or its commits cannot be read;
+    with the reason."""
+    if os.environ.get("GITHUB_EVENT_NAME") != "push":
+        return None, "not started by a push"
+    try:
+        with open(os.environ["GITHUB_EVENT_PATH"], "rb") as f:
+            before = json.loads(f.read().decode("utf-8")).get("before")
+    except (KeyError, OSError, ValueError, UnicodeDecodeError, AttributeError):
+        return None, "the push's commits cannot be read"
+    after = os.environ.get("GITHUB_SHA")
+    if not all(isinstance(v, str) and COMMIT.fullmatch(v) for v in (before, after)):
+        return None, "the push's commits cannot be read"
+    return (before, after), None
+
+
+def ask_scope(before, after):
+    """The services object pm-scope gives for the push, or every service with the reason it cannot be had."""
+    failed = every("pm-scope did not answer")
+    try:
+        drop = scrub_names()
+        p = subprocess.run([str(PM_SCOPE), str(CHECKOUT), "--push", before, after, "--json"], capture_output=True,
+                           text=True, stdin=subprocess.DEVNULL, timeout=SCOPE_TIMEOUT,
+                           env={k: v for k, v in os.environ.items() if k not in drop})
+        answer = json.loads(p.stdout) if p.returncode == 0 else None
+    except (OSError, ValueError, SyntaxError, subprocess.SubprocessError):
+        return failed
+    sv = answer.get("services") if isinstance(answer, dict) else None
+    if (not isinstance(sv, dict) or not isinstance(sv.get("all"), bool) or not isinstance(sv.get("why"), str)
+            or not isinstance(sv.get("names"), list)
+            or not all(isinstance(n, str) and SERVICE.fullmatch(n) for n in sv["names"])):
+        return failed
+    if sv["all"]:
+        return every(sv["why"])
+    return {"all": False, "names": sorted(set(sv["names"])), "why": sv["why"]}
+
+
+def manifest_services():
+    """{service: number of its checks} over the manifest rows whose `service` is a name of the form; {} when the
+    manifest cannot be read (the integration step then says so itself)."""
+    counts = {}
+    try:
+        for line in MANIFEST.read_text().splitlines():
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            s = row.get("service") if isinstance(row, dict) else None
+            if isinstance(s, str) and SERVICE.fullmatch(s):
+                counts[s] = counts.get(s, 0) + 1
+    except (OSError, ValueError, UnicodeDecodeError):
+        return {}
+    return counts
+
+
+def cmd_services():
+    commits, why = push_commits()
+    sv = every(why) if commits is None else ask_scope(*commits)
+    rel = SERVICES.relative_to(CHECKOUT)
+    try:
+        SERVICES.parent.mkdir(parents=True, exist_ok=True)
+        SERVICES.write_text(json.dumps({"services": None if sv["all"] else sv["names"], "why": sv["why"]}) + "\n")
+    except OSError as e:
+        print(f"services: {rel} cannot be written ({e.strerror or type(e).__name__})")
+        return 1
+    counts = manifest_services()
+    rows = []
+    if not sv["all"]:
+        for s in sorted(set(counts) | set(sv["names"])):
+            rows.append(("run" if s in sv["names"] else "not run", s, counts.get(s, 0)))
+    line = line_of(sv)
+    token = secrets.token_hex(16)
+    print(f"::stop-commands::{token}", flush=True)
+    print(line)
+    for status, s, n in rows:
+        if status == "not run":
+            print(f"not run  service {s}  {n} checks")
+    print(f"::{token}::", flush=True)
+    if sv["all"]:
+        table = f"Every service's checks are part of this run: {cell(sv['why'])}.\n\n"
+    else:
+        table = (f"Selected: {cell(', '.join(sv['names']) or 'none')} ({cell(sv['why'])}). The checks of no "
+                 f"service are part of every run.\n\n")
+        if rows:
+            table += "| Status | Service | Checks |\n|---|---|---|\n"
+            table += "".join(f"| {status} | `{s}` | {n} |\n" for status, s, n in rows) + "\n"
+    summary(f"### Services\n\n{table}")
+    return 0
+
+
 # ---------------------------------------------------------------------------------------------- run
 
 def scrub_names():
@@ -373,6 +497,8 @@ def main(args):
         return cmd_not_run()
     if sub == "versions" and not rest:
         return cmd_versions()
+    if sub == "services" and not rest:
+        return cmd_services()
     if sub == "run":
         return cmd_run(rest)
     usage(f"unknown subcommand or arguments: {' '.join(args)}")
