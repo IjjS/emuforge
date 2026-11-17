@@ -58,14 +58,15 @@
     color: var(--st-info);
   }
 
-  /* A 20px line for an address and for "-" alike, so a row is as tall either way. The address breaks before its port
-     (the row's `<wbr>`) and, when even that does not fit, at any character; it is literal text, never hyphenated. */
+  /* A 20px line for an address and for "-" alike, so a row is as tall either way; text enlarged past that gets a line
+     1.4 times its size, so its lines do not run into each other. The address breaks before its port (the row's
+     `<wbr>`) and, when even that does not fit, at any character; it is literal text, never hyphenated. */
   .st-addr {
     display: block;
     margin-top: 4px;
     font-family: var(--st-font-code);
     font-size: 13px;
-    line-height: 20px;
+    line-height: max(20px, 1.4em);
     color: var(--st-text-2);
     overflow-wrap: anywhere;
     hyphens: manual;

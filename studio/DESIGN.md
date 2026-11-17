@@ -689,9 +689,10 @@ tabs, with a control edge so it reads as something that opens.
 - **Status:** an 18px icon and the word, 16px, 650, in the status hue: a filled check circle for "Connected", a
   crossed circle for "Error" and "Unreachable", an open circle for "Not started" and "Unknown", a clock for
   "Checking". The busy Refresh's arc icon spins (0.9s, linear), and stops under `prefers-reduced-motion`.
-- **Address:** code font, 13px, `text-2`, on a 20px line, never cut and never hyphenated: one line while it fits;
-  when it does not, it breaks just before the ":" of its port and, failing that, at any character inside its box.
-  The break point adds no text: what is read and copied is the address as it is. An unknown address is "-" (hidden
+- **Address:** code font, 13px, `text-2`, on a 20px line (1.4 times the text when it is enlarged past that), never
+  cut and never hyphenated: one line while it fits; when it does not, it breaks just before the ":" of its port and,
+  failing that, at any character inside its box. The break point adds no text: what is read and copied is the
+  address as it is. An unknown address is "-" (hidden
   from screen readers) with "Not known" for a screen reader, in the interface font at 14px, on the same 20px line.
 
 ### Notices
