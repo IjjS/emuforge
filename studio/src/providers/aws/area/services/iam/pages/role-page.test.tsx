@@ -433,6 +433,16 @@ function pairValue(label: string): HTMLElement {
   return value as HTMLElement;
 }
 
+/** The container of "Permissions boundary": the one whose `h2` reads so. */
+function boundarySection(): HTMLElement {
+  const container = PAGE.findAllContainers().find(
+    (found) =>
+      (found.findHeader()?.getElement().querySelector('h2')?.textContent ?? '').trim() === 'Permissions boundary',
+  );
+  expect(container, 'Permissions boundary').toBeDefined();
+  return container?.getElement() as HTMLElement;
+}
+
 /** The status indicator inside `scope`: its Cloudscape type and its text. */
 function status(scope: HTMLElement): { type: string | undefined; text: string } {
   const indicator = [...scope.querySelectorAll('[class*="status-"]')].find((element) =>
@@ -640,6 +650,34 @@ describe('a loaded role', () => {
     const heading = within(main()).getByRole('heading', { level: 2, name: 'Permissions boundary' });
     const value = within(main()).getByText('Not set');
     expect(heading.compareDocumentPosition(value) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+  });
+
+  it('a permissions boundary: "Copy Permissions boundary" directly before its ARN; pressed, the ARN on the clipboard and "Permissions boundary copied" (issue 467, R5)', async () => {
+    const writeText = vi.fn<(text: string) => Promise<void>>(() => Promise.resolve());
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+    const boundary = 'arn:aws:iam::000000000000:policy/team/TeamBoundary';
+    await openLoaded({ name: 'bounded', boundary });
+
+    const section = boundarySection();
+    const copy = within(section).getByRole('button', { name: 'Copy Permissions boundary' });
+    const value = [...section.querySelectorAll('.aws-area-value')].find((found) => found.textContent === boundary);
+    expect(value, 'the boundary’s ARN in its section').toBeDefined();
+    expect(copy.compareDocumentPosition(value as Element) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+
+    fireEvent.click(copy);
+
+    expect(await within(section).findByText('Permissions boundary copied')).toBeInTheDocument();
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(writeText).toHaveBeenCalledWith(boundary);
+  });
+
+  it('no permissions boundary: "Not set" and no copy control in "Permissions boundary" (issue 467, R5)', async () => {
+    await openLoaded(PLAIN);
+
+    const section = boundarySection();
+    expect(within(section).getByText('Not set')).toBeInTheDocument();
+    expect(within(section).queryByRole('button')).toBeNull();
+    expect(within(main()).queryByRole('button', { name: 'Copy Permissions boundary' })).toBeNull();
   });
 
   it('no "Add permissions", "Remove" or "Change boundary" control', async () => {

@@ -28,8 +28,8 @@ import { ReadFailure } from './states';
 
 // The three sections of a role's page (issue 82, requirement R5.3): "Summary" with its "Edit" (R5.5), "Permissions
 // policies" and "Permissions boundary", in the console's words; their empty and failure texts in EmuForge's own.
-// Every value from the emulator is rendered as text, each as the kind of value it is, and the ARN with its copy control
-// (issue 467, requirement R5, R6).
+// Every value from the emulator is rendered as text, each as the kind of value it is, and the role's ARN and its
+// boundary's with their copy control (issue 467, requirement R5, R6).
 
 /**
  * The narrowest column of "Summary", in pixels: three columns where the page is wide, one at 390 wide, so the ARN has
@@ -146,12 +146,12 @@ export function PoliciesSection({ policies, connection, onRetry }: PoliciesSecti
   );
 }
 
-/** "Permissions boundary" (R5.3): the boundary's ARN as text, or "Not set". */
+/** "Permissions boundary" (R5.3): the boundary's ARN as text with its copy control (issue 467, R5), or "Not set". */
 export function BoundarySection({ role }: { role: Role }) {
   return (
     <Container header={<Header variant="h2">Permissions boundary</Header>}>
       <Box variant="p">
-        <ValueText kind="address" value={role.permissionsBoundary} none="Not set" />
+        <CopyValue label="Permissions boundary" value={role.permissionsBoundary} none="Not set" />
       </Box>
     </Container>
   );
