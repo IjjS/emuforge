@@ -66,15 +66,15 @@ def record(path):
 
 
 def live_pm_check(pid):
-    """True when `pid` is a pm-check that is not a `--stop`; False when it is another program; None when ps could not
-    say (it failed, passed its bound, or found no such process)."""
+    """True when `pid` is a pm-check that is not a `--stop`; False when it is another program or ps exits non-zero
+    (no such process: ps -p exits 1); None when ps could not say (it cannot be started or passed its bound)."""
     try:
         p = subprocess.run([PS, "-o", "command=", "-p", str(pid)], capture_output=True, text=True, env=PS_ENV,
                            timeout=PS_BOUND, stdin=subprocess.DEVNULL)
     except (OSError, subprocess.SubprocessError):
         return None
     if p.returncode != 0:
-        return None
+        return False
     words = p.stdout.split()
     return any(os.path.basename(w) == "pm-check" for w in words) and "--stop" not in words
 
