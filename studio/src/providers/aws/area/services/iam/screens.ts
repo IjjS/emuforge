@@ -1,5 +1,6 @@
 import type { ScreenNavigation, ServiceScreen } from '../../screens';
-import { IAM_PATH, ROLES_PATH } from './format';
+import { CREATE_ROLE_PATH, IAM_PATH, ROLES_PATH } from './format';
+import { CREATE_ROLE_TITLE, CreateRolePage } from './pages/create-role-page';
 import { RoleListPage, ROLES_TITLE } from './pages/role-list-page';
 import { ROLE_NAME_PARAM, RolePage } from './pages/role-page';
 
@@ -36,5 +37,13 @@ export const SCREENS: readonly ServiceScreen[] = [
     crumbs: (params) => [{ text: 'Roles', href: ROLES_PATH }, { text: params[ROLE_NAME_PARAM] ?? '' }],
     navigation: IAM_NAVIGATION,
     Page: RolePage,
+  },
+  // S3, "Create role" (R0, R6): its step `k` at `?step=<k>`.
+  {
+    paths: [CREATE_ROLE_PATH],
+    title: CREATE_ROLE_TITLE,
+    crumbs: [{ text: 'Roles', href: ROLES_PATH }, { text: CREATE_ROLE_TITLE }],
+    navigation: IAM_NAVIGATION,
+    Page: CreateRolePage,
   },
 ];
