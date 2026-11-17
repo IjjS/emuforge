@@ -56,9 +56,11 @@ describe('the registry of the AWS area', () => {
   });
 
   it('the real registry: the S3 bucket list for the folder s3, at /aws/s3 and /aws/s3/buckets, titled "Buckets" with the one crumb "Buckets"', () => {
-    const buckets = SCREENS.filter(({ service }) => service === '/s3');
-    expect(buckets).toHaveLength(1);
-    expect(buckets[0]).toMatchObject({
+    // Found by its paths among the folder's screens, which issue 256 makes more than one.
+    const list = SCREENS.find(
+      ({ service, paths }) => service === '/s3' && paths.includes('/aws/s3') && paths.includes('/aws/s3/buckets'),
+    );
+    expect(list).toMatchObject({
       service: '/s3',
       paths: ['/aws/s3', '/aws/s3/buckets'],
       title: 'Buckets',
