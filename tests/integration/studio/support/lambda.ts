@@ -793,6 +793,7 @@ export async function removeRoleDirect(caller: Caller, port: number, name: strin
   const listed = await iamDirect(caller, port, 'ListAttachedRolePolicies', {
     RoleName: name,
   });
+  caller.log(`cleanup ListAttachedRolePolicies ${name} directly: ${shownDirect(listed)}`);
   const arns =
     'error' in listed || listed.status !== 200
       ? []
@@ -904,17 +905,20 @@ export class LambdaSeeded {
   }
 
   async dispose(): Promise<void> {
+    const where = `on the emulator at port ${String(this.port)}`;
     try {
       for (const name of await functionNamesDirect(this.ctx, this.port, this.prefix)) {
         await deleteFunctionDirect(this.ctx, this.port, name);
       }
+    } catch (e) {
+      this.ctx.log(`cleanup of the functions ${this.prefix}* ${where} failed: ${(e as Error).message}`);
+    }
+    try {
       for (const role of await listRolesDirect(this.ctx, this.port, this.prefix)) {
         await removeRoleDirect(this.ctx, this.port, role.name);
       }
     } catch (e) {
-      this.ctx.log(
-        `cleanup of ${this.prefix}* on the emulator at port ${String(this.port)} failed: ${(e as Error).message}`,
-      );
+      this.ctx.log(`cleanup of the roles ${this.prefix}* ${where} failed: ${(e as Error).message}`);
     }
   }
 }
