@@ -10,11 +10,13 @@ import Input, { type InputProps } from '@cloudscape-design/components/input';
 import RadioGroup from '@cloudscape-design/components/radio-group';
 import Select, { type SelectProps } from '@cloudscape-design/components/select';
 import SpaceBetween from '@cloudscape-design/components/space-between';
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 
+import { DiscardDialog, type DiscardAnswer } from '../../../components/discard-dialog';
 import { usePageFlash } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
+import { ValueText } from '../../../components/value-text';
 import type { ScreenPageProps } from '../../../screens';
 import type { CreateFunctionRequest, LambdaFailure } from '../api';
 import { actionFailureItem, useAnnouncer } from '../components/failure-states';
@@ -26,13 +28,16 @@ import { RUNTIMES } from '../starter-code';
 // "Create Event Function" (issue 84, requirement R6, R9.4, R10.3): the console's form "Author from scratch" in the
 // console's words (`studio/references/console/lambda/create-function.yaml`), its description, help, field messages
 // and failures in EmuForge's own. Nothing typed is kept anywhere: the form lives as long as the page is open. The
-// section "Advanced settings" is not built (R13 item 9).
+// section "Advanced settings" is not built (R13 item 9). Issue 467: the description says only what the form creates
+// besides the function (R3), "Function name" states its rule from the start (R4), and "Cancel" asks before it
+// discards what was entered (R7).
 
 export const CREATE_FUNCTION_TITLE = 'Create Event Function';
-const DESCRIPTION =
-  'The function is created in your local emulator, not in an AWS account, with starter code that returns a greeting.';
+const DESCRIPTION = 'The function is created with starter code that returns a greeting.';
 
 const FUNCTION_NAME = 'Function name';
+/** The constraint text under "Function name" (issue 467, R4): what `nameMessage` lets through. */
+export const NAME_RULE = '1 to 64 characters: letters (A-Z, a-z), digits, hyphens (-) and underscores (_).';
 const RUNTIME = 'Runtime';
 const RUNTIME_DESCRIPTION = 'Studio has starter code for these runtimes.';
 const ARCHITECTURE = 'Architecture';
@@ -84,9 +89,50 @@ function failureHeadline(failure: LambdaFailure, what: string, engineOrigin: str
   }
 }
 
+/**
+ * A sentence that quotes a name: the name as a name, the words around it as free text (issue 467, R6). Its text is
+ * `before`, the name and `after`, character for character.
+ */
+function quoting(before: string, name: string, after: string): ReactNode {
+  return (
+    <>
+      <ValueText kind="text" value={before} />
+      <ValueText kind="name" value={name} />
+      <ValueText kind="text" value={after} />
+    </>
+  );
+}
+
 /** The sentence that follows a failure when "Create default role" made a role before it (R6.5). */
-function roleStillThere(roleName: string): string {
-  return `The role “${roleName}” was created in the local emulator and is still there.`;
+function roleStillThere(roleName: string): ReactNode {
+  return quoting('The role “', roleName, '” was created in the local emulator and is still there.');
+}
+
+/** What the form showed when it opened, which "Cancel" leaves without asking (issue 467, R7). */
+interface Opened {
+  roleChoice: RoleChoice;
+}
+
+/** The form's fields as they stand, compared with what it showed when it opened. */
+interface Entered extends Opened {
+  name: string;
+  runtime: SelectProps.Option;
+  architecture: Architecture;
+  existingRole: SelectProps.Option | null;
+}
+
+/**
+ * Whether any field or choice differs from what the form showed when it opened (R7): a name typed and removed again
+ * does not; the role chosen in "Existing role" counts only while "Use another role" shows it.
+ */
+function differs(entered: Entered, opened: Opened): boolean {
+  return (
+    entered.name !== '' ||
+    entered.runtime.value !== FIRST_RUNTIME.value ||
+    entered.architecture !== 'x86_64' ||
+    entered.roleChoice !== opened.roleChoice ||
+    (entered.roleChoice === 'existing' && entered.existingRole !== null)
+  );
 }
 
 /**
@@ -104,9 +150,11 @@ export function CreateFunctionPage({ connection }: ScreenPageProps) {
   const [name, setName] = useState('');
   const [runtime, setRuntime] = useState<SelectProps.Option>(FIRST_RUNTIME);
   const [architecture, setArchitecture] = useState<Architecture>('x86_64');
-  const [roleChoice, setRoleChoice] = useState<RoleChoice>(() =>
-    new URLSearchParams(search).get('role') === 'existing' ? 'existing' : 'default',
-  );
+  // What the address preselected, kept as the form opened with it (R6.3; issue 467, R7).
+  const [opened] = useState<Opened>(() => ({
+    roleChoice: new URLSearchParams(search).get('role') === 'existing' ? 'existing' : 'default',
+  }));
+  const [roleChoice, setRoleChoice] = useState<RoleChoice>(opened.roleChoice);
   const [existingRole, setExistingRole] = useState<SelectProps.Option | null>(null);
   /** The fields are checked from the first press of "Create Event Function" on, and again as they change. */
   const [checked, setChecked] = useState(false);
@@ -141,9 +189,15 @@ export function CreateFunctionPage({ connection }: ScreenPageProps) {
       return;
     }
     const content =
-      created.roleName === undefined
-        ? `Function “${created.name}” is being created in the local emulator.`
-        : `Function “${created.name}” is being created in the local emulator, with the execution role “${created.roleName}”.`;
+      created.roleName === undefined ? (
+        quoting('Function “', created.name, '” is being created in the local emulator.')
+      ) : (
+        <>
+          {quoting('Function “', created.name, '” is being created in the local emulator, with the execution role “')}
+          <ValueText kind="name" value={created.roleName} />
+          <ValueText kind="text" value="”." />
+        </>
+      );
     flash.handOver(functionPath(created.name), [{ type: 'success', content }]);
   }, [created, flash]);
 
@@ -179,9 +233,25 @@ export function CreateFunctionPage({ connection }: ScreenPageProps) {
     create(request);
   };
 
+  // "Cancel" leaves at once while nothing differs from what the form showed when it opened; otherwise it asks (R7).
+  const [asking, setAsking] = useState(false);
   const handleCancel = () => {
+    if (differs({ name, runtime, architecture, roleChoice, existingRole }, opened)) {
+      setAsking(true);
+      return;
+    }
     void navigate(FUNCTIONS_PATH);
   };
+
+  const handleDiscardAnswer = useCallback(
+    (answer: DiscardAnswer) => {
+      setAsking(false);
+      if (answer === 'discard') {
+        void navigate(FUNCTIONS_PATH);
+      }
+    },
+    [navigate],
+  );
 
   const handleRoleChange = useCallback((option: SelectProps.Option) => {
     setExistingRole(option);
@@ -214,7 +284,7 @@ export function CreateFunctionPage({ connection }: ScreenPageProps) {
             <SpaceBetween size="l">
               <Container header={<Header variant="h2">Basic information</Header>}>
                 <SpaceBetween size="l">
-                  <FormField label={FUNCTION_NAME} errorText={nameError}>
+                  <FormField label={FUNCTION_NAME} constraintText={NAME_RULE} errorText={nameError}>
                     <Input
                       ref={nameRef}
                       value={name}
@@ -289,6 +359,7 @@ export function CreateFunctionPage({ connection }: ScreenPageProps) {
           </Form>
         </form>
       </ContentLayout>
+      <DiscardDialog visible={asking} onAnswer={handleDiscardAnswer} />
       {announcement}
     </>
   );
