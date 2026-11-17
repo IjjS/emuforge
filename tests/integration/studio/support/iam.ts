@@ -500,6 +500,19 @@ export async function roleIsGone(caller: Caller, port: number, name: string): Pr
   return !answer.ok && answer.status === 404 && answer.code === 'NoSuchEntity';
 }
 
+/**
+ * Whether a direct `GetRole` of `name`, a name longer than IAM's 64 characters, answers that there is no such role:
+ * 404 `NoSuchEntity`, or the 400 `ValidationError` that refuses the name by its length (aws-emulator 1.0.481 gives
+ * the latter; decisions.md of issue 467, 2026-11-18 04:10).
+ */
+export async function tooLongRoleIsGone(caller: Caller, port: number, name: string): Promise<boolean> {
+  expect(name.length, `${name} is longer than 64 characters`).toBeGreaterThan(64);
+  const answer = await getRoleAnswer(caller, port, name);
+  if (answer.ok) return false;
+  if (answer.status === 404) return answer.code === 'NoSuchEntity';
+  return answer.status === 400 && answer.code === 'ValidationError' && /length/i.test(answer.message);
+}
+
 /** A policy attached to a role. */
 export interface AttachedPolicy {
   name: string;

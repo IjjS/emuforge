@@ -19,7 +19,7 @@ import type { Page } from '@playwright/test';
 import { expect, startStack, test } from './support';
 import { connectedAt, endpointPattern, expectLine } from './support/aws-area';
 import { ACTION, addressOf, heading } from './support/frame';
-import { getRoleDirect, IamSeeded, roleIsGone, type DirectRole } from './support/iam';
+import { getRoleDirect, IamSeeded, tooLongRoleIsGone, type DirectRole } from './support/iam';
 import { Lines } from './support/lines';
 import { checkPrefix, scrollsSideways } from './support/s3';
 import {
@@ -328,7 +328,7 @@ test('studio.iam-role-create-states-the-field-rules', async ({ ctx, page }) => {
         .poll(() => fieldTexts(page, F_NAME), { message: `what "${F_NAME}" shows under it` })
         .toEqual({ fields: 1, constraint: NAME_RULE, error: NAME_TOO_LONG });
       await expect(s.step(3), 'step 3 stays').toBeVisible();
-      expect(await roleIsGone(ctx, port, tooLong), `a direct GetRole of ${tooLong}`).toBe(true);
+      expect(await tooLongRoleIsGone(ctx, port, tooLong), `a direct GetRole of ${tooLong}`).toBe(true);
     },
   );
 
