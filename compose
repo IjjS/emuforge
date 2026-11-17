@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+# Starts and stops EmuForge's product form from this checkout, on Docker Desktop and on Docker Engine on Linux
+# (issue 54). One command for both platforms and both situations:
+#
+#   ./compose up      start EmuForge; with an emulator already running on EMULATOR_PORT it uses that one,
+#                     with none it starts one beside EmuForge
+#   ./compose down    stop what `up` started; an emulator you run yourself is left running
+#   ./compose <args>  `docker compose <args>` with the platform's file and the emulator profile (ps, logs, ...)
+#
+# It runs the plain `docker compose` command of the README's "Start" for the platform and the situation, and prints
+# that command line on standard error first. The ports are EMULATOR_PORT (9297), EMUFORGE_ENGINE_PORT (8297) and
+# EMUFORGE_STUDIO_PORT (8296), passed on as they are.
+#
+# The platform: Docker Engine on Linux when this runs on Linux and `docker info` does not name Docker Desktop; then
+# the file is docker-compose.linux.yml, the folder ~/.aws/emulator is created at `up` when it is missing, and the
+# form runs as the user (EMUFORGE_UID and EMUFORGE_GID from `id -u` and `id -g`, unless they are set). Anything else
+# is Docker Desktop: the root docker-compose.yml, and nothing of that.
+#
+# The situation, at `up`: the form of these ports already has an emulator of its own → 4 (it is kept); otherwise
+# something accepts a connection on 127.0.0.1:EMULATOR_PORT → 3; otherwise → 4.
+#
+# It never starts a form as root: run by uid 0, or with EMUFORGE_UID or EMUFORGE_GID 0, it refuses before it asks
+# Docker anything. The Docker command is an argument array run as it is, never through eval or a string. It opens
+# no file of the emulator and installs nothing. Bash 3.2 is enough.
+
+set -u
+
+root_line='compose: EmuForge is not started as root (uid 0 or gid 0); run it as your own user'
+
+# 1. Root, before anything else.
+if [ "$(id -u)" = 0 ]; then
+  printf '%s\n' "$root_line" >&2
+  exit 1
+fi
+
+# 2. Usage.
+if [ "$#" -eq 0 ]; then
+  printf '%s\n' 'usage: ./compose up | down | <docker compose arguments>' >&2
+  exit 2
+fi
+
+# 3. The ids, when set: a decimal number (0, or digits that do not start with 0), and not 0.
+decimal='^(0|[1-9][0-9]*)$'
+for name in EMUFORGE_UID EMUFORGE_GID; do
+  if [ -n "${!name+set}" ]; then
+    value=${!name}
+    if ! [[ $value =~ $decimal ]]; then
+      printf 'compose: %s must be a decimal number of a user or group id, not "%s"\n' "$name" "$value" >&2
+      exit 1
+    fi
+    if [ "$value" = 0 ]; then
+      printf '%s\n' "$root_line" >&2
+      exit 1
+    fi
+  fi
+done
+
+# Work from the checkout's root, where this script is, so it can be called from anywhere.
+here=${BASH_SOURCE[0]}
+case $here in
+  */*) here=${here%/*} ;;
+  *) here=. ;;
+esac
+cd -- "$here" || exit 1
+
+# 4. The platform. When Docker does not answer, its own message and exit code are the wrapper's.
+os_name=$(docker info --format '{{.OperatingSystem}}') || exit $?
+file_args=()
+if [ "$(uname -s)" = Linux ] && [ "$os_name" != 'Docker Desktop' ]; then
+  # 5. Docker Engine on Linux: the host form, run as the user.
+  if [ -z "${EMUFORGE_UID+set}" ]; then
+    EMUFORGE_UID=$(id -u) || exit 1
+  fi
+  if [ -z "${EMUFORGE_GID+set}" ]; then
+    EMUFORGE_GID=$(id -g) || exit 1
+  fi
+  if [ "$EMUFORGE_UID" = 0 ] || [ "$EMUFORGE_GID" = 0 ]; then
+    printf '%s\n' "$root_line" >&2
+    exit 1
+  fi
+  export EMUFORGE_UID EMUFORGE_GID
+  file_args=(-f docker-compose.linux.yml)
+  if [ "$1" = up ]; then
+    # As the user, so the folder is the user's; Docker is never let to create it.
+    mkdir -p -- "$HOME/.aws/emulator" || exit 1
+  fi
+fi
+
+# 6. The command.
+if [ "$1" = up ]; then
+  shift
+  # Has the form of these ports an emulator of its own? A question Compose cannot answer starts nothing.
+  own=$(docker compose ${file_args[@]+"${file_args[@]}"} --profile emulator ps -aq aws-emulator) || exit $?
+  profile=(--profile emulator)
+  if [ -z "$own" ] && (exec 3<>"/dev/tcp/127.0.0.1/${EMULATOR_PORT:-9297}") 2>/dev/null; then
+    # Situation 3: the emulator the user already runs.
+    profile=()
+  fi
+  cmd=(docker compose ${file_args[@]+"${file_args[@]}"} ${profile[@]+"${profile[@]}"} up -d --build "$@")
+  # Without it each build, even one that is all cache, gets a new image id from its provenance attestation, and
+  # Compose recreates every container of a running form, its emulator too, so a second `up` would restart them.
+  export BUILDX_NO_DEFAULT_ATTESTATIONS=1
+else
+  # Anything else, `down` included: the platform's situation 4 command, which on a situation 3 form removes the
+  # form alone.
+  cmd=(docker compose ${file_args[@]+"${file_args[@]}"} --profile emulator "$@")
+fi
+
+# 7. Say and run.
+printf '+ %s\n' "${cmd[*]}" >&2
+exec "${cmd[@]}"
