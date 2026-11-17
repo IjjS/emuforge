@@ -7,7 +7,7 @@
   .github/ci services
   .github/ci run [--second <step>] [--tails] -- <command> [<argument>...]
 
-not-run   Reads .github/not-run.json, tests/integration/manifest.jsonl and the step names `.pm/bin/pm-check
+not-run   Reads .github/not-run.json, the manifest (below) and the step names `.pm/bin/pm-check
           <checkout> --list` prints, and refuses the list (exit 1, one line `not-run: <entry>: <what is wrong>`
           per fault) when it is not the shape {"checks": [{"id", "reason", "issue"}], "steps": [{"step",
           "reason"}]}, a `checks` id is not a manifest id or is there twice, a `steps` entry is not a pm-check step
@@ -49,6 +49,12 @@ run       Starts <command> as given (an argument array, no shell) without the na
                           `flaky  <step>  failed once, passed its second run`, appends it to the run summary
                           and leaves a warning annotation, so the flake is never shown as a plain pass.
 Usage faults (an unknown subcommand, `run` without `--` or without a command) exit 2.
+
+The manifest (issue 402) is the rows of tests/integration/manifest.jsonl, then those of
+tests/integration/studio/services/<s>/manifest.jsonl for each folder <s> of the form [a-z][a-z0-9]*(-[a-z0-9]+)*
+that holds one, in name order (manifest_files). A part that cannot be read, a symbolic link at the folder
+services, at a folder <s> or at the file included, is to not-run a refusal naming that part, and to services no
+count of any service's checks.
 """
 import ast
 import json
@@ -65,6 +71,7 @@ import time
 CHECKOUT = pathlib.Path(__file__).resolve().parent.parent
 NOT_RUN = CHECKOUT / ".github" / "not-run.json"
 MANIFEST = CHECKOUT / "tests" / "integration" / "manifest.jsonl"
+SERVICE_CHECKS = CHECKOUT / "tests" / "integration" / "studio" / "services"
 PM_CHECK = CHECKOUT / ".pm" / "bin" / "pm-check"
 PM_SCOPE = CHECKOUT / ".pm" / "bin" / "pm-scope"
 SERVICES = CHECKOUT / "output" / "ci" / "services.json"
@@ -123,8 +130,58 @@ def pm_check_steps():
     return names
 
 
+class PartUnreadable(Exception):
+    """A part of the manifest cannot be read: `path` is the part, `error` what failed."""
+
+    def __init__(self, path, error):
+        super().__init__(f"{path}: {error!r}")
+        self.path, self.error = path, error
+
+
+def manifest_files():
+    """The files of the manifest, in its order: MANIFEST, then SERVICE_CHECKS/<s>/manifest.jsonl for each folder
+    <s> of the form SERVICE that holds one, the names in order. A folder services or <s> that is a symbolic link
+    is listed itself, so that reading it fails; a name reaches a path only once it is of the form."""
+    files = [MANIFEST]
+    if SERVICE_CHECKS.is_symlink():
+        return files + [SERVICE_CHECKS]
+    if not SERVICE_CHECKS.is_dir():
+        return files
+    for s in sorted(n for n in os.listdir(SERVICE_CHECKS) if SERVICE.fullmatch(n)):
+        d = SERVICE_CHECKS / s
+        if d.is_symlink():
+            files.append(d)
+        elif d.is_dir() and os.path.lexists(d / "manifest.jsonl"):
+            files.append(d / "manifest.jsonl")
+    return files
+
+
+def manifest_rows():
+    """[(file, row)] over manifest_files(); raises PartUnreadable for a part that is not a regular file reached
+    through real folders, cannot be read or holds a line that is not JSON."""
+    out = []
+    for f in manifest_files():
+        try:
+            if f.is_symlink() or not f.is_file():
+                raise OSError(f"{f.relative_to(CHECKOUT)} is not a regular file")
+            for line in f.read_text().splitlines():
+                if line.strip():
+                    out.append((f, json.loads(line)))
+        except (OSError, ValueError) as e:
+            raise PartUnreadable(f, e) from None
+    return out
+
+
 def manifest_ids():
-    return {json.loads(line)["check_id"] for line in MANIFEST.read_text().splitlines() if line.strip()}
+    """The check ids of the manifest; PartUnreadable names the part that cannot be read or holds a row without a
+    `check_id`."""
+    ids = set()
+    for f, row in manifest_rows():
+        try:
+            ids.add(row["check_id"])
+        except (KeyError, TypeError) as e:
+            raise PartUnreadable(f, e) from None
+    return ids
 
 
 def is_text(v):
@@ -200,8 +257,8 @@ def cmd_not_run():
         return fail_list([(rel, f"is not JSON ({e})")])
     try:
         ids = manifest_ids()
-    except (OSError, ValueError, KeyError, TypeError) as e:
-        return fail_list([(MANIFEST.relative_to(CHECKOUT), f"cannot be read ({e!r})")])
+    except PartUnreadable as e:
+        return fail_list([(e.path.relative_to(CHECKOUT), f"cannot be read ({e.error!r})")])
     try:
         steps = pm_check_steps()
     except (OSError, ValueError, subprocess.SubprocessError) as e:
@@ -302,19 +359,17 @@ def ask_scope(before, after):
 
 
 def manifest_services():
-    """{service: number of its checks} over the manifest rows whose `service` is a name of the form; {} when the
-    manifest cannot be read (the integration step then says so itself)."""
+    """{service: number of its checks} over the manifest rows (every part) whose `service` is a name of the form;
+    {} when any part of the manifest cannot be read (the integration step then says so itself)."""
     counts = {}
     try:
-        for line in MANIFEST.read_text().splitlines():
-            if not line.strip():
-                continue
-            row = json.loads(line)
-            s = row.get("service") if isinstance(row, dict) else None
-            if isinstance(s, str) and SERVICE.fullmatch(s):
-                counts[s] = counts.get(s, 0) + 1
-    except (OSError, ValueError, UnicodeDecodeError):
+        rows = manifest_rows()
+    except PartUnreadable:
         return {}
+    for _, row in rows:
+        s = row.get("service") if isinstance(row, dict) else None
+        if isinstance(s, str) and SERVICE.fullmatch(s):
+            counts[s] = counts.get(s, 0) + 1
     return counts
 
 
