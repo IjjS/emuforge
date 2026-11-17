@@ -376,8 +376,13 @@ function textOf(element: Element | null | undefined): string {
   for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
     parts.push(node.textContent ?? '');
   }
-  // A text that goes on in the next node (": message" after a code) is not apart from it.
-  return norm(parts.map((part) => (/^[:.,]/.test(part.trim()) ? part : ` ${part}`)).join(''));
+  // A text that goes on in the next node (": message" after a code, a name inside its quotation marks) is not apart
+  // from it.
+  let text = '';
+  for (const part of parts) {
+    text += /^[:.,”]/.test(part.trim()) || text.trimEnd().endsWith('“') ? part : ` ${part}`;
+  }
+  return norm(text);
 }
 
 function nameField(): HTMLInputElement {
@@ -867,13 +872,109 @@ describe('"Create Event Function" sent', () => {
     });
     expect(alertType(failureAlert()?.getElement())).toBe('error');
   });
+});
 
-  it('"Cancel": the list, nothing created; the form opened again is empty', async () => {
+// ---------------------------------------------------------------------------------------------------------------
+// Issue 467: what the description says (R3), the name's rule before a submit (R4), "Cancel" asks (R7), a quoted name
+// (R6).
+// ---------------------------------------------------------------------------------------------------------------
+
+const NAME_RULE = '1 to 64 characters: letters (A-Z, a-z), digits, hyphens (-) and underscores (_).';
+const DISCARD_HEADING = 'Discard what you entered?';
+
+/** The `h1`'s description: the text of the header that holds the `h1`, after the `h1`. */
+function headerDescription(): string {
+  const h1 = screen.getByRole('heading', { level: 1 });
+  const header = PAGE.findAllHeaders().find((found) => found.getElement().contains(h1));
+  return norm(header?.findDescription()?.getElement().textContent);
+}
+
+/** The constraint text under the field `label`; `undefined` when it shows none. */
+function constraintOf(label: string): string | undefined {
+  const constraint = formField(label)?.findConstraint();
+  return constraint === null || constraint === undefined ? undefined : norm(constraint.getElement().textContent);
+}
+
+/** The dialog "Discard what you entered?" while it is shown, or `null`. */
+function discardDialog(): HTMLElement | null {
+  return screen.queryByRole('dialog', { name: DISCARD_HEADING });
+}
+
+function cancelButton(): HTMLElement {
+  return screen.getByRole('button', { name: 'Cancel' });
+}
+
+/** "Cancel" on a form that differs: the dialog opens and the form stays. */
+async function cancelAsks(): Promise<HTMLElement> {
+  // As a press does: "Cancel" takes focus, then is clicked.
+  cancelButton().focus();
+  fireEvent.click(cancelButton());
+  const dialog = await waitFor(() => {
+    const found = discardDialog();
+    expect(found, `the dialog "${DISCARD_HEADING}"`).not.toBeNull();
+    return found as HTMLElement;
+  });
+  expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Create Event Function');
+  return dialog;
+}
+
+/** "Cancel" on a form that does not differ: the list at once, no dialog. */
+async function cancelLeaves(router: { state: { location: { pathname: string } } }): Promise<void> {
+  fireEvent.click(cancelButton());
+  expect(discardDialog()).toBeNull();
+  await screen.findByRole('heading', { level: 1, name: /^Event Functions/ });
+  expect(router.state.location.pathname).toBe(LIST_PATH);
+}
+
+describe('issue 467', () => {
+  it('the form as opened: the description says what it creates besides the function; under "Function name" its rule and no message', async () => {
+    await openForm();
+
+    expect(headerDescription()).toBe('The function is created with starter code that returns a greeting.');
+    expect(constraintOf('Function name')).toBe(NAME_RULE);
+    expect(messageOf('Function name')).toBeUndefined();
+  });
+
+  it('"Create Event Function" with a name of 65 characters: the message about the length and the constraint text, both under the field', async () => {
+    await openForm();
+
+    fireEvent.change(nameField(), { target: { value: 'a'.repeat(65) } });
+    press();
+    await waitFor(() => {
+      expect(messageOf('Function name')).toBe('The name can have up to 64 characters.');
+    });
+    expect(constraintOf('Function name')).toBe(NAME_RULE);
+    expect(engine.aws).toEqual([]);
+  });
+
+  it('"Cancel" with nothing changed: the list, no dialog; opened with ?role=existing and nothing changed: the same', async () => {
+    const first = await openForm();
+    await cancelLeaves(first.router);
+    first.unmount();
+
+    const second = await openForm(`${CREATE_PATH}?role=existing`);
+    expect(radio('Use another role').checked).toBe(true);
+    await cancelLeaves(second.router);
+  });
+
+  it('a name typed, "Cancel": the dialog; "Keep editing": the form with the name, focus on "Cancel"; "Cancel", "Discard": the list, nothing created, the form opened again empty', async () => {
     const { router } = await openForm();
 
     fireEvent.change(nameField(), { target: { value: 'orders' } });
-    fireEvent.click(radio('Use another role'));
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    const dialog = await cancelAsks();
+    expect(within(dialog).getByText('What you entered on this page is not kept.')).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Keep editing' }));
+    await waitFor(() => {
+      expect(discardDialog()).toBeNull();
+    });
+    expect(nameField().value).toBe('orders');
+    await waitFor(() => {
+      expect(document.activeElement).toBe(cancelButton());
+    });
+    expect(router.state.location.pathname).toBe(CREATE_PATH);
+
+    const again = await cancelAsks();
+    fireEvent.click(within(again).getByRole('button', { name: 'Discard' }));
     await screen.findByRole('heading', { level: 1, name: /^Event Functions/ });
     expect(router.state.location.pathname).toBe(LIST_PATH);
     expect(engine.creating).toEqual([]);
@@ -885,5 +986,51 @@ describe('"Create Event Function" sent', () => {
     await screen.findByRole('heading', { level: 1, name: 'Create Event Function' });
     expect(nameField().value).toBe('');
     expect(radio('Create default role').checked).toBe(true);
+  });
+
+  it('a name typed and removed, "Cancel": the list, no dialog; arm64 chosen, "Cancel": the dialog; "Use another role" chosen, "Cancel": the dialog', async () => {
+    const first = await openForm();
+    fireEvent.change(nameField(), { target: { value: 'orders' } });
+    fireEvent.change(nameField(), { target: { value: '' } });
+    await cancelLeaves(first.router);
+    first.unmount();
+
+    const second = await openForm();
+    fireEvent.click(radio('arm64'));
+    await cancelAsks();
+    second.unmount();
+
+    await openForm();
+    fireEvent.click(radio('Use another role'));
+    await cancelAsks();
+  });
+
+  it('after a failed "Create Event Function" with a name still in the field, "Cancel": the dialog', async () => {
+    engine.functions.add('orders');
+    await openForm();
+
+    fireEvent.change(nameField(), { target: { value: 'orders' } });
+    press();
+    await waitFor(() => {
+      expect(failureText()).toContain('Creating the function failed');
+    });
+    await cancelAsks();
+  });
+
+  it('a create that fails after its role was made: in the sentence about the role, the role’s name is a name and the rest free text', async () => {
+    engine.functions.add('orders');
+    await openForm();
+
+    fireEvent.change(nameField(), { target: { value: 'orders' } });
+    press();
+    await waitFor(() => {
+      expect(failureText()).toContain('is still there.');
+    });
+    const role = String(engine.sentOf('CreateRole')[0]?.params['RoleName']);
+    const alert = failureAlert()?.getElement();
+    const names = [...(alert?.querySelectorAll('.aws-area-value-name') ?? [])].map((found) => found.textContent);
+    expect(names).toEqual([role]);
+    const texts = [...(alert?.querySelectorAll('.aws-area-value-text') ?? [])].map((found) => found.textContent);
+    expect(texts).toEqual(['The role “', '” was created in the local emulator and is still there.']);
   });
 });

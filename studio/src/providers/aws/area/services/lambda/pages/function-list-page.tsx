@@ -16,21 +16,35 @@ import { useNavigate } from 'react-router';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
+import { ValueText } from '../../../components/value-text';
 import type { FunctionSummary } from '../api';
 import { DeleteFunctionsDialog } from '../components/delete-functions-dialog';
 import { readFailureState, useAnnouncer, type ReadFailureState } from '../components/failure-states';
-import { Code, ReadFailure } from '../components/failures';
-import '../components/function-sections.css';
+import { ReadFailure } from '../components/failures';
+import { quoting } from '../components/quoting';
+import './function-list-page.css';
 import { useAreaModalRoot } from '../components/modal-root';
-import { CREATE_FUNCTION_PATH, functionPath, lastModifiedText, runtimeText, typeText, valueText } from '../format';
+import { CREATE_FUNCTION_PATH, functionPath, lastModifiedText, NONE, runtimeText, typeText } from '../format';
 import { useFunctionListing, type FunctionCount, type FunctionListing } from '../queries';
 
 // Lambda's function list (issue 84, requirement R4, R6.1, R7 to R10): the console's "Event Functions" page in the
 // console's words (`studio/references/console/lambda/function-list.yaml`); its description and states in EmuForge's
-// own. Every value from the engine or the emulator is rendered as text.
+// own. Every value from the engine or the emulator is rendered as text, each cell as the kind of value it is (issue
+// 467, requirement R6), with "Wrap lines" on or off.
 
 /** The page's title, its `h1` (R6.1). */
 export const FUNCTIONS_TITLE = 'Event Functions';
+
+/** The `h1`'s description in every state of the connection: the filter's rule (issue 467, R3). */
+const DESCRIPTION = 'The filter matches the start of a name and is case-sensitive.';
+
+/**
+ * The room a column keeps (issue 467, R6), in characters of the heading's text, the cell's padding included: a name's
+ * column, so a name of up to 24 characters is on one line; "Runtime", so a runtime's name ("Node.js 24.x", "OS-only
+ * Runtime") is; "Description", so a word of free text up to 10 characters is whole. A size; no spacing is set.
+ */
+const NAME_MIN_WIDTH = '28ch';
+const RUNTIME_MIN_WIDTH = '18ch';
 
 const FILTER_LABEL = 'Search by attributes or search by keyword';
 const SELECT_FIRST = 'Select a function first';
@@ -121,7 +135,7 @@ function TableBody({ state, onCreate, onClearFilter, onRetry }: TableBodyProps) 
               No matches
             </Box>
             <Box variant="p" color="inherit">
-              {`No function name starts with “${state.text}”.`}
+              {quoting('No function name starts with “', state.text, '”.')}
             </Box>
           </SpaceBetween>
           <Box margin={{ top: 's' }}>
@@ -281,42 +295,48 @@ export function FunctionListPage({ connection }: { connection: AreaConnection })
     void navigate(CREATE_FUNCTION_PATH);
   }, [navigate]);
 
-  const result = connection.result;
-  const description =
-    result?.kind === 'connected' ? (
-      <>
-        Functions in your local emulator at <Code>{result.emulator.endpoint}</Code>, not in an AWS account. The filter
-        matches the start of a name, upper and lower case told apart.
-      </>
-    ) : (
-      'Functions in your local emulator, not in an AWS account. The filter matches the start of a name, upper and lower case told apart.'
-    );
-
-  // With "Wrap lines" on, a long word of a name or a description (64 or 256 characters without a space) breaks
-  // inside its cell instead of widening its column past the viewport (R11), with the area's own class.
-  const wrapClass = preferences.wrapLines ? 'aws-lambda-value' : undefined;
+  // A long word of a name or a description (64 or 256 characters without a space) breaks inside its cell instead of
+  // widening its column past the viewport (issue 84, R11); how each breaks is its kind's (issue 467, R6).
   const columns: TableProps.ColumnDefinition<FunctionSummary>[] = [
     {
       id: 'name',
       header: 'Function name',
       isRowHeader: true,
+      minWidth: NAME_MIN_WIDTH,
       cell: (fn) => (
-        <span className={wrapClass}>
-          <Link href={functionPath(fn.name)} onFollow={handleFollow}>
-            {fn.name}
-          </Link>
-        </span>
+        <Link href={functionPath(fn.name)} onFollow={handleFollow}>
+          <ValueText kind="name" value={fn.name} />
+        </Link>
       ),
     },
     {
       id: 'description',
       header: 'Description',
-      cell: (fn) => <span className={wrapClass}>{valueText(fn.description)}</span>,
+      // The cell's width is the table's to give, never its longest word's: a word longer than the column breaks inside
+      // it instead of widening it past the viewport (issue 84, R11).
+      cell: (fn) => (
+        <div className="aws-lambda-description-cell">
+          <ValueText kind="text" value={fn.description} none={NONE} />
+        </div>
+      ),
     },
-    { id: 'packageType', header: 'Package type', cell: (fn) => valueText(fn.packageType) },
-    { id: 'runtime', header: 'Runtime', cell: (fn) => runtimeText(fn.runtime) },
-    { id: 'type', header: 'Type', cell: (fn) => typeText(fn.durable) },
-    { id: 'lastModified', header: 'Last modified', cell: (fn) => lastModifiedText(fn.lastModified) },
+    {
+      id: 'packageType',
+      header: 'Package type',
+      cell: (fn) => <ValueText kind="fixed" value={fn.packageType} none={NONE} />,
+    },
+    {
+      id: 'runtime',
+      header: 'Runtime',
+      minWidth: RUNTIME_MIN_WIDTH,
+      cell: (fn) => <ValueText kind="fixed" value={runtimeText(fn.runtime)} />,
+    },
+    { id: 'type', header: 'Type', cell: (fn) => <ValueText kind="fixed" value={typeText(fn.durable)} /> },
+    {
+      id: 'lastModified',
+      header: 'Last modified',
+      cell: (fn) => <ValueText kind="fixed" value={lastModifiedText(fn.lastModified)} />,
+    },
   ];
 
   const count = loaded ? listing.count : undefined;
@@ -346,7 +366,7 @@ export function FunctionListPage({ connection }: { connection: AreaConnection })
           <Header
             variant="awsui-h1-sticky"
             counter={count === undefined ? undefined : `(${countText(count)})`}
-            description={description}
+            description={DESCRIPTION}
             actions={
               <SpaceBetween direction="horizontal" size="xs">
                 <Button iconName="refresh" ariaLabel="Refresh" onClick={handleRefresh} />
