@@ -27,8 +27,11 @@ interface NoScreenPageProps {
   part?: NoScreenPart | undefined;
 }
 
-/** A character after which a browser may break a line inside a word (a hyphen, `!`), with the character after it. */
-const BREAK_AFTER = /([-!].)/u;
+/**
+ * A run of characters after which a browser may break a line inside a word (hyphens, `!`), with the character after
+ * it, so no break is left inside the run either (`a--b`).
+ */
+const BREAK_AFTER = /([-!]+.)/u;
 
 /**
  * One segment of the path as one word: each character after which a browser would break a line inside it is joined to

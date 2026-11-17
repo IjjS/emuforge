@@ -124,6 +124,13 @@ describe('the "no screen yet" page below a service that has screens (issue 57, R
     expect(container.querySelector('b')).toBeNull();
   });
 
+  it('a segment with a run of hyphens, /aws/s3/buckets/a--b: shown as it is, the run held whole with the character after it, so no line breaks inside the run', () => {
+    const { container } = openPart('/aws/s3/buckets/a--b');
+
+    expect(shownPath(container)?.textContent).toBe('/aws/s3/buckets/a--b');
+    expect(screen.getByText('--b', { exact: true })).toBeInTheDocument();
+  });
+
   it('a path of 114 characters with a 63-character segment → the whole path is in the text, nothing shortened and no ellipsis', () => {
     const path = `/aws/s3/bucket/${'b'.repeat(63)}/property/intelligent-tiering/create`;
     expect(path).toHaveLength(114);
