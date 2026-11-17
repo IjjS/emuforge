@@ -93,8 +93,8 @@ every service's checks, so support that the checks of more than one service, or 
 in `support/` (`support/service-screens.ts` holds what a service's support lends to others), and
 `support/index.ts` exports nothing of a service's folder. A file of a service's folder may import shared support. A
 check file of a service is one every one of whose rows has that `service`. `run` refuses to start, before anything
-is built and with every check `error`, when a `.ts` file under `studio/` that is neither in a service's folder nor
-one of that service's check files imports a file of that folder, and when any file imports a `.spec.ts` file.
+is built and with every check `error`, when a `.ts` file under `studio/` imports a file of a service's folder and
+is neither in that service's folder nor one of its check files, and when any file imports a `.spec.ts` file.
 
 ## Manifest
 
