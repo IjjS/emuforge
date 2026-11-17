@@ -869,6 +869,28 @@ describe('loading and empty', () => {
     await expectNames(['ab-1']);
   });
 
+  it('the listing a finished delete starts: the filter, pagination and preferences disabled, though the filter started the one before', async () => {
+    await openLoaded([{ name: 'ab-1' }, { name: 'ab-2' }]);
+    typeFilter('ab');
+    pressEnter();
+    await expectNames(['ab-1', 'ab-2']);
+
+    fireEvent.click(checkbox('ab-1'));
+    fireEvent.click(action('Delete'));
+    const dialog = await screen.findByRole('dialog', { name: 'Delete 1 role?' });
+    const release = holdAnswers('ListRoles');
+    fireEvent.change(within(dialog).getByLabelText('To confirm, type delete'), { target: { value: 'delete' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+    await waitFor(() => {
+      expect(screen.getByText('Loading roles')).toBeInTheDocument();
+    });
+    expect(filterInput()).toBeDisabled();
+    expect(isDisabled(screen.getByRole('button', { name: 'Previous page' }))).toBe(true);
+    expect(isDisabled(screen.getByRole('button', { name: 'Preferences' }))).toBe(true);
+    release();
+    await expectNames(['ab-2']);
+  });
+
   it('an empty answer, no filter: "No roles", the sentence, "Create role" to the wizard; the counter "(0)"', async () => {
     const { router } = open();
 

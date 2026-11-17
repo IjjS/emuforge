@@ -253,6 +253,8 @@ export function RoleListPage({ connection }: ScreenPageProps) {
   }, []);
 
   const handleCloseDialog = useCallback(() => {
+    // A finished delete lists again, and no control of the list started that listing.
+    setStarter(null);
     setDeleting(undefined);
     deleteRef.current?.focus();
   }, []);
