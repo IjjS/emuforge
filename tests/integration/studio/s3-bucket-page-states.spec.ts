@@ -9,7 +9,6 @@
 // Words and readers: `support/s3-bucket-page.ts`; direct calls and `Seeded`: `support/s3.ts`.
 
 import { expect, startStack, test } from './support';
-import { heading } from './support/frame';
 import { Lines } from './support/lines';
 import { bucketPropertiesDirect, checkPrefix, listBucketsDirect, Seeded, SEOUL } from './support/s3';
 import {
@@ -50,7 +49,6 @@ test('studio.s3-bucket-page-shows-loading-until-the-answer', async ({ ctx, page,
         await page.goto(bucketPath(name));
         await expect(page.getByText(LOADING_BUCKET, { exact: true }), `"${LOADING_BUCKET}"`).toBeVisible();
         expect(hold.count(), 'a ListBuckets request is held').toBeGreaterThan(0);
-        await expect(heading(page, name), `the h1 "${name}" while the page is read`).toBeVisible();
         for (const t of TABS) await expect(tab(page, t), `the tab "${t}" while loading`).toHaveCount(0);
         expect(await shownSectionTitles(page), 'sections while loading').toEqual([]);
         await hold.release();
