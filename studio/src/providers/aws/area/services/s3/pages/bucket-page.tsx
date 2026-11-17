@@ -8,10 +8,13 @@ import { useLocation, useNavigate } from 'react-router';
 import { useShowsResources } from '../../../components/page-resources';
 import type { ScreenPageProps } from '../../../screens';
 import { BreakAnywhere } from '../components/break-anywhere';
-import { lineText, pageState } from '../components/bucket-read';
+import { lineText, pageState, type PageState } from '../components/bucket-read';
 import { BucketLoading, BucketNotFound, BucketReadFailure } from '../components/bucket-read-state';
+import { BucketSections } from '../components/bucket-sections';
 import { useAnnouncer } from '../components/use-announcer';
+import { anySectionMissing, useBucketSections } from '../components/use-bucket-sections';
 import { bucketPropertiesPath, bucketTabPath, type BucketTab } from '../format';
+import type { Bucket } from '../api';
 import { useBucketLookup } from '../queries';
 
 // S1, a general purpose bucket's own page with its tab "Properties" (issue 256, requirement R4, R5, R9.1, R10, R11):
@@ -39,7 +42,9 @@ function isPlainClick(event: MouseEvent): boolean {
 /**
  * `/aws/s3/buckets/{name}` and `/aws/s3/buckets/{name}/properties`: the bucket of that name as the emulator holds it,
  * found with `ListBuckets` on every opening and "Refresh" (R5.1). Until it is found the page shows the read's state in
- * place of its tabs (R11.1); a bucket the emulator does not hold is "Bucket not found" (R5.5). A failed read while the
+ * place of its tabs (R11.1). Once found, each section reads its own operation at once, all in parallel, and again with
+ * every "Refresh" (R5.1, R5.6). A bucket the emulator does not hold, by the page's read or by a section's, is "Bucket
+ * not found" (R5.5). A failed read while the
  * connection is not connected repeats the emulator line's status; once the connection is connected again the page is
  * read again by itself (R11.2).
  */
@@ -52,7 +57,13 @@ export function BucketPage({ connection, params }: ScreenPageProps) {
 
   const lookup = useBucketLookup(connection.engineOrigin, name);
   const { refresh } = lookup;
-  const state = pageState(lookup, connection);
+  const found = pageState(lookup, connection);
+  const sections = useBucketSections(connection.engineOrigin, name, {
+    generation: lookup.generation,
+    enabled: found.kind === 'loaded',
+  });
+  const state: PageState<Bucket> =
+    found.kind === 'loaded' && anySectionMissing(sections) ? { kind: 'not-found' } : found;
 
   // Kept from the previous render, as React's own pattern for it: what was last seen of the read and the connection,
   // so each change is acted on once, in the render that first shows it.
@@ -126,9 +137,14 @@ export function BucketPage({ connection, params }: ScreenPageProps) {
     [navigate, pathname, propertiesPath],
   );
 
-  const tabs: TabsProps.Tab[] = [
+  const tabs = (bucket: Bucket): TabsProps.Tab[] => [
     ...OTHER_TABS.slice(0, 2).map(({ id, label }) => ({ id, label, href: bucketTabPath(name, id) })),
-    { id: PROPERTIES_TAB, label: 'Properties', href: propertiesPath, content: null },
+    {
+      id: PROPERTIES_TAB,
+      label: 'Properties',
+      href: propertiesPath,
+      content: <BucketSections bucket={bucket} reads={sections} connection={connection} />,
+    },
     ...OTHER_TABS.slice(2).map(({ id, label }) => ({ id, label, href: bucketTabPath(name, id) })),
   ];
 
@@ -152,7 +168,12 @@ export function BucketPage({ connection, params }: ScreenPageProps) {
         {state.kind === 'loaded' && (
           // A click of a tab reaches its link first; this only adds what Cloudscape leaves out.
           <div onClick={handleTabsClick}>
-            <Tabs tabs={tabs} activeTabId={PROPERTIES_TAB} keyboardActivationMode="manual" onChange={handleTabChange} />
+            <Tabs
+              tabs={tabs(state.value)}
+              activeTabId={PROPERTIES_TAB}
+              keyboardActivationMode="manual"
+              onChange={handleTabChange}
+            />
           </div>
         )}
         {announcement}

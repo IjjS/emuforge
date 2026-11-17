@@ -134,3 +134,21 @@ export function pageState<T>(
   }
   return read.value === NO_SUCH_BUCKET ? { kind: 'not-found' } : { kind: 'loaded', value: read.value };
 }
+
+/**
+ * The state of a section of S1 whose own read failed (R11.3): the first line of the row of R11.1 that fits, for
+ * "Not connected" "Not read" with the line's status type, the row's second line where it has one, and no link; a
+ * 501 names the operation alone.
+ */
+export function sectionFailure(failure: RequestFailure, connection: AreaConnection): FailureView {
+  if (failure.kind === 'not-implemented') {
+    return {
+      type: 'info',
+      first: { before: 'Not implemented by the emulator' },
+      detail: { before: failure.operation },
+      recovery: false,
+    };
+  }
+  const view = pageFailure(failure, connection);
+  return view.recovery ? { type: view.type, first: { before: 'Not read' }, recovery: false } : view;
+}
