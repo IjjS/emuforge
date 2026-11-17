@@ -18,8 +18,11 @@ const BELOW = `${NO_SCREEN_SERVICE.below}/my-stream`;
 // requirement R13.2, each under /aws.
 const SERVICES = serviceLinks();
 
-/** Every service but Amazon Simple Storage Service, whose route has a screen of its own (issue 56). */
-const WITHOUT_SCREEN = SERVICES.filter(([label]) => label !== 'Amazon Simple Storage Service');
+/** The services whose route has a screen of its own: Amazon S3 (issue 56) and AWS Identity and Access Management (issue 82). */
+const WITH_SCREEN: readonly string[] = ['Amazon Simple Storage Service', 'AWS Identity and Access Management'];
+
+/** Every other service. */
+const WITHOUT_SCREEN = SERVICES.filter(([label]) => !WITH_SCREEN.includes(label));
 
 /** The AWS area's first import is real work (Cloudscape's modules), not a timer; a cold run takes a while. */
 const AREA_LOAD_MS = 10_000;
@@ -137,6 +140,20 @@ describe('routes', () => {
 
     await expectNoScreenYet(label);
   });
+
+  it('leaves AWS Identity and Access Management out of the services opened as a "no screen yet" page, and keeps every other', () => {
+    expect(WITHOUT_SCREEN.map(([label]) => label)).not.toContain('AWS Identity and Access Management');
+    expect(WITHOUT_SCREEN).toHaveLength(SERVICES.length - WITH_SCREEN.length);
+  });
+
+  it.each(['/aws/iam/policies', '/aws/iam/roles/details/abc/tags'])(
+    'opens %s as the "no screen yet" page of AWS Identity and Access Management',
+    async (path) => {
+      open(path);
+
+      await expectNoScreenYet('AWS Identity and Access Management');
+    },
+  );
 
   it.each(['/aws/s3', '/aws/s3/buckets'])(
     'opens %s as the S3 bucket list: the h1 "Buckets", the address unchanged, the title "Buckets | EmuForge Studio"',
