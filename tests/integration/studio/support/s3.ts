@@ -1,12 +1,20 @@
 // The S3 bucket list screen as a user meets it, and the emulator it is compared with (test-criteria.md, issue 56,
-// Flow checks; requirement R3 to R9). Used by the `s3-bucket-list*.spec.ts` checks and `safety.spec.ts`.
+// Flow checks; requirement R3 to R9), and the direct calls of the checks of a bucket's page, create, empty and delete
+// (issue 256). Used by the `s3-*.spec.ts` checks, `safety.spec.ts` and `s3-seed-structure.ts`.
 //
 // - Direct calls: S3 operations straight to the emulator, SigV4-signed with the key it wrote for this run, TLS
 //   verified against its `ca.pem`, never through the engine. Unlike `directS3` of `aws-clients.ts` they carry a query
 //   string (`ListBuckets` with `max-buckets`, `prefix`, `continuation-token`) and may be signed for another Region
 //   (`CreateBucket` in `ap-northeast-2`, R2). A direct `ListBuckets` always sends `max-buckets`: without it the
 //   emulator leaves `BucketRegion` out (R2).
-// - `Seeded`: the buckets a check makes, each removed (its objects first) when the check ends.
+// - A bucket's properties, versions and legal holds (issue 256, R2 and R5.3): `createBucketDirect` with Object Lock,
+//   ownership and tags; `configureBucketDirect` puts any of the properties the four screens of a bucket show or the
+//   create form sets, `bucketPropertiesDirect` reads them all back, each "not set" answer as `null`;
+//   `objectVersionsDirect` lists every version and delete marker; `putLegalHoldDirect`, `legalHoldDirect`,
+//   `deleteItemsDirect` and `emptyBucketDirect`; a KMS key (`createKeyDirect`). `s3Direct` and `kmsDirect` send any
+//   other call. Each takes a `DirectEnv` (a check's `Ctx`, or `{ home }` for `s3-seed-structure.ts`).
+// - `Seeded`: the buckets, KMS keys and SQS queues a check makes, and the buckets its screen makes (`track`), each
+//   bucket emptied of every version and delete marker, its legal holds taken off, and removed when the check ends.
 // - The screen: its words (R3 to R8, English), and readers of what it shows — the table's rows by its column
 //   headings, the counter after the table's title, the filter, the actions, the help panel and the notice.
 // - `ListBucketsRecord`: the page's `ListBuckets` requests to the engine (`GET /` on the engine's origin), from
@@ -26,6 +34,7 @@ import fs from 'node:fs';
 import https from 'node:https';
 import path from 'node:path';
 
+import { directSqs } from './aws-clients-general';
 import { EnvError, expect, type Ctx } from './check';
 import { emulatorDir, readEmulatorFiles } from './emulator';
 import { ACTION, heading } from './frame';
@@ -177,13 +186,19 @@ export function creationDateText(iso: string | null, zone: { offsetMinutes: numb
 // Direct calls.
 // ---------------------------------------------------------------------------------------------------------------
 
-/** An answer of a direct call, or the error that kept it from arriving. */
-export type Direct = { status: number; body: string } | { error: string };
+/** An answer of a direct call (its header names in lower case), or the error that kept it from arriving. */
+export type Direct = { status: number; body: string; headers: Record<string, string> } | { error: string };
+
+/** Any direct answer: this file's, or another support file's without headers. */
+type Answer = { status: number; body: string } | { error: string };
 
 /** `status` of a direct answer, or its error, for the log. */
-export function shownDirect(answer: Direct): string {
+export function shownDirect(answer: Answer): string {
   return 'error' in answer ? `error ${answer.error}` : `status ${String(answer.status)}`;
 }
+
+/** What a direct call needs of the run: the `$HOME` the emulator writes its files under. A check's `Ctx` is one. */
+export type DirectEnv = Pick<Ctx, 'home'>;
 
 const sha256Hex = (data: string) => createHash('sha256').update(data).digest('hex');
 const hmac = (key: string | Buffer, data: string) => createHmac('sha256', key).update(data).digest();
@@ -193,23 +208,31 @@ function uriEncode(value: string): string {
   return encodeURIComponent(value).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
 }
 
+/** One request to the emulator, before it is signed. */
+interface Unsigned {
+  /** The signing name: `s3`, `kms`. */
+  service: string;
+  method: string;
+  /** The path as sent, already percent-encoded (`objectPath`). */
+  pathname: string;
+  query: [string, string][];
+  body: string;
+  region: string;
+  /** Headers sent and signed besides `host`, `x-amz-content-sha256` and `x-amz-date`. */
+  headers: Record<string, string>;
+}
+
 /**
- * `method pathname?query` with `body` straight to the S3 of the emulator on `port`, header-signed for `region` with
- * the emulator's key over `host`, `x-amz-content-sha256` and `x-amz-date`, TLS verified against its `ca.pem`.
+ * `request` straight to the emulator on `port`, header-signed for its Region and service with the emulator's key over
+ * every header it sends, TLS verified against its `ca.pem`. A body goes with its `content-md5`, which S3 asks of
+ * `DeleteObjects`, `PutObjectLegalHold`, `PutObjectLockConfiguration` and an object put into an Object Lock bucket.
  */
-async function signedS3(
-  ctx: Ctx,
-  port: number,
-  method: string,
-  pathname: string,
-  query: [string, string][] = [],
-  body = '',
-  region = 'us-east-1',
-): Promise<Direct> {
-  const dir = emulatorDir(ctx.home, port);
+async function signed(env: DirectEnv, port: number, request: Unsigned): Promise<Direct> {
+  const dir = emulatorDir(env.home, port);
   const key = readEmulatorFiles(dir);
   if (!key) return { error: `the emulator files under ${dir} are incomplete` };
   const ca = fs.readFileSync(path.join(dir, 'ca.pem'));
+  const { service, method, pathname, query, body, region } = request;
   const amzDate = new Date()
     .toISOString()
     .replace(/[-:]/g, '')
@@ -221,10 +244,12 @@ async function signedS3(
     'x-amz-content-sha256': payloadHash,
     'x-amz-date': amzDate,
   };
+  if (body !== '') headers['content-md5'] = createHash('md5').update(body).digest('base64');
+  for (const [name, value] of Object.entries(request.headers)) headers[name.toLowerCase()] = value.trim();
   const names = Object.keys(headers).sort();
   const canonicalQuery = query
     .map(([k, v]) => [uriEncode(k), uriEncode(v)])
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .sort(([a, x], [b, y]) => (a < b ? -1 : a > b ? 1 : x < y ? -1 : x > y ? 1 : 0))
     .map(([k, v]) => `${k}=${v}`)
     .join('&');
   const canonical = [
@@ -236,9 +261,9 @@ async function signedS3(
     names.join(';'),
     payloadHash,
   ].join('\n');
-  const scope = `${day}/${region}/s3/aws4_request`;
+  const scope = `${day}/${region}/${service}/aws4_request`;
   const toSign = ['AWS4-HMAC-SHA256', amzDate, scope, sha256Hex(canonical)].join('\n');
-  const signingKey = hmac(hmac(hmac(hmac(`AWS4${key.secretAccessKey}`, day), region), 's3'), 'aws4_request');
+  const signingKey = hmac(hmac(hmac(hmac(`AWS4${key.secretAccessKey}`, day), region), service), 'aws4_request');
   const signature = createHmac('sha256', signingKey).update(toSign).digest('hex');
   const sent: Record<string, string> = { ...headers };
   delete sent.host;
@@ -248,20 +273,86 @@ async function signedS3(
   if (body !== '') sent['content-length'] = String(Buffer.byteLength(body));
   const target = canonicalQuery === '' ? pathname : `${pathname}?${canonicalQuery}`;
   return new Promise((resolve) => {
-    const request = https.request(
+    const call = https.request(
       { host: '127.0.0.1', port, method, path: target, ca, agent: false, timeout: 5_000, headers: sent },
       (response) => {
         let text = '';
         response.setEncoding('utf8');
         response.on('data', (chunk: string) => (text += chunk));
-        response.on('end', () => resolve({ status: response.statusCode ?? 0, body: text }));
+        response.on('end', () => {
+          const received: Record<string, string> = {};
+          for (const [name, value] of Object.entries(response.headers)) {
+            if (value !== undefined) received[name] = Array.isArray(value) ? value.join(', ') : value;
+          }
+          resolve({ status: response.statusCode ?? 0, body: text, headers: received });
+        });
         response.on('error', (e) => resolve({ error: e.message }));
       },
     );
-    request.on('timeout', () => request.destroy(new Error('no answer within 5 s')));
-    request.on('error', (e) => resolve({ error: e.message }));
-    request.end(body === '' ? undefined : body);
+    call.on('timeout', () => call.destroy(new Error('no answer within 5 s')));
+    call.on('error', (e) => resolve({ error: e.message }));
+    call.end(body === '' ? undefined : body);
   });
+}
+
+/** `method pathname?query` with `body` straight to the emulator's S3, signed for `region`, with `headers`. */
+function signedS3(
+  env: DirectEnv,
+  port: number,
+  method: string,
+  pathname: string,
+  query: [string, string][] = [],
+  body = '',
+  region = 'us-east-1',
+  headers: Record<string, string> = {},
+): Promise<Direct> {
+  return signed(env, port, { service: 's3', method, pathname, query, body, region, headers });
+}
+
+/**
+ * Any S3 request straight to the emulator, for a call this file has no function of its own for: `pathname` as sent
+ * (`objectPath` encodes a key), signed for `region` (default `us-east-1`) with the extra `headers`.
+ */
+export function s3Direct(
+  env: DirectEnv,
+  port: number,
+  request: {
+    method: string;
+    pathname: string;
+    query?: [string, string][];
+    body?: string;
+    region?: string;
+    headers?: Record<string, string>;
+  },
+): Promise<Direct> {
+  return signedS3(
+    env,
+    port,
+    request.method,
+    request.pathname,
+    request.query,
+    request.body,
+    request.region,
+    request.headers,
+  );
+}
+
+/** A KMS action (AWS JSON 1.1) with its JSON input, straight to the emulator. */
+export function kmsDirect(env: DirectEnv, port: number, action: string, input: object): Promise<Direct> {
+  return signed(env, port, {
+    service: 'kms',
+    method: 'POST',
+    pathname: '/',
+    query: [],
+    body: JSON.stringify(input),
+    region: 'us-east-1',
+    headers: { 'content-type': 'application/x-amz-json-1.1', 'x-amz-target': `TrentService.${action}` },
+  });
+}
+
+/** The path of the object `key` in `bucket` as sent and signed: each segment of the key percent-encoded. */
+export function objectPath(bucket: string, key: string): string {
+  return `/${bucket}/${key.split('/').map(uriEncode).join('/')}`;
 }
 
 /** One bucket of a direct `ListBuckets`, each value as the emulator wrote it, `null` when it wrote none. */
@@ -295,7 +386,7 @@ function answered(answer: Direct, status: number, what: string): string {
  * Every bucket a direct `ListBuckets` returns, in its order, page after page of 1000 (`max-buckets` always sent, so
  * each bucket carries its Region), with `prefix` when given.
  */
-export async function listBucketsDirect(ctx: Ctx, port: number, prefix?: string): Promise<DirectBucket[]> {
+export async function listBucketsDirect(ctx: DirectEnv, port: number, prefix?: string): Promise<DirectBucket[]> {
   const buckets: DirectBucket[] = [];
   let token: string | null = null;
   for (let pages = 0; pages < 100; pages++) {
@@ -318,12 +409,12 @@ export async function listBucketsDirect(ctx: Ctx, port: number, prefix?: string)
 }
 
 /** The names of a direct `ListBuckets` with `prefix`, in its order. */
-export async function bucketNamesDirect(ctx: Ctx, port: number, prefix?: string): Promise<string[]> {
+export async function bucketNamesDirect(ctx: DirectEnv, port: number, prefix?: string): Promise<string[]> {
   return (await listBucketsDirect(ctx, port, prefix)).map((b) => b.name);
 }
 
 /** The keys of a direct `ListObjectsV2` of `bucket`. */
-export async function objectKeysDirect(ctx: Ctx, port: number, bucket: string): Promise<string[]> {
+export async function objectKeysDirect(ctx: DirectEnv, port: number, bucket: string): Promise<string[]> {
   const body = answered(
     await signedS3(ctx, port, 'GET', `/${bucket}`, [['list-type', '2']]),
     200,
@@ -332,14 +423,688 @@ export async function objectKeysDirect(ctx: Ctx, port: number, bucket: string): 
   return [...body.matchAll(/<Contents>[\s\S]*?<Key>([^<]*)<\/Key>[\s\S]*?<\/Contents>/g)].map((m) => xmlText(m[1]));
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// A bucket's properties, versions and legal holds, directly (issue 256, R2 and R5.3).
+// ---------------------------------------------------------------------------------------------------------------
+
+const S3_XMLNS = 'http://s3.amazonaws.com/doc/2006-03-01/';
+
+/** `text` as XML character data. */
+function xmlEscape(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+/** `<name>text</name>`, the text escaped. */
+const el = (name: string, text: string) => `<${name}>${xmlEscape(text)}</${name}>`;
+
+/** The `<name>…</name>` blocks of `xml` in order, each block's inside; nested blocks of the same name are not met. */
+function blocks(xml: string, name: string): string[] {
+  return [...xml.matchAll(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`, 'g'))].map((m) => m[1]);
+}
+
+/** The emulator's `Code` of an error answer; `null` for an answer that has none. */
+export function errorCodeOf(answer: Answer): string | null {
+  return 'error' in answer ? null : element(answer.body, 'Code');
+}
+
 /**
- * The buckets a check makes directly on the emulator on `port`. Each is removed when the check ends, its objects
- * first, straight through the emulator; a removal that fails is logged. Making a bucket that does not answer 200 is
- * an environment failure: the check's Given would not hold.
+ * The body of `answer` when it is a 200; `null` when it is the 404 with `notSet`, the emulator's answer for a
+ * property never set (R2). Any other answer fails the check.
+ */
+function readOrNotSet(answer: Direct, notSet: string, what: string): string | null {
+  if (!('error' in answer) && answer.status === 404 && errorCodeOf(answer) === notSet) return null;
+  return answered(answer, 200, what);
+}
+
+/** Throws an `EnvError` unless `answer` has one of `statuses`: a direct Given the check needs did not hold. */
+function given<T extends Answer>(answer: T, what: string, statuses: number[] = [200]): Exclude<T, { error: string }> {
+  if ('error' in answer || !statuses.includes(answer.status)) {
+    const code = errorCodeOf(answer);
+    const message = 'error' in answer ? null : element(answer.body, 'Message');
+    throw new EnvError(
+      `${what} answered ${shownDirect(answer)}${code === null ? '' : ` ${code}`}${message === null ? '' : `: ${message}`}`,
+    );
+  }
+  return answer as Exclude<T, { error: string }>;
+}
+
+/** The values of `Rule.ObjectOwnership` (R6.4). */
+export type ObjectOwnership = 'BucketOwnerEnforced' | 'BucketOwnerPreferred' | 'ObjectWriter';
+
+/** What a direct `CreateBucket` sends besides the name (R2). */
+export interface CreateOptions {
+  /** Signed for this Region, with its `LocationConstraint` when it is not `us-east-1` (default `us-east-1`). */
+  region?: string;
+  /** The header `x-amz-bucket-object-lock-enabled: true`. */
+  objectLock?: boolean;
+  /** The header `x-amz-object-ownership`. */
+  ownership?: ObjectOwnership;
+  /** `CreateBucketConfiguration.Tags`, in order. */
+  tags?: [string, string][];
+}
+
+/** A direct `CreateBucket name` with `options`. */
+export function createBucketDirect(
+  env: DirectEnv,
+  port: number,
+  name: string,
+  options: CreateOptions = {},
+): Promise<Direct> {
+  const region = options.region ?? 'us-east-1';
+  const parts: string[] = [];
+  if (region !== 'us-east-1') parts.push(el('LocationConstraint', region));
+  if (options.tags && options.tags.length > 0) {
+    parts.push(`<Tags>${options.tags.map(([k, v]) => `<Tag>${el('Key', k)}${el('Value', v)}</Tag>`).join('')}</Tags>`);
+  }
+  const body =
+    parts.length === 0
+      ? ''
+      : `<CreateBucketConfiguration xmlns="${S3_XMLNS}">${parts.join('')}</CreateBucketConfiguration>`;
+  const headers: Record<string, string> = {};
+  if (options.objectLock) headers['x-amz-bucket-object-lock-enabled'] = 'true';
+  if (options.ownership) headers['x-amz-object-ownership'] = options.ownership;
+  return signedS3(env, port, 'PUT', `/${name}`, [], body, region, headers);
+}
+
+/** One Intelligent-Tiering configuration as put and as read (R5.3). */
+export interface TieringConfiguration {
+  id: string;
+  status: 'Enabled' | 'Disabled';
+  /** `Filter.Prefix`, or `Filter.And.Prefix` as read; `null` without one. */
+  prefix: string | null;
+  /** The `Days` of each `Tiering`, by its `AccessTier`. */
+  archiveDays: number | null;
+  deepArchiveDays: number | null;
+}
+
+/** One queue configuration of a bucket's event notifications, as put and as read (R5.3). */
+export interface QueueNotification {
+  id: string;
+  queueArn: string;
+  events: string[];
+  prefix: string | null;
+  suffix: string | null;
+}
+
+/** One public access setting each, as `PutPublicAccessBlock` and `GetPublicAccessBlock` name them (R6.4). */
+export interface PublicAccessBlock {
+  BlockPublicAcls: boolean;
+  IgnorePublicAcls: boolean;
+  BlockPublicPolicy: boolean;
+  RestrictPublicBuckets: boolean;
+}
+
+/** The default encryption as put (R5.3). */
+export interface EncryptionSetting {
+  algorithm: 'AES256' | 'aws:kms' | 'aws:kms:dsse';
+  keyId?: string;
+  bucketKey?: boolean;
+}
+
+/** The default retention of an Object Lock bucket as put, `days` or `years`. */
+export interface RetentionSetting {
+  mode: 'GOVERNANCE' | 'COMPLIANCE';
+  days?: number;
+  years?: number;
+}
+
+/** What `configureBucketDirect` puts, each property only when given, in this order. */
+export interface BucketSettings {
+  versioning?: 'Enabled' | 'Suspended';
+  abac?: 'Enabled' | 'Disabled';
+  tags?: [string, string][];
+  encryption?: EncryptionSetting;
+  intelligentTiering?: TieringConfiguration[];
+  logging?: { targetBucket: string; targetPrefix?: string };
+  /** The whole notification configuration: its queue configurations and whether EventBridge is on. */
+  notifications?: { queues?: QueueNotification[]; eventBridge?: boolean };
+  accelerate?: 'Enabled' | 'Suspended';
+  /** `PutObjectLockConfiguration` of a bucket made with Object Lock. */
+  defaultRetention?: RetentionSetting;
+  requestPayer?: 'BucketOwner' | 'Requester';
+  website?: { indexDocument: string; errorDocument?: string };
+  publicAccessBlock?: PublicAccessBlock;
+  ownership?: ObjectOwnership;
+}
+
+/** The subresource, body and name of each put of `settings`, in `BucketSettings`' order. */
+function settingPuts(settings: BucketSettings): { what: string; query: [string, string][]; body: string }[] {
+  const puts: { what: string; query: [string, string][]; body: string }[] = [];
+  const put = (what: string, query: [string, string][], root: string, inner: string) =>
+    puts.push({ what, query, body: `<${root} xmlns="${S3_XMLNS}">${inner}</${root}>` });
+  if (settings.versioning) {
+    put('PutBucketVersioning', [['versioning', '']], 'VersioningConfiguration', el('Status', settings.versioning));
+  }
+  if (settings.abac) put('PutBucketAbac', [['abac', '']], 'AbacStatus', el('Status', settings.abac));
+  if (settings.tags) {
+    const tags = settings.tags.map(([k, v]) => `<Tag>${el('Key', k)}${el('Value', v)}</Tag>`).join('');
+    put('PutBucketTagging', [['tagging', '']], 'Tagging', `<TagSet>${tags}</TagSet>`);
+  }
+  if (settings.encryption) {
+    const { algorithm, keyId, bucketKey } = settings.encryption;
+    const byDefault = `${el('SSEAlgorithm', algorithm)}${keyId === undefined ? '' : el('KMSMasterKeyID', keyId)}`;
+    const key = bucketKey === undefined ? '' : el('BucketKeyEnabled', String(bucketKey));
+    put(
+      'PutBucketEncryption',
+      [['encryption', '']],
+      'ServerSideEncryptionConfiguration',
+      `<Rule><ApplyServerSideEncryptionByDefault>${byDefault}</ApplyServerSideEncryptionByDefault>${key}</Rule>`,
+    );
+  }
+  for (const t of settings.intelligentTiering ?? []) {
+    const tierings = [
+      t.archiveDays === null
+        ? ''
+        : `<Tiering>${el('Days', String(t.archiveDays))}${el('AccessTier', 'ARCHIVE_ACCESS')}</Tiering>`,
+      t.deepArchiveDays === null
+        ? ''
+        : `<Tiering>${el('Days', String(t.deepArchiveDays))}${el('AccessTier', 'DEEP_ARCHIVE_ACCESS')}</Tiering>`,
+    ].join('');
+    const filter = t.prefix === null ? '' : `<Filter>${el('Prefix', t.prefix)}</Filter>`;
+    put(
+      `PutBucketIntelligentTieringConfiguration ${t.id}`,
+      [
+        ['intelligent-tiering', ''],
+        ['id', t.id],
+      ],
+      'IntelligentTieringConfiguration',
+      `${el('Id', t.id)}${filter}${el('Status', t.status)}${tierings}`,
+    );
+  }
+  if (settings.logging) {
+    const { targetBucket, targetPrefix } = settings.logging;
+    put(
+      'PutBucketLogging',
+      [['logging', '']],
+      'BucketLoggingStatus',
+      `<LoggingEnabled>${el('TargetBucket', targetBucket)}${el('TargetPrefix', targetPrefix ?? '')}</LoggingEnabled>`,
+    );
+  }
+  if (settings.notifications) {
+    const queues = (settings.notifications.queues ?? []).map((q) => {
+      const rules = [
+        q.prefix === null ? '' : `<FilterRule>${el('Name', 'prefix')}${el('Value', q.prefix)}</FilterRule>`,
+        q.suffix === null ? '' : `<FilterRule>${el('Name', 'suffix')}${el('Value', q.suffix)}</FilterRule>`,
+      ].join('');
+      const filter = rules === '' ? '' : `<Filter><S3Key>${rules}</S3Key></Filter>`;
+      return `<QueueConfiguration>${el('Id', q.id)}${el('Queue', q.queueArn)}${q.events.map((e) => el('Event', e)).join('')}${filter}</QueueConfiguration>`;
+    });
+    const eventBridge = settings.notifications.eventBridge
+      ? '<EventBridgeConfiguration></EventBridgeConfiguration>'
+      : '';
+    put(
+      'PutBucketNotificationConfiguration',
+      [['notification', '']],
+      'NotificationConfiguration',
+      `${queues.join('')}${eventBridge}`,
+    );
+  }
+  if (settings.accelerate) {
+    put(
+      'PutBucketAccelerateConfiguration',
+      [['accelerate', '']],
+      'AccelerateConfiguration',
+      el('Status', settings.accelerate),
+    );
+  }
+  if (settings.defaultRetention) {
+    const { mode, days, years } = settings.defaultRetention;
+    const period = days !== undefined ? el('Days', String(days)) : el('Years', String(years ?? 1));
+    put(
+      'PutObjectLockConfiguration',
+      [['object-lock', '']],
+      'ObjectLockConfiguration',
+      `${el('ObjectLockEnabled', 'Enabled')}<Rule><DefaultRetention>${el('Mode', mode)}${period}</DefaultRetention></Rule>`,
+    );
+  }
+  if (settings.requestPayer) {
+    put(
+      'PutBucketRequestPayment',
+      [['requestPayment', '']],
+      'RequestPaymentConfiguration',
+      el('Payer', settings.requestPayer),
+    );
+  }
+  if (settings.website) {
+    const { indexDocument, errorDocument } = settings.website;
+    const error = errorDocument === undefined ? '' : `<ErrorDocument>${el('Key', errorDocument)}</ErrorDocument>`;
+    put(
+      'PutBucketWebsite',
+      [['website', '']],
+      'WebsiteConfiguration',
+      `<IndexDocument>${el('Suffix', indexDocument)}</IndexDocument>${error}`,
+    );
+  }
+  if (settings.publicAccessBlock) {
+    const b = settings.publicAccessBlock;
+    put(
+      'PutPublicAccessBlock',
+      [['publicAccessBlock', '']],
+      'PublicAccessBlockConfiguration',
+      (['BlockPublicAcls', 'IgnorePublicAcls', 'BlockPublicPolicy', 'RestrictPublicBuckets'] as const)
+        .map((n) => el(n, String(b[n])))
+        .join(''),
+    );
+  }
+  if (settings.ownership) {
+    put(
+      'PutBucketOwnershipControls',
+      [['ownershipControls', '']],
+      'OwnershipControls',
+      `<Rule>${el('ObjectOwnership', settings.ownership)}</Rule>`,
+    );
+  }
+  return puts;
+}
+
+/**
+ * Puts each property of `settings` on `bucket` directly, one call each in `BucketSettings`' order, and logs each
+ * answer with `log`. A put that does not answer 200 is an `EnvError`: the check's Given would not hold.
+ */
+export async function configureBucketDirect(
+  env: DirectEnv,
+  port: number,
+  bucket: string,
+  settings: BucketSettings,
+  log: (line: string) => void = () => undefined,
+): Promise<void> {
+  for (const { what, query, body } of settingPuts(settings)) {
+    const answer = await signedS3(env, port, 'PUT', `/${bucket}`, query, body);
+    log(`direct ${what} ${bucket}: ${shownDirect(answer)}`);
+    given(answer, `direct ${what} ${bucket}`, [200, 204]);
+  }
+}
+
+/** A bucket's properties as direct reads return them, each `null` where the emulator answers "not set" (R2, R5.3). */
+export interface BucketProperties {
+  /** `GetBucketVersioning` `Status`; `null` on a bucket never versioned. */
+  versioning: string | null;
+  /** `GetBucketAbac` `Status`. */
+  abac: string | null;
+  /** `GetBucketTagging` `TagSet` in its order; `null` on `NoSuchTagSet`. */
+  tags: [string, string][] | null;
+  /** `GetBucketEncryption`'s first rule; `null` on `ServerSideEncryptionConfigurationNotFoundError`. */
+  encryption: { algorithm: string | null; keyId: string | null; bucketKey: boolean | null } | null;
+  /** `ListBucketIntelligentTieringConfigurations`, its first answer, and whether it was truncated. */
+  intelligentTiering: TieringConfiguration[];
+  intelligentTieringTruncated: boolean;
+  /** `GetBucketLogging` `LoggingEnabled`; `null` without it. */
+  logging: { targetBucket: string | null; targetPrefix: string | null } | null;
+  /** `GetBucketNotificationConfiguration`: its queue configurations, the ARNs of its topic and function ones. */
+  notifications: { queues: QueueNotification[]; topicArns: string[]; functionArns: string[]; eventBridge: boolean };
+  /** `GetBucketAccelerateConfiguration` `Status`; `null` without one. */
+  accelerate: string | null;
+  /** `GetObjectLockConfiguration`; `null` on `ObjectLockConfigurationNotFoundError`. */
+  objectLock: {
+    enabled: string | null;
+    retention: { mode: string | null; days: number | null; years: number | null } | null;
+  } | null;
+  /** `GetBucketRequestPayment` `Payer`. */
+  requestPayer: string | null;
+  /** `GetBucketWebsite`; `null` on `NoSuchWebsiteConfiguration`. */
+  website: { indexDocument: string | null; errorDocument: string | null } | null;
+  /** `GetPublicAccessBlock`; `null` on `NoSuchPublicAccessBlockConfiguration`. */
+  publicAccessBlock: PublicAccessBlock | null;
+  /** `GetBucketOwnershipControls` `ObjectOwnership`; `null` on `OwnershipControlsNotFoundError`. */
+  ownership: string | null;
+}
+
+const numberOrNull = (text: string | null) => (text === null ? null : Number(text));
+
+/** The filter rule `name` (`prefix`, `suffix`) of a notification configuration's block. */
+function filterRule(block: string, name: string): string | null {
+  for (const rule of blocks(block, 'FilterRule')) {
+    if (element(rule, 'Name')?.toLowerCase() === name) return element(rule, 'Value') ?? '';
+  }
+  return null;
+}
+
+/** Every property of `bucket` the four screens show or the create form sets, read directly, all in parallel. */
+export async function bucketPropertiesDirect(env: DirectEnv, port: number, bucket: string): Promise<BucketProperties> {
+  const get = (sub: string) => signedS3(env, port, 'GET', `/${bucket}`, [[sub, '']]);
+  const what = (op: string) => `direct ${op} ${bucket}`;
+  const [
+    versioning,
+    abac,
+    tagging,
+    encryption,
+    tiering,
+    logging,
+    notification,
+    accelerate,
+    lock,
+    payment,
+    website,
+    block,
+    ownership,
+  ] = await Promise.all(
+    [
+      'versioning',
+      'abac',
+      'tagging',
+      'encryption',
+      'intelligent-tiering',
+      'logging',
+      'notification',
+      'accelerate',
+      'object-lock',
+      'requestPayment',
+      'website',
+      'publicAccessBlock',
+      'ownershipControls',
+    ].map(get),
+  );
+  const tagsBody = readOrNotSet(tagging, 'NoSuchTagSet', what('GetBucketTagging'));
+  const encryptionBody = readOrNotSet(
+    encryption,
+    'ServerSideEncryptionConfigurationNotFoundError',
+    what('GetBucketEncryption'),
+  );
+  const tieringBody = answered(tiering, 200, what('ListBucketIntelligentTieringConfigurations'));
+  const loggingBody = answered(logging, 200, what('GetBucketLogging'));
+  const notificationBody = answered(notification, 200, what('GetBucketNotificationConfiguration'));
+  const lockBody = readOrNotSet(lock, 'ObjectLockConfigurationNotFoundError', what('GetObjectLockConfiguration'));
+  const websiteBody = readOrNotSet(website, 'NoSuchWebsiteConfiguration', what('GetBucketWebsite'));
+  const blockBody = readOrNotSet(block, 'NoSuchPublicAccessBlockConfiguration', what('GetPublicAccessBlock'));
+  const ownershipBody = readOrNotSet(ownership, 'OwnershipControlsNotFoundError', what('GetBucketOwnershipControls'));
+  const rule = encryptionBody === null ? null : (blocks(encryptionBody, 'Rule')[0] ?? '');
+  const enabledLogging = blocks(loggingBody, 'LoggingEnabled')[0];
+  const retention = lockBody === null ? undefined : blocks(lockBody, 'DefaultRetention')[0];
+  return {
+    versioning: element(answered(versioning, 200, what('GetBucketVersioning')), 'Status'),
+    abac: element(answered(abac, 200, what('GetBucketAbac')), 'Status'),
+    tags:
+      tagsBody === null
+        ? null
+        : blocks(tagsBody, 'Tag').map((t) => [element(t, 'Key') ?? '', element(t, 'Value') ?? ''] as [string, string]),
+    encryption:
+      rule === null
+        ? null
+        : {
+            algorithm: element(rule, 'SSEAlgorithm'),
+            keyId: element(rule, 'KMSMasterKeyID'),
+            bucketKey: element(rule, 'BucketKeyEnabled') === null ? null : element(rule, 'BucketKeyEnabled') === 'true',
+          },
+    intelligentTiering: blocks(tieringBody, 'IntelligentTieringConfiguration').map((c) => {
+      const days = (tier: string) =>
+        numberOrNull(
+          blocks(c, 'Tiering')
+            .filter((t) => element(t, 'AccessTier') === tier)
+            .map((t) => element(t, 'Days'))[0] ?? null,
+        );
+      const filter = blocks(c, 'Filter')[0] ?? '';
+      return {
+        id: element(c, 'Id') ?? '',
+        status: (element(c, 'Status') ?? '') as 'Enabled' | 'Disabled',
+        prefix: element(filter, 'Prefix'),
+        archiveDays: days('ARCHIVE_ACCESS'),
+        deepArchiveDays: days('DEEP_ARCHIVE_ACCESS'),
+      };
+    }),
+    intelligentTieringTruncated: element(tieringBody, 'IsTruncated') === 'true',
+    logging:
+      enabledLogging === undefined
+        ? null
+        : {
+            targetBucket: element(enabledLogging, 'TargetBucket'),
+            targetPrefix: element(enabledLogging, 'TargetPrefix'),
+          },
+    notifications: {
+      queues: blocks(notificationBody, 'QueueConfiguration').map((q) => ({
+        id: element(q, 'Id') ?? '',
+        queueArn: element(q, 'Queue') ?? '',
+        events: blocks(q, 'Event').map(xmlText),
+        prefix: filterRule(q, 'prefix'),
+        suffix: filterRule(q, 'suffix'),
+      })),
+      topicArns: blocks(notificationBody, 'TopicConfiguration').map((t) => element(t, 'Topic') ?? ''),
+      functionArns: blocks(notificationBody, 'CloudFunctionConfiguration').map(
+        (f) => element(f, 'CloudFunction') ?? '',
+      ),
+      eventBridge: /<EventBridgeConfiguration\s*\/?>/.test(notificationBody),
+    },
+    accelerate: element(answered(accelerate, 200, what('GetBucketAccelerateConfiguration')), 'Status'),
+    objectLock:
+      lockBody === null
+        ? null
+        : {
+            enabled: element(lockBody, 'ObjectLockEnabled'),
+            retention:
+              retention === undefined
+                ? null
+                : {
+                    mode: element(retention, 'Mode'),
+                    days: numberOrNull(element(retention, 'Days')),
+                    years: numberOrNull(element(retention, 'Years')),
+                  },
+          },
+    requestPayer: element(answered(payment, 200, what('GetBucketRequestPayment')), 'Payer'),
+    website:
+      websiteBody === null
+        ? null
+        : {
+            indexDocument: element(blocks(websiteBody, 'IndexDocument')[0] ?? '', 'Suffix'),
+            errorDocument: element(blocks(websiteBody, 'ErrorDocument')[0] ?? '', 'Key'),
+          },
+    publicAccessBlock:
+      blockBody === null
+        ? null
+        : {
+            BlockPublicAcls: element(blockBody, 'BlockPublicAcls') === 'true',
+            IgnorePublicAcls: element(blockBody, 'IgnorePublicAcls') === 'true',
+            BlockPublicPolicy: element(blockBody, 'BlockPublicPolicy') === 'true',
+            RestrictPublicBuckets: element(blockBody, 'RestrictPublicBuckets') === 'true',
+          },
+    ownership: ownershipBody === null ? null : element(ownershipBody, 'ObjectOwnership'),
+  };
+}
+
+/** One item of a bucket (R8.5): an object version or a delete marker, as `ListObjectVersions` lists it. */
+export interface DirectItem {
+  kind: 'version' | 'delete-marker';
+  key: string;
+  /** `null` in a bucket never versioned (the emulator writes `null`). */
+  versionId: string;
+  isLatest: boolean;
+}
+
+/**
+ * Every item of `bucket` by a direct `ListObjectVersions`, versions and delete markers in the answer's order, page
+ * after page of `maxKeys` (default 1000) with the answer's markers. `null` on `NoSuchBucket`.
+ */
+export async function objectVersionsDirect(
+  env: DirectEnv,
+  port: number,
+  bucket: string,
+  maxKeys = 1000,
+): Promise<DirectItem[] | null> {
+  const items: DirectItem[] = [];
+  let markers: [string, string][] = [];
+  for (let pages = 0; pages < 100; pages++) {
+    const answer = await signedS3(env, port, 'GET', `/${bucket}`, [
+      ['versions', ''],
+      ['max-keys', String(maxKeys)],
+      ...markers,
+    ]);
+    const body = readOrNotSet(answer, 'NoSuchBucket', `direct ListObjectVersions ${bucket}`);
+    if (body === null) return null;
+    for (const m of body.matchAll(/<(Version|DeleteMarker)>([\s\S]*?)<\/\1>/g)) {
+      items.push({
+        kind: m[1] === 'Version' ? 'version' : 'delete-marker',
+        key: element(m[2], 'Key') ?? '',
+        versionId: element(m[2], 'VersionId') ?? 'null',
+        isLatest: element(m[2], 'IsLatest') === 'true',
+      });
+    }
+    if (element(body, 'IsTruncated') !== 'true') return items;
+    markers = [
+      ['key-marker', element(body, 'NextKeyMarker') ?? ''],
+      ['version-id-marker', element(body, 'NextVersionIdMarker') ?? ''],
+    ];
+  }
+  throw new Error(`direct ListObjectVersions ${bucket}: more than 100 pages`);
+}
+
+/** A direct `PutObject bucket/key` with `body`; its version id is the header `x-amz-version-id` of a 200. */
+export function putObjectDirect(
+  env: DirectEnv,
+  port: number,
+  bucket: string,
+  key: string,
+  body: string,
+): Promise<Direct> {
+  return signedS3(env, port, 'PUT', objectPath(bucket, key), [], body);
+}
+
+/** A direct `DeleteObject bucket/key`, of `versionId` when given (without one, a versioned bucket gets a delete marker). */
+export function deleteObjectDirect(
+  env: DirectEnv,
+  port: number,
+  bucket: string,
+  key: string,
+  versionId?: string,
+): Promise<Direct> {
+  return signedS3(
+    env,
+    port,
+    'DELETE',
+    objectPath(bucket, key),
+    versionId === undefined ? [] : [['versionId', versionId]],
+  );
+}
+
+/** A direct `PutObjectLegalHold` of `key`'s `versionId` in `bucket`, `ON` or `OFF`. */
+export function putLegalHoldDirect(
+  env: DirectEnv,
+  port: number,
+  bucket: string,
+  key: string,
+  versionId: string,
+  status: 'ON' | 'OFF',
+): Promise<Direct> {
+  return signedS3(
+    env,
+    port,
+    'PUT',
+    objectPath(bucket, key),
+    [
+      ['legal-hold', ''],
+      ['versionId', versionId],
+    ],
+    `<LegalHold xmlns="${S3_XMLNS}">${el('Status', status)}</LegalHold>`,
+  );
+}
+
+/** The legal hold of `key`'s `versionId` in `bucket` by a direct `GetObjectLegalHold`; `null` when it has none. */
+export async function legalHoldDirect(
+  env: DirectEnv,
+  port: number,
+  bucket: string,
+  key: string,
+  versionId: string,
+): Promise<string | null> {
+  const answer = await signedS3(env, port, 'GET', objectPath(bucket, key), [
+    ['legal-hold', ''],
+    ['versionId', versionId],
+  ]);
+  const body = readOrNotSet(answer, 'NoSuchObjectLockConfiguration', `direct GetObjectLegalHold ${bucket}/${key}`);
+  return body === null ? null : element(body, 'Status');
+}
+
+/** One entry of a direct `DeleteObjects` answer's `Errors`. */
+export interface DeleteFailure {
+  key: string;
+  versionId: string | null;
+  code: string | null;
+  message: string | null;
+}
+
+/**
+ * A direct `DeleteObjects` of `items` (each with its version id) in `bucket`, `Quiet`, at most 1000, with
+ * `x-amz-bypass-governance-retention` so a governance retention does not keep a version (a legal hold still does).
+ * Returns the answer's `Errors`.
+ */
+export async function deleteItemsDirect(
+  env: DirectEnv,
+  port: number,
+  bucket: string,
+  items: { key: string; versionId: string }[],
+): Promise<DeleteFailure[]> {
+  const objects = items.map((i) => `<Object>${el('Key', i.key)}${el('VersionId', i.versionId)}</Object>`).join('');
+  const answer = await signedS3(
+    env,
+    port,
+    'POST',
+    `/${bucket}`,
+    [['delete', '']],
+    `<Delete xmlns="${S3_XMLNS}"><Quiet>true</Quiet>${objects}</Delete>`,
+    'us-east-1',
+    { 'x-amz-bypass-governance-retention': 'true' },
+  );
+  const body = given(answer, `direct DeleteObjects ${bucket} (${String(items.length)} items)`).body;
+  return blocks(body, 'Error').map((e) => ({
+    key: element(e, 'Key') ?? '',
+    versionId: element(e, 'VersionId'),
+    code: element(e, 'Code'),
+    message: element(e, 'Message'),
+  }));
+}
+
+/**
+ * Empties `bucket` directly of every item: lists from the bucket's start after each `DeleteObjects` (R2, markers after
+ * a delete are not safe), takes off the legal hold of a version that could not be deleted and sends it again. Returns
+ * the items still left (none when it worked); `null` when the emulator holds no such bucket.
+ */
+export async function emptyBucketDirect(
+  env: DirectEnv,
+  port: number,
+  bucket: string,
+  log: (line: string) => void = () => undefined,
+): Promise<DirectItem[] | null> {
+  const released = new Set<string>();
+  for (let round = 0; round < 10; round++) {
+    const items = await objectVersionsDirect(env, port, bucket);
+    if (items === null || items.length === 0) return items;
+    const failures = await deleteItemsDirect(env, port, bucket, items);
+    log(`direct DeleteObjects ${bucket}: ${String(items.length)} items, ${String(failures.length)} failed`);
+    let progress = failures.length < items.length;
+    for (const f of failures) {
+      const id = `${f.key}\u0000${f.versionId ?? ''}`;
+      if (f.versionId === null || released.has(id)) continue;
+      released.add(id);
+      const off = await putLegalHoldDirect(env, port, bucket, f.key, f.versionId, 'OFF');
+      log(`direct PutObjectLegalHold OFF ${bucket}/${f.key}: ${shownDirect(off)}`);
+      progress = true;
+    }
+    if (!progress) return objectVersionsDirect(env, port, bucket);
+  }
+  return objectVersionsDirect(env, port, bucket);
+}
+
+/** A KMS key made directly (`CreateKey`, symmetric, for encryption): its ARN. */
+export async function createKeyDirect(env: DirectEnv, port: number, description: string): Promise<string> {
+  const answer = given(await kmsDirect(env, port, 'CreateKey', { Description: description }), 'direct KMS CreateKey');
+  const arn = (JSON.parse(answer.body) as { KeyMetadata?: { Arn?: string } }).KeyMetadata?.Arn;
+  if (typeof arn !== 'string' || arn === '') throw new EnvError(`direct KMS CreateKey answered no KeyMetadata.Arn`);
+  return arn;
+}
+
+/**
+ * The buckets, KMS keys and SQS queues a check makes directly on the emulator on `port`, and the buckets its screen
+ * makes (`track`). Each bucket is removed when the check ends, emptied first of every version and delete marker and
+ * with every legal hold taken off; then each queue is deleted and each key scheduled for deletion (the shortest
+ * window KMS allows, 7 days). A removal that fails is logged. Making something that does not answer 200 is an
+ * environment failure: the check's Given would not hold.
  */
 export class Seeded {
   private readonly made: string[] = [];
-  private readonly objects = new Map<string, string[]>();
+  private readonly keys: string[] = [];
+  private readonly queues: string[] = [];
 
   constructor(
     private readonly ctx: Ctx,
@@ -349,27 +1114,100 @@ export class Seeded {
   }
 
   /** `CreateBucket name`, signed for `region`, with its `LocationConstraint` when it is not `us-east-1`. */
-  async bucket(name: string, region = 'us-east-1'): Promise<void> {
-    const body =
-      region === 'us-east-1'
-        ? ''
-        : `<CreateBucketConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><LocationConstraint>${region}</LocationConstraint></CreateBucketConfiguration>`;
+  async bucket(name: string, region = 'us-east-1', options: Omit<CreateOptions, 'region'> = {}): Promise<void> {
     this.made.push(name);
-    const answer = await signedS3(this.ctx, this.port, 'PUT', `/${name}`, [], body, region);
-    this.ctx.log(`direct CreateBucket ${name} in ${region}: ${shownDirect(answer)}`);
-    if ('error' in answer || answer.status !== 200) {
-      throw new EnvError(`direct CreateBucket ${name} in ${region} answered ${shownDirect(answer)}`);
-    }
+    const answer = await createBucketDirect(this.ctx, this.port, name, { ...options, region });
+    this.ctx.log(`direct CreateBucket ${name} in ${region} ${JSON.stringify(options)}: ${shownDirect(answer)}`);
+    given(answer, `direct CreateBucket ${name} in ${region}`);
   }
 
-  /** `PutObject bucket/key` with `body`. */
-  async object(bucket: string, key: string, body: string): Promise<void> {
-    this.objects.set(bucket, [...(this.objects.get(bucket) ?? []), key]);
-    const answer = await signedS3(this.ctx, this.port, 'PUT', `/${bucket}/${key}`, [], body);
+  /** Puts `settings` on `name` directly (`configureBucketDirect`). */
+  async configure(name: string, settings: BucketSettings): Promise<void> {
+    await configureBucketDirect(this.ctx, this.port, name, settings, (line) => this.ctx.log(line));
+  }
+
+  /** A bucket the check's screen makes: removed at the end like the check's own. */
+  track(name: string): void {
+    if (!this.made.includes(name)) this.made.push(name);
+  }
+
+  /** `PutObject bucket/key` with `body`; returns its version id (`null` when the answer names none). */
+  async object(bucket: string, key: string, body: string): Promise<string | null> {
+    const answer = await putObjectDirect(this.ctx, this.port, bucket, key, body);
     this.ctx.log(`direct PutObject ${bucket}/${key}: ${shownDirect(answer)}`);
-    if ('error' in answer || answer.status !== 200) {
-      throw new EnvError(`direct PutObject ${bucket}/${key} answered ${shownDirect(answer)}`);
-    }
+    return given(answer, `direct PutObject ${bucket}/${key}`).headers['x-amz-version-id'] ?? null;
+  }
+
+  /** `PutObject` of each key with `body`, at most `parallel` at a time; returns their version ids in order. */
+  async objects(bucket: string, keys: string[], body: string, parallel = 16): Promise<(string | null)[]> {
+    const ids: (string | null)[] = new Array<string | null>(keys.length).fill(null);
+    let next = 0;
+    const worker = async () => {
+      while (next < keys.length) {
+        const i = next++;
+        const answer = await putObjectDirect(this.ctx, this.port, bucket, keys[i], body);
+        ids[i] = given(answer, `direct PutObject ${bucket}/${keys[i]}`).headers['x-amz-version-id'] ?? null;
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(parallel, keys.length) }, worker));
+    this.ctx.log(`direct PutObject of ${String(keys.length)} keys into ${bucket}, ${String(parallel)} at a time`);
+    return ids;
+  }
+
+  /** `DeleteObject bucket/key` without a version id: in a versioned bucket, a delete marker; returns its version id. */
+  async deleteMarker(bucket: string, key: string): Promise<string | null> {
+    const answer = await deleteObjectDirect(this.ctx, this.port, bucket, key);
+    this.ctx.log(`direct DeleteObject ${bucket}/${key}: ${shownDirect(answer)}`);
+    return given(answer, `direct DeleteObject ${bucket}/${key}`, [200, 204]).headers['x-amz-version-id'] ?? null;
+  }
+
+  /** `PutObjectLegalHold` of `key`'s `versionId`, `ON` or `OFF`. */
+  async legalHold(bucket: string, key: string, versionId: string, status: 'ON' | 'OFF'): Promise<void> {
+    const answer = await putLegalHoldDirect(this.ctx, this.port, bucket, key, versionId, status);
+    this.ctx.log(`direct PutObjectLegalHold ${status} ${bucket}/${key}: ${shownDirect(answer)}`);
+    given(answer, `direct PutObjectLegalHold ${status} ${bucket}/${key}`);
+  }
+
+  /** A KMS key; returns its ARN. */
+  async kmsKey(): Promise<string> {
+    const arn = await createKeyDirect(this.ctx, this.port, `EmuForge check ${this.ctx.id}`);
+    this.keys.push(arn);
+    this.ctx.log(`direct KMS CreateKey: ${arn}`);
+    return arn;
+  }
+
+  /**
+   * An SQS queue `name` whose policy lets S3 send to it (without one the emulator refuses a notification to it:
+   * "Unable to validate the following destination configurations"); returns its ARN.
+   */
+  async queue(name: string): Promise<string> {
+    const created = given(
+      await directSqs(this.ctx, this.port, 'CreateQueue', { QueueName: name }),
+      `direct SQS CreateQueue ${name}`,
+    );
+    const url = (JSON.parse(created.body) as { QueueUrl?: string }).QueueUrl ?? '';
+    this.queues.push(url);
+    const attributes = given(
+      await directSqs(this.ctx, this.port, 'GetQueueAttributes', { QueueUrl: url, AttributeNames: ['QueueArn'] }),
+      `direct SQS GetQueueAttributes ${name}`,
+    );
+    const arn = (JSON.parse(attributes.body) as { Attributes?: { QueueArn?: string } }).Attributes?.QueueArn;
+    if (typeof arn !== 'string' || arn === '') throw new EnvError(`direct SQS GetQueueAttributes ${name}: no QueueArn`);
+    const policy = {
+      Version: '2012-10-17',
+      Statement: [
+        { Effect: 'Allow', Principal: { Service: 's3.amazonaws.com' }, Action: 'sqs:SendMessage', Resource: arn },
+      ],
+    };
+    given(
+      await directSqs(this.ctx, this.port, 'SetQueueAttributes', {
+        QueueUrl: url,
+        Attributes: { Policy: JSON.stringify(policy) },
+      }),
+      `direct SQS SetQueueAttributes ${name}`,
+    );
+    this.ctx.log(`direct SQS CreateQueue ${name}, its policy allowing S3: ${arn}`);
+    return arn;
   }
 
   /** Whether `name` was made by this check and is not removed yet. */
@@ -377,27 +1215,37 @@ export class Seeded {
     return this.made.includes(name);
   }
 
-  /** `DeleteBucket name` now (a check's step); the bucket is no longer removed at the end. */
+  /** Empties and deletes `name` now (a check's step); the bucket is no longer removed at the end. */
   async remove(name: string): Promise<void> {
-    for (const key of this.objects.get(name) ?? []) await signedS3(this.ctx, this.port, 'DELETE', `/${name}/${key}`);
-    this.objects.delete(name);
+    await emptyBucketDirect(this.ctx, this.port, name, (line) => this.ctx.log(line));
     const answer = await signedS3(this.ctx, this.port, 'DELETE', `/${name}`);
     this.ctx.log(`direct DeleteBucket ${name}: ${shownDirect(answer)}`);
-    if ('error' in answer || answer.status !== 204) {
-      throw new EnvError(`direct DeleteBucket ${name} answered ${shownDirect(answer)}`);
-    }
+    given(answer, `direct DeleteBucket ${name}`, [204]);
     this.made.splice(this.made.indexOf(name), 1);
   }
 
   async dispose(): Promise<void> {
+    const log = (line: string) => this.ctx.log(`cleanup ${line}`);
     for (const name of this.made.reverse()) {
-      for (const key of this.objects.get(name) ?? []) {
-        const deleted = await signedS3(this.ctx, this.port, 'DELETE', `/${name}/${key}`);
-        this.ctx.log(`cleanup DeleteObject ${name}/${key} directly: ${shownDirect(deleted)}`);
+      try {
+        const left = await emptyBucketDirect(this.ctx, this.port, name, log);
+        if (left !== null && left.length > 0) log(`${name} still holds ${String(left.length)} items`);
+      } catch (e) {
+        log(`emptying ${name} directly: ${e instanceof Error ? e.message : String(e)}`);
       }
-      this.ctx.log(
-        `cleanup DeleteBucket ${name} directly: ${shownDirect(await signedS3(this.ctx, this.port, 'DELETE', `/${name}`))}`,
+      log(`DeleteBucket ${name} directly: ${shownDirect(await signedS3(this.ctx, this.port, 'DELETE', `/${name}`))}`);
+    }
+    for (const url of this.queues) {
+      log(
+        `SQS DeleteQueue ${url} directly: ${shownDirect(await directSqs(this.ctx, this.port, 'DeleteQueue', { QueueUrl: url }))}`,
       );
+    }
+    for (const arn of this.keys) {
+      const answer = await kmsDirect(this.ctx, this.port, 'ScheduleKeyDeletion', {
+        KeyId: arn,
+        PendingWindowInDays: 7,
+      });
+      log(`KMS ScheduleKeyDeletion ${arn} directly: ${shownDirect(answer)}`);
     }
   }
 }

@@ -490,13 +490,13 @@ describe('selection and the actions', () => {
     expect(within(tableElement()).queryByText('ARN copied')).toBeNull();
   });
 
+  // The empty and delete pages read on opening (issue 256, R7.1 and R8.1), so a request after the navigation is
+  // theirs: these two rows assert the address only (test-criteria.md of issue 256, "Existing checks and cases").
   it.each([
     ['Empty', '/aws/s3/bucket/alpha/empty'],
     ['Delete', '/aws/s3/bucket/alpha/delete'],
-    ['Create bucket', '/aws/s3/bucket/create'],
-  ])('"%s" leads to %s without a request to the engine', async (name, path) => {
+  ])('"%s" leads to %s', async (name, path) => {
     const { router } = await openLoaded();
-    const sent = engine.aws.length;
 
     select('alpha');
     fireEvent.click(action(name));
@@ -504,28 +504,44 @@ describe('selection and the actions', () => {
     await waitFor(() => {
       expect(router.state.location.pathname).toBe(path);
     });
-    expect(engine.aws.length).toBe(sent);
   });
 
+  it.each([['Create bucket', '/aws/s3/bucket/create']])(
+    '"%s" leads to %s without a request to the engine',
+    async (name, path) => {
+      const { router } = await openLoaded();
+      const sent = engine.aws.length;
+
+      select('alpha');
+      fireEvent.click(action(name));
+
+      await waitFor(() => {
+        expect(router.state.location.pathname).toBe(path);
+      });
+      expect(engine.aws.length).toBe(sent);
+    },
+  );
+
+  // The tab first: a bucket's page reads on opening (issue 256, R5), and a read of it still on its way could be
+  // counted after the return to the list, so the name's link comes last and asserts the address only.
   it('a name leads to the bucket’s route and the tab "Directory buckets" to /aws/s3/directory-buckets, without a request', async () => {
     const { router } = await openLoaded([bucket('my bucket%/x')]);
     const sent = engine.aws.length;
 
-    fireEvent.click(within(tableElement()).getByRole('link', { name: 'my bucket%/x' }));
-    await waitFor(() => {
-      expect(router.state.location.pathname).toBe('/aws/s3/buckets/my%20bucket%25%2Fx');
-    });
-    act(() => {
-      void router.navigate('/aws/s3/buckets');
-    });
-    await expectNames(['my bucket%/x']);
-    const read = engine.aws.length;
     fireEvent.click(screen.getByRole('tab', { name: 'Directory buckets' }));
     await waitFor(() => {
       expect(router.state.location.pathname).toBe('/aws/s3/directory-buckets');
     });
-    expect(engine.aws.length).toBe(read);
+    expect(engine.aws.length).toBe(sent);
     expect(sent).toBe(1);
+    act(() => {
+      void router.navigate('/aws/s3/buckets');
+    });
+    await expectNames(['my bucket%/x']);
+    fireEvent.click(within(tableElement()).getByRole('link', { name: 'my bucket%/x' }));
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe('/aws/s3/buckets/my%20bucket%25%2Fx');
+    });
   });
 
   it('"Refresh Buckets": a new request, "Bucket list refreshed" announced, a selected bucket still there stays selected, one gone does not', async () => {

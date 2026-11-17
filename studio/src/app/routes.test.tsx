@@ -156,7 +156,13 @@ describe('routes', () => {
     },
   );
 
-  it.each(['/aws/s3/buckets/my-bucket', '/aws/s3/bucket/create', '/aws/s3/directory-buckets'])(
+  // Issue 256 gives /aws/s3/buckets/my-bucket and /aws/s3/bucket/create their screens; these three paths have none
+  // before or after (test-criteria.md, "Existing checks and cases").
+  it.each([
+    '/aws/s3/buckets/my-bucket/objects',
+    '/aws/s3/bucket/my-bucket/property/versioning/edit',
+    '/aws/s3/directory-buckets',
+  ])(
     'opens %s as the "no screen yet" page of Amazon Simple Storage Service, with no ListBuckets request',
     async (path) => {
       const engine = new FakeEngine();
