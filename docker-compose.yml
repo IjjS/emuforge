@@ -19,13 +19,8 @@ name: emuforge-app${EMUFORGE_STUDIO_PORT:+-${EMUFORGE_STUDIO_PORT}}
 
 x-emuforge: &emuforge
   image: ${EMUFORGE_IMAGE:-emuforge}
-  build:
-    context: .
-    dockerfile: infra/emuforge/Dockerfile
-    additional_contexts:
-      gateway: infra/emuforge
-  # Always built from this checkout, never pulled from a registry under the image's name.
-  pull_policy: build
+  # Built by the gateway's service from this checkout, never pulled from a registry under the image's name.
+  pull_policy: never
   environment:
     EMULATOR_PORT: ${EMULATOR_PORT:-9297}
     EMUFORGE_ENGINE_PORT: ${EMUFORGE_ENGINE_PORT:-8297}
@@ -40,6 +35,15 @@ services:
   # Owns the form's network namespace and its two published ports; carries bytes, nothing else (haproxy.cfg).
   gateway:
     <<: *emuforge
+    # The one service that builds the image. Compose labels an image with the service that built it, so three
+    # services building one tag would leave it on whichever finished last, and a second start would recreate
+    # every container even with BUILDX_NO_DEFAULT_ATTESTATIONS=1.
+    build:
+      context: .
+      dockerfile: infra/emuforge/Dockerfile
+      additional_contexts:
+        gateway: infra/emuforge
+    pull_policy: build
     command: ["haproxy", "-db", "-f", "/opt/emuforge/haproxy.cfg"]
     ports:
       # Published on 127.0.0.1 only, never on the whole network.
