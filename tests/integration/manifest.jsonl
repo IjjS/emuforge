@@ -133,3 +133,4 @@
 {"check_id": "engine.product-wrapper-uses-a-running-emulator", "path": "tests/integration/studio/product-wrapper.spec.ts", "module": "engine", "operations": [], "labels": ["own-emulator", "lifecycle"], "issue": 54}
 {"check_id": "engine.product-wrapper-starts-an-emulator-when-none-runs", "path": "tests/integration/studio/product-wrapper.spec.ts", "module": "engine", "operations": [], "labels": ["own-emulator", "lifecycle", "safety"], "issue": 54}
 {"check_id": "engine.product-wrapper-refuses-root-and-bad-ids", "path": "tests/integration/studio/product-wrapper.spec.ts", "module": "engine", "operations": [], "labels": ["safety"], "issue": 54}
+{"check_id": "studio.addresses-stay-whole-with-five-digit-ports", "path": "tests/integration/studio/addresses.spec.ts", "module": "studio", "operations": [], "labels": ["own-emulator", "regression"], "issue": 60}
