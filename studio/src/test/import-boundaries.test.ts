@@ -261,3 +261,130 @@ describe('file patterns (issue 386, R8.1)', () => {
     expect(await boundaryErrors(file, globbing('./services/s3/*.ts'))).toEqual([]);
   });
 });
+
+describe("a service's dialogs are the area's (issue 462, R5)", () => {
+  const FILE = 'providers/aws/area/services/s3/x.tsx';
+
+  /** The messages of the boundary rule that name the area's `AreaModal`. */
+  async function modalErrors(file: string, code: string): Promise<string[]> {
+    return (await boundaryErrors(file, code)).filter((message) => message.includes('AreaModal'));
+  }
+
+  /** A file rendering a Cloudscape `Box` given the attribute `name`. */
+  function withAttribute(name: string): string {
+    return [
+      "import Box from '@cloudscape-design/components/box';",
+      '',
+      'export function Thing({ value }: { value: unknown }) {',
+      `  return <Box ${name}={value} />;`,
+      '}',
+      '',
+    ].join('\n');
+  }
+
+  it(`${FILE} importing @cloudscape-design/components/modal → an error whose message names AreaModal`, async () => {
+    expect(await modalErrors(FILE, importing('@cloudscape-design/components/modal'))).toHaveLength(1);
+    expect(await boundaryErrors(FILE, importing('@cloudscape-design/components/modal'))).toHaveLength(1);
+  });
+
+  it(`${FILE} importing { Modal } from @cloudscape-design/components → an error whose message names AreaModal`, async () => {
+    const code = "import { Modal } from '@cloudscape-design/components';\n\nexport const used = Modal;\n";
+    expect(await modalErrors(FILE, code)).toHaveLength(1);
+    expect(await boundaryErrors(FILE, code)).toHaveLength(1);
+  });
+
+  it.each(['@cloudscape-design/components/modal', '@cloudscape-design/components'])(
+    `${FILE} with import('%s') → an error`,
+    async (source) => {
+      const code = `export const load = () => import('${source}');\n`;
+      expect(await modalErrors(FILE, code)).toHaveLength(1);
+    },
+  );
+
+  it.each(['getModalRoot', 'removeModalRoot', 'modalRoot'])(
+    `${FILE} rendering an element with the attribute %s → an error whose message names AreaModal and the area's root`,
+    async (name) => {
+      const errors = await boundaryErrors(FILE, withAttribute(name));
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toContain('AreaModal');
+      expect(errors[0]).toContain("the area's root");
+    },
+  );
+
+  it.each(['getModalRoot', 'removeModalRoot', 'modalRoot'])(
+    `${FILE} with an object property %s → an error whose message names AreaModal and the area's root`,
+    async (name) => {
+      for (const code of [
+        `export const root = { ${name}: () => null };\n`,
+        `export const root = { '${name}': null };\n`,
+      ]) {
+        const errors = await boundaryErrors(FILE, code);
+        expect(errors).toHaveLength(1);
+        expect(errors[0]).toContain('AreaModal');
+        expect(errors[0]).toContain("the area's root");
+      }
+    },
+  );
+
+  it('providers/aws/area/services/s3/x.test.tsx importing @cloudscape-design/components/modal → an error', async () => {
+    const file = 'providers/aws/area/services/s3/x.test.tsx';
+    expect(await modalErrors(file, importing('@cloudscape-design/components/modal'))).toHaveLength(1);
+  });
+
+  it.each(['dynamodb', 'sqs', 'a-service-not-yet-made'])(
+    'providers/aws/area/services/%s/x.tsx, any service folder whether it exists or not, importing the modal → an error',
+    async (service) => {
+      const file = `providers/aws/area/services/${service}/pages/x.tsx`;
+      expect(await modalErrors(file, importing('@cloudscape-design/components/modal'))).toHaveLength(1);
+      expect(await modalErrors(file, withAttribute('getModalRoot'))).toHaveLength(1);
+    },
+  );
+
+  it('providers/aws/area/components/x.tsx importing @cloudscape-design/components/modal and passing getModalRoot → no error', async () => {
+    const code = [
+      "import Modal from '@cloudscape-design/components/modal';",
+      '',
+      'export function Dialog({ root }: { root: () => Promise<HTMLElement> }) {',
+      '  return <Modal visible getModalRoot={root} />;',
+      '}',
+      '',
+    ].join('\n');
+    expect(await boundaryErrors('providers/aws/area/components/x.tsx', code)).toEqual([]);
+  });
+
+  it(`${FILE} importing the area's AreaModal and spreading the area's root into a CollectionPreferences → no error`, async () => {
+    const areaModal = from(FILE, 'providers/aws/area/components/area-modal');
+    const code = [
+      "import CollectionPreferences from '@cloudscape-design/components/collection-preferences';",
+      `import { AreaModal, useAreaModalRoot } from '${areaModal}';`,
+      '',
+      'export function Thing() {',
+      '  const modalRoot = useAreaModalRoot();',
+      '  return (',
+      '    <>',
+      '      <AreaModal visible />',
+      '      <CollectionPreferences {...modalRoot} />',
+      '    </>',
+      '  );',
+      '}',
+      '',
+    ].join('\n');
+    expect(await boundaryErrors(FILE, code)).toEqual([]);
+  });
+
+  it(`${FILE} importing { Button } from @cloudscape-design/components → no error`, async () => {
+    const code = "import { Button } from '@cloudscape-design/components';\n\nexport const used = Button;\n";
+    expect(await boundaryErrors(FILE, code)).toEqual([]);
+  });
+
+  it('every file of the repository under providers/aws/area/services/, linted as it is → no error from the rule', async () => {
+    const results = await eslint.lintFiles(['src/providers/aws/area/services/**/*.{ts,tsx}']);
+    expect(results.length).toBeGreaterThan(0);
+    const errors = results.flatMap((result) =>
+      result.messages
+        .filter((m) => m.ruleId === 'studio/boundaries')
+        .map((m) => `${path.relative(STUDIO, result.filePath)}:${m.line} ${m.message}`),
+    );
+    expect(errors).toEqual([]);
+  }, 60_000);
+});
