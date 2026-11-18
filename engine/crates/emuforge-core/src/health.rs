@@ -90,7 +90,7 @@ impl Reason {
     }
 }
 
-/// Reads the emulator's files, connects to `127.0.0.1:<port>` and asks its health route, all within
+/// Reads the emulator's files, connects to its loopback `<ip>:<port>` and asks its health route, all within
 /// `deadline`. Every failure becomes a [`Reason`]; nothing is kept for the next call.
 pub async fn probe(emulator: &Emulator, deadline: Duration) -> Health {
     let attempt = async {
@@ -113,7 +113,7 @@ where
 {
     let attempt = async {
         let config = client_config(files).map_err(from_files)?;
-        let tls = handshake(stream, config).await?;
+        let tls = handshake(stream, emulator.ip(), config).await?;
         exchange(tls, emulator).await
     };
     into_health(tokio::time::timeout(deadline, attempt).await)

@@ -789,7 +789,7 @@ where
     T: Send + 'static,
 {
     let a = certificate_a();
-    let (_home, _emulator, files) = files_with(&a.pem).await;
+    let (_home, emulator, files) = files_with(&a.pem).await;
     let (engine, server) = tokio::io::duplex(DUPLEX);
     let acceptor = acceptor(&a);
     let peer = tokio::spawn(async move {
@@ -802,7 +802,9 @@ where
     });
     let idle = IdleWrite::new(engine, Limits::DEFAULT.upload_idle);
     let stalled = idle.stalled_flag();
-    let stream = connect_on(idle, &files, CONNECT_DEADLINE).await.unwrap();
+    let stream = connect_on(idle, &emulator, &files, CONNECT_DEADLINE)
+        .await
+        .unwrap();
     (EngineSide { stream, stalled }, peer)
 }
 
@@ -919,7 +921,7 @@ fn header_names(headers: &HeaderMap) -> Vec<String> {
 #[tokio::test]
 async fn connect_on_peer_presenting_the_ca_certificate_is_ok_and_writes_reach_it() {
     let a = certificate_a();
-    let (_home, _emulator, files) = files_with(&a.pem).await;
+    let (_home, emulator, files) = files_with(&a.pem).await;
     let (engine, server) = tokio::io::duplex(DUPLEX);
     let acceptor = acceptor(&a);
     let peer = tokio::spawn(async move {
@@ -928,7 +930,9 @@ async fn connect_on_peer_presenting_the_ca_certificate_is_ok_and_writes_reach_it
         tls.read_exact(&mut received).await.unwrap();
         received
     });
-    let mut stream = connect_on(engine, &files, CONNECT_DEADLINE).await.unwrap();
+    let mut stream = connect_on(engine, &emulator, &files, CONNECT_DEADLINE)
+        .await
+        .unwrap();
     stream.write_all(b"ping").await.unwrap();
     stream.flush().await.unwrap();
     assert_eq!(&peer.await.unwrap(), b"ping");
@@ -938,12 +942,14 @@ async fn connect_on_peer_presenting_the_ca_certificate_is_ok_and_writes_reach_it
 async fn connect_on_peer_presenting_another_certificate_is_tls_untrusted() {
     let a = certificate_a();
     let b = certificate_a();
-    let (_home, _emulator, files) = files_with(&a.pem).await;
+    let (_home, emulator, files) = files_with(&a.pem).await;
     let (engine, server) = tokio::io::duplex(DUPLEX);
     let acceptor = acceptor(&b);
     tokio::spawn(async move { acceptor.accept(server).await.is_ok() });
     assert_eq!(
-        connect_on(engine, &files, CONNECT_DEADLINE).await.err(),
+        connect_on(engine, &emulator, &files, CONNECT_DEADLINE)
+            .await
+            .err(),
         Some(Reason::TlsUntrusted)
     );
 }
@@ -951,7 +957,7 @@ async fn connect_on_peer_presenting_another_certificate_is_tls_untrusted() {
 #[tokio::test(start_paused = true)]
 async fn connect_on_handshake_never_completing_times_out_at_the_connect_deadline() {
     let a = certificate_a();
-    let (_home, _emulator, files) = files_with(&a.pem).await;
+    let (_home, emulator, files) = files_with(&a.pem).await;
     let (engine, mut server) = tokio::io::duplex(DUPLEX);
     tokio::spawn(async move {
         let mut sink = [0u8; 4096];
@@ -959,7 +965,7 @@ async fn connect_on_handshake_never_completing_times_out_at_the_connect_deadline
     });
     let start = Instant::now();
     let attempt = tokio::spawn(async move {
-        let result = connect_on(engine, &files, CONNECT_DEADLINE).await;
+        let result = connect_on(engine, &emulator, &files, CONNECT_DEADLINE).await;
         (result.err(), Instant::now())
     });
     sleep(CONNECT_DEADLINE - MS).await;
@@ -2069,7 +2075,9 @@ async fn relayed_with(
     });
     let idle = IdleWrite::new(engine, Limits::DEFAULT.upload_idle);
     let stalled = idle.stalled_flag();
-    let stream = connect_on(idle, &files, CONNECT_DEADLINE).await.unwrap();
+    let stream = connect_on(idle, &emulator, &files, CONNECT_DEADLINE)
+        .await
+        .unwrap();
     drop(files);
     let response = forward(
         stream,

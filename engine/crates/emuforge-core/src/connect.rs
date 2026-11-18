@@ -1,8 +1,8 @@
-//! One connection to the emulator: TCP to `127.0.0.1:<port>` and a TLS handshake that trusts only its `ca.pem`,
+//! One connection to the emulator: TCP to its loopback `<ip>:<port>` and a TLS handshake that trusts only its `ca.pem`,
 //! together inside one deadline.
 
 use std::io;
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::IpAddr;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
@@ -49,7 +49,7 @@ pub async fn connect(
             })?;
         let idle = IdleWrite::new(tcp, write_idle);
         let stalled = idle.stalled_flag();
-        let stream = handshake(idle, config).await?;
+        let stream = handshake(idle, emulator.ip(), config).await?;
         Ok(Upstream { stream, stalled })
     };
     tokio::time::timeout(deadline, attempt)
@@ -57,9 +57,11 @@ pub async fn connect(
         .unwrap_or(Err(Reason::Timeout))
 }
 
-/// The TLS part of [`connect`] over an already open byte stream, within `deadline`.
+/// The TLS part of [`connect`] over an already open byte stream, for `emulator`'s IP as the server name,
+/// within `deadline`.
 pub async fn connect_on<S>(
     stream: S,
+    emulator: &Emulator,
     files: &EmulatorFiles,
     deadline: Duration,
 ) -> Result<TlsStream<S>, Reason>
@@ -67,20 +69,21 @@ where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     let config = client_config(files).map_err(from_files)?;
-    tokio::time::timeout(deadline, handshake(stream, config))
+    tokio::time::timeout(deadline, handshake(stream, emulator.ip(), config))
         .await
         .unwrap_or(Err(Reason::Timeout))
 }
 
-/// The handshake for the server name `127.0.0.1`, with no deadline of its own.
+/// The handshake for the server name `ip` (the emulator's loopback IP), with no deadline of its own.
 pub(crate) async fn handshake<S>(
     stream: S,
+    ip: IpAddr,
     config: Arc<ClientConfig>,
 ) -> Result<TlsStream<S>, Reason>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    let server_name = ServerName::IpAddress(IpAddr::V4(Ipv4Addr::LOCALHOST).into());
+    let server_name = ServerName::IpAddress(ip.into());
     TlsConnector::from(config)
         .connect(server_name, stream)
         .await
