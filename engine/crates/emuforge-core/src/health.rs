@@ -10,7 +10,7 @@ use hyper_util::rt::TokioIo;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::connect::{connect, from_files, handshake};
-use crate::{CA_FILE, Emulator, EmulatorFiles, client_config};
+use crate::{CA_FILE, CREDENTIALS_FILE, Emulator, EmulatorFiles, client_config};
 
 /// The probe's whole budget: connect, TLS handshake and response.
 pub const PROBE_DEADLINE: Duration = Duration::from_secs(2);
@@ -19,7 +19,7 @@ pub const HEALTH_PATH: &str = "/__admin/health";
 /// The answer body the emulator gives when it is up.
 const HEALTHY_BODY: &[u8] = b"ok";
 /// The health answer is read no further than this many bytes.
-const BODY_CAP: usize = 64;
+pub(crate) const BODY_CAP: usize = 64;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Health {
@@ -40,8 +40,10 @@ pub enum Reason {
     TlsUntrusted,
     /// No complete answer within [`PROBE_DEADLINE`].
     Timeout,
-    /// An answer other than `200` with body `ok`.
+    /// An answer other than the one expected: `200` with body `ok` for health, `200` for a target's credentials.
     UnexpectedResponse { status: u16 },
+    /// The emulator refused a request signed with the key in its own `emulator_credentials` (`403`).
+    CredentialsRejected,
     /// Any other connection error, by kind only.
     ConnectionFailed { kind: String },
 }
@@ -55,6 +57,7 @@ impl Reason {
             Reason::TlsUntrusted => "tls_untrusted",
             Reason::Timeout => "timeout",
             Reason::UnexpectedResponse { .. } => "unexpected_response",
+            Reason::CredentialsRejected => "credentials_rejected",
             Reason::ConnectionFailed { .. } => "connection_failed",
         }
     }
@@ -82,6 +85,9 @@ impl Reason {
             ),
             Reason::UnexpectedResponse { status } => format!(
                 "the emulator on {endpoint} answered {HEALTH_PATH} with status {status}, not 200 ok"
+            ),
+            Reason::CredentialsRejected => format!(
+                "the emulator on {endpoint} refused a request signed with the key in ~/.aws/emulator/{port}/{CREDENTIALS_FILE}; restart the emulator on port {port}"
             ),
             Reason::ConnectionFailed { kind } => {
                 format!("the connection to {endpoint} failed ({kind})")
@@ -127,7 +133,7 @@ fn into_health(result: Result<Result<(), Reason>, tokio::time::error::Elapsed>) 
     }
 }
 
-fn http_failed() -> Reason {
+pub(crate) fn http_failed() -> Reason {
     Reason::ConnectionFailed {
         kind: "http".into(),
     }
@@ -135,7 +141,7 @@ fn http_failed() -> Reason {
 
 /// One request, never a second, over a verified TLS stream: a redirect is an unexpected answer, not a place to
 /// go.
-async fn exchange<S>(tls: S, emulator: &Emulator) -> Result<(), Reason>
+pub(crate) async fn exchange<S>(tls: S, emulator: &Emulator) -> Result<(), Reason>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
@@ -185,5 +191,18 @@ where
         result = &mut answer => result,
         // The connection ended first: whatever answer it delivered is buffered, or the request fails.
         _ = &mut connection => answer.await,
+    }
+}
+
+/// The code, and the status, file or kind it carries; never anything read from the emulator's files.
+impl std::fmt::Display for Reason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let code = self.code();
+        match self {
+            Reason::FilesUnreadable { file } => write!(f, "{code} ({file})"),
+            Reason::UnexpectedResponse { status } => write!(f, "{code} (status {status})"),
+            Reason::ConnectionFailed { kind } => write!(f, "{code} ({kind})"),
+            _ => f.write_str(code),
+        }
     }
 }
