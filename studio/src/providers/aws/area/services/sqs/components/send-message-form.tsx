@@ -34,6 +34,14 @@ const TYPES: readonly SelectProps.Option[] = [
   { value: 'Binary', label: 'Binary' },
 ];
 
+const MIB = 1024 * 1024;
+
+/** "Up to 1,048,576 bytes (1 MiB).": the number grouped, and in MiB when it is a whole number of them. */
+function sizeRule(max: number): string {
+  const bytes = max.toLocaleString('en-US');
+  return max > 0 && max % MIB === 0 ? `Up to ${bytes} bytes (${String(max / MIB)} MiB).` : `Up to ${bytes} bytes.`;
+}
+
 export interface SendMessageFormProps {
   settings: QueueSettings;
   form: SendForm;
@@ -90,7 +98,7 @@ export function SendMessageForm({ settings, form, onChange, sending, onSend }: S
           <SpaceBetween size="l">
             <FormField
               label="Body"
-              {...(max === undefined ? {} : { constraintText: `Up to ${String(max)} bytes.` })}
+              {...(max === undefined ? {} : { constraintText: sizeRule(max) })}
               errorText={messages.body}
               stretch
             >
@@ -102,32 +110,34 @@ export function SendMessageForm({ settings, form, onChange, sending, onSend }: S
                 }}
               />
             </FormField>
-            {settings.fifo ? (
-              <>
-                <FormField label="Group ID" errorText={messages.groupId}>
-                  <Input
-                    value={form.groupId}
-                    onChange={({ detail }) => {
-                      change({ groupId: detail.value });
-                    }}
-                  />
-                </FormField>
-                <FormField
-                  label={settings.contentBasedDeduplication ? 'Deduplication ID - optional' : 'Deduplication ID'}
-                  {...(settings.contentBasedDeduplication
-                    ? { description: 'Leave empty to deduplicate by the body.' }
-                    : {})}
-                  errorText={messages.deduplicationId}
-                >
-                  <Input
-                    value={form.deduplicationId}
-                    onChange={({ detail }) => {
-                      change({ deduplicationId: detail.value });
-                    }}
-                  />
-                </FormField>
-              </>
-            ) : (
+            {/* Each field a child of its own, so the form's spacing applies between them. */}
+            {settings.fifo && (
+              <FormField label="Group ID" errorText={messages.groupId}>
+                <Input
+                  value={form.groupId}
+                  onChange={({ detail }) => {
+                    change({ groupId: detail.value });
+                  }}
+                />
+              </FormField>
+            )}
+            {settings.fifo && (
+              <FormField
+                label={settings.contentBasedDeduplication ? 'Deduplication ID - optional' : 'Deduplication ID'}
+                {...(settings.contentBasedDeduplication
+                  ? { description: 'Leave empty to deduplicate by the body.' }
+                  : {})}
+                errorText={messages.deduplicationId}
+              >
+                <Input
+                  value={form.deduplicationId}
+                  onChange={({ detail }) => {
+                    change({ deduplicationId: detail.value });
+                  }}
+                />
+              </FormField>
+            )}
+            {!settings.fifo && (
               <FormField label="Delay" constraintText="0 to 900 seconds." errorText={messages.delay}>
                 <Input
                   type="number"

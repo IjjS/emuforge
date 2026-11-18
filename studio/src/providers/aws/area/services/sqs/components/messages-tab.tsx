@@ -6,6 +6,7 @@ import Link from '@cloudscape-design/components/link';
 import Select, { type SelectProps } from '@cloudscape-design/components/select';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Table, { type TableProps } from '@cloudscape-design/components/table';
+import type { ReactNode } from 'react';
 
 import { creationDateText } from '../../../components/format-date';
 import { useFollow } from '../../../components/use-follow';
@@ -44,12 +45,30 @@ function showingFirst(shown: number, available: number): string {
 export interface ReadResult {
   messages: ReadMessage[];
   readAt: Date;
+  /** The queue's Available as shown when "Read messages" was pressed. */
+  availableBefore?: number;
 }
 
 /** What follows the table: why the read showed fewer than are available, or that none came. */
-function afterRead(result: ReadResult, settings: QueueSettings): string | undefined {
+function afterRead(result: ReadResult, settings: QueueSettings, link: (name: string) => ReactNode): ReactNode {
   const shown = result.messages.length;
   const available = settings.available ?? 0;
+  const policy = settings.redrivePolicy;
+  // A read of a queue with a redrive policy moves the messages received its count of times instead of showing them
+  // (probe-3 §1): fewer came than were available when it was pressed.
+  if (
+    policy?.maxReceiveCount !== undefined &&
+    result.availableBefore !== undefined &&
+    shown < result.availableBefore &&
+    shown < READ_SIZE
+  ) {
+    return (
+      <>
+        Messages received {String(policy.maxReceiveCount)} times in this queue were moved to{' '}
+        {link(policy.deadLetterQueue)} by this read instead of being shown.
+      </>
+    );
+  }
   if (settings.fifo && shown < available && shown < READ_SIZE) {
     return FIFO_SENTENCE;
   }
@@ -59,6 +78,19 @@ function afterRead(result: ReadResult, settings: QueueSettings): string | undefi
   return shown < available ? showingFirst(shown, available) : undefined;
 }
 
+/**
+ * The read's header description: when it was read and, on a queue with a redrive policy, when a read moves a
+ * message on.
+ */
+function readDescription(result: ReadResult, settings: QueueSettings): string {
+  const at = `Read at ${creationDateText(result.readAt)}.`;
+  const policy = settings.redrivePolicy;
+  if (policy?.maxReceiveCount === undefined) {
+    return at;
+  }
+  return `${at} Moved to ${policy.deadLetterQueue} after ${String(policy.maxReceiveCount)} receives in this queue.`;
+}
+
 export interface MessagesTabProps {
   settings: QueueSettings;
   /** The queue is a dead-letter queue: each message shows where it came from. */
@@ -66,7 +98,8 @@ export interface MessagesTabProps {
   wait: number;
   onWaitChange: (seconds: number) => void;
   reading: boolean;
-  onRead: () => void;
+  /** "Read messages", with the queue's Available as shown when it was pressed. */
+  onRead: (availableBefore: number | undefined) => void;
   result: ReadResult | undefined;
   selected: readonly ReadMessage[];
   onSelectionChange: (selected: ReadMessage[]) => void;
@@ -97,6 +130,17 @@ export function MessagesTab(props: MessagesTabProps) {
       ),
     },
     {
+      id: 'receiveCount',
+      header: 'Receive count',
+      cell: (message) => (
+        <ValueText
+          kind="fixed"
+          value={message.receiveCount === undefined ? undefined : String(message.receiveCount)}
+          none={NONE}
+        />
+      ),
+    },
+    {
       id: 'body',
       header: 'Body',
       cell: (message) => {
@@ -108,17 +152,6 @@ export function MessagesTab(props: MessagesTabProps) {
       id: 'sent',
       header: 'Sent',
       cell: (message) => <ValueText kind="fixed" value={creationDateText(message.sent)} />,
-    },
-    {
-      id: 'receiveCount',
-      header: 'Receive count',
-      cell: (message) => (
-        <ValueText
-          kind="fixed"
-          value={message.receiveCount === undefined ? undefined : String(message.receiveCount)}
-          none={NONE}
-        />
-      ),
     },
   ];
   if (settings.fifo) {
@@ -146,7 +179,12 @@ export function MessagesTab(props: MessagesTabProps) {
     });
   }
 
-  const sentence = result === undefined ? undefined : afterRead(result, settings);
+  const queueLink = (name: string) => (
+    <Link href={queuePath(name)} onFollow={handleFollow}>
+      <ValueText kind="name" value={name} />
+    </Link>
+  );
+  const sentence = result === undefined ? undefined : afterRead(result, settings, queueLink);
 
   return (
     <SpaceBetween size="l">
@@ -163,7 +201,14 @@ export function MessagesTab(props: MessagesTabProps) {
               }}
             />
           </FormField>
-          <Button variant="primary" loading={props.reading} disabled={props.reading} onClick={props.onRead}>
+          <Button
+            variant="primary"
+            loading={props.reading}
+            disabled={props.reading}
+            onClick={() => {
+              props.onRead(settings.available);
+            }}
+          >
             Read messages
           </Button>
         </SpaceBetween>
@@ -176,6 +221,7 @@ export function MessagesTab(props: MessagesTabProps) {
             trackBy="id"
             columnDefinitions={columns}
             wrapLines
+            stickyColumns={{ first: 1 }}
             selectionType="multi"
             selectedItems={[...selected]}
             onSelectionChange={({ detail: change }) => {
@@ -196,7 +242,7 @@ export function MessagesTab(props: MessagesTabProps) {
             header={
               <Header
                 counter={`(${String(result.messages.length)})`}
-                description={`Read at ${creationDateText(result.readAt)}`}
+                description={readDescription(result, settings)}
                 actions={
                   <Button
                     disabled={selected.length === 0}
@@ -211,13 +257,16 @@ export function MessagesTab(props: MessagesTabProps) {
               </Header>
             }
           />
-          {sentence !== undefined && (
-            <Box variant="p" color="text-body-secondary">
-              {sentence}
-            </Box>
-          )}
         </SpaceBetween>
       )}
+      {/* Always rendered, so what a read could not show is announced when it changes. */}
+      <div role="status" aria-live="polite">
+        {sentence !== undefined && (
+          <Box variant="p" color="text-body-secondary">
+            {sentence}
+          </Box>
+        )}
+      </div>
       {detail !== undefined && <MessageDetail message={detail} />}
     </SpaceBetween>
   );

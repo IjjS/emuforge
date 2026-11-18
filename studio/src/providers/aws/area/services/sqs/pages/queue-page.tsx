@@ -112,7 +112,7 @@ function QueueView(props: QueueViewProps) {
     }
   };
 
-  const handleRead = () => {
+  const handleRead = (availableBefore: number | undefined) => {
     if (reading) {
       return;
     }
@@ -121,7 +121,12 @@ function QueueView(props: QueueViewProps) {
     receive(details.url, read.wait, signal).then(
       (messages) => {
         if (!signal.aborted) {
-          onRead({ ...read, result: { messages, readAt: new Date() }, selected: [], detail: undefined });
+          onRead({
+            ...read,
+            result: { messages, readAt: new Date(), ...(availableBefore === undefined ? {} : { availableBefore }) },
+            selected: [],
+            detail: undefined,
+          });
           setReading(false);
         }
       },
@@ -456,6 +461,7 @@ export function QueuePage({ connection, params }: ScreenPageProps) {
                 />
                 <Button
                   disabled={details === undefined}
+                  disabledReason={queue.loading ? 'Reading the queue' : 'There is no queue to purge'}
                   onClick={() => {
                     setPurgeOpen(true);
                   }}
