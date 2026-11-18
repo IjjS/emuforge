@@ -161,6 +161,8 @@ export class OwnEmulator {
     try {
       await docker([
         'run',
+        '--pull',
+        'never',
         '-d',
         '--name',
         name,
@@ -174,7 +176,7 @@ export class OwnEmulator {
         `HOME=${ctx.home}`,
         '-v',
         volume,
-        'aws-emulator',
+        `aws-emulator:${ctx.emulatorTag}`,
         '-p',
         String(port),
         '-t',

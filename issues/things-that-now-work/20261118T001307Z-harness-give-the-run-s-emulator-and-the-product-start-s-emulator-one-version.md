@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: bug
 Issue-Source: finder
 Issue-Key: harness|integration|emulator-version-of-the-run-and-of-the-product-start-differ
-Issue-Check-Ids:
+Issue-Check-Ids: harness.integration-image engine.product-start-has-one-unpublished-emulator
 Issue-Commit: 3e36c96a2db31f77f893d9518d270975129c5fd1
 
 # Give the run's emulator and the product start's emulator one version

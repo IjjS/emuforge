@@ -10,14 +10,16 @@ frozen HERDR_PANE_ID); `whoami` shows the result without starting. A running dae
 PM pane and this PM session id; pm.json records them for pm-archive.
 
 The daemon does not poll. It subscribes to herdr's event socket (a pane's agent status changed, a pane opened,
-closed or exited) and is signalled by pm-report and pm-ready when they append a line, so it looks the moment
-something happens. --interval is only the fallback: the longest it sleeps when nothing wakes it, and the whole
-cadence while the socket is unreachable (logged once when that starts and once when it ends). What happened is
-always judged from `herdr agent list` and the report files, never from the event itself.
+closed or exited) and is signalled by pm-report, pm-ready and pm-emulator-image when they append a line, so it
+looks the moment something happens. --interval is only the fallback: the longest it sleeps when nothing wakes it,
+and the whole cadence while the socket is unreachable (logged once when that starts and once when it ends). What
+happened is always judged from `herdr agent list` and the report files, never from the event itself.
 
 Events, each delivered as one prompt line to the PM:
   EVENT ready <pane> <STAGE READY|UNIT READY|BLOCKED|DONE line> a registered pane finished a turn with a line for the PM
   EVENT go github#<n>                                           the owner commented READY on a GitHub issue (pm-ready poll)
+  EVENT emulator-image refreshed <before> -> <after>           a refresh moved aws-emulator to a new version or commit (pm-emulator-image)
+  EVENT emulator-image failed <reason>                        a refresh failed; aws-emulator was left as it was (pm-emulator-image)
   EVENT blocked <pane>                                          a pane waits at a permission/question dialog
   EVENT gone <pane>                                             a registered pane disappeared
   EVENT stale <pane> <hours>                                    working with no state change for --stale-hours
