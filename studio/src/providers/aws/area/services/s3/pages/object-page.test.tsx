@@ -85,7 +85,7 @@ class FakeEngine {
     if (answer === 'network-error') {
       throw new TypeError('Failed to fetch');
     }
-    return new Response(request.method === 'HEAD' ? null : (answer.body ?? null), {
+    return new Response(request.method === 'HEAD' ? null : ((answer.body ?? null) as BodyInit | null), {
       status: answer.status,
       headers: answer.headers ?? {},
     });
