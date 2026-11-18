@@ -259,11 +259,11 @@ test('studio.check-browser-sees-the-engine-preflight-refusal', async ({ ctx, pag
   const unlisted = await fetchFrom(ctx, page, what, health, { headers: { ...withToken, ...CHECK_HEADER } });
   expect(outcome(unlisted), `${what}: the fetch must reject (regression)`).toBe('rejected');
 
-  // `DELETE` with the session header → the fetch rejects: the engine's preflight lists only `GET` and `HEAD`.
-  // (regression)
-  what = 'DELETE /__emuforge/health with X-EmuForge-Session';
-  const deleted = await fetchFrom(ctx, page, what, health, { method: 'DELETE', headers: withToken });
-  expect(outcome(deleted), `${what}: the fetch must reject (regression)`).toBe('rejected');
+  // `PUT` with the session header → the fetch rejects: the engine's preflight lists only `GET`, `HEAD`, `POST` and
+  // `DELETE` (#485, design "Browsers"). (regression)
+  what = 'PUT /__emuforge/health with X-EmuForge-Session';
+  const put = await fetchFrom(ctx, page, what, health, { method: 'PUT', headers: withToken });
+  expect(outcome(put), `${what}: the fetch must reject (regression)`).toBe('rejected');
 
   // The session header only → the fetch resolves and the page reads the health answer: the emulator is reachable.
   what = 'GET /__emuforge/health with X-EmuForge-Session';
