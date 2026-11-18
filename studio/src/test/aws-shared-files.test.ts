@@ -396,6 +396,7 @@ function expectFixturePassed(run: NestedRun): void {
   expect(run.exitCode).toBe(0);
 }
 
+// Bound: starts a nested Vitest run of the fixture from a shell (issue 11 t1, e98cf2c).
 it(
   'passes the fixture in a nested run whose shell names existing shared files with markers',
   async () => {
@@ -411,6 +412,7 @@ it(
   NESTED_TIMEOUT_MS,
 );
 
+// Bound: starts a nested Vitest run of the fixture from a shell (issue 11 t1, e98cf2c).
 it(
   'passes the fixture in a nested run whose shell has neither shared-file variable',
   async () => {

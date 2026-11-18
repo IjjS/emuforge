@@ -141,6 +141,7 @@ const KIT = 'src/test/home-test-kit';
 const OLD_KIT = 'src/features/home/home-test-kit';
 
 describe('test support: the app project', () => {
+  // Bound: asks the TypeScript compiler for a project's whole file list (issue 14 t1, 804dd5c).
   it(
     'lists the files the app project compiles → none is under src/test/ and none imports a test-only package',
     () => {
@@ -149,6 +150,7 @@ describe('test support: the app project', () => {
     COMPILE_TIMEOUT,
   );
 
+  // Bound: asks the TypeScript compiler for a project's whole file list (issue 14 t1, 804dd5c).
   it(
     'adds src/features/home/x.tsx importing @testing-library/react, in memory → the check reports that file only',
     () => {
@@ -161,6 +163,7 @@ describe('test support: the app project', () => {
     COMPILE_TIMEOUT,
   );
 
+  // Bound: asks the TypeScript compiler for a project's whole file list (issue 14 t1, 804dd5c).
   it(
     'adds src/features/home/y.tsx importing src/test/setup.ts, in memory → the check reports src/test/setup.ts only',
     () => {
@@ -173,6 +176,7 @@ describe('test support: the app project', () => {
 });
 
 describe('test support: the test project', () => {
+  // Bound: asks the TypeScript compiler for a project's whole file list (issue 14 t1, 804dd5c).
   it(
     'lists the files the test project compiles → every file under src/test/ is among them, home-test-kit.tsx included',
     () => {

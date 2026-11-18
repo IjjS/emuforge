@@ -377,6 +377,7 @@ describe("a service's dialogs are the area's (issue 462, R5)", () => {
     expect(await boundaryErrors(FILE, code)).toEqual([]);
   });
 
+  // Bound: lints every file under providers/aws/area/services/ with ESLint (issue 462 s5, 479d71c).
   it('every file of the repository under providers/aws/area/services/, linted as it is → no error from the rule', async () => {
     const results = await eslint.lintFiles(['src/providers/aws/area/services/**/*.{ts,tsx}']);
     expect(results.length).toBeGreaterThan(0);
