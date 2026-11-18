@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: harness|emulator-image|refresh-at-session-start
-Issue-Check-Ids:
+Issue-Check-Ids: harness.emulator-image harness.check-emulator harness.emulator-image-docs harness.integration-image
 Issue-Commit: fe28fb4faecc4a824bf214f5b547ac759ca7f7aa
 
 # Refresh the aws-emulator image to the latest package when a PM session starts, and record its version
