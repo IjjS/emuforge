@@ -1,4 +1,5 @@
-//! The engine process under test.
+//! The engine process under test: `emuforge serve` (the binary of the run, built without Studio embedded, so it
+//! serves the engine only), with the arguments a check gives after `serve`.
 //!
 //! An engine starts with an empty environment plus `HOME`, `PATH`, `EMUFORGE_ENGINE_PORT=<engine port>` and
 //! `EMULATOR_PORT=<run's emulator port>`; a check adds or removes exactly what its criteria line names. Its
@@ -84,12 +85,13 @@ impl EngineCmd {
             .map(|(k, v)| format!("{k}={v}"))
             .collect();
         ctx.log(format!(
-            "spawn {} {} with {}",
+            "spawn {} serve {} with {}",
             bin.display(),
             self.args.join(" "),
             shown_env.join(" ")
         ));
         let mut child = Command::new(bin)
+            .arg("serve")
             .args(&self.args)
             .env_clear()
             .envs(&self.env)

@@ -1,5 +1,5 @@
-// The product checks that read files and start no form (issues 34 and 437, test-criteria.md): Compose's rendered
-// configuration of the one form and the gateway's configuration file; the README's "Start", "Ports" and "Run the
+// The product checks that read files and start no form (issues 34, 437 and 484, test-criteria.md): Compose's
+// rendered configuration of the one form; the README's "Start", "Ports" and "Run the
 // emulator" parts against the command lines the product checks run (`LINES` and `KEEP_START_LINE` in
 // `support/product.ts`, #437 R16); and the line endings of the tracked files an image copies or a container reads.
 //
@@ -38,14 +38,12 @@ import {
   tail,
 } from './support/product';
 
-/** The gateway's configuration file (design section 2.2). */
+/** The gateway's configuration file of the forms before issue 484, which the two-container form removes. */
 const HAPROXY_CFG = 'infra/emuforge/haproxy.cfg';
 
 /** The files of the forms before issue 437, which the one form removes (#437 R13). */
 const REMOVED_FILES = ['docker-compose.linux.yml', 'compose'];
 
-/** The gateway's own ports inside the form (#437 R12). */
-const GATEWAY_PORTS = [18296, 18297];
 
 const PORT_VARIABLES: [string, string][] = [
   ['EMULATOR_PORT', '9297'],
@@ -95,8 +93,8 @@ test('engine.product-configuration-names-loopback-and-the-emulator-only', async 
   };
   const config = ['docker', 'compose', 'config', '--format', 'json'];
 
-  // `docker compose config` with the form's variables → exit 0; the services are exactly gateway, aws-emulator,
-  // engine and studio, none with a profile (a rendering with every profile holds no other service).
+  // `docker compose config` with the form's variables → exit 0; the services are exactly emuforge and aws-emulator
+  // (#484), none with a profile (a rendering with every profile holds no other service).
   const { rendered: plain } = await render("the form's variables", config, env);
   const services = plain.services ?? {};
   expect(Object.keys(services).sort(), 'the services of the rendering').toEqual([...SERVICES].sort());
@@ -115,8 +113,8 @@ test('engine.product-configuration-names-loopback-and-the-emulator-only', async 
     'services with a profile',
   ).toEqual([]);
 
-  // The mounts → the engine one, the volume `emulator`, read-only, at its files' folder; the emulator one, the same
-  // volume, at its files' folder; the others none; no mount of type bind.
+  // The mounts → emuforge one, the volume `emulator`, read-only, at its files' folder; the emulator one, the same
+  // volume, at its files' folder; no mount of type bind.
   const mounts = (name: string) =>
     (services[name]?.volumes ?? []).map((v) => ({
       type: v.type,
@@ -124,15 +122,13 @@ test('engine.product-configuration-names-loopback-and-the-emulator-only', async 
       target: v.target,
       read_only: v.read_only === true,
     }));
-  expect(mounts('engine'), "the engine's mounts").toEqual([
+  expect(mounts('emuforge'), "emuforge's mounts").toEqual([
     { type: 'volume', source: 'emulator', target: ENGINE_FILES_DIR, read_only: true },
   ]);
   expect(
     mounts('aws-emulator').map(({ type, source, target }) => ({ type, source, target })),
     "the emulator's mounts",
   ).toEqual([{ type: 'volume', source: 'emulator', target: EMULATOR_FILES_DIR }]);
-  expect(mounts('gateway'), "the gateway's mounts").toEqual([]);
-  expect(mounts('studio'), "Studio's mounts").toEqual([]);
   expect(
     Object.entries(services).flatMap(([name, s]) =>
       (s.volumes ?? []).filter((v) => v.type === 'bind').map((v) => `${name}: ${JSON.stringify(v)}`),
@@ -140,16 +136,29 @@ test('engine.product-configuration-names-loopback-and-the-emulator-only', async 
     'mounts of type bind',
   ).toEqual([]);
 
-  // The ports → exactly two, on the gateway, host address 127.0.0.1, to 18296 and 18297.
+  // The ports → exactly two, on emuforge, host address 127.0.0.1, published and target both EMUFORGE_STUDIO_PORT and
+  // both EMUFORGE_ENGINE_PORT (#484 R8).
   const ports = Object.entries(services).flatMap(([name, s]) =>
-    (s.ports ?? []).map((p) => ({ service: name, host_ip: p.host_ip ?? '', target: p.target })),
+    (s.ports ?? []).map((p) => ({
+      service: name,
+      host_ip: p.host_ip ?? '',
+      published: String(p.published ?? ''),
+      target: p.target,
+    })),
   );
   expect(
     ports.sort((a, b) => (a.target ?? 0) - (b.target ?? 0)),
     'the published ports of the rendering',
-  ).toEqual(GATEWAY_PORTS.map((target) => ({ service: 'gateway', host_ip: '127.0.0.1', target })));
+  ).toEqual(
+    [form.studioPort, form.enginePort]
+      .sort((a, b) => a - b)
+      .map((port) => ({ service: 'emuforge', host_ip: '127.0.0.1', published: String(port), target: port })),
+  );
 
-  // The emulator's service → user 1000:0, command `-p <EMULATOR_PORT> -t off`, the gateway's network namespace, a
+  // emuforge's command → `serve --listen-address 0.0.0.0` (#484 R8).
+  expect(services.emuforge?.command ?? null, "emuforge's command").toEqual(['serve', '--listen-address', '0.0.0.0']);
+
+  // The emulator's service → user 1000:0, command `-p <EMULATOR_PORT> -t off`, emuforge's network namespace, a
   // healthcheck, every capability dropped, no-new-privileges, no container_name, pull_policy build.
   const emulator = services['aws-emulator'] ?? {};
   expect(
@@ -168,7 +177,7 @@ test('engine.product-configuration-names-loopback-and-the-emulator-only', async 
   ).toEqual({
     user: '1000:0',
     command: ['-p', String(form.emulatorPort), '-t', 'off'],
-    network_mode: 'service:gateway',
+    network_mode: 'service:emuforge',
     healthcheck: true,
     cap_drop: ['ALL'],
     no_new_privileges: true,
@@ -176,10 +185,11 @@ test('engine.product-configuration-names-loopback-and-the-emulator-only', async 
     pull_policy: 'build',
   });
 
-  // The engine's service → it depends on aws-emulator being healthy.
+  // The emulator's service → it depends on emuforge being healthy (#484 R8, in place of the engine waiting for the
+  // emulator).
   expect(
-    services.engine?.depends_on?.['aws-emulator']?.condition ?? null,
-    "the engine's dependency on aws-emulator",
+    emulator.depends_on?.emuforge?.condition ?? null,
+    "the emulator's dependency on emuforge",
   ).toBe('service_healthy');
 
   // HOME removed and USERPROFILE a Windows path → exit 0 and the same rendering, in which that path does not occur.
@@ -201,89 +211,8 @@ test('engine.product-configuration-names-loopback-and-the-emulator-only', async 
   const neither = await render('neither HOME nor USERPROFILE', config, withoutHome);
   expect(neither.rendered, 'the rendering with neither HOME nor USERPROFILE').toEqual(plain);
 
-  // The gateway's configuration file → no host.docker.internal, no resolvers section, no host name in a server line,
-  // exactly the two frontends on 18296 and 18297; and as the check asserts it otherwise (issue 34): the server lines
-  // to 127.0.0.1, each on a port of one of the three variables; mode tcp throughout; no ssl, verify or resolvers;
-  // noreuseport in global.
-  const cfgPath = path.join(ctx.checkout, HAPROXY_CFG);
-  expect(fs.existsSync(cfgPath), `${HAPROXY_CFG} exists`).toBe(true);
-  const cfg = fs.existsSync(cfgPath) ? fs.readFileSync(cfgPath, 'utf8') : '';
-  expect(cfg.includes('host.docker.internal'), `${HAPROXY_CFG} names host.docker.internal`).toBe(false);
-  const lines = cfg
-    .split('\n')
-    .map((l) => l.replace(/#.*$/, '').trim())
-    .filter((l) => l !== '');
-  expect(
-    lines.filter((l) => /^resolvers\b/.test(l)),
-    `resolvers sections of ${HAPROXY_CFG}`,
-  ).toEqual([]);
-  const servers = lines
-    .filter((l) => /^server\s/.test(l))
-    .map((l) => {
-      const address = (l.split(/\s+/)[2] ?? '').replace(/"/g, '');
-      const colon = address.lastIndexOf(':');
-      return { host: address.slice(0, colon), port: address.slice(colon + 1) };
-    });
-  expect(
-    servers.filter((s) => !/^\d{1,3}(\.\d{1,3}){3}$/.test(s.host)).map((s) => `${s.host}:${s.port}`),
-    `server lines of ${HAPROXY_CFG} whose address is a host name`,
-  ).toEqual([]);
-  expect(
-    servers.map((s) => s.host),
-    `the server lines of ${HAPROXY_CFG}`,
-  ).toEqual(['127.0.0.1', '127.0.0.1']);
-  const variable = /^\$\{(EMULATOR_PORT|EMUFORGE_ENGINE_PORT|EMUFORGE_STUDIO_PORT)\}$/;
-  expect(
-    servers.filter((s) => !variable.test(s.port)).map((s) => `${s.host}:${s.port}`),
-    `server lines of ${HAPROXY_CFG} whose port is not one of the three variables`,
-  ).toEqual([]);
-  // Sections, the binds of each frontend, and the mode each proxy runs in (its own `mode`, else that of the
-  // `defaults` before it).
-  let section = '';
-  let defaultsMode = '';
-  const modes: { section: string; mode: string }[] = [];
-  const frontends: { section: string; binds: string[] }[] = [];
-  let current: { section: string; mode: string } | null = null;
-  let frontend: { section: string; binds: string[] } | null = null;
-  const globalLines: string[] = [];
-  for (const l of lines) {
-    const header = /^(global|defaults|frontend|backend|listen|resolvers|peers|userlist)\b/.exec(l);
-    if (header) {
-      section = l;
-      current = null;
-      frontend = null;
-      if (header[1] === 'defaults') defaultsMode = '';
-      if (['frontend', 'backend', 'listen'].includes(header[1])) {
-        current = { section: l, mode: defaultsMode };
-        modes.push(current);
-      }
-      if (['frontend', 'listen'].includes(header[1])) {
-        frontend = { section: l, binds: [] };
-        frontends.push(frontend);
-      }
-      continue;
-    }
-    const mode = /^mode\s+(\S+)/.exec(l)?.[1];
-    if (mode && section.startsWith('defaults')) defaultsMode = mode;
-    if (mode && current) current.mode = mode;
-    const bind = /^bind\s+"?([^"\s]+)"?/.exec(l)?.[1];
-    if (bind && frontend) frontend.binds.push(bind.slice(bind.lastIndexOf(':') + 1));
-    if (section === 'global') globalLines.push(l);
-  }
-  expect(
-    frontends.map((f) => f.binds.join(',')).sort(),
-    `the frontends of ${HAPROXY_CFG}, by the ports they bind (${JSON.stringify(frontends)})`,
-  ).toEqual(GATEWAY_PORTS.map(String));
-  expect(modes.length, `proxies in ${HAPROXY_CFG}`).toBeGreaterThan(0);
-  expect(
-    modes.filter((m) => m.mode !== 'tcp').map((m) => `${m.section}: ${m.mode || 'no mode'}`),
-    `proxies of ${HAPROXY_CFG} not in mode tcp`,
-  ).toEqual([]);
-  expect(
-    lines.filter((l) => /(^|\s)(ssl|verify|resolvers)(\s|$)/.test(l)),
-    `lines of ${HAPROXY_CFG} with ssl, verify or resolvers`,
-  ).toEqual([]);
-  expect(globalLines, `the global section of ${HAPROXY_CFG}`).toContain('noreuseport');
+  // infra/emuforge/haproxy.cfg → absent (#484: no gateway).
+  expect(fs.existsSync(path.join(ctx.checkout, HAPROXY_CFG)), `${HAPROXY_CFG} exists`).toBe(false);
 
   // The checkout's files → no docker-compose.linux.yml and no compose.
   expect(
@@ -292,35 +221,21 @@ test('engine.product-configuration-names-loopback-and-the-emulator-only', async 
   ).toEqual([]);
 
   // EMULATOR_PORT, EMUFORGE_ENGINE_PORT and EMUFORGE_STUDIO_PORT set (the form's own free ports) → the project's name,
-  // the published ports and the three services' environment follow them, as the check asserts it (issue 34): the
-  // environment of gateway, engine and studio is the three ports and the container's HOME, the same HOME in the
-  // three, and the engine's mount is under that HOME.
+  // the published ports (above) and emuforge's environment follow them, as the check asserts it (issue 34): the
+  // environment of emuforge is the three ports and the container's HOME, and its mount is under that HOME.
   expect(plain.name ?? null, 'the project name').toBe(form.project);
+  const environment = services.emuforge?.environment ?? {};
+  expect(Object.keys(environment).sort(), "the environment of emuforge").toEqual(
+    ['EMULATOR_PORT', 'EMUFORGE_ENGINE_PORT', 'EMUFORGE_STUDIO_PORT', 'HOME'].sort(),
+  );
   expect(
-    (services.gateway?.ports ?? []).map((p) => ({ target: p.target, published: String(p.published ?? '') })),
-    "the gateway's published ports",
-  ).toEqual([
-    { target: 18296, published: String(form.studioPort) },
-    { target: 18297, published: String(form.enginePort) },
-  ]);
-  const homes = new Set<string>();
-  for (const name of ['gateway', 'engine', 'studio']) {
-    const environment = services[name]?.environment ?? {};
-    expect(Object.keys(environment).sort(), `the environment of ${name}`).toEqual(
-      ['EMULATOR_PORT', 'EMUFORGE_ENGINE_PORT', 'EMUFORGE_STUDIO_PORT', 'HOME'].sort(),
-    );
-    expect(
-      [environment.EMULATOR_PORT, environment.EMUFORGE_ENGINE_PORT, environment.EMUFORGE_STUDIO_PORT],
-      `the ports in the environment of ${name}`,
-    ).toEqual([form.emulatorPort, form.enginePort, form.studioPort].map(String));
-    homes.add(environment.HOME ?? '');
-  }
-  expect([...homes], 'HOME of the three services').toHaveLength(1);
-  const [home] = [...homes];
+    [environment.EMULATOR_PORT, environment.EMUFORGE_ENGINE_PORT, environment.EMUFORGE_STUDIO_PORT],
+    "the ports in the environment of emuforge",
+  ).toEqual([form.emulatorPort, form.enginePort, form.studioPort].map(String));
   expect(
-    services.engine?.volumes?.[0]?.target,
-    "the target of the engine's mount: the container's HOME/.aws/emulator",
-  ).toBe(`${home}/.aws/emulator`);
+    services.emuforge?.volumes?.[0]?.target,
+    "the target of emuforge's mount: the container's HOME/.aws/emulator",
+  ).toBe(`${environment.HOME ?? ''}/.aws/emulator`);
 });
 
 // --- README ---
@@ -612,8 +527,8 @@ test('engine.product-readme-gives-the-commands-the-checks-run', async ({ ctx }) 
 
   // "Ports" → the three variables with their defaults; a bash block that sets the two published ports for the start
   // line and for the stop line; a PowerShell block whose lines are those bash lines with each assignment spelled
-  // `$env:NAME=value;`, and the line with the variable; 18296 and 18297 as reserved; docker compose logs gateway; no
-  // ./compose.
+  // `$env:NAME=value;`, and the line with the variable; docker compose logs emuforge; no 18296 or 18297 (#484: no
+  // reserved port); no ./compose.
   for (const [name, value] of PORT_VARIABLES) {
     expect(namesVariableWithDefault(portsPart, name, value), `"Ports" names ${name} with ${value}`).toBe(true);
   }
@@ -656,10 +571,10 @@ test('engine.product-readme-gives-the-commands-the-checks-run', async ({ ctx }) 
   }
   const portsBlocks = blocksOf(portsPart);
   expect(
-    portsBlocks.some((b) => /(^|\D)18296(\D|$)/.test(b) && /(^|\D)18297(\D|$)/.test(b) && /reserved/i.test(b)),
-    '"Ports": a paragraph, item or row that says 18296 and 18297 are reserved',
-  ).toBe(true);
-  expect(codeOf(portsPart), '"Ports": docker compose logs gateway in code').toContain('docker compose logs gateway');
+    portsBlocks.filter((b) => /(^|\D)1829[67](\D|$)/.test(b)),
+    '"Ports": paragraphs, items or rows that name 18296 or 18297',
+  ).toEqual([]);
+  expect(codeOf(portsPart), '"Ports": docker compose logs emuforge in code').toContain('docker compose logs emuforge');
   expect(portsPart.includes('./compose'), '"Ports" holds ./compose').toBe(false);
 
   // "Run the emulator" → its lines as before issue 437, and a sentence that it is for the developer's start and was
