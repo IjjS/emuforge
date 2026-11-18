@@ -1,0 +1,7 @@
+/* A message's body in its detail (issue 481, design task 2, step 4): exactly as returned, its line breaks and spaces
+   kept, a line longer than the panel broken anywhere rather than widening the page. The area's own element inside
+   Cloudscape's `Box` of variant `code`; it sets no colour, spacing or font. */
+.aws-sqs-message-body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
