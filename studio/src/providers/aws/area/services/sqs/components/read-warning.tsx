@@ -3,6 +3,7 @@ import Link from '@cloudscape-design/components/link';
 
 import { useFollow } from '../../../components/use-follow';
 import { ValueText } from '../../../components/value-text';
+import { moreReads, times } from './counts';
 import { queuePath, type RedrivePolicy } from '../format';
 
 // The read warning of S2's "Messages" (issue 481, design task 2, step 1): shown directly above the read controls every
@@ -25,15 +26,16 @@ export function ReadWarning({ policy }: { policy: RedrivePolicy | undefined }) {
     );
   }
   // A policy without a count of its own says nothing of when the move happens; the warning then names no number.
-  const count = policy.maxReceiveCount === undefined ? 'the set number of' : String(policy.maxReceiveCount);
+  const count = policy.maxReceiveCount;
+  const received = count === undefined ? 'the set number of times' : times(count);
+  const again = count === undefined ? 'the set number of more reads' : moreReads(count);
   return (
     <Alert type="warning">
-      {READ_COUNTS} Once a message has been received {count} times in this queue, the next read moves it to{' '}
+      {READ_COUNTS} Once a message has been received {received} in this queue, the next read moves it to{' '}
       <Link href={queuePath(policy.deadLetterQueue)} onFollow={handleFollow}>
         <ValueText kind="name" value={policy.deadLetterQueue} />
       </Link>{' '}
-      instead of showing it. A message moved back keeps the receive count shown here, and is moved again after {count}{' '}
-      more reads.
+      instead of showing it. A message moved back keeps the receive count shown here, and is moved again after {again}.
     </Alert>
   );
 }
