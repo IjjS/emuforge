@@ -10,7 +10,10 @@ first live registered pane whose cwd is the worktree). AGAIN seconds after a lin
 is still an orphan of that worktree, one line `EVENT orphans again <worktree> …` with the same fields, once. A
 later line for a new PID keeps the first time of `again`. st["orphans"] (the daemon's saved state) holds what was
 seen and told, by `<pid>:<start>`, so a restarted daemon does not tell it again. A look that cannot read the process
-table gives no line and changes nothing. The line is a notice: nothing is stopped.
+table gives no line and changes nothing. The line is a notice: nothing is stopped. What every sweep leaves out
+(_pmorphans, issue 477: a worktree's running pm-check, its step group and the stand-ins its tests start under
+<worktree>/output/tests/, and impeccable's live-server while a live crit pane of the worktree's issue is
+registered) is not an orphan here either, so it is never told.
 """
 import collections
 import json

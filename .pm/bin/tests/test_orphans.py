@@ -1,5 +1,6 @@
 """The orphaned processes of a worktree: finding them, stopping them, the sweep, `pm-worktree orphans` and `rm`,
-and the sweep of `pm-pane reset` and `close` (issue 472, R1 to R5).
+and the sweep of `pm-pane reset` and `close` (issue 472, R1 to R5); and what they all leave out (issue 477): a running
+pm-check's own stand-ins and a live crit's live-server.
 
 Check id `harness.orphans`. One class per `Unit` heading of the issue's test criteria (`## test_orphans.py`).
 
@@ -21,9 +22,13 @@ once, so the child's parent is a reaper; the child writes `<role> <pid>` lines t
 120 s bound; none spins a core); `launch.py` (starts processes in its own group, records them and exits, so they are
 orphans of one group); a `pm-check` stand-in; `ps` and `lsof` stand-ins that exit 1 or 2, print a line `ps` would
 not print, sleep past `BOUND`, or print the real table with the `uid` of named PIDs changed; and, first on PATH for
-the commands, a `herdr` stand-in and a `docker` stand-in. The herdr stand-in answers `agent list`, `pane list`,
-`agent wait`, `agent prompt`, `pane wait-output` and `pane close`, appends each call to `F/output/herdr-calls.log`,
-and for the `/clear` prompt and the brief prompt also whether each PID of the case's pid files is alive. For a
+the commands, a `herdr` stand-in and a `docker` stand-in; and `live-server`, impeccable's live-server as `ps` shows
+it (bash run under the name `impeccable` with the word `live-server`), started through `launch.py`. For issue 477 a
+case records the `pm-check` stand-in, started through `launch.py`, as a live run in `wt-a/output/checks/
+running.json`, starts its "tests' stand-ins" under `wt-a/output/tests/`, and registers the crit pane `i1-crit` of
+issue 1 (every fixture worktree's issue) in `F/.pm/run/panes.json`. The herdr stand-in answers `agent list`,
+`pane list`, `agent wait`, `agent prompt`, `pane wait-output` and `pane close`, appends each call to
+`F/output/herdr-calls.log`, and for the `/clear` prompt and the brief prompt also whether each PID of the case's pid files is alive. For a
 command case where `ps` fails, the fixture's copy of `_pmorphans.py` has its `PS` set to the stand-in that exits 1.
 
 Every PID a case made is killed at the case's end, whether it passed or not, after checking that its command line
@@ -221,7 +226,10 @@ def out_result(v):
     if isinstance(v, M.CannotTell):
         return {"cannot_tell": str(v)}
     stopped, left = v
-    return {"stopped": [out_proc(p) for p in stopped], "left": [out_proc(p) for p in left]}
+    out = {"stopped": [out_proc(p) for p in stopped], "left": [out_proc(p) for p in left]}
+    if getattr(v, "kept", None):
+        out["kept"] = [[out_proc(p), why] for p, why in v.kept]
+    return out
 
 
 def reap():
@@ -269,10 +277,19 @@ def call(req):
         t = time.monotonic()
         r = M.sweep([tuple(x) for x in req["roots"]], reapers=REAPERS, settle_min=req.get("settle_min", 0))
         return {"result": {k: out_result(v) for k, v in r.items()}, "elapsed": time.monotonic() - t}
+    if op == "scan_left":
+        found, kept = M.scan_left([req["root"]], reapers=REAPERS)
+        return {"found": [out_proc(p) for p in found[req["root"]]],
+                "kept": [[out_proc(p), why] for p, why in kept[req["root"]]]}
     if op == "line":
         r = req["result"]
-        v = M.CannotTell(r["cannot_tell"]) if "cannot_tell" in r else \
-            ([in_proc(d) for d in r["stopped"]], [in_proc(d) for d in r["left"]])
+        if "cannot_tell" in r:
+            v = M.CannotTell(r["cannot_tell"])
+        elif "kept" in r:
+            v = M.Swept([in_proc(d) for d in r["stopped"]], [in_proc(d) for d in r["left"]],
+                        kept=[(in_proc(d), why) for d, why in r["kept"]])
+        else:
+            v = ([in_proc(d) for d in r["stopped"]], [in_proc(d) for d in r["left"]])
         return M.line(req["name"], v)
     raise ValueError(f"unknown op {op}")
 
@@ -360,6 +377,13 @@ else:
     print("{{}}")
 '''
 
+# impeccable's live-server as `ps` shows it (`impeccable live-server --port=… --target=<dir>`): bash under the name
+# `impeccable` with the word `live-server`; it sleeps in steps of 0.2 s up to a 120 s bound, so a child it leaves is
+# gone at once
+LIVE_SERVER = """#!/bin/bash
+exec -a impeccable /bin/bash -c 'end=$((SECONDS+120)); while [ $SECONDS -lt $end ]; do sleep 0.2; done' \\
+    live-server "$@"
+"""
 DOCKER = "#!/bin/sh\nexit 0\n"
 PS_EXIT1 = "#!/bin/sh\nexit 1\n"
 PS_GARBAGE = "#!/bin/sh\necho 'this is not a line of ps'\nexit 0\n"
@@ -469,7 +493,8 @@ class Case(unittest.TestCase):
         self.stub.mkdir(parents=True)
         for rel, text in {"orphan.py": ORPHAN, "sleeper.py": SLEEPER, "launch.py": LAUNCH, "driver.py": DRIVER,
                           "bin/pm-check": SLEEPER, "ps-uid": PS_UID, "ps-exit1": PS_EXIT1, "ps-garbage": PS_GARBAGE,
-                          "ps-slow": SLOW, "lsof-exit2": LSOF_EXIT2, "lsof-slow": SLOW}.items():
+                          "ps-slow": SLOW, "lsof-exit2": LSOF_EXIT2, "lsof-slow": SLOW,
+                          "live-server": LIVE_SERVER}.items():
             self.write(self.standins / rel, text)
         self.write(self.standins / "lsof-exit1", f"#!/bin/sh\necho started >> {shlex.quote(str(self.marker))}\nexit 1\n")
         self.write(self.stub / "herdr", HERDR)
@@ -623,6 +648,58 @@ class Case(unittest.TestCase):
 
     def pids_of(self, procs):
         return sorted(p["pid"] for p in procs)
+
+    # what the sweep leaves out (issue 477)
+
+    def check_running(self, wt="wt-a"):
+        """A live pm-check stand-in, started in a group of its own and recorded in <wt>/output/checks/running.json;
+        its PID."""
+        got, g = self.launch([["pmcheck", self.wt[wt], [PY, "-I", str(self.standins / "bin" / "pm-check"), "run"]]])
+        f = pathlib.Path(self.wt[wt]) / "output" / "checks" / "running.json"
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps(dict(pm_check_pid=got["pmcheck"], pgid=g, step="harness-test",
+                                     started=dt.datetime.now().astimezone().isoformat(timespec="seconds"))))
+        return got["pmcheck"]
+
+    def with_check(self, check, pids, reapers):
+        """`pids` and, when the pm-check stand-in is itself an orphan (its parent one of `reapers`, as launch.py
+        leaves it), the stand-in: what a sweep names as left running for the check, sorted."""
+        ppid = ps_field(check, "ppid")
+        return sorted(set(pids) | ({check} if ppid is not None and int(ppid) in reapers else set()))
+
+    def kept_text(self, check, pids, reapers):
+        """`<pid> <name>, … (the running pm-check <check>)` of with_check."""
+        names = ", ".join(f"{p} {exe_name(p)}" for p in self.with_check(check, pids, reapers))
+        return f"{names} (the running pm-check {check})"
+
+    def tests_dir(self, wt="wt-a"):
+        """<wt>/output/tests/<group>/<case>, where a harness test of a check running in <wt> works."""
+        d = pathlib.Path(self.wt[wt]) / "output" / "tests" / "group" / "case"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def live_server(self, cwd):
+        """impeccable's live-server stand-in, an orphan with its cwd at `cwd`; its PID once `ps` names it
+        `impeccable`."""
+        got, _ = self.launch([["live", str(cwd), [str(self.standins / "live-server"), "--port=8400",
+                                                  f"--target={cwd}"]]])
+        pid = got["live"]
+        end = time.time() + READY_WAIT
+        while exe_name(pid) != "impeccable":
+            self.assertLess(time.time(), end, f"the live-server stand-in {pid} is {ps_field(pid, 'command')!r}")
+            time.sleep(0.05)
+        return pid
+
+    def crit(self, issue="1", gone=False):
+        """F/.pm/run/panes.json with the crit pane i<issue>-crit, cwd F (as pm-pane registers one)."""
+        run_dir = self.co / ".pm" / "run"
+        f = run_dir / "panes.json"
+        reg = [r for r in (json.loads(f.read_text()) if f.exists() else []) if r.get("role") != "crit"]
+        reg.append(dict(name=f"i{issue}-crit", issue=issue, role="crit", unit=None, kind="claude",
+                        model="claude-opus-5-5", side="other", pane_id=f"p-crit-{issue}", tab_id="t1",
+                        cwd=str(self.co), brief=None, started="2026-11-18T00:00:00+00:00", session=None, gone=gone,
+                        resets=0))
+        f.write_text(json.dumps(reg))
 
 
 # ---------------------------------------------------------------------------------------------------------- Name
@@ -976,6 +1053,111 @@ class Sweep(Case):
                          "cannot tell the orphaned processes of wt-a: ps timed out")
 
 
+# ------------------------------------------------------------------------------------------------------- LeftOut
+
+class LeftOut(Case):
+    """Issue 477: given a driver; a pm-check stand-in recorded live in wt-a's output/checks/running.json; stand-ins
+    of its tests under wt-a/output/tests/; a live-server stand-in and the crit pane i1-crit of wt-a's issue 1.
+    Fails on main: `_pmorphans` has no `scan_left`, finds the stand-ins and the live-server, and its line names
+    nothing left running."""
+
+    def find(self, name="wt-a"):
+        return self.drv().call("find", root=self.wt[name])
+
+    def scan(self, name="wt-a"):
+        return self.drv().call("scan_left", root=self.wt[name])
+
+    def kept(self, name="wt-a"):
+        return sorted((k[0]["pid"], k[1]) for k in self.scan(name)["kept"])
+
+    def sweep(self, name="wt-a"):
+        return self.drv(GRACE=GRACE, SETTLE=SETTLE).call("sweep", roots=[[name, self.wt[name]]])["result"][name]
+
+    def test_a_running_check_s_stand_in_and_its_child_are_left_out(self):
+        check = self.check_running()
+        d = self.tests_dir()
+        o = self.orphan(d, "--child", d)
+        self.assertEqual(self.find(), [])
+        self.assertEqual(self.kept(), [(pid, f"the running pm-check {check}")
+                                       for pid in self.with_check(check, [o["orphan"]], self.driver.reapers)])
+
+    def test_one_started_before_the_check_is_found(self):
+        pid = self.orphan(self.tests_dir())["orphan"]
+        time.sleep(1.1)  # ps gives start times in whole seconds
+        self.check_running()
+        self.assertEqual(self.pids_of(self.find()), [pid])
+
+    def test_one_outside_output_tests_is_found(self):
+        self.check_running()
+        pid = self.orphan(self.wt["wt-a"])["orphan"]
+        self.assertEqual(self.pids_of(self.find()), [pid])
+
+    def test_without_a_live_check_one_under_output_tests_is_found(self):
+        pid = self.orphan(self.tests_dir())["orphan"]
+        self.assertEqual(self.pids_of(self.find()), [pid])
+        dead = self.drv().call("spawn", argv=[PY, "-I", "-c", "pass"], cwd=str(self.standins))["pid"]
+        f = pathlib.Path(self.wt["wt-a"]) / "output" / "checks" / "running.json"
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps(dict(pm_check_pid=dead, pgid=dead, step="harness-test", started="")))
+        self.assertEqual(self.pids_of(self.find()), [pid], "a record of a pm-check that ended")
+
+    def test_another_worktree_s_check_leaves_nothing_out_here(self):
+        self.check_running("wt-b")
+        pid = self.orphan(self.tests_dir("wt-a"))["orphan"]
+        self.assertEqual(self.pids_of(self.find()), [pid])
+
+    def test_the_sweep_leaves_the_check_s_own_running_and_stops_the_rest(self):
+        check = self.check_running()
+        own = self.orphan(self.tests_dir())["orphan"]
+        other = self.orphan(self.wt["wt-a"])["orphan"]
+        r = self.sweep()
+        self.assertEqual(self.pids_of(r["stopped"]), [other], r)
+        self.assertEqual([(k[0]["pid"], k[1]) for k in r.get("kept", [])],
+                         [(pid, f"the running pm-check {check}")
+                          for pid in self.with_check(check, [own], self.driver.reapers)], r)
+        self.assertAlive(own)
+        self.assertGone(other)
+
+    def test_a_live_crit_s_live_server_is_left_out(self):
+        self.crit()
+        pid = self.live_server(self.wt["wt-a"])
+        self.assertEqual(self.find(), [])
+        self.assertEqual(self.kept(), [(pid, "live pane i1-crit")])
+        r = self.sweep()
+        self.assertEqual(r["stopped"], [], r)
+        self.assertAlive(pid)
+
+    def test_the_live_server_is_found_with_the_crit_gone_absent_or_of_another_issue(self):
+        pid = self.live_server(self.wt["wt-a"])
+        for how in ("absent", "gone", "other issue"):
+            if how == "gone":
+                self.crit(gone=True)
+            elif how == "other issue":
+                self.crit(issue="2")
+            self.assertIn(pid, self.pids_of(self.find()), f"crit {how}")
+            self.assertEqual(self.kept(), [], f"crit {how}")
+
+    def test_another_program_is_found_beside_a_live_crit(self):
+        self.crit()
+        pid = self.orphan(self.wt["wt-a"])["orphan"]
+        self.assertEqual(self.pids_of(self.find()), [pid])
+
+    def line(self, result):
+        return self.drv().call("line", name="wt-a", result=result)
+
+    def test_line_names_what_was_left_running_and_why(self):
+        r = dict(stopped=[dict(pid=101, name="forks.js")], left=[],
+                 kept=[[dict(pid=303, name="impeccable"), "live pane i1-crit"],
+                       [dict(pid=203, name="sleep"), "the running pm-check 9"],
+                       [dict(pid=202, name="Python"), "the running pm-check 9"]])
+        self.assertEqual(self.line(r), "stopped 1 orphaned processes of wt-a: 101 forks.js; left running: "
+                                       "202 Python, 203 sleep (the running pm-check 9); 303 impeccable "
+                                       "(live pane i1-crit)")
+        r = dict(stopped=[], left=[], kept=[[dict(pid=202, name="Python"), "the running pm-check 9"]])
+        self.assertEqual(self.line(r), "no orphaned processes in wt-a; left running: 202 Python "
+                                       "(the running pm-check 9)")
+
+
 # ------------------------------------------------------------------------------------------------------ commands
 
 class Command(Case):
@@ -1070,6 +1252,36 @@ class Worktree(Command):
         self.assertIn(f"stopped 1 orphaned processes of wt-a-b: {ab} {name}", lines(r))
         self.assertGone(ab)
         self.assertAlive(a)
+
+    def test_orphans_during_a_check_lists_its_stand_in_as_left_running(self):
+        """issue 477"""
+        check = self.check_running()
+        pid = self.ours(self.tests_dir())
+        r = self.cmd("pm-worktree", "orphans", "wt-a")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(lines(r), ["no orphaned processes in wt-a",
+                                    f"wt-a left running: {self.kept_text(check, [pid], {1})}"])
+
+    def test_orphans_stop_during_a_check_leaves_its_stand_in_and_stops_the_rest(self):
+        """issue 477"""
+        check = self.check_running()
+        own = self.ours(self.tests_dir())
+        other = self.ours(self.wt["wt-a"])
+        name, kept = exe_name(other), self.kept_text(check, [own], {1})
+        r = self.cmd("pm-worktree", "orphans", "wt-a", "--stop")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn(f"stopped 1 orphaned processes of wt-a: {other} {name}; left running: {kept}", lines(r))
+        self.assertGone(other)
+        self.assertAlive(own)
+
+    def test_orphans_stop_leaves_a_live_crit_s_live_server(self):
+        """issue 477"""
+        self.crit()
+        pid = self.live_server(self.wt["wt-a"])
+        r = self.cmd("pm-worktree", "orphans", "wt-a", "--stop")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn(f"no orphaned processes in wt-a; left running: {pid} impeccable (live pane i1-crit)", lines(r))
+        self.assertAlive(pid)
 
     def test_rm_sweeps_before_the_removal(self):
         self.add_wt_r()
@@ -1263,6 +1475,37 @@ class Pane(Command):
         self.assertRegex(swept[1], rf"^stopped 1 orphaned processes of wt-b: {b} \S+$")
         self.assertGone(a)
         self.assertGone(b)
+
+    def test_reset_during_a_check_leaves_its_stand_in_running_and_says_so(self):
+        """issue 477"""
+        check = self.check_running()
+        pid = self.ours(self.tests_dir())
+        kept = self.kept_text(check, [pid], {1})
+        r = self.cmd("reset", "i1-worker-h1")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn(f"no orphaned processes in wt-a; left running: {kept}", lines(r))
+        brief = self.prompt(lambda t: t.startswith("Read "))
+        self.assertEqual(len(brief), 1, self.logged())
+        self.assertIs(brief[0]["alive"].get(str(pid)), True, brief)
+        self.assertAlive(pid)
+
+    def test_close_during_a_check_leaves_its_stand_in_running_and_says_so(self):
+        """issue 477"""
+        check = self.check_running()
+        pid = self.ours(self.tests_dir())
+        kept = self.kept_text(check, [pid], {1})
+        r = self.cmd("close", "i1-worker-h1")
+        self.assertIn(f"no orphaned processes in wt-a; left running: {kept}", lines(r))
+        self.assertAlive(pid)
+
+    def test_close_leaves_a_live_crit_s_live_server(self):
+        """issue 477"""
+        self.PANES = Pane.PANES + (("i1-crit", "p-crit-1", "crit", None, None),)  # herdr lists it: it stays live
+        self.crit()
+        pid = self.live_server(self.wt["wt-a"])
+        r = self.cmd("close", "i1-worker-h1")
+        self.assertIn(f"no orphaned processes in wt-a; left running: {pid} impeccable (live pane i1-crit)", lines(r))
+        self.assertAlive(pid)
 
     def test_sweep_lines_are_logged(self):
         self.ours(self.wt["wt-a"])

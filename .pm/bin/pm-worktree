@@ -32,13 +32,18 @@ emulator port left under ~/.aws/emulator. Neither a refusal there nor a sweep th
 a process stops the removal.
 orphans lists the orphaned processes of one registered worktree, or of every one in registry order: processes of
 the current user whose working directory is in the worktree and whose parent is a reaper (PID 1), with what runs
-below them in the worktree; not the live pm-check recorded in its output/checks/running.json, nor its step group.
-One line per process `<worktree> <pid> <age> <cpu>% <name> <cwd>`, or `no orphaned processes in <worktree>`; exit
-0. With --stop it sweeps: SIGTERM to each by PID, SIGKILL 5 s later to what is left, each only after a check that
-it is still the same process; nothing by name, no process group, no container. One line per worktree, `stopped
-<n> orphaned processes of <worktree>: <pid> <name>, …` (`; not stopped: …` for what outlived SIGKILL); exit 1 when
-a process was not stopped. A process table that cannot be read prints `cannot tell the orphaned processes of
-<worktree>: <reason>` and exits 1. A name that is not a registered worktree exits 2.
+below them in the worktree; not what the sweep leaves out (_pmorphans): the live pm-check recorded in its
+output/checks/running.json, its step group and, while it runs, the stand-ins its tests start under
+<worktree>/output/tests/; impeccable's live-server while a live crit pane of the worktree's issue is registered.
+One line per process `<worktree> <pid> <age> <cpu>% <name> <cwd>`, or `no orphaned processes in <worktree>`, then,
+when an orphaned process was left out, `<worktree> left running: <pid> <name>, … (<why>)`; exit 0. With --stop it
+sweeps: SIGTERM to each by PID, SIGKILL 5 s later to what is left, each only after a check that it is still the
+same process; nothing by name, no process group, no container. One line per worktree, `stopped <n> orphaned
+processes of <worktree>: <pid> <name>, …` (`; not stopped: …` for what outlived SIGKILL); exit 1 when a process
+was not stopped. Every sweep's line (here, rm, pm-pane reset and close) ends with `; left running: <pid> <name>, …
+(the running pm-check <pid>)` or `… (live pane <crit>)` when it left an orphaned process out. A process table that
+cannot be read prints `cannot tell the orphaned processes of <worktree>: <reason>` and exits 1. A name that is not
+a registered worktree exits 2.
 """
 import argparse
 import json
@@ -49,7 +54,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _pmlib import BIN, PORTS, ROOT, WORKTREES, guard, load, log, now, save
-from _pmorphans import CannotTell, line, scan, sweep, table, worktree_paths
+from _pmorphans import CannotTell, kept_text, line, scan_left, sweep, table, worktree_paths
 from _pmscope import Unreadable, run_git
 
 BRANCH_TYPES = ("feat", "refactor", "fix")
@@ -270,7 +275,7 @@ def cmd_orphans(a):
                 code = 1
         sys.exit(code)
     try:
-        found = scan(sorted({path for _, path in wts}), tab=table()) if wts else {}
+        found, kept = scan_left(sorted({path for _, path in wts}), tab=table()) if wts else ({}, {})
     except CannotTell as e:
         for name, _ in wts:
             print(line(name, e))
@@ -281,6 +286,8 @@ def cmd_orphans(a):
             print(f"{name} {p.pid} {p.age} {p.cpu:.1f}% {p.name} {p.cwd}")
         if not procs:
             print(f"no orphaned processes in {name}")
+        if kept[path]:
+            print(f"{name} left running: {kept_text(kept[path])}")
 
 
 def cmd_list(a):

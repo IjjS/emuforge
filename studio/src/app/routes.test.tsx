@@ -20,12 +20,14 @@ const SERVICES = serviceLinks();
 
 /**
  * The services whose route has a screen of its own: Amazon S3 (issue 56), AWS Identity and Access Management
- * (issue 82) and AWS Lambda, whose route is the function list (issue 84).
+ * (issue 82), AWS Lambda, whose route is the function list (issue 84), and Amazon SQS, whose route is the queue list
+ * (issue 481).
  */
 const WITH_SCREEN: readonly string[] = [
   'Amazon Simple Storage Service',
   'AWS Identity and Access Management',
   'AWS Lambda',
+  'Amazon Simple Queue Service',
 ];
 
 /** Every other service. */
