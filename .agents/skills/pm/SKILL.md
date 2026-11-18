@@ -242,7 +242,7 @@ flow step 1:
   - Studio screens of the batch are scored together: one `crit` pane, one mock round and one `final` for all the
     screens the batch changes.
   - The batch is finished as one: its plan sends one `ISSUE READY` for the host; you close it as flow step 2
-    says, report the five together, archive the host and push once.
+    says, with `pm-merge <host>`, report the five together, archive the host and push once.
   A `LOW` issue is not started outside a batch, and the next batch starts only when the one before it is pushed.
   An issue of any other severity, or one the owner asks for, is taken ahead of the next batch and is finished by
   itself as flow step 3 says.

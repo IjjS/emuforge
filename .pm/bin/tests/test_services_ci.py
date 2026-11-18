@@ -47,6 +47,7 @@ FORM_FILES = (CHECKOUT / ".pm" / "bin" / "_pmscope.py", CHECKOUT / "tests" / "in
 INTEGRATION_GUIDE = CHECKOUT / "tests" / "integration" / "AGENTS.md"
 ROOT_GUIDE = CHECKOUT / "AGENTS.md"
 SKILL = CHECKOUT / ".agents" / "skills" / "pm" / "SKILL.md"
+LEAD = CHECKOUT / ".agents" / "skills" / "pm" / "references" / "lead.md"
 
 NO_SERVICE = object()  # a row without the key `service`
 M = (  # (check_id, path, service, labels)
@@ -457,8 +458,9 @@ class Guides(unittest.TestCase):
                 and re.search(r"\bissue\b", s)]
         self.assertTrue(half, "no sentence holds the half-of-the-bound rule")
 
-    def test_skill_says_what_the_whole_check_runs(self):
-        found = [s for s in docs.sentences(SKILL.read_text())
+    def test_lead_says_what_the_whole_check_runs(self):
+        """The plan runs the whole check since issue 478, so lead.md holds the sentence the PM skill held."""
+        found = [s for s in docs.sentences(LEAD.read_text())
                  if "whole check" in s and re.search(r"\bservices\b", s) and "integration" in s
                  and "issue branch" in s and re.search(r"\bno service\b", s) and re.search(r"\btouch", s)]
         self.assertTrue(found, "no sentence says what the integration step of an issue branch's whole check runs")

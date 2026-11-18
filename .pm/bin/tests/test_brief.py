@@ -71,35 +71,34 @@ class Brief(unittest.TestCase):
         co = checkout("grade-engine")
         self.assertIn("studio issues", run(co, "pm-brief", "plan", 7, "--grade", "native").stderr)
 
-    def test_worker_blocks_and_close_step(self):
+    def test_worker_end_condition_and_close_step(self):
+        """Issue 478 removed the tests unit (the plan writes the integration tests), so a worker brief is one
+        template whose end condition is the unit's unit-test scenarios."""
         co = checkout("worker")
-        self.assertEqual(run(co, "pm-brief", "worker", 7, "t1", "--summary", "Checks.").returncode, 0)
         self.assertEqual(run(co, "pm-brief", "worker", 7, "e1", "--summary", "Relay.", "--close", "it-relay-1 it-relay-2").returncode, 0)
-        t1, e1 = brief(co, 7, "t1"), brief(co, 7, "e1")
-        for text in (t1, e1):
-            self.assertNotIn("{{", text)
-            self.assertNotIn("<!-- block", text)
-        self.assertIn("must fail now", t1)
-        self.assertNotIn("until it prints `PASSED`", t1)
+        e1 = brief(co, 7, "e1")
+        self.assertNotIn("{{", e1)
+        self.assertIn("End condition: the unit-test scenarios `test-criteria.md` lists for `e1`.", e1)
+        self.assertIn("i7-plan", e1)
         self.assertIn("until it prints `PASSED`", e1)
         self.assertIn(f'pm-issue close 7 --checks "it-relay-1 it-relay-2" --in {co}-7-e1', e1)
         self.assertIn("`design.md`", e1)
         self.assertIn("engine/references/security-review.md", e1)
         self.assertIn("the files breakdown.md lists for `e1`", e1)
 
-    def test_harness_unit_of_a_studio_issue_has_no_design_input(self):
-        co = checkout("h-unit")
+    def test_unit_of_a_studio_issue_has_no_design_input(self):
+        co = checkout("s-unit")
         run(co, "pm-brief", "plan", 8, "--grade", "none")
-        self.assertEqual(run(co, "pm-brief", "worker", 8, "h1", "--summary", "Guides.").returncode, 0)
-        text = brief(co, 8, "h1")
+        self.assertEqual(run(co, "pm-brief", "worker", 8, "s1", "--summary", "Screen.").returncode, 0)
+        text = brief(co, 8, "s1")
         self.assertNotIn("design.md", text)
         self.assertIn("does not close the issue", text)
 
     def test_refusals_write_nothing(self):
         co = checkout("refuse")
         for args, word in ((("worker", 7, "e9", "--summary", "x"), "pm-worktree new"),
-                           (("worker", 7, "t1", "--summary", "x", "--close", "a"), "test unit"),
-                           (("worker", 7, "x1", "--summary", "x"), "expected t<n>"),
+                           (("worker", 7, "t1", "--summary", "x", "--close", "a"), "expected e<n>"),
+                           (("worker", 7, "x1", "--summary", "x"), "expected e<n>"),
                            (("plan", 99), "no issue file"),
                            (("plan", 7, "--precedent", "3"), "no archive")):
             p = run(co, "pm-brief", *args)

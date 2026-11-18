@@ -62,9 +62,12 @@ Leaving tests out does not leave the whole check out: `pm-merge` into `main` ask
 
 ## Whole check
 
-`pm-merge <id> --take-main`, then `pm-check emuforge-<id>`, the whole check, `integration` included. A failed check
-goes to the unit that owns what failed. It fixes it on its branch, merges `feat/<id>` into its own when `pm-merge`
-asks, passes its fast check, and is merged again. `feat/<id>` has then moved, so run the whole check again.
+`pm-merge <id> --take-main`, then `pm-check emuforge-<id>`, the whole check, `integration` included. In the whole
+check the integration step of the issue branch runs every check of no service and the browser checks of the
+services its paths touch, every service's when a shared path changed; the `services` line of `pm-scope` and
+`pm-check` names them, and `pm-merge` refuses a record that ran fewer. A failed check goes to the unit that owns
+what failed, by `breakdown.md`. It fixes it on its branch, merges `feat/<id>` into its own when `pm-merge` asks,
+passes its fast check, and is merged again. `feat/<id>` has then moved, so run the whole check again.
 
 ## End review and critique
 
