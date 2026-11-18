@@ -1,14 +1,16 @@
 # Engine test criteria
 
-The test cases that prove the requirement, written before implementation. Read this at the `Test Criteria`
-stage of `references/workflow.md`.
+The scenarios that prove the requirement, written by the plan from the requirement and the design, before any code.
+Read this at the `Test Criteria` stage of `references/workflow.md`.
 
 ## Two kinds of case
 
-- **Unit**: runs with `cargo test`, no emulator. Proves logic the engine owns: parsing, signing, header
-  handling, policy evaluation, configuration, error mapping.
-- **Integration**: a check under `/tests/integration` that runs against a real emulator. Proves what only the
-  whole path can show: that a request arrives, that the answer is the emulator's, that a restart is survived.
+- **Unit**: runs with `cargo test`, no emulator, written by the unit's worker. Proves logic the engine owns:
+  parsing, signing, header handling, policy evaluation, configuration, error mapping. Grouped per unit: they are the
+  end condition its brief carries.
+- **Integration**: a check under `/tests/integration` that runs against a real emulator, written by the plan after
+  the build. Proves what only the whole path can show: that a request arrives, that the answer is the emulator's,
+  that a restart is survived.
 
 Put a case at the lowest level that can prove it. A rule that a unit test can prove is not repeated as an
 integration check.
@@ -17,7 +19,7 @@ integration check.
 
 Group cases under one heading per target.
 
-- `### Unit — <crate>::<module>` maps to one test module.
+- `### Unit <unit> — <crate>::<module>` maps to one test module of that unit.
 - `### Integration — <check id>` maps to one check. The id is `<module>.<slug>`, for example
   `engine.relay-s3-put-object-streams-body`.
 
@@ -38,7 +40,7 @@ Under a heading, a `Given` line is the shared context and each checkbox is one t
 Example:
 
 ```
-### Unit — emuforge_core::upstream
+### Unit e1 — emuforge_core::upstream
 - Given an upstream URL from configuration
   - [ ] `Upstream::parse` When the host is 127.0.0.1 → Then it is accepted
   - [ ] `Upstream::parse` When the host is an amazonaws.com name → Then Error::UpstreamNotLoopback
@@ -85,6 +87,12 @@ The test criteria always end with this fixed block. Check an axis once its cases
 - [ ] Transparency
 - [ ] Safety
 ```
+
+## Left out
+
+The plan may leave an integration scenario out when the issue is too slight or the test would cost more than it
+shows. It says so here, with the reason, when it can tell before the build, and in its `report.md` at the end. When
+it cannot tell, it asks the `pm` (`lead.md`).
 
 ## Scope
 

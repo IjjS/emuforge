@@ -1,8 +1,8 @@
 # Engine workflow
 
-Stages of an issue whose `Issue-Module` is `engine`, `cli`, `iam` or `verify`. The issue file under `issues/`
-states the problem and its acceptance; the stage documents below are working files in the issue's folder and
-are reviewed by `rev` one at a time.
+Stages of an issue whose `Issue-Module` is `engine`, `cli`, `iam` or `verify`, led by its `plan`
+(`.agents/skills/pm/references/lead.md`). The issue file under `issues/` states the problem and its acceptance; the
+stage documents below are working files in the issue's folder and are reviewed by `rev` one at a time.
 
 ## Principles
 
@@ -15,7 +15,7 @@ are reviewed by `rev` one at a time.
 
 ## Stages by kind
 
-| Kind | 1 Requirement | 2 Design | 3 Test Criteria | 4 Implementation | 5 Verification |
+| Kind | 1 Requirement | 2 Design | 3 Test Criteria | 4 Build | 5 Verification |
 |---|---|---|---|---|---|
 | `feature` | yes | yes | yes | yes | yes |
 | `gap` | the difference from the reference | only when a public type or the request path changes | yes, including the check that showed the gap | yes | yes |
@@ -43,22 +43,26 @@ Written from the issue file and the repository. Covers:
 - Error mapping: which failure becomes which error, in which protocol shape.
 - Failure modes and what the caller sees for each.
 - `references/security-review.md`, row by row, for every row the change touches: how the rule is kept.
-- How the work splits into units, and which files each unit owns.
+- How the work splits into units (`breakdown.md`): `e<n>` units, each with the files it owns.
 
 ## 3. Test Criteria
 
-Per `references/test-criteria.md`. Unit cases and integration checks are both listed here, before any code.
+Per `references/test-criteria.md`, before any code: the unit-test scenarios of each unit, which are the end
+condition its worker's brief carries, and the integration scenarios the plan writes as tests after the build, or
+leaves out with its reason.
 
-## 4. Implementation
+## 4. Build
 
-In the issue's worktree, on its branch, only the files the unit owns. Conventions: `engine/AGENTS.md`.
+Each unit in its own worktree, by its worker, only the files it owns, with the unit tests its brief's scenarios
+ask. Conventions: `engine/AGENTS.md`, `references/security-review.md`, `references/relay-fidelity.md`. A worker
+writes no integration test.
 
 ## 5. Verification
 
-- The three commands in `engine/AGENTS.md` pass.
-- Every integration check listed in stage 3 passes against a fresh emulator, and no check that passed on
-  `main` now fails.
+- The three commands in `engine/AGENTS.md` pass on each unit (its fast check, `pm-check`).
+- When every unit is merged into the issue branch, the plan writes the integration tests from the scenarios of
+  stage 3 (`tests/integration/AGENTS.md`). The whole check on the issue branch runs them against a fresh emulator,
+  with every check that passed on `main`, and passes; its record is the evidence.
 - The relay fidelity score is not lower than on `main` (`references/relay-fidelity.md`).
-- Evidence paths for all of the above are in the unit's report; when the issue has an issue branch, the
-  evidence of the integration checks is the issue's check record, the whole check on the issue branch. Then
-  `rev` reviews the implementation, and the `pm` merges.
+- `rev` reviews the whole (the diff, the record, and whether the integration tests are the scenarios), and the
+  `pm` merges.
