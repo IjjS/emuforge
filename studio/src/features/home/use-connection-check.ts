@@ -1,7 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
-import { useCallback, useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { loadConfig } from '../../app/config';
-import { createEngineClient, type CheckResult } from '../../lib/engine/engine-client';
+import { useTargetSeen } from '../../app/target-seen';
+import { createEngineClient, startedAtOf, targetOf, type CheckResult } from '../../lib/engine/engine-client';
 
 /** Home checks again this long after each answer while it is open (requirement 3.4). */
 export const RECHECK_MS = 5_000;
@@ -22,6 +23,10 @@ export interface ConnectionCheck {
 /**
  * The connection checks of Home: one on load, one 5 seconds after each answer, and one on "Refresh", for as long as
  * the component is mounted. Each check is new requests; no answer is kept for a later mount.
+ *
+ * Each answer that names a target is reported to the document's target seen, with the time its check started. When
+ * the target seen changes by another report (another check, the connections page), it checks at once, dropping the
+ * check in flight; a change its own answer made needs no further check.
  */
 export function useConnectionCheck(): ConnectionCheck {
   const config = useQuery({ queryKey: ['studio', 'config'], queryFn: loadConfig, staleTime: Infinity });
@@ -43,6 +48,27 @@ export function useConnectionCheck(): ConnectionCheck {
     structuralSharing: false,
   });
   const { refetch, isFetching, dataUpdatedAt } = check;
+  const result = check.data;
+  const { generation, report } = useTargetSeen();
+  // The generation this hook has seen or caused; a different one is a change made by another report.
+  const known = useRef(generation);
+
+  useEffect(() => {
+    const target = result === undefined ? undefined : targetOf(result);
+    if (result !== undefined && target !== undefined) {
+      known.current = report(target, startedAtOf(result));
+    }
+  }, [result, report]);
+
+  useEffect(() => {
+    if (generation === known.current) {
+      return;
+    }
+    known.current = generation;
+    if (client !== undefined) {
+      void refetch({ cancelRefetch: true });
+    }
+  }, [generation, client, refetch]);
 
   useEffect(() => {
     if (client === undefined || isFetching) {
@@ -63,7 +89,7 @@ export function useConnectionCheck(): ConnectionCheck {
   return {
     enginePort,
     engineOrigin: client?.origin,
-    result: check.data,
+    result,
     checking: isFetching || client === undefined,
     refresh,
   };

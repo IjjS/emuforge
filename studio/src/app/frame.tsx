@@ -27,6 +27,7 @@ import { LanguageControl } from '../ui/language-control';
 import { PAGE_TITLE_ID } from '../ui/page-head';
 import { PROVIDERS, type ProviderAreaProps, type ProviderConnection } from './provider-list';
 import { createQueryClient } from './query-client';
+import { useTargetSeen } from './target-seen';
 
 export const STUDIO_NAME = 'EmuForge Studio';
 
@@ -234,6 +235,7 @@ export function ProviderPage({ area: Area }: ProviderPageProps) {
   const [title, setTitle] = useState<string>();
   useDocumentTitle(title);
   const { routeChanges, nameContentTarget } = useContext(PageFocusContext);
+  const { generation } = useTargetSeen();
   // The area's content target, as the area named it; none until its code has loaded.
   const areaFocus = useRef<FocusContent | null>(null);
   const handleContentTarget = useCallback((focus: FocusContent | null) => {
@@ -258,6 +260,7 @@ export function ProviderPage({ area: Area }: ProviderPageProps) {
           onContentTarget={handleContentTarget}
           routeChanges={routeChanges}
           connection={connection}
+          targetGeneration={generation}
         />
       </Suspense>
     </div>
