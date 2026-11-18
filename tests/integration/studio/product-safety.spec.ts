@@ -46,11 +46,13 @@ test('engine.product-ports-are-published-on-loopback-only', async ({ ctx }) => {
   expect('error' in first ? first.error : '', 'the Given: the engine answers on its published port').toBe('');
 
   // The project's containers' published ports → exactly two, Studio's and the engine's, both on host address
-  // 127.0.0.1, both on the gateway's container.
-  const published: { service: string; hostIp: string; hostPort: string }[] = [];
+  // 127.0.0.1, both on emuforge's container, each to the same port inside (#484).
+  const published: { service: string; hostIp: string; hostPort: string; containerPort: string }[] = [];
   for (const container of await form.containers()) {
     const { running } = await publishedBy(container.id);
-    for (const b of running) published.push({ service: container.service, hostIp: b.hostIp, hostPort: b.hostPort });
+    for (const b of running) {
+      published.push({ service: container.service, hostIp: b.hostIp, hostPort: b.hostPort, containerPort: b.containerPort });
+    }
   }
   ctx.log(`published: ${JSON.stringify(published)}`);
   expect(
@@ -60,11 +62,11 @@ test('engine.product-ports-are-published-on-loopback-only', async ({ ctx }) => {
     [form.studioPort, form.enginePort]
       .map(String)
       .sort()
-      .map((hostPort) => ({ service: 'gateway', hostIp: '127.0.0.1', hostPort })),
+      .map((hostPort) => ({ service: 'emuforge', hostIp: '127.0.0.1', hostPort, containerPort: `${hostPort}/tcp` })),
   );
 
-  // The emulator's, the engine's and Studio's containers → none publishes a port and none has host networking.
-  const services = await form.byService(['aws-emulator', 'engine', 'studio']);
+  // The emulator's container → no published port and no host networking; emuforge's has no host networking.
+  const services = await form.byService(['aws-emulator']);
   for (const [service, container] of Object.entries(services)) {
     expect(await publishedBy(container.id), `the ports ${service} publishes`).toEqual({ running: [], configured: [] });
     const mode = await dockerRead(['inspect', '-f', '{{.HostConfig.NetworkMode}}', container.id]);
@@ -86,6 +88,15 @@ test('engine.product-ports-are-published-on-loopback-only', async ({ ctx }) => {
     }
   }
   expect(accepted, 'connections accepted at a non-loopback address').toEqual([]);
+
+  // `docker compose logs emuforge` → the warning of --listen-address, naming 0.0.0.0 (#484 R5).
+  const logs = await form.run(form.compose('logs', '--no-color', 'emuforge'), STOP_BOUND_MS);
+  expect(
+    `${logs.stdout}\n${logs.stderr}`
+      .split('\n')
+      .filter((line) => line.includes('0.0.0.0') && /not on loopback/.test(line) && line.includes('--listen-address')),
+    `lines of ${logs.line} with the warning of --listen-address`,
+  ).not.toEqual([]);
 });
 
 test('engine.product-holds-no-key-and-one-read-only-mount', async ({ ctx }) => {
@@ -102,7 +113,7 @@ test('engine.product-holds-no-key-and-one-read-only-mount', async ({ ctx }) => {
   const volume = (await form.volumes())[0] ?? '';
   expect(volume, `the Given: the volume of ${form.project}`).not.toBe('');
 
-  // The engine's mounts → one: the project's volume at /home/emuforge/.aws/emulator, read-only; a write there from
+  // emuforge's mounts → one: the project's volume at /home/emuforge/.aws/emulator, read-only; a write there from
   // inside the container is refused.
   const mounts: Record<string, Mount[]> = {};
   for (const [service, container] of Object.entries(services)) {
@@ -111,13 +122,13 @@ test('engine.product-holds-no-key-and-one-read-only-mount', async ({ ctx }) => {
   ctx.log(`mounts: ${JSON.stringify(mounts)}`);
   const shown = (list: Mount[]) =>
     list.map((m) => ({ type: m.Type, name: m.Name, destination: m.Destination, rw: m.RW }));
-  expect(shown(mounts.engine), "the engine's mounts").toEqual([
+  expect(shown(mounts.emuforge), "emuforge's mounts").toEqual([
     { type: 'volume', name: volume, destination: ENGINE_FILES_DIR, rw: false },
   ]);
   const name = `emuforge-it-write-${ctx.runId}`;
-  const write = await docker(['exec', services.engine.id, 'touch', `${ENGINE_FILES_DIR}/${name}`]);
-  ctx.log(`touch ${ENGINE_FILES_DIR}/${name} in the engine's container: ok ${String(write.ok)} ${write.stderr}`);
-  expect(write.ok, `touch ${ENGINE_FILES_DIR}/${name} in the engine's container succeeded`).toBe(false);
+  const write = await docker(['exec', services.emuforge.id, 'touch', `${ENGINE_FILES_DIR}/${name}`]);
+  ctx.log(`touch ${ENGINE_FILES_DIR}/${name} in emuforge's container: ok ${String(write.ok)} ${write.stderr}`);
+  expect(write.ok, `touch ${ENGINE_FILES_DIR}/${name} in emuforge's container succeeded`).toBe(false);
   expect(write.stderr, `touch ${ENGINE_FILES_DIR}/${name}: the error`).toMatch(/read-only file system/i);
 
   // The emulator's mounts → one: the same volume at /home/emulator/.aws/emulator.
@@ -126,9 +137,7 @@ test('engine.product-holds-no-key-and-one-read-only-mount', async ({ ctx }) => {
     "the emulator's mounts",
   ).toEqual([{ type: 'volume', name: volume, destination: EMULATOR_FILES_DIR }]);
 
-  // The gateway's and Studio's containers → no mount; no container of the project has a mount of type bind.
-  expect(mounts.gateway, "the gateway's mounts").toEqual([]);
-  expect(mounts.studio, "Studio's mounts").toEqual([]);
+  // No container of the project has a mount of type bind.
   const binds: string[] = [];
   for (const container of await form.containers()) {
     for (const m of await inspectJson<Mount[]>(container.id, '.Mounts')) {

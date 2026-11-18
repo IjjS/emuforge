@@ -160,7 +160,7 @@ export function startCommandLines(port: number): string[] {
 export function engineCommandLines(enginePort: number, studioPort: number): string[] {
   return [
     'cargo run \\',
-    '-p emuforge-server -- \\',
+    '-p emuforge -- serve \\',
     `--port ${String(enginePort)} \\`,
     `--studio-port ${String(studioPort)}`,
   ];

@@ -1,5 +1,6 @@
 // The engine process under test, started the way a developer starts it for Studio:
-// `emuforge-server --port <engine> --emulator-port <emulator> --studio-port <studio>`, with an empty environment
+// `emuforge serve --port <engine> --emulator-port <emulator> --studio-port <studio>` (the binary of the run, built
+// without Studio embedded, so it serves the engine only), with an empty environment
 // plus `HOME` and `PATH`. A missing binary is a failed assertion ("engine binary missing at <path>"), never an
 // environment error: the engine is the subject.
 
@@ -60,6 +61,7 @@ export class Engine {
     if (!fs.existsSync(bin)) throw new Error(`engine binary missing at ${bin}`);
     await ensurePortFree(this.port);
     const args = [
+      'serve',
       '--port',
       String(this.port),
       '--emulator-port',

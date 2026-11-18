@@ -62,8 +62,8 @@ export function startLines(): string[] {
   return [...Object.values(LINES).map(commandLine), KEEP_START_LINE];
 }
 
-/** The services of the one form (#437 R1). */
-export const SERVICES = ['gateway', 'aws-emulator', 'engine', 'studio'];
+/** The services of the one form (#484 R8): EmuForge's one process and the form's emulator. */
+export const SERVICES = ['emuforge', 'aws-emulator'];
 
 /** The checks' own Compose files, beside this file, as the checkout's relative paths. */
 export const CHECK_FILES = {
@@ -76,7 +76,7 @@ export type CheckFile = keyof typeof CHECK_FILES;
 /** Where the form's emulator keeps its files inside its container (#437 R3). */
 export const EMULATOR_FILES_DIR = '/home/emulator/.aws/emulator';
 
-/** Where the engine's container mounts the volume, read-only (#437 R3). */
+/** Where `emuforge`'s container mounts the volume, read-only (#437 R3, #484 R8). */
 export const ENGINE_FILES_DIR = '/home/emuforge/.aws/emulator';
 
 /** The files an emulator writes into `<files dir>/<port>/`. */
@@ -634,9 +634,8 @@ export class Form {
         'EMUFORGE_IT_PRODUCT_IMAGE and EMUFORGE_IT_EMULATOR_IMAGE are not set; run the suite with tests/integration/run',
       );
     }
-    // The run's ports, the defaults (the owner's form and emulator), the gateway's own, and every port a form of
-    // this process took.
-    const taken = [ctx.emulatorPort, ctx.enginePort, ctx.studioPort, 9297, 8296, 8297, 18296, 18297, ...picked];
+    // The run's ports, the defaults (the owner's form and emulator), and every port a form of this process took.
+    const taken = [ctx.emulatorPort, ctx.enginePort, ctx.studioPort, 9297, 8296, 8297, ...picked];
     for (const given of [options.emulatorPort, options.enginePort, options.studioPort]) {
       if (given !== undefined) taken.push(given);
     }

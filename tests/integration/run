@@ -663,7 +663,7 @@ if [[ -f "$engine_manifest" ]]; then
   if metadata="$(cargo metadata --manifest-path "$engine_manifest" --format-version 1 --no-deps 2>/dev/null)"; then
     target_dir="$(python3 -I -c 'import json, sys; print(json.load(sys.stdin)["target_directory"])' <<<"$metadata")"
   fi
-  if cargo build --manifest-path "$engine_manifest" --bin emuforge-server >"$logs/integration-engine-build.log" 2>&1; then
+  if cargo build --manifest-path "$engine_manifest" --bin emuforge >"$logs/integration-engine-build.log" 2>&1; then
     engine_build=ok
   else
     engine_build=failed
@@ -673,7 +673,7 @@ else
   engine_build=absent
   echo "integration: $engine_manifest does not exist; every check will fail at its first engine step" >&2
 fi
-engine_bin="$target_dir/debug/emuforge-server"
+engine_bin="$target_dir/debug/emuforge"
 
 # Studio under test: its locked dependencies and its production build, which the flow checks serve with
 # `bun run serve`. Install and build write one log.

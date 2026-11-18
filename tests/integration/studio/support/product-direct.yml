@@ -1,8 +1,8 @@
 # The checks' own means for the direct side (issue 437, design section 6), never part of the shipped form: given
-# beside the root file (`-f docker-compose.yml -f <this file>`), it publishes the form's emulator port, inside the
-# gateway's network namespace, on a loopback port of the run, so a check sends the same request directly to the
+# beside the root file (`-f docker-compose.yml -f <this file>`), it publishes the form's emulator port, inside
+# `emuforge`'s network namespace (#484), on a loopback port of the run, so a check sends the same request directly to the
 # form's own emulator. Published on 127.0.0.1 only.
 services:
-  gateway:
+  emuforge:
     ports:
       - "127.0.0.1:${EMUFORGE_IT_DIRECT_PORT:?the run's direct port}:${EMULATOR_PORT:-9297}"
