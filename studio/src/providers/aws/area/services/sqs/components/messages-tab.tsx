@@ -24,6 +24,15 @@ import { ReadWarning } from './read-warning';
 /** A message ID, a group and a source queue keep room for 24 characters, as the queue list's names (`aws-area.md`, entry 4). */
 const NAME_MIN_WIDTH = '28ch';
 
+/** A body's first line keeps room for a sentence. */
+const BODY_MIN_WIDTH = '40ch';
+
+/** A receive count is a short number: its column is narrow. */
+const RECEIVE_COUNT_WIDTH = '16ch';
+
+/** A group or a source queue keeps room for a short name; it breaks when longer. */
+const SHORT_NAME_MIN_WIDTH = '16ch';
+
 /** At most this many messages come in one read. */
 export const READ_SIZE = 10;
 
@@ -58,24 +67,42 @@ export interface ReadResult {
 /** What follows the table: why the read showed fewer than are available, or that none came. */
 function afterRead(result: ReadResult, settings: QueueSettings, link: (name: string) => ReactNode): ReactNode {
   const shown = result.messages.length;
-  const available = settings.available ?? 0;
+  const available = result.availableBefore ?? settings.available ?? 0;
   const policy = settings.redrivePolicy;
-  // On a queue with a redrive policy a read that returned fewer than were available either moved them (the
-  // dead-letter queue's count rose across it, probe-3 §1) or found them taken by another consumer.
-  if (policy !== undefined && result.availableBefore !== undefined && shown < result.availableBefore) {
-    // No more were moved than the read failed to show.
-    const rise = Math.min(result.deadLetterRise ?? 0, result.availableBefore - shown);
-    if (rise > 0) {
-      const count = policy.maxReceiveCount === undefined ? 'the set number of times' : times(policy.maxReceiveCount);
-      return (
+  if (policy !== undefined) {
+    const before = result.availableBefore;
+    // What was available when the read was pressed could not be read: nothing is said of what it did not show.
+    if (before === undefined) {
+      return undefined;
+    }
+    // No more were moved than the read failed to show (probe-3 §1: a read moves what it does not show).
+    const rise = Math.max(0, Math.min(result.deadLetterRise ?? 0, before - shown));
+    const count = policy.maxReceiveCount === undefined ? 'the set number of times' : times(policy.maxReceiveCount);
+    const moved =
+      rise === 0 ? undefined : (
         <>
           {rise === 1 ? '1 message' : `${String(rise)} messages`} received {count} in this queue{' '}
           {rise === 1 ? 'was' : 'were'} moved to {link(policy.deadLetterQueue)} by this read instead of being shown.
         </>
       );
+    if (shown < Math.min(before, READ_SIZE)) {
+      if (moved !== undefined) {
+        return moved;
+      }
+      if (settings.fifo) {
+        return FIFO_SENTENCE;
+      }
+      return `This read returned ${String(shown)} of the ${before === 1 ? '1 message' : `${String(before)} messages`} available at ${creationDateText(result.readAt)}.`;
     }
-    const before = result.availableBefore;
-    return `This read returned ${String(shown)} of the ${before === 1 ? '1 message' : `${String(before)} messages`} available at ${creationDateText(result.readAt)}.`;
+    if (shown < before) {
+      return (
+        <>
+          {showingFirst(shown, before)}
+          {moved !== undefined && <> {moved}</>}
+        </>
+      );
+    }
+    return shown === 0 ? EMPTY_READ : undefined;
   }
   if (settings.fifo && shown < available && shown < READ_SIZE) {
     return FIFO_SENTENCE;
@@ -125,7 +152,17 @@ export function MessagesTab(props: MessagesTabProps) {
       ),
     },
     {
+      id: 'body',
+      minWidth: BODY_MIN_WIDTH,
+      header: 'Body',
+      cell: (message) => {
+        const preview = bodyPreview(message.body);
+        return <ValueText kind="text" value={preview.more ? `${preview.first}…` : preview.first} none={NONE} />;
+      },
+    },
+    {
       id: 'receiveCount',
+      width: RECEIVE_COUNT_WIDTH,
       header: 'Receive count',
       cell: (message) => (
         <ValueText
@@ -136,14 +173,6 @@ export function MessagesTab(props: MessagesTabProps) {
       ),
     },
     {
-      id: 'body',
-      header: 'Body',
-      cell: (message) => {
-        const preview = bodyPreview(message.body);
-        return <ValueText kind="text" value={preview.more ? `${preview.first}…` : preview.first} none={NONE} />;
-      },
-    },
-    {
       id: 'sent',
       header: 'Sent',
       cell: (message) => <ValueText kind="fixed" value={creationDateText(message.sent)} />,
@@ -152,7 +181,7 @@ export function MessagesTab(props: MessagesTabProps) {
   if (settings.fifo) {
     columns.push({
       id: 'group',
-      minWidth: NAME_MIN_WIDTH,
+      minWidth: SHORT_NAME_MIN_WIDTH,
       header: 'Group',
       cell: (message) => <ValueText kind="name" value={message.groupId} none={NONE} />,
     });
@@ -160,7 +189,7 @@ export function MessagesTab(props: MessagesTabProps) {
   if (deadLetterQueue) {
     columns.push({
       id: 'from',
-      minWidth: NAME_MIN_WIDTH,
+      minWidth: SHORT_NAME_MIN_WIDTH,
       header: 'From',
       cell: (message) => {
         if (message.deadLetterSourceArn === undefined) {
