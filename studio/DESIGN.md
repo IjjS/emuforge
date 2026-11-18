@@ -594,10 +594,10 @@ properties, so it costs no request and is in the first paint (The frame, below).
 ### The frame (Studio's bar)
 
 - **Content:** the wordmark (the tile, then "EmuForge Studio") linking to `/`, then a navigation landmark labelled
-  "Studio" with "Home" and one tab per provider from the providers list ("AWS"), then the language control at the bar's
-  end. The bar is the same on every page, a provider area's pages too, and in the current language.
+  "Studio" with "Home", "Connections" and one tab per provider from the providers list ("AWS"), then the language
+  control at the bar's end. The bar is the same on every page, a provider area's pages too, and in the current language.
 - **Tabs:** 14px, 560, `text-2`, full bar height, 0 12px padding. Hover: `text`. Current: `text` with a 2px
-  verdigris underline drawn inside the tab's bottom edge. "Home" is current on `/` (`aria-current="page"`); a
+  verdigris underline drawn inside the tab's bottom edge. "Home" is current on `/` and "Connections" on `/connections` (`aria-current="page"`); a
   provider's tab is current on its index (`page`) and marked current (`true`) anywhere deeper in its area.
 - **Wordmark:** the tile is 28px square with a 6px gap to the text; at 640px and below it is 24px with a 5px gap, and
   "Studio" is clipped out of sight (`position: absolute`, 1px square, `overflow: hidden`, `clip-path: inset(50%)`) and
@@ -739,6 +739,58 @@ tabs, with a control edge so it reads as something that opens.
   status").
 - **Busy:** the header "Refresh" while a check runs: `aria-disabled="true"`, `aria-busy="true"`, text `text-2`,
   progress cursor, the spinning arc icon.
+
+- **Unavailable** (`ui/action-button.tsx`): an action that cannot be taken on this row (the target's "Remove"):
+  `aria-disabled="true"`, still focusable and in the Tab order, described by its reason (a 13px `text-2` line beside
+  the row's actions); a dashed `control-line` edge, no fill, `text-2`, a not-allowed cursor, no hover change. A choice
+  of it does nothing. The same component draws a busy action ("Making target", "Testing", "Removing", "Adding") and a
+  form's submit button.
+
+### Text fields
+
+- **Structure** (`ui/text-field.tsx`): the label (14px, 560), a hint under it (13px, `text-2`), the input 8px below,
+  then an error when the value breaks a rule. The hint and the error describe the input.
+- **Input:** 40px tall, 0 12px padding, 15px, `surface` fill, a 1px `control-line` edge (3:1), 10px radius; hover
+  `text-2` edge. A field that holds code (a name, an endpoint) is in the code face at 14px, with no spelling check
+  and no automatic capital.
+- **Error:** the input's edge turns `err` and it is marked invalid; under it, 8px below, a 16px crossed circle and the
+  text, 14px, in `err`. Focus moves to the first field in error when a form is sent.
+
+### Dialogs
+
+- **Structure** (`ui/dialog.tsx`): a modal panel centred over a `veil` that covers the viewport; `surface`, a 1px
+  `line-strong` edge, 14px radius, at most 480px wide, 20px 22px padding, no shadow (The Hairline Rule). Its heading
+  (18px, 650) names it, its text (`text-2`) describes it, a 32px close control named "Close" sits at the heading's
+  end, and its buttons sit at the end, the confirming one primary.
+- **Focus:** on opening, focus goes to the safe choice ("Cancel"); Tab and Shift+Tab stay inside; Escape, "Cancel"
+  and "Close" close it, and the control that opened it gets focus back.
+
+### Record lists
+
+- **Structure** (`ui/record-list.tsx`): records in one panel, a `line` hairline between them, 18px 22px padding
+  each. A record's fields sit side by side, each a label (13px, 560, `text-2`, the column's name) over its value; four
+  columns above 900px, two to 900px, one at 640px and below. Under the fields: the record's actions (small buttons,
+  8px apart), then what they produced.
+- **Marked record:** a 3px `accent` bar at its start edge, with a mark beside its name: "Target" in 12px, 650,
+  `accent` on `accent-wash`, a pill. It marks which one is chosen, not a status.
+
+### Status lines
+
+- **Structure** (`ui/status-line.tsx`): a status as the status rows draw it (its icon and word in its hue: `ok`,
+  `err`, `idle`, `wait`), and under it, 4px below, a message in 14px `text-2` that may break anywhere (the engine's
+  text, in its own `lang`). A small one (14px, 560, 16px icon) lists a test's checks.
+
+### Connections (`/connections`)
+
+- **Result line:** under the page head, one polite live region; a sentence about the last change in an `info-wash`
+  band with an `info-line` edge, or `err-wash` and `err-line` for a refusal or a time limit; empty, it takes no room.
+- **Rows:** one record per connection: Name (in the code face, 15px, 600, with the "Target" mark), Endpoint (code,
+  13px), Emulator (a status line, the engine's message under it), Keys ("Keys are read by the engine from" and the
+  folder as inline code). Actions "Make target", "Test", "Remove". A test's result follows: its summary (650, `ok` or
+  `err`) in the row's own polite region, then the five checks on `sunk`, in a grid of 170px columns.
+- **Add connection:** a section of its own under the list: Name and Endpoint side by side (stacked at 640px and
+  below), "Add connection" at the end; a refusal that concerns neither field sits under them in an `err-wash` band.
+  In the Compose form an information notice takes its place.
 
 ### Links
 
