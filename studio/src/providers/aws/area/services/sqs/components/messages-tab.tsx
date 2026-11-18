@@ -49,7 +49,7 @@ function showingFirst(shown: number, available: number): string {
 export interface ReadResult {
   messages: ReadMessage[];
   readAt: Date;
-  /** The queue's Available as shown when "Read messages" was pressed. */
+  /** The queue's `ApproximateNumberOfMessages`, read just before the read. */
   availableBefore?: number;
   /** On a queue with a redrive policy: how much the dead-letter queue's count rose across the read, when known. */
   deadLetterRise?: number;
@@ -63,7 +63,8 @@ function afterRead(result: ReadResult, settings: QueueSettings, link: (name: str
   // On a queue with a redrive policy a read that returned fewer than were available either moved them (the
   // dead-letter queue's count rose across it, probe-3 §1) or found them taken by another consumer.
   if (policy !== undefined && result.availableBefore !== undefined && shown < result.availableBefore) {
-    const rise = result.deadLetterRise ?? 0;
+    // No more were moved than the read failed to show.
+    const rise = Math.min(result.deadLetterRise ?? 0, result.availableBefore - shown);
     if (rise > 0) {
       const count = policy.maxReceiveCount === undefined ? 'the set number of times' : times(policy.maxReceiveCount);
       return (
@@ -92,8 +93,7 @@ export interface MessagesTabProps {
   wait: number;
   onWaitChange: (seconds: number) => void;
   reading: boolean;
-  /** "Read messages", with the queue's Available as shown when it was pressed. */
-  onRead: (availableBefore: number | undefined) => void;
+  onRead: () => void;
   result: ReadResult | undefined;
   selected: readonly ReadMessage[];
   onSelectionChange: (selected: ReadMessage[]) => void;
@@ -198,14 +198,7 @@ export function MessagesTab(props: MessagesTabProps) {
               }}
             />
           </FormField>
-          <Button
-            variant="primary"
-            loading={props.reading}
-            disabled={props.reading}
-            onClick={() => {
-              props.onRead(settings.available);
-            }}
-          >
+          <Button variant="primary" loading={props.reading} disabled={props.reading} onClick={props.onRead}>
             Read messages
           </Button>
         </SpaceBetween>

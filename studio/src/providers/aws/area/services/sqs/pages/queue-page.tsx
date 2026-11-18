@@ -111,7 +111,7 @@ function QueueView(props: QueueViewProps) {
     }
   };
 
-  const handleRead = (availableBefore: number | undefined) => {
+  const handleRead = () => {
     if (reading || engineOrigin === undefined) {
       return;
     }
@@ -124,12 +124,18 @@ function QueueView(props: QueueViewProps) {
       const dlqUrl =
         policy === undefined ? undefined : await deadLetterUrl(engineOrigin, policy.deadLetterQueue, signal);
       const before = dlqUrl === undefined ? undefined : await availableAt(engineOrigin, dlqUrl, signal);
+      // The queue's own count just before the read: what was available when it was pressed, never the count shown.
+      const availableBefore = await availableAt(engineOrigin, details.url, signal);
       const received = await receive(details.url, read.wait, signal);
       const after = dlqUrl === undefined ? undefined : await availableAt(engineOrigin, dlqUrl, signal);
-      return { received, rise: before === undefined || after === undefined ? undefined : after - before };
+      return {
+        received,
+        availableBefore,
+        rise: before === undefined || after === undefined ? undefined : after - before,
+      };
     };
     run().then(
-      ({ received, rise }) => {
+      ({ received, availableBefore, rise }) => {
         if (!signal.aborted) {
           props.announce(`${messages(received.length)} read`);
           onRead({
@@ -303,20 +309,8 @@ function QueueView(props: QueueViewProps) {
         />
       ),
     },
-    {
-      id: 'send',
-      label: 'Send message',
-      content: (
-        <SendMessageForm
-          settings={settings}
-          form={props.form}
-          onChange={props.onFormChange}
-          sending={sending}
-          onSend={handleSend}
-        />
-      ),
-    },
   ];
+  // On a dead-letter queue "Redrive" follows "Messages", where its dead letters are read.
   if (deadLetterQueue) {
     tabs.push({
       id: 'redrive',
@@ -324,6 +318,19 @@ function QueueView(props: QueueViewProps) {
       content: <RedriveTab details={details} settings={settings} connection={connection} />,
     });
   }
+  tabs.push({
+    id: 'send',
+    label: 'Send message',
+    content: (
+      <SendMessageForm
+        settings={settings}
+        form={props.form}
+        onChange={props.onFormChange}
+        sending={sending}
+        onSend={handleSend}
+      />
+    ),
+  });
 
   const count = read.selected.length;
   return (
@@ -476,15 +483,17 @@ export function QueuePage({ connection, params }: ScreenPageProps) {
                   disabledReason="Reading the queue"
                   onClick={handleRefresh}
                 />
-                <Button
-                  disabled={details === undefined}
-                  disabledReason={queue.loading ? 'Reading the queue' : 'There is no queue to purge'}
-                  onClick={() => {
-                    setPurgeOpen(true);
-                  }}
-                >
-                  Purge
-                </Button>
+                {value !== NO_SUCH_QUEUE && (
+                  <Button
+                    disabled={details === undefined}
+                    disabledReason={queue.loading ? 'Reading the queue' : 'There is no queue to purge'}
+                    onClick={() => {
+                      setPurgeOpen(true);
+                    }}
+                  >
+                    Purge
+                  </Button>
+                )}
               </SpaceBetween>
             }
           >

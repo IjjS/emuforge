@@ -1,3 +1,5 @@
+import './queue-details.css';
+
 import Box from '@cloudscape-design/components/box';
 import Container from '@cloudscape-design/components/container';
 import Header from '@cloudscape-design/components/header';
@@ -64,7 +66,7 @@ export function QueueDetailsSection({ details, settings }: { details: QueueDetai
           minColumnWidth={COUNT_MIN_COLUMN_WIDTH}
           items={[
             { label: 'Available', value: count(settings.available) },
-            { label: 'In flight', value: count(settings.inFlight) },
+            { label: <span className="aws-sqs-count-label">In flight</span>, value: count(settings.inFlight) },
             { label: 'Delayed', value: count(settings.delayed) },
           ]}
         />
