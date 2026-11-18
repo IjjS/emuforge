@@ -23,6 +23,8 @@
   },
   "connection.engine": "Silnik",
   "connection.emulator": "Emulator",
+  "connection.target": "Cel {target}",
+  "connection.manage": "Zarządzaj połączeniami",
   "status.checking": "Sprawdzanie",
   "status.connected": "Połączono",
   "status.notStarted": "Nie uruchomiono",
