@@ -10,6 +10,7 @@ import { CopyValue } from '../../../components/copy-value';
 import { useFollow } from '../../../components/use-follow';
 import { ValueText } from '../../../components/value-text';
 import type { QueueDetails } from '../api';
+import { receives } from './counts';
 import { NONE, queuePath, queueType, type QueueSettings } from '../format';
 
 // S2's summary "Details" (issue 481, design task 2): the queue's URL and ARN with their copy controls, its type and
@@ -82,7 +83,7 @@ export function QueueDetailsSection({ details, settings }: { details: QueueDetai
                     {policy.maxReceiveCount !== undefined && (
                       <>
                         {' '}
-                        <ValueText kind="text" value={`after ${String(policy.maxReceiveCount)} receives`} />
+                        <ValueText kind="text" value={`after ${receives(policy.maxReceiveCount)}`} />
                       </>
                     )}
                   </>

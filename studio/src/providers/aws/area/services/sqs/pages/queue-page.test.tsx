@@ -352,6 +352,11 @@ function detailValue(label: string): HTMLElement {
   return item?.findValue()?.getElement() as HTMLElement;
 }
 
+/** What the page's polite live regions say now. */
+function announcements(): string[] {
+  return [...document.querySelectorAll('.aws-area-announcer')].map(text);
+}
+
 function button(name: string): HTMLElement {
   return screen.getByRole('button', { name });
 }
@@ -600,6 +605,18 @@ describe('the read warning', () => {
   });
 });
 
+describe('singular forms at 1', () => {
+  it('a policy of 1: "received 1 time", "after 1 more read", "after 1 receive"', async () => {
+    const policy = JSON.stringify({ deadLetterTargetArn: `${ARN}:orders-dlq`, maxReceiveCount: 1 });
+    await openQueue({ ...ORDERS, attributes: { ...ORDERS.attributes, RedrivePolicy: policy } }, [DLQ]);
+
+    expect(text(readWarning().getElement())).toBe(
+      'Reading counts as receiving: each message read here has its receive count raised by one. Once a message has been received 1 time in this queue, the next read moves it to orders-dlq instead of showing it. A message moved back keeps the receive count shown here, and is moved again after 1 more read.',
+    );
+    expect(details()['Dead-letter queue']).toBe('orders-dlq after 1 receive');
+  });
+});
+
 describe('the tabs', () => {
   it('"Redrive" only when the queue has sources', async () => {
     const { unmount } = await openQueue(PLAIN);
@@ -656,18 +673,42 @@ describe('a read of messages', () => {
     });
   });
 
-  it('on a queue with a redrive policy: the header also says when a read moves a message', async () => {
+  it('on a queue with a redrive policy: the header says when it was read, and no more', async () => {
     engine.messages = [wire('m1', 'a')];
-    const { unmount } = await openQueue(ORDERS, [DLQ]);
+    await openQueue(ORDERS, [DLQ]);
     await readMessages();
-    expect(text(table().findHeaderSlot()?.getElement() as HTMLElement)).toContain(
-      'Moved to orders-dlq after 2 receives in this queue.',
-    );
-    unmount();
+    expect(text(table().findHeaderSlot()?.getElement() as HTMLElement)).toMatch(/Read at \w+ \d+, \d{4}, [^.]*\)$/);
+    expect(text(table().findHeaderSlot()?.getElement() as HTMLElement)).not.toContain('Moved to');
+  });
 
+  it('a read announces how many messages it read', async () => {
+    engine.messages = [wire('m1', 'a')];
     await openQueue(PLAIN);
     await readMessages();
-    expect(text(table().findHeaderSlot()?.getElement() as HTMLElement)).not.toContain('Moved to');
+    await waitFor(() => {
+      expect(announcements()).toContain('1 message read');
+    });
+    engine.messages = [wire('m1', 'a'), wire('m2', 'b')];
+    await readMessages();
+    await waitFor(() => {
+      expect(announcements()).toContain('2 messages read');
+    });
+  });
+
+  it('Message ID, Group and From keep the room of a name, as the queue list’s', async () => {
+    engine.messages = [wire('f1', 'a', { MessageGroupId: 'g1', DeadLetterQueueSourceArn: `${ARN}:orders` })];
+    await openQueue({ ...FIFO, sources: ['orders'] }, [ORDERS]);
+    await readMessages();
+
+    const widths = (table().findColumnHeaders() ?? []).map((header) => [
+      text(header.getElement()),
+      header.getElement().style.minWidth,
+    ]);
+    expect(widths.filter(([, width]) => width === '28ch').map(([name]) => name)).toEqual([
+      'Message ID',
+      'Group',
+      'From',
+    ]);
   });
 
   it('the after-read sentence is in a polite live region', async () => {
@@ -683,19 +724,27 @@ describe('a read of messages', () => {
     expect(sentence.closest('[aria-live="polite"]')).toBe(region);
   });
 
-  it('a policy queue whose read returned fewer than were available: the move sentence with the DLQ’s link', async () => {
-    engine.messages = [];
-    await openQueue(ORDERS, [DLQ]);
-    // The read moves the messages: the emulator then holds none available.
+  /** A read that moves `moved` messages of `orders` to its dead-letter queue. */
+  function moving(moved: number) {
     engine.on('ReceiveMessage', () => {
-      engine.queues = [{ ...ORDERS, attributes: standard('orders', [0, 0, 0], ORDERS.attributes) }, DLQ];
+      engine.queues = engine.queues.map((queue) =>
+        queue.name === 'orders-dlq'
+          ? { ...queue, attributes: { ...queue.attributes, ApproximateNumberOfMessages: String(2 + moved) } }
+          : queue,
+      );
       return ok({ Messages: [] });
     });
+  }
+
+  it('a policy read returning fewer, the DLQ’s count risen by k: the move sentence with the DLQ’s link', async () => {
+    moving(3);
+    await openQueue(ORDERS, [DLQ]);
+    const reads = engine.of('GetQueueAttributes').length;
     await readMessages();
 
     const sentence = await screen.findByText(/were moved to/);
     expect(text(sentence)).toBe(
-      'Messages received 2 times in this queue were moved to orders-dlq by this read instead of being shown.',
+      '3 messages received 2 times in this queue were moved to orders-dlq by this read instead of being shown.',
     );
     expect(within(sentence).getByRole('link', { name: 'orders-dlq' })).toHaveAttribute(
       'href',
@@ -703,6 +752,56 @@ describe('a read of messages', () => {
     );
     expect(sentence.closest('[aria-live="polite"]')).not.toBeNull();
     expect(screen.queryByText(/No message is available to read/)).toBeNull();
+    // The dead-letter queue's count is read just before and just after the read.
+    const around = engine.sent
+      .slice(engine.sent.findIndex((sent) => sent.body['QueueName'] === 'orders-dlq'))
+      .filter(
+        (sent) =>
+          sent.operation === 'ReceiveMessage' ||
+          sent.body['QueueUrl'] === urlOf('orders-dlq') ||
+          sent.body['QueueName'] === 'orders-dlq',
+      )
+      .map((sent) => sent.operation);
+    expect(around.slice(0, 4)).toEqual(['GetQueueUrl', 'GetQueueAttributes', 'ReceiveMessage', 'GetQueueAttributes']);
+    expect(engine.of('GetQueueAttributes').length).toBeGreaterThan(reads + 2);
+  });
+
+  it('a rise of 1 on a policy of 1: the singular forms', async () => {
+    moving(1);
+    const policy = JSON.stringify({ deadLetterTargetArn: `${ARN}:orders-dlq`, maxReceiveCount: 1 });
+    await openQueue({ ...ORDERS, attributes: { ...ORDERS.attributes, RedrivePolicy: policy } }, [DLQ]);
+    await readMessages();
+
+    expect(text(await screen.findByText(/was moved to/))).toBe(
+      '1 message received 1 time in this queue was moved to orders-dlq by this read instead of being shown.',
+    );
+  });
+
+  it('a policy read returning fewer, the DLQ’s count not risen: what the read returned of what was available', async () => {
+    engine.messages = [wire('m1', 'a')];
+    await openQueue(ORDERS, [DLQ]);
+    await readMessages();
+
+    const sentence = await screen.findByText(/^This read returned/);
+    expect(text(sentence)).toMatch(/^This read returned 1 of the 3 messages available at \w+ \d+, \d{4}, .*\)\.$/);
+    expect(text(sentence)).toContain(
+      text(table().findHeaderSlot()?.getElement() as HTMLElement).replace(/^.*Read at /, ''),
+    );
+    expect(screen.queryByText(/were moved to/)).toBeNull();
+  });
+
+  it('a queue without a policy: the empty-read and "Showing the first" sentences, never the policy’s', async () => {
+    engine.messages = [];
+    await openQueue(PLAIN);
+    await readMessages();
+    expect(screen.getByText(/^No message is available to read\./)).toBeInTheDocument();
+    engine.messages = [wire('m1', 'a')];
+    await readMessages();
+    expect(screen.getByText(/^Showing the first 1 of 15 available messages\./)).toBeInTheDocument();
+    expect(screen.queryByText(/^This read returned|were moved to/)).toBeNull();
+    expect(engine.of('GetQueueUrl').map((sent) => sent.body['QueueName'])).toEqual(
+      engine.of('GetQueueUrl').map(() => 'plain'),
+    );
   });
 
   it('a policy queue with nothing available: an empty read keeps the empty-read sentence', async () => {
@@ -1126,6 +1225,20 @@ describe('deleting messages', () => {
     ]);
     expect(rows().map((row) => row[0])).toEqual(['m2']);
     expect(PAGE.findModal()).toBeNull();
+  });
+
+  it('one message: "Delete 1 message from {name}?" and "It is deleted …"', async () => {
+    await readThree();
+    select(2);
+    fireEvent.click(within(table().getElement()).getByRole('button', { name: 'Delete' }));
+    await waitFor(() => {
+      expect(text(modal().findHeader().getElement())).toBe('Delete 1 message from plain?');
+    });
+    expect(text(modal().findContent().getElement())).toContain(
+      'It is deleted from your local emulator. This cannot be undone.',
+    );
+    await confirmWith('delete', 'Delete');
+    await expectFlash([['', 'Deleted 1 message from plain']]);
   });
 
   it('some failed → "{k} of {n} messages could not be deleted" with each ID, code and message; failed rows kept selected', async () => {

@@ -18,6 +18,8 @@ import type { AreaConnection } from '../../../components/emulator-line';
 import type { ScreenPageProps } from '../../../screens';
 import { NO_SUCH_QUEUE, OPERATIONS, type OutgoingMessage, type QueueDetails, type ReadMessage } from '../api';
 import { ConfirmDialog } from '../components/confirm-dialog';
+import { messages } from '../components/counts';
+import { availableAt, deadLetterUrl } from '../components/dead-letter-count';
 import { MessagesTab, type ReadResult } from '../components/messages-tab';
 import { actionFailureOf, usePageSignal } from '../components/page-signal';
 import { QueueDetailsSection } from '../components/queue-details';
@@ -36,11 +38,6 @@ import { QUEUES_TITLE } from './queue-list-page';
 const REFRESHED = 'Queue refreshed';
 
 type TabId = 'messages' | 'send' | 'redrive';
-
-/** "{n} message" or "{n} messages". */
-function messages(count: number): string {
-  return count === 1 ? '1 message' : `${String(count)} messages`;
-}
 
 /** "No queue named {name}", with Cloudscape's empty-state pattern, in the place of the details and tabs. */
 function NotFound({ name }: { name: string }) {
@@ -76,6 +73,8 @@ interface QueueViewProps {
   onFormChange: (form: SendForm) => void;
   purgeOpen: boolean;
   onPurgeClose: () => void;
+  /** The page's polite announcer. */
+  announce: (text: string) => void;
 }
 
 /** What "Messages" holds while the page is open, across its tabs. */
@@ -113,17 +112,34 @@ function QueueView(props: QueueViewProps) {
   };
 
   const handleRead = (availableBefore: number | undefined) => {
-    if (reading) {
+    if (reading || engineOrigin === undefined) {
       return;
     }
     const signal = pageSignal();
+    const readAt = new Date();
+    const policy = settings.redrivePolicy;
     setReading(true);
-    receive(details.url, read.wait, signal).then(
-      (messages) => {
+    const run = async () => {
+      // On a queue with a redrive policy the dead-letter queue's count, just before and just after the read.
+      const dlqUrl =
+        policy === undefined ? undefined : await deadLetterUrl(engineOrigin, policy.deadLetterQueue, signal);
+      const before = dlqUrl === undefined ? undefined : await availableAt(engineOrigin, dlqUrl, signal);
+      const received = await receive(details.url, read.wait, signal);
+      const after = dlqUrl === undefined ? undefined : await availableAt(engineOrigin, dlqUrl, signal);
+      return { received, rise: before === undefined || after === undefined ? undefined : after - before };
+    };
+    run().then(
+      ({ received, rise }) => {
         if (!signal.aborted) {
+          props.announce(`${messages(received.length)} read`);
           onRead({
             ...read,
-            result: { messages, readAt: new Date(), ...(availableBefore === undefined ? {} : { availableBefore }) },
+            result: {
+              messages: received,
+              readAt,
+              ...(availableBefore === undefined ? {} : { availableBefore }),
+              ...(rise === undefined ? {} : { deadLetterRise: rise }),
+            },
             selected: [],
             detail: undefined,
           });
@@ -327,7 +343,7 @@ function QueueView(props: QueueViewProps) {
       <ConfirmDialog
         visible={deleteOpen}
         header={`Delete ${messages(count)} from ${name}?`}
-        body="They are deleted from your local emulator. This cannot be undone."
+        body={`${count === 1 ? 'It is' : 'They are'} deleted from your local emulator. This cannot be undone.`}
         word="delete"
         action="Delete"
         pending={deleting}
@@ -440,6 +456,7 @@ export function QueuePage({ connection, params }: ScreenPageProps) {
         onPurgeClose={() => {
           setPurgeOpen(false);
         }}
+        announce={announce}
       />
     );
   }

@@ -12,6 +12,7 @@ import { creationDateText } from '../../../components/format-date';
 import { useFollow } from '../../../components/use-follow';
 import { ValueText } from '../../../components/value-text';
 import type { ReadMessage } from '../api';
+import { times } from './counts';
 import { bodyPreview, nameFromArn, NONE, queuePath, type QueueSettings } from '../format';
 import { MessageDetail } from './message-detail';
 import { ReadWarning } from './read-warning';
@@ -19,6 +20,9 @@ import { ReadWarning } from './read-warning';
 // S2's tab "Messages" (issue 481, design tasks 2 and 4): the read warning, the read's controls, the last read's
 // messages in the order returned, what the read could not show, the chosen message in full, and "Delete" of the
 // selected ones. Nothing is read until "Read messages" is pressed: a read counts as a receive (PM decision).
+
+/** A message ID, a group and a source queue keep room for 24 characters, as the queue list's names (`aws-area.md`, entry 4). */
+const NAME_MIN_WIDTH = '28ch';
 
 /** At most this many messages come in one read. */
 export const READ_SIZE = 10;
@@ -47,6 +51,8 @@ export interface ReadResult {
   readAt: Date;
   /** The queue's Available as shown when "Read messages" was pressed. */
   availableBefore?: number;
+  /** On a queue with a redrive policy: how much the dead-letter queue's count rose across the read, when known. */
+  deadLetterRise?: number;
 }
 
 /** What follows the table: why the read showed fewer than are available, or that none came. */
@@ -54,20 +60,21 @@ function afterRead(result: ReadResult, settings: QueueSettings, link: (name: str
   const shown = result.messages.length;
   const available = settings.available ?? 0;
   const policy = settings.redrivePolicy;
-  // A read of a queue with a redrive policy moves the messages received its count of times instead of showing them
-  // (probe-3 §1): fewer came than were available when it was pressed.
-  if (
-    policy?.maxReceiveCount !== undefined &&
-    result.availableBefore !== undefined &&
-    shown < result.availableBefore &&
-    shown < READ_SIZE
-  ) {
-    return (
-      <>
-        Messages received {String(policy.maxReceiveCount)} times in this queue were moved to{' '}
-        {link(policy.deadLetterQueue)} by this read instead of being shown.
-      </>
-    );
+  // On a queue with a redrive policy a read that returned fewer than were available either moved them (the
+  // dead-letter queue's count rose across it, probe-3 §1) or found them taken by another consumer.
+  if (policy !== undefined && result.availableBefore !== undefined && shown < result.availableBefore) {
+    const rise = result.deadLetterRise ?? 0;
+    if (rise > 0) {
+      const count = policy.maxReceiveCount === undefined ? 'the set number of times' : times(policy.maxReceiveCount);
+      return (
+        <>
+          {rise === 1 ? '1 message' : `${String(rise)} messages`} received {count} in this queue{' '}
+          {rise === 1 ? 'was' : 'were'} moved to {link(policy.deadLetterQueue)} by this read instead of being shown.
+        </>
+      );
+    }
+    const before = result.availableBefore;
+    return `This read returned ${String(shown)} of the ${before === 1 ? '1 message' : `${String(before)} messages`} available at ${creationDateText(result.readAt)}.`;
   }
   if (settings.fifo && shown < available && shown < READ_SIZE) {
     return FIFO_SENTENCE;
@@ -76,19 +83,6 @@ function afterRead(result: ReadResult, settings: QueueSettings, link: (name: str
     return EMPTY_READ;
   }
   return shown < available ? showingFirst(shown, available) : undefined;
-}
-
-/**
- * The read's header description: when it was read and, on a queue with a redrive policy, when a read moves a
- * message on.
- */
-function readDescription(result: ReadResult, settings: QueueSettings): string {
-  const at = `Read at ${creationDateText(result.readAt)}.`;
-  const policy = settings.redrivePolicy;
-  if (policy?.maxReceiveCount === undefined) {
-    return at;
-  }
-  return `${at} Moved to ${policy.deadLetterQueue} after ${String(policy.maxReceiveCount)} receives in this queue.`;
 }
 
 export interface MessagesTabProps {
@@ -116,6 +110,7 @@ export function MessagesTab(props: MessagesTabProps) {
   const columns: TableProps.ColumnDefinition<ReadMessage>[] = [
     {
       id: 'id',
+      minWidth: NAME_MIN_WIDTH,
       header: 'Message ID',
       isRowHeader: true,
       cell: (message) => (
@@ -157,6 +152,7 @@ export function MessagesTab(props: MessagesTabProps) {
   if (settings.fifo) {
     columns.push({
       id: 'group',
+      minWidth: NAME_MIN_WIDTH,
       header: 'Group',
       cell: (message) => <ValueText kind="name" value={message.groupId} none={NONE} />,
     });
@@ -164,6 +160,7 @@ export function MessagesTab(props: MessagesTabProps) {
   if (deadLetterQueue) {
     columns.push({
       id: 'from',
+      minWidth: NAME_MIN_WIDTH,
       header: 'From',
       cell: (message) => {
         if (message.deadLetterSourceArn === undefined) {
@@ -242,7 +239,7 @@ export function MessagesTab(props: MessagesTabProps) {
             header={
               <Header
                 counter={`(${String(result.messages.length)})`}
-                description={readDescription(result, settings)}
+                description={`Read at ${creationDateText(result.readAt)}`}
                 actions={
                   <Button
                     disabled={selected.length === 0}
