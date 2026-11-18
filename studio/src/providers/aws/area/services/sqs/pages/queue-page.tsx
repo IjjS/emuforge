@@ -14,12 +14,14 @@ import { usePageFlash, type FlashItem } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
 import { ValueText } from '../../../components/value-text';
+import type { AreaConnection } from '../../../components/emulator-line';
 import type { ScreenPageProps } from '../../../screens';
 import { NO_SUCH_QUEUE, OPERATIONS, type OutgoingMessage, type QueueDetails, type ReadMessage } from '../api';
 import { ConfirmDialog } from '../components/confirm-dialog';
 import { MessagesTab, type ReadResult } from '../components/messages-tab';
 import { actionFailureOf, usePageSignal } from '../components/page-signal';
 import { QueueDetailsSection } from '../components/queue-details';
+import { RedriveTab } from '../components/redrive-tab';
 import { EMPTY_SEND_FORM, type SendForm } from '../components/send-form';
 import { SendMessageForm } from '../components/send-message-form';
 import { QUEUES_PATH, queueSettings, type QueueSettings } from '../format';
@@ -67,7 +69,7 @@ function NotFound({ name }: { name: string }) {
 interface QueueViewProps {
   details: QueueDetails;
   settings: QueueSettings;
-  engineOrigin: string | undefined;
+  connection: AreaConnection;
   read: ReadState;
   onRead: (read: ReadState) => void;
   form: SendForm;
@@ -87,7 +89,8 @@ interface ReadState {
 const START_READ: ReadState = { wait: 0, result: undefined, selected: [], detail: undefined };
 
 function QueueView(props: QueueViewProps) {
-  const { details, settings, engineOrigin, read, onRead } = props;
+  const { details, settings, connection, read, onRead } = props;
+  const engineOrigin = connection.engineOrigin;
   const flash = usePageFlash();
   const pageSignal = usePageSignal();
   const receive = useReceiveMessages(engineOrigin);
@@ -294,7 +297,11 @@ function QueueView(props: QueueViewProps) {
     },
   ];
   if (deadLetterQueue) {
-    tabs.push({ id: 'redrive', label: 'Redrive', content: null });
+    tabs.push({
+      id: 'redrive',
+      label: 'Redrive',
+      content: <RedriveTab details={details} settings={settings} connection={connection} />,
+    });
   }
 
   const count = read.selected.length;
@@ -419,7 +426,7 @@ export function QueuePage({ connection, params }: ScreenPageProps) {
       <QueueView
         details={details}
         settings={settings}
-        engineOrigin={connection.engineOrigin}
+        connection={connection}
         read={read}
         onRead={setRead}
         form={form}
