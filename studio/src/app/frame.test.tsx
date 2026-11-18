@@ -1,7 +1,7 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { act, fireEvent, getRoles, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { Root } from 'react-dom/client';
 import { createMemoryRouter, RouterProvider, type RouteObject } from 'react-router';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -13,6 +13,7 @@ import {
   advance,
   buildOnceToggle,
   connected,
+  connectedTo,
   connectionNotice,
   connectionSection,
   emulatorDown,
@@ -1465,5 +1466,51 @@ describe("the AWS area's connection, as the frame checks it (issue 45, R4.4)", (
     // Only Home's rhythm from here: a check 5 seconds after each of its answers, each answered a second later.
     await advance(19_000);
     expect(engine.healths).toHaveLength(areaChecks + 4);
+  });
+});
+
+describe("the area's target generation (issue 486, s1)", () => {
+  let engine: FakeEngine;
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
+    engine = new FakeEngine();
+    vi.stubGlobal('fetch', engine.fetch);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('the area is rendered with targetGeneration 0 on load, then the target seen’s generation, and is not mounted again', async () => {
+    const seen: (number | undefined)[] = [];
+    let mounts = 0;
+    function ProbeArea({ targetGeneration }: ProviderAreaProps) {
+      // A probe of the area's own state: set once per mount.
+      const [mount] = useState(() => ++mounts);
+      seen.push(targetGeneration);
+      return (
+        <main>
+          <p>
+            Mount {mount}, generation {String(targetGeneration)}
+          </p>
+        </main>
+      );
+    }
+    engine.healthAnswers = [connectedTo('local'), connectedTo('second')];
+    openStudio('/stub', [
+      { element: <Frame />, children: [{ path: 'stub/*', element: <ProviderPage area={ProbeArea} /> }] },
+    ]);
+    await advance();
+    expect(engine.healths).toHaveLength(1);
+    expect(screen.getByText('Mount 1, generation 0')).toBeInTheDocument();
+    expect(new Set(seen)).toEqual(new Set([0]));
+
+    await advance(5_000);
+
+    expect(engine.healths).toHaveLength(2);
+    expect(screen.getByText('Mount 1, generation 1')).toBeInTheDocument();
+    expect(seen.at(-1)).toBe(1);
+    expect(mounts).toBe(1);
   });
 });

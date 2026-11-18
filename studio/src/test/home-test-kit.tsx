@@ -163,7 +163,9 @@ export function targetTest(target: FakeTarget, failed?: string): FakeAnswer {
     failed === undefined
       ? TEST_CHECKS.map((check) => ({ check, status: 'passed' }))
       : TEST_CHECKS.map((check, index) =>
-          index === 0 ? { check, status: 'failed', reason: 'not_started', message: failed } : { check, status: 'not_run' },
+          index === 0
+            ? { check, status: 'failed', reason: 'not_started', message: failed }
+            : { check, status: 'not_run' },
         );
   return {
     status: 200,
