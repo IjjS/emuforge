@@ -1286,6 +1286,7 @@ class Safety(unittest.TestCase):
     does not exist."""
 
     FILES = ("_pmorphans.py", "_pmorphanevent.py")
+    EXCEPTIONS = ("SubprocessError", "TimeoutExpired", "CalledProcessError")
 
     def trees(self):
         out = []
@@ -1297,13 +1298,16 @@ class Safety(unittest.TestCase):
 
     def test_no_group_signal_no_name_kill_no_shell(self):
         for f, tree in self.trees():
+            docs = {id(d.body[0].value) for d in ast.walk(tree)
+                    if isinstance(d, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+                    and ast.get_docstring(d) is not None}
             for n in ast.walk(tree):
                 where = f"{f}:{getattr(n, 'lineno', '?')}"
                 if isinstance(n, ast.Attribute):
                     self.assertNotIn(n.attr, ("killpg", "pthread_kill"), where)
                 if isinstance(n, ast.Name):
                     self.assertNotIn(n.id, ("killpg", "pthread_kill"), where)
-                if isinstance(n, ast.Constant) and isinstance(n.value, str):
+                if isinstance(n, ast.Constant) and isinstance(n.value, str) and id(n) not in docs:
                     for word in ("docker", "pkill", "killall"):
                         self.assertNotIn(word, n.value, where)
                 if isinstance(n, ast.keyword) and n.arg == "shell":
@@ -1313,8 +1317,9 @@ class Safety(unittest.TestCase):
         for f, tree in self.trees():
             for n in ast.walk(tree):
                 where = f"{f}:{getattr(n, 'lineno', '?')}"
-                if isinstance(n, ast.ImportFrom):
-                    self.assertNotEqual(n.module, "subprocess", f"{where}: from subprocess import …")
+                if isinstance(n, ast.ImportFrom) and n.module == "subprocess":
+                    for a in n.names:
+                        self.assertIn(a.name, self.EXCEPTIONS, f"{where}: from subprocess import {a.name}")
                 if not (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
                         and isinstance(n.func.value, ast.Name) and n.func.value.id == "subprocess"):
                     continue

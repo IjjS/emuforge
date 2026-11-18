@@ -130,6 +130,11 @@ ON_TOUCH = [
          sources=[_T + "test_issue_branch.py", _T + "_fixture.py", _B + "pm-worktree", _B + "pm-scope",
                   _B + "pm-check", _B + "pm-merge", _B + "pm-emulator-dir", _B + "pm-brief", *_ARCHIVE,
                   ".agents/skills/pm/references/briefs/"]),
+    dict(test="test_orphans.py",
+         why="real stand-in orphans found and stopped, and pm-pane reset and close and pm-worktree on fixture checkouts",
+         sources=[_T + "test_orphans.py", _T + "_fixture.py", _B + "pm-pane", _B + "pm-worktree", _B + "pm-watchd",
+                  _B + "pm-emulator-dir", _B + "_pmorphans.py", _B + "_pmorphanevent.py", _B + "_pmlib.py",
+                  _B + "_pmquota.py", _B + "_pmtokens.py", _B + "_pmstill.py", _B + "_pmwake.py"]),
 ]
 
 
