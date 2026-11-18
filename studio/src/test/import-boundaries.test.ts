@@ -332,7 +332,7 @@ describe("a service's dialogs are the area's (issue 462, R5)", () => {
   });
 
   it.each(['dynamodb', 'sqs', 'a-service-not-yet-made'])(
-    'providers/aws/area/services/%s/x.tsx, any service folder whether it exists or not, importing the modal → an error',
+    'providers/aws/area/services/%s/pages/x.tsx, any service folder whether it exists or not, importing the modal → an error',
     async (service) => {
       const file = `providers/aws/area/services/${service}/pages/x.tsx`;
       expect(await modalErrors(file, importing('@cloudscape-design/components/modal'))).toHaveLength(1);
