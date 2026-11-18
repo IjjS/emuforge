@@ -47,8 +47,6 @@ import {
   REFRESH,
   screen,
   Seeded,
-  TAB_DIRECTORY,
-  TAB_GENERAL,
   TABLE,
 } from './services/s3/s3';
 
@@ -105,7 +103,6 @@ function r9Order(names: string[]): Expected[] {
       optional: true,
     },
     { what: `"${NAV_GENERAL}"`, match: named(NAV_GENERAL, 'link') },
-    { what: `"${NAV_DIRECTORY}"`, match: named(NAV_DIRECTORY, 'link') },
     { what: 'the crumb "EmuForge"', match: named('EmuForge', 'link') },
     { what: 'the crumb "AWS"', match: named('AWS', 'link') },
     { what: 'the crumb "S3"', match: named('S3', 'link') },
@@ -113,9 +110,6 @@ function r9Order(names: string[]): Expected[] {
     { what: `the help toggle "${HELP_OPEN}" (after the crumbs)`, match: named(HELP_OPEN, 'button'), optional: true },
     { what: `the (i) control "${ABOUT}"`, match: named(ABOUT, 'button') },
     { what: `the notice's close "${NOTICE_CLOSE}"`, match: named(NOTICE_CLOSE, 'button') },
-    { what: `the tab "${TAB_GENERAL}"`, match: named(TAB_GENERAL, 'tab') },
-    { what: `the tab "${TAB_DIRECTORY}"`, match: named(TAB_DIRECTORY, 'tab'), optional: true },
-    { what: `the tab panel "${TAB_GENERAL}" (Cloudscape's)`, match: named(TAB_GENERAL, 'tabpanel'), optional: true },
     { what: `"${INFO}"`, match: named(INFO) },
     { what: `"${REFRESH}"`, match: named(REFRESH, 'button') },
     { what: `"${COPY_ARN}" (disabled)`, match: named(COPY_ARN, 'button'), optional: true },
@@ -205,7 +199,7 @@ test('studio.s3-bucket-list-keyboard-and-layout', async ({ ctx, page, context })
   const s = screen(page);
 
   await lines.line(
-    "Fresh load with two buckets under the filter, Tab from the document start, past Studio's frame → the stops inside the area come in the order of R9 (the side navigation's header and its two links, the crumbs, the help toggle, the (i) control, the notice's close, the tabs, \"Info\", the five actions with the disabled ones as Cloudscape places them, the filter, pagination, preferences, the first radio, the first name link), each with a visible focus indicator",
+    "Fresh load with two buckets under the filter, Tab from the document start, past Studio's frame → the stops inside the area come in the order of R9 (the side navigation's header and its link, the crumbs, the help toggle, the (i) control, the notice's close, \"Info\" — issue 480: \"Directory buckets\" and with it the tab bar went — the five actions with the disabled ones as Cloudscape places them, the filter, pagination, preferences, the first radio, the first name link), each with a visible focus indicator",
     async () => {
       await openList(page);
       await expectNames(page, two, 'the two rows');
@@ -335,7 +329,7 @@ test('studio.s3-bucket-list-keyboard-and-layout', async ({ ctx, page, context })
   );
 
   await lines.line(
-    'The screen at 390 wide → the side navigation is closed, "Open navigation" opens it with the two links, and the emulator line is visible without opening anything',
+    'The screen at 390 wide → the side navigation is closed, "Open navigation" opens it with the link "General purpose buckets" (issue 480: "Directory buckets" went), and the emulator line is visible without opening anything',
     async () => {
       await sizeTo(page, 390);
       await openList(page);
@@ -347,7 +341,7 @@ test('studio.s3-bucket-list-keyboard-and-layout', async ({ ctx, page, context })
       await page.locator(NAVIGATION_TOGGLE).filter({ visible: true }).first().click(ACTION);
       const nav = page.locator(SIDE_NAVIGATION).filter({ visible: true });
       await expect(nav.getByRole('link', { name: NAV_GENERAL, exact: true })).toBeVisible();
-      await expect(nav.getByRole('link', { name: NAV_DIRECTORY, exact: true })).toBeVisible();
+      await expect(nav.getByRole('link', { name: NAV_DIRECTORY, exact: true })).toHaveCount(0);
       await sizeTo(page, 1280);
     },
   );

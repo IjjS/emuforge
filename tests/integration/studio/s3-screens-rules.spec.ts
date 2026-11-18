@@ -37,7 +37,7 @@ import {
 } from './services/s3/s3';
 import { emptySentence, deleteSentence, openDeletePage, openEmptyPage, pageShows } from './services/s3/s3-bucket-actions';
 import {
-  bucketPath,
+  propertiesPath,
   ENCRYPTION,
   form,
   MESSAGES,
@@ -309,7 +309,7 @@ test('studio.s3-bucket-page-copies-arn-and-kms-key', async ({ ctx, page, context
     async () => {
       const keyId = (await bucketPropertiesDirect(ctx, port, withKey)).encryption?.keyId ?? null;
       expect(keyId, `a direct GetBucketEncryption ${withKey} gives a KMSMasterKeyID`).not.toBeNull();
-      if (!addressOf(bucketPath(withKey)).test(page.url())) {
+      if (!addressOf(propertiesPath(withKey)).test(page.url())) {
         await openRead(page, withKey, await arnOf(ctx, port, withKey));
       }
       await expect(sectionBox(page, ENCRYPTION), `"${ENCRYPTION}" shows the key`).toContainText(keyId ?? '');

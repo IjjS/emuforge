@@ -46,19 +46,13 @@ export function propertiesPath(name: string): string {
   return `${bucketPath(name)}/properties`;
 }
 
-/** The six tabs in the spec's order (R5.2), and the route of each but "Properties" (R10). */
-export const TABS = ['Objects', 'Metadata', 'Properties', 'Permissions', 'Metrics', 'Management'];
+/**
+ * The two tabs (issue 480, decisions.md: the tabs Metadata, Permissions, Metrics and Management went): "Objects" at
+ * the bare route, "Properties" at its own.
+ */
+export const TABS = ['Objects', 'Properties'];
+export const OBJECTS = 'Objects';
 export const PROPERTIES = 'Properties';
-export const OTHER_TABS: { tab: string; slug: string }[] = [
-  { tab: 'Objects', slug: 'objects' },
-  { tab: 'Metadata', slug: 'metadata' },
-  { tab: 'Permissions', slug: 'permissions' },
-  { tab: 'Metrics', slug: 'metrics' },
-  { tab: 'Management', slug: 'management' },
-];
-export function tabPath(name: string, slug: string): string {
-  return `${bucketPath(name)}/${slug}`;
-}
 
 /** The page's own words (R3 row 10, R5.1, R9.2, R11.1). */
 export const REFRESH = 'Refresh';
@@ -71,50 +65,24 @@ export const NO_NOTIFICATIONS = 'No event notifications';
 /** The section headings (R5.3), and the fields each one shows. */
 export const OVERVIEW = 'Bucket overview';
 export const VERSIONING = 'Bucket Versioning';
-export const ABAC = 'Bucket ABAC';
 export const TAGS = 'Tags';
 export const ENCRYPTION = 'Default encryption';
-export const TIERING = 'S3 Intelligent-Tiering Archive configurations';
-export const LOGGING = 'Server access logging';
 export const NOTIFICATIONS = 'Event notifications';
-export const EVENTBRIDGE = 'Amazon EventBridge';
-export const ACCELERATION = 'Transfer acceleration';
-export const OBJECT_LOCK = 'Object Lock';
-export const REQUESTER_PAYS = 'Requester pays';
 export const WEBSITE = 'Static website hosting';
 
-/** The thirteen sections built, in the spec's order ("AWS CloudTrail data events" is not built, R14 item 6). */
-export const SECTIONS = [
-  OVERVIEW,
-  VERSIONING,
-  ABAC,
-  TAGS,
-  ENCRYPTION,
-  TIERING,
-  LOGGING,
-  NOTIFICATIONS,
-  EVENTBRIDGE,
-  ACCELERATION,
-  OBJECT_LOCK,
-  REQUESTER_PAYS,
-  WEBSITE,
-];
+/**
+ * The six sections kept (issue 480: Bucket ABAC, S3 Intelligent-Tiering Archive configurations, Server access
+ * logging, Amazon EventBridge, Transfer acceleration, Object Lock and Requester pays went), in the page's order.
+ */
+export const SECTIONS = [OVERVIEW, VERSIONING, TAGS, ENCRYPTION, NOTIFICATIONS, WEBSITE];
 
-export const EVENTBRIDGE_FIELD = 'Send notifications to Amazon EventBridge for all events in this bucket';
-
-/** Each section's button and the route it leads to (R10). "Bucket overview" has none. */
+/** Each kept section's button and the route it leads to (R10): five. "Bucket overview" has none. */
 export const SECTION_BUTTONS: { section: string; button: string; path: (name: string) => string }[] = [
   ...(
     [
       [VERSIONING, 'versioning'],
-      [ABAC, 'abac'],
       [TAGS, 'tags'],
       [ENCRYPTION, 'encryption'],
-      [LOGGING, 'logging'],
-      [EVENTBRIDGE, 'eventbridge'],
-      [ACCELERATION, 'transfer-acceleration'],
-      [OBJECT_LOCK, 'object-lock'],
-      [REQUESTER_PAYS, 'requester-pays'],
       [WEBSITE, 'website'],
     ] as const
   ).map(([section, slug]) => ({
@@ -122,11 +90,6 @@ export const SECTION_BUTTONS: { section: string; button: string; path: (name: st
     button: 'Edit',
     path: (name: string) => `/aws/s3/bucket/${segment(name)}/property/${slug}/edit`,
   })),
-  {
-    section: TIERING,
-    button: 'Create configuration',
-    path: (name: string) => `/aws/s3/bucket/${segment(name)}/property/intelligent-tiering/create`,
-  },
   {
     section: NOTIFICATIONS,
     button: 'Create event notification',
@@ -139,11 +102,6 @@ export const SSE_S3 = 'Server-side encryption with Amazon S3 managed keys (SSE-S
 export const SSE_KMS = 'Server-side encryption with AWS Key Management Service keys (SSE-KMS)';
 export const DSSE_KMS = 'Dual-layer server-side encryption with AWS Key Management Service (AWS KMS) keys (DSSE-KMS)';
 const ENCRYPTION_TYPES: Record<string, string> = { AES256: SSE_S3, 'aws:kms': SSE_KMS, 'aws:kms:dsse': DSSE_KMS };
-
-/** "<n> day(s)" or "<n> year(s)" (test-criteria.md, format.test.ts: "1 day", "30 days", "1 year", "2 years"). */
-function period(n: number, unit: 'day' | 'year'): string {
-  return `${String(n)} ${unit}${n === 1 ? '' : 's'}`;
-}
 
 /** What one section is expected to show: field values by label, or a table's rows (none: its empty text). */
 export interface ExpectedSection {
@@ -164,16 +122,6 @@ export function expectedSections(
 ): Record<string, ExpectedSection> {
   const or = (v: string | null | undefined) => (v === null || v === undefined || v === '' ? '-' : v);
   const enc = props.encryption;
-  const lock = props.objectLock;
-  const retention = lock?.retention ?? null;
-  const log = props.logging;
-  const destination =
-    log === null
-      ? '-'
-      : log.targetPrefix === null || log.targetPrefix === ''
-        ? or(log.targetBucket)
-        : `${or(log.targetBucket)}/${log.targetPrefix}`;
-  const days = (n: number | null) => (n === null ? '-' : period(n, 'day'));
   return {
     [OVERVIEW]: {
       fields: {
@@ -183,7 +131,6 @@ export function expectedSections(
       },
     },
     [VERSIONING]: { fields: { [VERSIONING]: props.versioning ?? 'Disabled' } },
-    [ABAC]: { fields: { [ABAC]: or(props.abac) } },
     [TAGS]: { rows: (props.tags ?? []).map(([Key, Value]) => ({ Key, Value })), empty: NO_TAGS },
     [ENCRYPTION]: {
       fields: {
@@ -192,17 +139,6 @@ export function expectedSections(
         'Bucket Key': enc?.bucketKey === true ? 'Enabled' : 'Disabled',
       },
     },
-    [TIERING]: {
-      rows: props.intelligentTiering.map((t) => ({
-        Name: t.id,
-        Status: t.status,
-        Prefix: or(t.prefix),
-        'Archive Access tier': days(t.archiveDays),
-        'Deep Archive Access tier': days(t.deepArchiveDays),
-      })),
-      empty: NO_CONFIGURATIONS,
-    },
-    [LOGGING]: { fields: { [LOGGING]: log === null ? 'Disabled' : 'Enabled', 'Destination bucket': destination } },
     [NOTIFICATIONS]: {
       rows: props.notifications.queues.map((q) => ({
         'Event name': q.id,
@@ -214,25 +150,6 @@ export function expectedSections(
       })),
       empty: NO_NOTIFICATIONS,
     },
-    [EVENTBRIDGE]: { fields: { [EVENTBRIDGE_FIELD]: props.notifications.eventBridge ? 'On' : 'Off' } },
-    [ACCELERATION]: { fields: { [ACCELERATION]: props.accelerate ?? 'Disabled' } },
-    [OBJECT_LOCK]: {
-      fields: {
-        [OBJECT_LOCK]: lock === null ? 'Disabled' : 'Enabled',
-        'Default retention': retention === null ? 'Disabled' : 'Enabled',
-        'Retention mode':
-          retention?.mode === 'GOVERNANCE' ? 'Governance' : retention?.mode === 'COMPLIANCE' ? 'Compliance' : '-',
-        'Default retention period':
-          retention === null
-            ? '-'
-            : retention.days !== null
-              ? period(retention.days, 'day')
-              : retention.years !== null
-                ? period(retention.years, 'year')
-                : '-',
-      },
-    },
-    [REQUESTER_PAYS]: { fields: { [REQUESTER_PAYS]: props.requestPayer === 'Requester' ? 'Enabled' : 'Disabled' } },
     [WEBSITE]: {
       fields: {
         [WEBSITE]: props.website === null ? 'Disabled' : 'Enabled',
@@ -394,16 +311,25 @@ export function sectionButton(page: Page, section: string, name: string): Locato
   return box.getByRole('link', { name, exact: true }).or(box.getByRole('button', { name, exact: true }));
 }
 
-/** Waits for a bucket's page: its `h1` the bucket's name and the tab "Properties" selected. */
-export async function expectBucketPage(page: Page, name: string): Promise<void> {
+/** Waits for a bucket's page: its `h1` the bucket's name and the tab `selected` ("Properties" unless named). */
+export async function expectBucketPage(page: Page, name: string, selected = PROPERTIES): Promise<void> {
   await expect(heading(page, name), `the bucket page's h1 "${name}"`).toBeVisible();
-  await expect(tab(page, PROPERTIES), `the tab "${PROPERTIES}" selected`).toHaveAttribute('aria-selected', 'true');
+  await expect(tab(page, selected), `the tab "${selected}" selected`).toHaveAttribute('aria-selected', 'true');
 }
 
-/** Opens `path` and waits for the page of bucket `name`. */
-export async function openBucketPage(page: Page, name: string, path = bucketPath(name)): Promise<void> {
+/**
+ * Opens `path` and waits for the page of bucket `name` on "Properties": its own route since issue 480 moved the
+ * bare route to "Objects" (decisions.md, the listed checks).
+ */
+export async function openBucketPage(page: Page, name: string, path = propertiesPath(name)): Promise<void> {
   await page.goto(path);
   await expectBucketPage(page, name);
+}
+
+/** Opens a bucket's tab "Objects" at `prefix` (the bare route, `?prefix=`) and waits for it. */
+export async function openObjectsTab(page: Page, name: string, prefix = ''): Promise<void> {
+  await page.goto(prefix === '' ? bucketPath(name) : `${bucketPath(name)}?${new URLSearchParams({ prefix })}`);
+  await expectBucketPage(page, name, OBJECTS);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
