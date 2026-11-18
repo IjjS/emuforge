@@ -31,7 +31,7 @@ product may claim that passing here says anything about security on real AWS.
 
 | Id | Rule | Checked by |
 |---|---|---|
-| C1 | The engine reads only `~/.aws/emulator/<port>/`. It never opens `~/.aws/credentials` or `~/.aws/config` and never builds a default AWS credential chain | code read; test with a decoy profile present |
+| C1 | The engine reads credentials only from `~/.aws/emulator/<port>/` of a target's emulator. The one other file it reads and writes is its settings file `targets.json` (written through a temp file in the same folder, renamed over it), which holds no key, in a folder refused at or under `~/.aws`. It never opens `~/.aws/credentials` or `~/.aws/config` and never builds a default AWS credential chain | code read; test with a decoy profile present; the settings folder refused under `~/.aws`; the settings file searched for the key |
 | C2 | Emulator keys never leave the engine: not in a response, a log, an error, a child's command line, or the browser | log and response capture in an integration check |
 | C3 | Keys are re-read when the emulator's files change; a key from an earlier run is never reused after a failed signature | integration check across a restart |
 | C4 | A caller is identified before anything is forwarded. A request that cannot be attributed is refused, not forwarded as root | unit test per caller kind |

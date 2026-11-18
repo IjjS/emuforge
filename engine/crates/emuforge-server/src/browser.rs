@@ -202,11 +202,11 @@ fn preflight() -> Response {
     let headers = response.headers_mut();
     headers.insert(
         ACCESS_CONTROL_ALLOW_METHODS,
-        HeaderValue::from_static("GET, HEAD"),
+        HeaderValue::from_static("GET, HEAD, POST, DELETE"),
     );
     headers.insert(
         ACCESS_CONTROL_ALLOW_HEADERS,
-        HeaderValue::from_static("X-EmuForge-Session"),
+        HeaderValue::from_static("Content-Type, X-EmuForge-Session"),
     );
     headers.insert(
         ACCESS_CONTROL_MAX_AGE,

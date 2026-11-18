@@ -11,21 +11,23 @@ mod listener;
 mod routes;
 mod session;
 mod studio;
+mod targets;
 
 use std::future::IntoFuture;
 use std::io;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::SystemTime;
 
-use emuforge_core::{Emulator, Limits, PROBE_DEADLINE, probe, relay};
+use emuforge_core::{Limits, PROBE_DEADLINE, Replaced, Settings, Store, check, probe, relay};
 use tokio::net::TcpListener;
 
 pub use aws_error::{ErrorType, Protocol, render};
 pub use browser::{PREFLIGHT_MAX_AGE_SECS, SESSION_HEADER, StudioOrigin, is_engine_path};
 pub use config::{
-    Config, DEFAULT_EMULATOR_PORT, DEFAULT_ENGINE_PORT, DEFAULT_STUDIO_PORT, LISTEN_IP,
-    MAX_IN_FLIGHT, engine_addr, listen_warning, studio_addr,
+    Config, DEFAULT_EMULATOR_PORT, DEFAULT_ENGINE_PORT, DEFAULT_STUDIO_PORT, Form, LISTEN_IP,
+    MAX_IN_FLIGHT, engine_addr, listen_warning, seed_settings, settings_dir, studio_addr,
 };
 pub use listener::{CLIENT_WRITE_IDLE, DRAIN_BOUND, Drain, IdleListener, MAX_DRAINING};
 pub use routes::{
@@ -33,6 +35,7 @@ pub use routes::{
 };
 pub use session::SessionToken;
 pub use studio::{STUDIO_CONTENT_TYPES, StudioFiles, StudioState, studio_app};
+pub use targets::{ADD_BODY_CAP, TARGETS_PATH, TestFn, TestFuture};
 
 use config::{ENGINE_PORT, STUDIO_PORT, variable_of};
 
@@ -59,6 +62,13 @@ pub enum Error {
     StudioPortCollides { port: u16, other: &'static str },
     #[error("cannot create a session token: the operating system's random source failed ({kind})")]
     SessionToken { kind: String },
+    #[error(
+        "--settings-dir (EMUFORGE_SETTINGS_DIR) {} is under ~/.aws; EmuForge keeps its settings outside ~/.aws, choose another folder",
+        .dir.display()
+    )]
+    SettingsDirUnderAws { dir: PathBuf },
+    #[error("cannot read the working directory to resolve --settings-dir: {0}")]
+    WorkingDir(io::Error),
     #[error("Studio's build has no index.html; build Studio with `bun run build` in studio/")]
     StudioIndexMissing,
     #[error(
@@ -91,15 +101,54 @@ impl Error {
     }
 }
 
-/// Creates the session token, binds the engine's listener and, when `studio` is given, Studio's, then serves both
-/// until the process ends or either stops. When either cannot be bound, nothing is served. The emulator's files
-/// are read from `<home>/.aws/emulator/<emulator port>/` on every health and every relayed request.
+/// The settings step of `serve`. In the Compose form the file is made to hold exactly `seed` (its one target
+/// `compose`), with an info line when it was written; then one line names the file, the form and the active
+/// target, or says that the file cannot be used. Nothing stops the start: an unusable file is answered `503` at
+/// every use until it is fixed or removed. No line holds anything of the emulator's files.
+pub async fn settings_step(store: &Store, form: Form, seed: &Settings) {
+    let file = store.file();
+    if form == Form::Compose {
+        match store.replace(seed).await {
+            Ok(Replaced::Created) => {
+                tracing::info!(file = %file.display(), "settings file written with the one target compose");
+            }
+            Ok(Replaced::Replaced) => tracing::info!(
+                file = %file.display(),
+                "settings file replaced: the Compose form holds only the one target compose"
+            ),
+            Ok(Replaced::Unchanged) => {}
+            Err(error) => tracing::warn!("{error}"),
+        }
+    }
+    match store.load().await {
+        Ok(settings) => {
+            let active = settings.active();
+            tracing::info!(
+                "settings file {}, form {form}, active target {} at {}",
+                file.display(),
+                active.name(),
+                active.endpoint()
+            );
+        }
+        Err(error) => tracing::warn!(
+            "settings file {}, form {form}: the file cannot be used, every request is answered 503 until it is fixed or removed: {error}",
+            file.display()
+        ),
+    }
+}
+
+/// Resolves the settings folder, creates the session token, binds the engine's listener and, when `studio` is
+/// given, Studio's, then serves both until the process ends or either stops. When the folder is refused or either
+/// listener cannot be bound, nothing is served. The active target is read from the settings file on every health
+/// and every relayed request, and its emulator's files from `<home>/.aws/emulator/<its port>/`.
 pub async fn serve(
     config: Config,
     home: PathBuf,
     studio: Option<StudioFiles>,
 ) -> Result<(), Error> {
     config.validate()?;
+    let cwd = std::env::current_dir().map_err(Error::WorkingDir)?;
+    let dir = settings_dir(&config, &home, &cwd)?;
     let session = Arc::new(SessionToken::generate()?);
     let studio_origin = StudioOrigin::new(config.studio_port);
     if let Some(warning) = listen_warning(config.listen_address) {
@@ -126,22 +175,26 @@ pub async fn serve(
         studio_origin = studio_origin.as_str(),
         "engine listening"
     );
-    let emulator = Emulator::new(&home, config.emulator_port);
-    let probed = emulator.clone();
-    let probe: ProbeFn = Arc::new(move || {
-        let emulator = probed.clone();
-        Box::pin(async move { probe(&emulator, PROBE_DEADLINE).await })
-    });
-    let relayed = emulator.clone();
-    let relay: RelayFn = Arc::new(move |request| {
-        let emulator = relayed.clone();
+    let seed = seed_settings(config.form, config.emulator_port);
+    let settings = Arc::new(Store::new(dir, seed.clone()));
+    settings_step(&settings, config.form, &seed).await;
+    let probe: ProbeFn =
+        Arc::new(|emulator| Box::pin(async move { probe(&emulator, PROBE_DEADLINE).await }));
+    let relay: RelayFn = Arc::new(|emulator, request| {
         Box::pin(async move { relay(&emulator, request, &Limits::DEFAULT).await })
+    });
+    let test: TestFn = Arc::new(|emulator| {
+        Box::pin(async move { check::test(&emulator, PROBE_DEADLINE, SystemTime::now()).await })
     });
     let state = AppState {
         engine_port: config.port,
-        emulator,
+        studio_port: config.studio_port,
+        form: config.form,
+        home,
+        settings,
         probe,
         relay,
+        test,
         max_in_flight: MAX_IN_FLIGHT,
         studio_origin,
         session,

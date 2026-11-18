@@ -16,7 +16,7 @@ import fs from 'node:fs';
 import { directHealth, emulatorDir, expect, OwnEmulator, test, waitFor } from './support';
 import { bucketNames } from './support/aws-clients';
 import { connectionView } from './support/home';
-import { directS3, docker, runPrefix, signedVia, statusOf } from './support/product-inspect';
+import { directS3, docker, runPrefix, signedVia, statusOf, volumeFiles } from './support/product-inspect';
 import {
   CHANGE_BOUND_MS,
   containerIdentity,
@@ -34,6 +34,7 @@ import {
   productTimeout,
   publishedBy,
   SERVICES,
+  SETTINGS_FILE,
   UP_BOUND_MS,
   waitReachable,
   type HealthResult,
@@ -277,14 +278,21 @@ test('engine.product-stop-leaves-only-the-volume-and-a-users-emulator-untouched'
     expect(bucketNames(listed.body.toString('utf8')), "the buckets the user's emulator lists").not.toContain(bucket);
   }
 
-  // The stop line → exit 0, no container and no network of the project, one volume of the project left.
+  // The stop line → exit 0, no container and no network of the project, its two volumes left: `emulator` and
+  // `settings` (#485).
   expectExit(await form.stop(), 'zero');
   expect(await form.waitGone(), `what is left of ${form.project}`).toEqual({ containers: [], networks: [] });
-  const volumes = await form.volumes();
-  expect(volumes, `the volumes of ${form.project}`).toHaveLength(1);
+  const emulatorVolume = await form.volume('emulator');
+  const settingsVolume = await form.volume('settings');
+  expect((await form.volumes()).sort(), `the volumes of ${form.project}`).toEqual(
+    [emulatorVolume, settingsVolume].sort(),
+  );
+  expect(emulatorVolume, `the volume emulator of ${form.project}`).not.toBe('');
+  expect(settingsVolume, `the volume settings of ${form.project}`).not.toBe('');
 
-  // The volume left, listed from a container that mounts it read-only → no regular file. The emulator's image has
-  // `sh` and `ls` and no `find`, so the listing is `ls -AlR`, and a regular file is a line whose mode starts with `-`.
+  // The volume `emulator`, listed from a container that mounts it read-only → no regular file. The emulator's image
+  // has `sh` and `ls` and no `find`, so the listing is `ls -AlR`, and a regular file is a line whose mode starts with
+  // `-`.
   const listing = await docker([
     'run',
     '--rm',
@@ -295,16 +303,23 @@ test('engine.product-stop-leaves-only-the-volume-and-a-users-emulator-untouched'
     '--entrypoint',
     'sh',
     '-v',
-    `${volumes[0]}:/v:ro`,
+    `${emulatorVolume}:/v:ro`,
     ctx.emulatorImage,
     '-c',
     'ls -AlR /v',
   ]);
-  expect(listing.ok ? '' : listing.stderr, `ls -AlR /v in a container that mounts ${volumes[0]} read-only`).toBe('');
+  expect(listing.ok ? '' : listing.stderr, `ls -AlR /v in a container that mounts ${emulatorVolume} read-only`).toBe(
+    '',
+  );
   expect(
     listing.stdout.split('\n').filter((line) => line.startsWith('-')),
-    `the regular files in ${volumes[0]}`,
+    `the regular files in ${emulatorVolume}`,
   ).toEqual([]);
+
+  // The volume `settings` → only the settings file (#485; that it holds no key is
+  // `engine.product-holds-no-key-and-one-read-only-mount`'s).
+  const settingsFiles = await volumeFiles(ctx, settingsVolume);
+  expect([...settingsFiles.keys()], `the files in ${settingsVolume}`).toEqual([SETTINGS_FILE]);
 
   // The user's emulator after the stop → the same container, running, answering on P, the same file names.
   await untouched('after the stop line');
@@ -329,13 +344,15 @@ test('engine.product-two-forms-side-by-side', async ({ ctx }) => {
   await expectReachable(first, `health of ${first.project}`);
   expect(identities(await first.containers()), `the containers of ${first.project}`).toEqual(firstIds);
 
-  // Two emulator containers and two volumes, one per project.
+  // Two emulator containers, one per project, and each project's own two volumes, `emulator` and `settings` (#485).
   for (const form of [first, second]) {
     expect(
       (await emulatorsOf(form, ctx.emulatorImage)).map((c) => c.name),
       `the emulator containers of ${form.project}`,
     ).toHaveLength(1);
-    expect(await form.volumes(), `the volumes of ${form.project}`).toHaveLength(1);
+    expect((await form.volumes()).sort(), `the volumes of ${form.project}`).toEqual(
+      [`${form.project}_emulator`, `${form.project}_settings`].sort(),
+    );
   }
 
   // A bucket put through the first → listed through the first, not through the second.

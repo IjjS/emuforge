@@ -265,6 +265,8 @@ dependencies = [
  "rcgen",
  "ring",
  "rustls",
+ "serde",
+ "serde_json",
  "tempfile",
  "thiserror",
  "tokio",
@@ -284,10 +286,12 @@ dependencies = [
  "hyper",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror",
  "tokio",
  "tower",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

@@ -143,3 +143,11 @@
 {"check_id": "engine.product-studio-answers-as-studios-server", "path": "tests/integration/studio/product-image.spec.ts", "module": "engine", "operations": [], "labels": [], "issue": 484}
 {"check_id": "engine.product-binary-refuses-a-taken-studio-port-and-serves-nothing", "path": "tests/integration/studio/product-image.spec.ts", "module": "engine", "operations": [], "labels": ["lifecycle"], "issue": 484}
 {"check_id": "engine.product-image-holds-one-binary", "path": "tests/integration/studio/product-image.spec.ts", "module": "engine", "operations": [], "labels": ["safety"], "issue": 484}
+{"check_id": "engine.targets-relay-follows-the-active-target", "path": "tests/integration/engine/tests/targets.rs", "module": "engine", "operations": ["s3:CreateBucket", "s3:HeadBucket", "s3:DeleteBucket"], "labels": ["own-emulator"], "issue": 485}
+{"check_id": "engine.targets-health-follows-the-active-target-and-never-falls-back", "path": "tests/integration/engine/tests/targets.rs", "module": "engine", "operations": ["s3:ListBuckets"], "labels": ["safety"], "issue": 485}
+{"check_id": "engine.targets-kept-across-restart", "path": "tests/integration/engine/tests/targets.rs", "module": "engine", "operations": [], "labels": ["lifecycle"], "issue": 485}
+{"check_id": "engine.targets-test-checks-a-running-emulator", "path": "tests/integration/engine/tests/targets.rs", "module": "engine", "operations": ["sts:GetCallerIdentity"], "labels": [], "issue": 485}
+{"check_id": "engine.targets-test-follows-an-emulator-restart", "path": "tests/integration/engine/tests/targets.rs", "module": "engine", "operations": ["sts:GetCallerIdentity"], "labels": ["own-emulator", "lifecycle"], "issue": 485}
+{"check_id": "engine.targets-hold-no-key", "path": "tests/integration/engine/tests/targets.rs", "module": "engine", "operations": ["sts:GetCallerIdentity"], "labels": ["safety"], "issue": 485}
+{"check_id": "engine.checks-engines-keep-their-settings-in-the-run", "path": "tests/integration/engine/tests/targets.rs", "module": "engine", "operations": [], "labels": ["safety"], "issue": 485}
+{"check_id": "engine.product-targets-compose-holds-one-target", "path": "tests/integration/studio/product-targets.spec.ts", "module": "engine", "operations": [], "labels": [], "issue": 485}
