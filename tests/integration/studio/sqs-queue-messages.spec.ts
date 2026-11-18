@@ -30,6 +30,7 @@ import {
   firstOf,
   flashItems,
   FORMAT_JSON,
+  movedByRead,
   NON_EXISTENT_QUEUE,
   NOT_FOUND,
   open,
@@ -175,10 +176,13 @@ test('studio.sqs-read-on-a-redrive-queue-warns-and-moves', async ({ ctx, page })
   });
 
   await lines.line(
-    '"Read messages" a third time → the empty-read sentence; the emulator reports the source empty and the message in the dead-letter queue, and the page\'s Available is 0',
+    '"Read messages" a third time → "Messages received 2 times in this queue were moved to {dlq} by this read instead of being shown." with {dlq} a link, and not the empty-read sentence; the emulator reports the source empty and the message in the dead-letter queue, and the page\'s Available is 0',
     async () => {
       await readMessages(page);
-      await expect(page.getByText(EMPTY_READ)).toBeVisible();
+      const moved = s.panel.getByText(movedByRead(2, dlq.name), { exact: true });
+      await expect(moved, 'the moved-by-read sentence').toBeVisible();
+      await expect(moved.getByRole('link', { name: dlq.name, exact: true }), 'the dead-letter queue as a link').toBeVisible();
+      await expect(page.getByText(EMPTY_READ), 'no empty-read sentence').toHaveCount(0);
       expect(await countsDirect(ctx, port, source.url), 'the source, directly').toEqual({
         available: 0,
         inFlight: 0,
