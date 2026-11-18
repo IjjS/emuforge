@@ -3,18 +3,17 @@ import Box from '@cloudscape-design/components/box';
 import Button from '@cloudscape-design/components/button';
 import FormField from '@cloudscape-design/components/form-field';
 import Input from '@cloudscape-design/components/input';
-import Modal from '@cloudscape-design/components/modal';
 import Select, { type SelectProps } from '@cloudscape-design/components/select';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Textarea from '@cloudscape-design/components/textarea';
 import { useState } from 'react';
 
+import { AreaModal } from '../../../components/area-modal';
 import type { FlashItem } from '../../../components/page-flash';
 import { usePageFlash } from '../../../components/page-flash';
 import type { Role } from '../api';
 import { failureOf, useUpdateRole } from '../queries';
 import { actionFailureItem } from './failures';
-import { useAreaModalRoot } from './page-parts';
 import { Quoted } from './quoted';
 
 // "Edit" of a role's "Summary" (issue 82, requirement R5.5, R10.3): the dialog "Edit summary", in EmuForge's words
@@ -95,7 +94,6 @@ export function EditSummaryDialog({ role, engineOrigin, onClose }: EditSummaryDi
   const flash = usePageFlash();
   const update = useUpdateRole(engineOrigin);
   const pending = update.isPending;
-  const modalRoot = useAreaModalRoot();
 
   const handleDismiss = () => {
     if (!pending) {
@@ -137,8 +135,7 @@ export function EditSummaryDialog({ role, engineOrigin, onClose }: EditSummaryDi
   };
 
   return (
-    <Modal
-      {...modalRoot}
+    <AreaModal
       visible
       header="Edit summary"
       closeAriaLabel="Close modal"
@@ -191,6 +188,6 @@ export function EditSummaryDialog({ role, engineOrigin, onClose }: EditSummaryDi
           </Alert>
         )}
       </SpaceBetween>
-    </Modal>
+    </AreaModal>
   );
 }
