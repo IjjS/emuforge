@@ -285,6 +285,10 @@ export function warningMoves(n: number, dlq: string): string {
 }
 export const EMPTY_READ =
   'No message is available to read. Messages in flight or delayed are not returned until they are visible again.';
+/** On a queue with a redrive policy, a read that returned fewer than were available (pm decision 2026-11-19). */
+export function movedByRead(n: number, dlq: string): string {
+  return `Messages received ${String(n)} times in this queue were moved to ${dlq} by this read instead of being shown.`;
+}
 export const FIFO_FEWER =
   'Messages of a group your app has received and not yet deleted are not returned until they are visible again.';
 /** "Showing the first {n} of {available} available messages. …" */
