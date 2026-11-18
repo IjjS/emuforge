@@ -1,0 +1,28 @@
+[package]
+name = "emuforge"
+description = "The emuforge binary: serves the engine and, when built with embed-studio, Studio"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+build = "build.rs"
+
+[[bin]]
+name = "emuforge"
+path = "src/main.rs"
+
+[features]
+# Embeds Studio's production build (studio/dist, from `bun run build`) in the binary at compile time.
+embed-studio = []
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+emuforge-server.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

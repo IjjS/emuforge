@@ -39,7 +39,7 @@ export interface EngineCommandPorts {
 export function startEngineCommand({ enginePort, studioPort, emulatorPort }: EngineCommandPorts): string {
   const lines = [
     'cargo run',
-    '  -p emuforge-server --',
+    '  -p emuforge -- serve',
     `  --port ${String(enginePort)}`,
     `  --studio-port ${String(studioPort)}`,
   ];

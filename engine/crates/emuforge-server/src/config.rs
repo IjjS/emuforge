@@ -1,4 +1,4 @@
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::num::NonZeroU16;
 
 use crate::Error;
@@ -20,23 +20,33 @@ pub const DEFAULT_EMULATOR_PORT: NonZeroU16 = NonZeroU16::new(9297).expect("9297
 pub const DEFAULT_STUDIO_PORT: NonZeroU16 = NonZeroU16::new(8296).expect("8296 is not zero");
 /// Requests in flight across every route; one more is answered `503 Busy` at once.
 pub const MAX_IN_FLIGHT: usize = 32;
-/// The only address the engine listens on. No setting changes it.
+/// The address both listeners bind unless `--listen-address` names another.
 pub const LISTEN_IP: Ipv4Addr = Ipv4Addr::LOCALHOST;
 
-/// The engine's settings. A flag wins over its environment variable.
-#[derive(Debug, Clone, PartialEq, Eq, clap::Parser)]
-#[command(name = "emuforge-server", about = "The EmuForge engine, on 127.0.0.1")]
+/// The engine port's flag and variable.
+pub(crate) const ENGINE_PORT: (&str, &str) = ("--port", "EMUFORGE_ENGINE_PORT");
+/// The emulator port's flag and variable.
+pub(crate) const EMULATOR_PORT: (&str, &str) = ("--emulator-port", "EMULATOR_PORT");
+/// The Studio port's flag and variable.
+pub(crate) const STUDIO_PORT: (&str, &str) = ("--studio-port", "EMUFORGE_STUDIO_PORT");
+
+/// The settings of `serve`. A flag wins over its environment variable; `--listen-address` has no variable.
+#[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
 pub struct Config {
-    /// Port the engine listens on, always on 127.0.0.1
+    /// Port the engine listens on, at --listen-address
     #[arg(long, env = "EMUFORGE_ENGINE_PORT", default_value_t = DEFAULT_ENGINE_PORT)]
     pub port: NonZeroU16,
     /// Port of the local aws-emulator, reached at https://127.0.0.1:<port>
     #[arg(long = "emulator-port", env = "EMULATOR_PORT", default_value_t = DEFAULT_EMULATOR_PORT)]
     pub emulator_port: NonZeroU16,
-    /// Port Studio is served on; the engine serves browsers only from http://127.0.0.1:<port> and never listens
-    /// on it
+    /// Port Studio is served on, at --listen-address, when this build embeds Studio; the engine serves browsers
+    /// only from http://127.0.0.1:<port>
     #[arg(long = "studio-port", env = "EMUFORGE_STUDIO_PORT", default_value_t = DEFAULT_STUDIO_PORT)]
     pub studio_port: NonZeroU16,
+    /// IP address both listeners bind; any other than 127.0.0.1 lets anything that can reach it use the emulator
+    /// through the engine
+    #[arg(long = "listen-address", value_name = "IP", default_value_t = IpAddr::V4(LISTEN_IP))]
+    pub listen_address: IpAddr,
 }
 
 impl Config {
@@ -48,8 +58,8 @@ impl Config {
             });
         }
         for (other, port) in [
-            ("--port", self.port),
-            ("--emulator-port", self.emulator_port),
+            (ENGINE_PORT.0, self.port),
+            (EMULATOR_PORT.0, self.emulator_port),
         ] {
             if self.studio_port == port {
                 return Err(Error::StudioPortCollides {
@@ -62,15 +72,39 @@ impl Config {
     }
 }
 
-/// `127.0.0.1:<port>`: the one address `serve` binds.
-pub fn listen_addr(config: &Config) -> SocketAddr {
-    SocketAddr::new(LISTEN_IP.into(), config.port.get())
+/// The variable of a port flag, for the texts of the refusals that name the flag.
+pub(crate) fn variable_of(flag: &str) -> &'static str {
+    [ENGINE_PORT, EMULATOR_PORT, STUDIO_PORT]
+        .into_iter()
+        .find(|(name, _)| *name == flag)
+        .map_or("", |(_, variable)| variable)
+}
+
+/// `<listen address>:<port>`: the address `serve` binds for the engine.
+pub fn engine_addr(config: &Config) -> SocketAddr {
+    SocketAddr::new(config.listen_address, config.port.get())
+}
+
+/// `<listen address>:<studio port>`: the address `serve` binds for Studio, when the build embeds it.
+pub fn studio_addr(config: &Config) -> SocketAddr {
+    SocketAddr::new(config.listen_address, config.studio_port.get())
+}
+
+/// The warning `serve` logs before it binds an address other than `127.0.0.1`; `None` for `127.0.0.1`. Every other
+/// address warns, `::1` and the rest of `127.0.0.0/8` included: the rule names `127.0.0.1`.
+pub fn listen_warning(ip: IpAddr) -> Option<String> {
+    (ip != IpAddr::V4(LISTEN_IP)).then(|| {
+        format!(
+            "listening on {ip}, not on loopback: anything that can reach {ip} can open Studio and use the emulator \
+             through the engine; use --listen-address only inside a container whose ports are published on 127.0.0.1"
+        )
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use clap::error::ErrorKind;
-    use clap::{CommandFactory, FromArgMatches};
+    use clap::{Args, FromArgMatches};
 
     use super::*;
 
@@ -79,12 +113,16 @@ mod tests {
     fn parse(args: &[&str]) -> Result<Config, clap::Error> {
         let command = ["port", "emulator_port", "studio_port"]
             .into_iter()
-            .fold(Config::command(), |command, id| {
+            .fold(command(), |command, id| {
                 command.mut_arg(id, |arg| arg.env(None))
             });
         let matches = command
             .try_get_matches_from(std::iter::once("emuforge-server").chain(args.iter().copied()))?;
         Config::from_arg_matches(&matches)
+    }
+
+    fn command() -> clap::Command {
+        Config::augment_args(clap::Command::new("emuforge-server"))
     }
 
     fn port(value: u16) -> NonZeroU16 {
@@ -96,6 +134,7 @@ mod tests {
             port: port(engine),
             emulator_port: port(emulator),
             studio_port: port(studio),
+            listen_address: IpAddr::V4(LISTEN_IP),
         }
     }
 
@@ -134,7 +173,7 @@ mod tests {
 
     #[test]
     fn studio_port_help_shows_default_and_variable() {
-        let help = Config::command().render_help().to_string();
+        let help = command().render_help().to_string();
         let line = help
             .lines()
             .find(|line| line.trim_start().starts_with("--studio-port "))

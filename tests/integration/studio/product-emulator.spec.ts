@@ -40,7 +40,7 @@ async function started(form: Form) {
   });
 }
 
-/** The gateway's, the engine's and Studio's containers, by id and start time. */
+/** The containers of the form but the emulator's (emuforge's, #484), by id and start time. */
 async function others(form: Form) {
   return identities((await form.containers()).filter((c) => c.service !== 'aws-emulator'));
 }
@@ -108,7 +108,7 @@ test('engine.product-connects-when-the-emulator-starts-later', async ({ ctx, pag
     .toBe('Connected');
   expect(await stillSamePage(page), 'the page was not reloaded').toBe(true);
 
-  // The gateway's, the engine's and Studio's containers → the same ids and start times.
+  // emuforge's container → the same id and start time (not restarted).
   expect(await others(form), `the other containers of ${form.project}`).toEqual(before);
 });
 
@@ -116,7 +116,7 @@ test('engine.product-reconnects-after-the-emulator-restarts', async ({ ctx }) =>
   test.setTimeout(productTimeout(2, 2));
   const form = await Form.create(ctx);
   await started(form);
-  const engineBefore = identities([await form.container('engine')]);
+  const engineBefore = identities([await form.container('emuforge')]);
   const keyBefore = await emulatorKeyId(form);
   expect(keyBefore, "the Given: the emulator's access key id read inside its container").not.toBe('');
 
@@ -146,6 +146,6 @@ test('engine.product-reconnects-after-the-emulator-restarts', async ({ ctx }) =>
   expectExit(await form.run(form.compose('up', '-d', '--no-build', 'aws-emulator'), STOP_BOUND_MS * 2), 'zero');
   expect(await waitList(form, 200), 's3:ListBuckets through the form after the emulator was replaced').toBe(200);
 
-  // The engine's container → the same id and start time.
-  expect(identities([await form.container('engine')]), "the engine's container").toEqual(engineBefore);
+  // emuforge's container → the same id and start time.
+  expect(identities([await form.container('emuforge')]), "emuforge's container").toEqual(engineBefore);
 });

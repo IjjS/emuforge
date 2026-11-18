@@ -1,15 +1,17 @@
-# EmuForge as a product (issues 34 and 437): the engine, Studio and an emulator of their own, built and run from
-# this checkout, the same on every platform and in every shell:
+# EmuForge as a product (issues 34, 437 and 484): two containers, built and run from this checkout, the same on
+# every platform and in every shell:
 #   docker compose up -d --build
 #   docker compose down
 #
-# Then open http://127.0.0.1:8296/. Nothing of the form is on the host: the emulator's files are in the volume
-# `emulator`, which `docker compose down -v` removes. An AWS client on the host is pointed at the engine's port
-# with any key; the emulator's own port is not published.
+# `emuforge` is one process from one binary that serves Studio and the engine; `aws-emulator` is the form's own
+# emulator, from the emulator's image, in emuforge's network namespace. Then open http://127.0.0.1:8296/. Nothing
+# of the form is on the host: the emulator's files are in the volume `emulator`, which `docker compose down -v`
+# removes. An AWS client on the host is pointed at the engine's port with any key; the emulator's own port is not
+# published.
 # Change the ports with EMUFORGE_STUDIO_PORT (8296) and EMUFORGE_ENGINE_PORT (8297), and give the stop command the
 # same values. EMULATOR_PORT (9297) is the emulator's port inside the form; set it only to free that number for
-# one of the other two. 18296 and 18297 are the gateway's own inside the form and cannot be used for any of the
-# three. Every published port is on 127.0.0.1 only.
+# one of the other two. The three must differ; emuforge refuses otherwise, naming both variables. Every published
+# port is on 127.0.0.1 only.
 # Each EMUFORGE_STUDIO_PORT is its own project (emuforge-app-<port>) with its own emulator and volume, so forms on
 # different Studio and engine ports run side by side; left unset, the project is emuforge-app. Set no
 # COMPOSE_PROJECT_NAME or -p.
@@ -17,47 +19,56 @@
 # EMUFORGE_IMAGE and EMUFORGE_EMULATOR_IMAGE name the two images (emuforge, aws-emulator); the checks set their own.
 name: emuforge-app${EMUFORGE_STUDIO_PORT:+-${EMUFORGE_STUDIO_PORT}}
 
-x-emuforge: &emuforge
-  image: ${EMUFORGE_IMAGE:-emuforge}
-  # Built by the gateway's service from this checkout, never pulled from a registry under the image's name.
-  pull_policy: never
-  environment:
-    EMULATOR_PORT: ${EMULATOR_PORT:-9297}
-    EMUFORGE_ENGINE_PORT: ${EMUFORGE_ENGINE_PORT:-8297}
-    EMUFORGE_STUDIO_PORT: ${EMUFORGE_STUDIO_PORT:-8296}
-    HOME: /home/emuforge
-  # The engine installs no signal handler; as process 1 it would ignore SIGTERM and make every stop wait.
-  init: true
-  cap_drop: [ALL]
-  security_opt: ["no-new-privileges:true"]
-
 services:
-  # Owns the form's network namespace and its two published ports; carries bytes, nothing else (haproxy.cfg).
-  gateway:
-    <<: *emuforge
-    # The one service that builds the image. Compose labels an image with the service that built it, so three
-    # services building one tag would leave it on whichever finished last, and a second start would recreate
-    # every container even with BUILDX_NO_DEFAULT_ATTESTATIONS=1.
+  # Studio and the engine, one process. Owns the form's network namespace and its two published ports.
+  emuforge:
+    image: ${EMUFORGE_IMAGE:-emuforge}
     build:
       context: .
       dockerfile: infra/emuforge/Dockerfile
-      additional_contexts:
-        gateway: infra/emuforge
     pull_policy: build
-    command: ["haproxy", "-db", "-f", "/opt/emuforge/haproxy.cfg"]
+    # Inside the container both listeners take the container's address, so the ports Docker publishes reach them
+    # (security review N1: an explicit flag, and a warning in the log). On the host they are on 127.0.0.1 only.
+    command: ["serve", "--listen-address", "0.0.0.0"]
+    environment:
+      EMULATOR_PORT: ${EMULATOR_PORT:-9297}
+      EMUFORGE_ENGINE_PORT: ${EMUFORGE_ENGINE_PORT:-8297}
+      EMUFORGE_STUDIO_PORT: ${EMUFORGE_STUDIO_PORT:-8296}
+      HOME: /home/emuforge
     ports:
-      # Published on 127.0.0.1 only, never on the whole network.
-      - "127.0.0.1:${EMUFORGE_STUDIO_PORT:-8296}:18296"
-      - "127.0.0.1:${EMUFORGE_ENGINE_PORT:-8297}:18297"
+      # Published on 127.0.0.1 only, never on the whole network. The same number on both sides: the engine and
+      # Studio accept only Host 127.0.0.1:<their port>.
+      - "127.0.0.1:${EMUFORGE_STUDIO_PORT:-8296}:${EMUFORGE_STUDIO_PORT:-8296}"
+      - "127.0.0.1:${EMUFORGE_ENGINE_PORT:-8297}:${EMUFORGE_ENGINE_PORT:-8297}"
+    volumes:
+      # The one mount: the emulator's files, read-only. The parent, not the port's own directory, so emuforge sees
+      # the emulator's files after every start, stop and restart.
+      - type: volume
+        source: emulator
+        target: /home/emuforge/.aws/emulator
+        read_only: true
+    # Healthy once both ports accept a connection; the emulator waits for it, so a refused start of emuforge keeps
+    # the emulator from starting and the start line exits non-zero naming this container.
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/$$EMUFORGE_ENGINE_PORT && exec 4<>/dev/tcp/127.0.0.1/$$EMUFORGE_STUDIO_PORT"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    # emuforge installs no signal handler; as process 1 it would ignore SIGTERM and make every stop wait.
+    init: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
 
-  # The form's own emulator, in the gateway's namespace: the engine's 127.0.0.1:EMULATOR_PORT is this process.
+  # The form's own emulator, in emuforge's namespace: the engine's 127.0.0.1:EMULATOR_PORT is this process.
   # It publishes nothing and its files never leave the volume.
   aws-emulator:
     image: ${EMUFORGE_EMULATOR_IMAGE:-aws-emulator}
     build: infra/aws-emulator
     pull_policy: build
-    network_mode: "service:gateway"
-    depends_on: [gateway]
+    network_mode: "service:emuforge"
+    depends_on:
+      emuforge:
+        condition: service_healthy
     # Never root, not even to pick a user (rule 1 of entrypoint.sh); the image holds the volume's folder as 1000:0.
     user: "1000:0"
     # Telemetry off: nothing in this repository may send anything off the machine.
@@ -69,8 +80,8 @@ services:
       - type: volume
         source: emulator
         target: /home/emulator/.aws/emulator
-    # Healthy once it accepts a connection; the start line waits for that and fails, naming this container, when
-    # the emulator exits or does not accept one within a minute.
+    # Healthy once it accepts a connection; `docker compose ps -a` shows it. Nothing waits for it: the start line
+    # returns once both containers are started, and the engine reports the emulator unreachable until it is up.
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/$$EMULATOR_PORT"]
       interval: 2s
@@ -80,28 +91,6 @@ services:
     security_opt: ["no-new-privileges:true"]
     mem_limit: 2g
     memswap_limit: 2g
-
-  engine:
-    <<: *emuforge
-    network_mode: "service:gateway"
-    depends_on:
-      aws-emulator:
-        condition: service_healthy
-    command: ["emuforge-server"]
-    volumes:
-      # The engine's one mount: the emulator's files, read-only. The parent, not the port's own directory, so the
-      # engine sees the emulator's files after every start, stop and restart.
-      - type: volume
-        source: emulator
-        target: /home/emuforge/.aws/emulator
-        read_only: true
-
-  studio:
-    <<: *emuforge
-    network_mode: "service:gateway"
-    depends_on: [gateway]
-    # --no-install: bun never fetches a package at run time.
-    command: ["bun", "--no-install", "/opt/emuforge/studio/scripts/serve.ts"]
 
 volumes:
   emulator: {}

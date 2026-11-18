@@ -1,6 +1,11 @@
-//! `emuforge-server`: the EmuForge engine on `127.0.0.1`.
+//! `emuforge`: the EmuForge binary. `serve` runs the engine and, when this build embeds it, Studio.
 
 #![forbid(unsafe_code)]
+
+mod cli;
+#[cfg(test)]
+mod embed;
+mod studio;
 
 use std::env;
 use std::path::PathBuf;
@@ -11,16 +16,26 @@ use clap::{CommandFactory, Parser};
 use emuforge_server::{Config, serve};
 use tracing_subscriber::EnvFilter;
 
+use cli::{Cli, Command};
+
 fn main() -> ExitCode {
+    let Cli {
+        command: Command::Serve(config),
+    } = Cli::parse();
     let Some(home) = env::var_os("HOME").filter(|home| !home.is_empty()) else {
         eprintln!(
             "error: HOME is not set; the engine reads the emulator's files from $HOME/.aws/emulator/<port>/"
         );
         return ExitCode::FAILURE;
     };
-    let config = Config::parse();
     if let Err(error) = config.validate() {
-        Config::command()
+        // The usage line of `serve`, not of the bare binary.
+        let command = Cli::command();
+        command
+            .find_subcommand("serve")
+            .cloned()
+            .unwrap_or(command)
+            .bin_name("emuforge serve")
             .error(clap::error::ErrorKind::ArgumentConflict, error)
             .exit();
     }
@@ -41,10 +56,11 @@ fn main() -> ExitCode {
 }
 
 fn run(config: Config, home: PathBuf) -> anyhow::Result<()> {
+    let studio = studio::embedded()?;
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .context("cannot start the async runtime")?
-        .block_on(serve(config, home))?;
+        .block_on(serve(config, home, studio))?;
     Ok(())
 }

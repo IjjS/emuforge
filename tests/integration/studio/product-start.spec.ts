@@ -1,4 +1,4 @@
-// The start and stop checks of the one product form (issue 437, test-criteria.md): each starts its own form with
+// The start and stop checks of the one product form (issues 437 and 484, test-criteria.md): each starts its own form with
 // the start line, `docker compose up -d --build`, run at the checkout's root with a PATH on which cargo, rustc, bun
 // and node are not found (`support/product.ts`), observes it from the host and the check's browser, and stops it
 // with the stop line. Every form has an emulator of its own; a user's emulator is one the check started outside the
@@ -13,7 +13,7 @@
 import type { Page } from '@playwright/test';
 import fs from 'node:fs';
 
-import { directHealth, emulatorDir, expect, OwnEmulator, test } from './support';
+import { directHealth, emulatorDir, expect, OwnEmulator, test, waitFor } from './support';
 import { bucketNames } from './support/aws-clients';
 import { connectionView } from './support/home';
 import { directS3, docker, runPrefix, signedVia, statusOf } from './support/product-inspect';
@@ -23,19 +23,18 @@ import {
   dockerRead,
   entries,
   expectExit,
-  firstHealth,
   Form,
   freshHome,
   identities,
   inspectContainers,
   inspectJson,
   KEEP_VARIABLE,
+  LINES,
   madeUpKey,
-  NEVER_STARTED,
   productTimeout,
   publishedBy,
   SERVICES,
-  START_BOUND_MS,
+  UP_BOUND_MS,
   waitReachable,
   type HealthResult,
 } from './support/product';
@@ -83,9 +82,16 @@ function fileNames(dir: string): string[] {
   return fs.existsSync(dir) ? fs.readdirSync(dir).sort() : [];
 }
 
-/** `docker compose ps --format json` of the form: one object per container, whichever of the two shapes Compose prints. */
-async function composePs(form: Form): Promise<{ Service?: string; State?: string; Health?: string }[]> {
-  const result = await form.run(form.compose('ps', '--format', 'json'), 60_000);
+/**
+ * `docker compose ps --format json` of the form, or with `all` the README's line `docker compose ps -a` (`LINES.status`,
+ * #484 R10) with `--format json`: one object per container, whichever of the two shapes Compose prints.
+ */
+async function composePs(
+  form: Form,
+  all = false,
+): Promise<{ Service?: string; State?: string; Health?: string }[]> {
+  const line = all ? form.withFiles([...LINES.status, '--format', 'json']) : form.compose('ps', '--format', 'json');
+  const result = await form.run(line, 60_000);
   expectExit(result, 'zero');
   const text = result.stdout.trim();
   if (text.startsWith('[')) return JSON.parse(text) as { Service?: string; State?: string; Health?: string }[];
@@ -94,6 +100,12 @@ async function composePs(form: Form): Promise<{ Service?: string; State?: string
     .filter((line) => line.trim() !== '')
     .map((line) => JSON.parse(line) as { Service?: string; State?: string; Health?: string });
 }
+
+/**
+ * How long the emulator's healthcheck takes to give up on an emulator that never accepts a connection: 30 tries,
+ * 2 s apart, each of at most 2 s (`docker-compose.yml`), with room for Compose's own polling.
+ */
+const GIVE_UP_BOUND_MS = 150_000;
 
 /** The bucket names a signed s3:ListBuckets through the form lists, with a made-up key; `null` when it is not 200. */
 async function bucketsThrough(form: Form): Promise<string[] | null> {
@@ -108,7 +120,7 @@ async function putBucket(form: Form, bucket: string) {
   expect(statusOf(answer), `PUT /${bucket} through ${form.project}`).toBe(200);
 }
 
-function shownFirst(result: HealthResult) {
+function shownHealth(result: HealthResult) {
   return 'error' in result ? { error: result.error } : result;
 }
 
@@ -116,11 +128,12 @@ test('engine.product-start-connects-to-its-own-emulator', async ({ ctx, page }) 
   test.setTimeout(productTimeout(1, 2));
   const form = await Form.create(ctx);
 
-  // The start line → exit 0, and the first answer health gives after it returns (repeated only while the
-  // connection is refused or reset) is 200, reachable, with the form's EMULATOR_PORT; no `reachable: false` is seen.
+  // The start line → exit 0, and health within the bound after it returns → 200, reachable, with the form's
+  // EMULATOR_PORT. The emulator starts after emuforge, so the first answers may be `reachable: false` (#484 R10,
+  // requirement section 4; `decisions.md`, PM decisions).
   expectExit(await form.start(), 'zero');
-  const first = await firstHealth(form.enginePort);
-  expect(shownFirst(first), 'the first answer of GET /__emuforge/health after the start line').toMatchObject({
+  const reached = await waitReachable(form.enginePort, true, UP_BOUND_MS);
+  expect(shownHealth(reached), 'GET /__emuforge/health within the bound after the start line').toMatchObject({
     status: 200,
     body: { emulator: { reachable: true, port: form.emulatorPort } },
   });
@@ -129,9 +142,15 @@ test('engine.product-start-connects-to-its-own-emulator', async ({ ctx, page }) 
   await page.goto(form.studioUrl);
   await expectBothConnected(page);
 
-  // `docker compose ps` → four running containers, of gateway, aws-emulator, engine and studio, the emulator's
-  // healthy.
-  const ps = await composePs(form);
+  // `docker compose ps` → two running containers, of emuforge and aws-emulator, the emulator's healthy (#484). The
+  // start line does not wait for the emulator's healthcheck (R10), which records `healthy` only when it next runs, so
+  // `ps` is read again, within the bound, until the emulator's health is no longer `starting`.
+  let ps: { Service?: string; State?: string; Health?: string }[] = [];
+  await waitFor(UP_BOUND_MS, async () => {
+    ps = await composePs(form);
+    const health = ps.find((c) => c.Service === 'aws-emulator')?.Health;
+    return health !== undefined && health !== 'starting' && health !== '' ? true : undefined;
+  });
   expect(
     ps
       .map((c) => ({ service: c.Service, state: c.State }))
@@ -212,13 +231,13 @@ test('engine.product-start-has-one-unpublished-emulator', async ({ ctx }) => {
     ctx.emulatorVersion,
   );
 
-  // Inspected → no published port, the name Compose gives it, and its network the gateway's container.
+  // Inspected → no published port, the name Compose gives it, and its network emuforge's container (#484).
   const published = await publishedBy(emulator.id);
   expect(published, `the ports ${emulator.name} publishes`).toEqual({ running: [], configured: [] });
   expect(emulator.name, "the emulator's container name").toBe(form.emulatorContainerName);
-  const gateway = await form.container('gateway');
+  const owner = await form.container('emuforge');
   const mode = await dockerRead(['inspect', '-f', '{{.HostConfig.NetworkMode}}', emulator.id]);
-  expect([`container:${gateway.id}`, `container:${gateway.name}`], `the network mode of ${emulator.name}`).toContain(
+  expect([`container:${owner.id}`, `container:${owner.name}`], `the network mode of ${emulator.name}`).toContain(
     mode,
   );
 
@@ -334,42 +353,33 @@ test('engine.product-two-forms-side-by-side', async ({ ctx }) => {
 });
 
 test('engine.product-start-says-when-the-emulator-did-not-come-up', async ({ ctx }) => {
-  test.setTimeout(productTimeout(2, 4));
+  // The emulator starts last, in emuforge's namespace, and nothing waits for it (#484 R10, `decisions.md`, PM
+  // decisions): the start line returns once both containers are started, and the form says the rest.
+  test.setTimeout(productTimeout(1, 2) + GIVE_UP_BOUND_MS);
 
-  // EMULATOR_PORT 18297, so the emulator exits at its start → exit non-zero, the output names the project's
-  // aws-emulator container.
-  const exits = await Form.create(ctx, { emulatorPort: 18297 });
-  const failed = await exits.start();
-  expectExit(failed, 'non-zero');
-  expect(`${failed.stdout}\n${failed.stderr}`, 'the output of the start line').toContain(exits.emulatorContainerName);
-
-  // `docker compose logs aws-emulator` → exit 0 and a line of the emulator that says the address is in use.
-  const logs = await exits.emulatorLogs();
-  expectExit(logs, 'zero');
-  expect(`${logs.stdout}\n${logs.stderr}`, `the output of ${logs.line}`).toMatch(/address (already )?in use/i);
-
-  // The engine's container → never started.
-  const engines = (await exits.containers()).filter((c) => c.service === 'engine');
-  expect(
-    engines.filter((c) => c.startedAt !== NEVER_STARTED || c.running).map((c) => c.name),
-    `the engine containers of ${exits.project} that were started`,
-  ).toEqual([]);
-  expectExit(await exits.removeVolume(), 'zero');
-
-  // The emulator runs and accepts no connection on EMULATOR_PORT (product-deaf.yml) → exit non-zero within the
-  // form's bound of one minute plus the start's own time, and the output names the project's aws-emulator
-  // container. The start's own time is that of the start above, which the emulator ended at once; Compose polls a
-  // container's health on its own interval, so ten seconds more are allowed for it to see the last result.
+  // The emulator runs and accepts no connection on EMULATOR_PORT (product-deaf.yml) → the start line exits 0.
   const deaf = await Form.create(ctx, { files: ['deaf'] });
-  const unhealthy = await deaf.start();
-  expectExit(unhealthy, 'non-zero');
-  expect(`${unhealthy.stdout}\n${unhealthy.stderr}`, 'the output of the start line').toContain(
-    deaf.emulatorContainerName,
-  );
-  const bound = 60_000 + failed.ms + 10_000;
-  expect(unhealthy.ms, `how long the start line took, in ms (bound ${String(bound)})`).toBeLessThanOrEqual(
-    Math.min(bound, START_BOUND_MS),
-  );
+  expectExit(await deaf.start(), 'zero');
+
+  // GET /__emuforge/health within the emulator's healthcheck window → 503, `reachable: false` (the engine's health
+  // answer for an emulator it cannot reach, as before #484).
+  expect(await waitReachable(deaf.enginePort, false), 'GET /__emuforge/health of the engine').toMatchObject({
+    status: 503,
+    body: { emulator: { reachable: false } },
+  });
+
+  // `docker compose ps -a` (`LINES.status`) once the healthcheck has given up (30 tries, 2 s apart) → the
+  // emulator's container not healthy, emuforge's running.
+  let seen: { Service?: string; State?: string; Health?: string }[] = [];
+  await waitFor(GIVE_UP_BOUND_MS, async () => {
+    seen = await composePs(deaf, true);
+    const emulator = seen.find((c) => c.Service === 'aws-emulator');
+    return emulator !== undefined && emulator.Health !== 'starting' && emulator.Health !== '' ? true : undefined;
+  });
+  const states = Object.fromEntries(seen.map((c) => [c.Service ?? '', { state: c.State, health: c.Health }]));
+  ctx.log(`docker compose ps -a: ${JSON.stringify(states)}`);
+  expect(states['aws-emulator']?.health, "the emulator's health in docker compose ps -a").toBe('unhealthy');
+  expect(states.emuforge?.state, "emuforge's state in docker compose ps -a").toBe('running');
 });
 
 test('engine.product-repeated-start-with-the-variable-keeps-the-containers', async ({ ctx }) => {

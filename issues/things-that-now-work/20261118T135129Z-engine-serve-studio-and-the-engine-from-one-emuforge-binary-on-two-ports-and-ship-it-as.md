@@ -4,7 +4,7 @@ Issue-Module: engine
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: engine|packaging|one-binary-serves-studio-and-engine
-Issue-Check-Ids:
+Issue-Check-Ids: engine.serve-without-studio-serves-the-engine-only engine.product-studio-answers-as-studios-server engine.product-binary-refuses-a-taken-studio-port-and-serves-nothing engine.product-image-holds-one-binary engine.product-start-connects-to-its-own-emulator engine.product-start-has-one-unpublished-emulator engine.product-start-says-when-the-emulator-did-not-come-up engine.product-connects-when-the-emulator-starts-later engine.product-reconnects-after-the-emulator-restarts engine.product-ports-are-published-on-loopback-only engine.product-holds-no-key-and-one-read-only-mount engine.product-does-not-come-up-on-a-port-collision engine.product-configuration-names-loopback-and-the-emulator-only engine.product-readme-gives-the-commands-the-checks-run
 Issue-Commit: aa4c03efad86f9b110d88c61c26e552f651ddd90
 
 # Serve Studio and the engine from one emuforge binary on two ports, and ship it as one image beside the emulator
