@@ -258,31 +258,34 @@ test('studio.s3-bucket-page-rereads-on-open-and-refresh', async ({ ctx, page }) 
     },
   );
 
-  await lines.line('Put two tags directly, leave for the list and open the bucket again, then its "Properties" (issue 480: the name opens "Objects") → the two tags', async () => {
-    await openBucketPage(page, name);
-    await expectSections(page, { [TAGS]: { rows: [], empty: NO_TAGS } }, '"Tags" before');
-    await seeded.configure(name, {
-      tags: [
-        ['first', 'one'],
-        ['second', 'two'],
-      ],
-    });
-    const tags = (await bucketPropertiesDirect(ctx, port, name)).tags ?? [];
-    expect(tags.length, 'a direct GetBucketTagging returns two tags').toBe(2);
-    await crumbLink(page, 'Buckets').click(ACTION);
-    await expect(heading(page, H1), `the bucket list's h1 "${H1}"`).toBeVisible();
-    await filterFor(page, name);
-    await expectNames(page, [name], `the rows under the filter ${name}`);
-    await screen(page).nameLink(name).click(ACTION);
-    await expectBucketPage(page, name, OBJECTS);
-    await tab(page, PROPERTIES).click(ACTION);
-    await expectBucketPage(page, name);
-    await expectSections(
-      page,
-      { [TAGS]: { rows: tags.map(([Key, Value]) => ({ Key, Value })) } },
-      '"Tags" after opening the bucket again',
-    );
-  });
+  await lines.line(
+    'Put two tags directly, leave for the list and open the bucket again, then its "Properties" (issue 480: the name opens "Objects") → the two tags',
+    async () => {
+      await openBucketPage(page, name);
+      await expectSections(page, { [TAGS]: { rows: [], empty: NO_TAGS } }, '"Tags" before');
+      await seeded.configure(name, {
+        tags: [
+          ['first', 'one'],
+          ['second', 'two'],
+        ],
+      });
+      const tags = (await bucketPropertiesDirect(ctx, port, name)).tags ?? [];
+      expect(tags.length, 'a direct GetBucketTagging returns two tags').toBe(2);
+      await crumbLink(page, 'Buckets').click(ACTION);
+      await expect(heading(page, H1), `the bucket list's h1 "${H1}"`).toBeVisible();
+      await filterFor(page, name);
+      await expectNames(page, [name], `the rows under the filter ${name}`);
+      await screen(page).nameLink(name).click(ACTION);
+      await expectBucketPage(page, name, OBJECTS);
+      await tab(page, PROPERTIES).click(ACTION);
+      await expectBucketPage(page, name);
+      await expectSections(
+        page,
+        { [TAGS]: { rows: tags.map(([Key, Value]) => ({ Key, Value })) } },
+        '"Tags" after opening the bucket again',
+      );
+    },
+  );
 
   lines.end();
 });

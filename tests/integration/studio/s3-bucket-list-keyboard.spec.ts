@@ -199,7 +199,7 @@ test('studio.s3-bucket-list-keyboard-and-layout', async ({ ctx, page, context })
   const s = screen(page);
 
   await lines.line(
-    "Fresh load with two buckets under the filter, Tab from the document start, past Studio's frame → the stops inside the area come in the order of R9 (the side navigation's header and its link, the crumbs, the help toggle, the (i) control, the notice's close, \"Info\" — issue 480: \"Directory buckets\" and with it the tab bar went — the five actions with the disabled ones as Cloudscape places them, the filter, pagination, preferences, the first radio, the first name link), each with a visible focus indicator",
+    'Fresh load with two buckets under the filter, Tab from the document start, past Studio\'s frame → the stops inside the area come in the order of R9 (the side navigation\'s header and its link, the crumbs, the help toggle, the (i) control, the notice\'s close, "Info" — issue 480: "Directory buckets" and with it the tab bar went — the five actions with the disabled ones as Cloudscape places them, the filter, pagination, preferences, the first radio, the first name link), each with a visible focus indicator',
     async () => {
       await openList(page);
       await expectNames(page, two, 'the two rows');
