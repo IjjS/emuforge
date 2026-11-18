@@ -32,8 +32,9 @@ import { queueNameFromUrl } from './format';
 
 // The TanStack Query hooks of the SQS screens (issue 481, design tasks 1 to 5). Every read is a request of its own
 // on every mount, "Refresh" and "Retry", under a key that holds what it was asked with; a read no longer wanted is
-// aborted, and its late answer, under a key nobody shows any more, changes nothing shown. Every action reads the
-// shown SQS reads again once it has ended, whatever it answered, since each can change a queue's counts.
+// aborted, and its late answer, under a key nobody shows any more, changes nothing shown. Every action that succeeded
+// reads the shown SQS reads again, since each can change a queue's counts; a failed one reads nothing again, so its
+// result stays an item of the area's flash and never becomes a state of the page.
 
 /** The start of every key of SQS's reads. */
 const SQS_KEY = ['aws', 'sqs'] as const;
@@ -351,7 +352,7 @@ function useReadAgain(): () => void {
   }, [client]);
 }
 
-/** `action` at the engine's address, the shown SQS reads read again once it has ended, whatever it answered. */
+/** `action` at the engine's address, the shown SQS reads read again once it has succeeded, and only then. */
 function useAction<Args extends unknown[], Result>(
   endpoint: string | undefined,
   action: (endpoint: string, ...args: Args) => Promise<Result>,
@@ -362,11 +363,9 @@ function useAction<Args extends unknown[], Result>(
       if (endpoint === undefined) {
         noEndpoint();
       }
-      try {
-        return await action(endpoint, ...args);
-      } finally {
-        readAgain();
-      }
+      const result = await action(endpoint, ...args);
+      readAgain();
+      return result;
     },
     [endpoint, action, readAgain],
   );
