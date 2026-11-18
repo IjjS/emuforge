@@ -59,6 +59,12 @@ IMAGE = "aws-emulator"
 DOCKER_ENV = ("PATH", "HOME", "DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG", "XDG_RUNTIME_DIR", "TMPDIR")
 BOUND = 60.0  # seconds the emulator has to write its files and answer health
 POLL = 0.25
+# The machine's Docker short-name fault (issue 478; .pm/archive/critique-snapshots/68-evidence/h2-short-name.md):
+# Docker Desktop's socket can answer "No such image" for the bare name `aws-emulator` for some seconds while
+# `aws-emulator:latest` resolves. So the image is looked up by every form of its name, within IMAGE_BOUND seconds,
+# and run by its id.
+IMAGE_NAMES = (IMAGE, f"{IMAGE}:latest", f"docker.io/library/{IMAGE}:latest")
+IMAGE_BOUND = 30.0
 
 
 # ---------------------------------------------------------------------------------------------- pm-check
@@ -523,6 +529,19 @@ class Real_keys(Case):
         except subprocess.TimeoutExpired:
             self.fail(f"docker {args[0]} did not answer within {timeout} s")
 
+    def image_id(self):
+        """The id of the machine's emulator image, by the first form of its name that resolves within IMAGE_BOUND."""
+        deadline = time.monotonic() + IMAGE_BOUND
+        while True:
+            for name in IMAGE_NAMES:
+                p = self.docker("image", "inspect", "--format", "{{.Id}}", name)
+                if p.returncode == 0 and p.stdout.strip():
+                    return p.stdout.strip()
+            if time.monotonic() >= deadline:
+                self.fail(f"the image {IMAGE} is missing (no form of {', '.join(IMAGE_NAMES)} resolved within "
+                          f"{IMAGE_BOUND:g} s): docker compose -f infra/aws-emulator/docker-compose.yml build")
+            time.sleep(1)
+
     def free_port(self, root):
         while True:
             with socket.socket() as s:
@@ -547,8 +566,7 @@ class Real_keys(Case):
         info = self.docker("info", "--format", "{{.ServerVersion}}")
         if info.returncode != 0:
             self.fail(f"Docker does not answer (docker info exit {info.returncode}): {info.stderr.strip()[-400:]}")
-        if self.docker("image", "inspect", "--format", "{{.Id}}", IMAGE).returncode != 0:
-            self.fail(f"the image {IMAGE} is missing: docker compose -f infra/aws-emulator/docker-compose.yml build")
+        image = self.image_id()
         home = pathlib.Path(os.environ["HOME"])
         self.root = home / ".aws" / "emulator"
         self.root.mkdir(parents=True, exist_ok=True)
@@ -561,7 +579,7 @@ class Real_keys(Case):
 
         started = self.docker("run", "-d", "--name", self.name, "--memory", "2g",
                               "-p", f"127.0.0.1:{self.port}:{self.port}", "-e", f"HOME={home}",
-                              "-v", f"{self.root}:{self.root}", IMAGE, "-p", str(self.port), "-t", "off")
+                              "-v", f"{self.root}:{self.root}", image, "-p", str(self.port), "-t", "off")
         if started.returncode != 0:
             self.fail(f"the emulator would not start (docker run exit {started.returncode}): {started.stderr.strip()[-400:]}")
         self.started = True
