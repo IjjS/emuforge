@@ -1,6 +1,7 @@
 //! The in-flight bound (L3, D11): one semaphore shared by every route, fallback and refusal. A request takes a
 //! permit or is answered `503 Busy` at once; the permit moves into the response body and is released when that
-//! body ends or is dropped, so a streamed relay body counts until its last byte.
+//! body ends or is dropped, so a streamed relay body counts until its last byte. Studio's server has a bound of
+//! its own, with its own semaphore and its own answer.
 
 use std::pin::Pin;
 use std::sync::Arc;
@@ -31,6 +32,16 @@ impl InFlight {
             permits: Arc::new(Semaphore::new(max)),
         }
     }
+
+    /// A permit, or `None` at once when `max` requests are in flight.
+    pub(crate) fn try_acquire(&self) -> Option<OwnedSemaphorePermit> {
+        self.permits.clone().try_acquire_owned().ok()
+    }
+}
+
+/// `response` with `permit` moved into its body, released when the body ends or is dropped.
+pub(crate) fn hold(response: Response, permit: OwnedSemaphorePermit) -> Response {
+    response.map(|body| Body::new(Permitted::new(body, permit)))
 }
 
 /// Outside the `Host` guard and inside the CORS layer. Never waits for a permit.
@@ -39,7 +50,7 @@ pub(crate) async fn limit(
     request: Request,
     next: Next,
 ) -> Response {
-    let Ok(permit) = in_flight.permits.clone().try_acquire_owned() else {
+    let Some(permit) = in_flight.try_acquire() else {
         let (parts, _body) = request.into_parts();
         let busy = refusal(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -51,9 +62,7 @@ pub(crate) async fn limit(
         );
         return engine_refusal(Shape::of(&parts).apply(busy));
     };
-    next.run(request)
-        .await
-        .map(|body| Body::new(Permitted::new(body, permit)))
+    hold(next.run(request).await, permit)
 }
 
 /// A response body that holds an in-flight permit until it ends or is dropped.
