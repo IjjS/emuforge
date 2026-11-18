@@ -7,6 +7,13 @@
   pm-pane close <name> | --issue <issue>
   pm-pane list
 
+reset and close also stop the orphaned processes of the pane's worktree: its processes whose parent is a reaper
+(PID 1), as a test runner's workers left by a kill of the runner. reset sweeps after /clear and before the brief;
+close after the pane is closed, looking again for up to 5 s. Each prints one line per worktree: `stopped <n>
+orphaned processes of <worktree>: <pid> <name>, …`, `no orphaned processes in <worktree>` or `cannot tell …`, and
+logs it. Only processes of the worktree are signalled, by PID after a check that each is still the same process;
+nothing by name, no process group, no container. A pane in the main checkout is not swept.
+
 Roles: plan, worker, rev, crit. Name = i<issue>-<role>[-<unit>], e.g. i12-plan, i12-worker-s1, i12-rev (herdr names must start with a letter).
 A unit name starts with its side: s<n> studio, e<n> engine, t<n> tests, h<n> harness.
 Tab: "#<issue>" in the PM's workspace; created when missing. New agents are panes inside that tab.
@@ -25,6 +32,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _pmlib import (LIMITS, MODEL_IDS, PANES, PANES_HISTORY, PMINFO, ROOT, agent_by_name, cpu_pct, find_key, herdr, load, log,
                     mem_gb, now, panes, save, side_of, tabs)
+from _pmorphans import line, sweep, worktree_paths
 
 
 def registry():
@@ -47,6 +55,25 @@ def registry():
 
 def live(reg):
     return [r for r in reg if not r.get("gone")]
+
+
+def worktree_of(cwd):
+    """(name, path) of the registered worktree whose path is the pane's cwd, or None (the main checkout among them)."""
+    if not isinstance(cwd, str):
+        return None
+    real = os.path.realpath(cwd)
+    return next((w for w in worktree_paths() if w[1] == real), None)
+
+
+def sweep_worktrees(wts, settle_min=0):
+    """Stop the orphaned processes of each worktree; print and log one line per worktree."""
+    if not wts:
+        return
+    result = sweep(wts, settle_min=settle_min)
+    for name, _ in wts:
+        text = line(name, result[name])
+        print(text)
+        log("orphans " + text)
 
 
 def issue_tab(issue, workspace):
@@ -236,6 +263,10 @@ def cmd_reset(a):
             new = s
             break
         time.sleep(1)
+    # the agent has settled after /clear: what its old session left running in the worktree has no parent now
+    wt = worktree_of(entry.get("cwd"))
+    if wt:
+        sweep_worktrees([wt])
     # other pm-pane calls may have changed the registry meanwhile: reload and patch only this entry
     reg = load(PANES, [])
     entry = next((r for r in reg if r["name"] == a.name), entry)
@@ -261,7 +292,14 @@ def cmd_close(a):
         if not r.get("gone"):
             herdr("pane", "close", r["pane_id"], check=False)
         log(f"pane close {r['name']} {r['pane_id']}")
-        print(f"closed {r['name']} {r['pane_id']}")
+        print(f"closed {r['name']} {r['pane_id']}", flush=True)
+    # a closed pane's processes become orphans over a moment, so the sweep keeps looking for at least 2 s
+    wts = []
+    for r in targets:
+        wt = worktree_of(r.get("cwd"))
+        if wt and wt not in wts:
+            wts.append(wt)
+    sweep_worktrees(wts, settle_min=2)
 
 
 def cmd_list(a):

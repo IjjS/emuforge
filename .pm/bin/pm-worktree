@@ -4,6 +4,7 @@
   pm-worktree new <issue>
   pm-worktree new <issue> <unit> [--type feat|refactor|fix] [--branch NAME] [--base BRANCH]
   pm-worktree rm <path|name> [--keep-branch | --delete-branch]
+  pm-worktree orphans [<name>] [--stop]
   pm-worktree list
 
 new <issue> (no unit) makes the issue branch: the branch feat/<issue> from local main and its worktree
@@ -20,9 +21,20 @@ has an issue branch, so is a --branch that is not <feat|refactor|fix>/<issue>-<n
 has a branch whose target is the issue branch. Every worktree gets output/{captures,logs} and three ports in output/ports.json:
 studio (8100+), engine (8300+) and emulator (9300+), so parallel units never share a server or an emulator.
 When studio/package.json exists, `bun install` runs there (log in output/logs/install.log).
-rm removes the worktree, frees its ports and deletes the branch only when it is merged into local main. Before
-that it runs `pm-emulator-dir rm --worktree` for the worktree, merged or not, and prints its line: the folder the
-worktree's emulator port left under ~/.aws/emulator. A refusal there does not stop the removal.
+rm removes the worktree, frees its ports and deletes the branch only when it is merged into local main. It first
+stops the worktree's orphaned processes, as `orphans <name> --stop` does, and prints its line; then it runs
+`pm-emulator-dir rm --worktree` for the worktree, merged or not, and prints its line: the folder the worktree's
+emulator port left under ~/.aws/emulator. Neither a refusal there nor a sweep that cannot tell or left
+a process stops the removal.
+orphans lists the orphaned processes of one registered worktree, or of every one in registry order: processes of
+the current user whose working directory is in the worktree and whose parent is a reaper (PID 1), with what runs
+below them in the worktree; not the live pm-check recorded in its output/checks/running.json, nor its step group.
+One line per process `<worktree> <pid> <age> <cpu>% <name> <cwd>`, or `no orphaned processes in <worktree>`; exit
+0. With --stop it sweeps: SIGTERM to each by PID, SIGKILL 5 s later to what is left, each only after a check that
+it is still the same process; nothing by name, no process group, no container. One line per worktree, `stopped
+<n> orphaned processes of <worktree>: <pid> <name>, …` (`; not stopped: …` for what outlived SIGKILL); exit 1 when
+a process was not stopped. A process table that cannot be read prints `cannot tell the orphaned processes of
+<worktree>: <reason>` and exits 1. A name that is not a registered worktree exits 2.
 """
 import argparse
 import json
@@ -33,6 +45,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _pmlib import BIN, PORTS, ROOT, WORKTREES, load, log, now, save
+from _pmorphans import CannotTell, line, scan, sweep, table, worktree_paths
 from _pmscope import Unreadable, run_git
 
 BRANCH_TYPES = ("feat", "refactor", "fix")
@@ -195,6 +208,11 @@ def cmd_rm(a):
     wt = next((w for w in wts if w["name"] == key), None)
     if not wt:
         sys.exit(f"{key} not in registry; remove it by hand with git worktree remove")
+    swept = [w for w in worktree_paths() if w[0] == wt["name"]]
+    if swept:
+        text = line(wt["name"], sweep(swept)[wt["name"]])
+        print(text, flush=True)
+        log("orphans " + text)
     remove_emulator_dir(wt)
     run(["git", "-C", str(ROOT), "worktree", "remove", "--force", wt["path"]])
     run(["git", "-C", str(ROOT), "worktree", "prune"])
@@ -211,6 +229,38 @@ def cmd_rm(a):
     print(f"removed {wt['path']}")
 
 
+def cmd_orphans(a):
+    wts = worktree_paths()
+    if a.name is not None:
+        wts = [w for w in wts if w[0] == a.name]
+        if not wts:
+            print(f"pm-worktree: no worktree {a.name}", file=sys.stderr)
+            sys.exit(2)
+    code = 0
+    if a.stop:
+        result = sweep(wts)
+        for name, _ in wts:
+            r = result[name]
+            text = line(name, r)
+            print(text)
+            log("orphans " + text)
+            if isinstance(r, CannotTell) or r[1] or getattr(r, "reason", None):
+                code = 1
+        sys.exit(code)
+    try:
+        found = scan(sorted({path for _, path in wts}), tab=table()) if wts else {}
+    except CannotTell as e:
+        for name, _ in wts:
+            print(line(name, e))
+        sys.exit(1)
+    for name, path in wts:
+        procs = found[path]
+        for p in procs:
+            print(f"{name} {p.pid} {p.age} {p.cpu:.1f}% {p.name} {p.cwd}")
+        if not procs:
+            print(f"no orphaned processes in {name}")
+
+
 def cmd_list(a):
     for w in load(WORKTREES, []):
         print(f"  {w['name']:24} {w['branch']:24} ports={w.get('ports')} {'ok' if os.path.isdir(w['path']) else 'MISSING'}")
@@ -224,6 +274,9 @@ n.add_argument("--base", help="default: the issue branch when it is registered, 
 n.set_defaults(f=cmd_new)
 r = sp.add_parser("rm"); r.add_argument("target"); r.add_argument("--keep-branch", action="store_true")
 r.add_argument("--delete-branch", action="store_true", help="delete the local branch even when it is not merged"); r.set_defaults(f=cmd_rm)
+o = sp.add_parser("orphans"); o.add_argument("name", nargs="?")
+o.add_argument("--stop", action="store_true", help="stop them (SIGTERM, then SIGKILL), each by PID")
+o.set_defaults(f=cmd_orphans)
 l = sp.add_parser("list"); l.set_defaults(f=cmd_list)
 a = p.parse_args()
 a.f(a)
