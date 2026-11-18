@@ -9,6 +9,11 @@ Issue-Commit: 9743b197231a04ff6bb058cf26ddd38b9f7bc4fc
 
 # Build a bucket's "Management" tab: lifecycle rules, replication rules, inventory configurations
 
+> Narrowed by issue 480 (`.pm/issue-480/decisions.md`, PM, 2026-11-18): the lifecycle rules of this issue are task
+> 10 of S3's task list and are folded into issue 447; replication rules and inventory configurations are no longer a
+> task, and the tab "Management" left the bucket's page in issue 480. Nothing of this file is left to build; the
+> `pm` closes it out.
+
 > Identified against commit `9743b197231a04ff6bb058cf26ddd38b9f7bc4fc`. The code may have drifted since; trace the issue to the current code before fixing.
 
 ## Description
