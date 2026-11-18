@@ -13,13 +13,7 @@ import type { AreaConnection } from '../../../components/emulator-line';
 import { creationDateText } from '../../../components/format-date';
 import { useFollow } from '../../../components/use-follow';
 import { ValueText, type ValueKind } from '../../../components/value-text';
-import {
-  NO_SUCH_BUCKET,
-  type Bucket,
-  type EventNotification,
-  type NoSuchBucket,
-  type Tag,
-} from '../api';
+import { NO_SUCH_BUCKET, type Bucket, type EventNotification, type NoSuchBucket, type Tag } from '../api';
 import { createEventNotificationPath, editPropertyPath, encryptionTypeLabel, type EditableProperty } from '../format';
 import type { BucketRead } from '../queries';
 import { regionText } from '../regions';
@@ -174,15 +168,7 @@ interface TableSectionProps<T, Row> {
 }
 
 /** A section that is a table, read by its own operation; its states in the table's body. */
-function TableSection<T, Row>({
-  title,
-  action,
-  read,
-  connection,
-  rows,
-  columns,
-  empty,
-}: TableSectionProps<T, Row>) {
+function TableSection<T, Row>({ title, action, read, connection, rows, columns, empty }: TableSectionProps<T, Row>) {
   const value = answered(read);
   // A name's column keeps room for a name of 24 characters on one line (R6).
   const columnDefinitions: TableProps.ColumnDefinition<Row>[] = columns.map(({ id, header, kind, cell }) => ({

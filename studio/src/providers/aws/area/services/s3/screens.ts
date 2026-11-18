@@ -13,9 +13,7 @@ const NAVIGATION: ScreenNavigation = {
     {
       type: 'section',
       text: 'Buckets',
-      items: [
-        { type: 'link', text: 'General purpose buckets', href: BUCKETS_PATH },
-      ],
+      items: [{ type: 'link', text: 'General purpose buckets', href: BUCKETS_PATH }],
     },
   ],
   activeHref: BUCKETS_PATH,

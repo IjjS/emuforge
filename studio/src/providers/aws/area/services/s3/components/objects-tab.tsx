@@ -138,9 +138,9 @@ export function ObjectsTab({ name, prefix, connection, announce }: ObjectsTabPro
       clearTimeout(timer);
     };
   }, [copyResult]);
-  const [only] = selected.length === 1 ? selected : [];
-  const handleCopyUri = useCallback(() => {
-    if (only === undefined) {
+  const onlyId = selected.length === 1 ? selected[0]?.id : undefined;
+  const handleCopyUri = () => {
+    if (onlyId === undefined) {
       return;
     }
     const report = (ok: boolean) => {
@@ -153,7 +153,7 @@ export function ObjectsTab({ name, prefix, connection, announce }: ObjectsTabPro
       report(false);
       return;
     }
-    clipboard.writeText(s3Uri(name, only.id)).then(
+    clipboard.writeText(s3Uri(name, onlyId)).then(
       () => {
         report(true);
       },
@@ -161,9 +161,8 @@ export function ObjectsTab({ name, prefix, connection, announce }: ObjectsTabPro
         report(false);
       },
     );
-  }, [only, name, announce]);
-  const copyDisabledReason =
-    selected.length === 0 ? SELECT_ONE : selected.length > 1 ? SELECT_ONLY_ONE : undefined;
+  };
+  const copyDisabledReason = selected.length === 0 ? SELECT_ONE : selected.length > 1 ? SELECT_ONLY_ONE : undefined;
 
   const handleRefresh = useCallback(() => {
     setStarter('refresh');

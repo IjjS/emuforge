@@ -24,12 +24,7 @@ import { useFollow } from '../../../components/use-follow';
 import { ValueText, type ValueKind } from '../../../components/value-text';
 import type { RequestFailure } from '../../../../../../lib/aws/request';
 import { LIST_BUCKETS, type Bucket } from '../api';
-import {
-  bucketPath,
-  CREATE_BUCKET_PATH,
-  deleteBucketPath,
-  emptyBucketPath,
-} from '../format';
+import { bucketPath, CREATE_BUCKET_PATH, deleteBucketPath, emptyBucketPath } from '../format';
 import { NAME_COLUMN_MIN_WIDTH } from '../components/name-column';
 import { Quoted } from '../components/quoted';
 import { useBucketListing, type BucketCount, type BucketListing } from '../queries';

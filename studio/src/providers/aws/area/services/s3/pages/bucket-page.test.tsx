@@ -529,13 +529,16 @@ describe('a bucket’s page, loaded', () => {
     ['/aws/s3/buckets/alpha', 'Objects'],
     ['/aws/s3/buckets/alpha/objects', 'Objects'],
     ['/aws/s3/buckets/alpha/properties', 'Properties'],
-  ])('at %s, "%s" is selected, the page has exactly the two tabs, and the address stays as opened', async (path, tab) => {
-    const { router } = await openLoaded(path);
+  ])(
+    'at %s, "%s" is selected, the page has exactly the two tabs, and the address stays as opened',
+    async (path, tab) => {
+      const { router } = await openLoaded(path);
 
-    expect(tabNames()).toEqual(['Objects', 'Properties']);
-    expect(screen.getByRole('tab', { name: tab })).toHaveAttribute('aria-selected', 'true');
-    expect(router.state.location.pathname).toBe(path);
-  });
+      expect(tabNames()).toEqual(['Objects', 'Properties']);
+      expect(screen.getByRole('tab', { name: tab })).toHaveAttribute('aria-selected', 'true');
+      expect(router.state.location.pathname).toBe(path);
+    },
+  );
 
   it('a loaded bucket of a 63-character name: the h1 shows the whole name as a name, and the last crumb holds the whole name (issue 467, R6)', async () => {
     const long = 'a'.repeat(63);
@@ -1301,8 +1304,12 @@ async function openObjects(path = '/aws/s3/buckets/alpha', objects: FakeObject[]
   return opened;
 }
 
+/** The empty slot's text, a space after each block (title, sentence, line) as a reader hears them apart. */
 function objectsEmptySlot(): string {
-  return norm(objectsTable().findEmptySlot()?.getElement().textContent ?? '');
+  const slot = objectsTable().findEmptySlot()?.getElement().cloneNode(true);
+  if (!(slot instanceof HTMLElement)) return '';
+  for (const block of slot.querySelectorAll('div, p, strong, b')) block.append(' ');
+  return norm(slot.textContent);
 }
 
 function objectsAction(name: string): HTMLElement {
@@ -1321,7 +1328,9 @@ function selectRow(name: string) {
 function selectedNames(): string[] {
   return within(objectsTable().getElement())
     .queryAllByRole('checkbox')
-    .filter((box) => (box as HTMLInputElement).checked && /^Select (?!every)/.test(box.getAttribute('aria-label') ?? ''))
+    .filter(
+      (box) => (box as HTMLInputElement).checked && /^Select (?!every)/.test(box.getAttribute('aria-label') ?? ''),
+    )
     .map((box) => (box.getAttribute('aria-label') ?? '').replace(/^Select /, ''));
 }
 
@@ -1425,7 +1434,7 @@ describe('the tab "Objects", its states', () => {
     await waitFor(() => {
       expect(objectsTable().findLoadingText()?.getElement()).toHaveTextContent('Loading objects');
     });
-    answer.release(objectListing(APP_OBJECTS, new URL('http://x/alpha?list-type=2&delimiter=%2F')) );
+    answer.release(objectListing(APP_OBJECTS, new URL('http://x/alpha?list-type=2&delimiter=%2F')));
     await expectKeys(['logs/', '한글/', 'a.txt', 'q?#%.txt']);
   });
 
@@ -1545,17 +1554,17 @@ describe('the tab "Objects", its filter, "Refresh" and pages', () => {
   it('next and previous pages follow the tokens; the counter says more remain while truncated', async () => {
     engine.objectPageSize = 2;
     await openObjects();
-    await expectKeys(['logs/', '한글/']);
+    await expectKeys(['logs/', 'a.txt']);
     expect(objectsTable().findHeaderSlot()?.getElement().textContent).toContain('(2+)');
 
     fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
-    await expectKeys(['a.txt', 'q?#%.txt']);
+    await expectKeys(['한글/', 'q?#%.txt']);
     expect(engine.objectLists.at(-1)?.searchParams.get('continuation-token')).toBe('2');
     expect(objectsTable().findHeaderSlot()?.getElement().textContent).toContain('(2)');
     expect(objectsTable().findHeaderSlot()?.getElement().textContent).not.toContain('+');
 
     fireEvent.click(screen.getByRole('button', { name: 'Previous page' }));
-    await expectKeys(['logs/', '한글/']);
+    await expectKeys(['logs/', 'a.txt']);
     expect(engine.objectLists.at(-1)?.searchParams.has('continuation-token')).toBe(false);
   });
 });
@@ -1611,13 +1620,13 @@ describe('the tab "Objects", its selection and "Copy S3 URI"', () => {
   it('the selection is cleared by a page change', async () => {
     engine.objectPageSize = 2;
     await openObjects();
-    await expectKeys(['logs/', '한글/']);
+    await expectKeys(['logs/', 'a.txt']);
     selectRow('logs/');
 
     fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
-    await expectKeys(['a.txt', 'q?#%.txt']);
+    await expectKeys(['한글/', 'q?#%.txt']);
     fireEvent.click(screen.getByRole('button', { name: 'Previous page' }));
-    await expectKeys(['logs/', '한글/']);
+    await expectKeys(['logs/', 'a.txt']);
 
     expect(selectedNames()).toEqual([]);
   });
@@ -1656,7 +1665,7 @@ describe('the tab "Objects", its selection and "Copy S3 URI"', () => {
     fireEvent.click(within(objectsTable().getElement()).getByRole('link', { name: 'logs/' }));
     await expectKeys(['2026/']);
     act(() => {
-      router.navigate(-1) as unknown as void;
+      void router.navigate(-1);
     });
     await expectKeys(['logs/', '한글/', 'a.txt', 'q?#%.txt']);
 

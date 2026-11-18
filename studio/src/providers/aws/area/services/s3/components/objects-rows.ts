@@ -37,13 +37,15 @@ export type Row = FolderRow | ObjectRow;
  * object a folder is made of (its key the prefix itself) is the folder shown, not a row of it.
  */
 export function objectRows(page: ObjectPage, prefix: string): Row[] {
-  const folders: Row[] = page.folders.map(({ prefix: id, name }) => ({ kind: 'folder', id, name }));
+  // A key is shown after the folder, not after what was asked: a filter asks the folder plus its text.
+  const shown = (id: string) => id.slice(prefix.length);
+  const folders: Row[] = page.folders.map(({ prefix: id }) => ({ kind: 'folder', id, name: shown(id) }));
   const objects: Row[] = page.objects
     .filter(({ key }) => prefix === '' || key !== prefix)
-    .map(({ key, name, size, lastModified, storageClass }) => ({
+    .map(({ key, size, lastModified, storageClass }) => ({
       kind: 'object',
       id: key,
-      name,
+      name: shown(key),
       type: keyType(key),
       lastModified: creationDateText(lastModified),
       size: size === undefined ? NO_VALUE : formatSize(size),
@@ -68,7 +70,9 @@ export function listingFailure(failure: RequestFailure, connection: AreaConnecti
     return {
       type: 'info',
       first: { before: 'Not implemented by the emulator: ', code: failure.operation },
-      detail: { before: 'The emulator answered 501 Not Implemented, so Studio cannot list the objects of this bucket.' },
+      detail: {
+        before: 'The emulator answered 501 Not Implemented, so Studio cannot list the objects of this bucket.',
+      },
       recovery: false,
     };
   }

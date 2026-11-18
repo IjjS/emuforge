@@ -272,7 +272,11 @@ export function AreaLayout({
             onToolsChange={handleToolsChange}
             ariaLabels={helpOpen ? APP_LAYOUT_LABELS_HELP_OPEN : APP_LAYOUT_LABELS}
             breadcrumbs={
-              <BreadcrumbGroup items={breadcrumbs(page, pathname, query)} ariaLabel="Breadcrumbs" onFollow={handleFollow} />
+              <BreadcrumbGroup
+                items={breadcrumbs(page, pathname, query)}
+                ariaLabel="Breadcrumbs"
+                onFollow={handleFollow}
+              />
             }
             navigation={<SideNavigation {...navigation(page)} onFollow={handleFollow} />}
             content={
