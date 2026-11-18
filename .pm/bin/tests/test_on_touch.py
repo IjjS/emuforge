@@ -16,11 +16,11 @@ refusal of `pm-merge` that names the left-out files and says `run pm-check again
 made-up folder of scripts and test files for its last three cases. `Run` copies this checkout's runner into a
 folder of its own with made-up test files, so nothing of the real tests runs. `Scope`, `Check` and `Merge` build a
 fixture checkout per case with `_fixture.make` under <checkout>/output/tests/on-touch/<case>/ that holds copies of
-the scripts they drive, empty files `test_capture.py` and `test_hang.py` (two of the on-touch files) and, for
-`Check`, a stand-in `.pm/bin/tests/run` that writes its arguments to <checkout>/output/runner-args at each start
-and exits with the code of <checkout>/output/runner-exit for that start (0 when there is none). The worktrees of
-the issue-branch cases are the fixture's siblings, removed before the case builds its fixture again; `pm-merge`
-runs with a made-up HOME inside the fixture.
+the scripts they drive, empty files `test_emulator_telemetry.py` and `test_orphans.py` (two of the on-touch
+files) and, for `Check`, a stand-in `.pm/bin/tests/run` that writes its arguments to <checkout>/output/runner-args
+at each start and exits with the code of <checkout>/output/runner-exit for that start (0 when there is none). The
+worktrees of the issue-branch cases are the fixture's siblings, removed before the case builds its fixture again;
+`pm-merge` runs with a made-up HOME inside the fixture.
 
 On a checkout without the change every case fails on its own, for the reason under its heading: `_pmscope` has no
 `ON_TOUCH`, `EVERY_FILE` or `harness_tests`; the scope object has no `harness_tests`; the runner ignores its
@@ -39,9 +39,9 @@ from _fixture import BIN, CHECKOUT, HERE, clean_env, git, make, run
 
 import _pmscope
 
-ON_TOUCH_FILES = ["test_capture.py", "test_check_issue.py", "test_emulator_dir.py", "test_emulator_telemetry.py",
-                  "test_hang.py", "test_issue_branch.py", "test_orphans.py"]
-HELD = ["test_capture.py", "test_hang.py"]  # the two of the on-touch files a fixture checkout holds
+ON_TOUCH_FILES = ["test_check_issue.py", "test_emulator_dir.py", "test_emulator_telemetry.py", "test_issue_branch.py",
+                  "test_orphans.py"]
+HELD = ["test_emulator_telemetry.py", "test_orphans.py"]  # the two of the on-touch files a fixture checkout holds
 EVERY_FILE = [".pm/bin/_pmscope.py", ".pm/bin/tests/run"]
 B, T = ".pm/bin/", ".pm/bin/tests/"
 GROUP = "on-touch"
@@ -271,10 +271,10 @@ class Decide(unittest.TestCase):
         return _pmscope.harness_tests(list(paths))
 
     def test_one_test_file_of_its_own(self):
-        a = self.ht(T + "test_hang.py")
+        a = self.ht(T + "test_emulator_telemetry.py")
         self.assertIs(a["all"], False)
-        self.assertEqual(list(a["called"]), ["test_hang.py"])
-        self.assertEqual(a["left_out"], [n for n in ON_TOUCH_FILES if n != "test_hang.py"])
+        self.assertEqual(list(a["called"]), ["test_emulator_telemetry.py"])
+        self.assertEqual(a["left_out"], [n for n in ON_TOUCH_FILES if n != "test_emulator_telemetry.py"])
 
     def test_a_guide_calls_for_none(self):
         a = self.ht(".agents/skills/pm/SKILL.md")
@@ -293,19 +293,19 @@ class Decide(unittest.TestCase):
 
     def test_pmlib_is_asked_of_every_entry(self):
         self.assertEqual(set(self.ht(B + "_pmlib.py")["called"]),
-                         {"test_capture.py", "test_check_issue.py", "test_emulator_dir.py", "test_issue_branch.py",
-                          "test_orphans.py"})
+                         {"test_check_issue.py", "test_emulator_dir.py", "test_issue_branch.py", "test_orphans.py"})
 
     def test_folders_and_the_union_over_paths(self):
-        a = self.ht(T + "fixtures/structure/pages/a/index.html", T + "fixtures/hang/pm-structure")
-        self.assertEqual(set(a["called"]), {"test_capture.py", "test_hang.py"})
+        a = self.ht(T + "fixtures/emulator-telemetry/a/compose.yml", B + "_pmwake.py")
+        self.assertEqual(set(a["called"]), {"test_emulator_telemetry.py", "test_orphans.py"})
 
     def test_called_line_counts_the_paths(self):
-        two = self.ht(T + "test_hang.py", T + "_hang.py")["called"]["test_hang.py"]
+        two = self.ht(T + "test_emulator_telemetry.py",
+                      T + "_emulator_telemetry.py")["called"]["test_emulator_telemetry.py"]
         self.assertEqual(len(two), 1, two)
-        self.assertTrue(two[0].endswith(f"(2 paths, e.g. {T}_hang.py)"), two)
-        one = self.ht(T + "test_hang.py")["called"]["test_hang.py"]
-        self.assertTrue(one[0].endswith(f"(1 path, e.g. {T}test_hang.py)"), one)
+        self.assertTrue(two[0].endswith(f"(2 paths, e.g. {T}_emulator_telemetry.py)"), two)
+        one = self.ht(T + "test_emulator_telemetry.py")["called"]["test_emulator_telemetry.py"]
+        self.assertTrue(one[0].endswith(f"(1 path, e.g. {T}test_emulator_telemetry.py)"), one)
 
     def test_compose_files(self):
         for path in ["infra/aws-emulator/docker-compose.yml", "docker-compose.yml", "a/b/compose.dev.yaml"]:
@@ -315,11 +315,11 @@ class Decide(unittest.TestCase):
                          self.ht(T + "fixtures/compose-side-by-side/a/docker-compose.yml")["called"])
 
     def test_an_exact_source_matches_only_itself(self):
-        for path in [B + "pm-structure-old", "studio/package.json.bak", B + "x/pm-structure", T + "test_capture.pyc"]:
+        for path in [B + "pm-watchd-old", "studio/package.json.bak", B + "x/pm-watchd", T + "test_orphans.pyc"]:
             with self.subTest(path=path):
                 a = self.ht(path)
                 self.assertIs(a["all"], False)
-                self.assertNotIn("test_capture.py", a["called"])
+                self.assertNotIn("test_orphans.py", a["called"])
 
     def assertEvery(self, a, path):
         self.assertIs(a["all"], True)
@@ -328,17 +328,17 @@ class Decide(unittest.TestCase):
         self.assertEqual(a["left_out"], [])
 
     def test_the_map_runs_every_file(self):
-        for paths in ([B + "_pmscope.py"], [B + "_pmscope.py", T + "test_hang.py", GUIDE]):
+        for paths in ([B + "_pmscope.py"], [B + "_pmscope.py", T + "test_emulator_telemetry.py", GUIDE]):
             with self.subTest(paths=paths):
                 self.assertEvery(self.ht(*paths), B + "_pmscope.py")
 
     def test_the_runner_runs_every_file(self):
-        for paths in ([T + "run"], [T + "run", T + "test_hang.py"]):
+        for paths in ([T + "run"], [T + "run", T + "test_emulator_telemetry.py"]):
             with self.subTest(paths=paths):
                 self.assertEvery(self.ht(*paths), T + "run")
 
     def test_a_path_no_rule_knows_runs_every_file(self):
-        self.assertEvery(self.ht("LICENSE", T + "test_hang.py"), "LICENSE")
+        self.assertEvery(self.ht("LICENSE", T + "test_emulator_telemetry.py"), "LICENSE")
 
 
 # ---------------------------------------------------------------------------------------------------- fixtures
@@ -379,11 +379,11 @@ def branch(co, paths, name="feat/x"):
 
 
 def issue_branch(co):
-    """Issue 9 of the fixture: feat/9, in a worktree of its own, holding another unit's change of pm-structure, and
+    """Issue 9 of the fixture: feat/9, in a worktree of its own, holding another unit's change of pm-watchd, and
     its unit feat/9-h1 cut from it in a second worktree with one commit of `.agents/a.md`. Returns both."""
     iw, uw = co.parent / f"{co.name}-9", co.parent / f"{co.name}-9-h1"
     git(co, "worktree", "add", "-q", "-b", "feat/9", str(iw), "main")
-    commit(iw, [B + "pm-structure"], "another unit")
+    commit(iw, [B + "pm-watchd"], "another unit")
     git(co, "worktree", "add", "-q", "-b", "feat/9-h1", str(uw), "feat/9")
     commit(uw, [GUIDE], "h1")
     return iw, uw
@@ -399,7 +399,8 @@ SCOPE_SCRIPTS = ("pm-scope",)
 
 
 class Scope(unittest.TestCase):
-    """Given a fixture checkout F with pm-scope and _pmscope.py, and empty test_capture.py and test_hang.py."""
+    """Given a fixture checkout F with pm-scope and _pmscope.py, and empty test_emulator_telemetry.py and
+    test_orphans.py."""
 
     def setUp(self):
         self.co = fixture(name_of(self), SCOPE_SCRIPTS)
@@ -436,24 +437,24 @@ class Scope(unittest.TestCase):
         branch(self.co, [GUIDE])
         lines = self.text()
         mine = self.line(lines, "  harness tests")
-        self.assertEqual(mine, "  harness tests left out: test_capture.py, test_hang.py")
+        self.assertEqual(mine, "  harness tests left out: test_emulator_telemetry.py, test_orphans.py")
         module = [i for i, ln in enumerate(lines) if ln.startswith("  harness ") and not ln.startswith("  harness tests")]
         self.assertTrue(module, "\n".join(lines))
         self.assertGreater(lines.index(mine), module[0], "\n".join(lines))
 
     def test_a_called_for_file_has_its_line(self):
-        branch(self.co, [B + "pm-structure"])
+        branch(self.co, [B + "pm-watchd"])
         lines = self.text()
         mine = self.line(lines, "  harness tests")
-        self.assertEqual(mine, "  harness tests left out: test_hang.py")
+        self.assertEqual(mine, "  harness tests left out: test_emulator_telemetry.py")
         after = lines[lines.index(mine) + 1:]
-        self.assertTrue(any("test_capture.py" in ln and B + "pm-structure" in ln for ln in after), "\n".join(lines))
+        self.assertTrue(any("test_orphans.py" in ln and B + "pm-watchd" in ln for ln in after), "\n".join(lines))
         ht = self.ht()
-        self.assertEqual(list(ht["called"]), ["test_capture.py"])
-        self.assertEqual(ht["left_out"], ["test_hang.py"])
+        self.assertEqual(list(ht["called"]), ["test_orphans.py"])
+        self.assertEqual(ht["left_out"], ["test_emulator_telemetry.py"])
 
     def test_both_called_for_leaves_out_none(self):
-        branch(self.co, [B + "pm-structure", T + "_hang.py"])
+        branch(self.co, [B + "pm-watchd", T + "_emulator_telemetry.py"])
         self.assertEqual(self.line(self.text(), "  harness tests"), "  harness tests left out: none")
 
     def test_the_map_changed_is_every_file(self):
@@ -493,21 +494,21 @@ class Scope(unittest.TestCase):
         self.assertIs(sc["harness_tests"]["all"], True)
         self.assertEqual(sc["harness_tests"]["why"], sc["reason"])
 
-    # Given F as a unit feat/9-h1 of an issue branch feat/9 that holds another unit's change of pm-structure
+    # Given F as a unit feat/9-h1 of an issue branch feat/9 that holds another unit's change of pm-watchd
 
     def test_unit_is_held_to_its_own_paths(self):
         _, uw = issue_branch(self.co)
         sc = self.json(uw)
         self.assertEqual((sc["kind"], sc["target"]), ("unit", "feat/9"), sc)
         self.assertIn("harness_tests", sc, sc)
-        self.assertIn("test_capture.py", sc["harness_tests"]["left_out"])
+        self.assertIn("test_orphans.py", sc["harness_tests"]["left_out"])
 
     def test_issue_branch_calls_for_what_a_unit_did(self):
         iw, _ = issue_branch(self.co)
         sc = self.json(iw)
         self.assertEqual(sc["target"], "main", sc)
         self.assertIn("harness_tests", sc, sc)
-        self.assertIn("test_capture.py", sc["harness_tests"]["called"])
+        self.assertIn("test_orphans.py", sc["harness_tests"]["called"])
 
 
 class ScopeNoOnTouchFile(unittest.TestCase):
@@ -686,11 +687,12 @@ exit "${{code:-0}}"
 """
 KNOWS = "it takes --leave-out <test file> ..."
 OLD = "it takes no argument, as the runner of a checkout cut before issue 328"
-ARGS = "--leave-out test_capture.py test_hang.py"
+ARGS = "--leave-out test_emulator_telemetry.py test_orphans.py"
 
 
 class Check(unittest.TestCase):
-    """Given F with pm-check and the helpers, empty test_capture.py and test_hang.py, and a stand-in runner."""
+    """Given F with pm-check and the helpers, empty test_emulator_telemetry.py and test_orphans.py, and a stand-in
+    runner."""
 
     def fixture(self, runner=None, row=None):
         case = name_of(self) + (f"-{row}" if row else "")
@@ -745,16 +747,16 @@ class Check(unittest.TestCase):
         self.assertEqual(p.returncode, 0, out(p))
         self.assertIs(self.record()["passed"], True)
 
-    def test_pm_structure_leaves_out_test_hang(self):
+    def test_pm_watchd_leaves_out_test_emulator_telemetry(self):
         self.fixture()
-        branch(self.co, [B + "pm-structure"])
+        branch(self.co, [B + "pm-watchd"])
         p = self.check()
-        self.assertEqual(self.args(), ["--leave-out test_hang.py"], out(p))
-        self.assertEqual(self.left_out(), ["test_hang.py"])
+        self.assertEqual(self.args(), ["--leave-out test_emulator_telemetry.py"], out(p))
+        self.assertEqual(self.left_out(), ["test_emulator_telemetry.py"])
 
     def test_both_called_for_gives_no_argument(self):
         self.fixture()
-        branch(self.co, [B + "pm-structure", T + "_hang.py"])
+        branch(self.co, [B + "pm-watchd", T + "_emulator_telemetry.py"])
         p = self.check()
         self.assertEqual(self.args(), [""], out(p))
         self.assertEqual(self.left_out(), [])
@@ -790,7 +792,7 @@ class Check(unittest.TestCase):
         p = self.check()
         lines = p.stdout.splitlines()
         first = next((i for i, ln in enumerate(lines) if STEP_LINE.match(ln)), len(lines))
-        self.assertIn("  harness tests left out: test_capture.py, test_hang.py", lines[:first], out(p))
+        self.assertIn("  harness tests left out: test_emulator_telemetry.py, test_orphans.py", lines[:first], out(p))
 
     def test_the_retry_gets_the_same_arguments(self):
         self.fixture()
@@ -867,7 +869,7 @@ class Check(unittest.TestCase):
         self.assertEqual(self.left_out(), [])
         self.assertEqual(self.step()["status"], "passed")
 
-    # Given F as a unit feat/9-h1 of an issue branch feat/9 that holds another unit's change of pm-structure
+    # Given F as a unit feat/9-h1 of an issue branch feat/9 that holds another unit's change of pm-watchd
 
     def test_a_unit_is_held_to_its_own_paths(self):
         self.fixture()
@@ -950,34 +952,34 @@ class Merge(unittest.TestCase):
         self.assertTrue(found, out(p))
         return found[0]
 
-    # Given a fixture checkout with a reviewed unit whose branch changes .pm/bin/pm-structure
+    # Given a fixture checkout with a reviewed unit whose branch changes .pm/bin/pm-watchd
 
     def test_a_file_not_called_for_merges_guard(self):
-        self.record(self.unit([B + "pm-structure"]), ["test_hang.py"])
+        self.record(self.unit([B + "pm-watchd"]), ["test_emulator_telemetry.py"])
         p = self.merge(7, "h1")
         self.assertEqual(p.returncode, 0, out(p))
         self.assertEqual(git(self.co, "log", "-1", "--format=%s", "main"), "merge: #7 h1 (feat/7-h1)")
 
     def test_a_called_for_file_left_out_is_refused(self):
-        self.record(self.unit([B + "pm-structure"]), HELD)
-        line = self.assertRefused(self.merge(7, "h1", "--dry-run"), "test_capture.py")
-        self.assertNotIn("test_hang.py", line)
+        self.record(self.unit([B + "pm-watchd"]), HELD)
+        line = self.assertRefused(self.merge(7, "h1", "--dry-run"), "test_orphans.py")
+        self.assertNotIn("test_emulator_telemetry.py", line)
 
     def test_none_left_out_guard(self):
-        self.record(self.unit([B + "pm-structure"]), [])
+        self.record(self.unit([B + "pm-watchd"]), [])
         self.assertOk(self.merge(7, "h1", "--dry-run"))
 
     def test_a_record_without_the_key_guard(self):
-        self.record(self.unit([B + "pm-structure"]))
+        self.record(self.unit([B + "pm-watchd"]))
         self.assertOk(self.merge(7, "h1", "--dry-run"))
 
     def test_a_flaky_step_is_asked_too(self):
-        self.record(self.unit([B + "pm-structure"]), ["test_capture.py"], status="flaky")
-        self.assertRefused(self.merge(7, "h1", "--dry-run"), "test_capture.py")
+        self.record(self.unit([B + "pm-watchd"]), ["test_orphans.py"], status="flaky")
+        self.assertRefused(self.merge(7, "h1", "--dry-run"), "test_orphans.py")
 
     def test_left_out_that_cannot_be_read(self):
-        w = self.unit([B + "pm-structure"])
-        for value in ("test_hang.py", [1], {"a": 1}):
+        w = self.unit([B + "pm-watchd"])
+        for value in ("test_emulator_telemetry.py", [1], {"a": 1}):
             with self.subTest(left_out=value):
                 self.record(w, value)
                 self.assertRefused(self.merge(7, "h1", "--dry-run"), "left_out cannot be read")
@@ -985,10 +987,10 @@ class Merge(unittest.TestCase):
     # Given the same with a branch that changes .pm/bin/_pmscope.py
 
     def test_the_map_changed_calls_for_every_file(self):
-        self.record(self.unit([B + "_pmscope.py"]), ["test_hang.py"])
-        self.assertRefused(self.merge(7, "h1", "--dry-run"), "test_hang.py")
+        self.record(self.unit([B + "_pmscope.py"]), ["test_emulator_telemetry.py"])
+        self.assertRefused(self.merge(7, "h1", "--dry-run"), "test_emulator_telemetry.py")
 
-    # Given a unit feat/9-h1 of an issue branch feat/9 that holds another unit's change of pm-structure
+    # Given a unit feat/9-h1 of an issue branch feat/9 that holds another unit's change of pm-watchd
 
     def test_a_unit_into_its_issue_branch_is_held_to_its_paths_guard(self):
         _, uw = self.issue()
@@ -1002,10 +1004,10 @@ class Merge(unittest.TestCase):
         return self.merge(9, "--dry-run")
 
     def test_the_whole_check_is_held_to_the_issue_branchs_paths(self):
-        self.assertRefused(self.whole(["test_capture.py"]), "test_capture.py")
+        self.assertRefused(self.whole(["test_orphans.py"]), "test_orphans.py")
 
     def test_the_whole_check_leaving_out_what_nothing_called_for_guard(self):
-        self.assertOk(self.whole(["test_hang.py"]))
+        self.assertOk(self.whole(["test_emulator_telemetry.py"]))
 
 
 # ---------------------------------------------------------------------------------------------------- Moved

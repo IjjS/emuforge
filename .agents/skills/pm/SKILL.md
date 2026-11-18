@@ -27,7 +27,9 @@ issue files, merge or archive; they refuse a plan anything outside its own issue
    wait for it. Its outcome arrives as `EVENT emulator-image refreshed …` or `EVENT emulator-image failed …`
    (Events); `pm-emulator-image status` shows the image and the last refresh.
 3. Panes run on the kind and model the owner names for this session; without one, `claude` on Opus. Ask only if
-   the owner has not said and a pane is about to start. When the owner names a token rate for the day, set it
+   the owner has not said and a pane is about to start. The effort goes the same way, `pm-pane new … --effort
+   low|medium|high|xhigh|max`; without it a pane opened again gets the effort it had and a new one its role's
+   (`plan`, `rev`, `crit`, `harness-engineer` `high`, `worker` `medium`); a Codex pane ignores it. When the owner names a token rate for the day, set it
    with `pm-tokens target <rate>`; without one nothing is limited, and you do not ask for one.
 4. Open work: list every `.pm/issue-*/state.md` in one line each and continue from it. Then `pm-ready list`: each
    line is a go signal the owner gave while no PM was running. Then `pm-issue list`: the open issue files.
@@ -48,7 +50,8 @@ issue files, merge or archive; they refuse a plan anything outside its own issue
   only when a plan's question exists that the repository, the references and the reference behavior cannot answer;
   ② the final report. Nothing else goes to the owner but the one-line notices of flow step 3 (a rejected push, a
   failed or flaky run, no run or no answer), which tell and ask nothing. Designs are never put to the owner:
-  scores decide, and where the rules leave room you decide and record why.
+  the impeccable critique judges them (a P0 or P1 is fixed; the score decides nothing), and where the rules leave
+  room you decide and record why.
 - **You edit no product code and write no plan.** Stage documents and integration tests are the plan's; product
   code and unit tests change only in worker panes inside their worktrees; harness changes in a harness-engineer's.
   You write `state.md`, `decisions.md` and briefs under `.pm/`, and on `main` you commit only two things: issue files created in the main checkout, with
@@ -86,12 +89,12 @@ issue files, merge or archive; they refuse a plan anything outside its own issue
 An engine, CLI, IAM, Verify or Studio issue goes to a plan:
 
 ```
-.pm/bin/pm-brief plan <id> [--grade console|native|none] [--precedent <archived id>]
+.pm/bin/pm-brief plan <id> [--precedent <archived id>]
 .pm/bin/pm-pane new <id> plan --brief .pm/issue-<id>/brief-plan.md
 ```
 
 `pm-brief` fills `references/briefs/plan.md` and `rev.md` (placeholders: `references/briefs/README.md`), writes
-both briefs and marks the issue `lead: plan`; a studio issue needs its screen grade here, once. Never fill a
+both briefs and marks the issue `lead: plan`. Never fill a
 template by hand or with a script of your own, and add nothing to a written brief. The plan opens its rev, its
 workers and its crit, and leads the issue as `lead.md` says. You do nothing until its `ISSUE READY` line, except
 answer its `BLOCKED` lines (Events).
@@ -111,8 +114,8 @@ recording the answer under `## Review decisions`. On its `UNIT READY` read its `
 next part as `h2`, from `main` after the merge.
 
 An issue begun before issue 478 (its `brief.json` has no `lead`) finishes as its `state.md` says, under the rules of
-the commit it began at (`git show f0cbdfa:.agents/skills/pm/SKILL.md`); `pm-merge` keeps that issue's per-unit
-review rule.
+the commit it began at (`git show f0cbdfa:.agents/skills/pm/SKILL.md`), less the structure score, which issue 478
+removed; `pm-merge` keeps that issue's per-unit review rule.
 
 ### 2. Close (you)
 
@@ -162,8 +165,8 @@ it passes without recording why the earlier run failed.
 
 Touchpoint ②, in this order, from the plan's `report.md` and your close: what merged (the issue branch and the
 `main` sha), the record `main` took it on with its path (the whole check's record, `output/checks/last.json` of the
-issue's worktree; for a harness issue, its unit's), the score tables (`pm-critique table <id>`, and
-`pm-structure --table <id>` for `console` screens), where each owner decision landed, the review rounds, the
+issue's worktree; for a harness issue, its unit's), the critique scores (`pm-critique table <id>`), told and
+deciding nothing, where each owner decision landed, the review rounds, the
 issues filed with the severity each now has, what was not done, and what is waiting for the owner's word (a reply
 on the GitHub issue, closing it). Then
 `pm-archive <id> --yes` per `references/archive.md`.
@@ -243,8 +246,8 @@ flow step 1:
     (`pm-worktree new <host> <unit>`) and are cut as for one issue: a unit may fix
     several of the five and names the ones it fixes; `rev` reviews the whole once. The unit that fixes an issue runs
     `pm-issue close` for that issue, so each issue file moves in the commit that fixes it.
-  - Studio screens of the batch are scored together: one `crit` pane, one mock round and one `final` for all the
-    screens the batch changes.
+  - Studio screens of the batch are critiqued together: one `crit` pane and one `final` critique of the built app
+    for all the screens the batch changes.
   - The batch is finished as one: its plan sends one `ISSUE READY` for the host; you close it as flow step 2
     says, with `pm-merge <host>`, report the five together, archive the host and push once.
   A `LOW` issue is not started outside a batch, and the next batch starts only when the one before it is pushed.
@@ -277,7 +280,7 @@ flow step 1:
 | `EVENT ready <pane> BLOCKED memory` | nothing until `EVENT mem ok`; then prompt the pane to retry |
 | `EVENT ready <pane> BLOCKED cpu` | nothing until `EVENT cpu ok`; if none is pending (`pm-mem` shows the CPU under 90%), prompt the pane to retry now |
 | `EVENT blocked <pane>` | `herdr agent read <pane> --lines 200`; a permission prompt for the pane's own worktree is answered `y` via `herdr agent send-keys`; anything destructive or outside the worktree goes to the owner |
-| `EVENT ctx <pane> <n>K` | `pm-pane reset <pane>` with the command timeout set to 10 minutes; nothing else (a plan's long life survives it: it resumes from `state-plan.md`) |
+| `EVENT ctx <pane> <n>K` | read the pane's state file first (a plan's `state-plan.md`, a harness-engineer's `output/state.md` in its worktree); when it is behind what the pane last reported, tell the pane in one line to write it, and reset on its next turn; then `pm-pane reset <pane>` with the command timeout set to 10 minutes (a plan's long life survives it: it resumes from `state-plan.md`) |
 | `EVENT ctx pm <n>K` | write `state.md` for every open issue, then ask the owner in one line to clear your context; resume from the state files |
 | `EVENT mem … top=<pane> <GB>,…` | prompt the top pane in one line to stop its running process; start nothing new until `EVENT mem ok` |
 | `EVENT mem ok …` | prompt every pane that reported `BLOCKED memory` to retry; resume queued `pm-pane new` calls |
@@ -303,7 +306,7 @@ a reporting line are logged in `.pm/run/events.log` and never delivered. Talk to
 | Rules for every agent, roles, go signal, branches | `AGENTS.md` |
 | Issue file format | `issues/README.md` |
 | Engine, CLI, IAM, Verify: stages, test criteria, security review, relay fidelity | `engine/references/`, `engine/AGENTS.md` |
-| Studio: stages, reference specs and structure score, critique, test criteria | `studio/references/`, `studio/AGENTS.md` |
+| Studio: stages, the AWS area, the layers, critique, test criteria | `studio/references/`, `studio/AGENTS.md` |
 | Integration checks: who edits, isolation, manifest | `tests/integration/AGENTS.md` |
 | How a plan leads an issue, and the events it hears | `references/lead.md` |
 | Pane rules, review protocol, briefs and their placeholders, archive | `references/pane-mode.md`, `references/review-protocol.md`, `references/briefs/`, `references/archive.md` |
@@ -319,12 +322,11 @@ a reporting line are logged in `.pm/run/events.log` and never delivered. Talk to
 | `pm-emulator-image` | the machine's emulator image `aws-emulator` on the latest package: `refresh` at session start (returns at once; the outcome comes as `EVENT emulator-image …`), `refresh --foreground` by hand, `status` |
 | `pm-emulator-dir` | a port folder under `~/.aws/emulator` once nothing uses it: `rm --worktree` (run by `pm-merge` and `pm-worktree rm`), `rm --port`, `orphans [--remove]` on the owner's request |
 | `pm-brief` | a pane's brief from its template: `plan` (also writes rev's), `harness-engineer`, `worker`, `crit`, `show`; a plan runs `worker` and `crit` for its own issue |
-| `pm-pane` | panes: `new`, `reset`, `close`, `list`; a plan runs `new` of a worker, rev or crit and `reset` and `close` of those panes for its own issue; a `QUEUE` answer to a plan becomes `EVENT room` to it later |
+| `pm-pane` | panes: `new` (`--kind`, `--model`, `--effort`), `reset`, `close`, `list`; a plan runs `new` of a worker, rev or crit and `reset` and `close` of those panes for its own issue; a `QUEUE` answer to a plan becomes `EVENT room` to it later |
 | `pm-report` | a pane's reporting line to its lead: you, or the plan of its issue |
 | `pm-check` | the checks of a checkout, recorded; on a unit of an issue branch the fast check (`integration` left to the issue branch), on the issue's worktree the whole check; `--checks <id>…` single integration checks, never a gate; retries a failed test step once (`flaky`), a heavy run asks for room and starts or answers `WAIT <n>s` (exit 75; `EVENT room <pane> check <worktree>` follows), the record holds how long it `waited`, `--stop` ends one worktree's run; the harness step leaves out the on-touch test files no changed path touches (`left_out`), `--full` runs every file |
 | `pm-capture` | screen captures and contact sheets |
-| `pm-critique` | impeccable scores: `record`, `table`, `check` |
-| `pm-structure` | the structure score of a `console` screen against its reference spec: `--serve`, `--url` or `--snapshot`, `--record`, `--table` |
+| `pm-critique` | impeccable scores: `record`, `table`, `check` (fails while the last `final` has a P0 or P1) |
 | `pm-merge` | `<id> <unit>` a unit's branch into its target (the issue branch, or local `main` for an issue without one); `<id> --take-main` local `main` into the issue branch; `<id>` the issue branch into local `main`; a plan runs the first two for its own issue, into `feat/<id>` only; the review it asks follows the issue's `lead` |
 | `pm-archive`, `pm-cost` | clean-up and cost |
 | `pm-tokens` | Claude token use against today's target: status, `target <rate>`, `check` |

@@ -15,15 +15,15 @@ What it does, in order:
 2. Closes every pane of the issue (`pm-pane close --issue <id>`), then the issue tab.
 3. Removes the issue's worktrees with their `output/`, the issue branch's included; a merged branch is deleted
    with its worktree.
-4. Writes `.pm/archive/<id>.md`: branches, `state.md`, `decisions.md`, the critique score table, the structure
-   score table (`pm-structure --table <id>`), one line per review round (verdict, P1 count), the cost lines.
+4. Writes `.pm/archive/<id>.md`: branches, `state.md`, `decisions.md`, the critique score table, one line per
+   review round (verdict, P1 count), the cost lines.
 5. Moves the keep list to `.pm/archive/<id>/` and deletes `.pm/issue-<id>/`, so an archived issue never shows up
    as open work at session start.
 
 ## Keep list
 
-`requirement.md`, `decisions.md`, `test-criteria.md`, `report.md`, `critique-scores.json`, `structure-scores.json`,
-`cost.json`, `state.md`, moved to `.pm/archive/<id>/`. Everything else (briefs, `design.md`, mocks, review rounds, drafts) is
+`requirement.md`, `decisions.md`, `test-criteria.md`, `report.md`, `critique-scores.json`, `structure-scores.json`
+(an issue scored before issue 478 removed the structure score), `cost.json`, `state.md`, moved to `.pm/archive/<id>/`. Everything else (briefs, `design.md`, mocks, review rounds, drafts) is
 deleted; what was built is in the repository, the issue file is under `issues/things-that-now-work/`, and the
 reviews are summarized in the archive.
 

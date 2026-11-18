@@ -541,6 +541,7 @@ def flat(text):
 class Guides(unittest.TestCase):
     AGENTS = CHECKOUT / "tests" / "integration" / "AGENTS.md"
     README = CHECKOUT / "tests" / "integration" / "README.md"
+    SERVICES_REF = CHECKOUT / "tests" / "integration" / "references" / "services-and-manifest.md"  # issue 478
 
     def row(self, section, first_cell):
         rows = [ln for ln in section.splitlines() if ln.startswith(f"| {first_cell} |")]
@@ -548,7 +549,7 @@ class Guides(unittest.TestCase):
         return rows[0]
 
     def test_manifest_labels_name_on_request(self):
-        row = self.row(part(self.AGENTS.read_text(), "## Manifest"), "`labels`")
+        row = self.row(part(self.SERVICES_REF.read_text(), "## Manifest"), "`labels`")
         for label in ("transparency", "own-emulator", "safety", "regression", "lifecycle", "on-request"):
             self.assertIn(f"`{label}`", row)
 

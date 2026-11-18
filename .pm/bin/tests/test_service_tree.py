@@ -9,7 +9,8 @@ Check id `harness.service-tree`. One class per heading of the test criteria.
 or that holds no `manifest.jsonl` file, adds no row. This file reads it itself, as text, and imports no script.
 
 - `Tree` reads this checkout's main manifest, `T/services/`, `T/support/` and the `*.spec.ts` files under `T`.
-- `Guides` reads `tests/integration/AGENTS.md` and `tests/integration/README.md`.
+- `Guides` reads `tests/integration/AGENTS.md`, `tests/integration/references/services-and-manifest.md` and
+  `tests/integration/README.md`.
 
 On a checkout before the move every case fails on its own, not at import: S3's, Lambda's and IAM's support files
 are in `T/support/` and exported by its `index.ts`, their rows are in the main manifest with their `service`,
@@ -30,6 +31,7 @@ T = INTEGRATION / "studio"
 SERVICES = T / "services"
 SUPPORT = T / "support"
 AGENTS = INTEGRATION / "AGENTS.md"
+SERVICES_REF = INTEGRATION / "references" / "services-and-manifest.md"  # issue 478: moved out of AGENTS.md
 README = INTEGRATION / "README.md"
 
 SERVICE = re.compile(r"[a-z][a-z0-9]*(-[a-z0-9]+)*")  # requirement, "Words": matched with fullmatch
@@ -232,6 +234,7 @@ def tree_paths(text):
 class Guides(unittest.TestCase):
     def setUp(self):
         self.agents = AGENTS.read_text()
+        self.ref = SERVICES_REF.read_text()
 
     def assertSentence(self, text, *words, where=""):
         found = [s for s in sentences(text) if all(re.search(w, s, re.I) for w in words)]
@@ -243,7 +246,7 @@ class Guides(unittest.TestCase):
         self.assertTrue(any(p.endswith("studio/" + FOLDER) for p in paths), paths)
 
     def test_agents_service_checks_names_the_folder_and_what_it_calls_for(self):
-        text = part(self.agents, "## Service checks")
+        text = part(self.ref, "## Service checks")
         place = re.escape("tests/integration/studio/" + FOLDER)
         self.assertSentence(text, place, r"\bsupport\b", r"\bseed\b", r"manifest\.jsonl", where="Service checks")
         self.assertSentence(text, r"\bpaths?\b", re.escape(FOLDER) + r"|\bthere\b|\b(that|its|the) folder\b",
@@ -253,7 +256,7 @@ class Guides(unittest.TestCase):
         self.assertSentence(text, r"\brun\b", r"\brefuse", r"\bimport", r"\bcheck files?\b", where="Service checks")
 
     def test_agents_manifest_names_both_files_and_every_reader(self):
-        text = part(self.agents, "## Manifest")
+        text = part(self.ref, "## Manifest")
         self.assertSentence(text, r"\brows?\b", re.escape(FOLDER + "manifest.jsonl"), where="Manifest")
         main = r"(?<![/\w])`?manifest\.jsonl|tests/integration/manifest\.jsonl"
         self.assertSentence(text, r"\b(other|others|no service)\b", main, where="Manifest")

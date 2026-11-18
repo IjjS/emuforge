@@ -30,11 +30,10 @@ absent when harness is not called for.
 Services (issue 327). When integration is called for or deferred, a last line says which services' browser checks
 the integration step holds, as _pmscope.select decides it from the changed paths and the manifests:
 `  services     every service: <why>` or `  services     <names, or "none"> (<n> paths touch a service)`. A service
-is a folder under studio/src/providers/aws/area/services/ (or studio/references/console/), and a check is a
+is a folder under studio/src/providers/aws/area/services/, and a check is a
 service's when its manifest row has `service`; the checks of no service are part of every run. A path under one of
-the folders of line 1 of the selection, studio/src/providers/aws/area/services/<service>/,
-studio/references/console/<service>/ and tests/integration/studio/services/<service>/ (the service's folder of
-checks: its support, its seed script, its manifest), gives that service. A path shared by the services (the engine,
+the folders of line 1 of the selection, studio/src/providers/aws/area/services/<service>/ and
+tests/integration/studio/services/<service>/ (the service's folder of checks: its support, its manifest), gives that service. A path shared by the services (the engine,
 shared Studio code, the checks' shared support under tests/integration/studio/support/, .github/, .pm/bin/, a path
 no rule knows), a `service` given, taken away or changed in the manifest, or a manifest that cannot be read gives
 every service. The manifest is the rows of tests/integration/manifest.jsonl, then those of each

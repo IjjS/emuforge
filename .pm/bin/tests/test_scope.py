@@ -47,11 +47,21 @@ class Rules(unittest.TestCase):
     def test_rule_2_studio_package_and_lock(self):
         self.assertCalls(["studio/package.json", "studio/bun.lock"], ALL)
 
-    def test_rule_3_studio_references_markdown(self):
-        self.assertCalls(["studio/references/critique.md", "studio/references/console/s3.md"], HARNESS)
+    def test_rule_3_the_guides_and_references(self):
+        """Issue 478 (part 3, the pm's answer Q1 a): the AGENTS.md guides and the modules' references call for the
+        harness alone; no product step reads them."""
+        self.assertCalls(["AGENTS.md", "engine/AGENTS.md", "tests/integration/AGENTS.md",
+                          "engine/references/workflow.md", "tests/integration/references/a.md",
+                          "studio/references/critique.md", "studio/references/console/s3/a.yaml"], HARNESS)
 
-    def test_rule_3_is_markdown_only(self):
-        self.assertCalls(["studio/references/shot.png", "studio/references/spec.yaml"], PRODUCT)
+    def test_rule_3_studio_agents_is_read_by_studio_unit_tests(self):
+        """Two Studio unit tests read studio/AGENTS.md (request-module.test.ts, brand-files.test.ts), so a change of it
+        calls for the Studio steps as well as the harness."""
+        self.assertCalls(["studio/AGENTS.md"], {"studio", "harness"})
+
+    def test_rule_3_is_the_guides_only(self):
+        self.assertCalls(["studio/references/shot.png", "engine/references/a.rs", "studio/PRODUCT.md",
+                          "tests/integration/README.md", "studio/src/AGENTS.md"], PRODUCT)
 
     def test_rule_4_places_that_start_an_emulator(self):
         self.assertCalls(["tests/integration/run", "tests/integration/engine/support/emulator.rs",
@@ -65,7 +75,7 @@ class Rules(unittest.TestCase):
         self.assertCalls([".pm/bin/tests/fixtures/a/docker-compose.yml"], HARNESS)
 
     def test_rule_6_product_paths(self):
-        self.assertCalls(["engine/crates/a/src/lib.rs", "engine/AGENTS.md", "studio/src/a.tsx", "studio/AGENTS.md",
+        self.assertCalls(["engine/crates/a/src/lib.rs", "engine/README.md", "studio/src/a.tsx", "studio/DESIGN.md",
                           "studio/public/logo.png", "tests/integration/manifest.jsonl", "README.md"], PRODUCT)
 
     def test_rule_7_images_anywhere_else_any_case(self):
@@ -89,7 +99,7 @@ class Rules(unittest.TestCase):
                 self.assertTrue(any(".github/" in r for r in rules), rules)
 
     def test_unknown_path_calls_for_every_module_and_is_named(self):
-        for path in ["AGENTS.md", "LICENSE", ".gitignore", ".githubx/a.yml", "issues/README.md",
+        for path in ["CONTRIBUTING.md", "LICENSE", ".gitignore", ".githubx/a.yml", "issues/README.md",
                      "issues/things-that-do-not-work/a.txt", "studio", "enginex/a.rs", ".pm/binx/a"]:
             with self.subTest(path=path):
                 answer = decide([path])

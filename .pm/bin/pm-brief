@@ -1,7 +1,7 @@
 #!/usr/bin/env -S python3 -I
 """Fill a brief template for a pane and write it to .pm/issue-<id>/. The PM runs this instead of filling `{{…}}` by hand.
 
-  pm-brief plan <issue> [--grade console|native|none] [--precedent <archived id>]...
+  pm-brief plan <issue> [--precedent <archived id>]...
         writes brief-plan.md and brief-rev.md (one rev pane serves the whole issue)
         and marks the issue `lead: plan` in brief.json (pm-merge reads it)
   pm-brief worker <issue> <unit> --summary "<what the unit does>" [--owned "<files>"] [--scenarios "<where>"]
@@ -12,7 +12,7 @@
         the unit that closes the issue (auto: "the ids breakdown.md and test-criteria.md give")
   pm-brief harness-engineer <issue> <unit> --part "<what this pane plans and builds>" [--precedent <id>]...
         writes brief-harness-engineer.md for the unit's worktree and marks the issue `lead: harness-engineer`
-  pm-brief crit <issue> --targets "<routes or mock files>" --capture-wt <worktree> [--grade console|native]
+  pm-brief crit <issue> --targets "<routes or mock files>" --capture-wt <worktree>
         writes brief-crit.md
   pm-brief show <issue>
         the briefs written so far and the values remembered for the issue
@@ -22,11 +22,11 @@ briefs/README.md. Everything that can be looked up is looked up:
   issue, title, module, kind, issue file   from the issue file (open or closed)
   worktree, branch, base                   from the worktree registry (run pm-worktree new first)
   references to read                       from the module (its AGENTS.md and every file in its references/)
-  inputs, conventions                      from the unit's side (its first letter: e, s) and the screen grade
+  inputs, conventions                      from the unit's side (its first letter: e, s)
 Who may run it: the pm, and a plan for its own issue (`worker`, `crit`, `show`); `plan` and `harness-engineer` are
 the pm's. Every other pane is refused all but `show`.
-A studio issue needs its screen grade once (--grade on `plan`); it is remembered in brief.json for the worker and
-crit briefs. The command fails, and writes nothing, when a placeholder is left unfilled or a value it needs is
+A studio issue has no screen grade (issue 478 removed it with the structure score): its design stage is `design.md`
+and its crit brief is written when the plan has a screen to critique. The command fails, and writes nothing, when a placeholder is left unfilled or a value it needs is
 missing. Pass the written file to `pm-pane new … --brief <file>`.
 """
 import argparse
@@ -42,16 +42,11 @@ BRIEFS = ROOT / ".agents" / "skills" / "pm" / "references" / "briefs"
 ISSUE_DIRS = ("issues/things-that-do-not-work", "issues/things-that-now-work")
 # the folder whose AGENTS.md and references/ an issue of this module is planned and reviewed against
 MODULE_DIR = {"studio": "studio", "engine": "engine", "cli": "engine", "iam": "engine", "verify": "engine", "harness": "engine"}
-GRADES = ("console", "native", "none")
-SCREEN_STEP = {
-    None: "`design.md` per engine/references/workflow.md stage 2, with the security review rows for everything the "
-          "change touches. REVIEW design r1.",
-    "console": "one reference spec per screen under specs/ per studio/references/console-reference.md. REVIEW spec r1.",
-    "native": "a mock under mocks/ built from the design system of the screen's layer (studio/references/critique.md, "
-              "native screens), showing the states the requirement names; capture it with pm-capture <root> mock-<id> "
-              "--file <mock.html>, then have crit score it (lead.md, Critique); revise until critique.md's Screen stage "
-              "passes.",
-    "none": "(no screen stage for this grade)",
+DESIGN_STEP = {
+    "engine": "`design.md` per engine/references/workflow.md stage 2, with the security review rows for everything the "
+              "change touches. REVIEW design r1.",
+    "studio": "`design.md` per studio/references/workflow.md stage 2: per task, its flow through the screens and the API "
+              "call behind each action, the console captures read for its UX, and what is shared. REVIEW design r1.",
 }
 CONVENTIONS = {
     "e": "`engine/AGENTS.md`, `engine/references/security-review.md`, `engine/references/relay-fidelity.md`",
@@ -87,21 +82,6 @@ def precedents(ids):
     return "".join(f", .pm/archive/{m}.md (precedent)" for m in ids)
 
 
-def grade_of(n, module, given):
-    """The issue's screen grade: None for a non-studio issue, else --grade or the remembered one."""
-    memo = load(issue_dir(n) / "brief.json", {})
-    if module != "studio":
-        if given:
-            sys.exit(f"--grade is for studio issues; #{n} is {module}")
-        return None
-    grade = given or memo.get("grade")
-    if not grade:
-        sys.exit(f"#{n} is a studio issue: pass --grade console|native|none (remembered afterwards)")
-    if grade != memo.get("grade"):
-        save(issue_dir(n) / "brief.json", {**memo, "grade": grade})
-    return grade
-
-
 def fill(template, values):
     text = template
     for _ in range(5):  # a value may itself hold placeholders (work holds close_step, which holds root)
@@ -132,10 +112,9 @@ def mark_lead(n, who):
 def cmd_plan(a):
     guard(f"pm-brief plan {a.issue}")
     v = issue(a.issue)
-    grade = grade_of(a.issue, v["module"], a.grade)
     refs = module_refs(v["module"])
     common = dict(v, root=str(ROOT))
-    plan = dict(common, precedents=precedents(a.precedent), screen_step=SCREEN_STEP[grade],
+    plan = dict(common, precedents=precedents(a.precedent), design_step=DESIGN_STEP["studio" if v["module"] == "studio" else "engine"],
                 plan_refs=f"AGENTS.md, issues/README.md, tests/integration/AGENTS.md, {refs}")
     rev = dict(common, refs=f"AGENTS.md, issues/README.md, {refs}, tests/integration/AGENTS.md")
     texts = [("plan", fill((BRIEFS / "plan.md").read_text(), plan)), ("rev", fill((BRIEFS / "rev.md").read_text(), rev))]
@@ -153,13 +132,7 @@ def cmd_worker(a):
     wt = next((w for w in load(WORKTREES, []) if w["issue"] == str(a.issue) and w["unit"] == a.unit), None)
     if not wt:
         sys.exit(f"no registered worktree for issue {a.issue} unit {a.unit}; run pm-worktree new first")
-    grade = grade_of(a.issue, v["module"], None) if v["module"] == "studio" else None
-    if a.inputs:
-        inputs = a.inputs
-    elif side == "s":
-        inputs = "`requirement.md`, `decisions.md`, `test-criteria.md`" + {"console": ", `specs/`", "native": ", `mocks/`"}.get(grade, "")
-    else:  # a studio issue has no design.md
-        inputs = "`requirement.md`, `decisions.md`, " + ("" if v["module"] == "studio" else "`design.md`, ") + "`test-criteria.md`"
+    inputs = a.inputs or "`requirement.md`, `decisions.md`, `design.md`, `test-criteria.md`"
     ids = "<the check ids breakdown.md and test-criteria.md give this issue>" if a.close == "auto" else a.close
     close = (f'Run {{{{root}}}}/.pm/bin/pm-issue close {{{{issue}}}} --checks "{ids}" --in {{{{worktree}}}} and commit the '
              "move with your last commit.") if a.close else "(This unit does not close the issue; nothing to do in this step.)"
@@ -185,13 +158,12 @@ def cmd_harness(a):
 def cmd_crit(a):
     guard(f"pm-brief crit {a.issue}", issue=a.issue, plan_may=True)
     v = issue(a.issue)
-    grade = grade_of(a.issue, v["module"], a.grade)
-    if grade not in ("console", "native"):
-        sys.exit(f"#{a.issue} has no screen to score (module {v['module']}, grade {grade})")
+    if v["module"] != "studio":
+        sys.exit(f"#{a.issue} has no screen to score (module {v['module']})")
     wt = pathlib.Path(a.capture_wt).resolve()
     if not (wt / "studio").is_dir():
         sys.exit(f"{wt} has no studio/ folder")
-    values = dict(v, root=str(ROOT), grade=grade, targets=a.targets.strip(), capture_wt=str(wt))
+    values = dict(v, root=str(ROOT), targets=a.targets.strip(), capture_wt=str(wt))
     write(a.issue, "crit", fill((BRIEFS / "crit.md").read_text(), values))
 
 
@@ -204,7 +176,7 @@ def cmd_show(a):
 
 p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 sp = p.add_subparsers(dest="cmd", required=True)
-x = sp.add_parser("plan"); x.add_argument("issue"); x.add_argument("--grade", choices=GRADES)
+x = sp.add_parser("plan"); x.add_argument("issue")
 x.add_argument("--precedent", action="append", default=[]); x.set_defaults(f=cmd_plan)
 x = sp.add_parser("worker"); x.add_argument("issue"); x.add_argument("unit")
 x.add_argument("--summary", required=True); x.add_argument("--owned"); x.add_argument("--close"); x.add_argument("--scenarios")
@@ -213,7 +185,7 @@ x.set_defaults(f=cmd_worker)
 x = sp.add_parser("harness-engineer"); x.add_argument("issue"); x.add_argument("unit"); x.add_argument("--part", required=True)
 x.add_argument("--precedent", action="append", default=[]); x.set_defaults(f=cmd_harness)
 x = sp.add_parser("crit"); x.add_argument("issue"); x.add_argument("--targets", required=True)
-x.add_argument("--capture-wt", required=True); x.add_argument("--grade", choices=("console", "native")); x.set_defaults(f=cmd_crit)
+x.add_argument("--capture-wt", required=True); x.set_defaults(f=cmd_crit)
 x = sp.add_parser("show"); x.add_argument("issue"); x.set_defaults(f=cmd_show)
 a = p.parse_args()
 a.f(a)

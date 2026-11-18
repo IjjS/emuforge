@@ -23,7 +23,7 @@ repository references your brief lists, fresh from disk.
 
 ## Checks are not yours to change
 
-- A worker never writes or edits an integration test, a reference spec or `test-criteria.md`. If you believe one
+- A worker never writes or edits an integration test or `test-criteria.md`. If you believe one
   is wrong, append your reason to `decisions-needed.md` and stop with
   `BLOCKED <name> check <check id or file>`. Loosening an assertion, skipping a check or special-casing the
   code so a check passes is a defect, not a fix.
@@ -91,7 +91,7 @@ own unit is not this: that is `BLOCKED`.
 | logs, check records, captures, your resume note | your worktree's `output/` (ignored): `logs/`, `checks/`, `captures/<phase>/`, `state.md` |
 | the running check | your worktree's `output/checks/running.json` while `pm-check` runs (what `pm-check --stop` ends) |
 | ports | your worktree's `output/ports.json`: `studio`, `engine`, `emulator`. Use only these; never 9297 or another unit's |
-| mocks | `.pm/issue-<id>/mocks/` |
+| a mock, when the plan asks for one | `.pm/issue-<id>/mocks/` |
 | critique snapshots | written by the impeccable skill under the worktree's `studio/.impeccable/critique/`; recorded with `pm-critique record` |
 
 Nothing goes to `/tmp` or the `.pm/` root. Do not create or edit GitHub issues, comments or labels. Do not push,
@@ -183,4 +183,5 @@ own issue.
 
 ## Model and kind
 
-Whatever you were started as: Opus unless the owner names another model for the session. These rules and the reporting lines are the same for every agent kind.
+Whatever you were started as: Opus unless the owner names another model for the session, at the effort `pm-pane`
+gave you (`--effort`, else your role's: `high`, a worker `medium`). These rules and the reporting lines are the same for every agent kind.

@@ -1,7 +1,7 @@
 # engine
 
-Guidance for agents working in `engine/`. The root `AGENTS.md` applies first; this file adds what is specific
-to the Rust workspace. Stages for an engine issue are in `references/workflow.md`.
+What holds for every piece of work in `engine/`. The root `AGENTS.md` applies first. Stages, test criteria, the
+security review and relay fidelity are in `references/` ("References" below).
 
 ## What the engine is
 
@@ -71,8 +71,9 @@ engine/
 ## Tests
 
 - Unit tests sit next to the code in `#[cfg(test)] mod tests`. Tests of a crate's public API sit in its `tests/`.
-- A unit test uses no network, no Docker, no real time and no file outside a temp directory. Anything that
-  needs an emulator is an integration check and lives in `/tests/integration`, not here.
+- A unit test uses no network, no Docker, no real time and no file outside a temp directory. A worker writes the
+  unit tests its brief's scenarios ask. Anything that needs an emulator is an integration check, written by the
+  plan, and lives in `/tests/integration`, not here.
 - Name a test `<subject>_<condition>_<result>`, for example `resign_rejects_non_loopback_upstream`.
 - One behavior per test. Cover several inputs for one behavior with a table of cases in one test, each case
   named so a failure says which one.
@@ -82,7 +83,7 @@ engine/
   `tests/vectors/`; a vector is data from a named source (an AWS document, a captured request), never a value
   computed by the code under test.
 
-## Checks before review
+## Checks
 
 ```
 cargo fmt --all --check
@@ -90,14 +91,17 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-All three pass, with their output saved under the worktree's `output/logs/`, before a review is requested.
+All three pass. They run in `pm-check`, which records them and keeps their logs under the worktree's
+`output/logs/`.
 
 ## References
 
 ```
 references/
-  workflow.md          stages of an engine issue and what each produces
-  test-criteria.md     form of unit and integration test cases, coverage axes
-  security-review.md   the checklist every engine change is read against
-  relay-fidelity.md    what "the same as calling the emulator directly" means and how it is scored
+  workflow.md          stages of an engine issue and what each produces (the plan)
+  test-criteria.md     unit scenarios per unit and integration scenarios, coverage axes (the plan)
+  security-review.md   the checklist every engine change is read against (every engine unit)
+  relay-fidelity.md    what "the same as calling the emulator directly" means and how it is scored (every engine unit)
 ```
+
+The plan reads every file; `pm-brief worker` names the last two in every engine unit's brief.

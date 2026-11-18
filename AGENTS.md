@@ -40,7 +40,7 @@ Six roles, no more. A role is a separation of duty, not a head count.
 | Role | Does | Never does |
 |---|---|---|
 | `pm` | Orders the issues and gives each to its lead (a `plan`, or for a harness issue a `harness-engineer`); answers their `BLOCKED` lines; reviews the severity of each issue a plan's closing report names and may change it; looks the change over while it merges and, at its own discretion, files a further critical fault it finds, and only that; merges an issue's collecting branch (its issue branch `feat/<id>`) into local `main`, pushes, reads the run; judges a harness-engineer's plan and change itself; talks to the owner | Edits product code, writes the plan |
-| `plan` | Leads one issue to its end: requirement, design or screen, test criteria, the cut into units, their worktrees, briefs and worker panes, merging the units into the collecting branch `feat/<id>`, the integration tests, the whole check, the end review and critique, the closing report with a severity for each issue it filed | Writes code other than integration tests (no product code, no unit tests of a worker), acts outside its own issue, merges into `main`, talks to the owner |
+| `plan` | Leads one issue to its end: requirement, design, test criteria, the cut into units, their worktrees, briefs and worker panes, merging the units into the collecting branch `feat/<id>`, the integration tests, the whole check, the end review and critique, the closing report with a severity for each issue it filed | Writes code other than integration tests (no product code, no unit tests of a worker), acts outside its own issue, merges into `main`, talks to the owner |
 | `worker` | Implements one unit, engine or Studio, in its own worktree, with the unit tests its brief's scenarios ask | Writes integration tests, changes a confirmed check, touches files outside its unit, merges |
 | `rev` | Reviews an issue from files only: the stage documents before the build, and at the end the implementation and whether the integration tests are the scenarios | Edits anything, sees the author's reasoning |
 | `crit` | Scores Studio screens with the impeccable critique, on the built app | Fixes anything |
@@ -95,7 +95,8 @@ token rate for the day; over it, no new pane is opened.
 - The whole set of checks runs in `.github/workflows/full.yml`, which only the owner starts, by hand; the `pm`
   never starts it and reads a run of it on the owner's word. The push run takes the checks of the services the
   push touched, so between two runs of `full` a service no change touched is not checked.
-- Any other push, releases and deleting remote branches need the owner's explicit word.
+- Any other push, a release, anything written to GitHub and deleting a remote branch need the owner's explicit
+  word.
 
 ## Checks decide, not agents
 
@@ -109,11 +110,10 @@ token rate for the day; over it, no new pane is opened.
 
 ## Studio screens
 
-The owner does not pick or approve designs; the harness judges them.
-
-- A screen that mirrors an AWS console screen is scored against that screen's reference spec.
-- A screen that exists only in EmuForge (home, connection status, IAM simulation, Verify results) is designed by
-  the `plan`, scored with the impeccable critique, and the `pm` decides from the score.
+The owner does not pick or approve designs. A service's screens serve the tasks a developer does with it locally, as
+far as the emulator's API supports them; they need not match the AWS console. The UI and UX are the `worker`'s to
+shape and are judged by the impeccable critique alone, once, on the built app: a P0 or P1 finding is fixed, and the
+score is told and decides nothing (`studio/references/critique.md`).
 
 ## Safety
 

@@ -1,10 +1,11 @@
 # tests/integration
 
-Guidance for agents working in `tests/integration/`. The root `AGENTS.md` applies first.
+What holds for every integration check. The root `AGENTS.md` applies first. Which checks belong to a service, and
+the manifest's two files and fields, are in `references/services-and-manifest.md`.
 
 These checks are the project's ground truth. They run against a real aws-emulator and decide whether an issue
-is closed. They are written from a confirmed requirement, before the code they test, and the worker whose code
-they test does not change them.
+is closed. The issue's `plan` writes them after the build, from the scenarios of `test-criteria.md` confirmed before
+it, and the worker whose code they test never writes or changes them.
 
 ```
 tests/integration/
@@ -13,15 +14,19 @@ tests/integration/
     support/               shared support of the Studio checks
     services/<service>/    one service's support, seed script and manifest.jsonl
   manifest.jsonl   one row per check of no service
+  references/      services-and-manifest.md: a service's checks, the manifest's files and fields
 ```
 
 ## Who edits
 
-- A check is added at the Test Criteria stage of its issue and reviewed by `rev` before implementation starts.
-- After that, only the `pm` changes it, with the reason in the issue's `decisions.md`. A check that turns out
-  to be wrong is fixed in the open, never by loosening an assertion until it passes.
-- A worker may add helper code that its unit owns: shared helpers under `support/`, and one service's helpers under
-  `studio/services/<service>/` (Service checks). It never edits an assertion.
+- The `plan` writes an issue's checks, their helper code and their manifest rows, in the issue's worktree on its
+  issue branch, after every unit is merged; `rev` reviews whether they are the scenarios. A scenario left out says
+  why, in `test-criteria.md` or the plan's `report.md`.
+- A check that does not do what its scenario says is fixed by the plan, with the reason under `## Plan decisions`.
+  A scenario that is wrong, and any check once its issue is merged, is changed only on the `pm`'s decision, with the
+  reason in the issue's `decisions.md`. A check is never fixed by loosening an assertion until it passes.
+- A worker writes no integration check and edits no helper code here: shared helper code under `support/`, one
+  service's helpers under `studio/services/<service>/`, are the plan's (`references/services-and-manifest.md`).
 
 ## A check
 
@@ -60,8 +65,8 @@ A check labelled `on-request` in the manifest is not part of a default run: `run
 `pm-check --on-request` run it with the others, and `pm-check --checks <id>` runs it alone. The label is given and
 removed only by the `pm`, with the owner's word and the reason in the issue's `decisions.md`; a plan or a worker
 never labels a check to shorten a run. A check an open issue lists in `Issue-Check-Ids` is not on request: the
-issue that comes to list one takes the label off through its `t` unit, and runs it with `pm-check --checks` until
-then.
+plan of the issue that comes to list one takes the label off with its integration tests, and runs it with
+`pm-check --checks` until then.
 
 ## Safety
 
@@ -70,56 +75,6 @@ then.
 - Checks run without the AWS credentials, profiles and proxy settings of the environment.
 - Signing uses the keys the emulator wrote for this run and nothing else.
 
-## Service checks
-
-A check that drives the screens of one service has the field `service` in the manifest: the name of that
-service's folder under `studio/src/providers/aws/area/services/` (`s3`, `apigateway`), of the form
-`[a-z][a-z0-9]*(-[a-z0-9]+)*`. It is given by the `t` unit that writes the check, reviewed by `rev` with it, and
-changed after that only by the `pm`; a check of the engine, of shared Studio code or of more than one service
-has no `service`, and giving it to another check to shorten a run is a defect. A check of no service is part of
-every run. `run --services <file>` leaves out the checks of the services the file does not list: the whole check
-of a branch and the push run of `main.yml` hold the checks of the services their changes touch, and every
-service's when a shared path changed. So a service no change touched is not checked until the whole set runs
-again in `.github/workflows/full.yml`, which the owner starts by hand: until then a change inside one service
-that breaks another service's screen, or a service check that depends on a shared path no other check covers, is
-not seen.
-
-Everything of a service's checks other than its check files lives in `tests/integration/studio/services/<service>/`:
-its support (direct calls, seeding, cleanup, locators, texts), the seed script of its structure score and its
-`manifest.jsonl` (Manifest). The check files stay directly under `studio/`. A `t` unit of a service issue writes its
-helpers and rows there, not in `support/` or the main `manifest.jsonl`. A changed path under `services/<service>/`
-calls for that service's checks alone, as a path of its screens does. A changed path under `support/` calls for
-every service's checks, so support that the checks of more than one service, or a check of no service, read stays
-in `support/` (`support/service-screens.ts` holds what a service's support lends to others), and
-`support/index.ts` exports nothing of a service's folder. A file of a service's folder may import shared support. A
-check file of a service is one every one of whose rows has that `service`. `run` refuses to start, before anything
-is built and with every check `error`, when a `.ts` file under `studio/` imports a file of a service's folder and
-is neither in that service's folder nor one of its check files, and when any file imports a `.spec.ts` file.
-
-## Manifest
-
-The rows of a service's checks are the lines of `studio/services/<service>/manifest.jsonl`, each with that
-`service`, `module` `studio` and a `path` directly under `studio/`; `manifest.jsonl` holds the rows of the others,
-every check of no service. The manifest is the rows of both: `manifest.jsonl` in its order, then each service's
-file, the services in name order (a folder without one adds no row), and every reader reads it so: `run`,
-`pm-check --checks`, the selection of `pm-scope`, `pm-check` and `pm-merge`, and `.github/ci`. In a checkout that
-holds `studio/services/`, `run` refuses to start when a row of `manifest.jsonl` has a `service`, when a row of a
-service's file has another `service`, another `module` or a `path` that is not a `.spec.ts` directly under
-`studio/`, and when two rows hold one id.
-
-One JSON object per line:
-
-| Field | Meaning |
-|---|---|
-| `check_id` | `<module>.<slug>` |
-| `path` | file that holds the check |
-| `module` | `engine`, `cli`, `iam`, `verify`, `studio` |
-| `operations` | AWS operations it calls, as `<service>:<Operation>` |
-| `labels` | any of `transparency`, `own-emulator`, `safety`, `regression`, `lifecycle`, `on-request` |
-| `issue` | the `Issue-Id` it was written for |
-| `service` | the one service whose screens the check drives, as the name of its folder under `studio/src/providers/aws/area/services/`; absent for every other check (Service checks); a row that has it is in that service's `manifest.jsonl` |
-| `emulator_gap` | set when the reference behavior depends on an operation the emulator answers with 501; the check then asserts the 501 path |
-
 ## Verdicts
 
 | Verdict | Meaning |
@@ -127,7 +82,7 @@ One JSON object per line:
 | `passed` | every assertion held |
 | `failed` | an assertion did not hold, or the check timed out |
 | `error` | anything else: the emulator would not start, a tool is missing |
-| `not-run` | not executed: listed in the file given to `run --not-run` (`.github/not-run.json`), labelled `on-request` in a run without `--on-request`, or a check of a service the run's changes do not touch (`run --services`, Service checks); never counted as `passed` or `failed`. The list and the label are changed only on the `pm`'s decision, with the reason in the issue's `decisions.md` |
+| `not-run` | not executed: listed in the file given to `run --not-run` (`.github/not-run.json`), labelled `on-request` in a run without `--on-request`, or a check of a service the run's changes do not touch (`run --services`, `references/services-and-manifest.md`); never counted as `passed` or `failed`. The list and the label are changed only on the `pm`'s decision, with the reason in the issue's `decisions.md` |
 
 `error` is never counted as `failed` or `passed`; it is reported and the run is not used as evidence. A `not-run`
 check says nothing about the behavior it covers.

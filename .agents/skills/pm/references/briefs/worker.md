@@ -17,7 +17,7 @@ Steps:
    the plan's. Commit in small steps on your branch (the go signal authorized commits on this issue's branches;
    nothing else).
 2. `{{root}}/.pm/bin/pm-check {{worktree}}` until it prints `PASSED`: your fast check, which leaves `integration`
-   to the issue branch. A `WAIT` answer: end your turn until `EVENT room`. Never change an integration test, a reference spec or the criteria to get there; if one
+   to the issue branch. A `WAIT` answer: end your turn until `EVENT room`. Never change an integration test or the criteria to get there; if one
    is wrong, `BLOCKED … check <id>`. Studio units also capture each changed screen: build, then
    `{{root}}/.pm/bin/pm-capture {{worktree}} impl --serve studio/dist --url <route>…`. You do not look at the
    captures.

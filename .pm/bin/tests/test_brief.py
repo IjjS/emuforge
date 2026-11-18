@@ -52,24 +52,24 @@ class Brief(unittest.TestCase):
         self.assertIn("design.md", plan)
         self.assertIn(str(co), plan)
 
-    def test_studio_needs_a_grade_once(self):
-        co = checkout("grade")
+    def test_studio_plan_has_a_design_stage_and_no_grade(self):
+        """Issue 478 (part 3) removed the screen grade with the structure score: a studio plan's design stage is
+        design.md, and --grade is no option."""
+        co = checkout("design")
         p = run(co, "pm-brief", "plan", 8)
-        self.assertNotEqual(p.returncode, 0)
-        self.assertIn("--grade", p.stderr)
-        self.assertFalse((co / ".pm" / "issue-8" / "brief-plan.md").exists())
-        self.assertEqual(run(co, "pm-brief", "plan", 8, "--grade", "console").returncode, 0)
-        self.assertIn("reference spec", brief(co, 8, "plan"))
+        self.assertEqual(p.returncode, 0, p.stderr)
+        plan = brief(co, 8, "plan")
+        self.assertIn("`design.md` per studio/references/workflow.md stage 2", plan)
+        self.assertNotIn("reference spec", plan)
+        self.assertNotIn("grade", json.loads((co / ".pm" / "issue-8" / "brief.json").read_text()))
         p = run(co, "pm-brief", "worker", 8, "s1", "--summary", "The list screen.")
         self.assertEqual(p.returncode, 0, p.stderr)
         text = brief(co, 8, "s1")
-        self.assertIn("`specs/`", text)  # the remembered grade
+        self.assertIn("`design.md`", text)
+        self.assertNotIn("`specs/`", text)
         self.assertIn("based on `feat/8-t1`", text)
         self.assertIn("`studio/AGENTS.md`", text)
-
-    def test_grade_on_an_engine_issue_is_refused(self):
-        co = checkout("grade-engine")
-        self.assertIn("studio issues", run(co, "pm-brief", "plan", 7, "--grade", "native").stderr)
+        self.assertNotEqual(run(co, "pm-brief", "plan", 8, "--grade", "console").returncode, 0)
 
     def test_worker_end_condition_and_close_step(self):
         """Issue 478 removed the tests unit (the plan writes the integration tests), so a worker brief is one
@@ -86,12 +86,12 @@ class Brief(unittest.TestCase):
         self.assertIn("engine/references/security-review.md", e1)
         self.assertIn("the files breakdown.md lists for `e1`", e1)
 
-    def test_unit_of_a_studio_issue_has_no_design_input(self):
+    def test_unit_of_a_studio_issue_reads_the_design(self):
         co = checkout("s-unit")
-        run(co, "pm-brief", "plan", 8, "--grade", "none")
+        run(co, "pm-brief", "plan", 8)
         self.assertEqual(run(co, "pm-brief", "worker", 8, "s1", "--summary", "Screen.").returncode, 0)
         text = brief(co, 8, "s1")
-        self.assertNotIn("design.md", text)
+        self.assertIn("design.md", text)
         self.assertIn("does not close the issue", text)
 
     def test_refusals_write_nothing(self):
@@ -108,11 +108,11 @@ class Brief(unittest.TestCase):
 
     def test_crit(self):
         co = checkout("crit")
-        run(co, "pm-brief", "plan", 8, "--grade", "native")
+        run(co, "pm-brief", "plan", 8)
         p = run(co, "pm-brief", "crit", 8, "--targets", "/ and /settings", "--capture-wt", co)
         self.assertEqual(p.returncode, 0, p.stderr)
         text = brief(co, 8, "crit")
         self.assertNotIn("{{", text)
-        self.assertIn("Screen grade `native`", text)
+        self.assertNotIn("grade", text.lower())
         self.assertIn("/ and /settings", text)
         self.assertIn("no screen to score", run(co, "pm-brief", "crit", 7, "--targets", "/", "--capture-wt", co).stderr)

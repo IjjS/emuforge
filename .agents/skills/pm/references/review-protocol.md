@@ -13,7 +13,7 @@ lead → rev : REVIEW <stage> r<k> <path-to-deliverable> [<extra paths>]
 rev  → lead: REVIEWED <stage> r<k> verdict=<pass|revise> p1=<n> p2=<n> p3=<n> .pm/issue-<id>/review-<stage>-r<k>.md
 ```
 
-- `stage` is one of `requirement`, `design`, `spec`, `test-criteria`, `breakdown`, `impl`. `impl` is the whole:
+- `stage` is one of `requirement`, `design`, `test-criteria`, `breakdown`, `impl`. `impl` is the whole:
   the diff `main...feat/<id>` with the whole check's record, and the integration tests against the scenarios.
 - rev writes the review file, then prompts the lead with the REVIEWED line via `herdr agent prompt <lead> "<line>"`.
   The lead ends its turn after sending REVIEW; the REVIEWED prompt resumes it. Nobody waits or polls.
@@ -65,9 +65,9 @@ praise, no summaries. A finding without a location and a fix is not a finding.
 - **design** (engine side): the request path and error mapping are complete; every touched row of
   `security-review.md` says how it is kept; nothing makes the engine interpret a service's body without a
   recorded decision; units and owned files do not overlap.
-- **spec** (studio, `console`): `studio/references/console-reference.md` format; every item can be found in the
-  AWS user guide or the StackPort view; every `omitted` entry has a reason that can be checked; lists are in
-  visible order.
+- **design** (studio side): every task the requirement builds has its flow and the API call behind each action;
+  the console captures named are read for UX only and nothing of them is copied; a part shared with another service
+  is lifted into the area only when a second service needs it; units and owned files do not overlap.
 - **test-criteria**: the module's `references/test-criteria.md` form; each line is observable and maps to one
   test; every coverage axis is checked or marked `(Not Scope)`; success and failure are paired; each case sits at
   the lowest level that can prove it.
@@ -80,7 +80,7 @@ praise, no summaries. A finding without a location and a fix is not a finding.
   `test-criteria.md` or `report.md`; `tests/integration/AGENTS.md` for the tests (a manifest row each, isolation and
   cleanup, no sleep, loopback only); no criteria or spec file changed by a worker; per side:
   - engine: `engine/AGENTS.md`; every `security-review.md` row; relay fidelity not lower than on `main`.
-  - studio: `studio/AGENTS.md`; the four states built for every data screen; 501 shown as "not implemented", never
+  - studio: `studio/AGENTS.md` and the references its units' briefs named; 501 shown as "not implemented", never
     hidden or faked; the contact sheet read once.
 
 ## Independence

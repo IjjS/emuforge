@@ -87,7 +87,7 @@ class Refusals(LeadCase):
         "plan-stops-the-daemon": ("P9", ("pm-watchd", "stop"), ("refused", "the pm's")),
     }
     SCRIPTS = ("pm-worktree", "pm-scope", "pm-check", "pm-merge", "pm-emulator-dir", "pm-brief", "pm-archive",
-               "pm-cost", "pm-pane", "pm-critique", "pm-structure", "pm-issue", "pm-ready", "pm-tokens", "pm-watchd")
+               "pm-cost", "pm-pane", "pm-critique", "pm-issue", "pm-ready", "pm-tokens", "pm-watchd")
 
     def test_refused(self):
         self.fixture(scripts=self.SCRIPTS)
