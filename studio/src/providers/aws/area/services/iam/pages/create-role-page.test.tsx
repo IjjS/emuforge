@@ -467,6 +467,26 @@ function fieldTexts(label: string): { constraint: string | null; error: string |
 }
 
 /**
+ * "Service or use case" is described by issue 492's R5 text, which stands between the field's label and its input,
+ * read before typing.
+ */
+function expectServiceDescription(): void {
+  const found = PAGE.findAllFormFields().find(
+    (formField) => (formField.findLabel()?.getElement().textContent ?? '').trim() === 'Service or use case',
+  );
+  const label = found?.findLabel()?.getElement();
+  const description = found?.findDescription()?.getElement();
+  expect(label, 'the label').toBeDefined();
+  expect(description, 'the description').toBeDefined();
+  expect((description?.textContent ?? '').trim()).toBe(
+    'Enter the principal of the service that may assume the role, written as a host name. The emulator accepts one that names no service.',
+  );
+  const input = field('Service or use case');
+  expect(label?.compareDocumentPosition(description as Node) ?? 0).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  expect(description?.compareDocumentPosition(input) ?? 0).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+}
+
+/**
  * The kind of value (issue 467, R6) the area's element whose text is exactly `text` inside `scope` shows: `address`,
  * `name`, `fixed` or `text`; `undefined` when no such element holds it.
  */
@@ -547,9 +567,8 @@ describe('step 1, "Select trusted entity"', () => {
     expect(within(main()).queryByRole('radio', { name: 'Web identity' })).toBeNull();
     expect(within(main()).queryByRole('radio', { name: 'SAML 2.0 federation' })).toBeNull();
     expect(field('Service or use case')).toHaveValue('');
-    expect(main()).toHaveTextContent(
-      'Enter the principal of the service that may assume the role. The emulator accepts a principal that names no service.',
-    );
+    expectServiceDescription();
+    expect(fieldTexts('Service or use case')).toEqual({ constraint: null, error: null });
     expect(button('Cancel')).toBeInTheDocument();
     expect(button('Next')).toBeInTheDocument();
     expect(within(main()).queryByRole('button', { name: 'Previous' })).toBeNull();
@@ -680,13 +699,15 @@ describe('step 1, "Select trusted entity"', () => {
     }
   });
 
-  it('"Next" with "Service or use case" empty: "Enter a service principal." under it, focus on it, step 1 stays', async () => {
+  it('"Next" with "Service or use case" empty: "Enter a service principal." under it, the description above it still shown, focus on it, step 1 stays', async () => {
     await openWizard();
     next();
 
     await waitFor(() => {
       expect(main()).toHaveTextContent('Enter a service principal.');
     });
+    expect(fieldTexts('Service or use case')).toEqual({ constraint: null, error: 'Enter a service principal.' });
+    expectServiceDescription();
     expect(h1()).toHaveTextContent('Select trusted entity');
     expect(document.activeElement).toBe(field('Service or use case'));
   });
