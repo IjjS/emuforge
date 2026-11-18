@@ -661,6 +661,17 @@ class Case(unittest.TestCase):
                                      started=dt.datetime.now().astimezone().isoformat(timespec="seconds"))))
         return got["pmcheck"]
 
+    def with_check(self, check, pids, reapers):
+        """`pids` and, when the pm-check stand-in is itself an orphan (its parent one of `reapers`, as launch.py
+        leaves it), the stand-in: what a sweep names as left running for the check, sorted."""
+        ppid = ps_field(check, "ppid")
+        return sorted(set(pids) | ({check} if ppid is not None and int(ppid) in reapers else set()))
+
+    def kept_text(self, check, pids, reapers):
+        """`<pid> <name>, … (the running pm-check <check>)` of with_check."""
+        names = ", ".join(f"{p} {exe_name(p)}" for p in self.with_check(check, pids, reapers))
+        return f"{names} (the running pm-check {check})"
+
     def tests_dir(self, wt="wt-a"):
         """<wt>/output/tests/<group>/<case>, where a harness test of a check running in <wt> works."""
         d = pathlib.Path(self.wt[wt]) / "output" / "tests" / "group" / "case"
@@ -1067,7 +1078,8 @@ class LeftOut(Case):
         d = self.tests_dir()
         o = self.orphan(d, "--child", d)
         self.assertEqual(self.find(), [])
-        self.assertEqual(self.kept(), [(o["orphan"], f"the running pm-check {check}")])
+        self.assertEqual(self.kept(), [(pid, f"the running pm-check {check}")
+                                       for pid in self.with_check(check, [o["orphan"]], self.driver.reapers)])
 
     def test_one_started_before_the_check_is_found(self):
         pid = self.orphan(self.tests_dir())["orphan"]
@@ -1100,8 +1112,9 @@ class LeftOut(Case):
         other = self.orphan(self.wt["wt-a"])["orphan"]
         r = self.sweep()
         self.assertEqual(self.pids_of(r["stopped"]), [other], r)
-        self.assertEqual([(k[0]["pid"], k[1]) for k in r.get("kept", [])], [(own, f"the running pm-check {check}")],
-                         r)
+        self.assertEqual([(k[0]["pid"], k[1]) for k in r.get("kept", [])],
+                         [(pid, f"the running pm-check {check}")
+                          for pid in self.with_check(check, [own], self.driver.reapers)], r)
         self.assertAlive(own)
         self.assertGone(other)
 
@@ -1121,7 +1134,8 @@ class LeftOut(Case):
                 self.crit(gone=True)
             elif how == "other issue":
                 self.crit(issue="2")
-            self.assertEqual(self.pids_of(self.find()), [pid], f"crit {how}")
+            self.assertIn(pid, self.pids_of(self.find()), f"crit {how}")
+            self.assertEqual(self.kept(), [], f"crit {how}")
 
     def test_another_program_is_found_beside_a_live_crit(self):
         self.crit()
@@ -1246,17 +1260,17 @@ class Worktree(Command):
         r = self.cmd("pm-worktree", "orphans", "wt-a")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertEqual(lines(r), ["no orphaned processes in wt-a",
-                                    f"wt-a left running: {pid} {exe_name(pid)} (the running pm-check {check})"])
+                                    f"wt-a left running: {self.kept_text(check, [pid], {1})}"])
 
     def test_orphans_stop_during_a_check_leaves_its_stand_in_and_stops_the_rest(self):
         """issue 477"""
         check = self.check_running()
         own = self.ours(self.tests_dir())
         other = self.ours(self.wt["wt-a"])
+        name, kept = exe_name(other), self.kept_text(check, [own], {1})
         r = self.cmd("pm-worktree", "orphans", "wt-a", "--stop")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertIn(f"stopped 1 orphaned processes of wt-a: {other} {exe_name(other)}; left running: {own} "
-                      f"{exe_name(own)} (the running pm-check {check})", lines(r))
+        self.assertIn(f"stopped 1 orphaned processes of wt-a: {other} {name}; left running: {kept}", lines(r))
         self.assertGone(other)
         self.assertAlive(own)
 
@@ -1466,10 +1480,10 @@ class Pane(Command):
         """issue 477"""
         check = self.check_running()
         pid = self.ours(self.tests_dir())
+        kept = self.kept_text(check, [pid], {1})
         r = self.cmd("reset", "i1-worker-h1")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertIn(f"no orphaned processes in wt-a; left running: {pid} {exe_name(pid)} (the running pm-check "
-                      f"{check})", lines(r))
+        self.assertIn(f"no orphaned processes in wt-a; left running: {kept}", lines(r))
         brief = self.prompt(lambda t: t.startswith("Read "))
         self.assertEqual(len(brief), 1, self.logged())
         self.assertIs(brief[0]["alive"].get(str(pid)), True, brief)
@@ -1479,13 +1493,14 @@ class Pane(Command):
         """issue 477"""
         check = self.check_running()
         pid = self.ours(self.tests_dir())
+        kept = self.kept_text(check, [pid], {1})
         r = self.cmd("close", "i1-worker-h1")
-        self.assertIn(f"no orphaned processes in wt-a; left running: {pid} {exe_name(pid)} (the running pm-check "
-                      f"{check})", lines(r))
+        self.assertIn(f"no orphaned processes in wt-a; left running: {kept}", lines(r))
         self.assertAlive(pid)
 
     def test_close_leaves_a_live_crit_s_live_server(self):
         """issue 477"""
+        self.PANES = Pane.PANES + (("i1-crit", "p-crit-1", "crit", None, None),)  # herdr lists it: it stays live
         self.crit()
         pid = self.live_server(self.wt["wt-a"])
         r = self.cmd("close", "i1-worker-h1")
