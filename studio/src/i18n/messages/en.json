@@ -21,6 +21,8 @@
   },
   "connection.engine": "Engine",
   "connection.emulator": "Emulator",
+  "connection.target": "Target {target}",
+  "connection.manage": "Manage connections",
   "status.checking": "Checking",
   "status.connected": "Connected",
   "status.notStarted": "Not started",

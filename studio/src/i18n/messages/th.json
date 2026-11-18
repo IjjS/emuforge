@@ -20,6 +20,8 @@
   },
   "connection.engine": "เ\u2060อ\u2060น\u2060จิ\u2060น",
   "connection.emulator": "อี\u2060มู\u2060เ\u2060ล\u2060เ\u2060ต\u2060อ\u2060ร์",
+  "connection.target": "เป้าหมาย {target}",
+  "connection.manage": "จัดการการเชื่อมต่อ",
   "status.checking": "กำลังตรวจสอบ",
   "status.connected": "เชื่อมต่อแล้ว",
   "status.notStarted": "ยังไม่เริ่มทำงาน",

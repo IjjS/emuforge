@@ -22,6 +22,8 @@
   },
   "connection.engine": "Moteur",
   "connection.emulator": "Émulateur",
+  "connection.target": "Cible {target}",
+  "connection.manage": "Gérer les connexions",
   "status.checking": "Vérification",
   "status.connected": "Connecté",
   "status.notStarted": "Non démarré",

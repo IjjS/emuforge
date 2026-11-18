@@ -20,6 +20,8 @@
   },
   "connection.engine": "Engine",
   "connection.emulator": "Trình giả lập",
+  "connection.target": "Mục tiêu {target}",
+  "connection.manage": "Quản lý kết nối",
   "status.checking": "Đang kiểm tra",
   "status.connected": "Đã kết nối",
   "status.notStarted": "Chưa khởi động",

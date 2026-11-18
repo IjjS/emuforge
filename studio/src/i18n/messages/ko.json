@@ -20,6 +20,8 @@
   },
   "connection.engine": "엔진",
   "connection.emulator": "에뮬레이터",
+  "connection.target": "대상 {target}",
+  "connection.manage": "연결 관리",
   "status.checking": "확인 중",
   "status.connected": "연결됨",
   "status.notStarted": "시작되지 않음",
