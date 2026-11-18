@@ -288,8 +288,8 @@ def with_block(step):
 MAIN_RUN_END = "./run --not-run ../../.github/not-run.json --services ../../output/ci/services.json"
 FULL_STEPS = ("checkout", "node", "not-run", "versions", "rust", "bun", "tools", "studio dependencies", "chromium",
               "emulator image", "integration", "integration (second run)")
-FULL_RUN = "../../.github/ci run --tails -- ./run --not-run ../../.github/not-run.json"
-FULL_SECOND = "../../.github/ci run --second integration --tails -- ./run --not-run ../../.github/not-run.json"
+FULL_RUN = "../../.github/ci run --tails -- ./run --not-run ../../.github/not-run.json --full"
+FULL_SECOND = "../../.github/ci run --second integration --tails -- ./run --not-run ../../.github/not-run.json --full"
 TRIGGERS = ("push", "pull_request", "pull_request_target", "schedule", "workflow_run", "workflow_call")
 
 

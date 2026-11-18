@@ -10,7 +10,8 @@
 # and writes `output/ci/services.json`, which both integration runs pass to `run --services`. A run not started by
 # a push, a first or forced push, or git that cannot answer is every service. The checkout fetches the whole
 # history so that the commit before the push is there. The checks of a service no push touches run only in
-# `full.yml`, which the owner starts by hand.
+# `full.yml`, which the owner starts by hand. The checks of the tier full (issue 482, the manifest's label `full`)
+# run only there: this workflow never passes `--full`, so each is `not-run`, whatever the push touched.
 #
 # A failed step does not stop the later ones of the nine. engine-test, studio-unit and integration (pm-check's
 # RETRY) run once more, as `<step> (second run)`, only when their first run failed; a second run that passes is
