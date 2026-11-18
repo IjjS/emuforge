@@ -17,7 +17,7 @@ import { expect, startStack, test, type Ctx } from './support';
 import { connectedAt, engineNotAnswering, expectLine, LINE_CHANGE_BOUND_MS, notStartedOn } from './support/aws-area';
 import { ACTION, heading } from './support/frame';
 import { markPage, stillSamePage } from './support/home';
-import { containing, getRoleAnswer, IamSeeded, roleNamesDirect, xmlTree, textAt } from './support/iam';
+import { containing, getRoleAnswer, IamSeeded, roleNamesDirect, xmlTree, textAt } from './services/iam/iam';
 import { Lines } from './support/lines';
 
 // ---------------------------------------------------------------------------------------------------------------

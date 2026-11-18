@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: feature
 Issue-Source: plan
 Issue-Key: harness|integration.studio-support|service-support-calls-for-every-service
-Issue-Check-Ids:
+Issue-Check-Ids: harness.service-files harness.service-tree
 Issue-Commit: 39a97fc6be2d56e35e8a9e37f248a6511d210a29
 
 # Keep a service's check support where a change of it calls for that service's checks alone

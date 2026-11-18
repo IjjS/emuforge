@@ -18,10 +18,10 @@ import { expect, startStack, test } from './support';
 import { crumbLink } from './support/aws-area';
 import { ACTION, addressOf, heading } from './support/frame';
 import { Lines } from './support/lines';
+import { checkPrefix } from './support/service-screens';
 import {
   BUCKETS_PATH,
   bucketNamesDirect,
-  checkPrefix,
   deleteItemsDirect,
   EMPTY,
   expectNames,
@@ -33,8 +33,8 @@ import {
   REFRESH,
   screen,
   Seeded,
-} from './support/s3';
-import { EngineHold } from './support/s3-bucket-page';
+} from './services/s3/s3';
+import { EngineHold } from './services/s3/s3-bucket-page';
 import {
   DELETE_H1,
   deletedCount,
@@ -57,7 +57,7 @@ import {
   pageShowsError,
   startEmptying,
   STATUS_H1,
-} from './support/s3-bucket-actions';
+} from './services/s3/s3-bucket-actions';
 
 /** Waits for the bucket list. */
 async function expectList(page: Page): Promise<void> {

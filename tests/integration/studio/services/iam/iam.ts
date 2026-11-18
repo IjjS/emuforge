@@ -29,8 +29,8 @@ import fs from 'node:fs';
 import https from 'node:https';
 import path from 'node:path';
 
-import { EnvError, expect, type Ctx } from './check';
-import { emulatorDir, readEmulatorFiles } from './emulator';
+import { EnvError, expect, type Ctx } from '../../support/check';
+import { emulatorDir, readEmulatorFiles } from '../../support/emulator';
 
 const REGION = 'us-east-1';
 

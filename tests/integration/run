@@ -31,6 +31,22 @@
 # refused with a usage line (exit 2). Only the list, the label and the services file turn this on;
 # EMUFORGE_IT_NOT_RUN from the caller is unset.
 #
+# The manifest (issue 402) is the main manifest's rows, tests/integration/manifest.jsonl in its order, then each
+# service's rows, studio/services/<service>/manifest.jsonl, the services in name order; a folder under
+# studio/services/ whose name is not a service name, or that holds no manifest.jsonl, adds no row. Before anything
+# else the run writes it as <checkout>/output/integration/manifest.jsonl, which every later step reads; when a part
+# cannot be read (a symbolic link at studio/services, at a service's folder or at its manifest included) no such
+# file is written and the run meets it as it meets a main manifest that cannot be read. In a checkout that holds
+# studio/services/, the run then refuses rows out of their place: a row of the main manifest with a `service`, a
+# row of a service's manifest whose `service` is not that service, whose `module` is not studio or whose `path` is
+# not a .spec.ts directly under studio/, and a check id held by two rows. It also refuses imports that reach a
+# service's folder from outside: a .ts file under studio/ that imports a file under studio/services/<service>/
+# and is neither in that folder nor one of its check files (a file every one of whose rows, at least one, is of
+# that service), and any import of a .spec.ts file. An import is a relative specifier of `from '...'`,
+# `import '...'`, `import('...')` or `require('...')`, read as text (a comment counts) and never run; symbolic
+# links are not followed and node_modules is left out. Either refusal makes every check `error` (exit 127) with
+# one reason naming the first finding and their number, before anything is built or started, whatever the options.
+#
 # Relay fidelity (engine/references/relay-fidelity.md): passed / total over the manifest rows labelled
 # `transparency` whose verdict is passed or failed (`error` counts in neither). It is written into report.json as
 # relay_fidelity {passed, total} and printed as the last line of the output:
@@ -95,8 +111,9 @@ checkout="$(cd ../.. && pwd)"
 out="$checkout/output/integration"
 logs="$checkout/output/logs"
 rm -rf "$out/verdicts" "$out/logs" "$out/tmp" "$out/playwright" "$out/report.json" "$out/not-run.ids" \
-  "$out/not-run.json" "$out/services.json"
+  "$out/not-run.json" "$out/services.json" "$out/manifest.jsonl"
 mkdir -p "$out/verdicts" "$logs"
+manifest="$out/manifest.jsonl"
 run_id="$(date +%s)-$$"
 product_image="emuforge-it-product-$run_id"
 emulator_image="emuforge-it-emulator-$run_id"
@@ -110,7 +127,7 @@ product_build_bound=600
 # report <reason>: writes report.json from the manifest and the verdict files and prints the exit code. With a
 # reason, the run did not get to its checks and every check is `error` with that reason.
 report() {
-  python3 -I - "$here/manifest.jsonl" "$out/verdicts" "$out/report.json" \
+  python3 -I - "$manifest" "$out/verdicts" "$out/report.json" \
     "$emulator_version" "$emulator_commit" "$commit" "$out/not-run.json" "$out/services.json" "${1:-}" <<'PY'
 import json, pathlib, sys
 manifest, verdicts, report, version, emulator_commit, commit, not_run, services, reason = sys.argv[1:]
@@ -258,6 +275,167 @@ free_port() {
   python3 -I -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])'
 }
 
+# The manifest and its two guards (issue 402), first of all: it writes $manifest, the main manifest's bytes then
+# each service's manifest's (studio/services/<s>/manifest.jsonl, the names held to the form and sorted), each part
+# ended with a newline; when a part cannot be read (the main manifest, or a service's that is there and is not a
+# regular file reached through real folders) it writes nothing and stops, and the readers below meet a manifest
+# that cannot be read as they meet an unreadable main manifest. Without a folder studio/services it stops there.
+# Else, when every part parses, it holds the rows to their place and then the imports to the service folders, and
+# on a finding prints one reason and exits 1: the run then makes every check `error` with it. It reads only files
+# under $here; a specifier is joined and normalized as text and only looked up among the walked files, so nothing it
+# names is opened; it follows no symbolic link and starts no process. (Its output goes through a file, as below.)
+if ! python3 -I - "$here" "$out" >"$out/service-files.out" <<'PY'
+import json, os, posixpath, re, sys
+here, out = sys.argv[1:]
+checkout = os.path.dirname(os.path.dirname(here))
+ID = re.compile(r"[a-z]+\.[a-z0-9-]+")
+SERVICE = re.compile(r"[a-z][a-z0-9]*(-[a-z0-9]+)*")
+MAIN = "tests/integration/manifest.jsonl"
+STUDIO = "tests/integration/studio/"
+SPECIFIERS = [re.compile(p) for p in (r"""\bfrom\s*['"](\.[^'"]*)['"]""", r"""\bimport\s*['"](\.[^'"]*)['"]""",
+                                      r"""\bimport\s*\(\s*['"](\.[^'"]*)['"]""",
+                                      r"""\brequire\s*\(\s*['"](\.[^'"]*)['"]""")]
+CHECK_FILE = re.compile(re.escape(STUDIO) + r"[^/]+\.spec\.ts")
+
+
+def unreadable():
+    sys.exit(0)
+
+
+def read(path):
+    try:
+        with open(path, "rb") as f:
+            return f.read()
+    except OSError:
+        unreadable()
+
+
+# 1 The manifest: [(its path relative to the checkout, service or None, bytes)].
+parts = [(MAIN, None, read(os.path.join(here, "manifest.jsonl")))]
+folder = os.path.join(here, "studio", "services")
+if os.path.islink(folder):
+    unreadable()
+has_services = os.path.isdir(folder)
+if has_services:
+    try:
+        names = sorted(n for n in os.listdir(folder) if SERVICE.fullmatch(n))
+    except OSError:
+        unreadable()
+    for s in names:
+        d = os.path.join(folder, s)
+        m = os.path.join(d, "manifest.jsonl")
+        if os.path.islink(d):
+            unreadable()
+        if not os.path.isdir(d) or not os.path.lexists(m):
+            continue
+        if os.path.islink(m) or not os.path.isfile(m):
+            unreadable()
+        parts.append((f"{STUDIO}services/{s}/manifest.jsonl", s, read(m)))
+with open(os.path.join(out, "manifest.jsonl"), "wb") as f:
+    f.write(b"".join(b if b.endswith(b"\n") or not b else b + b"\n" for _, _, b in parts))
+# 2 A checkout without the folder is never refused.
+if not has_services:
+    sys.exit(0)
+rows = []  # (part, its service, row)
+try:
+    for rel, s, data in parts:
+        for line in data.decode("utf-8").splitlines():
+            if line.strip():
+                row = json.loads(line)
+                if not isinstance(row, dict):
+                    raise ValueError("a manifest line is not a JSON object")
+                rows.append((rel, s, row))
+except (ValueError, RecursionError):
+    sys.exit(0)  # the run meets the manifest that does not parse as today
+
+
+def named(cid):
+    return cid if isinstance(cid, str) and ID.fullmatch(cid) else "a row"
+
+
+def refuse(found, text, unit):
+    print(f"service files: {text(found[0])} ({len(found)} {unit})")
+    sys.exit(1)
+
+
+def service_of(row):
+    s = row.get("service")
+    return s if isinstance(s, str) and SERVICE.fullmatch(s) else None
+
+
+# 3 Rows: a service in the main manifest; a row of a service's manifest that is not a check of it in a check file;
+# an id held by two rows.
+found = [(rel, row) for rel, s, row in rows if s is None and service_of(row) is not None]
+if found:
+    refuse(found, lambda f: f"{named(f[1].get('check_id'))} in {f[0]} has the service {service_of(f[1])}; its row "
+                            f"belongs in {STUDIO}services/{service_of(f[1])}/manifest.jsonl", "rows")
+found = [(rel, s, row) for rel, s, row in rows if s is not None and (
+    row.get("service") != s or row.get("module") != "studio"
+    or not (isinstance(row.get("path"), str) and CHECK_FILE.fullmatch(row["path"])))]
+if found:
+    refuse(found, lambda f: f"{named(f[2].get('check_id'))} in {f[0]} is not a check of {f[1]} in a check file", "rows")
+seen, twice = set(), []
+for _, _, row in rows:
+    cid = row.get("check_id")
+    if isinstance(cid, str):
+        if cid in seen and cid not in twice:
+            twice.append(cid)
+        seen.add(cid)
+if twice:
+    refuse(twice, lambda cid: f"{named(cid)} is held by two rows of the manifest", "ids")
+# 4 Imports. The .ts files under studio/, no link followed, node_modules left out; paths relative to the checkout.
+walked = set()
+for top, dirs, files in os.walk(os.path.join(here, "studio"), followlinks=False):
+    dirs[:] = sorted(d for d in dirs if d != "node_modules" and not os.path.islink(os.path.join(top, d)))
+    for name in files:
+        p = os.path.join(top, name)
+        if name.endswith(".ts") and not os.path.islink(p) and os.path.isfile(p):
+            walked.add(os.path.relpath(p, checkout).replace(os.sep, "/"))
+of_path = {}
+for _, _, row in rows:
+    if isinstance(row.get("path"), str):
+        of_path.setdefault(row["path"], set()).add(service_of(row))
+
+
+def service_folder(path):
+    """<s> when `path` is under studio/services/<s>/ with <s> of the form, else None."""
+    rest = path[len(STUDIO + "services/"):] if path.startswith(STUDIO + "services/") else ""
+    s = rest.split("/", 1)[0] if "/" in rest else ""
+    return s if SERVICE.fullmatch(s) else None
+
+
+foreign, specs = set(), set()
+for importer in sorted(walked):
+    try:
+        with open(os.path.join(checkout, importer), encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except OSError:
+        print(f"service files: {importer} cannot be read")
+        sys.exit(1)
+    for pattern in SPECIFIERS:
+        for spec in pattern.findall(text):
+            n = posixpath.normpath(posixpath.join(posixpath.dirname(importer), spec))
+            imported = next((c for c in (n, n + ".ts", n + "/index.ts") if c in walked), None)
+            if imported is None:
+                continue
+            s = service_folder(imported)
+            if s is not None and service_folder(importer) != s and of_path.get(importer, set()) != {s}:
+                foreign.add((importer, imported, s))
+            if imported.endswith(".spec.ts"):
+                specs.add((importer, imported))
+if foreign:
+    refuse(sorted(foreign), lambda f: f"{f[0]} imports {f[1]} of the service {f[2]}, and is not one of its check "
+                                      f"files", "imports")
+if specs:
+    refuse(sorted(specs), lambda f: f"{f[0]} imports the check file {f[1]}", "imports")
+PY
+then
+  reason="$(cat "$out/service-files.out")"
+  rm -f "$out/service-files.out"
+  preflight_error "${reason:-service files: cannot be checked}"
+fi
+rm -f "$out/service-files.out"
+
 # What is left out, before anything is built or started: the not-run list given to --not-run, without
 # --on-request every manifest row labelled `on-request` (each with the fixed reason ON_REQUEST below) and, with a
 # --services list, every check of a service not in it (each with the reason of service_reason below); an id left out
@@ -270,7 +448,7 @@ free_port() {
 # leaves nothing out: the run ends at its report as it would without this block. (Its output goes through a file:
 # bash 3.2 cannot parse a heredoc inside $(...).)
 grep_invert=
-if python3 -I - "$not_run" "$not_run_file" "$here/manifest.jsonl" "$out" "$on_request" "$services" \
+if python3 -I - "$not_run" "$not_run_file" "$manifest" "$out" "$on_request" "$services" \
   "$services_file" >"$out/not-run.out" <<'PY'
 import json, pathlib, re, sys
 has_list, path, manifest, out, on_request, has_services, services_path = sys.argv[1:]
@@ -597,7 +775,7 @@ else
   else
     reason="no Playwright at $playwright (studio build $studio_build, see $studio_log)"
   fi
-  python3 -I - "$here/manifest.jsonl" "$out/verdicts" "$reason" <<'PY'
+  python3 -I - "$manifest" "$out/verdicts" "$reason" <<'PY'
 import json, pathlib, sys
 manifest, verdicts, reason = sys.argv[1:]
 for line in pathlib.Path(manifest).read_text().splitlines():

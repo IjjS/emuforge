@@ -47,8 +47,16 @@ DEFERRED = ("integration",)  # what a unit leaves to its issue branch
 # The selection of the touched services (select below). A service name is the name of a service's folder; it is
 # only ever written into JSON and compared with manifest values, never joined to a path or put on a command line.
 SERVICE = re.compile(r"[a-z][a-z0-9]*(-[a-z0-9]+)*")  # matched with fullmatch
-SERVICE_FOLDERS = ("studio/src/providers/aws/area/services/", "studio/references/console/")
+# A service's folder of checks (issue 402): its support, its seed script and its manifest. A path under it is its
+# service's, as a path under a folder of its screens is.
+SERVICE_CHECKS = "tests/integration/studio/services/"
+SERVICE_FOLDERS = ("studio/src/providers/aws/area/services/", "studio/references/console/", SERVICE_CHECKS)
+# The manifest (issue 402, R3.2) is the rows of the main manifest, in its order, then the rows of each service's
+# manifest, SERVICE_CHECKS + <s> + "/" + SERVICE_MANIFEST, the services in name order. A folder under
+# SERVICE_CHECKS whose name is not of the form SERVICE, or that holds no manifest, adds no row; a checkout without
+# SERVICE_CHECKS reads the main manifest alone.
 MANIFEST = "tests/integration/manifest.jsonl"
+SERVICE_MANIFEST = "manifest.jsonl"
 UNIT_TESTS = ("studio/src/*.test.ts", "studio/src/*.test.tsx")  # "*" crosses "/": not part of the built Studio
 TOOLS = (".github/", ".pm/bin/")  # the workflow, the selection and its rules: every service where integration runs
 COMMIT = re.compile(r"[0-9a-f]{40}")  # the only form of a push's commit id that reaches git
@@ -265,14 +273,21 @@ def select(paths, head, base):
     commit has none, None when it exists and cannot be read. Returns the services object {all, names, why}:
     `all` true (every service, `names` []) or a sorted list of names, which may be empty.
 
+    `head` and `base` are each the manifest of R3.2 as one text (manifest_of, manifest_at): the main manifest's
+    rows, then each service's manifest's.
+
     Each path is compared as text, never opened, and decided by the first line it matches:
-      1 under one of SERVICE_FOLDERS, a folder segment <s> followed by "/": the service <s>, or every service
-        when <s> is not of the form SERVICE (a file directly under the folder falls to line 6)
+      1 under one of SERVICE_FOLDERS (studio/src/providers/aws/area/services/, studio/references/console/ and
+        tests/integration/studio/services/, the service's folder of checks), a folder segment <s> followed by "/":
+        the service <s>, or every service when <s> is not of the form SERVICE (a file directly under the folder
+        falls to line 6); a service's manifest, tests/integration/studio/services/<s>/manifest.jsonl, also asks
+        line 3
       2 the `path` of one or more rows of `head` (a file of checks): the services those rows name, none for
         rows of no service
-      3 the manifest: every service when a check id both manifests hold has another service in the two, an id
-        only `head` holds has a service and its path is not among the changed paths, or `base` cannot be read;
-        else nothing
+      3 the main manifest: every service when a check id both manifests hold has another service in the two, an
+        id only `head` holds has a service and its path is not among the changed paths, or `base` cannot be read;
+        else nothing. It is asked once, over the whole of `head` and `base`, when the main manifest or a
+        service's manifest is among the paths
       4 studio/src/*.test.ts or *.test.tsx (unit tests, not part of the built Studio): nothing
       5 a path whose rule in RULES calls for no product module, outside .github/ and .pm/bin/: nothing
       6 any other path (the engine, shared Studio code, the checks' support, the workflow, the harness, a path
@@ -292,6 +307,14 @@ def select(paths, head, base):
         if isinstance(row.get("path"), str):
             of_file.setdefault(row["path"], set()).add(_service(row))
     names, touching, shared, reasons = set(), 0, [], []
+    asked = []  # line 3's answer, asked once per call
+
+    def manifest_changed(path):
+        if not asked:
+            asked.append(_manifest_change(paths, head_rows, base))
+        if asked[0]:
+            reasons.append((path, asked[0]))
+
     for path in sorted(set(paths)):
         folder = next((f for f in SERVICE_FOLDERS if path.startswith(f) and "/" in path[len(f):]), None)
         if folder is not None:
@@ -301,6 +324,8 @@ def select(paths, head, base):
                 touching += 1
             else:
                 reasons.append((path, f"{path} is under a folder that is not a service name"))
+            if service_of_manifest(path) is not None:
+                manifest_changed(path)
             continue
         if path in of_file:
             given = of_file[path] - {None}
@@ -308,9 +333,7 @@ def select(paths, head, base):
             touching += bool(given)
             continue
         if path == MANIFEST:
-            why = _manifest_change(paths, head_rows, base)
-            if why:
-                reasons.append((path, why))
+            manifest_changed(path)
             continue
         if any(fnmatch.fnmatchcase(path, p) for p in UNIT_TESTS):
             continue
@@ -415,22 +438,107 @@ def changed(checkout, target="main"):
     return sorted(paths), head, main, base
 
 
+def service_of_manifest(path):
+    """The service <s> when `path` is exactly SERVICE_CHECKS + <s> + "/" + SERVICE_MANIFEST with <s> of the form
+    SERVICE, else None. Text only."""
+    if not (path.startswith(SERVICE_CHECKS) and path.endswith("/" + SERVICE_MANIFEST)):
+        return None
+    s = path[len(SERVICE_CHECKS):-len("/" + SERVICE_MANIFEST)]
+    return s if SERVICE.fullmatch(s) else None
+
+
+def _joined(parts):
+    """The manifest's text from its parts' texts: the main manifest's alone, word for word, when it is the only
+    part; else each part that another follows ended with a newline when it has none."""
+    return "".join(t if not t or t.endswith("\n") or i == len(parts) - 1 else t + "\n" for i, t in enumerate(parts))
+
+
 def manifest_at(top, commit):
-    """The text of the manifest at `commit` of the repository at `top`: "" when the commit has none. Raises
-    Unreadable when git fails or does not answer; a caller that catches it passes None to select()."""
-    if not git(top, "ls-tree", commit, "--", MANIFEST).strip():
-        return ""
-    return git(top, "show", f"{commit}:{MANIFEST}")
+    """The text of the manifest (R3.2) at `commit` of the repository at `top`: the main manifest's ("" when the
+    commit has none), then each service's manifest the commit holds, in name order; "" when it holds none of them.
+    Raises Unreadable when git fails or does not answer, and when the commit holds a service's manifest as anything
+    but a regular file reached through real folders: the folder tests/integration/studio/services or a folder <s>
+    of it a symbolic link or a submodule, the manifest one or a folder. A regular file in the place of the folder
+    services or of a folder <s> adds no row, as in the work tree. A caller that catches Unreadable passes None to
+    select()."""
+    parts = [git(top, "show", f"{commit}:{MANIFEST}") if git(top, "ls-tree", commit, "--", MANIFEST).strip() else ""]
+    folder = SERVICE_CHECKS.rstrip("/")
+    found = {}
+    for entry in _names(git(top, "ls-tree", "-r", "-z", commit, "--", folder)):
+        meta, _, path = entry.partition("\t")
+        mode = meta.split(" ", 1)[0]
+        s = service_of_manifest(path)
+        rest = path[len(SERVICE_CHECKS):].split("/") if path.startswith(SERVICE_CHECKS) else []
+        if path == folder or (len(rest) == 1 and SERVICE.fullmatch(rest[0])):
+            if mode not in ("100644", "100755"):
+                raise Unreadable(f"{path} is not a folder at {commit}")
+            continue
+        if len(rest) > 2 and SERVICE.fullmatch(rest[0]) and rest[1] == SERVICE_MANIFEST:
+            raise Unreadable(f"{SERVICE_CHECKS}{rest[0]}/{SERVICE_MANIFEST} is a folder at {commit}")
+        if s is not None:
+            if mode not in ("100644", "100755"):
+                raise Unreadable(f"{path} is not a regular file at {commit}")
+            found[s] = path
+    parts += [git(top, "show", f"{commit}:{found[s]}") for s in sorted(found)]
+    return _joined(parts)
+
+
+def manifest_parts(checkout):
+    """The files of the work tree's manifest (R3.2), uncommitted changes included, as [(path, text, why)]: the
+    main manifest, then for each folder <s> of tests/integration/studio/services/ of the form SERVICE, in name
+    order, its manifest when it holds one. `text` is None, and `why` says why, for a part that cannot be read: the
+    main manifest missing or unreadable, and a service's that is there and is not a regular file reached through
+    real folders (the folder services, the folder <s> or the file a symbolic link, the file a folder). A folder
+    services that is a symbolic link is one part, the folder itself, that cannot be read; so is a folder <s> that
+    is one. `path` is joined to `checkout`; a name from the folder reaches a path only once it is of the form."""
+    def read(path):
+        try:
+            with open(path, encoding="utf-8") as f:
+                return f.read(), None
+        except (OSError, UnicodeDecodeError) as e:
+            return None, type(e).__name__
+
+    co = str(checkout)
+    parts = [(os.path.join(co, MANIFEST), *read(os.path.join(co, MANIFEST)))]
+    folder = os.path.join(co, SERVICE_CHECKS.rstrip("/"))
+    if os.path.islink(folder):
+        return parts + [(folder, None, "a symbolic link")]
+    if not os.path.isdir(folder):
+        return parts
+    try:
+        listed = sorted(n for n in os.listdir(folder) if SERVICE.fullmatch(n))
+    except OSError as e:
+        return parts + [(folder, None, type(e).__name__)]
+    for s in listed:
+        d = os.path.join(folder, s)
+        m = os.path.join(d, SERVICE_MANIFEST)
+        if os.path.islink(d):
+            parts.append((d, None, "a symbolic link"))
+        elif not os.path.isdir(d) or not os.path.lexists(m):
+            continue
+        elif os.path.islink(m):
+            parts.append((m, None, "a symbolic link"))
+        elif not os.path.isfile(m):
+            parts.append((m, None, "not a regular file"))
+        else:
+            parts.append((m, *read(m)))
+    return parts
+
+
+def manifest_paths(checkout):
+    """The paths manifest_of reads, in its order, for a caller that names a file in a refusal (pm-check)."""
+    return [p for p, _, _ in manifest_parts(checkout)]
 
 
 def manifest_of(checkout):
-    """The text of the work tree's manifest, the file `run` reads, uncommitted changes included; None when it
-    cannot be read (missing too)."""
-    try:
-        with open(os.path.join(str(checkout), MANIFEST), encoding="utf-8") as f:
-            return f.read()
-    except (OSError, UnicodeDecodeError):
+    """The text of the work tree's manifest (R3.2), what `run` reads, uncommitted changes included: the main
+    manifest's, then each service's; exactly the main manifest's text in a checkout without
+    tests/integration/studio/services/. None when a part cannot be read (manifest_parts; the main manifest missing
+    too)."""
+    parts = manifest_parts(checkout)
+    if any(t is None for _, t, _ in parts):
         return None
+    return _joined([t for _, t, _ in parts])
 
 
 def push(top, before, after):

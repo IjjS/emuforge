@@ -19,9 +19,9 @@ import { connectedAt, crumbLink, crumbs, emulatorLine, endpointPattern, expectLi
 import { ACTION, addressOf, heading } from './support/frame';
 import { markPage, stillSamePage } from './support/home';
 import { Lines } from './support/lines';
+import { checkPrefix, SEOUL } from './support/service-screens';
 import {
   bucketPropertiesDirect,
-  checkPrefix,
   expectNames,
   filterFor,
   H1,
@@ -31,8 +31,7 @@ import {
   regionText,
   screen,
   Seeded,
-  SEOUL,
-} from './support/s3';
+} from './services/s3/s3';
 import {
   ABAC,
   ACCELERATION,
@@ -68,7 +67,7 @@ import {
   TIERING,
   VERSIONING,
   WEBSITE,
-} from './support/s3-bucket-page';
+} from './services/s3/s3-bucket-page';
 import { NOTICE_BODY, noticeBody, pageHeader, pairValueOf, timesOnPage } from './support/screen-rules';
 
 /** The page's notice region, as the area names it. */

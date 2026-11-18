@@ -9,7 +9,7 @@
 
 import { expect, startStack, test } from './support';
 import { ACTION } from './support/frame';
-import { LambdaSeeded, listRolesDirect, listRolesPage } from './support/lambda';
+import { LambdaSeeded, listRolesDirect, listRolesPage } from './services/lambda/lambda';
 import {
   createForm,
   EXISTING_ROLE,
@@ -18,9 +18,9 @@ import {
   optionNames,
   optionTexts,
   USE_ANOTHER_ROLE,
-} from './support/lambda-page';
+} from './services/lambda/lambda-page';
 import { Lines } from './support/lines';
-import { checkPrefix } from './support/s3';
+import { checkPrefix } from './support/service-screens';
 
 /** How long the select may take to show what a page of `ListRoles` brought. */
 const ROLES_BOUND_MS = 15_000;

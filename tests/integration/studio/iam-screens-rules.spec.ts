@@ -19,9 +19,9 @@ import type { Page } from '@playwright/test';
 import { expect, startStack, test } from './support';
 import { connectedAt, endpointPattern, expectLine } from './support/aws-area';
 import { ACTION, addressOf, heading } from './support/frame';
-import { getRoleDirect, IamSeeded, tooLongRoleIsGone, type DirectRole } from './support/iam';
+import { getRoleDirect, IamSeeded, tooLongRoleIsGone, type DirectRole } from './services/iam/iam';
 import { Lines } from './support/lines';
-import { checkPrefix, scrollsSideways } from './support/s3';
+import { checkPrefix, scrollsSideways } from './support/service-screens';
 import {
   breakAfterProblems,
   cellUnder,

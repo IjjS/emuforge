@@ -1,7 +1,7 @@
 // A bucket's page and the create form as a user meets them (test-criteria.md, issue 256, Flow checks of a bucket's
 // page and of "Create bucket"; requirement R5, R6, R9, R10, R11), and what the checks compare them with. Imported
 // directly by `s3-bucket-page.spec.ts`, `s3-bucket-page-states.spec.ts` and `s3-create-bucket.spec.ts`; the direct
-// calls and `Seeded` are `support/s3.ts`'s.
+// calls and `Seeded` are `services/s3/s3.ts`'s.
 //
 // - The words: the tabs, the thirteen sections built (every section of the spec but "AWS CloudTrail data events",
 //   R14 item 6), their fields and buttons, the routes of R10, the form's labels and messages (R6.3), the flash items
@@ -25,9 +25,11 @@
 import createWrapper from '@cloudscape-design/components/test-utils/selectors';
 import type { BrowserContext, CDPSession, Locator, Page } from '@playwright/test';
 
-import { expect, type Ctx } from './check';
-import { ACTION, heading } from './frame';
-import { type BucketProperties, creationDateText, type DirectBucket, regionText } from './s3';
+import { expect, type Ctx } from '../../support/check';
+import { ACTION, heading } from '../../support/frame';
+import { creationDateText } from '../../support/service-screens';
+
+import { type BucketProperties, type DirectBucket, regionText } from './s3';
 
 // ---------------------------------------------------------------------------------------------------------------
 // A bucket's page: routes and words (R0, R5, R9, R10).

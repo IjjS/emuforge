@@ -35,7 +35,7 @@ import {
 } from './support/aws-area';
 import { focusedAx, focusRing } from './support/focus';
 import { ACTION, heading, NAVIGATION_TOGGLE, SIDE_NAVIGATION } from './support/frame';
-import { getRoleDirect, IamSeeded } from './support/iam';
+import { getRoleDirect, IamSeeded } from './services/iam/iam';
 import { Lines } from './support/lines';
 import { copyControl, directlyBeforeProblems, pairValueOf } from './support/screen-rules';
 

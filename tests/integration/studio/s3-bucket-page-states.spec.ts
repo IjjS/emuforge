@@ -10,7 +10,8 @@
 
 import { expect, startStack, test } from './support';
 import { Lines } from './support/lines';
-import { bucketPropertiesDirect, checkPrefix, listBucketsDirect, Seeded, SEOUL } from './support/s3';
+import { checkPrefix, SEOUL } from './support/service-screens';
+import { bucketPropertiesDirect, listBucketsDirect, Seeded } from './services/s3/s3';
 import {
   bucketPath,
   EngineHold,
@@ -25,7 +26,7 @@ import {
   TABS,
   tab,
   VERSIONING,
-} from './support/s3-bucket-page';
+} from './services/s3/s3-bucket-page';
 
 test.use({ timezoneId: SEOUL.timeZone });
 

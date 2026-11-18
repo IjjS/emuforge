@@ -58,6 +58,32 @@ starts the emulator on another port than its healthcheck asks.
 When `docker-compose.yml` is missing or an image does not build, every product check still runs and fails at its
 start line, as the engine checks do without an engine.
 
+## A service's folder
+
+A service's check support is in `studio/services/<service>/`: its helpers, the seed script of its structure score and
+`studio/services/<service>/manifest.jsonl`, the rows of its checks. Its check files stay directly under `studio/`.
+The seed script is not a check; the `pm` starts it from the repository root as
+`NODE_PATH=studio/node_modules bun tests/integration/studio/services/<service>/<service>-seed-structure.ts …`.
+Support that more than one service's checks, or a check of no service, read is shared and stays in `studio/support/`.
+
+The manifest is `manifest.jsonl`, the rows of every check of no service in its order, then each service's
+`manifest.jsonl`, the services in name order; a folder under `studio/services/` whose name is not a service name, or
+that holds no `manifest.jsonl`, adds no row. Before anything else `run` writes it as
+`output/integration/manifest.jsonl`, which its later steps read; when a part cannot be read it writes no such file
+and the run meets it as a main manifest that cannot be read. In a checkout that holds `studio/services/`, `run` then
+refuses to start, with every check `error` (exit 127) and one reason naming the first finding and their number:
+
+- a row of `manifest.jsonl` that has a `service`;
+- a row of a service's `manifest.jsonl` whose `service` is not that service, whose `module` is not `studio` or whose
+  `path` is not a `.spec.ts` directly under `studio/`;
+- a check id held by two rows;
+- a `.ts` file under `studio/` that imports a file of `studio/services/<service>/` and is neither in that folder nor a
+  check file of that service (a file every one of whose rows, at least one, has that `service`);
+- any import of a `.spec.ts` file.
+
+An import is a relative specifier of `from '…'`, `import '…'`, `import('…')` or `require('…')`, read as text and
+never run, so a comment that reads like one counts; symbolic links are not followed and `node_modules` is left out.
+
 ## Checks not run
 
 `run` takes `--not-run <file>`, `--on-request` and `--services <file>`, each at most once, in any order; with any other

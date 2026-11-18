@@ -12,7 +12,7 @@
 
 import { expect, startStack, test } from './support';
 import { ACTION } from './support/frame';
-import { deleteFunctionDirect, functionNamesDirect, LambdaSeeded, listFunctionsPage } from './support/lambda';
+import { deleteFunctionDirect, functionNamesDirect, LambdaSeeded, listFunctionsPage } from './services/lambda/lambda';
 import {
   counter,
   CREATE,
@@ -27,9 +27,9 @@ import {
   screen,
   setPageSize,
   shownNames,
-} from './support/lambda-list';
+} from './services/lambda/lambda-list';
 import { Lines } from './support/lines';
-import { checkPrefix } from './support/s3';
+import { checkPrefix } from './support/service-screens';
 
 // ---------------------------------------------------------------------------------------------------------------
 
