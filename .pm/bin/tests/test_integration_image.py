@@ -702,7 +702,22 @@ def tag_maker(text):
 
 
 class Only_that_name(Case):
-    """After its read of the machine's image the run and its checks use only the run's own names."""
+    """After its read of the machine's image the run and its checks use only the run's own names.
+
+    The text cases of the support code accept these shapes, as the telemetry scan needs the literal at each site:
+    - a start site's image is one quoted string without whitespace that starts `aws-emulator:` and interpolates its
+      tag: `format!("aws-emulator:{…}", …)` in Rust, a template literal `aws-emulator:${…}` in TypeScript (a literal
+      tag, or a name joined with `+`, is not accepted);
+    - each `docker run` holds `--pull never` (or `--pull=never`) between its `"run"` and the image, or the next
+      `"run"` where its image is added later;
+    - check.rs makes the tag in one `let` or `fn` statement that holds the literal `"latest"`, the variable name as
+      the literal `"EMUFORGE_IT_RUN_ID"` and a format string starting `"it-{`, and no `process::id`; a const for the
+      variable name, or a second helper the statement calls, is not accepted;
+    - emulator.rs and volume.rs name that statement's binding (or a struct field set from it, `field: binding`)
+      within two lines before or one after each image string, and neither reads `EMUFORGE_IT_RUN_ID`;
+    - env.ts: exactly one field of what `runEnv()` returns is `it-<run id>`, and that field is `latest` without the
+      variable.
+    """
 
     @classmethod
     def setUpClass(cls):
