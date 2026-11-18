@@ -6,7 +6,7 @@
 
 use std::io;
 use std::num::NonZeroU16;
-use std::path::Path;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -22,8 +22,10 @@ use axum::http::header::{
     CONTENT_TYPE, HOST, ORIGIN, VARY, WWW_AUTHENTICATE,
 };
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, Request, StatusCode, Uri};
-use emuforge_core::{Emulator, Health, Limits, Prepared, Reason, RelayError, forward};
-use emuforge_server::{AppState, ProbeFn, RelayFn, SessionToken, StudioOrigin, app};
+use emuforge_core::{Health, Limits, Prepared, Reason, RelayError, Store, forward};
+use emuforge_server::{
+    AppState, Form, ProbeFn, RelayFn, SessionToken, StudioOrigin, app, seed_settings,
+};
 use hyper::body::{Bytes, Frame};
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, DuplexStream};
@@ -103,7 +105,7 @@ impl Seam {
     fn answering(script: Script) -> Seam {
         let seen = Arc::new(Mutex::new(Vec::new()));
         let record = seen.clone();
-        let relay: RelayFn = Arc::new(move |request: Request<Body>| {
+        let relay: RelayFn = Arc::new(move |_emulator, request: Request<Body>| {
             record.lock().unwrap().push(Seen {
                 method: request.method().clone(),
                 uri: request.uri().clone(),
@@ -188,17 +190,28 @@ async fn stand_in(mut stream: DuplexStream, script: Script, head_only: bool) {
 fn counted_probe() -> (ProbeFn, Arc<AtomicUsize>) {
     let calls = Arc::new(AtomicUsize::new(0));
     let counter = calls.clone();
-    let probe: ProbeFn = Arc::new(move || {
+    let probe: ProbeFn = Arc::new(move |_emulator| {
         counter.fetch_add(1, Ordering::SeqCst);
         Box::pin(async { Health::Reachable })
     });
     (probe, calls)
 }
 
+/// A store whose folder does not exist: every load is the seed, `local` at `https://127.0.0.1:9391`.
+fn absent_settings() -> Arc<Store> {
+    Arc::new(Store::new(
+        PathBuf::from("/h/.config/emuforge"),
+        seed_settings(Form::Native, NonZeroU16::new(9391).unwrap()),
+    ))
+}
+
 fn app_relaying(probe: ProbeFn, relay: RelayFn) -> Router {
     app(AppState {
         engine_port: port(8297),
-        emulator: Emulator::new(Path::new("/h"), port(9391)),
+        studio_port: NonZeroU16::new(8296).unwrap(),
+        form: Form::Native,
+        home: PathBuf::from("/h"),
+        settings: absent_settings(),
         probe,
         relay,
         max_in_flight: 2,

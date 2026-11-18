@@ -2,7 +2,7 @@
 
 use std::io;
 use std::num::NonZeroU16;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -15,9 +15,10 @@ use axum::Router;
 use axum::body::Body;
 use axum::http::header::{ALLOW, CONNECTION, CONTENT_TYPE, HOST, ORIGIN};
 use axum::http::{HeaderMap, Method, Request, StatusCode};
-use emuforge_core::{Emulator, Health, Limits, Prepared, Reason, RelayError, forward};
+use emuforge_core::{Emulator, Health, Limits, Prepared, Reason, RelayError, Store, forward};
 use emuforge_server::{
-    AppState, CLIENT_WRITE_IDLE, DRAIN_BOUND, IdleListener, ProbeFn, RelayFn, SessionToken,
+    AppState, CLIENT_WRITE_IDLE, DRAIN_BOUND, Form, IdleListener, ProbeFn, RelayFn, SessionToken,
+    seed_settings,
     StudioOrigin, app,
 };
 use hyper::body::{Bytes, Frame};
@@ -33,6 +34,14 @@ fn emulator() -> Emulator {
     Emulator::new(Path::new("/h"), NonZeroU16::new(9391).unwrap())
 }
 
+/// A store whose folder does not exist: every load is the seed, `local` at `https://127.0.0.1:9391`.
+fn absent_settings() -> Arc<Store> {
+    Arc::new(Store::new(
+        PathBuf::from("/h/.config/emuforge"),
+        seed_settings(Form::Native, NonZeroU16::new(9391).unwrap()),
+    ))
+}
+
 fn app_with(probe: ProbeFn) -> Router {
     app_relaying(probe, TestRelay::answering(Script::ok()).relay)
 }
@@ -40,7 +49,10 @@ fn app_with(probe: ProbeFn) -> Router {
 fn app_relaying(probe: ProbeFn, relay: RelayFn) -> Router {
     app(AppState {
         engine_port: NonZeroU16::new(8297).unwrap(),
-        emulator: emulator(),
+        studio_port: NonZeroU16::new(8296).unwrap(),
+        form: Form::Native,
+        home: PathBuf::from("/h"),
+        settings: absent_settings(),
         probe,
         relay,
         max_in_flight: 2,
@@ -53,7 +65,7 @@ fn app_relaying(probe: ProbeFn, relay: RelayFn) -> Router {
 fn answering(healths: Vec<Health>) -> (ProbeFn, Arc<AtomicUsize>) {
     let calls = Arc::new(AtomicUsize::new(0));
     let counter = calls.clone();
-    let probe: ProbeFn = Arc::new(move || {
+    let probe: ProbeFn = Arc::new(move |_emulator| {
         let call = counter.fetch_add(1, Ordering::SeqCst);
         let health = healths[call.min(healths.len() - 1)].clone();
         Box::pin(async move { health })
@@ -128,7 +140,7 @@ async fn health_reachable_is_200_with_emulator_and_no_reason() {
     assert_eq!(answer.headers[CONTENT_TYPE], "application/json");
     assert_eq!(
         answer.body,
-        r#"{"emulator":{"port":9391,"endpoint":"https://127.0.0.1:9391","reachable":true}}"#
+        r#"{"target":"local","emulator":{"port":9391,"endpoint":"https://127.0.0.1:9391","reachable":true}}"#
     );
 }
 
@@ -149,7 +161,7 @@ async fn health_unreachable_is_503_with_reason_code_and_message() {
         );
         assert_eq!(
             answer.json(),
-            json!({"emulator": {
+            json!({"target": "local", "emulator": {
                 "port": 9391,
                 "endpoint": "https://127.0.0.1:9391",
                 "reachable": false,
@@ -416,7 +428,7 @@ impl Held {
         let calls = Arc::new(AtomicUsize::new(0));
         let dropped = Arc::new(AtomicUsize::new(0));
         let (notify, counter, drops) = (release.clone(), calls.clone(), dropped.clone());
-        let probe: ProbeFn = Arc::new(move || {
+        let probe: ProbeFn = Arc::new(move |_emulator| {
             let call = counter.fetch_add(1, Ordering::SeqCst);
             let (notify, entered, dropped) = (notify.clone(), entered_tx.clone(), drops.clone());
             Box::pin(async move {
@@ -622,7 +634,7 @@ impl TestRelay {
     fn with_limits(script: Script, limits: Limits) -> TestRelay {
         let seen = Arc::new(Mutex::new(Vec::new()));
         let record = seen.clone();
-        let relay: RelayFn = Arc::new(move |request: Request<Body>| {
+        let relay: RelayFn = Arc::new(move |_emulator, request: Request<Body>| {
             record
                 .lock()
                 .unwrap()
@@ -1450,7 +1462,7 @@ impl BodyRecorder {
     fn new() -> BodyRecorder {
         let seen = Arc::new(Mutex::new(Vec::new()));
         let record = seen.clone();
-        let relay: RelayFn = Arc::new(move |request: Request<Body>| {
+        let relay: RelayFn = Arc::new(move |_emulator, request: Request<Body>| {
             let record = record.clone();
             Box::pin(async move {
                 let (parts, body) = request.into_parts();
@@ -1701,7 +1713,10 @@ async fn upload_ending_cleanly(served: &Served, head: &str, case: &str) -> Wire 
 fn app_limited(relay: RelayFn, max_in_flight: usize) -> Router {
     app(AppState {
         engine_port: NonZeroU16::new(8297).unwrap(),
-        emulator: emulator(),
+        studio_port: NonZeroU16::new(8296).unwrap(),
+        form: Form::Native,
+        home: PathBuf::from("/h"),
+        settings: absent_settings(),
         probe: reachable_probe(),
         relay,
         max_in_flight,

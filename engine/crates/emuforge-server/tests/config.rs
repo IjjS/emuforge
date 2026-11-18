@@ -2,10 +2,16 @@
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::num::NonZeroU16;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use clap::error::ErrorKind;
 use clap::{Args, FromArgMatches};
-use emuforge_server::{Config, Error, LISTEN_IP, engine_addr, listen_warning, studio_addr};
+use emuforge_core::{SETTINGS_FILE, Store};
+use emuforge_server::{
+    Config, Error, Form, LISTEN_IP, engine_addr, listen_warning, seed_settings, settings_dir,
+    settings_step, studio_addr,
+};
 
 /// `Config` augmented onto a command, as a binary flattens it.
 fn command() -> clap::Command {
@@ -149,6 +155,8 @@ fn listen_addr_is_loopback_with_the_engine_port() {
             emulator_port: port(9400),
             studio_port: port(8296),
             listen_address: IpAddr::V4(LISTEN_IP),
+            settings_dir: None,
+            form: Form::Native,
         };
         assert_eq!(
             engine_addr(&config),
@@ -168,6 +176,8 @@ fn config_at(listen_address: IpAddr) -> Config {
         emulator_port: port(9400),
         studio_port: port(8396),
         listen_address,
+        settings_dir: None,
+        form: Form::Native,
     }
 }
 
@@ -360,4 +370,350 @@ fn bind_error_names_the_address_the_os_error_and_the_listeners_flag_and_variable
             assert!(text.contains(part), "case {name}, {part}: {text}");
         }
     }
+}
+
+// ---- Issue 485: the settings folder, the form and the settings step of `serve` ----
+
+/// `Config` with every environment binding removed, so the process environment plays no part.
+fn parse_without_environment(args: &[&str]) -> Result<Config, clap::Error> {
+    let command = [
+        "port",
+        "emulator_port",
+        "studio_port",
+        "settings_dir",
+        "form",
+    ]
+    .into_iter()
+    .fold(command(), |command, id| {
+        command.mut_arg(id, |arg| arg.env(None))
+    });
+    let matches = command
+        .try_get_matches_from(std::iter::once("emuforge-server").chain(args.iter().copied()))?;
+    Config::from_arg_matches(&matches)
+}
+
+#[test]
+fn settings_dir_and_form_absent_are_no_folder_and_native() {
+    let config = parse_without_environment(&[]).unwrap();
+    assert_eq!(config.settings_dir, None);
+    assert_eq!(config.form, Form::Native);
+}
+
+#[test]
+fn form_compose_flag_is_compose_and_another_value_is_a_usage_error_naming_the_flag() {
+    let config = parse_without_environment(&["--form", "compose"]).unwrap();
+    assert_eq!(config.form, Form::Compose);
+    let config = parse_without_environment(&["--form", "native"]).unwrap();
+    assert_eq!(config.form, Form::Native);
+    let error = parse_without_environment(&["--form", "other"]).unwrap_err();
+    assert_eq!(error.kind(), ErrorKind::InvalidValue, "{error}");
+    assert!(error.to_string().contains("--form"), "{error}");
+}
+
+#[test]
+fn settings_dir_flag_is_that_folder() {
+    let config = parse_without_environment(&["--settings-dir", "/x"]).unwrap();
+    assert_eq!(config.settings_dir, Some(PathBuf::from("/x")));
+}
+
+/// Set in the child process of the variable tests below.
+const SETTINGS_CHILD_MARKER: &str = "EMUFORGE_TEST_SETTINGS_CHILD";
+const SETTINGS_CHILD_TEST: &str = "settings_parsed_in_the_child_process_are_printed";
+
+/// Runs only as the child process of the tests below, whose environment it has; elsewhere it does nothing.
+#[test]
+fn settings_parsed_in_the_child_process_are_printed() {
+    let Some(args) = std::env::var_os(SETTINGS_CHILD_MARKER) else {
+        return;
+    };
+    let args = args.into_string().unwrap();
+    let args: Vec<&str> = args.split_whitespace().collect();
+    let config = parse(&args).unwrap();
+    println!(
+        "form={} settings_dir={:?}",
+        config.form,
+        config.settings_dir.as_deref().map(Path::display).map(|d| d.to_string())
+    );
+}
+
+/// Runs this test binary again for the one test above, with `variables` set and `args` given to it.
+fn parsed_in_a_child(variables: &[(&str, &str)], args: &str) -> String {
+    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    command
+        .args([SETTINGS_CHILD_TEST, "--exact", "--nocapture", "--test-threads=1"])
+        .env(SETTINGS_CHILD_MARKER, args)
+        .env_remove("EMUFORGE_FORM")
+        .env_remove("EMUFORGE_SETTINGS_DIR");
+    for (name, value) in variables {
+        command.env(name, value);
+    }
+    let output = command.output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    assert!(output.status.success(), "{stdout}");
+    stdout
+}
+
+#[test]
+fn form_variable_compose_is_compose() {
+    let stdout = parsed_in_a_child(&[("EMUFORGE_FORM", "compose")], " ");
+    assert!(stdout.contains("form=compose "), "{stdout}");
+}
+
+#[test]
+fn settings_dir_variable_is_that_folder_and_the_flag_wins_over_it() {
+    let stdout = parsed_in_a_child(&[("EMUFORGE_SETTINGS_DIR", "/x")], " ");
+    assert!(stdout.contains("settings_dir=Some(\"/x\")"), "{stdout}");
+    let stdout = parsed_in_a_child(&[("EMUFORGE_SETTINGS_DIR", "/x")], "--settings-dir /y");
+    assert!(stdout.contains("settings_dir=Some(\"/y\")"), "{stdout}");
+}
+
+#[test]
+fn help_lists_settings_dir_and_form_with_their_variables_and_emulator_port_as_the_port_of_local() {
+    let help = command().render_help().to_string();
+    let entry = |flag: &str| {
+        let start = help
+            .find(&format!("      {flag} "))
+            .unwrap_or_else(|| panic!("no entry for {flag}: {help}"));
+        help[start..]
+            .split("\n      --")
+            .next()
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let settings = entry("--settings-dir");
+    assert!(settings.contains("[env: EMUFORGE_SETTINGS_DIR="), "{settings}");
+    let form = entry("--form");
+    assert!(form.contains("[env: EMUFORGE_FORM="), "{form}");
+    assert!(form.contains("native") && form.contains("compose"), "{form}");
+    let emulator = entry("--emulator-port");
+    assert!(
+        emulator.contains("local") && emulator.contains("settings file is absent"),
+        "{emulator}"
+    );
+}
+
+fn with(form: Form, settings: Option<&str>) -> Config {
+    Config {
+        settings_dir: settings.map(PathBuf::from),
+        form,
+        ..config_at(IpAddr::V4(LISTEN_IP))
+    }
+}
+
+#[test]
+fn settings_folder_without_the_flag_is_the_forms_folder_under_home() {
+    let home = Path::new("/home/u");
+    let cwd = Path::new("/work");
+    assert_eq!(
+        settings_dir(&with(Form::Native, None), home, cwd).unwrap(),
+        PathBuf::from("/home/u/.config/emuforge")
+    );
+    assert_eq!(
+        settings_dir(&with(Form::Compose, None), home, cwd).unwrap(),
+        PathBuf::from("/home/u/.config/emuforge-compose")
+    );
+}
+
+#[test]
+fn settings_folder_at_or_under_aws_is_refused_naming_the_flag_and_aws() {
+    let home = Path::new("/home/u");
+    let cases = [
+        ("~/.aws", "/home/u/.aws", "/work"),
+        ("~/.aws/x", "/home/u/.aws/x", "/work"),
+        ("~/.aws/", "/home/u/.aws/", "/work"),
+        ("relative under ~/.aws", "../.aws/emulator", "/home/u/work"),
+        ("relative with dot", "./.aws", "/home/u"),
+        ("through ..", "/home/u/x/../.aws/y", "/work"),
+    ];
+    for (name, dir, cwd) in cases {
+        for form in [Form::Native, Form::Compose] {
+            let error = settings_dir(&with(form, Some(dir)), home, Path::new(cwd)).unwrap_err();
+            assert!(
+                matches!(error, Error::SettingsDirUnderAws { .. }),
+                "case {name}: {error:?}"
+            );
+            let text = error.to_string();
+            assert!(
+                text.contains("--settings-dir") && text.contains("~/.aws"),
+                "case {name}: {text}"
+            );
+        }
+    }
+}
+
+#[test]
+fn settings_folder_beside_aws_or_relative_elsewhere_is_accepted_and_made_absolute() {
+    let home = Path::new("/home/u");
+    let cases = [
+        ("~/.awsx", "/home/u/.awsx", "/work", "/home/u/.awsx"),
+        ("relative", "s", "/work", "/work/s"),
+        ("relative with ..", "../s", "/work/a", "/work/s"),
+    ];
+    for (name, dir, cwd, expected) in cases {
+        let resolved =
+            settings_dir(&with(Form::Native, Some(dir)), home, Path::new(cwd)).unwrap_or_else(
+                |error| panic!("case {name}: {error}"),
+            );
+        assert_eq!(resolved, PathBuf::from(expected), "case {name}");
+    }
+}
+
+/// The lines of every `tracing` event while `run` runs, the subscriber set on this thread only.
+async fn captured<F: std::future::Future<Output = ()>>(run: F) -> String {
+    #[derive(Clone)]
+    struct Lines(Arc<Mutex<Vec<u8>>>);
+    impl std::io::Write for Lines {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let lines = Lines(Arc::new(Mutex::new(Vec::new())));
+    let writer = lines.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(move || writer.clone())
+        .with_ansi(false)
+        .with_max_level(tracing::Level::TRACE)
+        .finish();
+    let guard = tracing::subscriber::set_default(subscriber);
+    run.await;
+    drop(guard);
+    String::from_utf8(lines.0.lock().unwrap().clone()).unwrap()
+}
+
+const UNUSABLE: &str = "{not json";
+
+fn store(dir: &Path, form: Form) -> (Store, emuforge_core::Settings) {
+    let seed = seed_settings(form, port(9391));
+    (Store::new(dir.to_owned(), seed.clone()), seed)
+}
+
+fn entries(dir: &Path) -> Vec<String> {
+    std::fs::read_dir(dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect()
+}
+
+/// No line names a key id, secret or session token: the step reads nothing of the emulator's files, so a
+/// line holds none of their words.
+fn assert_no_key(log: &str) {
+    for word in [
+        "AKIA", "ASIA", "secret", "Secret", "session_token", "token", "aws_access_key_id",
+    ] {
+        assert!(!log.contains(word), "a start line holds {word}: {log}");
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn native_start_with_the_file_absent_writes_nothing_and_names_the_file_form_and_local() {
+    let dir = tempfile::tempdir().unwrap();
+    let (store, seed) = store(dir.path(), Form::Native);
+    let log = captured(settings_step(&store, Form::Native, &seed)).await;
+    assert!(entries(dir.path()).is_empty(), "{:?}", entries(dir.path()));
+    let lines: Vec<&str> = log.lines().filter(|line| line.contains("INFO")).collect();
+    assert_eq!(lines.len(), 1, "{log}");
+    let file = dir.path().join(SETTINGS_FILE);
+    let line = lines[0];
+    assert!(line.contains(&file.display().to_string()), "{line}");
+    assert!(line.contains("form native"), "{line}");
+    assert!(
+        line.contains("active target local at https://127.0.0.1:9391"),
+        "{line}"
+    );
+    assert_no_key(&log);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn native_start_with_an_unusable_file_goes_on_and_says_the_file_cannot_be_used() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join(SETTINGS_FILE);
+    std::fs::write(&file, UNUSABLE).unwrap();
+    let (store, seed) = store(dir.path(), Form::Native);
+    let log = captured(settings_step(&store, Form::Native, &seed)).await;
+    assert!(log.contains("cannot be used"), "{log}");
+    assert!(log.contains(&file.display().to_string()), "{log}");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), UNUSABLE);
+    assert_no_key(&log);
+}
+
+const COMPOSE_FILE: &str = r#"{
+  "version": 1,
+  "active": "compose",
+  "targets": [
+    {
+      "name": "compose",
+      "provider": "aws",
+      "emulator": "aws-emulator",
+      "endpoint": "https://127.0.0.1:9391",
+      "credentials": "emulator-files",
+      "tls": "emulator-ca"
+    }
+  ]
+}
+"#;
+
+#[tokio::test(flavor = "current_thread")]
+async fn compose_start_makes_the_file_hold_exactly_compose_and_says_it_was_written() {
+    let other = r#"{"version":1,"active":"a","targets":[{"name":"a","endpoint":"https://127.0.0.2:9500"},{"name":"b","endpoint":"https://127.0.0.1:9600"}]}"#;
+    let cases = [
+        ("absent", None, "written"),
+        ("other targets", Some(other), "replaced"),
+        ("unusable", Some(UNUSABLE), "replaced"),
+    ];
+    for (name, before, said) in cases {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join(SETTINGS_FILE);
+        if let Some(before) = before {
+            std::fs::write(&file, before).unwrap();
+        }
+        let (store, seed) = store(dir.path(), Form::Compose);
+        let log = captured(settings_step(&store, Form::Compose, &seed)).await;
+        assert_eq!(
+            store.load().await.unwrap(),
+            seed,
+            "case {name}: the file does not hold exactly compose"
+        );
+        let written: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        assert_eq!(
+            written,
+            serde_json::from_str::<serde_json::Value>(COMPOSE_FILE).unwrap(),
+            "case {name}"
+        );
+        assert_eq!(entries(dir.path()), vec![SETTINGS_FILE], "case {name}");
+        let line = log
+            .lines()
+            .find(|line| line.contains("INFO") && line.contains(said))
+            .unwrap_or_else(|| panic!("case {name}: no line saying {said}: {log}"));
+        assert!(line.contains(&file.display().to_string()), "case {name}: {line}");
+        assert!(
+            log.contains("form compose, active target compose at https://127.0.0.1:9391"),
+            "case {name}: {log}"
+        );
+        assert_no_key(&log);
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn compose_start_with_the_file_already_so_does_not_rewrite_it_and_says_nothing_of_writing() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join(SETTINGS_FILE);
+    // The same settings in another layout: rewriting would change the bytes.
+    let compact: String = COMPOSE_FILE.split_whitespace().collect();
+    std::fs::write(&file, &compact).unwrap();
+    let modified = std::fs::metadata(&file).unwrap().modified().unwrap();
+    let (store, seed) = store(dir.path(), Form::Compose);
+    let log = captured(settings_step(&store, Form::Compose, &seed)).await;
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), compact);
+    assert_eq!(std::fs::metadata(&file).unwrap().modified().unwrap(), modified);
+    assert!(!log.contains("written") && !log.contains("replaced"), "{log}");
+    assert!(
+        log.contains("form compose, active target compose at https://127.0.0.1:9391"),
+        "{log}"
+    );
+    assert_no_key(&log);
 }
