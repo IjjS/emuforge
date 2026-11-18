@@ -138,6 +138,15 @@ Never `pkill`, `killall` or `kill` by a program's name or by a pattern (`cargo`,
 did not start. A process you cannot tie to your worktree is not yours; leave it and, if it is in your way,
 `BLOCKED <name> depends <what>`.
 
+A run of your own (a test runner, a build, a server) is started with the agent tool's own background mode, never
+detached inside a foreground call (`&`, `( … &)`, `nohup`, `setsid`), and it is stopped whole, by what started it:
+the agent tool's own stop for a background task (`TaskStop` in Claude Code), `pm-check --stop` for a check. Killing
+one of its processes, as a runner's main process, leaves its workers running with no parent. A process of a
+worktree whose parent is a reaper (PID 1) is therefore abandoned, and the harness may stop it: `pm-pane reset` and
+`close` and `pm-worktree rm` do, and when the `pm` prompts you with the PIDs of such processes, stop each by its PID.
+A pane never runs the `pm`'s own scripts: `pm-watchd`, `pm-pane`, `pm-merge`, `pm-worktree`, `pm-archive`,
+`pm-brief`, `pm-tokens`, `pm-ready`, except a `plan`, for its own issue, as `lead.md` says.
+
 ## Reporting lines
 
 Report through the file channel, then print the same line as the last line of your reply and stop:

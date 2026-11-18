@@ -5,7 +5,7 @@ An issue led by a plan hears its own panes through its plan (issue 478): a line 
 issue <n>, or about a worktree of issue <n>, goes to the live pane `i<n>-plan` when there is one. Every other line
 goes to the pm: the plan's own lines, a harness-engineer's, a dialog (`EVENT blocked`, which only the pm may answer),
 a pane's `BLOCKED … memory`, `BLOCKED … cpu` and `BLOCKED … depends emulator image` (the machine's, which the pm
-answers on EVENT mem ok, cpu ok and emulator-image), the machine's own (mem, cpu, tokens), the owner's (go) and every
+answers on EVENT mem ok, cpu ok and emulator-image), the machine's own (mem, cpu, tokens, orphans: the pm prompts the pane or sweeps), the owner's (go) and every
 other kind. An issue with no live plan (one begun before
 issue 478) is heard by the pm, as before. `EVENT room <pane> …` goes to the pane it names, the one a QUEUE answer
 told to wait; when that pane is gone, to nobody.

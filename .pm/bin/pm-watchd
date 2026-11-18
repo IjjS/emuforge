@@ -35,6 +35,9 @@ _pmroute.py): a line about a worker, rev or crit pane of an issue, or about a wo
   EVENT tokens over <rate> target <rate>                        the last hour's Claude token rate passed today's target (pm-tokens)
   EVENT tokens ok <rate>                                        back under the target (once)
   EVENT check still <worktree> <step> <minutes>m                a pm-check step has run for an hour (again every hour)
+  EVENT orphans <worktree> <n> <cpu>% <name>×<k>,… pids=<pid>,… [pane=<pane>]
+                                                                a worktree holds orphaned processes (parent a reaper) on two looks 60 s apart; told once per set, again when a PID joins it
+  EVENT orphans again <worktree> …                              5 min after a line with pane=, one of its PIDs is still an orphan there (once)
 Panes report with `pm-report "<line>"` (file channel .pm/run/reports.jsonl, exact and agent-independent); the
 terminal is scraped only as a fallback, where a reporting line counts only when it is the pane's last reply (no
 newer prompt echo below it). REVIEWED and turns without a line are logged only. Lines that cannot be delivered (PM blocked, PM pane missing, herdr down) are queued
@@ -302,6 +305,8 @@ def run(a):
             from _pmstill import tick as still_tick
             events.extend(still_tick(st))
             events.extend(room_tick(st, reg))
+            from _pmorphanevent import tick as orphan_tick
+            events.extend(orphan_tick(st))
             seen = st["seen"]
             # primary channel: lines the panes reported through pm-report (exact, agent-independent)
             events.extend(inbox_lines(st))
