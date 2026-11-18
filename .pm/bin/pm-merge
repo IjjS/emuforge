@@ -1,6 +1,6 @@
 #!/usr/bin/env -S python3 -I
 """Merge a unit's branch into its target, main into an issue branch, or an issue branch into local main. Only the
-PM runs this; there are no pull requests.
+PM runs this, and a plan for its own issue; there are no pull requests.
 
   pm-merge <issue> <unit> [--dry-run]      a unit into its target: main, or the issue branch feat/<issue>
   pm-merge <issue> --take-main [--dry-run] local main into the issue branch, in the issue's worktree
@@ -75,6 +75,14 @@ an ancestor of feat/<issue>; the review rule holds for each of them; the issue's
 for, a "deferred" step covering nothing; and the branch holds main as a unit must above (otherwise:
 pm-merge <issue> --take-main, the whole check, rerun). After the merge it removes the emulator port folders of the
 issue's worktree and of every unit's, and names the units and the record it merged on.
+Who may run it (issue 478). The pm runs every form. A plan runs `pm-merge <its issue> <unit>` for a unit whose target
+is feat/<its issue>, and `pm-merge <its issue> --take-main`; a unit into main and the issue branch into main are the
+pm's. Every other pane is refused.
+The lead of the issue, the mark `lead` that pm-brief writes into .pm/issue-<n>/brief.json, changes the review rule:
+`plan`: a unit goes into feat/<issue> on its fast check alone (rev reviews the whole at the end), and feat/<issue>
+goes into main only when the newest review-impl-r<k>.md (the whole, stage `impl`) says verdict: pass.
+`harness-engineer`: no review file is asked; the pm that runs the merge has judged the change, and the output says so.
+Without the mark (an issue begun before issue 478) the per-unit rule above holds, word for word.
 `pm-merge <issue> issue` is refused: the issue branch is not a unit. --dry-run checks every condition of its form,
 lists every problem, and merges nothing. The new forms time their merges out after 120 s (the merge is then
 aborted) and every read of git after 30 s.
@@ -89,7 +97,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _pmlib import BIN, PM, ROOT, WORKTREES, load, log
+from _pmlib import BIN, PM, ROOT, WORKTREES, guard, load, log
 from _pmscope import (MODULES, Unreadable, between, decide, harness_tests, manifest_at, merge_base, run_git, select,
                       target_of)
 from _pmscope import git as read_git
@@ -278,6 +286,33 @@ def review(issue, unit):
     return [], reviews[-1]
 
 
+def lead(issue):
+    """`plan`, `harness-engineer`, or None for an issue begun before issue 478 (pm-brief writes the mark)."""
+    return load(PM / f"issue-{issue}" / "brief.json", {}).get("lead")
+
+
+def unit_review(issue, unit):
+    """(problems, what the merge was judged on) for one unit, by the issue's lead."""
+    led = lead(issue)
+    if led == "harness-engineer":
+        return [], "the pm's own judgement (harness issue)"
+    if led == "plan":
+        return [], "its fast check (rev reviews the whole at the end)"
+    found, reviewed = review(issue, unit)
+    return found, (reviewed.name if reviewed else None)
+
+
+def whole_review(issue):
+    """(problems, what it was judged on) for the issue branch of a plan-led issue: the newest review-impl-r<k>.md."""
+    reviews = sorted((PM / f"issue-{issue}").glob("review-impl-r*.md"),
+                     key=lambda f: int(re.search(r"-r(\d+)\.md$", f.name).group(1)))
+    if not reviews:
+        return ["no review-impl-r<k>.md; rev has not reviewed the whole issue branch"], None
+    if not re.search(r"^verdict:\s*pass\s*$", reviews[-1].read_text(errors="replace")[:400], re.M):
+        return [f"{reviews[-1].name} is not verdict: pass"], reviews[-1].name
+    return [], reviews[-1].name
+
+
 def record_problems(last, head):
     """Today's three questions of a record: it exists, it is of the head, it passed."""
     if not last:
@@ -380,6 +415,9 @@ def main():
         p.error("--take-main takes no unit")
     if a.unit == ISSUE:
         sys.exit(f"{ISSUE} is not a unit; the issue branch is merged with pm-merge {a.issue}")
+    asker = guard(f"pm-merge {a.issue}", issue=a.issue, plan_may=True)
+    if asker and a.unit is None and not a.take_main:
+        sys.exit(f"refused: the issue branch goes into main with pm-merge {a.issue}, the pm's; {asker['name']} may not")
     wts = load(WORKTREES, [])
     if a.take_main:
         return take_main(a, wts)
@@ -393,6 +431,8 @@ def main():
     except Unreadable as e:
         sys.exit(f"cannot merge:\n- the target of {wt['branch']} cannot be read: {e}")
     if target == "main":
+        if asker:
+            sys.exit(f"refused: {wt['branch']} would go into main, which is the pm's; {asker['name']} merges into feat/{a.issue}")
         return into_main(a, wts, wt)
     return into_issue_branch(a, wts, wt, target)
 
@@ -419,7 +459,7 @@ def into_main(a, wts, wt):
     if last and last.get("commit") == head and last.get("passed") and not earlier(last):
         found, note = judge(branch, head, last)
         problems += found
-    found, reviewed = review(a.issue, a.unit)
+    found, reviewed = unit_review(a.issue, a.unit)
     problems += found
     if problems:
         sys.exit("cannot merge:\n- " + "\n- ".join(problems))
@@ -435,7 +475,7 @@ def into_main(a, wts, wt):
     new = git("rev-parse", "HEAD").stdout.strip()
     log(f"merge {a.issue} {a.unit} {branch} -> main {new[:9]}")
     flaky = f"; flaky in its check run: {', '.join(last['flaky'])} (file the flake, see .pm/run/flakes.jsonl)" if last.get("flaky") else ""
-    print(f"merged {branch} into main at {new[:9]} (reviewed: {reviewed.name}){flaky}; units stacked on it must merge main into their branch")
+    print(f"merged {branch} into main at {new[:9]} (reviewed: {reviewed}){flaky}; units stacked on it must merge main into their branch")
     for w in stack(wts, wt):
         remove_emulator_dir(w)
 
@@ -456,7 +496,7 @@ def into_issue_branch(a, wts, wt, target):
     if not found:
         more, note = judge(branch, head, last, target, defer=True)
         problems += more
-    more, reviewed = review(a.issue, a.unit)
+    more, reviewed = unit_review(a.issue, a.unit)
     problems += more
     if problems:
         sys.exit("cannot merge:\n- " + "\n- ".join(problems))
@@ -467,7 +507,7 @@ def into_issue_branch(a, wts, wt, target):
         return
     new = merge(entry["path"], branch, f"merge: #{a.issue} {a.unit} ({branch}) into {target}", target)
     log(f"merge {a.issue} {a.unit} {branch} -> {target} {new[:9]}")
-    print(f"merged {branch} into {target} at {new[:9]} (reviewed: {reviewed.name}){flaky_note(last)}; "
+    print(f"merged {branch} into {target} at {new[:9]} (reviewed: {reviewed}){flaky_note(last)}; "
           f"units cut from {target} must merge it into their branch")
     for w in stack(wts, wt):
         remove_emulator_dir(w)
@@ -535,8 +575,14 @@ def into_main_whole(a, wts):
         more, note = judge(branch, head, last, "main", defer=False,
                            remedy=f"run pm-merge {a.issue} --take-main, then pm-check again")
         problems += more
-    for w in mine:
-        problems += review(a.issue, w["unit"])[0]
+    judged = None
+    if lead(a.issue) == "plan":
+        more, judged = whole_review(a.issue)
+        problems += more
+    else:
+        for w in mine:
+            more, judged = unit_review(a.issue, w["unit"])
+            problems += more
     if problems:
         sys.exit("cannot merge:\n- " + "\n- ".join(problems))
     if note:
@@ -547,7 +593,8 @@ def into_main_whole(a, wts):
     new = merge(ROOT, branch, f"merge: #{a.issue} ({branch})", "main")
     log(f"merge {a.issue} {branch} -> main {new[:9]}")
     names = ", ".join(w["unit"] for w in mine) or "none"
-    print(f"merged {branch} into main at {new[:9]} (units: {names}; whole check: {record}){flaky_note(last)}")
+    reviewed = f"; reviewed: {judged}" if lead(a.issue) else ""
+    print(f"merged {branch} into main at {new[:9]} (units: {names}; whole check: {record}{reviewed}){flaky_note(last)}")
     for w in [entry, *mine]:
         remove_emulator_dir(w)
 
