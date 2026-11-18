@@ -514,8 +514,8 @@ describe('the destinations', () => {
     expect(formField('Destination').description).toBe('');
     chooseAnother();
     expect(formField('Queue').constraint).toBe('');
-    await filterQueues('', ['orders-dlq', 'orders', 'parking', 'payments']);
-    expect(optionDescriptions()).toEqual(['', '', '', '']);
+    await filterQueues('', ['orders', 'parking', 'payments']);
+    expect(optionDescriptions()).toEqual(['', '', '']);
   });
 
   it('more than one source: "Back to their source queues" is disabled; "Another queue" is chosen', async () => {
@@ -558,19 +558,60 @@ describe('the destinations', () => {
     expect(formField('Queue').constraint).toBe(
       'All messages of shared-dlq go to this queue, whatever queue they came from.',
     );
-    await filterQueues('', ['shared-dlq', 'orders-dlq', 'orders', 'parking', 'payments']);
-    expect(optionDescriptions()).toEqual(['', '', 'A source of shared-dlq', '', 'A source of shared-dlq']);
+    await filterQueues('', ['orders-dlq', 'orders', 'parking', 'payments']);
+    expect(optionDescriptions()).toEqual(['', 'A source of shared-dlq', '', 'A source of shared-dlq']);
   });
 });
 
 describe('the move form', () => {
+  it('the destination chooser leaves out this queue itself', async () => {
+    await openRedrive();
+    chooseAnother();
+    await filterQueues('orders', ['orders']);
+    expect(engine.of('ListQueues').at(-1)?.body['QueueNamePrefix']).toBe('orders');
+  });
+
+  it('Start is disabled while the chosen queue’s ARN is read, with "Reading the queue\'s ARN"', async () => {
+    let answer: (value: Answer) => void = () => undefined;
+    engine.on('GetQueueAttributes', (body) =>
+      body['QueueUrl'] === urlOf('parking')
+        ? new Promise<Answer>((done) => {
+            answer = done;
+          })
+        : undefined,
+    );
+    await openRedrive();
+    chooseAnother();
+    await filterQueues('park', ['parking']);
+    await chooseQueue('parking');
+    const startElement = button('Start');
+    const startButton = PAGE.findAllButtons().find((each) => each.getElement() === startElement);
+    expect(startButton).toBeDefined();
+    expect(startButton?.getElement().getAttribute('aria-disabled')).toBe('true');
+    act(() => {
+      startButton?.focus();
+    });
+    await waitFor(() => {
+      expect(text(startButton?.findDisabledReason()?.getElement() ?? document.createElement('i'))).toBe(
+        "Reading the queue's ARN",
+      );
+    });
+
+    act(() => {
+      answer(ok({ Attributes: { QueueArn: `${ARN}:parking` } }));
+    });
+    await waitFor(() => {
+      expect(startButton?.getElement().getAttribute('aria-disabled')).not.toBe('true');
+    });
+  });
+
   it('the description is "… back to its source queues", and "… to {destination}" once another queue is chosen', async () => {
     await openRedrive();
     expect(description()).toBe('Move the messages of orders-dlq back to its source queues');
 
     chooseAnother();
     expect(description()).toBe('Move the messages of orders-dlq back to its source queues');
-    await filterQueues('', ['orders-dlq', 'orders', 'parking', 'payments']);
+    await filterQueues('', ['orders', 'parking', 'payments']);
     await chooseQueue('parking');
     expect(description()).toBe('Move the messages of orders-dlq to parking');
   });
@@ -683,6 +724,8 @@ describe('the move tasks', () => {
       expect(row[3]).toContain(STARTED_TEXT);
     }
     expect(shown.map((row) => row[4])).toEqual(['Cancel', '', '', '']);
+    const link = within(tasksTable().getElement()).getByRole('link', { name: 'parking' });
+    expect(link.getAttribute('href')).toBe('/aws/sqs/queues/queue/parking');
   });
 
   it('none: "No move tasks" and "No move tasks are listed for this queue."', async () => {
@@ -701,6 +744,14 @@ describe('the move tasks', () => {
     });
     expect(engine.of('CancelMessageMoveTask')[0]?.body).toEqual({ TaskHandle: 'task-running' });
     await expectFlash([['', 'Cancelled the move of orders-dlq: 3 messages moved']]);
+  });
+
+  it('"Cancel" answered without a count → "Cancelled the move of {name}"', async () => {
+    engine.on('ListMessageMoveTasks', () => ok({ Results: [wireTask('RUNNING', { TaskHandle: 'task-running' })] }));
+    engine.on('CancelMessageMoveTask', () => ok({}));
+    await openRedrive();
+    fireEvent.click(await within(tasksTable().getElement()).findByRole('button', { name: 'Cancel' }));
+    await expectFlash([['', 'Cancelled the move of orders-dlq']]);
   });
 
   it('a refused cancel → "Cancelling the move failed" with its code and message', async () => {
