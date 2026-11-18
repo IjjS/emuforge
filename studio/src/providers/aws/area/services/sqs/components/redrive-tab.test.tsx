@@ -479,6 +479,23 @@ function radio(value: string) {
   };
 }
 
+/** A form field's description and constraint text, by its label. */
+function formField(label: string) {
+  const found = PAGE.findAllFormFields().find((each) => text(each.findLabel()?.getElement() as HTMLElement) === label);
+  expect(found).toBeDefined();
+  return {
+    description: text(found?.findDescription()?.getElement() ?? document.createElement('i')),
+    constraint: text(found?.findConstraint()?.getElement() ?? document.createElement('i')),
+  };
+}
+
+/** The open select's options' descriptions, in order. */
+function optionDescriptions(): string[] {
+  return (queueSelect().findDropdown().findOptions() ?? []).map((option) =>
+    text(option.findDescription()?.getElement() ?? document.createElement('i')),
+  );
+}
+
 describe('the destinations', () => {
   it('one source: "Back to their source queues" is enabled and chosen, with no description', async () => {
     await openRedrive();
@@ -492,14 +509,22 @@ describe('the destinations', () => {
     expect(PAGE.findSelect()).toBeNull();
   });
 
-  it('more than one source: "Back to their source queues" is disabled and says why; "Another queue" is chosen', async () => {
+  it('one source: the Destination field has no description; the Queue field no constraint, its options none', async () => {
+    await openRedrive();
+    expect(formField('Destination').description).toBe('');
+    chooseAnother();
+    expect(formField('Queue').constraint).toBe('');
+    await filterQueues('', ['orders-dlq', 'orders', 'parking', 'payments']);
+    expect(optionDescriptions()).toEqual(['', '', '', '']);
+  });
+
+  it('more than one source: "Back to their source queues" is disabled; "Another queue" is chosen', async () => {
     await openRedrive(SHARED_DLQ);
     expect(radio('source')).toEqual({
       checked: false,
       disabled: true,
       label: 'Back to their source queues',
-      description:
-        "shared-dlq is the dead-letter queue of 2 queues, so the emulator cannot tell each message's source queue. Choose the queue to move them to.",
+      description: '',
     });
     expect(radio('another')).toMatchObject({ checked: true, disabled: false });
     expect(PAGE.findSelect()).not.toBeNull();
@@ -511,6 +536,30 @@ describe('the destinations', () => {
       SourceArn: `${ARN}:shared-dlq`,
       DestinationArn: `${ARN}:parking`,
     });
+  });
+
+  it('more than one source: the reason is the Destination field’s description', async () => {
+    await openRedrive(SHARED_DLQ);
+    expect(formField('Destination').description).toBe(
+      "shared-dlq is the dead-letter queue of 2 queues, so the emulator cannot tell each message's source queue. Choose the queue to move them to.",
+    );
+  });
+
+  it('more than one source: "… to the queue you choose" until one is chosen, then "… to {destination}"', async () => {
+    await openRedrive(SHARED_DLQ);
+    expect(description()).toBe('Move the messages of shared-dlq to the queue you choose');
+    await filterQueues('park', ['parking']);
+    await chooseQueue('parking');
+    expect(description()).toBe('Move the messages of shared-dlq to parking');
+  });
+
+  it('more than one source: the Queue field’s constraint, and "A source of {name}" on each source', async () => {
+    await openRedrive(SHARED_DLQ);
+    expect(formField('Queue').constraint).toBe(
+      'All messages of shared-dlq go to this queue, whatever queue they came from.',
+    );
+    await filterQueues('', ['shared-dlq', 'orders-dlq', 'orders', 'parking', 'payments']);
+    expect(optionDescriptions()).toEqual(['', '', 'A source of shared-dlq', '', 'A source of shared-dlq']);
   });
 });
 
@@ -636,9 +685,10 @@ describe('the move tasks', () => {
     expect(shown.map((row) => row[4])).toEqual(['Cancel', '', '', '']);
   });
 
-  it('none: "No move tasks"', async () => {
+  it('none: "No move tasks" and "No move tasks are listed for this queue."', async () => {
     await openRedrive();
     await within(tasksTable().getElement()).findByText('No move tasks');
+    expect(within(tasksTable().getElement()).getByText('No move tasks are listed for this queue.')).toBeDefined();
   });
 
   it('"Cancel" → CancelMessageMoveTask with its handle; "Cancelled the move of {name}: {n} messages moved"', async () => {

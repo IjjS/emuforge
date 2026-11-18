@@ -38,22 +38,18 @@ type Destination = 'source' | 'another';
 
 /**
  * The destinations to choose from. On the dead-letter queue of more than one source the emulator refuses a move back
- * to the sources (probe-5, `UnsupportedOperation`), so that item is disabled and says why.
+ * to the sources (probe-5, `UnsupportedOperation`), so that item is disabled; the Destination field says why.
  */
-function destinations(name: string, sources: number): RadioGroupProps.RadioButtonDefinition[] {
+function destinations(sources: number): RadioGroupProps.RadioButtonDefinition[] {
   return [
-    {
-      value: 'source',
-      label: 'Back to their source queues',
-      ...(sources > 1
-        ? {
-            disabled: true,
-            description: `${name} is the dead-letter queue of ${String(sources)} queues, so the emulator cannot tell each message's source queue. Choose the queue to move them to.`,
-          }
-        : {}),
-    },
+    { value: 'source', label: 'Back to their source queues', ...(sources > 1 ? { disabled: true } : {}) },
     { value: 'another', label: 'Another queue' },
   ];
+}
+
+/** Why a move back to the sources cannot be chosen on the dead-letter queue of `sources` queues. */
+function manySourcesReason(name: string, sources: number): string {
+  return `${name} is the dead-letter queue of ${String(sources)} queues, so the emulator cannot tell each message's source queue. Choose the queue to move them to.`;
 }
 
 /** The chosen destination and, once read, its `QueueArn`. */
@@ -131,7 +127,12 @@ export function RedriveTab({ details, settings, connection }: RedriveTabProps) {
 
   const another = destination === 'another';
   const destinationName = another ? chosen?.queue.name : undefined;
-  const sentence = moveSentence(name, destinationName);
+  // With no way back to the sources, the sentence waits for the queue to be chosen.
+  const sentence =
+    manySources && destinationName === undefined
+      ? `Move the messages of ${name} to the queue you choose`
+      : moveSentence(name, destinationName);
+  const sourceNames = new Set(details.sources);
   const rate = perSecond.trim();
   const rateError = rate !== '' && wholeNumber(rate) === undefined ? 'Enter a whole number.' : undefined;
   const queueError = another && chosen === undefined ? 'Choose a queue.' : undefined;
@@ -247,6 +248,7 @@ export function RedriveTab({ details, settings, connection }: RedriveTabProps) {
   const options: SelectProps.Option[] = (choices.value ?? []).map((queue) => ({
     value: queue.url,
     label: queue.name,
+    ...(manySources && sourceNames.has(queue.name) ? { description: `A source of ${name}` } : {}),
   }));
   let statusType: 'finished' | 'loading' | 'error' = 'finished';
   if (choices.loading) {
@@ -322,17 +324,26 @@ export function RedriveTab({ details, settings, connection }: RedriveTabProps) {
             }
           >
             <SpaceBetween size="l">
-              <FormField label="Destination">
+              <FormField
+                label="Destination"
+                {...(manySources ? { description: manySourcesReason(name, details.sources.length) } : {})}
+              >
                 <RadioGroup
                   value={destination}
-                  items={destinations(name, details.sources.length)}
+                  items={destinations(details.sources.length)}
                   onChange={({ detail }) => {
                     setDestination(detail.value as Destination);
                   }}
                 />
               </FormField>
               {another && (
-                <FormField label="Queue" errorText={tried ? queueError : undefined}>
+                <FormField
+                  label="Queue"
+                  {...(manySources
+                    ? { constraintText: `All messages of ${name} go to this queue, whatever queue they came from.` }
+                    : {})}
+                  errorText={tried ? queueError : undefined}
+                >
                   <Select
                     selectedOption={chosen === undefined ? null : { value: chosen.queue.url, label: chosen.queue.name }}
                     options={options}
@@ -409,7 +420,7 @@ export function RedriveTab({ details, settings, connection }: RedriveTabProps) {
                 No move tasks
               </Box>
               <Box variant="p" color="inherit">
-                No move of this queue&apos;s messages has been started.
+                No move tasks are listed for this queue.
               </Box>
             </Box>
           }
