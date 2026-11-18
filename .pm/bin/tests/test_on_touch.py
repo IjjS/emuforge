@@ -16,7 +16,7 @@ refusal of `pm-merge` that names the left-out files and says `run pm-check again
 made-up folder of scripts and test files for its last three cases. `Run` copies this checkout's runner into a
 folder of its own with made-up test files, so nothing of the real tests runs. `Scope`, `Check` and `Merge` build a
 fixture checkout per case with `_fixture.make` under <checkout>/output/tests/on-touch/<case>/ that holds copies of
-the scripts they drive, empty files `test_capture.py` and `test_hang.py` (two of the six on-touch files) and, for
+the scripts they drive, empty files `test_capture.py` and `test_hang.py` (two of the on-touch files) and, for
 `Check`, a stand-in `.pm/bin/tests/run` that writes its arguments to <checkout>/output/runner-args at each start
 and exits with the code of <checkout>/output/runner-exit for that start (0 when there is none). The worktrees of
 the issue-branch cases are the fixture's siblings, removed before the case builds its fixture again; `pm-merge`
@@ -39,9 +39,9 @@ from _fixture import BIN, CHECKOUT, HERE, clean_env, git, make, run
 
 import _pmscope
 
-SIX = ["test_capture.py", "test_check_issue.py", "test_emulator_dir.py", "test_emulator_telemetry.py",
-       "test_hang.py", "test_issue_branch.py"]
-HELD = ["test_capture.py", "test_hang.py"]  # the two of the six a fixture checkout holds
+ON_TOUCH_FILES = ["test_capture.py", "test_check_issue.py", "test_emulator_dir.py", "test_emulator_telemetry.py",
+                  "test_hang.py", "test_issue_branch.py", "test_orphans.py"]
+HELD = ["test_capture.py", "test_hang.py"]  # the two of the on-touch files a fixture checkout holds
 EVERY_FILE = [".pm/bin/_pmscope.py", ".pm/bin/tests/run"]
 B, T = ".pm/bin/", ".pm/bin/tests/"
 GROUP = "on-touch"
@@ -186,7 +186,7 @@ class Map(unittest.TestCase):
 
     def test_entries_are_the_six(self):
         names = [e["test"] for e in self.entries()]
-        self.assertEqual(sorted(names), SIX, names)
+        self.assertEqual(sorted(names), ON_TOUCH_FILES, names)
         for e in _pmscope.ON_TOUCH:
             with self.subTest(test=e["test"]):
                 self.assertTrue((HERE / e["test"]).is_file(), e["test"])
@@ -274,26 +274,27 @@ class Decide(unittest.TestCase):
         a = self.ht(T + "test_hang.py")
         self.assertIs(a["all"], False)
         self.assertEqual(list(a["called"]), ["test_hang.py"])
-        self.assertEqual(a["left_out"], [n for n in SIX if n != "test_hang.py"])
+        self.assertEqual(a["left_out"], [n for n in ON_TOUCH_FILES if n != "test_hang.py"])
 
     def test_a_guide_calls_for_none(self):
         a = self.ht(".agents/skills/pm/SKILL.md")
         self.assertIs(a["all"], False)
         self.assertEqual(a["called"], {})
         self.assertEqual(a["why"], "")
-        self.assertEqual(a["left_out"], SIX)
+        self.assertEqual(a["left_out"], ON_TOUCH_FILES)
 
     def test_no_path_leaves_out_the_six(self):
         a = self.ht()
         self.assertIs(a["all"], False)
-        self.assertEqual(a["left_out"], SIX)
+        self.assertEqual(a["left_out"], ON_TOUCH_FILES)
 
     def test_pm_check(self):
         self.assertEqual(set(self.ht(B + "pm-check")["called"]), {"test_check_issue.py", "test_issue_branch.py"})
 
     def test_pmlib_is_asked_of_every_entry(self):
         self.assertEqual(set(self.ht(B + "_pmlib.py")["called"]),
-                         {"test_capture.py", "test_check_issue.py", "test_emulator_dir.py", "test_issue_branch.py"})
+                         {"test_capture.py", "test_check_issue.py", "test_emulator_dir.py", "test_issue_branch.py",
+                          "test_orphans.py"})
 
     def test_folders_and_the_union_over_paths(self):
         a = self.ht(T + "fixtures/structure/pages/a/index.html", T + "fixtures/hang/pm-structure")
@@ -510,7 +511,7 @@ class Scope(unittest.TestCase):
 
 
 class ScopeNoOnTouchFile(unittest.TestCase):
-    """Given a fixture checkout that holds none of the six, on a branch that changes .pm/bin/a."""
+    """Given a fixture checkout that holds none of the on-touch files, on a branch that changes .pm/bin/a."""
 
     def setUp(self):
         self.co = fixture(name_of(self), SCOPE_SCRIPTS, held=())
