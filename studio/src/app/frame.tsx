@@ -89,8 +89,8 @@ function currentOf(pathname: string, target: string, deeper: boolean): Current {
 
 /**
  * Studio's frame on every page (requirement R5.1): the top bar with the tile and "EmuForge Studio" (issue #36, R6), the
- * navigation "Studio" with Home and one link per provider of the providers list, and the language control (issue #17,
- * R3.1), then the page. Built from Studio's own design only.
+ * navigation "Studio" with Home, Connections (issue 486, R1) and one link per provider of the providers list, and the
+ * language control (issue #17, R3.1), then the page. Built from Studio's own design only.
  */
 export function Frame() {
   const { t } = useLanguage();
@@ -133,6 +133,9 @@ export function Frame() {
         <nav className="st-nav" aria-label={t('frame.nav')}>
           <Link to="/" aria-current={currentOf(pathname, '/', false)}>
             {t('frame.home')}
+          </Link>
+          <Link to="/connections" aria-current={currentOf(pathname, '/connections', false)}>
+            {t('frame.connections')}
           </Link>
           {PROVIDERS.map((provider) => {
             const target = `/${provider.segment}`;

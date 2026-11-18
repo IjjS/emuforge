@@ -1,0 +1,67 @@
+/* Studio's record list (DESIGN.md, Record lists): records in one panel, a hairline between them; each record's fields
+   in a grid, a label over each value, and its actions and results under them. The marked record (the target) has a
+   3px verdigris bar at its start edge. */
+
+@layer studio {
+  .st-records {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .st-record {
+    position: relative;
+    padding: 18px var(--st-pad) 20px;
+  }
+
+  .st-record + .st-record {
+    border-top: 1px solid var(--st-line);
+  }
+
+  .st-record.marked::before {
+    content: '';
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 3px;
+    background: var(--st-accent);
+  }
+
+  .st-fields {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr) minmax(0, 1.4fr) minmax(0, 1.3fr);
+    gap: 12px 24px;
+    margin: 0;
+  }
+
+  .st-field-cell {
+    min-width: 0;
+  }
+
+  .st-field-cell dt {
+    margin-bottom: 4px;
+    font-size: 13px;
+    font-weight: 560;
+    color: var(--st-text-2);
+  }
+
+  .st-field-cell dd {
+    min-width: 0;
+    margin: 0;
+  }
+
+  @media (max-width: 900px) {
+    .st-fields {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    }
+  }
+
+  @media (max-width: 640px) {
+    .st-record {
+      padding: 14px 16px 16px;
+    }
+
+    .st-fields {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+}

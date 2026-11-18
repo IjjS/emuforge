@@ -225,14 +225,15 @@ function frameLinks() {
     banner,
     nav,
     home: within(nav).getByRole('link', { name: 'Home' }),
+    connections: within(nav).getByRole('link', { name: 'Connections' }),
     aws: within(nav).getByRole('link', { name: 'AWS' }),
   };
 }
 
 describe('Studio’s frame', () => {
-  it('on /: a banner with "EmuForge Studio" to / and the navigation "Studio" with Home then AWS; Home current', () => {
+  it('on /: a banner with "EmuForge Studio" to / and the navigation "Studio" with Home, Connections, then AWS; Home current', () => {
     openFrame('/');
-    const { banner, nav, home, aws } = frameLinks();
+    const { banner, nav, home, connections, aws } = frameLinks();
 
     expect(within(banner).getByRole('link', { name: 'EmuForge Studio' })).toHaveAttribute('href', '/');
     const links = within(nav)
@@ -240,11 +241,31 @@ describe('Studio’s frame', () => {
       .map((link) => [link.textContent, link.getAttribute('href')]);
     expect(links).toEqual([
       ['Home', '/'],
+      ['Connections', '/connections'],
       ['AWS', '/aws'],
     ]);
     expect(home).toHaveAttribute('aria-current', 'page');
+    expect(connections).not.toHaveAttribute('aria-current');
     expect(aws).not.toHaveAttribute('aria-current');
   });
+
+  it('on /connections: Connections is the current page, Home and AWS are not marked (issue 486, R1)', () => {
+    openFrame('/connections');
+    const { home, connections, aws } = frameLinks();
+
+    expect(connections).toHaveAttribute('aria-current', 'page');
+    expect(home).not.toHaveAttribute('aria-current');
+    expect(aws).not.toHaveAttribute('aria-current');
+  });
+
+  it.each(['/', '/aws', '/aws/s3', '/connections/x', '/connectionsx', '/does-not-exist'])(
+    'on %s: Connections is not marked (issue 486, R1)',
+    (path) => {
+      openFrame(path);
+
+      expect(frameLinks().connections).not.toHaveAttribute('aria-current');
+    },
+  );
 
   it('on /aws: AWS is the current page, Home is not marked', () => {
     openFrame('/aws');
@@ -293,6 +314,7 @@ describe('Studio’s frame', () => {
   it.each([
     ['/', 'EmuForge Studio'],
     ['/does-not-exist', 'Page not found | EmuForge Studio'],
+    ['/connections', 'Connections | EmuForge Studio'],
     ['/aws', 'Amazon Web Services | EmuForge Studio'],
     [NO_SCREEN_SERVICE.below, `${NO_SCREEN_SERVICE.label} | EmuForge Studio`],
   ])('on %s: the document title is "%s"', async (path, title) => {

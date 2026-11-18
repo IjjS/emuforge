@@ -29,9 +29,12 @@ describe('the endpoint', () => {
     expect(said(endpointProblem(''))).toBe('Enter an endpoint.');
   });
 
-  it.each(['http://127.0.0.1:9', '127.0.0.1:9302', 'ftp://x:1'])('%s → "Start the endpoint with https://."', (value) => {
-    expect(said(endpointProblem(value))).toBe('Start the endpoint with https://.');
-  });
+  it.each(['http://127.0.0.1:9', '127.0.0.1:9302', 'ftp://x:1'])(
+    '%s → "Start the endpoint with https://."',
+    (value) => {
+      expect(said(endpointProblem(value))).toBe('Start the endpoint with https://.');
+    },
+  );
 
   it.each(['https://127.0.0.1', 'https://[::1]', 'https://127.0.0.1/', 'https://[::1]9302', 'https://127.0.0.1:'])(
     '%s → "Add the port: https://127.0.0.1:<port>."',
