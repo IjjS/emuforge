@@ -45,7 +45,7 @@ function NotKnown() {
 }
 
 /** What runs on a row now, so its control reads busy. */
-export type RowWork = 'use' | 'test' | 'remove' | undefined;
+export type RowWork = 'use' | undefined;
 
 interface ConnectionRowProps {
   target: Target;
@@ -108,7 +108,7 @@ export function ConnectionRow({ target, info, test, work, onUse, onTest, onRemov
         )}
         <ActionButton
           small
-          busy={work === 'test' || test?.kind === 'running'}
+          busy={test?.kind === 'running'}
           ariaLabel={t('connections.testName', { name })}
           onClick={() => {
             onTest(name);
