@@ -28,6 +28,11 @@ stand-in spins a core. A case signals only the stand-ins it started, by PID and 
 has the start time it had when it was made; every one is killed at the case's end, passed or not. Nothing is
 signalled by name, pattern or group.
 
+For issue 477 a case records a `pm-check` stand-in (an orphan in `wt-a`) as a live run in
+`wt-a/output/checks/running.json` and starts a stand-in of its tests under `wt-a/output/tests/`, or registers the
+crit pane `i1-crit` of issue 1 and starts impeccable's live-server as `ps` shows it (bash under the name
+`impeccable` with the word `live-server`) in `wt-a`; neither is told, an orphan beside them is.
+
 On a checkout without the change every case fails on its own for the reason under its heading: `_pmorphanevent`
 does not exist (Tick), `pm-watchd` does not call it (Daemon), no text names the event, the sweep or the rule
 (Texts).
@@ -141,6 +146,17 @@ for line in sys.stdin:
     print(json.dumps(out), flush=True)
 """
 FAILING_PS = "#!/bin/sh\nexit 1\n"
+PM_CHECK = f"""#!{sys.executable} -I
+import time
+end = time.time() + 120
+while time.time() < end:
+    time.sleep(1)
+"""
+# impeccable's live-server as `ps` shows it: bash under the name `impeccable` with the word `live-server`
+LIVE_SERVER = """#!/bin/bash
+exec -a impeccable /bin/bash -c 'end=$((SECONDS+120)); while [ $SECONDS -lt $end ]; do sleep 0.2; done' \\
+    live-server "$@"
+"""
 SLEEP = ["/bin/sleep", "120"]  # an orphan of another name than the Python stand-in
 
 
@@ -218,9 +234,9 @@ class Driver:
         return out["state"]
 
     def orphan(self, where, program=()):
-        """A stand-in orphan started by the driver with its cwd in `where` (a worktree's name, or "F"); with
+        """A stand-in orphan started by the driver with its cwd in `where` (a worktree's name, "F", or a path); with
         `program`, the orphan is that program."""
-        cwd = self.f.co if where == "F" else self.f.wt[where]
+        cwd = self.f.co if where == "F" else self.f.wt[where] if where in self.f.wt else where
         self.f.n += 1
         pidfile = self.f.co / "output" / "pids" / f"{self.f.n}.pid"
         pidfile.parent.mkdir(parents=True, exist_ok=True)
@@ -283,6 +299,37 @@ class Fixture:
             name=PANE, issue="1", role="worker", unit="h1", kind="claude", model="claude-opus-5-5", side="harness",
             pane_id="w1-p2", tab_id="w1-t1", cwd=str(self.wt["wt-a"]), brief=None, started="2026-11-18T00:00:00",
             session=None, gone=gone, resets=0)]))
+
+    def crit(self):
+        """Register the live crit pane i1-crit of issue 1 (every worktree's issue), cwd F, as pm-pane does."""
+        (self.co / ".pm" / "run" / "panes.json").write_text(json.dumps([dict(
+            name="i1-crit", issue="1", role="crit", unit=None, kind="claude", model="claude-opus-5-5", side="other",
+            pane_id="w1-p3", tab_id="w1-t1", cwd=str(self.co), brief=None, started="2026-11-18T00:00:00",
+            session=None, gone=False, resets=0)]))
+
+    def check_running(self, d, wt="wt-a"):
+        """A pm-check stand-in, an orphan in `wt`, recorded live in <wt>/output/checks/running.json."""
+        o = d.orphan(wt, [str(self.program("pm-check", PM_CHECK)), "run"])
+        f = self.wt[wt] / "output" / "checks" / "running.json"
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps(dict(pm_check_pid=o.pid, pgid=o.pid, step="harness-test", started="")))
+        return o
+
+    def tests_dir(self, wt="wt-a"):
+        d = self.wt[wt] / "output" / "tests" / "group" / "case"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def live_server(self, d, wt="wt-a"):
+        """impeccable's live-server stand-in, an orphan in `wt`, once `ps` names it `impeccable`."""
+        o = d.orphan(wt, [str(self.program("live-server", LIVE_SERVER)), "--port=8400", f"--target={self.wt[wt]}"])
+        end = time.time() + CALL_WAIT
+        while True:
+            row = ps_row(o.pid)
+            if row and row[3].split()[:1] == ["impeccable"]:
+                return o
+            self.case.assertLess(time.time(), end, f"the live-server stand-in is {row}")
+            time.sleep(0.05)
 
     def driver(self, state=None, reapers=()):
         return Driver(self.case, self, state, reapers)
@@ -458,6 +505,28 @@ class Tick(unittest.TestCase):
         self.assertTrue(any(f" sleep×2,{a1.name}×1 " in line for line in lines), f"most first: {lines}")
         self.assertTrue(any(f" {b2.name}×1,sleep×1 " in line for line in lines), f"a tie by name: {lines}")
 
+    def test_a_running_check_s_stand_in_is_not_told_and_an_orphan_beside_it_is(self):
+        """issue 477"""
+        f, d, t = self.setup("check-own")
+        check = f.check_running(d)
+        own = d.orphan(str(f.tests_dir()))
+        other = d.orphan("wt-a")
+        self.assertEqual(d.tick(t), [])
+        self.assertLines(d.tick(t + 60), [event("wt-a", [other])])
+        self.assertTrue(own.alive())
+        (f.wt["wt-a"] / "output" / "checks" / "running.json").unlink()
+        self.assertEqual(d.tick(t + 90), [], "the check ended: its stand-in's first look as an orphan")
+        self.assertLines(d.tick(t + 150), [event("wt-a", [other, own, check])], "60 s after the check ended")
+
+    def test_a_live_crit_s_live_server_is_not_told_and_an_orphan_beside_it_is(self):
+        """issue 477"""
+        f, d, t = self.setup("live-server")
+        f.crit()
+        f.live_server(d)
+        other = d.orphan("wt-a")
+        self.assertEqual(d.tick(t), [])
+        self.assertLines(d.tick(t + 60), [event("wt-a", [other])])
+
     def test_the_event_stops_nothing(self):
         _, d, t = self.setup("stops-nothing", pane="live")
         orphans = [d.orphan("wt-a"), d.orphan("wt-a")]
@@ -550,6 +619,41 @@ class Texts(unittest.TestCase):
         self.assertEqual(len(stop), 1, f"no single row for `EVENT orphans again …` and `EVENT orphans` without "
                                        f"`pane=`: {stop}")
         self.assertIn("pm-worktree orphans <worktree> --stop", stop[0][1], stop[0])
+
+    def test_the_skills_orphans_rows_say_what_to_look_at_first(self):
+        """issue 477"""
+        rows = table_rows((CHECKOUT / ".agents" / "skills" / "pm" / "SKILL.md").read_text())
+        pane = [r for r in rows if len(r) > 1 and "EVENT orphans" in r[0] and "pane=<pane>" in r[0]
+                and "again" not in r[0]]
+        stop = [r for r in rows if len(r) > 1 and "EVENT orphans again" in r[0] and "without" in r[0]]
+        self.assertEqual((len(pane), len(stop)), (1, 1), f"{pane} {stop}")
+        act = pane[0][1]
+        self.assertIn("First look: `pm-worktree orphans <worktree>`", act, pane[0])
+        self.assertLess(act.index("pm-worktree orphans <worktree>"), act.index("prompt"), pane[0])
+        for row in (act, stop[0][1]):
+            for wanted in ("left running", "running check", "live crit"):
+                with self.subTest(wanted, row=row[:40]):
+                    self.assertIn(wanted, row)
+        self.assertIn("no longer lists is left alone", act, pane[0])
+
+    def test_lead_says_what_the_sweep_of_reset_and_close_leaves_running(self):
+        """issue 477"""
+        text = flat((CHECKOUT / ".agents" / "skills" / "pm" / "references" / "lead.md").read_text())
+        m = re.search(r"`EVENT orphans` is the machine's and goes to the `pm`.*?not yours to stop\.", text)
+        self.assertIsNotNone(m, "lead.md does not say where `EVENT orphans` goes and what reset and close leave")
+        for wanted in ("pm-pane reset", "close", "left running:", "running check", "live crit", "Before you act"):
+            with self.subTest(wanted):
+                self.assertIn(wanted, m.group(0))
+
+    def test_the_helps_name_what_the_sweep_leaves_out(self):
+        """issue 477"""
+        for script in ("pm-pane", "pm-worktree"):
+            r = help_of(script)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            text = flat(r.stdout)
+            for wanted in ("left running:", "output/tests/", "live-server", "crit pane"):
+                with self.subTest(script=script, wanted=wanted):
+                    self.assertIn(wanted, text)
 
     def test_pane_mode_machine_says_how_a_run_is_started_and_stopped(self):
         text = (CHECKOUT / ".agents" / "skills" / "pm" / "references" / "pane-mode.md").read_text()
