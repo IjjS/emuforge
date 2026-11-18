@@ -51,6 +51,8 @@ export interface ReadResult {
   readAt: Date;
   /** The queue's Available as shown when "Read messages" was pressed. */
   availableBefore?: number;
+  /** On a queue with a redrive policy: how much the dead-letter queue's count rose across the read, when known. */
+  deadLetterRise?: number;
 }
 
 /** What follows the table: why the read showed fewer than are available, or that none came. */
@@ -58,20 +60,21 @@ function afterRead(result: ReadResult, settings: QueueSettings, link: (name: str
   const shown = result.messages.length;
   const available = settings.available ?? 0;
   const policy = settings.redrivePolicy;
-  // A read of a queue with a redrive policy moves the messages received its count of times instead of showing them
-  // (probe-3 §1): fewer came than were available when it was pressed.
-  if (
-    policy?.maxReceiveCount !== undefined &&
-    result.availableBefore !== undefined &&
-    shown < result.availableBefore &&
-    shown < READ_SIZE
-  ) {
-    return (
-      <>
-        Messages received {times(policy.maxReceiveCount)} in this queue were moved to {link(policy.deadLetterQueue)} by
-        this read instead of being shown.
-      </>
-    );
+  // On a queue with a redrive policy a read that returned fewer than were available either moved them (the
+  // dead-letter queue's count rose across it, probe-3 §1) or found them taken by another consumer.
+  if (policy !== undefined && result.availableBefore !== undefined && shown < result.availableBefore) {
+    const rise = result.deadLetterRise ?? 0;
+    if (rise > 0) {
+      const count = policy.maxReceiveCount === undefined ? 'the set number of times' : times(policy.maxReceiveCount);
+      return (
+        <>
+          {rise === 1 ? '1 message' : `${String(rise)} messages`} received {count} in this queue{' '}
+          {rise === 1 ? 'was' : 'were'} moved to {link(policy.deadLetterQueue)} by this read instead of being shown.
+        </>
+      );
+    }
+    const before = result.availableBefore;
+    return `This read returned ${String(shown)} of the ${before === 1 ? '1 message' : `${String(before)} messages`} available at ${creationDateText(result.readAt)}.`;
   }
   if (settings.fifo && shown < available && shown < READ_SIZE) {
     return FIFO_SENTENCE;

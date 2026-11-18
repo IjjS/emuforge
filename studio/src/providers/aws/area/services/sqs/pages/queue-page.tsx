@@ -19,6 +19,7 @@ import type { ScreenPageProps } from '../../../screens';
 import { NO_SUCH_QUEUE, OPERATIONS, type OutgoingMessage, type QueueDetails, type ReadMessage } from '../api';
 import { ConfirmDialog } from '../components/confirm-dialog';
 import { messages } from '../components/counts';
+import { availableAt, deadLetterUrl } from '../components/dead-letter-count';
 import { MessagesTab, type ReadResult } from '../components/messages-tab';
 import { actionFailureOf, usePageSignal } from '../components/page-signal';
 import { QueueDetailsSection } from '../components/queue-details';
@@ -111,21 +112,33 @@ function QueueView(props: QueueViewProps) {
   };
 
   const handleRead = (availableBefore: number | undefined) => {
-    if (reading) {
+    if (reading || engineOrigin === undefined) {
       return;
     }
     const signal = pageSignal();
+    const readAt = new Date();
+    const policy = settings.redrivePolicy;
     setReading(true);
-    receive(details.url, read.wait, signal).then(
-      (received) => {
+    const run = async () => {
+      // On a queue with a redrive policy the dead-letter queue's count, just before and just after the read.
+      const dlqUrl =
+        policy === undefined ? undefined : await deadLetterUrl(engineOrigin, policy.deadLetterQueue, signal);
+      const before = dlqUrl === undefined ? undefined : await availableAt(engineOrigin, dlqUrl, signal);
+      const received = await receive(details.url, read.wait, signal);
+      const after = dlqUrl === undefined ? undefined : await availableAt(engineOrigin, dlqUrl, signal);
+      return { received, rise: before === undefined || after === undefined ? undefined : after - before };
+    };
+    run().then(
+      ({ received, rise }) => {
         if (!signal.aborted) {
           props.announce(`${messages(received.length)} read`);
           onRead({
             ...read,
             result: {
               messages: received,
-              readAt: new Date(),
+              readAt,
               ...(availableBefore === undefined ? {} : { availableBefore }),
+              ...(rise === undefined ? {} : { deadLetterRise: rise }),
             },
             selected: [],
             detail: undefined,
