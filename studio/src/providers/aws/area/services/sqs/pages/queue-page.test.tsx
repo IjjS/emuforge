@@ -660,9 +660,9 @@ describe('a read of messages', () => {
       },
     ]);
     const headers = (table().findColumnHeaders() ?? []).map((header) => text(header.getElement()));
-    expect(headers.slice(1)).toEqual(['Message ID', 'Receive count', 'Body', 'Sent']);
+    expect(headers.slice(1)).toEqual(['Message ID', 'Body', 'Receive count', 'Sent']);
     expect(rows().map((row) => row[0])).toEqual(engine.messages.map((message) => message['MessageId']));
-    expect(rows()[0]?.slice(0, 3)).toEqual(['m01', '1', 'first line…']);
+    expect(rows()[0]?.slice(0, 3)).toEqual(['m01', 'first line…', '1']);
     expect(text(table().findHeaderSlot()?.getElement() as HTMLElement)).toMatch(/Read at \w+ \d+, \d{4}, /);
     expect(
       screen.getByText(
@@ -696,20 +696,24 @@ describe('a read of messages', () => {
     });
   });
 
-  it('Message ID, Group and From keep the room of a name, as the queue list’s', async () => {
+  it('Message ID keeps the room of a name, Body of a sentence, Group and From of a short name; Receive count narrow', async () => {
     engine.messages = [wire('f1', 'a', { MessageGroupId: 'g1', DeadLetterQueueSourceArn: `${ARN}:orders` })];
     await openQueue({ ...FIFO, sources: ['orders'] }, [ORDERS]);
     await readMessages();
 
-    const widths = (table().findColumnHeaders() ?? []).map((header) => [
-      text(header.getElement()),
-      header.getElement().style.minWidth,
-    ]);
-    expect(widths.filter(([, width]) => width === '28ch').map(([name]) => name)).toEqual([
-      'Message ID',
-      'Group',
-      'From',
-    ]);
+    const widths = Object.fromEntries(
+      (table().findColumnHeaders() ?? [])
+        .slice(1)
+        .map((header) => [
+          text(header.getElement()),
+          [header.getElement().style.minWidth, header.getElement().style.width],
+        ]),
+    );
+    expect(widths['Message ID']?.[0]).toBe('28ch');
+    expect(widths['Body']?.[0]).toBe('40ch');
+    expect(widths['Group']?.[0]).toBe('16ch');
+    expect(widths['From']?.[0]).toBe('16ch');
+    expect(widths['Receive count']?.[1]).toBe('16ch');
   });
 
   it('the after-read sentence is in a polite live region', async () => {
@@ -804,6 +808,87 @@ describe('a read of messages', () => {
     );
   });
 
+  /** A policy queue whose read returns `shown` of `available` messages, the dead-letter queue's count rising by `rise`. */
+  async function policyRead(available: number, shown: number, rise: number, extra: Record<string, string> = {}) {
+    engine.messages = Array.from({ length: shown }, (_, index) => wire(`m${String(index + 1)}`, 'x'));
+    engine.on('ReceiveMessage', () => {
+      engine.queues = engine.queues.map((queue) =>
+        queue.name === 'orders-dlq'
+          ? { ...queue, attributes: { ...queue.attributes, ApproximateNumberOfMessages: String(2 + rise) } }
+          : queue,
+      );
+      return ok({ Messages: engine.messages });
+    });
+    const attributes = { ...ORDERS.attributes, ApproximateNumberOfMessages: String(available), ...extra };
+    await openQueue({ ...ORDERS, attributes }, [DLQ]);
+    await readMessages();
+  }
+
+  function afterReadText(): string {
+    return text(document.querySelector('[role="status"][aria-live="polite"]') as HTMLElement);
+  }
+
+  it('a policy read of 10 with more available and no rise: "Showing the first" alone', async () => {
+    await policyRead(15, 10, 0);
+    await waitFor(() => {
+      expect(afterReadText()).toBe(
+        'Showing the first 10 of 15 available messages. A read returns the same first messages each time, at most 10.',
+      );
+    });
+  });
+
+  it('a policy read of 10 with more available and a rise: "Showing the first", then the moved sentence', async () => {
+    await policyRead(15, 10, 2);
+    await waitFor(() => {
+      expect(afterReadText()).toBe(
+        'Showing the first 10 of 15 available messages. A read returns the same first messages each time, at most 10. 2 messages received 2 times in this queue were moved to orders-dlq by this read instead of being shown.',
+      );
+    });
+  });
+
+  it('a FIFO policy read returning fewer with no rise: the FIFO sentence', async () => {
+    await policyRead(5, 1, 0, { FifoQueue: 'true' });
+    await waitFor(() => {
+      expect(afterReadText()).toBe(
+        'Messages of a group your app has received and not yet deleted are not returned until they are visible again.',
+      );
+    });
+  });
+
+  it('a policy read whose available count could not be read: no after-read sentence', async () => {
+    engine.messages = [];
+    await openQueue(ORDERS, [DLQ]);
+    // The queue's own count, read just after the dead-letter queue's before the read, fails; every other read answers.
+    let armed = false;
+    let failed = false;
+    engine.on('GetQueueAttributes', (body) => {
+      if (body['QueueUrl'] === urlOf('orders-dlq') && !failed) {
+        armed = true;
+      } else if (armed && body['QueueUrl'] === urlOf('orders')) {
+        armed = false;
+        failed = true;
+        // A code the SDK does not retry.
+        return refused(400, 'InvalidParameterValue', 'boom');
+      }
+      return undefined;
+    });
+    await readMessages();
+
+    expect(failed).toBe(true);
+    expect(afterReadText()).toBe('');
+  });
+
+  it('"Showing the first" counts what was available when the read was pressed', async () => {
+    engine.messages = Array.from({ length: 10 }, (_, index) => wire(`m${String(index + 1)}`, 'x'));
+    await openQueue(PLAIN);
+    engine.queues = [{ ...PLAIN, attributes: { ...PLAIN.attributes, ApproximateNumberOfMessages: '12' } }];
+    await readMessages();
+
+    expect(afterReadText()).toBe(
+      'Showing the first 10 of 12 available messages. A read returns the same first messages each time, at most 10.',
+    );
+  });
+
   it('a rise of 1 on a policy of 1: the singular forms', async () => {
     moving(1);
     const policy = JSON.stringify({ deadLetterTargetArn: `${ARN}:orders-dlq`, maxReceiveCount: 1 });
@@ -885,7 +970,7 @@ describe('a read of messages', () => {
     await readMessages();
 
     const headers = (table().findColumnHeaders() ?? []).map((header) => text(header.getElement()));
-    expect(headers.slice(1)).toEqual(['Message ID', 'Receive count', 'Body', 'Sent', 'Group']);
+    expect(headers.slice(1)).toEqual(['Message ID', 'Body', 'Receive count', 'Sent', 'Group']);
     expect(rows()[0]?.[4]).toBe('g1');
     expect(
       screen.getByText(
@@ -900,7 +985,7 @@ describe('a read of messages', () => {
     await readMessages();
 
     const headers = (table().findColumnHeaders() ?? []).map((header) => text(header.getElement()));
-    expect(headers.slice(1)).toEqual(['Message ID', 'Receive count', 'Body', 'Sent', 'From']);
+    expect(headers.slice(1)).toEqual(['Message ID', 'Body', 'Receive count', 'Sent', 'From']);
     const row = table().findRows()[0]?.getElement() as HTMLElement;
     expect(within(row).getByRole('link', { name: 'orders' })).toHaveAttribute('href', '/aws/sqs/queues/queue/orders');
   });
