@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Entry point of the integration suite; pm-check runs it as the `integration` step.
 #
-# Builds the engine, Studio and the product form's image (issue 34), starts the run's own aws-emulator (telemetry off) on a loopback port, runs the
-# engine checks of tests/integration/engine one at a time, then the Studio flow checks of tests/integration/studio
-# one at a time, stops everything it started and writes <checkout>/output/integration/report.json: emulator
-# version and commit, the checkout's commit, the verdict of every manifest check (passed, failed, error, not-run)
+# Builds the engine, Studio, the run's own emulator image (issue 68) and the product form's image (issue 34), starts
+# the run's own aws-emulator (telemetry off) on a loopback port, runs the engine checks of tests/integration/engine one
+# at a time, then the Studio flow checks of tests/integration/studio one at a time, stops everything it started and
+# writes <checkout>/output/integration/report.json: emulator version and commit, the emulator image
+# (emulator_image), the checkout's commit, the verdict of every manifest check (passed, failed, error, not-run)
 # and the relay fidelity figure.
 #
 # Usage: run [--not-run <file>] [--on-request] [--services <file>], in any order. The --not-run file is a not-run list
@@ -55,17 +56,33 @@
 # Ports: EMULATOR_PORT, EMUFORGE_ENGINE_PORT and EMUFORGE_STUDIO_PORT when set (EMULATOR_PORT=9297, the owner's
 # emulator, is refused), else a free loopback port each.
 #
+# The run's emulator image (issue 68): after the engine and Studio builds the run builds the checkout's
+# infra/aws-emulator, uncommitted changes included, with Docker's build cache, as aws-emulator:it-<run id>, bounded at
+# emulator_build_bound seconds (log output/logs/integration-emulator-build.log). A build that has not ended within the
+# bound is the environment's: every check `error`. A build that exits with an error is the checkout's: no emulator
+# starts and no check runs, every check not left out is `failed` with the reason. The report's version and commit are
+# read from that image. The run then reads the machine's image aws-emulator once (its id and its label
+# emuforge.source-tree, then its version by that id) and compares the two when the label is the tree id of
+# infra/aws-emulator at HEAD and that folder has no uncommitted change: another version or commit makes every check
+# `error`, naming .pm/bin/pm-emulator-image refresh. report.json's emulator_image is {id, machine, compared}, null when
+# the run stopped before it read its image. After that read neither the run nor a check reads or writes the name
+# aws-emulator: the run's emulator and every emulator a check starts run aws-emulator:it-<run id> (the tag comes from
+# support/check.rs and studio/support/env.ts), every `docker run` of it with `--pull never`. The image is removed at
+# the end with the two names of the product form.
+#
 # Product form (issue 34): the image of the root docker-compose.yml is built once per run under the run's own
-# name (emuforge-it-product-<run id>), and the run's pinned emulator image is tagged under the run's own name
+# name (emuforge-it-product-<run id>), and the run's emulator image is tagged under the run's own name
 # (emuforge-it-emulator-<run id>), so a check's `docker compose ... up --build` is a cache hit and never retags
-# `emuforge` or `aws-emulator`. Both names are removed at the end, with the containers and networks of the forms
-# the checks recorded and could not remove.
+# `emuforge` or `aws-emulator`. After a product build that passed, the emulator under that name is read: another
+# version or commit than the run's image makes every check `error`. Both names are removed at the end, with the
+# containers and networks of the forms the checks recorded and could not remove.
 #
 # Exit, over the checks that are not `not-run`: 0 when every one passed; 1 when any failed; 127 when there are only
-# errors (the environment failed: Docker, the image, cargo, bun, a product image build that has not ended within
-# product_build_bound seconds; pm-check records 127 as `error`) or every check is `not-run` (nothing was checked); 2 for
-# a usage error. The engine and Studio are the subject, not the environment: when engine/ or studio/ does not exist or
-# does not build, every check still runs and fails at its first engine or Studio step.
+# errors (the environment failed: Docker, cargo, bun, an emulator or product image build that has not ended within its
+# bound, an emulator of another version than the run's image; pm-check records 127 as `error`) or every check is
+# `not-run` (nothing was checked); 2 for a usage error. The engine and Studio are the subject, not the environment:
+# when engine/ or studio/ does not exist or does not build, every check still runs and fails at its first engine or
+# Studio step. An emulator image that does not build ends the run before any check, every check `failed` (exit 1).
 set -euo pipefail
 
 # Real AWS credentials, profiles and proxy settings never reach a check.
@@ -111,7 +128,7 @@ checkout="$(cd ../.. && pwd)"
 out="$checkout/output/integration"
 logs="$checkout/output/logs"
 rm -rf "$out/verdicts" "$out/logs" "$out/tmp" "$out/playwright" "$out/report.json" "$out/not-run.ids" \
-  "$out/not-run.json" "$out/services.json" "$out/manifest.jsonl"
+  "$out/not-run.json" "$out/services.json" "$out/manifest.jsonl" "$out/emulator-image.json"
 mkdir -p "$out/verdicts" "$logs"
 manifest="$out/manifest.jsonl"
 run_id="$(date +%s)-$$"
@@ -123,20 +140,26 @@ emulator_commit=unknown
 # Seconds the product image build may take (issue 293). A cached build takes seconds and an uncached one on a runner
 # a few minutes; one that waits for a registry that does not answer never ends by itself.
 product_build_bound=600
+# Seconds the run's own emulator image build may take (issue 68), as the product build.
+emulator_build_bound=600
+# The run's emulator image, built from the checkout: the one emulator image the run and its checks start.
+pin="aws-emulator:it-$run_id"
 
 # report <reason>: writes report.json from the manifest and the verdict files and prints the exit code. With a
 # reason, the run did not get to its checks and every check is `error` with that reason.
 report() {
-  python3 -I - "$manifest" "$out/verdicts" "$out/report.json" \
-    "$emulator_version" "$emulator_commit" "$commit" "$out/not-run.json" "$out/services.json" "${1:-}" <<'PY'
+  python3 -I - "$manifest" "$out/verdicts" "$out/report.json" "$emulator_version" "$emulator_commit" "$commit" \
+    "$out/not-run.json" "$out/services.json" "$out/emulator-image.json" "${1:-}" <<'PY'
 import json, pathlib, sys
-manifest, verdicts, report, version, emulator_commit, commit, not_run, services, reason = sys.argv[1:]
+manifest, verdicts, report, version, emulator_commit, commit, not_run, services, image, reason = sys.argv[1:]
 # {id: reason} of the checks left out (the validated not-run list, the rows on request, the checks of the services
 # not touched); absent when none is.
 listed = json.loads(pathlib.Path(not_run).read_text()) if pathlib.Path(not_run).exists() else {}
 # The accepted services file's list, sorted without repeats, or null; absent without --services. A run that did not
 # get to its checks left nothing out by service.
 touched = json.loads(pathlib.Path(services).read_text()) if pathlib.Path(services).exists() and not reason else None
+# The run's emulator image {id, machine, compared} once the run has read it; null before.
+emulator_image = json.loads(pathlib.Path(image).read_text()) if pathlib.Path(image).exists() else None
 checks = []
 transparency = set()
 for line in pathlib.Path(manifest).read_text().splitlines():
@@ -160,8 +183,8 @@ for line in pathlib.Path(manifest).read_text().splitlines():
 counted = [c for c in checks if c["check_id"] in transparency and c["verdict"] in ("passed", "failed")]
 fidelity = dict(passed=sum(c["verdict"] == "passed" for c in counted), total=len(counted))
 pathlib.Path(report).write_text(json.dumps(dict(
-    emulator_version=version, emulator_commit=emulator_commit, commit=commit, relay_fidelity=fidelity,
-    services=touched, checks=checks), indent=1) + "\n")
+    emulator_version=version, emulator_commit=emulator_commit, emulator_image=emulator_image, commit=commit,
+    relay_fidelity=fidelity, services=touched, checks=checks), indent=1) + "\n")
 for c in checks:
     print(f"  {c['verdict']:7} {c['check_id']}  {c['message'].splitlines()[0][:160] if c['message'] else ''}", file=sys.stderr)
 verdicts = {c["verdict"] for c in checks if c["verdict"] != "not-run"}
@@ -185,6 +208,42 @@ preflight_error() {
   echo "integration: report $out/report.json" >&2
   fidelity_line
   exit 127
+}
+
+# fail_all <reason>: the subject failed before any check could run (the emulator image did not build). Every manifest
+# check gets a verdict `failed` with the reason, then report as at the end of a run: the checks the not-run list, the
+# on-request label or the services file left out stay `not-run`. Exits with report's code.
+fail_all() {
+  echo "integration: $1" >&2
+  python3 -I - "$manifest" "$out/verdicts" "$1" <<'PY'
+import json, pathlib, sys
+manifest, verdicts, reason = sys.argv[1:]
+for line in pathlib.Path(manifest).read_text().splitlines():
+    if line.strip():
+        check_id = json.loads(line)["check_id"]
+        record = dict(check_id=check_id, verdict="failed", seconds=0, log=None, message=reason)
+        (pathlib.Path(verdicts) / f"{check_id}.json").write_text(json.dumps(record))
+PY
+  local code
+  code="$(report)"
+  echo "integration: report $out/report.json, exit $code" >&2
+  fidelity_line
+  exit "$code"
+}
+
+# version_of <image>: the image's `aws-emulator --version`, one-shot without a network and without a pull, into
+# read_version and read_commit; a value missing or out of the shape [0-9A-Za-z._+-]{1,64} is `unknown`, so no other
+# text reaches a line or the report. Returns 1, both `unknown`, when the read fails.
+version_of() {
+  local text
+  read_version=unknown
+  read_commit=unknown
+  text="$(docker run --rm --pull never --network none --entrypoint aws-emulator "$1" --version 2>&1)" || return 1
+  read_version="$(sed -n 's/^Version: *//p' <<<"$text" | head -n 1)"
+  read_commit="$(sed -n 's/^Commit: *//p' <<<"$text" | head -n 1)"
+  [[ "$read_version" =~ ^[0-9A-Za-z._+-]{1,64}$ ]] || read_version=unknown
+  [[ "$read_commit" =~ ^[0-9A-Za-z._+-]{1,64}$ ]] || read_commit=unknown
+  return 0
 }
 
 # bounded <seconds> <command...>: runs the command in a session of its own (so its process group holds everything it
@@ -587,8 +646,6 @@ echo "integration: run $run_id, emulator port $EMULATOR_PORT, engine port $EMUFO
 # Preflight: the environment, not the subject.
 docker info >/dev/null 2>&1 || preflight_error "docker does not answer"
 docker compose version >/dev/null 2>&1 || preflight_error "docker compose does not answer"
-docker image inspect aws-emulator >/dev/null 2>&1 \
-  || preflight_error "image aws-emulator is missing: docker compose -f infra/aws-emulator/docker-compose.yml build"
 for tool in cargo curl shasum; do
   command -v "$tool" >/dev/null 2>&1 || preflight_error "$tool is not on PATH"
 done
@@ -632,12 +689,6 @@ else
   studio_build=absent
   echo "integration: $studio_manifest does not exist; every Studio check will fail at its first Studio step" >&2
 fi
-
-# The emulator version, pinned for the run.
-version_text="$(docker run --rm --entrypoint aws-emulator aws-emulator --version 2>&1)" \
-  || preflight_error "aws-emulator --version failed"
-emulator_version="$(sed -n 's/^Version: *//p' <<<"$version_text")"
-emulator_commit="$(sed -n 's/^Commit: *//p' <<<"$version_text")"
 
 # The run's emulator.
 emulator_dir="$HOME/.aws/emulator/$EMULATOR_PORT"
@@ -703,15 +754,84 @@ cleanup() {
       done
     done
   fi
-  docker image rm "$product_image" "$emulator_image" >/dev/null 2>&1 || true
+  docker image rm "$product_image" "$emulator_image" "$pin" >/dev/null 2>&1 || true
   rm -rf "$out/tmp"
 }
 trap cleanup EXIT
-# The product form's images: the run's tag of its pinned emulator, then the product image, built once with the
-# root docker-compose.yml under the run's name. A missing file or a failed build is the subject's, not the
-# environment's: every product check still runs and fails at its start command, as the engine checks do without an
-# engine.
-docker tag aws-emulator "$emulator_image" || preflight_error "cannot tag aws-emulator as $emulator_image"
+
+# The run's emulator image (issue 68): the checkout's infra/aws-emulator, built with Docker's cache and bounded as the
+# product build. An error exit is the subject's (no emulator to run against, so no check runs); the bound is the
+# environment's.
+emulator_log="$logs/integration-emulator-build.log"
+emulator_build_code=0
+(cd "$checkout" && bounded "$emulator_build_bound" docker build --progress plain --tag "$pin" infra/aws-emulator) \
+  >"$emulator_log" 2>&1 || emulator_build_code=$?
+case "$emulator_build_code" in
+  0) ;;
+  124) preflight_error "the emulator image build did not end within $emulator_build_bound s, see $emulator_log" ;;
+  *) fail_all "the emulator image did not build (exit $emulator_build_code), see $emulator_log" ;;
+esac
+
+# The emulator version, pinned for the run: the run's image's.
+version_of "$pin" || preflight_error "aws-emulator --version failed"
+emulator_version="$read_version"
+emulator_commit="$read_commit"
+pin_id="$(docker image inspect -f '{{.Id}}' "$pin" 2>/dev/null || true)"
+
+# The machine's image, read once: its id and its label emuforge.source-tree from Docker's JSON array (an image without
+# labels has no Labels key on the containerd store, which is an image without the label, not a failed read), then its
+# version by that id, so a refresh that moves the name in between changes nothing. After this read the run never
+# names the image aws-emulator again.
+machine="$(docker image inspect aws-emulator 2>/dev/null | python3 -I -c '
+import json, re, sys
+try:
+    data = json.load(sys.stdin)
+except ValueError:
+    sys.exit(0)
+if not (isinstance(data, list) and len(data) == 1 and isinstance(data[0], dict)
+        and isinstance(data[0].get("Id"), str) and re.fullmatch(r"[0-9A-Za-z:]{1,128}", data[0]["Id"])):
+    sys.exit(0)
+labels = (data[0].get("Config") or {}).get("Labels") or {}
+label = labels.get("emuforge.source-tree") if isinstance(labels, dict) else None
+print(data[0]["Id"], label if isinstance(label, str) and re.fullmatch(r"[0-9a-f]{1,64}", label) else "-")
+' || true)"
+machine_id="${machine%% *}"
+machine_label="${machine#* }"
+machine_version=
+machine_commit=
+if [[ -n "$machine" ]] && version_of "$machine_id" \
+  && [[ "$read_version" != unknown && "$read_commit" != unknown ]]; then
+  machine_version="$read_version"
+  machine_commit="$read_commit"
+fi
+tree="$(git -C "$checkout" rev-parse HEAD:infra/aws-emulator 2>/dev/null || true)"
+dirty="$(git -C "$checkout" status --porcelain -- infra/aws-emulator 2>/dev/null || echo unknown)"
+compared=false
+if [[ -n "$machine_version" && -n "$tree" && "$machine_label" == "$tree" && -z "$dirty" ]]; then
+  compared=true
+fi
+python3 -I - "$out/emulator-image.json" "$pin_id" "$machine_version" "$machine_commit" "$compared" <<'PY'
+import json, pathlib, sys
+path, image_id, version, commit, compared = sys.argv[1:]
+machine = dict(version=version, commit=commit) if version and commit else None
+image = dict(id=image_id or None, machine=machine, compared=compared == "true")
+pathlib.Path(path).write_text(json.dumps(image) + "\n")
+PY
+how="not compared"
+[[ "$compared" == true ]] && how=compared
+printf 'integration: emulator image %s %s (%s); machine image %s (%s)\n' "$pin" "$emulator_version" \
+  "$emulator_commit" "${machine_version:-none}" "$how" >&2
+if [[ "$compared" == true && ( "$machine_version" != "$emulator_version" || "$machine_commit" != "$emulator_commit" ) ]]
+then
+  preflight_error "the emulator built for this run is $emulator_version ($emulator_commit), the machine's image aws-emulator is $machine_version ($machine_commit); run .pm/bin/pm-emulator-image refresh"
+fi
+
+# The product form's images: the run's tag of its emulator image, then the product image, built once with the root
+# docker-compose.yml under the run's name. A missing file or a failed build is the subject's, not the environment's:
+# every product check still runs and fails at its start command, as the engine checks do without an engine. A build
+# that passed wrote the emulator under the run's name again (a cache hit of the build above); it is held to the run's
+# version before the run's emulator starts.
+docker tag "$pin" "$emulator_image" || preflight_error "cannot tag $pin as $emulator_image"
 product_log="$logs/integration-product-build.log"
 if [[ -f "$checkout/docker-compose.yml" ]]; then
   # Bounded (issue 293): a build that has not ended within product_build_bound seconds is the environment's failure.
@@ -731,9 +851,17 @@ else
   echo "integration: $checkout/docker-compose.yml does not exist; every product check will fail at its start" >&2
   echo "$checkout/docker-compose.yml does not exist" >"$product_log"
 fi
-docker run -d --name "$container" --label "emuforge-it-run=$run_id" --memory 2g \
+if [[ "$product_build" == ok ]]; then
+  product_read=ok
+  version_of "$emulator_image" || product_read=failed
+  if [[ "$product_read" == failed || "$read_version" != "$emulator_version" || "$read_commit" != "$emulator_commit" ]]
+  then
+    preflight_error "the product build's emulator is $read_version ($read_commit), the run's image is $emulator_version ($emulator_commit)"
+  fi
+fi
+docker run -d --pull never --name "$container" --label "emuforge-it-run=$run_id" --memory 2g \
   -p "127.0.0.1:$EMULATOR_PORT:$EMULATOR_PORT" -e "HOME=$HOME" -v "$HOME/.aws/emulator:$HOME/.aws/emulator" \
-  aws-emulator -p "$EMULATOR_PORT" -t off >/dev/null \
+  "aws-emulator:it-$run_id" -p "$EMULATOR_PORT" -t off >/dev/null \
   || preflight_error "the run's emulator would not start"
 health="$(curl -q -fsS --noproxy '*' --retry-all-errors --retry 60 --retry-delay 1 --retry-max-time 30 \
   --max-time 5 --cacert "$emulator_dir/ca.pem" "https://127.0.0.1:$EMULATOR_PORT/__admin/health" 2>/dev/null || true)"

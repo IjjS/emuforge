@@ -28,10 +28,32 @@ loopback port.
 
 ## Product stage
 
+After the engine and Studio builds, `run` builds its own emulator image `aws-emulator:it-<run id>` from the
+checkout's `infra/aws-emulator`, uncommitted changes included, with Docker's build cache (issue 68; log
+`output/logs/integration-emulator-build.log`, bound `emulator_build_bound`, 600 seconds). The version and commit of
+the report are read from it, and it is the only emulator image the run and its checks start: the run's emulator,
+every emulator a check starts for itself (its tag from `engine/support/check.rs` and `studio/support/env.ts`) and,
+under the run's product name, the product form's. Every `docker run` of it has `--pull never`. A check started by
+hand without `run` (no `EMUFORGE_IT_RUN_ID`) starts the machine's image `aws-emulator` as before. The run then reads
+the machine's image `aws-emulator` once, by its id: when its label `emuforge.source-tree` is the tree id of
+`infra/aws-emulator` at the checkout's `HEAD` and that folder has no uncommitted change, a version or commit other
+than the run's image's makes every check `error` with the reason
+`the emulator built for this run is <v> (<commit>), the machine's image aws-emulator is <v'> (<commit'>); run .pm/bin/pm-emulator-image refresh`
+and the run exits 127; without such a label, or without a machine's image, nothing is compared. `report.json` says
+which in `emulator_image` (`{id, machine, compared}`), and the run prints
+`integration: emulator image aws-emulator:it-<run id> <version> (<commit>); machine image <version|none> (compared|not compared)`.
+When the emulator image build has not ended within its bound every check is `error`, exit 127. When the emulator
+image does not build, the run ends before any check: there is no emulator to run against, so every check is
+`failed` with the reason `the emulator image did not build (exit <n>), see <log>`, exit 1. The run's image is
+removed at the end with the two names below, also after a refusal or a SIGTERM.
+
 `run` also builds the product form of issues 34 and 437: the images of the root `docker-compose.yml`, once per run,
 with `docker compose --progress plain build` at the checkout's root under the run's own names (`EMUFORGE_IMAGE` set
 to `emuforge-it-product-<run id>`, `EMUFORGE_EMULATOR_IMAGE` to `emuforge-it-emulator-<run id>`, which `run` first
-tags from the run's pinned emulator image; log `output/logs/integration-product-build.log`). The checks never use the
+tags from the run's own emulator image; log `output/logs/integration-product-build.log`). After a build that passed,
+the run reads the version of the product build's emulator under that name: one other than the run's image's makes
+every check `error` with the reason `the product build's emulator is <v'> (<commit'>), the run's image is <v>
+(<commit>)` and the run exits 127 before it starts its emulator. The checks never use the
 names `emuforge` or `aws-emulator` and never port 9297. Each form writes its Compose project to
 `output/integration/tmp/product-projects`; when it ends, `run` removes, of those projects, the containers created
 under one of the run's two image names, the networks no container uses any more and the volumes the removed
@@ -55,8 +77,9 @@ the root file where a check needs them: `studio/support/product-direct.yml` publ
 loopback port of the run, so a check can send the same request directly, and `studio/support/product-deaf.yml`
 starts the emulator on another port than its healthcheck asks.
 
-When `docker-compose.yml` is missing or an image does not build, every product check still runs and fails at its
-start line, as the engine checks do without an engine.
+When `docker-compose.yml` is missing or the product image does not build, every product check still runs and fails
+at its start line, as the engine checks do without an engine; a failed emulator image build is the one build that
+ends the run before any check (above).
 
 ## A service's folder
 
