@@ -18,7 +18,9 @@ COPY --from=studio /src/studio/dist studio/dist
 RUN cargo build --release --locked -p emuforge --features embed-studio --manifest-path engine/Cargo.toml
 
 FROM debian:bookworm-20261104-slim
-RUN mkdir -p /home/emuforge && chown 1000:1000 /home/emuforge
+# The settings folder of the Compose form, owned by the engine's user, so a new named volume mounted there takes
+# that owner and the engine can write targets.json.
+RUN mkdir -p /home/emuforge/.config/emuforge-compose && chown -R 1000:1000 /home/emuforge
 COPY --from=build /src/engine/target/release/emuforge /usr/local/bin/emuforge
 USER 1000:1000
 ENV HOME=/home/emuforge

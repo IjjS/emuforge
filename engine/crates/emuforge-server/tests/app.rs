@@ -15,11 +15,12 @@ use axum::Router;
 use axum::body::Body;
 use axum::http::header::{ALLOW, CONNECTION, CONTENT_TYPE, HOST, ORIGIN};
 use axum::http::{HeaderMap, Method, Request, StatusCode};
-use emuforge_core::{Emulator, Health, Limits, Prepared, Reason, RelayError, Store, forward};
+use emuforge_core::{
+    Emulator, Health, Limits, Prepared, Reason, RelayError, SETTINGS_FILE, Store, forward,
+};
 use emuforge_server::{
     AppState, CLIENT_WRITE_IDLE, DRAIN_BOUND, Form, IdleListener, ProbeFn, RelayFn, SessionToken,
-    seed_settings,
-    StudioOrigin, app,
+    StudioOrigin, app, seed_settings,
 };
 use hyper::body::{Bytes, Frame};
 use serde_json::{Value, json};
@@ -1925,4 +1926,296 @@ async fn keep_alive_connection_answers_a_second_request_without_a_drain_between(
         assert_eq!(answer.status, 200, "case {request}");
         assert_eq!(answer.header("connection"), None, "case {request}");
     }
+}
+
+// ---- Issue 485: health and relay follow the active target of the settings file ----
+
+/// An app whose settings folder is `dir` (seed `local` at 9391), whose probe and relay record the `Emulator`
+/// each was given; the probe answers `probed`, the relay `relayed`.
+struct Following {
+    app: Router,
+    probed: Arc<Mutex<Vec<Emulator>>>,
+    relayed: Arc<Mutex<Vec<Emulator>>>,
+}
+
+impl Following {
+    fn new(dir: &Path, probe_answers: Health, script: Script) -> Following {
+        let probed = Arc::new(Mutex::new(Vec::new()));
+        let relayed = Arc::new(Mutex::new(Vec::new()));
+        let (probe_seen, relay_seen) = (probed.clone(), relayed.clone());
+        let probe: ProbeFn = Arc::new(move |emulator| {
+            probe_seen.lock().unwrap().push(emulator);
+            let health = probe_answers.clone();
+            Box::pin(async move { health })
+        });
+        let inner = TestRelay::answering(script).relay;
+        let relay: RelayFn = Arc::new(move |emulator: Emulator, request: Request<Body>| {
+            relay_seen.lock().unwrap().push(emulator.clone());
+            inner(emulator, request)
+        });
+        let app = app(AppState {
+            engine_port: NonZeroU16::new(8297).unwrap(),
+            studio_port: NonZeroU16::new(8296).unwrap(),
+            form: Form::Native,
+            home: PathBuf::from("/h"),
+            settings: Arc::new(Store::new(
+                dir.to_owned(),
+                seed_settings(Form::Native, NonZeroU16::new(9391).unwrap()),
+            )),
+            probe,
+            relay,
+            max_in_flight: 2,
+            studio_origin: StudioOrigin::new(NonZeroU16::new(8296).unwrap()),
+            session: Arc::new(SessionToken::generate().unwrap()),
+        });
+        Following {
+            app,
+            probed,
+            relayed,
+        }
+    }
+
+    fn probed(&self) -> Vec<String> {
+        addresses(&self.probed)
+    }
+
+    fn relayed(&self) -> Vec<String> {
+        addresses(&self.relayed)
+    }
+}
+
+fn addresses(seen: &Mutex<Vec<Emulator>>) -> Vec<String> {
+    seen.lock()
+        .unwrap()
+        .iter()
+        .map(|emulator| emulator.socket_addr().to_string())
+        .collect()
+}
+
+/// A settings file of two targets, `local` at 9391 and `other` at `endpoint`, `active` the active one.
+fn two_targets(dir: &Path, active: &str, endpoint: &str) {
+    std::fs::write(
+        dir.join(SETTINGS_FILE),
+        format!(
+            r#"{{"version":1,"active":"{active}","targets":[{{"name":"local","endpoint":"https://127.0.0.1:9391"}},{{"name":"other","endpoint":"{endpoint}"}}]}}"#
+        ),
+    )
+    .unwrap();
+}
+
+const UNUSABLE_SETTINGS: &str = r#"{"version":1,"active":"local","targets":[]"#;
+
+#[tokio::test]
+async fn health_with_the_file_absent_probes_local_and_names_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let following = Following::new(dir.path(), Health::Reachable, Script::ok());
+    let answer = get(&following.app, HEALTH).await;
+    assert_eq!(answer.status, StatusCode::OK);
+    assert_eq!(following.probed(), vec!["127.0.0.1:9391"]);
+    assert_eq!(
+        answer.json(),
+        json!({"target": "local", "emulator": {
+            "port": 9391,
+            "endpoint": "https://127.0.0.1:9391",
+            "reachable": true,
+        }})
+    );
+}
+
+#[tokio::test]
+async fn health_with_another_active_target_probes_it_and_names_it_and_its_endpoint() {
+    let dir = tempfile::tempdir().unwrap();
+    two_targets(dir.path(), "other", "https://127.0.0.2:9500");
+    let following = Following::new(
+        dir.path(),
+        Health::Unreachable(Reason::ConnectionRefused),
+        Script::ok(),
+    );
+    let answer = get(&following.app, HEALTH).await;
+    assert_eq!(answer.status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(following.probed(), vec!["127.0.0.2:9500"]);
+    let body = answer.json();
+    assert_eq!(body["target"], "other");
+    assert_eq!(body["emulator"]["port"], 9500);
+    assert_eq!(body["emulator"]["endpoint"], "https://127.0.0.2:9500");
+    assert_eq!(body["emulator"]["reason"], "connection_refused");
+}
+
+#[tokio::test]
+async fn health_with_an_unusable_file_is_503_settings_unusable_naming_it_and_probes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join(SETTINGS_FILE);
+    std::fs::write(&file, UNUSABLE_SETTINGS).unwrap();
+    let following = Following::new(dir.path(), Health::Reachable, Script::ok());
+    let answer = get(&following.app, HEALTH).await;
+    assert_eq!(answer.status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(answer.code(), "SettingsUnusable");
+    let message = answer.json()["error"]["message"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(message.contains(&file.display().to_string()), "{message}");
+    assert!(following.probed().is_empty(), "probed");
+}
+
+#[tokio::test]
+async fn relayed_requests_each_go_to_the_target_active_at_their_start() {
+    let dir = tempfile::tempdir().unwrap();
+    let following = Following::new(dir.path(), Health::Reachable, Script::ok());
+    let send_one = || {
+        send(
+            &following.app,
+            empty(header_signed(Method::GET, "/b/k", "s3")),
+        )
+    };
+    assert_eq!(send_one().await.status, StatusCode::OK);
+    two_targets(dir.path(), "other", "https://127.0.0.2:9500");
+    assert_eq!(send_one().await.status, StatusCode::OK);
+    two_targets(dir.path(), "local", "https://127.0.0.2:9500");
+    assert_eq!(send_one().await.status, StatusCode::OK);
+    assert_eq!(
+        following.relayed(),
+        vec!["127.0.0.1:9391", "127.0.0.2:9500", "127.0.0.1:9391"]
+    );
+}
+
+#[tokio::test]
+async fn relayed_request_with_an_unusable_file_is_503_settings_unusable_in_the_callers_protocol() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join(SETTINGS_FILE);
+    std::fs::write(&file, UNUSABLE_SETTINGS).unwrap();
+    let file = file.display().to_string();
+    let following = Following::new(dir.path(), Health::Reachable, Script::ok());
+
+    let json = send(
+        &following.app,
+        empty(
+            header_signed(Method::POST, "/", "dynamodb")
+                .header("x-amz-target", "DynamoDB_20120810.ListTables")
+                .header(CONTENT_TYPE, "application/x-amz-json-1.0"),
+        ),
+    )
+    .await;
+    assert_eq!(json.status, StatusCode::SERVICE_UNAVAILABLE, "case JSON");
+    assert_eq!(
+        json.headers[CONTENT_TYPE], "application/x-amz-json-1.0",
+        "case JSON"
+    );
+    assert_eq!(json.aws_code(), "SettingsUnusable", "case JSON");
+    assert!(json.text().contains(&file), "case JSON: {}", json.text());
+
+    let rest_xml = send(
+        &following.app,
+        empty(header_signed(Method::GET, "/b/k", "s3")),
+    )
+    .await;
+    assert_eq!(
+        rest_xml.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "case REST-XML"
+    );
+    assert_eq!(
+        rest_xml.headers[CONTENT_TYPE], "application/xml",
+        "case REST-XML"
+    );
+    assert!(
+        rest_xml
+            .text()
+            .starts_with("<Error><Code>SettingsUnusable</Code><Message>"),
+        "case REST-XML: {}",
+        rest_xml.text()
+    );
+    assert!(rest_xml.text().contains(&file), "case REST-XML");
+
+    let query = send(
+        &following.app,
+        empty(header_signed(Method::POST, "/", "iam").header(CONTENT_TYPE, FORM)),
+    )
+    .await;
+    assert_eq!(query.status, StatusCode::SERVICE_UNAVAILABLE, "case Query");
+    assert_eq!(query.headers[CONTENT_TYPE], "text/xml", "case Query");
+    let (kind, code, message) = query_error(&query.text());
+    assert_eq!(
+        (kind.as_str(), code.as_str()),
+        ("Receiver", "SettingsUnusable"),
+        "case Query"
+    );
+    assert!(message.contains(&file), "case Query: {message}");
+
+    let unsigned = send(&following.app, empty(request(Method::GET, "/b/k"))).await;
+    assert_eq!(
+        unsigned.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "case unsigned"
+    );
+    assert_eq!(
+        unsigned.headers[CONTENT_TYPE], "application/json",
+        "case unsigned"
+    );
+    assert_eq!(unsigned.aws_code(), "SettingsUnusable", "case unsigned");
+
+    assert!(following.relayed().is_empty(), "relayed");
+}
+
+#[tokio::test]
+async fn relayed_request_to_an_unreachable_active_target_is_503_naming_that_targets_endpoint_only()
+{
+    let dir = tempfile::tempdir().unwrap();
+    two_targets(dir.path(), "other", "https://127.0.0.2:9500");
+    let following = Following::new(
+        dir.path(),
+        Health::Reachable,
+        Script::Error(RelayError::Unavailable(Reason::ConnectionRefused)),
+    );
+    let answer = send(
+        &following.app,
+        empty(header_signed(Method::POST, "/", "iam").header(CONTENT_TYPE, FORM)),
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::SERVICE_UNAVAILABLE);
+    let (_, code, message) = query_error(&answer.text());
+    assert_eq!(code, "EmulatorUnavailable");
+    assert!(message.contains("https://127.0.0.2:9500"), "{message}");
+    assert!(!message.contains("9391"), "{message}");
+    assert_eq!(following.relayed(), vec!["127.0.0.2:9500"]);
+}
+
+#[tokio::test]
+async fn serving_health_and_relayed_requests_with_the_file_absent_writes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let following = Following::new(dir.path(), Health::Reachable, Script::ok());
+    assert_eq!(get(&following.app, HEALTH).await.status, StatusCode::OK);
+    let relayed = send(
+        &following.app,
+        empty(header_signed(Method::GET, "/b/k", "s3")),
+    )
+    .await;
+    assert_eq!(relayed.status, StatusCode::OK);
+    assert_eq!(
+        std::fs::read_dir(dir.path()).unwrap().count(),
+        0,
+        "the settings folder is not empty"
+    );
+}
+
+#[tokio::test]
+async fn an_active_target_at_the_engines_own_port_is_read_and_given_to_relay_and_probe() {
+    let dir = tempfile::tempdir().unwrap();
+    two_targets(dir.path(), "other", "https://127.0.0.1:8297");
+    let following = Following::new(dir.path(), Health::Reachable, Script::ok());
+    let health = get(&following.app, HEALTH).await;
+    assert_eq!(health.status, StatusCode::OK);
+    assert_eq!(health.json()["target"], "other");
+    assert_eq!(
+        health.json()["emulator"]["endpoint"],
+        "https://127.0.0.1:8297"
+    );
+    let relayed = send(
+        &following.app,
+        empty(header_signed(Method::GET, "/b/k", "s3")),
+    )
+    .await;
+    assert_eq!(relayed.status, StatusCode::OK);
+    assert_eq!(following.probed(), vec!["127.0.0.1:8297"]);
+    assert_eq!(following.relayed(), vec!["127.0.0.1:8297"]);
 }

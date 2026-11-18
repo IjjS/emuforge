@@ -98,7 +98,11 @@ pub struct Config {
     pub listen_address: IpAddr,
     /// Folder of the settings file targets.json [default: $HOME/.config/emuforge, or
     /// $HOME/.config/emuforge-compose in the Compose form]; never ~/.aws or a folder under it
-    #[arg(long = "settings-dir", env = "EMUFORGE_SETTINGS_DIR", value_name = "DIR")]
+    #[arg(
+        long = "settings-dir",
+        env = "EMUFORGE_SETTINGS_DIR",
+        value_name = "DIR"
+    )]
     pub settings_dir: Option<PathBuf>,
     /// How EmuForge is run: native on the host, or compose, which holds one target, its own emulator
     #[arg(long, env = "EMUFORGE_FORM", value_enum, default_value_t = Form::Native)]
@@ -211,11 +215,17 @@ mod tests {
     /// `Config::try_parse_from` with every environment binding removed, so the process environment (a check
     /// run sets the engine's variables) plays no part.
     fn parse(args: &[&str]) -> Result<Config, clap::Error> {
-        let command = ["port", "emulator_port", "studio_port", "settings_dir", "form"]
-            .into_iter()
-            .fold(command(), |command, id| {
-                command.mut_arg(id, |arg| arg.env(None))
-            });
+        let command = [
+            "port",
+            "emulator_port",
+            "studio_port",
+            "settings_dir",
+            "form",
+        ]
+        .into_iter()
+        .fold(command(), |command, id| {
+            command.mut_arg(id, |arg| arg.env(None))
+        });
         let matches = command
             .try_get_matches_from(std::iter::once("emuforge-server").chain(args.iter().copied()))?;
         Config::from_arg_matches(&matches)

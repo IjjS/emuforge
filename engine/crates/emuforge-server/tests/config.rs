@@ -432,7 +432,11 @@ fn settings_parsed_in_the_child_process_are_printed() {
     println!(
         "form={} settings_dir={:?}",
         config.form,
-        config.settings_dir.as_deref().map(Path::display).map(|d| d.to_string())
+        config
+            .settings_dir
+            .as_deref()
+            .map(Path::display)
+            .map(|d| d.to_string())
     );
 }
 
@@ -440,7 +444,12 @@ fn settings_parsed_in_the_child_process_are_printed() {
 fn parsed_in_a_child(variables: &[(&str, &str)], args: &str) -> String {
     let mut command = std::process::Command::new(std::env::current_exe().unwrap());
     command
-        .args([SETTINGS_CHILD_TEST, "--exact", "--nocapture", "--test-threads=1"])
+        .args([
+            SETTINGS_CHILD_TEST,
+            "--exact",
+            "--nocapture",
+            "--test-threads=1",
+        ])
         .env(SETTINGS_CHILD_MARKER, args)
         .env_remove("EMUFORGE_FORM")
         .env_remove("EMUFORGE_SETTINGS_DIR");
@@ -481,10 +490,16 @@ fn help_lists_settings_dir_and_form_with_their_variables_and_emulator_port_as_th
             .to_owned()
     };
     let settings = entry("--settings-dir");
-    assert!(settings.contains("[env: EMUFORGE_SETTINGS_DIR="), "{settings}");
+    assert!(
+        settings.contains("[env: EMUFORGE_SETTINGS_DIR="),
+        "{settings}"
+    );
     let form = entry("--form");
     assert!(form.contains("[env: EMUFORGE_FORM="), "{form}");
-    assert!(form.contains("native") && form.contains("compose"), "{form}");
+    assert!(
+        form.contains("native") && form.contains("compose"),
+        "{form}"
+    );
     let emulator = entry("--emulator-port");
     assert!(
         emulator.contains("local") && emulator.contains("settings file is absent"),
@@ -550,10 +565,8 @@ fn settings_folder_beside_aws_or_relative_elsewhere_is_accepted_and_made_absolut
         ("relative with ..", "../s", "/work/a", "/work/s"),
     ];
     for (name, dir, cwd, expected) in cases {
-        let resolved =
-            settings_dir(&with(Form::Native, Some(dir)), home, Path::new(cwd)).unwrap_or_else(
-                |error| panic!("case {name}: {error}"),
-            );
+        let resolved = settings_dir(&with(Form::Native, Some(dir)), home, Path::new(cwd))
+            .unwrap_or_else(|error| panic!("case {name}: {error}"));
         assert_eq!(resolved, PathBuf::from(expected), "case {name}");
     }
 }
@@ -602,7 +615,13 @@ fn entries(dir: &Path) -> Vec<String> {
 /// line holds none of their words.
 fn assert_no_key(log: &str) {
     for word in [
-        "AKIA", "ASIA", "secret", "Secret", "session_token", "token", "aws_access_key_id",
+        "AKIA",
+        "ASIA",
+        "secret",
+        "Secret",
+        "session_token",
+        "token",
+        "aws_access_key_id",
     ] {
         assert!(!log.contains(word), "a start line holds {word}: {log}");
     }
@@ -689,7 +708,10 @@ async fn compose_start_makes_the_file_hold_exactly_compose_and_says_it_was_writt
             .lines()
             .find(|line| line.contains("INFO") && line.contains(said))
             .unwrap_or_else(|| panic!("case {name}: no line saying {said}: {log}"));
-        assert!(line.contains(&file.display().to_string()), "case {name}: {line}");
+        assert!(
+            line.contains(&file.display().to_string()),
+            "case {name}: {line}"
+        );
         assert!(
             log.contains("form compose, active target compose at https://127.0.0.1:9391"),
             "case {name}: {log}"
@@ -709,8 +731,14 @@ async fn compose_start_with_the_file_already_so_does_not_rewrite_it_and_says_not
     let (store, seed) = store(dir.path(), Form::Compose);
     let log = captured(settings_step(&store, Form::Compose, &seed)).await;
     assert_eq!(std::fs::read_to_string(&file).unwrap(), compact);
-    assert_eq!(std::fs::metadata(&file).unwrap().modified().unwrap(), modified);
-    assert!(!log.contains("written") && !log.contains("replaced"), "{log}");
+    assert_eq!(
+        std::fs::metadata(&file).unwrap().modified().unwrap(),
+        modified
+    );
+    assert!(
+        !log.contains("written") && !log.contains("replaced"),
+        "{log}"
+    );
     assert!(
         log.contains("form compose, active target compose at https://127.0.0.1:9391"),
         "{log}"

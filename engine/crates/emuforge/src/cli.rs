@@ -113,6 +113,31 @@ mod tests {
     }
 
     #[test]
+    fn cli_serve_help_lists_settings_dir_and_form_with_their_variables() {
+        let error = parse(&["serve", "--help"]).unwrap_err();
+        let text = error.render().to_string();
+        for (flag, variable) in [
+            ("--settings-dir", "EMUFORGE_SETTINGS_DIR"),
+            ("--form", "EMUFORGE_FORM"),
+        ] {
+            let start = text
+                .find(&format!("      {flag} "))
+                .unwrap_or_else(|| panic!("case {flag}: no line in {text}"));
+            let entry = text[start..].split("\n      --").next().unwrap_or_default();
+            assert!(
+                entry.contains(&format!("[env: {variable}=")),
+                "case {flag}: {entry}"
+            );
+        }
+        let start = text.find("      --emulator-port ").unwrap();
+        let entry = text[start..].split("\n      --").next().unwrap_or_default();
+        assert!(
+            entry.contains("local") && entry.contains("settings file is absent"),
+            "{entry}"
+        );
+    }
+
+    #[test]
     fn cli_serve_with_every_flag_is_serve_with_those_values() {
         let cli = parse(&[
             "serve",
