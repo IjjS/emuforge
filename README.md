@@ -4,6 +4,11 @@ A local workbench on top of the official [aws-emulator](https://github.com/aws/a
 (Studio), a CLI, IAM policy evaluation and IaC verification. EmuForge does not reimplement the emulator; it
 calls one it does not write: the one it starts beside itself, or, in the developer's start, one you run.
 
+Where EmuForge is going is the owner's product plan, [PRODUCT.md](PRODUCT.md): a native emuforge CLI and a
+Docker Compose form. Issues 484 to 486 bring the Compose form described below to that plan: one emuforge image
+beside the emulator in its own container (issue 484), and emulator connections you register and choose in Studio
+(issues 485 and 486). Until they are merged, this README describes the form as it is.
+
 ## Independence and trademarks
 
 EmuForge is an independent project. It is not affiliated with, endorsed by or sponsored by Amazon Web Services
@@ -72,8 +77,8 @@ running is not part of this form for now. A form started from a clone before thi
 an emulator or start one under its own name, leaves that emulator running as an orphan after you update the
 clone; the stop line with `--remove-orphans` added removes it.
 
-The other ways to get EmuForge are not available yet: a released version, installed with a shell command; and
-the emuforge CLI, downloaded on its own.
+The other ways to get EmuForge in the plan are not available yet: the native emuforge CLI from GitHub Releases,
+which runs Studio and the engine beside an emulator you run, and a released image of a tagged version.
 
 ### Ports
 
