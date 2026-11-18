@@ -57,6 +57,10 @@ pub struct Ctx {
     /// The port an engine started by a check listens on.
     pub engine_port: u16,
     pub engine_bin: PathBuf,
+    /// The settings folder every engine this check starts is given (`EMUFORGE_SETTINGS_DIR`, issue 485):
+    /// `<run output>/tmp/settings/<id>`, empty when the check starts and removed when it ends, so no check reads or
+    /// writes the settings under `$HOME/.config`.
+    pub settings_dir: PathBuf,
     /// Why there is no engine binary to run, when `run` knows it.
     pub engine_missing: Option<String>,
     pub run_id: String,
@@ -209,6 +213,7 @@ pub fn check(id: &'static str, body: impl FnOnce(&mut Ctx) -> Result<(), Env>) {
                 }
             };
             ctx.log(format!("verdict {verdict} {message}"));
+            let _ = fs::remove_dir_all(&ctx.settings_dir);
             (verdict, message)
         }
     };
@@ -258,12 +263,18 @@ fn context(
         .map_or_else(|| "latest".to_owned(), |id| format!("it-{id}"));
     // The run's emulator keys and certificate are redacted from everything written from here on.
     let _ = EmulatorFiles::read(&emulator_dir(&home, emulator_port));
+    let settings_dir = out_dir.join("tmp").join("settings").join(id);
+    if settings_dir.exists() {
+        fs::remove_dir_all(&settings_dir)
+            .map_err(|e| format!("cannot clear {}: {e}", settings_dir.display()))?;
+    }
     Ok(Ctx {
         id,
         home,
         emulator_port,
         engine_port,
         engine_bin,
+        settings_dir,
         engine_missing,
         run_id,
         image_tag,
