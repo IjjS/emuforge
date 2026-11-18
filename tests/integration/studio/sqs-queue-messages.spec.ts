@@ -2,7 +2,7 @@
 // in front of a real engine and emulator (test-criteria.md, issue 481: tasks 2 and 4).
 //
 // `studio.sqs-read-messages-leaves-them-in-the-queue`, `studio.sqs-read-on-a-redrive-queue-warns-and-moves`,
-// `studio.sqs-read-fifo-queue-shows-groups`, `studio.sqs-delete-read-messages`, `studio.sqs-purge-queue`,
+// `studio.sqs-read-on-a-redrive-queue-after-a-consumer-took-them`, `studio.sqs-read-fifo-queue-shows-groups`, `studio.sqs-delete-read-messages`, `studio.sqs-purge-queue`,
 // `studio.sqs-queue-gone-while-open`.
 //
 // Each check names its queues with its own prefix `<p>` and deletes them when it ends (`SqsSeeded`). What the emulator
@@ -190,6 +190,41 @@ test('studio.sqs-read-on-a-redrive-queue-warns-and-moves', async ({ ctx, page })
       });
       expect((await countsDirect(ctx, port, dlq.url)).available, 'the dead-letter queue, directly').toBe(1);
       await expectValue(page, 'Available', '0');
+    },
+  );
+
+  lines.end();
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+
+test('studio.sqs-read-on-a-redrive-queue-after-a-consumer-took-them', async ({ ctx, page }) => {
+  const stack = await startStack(ctx);
+  const port = stack.emulatorPort;
+  const lines = new Lines(ctx);
+  const p = checkPrefix(ctx, 'taken');
+  const seeded = new SqsSeeded(ctx, port, p);
+  const { source, dlq } = await seeded.redrivePair(`${p}-src`, `${p}-dlq`, 5);
+  await seeded.messages(source, 3);
+  const s = queueScreen(page);
+
+  await lines.line(
+    'All 3 received directly with a visibility of 600 s, then "Read messages" → the empty-read sentence, and neither "This read returned …" nor a sentence that messages were moved; the emulator reports 0 available and 3 in flight in the source and none in the dead-letter queue',
+    async () => {
+      await open(page, queuePath(source.name), source.name);
+      await expectValue(page, 'Available', '3');
+      const taken = await receiveDirect(ctx, port, source.url, 600);
+      expect(taken.length, 'received directly by another consumer').toBe(3);
+      await readMessages(page);
+      await expect(s.panel.getByText(EMPTY_READ), 'the empty-read sentence').toBeVisible();
+      await expect(s.panel.getByText(/^This read returned /), 'no "This read returned …"').toHaveCount(0);
+      await expect(s.panel.getByText(/ by this read instead of being shown\.$/), 'no moved-by-read sentence').toHaveCount(0);
+      expect(await countsDirect(ctx, port, source.url), 'the source, directly').toEqual({
+        available: 0,
+        inFlight: 3,
+        delayed: 0,
+      });
+      expect((await countsDirect(ctx, port, dlq.url)).available, 'the dead-letter queue, directly').toBe(0);
     },
   );
 
