@@ -761,18 +761,16 @@ describe('the local-emulator notice in the AWS area (issue 45, R5)', () => {
     expect(about()).toHaveAttribute('aria-expanded', 'true');
   });
 
-  it('the notice closed on one page: still closed on another page that shows resources, the (i) control collapsed', () => {
+  it('the notice closed on one page: still closed on another page that shows resources, the (i) control collapsed', async () => {
     resources = { word: 'buckets' };
-    const { wrapper, router } = open(NO_SCREEN_SERVICE.path);
+    const { router } = open(NO_SCREEN_SERVICE.path);
     closeNotice();
     expect(notice()).toBeNull();
 
-    act(() => {
-      fireEvent.click(wrapper.findSideNavigation()?.findLinkByHref('/aws/sqs')?.getElement() as HTMLElement);
-    });
+    await act(() => router.navigate(NO_SCREEN_SERVICE.below));
 
-    expect(router.state.location.pathname).toBe('/aws/sqs');
-    expect(screen.getByRole('heading', { level: 1, name: 'Amazon Simple Queue Service' })).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe(NO_SCREEN_SERVICE.below);
+    expect(screen.getByRole('heading', { level: 1, name: NO_SCREEN })).toBeInTheDocument();
     expect(notice()).toBeNull();
     expect(about()).toHaveAttribute('aria-expanded', 'false');
   });
