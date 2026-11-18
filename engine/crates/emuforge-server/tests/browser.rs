@@ -68,6 +68,7 @@ fn app_relaying(probe: ProbeFn, relay: RelayFn) -> Router {
         settings: absent_settings(),
         probe,
         relay,
+        test: Arc::new(|_| Box::pin(async { emuforge_core::TestReport { checks: Vec::new() } })),
         max_in_flight: 2,
         studio_origin: StudioOrigin::new(port(8296)),
         session: Arc::new(SessionToken::generate().unwrap()),
@@ -427,12 +428,12 @@ fn assert_preflight(answer: &Answer, case: &str) {
     answer.assert_cors(case);
     assert_eq!(
         answer.values(ACCESS_CONTROL_ALLOW_METHODS),
-        ["GET, HEAD"],
+        ["GET, HEAD, POST, DELETE"],
         "case {case}"
     );
     assert_eq!(
         answer.values(ACCESS_CONTROL_ALLOW_HEADERS),
-        ["X-EmuForge-Session"],
+        ["Content-Type, X-EmuForge-Session"],
         "case {case}"
     );
     assert_eq!(

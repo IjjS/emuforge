@@ -214,6 +214,7 @@ fn app_relaying(probe: ProbeFn, relay: RelayFn) -> Router {
         settings: absent_settings(),
         probe,
         relay,
+        test: Arc::new(|_| Box::pin(async { emuforge_core::TestReport { checks: Vec::new() } })),
         max_in_flight: 2,
         studio_origin: StudioOrigin::new(port(8296)),
         session: Arc::new(SessionToken::generate().unwrap()),

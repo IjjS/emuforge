@@ -27,6 +27,7 @@ use crate::browser::{self, StudioOrigin, engine_refusal, is_engine_path};
 use crate::config::Form;
 use crate::limit::{InFlight, limit};
 use crate::session::SessionToken;
+use crate::targets::{self, TestFn};
 
 /// The engine's health route.
 pub const HEALTH_PATH: &str = "/__emuforge/health";
@@ -53,6 +54,8 @@ pub struct AppState {
     pub settings: Arc<Store>,
     pub probe: ProbeFn,
     pub relay: RelayFn,
+    /// Runs a target's test; called once per test request.
+    pub test: TestFn,
     pub max_in_flight: usize,
     pub studio_origin: StudioOrigin,
     pub session: Arc<SessionToken>,
@@ -75,6 +78,7 @@ pub fn app(state: AppState) -> Router {
             SESSION_PATH,
             get(session).fallback(|| method_not_allowed(SESSION_PATH)),
         )
+        .merge(targets::routes())
         .fallback(fallback)
         .layer(middleware::from_fn_with_state(
             state.clone(),
