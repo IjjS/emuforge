@@ -68,7 +68,9 @@ function redriveTab(page: Page) {
 async function chooseQueue(page: Page, name: string): Promise<void> {
   await redriveTab(page).choose.click(ACTION);
   await page.getByRole('combobox', { name: QUEUE_PREFIX }).fill(name, ACTION);
-  await page.getByRole('option', { name, exact: true }).click(ACTION);
+  // An option's accessible name is the queue's name, then its description when it has one ("A source of …").
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  await page.getByRole('option', { name: new RegExp(`^${escaped}( |$)`) }).click(ACTION);
 }
 
 /** Receives each message of `url` with a visibility of 0 until the dead-letter queue `dlqUrl` holds `count`. */
