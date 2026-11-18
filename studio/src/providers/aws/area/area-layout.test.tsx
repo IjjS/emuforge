@@ -989,6 +989,30 @@ describe('a console screen in the AWS area (issue 56, R5)', () => {
     },
   );
 
+  // Issue 480: a screen's crumbs and title may read the address's query, as S3's objects read `?prefix=`.
+  it('a screen whose crumbs and title read the query, on /aws/dynamodb/shelves?part=a%2Fb: both carry the decoded value', () => {
+    const shelves: AreaScreen = {
+      ...WIDGETS,
+      paths: ['/aws/dynamodb/shelves'],
+      title: (_params, query) => `Shelf ${query.get('part') ?? ''}`,
+      crumbs: (_params, query) => [
+        { text: 'Shelves', href: '/aws/dynamodb/shelves' },
+        { text: query.get('part') ?? '' },
+      ],
+    };
+    registry.screens.push(shelves);
+    const { wrapper } = open('/aws/dynamodb/shelves?part=a%2Fb');
+
+    expect(titles.at(-1)).toBe('Shelf a/b');
+    expect(breadcrumbs(wrapper)).toEqual([
+      ['EmuForge', '/'],
+      ['AWS', '/aws'],
+      ['DynamoDB', '/aws/dynamodb'],
+      ['Shelves', '/aws/dynamodb/shelves'],
+      ['a/b', null],
+    ]);
+  });
+
   it.each(THINGS.paths)(
     "on %s: the side navigation is the screen's header and links, All things current, none of the services",
     (path) => {

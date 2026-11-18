@@ -2,32 +2,26 @@ import {
   CreateBucketCommand,
   DeleteBucketCommand,
   DeleteObjectsCommand,
-  GetBucketAbacCommand,
-  GetBucketAccelerateConfigurationCommand,
   GetBucketEncryptionCommand,
-  GetBucketLoggingCommand,
   GetBucketNotificationConfigurationCommand,
-  GetBucketRequestPaymentCommand,
   GetBucketTaggingCommand,
   GetBucketVersioningCommand,
   GetBucketWebsiteCommand,
-  GetObjectLockConfigurationCommand,
-  ListBucketIntelligentTieringConfigurationsCommand,
   ListBucketsCommand,
+  ListObjectsV2Command,
   ListObjectVersionsCommand,
   PutBucketEncryptionCommand,
   PutBucketVersioningCommand,
   PutPublicAccessBlockCommand,
   type FilterRule,
   type GetBucketNotificationConfigurationCommandOutput,
-  type IntelligentTieringConfiguration,
   type ListBucketsCommandOutput,
+  type ListObjectsV2CommandOutput,
   type S3Client,
 } from '@aws-sdk/client-s3';
 
 import { createS3Client } from '../../../../../lib/aws/client-factory';
 import { RequestError, sendRequest } from '../../../../../lib/aws/request';
-import type { RetentionPeriod } from './format';
 
 // The S3 calls of the AWS area (issue 56, requirement R2, R4, R7; issue 256, requirement R2, R5 to R8), through the
 // engine, mapped to plain typed results. Every value in a result comes from the emulator's answer, unchanged; each
@@ -150,16 +144,11 @@ const NO_SUCH_BUCKET_CODE = 'NoSuchBucket';
 /** The operations of a bucket's screens, as a failure names them. */
 export const OPERATIONS = {
   getBucketVersioning: 'GetBucketVersioning',
-  getBucketAbac: 'GetBucketAbac',
   getBucketTagging: 'GetBucketTagging',
   getBucketEncryption: 'GetBucketEncryption',
-  listBucketIntelligentTieringConfigurations: 'ListBucketIntelligentTieringConfigurations',
-  getBucketLogging: 'GetBucketLogging',
   getBucketNotificationConfiguration: 'GetBucketNotificationConfiguration',
-  getBucketAccelerateConfiguration: 'GetBucketAccelerateConfiguration',
-  getObjectLockConfiguration: 'GetObjectLockConfiguration',
-  getBucketRequestPayment: 'GetBucketRequestPayment',
   getBucketWebsite: 'GetBucketWebsite',
+  listObjectsV2: 'ListObjectsV2',
   listObjectVersions: 'ListObjectVersions',
   deleteObjects: 'DeleteObjects',
   deleteBucket: 'DeleteBucket',
@@ -212,7 +201,7 @@ export async function findBucket(endpoint: string, name: string, signal: AbortSi
   return first !== undefined && first.name === name ? first : NO_SUCH_BUCKET;
 }
 
-/** "Enabled", "Suspended" or "Disabled": the status of Bucket Versioning or of Transfer acceleration. */
+/** "Enabled", "Suspended" or "Disabled": the status of Bucket Versioning. */
 export interface StatusSetting {
   status: string;
 }
@@ -228,28 +217,6 @@ export function getBucketVersioning(
     OPERATIONS.getBucketVersioning,
     (client, abortSignal) => client.send(new GetBucketVersioningCommand({ Bucket: bucket }), { abortSignal }),
     (output) => ({ status: text(output.Status) ?? 'Disabled' }),
-    signal,
-  );
-}
-
-/** "Bucket ABAC" (R5.3), "Enabled" or "Disabled" as the answer says; absent when it says nothing. */
-export interface AbacSetting {
-  status?: string;
-}
-
-export function getBucketAbac(
-  endpoint: string,
-  bucket: string,
-  signal: AbortSignal,
-): Promise<AbacSetting | NoSuchBucket> {
-  return onBucket(
-    endpoint,
-    OPERATIONS.getBucketAbac,
-    (client, abortSignal) => client.send(new GetBucketAbacCommand({ Bucket: bucket }), { abortSignal }),
-    (output) => {
-      const status = text(output.AbacStatus?.Status);
-      return status === undefined ? {} : { status };
-    },
     signal,
   );
 }
@@ -305,91 +272,6 @@ export function getBucketEncryption(
   );
 }
 
-/** One row of "S3 Intelligent-Tiering Archive configurations" (R5.3). */
-export interface TieringConfiguration {
-  /** "Name", `Id`. */
-  name?: string;
-  status?: string;
-  /** `Filter.Prefix`, or `Filter.And.Prefix`. */
-  prefix?: string;
-  /** "Archive Access tier": the `Days` of the tiering `ARCHIVE_ACCESS`. */
-  archiveDays?: number;
-  /** "Deep Archive Access tier": the `Days` of the tiering `DEEP_ARCHIVE_ACCESS`. */
-  deepArchiveDays?: number;
-}
-
-/** The first answer of the configurations; `more` when it is truncated. */
-export interface TieringConfigurations {
-  configurations: TieringConfiguration[];
-  more: boolean;
-}
-
-function toTiering({ Id, Status, Filter, Tierings }: IntelligentTieringConfiguration): TieringConfiguration {
-  const days = (tier: string) => number(Tierings?.find(({ AccessTier }) => AccessTier === tier)?.Days);
-  const configuration: TieringConfiguration = {};
-  const name = text(Id);
-  const status = text(Status);
-  const prefix = text(Filter?.Prefix) ?? text(Filter?.And?.Prefix);
-  const archiveDays = days('ARCHIVE_ACCESS');
-  const deepArchiveDays = days('DEEP_ARCHIVE_ACCESS');
-  if (name !== undefined) configuration.name = name;
-  if (status !== undefined) configuration.status = status;
-  if (prefix !== undefined) configuration.prefix = prefix;
-  if (archiveDays !== undefined) configuration.archiveDays = archiveDays;
-  if (deepArchiveDays !== undefined) configuration.deepArchiveDays = deepArchiveDays;
-  return configuration;
-}
-
-export function listBucketIntelligentTieringConfigurations(
-  endpoint: string,
-  bucket: string,
-  signal: AbortSignal,
-): Promise<TieringConfigurations | NoSuchBucket> {
-  return onBucket(
-    endpoint,
-    OPERATIONS.listBucketIntelligentTieringConfigurations,
-    (client, abortSignal) =>
-      client.send(new ListBucketIntelligentTieringConfigurationsCommand({ Bucket: bucket }), { abortSignal }),
-    (output) => ({
-      configurations: (output.IntelligentTieringConfigurationList ?? []).map(toTiering),
-      more: output.IsTruncated === true,
-    }),
-    signal,
-  );
-}
-
-/** "Server access logging" (R5.3). */
-export interface LoggingSetting {
-  status: 'Enabled' | 'Disabled';
-  targetBucket?: string;
-  targetPrefix?: string;
-}
-
-export function getBucketLogging(
-  endpoint: string,
-  bucket: string,
-  signal: AbortSignal,
-): Promise<LoggingSetting | NoSuchBucket> {
-  return onBucket(
-    endpoint,
-    OPERATIONS.getBucketLogging,
-    (client, abortSignal) => client.send(new GetBucketLoggingCommand({ Bucket: bucket }), { abortSignal }),
-    ({ LoggingEnabled }): LoggingSetting => {
-      if (LoggingEnabled === undefined) {
-        return { status: 'Disabled' };
-      }
-      const targetBucket = text(LoggingEnabled.TargetBucket);
-      const targetPrefix = text(LoggingEnabled.TargetPrefix);
-      return {
-        status: 'Enabled',
-        ...(targetBucket === undefined ? {} : { targetBucket }),
-        ...(targetPrefix === undefined ? {} : { targetPrefix }),
-      };
-    },
-    signal,
-  );
-}
-
 /** One row of "Event notifications" (R5.3). */
 export interface EventNotification {
   /** "Event name", `Id`. */
@@ -403,11 +285,9 @@ export interface EventNotification {
   destination?: string;
 }
 
-/** "Event notifications" and "Amazon EventBridge", from one answer. */
+/** "Event notifications". */
 export interface NotificationSettings {
   notifications: EventNotification[];
-  /** "Send notifications to Amazon EventBridge for all events in this bucket". */
-  eventBridge: 'On' | 'Off';
 }
 
 interface NotificationConfiguration {
@@ -444,7 +324,6 @@ function toNotifications(output: GetBucketNotificationConfigurationCommandOutput
         toNotification(c, 'Lambda function', c.LambdaFunctionArn),
       ),
     ],
-    eventBridge: output.EventBridgeConfiguration === undefined ? 'Off' : 'On',
   };
 }
 
@@ -459,97 +338,6 @@ export function getBucketNotificationConfiguration(
     (client, abortSignal) =>
       client.send(new GetBucketNotificationConfigurationCommand({ Bucket: bucket }), { abortSignal }),
     toNotifications,
-    signal,
-  );
-}
-
-/** "Transfer acceleration" (R5.3): "Disabled" when the answer has no `Status`. */
-export function getBucketAccelerateConfiguration(
-  endpoint: string,
-  bucket: string,
-  signal: AbortSignal,
-): Promise<StatusSetting | NoSuchBucket> {
-  return onBucket(
-    endpoint,
-    OPERATIONS.getBucketAccelerateConfiguration,
-    (client, abortSignal) =>
-      client.send(new GetBucketAccelerateConfigurationCommand({ Bucket: bucket }), { abortSignal }),
-    (output) => ({ status: text(output.Status) ?? 'Disabled' }),
-    signal,
-  );
-}
-
-/** "Object Lock" (R5.3). */
-export interface ObjectLockSetting {
-  /** "Enabled" as the answer says, "Disabled" when the bucket has no configuration; absent when it says nothing. */
-  status?: string;
-  /** "Default retention": "Enabled" when the answer has a default retention. */
-  defaultRetention: 'Enabled' | 'Disabled';
-  /** "Retention mode": "Governance", "Compliance", or another mode as it came. */
-  mode?: string;
-  /** "Default retention period". */
-  period?: RetentionPeriod;
-}
-
-const RETENTION_MODES: Readonly<Record<string, string>> = { GOVERNANCE: 'Governance', COMPLIANCE: 'Compliance' };
-
-export function getObjectLockConfiguration(
-  endpoint: string,
-  bucket: string,
-  signal: AbortSignal,
-): Promise<ObjectLockSetting | NoSuchBucket> {
-  return onBucket(
-    endpoint,
-    OPERATIONS.getObjectLockConfiguration,
-    (client, abortSignal) => client.send(new GetObjectLockConfigurationCommand({ Bucket: bucket }), { abortSignal }),
-    ({ ObjectLockConfiguration }): ObjectLockSetting => {
-      const status = text(ObjectLockConfiguration?.ObjectLockEnabled);
-      const retention = ObjectLockConfiguration?.Rule?.DefaultRetention;
-      const setting: ObjectLockSetting = {
-        ...(status === undefined ? {} : { status }),
-        defaultRetention: retention === undefined ? 'Disabled' : 'Enabled',
-      };
-      const mode = text(retention?.Mode);
-      if (mode !== undefined) {
-        setting.mode = Object.hasOwn(RETENTION_MODES, mode) ? (RETENTION_MODES[mode] as string) : mode;
-      }
-      const days = number(retention?.Days);
-      const years = number(retention?.Years);
-      if (days !== undefined) {
-        setting.period = { unit: 'days', count: days };
-      } else if (years !== undefined) {
-        setting.period = { unit: 'years', count: years };
-      }
-      return setting;
-    },
-    signal,
-    { code: 'ObjectLockConfigurationNotFoundError', result: { status: 'Disabled', defaultRetention: 'Disabled' } },
-  );
-}
-
-/** "Requester pays" (R5.3): "Enabled" for `Requester`, "Disabled" for `BucketOwner`, another payer as it came. */
-export interface RequestPaymentSetting {
-  status?: string;
-}
-
-const PAYERS: Readonly<Record<string, string>> = { Requester: 'Enabled', BucketOwner: 'Disabled' };
-
-export function getBucketRequestPayment(
-  endpoint: string,
-  bucket: string,
-  signal: AbortSignal,
-): Promise<RequestPaymentSetting | NoSuchBucket> {
-  return onBucket(
-    endpoint,
-    OPERATIONS.getBucketRequestPayment,
-    (client, abortSignal) => client.send(new GetBucketRequestPaymentCommand({ Bucket: bucket }), { abortSignal }),
-    (output) => {
-      const payer = text(output.Payer);
-      if (payer === undefined) {
-        return {};
-      }
-      return { status: Object.hasOwn(PAYERS, payer) ? (PAYERS[payer] as string) : payer };
-    },
     signal,
   );
 }
@@ -583,6 +371,100 @@ export function getBucketWebsite(
     },
     signal,
     { code: 'NoSuchWebsiteConfiguration', result: { status: 'Disabled' } },
+  );
+}
+
+/** A folder of a listing: a common prefix of its answer (issue 480, task 1). */
+export interface ObjectFolder {
+  /** The whole prefix, as the emulator gave it (`logs/2026/`). */
+  prefix: string;
+  /** The part after the listing's prefix (`2026/`). */
+  name: string;
+}
+
+/** An object of a listing. A value the answer did not give is absent. */
+export interface ObjectEntry {
+  /** The whole key, as the emulator gave it. */
+  key: string;
+  /** The part after the listing's prefix. */
+  name: string;
+  size?: number;
+  lastModified?: Date;
+  storageClass?: string;
+}
+
+/** One page of a bucket's objects under a prefix: its folders, then its objects, each in the answer's order. */
+export interface ObjectPage {
+  folders: ObjectFolder[];
+  objects: ObjectEntry[];
+  /** `NextContinuationToken`, while the answer is truncated: more remain after this page. */
+  nextToken?: string;
+}
+
+/** What one page of objects is asked with. */
+export interface ObjectPageRequest {
+  /** `Prefix`; an empty text is not sent. */
+  prefix: string;
+  /** `MaxKeys`. */
+  pageSize: number;
+  /** `ContinuationToken`, the token of the page before. */
+  token?: string;
+}
+
+/** The part of `whole` after `prefix`, or `whole` when it does not start with it. */
+function after(prefix: string, whole: string): string {
+  return whole.startsWith(prefix) ? whole.slice(prefix.length) : whole;
+}
+
+function toObjectPage(prefix: string, output: ListObjectsV2CommandOutput): ObjectPage {
+  const page: ObjectPage = {
+    folders: (output.CommonPrefixes ?? []).flatMap(({ Prefix }) =>
+      Prefix === undefined || Prefix === '' ? [] : [{ prefix: Prefix, name: after(prefix, Prefix) }],
+    ),
+    objects: (output.Contents ?? []).map(({ Key, Size, LastModified, StorageClass }) => {
+      const key = Key ?? '';
+      const entry: ObjectEntry = { key, name: after(prefix, key) };
+      const size = number(Size);
+      const storageClass = text(StorageClass);
+      if (size !== undefined) entry.size = size;
+      if (LastModified instanceof Date && !Number.isNaN(LastModified.getTime())) entry.lastModified = LastModified;
+      if (storageClass !== undefined) entry.storageClass = storageClass;
+      return entry;
+    }),
+  };
+  const token = text(output.NextContinuationToken);
+  if (output.IsTruncated === true && token !== undefined) {
+    page.nextToken = token;
+  }
+  return page;
+}
+
+/**
+ * One page of the folders and objects of bucket `bucket` under `prefix` (issue 480, task 1): `ListObjectsV2` with the
+ * delimiter `/`, so a deeper key is a folder of this page. "No such bucket" is `NO_SUCH_BUCKET`.
+ */
+export function listObjects(
+  endpoint: string,
+  bucket: string,
+  { prefix, pageSize, token }: ObjectPageRequest,
+  signal: AbortSignal,
+): Promise<ObjectPage | NoSuchBucket> {
+  return onBucket(
+    endpoint,
+    OPERATIONS.listObjectsV2,
+    (client, abortSignal) =>
+      client.send(
+        new ListObjectsV2Command({
+          Bucket: bucket,
+          Delimiter: '/',
+          MaxKeys: pageSize,
+          ...(prefix === '' ? {} : { Prefix: prefix }),
+          ...(token === undefined ? {} : { ContinuationToken: token }),
+        }),
+        { abortSignal },
+      ),
+    (output) => toObjectPage(prefix, output),
+    signal,
   );
 }
 

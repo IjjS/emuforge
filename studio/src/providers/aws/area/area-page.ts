@@ -97,13 +97,13 @@ export function areaPage(pathname: string): AreaPage {
   return { kind: 'part', service, first, above, navigation: partNavigation(screens, above, first, pathname) };
 }
 
-/** The page's title: what the area reports to Studio's frame. */
-export function areaPageTitle(page: AreaPage): string {
+/** The page's title: what the area reports to Studio's frame, a screen's for the address's query `query`. */
+export function areaPageTitle(page: AreaPage, query: URLSearchParams = new URLSearchParams()): string {
   switch (page.kind) {
     case 'index':
       return AWS_NAME;
     case 'screen':
-      return screenTitle(page.screen, page.params);
+      return screenTitle(page.screen, page.params, query);
     case 'service':
       return page.service.label;
     case 'part':

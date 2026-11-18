@@ -4,20 +4,23 @@ import {
   bucketPath,
   bucketPropertiesPath,
   BUCKETS_PATH,
-  bucketTabPath,
   CREATE_BUCKET_PATH,
   createEventNotificationPath,
-  createIntelligentTieringPath,
   deleteBucketPath,
-  DIRECTORY_BUCKETS_PATH,
   editPropertyPath,
   emptyBucketPath,
   encryptionTypeLabel,
-  formatDays,
-  formatRetentionPeriod,
-  type BucketTab,
+  FOLDER_TYPE,
+  formatSize,
+  keyType,
+  objectPath,
+  objectsPath,
+  prefixParts,
+  s3Uri,
+  uploadPath,
   type EditableProperty,
 } from './format';
+import * as format from './format';
 
 describe('the routes of the bucket list', () => {
   it.each([
@@ -39,49 +42,26 @@ describe('the routes of the bucket list', () => {
     expect(deleteBucketPath('my-bucket')).toBe('/aws/s3/bucket/my-bucket/delete');
   });
 
-  it('gives the fixed routes of the list, "Create bucket" and "Directory buckets"', () => {
+  it('gives the fixed routes of the list and "Create bucket"', () => {
     expect(BUCKETS_PATH).toBe('/aws/s3/buckets');
     expect(CREATE_BUCKET_PATH).toBe('/aws/s3/bucket/create');
-    expect(DIRECTORY_BUCKETS_PATH).toBe('/aws/s3/directory-buckets');
   });
 });
 
-const TABS: BucketTab[] = ['objects', 'metadata', 'permissions', 'metrics', 'management'];
-
-const EDITABLE: EditableProperty[] = [
-  'versioning',
-  'abac',
-  'tags',
-  'encryption',
-  'logging',
-  'eventbridge',
-  'transfer-acceleration',
-  'object-lock',
-  'requester-pays',
-  'website',
-];
+const EDITABLE: EditableProperty[] = ['versioning', 'tags', 'encryption', 'website'];
 
 describe('the routes of a bucket’s page', () => {
-  it('give a bucket named my.bucket-1 its page, its "Properties" and the other five tabs', () => {
+  it('give a bucket named my.bucket-1 its page (the tab "Objects" at the root) and its "Properties"', () => {
     expect(bucketPath('my.bucket-1')).toBe('/aws/s3/buckets/my.bucket-1');
+    expect(objectsPath('my.bucket-1')).toBe('/aws/s3/buckets/my.bucket-1');
     expect(bucketPropertiesPath('my.bucket-1')).toBe('/aws/s3/buckets/my.bucket-1/properties');
-    expect(TABS.map((tab) => bucketTabPath('my.bucket-1', tab))).toEqual([
-      '/aws/s3/buckets/my.bucket-1/objects',
-      '/aws/s3/buckets/my.bucket-1/metadata',
-      '/aws/s3/buckets/my.bucket-1/permissions',
-      '/aws/s3/buckets/my.bucket-1/metrics',
-      '/aws/s3/buckets/my.bucket-1/management',
-    ]);
   });
 
   it.each(EDITABLE)('give the "Edit" of the section %s its edit route', (property) => {
     expect(editPropertyPath('my.bucket-1', property)).toBe(`/aws/s3/bucket/my.bucket-1/property/${property}/edit`);
   });
 
-  it('give "Create configuration" and "Create event notification" their create routes', () => {
-    expect(createIntelligentTieringPath('my.bucket-1')).toBe(
-      '/aws/s3/bucket/my.bucket-1/property/intelligent-tiering/create',
-    );
+  it('give "Create event notification" its create route', () => {
     expect(createEventNotificationPath('my.bucket-1')).toBe(
       '/aws/s3/bucket/my.bucket-1/property/event-notification/create',
     );
@@ -91,9 +71,7 @@ describe('the routes of a bucket’s page', () => {
     const paths = [
       bucketPath('a b'),
       bucketPropertiesPath('a b'),
-      ...TABS.map((tab) => bucketTabPath('a b', tab)),
       ...EDITABLE.map((property) => editPropertyPath('a b', property)),
-      createIntelligentTieringPath('a b'),
       createEventNotificationPath('a b'),
     ];
     for (const path of paths) {
@@ -116,17 +94,119 @@ describe('the words of a bucket’s values', () => {
   ])('write the encryption type %s as %j', (algorithm, label) => {
     expect(encryptionTypeLabel(algorithm)).toBe(label);
   });
+});
 
-  it.each([
-    [{ unit: 'days', count: 1 } as const, '1 day'],
-    [{ unit: 'days', count: 30 } as const, '30 days'],
-    [{ unit: 'years', count: 1 } as const, '1 year'],
-    [{ unit: 'years', count: 2 } as const, '2 years'],
-  ])('write a retention of %j as %j', (period, text) => {
-    expect(formatRetentionPeriod(period)).toBe(text);
+// Issue 480 (test-criteria.md, "Unit s1 — services/s3/format.test.ts").
+const KEYS = ['q?#%.txt', 'a&b/c d.txt', 'logs/2026/', '한글/파일.txt', 'd//e.txt', '%2F'];
+
+describe('the addresses of the tab "Objects", an object and "Upload"', () => {
+  it.each(KEYS)('carry %j in the query, encoded so it round-trips, never in a path segment', (value) => {
+    const objects = new URL(objectsPath('my.bucket-1', value), 'http://studio');
+    expect(objects.pathname).toBe('/aws/s3/buckets/my.bucket-1');
+    expect(objects.searchParams.get('prefix')).toBe(value);
+    expect(objects.hash).toBe('');
+
+    const object = new URL(objectPath('my.bucket-1', value), 'http://studio');
+    expect(object.pathname).toBe('/aws/s3/buckets/my.bucket-1/object');
+    expect(object.searchParams.get('key')).toBe(value);
+    expect(object.hash).toBe('');
+
+    const upload = new URL(uploadPath('my.bucket-1', value), 'http://studio');
+    expect(upload.pathname).toBe('/aws/s3/bucket/my.bucket-1/upload');
+    expect(upload.searchParams.get('prefix')).toBe(value);
+    expect(upload.hash).toBe('');
   });
 
-  it('writes a tiering of 90 days as "90 days"', () => {
-    expect(formatDays(90)).toBe('90 days');
+  it('give the root of a bucket, and an upload into it, without a query', () => {
+    expect(objectsPath('my.bucket-1', '')).toBe('/aws/s3/buckets/my.bucket-1');
+    expect(uploadPath('my.bucket-1')).toBe('/aws/s3/bucket/my.bucket-1/upload');
+  });
+
+  it('give an S3 URI with the key as it is', () => {
+    expect(s3Uri('my.bucket-1', 'logs/2026/x.json')).toBe('s3://my.bucket-1/logs/2026/x.json');
+  });
+
+  it('give the parts of a prefix, from the root down, each opening its own prefix', () => {
+    expect(prefixParts('')).toEqual([]);
+    expect(prefixParts('logs/2026/')).toEqual([
+      { text: 'logs', prefix: 'logs/' },
+      { text: '2026', prefix: 'logs/2026/' },
+    ]);
+    expect(prefixParts('d//')).toEqual([
+      { text: 'd', prefix: 'd/' },
+      { text: '/', prefix: 'd//' },
+    ]);
+    expect(prefixParts('logs/lo')).toEqual([
+      { text: 'logs', prefix: 'logs/' },
+      { text: 'lo', prefix: 'logs/lo' },
+    ]);
+  });
+});
+
+describe('the words of an object row', () => {
+  it.each([
+    [0, '0 B'],
+    [512, '512 B'],
+    [1023, '1023 B'],
+    [1024, '1.0 KiB'],
+    [1536, '1.5 KiB'],
+    [20 * 1024 * 1024, '20.0 MiB'],
+    [1024 * 1024 - 1, '1.0 MiB'],
+    [Math.round(1.2 * 1024 ** 3), '1.2 GiB'],
+  ])('write a size of %d bytes as %j, base 1024', (bytes, text) => {
+    expect(formatSize(bytes)).toBe(text);
+  });
+
+  it.each([
+    ['x.json', 'json'],
+    ['logs/2026/archive.tar.gz', 'gz'],
+    ['README', '-'],
+    ['dir.d/README', '-'],
+    ['.env', '-'],
+    ['trailing.', '-'],
+  ])('give the key %j the type %j', (key, type) => {
+    expect(keyType(key)).toBe(type);
+  });
+
+  it('give a folder row the type "Folder"', () => {
+    expect(FOLDER_TYPE).toBe('Folder');
+  });
+});
+
+describe('what issue 480 removed', () => {
+  it('leaves no route of Directory buckets, the tabs Metadata, Permissions, Metrics, Management or the dropped sections', () => {
+    const names = Object.keys(format);
+    for (const gone of [
+      'DIRECTORY_BUCKETS_PATH',
+      'bucketTabPath',
+      'createIntelligentTieringPath',
+      'formatDays',
+      'formatYears',
+      'formatRetentionPeriod',
+    ]) {
+      expect(names).not.toContain(gone);
+    }
+    const routes = [
+      ...EDITABLE.map((property) => editPropertyPath('b', property)),
+      createEventNotificationPath('b'),
+      bucketPropertiesPath('b'),
+      objectsPath('b'),
+    ];
+    for (const dropped of [
+      'directory-buckets',
+      '/metadata',
+      '/permissions',
+      '/metrics',
+      '/management',
+      'abac',
+      'intelligent-tiering',
+      'logging',
+      'eventbridge',
+      'transfer-acceleration',
+      'object-lock',
+      'requester-pays',
+    ]) {
+      expect(routes.filter((route) => route.includes(dropped))).toEqual([]);
+    }
   });
 });
