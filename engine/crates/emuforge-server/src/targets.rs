@@ -84,6 +84,8 @@ struct TargetView<'a> {
 struct ListView<'a> {
     active: &'a TargetName,
     targets: Vec<TargetView<'a>>,
+    /// The form the engine was started in: `native` or `compose`.
+    form: &'static str,
 }
 
 fn view<'a>(settings: &'a Settings, target: &'a Target) -> TargetView<'a> {
@@ -93,7 +95,7 @@ fn view<'a>(settings: &'a Settings, target: &'a Target) -> TargetView<'a> {
     }
 }
 
-fn list_view(settings: &Settings) -> Response {
+fn list_view(settings: &Settings, form: Form) -> Response {
     let body = ListView {
         active: settings.active().name(),
         targets: settings
@@ -101,6 +103,7 @@ fn list_view(settings: &Settings) -> Response {
             .iter()
             .map(|target| view(settings, target))
             .collect(),
+        form: form.as_str(),
     };
     (StatusCode::OK, Json(body)).into_response()
 }
@@ -108,7 +111,7 @@ fn list_view(settings: &Settings) -> Response {
 /// `GET` and `HEAD /__emuforge/targets`.
 async fn list(State(state): State<Arc<AppState>>) -> Response {
     match state.settings.load().await {
-        Ok(settings) => list_view(&settings),
+        Ok(settings) => list_view(&settings, state.form),
         Err(error) => settings_unusable(&error),
     }
 }
@@ -308,7 +311,7 @@ async fn use_target(
                     "target used"
                 );
             }
-            list_view(&settings)
+            list_view(&settings, state.form)
         }
         Err(error) => change_refusal(&error),
     }
