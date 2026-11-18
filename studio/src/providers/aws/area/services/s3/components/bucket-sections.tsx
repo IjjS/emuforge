@@ -19,17 +19,8 @@ import {
   type EventNotification,
   type NoSuchBucket,
   type Tag,
-  type TieringConfiguration,
 } from '../api';
-import {
-  createEventNotificationPath,
-  createIntelligentTieringPath,
-  editPropertyPath,
-  encryptionTypeLabel,
-  formatDays,
-  formatRetentionPeriod,
-  type EditableProperty,
-} from '../format';
+import { createEventNotificationPath, editPropertyPath, encryptionTypeLabel, type EditableProperty } from '../format';
 import type { BucketRead } from '../queries';
 import { regionText } from '../regions';
 import { sectionFailure } from './bucket-read';
@@ -180,8 +171,6 @@ interface TableSectionProps<T, Row> {
   columns: readonly Column<Row>[];
   /** The empty state's title and sentence (R9.2). */
   empty: { title: string; text: string };
-  /** A line under the table. */
-  footer?: (value: T) => string | undefined;
 }
 
 /** A section that is a table, read by its own operation; its states in the table's body. */
@@ -193,10 +182,8 @@ function TableSection<T, Row>({
   rows,
   columns,
   empty,
-  footer,
 }: TableSectionProps<T, Row>) {
   const value = answered(read);
-  const footerText = value === undefined ? undefined : footer?.(value);
   // A name's column keeps room for a name of 24 characters on one line (R6).
   const columnDefinitions: TableProps.ColumnDefinition<Row>[] = columns.map(({ id, header, kind, cell }) => ({
     id,
@@ -229,7 +216,6 @@ function TableSection<T, Row>({
           </Box>
         )
       }
-      {...(footerText !== undefined && { footer: <Box variant="p">{footerText}</Box> })}
     />
   );
 }
@@ -237,26 +223,6 @@ function TableSection<T, Row>({
 const TAG_COLUMNS: readonly Column<Tag>[] = [
   { id: 'key', header: 'Key', kind: 'name', cell: (tag) => tag.key },
   { id: 'value', header: 'Value', kind: 'text', cell: (tag) => tag.value },
-];
-
-const days = (count: number | undefined): string | undefined => (count === undefined ? undefined : formatDays(count));
-
-const TIERING_COLUMNS: readonly Column<TieringConfiguration>[] = [
-  { id: 'name', header: 'Name', kind: 'name', cell: (configuration) => configuration.name },
-  { id: 'status', header: 'Status', kind: 'fixed', cell: (configuration) => configuration.status },
-  { id: 'prefix', header: 'Prefix', kind: 'text', cell: (configuration) => configuration.prefix },
-  {
-    id: 'archive',
-    header: 'Archive Access tier',
-    kind: 'fixed',
-    cell: (configuration) => days(configuration.archiveDays),
-  },
-  {
-    id: 'deep-archive',
-    header: 'Deep Archive Access tier',
-    kind: 'fixed',
-    cell: (configuration) => days(configuration.deepArchiveDays),
-  },
 ];
 
 const NOTIFICATION_COLUMNS: readonly Column<EventNotification>[] = [
@@ -285,7 +251,10 @@ interface BucketSectionsProps {
   connection: AreaConnection;
 }
 
-/** The thirteen sections of a bucket's "Properties" (R5.3), in the spec's order. */
+/**
+ * The six sections of a bucket's "Properties" (R5.3; issue 480: the overview, versioning, tags, encryption, event
+ * notifications and website, what the tasks a developer does locally read), in the spec's order.
+ */
 export function BucketSections({ bucket, reads, connection }: BucketSectionsProps) {
   const { name } = bucket;
   return (
@@ -305,13 +274,6 @@ export function BucketSections({ bucket, reads, connection }: BucketSectionsProp
         read={reads.versioning}
         connection={connection}
         fields={({ status }) => [{ label: 'Bucket Versioning', kind: 'fixed', value: status }]}
-      />
-      <FieldsSection
-        title="Bucket ABAC"
-        action={edit(name, 'abac')}
-        read={reads.abac}
-        connection={connection}
-        fields={({ status }) => [{ label: 'Bucket ABAC', kind: 'fixed', value: status }]}
       />
       <TableSection
         title="Tags"
@@ -338,30 +300,6 @@ export function BucketSections({ bucket, reads, connection }: BucketSectionsProp
         ]}
       />
       <TableSection
-        title="S3 Intelligent-Tiering Archive configurations"
-        action={{ label: 'Create configuration', href: createIntelligentTieringPath(name) }}
-        read={reads['intelligent-tiering']}
-        connection={connection}
-        rows={({ configurations }) => configurations}
-        columns={TIERING_COLUMNS}
-        empty={{ title: 'No configurations', text: 'This bucket has no Intelligent-Tiering Archive configurations.' }}
-        footer={({ more }) => (more ? 'More configurations exist than are shown here.' : undefined)}
-      />
-      <FieldsSection
-        title="Server access logging"
-        action={edit(name, 'logging')}
-        read={reads.logging}
-        connection={connection}
-        fields={({ status, targetBucket, targetPrefix }) => [
-          { label: 'Server access logging', kind: 'fixed', value: status },
-          {
-            label: 'Destination bucket',
-            kind: 'address',
-            value: targetPrefix === undefined ? targetBucket : `${targetBucket ?? NONE}/${targetPrefix}`,
-          },
-        ]}
-      />
-      <TableSection
         title="Event notifications"
         action={{ label: 'Create event notification', href: createEventNotificationPath(name) }}
         read={reads.notifications}
@@ -369,49 +307,6 @@ export function BucketSections({ bucket, reads, connection }: BucketSectionsProp
         rows={({ notifications }) => notifications}
         columns={NOTIFICATION_COLUMNS}
         empty={{ title: 'No event notifications', text: 'This bucket sends no event notifications.' }}
-      />
-      <FieldsSection
-        title="Amazon EventBridge"
-        action={edit(name, 'eventbridge')}
-        read={reads.notifications}
-        connection={connection}
-        fields={({ eventBridge }) => [
-          {
-            label: 'Send notifications to Amazon EventBridge for all events in this bucket',
-            kind: 'fixed',
-            value: eventBridge,
-          },
-        ]}
-      />
-      <FieldsSection
-        title="Transfer acceleration"
-        action={edit(name, 'transfer-acceleration')}
-        read={reads.acceleration}
-        connection={connection}
-        fields={({ status }) => [{ label: 'Transfer acceleration', kind: 'fixed', value: status }]}
-      />
-      <FieldsSection
-        title="Object Lock"
-        action={edit(name, 'object-lock')}
-        read={reads['object-lock']}
-        connection={connection}
-        fields={({ status, defaultRetention, mode, period }) => [
-          { label: 'Object Lock', kind: 'fixed', value: status },
-          { label: 'Default retention', kind: 'fixed', value: defaultRetention },
-          { label: 'Retention mode', kind: 'fixed', value: mode },
-          {
-            label: 'Default retention period',
-            kind: 'fixed',
-            value: period === undefined ? undefined : formatRetentionPeriod(period),
-          },
-        ]}
-      />
-      <FieldsSection
-        title="Requester pays"
-        action={edit(name, 'requester-pays')}
-        read={reads['request-payment']}
-        connection={connection}
-        fields={({ status }) => [{ label: 'Requester pays', kind: 'fixed', value: status }]}
       />
       <FieldsSection
         title="Static website hosting"

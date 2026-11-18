@@ -10,7 +10,6 @@ import Pagination from '@cloudscape-design/components/pagination';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator, { type StatusIndicatorProps } from '@cloudscape-design/components/status-indicator';
 import Table, { type TableProps } from '@cloudscape-design/components/table';
-import Tabs, { type TabsProps } from '@cloudscape-design/components/tabs';
 import TextFilter, { type TextFilterProps } from '@cloudscape-design/components/text-filter';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
@@ -27,10 +26,8 @@ import type { RequestFailure } from '../../../../../../lib/aws/request';
 import { LIST_BUCKETS, type Bucket } from '../api';
 import {
   bucketPath,
-  BUCKETS_PATH,
   CREATE_BUCKET_PATH,
   deleteBucketPath,
-  DIRECTORY_BUCKETS_PATH,
   emptyBucketPath,
 } from '../format';
 import { NAME_COLUMN_MIN_WIDTH } from '../components/name-column';
@@ -38,8 +35,9 @@ import { Quoted } from '../components/quoted';
 import { useBucketListing, type BucketCount, type BucketListing } from '../queries';
 import { regionText } from '../regions';
 
-// S3's general purpose bucket list (issue 56, requirement R3 to R8): the console's "Buckets" page with the tab
-// "General purpose buckets", in the console's words; its help and states in EmuForge's own. Every value from the
+// S3's general purpose bucket list (issue 56, requirement R3 to R8): the console's "Buckets" page with its table
+// "General purpose buckets" (issue 480: without the tab "Directory buckets", which is not a local task), in the
+// console's words; its help and states in EmuForge's own. Every value from the
 // engine or the emulator is rendered as text, each as the kind of value it is (issue 467, requirement R6). The table's
 // header has no description: the area's frame says where the buckets are, and the filter's rule is in the help panel
 // (issue 467, R3).
@@ -511,15 +509,6 @@ export function BucketListPage({ connection }: { connection: AreaConnection }) {
     [preferences],
   );
 
-  const handleTabChange = useCallback(
-    ({ detail }: { detail: TabsProps.ChangeDetail }) => {
-      if (detail.activeTabHref !== undefined) {
-        void navigate(detail.activeTabHref);
-      }
-    },
-    [navigate],
-  );
-
   const handleSelection = useCallback(({ detail }: { detail: TableProps.SelectionChangeDetail<Bucket> }) => {
     setSelectedName(detail.selectedItems[0]?.name);
   }, []);
@@ -679,16 +668,11 @@ export function BucketListPage({ connection }: { connection: AreaConnection }) {
     />
   );
 
-  const tabs: TabsProps.Tab[] = [
-    { id: 'general', label: 'General purpose buckets', href: BUCKETS_PATH, content: table },
-    { id: 'directory', label: 'Directory buckets', href: DIRECTORY_BUCKETS_PATH },
-  ];
-
   return (
     <SpaceBetween size="s">
       <Header variant="h1">{BUCKETS_TITLE}</Header>
       <div>
-        <Tabs tabs={tabs} activeTabId="general" keyboardActivationMode="manual" onChange={handleTabChange} />
+        {table}
         {announcement}
       </div>
     </SpaceBetween>
