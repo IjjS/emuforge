@@ -350,7 +350,7 @@ describe('Connection: engine unreachable', () => {
     );
     const command = [
       'cargo run \\',
-      '  -p emuforge-server -- \\',
+      '  -p emuforge -- serve \\',
       '  --port 8297 \\',
       ...(emulatorPort === undefined
         ? [`  --studio-port ${STUDIO_PORT}`]
