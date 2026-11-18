@@ -45,6 +45,7 @@ FULL_YML = CHECKOUT / ".github" / "workflows" / "full.yml"
 FORM_FILES = (CHECKOUT / ".pm" / "bin" / "_pmscope.py", CHECKOUT / "tests" / "integration" / "run",
               CHECKOUT / ".github" / "ci")
 INTEGRATION_GUIDE = CHECKOUT / "tests" / "integration" / "AGENTS.md"
+SERVICES_REF = CHECKOUT / "tests" / "integration" / "references" / "services-and-manifest.md"  # issue 478
 ROOT_GUIDE = CHECKOUT / "AGENTS.md"
 SKILL = CHECKOUT / ".agents" / "skills" / "pm" / "SKILL.md"
 LEAD = CHECKOUT / ".agents" / "skills" / "pm" / "references" / "lead.md"
@@ -416,16 +417,16 @@ def section(text, title):
 class Guides(unittest.TestCase):
     def test_integration_guide_names_the_field_and_the_section(self):
         text = INTEGRATION_GUIDE.read_text()
-        manifest = section(text, "Manifest")
+        manifest = section(SERVICES_REF.read_text(), "Manifest")
         self.assertTrue(any(ln.startswith("| `service` |") for ln in manifest.splitlines()), manifest)
         verdicts = section(text, "Verdicts")
         row = [ln for ln in verdicts.splitlines() if ln.startswith("| `not-run` |")]
         self.assertEqual(len(row), 1, verdicts)
         self.assertIn("--services", row[0])
-        section(text, "Service checks")
+        section(SERVICES_REF.read_text(), "Service checks")
 
     def test_integration_guide_says_what_goes_unseen(self):
-        part = section(INTEGRATION_GUIDE.read_text(), "Service checks")
+        part = section(SERVICES_REF.read_text(), "Service checks")
         self.assertIn("full.yml", part)
         said = [s for s in docs.sentences(part) if re.search(r"\btouch", s) and UNCHECKED.search(s)]
         self.assertTrue(said, part)
