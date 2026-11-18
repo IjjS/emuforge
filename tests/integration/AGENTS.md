@@ -68,6 +68,13 @@ never labels a check to shorten a run. A check an open issue lists in `Issue-Che
 plan of the issue that comes to list one takes the label off with its integration tests, and runs it with
 `pm-check --checks` until then.
 
+## Safety
+
+- The only endpoints are the engine and the emulator on a loopback IP address. A check that would reach any
+  other host is refused before it runs.
+- Checks run without the AWS credentials, profiles and proxy settings of the environment.
+- Signing uses the keys the emulator wrote for this run and nothing else.
+
 ## Full tier
 
 A check labelled `full` in the manifest is an auxiliary check, slow and not critical: a language's layout and
@@ -81,13 +88,6 @@ report of an issue need not name it. `report.json` holds `full_tier` `{of, left_
 print the count left out (`full tier <n> of <m> left out`). The label is given and removed only by the `pm`, with
 the owner's word and the reason in the issue's `decisions.md`; a plan or a worker never labels a check to shorten a
 run. A row is never labelled both `full` and `on-request`: `run` refuses such a manifest before anything starts.
-
-## Safety
-
-- The only endpoints are the engine and the emulator on a loopback IP address. A check that would reach any
-  other host is refused before it runs.
-- Checks run without the AWS credentials, profiles and proxy settings of the environment.
-- Signing uses the keys the emulator wrote for this run and nothing else.
 
 ## Verdicts
 

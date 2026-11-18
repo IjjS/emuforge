@@ -24,7 +24,7 @@ from _fixture import CHECKOUT
 from test_check_issue import CheckCase
 from test_integration_not_run import out
 from test_issue_branch import INTEGRATION_RUN, PRODUCT_PATH
-from test_on_request import ON_REQUEST, RunCase, RunFixture
+from test_on_request import FIXED as ON_REQUEST, RunCase, RunFixture
 
 FULL = "full: runs only in the full run; run it with --full"
 USAGE = "usage: tests/integration/run [--not-run <file>] [--on-request] [--full] [--services <file>]"

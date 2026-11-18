@@ -35,7 +35,7 @@ import unittest
 
 from _fixture import CHECKOUT, clean_env, git, make
 from test_emulator_scan import REPO_SCAN_EXCLUDED, findings, is_image, scan, tracked_files
-from test_integration_build_bound import LISTED, ON_REQUEST, STANDIN, alive, left, ps
+from test_integration_build_bound import FULL_TIER, LISTED, ON_REQUEST, STANDIN, alive, left, ps
 
 RUN = CHECKOUT / "tests" / "integration" / "run"
 MANIFEST = CHECKOUT / "tests" / "integration" / "manifest.jsonl"
@@ -440,10 +440,10 @@ class Case(unittest.TestCase):
         self.assertEqual(fx.code, code, fx.why())
 
     def counted(self, fx):
-        """{id: (verdict, message)} of every check the run did not leave out (the on-request rows)."""
+        """{id: (verdict, message)} of every check the run did not leave out (the rows on request and of the tier full)."""
         report = fx.report()
         self.assertIsNotNone(report, f"no report.json{fx.why()}")
-        return {i: (c["verdict"], c["message"]) for i, c in report.items() if i not in ON_REQUEST}
+        return {i: (c["verdict"], c["message"]) for i, c in report.items() if i not in ON_REQUEST | FULL_TIER}
 
     def every_check(self, fx, verdict, message, but=()):
         wrong = {i: v for i, v in self.counted(fx).items() if i not in but and v != (verdict, message)}
