@@ -783,6 +783,58 @@ describe('saving', () => {
   });
 });
 
+describe('the dialog stays in place while the page re-renders (issue 462)', () => {
+  it('a description typed one character at a time with a new connection answer after the third: the same dialog and "Description" field, focus in it, it holds what was typed', async () => {
+    const { dialog } = await openDialog(ROLE_D);
+    const field = descriptionField(dialog);
+    act(() => {
+      field.focus();
+    });
+
+    for (const typed of ['dn', 'dne', 'dnew', 'dnew ', 'dnew w']) {
+      typeDescription(dialog, typed);
+      await act(() => Promise.resolve());
+      if (typed === 'dnew') {
+        // What the area's page sees every 5 seconds: a new answer of the same state.
+        connection.set(connectedResult());
+        await act(() => Promise.resolve());
+      }
+    }
+    expect(dialog.isConnected).toBe(true);
+    expect(field.isConnected).toBe(true);
+    expect(screen.getByRole('dialog', { name: 'Edit summary' })).toBe(dialog);
+    expect(descriptionField(dialog)).toBe(field);
+    expect(document.activeElement).toBe(field);
+    expect(field.value).toBe('dnew w');
+  });
+
+  it('"Save changes" pressed with the update in flight: the same dialog, "Save changes" shows progress and keeps focus', async () => {
+    const { dialog } = await openDialog(ROLE_D);
+    const release = holdAnswers('UpdateRole');
+    const button = saveButton(dialog);
+    act(() => {
+      button.focus();
+    });
+
+    save(dialog);
+    await waitFor(() => {
+      expect(updates()).toHaveLength(1);
+    });
+    await waitFor(() => {
+      expect(dialog).toHaveTextContent('Saving changes');
+    });
+    expect(dialog.isConnected).toBe(true);
+    expect(button.isConnected).toBe(true);
+    expect(screen.getByRole('dialog', { name: 'Edit summary' })).toBe(dialog);
+    expect(saveButton(dialog)).toBe(button);
+    expect(isDisabled(button)).toBe(true);
+    expect(document.activeElement).toBe(button);
+
+    release();
+    await expectClosed();
+  });
+});
+
 describe('closing', () => {
   it('"Cancel" and Esc close it without a request, focus on "Edit"; while open, Tab stays inside', async () => {
     const { dialog } = await openDialog(ROLE_D);

@@ -2,6 +2,7 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { useState, useSyncExternalStore } from 'react';
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -821,6 +822,33 @@ describe('preferences', () => {
     expect(engine.lists.at(-1)?.searchParams.get('MaxItems')).toBe('10');
     expect(engine.lists.at(-1)?.searchParams.get('Marker')).toBeNull();
   });
+  it('"Preferences" opened, "50 functions" chosen with the arrow keys, then a new connection answer: the same dialog, "50 functions" has focus and is chosen (issue 462)', async () => {
+    const user = userEvent.setup();
+    await openLoaded();
+
+    await user.click(screen.getByRole('button', { name: 'Preferences' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Preferences' });
+    const chosen = within(dialog).getByRole('radio', { name: '25 functions' });
+    expect(chosen).toBeChecked();
+    act(() => {
+      chosen.focus();
+    });
+    await user.keyboard('{ArrowDown}');
+    const fifty = within(dialog).getByRole('radio', { name: '50 functions' });
+    expect(fifty).toBeChecked();
+    expect(document.activeElement).toBe(fifty);
+
+    // What the area sees every 5 seconds: a new answer object, the same state.
+    connection.set(connectedResult());
+    await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+
+    expect(dialog.isConnected).toBe(true);
+    expect(screen.getByRole('dialog', { name: 'Preferences' })).toBe(dialog);
+    expect(fifty.isConnected).toBe(true);
+    expect(document.activeElement).toBe(fifty);
+    expect(fifty).toBeChecked();
+  });
+
   it('a row\'s cells, each as its kind of value (issue 467, R6): the name a name inside its link, the description free text, "Package type", "Runtime", "Type" and "Last modified" fixed words; with "Wrap lines" off the same kinds', async () => {
     const name = 'x'.repeat(64);
     const description = 'd'.repeat(256);

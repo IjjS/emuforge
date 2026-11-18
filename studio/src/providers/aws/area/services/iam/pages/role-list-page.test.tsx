@@ -1,6 +1,7 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { useState, useSyncExternalStore } from 'react';
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -1131,6 +1132,33 @@ describe('preferences and wrapping', () => {
     });
     expect(engine.lists.length).toBe(before);
     expect(names()).toHaveLength(10);
+  });
+
+  it('"Preferences" opened, "50 roles" chosen with the arrow keys, then a new connection answer: the same dialog, "50 roles" has focus and is chosen (issue 462)', async () => {
+    const user = userEvent.setup();
+    await openLoaded(many(12, 'role'));
+    const modal = await preferencesModal();
+    const dialog = modal.getElement();
+    const twenty = within(dialog).getByRole('radio', { name: '20 roles' });
+    expect(twenty).toBeChecked();
+    act(() => {
+      twenty.focus();
+    });
+
+    await user.keyboard('{ArrowDown}');
+    const fifty = within(dialog).getByRole('radio', { name: '50 roles' });
+    expect(fifty).toBeChecked();
+    expect(document.activeElement).toBe(fifty);
+
+    // What the area's page sees every 5 seconds: a new answer of the same state.
+    connection.set(connectedResult());
+    await act(() => Promise.resolve());
+
+    expect(dialog.isConnected).toBe(true);
+    expect(screen.getByRole('dialog', { name: 'Preferences' })).toBe(dialog);
+    expect(fifty.isConnected).toBe(true);
+    expect(document.activeElement).toBe(fifty);
+    expect(fifty).toBeChecked();
   });
 
   it('a 64-character name, "Wrap lines" on as at the start: the link holds all 64 characters', async () => {
