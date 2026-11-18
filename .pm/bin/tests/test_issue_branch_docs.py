@@ -4,8 +4,12 @@ test_ci_docs.py, with its helpers' meaning.
 A **part** is the body under a heading up to the next heading of the same or a higher level; a **block** is a
 paragraph or a list item on one line; a **sentence** ends at a block's end or at `.`, `!` or `?` before a space.
 Each case is one line of test-criteria.md; each thing the line asks is a subTest, so a run names every one that
-fails. Every case fails on the rules as they were before the issue, except the two marked `guard: passes on main`:
-the one sentence that runs `pm-check .` on `main` by hand, and `pm-brief worker` filling the templates.
+fails. Every case failed on the rules as they were before issue 63, except the two marked `guard: passes on main`:
+the one sentence that runs `pm-check .` on `main` by hand, and `pm-brief worker` filling the template.
+
+Issue 478 moved the plan's steps out of SKILL.md into `references/lead.md` (the plan leads its issue), made the
+`impl` review one stage of the whole, and left only `e` and `s` units (decisions.md of issue 478). The cases follow
+each rule to where it now lives, in the class `Lead` for lead.md; what they ask of each rule is unchanged.
 """
 import json
 import re
@@ -17,6 +21,7 @@ PM = CHECKOUT / ".agents" / "skills" / "pm"
 SKILL = PM / "SKILL.md"
 PANE_MODE = PM / "references" / "pane-mode.md"
 REVIEW = PM / "references" / "review-protocol.md"
+LEAD = PM / "references" / "lead.md"
 ARCHIVE = PM / "references" / "archive.md"
 BRIEFS = PM / "references" / "briefs"
 WORKER = BRIEFS / "worker.md"
@@ -24,7 +29,7 @@ BRIEFS_README = BRIEFS / "README.md"
 ROOT = CHECKOUT / "AGENTS.md"
 ENGINE_WORKFLOW = CHECKOUT / "engine" / "references" / "workflow.md"
 STUDIO_WORKFLOW = CHECKOUT / "studio" / "references" / "workflow.md"
-EIGHT = (SKILL, PANE_MODE, REVIEW, ARCHIVE, WORKER, ROOT, ENGINE_WORKFLOW, STUDIO_WORKFLOW)
+GUIDES = (SKILL, LEAD, PANE_MODE, REVIEW, ARCHIVE, WORKER, ROOT, ENGINE_WORKFLOW, STUDIO_WORKFLOW)
 PM_CHECK = "`pm-check .`"
 LEAVES = r"\bleft to\b|\bleaves\b|\bdeferred\b"
 
@@ -74,6 +79,12 @@ def sentences(text):
     return out
 
 
+def clauses(text):
+    """The sentences of `text`, each split again at `; `: a list of clauses joined by semicolons says one thing per
+    clause, so a clause on each unit and a clause on the collecting branch are read apart."""
+    return [c for s in sentences(text) for c in s.split("; ") if c]
+
+
 def flat(text):
     return " ".join(text.split())
 
@@ -121,65 +132,13 @@ def rows(text, start):
 class Skill(unittest.TestCase):
     def setUp(self):
         self.text = SKILL.read_text()
-        self.merge = blocks(part_of(self.text, "### 5."))
 
-    def test_build_makes_the_issue_branch_first(self):
-        build = blocks(part(self.text, "### 3. Build (worker panes and rev)"))
-        with self.subTest("pm-worktree new <id> with more than one unit and issue branch"):
-            self.assertTrue(any(has(b, r"`pm-worktree new <id>`", r"\bmore than one unit\b", r"\bissue branch\b")
-                                for b in build), build)
-        with self.subTest("an issue of one unit gets none"):
-            self.assertTrue(any(has(b, r"\bone unit\b[^.]*\b(none|no issue branch)\b") for b in build), build)
-
-    def test_gate_one_green_at_the_issue_branch_merge(self):
-        gate = blocks(part(self.text, "### 2. Gate review 1 (you)"))
-        with self.subTest("no block: arrive on main with the code"):
-            self.assertFalse([b for b in gate if "arrive on `main` with the code" in b])
-        with self.subTest("the issue branch is green when it merges into main"):
-            self.assertTrue(any(has(s, r"\bissue branch\b", r"\bgreen\b", r"\binto `?main\b")
-                                for b in gate for s in sentences(b)), gate)
-        with self.subTest("a t unit may be merged into the issue branch on its checks review"):
-            self.assertTrue(any(has(s, r"`t` unit", r"\bmay be merged\b[^.]*\binto the issue branch\b",
-                                    r"\bchecks\b[^.]*\breview\b|review-checks")
-                                for b in gate for s in sentences(b)), gate)
-
-    def test_merge_order_unit_take_main_whole_check_issue(self):
-        missing = in_order(self.merge, [
-            (r"`pm-merge <id> <unit>`", lambda b: "issue branch" in b),
-            (r"pm-merge <id> --take-main", lambda b: True),
-            (r"pm-check", lambda b: "issue's worktree" in b or "emuforge-<id>" in b),
-            (r"pm-merge <id>`", lambda b: True),
-        ])
-        self.assertEqual(missing, [], self.merge)
-
-    def test_fast_check_leaves_integration_and_checks_is_no_gate(self):
-        with self.subTest("the fast check leaves integration to the issue branch"):
-            self.assertTrue(any(has(b, r"`integration`", r"\bissue branch\b", LEAVES) for b in self.merge),
-                            self.merge)
-        with self.subTest("--checks is not a gate"):
-            self.assertTrue(any(has(b, r"--checks", r"never a gate|not a gate|neither is the gate")
-                                for b in self.merge), self.merge)
-
-    def test_failed_whole_check_goes_to_the_owning_unit(self):
-        self.assertTrue(any(has(b, r"\bfailed\b", r"\bchecks\b", r"\bunit\b", r"`breakdown\.md`",
-                                r"\bmerged?\b[^.]*\bagain\b") for b in self.merge), self.merge)
-
-    def test_prompt_after_a_units_merge_names_the_issue_branch(self):
-        spans = [s for b in self.merge for s in re.findall(r"`([^`]+)`", b)]
-        with self.subTest("the prompt names the issue branch"):
-            self.assertTrue(any("feat/<id> is at" in s or "issue branch is at" in s for s in spans), spans)
-        with self.subTest("no block tells every pane to merge main after a unit's merge into the issue branch"):
-            told = [b for b in self.merge
-                    if has(b, r"`pm-merge <id> <unit>`|\binto the issue branch\b", r"\bpanes?\b",
-                           r"main is at|merge `main`|merge main\b")]
-            self.assertEqual(told, [])
-
-    def test_critique_captures_the_issues_worktree(self):
-        crit = blocks(part(self.text, "### 4. Critique (studio units, grade not `none`)"))
-        self.assertTrue(any(has(b, r"--capture-wt", r"issue's worktree|emuforge-<id>") for b in crit), crit)
+    def test_close_merges_the_issue_branch_on_its_whole_check(self):
+        close = blocks(part_of(self.text, "### 2."))
+        self.assertTrue(any(has(b, r"`pm-merge <id>`", r"\bwhole check'?s?\b[^.]*\brecord\b") for b in close), close)
 
     def test_report_names_the_whole_checks_record(self):
-        report = blocks(part(self.text, "### 6. Report and archive"))
+        report = blocks(part_of(self.text, "### 3."))
         self.assertTrue(any(has(b, r"\bwhole check'?s?\b[^.]*\brecord\b|\brecord of the whole check\b")
                             for b in report), report)
 
@@ -197,7 +156,8 @@ class Skill(unittest.TestCase):
 
     def test_scripts_rows(self):
         scripts = part(self.text, "## Scripts")
-        for name, words in (("pm-merge", ("issue branch", "--take-main")), ("pm-check", ("--checks",)),
+        for name, words in (("pm-merge", ("issue branch", "--take-main")),
+                            ("pm-check", ("--checks", "never a gate", "`integration` left to the issue branch")),
                             ("pm-worktree", ("issue branch",))):
             row = rows(scripts, f"| `{name}` |")
             with self.subTest(name):
@@ -210,14 +170,64 @@ class Skill(unittest.TestCase):
         self.assertEqual(len(said), 1, said)
 
 
+class Lead(unittest.TestCase):
+    """The plan's steps that SKILL.md held before issue 478 (its flow steps 3 to 5) now live in `lead.md`, which the
+    plan follows as the lead of its issue (decisions.md of issue 478); the cases follow the rules there."""
+
+    def setUp(self):
+        self.text = LEAD.read_text()
+        self.build = blocks(part(self.text, "## Build"))
+
+    def test_build_makes_the_issue_branch_first_even_for_one_unit(self):
+        first = [b for b in self.build if b.startswith("1. ")]
+        self.assertEqual(len(first), 1, self.build)
+        self.assertTrue(has(first[0], r"`pm-worktree new <id>`", r"`feat/<id>`", r"`emuforge-<id>`",
+                            r"\beven for an issue of one unit\b"), first[0])
+
+    def test_merge_order_unit_take_main_whole_check(self):
+        missing = in_order(blocks(self.text), [
+            (r"`pm-merge <id> <unit>`", lambda b: "feat/<id>" in b),
+            (r"pm-merge <id> --take-main", lambda b: True),
+            (r"pm-check emuforge-<id>", lambda b: "whole check" in b),
+            (r"ISSUE READY", lambda b: True),
+        ])
+        self.assertEqual(missing, [], blocks(self.text))
+
+    def test_failed_whole_check_goes_to_the_owning_unit(self):
+        whole = blocks(part(self.text, "## Whole check"))
+        self.assertTrue(any(has(b, r"\bfailed\b", r"\bchecks?\b", r"\bunit\b", r"`breakdown\.md`",
+                                r"\bmerged?\b[^.]*\bagain\b") for b in whole), whole)
+
+    def test_prompt_after_a_units_merge_names_the_issue_branch(self):
+        spans = [s for b in self.build for s in re.findall(r"`([^`]+)`", b)]
+        with self.subTest("the prompt names the issue branch"):
+            self.assertTrue(any("feat/<id> is at" in s for s in spans), spans)
+        with self.subTest("no block tells every pane to merge main after a unit's merge into the issue branch"):
+            told = [b for b in self.build
+                    if has(b, r"`pm-merge <id> <unit>`|\binto `?feat/<id>`?", r"\bpanes?\b",
+                           r"main is at|merge `main`|merge main\b")]
+            self.assertEqual(told, [])
+
+    def test_critique_captures_the_issues_worktree(self):
+        crit = blocks(part(self.text, "## End review and critique"))
+        self.assertTrue(any(has(b, r"--capture-wt", r"emuforge-<id>") for b in crit), crit)
+
+    def test_no_t_unit(self):
+        cut = blocks(part(self.text, "## The cut"))
+        with self.subTest("a unit is e<n> or s<n>"):
+            self.assertTrue(any(has(b, r"`e<n>`", r"`s<n>`") for b in cut), cut)
+        with self.subTest("no t<n> unit"):
+            self.assertEqual([b for b in cut if re.search(r"`t<n>`|`t` unit", b)], [])
+
+
 class Panes_and_reviews(unittest.TestCase):
     def test_pane_mode(self):
         bs = blocks(PANE_MODE.read_text())
-        with self.subTest("--checks with pm-check"):
-            self.assertTrue(any(has(b, r"--checks", r"pm-check") for b in bs))
-        with self.subTest("a unit's pm-check leaves integration to the issue branch"):
-            self.assertTrue(any(has(b, r"\bunit\b", r"pm-check", r"`integration`", r"\bissue branch\b", LEAVES)
-                                for b in bs))
+        with self.subTest("--checks with pm-check, never a gate"):
+            self.assertTrue(any(has(b, r"--checks", r"pm-check", r"never a gate") for b in bs))
+        with self.subTest("a unit's pm-check, the fast check, leaves integration to the issue branch"):
+            self.assertTrue(any(has(b, r"\bunit\b", r"pm-check", r"\bfast check\b", r"`integration`",
+                                    r"\bissue branch\b", LEAVES) for b in bs))
         with self.subTest("no block: git merge main when the PM tells you main moved"):
             self.assertEqual([b for b in bs if "`git merge main` when the PM tells you main moved" in b], [])
         with self.subTest("the block on filed issues does not say: when the unit merges"):
@@ -225,17 +235,24 @@ class Panes_and_reviews(unittest.TestCase):
             self.assertTrue(filed)
             self.assertEqual([b for b in filed if "when the unit merges" in b], [])
 
-    def test_review_protocol_checks(self):
-        found = [b for b in blocks(REVIEW.read_text()) if b.startswith("- **checks-<unit>**")]
+    def test_review_protocol_breakdown_green_into_main(self):
+        found = [b for b in blocks(REVIEW.read_text()) if b.startswith("- **breakdown**")]
         self.assertEqual(len(found), 1, found)
-        self.assertIn("output/checks/checks.json", found[0])
+        with self.subTest("the collecting branch is green when it merges into main"):
+            self.assertRegex(found[0], r"\b(collecting|issue) branch green when it merges into `main`")
+        with self.subTest("each unit is e<n> or s<n>"):
+            self.assertRegex(found[0], r"`e<n>` or `s<n>`")
 
-    def test_review_protocol_impl(self):
-        found = [b for b in blocks(REVIEW.read_text()) if b.startswith("- **impl-<unit>**")]
-        self.assertEqual(len(found), 2, found)
-        for b in found:
-            with self.subTest(b[:40]):
-                self.assertRegex(b, r"\bfast check\b|\bissue branch\b")
+    def test_review_protocol_impl_is_the_whole(self):
+        bs = blocks(REVIEW.read_text())
+        with self.subTest("no per-unit stage"):
+            self.assertEqual([b for b in bs if re.match(r"- \*\*(checks|impl)-<unit>\*\*", b)], [])
+        found = [b for b in bs if b.startswith("- **impl** (the whole)")]
+        self.assertEqual(len(found), 1, found)
+        for words in ("`main...feat/<id>`", "whole check", "emuforge-<id>/output/checks/last.json",
+                      "integration checks"):
+            with self.subTest(words):
+                self.assertIn(words, found[0])
 
     def test_archive_first_block(self):
         first = blocks(part(ARCHIVE.read_text(), "# Archive"))[0]
@@ -243,20 +260,20 @@ class Panes_and_reviews(unittest.TestCase):
         self.assertNotIn(PM_CHECK, first)
 
     def test_worker_brief_and_placeholders(self):
-        text = WORKER.read_text()
-        tests, impl = template_block(text, "tests"), template_block(text, "implementation")
-        with self.subTest("the tests block names --checks"):
-            self.assertIn("--checks", tests)
-        with self.subTest("the asserted phrases stay"):
-            self.assertIn("must fail now", tests)
-            self.assertIn("until it prints `PASSED`", impl)
+        text = flat(WORKER.read_text())
+        with self.subTest("the fast check, until PASSED, leaves integration to the issue branch"):
+            self.assertIn("until it prints `PASSED`: your fast check, which leaves `integration` to the issue branch",
+                          text)
+        with self.subTest("the worker writes no integration test"):
+            self.assertIn("You write no integration test", text)
         with self.subTest("the row of {{base}}"):
             row = [ln for ln in BRIEFS_README.read_text().splitlines()
                    if ln.startswith("|") and "`{{base}}`" in ln]
             self.assertEqual(len(row), 1, row)
             self.assertIn("issue branch", row[0])
 
-    def test_guard_pm_brief_fills_the_worker_templates(self):  # guard: passes on main
+    def test_guard_pm_brief_fills_the_worker_template(self):  # guard: passes on main
+        """Only an `e` or `s` unit since issue 478 (`pm-brief worker` refuses `t<n>`)."""
         files = {f".agents/skills/pm/references/briefs/{n}.md": (BRIEFS / f"{n}.md").read_text()
                  for n in ("plan", "rev", "worker", "crit")}
         files["issues/things-that-do-not-work/1-engine.md"] = (
@@ -264,14 +281,12 @@ class Panes_and_reviews(unittest.TestCase):
             "Issue-Key: engine|x|y\nIssue-Check-Ids:\nIssue-Commit: 0\n\n# Make the thing work\n\n## Description\n")
         files["engine/AGENTS.md"] = files["engine/references/workflow.md"] = "x\n"
         co = make("issue-branch-docs", "brief", ("pm-brief",), files)
-        wts = [dict(issue="7", unit=u, path=f"{co}-7-{u}", branch=f"feat/7-{u}", base="main") for u in ("t1", "e1")]
+        wts = [dict(issue="7", unit="e1", path=f"{co}-7-e1", branch="feat/7-e1", base="feat/7")]
         (co / ".pm" / "run").mkdir(parents=True, exist_ok=True)
         (co / ".pm" / "run" / "worktrees.json").write_text(json.dumps(wts))
-        for unit, extra in (("t1", ()), ("e1", ("--close", "it-relay-1"))):
-            with self.subTest(unit):
-                p = run(co, "pm-brief", "worker", 7, unit, "--summary", "The unit.", *extra)
-                self.assertEqual(p.returncode, 0, p.stderr)
-                self.assertNotIn("{{", (co / ".pm" / "issue-7" / f"brief-{unit}.md").read_text())
+        p = run(co, "pm-brief", "worker", 7, "e1", "--summary", "The unit.", "--close", "it-relay-1")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertNotIn("{{", (co / ".pm" / "issue-7" / "brief-e1.md").read_text())
 
 
 class Root_and_modules(unittest.TestCase):
@@ -285,8 +300,12 @@ class Root_and_modules(unittest.TestCase):
         said = sentences(branches)
         with self.subTest("the issue branch, once, main"):
             self.assertTrue(any(has(s, r"\bissue branch\b", r"\bonce\b", r"\bmain\b") for s in said), said)
-        with self.subTest("an issue of one unit merges its unit's branch"):
-            self.assertTrue(any(has(s, r"\bone unit\b", r"\bmerge", r"\bunit's branch\b") for s in said), said)
+        with self.subTest("even an issue of one unit collects its unit on the issue branch"):
+            self.assertTrue(any(has(s, r"\beven an issue of one unit\b", r"\bissue branch\b", r"\bmerges a unit's branch\b")
+                                for s in said), said)
+        with self.subTest("a harness issue has none: its unit's branch goes into main"):
+            self.assertTrue(any(has(s, r"\bharness issue has no issue branch\b", r"\bunit's branch into local `main`")
+                                for s in said), said)
         with self.subTest("GitHub Actions"):
             self.assertIn("GitHub Actions", flat(branches))
 
@@ -301,8 +320,8 @@ class Root_and_modules(unittest.TestCase):
 
 class No_unit_does_it_alone(unittest.TestCase):
     def test_no_sentence_has_every_unit_run_integration_or_merge_into_main(self):
-        for path in EIGHT:
-            said = sentences(path.read_text())
+        for path in GUIDES:
+            said = clauses(path.read_text())
             unit = [s for s in said if re.search(r"\b(each|every) unit\b", s)]
             with self.subTest(f"{path.name}: integration"):
                 self.assertEqual([s for s in unit if has(s, r"integration", r"\bruns\b|\brun the\b")], [])
@@ -312,7 +331,7 @@ class No_unit_does_it_alone(unittest.TestCase):
 
     def test_archive_and_report_do_not_merge_each_unit_into_main(self):
         for name, text in (("archive.md", blocks(part(ARCHIVE.read_text(), "# Archive"))[0]),
-                           ("SKILL 6", part(SKILL.read_text(), "### 6. Report and archive"))):
+                           ("SKILL 3", part_of(SKILL.read_text(), "### 3."))):
             for words in ("every unit of the issue is merged into local `main`", "each was merged on a passing check"):
                 with self.subTest(f"{name}: {words}"):
                     self.assertNotIn(words, flat(text))
