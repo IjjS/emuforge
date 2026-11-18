@@ -131,12 +131,21 @@ async fn add(State(state): State<Arc<AppState>>, request: Request) -> Response {
             "a target is sent as JSON with Content-Type: application/json".to_owned(),
         );
     }
-    let Some(bytes) = read_capped(&parts.headers, body).await else {
-        return refusal(
-            StatusCode::PAYLOAD_TOO_LARGE,
-            "BodyTooLarge",
-            format!("a target is at most {ADD_BODY_CAP} bytes of JSON"),
-        );
+    let bytes = match read_capped(&parts.headers, body).await {
+        Read::Whole(bytes) => bytes,
+        Read::TooLarge => {
+            return refusal(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "BodyTooLarge",
+                format!("a target is at most {ADD_BODY_CAP} bytes of JSON"),
+            );
+        }
+        Read::Failed => {
+            return target_refusal(&TargetError::Invalid {
+                field: "body".to_owned(),
+                why: "the request body ended in an error before it was complete".to_owned(),
+            });
+        }
     };
     let target = match serde_json::from_slice(&bytes)
         .map_err(|_| TargetError::Invalid {
@@ -186,27 +195,39 @@ fn is_json(headers: &HeaderMap) -> bool {
         .is_some_and(|essence| essence.trim().eq_ignore_ascii_case("application/json"))
 }
 
+/// What reading the add body gave.
+enum Read {
+    Whole(Bytes),
+    /// Past [`ADD_BODY_CAP`], by its `Content-Length` or by what arrived.
+    TooLarge,
+    /// The body ended in an error before it was complete.
+    Failed,
+}
+
 /// The whole body when it is at most [`ADD_BODY_CAP`] bytes, by its `Content-Length` before reading and by what
-/// arrives while reading; `None` past the cap or when the body fails.
-async fn read_capped(headers: &HeaderMap, mut body: Body) -> Option<Bytes> {
+/// arrives while reading.
+async fn read_capped(headers: &HeaderMap, mut body: Body) -> Read {
     let declared = headers
         .get(CONTENT_LENGTH)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.parse::<u64>().ok());
     if declared.is_some_and(|length| length > ADD_BODY_CAP as u64) {
-        return None;
+        return Read::TooLarge;
     }
     let mut bytes = Vec::new();
     while let Some(frame) = std::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await {
-        let Ok(data) = frame.ok()?.into_data() else {
+        let Ok(frame) = frame else {
+            return Read::Failed;
+        };
+        let Ok(data) = frame.into_data() else {
             continue;
         };
         if bytes.len() + data.len() > ADD_BODY_CAP {
-            return None;
+            return Read::TooLarge;
         }
         bytes.extend_from_slice(&data);
     }
-    Some(Bytes::from(bytes))
+    Read::Whole(Bytes::from(bytes))
 }
 
 #[derive(Serialize)]
