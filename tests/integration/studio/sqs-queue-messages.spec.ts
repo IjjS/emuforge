@@ -2,7 +2,8 @@
 // in front of a real engine and emulator (test-criteria.md, issue 481: tasks 2 and 4).
 //
 // `studio.sqs-read-messages-leaves-them-in-the-queue`, `studio.sqs-read-on-a-redrive-queue-warns-and-moves`,
-// `studio.sqs-read-on-a-redrive-queue-after-a-consumer-took-them`, `studio.sqs-read-fifo-queue-shows-groups`, `studio.sqs-delete-read-messages`, `studio.sqs-purge-queue`,
+// `studio.sqs-read-on-a-redrive-queue-after-a-consumer-took-them`, `studio.sqs-read-on-a-redrive-queue-of-more-than-ten`,
+// `studio.sqs-read-fifo-queue-shows-groups`, `studio.sqs-delete-read-messages`, `studio.sqs-purge-queue`,
 // `studio.sqs-queue-gone-while-open`.
 //
 // Each check names its queues with its own prefix `<p>` and deletes them when it ends (`SqsSeeded`). What the emulator
@@ -224,6 +225,36 @@ test('studio.sqs-read-on-a-redrive-queue-after-a-consumer-took-them', async ({ c
         inFlight: 3,
         delayed: 0,
       });
+      expect((await countsDirect(ctx, port, dlq.url)).available, 'the dead-letter queue, directly').toBe(0);
+    },
+  );
+
+  lines.end();
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+
+test('studio.sqs-read-on-a-redrive-queue-of-more-than-ten', async ({ ctx, page }) => {
+  const stack = await startStack(ctx);
+  const port = stack.emulatorPort;
+  const lines = new Lines(ctx);
+  const p = checkPrefix(ctx, 'ten');
+  const seeded = new SqsSeeded(ctx, port, p);
+  const { source, dlq } = await seeded.redrivePair(`${p}-src`, `${p}-dlq`, 5);
+  await seeded.messages(source, 12);
+  const s = queueScreen(page);
+
+  await lines.line(
+    '"Read messages" → 10 are listed and "Showing the first 10 of 12 available messages. …" is shown, and neither "This read returned …" nor a sentence that messages were moved; the emulator reports 12 available in the source and none in the dead-letter queue',
+    async () => {
+      await open(page, queuePath(source.name), source.name);
+      await expectValue(page, 'Available', '12');
+      await readMessages(page);
+      await expect.poll(async () => (await rowsOf(s.table)).length, { message: 'rows of the read' }).toBe(10);
+      await expect(s.panel.getByText(firstOf(10, 12)), 'the first-ten sentence').toBeVisible();
+      await expect(s.panel.getByText(/^This read returned /), 'no "This read returned …"').toHaveCount(0);
+      await expect(s.panel.getByText(/ by this read instead of being shown\.$/), 'no moved-by-read sentence').toHaveCount(0);
+      expect((await countsDirect(ctx, port, source.url)).available, 'the source, directly').toBe(12);
       expect((await countsDirect(ctx, port, dlq.url)).available, 'the dead-letter queue, directly').toBe(0);
     },
   );
