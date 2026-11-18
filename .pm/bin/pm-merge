@@ -86,7 +86,7 @@ Without the mark (an issue begun before issue 478) the per-unit rule above holds
 `pm-merge <issue> issue` is refused: the issue branch is not a unit. --dry-run checks every condition of its form,
 lists every problem, and merges nothing. The new forms time their merges out after 120 s (the merge is then
 aborted) and every read of git after 30 s.
-Never pushes; the PM pushes main when an issue is finished (pm skill, flow step 6).
+Never pushes; the PM pushes main when an issue is finished (pm skill, flow step 3).
 """
 import argparse
 import json
