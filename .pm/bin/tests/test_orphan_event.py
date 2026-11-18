@@ -15,14 +15,15 @@ never read or written) whose `.pm/run/worktrees.json` names three worktrees, fol
 `wt-a` as its cwd, in `F/.pm/run/panes.json`, live or `gone`.
 
 `tick` runs in a driver: a child process that imports the fixture's `_pmorphanevent`, keeps one state dict across
-the calls of a case (written to JSON and read back only when the case says so: a restarted daemon), and answers
-each call with the lines `tick` returned or the exception it raised. When the module cannot be imported every call
+the calls of a case, and answers each call with the lines `tick` returned or the exception it raised. A restarted
+daemon is a new driver process that starts from the state the first one had, written to a JSON file. When the module cannot be imported every call
 answers with that error, so each case fails on its own. On Linux the driver makes itself a child subreaper and
 passes `{1, <its PID>}` as the reapers; on macOS `{1}`.
 
-The orphans are stand-ins this file writes, started by the driver: `orphan.py <cwd> <pidfile>` forks, the starter
-exits at once (so the child's parent is a reaper), and the child moves to `<cwd>`, writes its PID and sleeps until
-a 120 s bound. No stand-in spins a core. A case signals only the stand-ins it started, by PID and after checking that
+The orphans are stand-ins this file writes, started by the driver: `orphan.py <cwd> <pidfile> [<program> <arg>…]`
+forks, the starter exits at once (so the child's parent is a reaper), and the child moves to `<cwd>`, writes its
+PID and sleeps until a 120 s bound. With a program the child moves to `<cwd>` and becomes `/bin/sleep 120` (exec),
+so a case has orphans of two names; the starter writes the PID once the exec has happened and then exits. No stand-in spins a core. A case signals only the stand-ins it started, by PID and after checking that
 the PID still has the start time it had when it was made; every one is killed at the case's end, passed or not.
 Nothing is signalled by name, pattern or group.
 
@@ -55,14 +56,31 @@ PS_ENV = {"PATH": "/usr/bin:/bin", "LC_ALL": "C"}
 
 ORPHAN = f"""#!{sys.executable} -I
 import os, sys, time
-cwd, pidfile = sys.argv[1], sys.argv[2]
+cwd, pidfile, program = sys.argv[1], sys.argv[2], sys.argv[3:]
+
+
+def write(pid):
+    tmp = pidfile + ".tmp"
+    with open(tmp, "w") as f:
+        f.write(str(pid))
+    os.replace(tmp, pidfile)
+
+
+if program:
+    r, w = os.pipe()  # not inheritable: the exec closes w, which ends the starter's read
+    pid = os.fork()
+    if pid == 0:
+        os.close(r)
+        os.chdir(cwd)
+        os.execv(program[0], program)
+    os.close(w)
+    os.read(r, 1)
+    write(pid)
+    os._exit(0)
 if os.fork():
     os._exit(0)
 os.chdir(cwd)
-tmp = pidfile + ".tmp"
-with open(tmp, "w") as f:
-    f.write(str(os.getpid()))
-os.replace(tmp, pidfile)
+write(os.getpid())
 end = time.time() + 120
 while time.time() < end:
     time.sleep(1)
@@ -71,7 +89,7 @@ while time.time() < end:
 DRIVER = """
 import ctypes, json, os, subprocess, sys, time
 sys.path.insert(0, sys.argv[1])
-reapers = {1}
+reapers = {1} | {int(x) for x in sys.argv[3].split(",") if x}
 if sys.platform.startswith("linux"):
     if ctypes.CDLL(None, use_errno=True).prctl(36, 1, 0, 0, 0) != 0:  # PR_SET_CHILD_SUBREAPER
         raise SystemExit("prctl PR_SET_CHILD_SUBREAPER failed")
@@ -95,13 +113,13 @@ def reap():
             return
 
 
-st = {}
+st = json.loads(open(sys.argv[2]).read()) if sys.argv[2] else {}
 for line in sys.stdin:
     cmd = json.loads(line)
     try:
         if cmd["op"] == "spawn":
             pidfile = cmd["pidfile"]
-            subprocess.run([sys.executable, "-I", cmd["orphan"], cmd["cwd"], pidfile], stdin=subprocess.DEVNULL,
+            subprocess.run([sys.executable, "-I", cmd["orphan"], cmd["cwd"], pidfile, *cmd["program"]], stdin=subprocess.DEVNULL,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30, check=True)
             end = time.time() + 10
             while not os.path.exists(pidfile) and time.time() < end:
@@ -113,8 +131,6 @@ for line in sys.stdin:
             out = dict(raised=missing)
         else:
             reap()
-            if cmd.get("restart"):
-                st = json.loads(json.dumps(st))
             for m, real in ps.items():
                 m.PS = cmd.get("ps") or real
             out = dict(lines=_pmorphanevent.tick(st, now=cmd["now"], reapers=frozenset(reapers)))
@@ -123,6 +139,7 @@ for line in sys.stdin:
     print(json.dumps(out), flush=True)
 """
 FAILING_PS = "#!/bin/sh\nexit 1\n"
+SLEEP = ["/bin/sleep", "120"]  # an orphan of another name than the Python stand-in
 
 
 def ps_row(pid):
@@ -159,11 +176,15 @@ class Orphan:
 class Driver:
     """One driver process for one case."""
 
-    def __init__(self, case, f):
+    def __init__(self, case, f, state=None, reapers=()):
+        """`state`: a JSON file the driver starts from (a restarted daemon); `reapers`: PIDs added to its own."""
         self.case, self.f = case, f
-        self.err = f.co / "output" / "driver.err"
+        self.reapers = []
+        f.drivers += 1
+        self.err = f.co / "output" / f"driver-{f.drivers}.err"
         with open(self.err, "w") as err:
-            self.p = subprocess.Popen([sys.executable, "-I", "-c", DRIVER, str(f.co / ".pm" / "bin")],
+            self.p = subprocess.Popen([sys.executable, "-I", "-c", DRIVER, str(f.co / ".pm" / "bin"),
+                                       str(state or ""), ",".join(map(str, reapers))],
                                       stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=err, text=True,
                                       env=clean_env(), cwd=str(f.co))
         case.addCleanup(self.close)
@@ -182,9 +203,9 @@ class Driver:
             self.case.fail(f"the driver gave no answer ({how}): {self.err.read_text()[-2000:]}")
         return json.loads(line)
 
-    def tick(self, now, ps=None, restart=False):
+    def tick(self, now, ps=None):
         """The lines of one call of tick; fails the case when tick raised or returned something else than a list."""
-        out = self.call(op="tick", now=now, ps=str(ps) if ps else None, restart=restart)
+        out = self.call(op="tick", now=now, ps=str(ps) if ps else None)
         self.case.assertNotIn("raised", out, f"tick raised {out.get('raised')}")
         self.case.assertIsInstance(out["lines"], list, out)
         return out["lines"]
@@ -194,14 +215,17 @@ class Driver:
         self.case.assertNotIn("raised", out, out.get("raised"))
         return out["state"]
 
-    def orphan(self, where):
-        """A stand-in orphan started by the driver with its cwd in `where` (a worktree's name, or "F")."""
+    def orphan(self, where, program=()):
+        """A stand-in orphan started by the driver with its cwd in `where` (a worktree's name, or "F"); with
+        `program`, the orphan is that program."""
         cwd = self.f.co if where == "F" else self.f.wt[where]
         self.f.n += 1
         pidfile = self.f.co / "output" / "pids" / f"{self.f.n}.pid"
         pidfile.parent.mkdir(parents=True, exist_ok=True)
-        out = self.call(op="spawn", orphan=str(self.f.orphan_py), cwd=str(cwd), pidfile=str(pidfile))
+        out = self.call(op="spawn", orphan=str(self.f.orphan_py), cwd=str(cwd), pidfile=str(pidfile),
+                        program=list(program))
         self.case.assertNotIn("raised", out, f"the stand-in did not start: {out.get('raised')}")
+        self.reapers = out["reapers"]
         row = ps_row(out["pid"])
         self.case.assertIsNotNone(row, f"the stand-in {out['pid']} is not running")
         o = Orphan(out["pid"], row)
@@ -235,6 +259,7 @@ class Fixture:
             p.mkdir(parents=True)
             self.wt[w] = p.resolve()
         self.n = 0
+        self.drivers = 0
         self.standins = self.co / "output" / "standins"
         self.standins.mkdir(parents=True)
         self.orphan_py = self.program("orphan.py", ORPHAN)
@@ -257,8 +282,8 @@ class Fixture:
             pane_id="w1-p2", tab_id="w1-t1", cwd=str(self.wt["wt-a"]), brief=None, started="2026-11-18T00:00:00",
             session=None, gone=gone, resets=0)]))
 
-    def driver(self):
-        return Driver(self.case, self)
+    def driver(self, state=None, reapers=()):
+        return Driver(self.case, self, state, reapers)
 
 
 def now0():
@@ -380,11 +405,17 @@ class Tick(unittest.TestCase):
         self.assertLines(d.tick(t + 180), [event("wt-a", [o2])], "60 s after it")
 
     def test_a_restarted_daemon_does_not_tell_again(self):
-        _, d, t = self.setup("restart")
+        f, d, t = self.setup("restart", pane="live")
         o = d.orphan("wt-a")
         self.assertEqual(d.tick(t), [])
-        self.assertLines(d.tick(t + 60), [event("wt-a", [o])])
-        self.assertEqual(d.tick(t + 90, restart=True), [])
+        self.assertLines(d.tick(t + 60), [event("wt-a", [o], pane=PANE)])
+        saved = f.co / "output" / "watchd-state.json"
+        saved.write_text(json.dumps(d.state()))
+        # a new process from the saved state alone; the first driver stays, as on Linux it is the orphan's parent
+        d2 = f.driver(state=saved, reapers=d.reapers)
+        self.assertEqual(d2.tick(t + 90), [], "the restarted daemon told the set again")
+        self.assertLines(d2.tick(t + 360), [event("wt-a", [o], again=True, pane=PANE)],
+                         "the restarted daemon did not keep what it had told (again 300 s after the line)")
 
     def test_less_than_30_s_after_a_look_is_no_look(self):
         _, d, t = self.setup("look")
@@ -412,9 +443,18 @@ class Tick(unittest.TestCase):
 
     def test_one_line_per_worktree_with_the_names_grouped(self):
         _, d, t = self.setup("two-worktrees")
-        a1, a2, b1 = d.orphan("wt-a"), d.orphan("wt-a"), d.orphan("wt-b")
+        # wt-a: the Python stand-in once and sleep twice, so the most common name sorts after the other by name;
+        # wt-b: one of each, sleep started first, so a tie is ordered by name and not by PID
+        a1, a2, a3 = d.orphan("wt-a"), d.orphan("wt-a", SLEEP), d.orphan("wt-a", SLEEP)
+        b1, b2 = d.orphan("wt-b", SLEEP), d.orphan("wt-b")
+        self.assertEqual((a2.name, a3.name, b1.name), ("sleep", "sleep", "sleep"))
+        self.assertNotEqual(a1.name, "sleep")
+        self.assertLess(a1.name, "sleep", "the Python stand-in's name must sort before sleep for the tie")
         self.assertEqual(d.tick(t), [])
-        self.assertLines(d.tick(t + 60), [event("wt-a", [a1, a2]), event("wt-b", [b1])])
+        lines = d.tick(t + 60)
+        self.assertLines(lines, [event("wt-a", [a1, a2, a3]), event("wt-b", [b1, b2])])
+        self.assertTrue(any(f" sleep×2,{a1.name}×1 " in line for line in lines), f"most first: {lines}")
+        self.assertTrue(any(f" {b2.name}×1,sleep×1 " in line for line in lines), f"a tie by name: {lines}")
 
     def test_the_event_stops_nothing(self):
         _, d, t = self.setup("stops-nothing", pane="live")
