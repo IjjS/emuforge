@@ -346,9 +346,9 @@ function wireTask(status: string, extra: Record<string, unknown> = {}) {
 }
 
 /** The queue's page of the dead-letter queue, on its tab "Redrive". */
-async function openRedrive() {
-  engine.queues = [DLQ, ORDERS, PARKING, PAYMENTS];
-  open(`/aws/sqs/queues/queue/${DLQ.name}`);
+async function openRedrive(queue: FakeQueue = DLQ) {
+  engine.queues = [queue, ...[DLQ, ORDERS, PARKING, PAYMENTS].filter((other) => other.name !== queue.name)];
+  open(`/aws/sqs/queues/queue/${queue.name}`);
   await screen.findByRole('heading', { name: 'Details' });
   const link = (PAGE.findTabs()?.findTabLinks() ?? []).find((each) => text(each.getElement()) === 'Redrive');
   expect(link).toBeDefined();
@@ -453,6 +453,66 @@ function taskRows(): string[][] {
 const STARTED_TEXT = new Intl.DateTimeFormat('en-US', { year: 'numeric' }).format(new Date(STARTED_MS));
 
 // ---------------------------------------------------------------------------------------------------------------
+
+/** The dead-letter queue of two sources. */
+const SHARED_DLQ: FakeQueue = {
+  name: 'shared-dlq',
+  attributes: standard('shared-dlq', [4, 0, 0]),
+  sources: ['orders', 'payments'],
+};
+
+/** The radio button of `value`: whether it is checked and disabled, its label and its description. */
+function radio(value: string) {
+  const button = (PAGE.findRadioGroup()?.findButtons() ?? []).find(
+    (each) => (each.findNativeInput().getElement() as HTMLInputElement).value === value,
+  );
+  expect(button).toBeDefined();
+  const input = button?.findNativeInput().getElement() as HTMLInputElement;
+  const description = text(button?.findDescription()?.getElement() ?? document.createElement('i'));
+  // The label's element holds the description after the label's own text.
+  const label = text(button?.findLabel().getElement() as HTMLElement);
+  return {
+    checked: input.checked,
+    disabled: input.disabled,
+    label: description === '' ? label : label.slice(0, label.length - description.length).trim(),
+    description,
+  };
+}
+
+describe('the destinations', () => {
+  it('one source: "Back to their source queues" is enabled and chosen, with no description', async () => {
+    await openRedrive();
+    expect(radio('source')).toEqual({
+      checked: true,
+      disabled: false,
+      label: 'Back to their source queues',
+      description: '',
+    });
+    expect(radio('another')).toMatchObject({ checked: false, disabled: false });
+    expect(PAGE.findSelect()).toBeNull();
+  });
+
+  it('more than one source: "Back to their source queues" is disabled and says why; "Another queue" is chosen', async () => {
+    await openRedrive(SHARED_DLQ);
+    expect(radio('source')).toEqual({
+      checked: false,
+      disabled: true,
+      label: 'Back to their source queues',
+      description:
+        "shared-dlq is the dead-letter queue of 2 queues, so the emulator cannot tell each message's source queue. Choose the queue to move them to.",
+    });
+    expect(radio('another')).toMatchObject({ checked: true, disabled: false });
+    expect(PAGE.findSelect()).not.toBeNull();
+
+    await filterQueues('park', ['parking']);
+    await chooseQueue('parking');
+    await start();
+    expect(engine.of('StartMessageMoveTask')[0]?.body).toEqual({
+      SourceArn: `${ARN}:shared-dlq`,
+      DestinationArn: `${ARN}:parking`,
+    });
+  });
+});
 
 describe('the move form', () => {
   it('the description is "… back to its source queues", and "… to {destination}" once another queue is chosen', async () => {
