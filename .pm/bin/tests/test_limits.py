@@ -38,8 +38,10 @@ class Limits(unittest.TestCase):
     def test_total_is_24(self):
         self.assertEqual(LIMITS["total"], 24)
 
-    def test_memory_cpu_and_checks_stay(self):
-        self.assertEqual((LIMITS["mem_gb"], LIMITS["cpu_pct"], LIMITS["checks"]), (22.5, 90, 2))
+    def test_memory_and_cpu_stay_and_the_limit_of_checks_is_gone(self):
+        # the limit of two heavy checks went (issue 478, the owner's decision "Checks"): a check asks for room
+        self.assertEqual((LIMITS["mem_gb"], LIMITS["cpu_pct"]), (22.5, 90))
+        self.assertNotIn("checks", LIMITS)
 
     def test_help_states_the_worker_limits_and_the_total(self):
         r = help_text()

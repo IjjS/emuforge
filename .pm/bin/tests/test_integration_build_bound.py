@@ -16,7 +16,6 @@ each case ends what it started: the run's process group, then each recorded pid 
 case's directory. Under_pm_check also runs the fixture's own pm-check with its own .pm/run, and a stand-in `top`
 that prints nothing, so pm-check's wait for the CPU (up to five minutes) does not apply to the fixture.
 """
-import fcntl
 import json
 import os
 import re
@@ -107,7 +106,8 @@ elif tool == "cargo" and args[:1] == ["test"]:
 elif tool == "playwright":
     write_verdicts(".spec.ts")
 """
-# pm-check's CPU reading: no output, so cpu_pct() is None and the run starts at once
+# pm-check's look at the machine (`top`, `vm_stat`): no output, so the CPU is unknown and no memory is in use, and
+# the run starts at once (its PATH has no sysctl, which is no swap)
 TOP = "#!/bin/sh\nexit 0\n"
 
 
@@ -159,17 +159,6 @@ def left(pids, grace=GONE_GRACE):
         if not still or time.time() >= end:
             return still
         time.sleep(0.05)
-
-
-def lockable(path):
-    """The test can take the lock `path` at once (and lets it go)."""
-    with open(path, "a") as f:
-        try:
-            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            return False
-        fcntl.flock(f, fcntl.LOCK_UN)
-        return True
 
 
 class Fixture:
@@ -527,7 +516,7 @@ class Under_pm_check(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.fx = fx = Fixture("pm-check", scripts=("pm-check",), tools=("top",))
+        cls.fx = fx = Fixture("pm-check", scripts=("pm-check",), tools=("top", "vm_stat"))
         cls.addClassCleanup(fx.end)
         fx.start("hang", ".", "--only", "integration", program=[str(fx.co / ".pm" / "bin" / "pm-check")])
         cls.build = fx.wait_build()
@@ -535,9 +524,11 @@ class Under_pm_check(unittest.TestCase):
         if cls.build is not None:
             # pm-check's own bound: the run's, then its record and the end of the step's group
             cls.code = fx.wait(cls.build["started"] + LOWERED + SLACK + 30)
-        cls.slot_free = cls.running_left = cls.left = None
+        cls.run_left = cls.running_left = cls.left = None
         if cls.code is not None:
-            cls.slot_free = lockable(fx.co / ".pm" / "run" / "check-slots" / "slot-0.lock")
+            # the limit of two heavy runs went (issue 478, the owner's decision "Checks"): a run is recorded in
+            # .pm/run/checks/ while it lasts, and its file is what must not outlive it
+            cls.run_left = sorted(f.name for f in (fx.co / ".pm" / "run" / "checks").glob("*.json"))
             cls.running_left = (fx.co / "output" / "checks" / "running.json").exists()
             cls.left = left(fx.build_pids())
 
@@ -563,9 +554,9 @@ class Under_pm_check(unittest.TestCase):
         self.assertEqual(len(self.fx.compose_builds()), 1, self.fx.compose_builds())
         self.assertEqual(len(self.fx.builds()), 1, self.fx.builds())
 
-    def test_the_slot_is_free_and_nothing_of_the_build_is_left_when_pm_check_has_ended(self):
+    def test_the_run_is_unrecorded_and_nothing_of_the_build_is_left_when_pm_check_has_ended(self):
         self.ended()
-        self.assertTrue(self.slot_free, "check-slots/slot-0.lock is still held")
+        self.assertEqual(self.run_left, [], ".pm/run/checks/ still records the run")
         self.assertFalse(self.running_left, "running.json is still there")
         self.assertEqual(len(self.fx.build_pids()), 2, self.fx.why())
         self.assertEqual(self.left, [], f"alive after pm-check ended{self.fx.why()}")

@@ -281,7 +281,7 @@ flow step 1:
 | `EVENT ctx pm <n>K` | write `state.md` for every open issue, then ask the owner in one line to clear your context; resume from the state files |
 | `EVENT mem … top=<pane> <GB>,…` | prompt the top pane in one line to stop its running process; start nothing new until `EVENT mem ok` |
 | `EVENT mem ok …` | prompt every pane that reported `BLOCKED memory` to retry; resume queued `pm-pane new` calls |
-| `EVENT cpu <pct>% top=…` | the CPU has been over 90% for a minute and a half: open no new pane and start no check yourself until `EVENT cpu ok`; running panes carry on (`pm-check` queues itself) |
+| `EVENT cpu <pct>% top=…` | the CPU has been over 90% for a minute and a half: open no new pane and start no check yourself until `EVENT cpu ok`; running panes carry on (`pm-check` answers a pane `WAIT` and `pm-watchd` tells it when there is room) |
 | `EVENT cpu ok …` | prompt every pane that reported `BLOCKED cpu` to retry; resume queued `pm-pane new` calls |
 | `EVENT stale <pane>` | `herdr agent read`; if looping, `pm-pane reset <pane>` |
 | `EVENT check still <worktree> <step> <n>m` | read the end of `<worktree>/output/logs/check-<step>.log` (for `integration` also `output/logs/integration-*.log`); a step that still writes is left alone; a hung one: `pm-check <worktree> --stop`, tell its pane in one line, and file what held it |
@@ -321,7 +321,7 @@ a reporting line are logged in `.pm/run/events.log` and never delivered. Talk to
 | `pm-brief` | a pane's brief from its template: `plan` (also writes rev's), `harness-engineer`, `worker`, `crit`, `show`; a plan runs `worker` and `crit` for its own issue |
 | `pm-pane` | panes: `new`, `reset`, `close`, `list`; a plan runs `new` of a worker, rev or crit and `reset` and `close` of those panes for its own issue; a `QUEUE` answer to a plan becomes `EVENT room` to it later |
 | `pm-report` | a pane's reporting line to its lead: you, or the plan of its issue |
-| `pm-check` | the checks of a checkout, recorded; on a unit of an issue branch the fast check (`integration` left to the issue branch), on the issue's worktree the whole check; `--checks <id>…` single integration checks, never a gate; retries a failed test step once (`flaky`), at most two heavy runs at a time, `--stop` ends one worktree's run; the harness step leaves out the on-touch test files no changed path touches (`left_out`), `--full` runs every file |
+| `pm-check` | the checks of a checkout, recorded; on a unit of an issue branch the fast check (`integration` left to the issue branch), on the issue's worktree the whole check; `--checks <id>…` single integration checks, never a gate; retries a failed test step once (`flaky`), a heavy run asks for room and starts or answers `WAIT <n>s` (exit 75; `EVENT room <pane> check <worktree>` follows), the record holds how long it `waited`, `--stop` ends one worktree's run; the harness step leaves out the on-touch test files no changed path touches (`left_out`), `--full` runs every file |
 | `pm-capture` | screen captures and contact sheets |
 | `pm-critique` | impeccable scores: `record`, `table`, `check` |
 | `pm-structure` | the structure score of a `console` screen against its reference spec: `--serve`, `--url` or `--snapshot`, `--record`, `--table` |

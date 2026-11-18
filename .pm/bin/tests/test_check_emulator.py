@@ -4,8 +4,8 @@
 Check id `harness.check-emulator`. One class per heading of the test criteria.
 
 Every case builds a fixture checkout with `_fixture.make` under <checkout>/output/tests/check-emulator/<case>/ that
-holds its own copies of pm-check and the helpers, so `_pmlib.ROOT` is the fixture and its check slots and
-`.pm/run` are its own. The fixture has no engine/Cargo.toml and no studio/package.json (both modules are absent),
+holds its own copies of pm-check and the helpers, so `_pmlib.ROOT` is the fixture and its
+`.pm/run` is its own. The fixture has no engine/Cargo.toml and no studio/package.json (both modules are absent),
 a stand-in .pm/bin/tests/run (the harness step, exit 0) and a stand-in tests/integration/run with a manifest of two
 rows, `engine.a` and `studio.b`. Every script runs with a made-up HOME inside the fixture and a stand-in folder
 first on PATH: `top` reports the CPU 98 % idle, so a run never waits for the machine, and `docker` exits 0.
