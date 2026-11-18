@@ -23,7 +23,7 @@
 //! | `EMUFORGE_IT_ENGINE_BUILD` | `ok`, `absent` or `failed`; anything but `ok` means there is no engine to run |
 //! | `EMULATOR_PORT` | the run's emulator, already started |
 //! | `EMUFORGE_ENGINE_PORT` | the port every engine a check starts listens on |
-//! | `EMUFORGE_IT_RUN_ID` | unique per run; names the containers a check starts |
+//! | `EMUFORGE_IT_RUN_ID` | unique per run; names the containers a check starts, and its emulators' image `aws-emulator:it-<run id>` |
 //! | `EMUFORGE_IT_NOT_RUN` | optional: a file of check ids, one per line, that are not run (`run --not-run`) |
 
 use std::fs::{self, File};
@@ -60,6 +60,10 @@ pub struct Ctx {
     /// Why there is no engine binary to run, when `run` knows it.
     pub engine_missing: Option<String>,
     pub run_id: String,
+    /// The tag of the image every emulator a check starts runs: `it-<run id>`, the run's own image
+    /// `aws-emulator:it-<run id>` that `run` built, when `EMUFORGE_IT_RUN_ID` is set; else `latest`, the
+    /// machine's image `aws-emulator` (a check started by hand), never a name made from a process id.
+    pub image_tag: String,
     out_dir: PathBuf,
     started: Instant,
     log: Mutex<File>,
@@ -247,6 +251,11 @@ fn context(
     };
     let run_id =
         std::env::var("EMUFORGE_IT_RUN_ID").unwrap_or_else(|_| std::process::id().to_string());
+    // The one place the image tag is made: from the variable itself, not from the run id after its fallback.
+    let image_tag = std::env::var("EMUFORGE_IT_RUN_ID")
+        .ok()
+        .filter(|id| !id.is_empty())
+        .map_or_else(|| "latest".to_owned(), |id| format!("it-{id}"));
     // The run's emulator keys and certificate are redacted from everything written from here on.
     let _ = EmulatorFiles::read(&emulator_dir(&home, emulator_port));
     Ok(Ctx {
@@ -257,6 +266,7 @@ fn context(
         engine_bin,
         engine_missing,
         run_id,
+        image_tag,
         out_dir,
         started,
         log: Mutex::new(log),
