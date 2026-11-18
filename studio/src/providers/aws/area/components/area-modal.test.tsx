@@ -223,7 +223,9 @@ describe('AreaModal, the area’s dialog', () => {
       </Area>,
     );
     const dialog = await screen.findByRole('dialog');
-    const second = within(dialog).getByRole('button', { name: 'Delete' });
+    // In the dialog's order: "Close modal", then "Cancel", then "Delete".
+    const second = within(dialog).getAllByRole('button')[1] as HTMLElement;
+    expect(second).toHaveAccessibleName('Cancel');
     act(() => {
       second.focus();
     });
