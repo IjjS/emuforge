@@ -149,19 +149,20 @@ function counterText(rows: number, openEnd: boolean): string {
   return `(${String(rows)}${openEnd ? '+' : ''})`;
 }
 
-/** The label of the warning on the Available count of a dead-letter queue that holds messages. */
+/** The visible label beside the Available count of a dead-letter queue that holds messages. */
 const DEAD_LETTERS = 'Dead letters waiting';
 
 /**
- * A queue's Available count; on a dead-letter queue of at least one source that holds messages, a warning, so dead
- * letters stand out from the counts of any other queue.
+ * A queue's Available count; on a dead-letter queue of at least one source that holds messages, a warning with the
+ * words "Dead letters waiting" beside the count, so dead letters stand out from the counts of any other queue, to the
+ * eye and to a screen reader alike.
  */
 function AvailableCount({ settings, deadLetters }: { settings: QueueSettings; deadLetters: boolean }) {
   const available = settings.available;
   if (deadLetters && available !== undefined && available > 0) {
     return (
-      <StatusIndicator type="warning" iconAriaLabel={DEAD_LETTERS}>
-        <ValueText kind="fixed" value={String(available)} />
+      <StatusIndicator type="warning">
+        <ValueText kind="fixed" value={String(available)} /> <ValueText kind="text" value={DEAD_LETTERS} />
       </StatusIndicator>
     );
   }
