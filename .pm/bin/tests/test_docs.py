@@ -6,6 +6,10 @@ Issue 478 (owner decisions, `decisions.md`, 2026-11-18): "구조점수는 빼는
 alone, once, on the built app: a P0 or P1 finding is fixed, and the score is told and decides nothing. The PM
 skill, the crit brief and critique.md say so.
 
+Issue 478 (part 3, the owner's word on effort, 2026-11-18): the guides name `pm-pane new --effort` where they name the
+model: the PM skill's session start and scripts table, lead.md's step that opens a worker, pane-mode.md's "Model and
+kind"; each says the role defaults that `pm-pane` holds.
+
 Issue 478 (part 3, item 4): before `pm-pane reset` on `EVENT ctx`, the lead reads the pane's state file and, when it
 is behind, tells the pane to write it first. lead.md (the plan's events) and the PM skill (the pm's) say so.
 """
@@ -124,6 +128,31 @@ class ResetReadsTheStateFile(unittest.TestCase):
         row = self.row(SKILL, "EVENT ctx <pane>")
         self.check(row)
         self.assertIn("output/state.md", row)  # a harness-engineer's
+
+
+class EffortNamedWithTheModel(unittest.TestCase):
+    PANE_MODE = PM / "references" / "pane-mode.md"
+
+    def test_skill_names_it_beside_the_model_with_the_defaults(self):
+        text = SKILL.read_text()
+        start = next(b for b in flat(text).split(" 4. ") if "kind and model the owner names" in b)
+        self.assertIn("--effort", start)
+        self.assertRegex(start, r"`plan`, `rev`, `crit`, `harness-engineer` `high`, `worker` `medium`")
+        row = next(ln for ln in section(text, "## Scripts").splitlines() if ln.startswith("| `pm-pane`"))
+        self.assertIn("`--model`, `--effort`", row)
+
+    def test_lead_lets_a_plan_pass_it(self):
+        text = flat(LEAD.read_text())
+        self.assertRegex(text, r"You may pass `--effort [a-z|]+` to any pane you open")
+        self.assertRegex(text, r"worker runs at `medium`, `rev` and `crit` at `high`")
+
+    def test_pane_mode_says_the_effort_beside_the_model(self):
+        self.assertIn("--effort", section(self.PANE_MODE.read_text(), "## Model and kind"))
+
+    def test_pm_pane_holds_the_same_defaults(self):
+        text = (CHECKOUT / ".pm" / "bin" / "pm-pane").read_text()
+        self.assertIn('EFFORT_BY_ROLE = {"plan": "high", "rev": "high", "crit": "high", "harness-engineer": "high", '
+                      '"worker": "medium"}', text)
 
 
 if __name__ == "__main__":

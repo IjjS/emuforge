@@ -183,4 +183,5 @@ own issue.
 
 ## Model and kind
 
-Whatever you were started as: Opus unless the owner names another model for the session. These rules and the reporting lines are the same for every agent kind.
+Whatever you were started as: Opus unless the owner names another model for the session, at the effort `pm-pane`
+gave you (`--effort`, else your role's: `high`, a worker `medium`). These rules and the reporting lines are the same for every agent kind.

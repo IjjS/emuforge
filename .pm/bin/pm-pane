@@ -2,7 +2,7 @@
 """Open, list, reset and close agent panes inside the issue's herdr tab.
 
   pm-pane new <issue> <role> [--unit U] [--kind claude|codex] [--model opus|fable|sonnet|<id>]
-                              [--cwd PATH] [--brief FILE] [--text TEXT] [--no-limit]
+                              [--effort low|medium|high|xhigh|max] [--cwd PATH] [--brief FILE] [--text TEXT] [--no-limit]
   pm-pane reset <name>            state file -> /clear -> brief again (run on EVENT ctx <name>)
   pm-pane close <name> | --issue <issue>
   pm-pane list
@@ -23,7 +23,11 @@ A unit name starts with its side: s<n> studio, e<n> engine, t<n> tests, h<n> har
 Tab: "#<issue>" in the PM's workspace; created when missing. New agents are panes inside that tab.
 Limits (enforced unless --no-limit): worker panes per side (studio 8, engine 8, tests 8, harness 8), total live panes 24,
 memory 22.5 GB, swap free 256 MB, CPU 90%, and the Claude token rate of the last hour under today's target when one is set (pm-tokens).
-Default: claude on opus. Any pane takes --kind/--model (the PM passes what the owner chose at session start). The brief is sent as: "Read <FILE> and follow it. Your pane name is <name>."
+Default: claude on opus. Any pane takes --kind/--model (the PM passes what the owner chose at session start).
+Effort: --effort goes to the agent as the model does (claude --effort <level>, after the -- of herdr agent start);
+a plan may pass it for its own panes. Without it, a pane opened again gets the effort it had (the registry and
+.pm/run/panes-history.jsonl remember it), and a new one its role's: plan, rev, crit and harness-engineer high,
+worker medium. A codex pane takes no effort: --effort is ignored, with one line saying so. The brief is sent as: "Read <FILE> and follow it. Your pane name is <name>."
 To talk to a pane use herdr directly: herdr agent prompt <name> "<text>" (it refuses a pane blocked at a dialog).
 """
 import argparse
@@ -139,6 +143,38 @@ def brief_text(entry, resumed=False):
     return t
 
 
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
+EFFORT_BY_ROLE = {"plan": "high", "rev": "high", "crit": "high", "harness-engineer": "high", "worker": "medium"}
+
+
+def remembered_effort(name, old):
+    """The effort the pane of this name had when last opened: its registry entry, else its last history line."""
+    if old and old.get("effort"):
+        return old["effort"]
+    last = None
+    try:
+        with open(PANES_HISTORY) as f:
+            for ln in f:
+                try:
+                    r = json.loads(ln)
+                except json.JSONDecodeError:
+                    continue
+                if r.get("name") == name and r.get("effort") in EFFORTS:
+                    last = r["effort"]
+    except OSError:
+        pass
+    return last
+
+
+def effort_of(a, name, old):
+    """The effort a claude pane is started with: --effort, else the one it had, else its role's; None for codex."""
+    if a.kind != "claude":
+        if a.effort:
+            print(f"effort {a.effort} ignored: a {a.kind} pane takes no effort")
+        return None
+    return a.effort or remembered_effort(name, old) or EFFORT_BY_ROLE.get(a.role)
+
+
 def queue(asker, a, side, why, tail=""):
     """Answer QUEUE; a pane that asked is remembered, so pm-watchd tells it when there is room."""
     if asker:
@@ -203,8 +239,11 @@ def cmd_new(a):
     model = MODEL_IDS.get(a.model, a.model) if a.model else (MODEL_IDS["opus"] if a.kind == "claude" else None)
     args = ["agent", "start", name, "--kind", a.kind, "--pane", pane_id, "--timeout", "90000"]
     extra = []
+    effort = effort_of(a, name, old)
     if a.kind == "claude" and model:
         extra += ["--model", model]
+    if effort:
+        extra += ["--effort", effort]
     if a.kind == "codex" and model:
         extra += ["-m", model]
     if extra:
@@ -212,7 +251,7 @@ def cmd_new(a):
     r = existing if a.adopt else herdr(*args, check=False)
     if r is None:
         sys.exit(f"agent start failed for {name} in {pane_id}; the pane is left open for inspection")
-    entry = dict(name=name, issue=str(a.issue), role=a.role, unit=a.unit, kind=a.kind, model=model, side=side,
+    entry = dict(name=name, issue=str(a.issue), role=a.role, unit=a.unit, kind=a.kind, model=model, effort=effort, side=side,
                  pane_id=pane_id, tab_id=tab_id, cwd=cwd, brief=(os.path.abspath(a.brief) if a.brief else None),
                  started=now(), session=session_of(name, tries=3), gone=False, resets=0)
     reg.append(entry)
@@ -225,11 +264,11 @@ def cmd_new(a):
         if str(a.issue) not in lst:
             lst.append(str(a.issue))
             save(PMINFO, pinfo)
-    log(f"pane new {name} {pane_id} {a.kind} {model} cwd={cwd}")
+    log(f"pane new {name} {pane_id} {a.kind} {model} effort={effort} cwd={cwd}")
     text = a.text
     if a.brief:
         text = brief_text(entry) + (f" {a.text}" if a.text else "")
-    print(f"{name} {pane_id} tab={tab_id} kind={a.kind} model={model} session={entry['session']}")
+    print(f"{name} {pane_id} tab={tab_id} kind={a.kind} model={model} effort={effort} session={entry['session']}")
     if text:
         herdr("agent", "wait", name, "--until", "idle", "--until", "done", "--timeout", "60000", check=False)
         if herdr("agent", "prompt", name, text, check=False) is None:
@@ -329,13 +368,14 @@ def cmd_list(a):
     print(f"mem used {used:.1f}GB swap {su:.1f}/{st:.1f}GB cpu {cpu_pct()}%; live panes {len(live(reg))}/{LIMITS['total']}")
     for r in reg:
         st_ = "gone" if r.get("gone") else (ags.get(r["name"]) or {}).get("agent_status", "?")
-        print(f"  {r['name']:16} {r['pane_id']:8} {st_:8} {r['kind']:6} {str(r.get('model') or ''):18} resets={r.get('resets', 0)} {r['cwd']}")
+        print(f"  {r['name']:16} {r['pane_id']:8} {st_:8} {r['kind']:6} {str(r.get('model') or ''):18} {str(r.get('effort') or ''):6} resets={r.get('resets', 0)} {r['cwd']}")
 
 
 p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 sp = p.add_subparsers(dest="cmd", required=True)
 n = sp.add_parser("new"); n.add_argument("issue"); n.add_argument("role", choices=PANE_ROLES)
 n.add_argument("--unit"); n.add_argument("--kind", default="claude", choices=["claude", "codex"]); n.add_argument("--model")
+n.add_argument("--effort", choices=EFFORTS)
 n.add_argument("--cwd"); n.add_argument("--brief"); n.add_argument("--text"); n.add_argument("--no-limit", action="store_true")
 n.add_argument("--adopt", action="store_true", help="register an exact-name/cwd/kind agent left after a startup trust dialog")
 n.set_defaults(f=cmd_new)

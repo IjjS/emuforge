@@ -27,7 +27,9 @@ issue files, merge or archive; they refuse a plan anything outside its own issue
    wait for it. Its outcome arrives as `EVENT emulator-image refreshed …` or `EVENT emulator-image failed …`
    (Events); `pm-emulator-image status` shows the image and the last refresh.
 3. Panes run on the kind and model the owner names for this session; without one, `claude` on Opus. Ask only if
-   the owner has not said and a pane is about to start. When the owner names a token rate for the day, set it
+   the owner has not said and a pane is about to start. The effort goes the same way, `pm-pane new … --effort
+   low|medium|high|xhigh|max`; without it a pane opened again gets the effort it had and a new one its role's
+   (`plan`, `rev`, `crit`, `harness-engineer` `high`, `worker` `medium`); a Codex pane ignores it. When the owner names a token rate for the day, set it
    with `pm-tokens target <rate>`; without one nothing is limited, and you do not ask for one.
 4. Open work: list every `.pm/issue-*/state.md` in one line each and continue from it. Then `pm-ready list`: each
    line is a go signal the owner gave while no PM was running. Then `pm-issue list`: the open issue files.
@@ -320,7 +322,7 @@ a reporting line are logged in `.pm/run/events.log` and never delivered. Talk to
 | `pm-emulator-image` | the machine's emulator image `aws-emulator` on the latest package: `refresh` at session start (returns at once; the outcome comes as `EVENT emulator-image …`), `refresh --foreground` by hand, `status` |
 | `pm-emulator-dir` | a port folder under `~/.aws/emulator` once nothing uses it: `rm --worktree` (run by `pm-merge` and `pm-worktree rm`), `rm --port`, `orphans [--remove]` on the owner's request |
 | `pm-brief` | a pane's brief from its template: `plan` (also writes rev's), `harness-engineer`, `worker`, `crit`, `show`; a plan runs `worker` and `crit` for its own issue |
-| `pm-pane` | panes: `new`, `reset`, `close`, `list`; a plan runs `new` of a worker, rev or crit and `reset` and `close` of those panes for its own issue; a `QUEUE` answer to a plan becomes `EVENT room` to it later |
+| `pm-pane` | panes: `new` (`--kind`, `--model`, `--effort`), `reset`, `close`, `list`; a plan runs `new` of a worker, rev or crit and `reset` and `close` of those panes for its own issue; a `QUEUE` answer to a plan becomes `EVENT room` to it later |
 | `pm-report` | a pane's reporting line to its lead: you, or the plan of its issue |
 | `pm-check` | the checks of a checkout, recorded; on a unit of an issue branch the fast check (`integration` left to the issue branch), on the issue's worktree the whole check; `--checks <id>…` single integration checks, never a gate; retries a failed test step once (`flaky`), a heavy run asks for room and starts or answers `WAIT <n>s` (exit 75; `EVENT room <pane> check <worktree>` follows), the record holds how long it `waited`, `--stop` ends one worktree's run; the harness step leaves out the on-touch test files no changed path touches (`left_out`), `--full` runs every file |
 | `pm-capture` | screen captures and contact sheets |

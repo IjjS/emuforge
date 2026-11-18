@@ -46,7 +46,9 @@ Each stage document is reviewed by `rev` per `review-protocol.md` before the nex
 2. Per unit: `pm-worktree new <id> <unit> [--base <unit branch>]`, then
    `pm-brief worker <id> <unit> --summary "<its line in breakdown.md>" [--scenarios "<where>"] [--close "<ids>"]`
    (`--close` for the unit that closes the issue), then
-   `pm-pane new <id> worker --unit <unit> --cwd <its worktree> --brief .pm/issue-<id>/brief-<unit>.md`.
+   `pm-pane new <id> worker --unit <unit> --cwd <its worktree> --brief .pm/issue-<id>/brief-<unit>.md`. You may
+   pass `--effort low|medium|high|xhigh|max` to any pane you open, as the model goes; without it a worker runs at
+   `medium`, `rev` and `crit` at `high`, and a pane opened again at the effort it had.
 3. On a worker's `UNIT READY`: `pm-merge <id> <unit>` merges its branch into `feat/<id>` on its fast check. A unit
    is merged as many times as it is fixed.
 4. After a merge, tell only a pane whose branch was cut from `feat/<id>` and that needs what it gained:
