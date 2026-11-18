@@ -530,6 +530,7 @@ describe('a failed read of the queue', () => {
       .find((each) => each.closest('nav') === null && each.getAttribute('aria-current') === null);
     expect(link).toBeDefined();
     expect(link).toHaveAttribute('href', '/aws/sqs/queues');
+    expect(screen.queryByRole('button', { name: 'Purge' })).toBeNull();
     expect(text(screen.getByText('No queue named').parentElement as HTMLElement)).toBe('No queue named nope');
   });
 
@@ -629,8 +630,8 @@ describe('the tabs', () => {
     await openQueue(DLQ, [ORDERS]);
     expect((PAGE.findTabs()?.findTabLinks() ?? []).map((link) => text(link.getElement()))).toEqual([
       'Messages',
-      'Send message',
       'Redrive',
+      'Send message',
     ]);
   });
 });
@@ -764,6 +765,43 @@ describe('a read of messages', () => {
       .map((sent) => sent.operation);
     expect(around.slice(0, 4)).toEqual(['GetQueueUrl', 'GetQueueAttributes', 'ReceiveMessage', 'GetQueueAttributes']);
     expect(engine.of('GetQueueAttributes').length).toBeGreaterThan(reads + 2);
+  });
+
+  it('what was available is the queue’s own count read just before the read, not the count shown', async () => {
+    engine.messages = [wire('m1', 'a')];
+    await openQueue(ORDERS, [DLQ]);
+    // Another consumer took two of the three shown before "Read messages" was pressed.
+    engine.queues = engine.queues.map((queue) =>
+      queue.name === 'orders'
+        ? { ...queue, attributes: { ...queue.attributes, ApproximateNumberOfMessages: '1' } }
+        : queue,
+    );
+    const from = engine.sent.length;
+    await readMessages();
+
+    const asked = engine.sent.slice(from).map((sent) => [sent.operation, sent.body['QueueUrl']]);
+    const receive = asked.findIndex(([operation]) => operation === 'ReceiveMessage');
+    expect(asked[receive - 1]).toEqual(['GetQueueAttributes', urlOf('orders')]);
+    expect(screen.queryByText(/^This read returned|were moved to/)).toBeNull();
+  });
+
+  it('the moved count is at most what the read did not show of what was available', async () => {
+    engine.messages = [wire('m1', 'a')];
+    // The dead-letter queue's count rises by 5 across the read (some sent there by another app).
+    engine.on('ReceiveMessage', () => {
+      engine.queues = engine.queues.map((queue) =>
+        queue.name === 'orders-dlq'
+          ? { ...queue, attributes: { ...queue.attributes, ApproximateNumberOfMessages: '7' } }
+          : queue,
+      );
+      return ok({ Messages: engine.messages });
+    });
+    await openQueue(ORDERS, [DLQ]);
+    await readMessages();
+
+    expect(text(await screen.findByText(/were moved to/))).toBe(
+      '2 messages received 2 times in this queue were moved to orders-dlq by this read instead of being shown.',
+    );
   });
 
   it('a rise of 1 on a policy of 1: the singular forms', async () => {
