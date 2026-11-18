@@ -24,7 +24,7 @@ Each stage document is reviewed by `rev` per `review-protocol.md` before the nex
 
 1. `requirement.md`. Find out what the emulator answers today by calling one (start it on a free port, stop it
    after); never from memory.
-2. The design or screen stage your brief names.
+2. `design.md`, the design stage your brief names (the module's `references/workflow.md`, stage 2).
 3. `test-criteria.md`: per unit, the unit-test scenarios that are its worker's end condition; for the issue, the
    scenarios its integration tests will be. When you can already tell that an integration test will be left out
    (the issue is too slight, or the test would cost more than it shows), say so here, with the reason.
@@ -75,8 +75,11 @@ passes its fast check, and is merged again. `feat/<id>` has then moved, so run t
 - `REVIEW impl r1 <changed paths> emuforge-<id>/output/checks/last.json` to `rev`: the whole diff
   `main...feat/<id>`, and whether the integration tests are the scenarios.
 - For a Studio screen: `pm-brief crit <id> --targets "<routes>" --capture-wt emuforge-<id>`, then
-  `pm-pane new <id> crit --brief .pm/issue-<id>/brief-crit.md`, and prompt it `SCORE final <routes>`. A screen mock
-  of the screen stage is scored the same way, at point `mock`.
+  `pm-pane new <id> crit --brief .pm/issue-<id>/brief-crit.md`, and prompt it `SCORE final <routes>`: the impeccable
+  critique, once, on the built app (`studio/references/critique.md`). Every P0 and P1 finding goes to the worker that
+  owns the screen, as a fault below, and is critiqued once more; the score goes in `report.md` and decides nothing.
+  A mock before the build is never required: ask `crit` for one (`SCORE mock <file>`) only when a screen is new and
+  large and the build would otherwise be a guess.
 - A fault found, by its size:
   - Small and inside the issue: give it to the owning worker at once. It is fixed, merged again, and checked
     whole again, and then the next review round follows.
@@ -115,7 +118,7 @@ events go to the `pm`.
 | `EVENT ready <pane> BLOCKED depends <unit> <what>` | answer in one line, or tell the pane to wait for the parent's `UNIT READY` |
 | `EVENT ready <pane> BLOCKED check <id>` | a worker believes a confirmed check is wrong: a wrong criteria line is changed only on the `pm`'s decision, so stop with `BLOCKED i<id>-plan check <id>`; an integration test of yours that does not do what its criteria line says you fix yourself, and record why under `## Plan decisions` |
 | `EVENT ready <pane> BLOCKED review <stage>` | three rounds failed: stop with `BLOCKED i<id>-plan review <stage>` |
-| `EVENT ctx <pane> <n>K` | `pm-pane reset <pane>` with the command timeout set to 10 minutes |
+| `EVENT ctx <pane> <n>K` | read the pane's state file first (a worker's `output/state.md` in its worktree, `state-rev.md` or `state-crit.md`); when it is behind what the pane last reported, tell the pane in one line to write it, and reset on its next turn; then `pm-pane reset <pane>` with the command timeout set to 10 minutes |
 | `EVENT stale <pane>` | `herdr agent read <pane> --lines 80`; if it loops, `pm-pane reset <pane>` |
 | `EVENT gone <pane>` | reopen it with the same brief; its worktree and state file are still there |
 | `EVENT check still <worktree> <step> <n>m` | read the end of `<worktree>/output/logs/check-<step>.log`; a step that still writes is left alone; a hung one: `pm-check <worktree> --stop` and tell its pane in one line |
