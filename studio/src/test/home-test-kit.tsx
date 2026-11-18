@@ -1,14 +1,17 @@
 // Used by unit tests only; nothing in the app imports it. A fake engine behind `fetch` that answers Studio's
-// `/config.json`, the engine's session and health routes the way a test tells it to and records every request,
-// and Home rendered with the app's real routes and providers. Only the network is replaced. For tests of language:
+// `/config.json`, the engine's session, health and targets routes the way a test tells it to and records every
+// request, and Home rendered with the app's real routes and providers; a tree rendered under the document's target
+// seen. Only the network is replaced. For tests of language:
 // a marked test catalogue and what of Studio's text it does not cover.
 
-import { notifyManager } from '@tanstack/react-query';
+import { notifyManager, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { act, render, screen, within } from '@testing-library/react';
+import type { ReactNode } from 'react';
 import { createMemoryRouter, RouterProvider } from 'react-router';
 import { PROVIDERS } from '../app/provider-list';
 import { Providers } from '../app/providers';
 import { routes } from '../app/routes';
+import { useTargetSeen, type TargetSeen } from '../app/target-seen';
 import { BUNDLED_CATALOGUES } from '../i18n/bundled';
 import {
   catalogueSet,
@@ -40,6 +43,10 @@ export interface SeenRequest {
   /** Header names lower-case. */
   headers: Record<string, string>;
   init: RequestInit;
+  /** The request's method, upper-case. */
+  method: string;
+  /** The request's body parsed as JSON; `undefined` when it has none or it is not JSON. */
+  body: unknown;
   /** The request's signal was aborted, before or after its answer. */
   aborted: () => boolean;
 }
@@ -51,6 +58,20 @@ export function connected(port = 9297): FakeAnswer {
   return { status: 200, json: { emulator: { port, endpoint: `https://127.0.0.1:${String(port)}`, reachable: true } } };
 }
 
+/** A health answer `200` naming `target`. */
+export function connectedTo(target: string, port = 9297): FakeAnswer {
+  return withTarget(connected(port), target);
+}
+
+/** A health answer `503`, the emulator not started, naming `target`. */
+export function emulatorDownOn(target: string, port = 9297, message = 'the engine says why'): FakeAnswer {
+  return withTarget(emulatorDown('not_started', port, message), target);
+}
+
+function withTarget(answer: FakeAnswer, target: string): FakeAnswer {
+  return 'json' in answer && typeof answer.json === 'object' ? { ...answer, json: { target, ...answer.json } } : answer;
+}
+
 export function emulatorDown(reason: string | undefined, port = 9297, message = 'the engine says why'): FakeAnswer {
   return {
     status: 503,
@@ -60,6 +81,126 @@ export function emulatorDown(reason: string | undefined, port = 9297, message = 
 
 export function engineRefusal(status: number, code: string, message = `the engine refused: ${code}`): FakeAnswer {
   return { status, json: { error: { code, message } } };
+}
+
+/** The routes of the engine's targets API. */
+export type TargetsRoute = 'list' | 'info' | 'add' | 'use' | 'test' | 'remove';
+
+/** Every refusal code of the targets API (requirement §1), with its status. */
+export const TARGETS_REFUSALS = {
+  TargetInvalid: 400,
+  EndpointNotLoopback: 400,
+  TargetExists: 409,
+  TargetLimit: 409,
+  TargetNotFound: 404,
+  TargetActive: 409,
+  ComposeHoldsOneTarget: 403,
+  SettingsUnusable: 503,
+} as const;
+
+export type TargetsRefusalCode = keyof typeof TARGETS_REFUSALS;
+
+/** A refusal of the targets API with its own status. */
+export function targetsRefusal(code: TargetsRefusalCode, message = `the engine refused: ${code}`): FakeAnswer {
+  return engineRefusal(TARGETS_REFUSALS[code], code, message);
+}
+
+/** A connection the fake engine holds. */
+export interface FakeTarget {
+  name: string;
+  endpoint: string;
+}
+
+/** The port of a loopback endpoint `https://127.0.0.1:<port>`; `undefined` for another. */
+function portOf(endpoint: string): string | undefined {
+  return /:(\d+)\/?$/.exec(endpoint)?.[1];
+}
+
+/** A target as the engine lists it. */
+export function targetJson(target: FakeTarget, active: boolean): Record<string, unknown> {
+  return {
+    name: target.name,
+    provider: 'aws',
+    emulator: 'aws-emulator',
+    endpoint: target.endpoint,
+    credentials: 'emulator-files',
+    tls: 'emulator-ca',
+    active,
+  };
+}
+
+/** A list answer `200` of `targets`, `active` the target, in `form`. */
+export function targetsList(
+  targets: readonly FakeTarget[],
+  active: string,
+  form: 'native' | 'compose' = 'native',
+): FakeAnswer {
+  return {
+    status: 200,
+    json: { active, targets: targets.map((target) => targetJson(target, target.name === active)), form },
+  };
+}
+
+/** An info answer `200` of `target`: reachable, or not started with `message`. */
+export function targetInfo(target: FakeTarget, active: boolean, down?: string): FakeAnswer {
+  const health = down === undefined ? { reachable: true } : { reachable: false, reason: 'not_started', message: down };
+  return {
+    status: 200,
+    json: {
+      ...targetJson(target, active),
+      credentials_dir: `~/.aws/emulator/${portOf(target.endpoint) ?? '0'}/`,
+      health,
+    },
+  };
+}
+
+/** The five checks of a test, in the engine's order. */
+export const TEST_CHECKS = ['files', 'connection', 'tls', 'health', 'credentials'] as const;
+
+/** A test answer `200` of `target`: passed, or failed at "files" with `failed` as its message. */
+export function targetTest(target: FakeTarget, failed?: string): FakeAnswer {
+  const checks =
+    failed === undefined
+      ? TEST_CHECKS.map((check) => ({ check, status: 'passed' }))
+      : TEST_CHECKS.map((check, index) =>
+          index === 0 ? { check, status: 'failed', reason: 'not_started', message: failed } : { check, status: 'not_run' },
+        );
+  return {
+    status: 200,
+    json: { name: target.name, endpoint: target.endpoint, passed: failed === undefined, checks },
+  };
+}
+
+const TARGETS_PATH = '/__emuforge/targets';
+
+/** The targets route of a request, and the name it names; `undefined` for another path. */
+function targetsRoute(method: string, path: string): { route: TargetsRoute; name: string } | undefined {
+  if (path === TARGETS_PATH) {
+    return method === 'POST' ? { route: 'add', name: '' } : { route: 'list', name: '' };
+  }
+  const match = /^\/__emuforge\/targets\/([^/]+)(\/use|\/test)?$/.exec(path);
+  if (match === null) {
+    return undefined;
+  }
+  const name = decodeURIComponent(match[1] ?? '');
+  if (match[2] === '/use') {
+    return { route: 'use', name };
+  }
+  if (match[2] === '/test') {
+    return { route: 'test', name };
+  }
+  return { route: method === 'DELETE' ? 'remove' : 'info', name };
+}
+
+function parseBody(body: RequestInit['body']): unknown {
+  if (typeof body !== 'string') {
+    return undefined;
+  }
+  try {
+    return JSON.parse(body) as unknown;
+  } catch {
+    return undefined;
+  }
 }
 
 function abortError(signal: AbortSignal): unknown {
@@ -75,6 +216,15 @@ export class FakeEngine {
   sessionAnswers: FakeAnswer[] = [{ status: 200, json: { token: TOKEN_1 } }];
   /** Answers to health requests, in order; the last one repeats. */
   healthAnswers: FakeAnswer[] = [connected()];
+  /**
+   * The connections the engine holds, in the order added, and its target and form. The targets routes answer from
+   * them, and add, use and remove change them, unless a test has queued answers for the route (`answerTargets`).
+   */
+  targets: FakeTarget[] = [{ name: 'local', endpoint: 'https://127.0.0.1:9297' }];
+  active = 'local';
+  form: 'native' | 'compose' = 'native';
+  /** Answers queued per targets route, each used once, in order; then the route answers from the state above. */
+  private readonly targetsQueue = new Map<TargetsRoute, FakeAnswer[]>();
   private sessionCount = 0;
   private healthCount = 0;
 
@@ -96,6 +246,59 @@ export class FakeEngine {
     this.healthAnswers = [...this.healthAnswers.slice(0, this.healthCount), ...answers];
   }
 
+  /** The next requests of the targets `route` are answered `answers`, one each, in order. */
+  answerTargets(route: TargetsRoute, ...answers: FakeAnswer[]): void {
+    this.targetsQueue.set(route, [...(this.targetsQueue.get(route) ?? []), ...answers]);
+  }
+
+  /** Requests to the targets `route`, in order. */
+  targetRequests(route: TargetsRoute): SeenRequest[] {
+    return this.requests.filter(
+      (r) => r.origin.startsWith('http://127.0.0.1:') && targetsRoute(r.method, r.path)?.route === route,
+    );
+  }
+
+  /** What the targets `route` answers from the engine's state, changing it as the engine would. */
+  private targetsAnswer(route: TargetsRoute, name: string, body: unknown): FakeAnswer {
+    const held = this.targets.find((target) => target.name === name);
+    switch (route) {
+      case 'list':
+        return targetsList(this.targets, this.active, this.form);
+      case 'add': {
+        if (this.form === 'compose') {
+          return targetsRefusal('ComposeHoldsOneTarget');
+        }
+        const sent = body as Partial<FakeTarget> | undefined;
+        const added = { name: String(sent?.name ?? ''), endpoint: String(sent?.endpoint ?? '') };
+        if (this.targets.some((target) => target.name === added.name)) {
+          return targetsRefusal('TargetExists', `a target named ${added.name} already exists; choose another name`);
+        }
+        this.targets = [...this.targets, added];
+        return { status: 201, json: targetJson(added, false) };
+      }
+      default:
+        break;
+    }
+    if (held === undefined) {
+      return targetsRefusal('TargetNotFound', `there is no target named ${name}`);
+    }
+    switch (route) {
+      case 'info':
+        return targetInfo(held, held.name === this.active);
+      case 'use':
+        this.active = held.name;
+        return targetsList(this.targets, this.active, this.form);
+      case 'test':
+        return targetTest(held);
+      case 'remove':
+        if (held.name === this.active) {
+          return targetsRefusal('TargetActive', `the target ${name} is the active one; use another target first`);
+        }
+        this.targets = this.targets.filter((target) => target !== held);
+        return { status: 204 };
+    }
+  }
+
   /** Every later session request is answered `answer`. */
   answerSession(...answers: FakeAnswer[]): void {
     this.sessionAnswers = [...this.sessionAnswers.slice(0, this.sessionCount), ...answers];
@@ -106,12 +309,16 @@ export class FakeEngine {
     const headers: Record<string, string> = {};
     new Headers(init.headers).forEach((value, name) => (headers[name] = value));
     const signal = init.signal ?? undefined;
+    const method = (init.method ?? 'GET').toUpperCase();
+    const body = parseBody(init.body);
     this.requests.push({
       url: String(input),
       origin: url.origin,
       path: url.pathname,
       headers,
       init,
+      method,
+      body,
       aborted: () => signal?.aborted === true,
     });
     if (url.origin === window.location.origin && url.pathname === '/config.json') {
@@ -122,7 +329,10 @@ export class FakeEngine {
       );
     }
     let answer: FakeAnswer;
-    if (url.pathname === '/__emuforge/session') {
+    const targets = targetsRoute(method, url.pathname);
+    if (targets !== undefined) {
+      answer = this.targetsQueue.get(targets.route)?.shift() ?? this.targetsAnswer(targets.route, targets.name, body);
+    } else if (url.pathname === '/__emuforge/session') {
       answer = this.sessionAnswers[Math.min(this.sessionCount++, this.sessionAnswers.length - 1)] ?? { hang: true };
     } else if (url.pathname === '/__emuforge/health') {
       answer = this.healthAnswers[Math.min(this.healthCount++, this.healthAnswers.length - 1)] ?? { hang: true };
@@ -201,6 +411,44 @@ export function renderApp(path = '/', language?: LanguageStore) {
     </Providers>,
   );
   return { ...result, router };
+}
+
+/** The document's target seen and the app's query client, as a tree rendered by `renderWithTargetSeen` sees them. */
+export interface SeenProbe {
+  /** The target seen now: its name, generation and `report`. */
+  readonly current: TargetSeen;
+  readonly queryClient: QueryClient;
+}
+
+/**
+ * Renders `children` under the app's providers (the language, the query client, the target seen), and returns a probe
+ * of the target seen and the query client.
+ */
+export function renderWithTargetSeen(children: ReactNode = null, language?: LanguageStore) {
+  const probe: { current: TargetSeen | undefined; queryClient: QueryClient | undefined } = {
+    current: undefined,
+    queryClient: undefined,
+  };
+  function Probe() {
+    probe.current = useTargetSeen();
+    probe.queryClient = useQueryClient();
+    return null;
+  }
+  const result = render(
+    <Providers language={language}>
+      <Probe />
+      {children}
+    </Providers>,
+  );
+  const seen: SeenProbe = {
+    get current() {
+      return present(probe.current, 'the target seen');
+    },
+    get queryClient() {
+      return present(probe.queryClient, 'the query client');
+    },
+  };
+  return { ...result, seen };
 }
 
 /** The marks around every value of the marked test catalogue. */
