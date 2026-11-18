@@ -45,7 +45,7 @@ pub struct Config {
     pub studio_port: NonZeroU16,
     /// IP address both listeners bind; any other than 127.0.0.1 lets anything that can reach it use the emulator
     /// through the engine
-    #[arg(long = "listen-address", default_value_t = IpAddr::V4(LISTEN_IP))]
+    #[arg(long = "listen-address", value_name = "IP", default_value_t = IpAddr::V4(LISTEN_IP))]
     pub listen_address: IpAddr,
 }
 
