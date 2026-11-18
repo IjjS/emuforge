@@ -43,6 +43,12 @@ export interface ProviderAreaProps {
   routeChanges: number;
   /** The engine's connection status, as Studio's frame last read it. */
   connection: ProviderConnection;
+  /**
+   * How many changes of target the document has seen (issue 486, R3): `0` until the first, one more on each. A plain
+   * value like `connection`; the area is not mounted again when it changes. Absent means `0`. When it changes, every
+   * answer the area cached has already been dropped.
+   */
+  targetGeneration?: number | undefined;
 }
 
 /** A service of a provider, as Home lists it. */
