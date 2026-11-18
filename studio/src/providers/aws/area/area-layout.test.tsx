@@ -2430,7 +2430,7 @@ describe('a change of target (issue 486, R3)', () => {
     expect(screen.getByRole('button', { name: 'About the local emulator' })).toHaveAttribute('aria-expanded', 'false');
   });
 
-  it('on that change, with focus inside the page: focus moves to the page\'s content target', () => {
+  it("on that change, with focus inside the page: focus moves to the page's content target", () => {
     openProbe();
     act(() => {
       count().focus();

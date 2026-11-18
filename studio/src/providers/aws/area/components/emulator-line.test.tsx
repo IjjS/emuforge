@@ -366,21 +366,28 @@ describe("the emulator line's target (issue 486, R2)", () => {
   it.each([
     ['not started', 'not_started', 'Not started on port 9297', 'stopped'],
     ['not answering', 'timeout', `Not answering at ${endpoint(9297)}`, 'error'],
-  ])('%s with target local: the status unchanged, then "Target local", then "Connection status"', (_name, reason, status, type) => {
-    connection.value = { result: naming(emulatorDown(reason, 9297), 'local'), engineOrigin: ENGINE_ORIGIN };
-    open();
+  ])(
+    '%s with target local: the status unchanged, then "Target local", then "Connection status"',
+    (_name, reason, status, type) => {
+      connection.value = { result: naming(emulatorDown(reason, 9297), 'local'), engineOrigin: ENGINE_ORIGIN };
+      open();
 
-    expect(statusText()).toBe(status);
-    expect(statusType()).toBe(type);
-    const part = targetPart() as HTMLElement;
-    expect(text(part)).toBe('Target local');
-    const link = connectionStatusLink() as HTMLElement;
-    expect(follows(part, link)).toBe(true);
-  });
+      expect(statusText()).toBe(status);
+      expect(statusType()).toBe(type);
+      const part = targetPart() as HTMLElement;
+      expect(text(part)).toBe('Target local');
+      const link = connectionStatusLink() as HTMLElement;
+      expect(follows(part, link)).toBe(true);
+    },
+  );
 
   it.each([
     ['engine not answering', engineUnreachable, `The EmuForge engine at ${ENGINE_ORIGIN} is not answering`],
-    ['engine error', () => engineError(403, 'OriginNotAllowed'), 'The EmuForge engine answered with an error: OriginNotAllowed'],
+    [
+      'engine error',
+      () => engineError(403, 'OriginNotAllowed'),
+      'The EmuForge engine answered with an error: OriginNotAllowed',
+    ],
   ])('%s: as before, no target part', (_name, result, status) => {
     connection.value = { result: result(), engineOrigin: ENGINE_ORIGIN };
     open();

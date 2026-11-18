@@ -155,8 +155,7 @@ export function EmulatorLine({ connection, about, aboutRef }: EmulatorLineProps)
   const labelId = useId();
   const status = lineStatus(connection);
   // Only a state that comes from the emulator's answer names the target; an engine state names none.
-  const target =
-    connection.result === undefined || status === CHECKING ? undefined : targetOf(connection.result);
+  const target = connection.result === undefined || status === CHECKING ? undefined : targetOf(connection.result);
   const announcement = useAnnouncement({ status, target });
   const state = (
     <SpaceBetween direction="horizontal" size="xs" alignItems="center">
