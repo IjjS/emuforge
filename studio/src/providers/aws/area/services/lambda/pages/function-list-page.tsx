@@ -13,6 +13,7 @@ import Table, { type TableProps } from '@cloudscape-design/components/table';
 import { useCallback, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 
+import { useAreaModalRoot } from '../../../components/area-modal';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
@@ -23,7 +24,6 @@ import { readFailureState, useAnnouncer, type ReadFailureState } from '../compon
 import { ReadFailure } from '../components/failures';
 import { quoting } from '../components/quoting';
 import './function-list-page.css';
-import { useAreaModalRoot } from '../components/modal-root';
 import { CREATE_FUNCTION_PATH, functionPath, lastModifiedText, NONE, runtimeText, typeText } from '../format';
 import { useFunctionListing, type FunctionCount, type FunctionListing } from '../queries';
 
