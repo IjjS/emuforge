@@ -102,9 +102,11 @@ export interface RedriveTabProps {
   details: QueueDetails;
   settings: QueueSettings;
   connection: AreaConnection;
+  /** Called once the emulator has started a move task: the messages read before may have moved. */
+  onMoveStarted: () => void;
 }
 
-export function RedriveTab({ details, settings, connection }: RedriveTabProps) {
+export function RedriveTab({ details, settings, connection, onMoveStarted }: RedriveTabProps) {
   const engineOrigin = connection.engineOrigin;
   const name = details.name;
   const sourceArn = settings.arn;
@@ -203,6 +205,7 @@ export function RedriveTab({ details, settings, connection }: RedriveTabProps) {
       () => {
         if (!signal.aborted) {
           setStarting(false);
+          onMoveStarted();
           flash.show([
             {
               type: 'success',

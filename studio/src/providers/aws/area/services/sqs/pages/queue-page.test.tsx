@@ -1397,6 +1397,57 @@ describe('deleting messages', () => {
   });
 });
 
+describe('a move task started on "Redrive"', () => {
+  async function startMove() {
+    openTab('Redrive');
+    await screen.findByRole('heading', { name: /^Move messages/ });
+    const before = engine.of('StartMessageMoveTask').length;
+    fireEvent.click(button('Start'));
+    await waitFor(() => {
+      expect(engine.of('StartMessageMoveTask')).toHaveLength(before + 1);
+    });
+  }
+
+  it('clears the read result, as a purge does: no row read before is left to select or delete', async () => {
+    engine.messages = [wire('m1', 'a'), wire('m2', 'b')];
+    await openQueue(DLQ, [ORDERS]);
+    await readMessages();
+    act(() => {
+      table().findRowSelectionArea(1)?.click();
+    });
+    expect(table().findSelectedRows()).toHaveLength(1);
+
+    engine.on('StartMessageMoveTask', () => ok({ TaskHandle: 'task-1' }));
+    await startMove();
+    await expectFlash([['Started: move the messages of orders-dlq back to its source queues', '']]);
+
+    openTab('Messages');
+    expect(PAGE.findTable()).toBeNull();
+    expect(screen.queryByText('m1')).toBeNull();
+  });
+
+  it('a refused start keeps the read result', async () => {
+    engine.messages = [wire('m1', 'a')];
+    await openQueue(DLQ, [ORDERS]);
+    await readMessages();
+    engine.on('StartMessageMoveTask', () =>
+      refused(
+        400,
+        'UnsupportedOperation',
+        'There is already a task running.',
+        'AWS.SimpleQueueService.UnsupportedOperation',
+      ),
+    );
+    await startMove();
+    await expectFlash([
+      ['Starting the move failed', 'AWS.SimpleQueueService.UnsupportedOperation: There is already a task running.'],
+    ]);
+
+    openTab('Messages');
+    expect(rows()).toHaveLength(1);
+  });
+});
+
 describe('purging', () => {
   function modal() {
     const found = PAGE.findModal();

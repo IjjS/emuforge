@@ -315,7 +315,17 @@ function QueueView(props: QueueViewProps) {
     tabs.push({
       id: 'redrive',
       label: 'Redrive',
-      content: <RedriveTab details={details} settings={settings} connection={connection} />,
+      content: (
+        <RedriveTab
+          details={details}
+          settings={settings}
+          connection={connection}
+          onMoveStarted={() => {
+            // The messages read before may now be in other queues; a delete of their handles would still answer 200.
+            onRead({ ...read, result: undefined, selected: [], detail: undefined });
+          }}
+        />
+      ),
     });
   }
   tabs.push({
