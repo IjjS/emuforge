@@ -49,7 +49,7 @@ interface ConnectionStatus {
  * The emulator line's status for `connection` (`aws-area.md`, "The emulator line"): what a failed read repeats while
  * the connection is not connected. `undefined` while the line says "Checking" or connected.
  */
-export function connectionStatus({ result, engineOrigin }: AreaConnection): ConnectionStatus | undefined {
+function connectionStatus({ result, engineOrigin }: AreaConnection): ConnectionStatus | undefined {
   switch (result?.kind) {
     case undefined:
     case 'connected':
@@ -87,6 +87,7 @@ export interface ReadFailureState {
  * answer's own meaning first (501, `AccessDenied`), then the connection while it is not connected, then the kind
  * of failure.
  */
+// eslint-disable-next-line react-refresh/only-export-components -- the states and the components that write them are one module (breakdown s1)
 export function readFailureState(failure: RequestFailure, connection: AreaConnection, thing: string): ReadFailureState {
   if (failure.kind === 'not-implemented') {
     return {
@@ -185,6 +186,7 @@ export function ReadFailure({ state, onRetry }: { state: ReadFailureState; onRet
  * The Flashbar item of an action that failed: `what` names the step in the item of any other failure ("Sending the
  * message", "Purging orders"); `engineOrigin` is the engine's address the page is configured with.
  */
+// eslint-disable-next-line react-refresh/only-export-components -- the states and the components that write them are one module (breakdown s1)
 export function actionFailureItem(failure: RequestFailure, what: string, engineOrigin: string | undefined): FlashItem {
   switch (failure.kind) {
     case 'not-implemented':
@@ -221,6 +223,7 @@ export function actionFailureItem(failure: RequestFailure, what: string, engineO
 }
 
 /** A page's polite announcements: each one a new element, so the same text is said again. */
+// eslint-disable-next-line react-refresh/only-export-components -- the states and the components that write them are one module (breakdown s1)
 export function useAnnouncer(): [ReactNode, (text: string) => void] {
   const [said, setSaid] = useState({ text: '', id: 0 });
   const announce = useCallback((text: string) => {

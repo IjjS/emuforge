@@ -135,7 +135,12 @@ describe('the request', () => {
 describe('a failure', () => {
   it('whose code is AWS.SimpleQueueService.NonExistentQueue is told apart as no such queue', async () => {
     const gone = () =>
-      refused(400, 'QueueDoesNotExist', 'The specified queue does not exist.', 'AWS.SimpleQueueService.NonExistentQueue');
+      refused(
+        400,
+        'QueueDoesNotExist',
+        'The specified queue does not exist.',
+        'AWS.SimpleQueueService.NonExistentQueue',
+      );
     engine.on('GetQueueUrl', gone);
     engine.on('GetQueueAttributes', gone);
     engine.on('SendMessage', gone);
@@ -467,7 +472,10 @@ describe('a redrive', () => {
 describe('the queue list', () => {
   it('reads ListQueues, then each queue’s attributes and ListDeadLetterSourceQueues, keeping a failed row', async () => {
     engine.on('ListQueues', () =>
-      ok({ QueueUrls: [`${AWS_HOST}/orders`, `${AWS_HOST}/orders-dlq`, `${AWS_HOST}/gone`, `${AWS_HOST}/odd`], NextToken: 't2' }),
+      ok({
+        QueueUrls: [`${AWS_HOST}/orders`, `${AWS_HOST}/orders-dlq`, `${AWS_HOST}/gone`, `${AWS_HOST}/odd`],
+        NextToken: 't2',
+      }),
     );
     engine.on('GetQueueAttributes', (body) => {
       const url = String(body['QueueUrl']);

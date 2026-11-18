@@ -156,7 +156,11 @@ export function getQueueAttributes(
 }
 
 /** The `QueueArn` attribute of the queue at `url`, as it came; `undefined` when the answer gave none. */
-export function getQueueArn(endpoint: string, url: string, signal: AbortSignal): Promise<string | NoSuchQueue | undefined> {
+export function getQueueArn(
+  endpoint: string,
+  url: string,
+  signal: AbortSignal,
+): Promise<string | NoSuchQueue | undefined> {
   return orNoSuchQueue(
     send(
       endpoint,
@@ -225,7 +229,11 @@ export async function readQueueDetails(
 }
 
 /** S2's read: `GetQueueUrl` of the route's name, then the queue's details; `NO_SUCH_QUEUE` when it is not held. */
-export async function readQueue(endpoint: string, name: string, signal: AbortSignal): Promise<QueueDetails | NoSuchQueue> {
+export async function readQueue(
+  endpoint: string,
+  name: string,
+  signal: AbortSignal,
+): Promise<QueueDetails | NoSuchQueue> {
   const url = await getQueueUrl(endpoint, name, signal);
   return url === NO_SUCH_QUEUE ? url : readQueueDetails(endpoint, url, signal);
 }
@@ -266,7 +274,11 @@ async function queueRow(endpoint: string, url: string, signal: AbortSignal): Pro
  * `ListDeadLetterSourceQueues`. A row whose own reads fail keeps its name and its failure; only a failure of
  * `ListQueues` rejects.
  */
-export async function listQueuePage(endpoint: string, request: QueuePageRequest, signal: AbortSignal): Promise<QueuePage> {
+export async function listQueuePage(
+  endpoint: string,
+  request: QueuePageRequest,
+  signal: AbortSignal,
+): Promise<QueuePage> {
   const { urls, nextToken } = await listQueues(endpoint, request, signal);
   const queues = await Promise.all(urls.map((url) => queueRow(endpoint, url, signal)));
   return nextToken === undefined ? { queues } : { queues, nextToken };
@@ -602,7 +614,11 @@ export interface MoveTask {
 }
 
 /** The move tasks of the queue whose ARN is `sourceArn`, newest first, at most 10. */
-export async function listMessageMoveTasks(endpoint: string, sourceArn: string, signal: AbortSignal): Promise<MoveTask[]> {
+export async function listMessageMoveTasks(
+  endpoint: string,
+  sourceArn: string,
+  signal: AbortSignal,
+): Promise<MoveTask[]> {
   const output = await send(
     endpoint,
     OPERATIONS.listMessageMoveTasks,
