@@ -1,13 +1,14 @@
 #!/usr/bin/env -S python3 -I
 """Record impeccable critique scores per issue and print the score table.
 
-  pm-critique record <issue> <phase> <snapshot.md> [--label A]   phase: baseline | candidate | revised | final
+  pm-critique record <issue> <phase> <snapshot.md> [--label A]   phase: final, or mock when the plan asked for one
   pm-critique table <issue>                                       markdown table for the issue report
-  pm-critique check <issue>                                       exit 1 when final < revised - 2 or final has P0/P1
+  pm-critique check <issue>                                       exit 1 when the last final has a P0 or P1 finding
 
 The critic pane runs the impeccable critique skill itself (two sub-agents, same viewports every time); the snapshot
 it persists under <worktree>/studio/.impeccable/critique/<ts>__<slug>.md carries the score in its frontmatter. This
-script only copies that frontmatter into .pm/issue-<n>/critique-scores.json so the four points are comparable.
+script only copies that frontmatter into .pm/issue-<n>/critique-scores.json. The score is told in the issue's report
+and decides nothing (issue 478); only a P0 or P1 finding of the final point holds the screen back, until it is fixed.
 """
 import argparse
 import json
@@ -70,17 +71,12 @@ def cmd_table(a):
 def cmd_check(a):
     t, rows = table(a.issue)
     fin = [r for r in rows if r["phase"] == "final"]
-    rev = [r for r in rows if r["phase"] == "revised"] or [r for r in rows if r["phase"] == "baseline"]
     if not fin:
         sys.exit("no final score yet")
     f = fin[-1]
-    ok = True
-    if f["p0"] or f["p1"]:
-        print(f"final has P0={f['p0']} P1={f['p1']}: rework before PR"); ok = False
-    if rev:
-        ref = rev[-1]
-        if f["total"] / f["max"] < ref["total"] / ref["max"] - 2 / 40:
-            print(f"final {f['total']}/{f['max']} dropped more than 2 points below {ref['phase']} {ref['total']}/{ref['max']}: rework before PR"); ok = False
+    ok = not (f["p0"] or f["p1"])
+    if not ok:
+        print(f"final has P0={f['p0']} P1={f['p1']}: fix each before the issue is ready")
     print(t)
     sys.exit(0 if ok else 1)
 

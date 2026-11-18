@@ -47,7 +47,7 @@ import unittest
 from _fixture import CHECKOUT, clean_env, git, make, run
 
 SCRIPTS = ("pm-worktree", "pm-scope", "pm-check", "pm-merge", "pm-emulator-dir", "pm-brief", "pm-archive",
-           "pm-cost", "pm-pane", "pm-critique", "pm-structure")
+           "pm-cost", "pm-pane", "pm-critique")
 PRODUCT_PATH = "studio/src/a.txt"  # rule 6: engine, studio, integration
 HARNESS_PATH = ".pm/bin/note.txt"  # rule 8: harness
 ISSUE_FILE = "issues/things-that-do-not-work/a.md"  # rule 9: nothing

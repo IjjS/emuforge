@@ -103,19 +103,9 @@ EVERY_FILE = (".pm/bin/_pmscope.py", ".pm/bin/tests/run")
 # there) and why it runs when one of them changes. A test file without an entry is an always file. Adding an entry
 # or taking a source away is the `pm`'s decision, recorded in the issue's decisions.md; adding a source is not.
 _T, _B = ".pm/bin/tests/", ".pm/bin/"
-_SCORE = [_B + "_pmbrowse.py", _B + "_pmproc.py", _B + "_pmscore.py", _B + "_pmspec.py"]
-_ARCHIVE = [_B + "pm-archive", _B + "pm-cost", _B + "pm-pane", _B + "pm-critique", _B + "pm-structure",
-            _B + "_pmlib.py", _B + "_pmquota.py", _B + "_pmtokens.py", *_SCORE]
+_ARCHIVE = [_B + "pm-archive", _B + "pm-cost", _B + "pm-pane", _B + "pm-critique", _B + "_pmlib.py", _B + "_pmquota.py",
+            _B + "_pmtokens.py"]
 ON_TOUCH = [
-    dict(test="test_capture.py",
-         why="pm-structure captures its fixture pages with the Playwright, Vite and Cloudscape Studio installs",
-         sources=[_T + "test_capture.py", _T + "fixtures/structure/", _B + "pm-structure",
-                  _B + "_pmstructure_capture.mjs", *_SCORE, _B + "_pmlib.py", _B + "_pmquota.py",
-                  _B + "_pmtokens.py", "studio/package.json",
-                  "studio/bun.lock"]),
-    dict(test="test_hang.py",
-         why="the stand-ins of a capture that hangs and the ending of their process groups",
-         sources=[_T + "test_hang.py", _T + "_hang.py", _T + "test_terminate.py", _T + "fixtures/hang/"]),
     dict(test="test_emulator_dir.py",
          why="pm-emulator-dir and the scripts that remove an emulator's port folder, on fixture checkouts",
          sources=[_T + "test_emulator_dir.py", _T + "_fixture.py", _B + "pm-emulator-dir", _B + "pm-merge",
