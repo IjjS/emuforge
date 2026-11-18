@@ -69,12 +69,19 @@ on the built app (`critique.md`).
   engine's address the page is configured with. Every value is rendered as text; no endpoint, port or origin is a
   constant in the area's source, and a state in which the engine does not answer or answers with an error names
   no emulator endpoint.
+- In the states that come from the emulator's answer (connected, not started, not answering), when that answer names
+  the engine's target, the status is followed by a part of its own, "Target `{target}`", the name as the answer gave
+  it, rendered as text in code style (issue 486, R2). The status texts above are unchanged, word for word and in the
+  same element. The engine states and "Checking" name no target, and an answer that names none shows no part.
 - In every state but "Checking" and connected the line ends with the link "Connection status" to Home, a route
   change like a crumb's.
 - The line stays current while a page of the area is open (the 5-second rhythm of "The area in Studio's frame");
   while a later check is in flight it keeps showing the last answer's state. A change of state is announced once, label and new
-  status together, in a polite live region that does not hold the link; a check that finds the same state
-  announces nothing, and the first answer is announced only when it is not connected.
+  status together, with the target part when there is one, in a polite live region that does not hold the link; a
+  check that finds the same state announces nothing, and the first answer is announced only when it is not
+  connected. A change of target that keeps the kind of status (connected to connected, say, even with another
+  endpoint) is announced by the area's flash ("The area in Studio's frame"), so the line's live region says nothing
+  of it; a change of the kind of status is announced as before, whatever the target.
 - The line's height is not fixed: at 390 wide a long status may take a row more, so a check that compares
   positions on a page of the area measures after the line shows its first answer.
 
@@ -165,6 +172,18 @@ Applies to everything under `providers/aws/area/`, at `/aws` and below.
   a page of the area opens and again 5 seconds after each answer, for as long as a page of the area is open, so a
   route change inside the area keeps the last answer. The area reads the connection from what Studio hands it and
   its types from `lib/`, and imports nothing from `app/` or `features/` to learn it.
+- Beside the connection Studio hands the area `targetGeneration` (issue 486, R3): how many changes of target the
+  document has seen, `0` until the first, absent meaning `0`. The area learns the target only from what Studio hands
+  it. When the number changes while the area is mounted, the routed page alone (below the emulator line, the notice
+  and the flash) is mounted again in place: it reads its data afresh from the new target (Studio dropped what the
+  area had cached) and keeps no local state of the earlier one, a page token, a selection or a half-filled form
+  included, with no "Discard what you entered?" asked. The line, the notice and the layout stay mounted with their
+  state. No route changed, so no focus is moved for one: focus that was inside the page moves to the content target,
+  and focus anywhere else (the line, the notice, the flash, the side navigation, Studio's bar) stays where it is. On a
+  screen's page the flash shows the info result "The target is now `{target}`. This page was read again from its
+  emulator.", announced once as any flash, as soon as the connection Studio hands names a target other than the
+  one before the change. An area that mounts with the number already above `0` remounts nothing and shows no
+  flash, and a route change with the same number is as any route change.
 - The frame, Home and the router read that list and name no provider themselves. Adding a provider is one new
   entry and that provider's own folder (`providers/<id>/provider.ts`, `providers/<id>/area/`); it changes no file
   of Studio's own screens and no file of another provider's area.
