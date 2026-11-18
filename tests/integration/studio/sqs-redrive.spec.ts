@@ -2,7 +2,8 @@
 // the move tasks and their cancel, in the built app in front of a real engine and emulator (test-criteria.md, issue
 // 481: task 5).
 //
-// `studio.sqs-redrive-dead-letters-back-to-their-source`, `studio.sqs-redrive-to-another-queue-and-cancel`.
+// `studio.sqs-redrive-dead-letters-back-to-their-source`, `studio.sqs-redrive-of-several-sources-asks-for-a-queue`,
+// `studio.sqs-redrive-to-another-queue-and-cancel`.
 //
 // Each check names its queues with its own prefix `<p>` and deletes them when it ends (`SqsSeeded`). What the emulator
 // holds afterwards is read directly (`countsDirect`, `moveTasksDirect`). Words, direct calls and readers:
@@ -28,6 +29,7 @@ import {
   queueScreen,
   readMessages,
   receiveDirect,
+  redrivePolicy,
   SqsSeeded,
   TAB_MESSAGES,
   TAB_REDRIVE,
@@ -43,6 +45,10 @@ const START = 'Start';
 const CANCEL = 'Cancel';
 const SOURCE_QUEUES = 'Source queues';
 const ALREADY_RUNNING = 'There is already a task running';
+/** The disabled "Back to their source queues" item's description on a dead-letter queue of `n` sources. */
+function severalSources(name: string, n: number): string {
+  return `${name} is the dead-letter queue of ${String(n)} queues, so the emulator cannot tell each message's source queue. Choose the queue to move them to.`;
+}
 
 /** The parts of the tab "Redrive" a check acts on. */
 function redriveTab(page: Page) {
@@ -56,6 +62,31 @@ function redriveTab(page: Page) {
     tasks: panel.locator(TABLE).first(),
     cancel: panel.getByRole('button', { name: CANCEL, exact: true }),
   };
+}
+
+/** Chooses `queue` in the "Another queue" select, filtering by its name. */
+async function chooseQueue(page: Page, name: string): Promise<void> {
+  await redriveTab(page).choose.click(ACTION);
+  await page.getByRole('combobox', { name: QUEUE_PREFIX }).fill(name, ACTION);
+  await page.getByRole('option', { name, exact: true }).click(ACTION);
+}
+
+/** Receives each message of `url` with a visibility of 0 until the dead-letter queue `dlqUrl` holds `count`. */
+async function receivedIntoDlq(
+  ctx: Parameters<typeof countsDirect>[0],
+  port: number,
+  urls: string[],
+  dlqUrl: string,
+  count: number,
+): Promise<number> {
+  return eventually(
+    10_000,
+    async () => {
+      for (const url of urls) await receiveDirect(ctx, port, url, 0);
+      return (await countsDirect(ctx, port, dlqUrl)).available;
+    },
+    (n) => n === count,
+  );
 }
 
 /** A task row as shown: its status, destination and "moved of to move". */
@@ -73,14 +104,7 @@ test('studio.sqs-redrive-dead-letters-back-to-their-source', async ({ ctx, page 
   const seeded = new SqsSeeded(ctx, port, p);
   const { source, dlq } = await seeded.redrivePair(`${p}-src`, `${p}-dlq`, 1);
   await seeded.messages(source, 1, 'poison');
-  const moved = await eventually(
-    10_000,
-    async () => {
-      await receiveDirect(ctx, port, source.url, 0);
-      return (await countsDirect(ctx, port, dlq.url)).available;
-    },
-    (n) => n === 1,
-  );
+  const moved = await receivedIntoDlq(ctx, port, [source.url], dlq.url, 1);
   expect(moved, 'the message is in the dead-letter queue, directly').toBe(1);
   const s = queueScreen(page);
   const r = redriveTab(page);
@@ -121,6 +145,53 @@ test('studio.sqs-redrive-dead-letters-back-to-their-source', async ({ ctx, page 
 
 // ---------------------------------------------------------------------------------------------------------------
 
+test('studio.sqs-redrive-of-several-sources-asks-for-a-queue', async ({ ctx, page }) => {
+  const stack = await startStack(ctx);
+  const port = stack.emulatorPort;
+  const lines = new Lines(ctx);
+  const p = checkPrefix(ctx, 'redrive-several');
+  const seeded = new SqsSeeded(ctx, port, p);
+  const { source: first, dlq } = await seeded.redrivePair(`${p}-a`, `${p}-dlq`, 1);
+  const second = await seeded.queue(`${p}-b`, { RedrivePolicy: redrivePolicy(dlq.arn, 1) });
+  await seeded.messages(first, 1, 'from-a');
+  await seeded.messages(second, 1, 'from-b');
+  expect(await receivedIntoDlq(ctx, port, [first.url, second.url], dlq.url, 2), 'both in the dead-letter queue, directly').toBe(2);
+  const s = queueScreen(page);
+  const r = redriveTab(page);
+
+  await lines.line(
+    'Open the dead-letter queue\'s "Redrive" → "Back to their source queues" is disabled with "{name} is the dead-letter queue of 2 queues, …", and "Another queue" is chosen',
+    async () => {
+      await open(page, queuePath(dlq.name), dlq.name);
+      await s.tab(TAB_REDRIVE).click(ACTION);
+      await expect(r.radio(BACK), '"Back to their source queues" disabled').toBeDisabled();
+      await expect(r.panel.getByText(severalSources(dlq.name, 2), { exact: true })).toBeVisible();
+      await expect(r.radio(ANOTHER), '"Another queue" chosen').toBeChecked();
+    },
+  );
+
+  await lines.line(
+    'Choose the first source, "Start" → the task is listed COMPLETED with 2 of 2 moved, and the emulator reports both messages in the first source and none in the dead-letter queue',
+    async () => {
+      await chooseQueue(page, first.name);
+      await expect(r.start, '"Start" once the queue\'s ARN is read').toBeEnabled({ timeout: 15_000 });
+      await answered(page, 'StartMessageMoveTask', () => r.start.click(ACTION));
+      await expectFlash(page, 'success', 'Started');
+      await expectRows(r.tasks, task, [['COMPLETED', first.name, '2 of 2']], 'the move tasks', 20_000);
+      const direct = await eventually(
+        10_000,
+        async () => [(await countsDirect(ctx, port, first.url)).available, (await countsDirect(ctx, port, dlq.url)).available],
+        ([inFirst, inDlq]) => inFirst === 2 && inDlq === 0,
+      );
+      expect(direct, 'available in the first source and in the dead-letter queue, directly').toEqual([2, 0]);
+    },
+  );
+
+  lines.end();
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+
 test('studio.sqs-redrive-to-another-queue-and-cancel', async ({ ctx, page }) => {
   const stack = await startStack(ctx);
   const port = stack.emulatorPort;
@@ -139,9 +210,7 @@ test('studio.sqs-redrive-to-another-queue-and-cancel', async ({ ctx, page }) => 
       await open(page, queuePath(dlq.name), dlq.name);
       await s.tab(TAB_REDRIVE).click(ACTION);
       await r.radio(ANOTHER).check(ACTION);
-      await r.choose.click(ACTION);
-      await page.getByRole('combobox', { name: QUEUE_PREFIX }).fill(third.name, ACTION);
-      await page.getByRole('option', { name: third.name, exact: true }).click(ACTION);
+      await chooseQueue(page, third.name);
       await expect(r.panel.getByText(moveTo(dlq.name, third.name), { exact: true })).toBeVisible();
       await r.rate.fill('1', ACTION);
       await expect(r.start, '"Start" once the queue\'s ARN is read').toBeEnabled({ timeout: 15_000 });
