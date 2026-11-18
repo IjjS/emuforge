@@ -23,6 +23,8 @@
   },
   "connection.engine": "Движок",
   "connection.emulator": "Эмулятор",
+  "connection.target": "Цель {target}",
+  "connection.manage": "Управление подключениями",
   "status.checking": "Проверка",
   "status.connected": "Подключено",
   "status.notStarted": "Не запущен",

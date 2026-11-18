@@ -31,6 +31,8 @@
   },
   "connection.engine": "Engine",
   "connection.emulator": "Emulator",
+  "connection.target": "Ziel {target}",
+  "connection.manage": "Verbindungen verwalten",
   "status.checking": "Wird geprüft",
   "status.connected": "Verbunden",
   "status.notStarted": "Nicht gestartet",

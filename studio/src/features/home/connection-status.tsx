@@ -3,7 +3,8 @@ import { useEffect, useRef, type FocusEvent } from 'react';
 import type { MessageKey } from '../../i18n/catalogue';
 import { useLanguage } from '../../i18n/language-context';
 import type { Messages } from '../../i18n/messages';
-import type { CheckResult } from '../../lib/engine/engine-client';
+import { targetOf, type CheckResult } from '../../lib/engine/engine-client';
+import { ButtonLink } from '../../ui/button-link';
 import { Panel, Section } from '../../ui/section';
 import { StatusRow, StatusRows, type StatusKind } from '../../ui/status-rows';
 import { ConnectionNotice } from './connection-notice';
@@ -86,12 +87,17 @@ export interface ConnectionStatusProps {
   onFocusLost: () => void;
 }
 
-/** The "Connection" section of Home (requirement R9.1): the Engine and Emulator rows and the state's notice. */
+/**
+ * The "Connection" section of Home (requirement R9.1): the Engine and Emulator rows, below them the target the health
+ * answer named and the way to the connections page (issue 486, R2), and the state's notice.
+ */
 export function ConnectionStatus(props: ConnectionStatusProps) {
   const { result, engineOrigin, enginePort, studioPort, refreshing, onRefresh, onFocusLost } = props;
   const language = useLanguage();
   const { t } = language;
   const { engine, emulator } = rows(result, engineOrigin);
+  // Only an answer from the engine's health route names a target; the engine states know none.
+  const target = result === undefined ? undefined : targetOf(result);
 
   // The element in the notice that last had focus, kept until focus leaves for another element. A focused element
   // that an answer removes takes focus with it; the header "Refresh" receives it instead.
@@ -141,6 +147,14 @@ export function ConnectionStatus(props: ConnectionStatusProps) {
               address={emulator.endpoint}
             />
           </StatusRows>
+          {/* Outside the rows, which stay as they were; the live region below does not name the target, so a change
+              of target alone announces nothing. */}
+          <div className="st-row">
+            <div className="st-section-head">
+              {target !== undefined && <p className="st-meta">{t('connection.target', { target })}</p>}
+              <ButtonLink to="/connections">{t('connection.manage')}</ButtonLink>
+            </div>
+          </div>
           {engineOrigin !== undefined && enginePort !== undefined && hasNotice(result) && (
             <div onFocus={handleFocus} onBlur={handleBlur}>
               <ConnectionNotice

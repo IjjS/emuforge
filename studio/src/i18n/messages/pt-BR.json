@@ -22,6 +22,8 @@
   },
   "connection.engine": "Mecanismo",
   "connection.emulator": "Emulador",
+  "connection.target": "Destino {target}",
+  "connection.manage": "Gerenciar conexões",
   "status.checking": "Verificando",
   "status.connected": "Conectado",
   "status.notStarted": "Não iniciado",

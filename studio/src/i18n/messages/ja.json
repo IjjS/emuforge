@@ -20,6 +20,8 @@
   },
   "connection.engine": "エンジン",
   "connection.emulator": "エミュレーター",
+  "connection.target": "ターゲット {target}",
+  "connection.manage": "接続を管理",
   "status.checking": "確認中",
   "status.connected": "接続済み",
   "status.notStarted": "未起動",
