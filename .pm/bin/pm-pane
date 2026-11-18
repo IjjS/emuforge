@@ -12,7 +12,10 @@ reset and close also stop the orphaned processes of the pane's worktree: its pro
 close after the pane is closed, looking again for up to 5 s. Each prints one line per worktree: `stopped <n>
 orphaned processes of <worktree>: <pid> <name>, …`, `no orphaned processes in <worktree>` or `cannot tell …`, and
 logs it. Only processes of the worktree are signalled, by PID after a check that each is still the same process;
-nothing by name, no process group, no container. A pane in the main checkout is not swept.
+nothing by name, no process group, no container. A pane in the main checkout is not swept. What the sweep leaves
+out (_pmorphans: a running pm-check of the worktree, its step group and the stand-ins its tests start under
+<worktree>/output/tests/, and impeccable's live-server while a live crit pane of the worktree's issue is
+registered) is not signalled, and the line says so: `…; left running: <pid> <name>, … (<why>)`.
 
 Roles: plan, worker, rev, crit, harness-engineer. Name = i<issue>-<role>[-<unit>], e.g. i12-plan, i12-worker-s1, i12-rev,
 i12-harness-engineer (herdr names must start with a letter).

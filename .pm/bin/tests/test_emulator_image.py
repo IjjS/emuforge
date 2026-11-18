@@ -32,7 +32,10 @@ the started line does. A refresh's pid is the pid of the process that does the w
 `--foreground` (the script runs as `/usr/bin/env -S python3 -I`, which keeps its pid), the started line's otherwise.
 
 The script's output goes to files, never to a pipe a process it leaves could hold. Each case ends what it started:
-every recorded pid, the pids of the started lines, and any process whose command line names the case's directory.
+first every recorded pid and the pids of the started lines, each waited for until it is gone, so no worker starts
+another docker call after it; then, look after look until one finds none, any process whose command line names the
+case's directory. A process still alive after that fails the case (issue 477: a `docker info` a worker started
+between the look and its kill outlived the case).
 
 On a checkout without .pm/bin/pm-emulator-image every case fails at once, saying so.
 """
@@ -371,24 +374,42 @@ class Case(unittest.TestCase):
         self.docker()
 
     def end(self):
-        """End what the case started: recorded pids, started workers, and anything naming the case's directory."""
+        """End what the case started: the recorded pids and workers first, until each is gone; then what names the
+        case's directory, look after look until one finds none. Fails the case when one is still alive."""
         pids = set(self.started_pids) | set(self.other_pids)
         pids |= {c["pid"] for c in self.calls()}
         pids |= {p for b in self.builds() for p in (b["pid"], b["child"]) if p}
-        for line in ps("-axo", "pid=,command=").splitlines():
-            pid, _, command = line.strip().partition(" ")
-            if f"{self.co}/" in command and pid.isdigit():
-                pids.add(int(pid))
-        pids.discard(os.getpid())
-        for pid in pids:
-            if alive(pid):
-                try:
-                    os.kill(pid, signal.SIGKILL)
-                except (ProcessLookupError, PermissionError):
-                    pass
+        self.kill(pids)
+        end = time.time() + GONE_GRACE
+        named = self.naming()
+        while named and time.time() < end:
+            self.kill(named)
+            named = self.naming()
         decoy = self.home / ".aws" / "credentials"
         if decoy.exists():
             decoy.chmod(0o600)
+        if named:
+            self.fail(f"still alive at the case's end, naming {self.co}: {sorted(named)}")
+
+    def naming(self):
+        """The live pids, other than this process, whose command line names the case's directory."""
+        out = set()
+        for line in ps("-axo", "pid=,command=").splitlines():
+            pid, _, command = line.strip().partition(" ")
+            if f"{self.co}/" in command and pid.isdigit() and int(pid) != os.getpid() and alive(int(pid)):
+                out.add(int(pid))
+        return out
+
+    @staticmethod
+    def kill(pids):
+        """SIGKILL each live pid, then wait, bounded, until each is gone."""
+        pids = {p for p in pids if p != os.getpid() and alive(p)}
+        for pid in pids:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+        until(lambda: not any(alive(p) for p in pids), GONE_GRACE)
 
     # ---- the stand-in
 
@@ -555,6 +576,23 @@ class Started(Case):
         self.assertLess(r.seconds, RETURNS_WITHIN, r)
         n = self.started(r, "1.0.1")
         self.assertTrue(alive(n), f"the worker {n} is not running")
+
+    def test_the_case_s_end_leaves_nothing_a_worker_starts_late(self):
+        """regression (issue 477): a recorded process that keeps starting processes in sessions of their own, as a
+        refresh worker starts its docker calls; the case's end leaves none of them"""
+        sleeper = self.case / "sleeper.py"
+        sleeper.write_text("import time\ntime.sleep(120)\n")
+        spawner = self.case / "spawner.py"
+        spawner.write_text("import subprocess, sys, time\nend = time.time() + 60\nwhile time.time() < end:\n"
+                           f"    subprocess.Popen([sys.executable, '-I', {str(sleeper)!r}], start_new_session=True)\n"
+                           "    time.sleep(0.02)\n")
+        p = subprocess.Popen([sys.executable, "-I", str(spawner)], stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        self.addCleanup(p.wait)
+        self.started_pids.append(p.pid)
+        self.assertTrue(until(lambda: len(self.naming()) > 3, WAIT), "the spawner started nothing")
+        self.end()
+        self.assertEqual(self.naming(), set())
 
     def test_without_a_record_the_last_known_image_is_unknown(self):
         self.image("1.0.1", "aaa")
