@@ -1,5 +1,4 @@
 import Alert from '@cloudscape-design/components/alert';
-import AttributeEditor from '@cloudscape-design/components/attribute-editor';
 import Button, { type ButtonProps } from '@cloudscape-design/components/button';
 import Checkbox from '@cloudscape-design/components/checkbox';
 import Container from '@cloudscape-design/components/container';
@@ -21,12 +20,10 @@ import type { ScreenPageProps } from '../../../screens';
 import type { ObjectOwnership, PublicAccessBlock, Tag } from '../api';
 import {
   bucketKeyShown,
-  canAddTag,
   firstMessageField,
   formMessages,
   initialBucketForm,
   kmsKeyShown,
-  MAX_TAGS_REASON,
   nameTakenMessage,
   SETTING_WHAT,
   versioningShown,
@@ -38,6 +35,7 @@ import {
   type MessageField,
 } from '../bucket-form';
 import { actionFailure, type ActionFailure } from '../components/action-failure';
+import { BucketTags } from '../components/bucket-tags';
 import { Quoted } from '../components/quoted';
 import { useAnnouncer } from '../components/use-announcer';
 import { BUCKETS_PATH, encryptionTypeLabel } from '../format';
@@ -295,26 +293,6 @@ export function CreateBucketPage({ connection }: ScreenPageProps) {
     change((current) => ({ ...current, tags: update(current.tags) }));
   };
 
-  const tagInput = (index: number, part: 'key' | 'value') => (
-    <Input
-      ref={(ref) => {
-        const id = `tag-${part}-${String(index)}`;
-        if (ref === null) {
-          tagRefs.current.delete(id);
-        } else {
-          tagRefs.current.set(id, ref);
-        }
-      }}
-      value={form.tags[index]?.[part] ?? ''}
-      invalid={messages.tags[index]?.[part] !== undefined}
-      autoComplete={false}
-      spellcheck={false}
-      onChange={({ detail }) => {
-        setTags((tags) => tags.map((tag, at) => (at === index ? { ...tag, [part]: detail.value } : tag)));
-      }}
-    />
-  );
-
   const nameMessage = nameTaken === undefined ? messages.name : nameTakenMessage(nameTaken);
   // A field's message is free text, the name it quotes included, as on Lambda's and IAM's forms (issue 467, R6): the
   // field is described by the message's sentence as it is written.
@@ -401,37 +379,15 @@ export function CreateBucketPage({ connection }: ScreenPageProps) {
               </FormField>
             </Container>
 
-            <Container header={<Header variant="h2">Tags</Header>}>
-              <AttributeEditor
-                items={form.tags}
-                addButtonText="Add tag"
-                removeButtonText="Remove"
-                disableAddButton={!canAddTag(form)}
-                {...(!canAddTag(form) && { additionalInfo: MAX_TAGS_REASON })}
-                onAddButtonClick={() => {
-                  setTags((tags) => [...tags, { key: '', value: '' }]);
-                }}
-                onRemoveButtonClick={({ detail }) => {
-                  setTags((tags) => tags.filter((_, at) => at !== detail.itemIndex));
-                  setMessages((current) => ({
-                    ...current,
-                    tags: current.tags.filter((_, at) => at !== detail.itemIndex),
-                  }));
-                }}
-                definition={[
-                  {
-                    label: 'Key',
-                    control: (_, index) => tagInput(index, 'key'),
-                    errorText: (_, index) => messages.tags[index]?.key,
-                  },
-                  {
-                    label: 'Value',
-                    control: (_, index) => tagInput(index, 'value'),
-                    errorText: (_, index) => messages.tags[index]?.value,
-                  },
-                ]}
-              />
-            </Container>
+            <BucketTags
+              form={form}
+              messages={messages.tags}
+              onChange={setTags}
+              onRemove={(index) => {
+                setMessages((current) => ({ ...current, tags: current.tags.filter((_, at) => at !== index) }));
+              }}
+              tagRefs={tagRefs}
+            />
 
             <Container header={<Header variant="h2">Default encryption</Header>}>
               <SpaceBetween size="l">

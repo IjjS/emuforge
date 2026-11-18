@@ -242,6 +242,7 @@ describe('routes', () => {
 
   // Issue 57 (test-criteria.md, "Unit — app/routes.test.tsx", rewritten): a path below a service that has screens,
   // which no screen matches, shows the "no screen yet" page for that part of the service.
+  // Bound: waits up to AREA_LOAD_MS (10 s) for the h1, so the find reports what is missing before the case ends (issue 57 t1, 9249783).
   it.each(['/aws/iam/policies', '/aws/iam/roles/details/abc/tags'])(
     'opens %s as the "no screen yet" page for that part of AWS Identity and Access Management',
     async (path) => {
@@ -473,6 +474,7 @@ describe('routes', () => {
   });
 
   // Issue 57 (test-criteria.md, "Unit — app/routes.test.tsx", rewritten).
+  // Bound: waits up to AREA_LOAD_MS (10 s) for the h1, so the find reports what is missing before the case ends (issue 57 t1, 9249783).
   it.each(['/aws/lambda/functions/function/orders/test', '/aws/lambda/layers'])(
     'opens %s as the "no screen yet" page for that part of AWS Lambda',
     async (path) => {
@@ -486,6 +488,7 @@ describe('routes', () => {
   // Issue 256 gives /aws/s3/buckets/my-bucket and /aws/s3/bucket/create their screens; these three paths have none
   // before or after. Issue 57 (test-criteria.md, "Unit — app/routes.test.tsx", rewritten): the page for that part of
   // the service, and no request for an AWS operation.
+  // Bound: waits up to AREA_LOAD_MS (10 s) for the h1, so the find reports what is missing before the case ends (issue 57 t1, 9249783).
   it.each([
     '/aws/s3/buckets/my-bucket/objects',
     '/aws/s3/bucket/my-bucket/property/versioning/edit',
@@ -521,6 +524,7 @@ describe('routes', () => {
 
   // Issue 57 (test-criteria.md, "Unit — app/routes.test.tsx", New): the crumbs of the screen above the path, and the
   // first action.
+  // Bound: waits up to AREA_LOAD_MS (10 s) for the h1, so the find reports what is missing before the case ends (issue 57 s1, bda293f, as 9249783).
   it.each<[string, [string, string | null][]]>([
     [
       '/aws/s3/buckets/my-bucket/objects',
@@ -559,6 +563,7 @@ describe('routes', () => {
     NO_SCREEN_PART_TEST_MS,
   );
 
+  // Bound: waits up to AREA_LOAD_MS (10 s) for the h1, so the find reports what is missing before the case ends (issue 57 s1, bda293f, as 9249783).
   it(
     'opens /aws/s3/directory-buckets, then "Go to Buckets": the address /aws/s3 and the h1 "Buckets", without a document load',
     async () => {

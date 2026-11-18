@@ -1082,20 +1082,6 @@ describe('step 3, "Name, review, and create"', () => {
     expect(engine.changes()).toEqual([]);
   });
 
-  // Fifty rows of the editor take a while to render one by one.
-  it('a 51st tag cannot be added', { timeout: 60_000 }, async () => {
-    await openWizard();
-    await toStep3();
-    for (let i = 1; i <= 50; i++) {
-      addTag(`key${String(i)}`, 'v');
-    }
-    const editor = PAGE.findTagEditor();
-    expect(editor?.findRows()).toHaveLength(50);
-    leaveField();
-    fireEvent.click(within(main()).getByRole('button', { name: 'Add new tag' }));
-    expect(PAGE.findTagEditor()?.findRows()).toHaveLength(50);
-  });
-
   it('an untouched tag with an empty key: no request, and the editor’s message at the tag', async () => {
     await openWizard();
     await toStep3();

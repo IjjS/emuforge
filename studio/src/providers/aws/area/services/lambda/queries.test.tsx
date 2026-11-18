@@ -394,6 +394,7 @@ describe('a delete', () => {
 });
 
 describe('a function’s page', () => {
+  // Bound: real timers: re-readings REREAD_DELAY_MS (1 s) apart and a wait after the last (issue 84 s1, b15ce0d).
   it('reads a Pending function again 1 second after the answer, until it is Active and not InProgress, then no more', async () => {
     answerUrlsAtOnce();
     const { result } = renderReading();
@@ -422,6 +423,7 @@ describe('a function’s page', () => {
     expect(getFunctions()).toHaveLength(3);
   }, 10000);
 
+  // Bound: real timers: re-readings REREAD_DELAY_MS (1 s) apart and a wait after the last (issue 84 s1, b15ce0d).
   it.each([
     ['Active with InProgress', functionAnswer('Active', 'InProgress'), 2],
     ['Failed', functionAnswer('Failed'), 1],
@@ -442,6 +444,7 @@ describe('a function’s page', () => {
     10000,
   );
 
+  // Bound: real timers: re-readings REREAD_DELAY_MS (1 s) apart and a wait after the last (issue 84 s1, b15ce0d).
   it('shows nothing of a re-reading that fails and reads no more until the next reading', async () => {
     answerUrlsAtOnce();
     const { result } = renderReading();
