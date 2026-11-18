@@ -8,11 +8,18 @@
 # (emulator_image), the checkout's commit, the verdict of every manifest check (passed, failed, error, not-run)
 # and the relay fidelity figure.
 #
-# Usage: run [--not-run <file>] [--on-request] [--services <file>], in any order. The --not-run file is a not-run list
+# Usage: run [--not-run <file>] [--on-request] [--full] [--services <file>], in any order. The --not-run file is a not-run list
 # (.github/not-run.json, issue 53): its `checks` name manifest ids, each with a `reason`; its other keys are not read. A
 # check is on request when its manifest row is labelled `on-request` (issue 315); without --on-request every such check
 # is left out with the reason "on request: not part of a default run; run it with --on-request", and with it they run
-# like every other check. A check that is listed and on request has the list's reason, with or without --on-request. A
+# like every other check. A check that is listed and on request has the list's reason, with or without --on-request.
+# A check is in the tier full when its row is labelled `full` (issue 482): without --full every such check is left
+# out with the reason "full: runs only in the full run; run it with --full", and with it they run like every other
+# check. Only .github/workflows/full.yml, which the owner starts, and a local run on the owner's word pass --full; no
+# changed path calls a check of the tier. A row labelled both `full` and `on-request` makes every check `error`
+# (exit 127) before anything is built or started, whatever the options. report.json says `full_tier`: {of, left_out},
+# the number of the rows of the tier and of those left out (not-run), and the run prints it as
+# `integration: full tier <left_out> of <of> left out` before its report line. A
 # check left out is not executed: the engine checks get EMUFORGE_IT_NOT_RUN naming a file of the left-out ids, so
 # support::check::check returns at once, and Playwright gets one --grep-invert pattern of the left-out Studio and
 # product ids. Each is reported `not-run` with its reason and counts neither as passed nor as failed; everything else,
@@ -25,11 +32,11 @@
 # read. null is every service: nothing more is left out. With a list, every check of a service not in the list is
 # left out as a listed check is, with the reason "service <s> not touched: its checks are not part of this run"; a
 # name no row has selects nothing. When more than one reason applies, the list's comes first, then on request, then
-# the service. report.json says `services`: the file's list, sorted without repeats, or null when every service's
+# the tier, then the service. report.json says `services`: the file's list, sorted without repeats, or null when every service's
 # checks were part of the run (without the option, with null, and in a report of a run that did not get to its
 # checks). A services file that cannot be read, is not that shape or holds an entry that is not a service name makes
 # every check `error` (exit 127) before anything is built or started. Any other argument, or any option twice, is
-# refused with a usage line (exit 2). Only the list, the label and the services file turn this on;
+# refused with a usage line (exit 2). Only the list, the labels and the services file turn this on;
 # EMUFORGE_IT_NOT_RUN from the caller is unset.
 #
 # The manifest (issue 402) is the main manifest's rows, tests/integration/manifest.jsonl in its order, then each
@@ -99,12 +106,13 @@ unset NODE_OPTIONS NODE_PATH
 export AWS_EC2_METADATA_DISABLED=true
 
 usage() {
-  echo "usage: tests/integration/run [--not-run <file>] [--on-request] [--services <file>]" >&2
+  echo "usage: tests/integration/run [--not-run <file>] [--on-request] [--full] [--services <file>]" >&2
   exit 2
 }
 not_run=no
 not_run_file=
 on_request=no
+full=no
 services=no
 services_file=
 while (($#)); do
@@ -115,6 +123,9 @@ while (($#)); do
     --on-request)
       [[ "$on_request" == no ]] || usage
       on_request=yes; shift ;;
+    --full)
+      [[ "$full" == no ]] || usage
+      full=yes; shift ;;
     --services)
       [[ "$services" == no && $# -ge 2 ]] || usage
       services=yes; services_file="$2"; shift 2 ;;
@@ -152,8 +163,8 @@ report() {
     "$out/not-run.json" "$out/services.json" "$out/emulator-image.json" "${1:-}" <<'PY'
 import json, pathlib, sys
 manifest, verdicts, report, version, emulator_commit, commit, not_run, services, image, reason = sys.argv[1:]
-# {id: reason} of the checks left out (the validated not-run list, the rows on request, the checks of the services
-# not touched); absent when none is.
+# {id: reason} of the checks left out (the validated not-run list, the rows on request, the rows of the tier full,
+# the checks of the services not touched); absent when none is.
 listed = json.loads(pathlib.Path(not_run).read_text()) if pathlib.Path(not_run).exists() else {}
 # The accepted services file's list, sorted without repeats, or null; absent without --services. A run that did not
 # get to its checks left nothing out by service.
@@ -162,6 +173,7 @@ touched = json.loads(pathlib.Path(services).read_text()) if pathlib.Path(service
 emulator_image = json.loads(pathlib.Path(image).read_text()) if pathlib.Path(image).exists() else None
 checks = []
 transparency = set()
+tier = set()  # the ids of the rows labelled `full`
 for line in pathlib.Path(manifest).read_text().splitlines():
     if not line.strip():
         continue
@@ -169,6 +181,8 @@ for line in pathlib.Path(manifest).read_text().splitlines():
     check_id = row["check_id"]
     if "transparency" in row.get("labels", []):
         transparency.add(check_id)
+    if isinstance(row.get("labels"), list) and "full" in row["labels"]:
+        tier.add(check_id)
     record = pathlib.Path(verdicts) / f"{check_id}.json"
     if reason:
         entry = dict(check_id=check_id, verdict="error", seconds=0, log=None, message=reason)
@@ -182,11 +196,13 @@ for line in pathlib.Path(manifest).read_text().splitlines():
     checks.append(entry)
 counted = [c for c in checks if c["check_id"] in transparency and c["verdict"] in ("passed", "failed")]
 fidelity = dict(passed=sum(c["verdict"] == "passed" for c in counted), total=len(counted))
+full_tier = dict(of=len(tier), left_out=sum(c["check_id"] in tier and c["verdict"] == "not-run" for c in checks))
 pathlib.Path(report).write_text(json.dumps(dict(
     emulator_version=version, emulator_commit=emulator_commit, emulator_image=emulator_image, commit=commit,
-    relay_fidelity=fidelity, services=touched, checks=checks), indent=1) + "\n")
+    relay_fidelity=fidelity, services=touched, full_tier=full_tier, checks=checks), indent=1) + "\n")
 for c in checks:
     print(f"  {c['verdict']:7} {c['check_id']}  {c['message'].splitlines()[0][:160] if c['message'] else ''}", file=sys.stderr)
+print(f"integration: full tier {full_tier['left_out']} of {full_tier['of']} left out", file=sys.stderr)
 verdicts = {c["verdict"] for c in checks if c["verdict"] != "not-run"}
 print(0 if verdicts == {"passed"} else 1 if "failed" in verdicts else 127)
 PY
@@ -212,7 +228,7 @@ preflight_error() {
 
 # fail_all <reason>: the subject failed before any check could run (the emulator image did not build). Every manifest
 # check gets a verdict `failed` with the reason, then report as at the end of a run: the checks the not-run list, the
-# on-request label or the services file left out stay `not-run`. Exits with report's code.
+# on-request and full labels or the services file left out stay `not-run`. Exits with report's code.
 fail_all() {
   echo "integration: $1" >&2
   python3 -I - "$manifest" "$out/verdicts" "$1" <<'PY'
@@ -496,9 +512,10 @@ fi
 rm -f "$out/service-files.out"
 
 # What is left out, before anything is built or started: the not-run list given to --not-run, without
-# --on-request every manifest row labelled `on-request` (each with the fixed reason ON_REQUEST below) and, with a
-# --services list, every check of a service not in it (each with the reason of service_reason below); an id left out
-# for more than one reason has the list's, then on request's. When anything is left out, or a list was given, it
+# --on-request every manifest row labelled `on-request` (each with the fixed reason ON_REQUEST below), without --full
+# every row labelled `full` (FULL below) and, with a --services list, every check of a service not in it (each with
+# the reason of service_reason below); an id left out for more than one reason has the list's, then on request's,
+# then the tier's. A row labelled both `on-request` and `full` is refused. When anything is left out, or a list was given, it
 # writes $out/not-run.json ({id: reason}) for report and $out/not-run.ids (one id per line) for the engine checks,
 # and prints the Playwright pattern of the left-out .spec.ts ids (nothing when there is none); an accepted services
 # file is written as $out/services.json (its list sorted without repeats, or null) for report. On a refusal of the
@@ -508,10 +525,11 @@ rm -f "$out/service-files.out"
 # bash 3.2 cannot parse a heredoc inside $(...).)
 grep_invert=
 if python3 -I - "$not_run" "$not_run_file" "$manifest" "$out" "$on_request" "$services" \
-  "$services_file" >"$out/not-run.out" <<'PY'
+  "$services_file" "$full" >"$out/not-run.out" <<'PY'
 import json, pathlib, re, sys
-has_list, path, manifest, out, on_request, has_services, services_path = sys.argv[1:]
+has_list, path, manifest, out, on_request, has_services, services_path, full = sys.argv[1:]
 ON_REQUEST = "on request: not part of a default run; run it with --on-request"
+FULL = "full: runs only in the full run; run it with --full"
 ID = re.compile(r"[a-z]+\.[a-z0-9-]+")
 SERVICE = re.compile(r"[a-z][a-z0-9]*(-[a-z0-9]+)*")
 
@@ -593,12 +611,30 @@ def usable(row):
             and isinstance(row.get("path"), str))
 
 
+def labelled(row, label):
+    return isinstance(row, dict) and isinstance(row.get("labels"), list) and label in row["labels"]
+
+
+# A row labelled both `on-request` and `full` is refused: the two tiers exclude each other.
+both = [row for row in rows if labelled(row, "on-request") and labelled(row, "full")]
+if both:
+    cid = both[0].get("check_id")
+    name = cid if isinstance(cid, str) and ID.fullmatch(cid) else "a row"
+    print(f"manifest: {name} is labelled both on-request and full ({len(both)} such rows)")
+    sys.exit(1)
 # A row is on request when its `labels` is a list that holds `on-request`.
 asked = {}
 if on_request != "yes":
     for row in rows:
         if usable(row) and isinstance(row.get("labels"), list) and "on-request" in row["labels"]:
             asked[row["check_id"]] = ON_REQUEST
+            paths.setdefault(row["check_id"], row["path"])
+# A row is in the tier full when its `labels` is a list that holds `full`.
+tier = {}
+if full != "yes":
+    for row in rows:
+        if usable(row) and labelled(row, "full"):
+            tier[row["check_id"]] = FULL
             paths.setdefault(row["check_id"], row["path"])
 # A row is a check of a service when its `service` is a service name; any other row is a check of no service.
 by_service = {}
@@ -609,7 +645,7 @@ if touched is not None:
                 and service not in touched):
             by_service[row["check_id"]] = service_reason(service)
             paths.setdefault(row["check_id"], row["path"])
-left_out = {**by_service, **asked, **listed}
+left_out = {**by_service, **tier, **asked, **listed}
 if not left_out and has_list != "yes":
     sys.exit(0)
 pathlib.Path(out, "not-run.json").write_text(json.dumps(left_out, indent=1) + "\n")

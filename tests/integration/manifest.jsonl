@@ -33,12 +33,12 @@
 {"check_id": "engine.relay-reports-emulator-unavailable", "path": "tests/integration/engine/tests/relay_lifecycle.rs", "module": "engine", "operations": ["s3:ListBuckets", "dynamodb:ListTables", "iam:ListUsers", "lambda:ListFunctions"], "labels": ["own-emulator", "lifecycle"], "issue": 2}
 {"check_id": "engine.relay-survives-emulator-restart", "path": "tests/integration/engine/tests/relay_lifecycle.rs", "module": "engine", "operations": ["s3:CreateBucket", "s3:ListBuckets", "s3:DeleteBucket"], "labels": ["own-emulator", "lifecycle"], "issue": 2}
 {"check_id": "studio.home-shows-connected", "path": "tests/integration/studio/home.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 3}
-{"check_id": "studio.home-shows-emulator-not-started-after-stop", "path": "tests/integration/studio/home.spec.ts", "module": "studio", "operations": [], "labels": ["own-emulator", "lifecycle"], "issue": 3}
-{"check_id": "studio.home-reconnects-after-emulator-kill-and-start", "path": "tests/integration/studio/home.spec.ts", "module": "studio", "operations": [], "labels": ["own-emulator", "lifecycle"], "issue": 3}
+{"check_id": "studio.home-shows-emulator-not-started-after-stop", "path": "tests/integration/studio/home.spec.ts", "module": "studio", "operations": [], "labels": ["own-emulator", "lifecycle", "full"], "issue": 3}
+{"check_id": "studio.home-reconnects-after-emulator-kill-and-start", "path": "tests/integration/studio/home.spec.ts", "module": "studio", "operations": [], "labels": ["own-emulator", "lifecycle", "full"], "issue": 3}
 {"check_id": "studio.home-shows-engine-unreachable-and-recovers", "path": "tests/integration/studio/home.spec.ts", "module": "studio", "operations": [], "labels": ["lifecycle"], "issue": 3}
 {"check_id": "studio.home-shows-engine-unreachable-for-another-studio-origin", "path": "tests/integration/studio/home.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 3}
 {"check_id": "studio.app-talks-only-to-engine-and-own-origin", "path": "tests/integration/studio/safety.spec.ts", "module": "studio", "operations": ["s3:ListBuckets"], "labels": ["safety", "transparency"], "issue": 3}
-{"check_id": "studio.shell-finish", "path": "tests/integration/studio/home.spec.ts", "module": "studio", "operations": [], "labels": ["own-emulator", "lifecycle"], "issue": 3}
+{"check_id": "studio.shell-finish", "path": "tests/integration/studio/home.spec.ts", "module": "studio", "operations": [], "labels": ["own-emulator", "lifecycle", "full"], "issue": 3}
 {"check_id": "studio.serve-binds-loopback-with-spa-fallback", "path": "tests/integration/studio/serve.spec.ts", "module": "studio", "operations": [], "labels": ["safety"], "issue": 3}
 {"check_id": "engine.studio-relay-s3-list-buckets-matches-direct", "path": "tests/integration/engine/tests/studio_relay.rs", "module": "engine", "operations": ["s3:ListBuckets", "s3:CreateBucket", "s3:DeleteBucket"], "labels": ["transparency"], "issue": 10}
 {"check_id": "engine.studio-relay-s3-put-object-matches-direct", "path": "tests/integration/engine/tests/studio_relay.rs", "module": "engine", "operations": ["s3:PutObject", "s3:GetObject", "s3:CreateBucket", "s3:DeleteObject", "s3:DeleteBucket"], "labels": ["transparency"], "issue": 10}
@@ -70,12 +70,12 @@
 {"check_id": "studio.language-follows-the-browser", "path": "tests/integration/studio/languages.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 17}
 {"check_id": "studio.language-choice-applies-at-once-and-survives-reload", "path": "tests/integration/studio/languages.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 17}
 {"check_id": "studio.language-first-render-is-already-in-the-language", "path": "tests/integration/studio/languages.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 17}
-{"check_id": "studio.studio-layer-complete-in-every-language", "path": "tests/integration/studio/languages.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 17}
-{"check_id": "studio.aws-area-stays-english-in-every-language", "path": "tests/integration/studio/languages.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 17}
-{"check_id": "studio.language-layout-in-every-language", "path": "tests/integration/studio/languages.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 17}
+{"check_id": "studio.studio-layer-complete-in-every-language", "path": "tests/integration/studio/languages.spec.ts", "module": "studio", "operations": [], "labels": ["full"], "issue": 17}
+{"check_id": "studio.aws-area-stays-english-in-every-language", "path": "tests/integration/studio/languages.spec.ts", "module": "studio", "operations": [], "labels": ["full"], "issue": 17}
+{"check_id": "studio.language-layout-in-every-language", "path": "tests/integration/studio/languages.spec.ts", "module": "studio", "operations": [], "labels": ["full"], "issue": 17}
 {"check_id": "studio.language-faces-per-script", "path": "tests/integration/studio/languages.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 17}
 {"check_id": "studio.language-control-keyboard-and-contrast", "path": "tests/integration/studio/languages.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 17}
-{"check_id": "studio.home-kill-notice-stop-step-names-container", "path": "tests/integration/studio/home-kill-notice.spec.ts", "module": "studio", "operations": [], "labels": ["own-emulator", "lifecycle", "regression"], "issue": 18}
+{"check_id": "studio.home-kill-notice-stop-step-names-container", "path": "tests/integration/studio/home-kill-notice.spec.ts", "module": "studio", "operations": [], "labels": ["own-emulator", "lifecycle", "regression", "full"], "issue": 18}
 {"check_id": "studio.skip-link-reaches-page-content", "path": "tests/integration/studio/focus.spec.ts", "module": "studio", "operations": [], "labels": ["regression"], "issue": 19}
 {"check_id": "studio.route-change-focuses-new-page-content", "path": "tests/integration/studio/focus.spec.ts", "module": "studio", "operations": [], "labels": ["regression"], "issue": 19}
 {"check_id": "studio.focus-moves-change-nothing-on-screen", "path": "tests/integration/studio/focus.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 19}
@@ -111,27 +111,27 @@
 {"check_id": "studio.aws-clients-every-read-reaches-the-engine", "path": "tests/integration/studio/aws-clients-cache.spec.ts", "module": "studio", "operations": ["s3:CreateBucket", "s3:PutObject", "s3:GetObject", "s3:HeadObject", "s3:ListObjectsV2", "s3:ListBuckets", "states:ListStateMachines", "s3:DeleteObject", "s3:DeleteBucket"], "labels": ["regression"], "issue": 26}
 {"check_id": "studio.aws-clients-put-object-stores-only-what-the-command-gives", "path": "tests/integration/studio/aws-clients-cache.spec.ts", "module": "studio", "operations": ["s3:CreateBucket", "s3:PutObject", "s3:HeadObject", "s3:GetObject", "s3:DeleteObject", "s3:DeleteBucket"], "labels": [], "issue": 26}
 {"check_id": "studio.brand-symbol-holds-the-reference-numbers", "path": "tests/integration/studio/brand.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 36}
-{"check_id": "studio.brand-tile-and-app-icons-hold-their-layout", "path": "tests/integration/studio/brand.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 36}
-{"check_id": "studio.brand-logos-hold-their-layout", "path": "tests/integration/studio/brand-files.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 36}
+{"check_id": "studio.brand-tile-and-app-icons-hold-their-layout", "path": "tests/integration/studio/brand.spec.ts", "module": "studio", "operations": [], "labels": ["full"], "issue": 36}
+{"check_id": "studio.brand-logos-hold-their-layout", "path": "tests/integration/studio/brand-files.spec.ts", "module": "studio", "operations": [], "labels": ["full"], "issue": 36}
 {"check_id": "studio.brand-social-image-holds-its-layout", "path": "tests/integration/studio/brand-files.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 36}
 {"check_id": "studio.brand-colours-are-studio-tokens", "path": "tests/integration/studio/brand-files.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 36}
 {"check_id": "studio.brand-rasters-are-their-vectors-drawn", "path": "tests/integration/studio/brand-files.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 36}
 {"check_id": "studio.document-icons-are-served-as-images", "path": "tests/integration/studio/icons.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 36}
 {"check_id": "studio.favicon-follows-the-colour-scheme", "path": "tests/integration/studio/icons.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 36}
-{"check_id": "studio.frame-wordmark-shows-the-tile", "path": "tests/integration/studio/frame-logo.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 36}
-{"check_id": "studio.frame-tile-stays-while-engine-and-emulator-are-away", "path": "tests/integration/studio/frame-logo.spec.ts", "module": "studio", "operations": [], "labels": ["lifecycle", "own-emulator"], "issue": 36}
-{"check_id": "studio.frame-bar-fits-with-the-tile-in-every-language", "path": "tests/integration/studio/frame-logo.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 36}
-{"check_id": "studio.korean-words-stay-whole", "path": "tests/integration/studio/wrapping.spec.ts", "module": "studio", "operations": [], "labels": ["own-emulator", "regression"], "issue": 32}
+{"check_id": "studio.frame-wordmark-shows-the-tile", "path": "tests/integration/studio/frame-logo.spec.ts", "module": "studio", "operations": [], "labels": ["full"], "issue": 36}
+{"check_id": "studio.frame-tile-stays-while-engine-and-emulator-are-away", "path": "tests/integration/studio/frame-logo.spec.ts", "module": "studio", "operations": [], "labels": ["lifecycle", "own-emulator", "full"], "issue": 36}
+{"check_id": "studio.frame-bar-fits-with-the-tile-in-every-language", "path": "tests/integration/studio/frame-logo.spec.ts", "module": "studio", "operations": [], "labels": ["full"], "issue": 36}
+{"check_id": "studio.korean-words-stay-whole", "path": "tests/integration/studio/wrapping.spec.ts", "module": "studio", "operations": [], "labels": ["own-emulator", "regression", "full"], "issue": 32}
 {"check_id": "studio.count-and-unit-stay-on-one-line", "path": "tests/integration/studio/wrapping.spec.ts", "module": "studio", "operations": [], "labels": ["own-emulator", "regression", "on-request"], "issue": 32}
-{"check_id": "studio.language-menu-dismissing-press-does-nothing-else", "path": "tests/integration/studio/language-menu.spec.ts", "module": "studio", "operations": [], "labels": ["own-emulator", "regression"], "issue": 32}
-{"check_id": "studio.language-menu-is-veiled-at-480-and-below", "path": "tests/integration/studio/language-menu.spec.ts", "module": "studio", "operations": [], "labels": ["own-emulator", "regression"], "issue": 32}
+{"check_id": "studio.language-menu-dismissing-press-does-nothing-else", "path": "tests/integration/studio/language-menu.spec.ts", "module": "studio", "operations": [], "labels": ["own-emulator", "regression", "full"], "issue": 32}
+{"check_id": "studio.language-menu-is-veiled-at-480-and-below", "path": "tests/integration/studio/language-menu.spec.ts", "module": "studio", "operations": [], "labels": ["own-emulator", "regression", "full"], "issue": 32}
 {"check_id": "studio.aws-area-breadcrumbs-start-at-emuforge", "path": "tests/integration/studio/aws-area-frame.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 45}
 {"check_id": "studio.aws-area-emulator-line-shows-connected-endpoint", "path": "tests/integration/studio/aws-area-frame.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 45}
 {"check_id": "studio.aws-area-emulator-line-follows-emulator-stop-and-start", "path": "tests/integration/studio/aws-area-frame.spec.ts", "module": "studio", "operations": [], "labels": ["own-emulator", "lifecycle"], "issue": 45}
-{"check_id": "studio.aws-area-emulator-line-shows-engine-unreachable", "path": "tests/integration/studio/aws-area-frame.spec.ts", "module": "studio", "operations": [], "labels": ["lifecycle"], "issue": 45}
-{"check_id": "studio.aws-area-emulator-line-keyboard-and-layout", "path": "tests/integration/studio/aws-area-frame.spec.ts", "module": "studio", "operations": [], "labels": ["own-emulator"], "issue": 45}
+{"check_id": "studio.aws-area-emulator-line-shows-engine-unreachable", "path": "tests/integration/studio/aws-area-frame.spec.ts", "module": "studio", "operations": [], "labels": ["lifecycle", "full"], "issue": 45}
+{"check_id": "studio.aws-area-emulator-line-keyboard-and-layout", "path": "tests/integration/studio/aws-area-frame.spec.ts", "module": "studio", "operations": [], "labels": ["own-emulator", "full"], "issue": 45}
 {"check_id": "studio.aws-area-shows-no-image", "path": "tests/integration/studio/aws-area-frame.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 45}
-{"check_id": "studio.addresses-stay-whole-with-five-digit-ports", "path": "tests/integration/studio/addresses.spec.ts", "module": "studio", "operations": [], "labels": ["own-emulator", "regression"], "issue": 60}
+{"check_id": "studio.addresses-stay-whole-with-five-digit-ports", "path": "tests/integration/studio/addresses.spec.ts", "module": "studio", "operations": [], "labels": ["own-emulator", "regression", "full"], "issue": 60}
 {"check_id": "engine.emulator-image-gives-its-files-to-the-folders-owner", "path": "tests/integration/engine/tests/emulator_image.rs", "module": "engine", "operations": [], "labels": ["own-emulator", "regression", "safety"], "issue": 55}
 {"check_id": "engine.emulator-image-stops-and-restarts-as-the-folders-owner", "path": "tests/integration/engine/tests/emulator_image.rs", "module": "engine", "operations": [], "labels": ["own-emulator", "lifecycle"], "issue": 55}
 {"check_id": "engine.emulator-image-never-runs-as-root", "path": "tests/integration/engine/tests/emulator_image.rs", "module": "engine", "operations": [], "labels": ["own-emulator", "safety"], "issue": 55}

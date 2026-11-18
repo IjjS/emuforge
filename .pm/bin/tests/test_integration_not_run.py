@@ -68,8 +68,10 @@ IDS = [r["check_id"] for r in ROWS]
 ENGINE_IDS = [r["check_id"] for r in ROWS if r["path"].endswith(".rs")]
 SPEC_IDS = [r["check_id"] for r in ROWS if r["path"].endswith(".spec.ts")]
 PRODUCT_IDS = [i for i in IDS if i.startswith("engine.product-")]
-# the ids of the rows labelled `on-request` (issue 315): a run without --on-request leaves them out
-ON = [r["check_id"] for r in ROWS if isinstance(r.get("labels"), list) and "on-request" in r["labels"]]
+# the ids of the rows a default run leaves out: those labelled `on-request` (issue 315), left out without
+# --on-request, and those labelled `full` (issue 482), left out without --full
+ON = [r["check_id"] for r in ROWS if isinstance(r.get("labels"), list)
+      and ("on-request" in r["labels"] or "full" in r["labels"])]
 # one id of an engine test file and one of a .spec.ts file
 ENGINE_ID = "engine.health-reports-emulator-reachable"
 SPEC_ID = "studio.home-shows-connected"

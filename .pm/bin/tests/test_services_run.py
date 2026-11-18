@@ -24,7 +24,7 @@ from test_integration_not_run import RUN, STANDIN, TOOLS, Fixture, grep_invert, 
 
 GROUP = "services-run"
 ON_REQUEST = "on request: not part of a default run; run it with --on-request"
-USAGE = "usage: tests/integration/run [--not-run <file>] [--on-request] [--services <file>]"
+USAGE = "usage: tests/integration/run [--not-run <file>] [--on-request] [--full] [--services <file>]"
 FORM = re.compile(r"[a-z][a-z0-9]*(-[a-z0-9]+)*")
 NONE = object()  # a row without the key `service`
 

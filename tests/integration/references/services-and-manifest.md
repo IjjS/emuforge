@@ -10,7 +10,8 @@ service's folder under `studio/src/providers/aws/area/services/` (`s3`, `apigate
 `[a-z][a-z0-9]*(-[a-z0-9]+)*`. It is given by the plan that writes the check, reviewed by `rev` with it, and
 changed after that only by the `pm`; a check of the engine, of shared Studio code or of more than one service
 has no `service`, and giving it to another check to shorten a run is a defect. A check of no service is part of
-every run. `run --services <file>` leaves out the checks of the services the file does not list: the whole check
+every run, unless it is labelled `full` or `on-request` (`tests/integration/AGENTS.md`); so is a check of a touched
+service. `run --services <file>` leaves out the checks of the services the file does not list: the whole check
 of a branch and the push run of `main.yml` hold the checks of the services their changes touch, and every
 service's when a shared path changed. So a service no change touched is not checked until the whole set runs
 again in `.github/workflows/full.yml`, which the owner starts by hand: until then a change inside one service
@@ -48,7 +49,7 @@ One JSON object per line:
 | `path` | file that holds the check |
 | `module` | `engine`, `cli`, `iam`, `verify`, `studio` |
 | `operations` | AWS operations it calls, as `<service>:<Operation>` |
-| `labels` | any of `transparency`, `own-emulator`, `safety`, `regression`, `lifecycle`, `on-request` |
+| `labels` | any of `transparency`, `own-emulator`, `safety`, `regression`, `lifecycle`, `on-request`, `full` (the tier full: only in `full.yml` and a run the owner asks for, `AGENTS.md`); never both `on-request` and `full` |
 | `issue` | the `Issue-Id` it was written for |
 | `service` | the one service whose screens the check drives, as the name of its folder under `studio/src/providers/aws/area/services/`; absent for every other check (Service checks); a row that has it is in that service's `manifest.jsonl` |
 | `emulator_gap` | set when the reference behavior depends on an operation the emulator answers with 501; the check then asserts the 501 path |

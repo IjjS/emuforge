@@ -109,12 +109,19 @@ never run, so a comment that reads like one counts; symbolic links are not follo
 
 ## Checks not run
 
-`run` takes `--not-run <file>`, `--on-request` and `--services <file>`, each at most once, in any order; with any other
-argument, or an option without its file, it prints the usage line
-`usage: tests/integration/run [--not-run <file>] [--on-request] [--services <file>]` and exits 2. Without
+`run` takes `--not-run <file>`, `--on-request`, `--full` and `--services <file>`, each at most once, in any order;
+with any other argument, or an option without its file, it prints the usage line
+`usage: tests/integration/run [--not-run <file>] [--on-request] [--full] [--services <file>]` and exits 2. Without
 `--on-request` it runs every check that is not labelled `on-request` in the manifest, and reports each labelled one
 `not-run` with the message `on request: not part of a default run; run it with --on-request`. With `--on-request`
 those run like every other check.
+
+Without `--full` it reports each check labelled `full` (the tier full, `AGENTS.md`) `not-run` with the message
+`full: runs only in the full run; run it with --full`; with `--full` those run like every other check. Only
+`.github/workflows/full.yml` and a local run the owner asks for pass it. A row labelled both `full` and
+`on-request` makes every check `error` (exit 127) before anything is built or started, whatever the options.
+`report.json` holds `full_tier`: `{"of": <rows labelled full>, "left_out": <those not-run>}`, and the run prints
+`integration: full tier <left_out> of <of> left out` before its report line.
 
 `run --not-run <file>` leaves out the checks a not-run list names; the workflow on GitHub Actions passes it
 `.github/not-run.json`. Only the list's `checks` are read: each entry's `id` must be a manifest id, listed once,
@@ -131,11 +138,11 @@ a service not in the list is `not-run` with the message
 `service <s> not touched: its checks are not part of this run`; a name that no row has selects nothing and is not an
 error. A file that cannot be read, is not that shape or holds an entry that is not a service name makes every check
 `error` (exit 127) before anything is built or started. When more than one reason applies to a check, the not-run
-list's comes first, then on request, then the service: with `--on-request`, a check on request of a service not in
+list's comes first, then on request, then the tier full, then the service: with `--on-request`, a check on request of a service not in
 the list is `not-run` with the service's message. `report.json` holds `services`: the file's list, sorted without
 repeats, or `null` when every service's checks were part of the run.
 
-The checks on request and those of the services not touched are left out the way the listed ones are, by the same ids
+The checks on request, those of the tier full and those of the services not touched are left out the way the listed ones are, by the same ids
 file and the same pattern. A left-out engine check returns at once: `run` gives `cargo test` `EMUFORGE_IT_NOT_RUN`
 naming `output/integration/not-run.ids`, and `support::check::check` prints `not-run <id>` and writes no verdict, so
 `cargo test` shows that test as `ok`. A left-out Studio or product check is left out of the Playwright run with one

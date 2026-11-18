@@ -75,6 +75,20 @@ plan of the issue that comes to list one takes the label off with its integratio
 - Checks run without the AWS credentials, profiles and proxy settings of the environment.
 - Signing uses the keys the emulator wrote for this run and nothing else.
 
+## Full tier
+
+A check labelled `full` in the manifest is an auxiliary check, slow and not critical: a language's layout and
+words, the brand's layout, a screen's keyboard and layout, a screen's stop, restart and engine away. It runs only in
+`.github/workflows/full.yml`, which the owner starts, and in a local run the owner asks for: `run --full`,
+`pm-check --full`, or `pm-check --checks` naming it. Every other run leaves it out and reports it `not-run` with the
+reason `full: runs only in the full run; run it with --full`; no service, check file or changed path calls it, so
+neither a push run of `main.yml` nor the whole check of an issue holds it. No agent runs the tier on its own: a
+plan, a worker or the `pm` runs `--full` or `--checks` of a check of the tier only on the owner's word, and the
+report of an issue need not name it. `report.json` holds `full_tier` `{of, left_out}`, and `run` and `pm-check`
+print the count left out (`full tier <n> of <m> left out`). The label is given and removed only by the `pm`, with
+the owner's word and the reason in the issue's `decisions.md`; a plan or a worker never labels a check to shorten a
+run. A row is never labelled both `full` and `on-request`: `run` refuses such a manifest before anything starts.
+
 ## Verdicts
 
 | Verdict | Meaning |
@@ -82,7 +96,7 @@ plan of the issue that comes to list one takes the label off with its integratio
 | `passed` | every assertion held |
 | `failed` | an assertion did not hold, or the check timed out |
 | `error` | anything else: the emulator would not start, a tool is missing |
-| `not-run` | not executed: listed in the file given to `run --not-run` (`.github/not-run.json`), labelled `on-request` in a run without `--on-request`, or a check of a service the run's changes do not touch (`run --services`, `references/services-and-manifest.md`); never counted as `passed` or `failed`. The list and the label are changed only on the `pm`'s decision, with the reason in the issue's `decisions.md` |
+| `not-run` | not executed: listed in the file given to `run --not-run` (`.github/not-run.json`), labelled `on-request` in a run without `--on-request`, labelled `full` in a run without `--full`, or a check of a service the run's changes do not touch (`run --services`, `references/services-and-manifest.md`); never counted as `passed` or `failed`. The list and the label are changed only on the `pm`'s decision, with the reason in the issue's `decisions.md` |
 
 `error` is never counted as `failed` or `passed`; it is reported and the run is not used as evidence. A `not-run`
 check says nothing about the behavior it covers.
