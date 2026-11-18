@@ -19,9 +19,11 @@ use ring::digest;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 
-use crate::connect::{connect, from_files, handshake};
+use crate::connect::{from_files, handshake};
 use crate::health::{BODY_CAP, exchange, http_failed};
-use crate::sigv4::{ALGORITHM, Scope, UriMode, canonical_request, scope_text, signature, string_to_sign};
+use crate::sigv4::{
+    ALGORITHM, Scope, UriMode, canonical_request, scope_text, signature, string_to_sign,
+};
 use crate::{Credentials, Emulator, EmulatorFiles, Reason, client_config};
 
 /// The body of the `credentials` step's request: STS `GetCallerIdentity` in the Query protocol.
@@ -135,8 +137,27 @@ impl fmt::Display for TestReport {
 /// Runs the five steps against `emulator`, each within `deadline`; the first failure stops the test and the
 /// steps after it are [`Outcome::NotRun`]. `now` dates the signed request of the `credentials` step.
 pub async fn test(emulator: &Emulator, deadline: Duration, now: SystemTime) -> TestReport {
-    let failure = run(emulator, deadline, now).await.err();
-    let failed_at = failure.as_ref().map_or(Step::ALL.len(), |(step, _)| *step as usize);
+    let addr = emulator.socket_addr();
+    test_over(emulator, deadline, now, || TcpStream::connect(addr)).await
+}
+
+/// [`test`] over the byte streams `dial` opens instead of TCP to [`Emulator::socket_addr`]: the `connection` step
+/// is the first call, the `credentials` step's request goes over a second one. Everything else is the same.
+pub async fn test_over<D, F, S>(
+    emulator: &Emulator,
+    deadline: Duration,
+    now: SystemTime,
+    dial: D,
+) -> TestReport
+where
+    D: FnMut() -> F,
+    F: Future<Output = io::Result<S>>,
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    let failure = run(emulator, deadline, now, dial).await.err();
+    let failed_at = failure
+        .as_ref()
+        .map_or(Step::ALL.len(), |(step, _)| *step as usize);
     let mut reason = failure.map(|(_, reason)| reason);
     let checks = Step::ALL
         .iter()
@@ -156,7 +177,17 @@ pub async fn test(emulator: &Emulator, deadline: Duration, now: SystemTime) -> T
 }
 
 /// Runs the steps in order; the first failure is returned with its step.
-async fn run(emulator: &Emulator, deadline: Duration, now: SystemTime) -> Result<(), (Step, Reason)> {
+async fn run<D, F, S>(
+    emulator: &Emulator,
+    deadline: Duration,
+    now: SystemTime,
+    mut dial: D,
+) -> Result<(), (Step, Reason)>
+where
+    D: FnMut() -> F,
+    F: Future<Output = io::Result<S>>,
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
     let at = |step: Step| move |reason: Reason| (step, reason);
 
     let files = within(deadline, async {
@@ -165,17 +196,13 @@ async fn run(emulator: &Emulator, deadline: Duration, now: SystemTime) -> Result
     .await
     .map_err(at(Step::Files))?;
 
-    let tcp = within(deadline, async {
-        TcpStream::connect(emulator.socket_addr())
-            .await
-            .map_err(from_connect)
-    })
-    .await
-    .map_err(at(Step::Connection))?;
+    let stream = within(deadline, async { dial().await.map_err(from_connect) })
+        .await
+        .map_err(at(Step::Connection))?;
 
     let tls = within(deadline, async {
         let config = client_config(&files).map_err(from_files)?;
-        handshake(tcp, emulator.ip(), config).await
+        handshake(stream, emulator.ip(), config).await
     })
     .await
     .map_err(at(Step::Tls))?;
@@ -186,8 +213,10 @@ async fn run(emulator: &Emulator, deadline: Duration, now: SystemTime) -> Result
 
     within(deadline, async {
         let request = credentials_request(emulator, files.credentials(), now)?;
-        let upstream = connect(emulator, &files, deadline, deadline).await?;
-        match send_once(upstream.stream, request).await? {
+        let config = client_config(&files).map_err(from_files)?;
+        let stream = dial().await.map_err(from_connect)?;
+        let tls = handshake(stream, emulator.ip(), config).await?;
+        match send_once(tls, request).await? {
             StatusCode::OK => Ok(()),
             StatusCode::FORBIDDEN => Err(Reason::CredentialsRejected),
             other => Err(Reason::UnexpectedResponse {
