@@ -5,7 +5,7 @@
 
 Run after every unit of the issue is merged into local main (pm-merge). Refuses unless every branch of the issue's
 registered worktrees is an ancestor of main (--force overrides). Moves requirement.md, decisions.md,
-test-criteria.md, critique-scores.json, structure-scores.json, cost.json and state.md to .pm/archive/<n>/ and
+test-criteria.md, report.md, critique-scores.json, structure-scores.json, cost.json and state.md to .pm/archive/<n>/ and
 deletes the rest of
 .pm/issue-<n>/ (drafts, review rounds, briefs) after their gist is written into .pm/archive/<n>.md. Worktrees and
 their output/ are removed with their local branches. pm-worktree rm also removes each worktree's emulator port
@@ -22,7 +22,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _pmlib import BIN, PM, PMINFO, ROOT, WORKTREES, guard, issue_dir, load, log, now, tabs, herdr
 
-KEEP = {"requirement.md", "decisions.md", "test-criteria.md", "critique-scores.json", "structure-scores.json", "cost.json",
+KEEP = {"requirement.md", "decisions.md", "test-criteria.md", "report.md", "critique-scores.json", "structure-scores.json", "cost.json",
         "state.md"}
 
 
