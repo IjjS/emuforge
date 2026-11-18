@@ -27,6 +27,11 @@ import tseslint from 'typescript-eslint';
 //   folder imports nothing from another's, its tests included;
 // - an AWS SDK client (`<Name>Client`) or aggregated class (`<Name>`) imported from an `@aws-sdk/client-*` package is
 //   constructed with `new` only under `lib/aws/` or in a test (R6.8); a command, an error or a paginator may be;
+// - no file under `providers/aws/area/services/` (issue 462, requirement R5), its tests included and in a service
+//   folder that does not exist yet, imports Cloudscape's `Modal` (its entry point `components/modal`, or `Modal` from
+//   the package index, which a whole-module import or an `import()` of the index brings too) or names a modal root of
+//   its own (a JSX attribute or an object property `getModalRoot`, `removeModalRoot` or `modalRoot`): a dialog of a
+//   service is the area's `AreaModal`, and a `CollectionPreferences` takes the area's root from `useAreaModalRoot()`;
 // - a file pattern (`import.meta.glob`) is no import to the rules above, so it has its own (R8.1): none outside
 //   `providers/<id>/area/` but the one pattern `./area/services/*/service.json` of `providers/aws/services.ts` (data
 //   only, R13.3) and the catalogues' `./messages/*.json` of `i18n/bundled.ts`; inside the area outside `services/`,
@@ -237,6 +242,56 @@ function brokenPattern(file, from, patterns) {
   return undefined;
 }
 
+const CLOUDSCAPE_COMPONENTS = '@cloudscape-design/components';
+const NODE_MODULES = `${path.sep}node_modules${path.sep}`;
+const AWS_SERVICES = path.join('providers', 'aws', 'area', 'services') + path.sep;
+const MODAL_ROOT_NAMES = new Set(['getModalRoot', 'removeModalRoot', 'modalRoot']);
+
+/** The package path an import's source names, as `<package>/<path>` without `/index` or `.js`, for a relative one too. */
+function packagePathOf(file, source) {
+  let named = source;
+  if (source.startsWith('.')) {
+    const resolved = path.resolve(path.dirname(file), source);
+    const at = resolved.lastIndexOf(NODE_MODULES);
+    if (at === -1) return undefined;
+    named = resolved
+      .slice(at + NODE_MODULES.length)
+      .split(path.sep)
+      .join('/');
+  }
+  return named.replace(/\.js$/, '').replace(/\/index$/, '');
+}
+
+/**
+ * Whether an import of `source` that takes the exports `names` (`'*'` for the whole module) brings Cloudscape's
+ * `Modal`: anything from its entry point `components/modal`, or `Modal` (or the whole module) from the package index.
+ */
+function bringsModal(file, source, names) {
+  const named = packagePathOf(file, source);
+  if (named === `${CLOUDSCAPE_COMPONENTS}/modal` || named?.startsWith(`${CLOUDSCAPE_COMPONENTS}/modal/`)) return true;
+  return named === CLOUDSCAPE_COMPONENTS && (names.includes('Modal') || names.includes('*'));
+}
+
+const MODAL_IMPORT_MESSAGE =
+  "a service of the AWS area does not import Cloudscape's Modal; a dialog is the area's AreaModal (providers/aws/area/components/area-modal.tsx), which renders into the area's root.";
+const MODAL_ROOT_MESSAGE =
+  "a service of the AWS area names no modal root of its own; a dialog is the area's AreaModal, and a Cloudscape component that opens a modal of its own (CollectionPreferences) takes the area's root from useAreaModalRoot() (providers/aws/area/components/area-modal.tsx).";
+
+/** The name of an import or export specifier's exported side (`imported` or `local`), whether identifier or string. */
+function specifierName(node) {
+  return node.type === 'Identifier' ? node.name : node.value;
+}
+
+/** The exports an import, re-export or `import()` takes from its module: their names, or `'*'` for the whole module. */
+function takenNames(node) {
+  if (node.type === 'ImportExpression' || node.type === 'ExportAllDeclaration') return ['*'];
+  return node.specifiers.map((specifier) => {
+    if (specifier.type === 'ImportSpecifier') return specifierName(specifier.imported);
+    if (specifier.type === 'ExportSpecifier') return specifierName(specifier.local);
+    return '*';
+  });
+}
+
 const boundaries = {
   meta: {
     type: 'problem',
@@ -250,6 +305,13 @@ const boundaries = {
       return {};
     }
     const isTest = /\.test\.tsx?$/.test(file);
+    // By path alone, so it holds for a service folder that does not exist yet.
+    const inAwsServices = from.kind === 'area' && from.rel.startsWith(AWS_SERVICES);
+    const modalRoot = (node, name) => {
+      if (MODAL_ROOT_NAMES.has(name)) {
+        context.report({ node, message: `${name}: ${MODAL_ROOT_MESSAGE}` });
+      }
+    };
     const check = (node, sourceNode, dynamic) => {
       let source;
       if (sourceNode?.type === 'Literal' && typeof sourceNode.value === 'string') {
@@ -263,6 +325,9 @@ const boundaries = {
       const message = brokenBoundary(from, targetOf(file, source), source, dynamic, isTest);
       if (message !== undefined) {
         context.report({ node, message });
+      }
+      if (inAwsServices && bringsModal(file, source, takenNames(node))) {
+        context.report({ node, message: `${source}: ${MODAL_IMPORT_MESSAGE}` });
       }
     };
     const inAwsArea = from.kind === 'area' && from.provider === 'aws';
@@ -303,6 +368,11 @@ const boundaries = {
         "JSXAttribute[name.name='expandToViewport']": expandToViewport,
         "Property[key.name='expandToViewport']": expandToViewport,
         "Property[key.value='expandToViewport']": expandToViewport,
+      }),
+      ...(inAwsServices && {
+        JSXAttribute: (node) => node.name.type === 'JSXIdentifier' && modalRoot(node, node.name.name),
+        Property: (node) =>
+          modalRoot(node, node.key.type === 'Identifier' && !node.computed ? node.key.name : stringOf(node.key)),
       }),
     };
   },
