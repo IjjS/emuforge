@@ -3,8 +3,16 @@
 A process of worktree W is a process of the current user whose working directory is W's path or a folder under it,
 compared by path components after resolving symbolic links. It is orphaned when its parent is a reaper (PID 1; a
 test may add its own PID as a subreaper). An orphan of W is an orphaned process of W that is not this process or
-one of its ancestors, not the live pm-check recorded in W's output/checks/running.json and not a member of the step
-group that record names, together with every process below it that is itself a process of W.
+one of its ancestors and is not left out, together with every process below it that is itself a process of W.
+
+Left out (issue 477), and never listed, signalled or told, are the orphaned processes of W that are:
+- the live pm-check recorded in W's output/checks/running.json, or a member of the step group that record names;
+- while that pm-check is live, a process whose working directory is under W/output/tests/ (where the harness tests
+  work) and that started at or after the recorded pm-check (by ps's start time): a stand-in a test of the running
+  check started in a session of its own. One that started before the pm-check, or outside output/tests/, is found;
+- impeccable's live-server (a process named `impeccable` with the word `live-server`) while a live registered pane
+  of role crit of W's registered issue exists: the critique of that issue serves the worktree with it.
+Each sweep's line names what it left running, and why.
 
 find(root) lists them from one `ps` run and one `lsof` run (or /proc on Linux); stop(procs, root) sends SIGTERM to
 each by PID, then SIGKILL to what is left after GRACE seconds, checking before each signal that the PID is still
@@ -23,7 +31,7 @@ import signal
 import subprocess
 import time
 
-from _pmlib import ROOT, WORKTREES
+from _pmlib import PANES, ROOT, WORKTREES
 
 PS = "/bin/ps"
 LSOF = "/usr/sbin/lsof"
@@ -49,11 +57,13 @@ class CannotTell(Exception):
 
 
 class Swept(tuple):
-    """(stopped, left) of a sweep, with `reason` set when a later look could not tell."""
+    """(stopped, left) of a sweep, with `reason` set when a later look could not tell and `kept` the left-out
+    orphans of the last look, [(Proc, why)]."""
 
-    def __new__(cls, stopped, left, reason=None):
+    def __new__(cls, stopped, left, reason=None, kept=()):
         t = super().__new__(cls, (stopped, left))
         t.reason = reason
+        t.kept = list(kept)
         return t
 
 
@@ -178,22 +188,88 @@ def is_pm_check(command):
     return any(os.path.basename(w) == "pm-check" for w in words) and "--stop" not in words
 
 
-def recorded(root, tab):
-    """PIDs of the live pm-check recorded in <root>/output/checks/running.json and of its step group."""
+def live_record(root, tab):
+    """(pm_check_pid, pgid) of the live pm-check recorded in <root>/output/checks/running.json, or None."""
     try:
         with open(os.path.join(root, "output", "checks", "running.json"), encoding="utf-8") as f:
             rec = json.load(f)
     except (OSError, ValueError):
-        return set()
+        return None
     if not isinstance(rec, dict):
-        return set()
+        return None
     pid, pgid = rec.get("pm_check_pid"), rec.get("pgid")
     if type(pid) is not int or type(pgid) is not int:
-        return set()
+        return None
     p = tab.get(pid)
     if p is None or not is_pm_check(p.command):
-        return set()
-    return {pid} | {q.pid for q in tab.values() if q.pgid == pgid}
+        return None
+    return pid, pgid
+
+
+def started_at(start):
+    """Seconds since the epoch of a ps `lstart` (LC_ALL=C), or None when it cannot be read."""
+    try:
+        return time.mktime(time.strptime(start, "%a %b %d %H:%M:%S %Y"))
+    except (ValueError, OverflowError):
+        return None
+
+
+def is_live_server(command):
+    """impeccable's live-server: a process named `impeccable` with the word `live-server` in its command."""
+    return name_of(command) == "impeccable" and "live-server" in command.split()
+
+
+def registered_issues():
+    """{real path: issue} of the registered worktrees that name an issue."""
+    try:
+        reg = json.loads(WORKTREES.read_text())
+    except (OSError, ValueError):
+        return {}
+    out = {}
+    for w in reg if isinstance(reg, list) else []:
+        if isinstance(w, dict) and isinstance(w.get("path"), str) and isinstance(w.get("issue"), (str, int)) \
+                and not isinstance(w.get("issue"), bool):
+            out[os.path.realpath(w["path"])] = str(w["issue"])
+    return out
+
+
+def live_crits():
+    """{issue: name} of the live (not gone) registered panes of role crit, the first of each issue."""
+    try:
+        reg = json.loads(PANES.read_text())
+    except (OSError, ValueError):
+        return {}
+    out = {}
+    for r in reg if isinstance(reg, list) else []:
+        if isinstance(r, dict) and r.get("role") == "crit" and not r.get("gone") and isinstance(r.get("name"), str) \
+                and isinstance(r.get("issue"), (str, int)) and not isinstance(r.get("issue"), bool):
+            out.setdefault(str(r["issue"]), r["name"])
+    return out
+
+
+def left_out(root, tab, tops, dirs, crit=None):
+    """{pid: why} of what the sweep of `root` leaves alone (the module docstring): the recorded live pm-check and its
+    step group, the stand-ins of its tests among `tops` (orphaned processes, with `dirs` their working directories),
+    and impeccable's live-server among `tops` while `crit` (a live crit pane of root's issue) is given."""
+    out = {}
+    rec = live_record(root, tab)
+    if rec is not None:
+        pid, pgid = rec
+        why = f"the running pm-check {pid}"
+        out[pid] = why
+        out.update({q.pid: why for q in tab.values() if q.pgid == pgid})
+        since = started_at(tab[pid].start)
+        tests = os.path.join(root, "output", "tests")
+        if since is not None:
+            for p in tops:
+                at = started_at(p.start)
+                if p.pid not in out and at is not None and at >= since and inside(dirs.get(p.pid), tests):
+                    out[p.pid] = why
+    if crit:
+        for p in tops:
+            if p.pid not in out and is_live_server(p.command) and inside(dirs.get(p.pid), root):
+                out[p.pid] = f"live pane {crit}"
+    return out
 
 
 def ancestors(tab):
@@ -205,11 +281,11 @@ def ancestors(tab):
     return out | {os.getpid()}
 
 
-def scan(roots, reapers=REAPERS, tab=None):
-    """{root: [Proc]} of the orphans of each real path in `roots`, sorted by PID, from one table and one cwds run."""
+def scan_left(roots, reapers=REAPERS, tab=None):
+    """({root: [Proc]} of the orphans of each real path in `roots`, {root: [(Proc, why)]} of its left-out orphaned
+    processes), both sorted by PID, from one table and one cwds run."""
     tab = table() if tab is None else tab
     uid, mine = os.getuid(), ancestors(tab)
-    kept = {r: mine | recorded(r, tab) for r in roots}
     children = collections.defaultdict(list)
     for p in tab.values():
         children[p.ppid].append(p.pid)
@@ -226,10 +302,15 @@ def scan(roots, reapers=REAPERS, tab=None):
         candidates.add(pid)
         todo += [c for c in children.get(pid, ()) if ours(tab[c])]
     dirs = cwds(candidates) if candidates else {}
-    out = {}
+    issues, crits = (registered_issues(), live_crits()) if any(is_live_server(p.command) for p in tops) else ({}, {})
+    out, kept_out = {}, {}
     for r in roots:
+        why = left_out(r, tab, tops, dirs, crits.get(issues.get(r)))
+        kept = mine | set(why)
+        kept_out[r] = sorted(((p._replace(cwd=dirs[p.pid], name=name_of(p.command)), why[p.pid]) for p in tops
+                              if p.pid in why and inside(dirs.get(p.pid), r)), key=lambda x: x[0].pid)
         found, seen = [], set()
-        todo = [p.pid for p in tops if p.pid not in kept[r] and inside(dirs.get(p.pid), r)]
+        todo = [p.pid for p in tops if p.pid not in kept and inside(dirs.get(p.pid), r)]
         while todo:
             pid = todo.pop()
             if pid in seen:
@@ -237,10 +318,15 @@ def scan(roots, reapers=REAPERS, tab=None):
             seen.add(pid)
             p = tab[pid]
             found.append(p._replace(cwd=dirs[pid], name=name_of(p.command)))
-            todo += [c for c in children.get(pid, ()) if c in candidates and c not in kept[r]
+            todo += [c for c in children.get(pid, ()) if c in candidates and c not in kept
                      and inside(dirs.get(c), r)]
         out[r] = sorted(found, key=lambda p: p.pid)
-    return out
+    return out, kept_out
+
+
+def scan(roots, reapers=REAPERS, tab=None):
+    """{root: [Proc]} of the orphans of each real path in `roots`, sorted by PID, from one table and one cwds run."""
+    return scan_left(roots, reapers, tab)[0]
 
 
 def find(root, reapers=REAPERS, tab=None):
@@ -330,9 +416,11 @@ def by_pid(procs):
 def sweep(roots, reapers=REAPERS, settle_min=0):
     """{name: Swept(stopped, left)} or {name: CannotTell} for roots [(name, path)], in one window for all: look,
     stop what is new, look again. The window ends at the first look after `settle_min` seconds that finds nothing
-    new, or at SETTLE seconds; a stop is always followed by one more look, whose own stop ends the sweep."""
+    new, or at SETTLE seconds; a stop is always followed by one more look, whose own stop ends the sweep. A Swept's
+    `kept` is what the last look that could tell left out."""
     paths = {name: os.path.realpath(path) for name, path in roots}
     done = {name: (set(), [], []) for name in paths}  # handled (pid, start), stopped, left
+    kept = {name: [] for name in paths}
     result = {}
     t0 = time.monotonic()
     while True:
@@ -341,14 +429,16 @@ def sweep(roots, reapers=REAPERS, settle_min=0):
             break
         t = time.monotonic() - t0
         try:
-            found = scan(sorted({paths[n] for n in active}), reapers)
+            found, left_alone = scan_left(sorted({paths[n] for n in active}), reapers)
         except CannotTell as e:
             for n in active:
                 handled, stopped, left = done[n]
-                result[n] = Swept(by_pid(stopped), by_pid(left), str(e)) if stopped or left else e
+                result[n] = Swept(by_pid(stopped), by_pid(left), str(e), kept[n]) if stopped or left or kept[n] \
+                    else e
             break
         new_any = False
         for n in active:
+            kept[n] = left_alone[paths[n]]
             handled, stopped, left = done[n]
             new = [p for p in found[paths[n]] if (p.pid, p.start) not in handled]
             if not new:
@@ -358,7 +448,8 @@ def sweep(roots, reapers=REAPERS, settle_min=0):
             try:
                 s, l = stop(new, paths[n], reapers)
             except CannotTell as e:
-                result[n] = Swept(by_pid(stopped), by_pid(left), str(e)) if stopped or left else e
+                result[n] = Swept(by_pid(stopped), by_pid(left), str(e), kept[n]) if stopped or left or kept[n] \
+                    else e
                 continue
             stopped += s
             left += l
@@ -371,8 +462,16 @@ def sweep(roots, reapers=REAPERS, settle_min=0):
     for n in paths:
         if n not in result:
             _, stopped, left = done[n]
-            result[n] = Swept(by_pid(stopped), by_pid(left))
+            result[n] = Swept(by_pid(stopped), by_pid(left), kept=kept[n])
     return result
+
+
+def kept_text(kept):
+    """`<pid> <name>, … (<why>)` for each reason of [(Proc, why)], in order of their first PID; '' for none."""
+    groups = {}
+    for p, why in sorted(kept, key=lambda x: x[0].pid):
+        groups.setdefault(why, []).append(f"{p.pid} {p.name}")
+    return "; ".join(f"{', '.join(names)} ({why})" for why, names in groups.items())
 
 
 def line(name, result):
@@ -381,6 +480,7 @@ def line(name, result):
         return f"cannot tell the orphaned processes of {name}: {result}"
     stopped, left = result
     reason = getattr(result, "reason", None)
+    kept = getattr(result, "kept", [])
 
     def names(procs):
         return ", ".join(f"{p.pid} {p.name}" for p in sorted(procs, key=lambda p: p.pid))
@@ -391,7 +491,8 @@ def line(name, result):
         text = f"stopped {len(stopped)} orphaned processes of {name}" + (f": {names(stopped)}" if stopped else "")
         if left:
             text += f"; not stopped: {names(left)}"
+    if kept:
+        text += f"; left running: {kept_text(kept)}"
     if reason:
         text += f"; then cannot tell: {reason}"
     return text
-
