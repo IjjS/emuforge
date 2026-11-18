@@ -11,14 +11,16 @@ mod listener;
 mod routes;
 mod session;
 mod studio;
+mod targets;
 
 use std::future::IntoFuture;
 use std::io;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::SystemTime;
 
-use emuforge_core::{Limits, PROBE_DEADLINE, Replaced, Settings, Store, probe, relay};
+use emuforge_core::{Limits, PROBE_DEADLINE, Replaced, Settings, Store, check, probe, relay};
 use tokio::net::TcpListener;
 
 pub use aws_error::{ErrorType, Protocol, render};
@@ -33,6 +35,7 @@ pub use routes::{
 };
 pub use session::SessionToken;
 pub use studio::{STUDIO_CONTENT_TYPES, StudioFiles, StudioState, studio_app};
+pub use targets::{ADD_BODY_CAP, TARGETS_PATH, TestFn, TestFuture};
 
 use config::{ENGINE_PORT, STUDIO_PORT, variable_of};
 
@@ -180,6 +183,9 @@ pub async fn serve(
     let relay: RelayFn = Arc::new(|emulator, request| {
         Box::pin(async move { relay(&emulator, request, &Limits::DEFAULT).await })
     });
+    let test: TestFn = Arc::new(|emulator| {
+        Box::pin(async move { check::test(&emulator, PROBE_DEADLINE, SystemTime::now()).await })
+    });
     let state = AppState {
         engine_port: config.port,
         studio_port: config.studio_port,
@@ -188,6 +194,7 @@ pub async fn serve(
         settings,
         probe,
         relay,
+        test,
         max_in_flight: MAX_IN_FLIGHT,
         studio_origin,
         session,
