@@ -1,10 +1,11 @@
 // The engine process under test, started the way a developer starts it for Studio:
 // `emuforge serve --port <engine> --emulator-port <emulator> --studio-port <studio>` (the binary of the run, built
 // without Studio embedded, so it serves the engine only), with an empty environment
-// plus `HOME` and `PATH`. A missing binary is a failed assertion ("engine binary missing at <path>"), never an
+// plus `HOME`, `PATH` and `EMUFORGE_SETTINGS_DIR` (a folder of the check's own, issue 485). A missing binary is a failed assertion ("engine binary missing at <path>"), never an
 // environment error: the engine is the subject.
 
 import fs from 'node:fs';
+import path from 'node:path';
 
 import { type Ctx } from './check';
 import { ensurePortFree } from './net';
@@ -69,7 +70,12 @@ export class Engine {
       '--studio-port',
       String(this.studioPort),
     ];
-    const env = { HOME: this.ctx.home, PATH: process.env.PATH ?? '' };
+    // Its own settings folder in the run's scratch space (issue 485): no check reads or writes $HOME/.config.
+    const env = {
+      HOME: this.ctx.home,
+      PATH: process.env.PATH ?? '',
+      EMUFORGE_SETTINGS_DIR: path.join(this.ctx.tmp, 'settings', this.ctx.id),
+    };
     this.proc = Proc.spawn(this.ctx, 'engine', bin, args, this.ctx.checkout, env);
     const ready = await this.proc.waitListening(this.port, LISTEN_BOUND_MS);
     if (ready === 'listening') {

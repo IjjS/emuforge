@@ -1,8 +1,8 @@
 //! The engine process under test: `emuforge serve` (the binary of the run, built without Studio embedded, so it
 //! serves the engine only), with the arguments a check gives after `serve`.
 //!
-//! An engine starts with an empty environment plus `HOME`, `PATH`, `EMUFORGE_ENGINE_PORT=<engine port>` and
-//! `EMULATOR_PORT=<run's emulator port>`; a check adds or removes exactly what its criteria line names. Its
+//! An engine starts with an empty environment plus `HOME`, `PATH`, `EMUFORGE_ENGINE_PORT=<engine port>`,
+//! `EMULATOR_PORT=<run's emulator port>` and `EMUFORGE_SETTINGS_DIR=<the check's settings folder>` (issue 485); a check adds or removes exactly what its criteria line names. Its
 //! stdout and stderr are captured whole. A missing binary, or one that cannot be spawned, is a failed assertion
 //! ("engine binary missing at <path>"), never an exit status, so no "exits non-zero" case passes without an
 //! engine.
@@ -40,6 +40,10 @@ impl EngineCmd {
             ctx.engine_port.to_string(),
         );
         env.insert("EMULATOR_PORT".to_owned(), ctx.emulator_port.to_string());
+        env.insert(
+            "EMUFORGE_SETTINGS_DIR".to_owned(),
+            ctx.settings_dir.display().to_string(),
+        );
         EngineCmd {
             args: Vec::new(),
             env,
