@@ -291,7 +291,7 @@ class Passed_on(unittest.TestCase):
         playwright = CHECKOUT / "studio" / "node_modules" / ".bin" / "playwright"
         self.assertTrue(os.access(playwright, os.X_OK),
                         f"{playwright} is missing: install Studio's dependencies (bun install --frozen-lockfile)")
-        self.assertEqual(len(PRODUCT_IDS), 19)
+        self.assertEqual(len(PRODUCT_IDS), 22)
         fx = Fixture("passed-real-playwright")
         products = {i: "the product form does not run on Docker Engine on Linux" for i in PRODUCT_IDS}
         fx.verdicts(passed_except=products)
