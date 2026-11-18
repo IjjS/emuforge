@@ -46,8 +46,9 @@ test('studio.connections-target-changed-outside-studio', async ({ page, ctx }) =
     .toEqual([onB]);
   await expectLine(page, connectedAt(b.port), NEXT_CHECK_MS);
   await expect.poll(async () => (await lineText(page)) ?? '', ACTION).toContain(`Target ${second}`);
+  // The flash list; Cloudscape also copies the text into a live region outside it.
   await expect(
-    page.getByText(
+    page.getByRole('list', { name: 'Notifications', exact: true }).getByText(
       new RegExp(`The target is now\\s*${second}\\.\\s*This page was read again from its emulator\\.`),
     ),
     'the flash says the target changed',
