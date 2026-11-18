@@ -19,6 +19,7 @@ import { NO_SUCH_BUCKET } from '../api';
 import { NO_VALUE, objectPath, objectsPath, s3Uri } from '../format';
 import { useObjectListing, type BucketCount } from '../queries';
 import { lineText } from './bucket-read';
+import { DeleteObjectsDialog } from './delete-objects-dialog';
 import { NAME_COLUMN_MIN_WIDTH } from './name-column';
 import { listingFailure, objectRows, rowType, type Row } from './objects-rows';
 import { ObjectsBucketGone, ObjectsTableBody, type ObjectsBody } from './objects-states';
@@ -35,6 +36,7 @@ const URI_COPIED = 'S3 URI copied';
 const URI_NOT_COPIED = "Couldn't copy the S3 URI";
 const SELECT_ONE = 'Select one object or folder first';
 const SELECT_ONLY_ONE = 'Select only one object or folder';
+const SELECT_TO_DELETE = 'Select the objects or folders to delete first';
 
 /** How long the result of "Copy S3 URI" stays beside the button. */
 const COPY_RESULT_MS = 3_000;
@@ -164,6 +166,25 @@ export function ObjectsTab({ name, prefix, connection, announce }: ObjectsTabPro
   };
   const copyDisabledReason = selected.length === 0 ? SELECT_ONE : selected.length > 1 ? SELECT_ONLY_ONE : undefined;
 
+  // "Delete": the dialog for the rows selected (task 4); once a deletion ran, the listing is asked again.
+  const [deleting, setDeleting] = useState<{ keys: string[]; folders: string[] }>();
+  const handleDelete = () => {
+    setDeleting({
+      keys: selected.flatMap((row) => (row.kind === 'object' ? [row.id] : [])),
+      folders: selected.flatMap((row) => (row.kind === 'folder' ? [row.id] : [])),
+    });
+  };
+  const handleDeleteClose = useCallback(
+    (changed: boolean) => {
+      setDeleting(undefined);
+      if (changed) {
+        setStarter(null);
+        refresh();
+      }
+    },
+    [refresh],
+  );
+
   const handleRefresh = useCallback(() => {
     setStarter('refresh');
     setRefreshing(true);
@@ -252,92 +273,108 @@ export function ObjectsTab({ name, prefix, connection, announce }: ObjectsTabPro
   ];
 
   return (
-    <Table<Row>
-      items={rows ?? []}
-      trackBy="id"
-      columnDefinitions={columns}
-      selectionType="multi"
-      selectedItems={selected}
-      onSelectionChange={handleSelection}
-      ariaLabels={{
-        selectionGroupLabel: 'Object selection',
-        allItemsSelectionLabel: () => 'Select every object and folder on this page',
-        itemSelectionLabel: (_, row) => `Select ${row.name}`,
-      }}
-      wrapLines={preferences.wrapLines}
-      loading={state.kind === 'loading'}
-      loadingText="Loading objects"
-      empty={<ObjectsTableBody state={state} onClearFilter={handleClearFilter} onRetry={handleRetry} />}
-      header={
-        <Header
-          variant="h2"
-          counter={count === undefined ? undefined : counterText(count)}
-          actions={
-            <SpaceBetween direction="horizontal" size="xs" alignItems="center">
-              <Button iconName="refresh" disabled={!loaded && starter !== 'refresh'} onClick={handleRefresh}>
-                Refresh
-              </Button>
-              {copyResult !== undefined && (
-                <StatusIndicator type={copyResult.ok ? 'success' : 'error'}>
-                  {copyResult.ok ? URI_COPIED : URI_NOT_COPIED}
-                </StatusIndicator>
-              )}
-              <Button
-                iconName="copy"
-                disabled={copyDisabledReason !== undefined}
-                {...(copyDisabledReason === undefined ? {} : { disabledReason: copyDisabledReason })}
-                onClick={handleCopyUri}
-              >
-                Copy S3 URI
-              </Button>
-            </SpaceBetween>
-          }
-        >
-          {TABLE_TITLE}
-        </Header>
-      }
-      filter={
-        <TextFilter
-          ref={filterRef}
-          filteringText={filter}
-          filteringPlaceholder="Find objects by prefix"
-          filteringAriaLabel="Find objects by prefix"
-          disabled={!loaded && state.kind !== 'failure' && starter !== 'filter'}
-          {...(listing.text !== '' && count !== undefined && { countText: matchesText(count) })}
-          onChange={handleFilterChange}
-        />
-      }
-      pagination={
-        <Pagination
-          currentPageIndex={listing.currentPage}
-          pagesCount={listing.pagesCount}
-          openEnd={listing.openEnd}
-          disabled={!loaded && starter !== 'pagination'}
-          ariaLabels={{
-            nextPageLabel: 'Next page',
-            previousPageLabel: 'Previous page',
-            pageLabel: (number) => `Page ${String(number)}`,
-          }}
-          onChange={handlePageChange}
-        />
-      }
-      preferences={
-        <CollectionPreferences
-          {...modalRoot}
-          title="Preferences"
-          confirmLabel="Confirm"
-          cancelLabel="Cancel"
-          closeAriaLabel="Close modal"
-          disabled={!loaded && starter !== 'preferences'}
-          preferences={preferences}
-          pageSizePreference={{
-            title: 'Page size',
-            options: PAGE_SIZES.map((size) => ({ value: size, label: `${String(size)} objects` })),
-          }}
-          wrapLinesPreference={{ label: 'Wrap lines', description: 'Show all of a long key or date' }}
-          onConfirm={handlePreferences}
-        />
-      }
-    />
+    <>
+      <DeleteObjectsDialog
+        visible={deleting !== undefined}
+        endpoint={connection.engineOrigin}
+        bucket={name}
+        selection={deleting ?? { keys: [], folders: [] }}
+        onClose={handleDeleteClose}
+      />
+      <Table<Row>
+        items={rows ?? []}
+        trackBy="id"
+        columnDefinitions={columns}
+        selectionType="multi"
+        selectedItems={selected}
+        onSelectionChange={handleSelection}
+        ariaLabels={{
+          selectionGroupLabel: 'Object selection',
+          allItemsSelectionLabel: () => 'Select every object and folder on this page',
+          itemSelectionLabel: (_, row) => `Select ${row.name}`,
+        }}
+        wrapLines={preferences.wrapLines}
+        loading={state.kind === 'loading'}
+        loadingText="Loading objects"
+        empty={<ObjectsTableBody state={state} onClearFilter={handleClearFilter} onRetry={handleRetry} />}
+        header={
+          <Header
+            variant="h2"
+            counter={count === undefined ? undefined : counterText(count)}
+            actions={
+              <SpaceBetween direction="horizontal" size="xs" alignItems="center">
+                <Button iconName="refresh" disabled={!loaded && starter !== 'refresh'} onClick={handleRefresh}>
+                  Refresh
+                </Button>
+                {copyResult !== undefined && (
+                  <StatusIndicator type={copyResult.ok ? 'success' : 'error'}>
+                    {copyResult.ok ? URI_COPIED : URI_NOT_COPIED}
+                  </StatusIndicator>
+                )}
+                <Button
+                  iconName="copy"
+                  disabled={copyDisabledReason !== undefined}
+                  {...(copyDisabledReason === undefined ? {} : { disabledReason: copyDisabledReason })}
+                  onClick={handleCopyUri}
+                >
+                  Copy S3 URI
+                </Button>
+                <Button
+                  disabled={selected.length === 0}
+                  {...(selected.length === 0 && { disabledReason: SELECT_TO_DELETE })}
+                  onClick={handleDelete}
+                >
+                  Delete
+                </Button>
+              </SpaceBetween>
+            }
+          >
+            {TABLE_TITLE}
+          </Header>
+        }
+        filter={
+          <TextFilter
+            ref={filterRef}
+            filteringText={filter}
+            filteringPlaceholder="Find objects by prefix"
+            filteringAriaLabel="Find objects by prefix"
+            disabled={!loaded && state.kind !== 'failure' && starter !== 'filter'}
+            {...(listing.text !== '' && count !== undefined && { countText: matchesText(count) })}
+            onChange={handleFilterChange}
+          />
+        }
+        pagination={
+          <Pagination
+            currentPageIndex={listing.currentPage}
+            pagesCount={listing.pagesCount}
+            openEnd={listing.openEnd}
+            disabled={!loaded && starter !== 'pagination'}
+            ariaLabels={{
+              nextPageLabel: 'Next page',
+              previousPageLabel: 'Previous page',
+              pageLabel: (number) => `Page ${String(number)}`,
+            }}
+            onChange={handlePageChange}
+          />
+        }
+        preferences={
+          <CollectionPreferences
+            {...modalRoot}
+            title="Preferences"
+            confirmLabel="Confirm"
+            cancelLabel="Cancel"
+            closeAriaLabel="Close modal"
+            disabled={!loaded && starter !== 'preferences'}
+            preferences={preferences}
+            pageSizePreference={{
+              title: 'Page size',
+              options: PAGE_SIZES.map((size) => ({ value: size, label: `${String(size)} objects` })),
+            }}
+            wrapLinesPreference={{ label: 'Wrap lines', description: 'Show all of a long key or date' }}
+            onConfirm={handlePreferences}
+          />
+        }
+      />
+    </>
   );
 }
