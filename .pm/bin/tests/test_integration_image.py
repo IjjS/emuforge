@@ -59,7 +59,7 @@ SOURCE_TREE = "emuforge.source-tree"
 EMULATOR_BOUND_SETTING = re.compile(r"(?m)^[ \t]*(?:readonly[ \t]+)?emulator_build_bound=(\S*)")
 
 DOCKER = f"""#!{sys.executable} -I
-import hashlib, json, os, pathlib, subprocess, sys
+import hashlib, json, os, pathlib, subprocess, sys, time
 case = pathlib.Path(os.environ["STANDIN_DIR"])
 args = sys.argv[1:]
 out = case / "run.out"
@@ -104,7 +104,6 @@ def build(kind, how):
         print({BUILD_LINE!r}, flush=True)
         child = subprocess.Popen([sys.executable, "-I", "-c", CHILD, str(case)])
     with open(case / "builds.jsonl", "a") as f:
-        import time
         f.write(json.dumps(dict(kind=kind, pid=os.getpid(), child=child and child.pid, started=time.time())) + "\\n")
     if how == "hang":
         while True:
@@ -730,7 +729,8 @@ class Only_that_name(Case):
                     and (i == 0 or c["args"][i - 1] != "--entrypoint")]]
         self.assertEqual(bare, [], "calls naming the image aws-emulator after its read")
         self.assertIsNotNone(fx.run_id, fx.why())
-        self.assertEqual([c["args"][-5] if len(c["args"]) >= 5 else c["args"] for c in fx.detached()],
+        # the image of `docker run -d ... <image> -p <port> -t off` is the argument before its last -p
+        self.assertEqual([a[len(a) - 2 - a[::-1].index("-p")] for a in (c["args"] for c in fx.detached())],
                          [fx.pin], f"the run's emulator start: {[c['args'] for c in fx.detached()]}")
         own = {fx.pin, fx.product_name}
         named = [a[a.index("--version") - 1] for a in (c["args"] for c in fx.version_reads())]
