@@ -134,7 +134,9 @@ impl Config {
 
 /// The settings folder `serve` uses: `--settings-dir` made absolute against `cwd`, or the form's folder under
 /// `home`. A folder that is `<home>/.aws` or under it is refused; the comparison is of path components after
-/// `.` and `..` are resolved lexically, and no symlink is followed.
+/// `.` and `..` are resolved lexically. Its limits: components are compared byte for byte, so it is
+/// case-sensitive (`~/.AWS` on a case-insensitive file system is not refused), and no symlink is followed (a
+/// link to `~/.aws` elsewhere is not refused).
 pub fn settings_dir(config: &Config, home: &Path, cwd: &Path) -> Result<PathBuf, Error> {
     let dir = match &config.settings_dir {
         Some(dir) => lexical(&cwd.join(dir)),
@@ -166,14 +168,10 @@ fn lexical(path: &Path) -> PathBuf {
 pub fn seed_settings(form: Form, emulator_port: NonZeroU16) -> Settings {
     #[allow(
         clippy::expect_used,
-        reason = "a fixed lowercase name and https://127.0.0.1 with a non-zero port always parse"
+        reason = "the seed name is one of two string literals, checked by the tests"
     )]
-    let (name, endpoint) = (
-        TargetName::parse(form.seed_name()).expect("the seed name follows the name rule"),
-        Endpoint::parse(&format!("https://127.0.0.1:{emulator_port}"))
-            .expect("127.0.0.1 with a port is a loopback endpoint"),
-    );
-    Settings::seed(name, endpoint)
+    let name = TargetName::parse(form.seed_name()).expect("the seed name follows the name rule");
+    Settings::seed(name, Endpoint::loopback_v4(emulator_port))
 }
 
 /// The variable of a port flag, for the texts of the refusals that name the flag.

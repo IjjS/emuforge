@@ -72,6 +72,29 @@ fn endpoint_parse_loopback_https_is_accepted_and_normalized() {
 }
 
 #[test]
+fn endpoint_loopback_v4_is_127_0_0_1_at_the_port_and_equals_its_parsed_form() {
+    for port in [1, 9297, 65535] {
+        let built = Endpoint::loopback_v4(std::num::NonZeroU16::new(port).unwrap());
+        assert_eq!(
+            built.to_string(),
+            format!("https://127.0.0.1:{port}"),
+            "case {port}"
+        );
+        assert_eq!(
+            built.ip(),
+            std::net::IpAddr::from([127, 0, 0, 1]),
+            "case {port}"
+        );
+        assert_eq!(built.port().get(), port, "case {port}");
+        assert_eq!(
+            Ok(built),
+            Endpoint::parse(&format!("https://127.0.0.1:{port}")),
+            "case {port}"
+        );
+    }
+}
+
+#[test]
 fn endpoint_parse_host_not_a_loopback_ip_is_not_loopback() {
     for (case, text) in [
         ("localhost", "https://localhost:9297"),

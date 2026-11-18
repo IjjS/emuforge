@@ -133,6 +133,14 @@ impl Endpoint {
     pub fn port(&self) -> NonZeroU16 {
         self.port
     }
+
+    /// `https://127.0.0.1:<port>`, built without parsing text.
+    pub fn loopback_v4(port: NonZeroU16) -> Endpoint {
+        Endpoint {
+            ip: Ipv4Addr::LOCALHOST.into(),
+            port,
+        }
+    }
 }
 
 enum Host<'a> {
