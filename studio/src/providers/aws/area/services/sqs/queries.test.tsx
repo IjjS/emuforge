@@ -306,6 +306,7 @@ describe('an action', () => {
 });
 
 describe('the move tasks', () => {
+  // Bound: waits on real time through two MOVE_TASKS_POLL_MS (2 s) reads and one more interval that reads nothing (about 6.5 s) (issue 481 s1).
   it(
     'are read every 2 seconds while one is RUNNING or CANCELLING, and not after none is',
     async () => {
@@ -352,6 +353,7 @@ describe('the move tasks', () => {
     MOVE_TASKS_POLL_MS * 4,
   );
 
+  // Bound: waits on real time one MOVE_TASKS_POLL_MS (2 s) interval and more, to see that no read follows (issue 481 s1).
   it(
     'are read once, and not again, when none is running',
     async () => {
