@@ -142,8 +142,15 @@ test('engine.product-start-connects-to-its-own-emulator', async ({ ctx, page }) 
   await page.goto(form.studioUrl);
   await expectBothConnected(page);
 
-  // `docker compose ps` → two running containers, of emuforge and aws-emulator, the emulator's healthy (#484).
-  const ps = await composePs(form);
+  // `docker compose ps` → two running containers, of emuforge and aws-emulator, the emulator's healthy (#484). The
+  // start line does not wait for the emulator's healthcheck (R10), which records `healthy` only when it next runs, so
+  // `ps` is read again, within the bound, until the emulator's health is no longer `starting`.
+  let ps: { Service?: string; State?: string; Health?: string }[] = [];
+  await waitFor(UP_BOUND_MS, async () => {
+    ps = await composePs(form);
+    const health = ps.find((c) => c.Service === 'aws-emulator')?.Health;
+    return health !== undefined && health !== 'starting' && health !== '' ? true : undefined;
+  });
   expect(
     ps
       .map((c) => ({ service: c.Service, state: c.State }))
