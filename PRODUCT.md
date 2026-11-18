@@ -279,8 +279,8 @@ What the repository does today differs from this plan in these places, each with
 
 - **The image and the Compose form: issue 484.** One `emuforge` binary serves Studio and the engine on two ports,
   in one image. The emulator runs in its own container, joined to the `emuforge` container's network namespace,
-  and the engine reaches it at `127.0.0.1` with `ca.pem` verified, not by its Compose service name: issue 484's
-  probe found that the emulator's certificate names no Compose service. Root `AGENTS.md`'s sentence that the only
+  and the engine reaches it at `127.0.0.1`, TLS verified against `ca.pem`, not by its Compose service name: issue
+  484's probe found that the emulator's certificate names no Compose service. Root `AGENTS.md`'s sentence that the only
   upstream is the local emulator on loopback stays as it is.
 - **Emulator connections: issues 485 and 486.** Today the engine knows one emulator, by its port. Issue 485 gives
   the engine the target model, kept on disk, with an API to add, list, use, test and remove targets; issue 486
