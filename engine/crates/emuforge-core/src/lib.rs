@@ -4,6 +4,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod check;
 pub mod chunked;
 pub mod connect;
 mod emulator;
@@ -18,6 +19,7 @@ pub mod tls;
 
 use std::io;
 
+pub use check::{Outcome, Step, TestReport};
 pub use connect::{CONNECT_DEADLINE, EmulatorStream, Upstream, connect, connect_on};
 pub use emulator::Emulator;
 pub use files::{CA_FILE, CREDENTIALS_FILE, Credentials, EmulatorFiles, FILE_CAP, Secret};

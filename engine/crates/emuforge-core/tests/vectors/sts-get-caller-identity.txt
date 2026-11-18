@@ -1,0 +1,34 @@
+# Source: botocore 1.44.5 (Python 3.14.5), botocore.auth.SigV4Auth signing the request the `credentials` step of
+# a target's test sends (emuforge_core::check, issue 485 decisions.md "Plan decisions"), made 2026-11-19 by
+# i485-worker-e2 with the made-up stand-in emulator key of the prepare vectors
+# EMUKEYID000000000001 / emuforgeUnitTestSecretKey000000000000001; no real or emulator key appears here.
+# Command: `python -m venv venv && venv/bin/pip install botocore==1.44.5 && venv/bin/python -I sts_vector.py`, where
+# sts_vector.py is:
+#   import datetime
+#   from unittest import mock
+#   from botocore.auth import SigV4Auth
+#   from botocore.awsrequest import AWSRequest
+#   from botocore.credentials import Credentials
+#   req = AWSRequest(method="POST", url="https://127.0.0.1:9391/",
+#                    data="Action=GetCallerIdentity&Version=2011-06-15",
+#                    headers={"Content-Type": "application/x-www-form-urlencoded; charset=utf-8"})
+#   creds = Credentials("EMUKEYID000000000001", "emuforgeUnitTestSecretKey000000000000001")
+#   now = datetime.datetime(2026, 11, 19, 12, 0, 0, tzinfo=datetime.timezone.utc)
+#   with mock.patch("botocore.auth.get_current_datetime", return_value=now):
+#       SigV4Auth(creds, "sts", "us-east-1").add_auth(req)
+#   for k, v in req.headers.items():
+#       print(f"{k}: {v}")
+# botocore signs the Host of the URL (127.0.0.1:9391) without adding it to the printed headers.
+# `now` is 2026-11-19T12:00:00Z, 1795089600 seconds after the Unix epoch.
+== host ==
+127.0.0.1:9391
+== now-unix-seconds ==
+1795089600
+== content-type ==
+application/x-www-form-urlencoded; charset=utf-8
+== body ==
+Action=GetCallerIdentity&Version=2011-06-15
+== x-amz-date ==
+20261119T120000Z
+== authorization ==
+AWS4-HMAC-SHA256 Credential=EMUKEYID000000000001/20261119/us-east-1/sts/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=d7acc9c9ad5d6be3831e96d13a17fc62ccf805e7f04d93a61ad71e96be0e52f0
