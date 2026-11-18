@@ -470,6 +470,28 @@ describe('the field', () => {
     expect(isDisabled(deleteButton(dialog))).toBe(false);
   });
 
+  it('`confirm` typed one character at a time with a new connection answer after the third: the same dialog and field, focus in the field, it holds `confirm` and "Delete" is enabled (issue 462)', async () => {
+    const dialog = await openDialogFor(['orders']);
+    const input = field(dialog);
+    input.focus();
+
+    for (const text of ['c', 'co', 'con', 'conf', 'confi', 'confir', 'confirm']) {
+      fireEvent.change(input, { target: { value: text } });
+      if (text === 'con') {
+        // What the area sees every 5 seconds: a new answer object, the same state.
+        connection.set(connectedResult());
+      }
+      await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+    }
+
+    expect(dialog.isConnected).toBe(true);
+    expect(screen.getByRole('dialog', { name: 'Delete functions' })).toBe(dialog);
+    expect(input.isConnected).toBe(true);
+    expect(document.activeElement).toBe(input);
+    expect(input).toHaveValue('confirm');
+    expect(isDisabled(deleteButton(dialog))).toBe(false);
+  });
+
   it('Enter with `confirm` typed does what "Delete" does; with anything else nothing is sent', async () => {
     const dialog = await openDialogFor(['orders']);
 

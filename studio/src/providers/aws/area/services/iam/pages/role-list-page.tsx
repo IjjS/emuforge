@@ -12,6 +12,7 @@ import TextFilter, { type TextFilterProps } from '@cloudscape-design/components/
 import { useCallback, useRef, useState, type KeyboardEvent } from 'react';
 import { useNavigate } from 'react-router';
 
+import { useAreaModalRoot } from '../../../components/area-modal';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
 import { ValueText } from '../../../components/value-text';
@@ -20,7 +21,7 @@ import type { Role } from '../api';
 import { CREATE_ROLE_PATH, lastActivityText, rolePath, trustedEntitiesText } from '../format';
 import { useRoleListing, type Listing, type ListingCount } from '../queries';
 import { DeleteRolesDialog } from '../components/delete-roles-dialog';
-import { NAME_COLUMN_MIN_WIDTH, useAnnouncer, useAreaModalRoot } from '../components/page-parts';
+import { NAME_COLUMN_MIN_WIDTH, useAnnouncer } from '../components/page-parts';
 import { readFailureState, type ReadFailureState } from '../components/failures';
 import { ReadFailure } from '../components/states';
 

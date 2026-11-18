@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: bug
 Issue-Source: worker
 Issue-Key: studio|aws-area.modal-root|remounts-on-render
-Issue-Check-Ids:
+Issue-Check-Ids: studio.s3-bucket-list-preferences-keeps-focus-across-a-connection-check
 Issue-Commit: efff0eca145f2583e47f3bc16c0cc6dafa5aab7d
 
 # Keep an AWS area dialog mounted while it re-renders

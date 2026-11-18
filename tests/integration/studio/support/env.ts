@@ -9,7 +9,7 @@
 // | `EMULATOR_PORT` | the run's emulator, already started |
 // | `EMUFORGE_ENGINE_PORT` | the port the engine a check starts listens on |
 // | `EMUFORGE_STUDIO_PORT` | the port Studio's server a check starts listens on |
-// | `EMUFORGE_IT_RUN_ID` | unique per run; names and labels the containers a check starts |
+// | `EMUFORGE_IT_RUN_ID` | unique per run; names and labels the containers a check starts, and its emulators' image `aws-emulator:it-<run id>` |
 // | `EMUFORGE_IT_PRODUCT_IMAGE` | the run's own name for the product form's image (`EMUFORGE_IMAGE` of a form) |
 // | `EMUFORGE_IT_EMULATOR_IMAGE` | the run's own tag of its pinned emulator image (`EMUFORGE_EMULATOR_IMAGE` of a form) |
 // | `EMUFORGE_IT_PRODUCT_BUILD` | `ok`, `absent` or `failed`: the run's build of the product image |
@@ -36,6 +36,12 @@ export interface RunEnv {
   /** Why there is no built Studio to serve, when `run` knows it. */
   studioMissing: string | null;
   runId: string;
+  /**
+   * The tag of the image every emulator a check starts runs: `it-<run id>`, the run's own image
+   * `aws-emulator:it-<run id>` that `run` built, when `EMUFORGE_IT_RUN_ID` is set; else `latest`, the machine's image
+   * `aws-emulator` (a check started by hand), never a name made from a process id.
+   */
+  emulatorTag: string;
   /** The run's names for the product form's images; `''` when `run` did not set them. */
   productImage: string;
   emulatorImage: string;
@@ -96,6 +102,7 @@ export function runEnv(): RunEnv {
     engineMissing: missing(process.env.EMUFORGE_IT_ENGINE_BUILD, 'engine build', 'engine/Cargo.toml does not exist'),
     studioMissing: missing(process.env.EMUFORGE_IT_STUDIO_BUILD, 'studio build', 'studio/package.json does not exist'),
     runId: process.env.EMUFORGE_IT_RUN_ID || String(process.pid),
+    emulatorTag: process.env.EMUFORGE_IT_RUN_ID ? `it-${process.env.EMUFORGE_IT_RUN_ID}` : 'latest',
     productImage: process.env.EMUFORGE_IT_PRODUCT_IMAGE ?? '',
     emulatorImage: process.env.EMUFORGE_IT_EMULATOR_IMAGE ?? '',
     productMissing: missing(

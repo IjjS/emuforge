@@ -154,6 +154,7 @@ impl OwnEmulator {
         let publish = format!("127.0.0.1:{port}:{port}");
         let label = format!("emuforge-it-run={}", ctx.run_id);
         let port_arg = port.to_string();
+        let image_tag = &ctx.image_tag;
         ctx.log(format!("starting own emulator {name} on 127.0.0.1:{port}"));
         let emulator = OwnEmulator {
             port,
@@ -163,6 +164,8 @@ impl OwnEmulator {
         };
         docker(&[
             "run",
+            "--pull",
+            "never",
             "-d",
             "--name",
             &name,
@@ -176,7 +179,7 @@ impl OwnEmulator {
             &format!("HOME={home}"),
             "-v",
             &volume,
-            "aws-emulator",
+            &format!("aws-emulator:{image_tag}"),
             "-p",
             &port_arg,
             "-t",

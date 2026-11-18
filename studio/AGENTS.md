@@ -538,7 +538,10 @@ Applies to everything under `providers/aws/area/`, at `/aws` and below.
   app's own origin.
 - Overlays stay in the area: no component uses `expandToViewport`, and a `Modal` renders into the area's root
   (`getModalRoot`), so no Cloudscape element is rendered outside the area. `bun run lint` fails on a use of
-  `expandToViewport` under `providers/aws/area/`.
+  `expandToViewport` under `providers/aws/area/`, and on a file under `providers/aws/area/services/` (tests
+  included) that imports Cloudscape's `Modal` or names a modal root of its own (`getModalRoot`, `removeModalRoot`,
+  `modalRoot`): a service's dialog is the area's `AreaModal`, and a `CollectionPreferences` takes the area's root
+  from `useAreaModalRoot()` (`components/area-modal.tsx`).
 - A destructive action is confirmed in a `Modal`, or on the console's own confirmation page where the console has
   one; where the AWS console asks the user to type a word or the resource name, so does Studio.
 - The result of an action is announced in the `Flashbar`. A save in progress disables its button and keeps

@@ -1,4 +1,4 @@
-//! Emulators of the image `aws-emulator` started on a Docker volume instead of the host folder (issue 55). A volume
+//! Emulators of the image `aws-emulator:<tag>` (`Ctx::image_tag`) started on a Docker volume instead of the host folder (issue 55). A volume
 //! shows real owners and modes on Docker Desktop and on Docker Engine on Linux alike, so a check sees the
 //! filesystem of a Linux host on any machine.
 //!
@@ -86,6 +86,7 @@ pub struct Volume {
     pub name: String,
     run_label: String,
     run_id: String,
+    image_tag: String,
 }
 
 impl Volume {
@@ -99,6 +100,7 @@ impl Volume {
             name,
             run_label,
             run_id: ctx.run_id.clone(),
+            image_tag: ctx.image_tag.clone(),
         };
         let given = volume.one_shot(
             "0:0",
@@ -148,8 +150,11 @@ impl Volume {
             self.run_id
         );
         let mount = self.mount();
+        let image = format!("aws-emulator:{}", self.image_tag);
         let mut all = vec![
             "run",
+            "--pull",
+            "never",
             "--rm",
             "--name",
             &name,
@@ -163,7 +168,7 @@ impl Volume {
             &mount,
             "--entrypoint",
             entrypoint,
-            "aws-emulator",
+            &image,
         ];
         all.extend_from_slice(args);
         docker(&all)
@@ -230,7 +235,7 @@ pub struct ImageEmulator {
 }
 
 impl ImageEmulator {
-    /// `docker run -d` of `aws-emulator` as the checks start it, with `--network none`, no `--user` and no
+    /// `docker run -d` of `aws-emulator:<tag>` as the checks start it, with `--network none`, no `--user` and no
     /// capability option unless `extra` adds one, the arguments `-p <VOLUME_PORT> -t off`. With a volume:
     /// `HOME=<VOLUME_HOME>` and the volume at `<VOLUME_FOLDER>`; without: no `HOME` and no mount (the image's own).
     pub fn start(
@@ -244,8 +249,11 @@ impl ImageEmulator {
         let home = format!("HOME={VOLUME_HOME}");
         let mount = volume.map(Volume::mount);
         let port = VOLUME_PORT.to_string();
+        let image_tag = &ctx.image_tag;
         let mut args = vec![
             "run",
+            "--pull",
+            "never",
             "-d",
             "--name",
             &name,
@@ -260,7 +268,14 @@ impl ImageEmulator {
             args.extend_from_slice(&["-e", &home, "-v", mount]);
         }
         args.extend_from_slice(extra);
-        args.extend_from_slice(&["aws-emulator", "-p", &port, "-t", "off"]);
+        let start: &[&str] = &[
+            &format!("aws-emulator:{image_tag}"),
+            "-p",
+            &port,
+            "-t",
+            "off",
+        ];
+        args.extend_from_slice(start);
         ctx.log(format!(
             "docker run -d {name}{}{}",
             if mount.is_some() {
