@@ -8,7 +8,7 @@ a pane's `BLOCKED … memory`, `BLOCKED … cpu` and `BLOCKED … depends emulat
 answers on EVENT mem ok, cpu ok and emulator-image), the machine's own (mem, cpu, tokens, orphans: the pm prompts the pane or sweeps), the owner's (go) and every
 other kind. An issue with no live plan (one begun before
 issue 478) is heard by the pm, as before. `EVENT room <pane> …` goes to the pane it names, the one a QUEUE answer
-told to wait; when that pane is gone, to nobody.
+of pm-pane or a WAIT answer of pm-check told to wait; when that pane is gone, to nobody.
 """
 import os
 import re

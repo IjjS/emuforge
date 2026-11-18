@@ -6,8 +6,9 @@ Check id `harness.check-issue`. One class per heading of the test criteria.
 The fixture, its stand-ins and the helpers are those of `test_issue_branch.py` (see its docstring), under
 <checkout>/output/tests/check-issue/<case>/. pm-check is run with the unit's or the issue's worktree as its
 checkout, from the fixture's main checkout. A case that lets the integration stand-in run finds the stand-in
-`top` first on PATH, so the run never waits for the CPU; its check slots are the fixture's own
-(<fixture>/.pm/run/check-slots/slot-<i>.lock), and a case that holds them takes their locks itself.
+`top` first on PATH, so the machine is idle and the run starts; a case that wants a busy machine puts a `top` of
+its own first (`busy`). The limit of two heavy runs and its slots went with issue 478 (the owner's decision
+"Checks"): a heavy run asks for room and is answered WAIT when there is none.
 
 Interface used (design 2.3): the `integration` entry of a record has `checks` (`passed`, `failed`, `error`,
 `not_run`), null when there is no report of the run; a `--checks` run writes output/checks/checks.json, a
@@ -17,17 +18,15 @@ log is output/logs/checks-integration.log, and its `integration` entry has `aske
 On a checkout without the change every case fails on its own, not at import: `pm-worktree new <id>` and
 `--checks` do not exist there, and a record has no `checks`. The case whose name says `guard` passes there.
 """
-import fcntl
 import json
 import os
 import pathlib
 import re
-import subprocess
 import time
 import unittest
 
 from _fixture import git
-from test_issue_branch import HARNESS_PATH, ISSUE_FILE, PRODUCT_PATH, IssueCase, exact, line_with, manifest
+from test_issue_branch import HARNESS_PATH, ISSUE_FILE, PRODUCT_PATH, TOP, IssueCase, exact, line_with, manifest
 
 NO_REPORT = "integration: no report of this run"
 VERDICTS = ("passed", "failed", "error", "not-run")
@@ -66,17 +65,13 @@ class CheckCase(IssueCase):
         self.assertEqual(len(found), 1, rec["steps"])
         return found[0]
 
-    def hold_slots(self):
-        """Take both of the fixture's check slots; each file object holds one lock until it is closed."""
-        d = self.co / ".pm" / "run" / "check-slots"
-        d.mkdir(parents=True, exist_ok=True)
-        held = []
-        for i in range(2):
-            f = open(d / f"slot-{i}.lock", "w")
-            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            held.append(f)
-            self.addCleanup(f.close)
-        return held
+    def busy(self):
+        """The fixture's stand-in `top` reports the CPU 99 % in use from now on."""
+        (self.stub / "top").write_text("#!/bin/sh\necho 'CPU usage: 90.0% user, 9.0% sys, 1.0% idle'\n"
+                                       "echo 'CPU usage: 90.0% user, 9.0% sys, 1.0% idle'\n")
+
+    def idle(self):
+        (self.stub / "top").write_text(TOP)
 
 
 # ---------------------------------------------------------------------------------------------------- R3.1, R3.2
@@ -106,14 +101,12 @@ class FastCheck(CheckCase):
         self.assertEqual(rec["scope"], sc)
         self.assertEqual((sc["kind"], sc.get("target")), ("unit", "feat/9"), sc)
 
-    def test_fast_check_takes_no_slot(self):
+    def test_fast_check_asks_for_no_room(self):
         self.given()
-        self.hold_slots()
-        try:
-            p = self.check(self.s1, timeout=120)
-        except subprocess.TimeoutExpired:
-            self.fail("pm-check waited for a check slot although no product step runs")
+        self.busy()
+        p = self.check(self.s1, timeout=120)
         self.ok(p)
+        self.assertNotIn("WAIT", p.stdout)
 
     def test_failing_harness_step_fails_the_fast_check(self):
         self.given()
@@ -372,29 +365,22 @@ class Checks(CheckCase):
                 if named:
                     self.assertIn(named, p.stderr)
 
-    def test_waits_for_a_slot(self):
+    def test_is_answered_wait_on_a_busy_machine_and_runs_on_an_idle_one(self):
         self.given()
         (self.u / "output" / "ran").unlink()
         self.standin(self.u, dict(exit=0))
-        held = self.hold_slots()
-        log = self.u / "output" / "logs" / "case-checks-queued.log"
-        with open(log, "w") as f:
-            proc = subprocess.Popen([str(self.co / ".pm" / "bin" / "pm-check"), str(self.u), "--checks", "studio.b"],
-                                    stdout=f, stderr=subprocess.STDOUT, env=self.env(), cwd=str(self.co))
-        self.addCleanup(lambda: proc.poll() is None and proc.kill())
-        end = time.time() + 60
-        while "queued" not in log.read_text() and proc.poll() is None and time.time() < end:
-            time.sleep(0.05)
-        self.assertIn("queued", log.read_text(), f"exit {proc.poll()}\n{log.read_text()}")
-        self.assertIsNone(proc.poll(), log.read_text())
+        self.busy()
+        p = self.check(self.u, "--checks", "studio.b", timeout=120)
+        self.assertEqual(p.returncode, 75, self.out(p))
+        self.assertRegex(p.stdout.splitlines()[-1], r"^WAIT \d+s: cpu 99% > 90%; ")
         self.assertIsNone(self.ran(self.u))
-        held[0].close()
-        try:
-            code = proc.wait(timeout=120)
-        except subprocess.TimeoutExpired:
-            self.fail(f"pm-check did not end after a slot was freed\n{log.read_text()}")
-        self.assertEqual(code, 0, log.read_text())
+        self.assertFalse((self.u / "output" / "checks" / "checks.json").exists())
+        self.idle()
+        p = self.check(self.u, "--checks", "studio.b", timeout=120)
+        self.assertEqual(p.returncode, 0, self.out(p))
         self.assertIn("integration", self.modules_ran(self.u))
+        waited = json.loads((self.u / "output" / "checks" / "checks.json").read_text())["waited"]
+        self.assertEqual(waited["asks"], 1, waited)
 
     def test_checks_record_is_no_gate_on_the_issue_branch(self):
         self.fixture()

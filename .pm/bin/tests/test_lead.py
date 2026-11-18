@@ -219,6 +219,8 @@ class Route(unittest.TestCase):
             ("EVENT check still emuforge-9 integration 61m", "i9-plan"),
             ("EVENT room i9-plan pane worker engine", "i9-plan"),
             ("EVENT room i3-plan pane worker engine", ""),
+            ("EVENT room i7-worker-e1 check /x/emuforge-7-e1", "i7-worker-e1"),  # a WAIT answer of pm-check (issue 478)
+            ("EVENT room i9-crit check /x/emuforge-9", ""),
             ("EVENT ready i9-worker-e1 BLOCKED i9-worker-e1 memory", None),
             ("EVENT ready i9-worker-e1 BLOCKED i9-worker-e1 cpu", None),
             ("EVENT ready i9-worker-e1 BLOCKED i9-worker-e1 depends emulator image", None),

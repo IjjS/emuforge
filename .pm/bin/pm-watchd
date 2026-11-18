@@ -20,6 +20,8 @@ _pmroute.py): a line about a worker, rev or crit pane of an issue, or about a wo
 `i<n>-plan`; everything else, and everything of an issue with no live plan, to the PM:
   EVENT ready <pane> <STAGE READY|UNIT READY|ISSUE READY|BLOCKED|DONE line> a registered pane finished a turn with a reporting line
   EVENT room <pane> pane <role> <side>                          to the pane a QUEUE answer of pm-pane told to wait: there is room now
+  EVENT room <pane> check <checkout>                            to the pane a WAIT answer of pm-check told to wait: there is room
+                                                                now (the longest waiting first, one per look, every 30 s)
   EVENT go github#<n>                                           the owner commented READY on a GitHub issue (pm-ready poll)
   EVENT emulator-image refreshed <before> -> <after>           a refresh moved aws-emulator to a new version or commit (pm-emulator-image)
   EVENT emulator-image failed <reason>                        a refresh failed; aws-emulator was left as it was (pm-emulator-image)
@@ -54,8 +56,8 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _pmlib import (EVENTS, PANES, PMINFO, ROOT, RUN, WAITING, WORKTREES, agents, cpu_pct, find_key, herdr, load, log, mem_gb,
-                    notify, now, pane_rss_gb, room, save, transcript_ctx)
+from _pmlib import (EVENTS, PANES, PMINFO, ROOT, RUN, WAITING, WORKTREES, agents, check_room, cpu_pct, find_key, herdr, load,
+                    log, mem_gb, notify, now, pane_rss_gb, room, save, transcript_ctx)
 from _pmroute import PM as TO_PM, route
 from _pmwake import Waker
 
@@ -94,17 +96,30 @@ def send_to(name, ags_list, lines):
     return True
 
 
-def room_tick(st, reg):
-    """EVENT room for each pane in waiting.json whose limit has cleared; at most every 30 s, and only while one waits."""
+def room_tick(st, reg, checks=check_room):
+    """EVENT room for each pane in waiting.json whose limit has cleared; at most every 30 s, and only while one waits.
+    Of the panes a WAIT answer of pm-check told to wait, only the longest waiting is told, once `checks` finds room:
+    the check it starts changes the room, and check_room holds the next one until the machine shows its load."""
     waiting = load(WAITING, [])
     if not waiting or time.time() - st.get("room_checked", 0) < 30:
         return []
     st["room_checked"] = time.time()
     live = {r["name"] for r in reg}
     done, out, judged = [], [], {}
+    check_told = False
     for w in waiting:
         if w.get("asker") not in live:
             done.append(w)
+            continue
+        if "check" in w:
+            if check_told:
+                continue
+            if "check" not in judged:
+                judged["check"] = checks()[0]
+            if judged["check"] is None:
+                out.append(f"EVENT room {w['asker']} check {w['check']}")
+                done.append(w)
+                check_told = True
             continue
         key = (w.get("role"), w.get("side"), w.get("issue"))
         if key not in judged:

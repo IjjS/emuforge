@@ -71,7 +71,8 @@ own unit is not this: that is `BLOCKED`.
   Never paste a document into chat.
 - Shell: batch (`a && b && c`), send long output to `output/logs/` and read the tail or `grep`. Never `sleep N`
   and check again; `pm-check` and `pm-capture` block until done, and anything you wait for from another pane
-  arrives as your next prompt.
+  arrives as your next prompt. A `pm-check` the machine has no room for answers `WAIT <n>s: …` at once and runs
+  nothing; end your turn, and `EVENT room <name> check <worktree>` arrives when there is room: run it again.
 - Checks only through `<Root>/.pm/bin/pm-check <worktree>`; captures only through `pm-capture`. Their records
   are the evidence; a command you ran by hand is not.
 - For a unit of an issue that has an issue branch, `pm-check` is the fast check: it runs what the unit's own paths
@@ -122,8 +123,8 @@ It refuses while anything uses the port and never reads the files. Never `rm` or
 Memory budget 22.5 GB used, CPU 90% (`<Root>/.pm/bin/pm-mem`). Before `cargo build`, Playwright, a dev server or
 an emulator run `pm-mem --wait`: it waits up to five minutes for the CPU to drop and fails at once on memory. If
 it fails on memory, stop with `BLOCKED <name> memory` at once; if the CPU is still over after the wait, stop with
-`BLOCKED <name> cpu`. `pm-check` needs nothing before it: it queues behind other
-worktrees' runs and waits for the CPU by itself, so a long quiet start is normal; never start a second one. No
+`BLOCKED <name> cpu`. `pm-check` needs nothing before it: it asks for room itself and either starts, however many
+other checks run, or answers `WAIT` with the expected wait (above); never start a second one of your own. No
 long-running dev servers: web checks use the built app served by `pm-capture --serve` or on your own port.
 Headless Playwright only.
 

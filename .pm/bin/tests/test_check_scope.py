@@ -5,7 +5,7 @@ and `module` on every entry of `steps`; a step not called for has status `not-ne
 
 Each case builds a fixture checkout (see `_fixture.py`) with stand-in steps that append their module's name to
 `output/ran`: `.pm/bin/tests/run` for `harness` and, where a case has it, `tests/integration/run`. No case lets
-the integration stand-in run, so no case takes a check slot or waits for the CPU. Every case fails on `main`,
+the integration stand-in run, so no case asks for room (issue 478). Every case fails on `main`,
 where `_pmscope.py` and `pm-scope` do not exist and the fixture cannot be built.
 """
 import json
@@ -104,12 +104,14 @@ class CheckScope(unittest.TestCase):
         self.assertTrue(any("harness" in ln and RULE8 in ln for ln in before), p.stdout)
         self.assertTrue(any("integration" in ln and "not needed" in ln for ln in lines), p.stdout)
 
-    def test_harness_only_run_takes_no_slot(self):
+    def test_harness_only_run_asks_for_no_room(self):
+        # the slots went with the limit of two heavy runs (issue 478, the owner's decision "Checks"); a run that asks
+        # for room is recorded in .pm/run/checks/, and a harness-only run never asks
         co = fixture("no-slot")
         branch(co, [".pm/bin/a"])
         p = pm_check(co)
         self.assertEqual(p.returncode, 0, self.out(p))
-        self.assertFalse((co / ".pm" / "run" / "check-slots").exists())
+        self.assertFalse((co / ".pm" / "run" / "checks").exists())
 
     def test_failing_harness_step_fails_the_run(self):
         co = fixture("harness-fails", harness_code=1)

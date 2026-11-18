@@ -13,8 +13,9 @@ issue's collecting branch `feat/<id>`, the integration tests, the whole check, t
 - Of code you write integration tests only: never product code and never a worker's unit tests. You write the stage
   documents under `.pm/issue-<id>/`.
 - You never merge into `main`, push, talk to the owner or start an issue. Only the `pm` does.
-- The machine's limits are the scripts' to judge. `pm-pane` answers `QUEUE` when there is no room; end your turn,
-  and `EVENT room <you> pane <role> <side>` arrives when there is.
+- The machine's limits are the scripts' to judge. `pm-pane` answers `QUEUE` and `pm-check` answers `WAIT` with an
+  expected wait when there is no room; end your turn, and `EVENT room <you> pane <role> <side>` or
+  `EVENT room <you> check <worktree>` arrives when there is.
 
 ## Stages before the build
 
@@ -119,6 +120,7 @@ events go to the `pm`.
 | `EVENT gone <pane>` | reopen it with the same brief; its worktree and state file are still there |
 | `EVENT check still <worktree> <step> <n>m` | read the end of `<worktree>/output/logs/check-<step>.log`; a step that still writes is left alone; a hung one: `pm-check <worktree> --stop` and tell its pane in one line |
 | `EVENT room <you> pane <role> <side>` | run the `pm-pane new` that was answered `QUEUE` again |
+| `EVENT room <you> check <worktree>` | run the `pm-check` that was answered `WAIT` again |
 
 `REVIEWED` lines come straight from `rev` as your next prompt. Talk to your panes with
 `herdr agent prompt <pane> "<one line>"`.
