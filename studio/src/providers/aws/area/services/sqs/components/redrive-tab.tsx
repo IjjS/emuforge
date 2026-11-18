@@ -5,7 +5,7 @@ import Form from '@cloudscape-design/components/form';
 import FormField from '@cloudscape-design/components/form-field';
 import Header from '@cloudscape-design/components/header';
 import Input from '@cloudscape-design/components/input';
-import RadioGroup from '@cloudscape-design/components/radio-group';
+import RadioGroup, { type RadioGroupProps } from '@cloudscape-design/components/radio-group';
 import Select, { type SelectProps } from '@cloudscape-design/components/select';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator, { type StatusIndicatorProps } from '@cloudscape-design/components/status-indicator';
@@ -36,10 +36,25 @@ import { actionFailureOf, usePageSignal } from './page-signal';
 
 type Destination = 'source' | 'another';
 
-const DESTINATIONS = [
-  { value: 'source', label: 'Back to their source queues' },
-  { value: 'another', label: 'Another queue' },
-];
+/**
+ * The destinations to choose from. On the dead-letter queue of more than one source the emulator refuses a move back
+ * to the sources (probe-5, `UnsupportedOperation`), so that item is disabled and says why.
+ */
+function destinations(name: string, sources: number): RadioGroupProps.RadioButtonDefinition[] {
+  return [
+    {
+      value: 'source',
+      label: 'Back to their source queues',
+      ...(sources > 1
+        ? {
+            disabled: true,
+            description: `${name} is the dead-letter queue of ${String(sources)} queues, so the emulator cannot tell each message's source queue. Choose the queue to move them to.`,
+          }
+        : {}),
+    },
+    { value: 'another', label: 'Another queue' },
+  ];
+}
 
 /** The chosen destination and, once read, its `QueueArn`. */
 interface Chosen {
@@ -102,7 +117,10 @@ export function RedriveTab({ details, settings, connection }: RedriveTabProps) {
   const start = useStartMoveTask(engineOrigin);
   const cancel = useCancelMoveTask(engineOrigin);
 
-  const [destination, setDestination] = useState<Destination>('source');
+  // On the dead-letter queue of more than one source, "Another queue" is the only destination the emulator takes.
+  const manySources = details.sources.length > 1;
+  const [picked, setDestination] = useState<Destination>(manySources ? 'another' : 'source');
+  const destination: Destination = manySources ? 'another' : picked;
   const [filter, setFilter] = useState('');
   const choices = useQueueChoices(engineOrigin, filter, destination === 'another');
   const [chosen, setChosen] = useState<Chosen>();
@@ -307,7 +325,7 @@ export function RedriveTab({ details, settings, connection }: RedriveTabProps) {
               <FormField label="Destination">
                 <RadioGroup
                   value={destination}
-                  items={DESTINATIONS}
+                  items={destinations(name, details.sources.length)}
                   onChange={({ detail }) => {
                     setDestination(detail.value as Destination);
                   }}
