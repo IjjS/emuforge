@@ -53,8 +53,11 @@ Compose 5.1.4) and on Docker Engine on Linux (Ubuntu, the runner of the checks o
 run yet.
 
 Nothing of EmuForge is on the host. The emulator's files, its keys among them, are in a Docker volume of the form,
-which only the emulator and `emuforge` mount (`emuforge` read-only), and the emulator's port is not published.
-The stop line leaves the volume, which then holds no key; `docker compose down -v` removes it too.
+`emulator`, which only the emulator and `emuforge` mount (`emuforge` read-only), and the emulator's port is not
+published. `emuforge`'s target settings, `targets.json`, are in a second volume, `settings`, which only `emuforge`
+mounts and which holds no key. The Compose form holds one target, `compose`, its own emulator at
+`https://127.0.0.1:<EMULATOR_PORT>`; `emuforge` writes it at every start and refuses to add another. The stop line
+leaves both volumes, the first then holding no key; `docker compose down -v` removes both.
 
 An AWS client on the host uses the engine: endpoint http://127.0.0.1:8297 and any access key and secret. The
 engine signs each request again with the emulator's own key, which a client does not need and which is not

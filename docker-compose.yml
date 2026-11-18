@@ -5,8 +5,8 @@
 #
 # `emuforge` is one process from one binary that serves Studio and the engine; `aws-emulator` is the form's own
 # emulator, from the emulator's image, in emuforge's network namespace. Then open http://127.0.0.1:8296/. Nothing
-# of the form is on the host: the emulator's files are in the volume `emulator`, which `docker compose down -v`
-# removes. An AWS client on the host is pointed at the engine's port with any key; the emulator's own port is not
+# of the form is on the host: the emulator's files are in the volume `emulator` and emuforge's target settings in
+# the volume `settings`, both of which `docker compose down -v` removes. An AWS client on the host is pointed at the engine's port with any key; the emulator's own port is not
 # published.
 # Change the ports with EMUFORGE_STUDIO_PORT (8296) and EMUFORGE_ENGINE_PORT (8297), and give the stop command the
 # same values. EMULATOR_PORT (9297) is the emulator's port inside the form; set it only to free that number for
@@ -29,7 +29,8 @@ services:
     pull_policy: build
     # Inside the container both listeners take the container's address, so the ports Docker publishes reach them
     # (security review N1: an explicit flag, and a warning in the log). On the host they are on 127.0.0.1 only.
-    command: ["serve", "--listen-address", "0.0.0.0"]
+    # The Compose form holds one target, `compose`, this form's own emulator; emuforge writes it at every start.
+    command: ["serve", "--listen-address", "0.0.0.0", "--form", "compose"]
     environment:
       EMULATOR_PORT: ${EMULATOR_PORT:-9297}
       EMUFORGE_ENGINE_PORT: ${EMUFORGE_ENGINE_PORT:-8297}
@@ -41,12 +42,17 @@ services:
       - "127.0.0.1:${EMUFORGE_STUDIO_PORT:-8296}:${EMUFORGE_STUDIO_PORT:-8296}"
       - "127.0.0.1:${EMUFORGE_ENGINE_PORT:-8297}:${EMUFORGE_ENGINE_PORT:-8297}"
     volumes:
-      # The one mount: the emulator's files, read-only. The parent, not the port's own directory, so emuforge sees
-      # the emulator's files after every start, stop and restart.
+      # The emulator's files, read-only. The parent, not the port's own directory, so emuforge sees the emulator's
+      # files after every start, stop and restart.
       - type: volume
         source: emulator
         target: /home/emuforge/.aws/emulator
         read_only: true
+      # The target settings (targets.json, no key), read-write, at the Compose form's own settings folder; never
+      # shared with a native run's settings.
+      - type: volume
+        source: settings
+        target: /home/emuforge/.config/emuforge-compose
     # Healthy once both ports accept a connection; the emulator waits for it, so a refused start of emuforge keeps
     # the emulator from starting and the start line exits non-zero naming this container.
     healthcheck:
@@ -94,3 +100,4 @@ services:
 
 volumes:
   emulator: {}
+  settings: {}
