@@ -356,7 +356,8 @@ class Work:
 
     def outcome(self):
         b, a = self.before, self.after
-        if b and b["version"] == a["version"] and b["commit"] == a["commit"] and "unknown" not in (b["version"],):
+        same = b is not None and (b["version"], b["commit"]) == (a["version"], a["commit"])
+        if same and "unknown" not in (b["version"], b["commit"]):  # unknown differs from every version
             return "unchanged", f"{PREFIX}unchanged {a['version']}"
         return "refreshed", f"{PREFIX}refreshed {(b or {}).get('version') or 'none'} -> {a['version']}"
 
