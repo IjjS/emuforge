@@ -149,7 +149,9 @@ test file gets its entry in `_pmscope.py`; adding a source needs no decision, bu
 away changes what a run checks and is made only on the `pm`'s decision, recorded in the issue's `decisions.md`.
 What a left-out file leaves unseen until a run calls for it: a case that depends on a file the map does not name
 as its source, and a break from outside the repository (a new emulator image, a new Chromium, the machine). Name
-this in the report of an issue whose units left files out, and run `pm-check --full` when in doubt.
+this in the report of an issue whose units left files out, and run `pm-check --only harness` when in doubt:
+`pm-check --full` also runs the integration checks of the tier `full`, which the `pm` runs only on the owner's word
+(`tests/integration/AGENTS.md`, Full tier).
 
 **Intermittent failures.** `pm-check` runs a failed test step once more; when the second run passes, the step is
 `flaky`, the run passes and the unit is not held up. Every flake is a line in `.pm/run/flakes.jsonl` (step,

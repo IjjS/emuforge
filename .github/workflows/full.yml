@@ -2,7 +2,9 @@
 # Actions tab (`workflow_dispatch`); nothing else triggers it and the `pm` never starts it. It runs every check of
 # the manifest but those `.github/not-run.json` lists and those on request: the browser checks of every service,
 # without `--services`, so it sees what the push run of `main.yml` does not, a change of one service that breaks
-# another service's screen (R7).
+# another service's screen (R7), and the checks of the tier full (issue 482), with `--full`: the slow auxiliary
+# browser checks of languages, layout, brand, keyboard and each screen's stop, restart and engine away, which run
+# in no other run on GitHub and in no local run but one the owner asks for.
 #
 # Its steps are the preparing steps of `main.yml`, the same text, and the integration step with its second run,
 # as `main.yml` ran it before issue 327. The eight engine and Studio steps are the push run's and are not here
@@ -107,10 +109,10 @@ jobs:
         continue-on-error: true
         timeout-minutes: 60
         working-directory: tests/integration
-        run: ../../.github/ci run --tails -- ./run --not-run ../../.github/not-run.json
+        run: ../../.github/ci run --tails -- ./run --not-run ../../.github/not-run.json --full
 
       - name: integration (second run)
         if: ${{ !cancelled() && steps.integration.outcome == 'failure' }}
         timeout-minutes: 60
         working-directory: tests/integration
-        run: ../../.github/ci run --second integration --tails -- ./run --not-run ../../.github/not-run.json
+        run: ../../.github/ci run --second integration --tails -- ./run --not-run ../../.github/not-run.json --full

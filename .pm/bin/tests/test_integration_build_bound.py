@@ -120,6 +120,10 @@ IDS = manifest_ids()
 ON_REQUEST = {json.loads(line)["check_id"] for line in MANIFEST.read_text().splitlines()
               if line.strip() and "on-request" in (json.loads(line).get("labels") or [])}
 ON_REQUEST_REASON = "on request: not part of a default run; run it with --on-request"
+# The rows of the tier full (issue 482), which a default run leaves out too, and their reason.
+FULL_TIER = {json.loads(line)["check_id"] for line in MANIFEST.read_text().splitlines()
+             if line.strip() and "full" in (json.loads(line).get("labels") or [])}
+FULL_REASON = "full: runs only in the full run; run it with --full"
 LISTED = {"engine.health-reports-emulator-reachable": "listed engine check: reason one",
           "studio.home-shows-connected": "listed studio check: reason two"}
 BOUND_SETTING = re.compile(r"(?m)^[ \t]*(?:readonly[ \t]+)?product_build_bound=(\S*)")
@@ -422,9 +426,11 @@ class Ended_in_time(unittest.TestCase):
         report = fx.report()
         self.assertIsNotNone(report, fx.why())
         self.assertEqual({i: c["verdict"] for i, c in report.items()
-                          if i not in ON_REQUEST and c["verdict"] != "passed"}, {})
+                          if i not in ON_REQUEST | FULL_TIER and c["verdict"] != "passed"}, {})
         self.assertEqual({i: (c["verdict"], c["message"]) for i, c in report.items() if i in ON_REQUEST},
                          {i: ("not-run", ON_REQUEST_REASON) for i in ON_REQUEST})
+        self.assertEqual({i: (c["verdict"], c["message"]) for i, c in report.items() if i in FULL_TIER},
+                         {i: ("not-run", FULL_REASON) for i in FULL_TIER})
         self.assertEqual(sorted(report), sorted(IDS))
         # the fixture's own path holds the word "bound", so the line is looked for by the bound's wording
         named = [line for line in fx.lines() if re.search(rf"did not end within|within {LOWERED} s\b", line)]
