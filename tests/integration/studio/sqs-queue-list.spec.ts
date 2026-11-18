@@ -225,7 +225,8 @@ test('studio.sqs-queue-search-and-pages', async ({ ctx, page }) => {
   await lines.line(
     'Search the prefix with one letter\'s case changed → "No matches" and its sentence; "Clear filter" lists the queues again',
     async () => {
-      const changed = first.replace('efit', 'Efit');
+      // The case of the letter the check itself put in the names (`-a` → `-A`), whatever the run's prefix.
+      const changed = `${p}-A`;
       await open(page, SQS_PATH, LIST_H1);
       await search(page, changed);
       await expect(table.getByText(NO_MATCHES, { exact: true })).toBeVisible({ timeout: 15_000 });
