@@ -64,19 +64,7 @@ function isList(url: URL): boolean {
 const ok = (body: string): Answer => ({ status: 200, body: `<?xml version="1.0" encoding="UTF-8"?>${body}` });
 
 /** The part of a bucket's configuration each section reads, by the subresource of its request. */
-const PARTS = [
-  'versioning',
-  'abac',
-  'tagging',
-  'encryption',
-  'intelligent-tiering',
-  'logging',
-  'notification',
-  'accelerate',
-  'object-lock',
-  'requestPayment',
-  'website',
-] as const;
+const PARTS = ['versioning', 'tagging', 'encryption', 'notification', 'website'] as const;
 type Part = (typeof PARTS)[number];
 
 /** The subresource of a request to a bucket (`/alpha?versioning`), if it is one of `PARTS`. */
@@ -90,27 +78,13 @@ function partOf(url: URL): Part | undefined {
 /** What a bucket made with nothing set answers (requirement R2). */
 const PLAIN: Record<Part, () => EngineAnswer> = {
   versioning: () => ok('<VersioningConfiguration/>'),
-  abac: () => ok('<AbacStatus><Status>Disabled</Status></AbacStatus>'),
   tagging: () => errorAnswer(404, 'NoSuchTagSet', 'The TagSet does not exist'),
   encryption: () =>
     ok(
       '<ServerSideEncryptionConfiguration><Rule><ApplyServerSideEncryptionByDefault><SSEAlgorithm>AES256</SSEAlgorithm>' +
         '</ApplyServerSideEncryptionByDefault><BucketKeyEnabled>false</BucketKeyEnabled></Rule></ServerSideEncryptionConfiguration>',
     ),
-  'intelligent-tiering': () =>
-    ok(
-      '<ListBucketIntelligentTieringConfigurationsOutput><IsTruncated>false</IsTruncated></ListBucketIntelligentTieringConfigurationsOutput>',
-    ),
-  logging: () => ok('<BucketLoggingStatus/>'),
   notification: () => ok('<NotificationConfiguration/>'),
-  accelerate: () => ok('<AccelerateConfiguration/>'),
-  'object-lock': () =>
-    errorAnswer(
-      404,
-      'ObjectLockConfigurationNotFoundError',
-      'Object Lock configuration does not exist for this bucket',
-    ),
-  requestPayment: () => ok('<RequestPaymentConfiguration><Payer>BucketOwner</Payer></RequestPaymentConfiguration>'),
   website: () =>
     errorAnswer(404, 'NoSuchWebsiteConfiguration', 'The specified bucket does not have a website configuration'),
 };
@@ -121,7 +95,6 @@ const QUEUE = 'arn:aws:sqs:us-east-1:000000000000:alpha-events';
 /** What a bucket with every property set answers. */
 const FULL: Record<Part, () => EngineAnswer> = {
   versioning: () => ok('<VersioningConfiguration><Status>Enabled</Status></VersioningConfiguration>'),
-  abac: () => ok('<AbacStatus><Status>Enabled</Status></AbacStatus>'),
   tagging: () =>
     ok(
       '<Tagging><TagSet><Tag><Key>team</Key><Value>storage</Value></Tag><Tag><Key>env</Key><Value>dev</Value></Tag></TagSet></Tagging>',
@@ -132,19 +105,6 @@ const FULL: Record<Part, () => EngineAnswer> = {
         `<KMSMasterKeyID>${KMS_KEY}</KMSMasterKeyID></ApplyServerSideEncryptionByDefault>` +
         '<BucketKeyEnabled>true</BucketKeyEnabled></Rule></ServerSideEncryptionConfiguration>',
     ),
-  'intelligent-tiering': () =>
-    ok(
-      '<ListBucketIntelligentTieringConfigurationsOutput><IsTruncated>false</IsTruncated>' +
-        '<IntelligentTieringConfiguration><Id>archive-logs</Id><Filter><Prefix>logs/</Prefix></Filter><Status>Enabled</Status>' +
-        '<Tiering><Days>90</Days><AccessTier>ARCHIVE_ACCESS</AccessTier></Tiering>' +
-        '<Tiering><Days>180</Days><AccessTier>DEEP_ARCHIVE_ACCESS</AccessTier></Tiering></IntelligentTieringConfiguration>' +
-        '</ListBucketIntelligentTieringConfigurationsOutput>',
-    ),
-  logging: () =>
-    ok(
-      '<BucketLoggingStatus><LoggingEnabled><TargetBucket>alpha-logs</TargetBucket><TargetPrefix>access/</TargetPrefix>' +
-        '</LoggingEnabled></BucketLoggingStatus>',
-    ),
   notification: () =>
     ok(
       '<NotificationConfiguration><QueueConfiguration><Id>to-queue</Id>' +
@@ -153,13 +113,6 @@ const FULL: Record<Part, () => EngineAnswer> = {
         '<FilterRule><Name>suffix</Name><Value>.csv</Value></FilterRule></S3Key></Filter></QueueConfiguration>' +
         '<EventBridgeConfiguration></EventBridgeConfiguration></NotificationConfiguration>',
     ),
-  accelerate: () => ok('<AccelerateConfiguration><Status>Enabled</Status></AccelerateConfiguration>'),
-  'object-lock': () =>
-    ok(
-      '<ObjectLockConfiguration><ObjectLockEnabled>Enabled</ObjectLockEnabled><Rule><DefaultRetention>' +
-        '<Mode>GOVERNANCE</Mode><Days>1</Days></DefaultRetention></Rule></ObjectLockConfiguration>',
-    ),
-  requestPayment: () => ok('<RequestPaymentConfiguration><Payer>Requester</Payer></RequestPaymentConfiguration>'),
   website: () =>
     ok(
       '<WebsiteConfiguration><IndexDocument><Suffix>index.html</Suffix></IndexDocument>' +
@@ -167,9 +120,73 @@ const FULL: Record<Part, () => EngineAnswer> = {
     ),
 };
 
+/** Whether `url` is a `ListObjectsV2` request. */
+function isObjectList(url: URL): boolean {
+  return url.searchParams.get('list-type') === '2';
+}
+
+/** An object the emulator holds, by its key. */
+interface FakeObject {
+  key: string;
+  size?: number;
+  date?: string;
+  storageClass?: string;
+}
+
+/**
+ * `ListObjectsV2` over `objects` (sorted by key) as the emulator answers it: `prefix`, the delimiter `/` folding deeper
+ * keys into common prefixes, `max-keys` (or `pageSize` when set) and a token that is the index the next page starts at.
+ */
+function objectListing(objects: readonly FakeObject[], url: URL, pageSize?: number): Answer {
+  const prefix = url.searchParams.get('prefix') ?? '';
+  const delimiter = url.searchParams.get('delimiter');
+  const size = pageSize ?? Number(url.searchParams.get('max-keys') ?? '1000');
+  const start = Number(url.searchParams.get('continuation-token') ?? '0');
+  const entries: ({ kind: 'object'; object: FakeObject } | { kind: 'prefix'; prefix: string })[] = [];
+  for (const object of [...objects].sort((a, b) => (a.key < b.key ? -1 : 1))) {
+    if (!object.key.startsWith(prefix)) continue;
+    const rest = object.key.slice(prefix.length);
+    const at = delimiter === null ? -1 : rest.indexOf(delimiter);
+    if (at === -1) {
+      entries.push({ kind: 'object', object });
+    } else {
+      const common = prefix + rest.slice(0, at + 1);
+      if (!entries.some((entry) => entry.kind === 'prefix' && entry.prefix === common)) {
+        entries.push({ kind: 'prefix', prefix: common });
+      }
+    }
+  }
+  const page = entries.slice(start, start + size);
+  const truncated = start + size < entries.length;
+  const contents = page
+    .flatMap((entry) => (entry.kind === 'object' ? [entry.object] : []))
+    .map(
+      ({ key, size: bytes = 0, date = '2026-11-18T10:00:00.000Z', storageClass = 'STANDARD' }) =>
+        `<Contents><Key>${xml(key)}</Key><LastModified>${date}</LastModified><Size>${String(bytes)}</Size>` +
+        `<StorageClass>${storageClass}</StorageClass></Contents>`,
+    )
+    .join('');
+  const prefixes = page
+    .flatMap((entry) => (entry.kind === 'prefix' ? [entry.prefix] : []))
+    .map((common) => `<CommonPrefixes><Prefix>${xml(common)}</Prefix></CommonPrefixes>`)
+    .join('');
+  return ok(
+    `<ListBucketResult><Name>alpha</Name><Prefix>${xml(prefix)}</Prefix><KeyCount>${String(page.length)}</KeyCount>` +
+      `<IsTruncated>${String(truncated)}</IsTruncated>` +
+      (truncated ? `<NextContinuationToken>${String(start + size)}</NextContinuationToken>` : '') +
+      `${contents}${prefixes}</ListBucketResult>`,
+  );
+}
+
 class FakeEngine {
   /** The buckets the emulator holds, in its order (names ascending). */
   buckets: FakeBucket[] = [];
+  /** The objects of the bucket the page shows. */
+  objects: FakeObject[] = [];
+  /** A page size the emulator keeps to whatever `max-keys` asks, so a case can page over a few keys. */
+  objectPageSize: number | undefined;
+  /** The answer to `ListObjectsV2`; by default the emulator's listing of `objects`. */
+  objectList: (url: URL) => EngineAnswer = (url) => objectListing(this.objects, url, this.objectPageSize);
   /** Every AWS request, its URL as sent. */
   readonly aws: URL[] = [];
   /** The answer to `ListBuckets`; by default the emulator's listing of `buckets`. */
@@ -209,6 +226,9 @@ class FakeEngine {
     if (isList(url)) {
       return this.list(url);
     }
+    if (isObjectList(url)) {
+      return this.objectList(url);
+    }
     const part = partOf(url);
     return part === undefined
       ? errorAnswer(400, 'InvalidRequest', `not in this fake: ${url.href}`)
@@ -220,11 +240,19 @@ class FakeEngine {
     return this.aws.filter(isList);
   }
 
+  /** The `ListObjectsV2` requests sent so far. */
+  get objectLists(): URL[] {
+    return this.aws.filter(isObjectList);
+  }
+
   /** The requests of the section reading `part` sent so far. */
   reads(part: Part): URL[] {
     return this.aws.filter((url) => partOf(url) === part);
   }
 }
+
+/** The tab "Properties" of the bucket alpha, where the cases of issue 256 open (issue 480). */
+const PROPERTIES = '/aws/s3/buckets/alpha/properties';
 
 // ---------------------------------------------------------------------------------------------------------------
 // The area as Studio's frame renders it.
@@ -321,7 +349,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function open(path = '/aws/s3/buckets/alpha') {
+function open(path = PROPERTIES) {
   const router = createMemoryRouter(
     [
       { path: '/', element: <p>Studio&apos;s Home</p> },
@@ -456,7 +484,7 @@ function before(first: Element, second: Element): boolean {
   return (first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
 }
 
-const TABS = ['Objects', 'Metadata', 'Properties', 'Permissions', 'Metrics', 'Management'];
+const TABS = ['Objects', 'Properties'];
 
 const ALPHA: FakeBucket = {
   name: 'alpha',
@@ -484,7 +512,7 @@ function held(): { answer: Promise<Answer>; release: (answer: Answer) => void } 
 // ---------------------------------------------------------------------------------------------------------------
 
 describe('a bucket’s page, loaded', () => {
-  it('the h1 is the name, with no description (issue 467, R3); six tabs in the spec’s order, "Properties" selected', async () => {
+  it('the h1 is the name, with no description (issue 467, R3); the two tabs "Objects" and "Properties", "Properties" selected', async () => {
     await openLoaded();
 
     expect(h1()).toHaveTextContent(/^alpha$/);
@@ -496,15 +524,18 @@ describe('a bucket’s page, loaded', () => {
     expect(screen.getByRole('button', { name: 'Refresh' })).toBeInTheDocument();
   });
 
-  it.each(['/aws/s3/buckets/alpha', '/aws/s3/buckets/alpha/properties'])(
-    'at %s, "Properties" is selected and the address stays as opened',
-    async (path) => {
-      const { router } = await openLoaded(path);
+  // Issue 480 (test-criteria.md, "Unit s1"): the bare route and `/objects` show "Objects", `/properties` "Properties".
+  it.each([
+    ['/aws/s3/buckets/alpha', 'Objects'],
+    ['/aws/s3/buckets/alpha/objects', 'Objects'],
+    ['/aws/s3/buckets/alpha/properties', 'Properties'],
+  ])('at %s, "%s" is selected, the page has exactly the two tabs, and the address stays as opened', async (path, tab) => {
+    const { router } = await openLoaded(path);
 
-      expect(screen.getByRole('tab', { name: 'Properties' })).toHaveAttribute('aria-selected', 'true');
-      expect(router.state.location.pathname).toBe(path);
-    },
-  );
+    expect(tabNames()).toEqual(['Objects', 'Properties']);
+    expect(screen.getByRole('tab', { name: tab })).toHaveAttribute('aria-selected', 'true');
+    expect(router.state.location.pathname).toBe(path);
+  });
 
   it('a loaded bucket of a 63-character name: the h1 shows the whole name as a name, and the last crumb holds the whole name (issue 467, R6)', async () => {
     const long = 'a'.repeat(63);
@@ -520,23 +551,24 @@ describe('a bucket’s page, loaded', () => {
     expect(document.querySelector('.aws-s3-break-anywhere')).toBeNull();
   });
 
-  it('the notice reads "These buckets are in your local emulator", with the (i) control', async () => {
-    await openLoaded();
+  it.each([
+    ['/aws/s3/buckets/alpha', 'objects'],
+    ['/aws/s3/buckets/alpha/properties', 'buckets'],
+  ])('at %s the notice reads "These %s are in your local emulator", with the (i) control', async (path, word) => {
+    await openLoaded(path);
 
-    expect(screen.getByText('These buckets are in your local emulator')).toBeInTheDocument();
+    expect(screen.getByText(`These ${word} are in your local emulator`)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'About the local emulator' })).toBeInTheDocument();
   });
 });
 
 describe('a bucket’s page, its tabs', () => {
   it.each([
-    ['Objects', '/aws/s3/buckets/alpha/objects'],
-    ['Metadata', '/aws/s3/buckets/alpha/metadata'],
-    ['Permissions', '/aws/s3/buckets/alpha/permissions'],
-    ['Metrics', '/aws/s3/buckets/alpha/metrics'],
-    ['Management', '/aws/s3/buckets/alpha/management'],
-  ])('"%s" leads to %s', async (tab, path) => {
-    const { router } = await openLoaded();
+    ['Objects', PROPERTIES, '/aws/s3/buckets/alpha'],
+    ['Properties', '/aws/s3/buckets/alpha', PROPERTIES],
+    ['Properties', '/aws/s3/buckets/alpha/objects', PROPERTIES],
+  ])('"%s" from %s leads to %s', async (tab, from, path) => {
+    const { router } = await openLoaded(from);
 
     expect(screen.getByRole('tab', { name: tab })).toHaveAttribute('href', path);
     fireEvent.click(screen.getByRole('tab', { name: tab }));
@@ -544,26 +576,7 @@ describe('a bucket’s page, its tabs', () => {
     await waitFor(() => {
       expect(router.state.location.pathname).toBe(path);
     });
-  });
-
-  it('"Properties" leads from the bucket’s route to /aws/s3/buckets/alpha/properties', async () => {
-    const { router } = await openLoaded();
-
-    expect(screen.getByRole('tab', { name: 'Properties' })).toHaveAttribute('href', '/aws/s3/buckets/alpha/properties');
-    fireEvent.click(screen.getByRole('tab', { name: 'Properties' }));
-
-    await waitFor(() => {
-      expect(router.state.location.pathname).toBe('/aws/s3/buckets/alpha/properties');
-    });
-    expect(await screen.findByRole('tab', { name: 'Properties' })).toHaveAttribute('aria-selected', 'true');
-  });
-
-  it('a click with a modifier key on "Properties" is left to the browser', async () => {
-    const { router } = await openLoaded();
-
-    fireEvent.click(screen.getByRole('tab', { name: 'Properties' }), { ctrlKey: true });
-
-    expect(router.state.location.pathname).toBe('/aws/s3/buckets/alpha');
+    expect(await screen.findByRole('tab', { name: tab })).toHaveAttribute('aria-selected', 'true');
   });
 });
 
@@ -773,20 +786,22 @@ describe('a bucket’s page, read again', () => {
 const SECTIONS = [
   'Bucket overview',
   'Bucket Versioning',
-  'Bucket ABAC',
   'Tags',
   'Default encryption',
+  'Event notifications',
+  'Static website hosting',
+];
+
+/** The sections issue 480 dropped (requirement, "Screens on main"). */
+const DROPPED = [
+  'Bucket ABAC',
   'S3 Intelligent-Tiering Archive configurations',
   'Server access logging',
-  'Event notifications',
   'Amazon EventBridge',
   'Transfer acceleration',
   'Object Lock',
   'Requester pays',
-  'Static website hosting',
 ];
-
-const EVENTBRIDGE_FIELD = 'Send notifications to Amazon EventBridge for all events in this bucket';
 
 const norm = (text: string | null) => (text ?? '').replace(/\s+/g, ' ').trim();
 
@@ -844,17 +859,20 @@ async function expectSectionsShown() {
 async function openBucket(parts: Partial<Record<Part, () => EngineAnswer>> = {}, bucket: FakeBucket = ALPHA) {
   engine.buckets = [bucket];
   engine.parts = { ...PLAIN, ...parts };
-  const opened = open(`/aws/s3/buckets/${bucket.name}`);
+  const opened = open(`/aws/s3/buckets/${bucket.name}/properties`);
   await expectSectionsShown();
   return opened;
 }
 
 describe('a bucket’s page, its sections', () => {
-  it('a bucket with every property set → thirteen sections in the spec’s order, every one but "AWS CloudTrail data events"', async () => {
+  it('a bucket with every property set → the six kept sections in the spec’s order, none of the seven dropped', async () => {
     await openBucket(FULL);
 
     expect(sectionHeadings()).toEqual(SECTIONS);
     expect(screen.queryByText('AWS CloudTrail data events')).toBeNull();
+    for (const title of DROPPED) {
+      expect(screen.queryByText(title)).toBeNull();
+    }
   });
 
   it('the same → each field shows its value', async () => {
@@ -866,7 +884,6 @@ describe('a bucket’s page, its sections', () => {
       /^(October|November) \d{1,2}, 2026, \d{2}:\d{2}:\d{2} \(UTC[+-]\d{2}:\d{2}\)$/,
     );
     expect(field('Bucket Versioning', 'Bucket Versioning')).toBe('Enabled');
-    expect(field('Bucket ABAC', 'Bucket ABAC')).toBe('Enabled');
     expect(tableRows('Tags')).toEqual([
       ['team', 'storage'],
       ['env', 'dev'],
@@ -876,39 +893,20 @@ describe('a bucket’s page, its sections', () => {
     );
     expect(field('Default encryption', 'AWS KMS key')).toBe(KMS_KEY);
     expect(field('Default encryption', 'Bucket Key')).toBe('Enabled');
-    expect(tableRows('S3 Intelligent-Tiering Archive configurations')).toEqual([
-      ['archive-logs', 'Enabled', 'logs/', '90 days', '180 days'],
-    ]);
-    expect(field('Server access logging', 'Server access logging')).toBe('Enabled');
-    expect(field('Server access logging', 'Destination bucket')).toBe('alpha-logs/access/');
     expect(tableRows('Event notifications')).toEqual([
       ['to-queue', 's3:ObjectCreated:Put, s3:ObjectRemoved:*', 'in/', '.csv', 'SQS queue', QUEUE],
     ]);
-    expect(field('Amazon EventBridge', EVENTBRIDGE_FIELD)).toBe('On');
-    expect(field('Transfer acceleration', 'Transfer acceleration')).toBe('Enabled');
-    expect(field('Object Lock', 'Object Lock')).toBe('Enabled');
-    expect(field('Object Lock', 'Default retention')).toBe('Enabled');
-    expect(field('Object Lock', 'Retention mode')).toBe('Governance');
-    expect(field('Object Lock', 'Default retention period')).toBe('1 day');
-    expect(field('Requester pays', 'Requester pays')).toBe('Enabled');
     expect(field('Static website hosting', 'Static website hosting')).toBe('Enabled');
     expect(field('Static website hosting', 'Index document')).toBe('index.html');
     expect(field('Static website hosting', 'Error document')).toBe('error.html');
   });
 
-  it('the column headings of the three tables, in the console’s words', async () => {
+  it('the column headings of the two tables, in the console’s words', async () => {
     await openBucket(FULL);
 
     const headings = (title: string) =>
       [...section(title).querySelectorAll('thead th')].map((cell) => norm(cell.textContent));
     expect(headings('Tags')).toEqual(['Key', 'Value']);
-    expect(headings('S3 Intelligent-Tiering Archive configurations')).toEqual([
-      'Name',
-      'Status',
-      'Prefix',
-      'Archive Access tier',
-      'Deep Archive Access tier',
-    ]);
     expect(headings('Event notifications')).toEqual([
       'Event name',
       'Event types',
@@ -919,36 +917,21 @@ describe('a bucket’s page, its sections', () => {
     ]);
   });
 
-  it('a plain bucket → "Disabled" or "Off", "-" where nothing is set, and the three tables’ empty texts', async () => {
+  it('a plain bucket → "Disabled", "-" where nothing is set, and the two tables’ empty texts', async () => {
     await openBucket();
 
     expect(field('Bucket Versioning', 'Bucket Versioning')).toBe('Disabled');
-    expect(field('Bucket ABAC', 'Bucket ABAC')).toBe('Disabled');
     expect(field('Default encryption', 'Encryption type')).toBe(
       'Server-side encryption with Amazon S3 managed keys (SSE-S3)',
     );
     expect(field('Default encryption', 'AWS KMS key')).toBe('-');
     expect(field('Default encryption', 'Bucket Key')).toBe('Disabled');
-    expect(field('Server access logging', 'Server access logging')).toBe('Disabled');
-    expect(field('Server access logging', 'Destination bucket')).toBe('-');
-    expect(field('Amazon EventBridge', EVENTBRIDGE_FIELD)).toBe('Off');
-    expect(field('Transfer acceleration', 'Transfer acceleration')).toBe('Disabled');
-    expect(field('Object Lock', 'Object Lock')).toBe('Disabled');
-    expect(field('Object Lock', 'Default retention')).toBe('Disabled');
-    expect(field('Object Lock', 'Retention mode')).toBe('-');
-    expect(field('Object Lock', 'Default retention period')).toBe('-');
-    expect(field('Requester pays', 'Requester pays')).toBe('Disabled');
     expect(field('Static website hosting', 'Static website hosting')).toBe('Disabled');
     expect(field('Static website hosting', 'Index document')).toBe('-');
     expect(field('Static website hosting', 'Error document')).toBe('-');
     expect(tableRows('Tags')).toEqual([]);
     expect(sectionText('Tags')).toContain('No tags');
     expect(sectionText('Tags')).toContain('This bucket has no tags.');
-    expect(tableRows('S3 Intelligent-Tiering Archive configurations')).toEqual([]);
-    expect(sectionText('S3 Intelligent-Tiering Archive configurations')).toContain('No configurations');
-    expect(sectionText('S3 Intelligent-Tiering Archive configurations')).toContain(
-      'This bucket has no Intelligent-Tiering Archive configurations.',
-    );
     expect(tableRows('Event notifications')).toEqual([]);
     expect(sectionText('Event notifications')).toContain('No event notifications');
     expect(sectionText('Event notifications')).toContain('This bucket sends no event notifications.');
@@ -965,28 +948,6 @@ describe('a bucket’s page, its sections', () => {
     expect(field('Bucket overview', 'AWS Region')).toBe('-');
     expect(field('Bucket overview', 'Bucket ARN')).toBe('-');
     expect(field('Bucket overview', 'Creation date')).toBe('-');
-  });
-
-  it('a truncated list of configurations → "More configurations exist than are shown here." under the table', async () => {
-    await openBucket({
-      'intelligent-tiering': () =>
-        ok(
-          '<ListBucketIntelligentTieringConfigurationsOutput><IsTruncated>true</IsTruncated><NextContinuationToken>t</NextContinuationToken>' +
-            '<IntelligentTieringConfiguration><Id>one</Id><Status>Enabled</Status></IntelligentTieringConfiguration>' +
-            '</ListBucketIntelligentTieringConfigurationsOutput>',
-        ),
-    });
-
-    expect(tableRows('S3 Intelligent-Tiering Archive configurations')).toEqual([['one', 'Enabled', '-', '-', '-']]);
-    expect(sectionText('S3 Intelligent-Tiering Archive configurations')).toContain(
-      'More configurations exist than are shown here.',
-    );
-  });
-
-  it('a list that is not truncated has no such line', async () => {
-    await openBucket(FULL);
-
-    expect(sectionText('S3 Intelligent-Tiering Archive configurations')).not.toContain('More configurations exist');
   });
 
   it('a tag value `<img src=x onerror=alert(1)>` → shown as text; the page holds no image', async () => {
@@ -1062,7 +1023,7 @@ describe('a bucket’s page, its sections', () => {
     });
   });
 
-  it('the tables of the sections: a tag’s key and a configuration’s and a notification’s name as names; a status, a tier and a destination type as fixed words; a tag’s value, a prefix and a suffix as free text; a destination ARN as an address (issue 467, R6)', async () => {
+  it('the tables of the sections: a tag’s key and a notification’s name as names; a destination type as a fixed word; a tag’s value, a prefix and a suffix as free text; a destination ARN as an address (issue 467, R6)', async () => {
     await openBucket({
       ...FULL,
       tagging: () =>
@@ -1072,12 +1033,6 @@ describe('a bucket’s page, its sections', () => {
     const tags = section('Tags');
     expect(kindOf(tags, 'archive-reports')).toBe('name');
     expect(kindOf(tags, 'kept for one year')).toBe('text');
-    const tiering = section('S3 Intelligent-Tiering Archive configurations');
-    expect(kindOf(tiering, 'archive-logs')).toBe('name');
-    expect(kindOf(tiering, 'Enabled')).toBe('fixed');
-    expect(kindOf(tiering, 'logs/')).toBe('text');
-    expect(kindOf(tiering, '90 days')).toBe('fixed');
-    expect(kindOf(tiering, '180 days')).toBe('fixed');
     const notifications = section('Event notifications');
     expect(kindOf(notifications, 'to-queue')).toBe('name');
     expect(kindOf(notifications, 'in/')).toBe('text');
@@ -1091,22 +1046,20 @@ describe('a bucket’s page, its sections', () => {
 describe('a bucket’s page, its sections’ buttons', () => {
   const BUTTONS: [string, string, string][] = [
     ['Bucket Versioning', 'Edit', '/aws/s3/bucket/alpha/property/versioning/edit'],
-    ['Bucket ABAC', 'Edit', '/aws/s3/bucket/alpha/property/abac/edit'],
     ['Tags', 'Edit', '/aws/s3/bucket/alpha/property/tags/edit'],
     ['Default encryption', 'Edit', '/aws/s3/bucket/alpha/property/encryption/edit'],
-    [
-      'S3 Intelligent-Tiering Archive configurations',
-      'Create configuration',
-      '/aws/s3/bucket/alpha/property/intelligent-tiering/create',
-    ],
-    ['Server access logging', 'Edit', '/aws/s3/bucket/alpha/property/logging/edit'],
     ['Event notifications', 'Create event notification', '/aws/s3/bucket/alpha/property/event-notification/create'],
-    ['Amazon EventBridge', 'Edit', '/aws/s3/bucket/alpha/property/eventbridge/edit'],
-    ['Transfer acceleration', 'Edit', '/aws/s3/bucket/alpha/property/transfer-acceleration/edit'],
-    ['Object Lock', 'Edit', '/aws/s3/bucket/alpha/property/object-lock/edit'],
-    ['Requester pays', 'Edit', '/aws/s3/bucket/alpha/property/requester-pays/edit'],
     ['Static website hosting', 'Edit', '/aws/s3/bucket/alpha/property/website/edit'],
   ];
+
+  it('the page has exactly the five buttons of the kept sections', async () => {
+    await openBucket();
+
+    const links = within(screen.getByRole('main'))
+      .queryAllByRole('link')
+      .filter((link) => link.closest('nav') === null && /\/property\//.test(link.getAttribute('href') ?? ''));
+    expect(links.map((link) => link.getAttribute('href'))).toEqual(BUTTONS.map(([, , path]) => path));
+  });
 
   it.each(BUTTONS)('"%s" has "%s", which leads to %s', async (title, label, path) => {
     const { router } = await openBucket();
@@ -1153,8 +1106,8 @@ describe('a bucket’s page, a section’s read', () => {
     open();
 
     await waitFor(() => {
-      expect(field('Bucket ABAC', 'Bucket ABAC')).toBe('Disabled');
-      expect(field('Requester pays', 'Requester pays')).toBe('Disabled');
+      expect(field('Default encryption', 'Bucket Key')).toBe('Disabled');
+      expect(field('Static website hosting', 'Static website hosting')).toBe('Disabled');
     });
     expect(sectionText('Bucket Versioning')).toContain('Loading');
     expect(field('Bucket Versioning', 'Bucket Versioning')).toBeNull();
@@ -1168,7 +1121,7 @@ describe('a bucket’s page, a section’s read', () => {
 
   it('a section’s read answers "no such bucket" → the whole page shows "Bucket not found"', async () => {
     engine.buckets = [ALPHA];
-    engine.parts = { ...PLAIN, logging: () => errorAnswer(404, 'NoSuchBucket', 'The specified bucket does not exist') };
+    engine.parts = { ...PLAIN, website: () => errorAnswer(404, 'NoSuchBucket', 'The specified bucket does not exist') };
     open();
 
     expect(await screen.findByText('Bucket not found')).toBeInTheDocument();
@@ -1187,7 +1140,7 @@ describe('a bucket’s page, a section’s read', () => {
     expect(within(section('Default encryption')).getByRole('link', { name: 'Edit' })).toBeInTheDocument();
     expect(field('Default encryption', 'Encryption type')).toBeNull();
     expect(field('Bucket Versioning', 'Bucket Versioning')).toBe('Disabled');
-    expect(field('Object Lock', 'Object Lock')).toBe('Disabled');
+    expect(field('Static website hosting', 'Static website hosting')).toBe('Disabled');
   });
 
   it('"Retry" of a section reads that section alone', async () => {
@@ -1226,33 +1179,35 @@ describe('a bucket’s page, a section’s read', () => {
   });
 
   it('the engine’s EmulatorUnavailable while connected → "The emulator did not answer", the engine’s message and "Retry"', async () => {
-    await openBucket({ accelerate: () => errorAnswer(503, 'EmulatorUnavailable', 'the emulator went away') });
+    await openBucket({ versioning: () => errorAnswer(503, 'EmulatorUnavailable', 'the emulator went away') });
 
-    const text = sectionText('Transfer acceleration');
+    const text = sectionText('Bucket Versioning');
     expect(text).toContain('The emulator did not answer');
     expect(text).toContain('the emulator went away');
-    expect(within(section('Transfer acceleration')).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(within(section('Bucket Versioning')).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
   });
 
   it('501 → "Not implemented by the emulator" and the operation’s name in that section, as information', async () => {
-    await openBucket({ abac: () => errorAnswer(501, 'NotImplemented', 'operation GetBucketAbac is not implemented') });
+    await openBucket({
+      versioning: () => errorAnswer(501, 'NotImplemented', 'operation GetBucketVersioning is not implemented'),
+    });
 
-    const text = sectionText('Bucket ABAC');
+    const text = sectionText('Bucket Versioning');
     expect(text).toContain('Not implemented by the emulator');
-    expect(text).toContain('GetBucketAbac');
-    const status = within(section('Bucket ABAC')).getByText('Not implemented by the emulator');
+    expect(text).toContain('GetBucketVersioning');
+    const status = within(section('Bucket Versioning')).getByText('Not implemented by the emulator');
     expect(status.closest('[class*="status-info"]')).not.toBeNull();
   });
 
   it('while not connected → "Not read" in that section, with "Retry"', async () => {
-    await openBucket({ 'object-lock': () => errorAnswer(503, 'EmulatorUnavailable', 'the emulator is not running') });
+    await openBucket({ encryption: () => errorAnswer(503, 'EmulatorUnavailable', 'the emulator is not running') });
     // The page found the bucket while connected; the section's read failed after the line stopped saying so.
     connection.set(notStartedResult());
 
     await waitFor(() => {
-      expect(sectionText('Object Lock')).toContain('Not read');
+      expect(sectionText('Default encryption')).toContain('Not read');
     });
-    expect(within(section('Object Lock')).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(within(section('Default encryption')).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
   });
 });
 
@@ -1287,7 +1242,7 @@ describe('a bucket’s page, "Refresh" and its sections', () => {
       expect(sectionText('Bucket Versioning')).toContain('Loading');
     });
     await waitFor(() => {
-      expect(field('Bucket ABAC', 'Bucket ABAC')).not.toBeNull();
+      expect(field('Static website hosting', 'Static website hosting')).not.toBeNull();
     });
     expect(said).not.toContain('Bucket refreshed');
     answer.release(ok('<VersioningConfiguration><Status>Suspended</Status></VersioningConfiguration>'));
@@ -1296,5 +1251,415 @@ describe('a bucket’s page, "Refresh" and its sections', () => {
       expect(said).toContain('Bucket refreshed');
     });
     expect(field('Bucket Versioning', 'Bucket Versioning')).toBe('Suspended');
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// Issue 480, the tab "Objects" (test-criteria.md, "Unit s1 — services/s3/pages/bucket-page.test.tsx").
+// ---------------------------------------------------------------------------------------------------------------
+
+const APP_OBJECTS: FakeObject[] = [
+  { key: 'a.txt', size: 12 },
+  { key: 'q?#%.txt', size: 1536, storageClass: 'STANDARD_IA' },
+  { key: 'logs/2026/x.json', size: 20 },
+  { key: 'logs/2026/y.json', size: 30 },
+  { key: '한글/파일.txt', size: 5 },
+];
+
+/** The Objects table. */
+function objectsTable() {
+  const table = createWrapper(document.body)
+    .findAllTables()
+    .find((found) => found.findHeaderSlot()?.getElement().textContent?.includes('Objects') === true);
+  expect(table, 'the Objects table').toBeDefined();
+  return table as NonNullable<typeof table>;
+}
+
+/** The Objects table's rows, each its cells' text but the selection cell's. */
+function objectRowsShown(): string[][] {
+  return [...objectsTable().getElement().querySelectorAll('tbody tr')]
+    .map((row) => [...row.querySelectorAll('td, th')].slice(1).map((cell) => norm(cell.textContent)))
+    .filter((cells) => cells.length > 1);
+}
+
+/** The Key column of the rows shown. */
+function keysShown(): string[] {
+  return objectRowsShown().map(([key]) => key ?? '');
+}
+
+async function expectKeys(keys: string[]) {
+  await waitFor(() => {
+    expect(keysShown()).toEqual(keys);
+  });
+}
+
+async function openObjects(path = '/aws/s3/buckets/alpha', objects: FakeObject[] = APP_OBJECTS) {
+  engine.buckets = [ALPHA];
+  engine.objects = objects;
+  const opened = open(path);
+  await expectTabs();
+  return opened;
+}
+
+function objectsEmptySlot(): string {
+  return norm(objectsTable().findEmptySlot()?.getElement().textContent ?? '');
+}
+
+function objectsAction(name: string): HTMLElement {
+  return within(objectsTable().getElement()).getByRole('button', { name });
+}
+
+/** A Cloudscape button is disabled by `disabled`, or with a reason by `aria-disabled`. */
+function isDisabled(element: HTMLElement): boolean {
+  return (element as HTMLButtonElement).disabled || element.getAttribute('aria-disabled') === 'true';
+}
+
+function selectRow(name: string) {
+  fireEvent.click(within(objectsTable().getElement()).getByRole('checkbox', { name: `Select ${name}` }));
+}
+
+function selectedNames(): string[] {
+  return within(objectsTable().getElement())
+    .queryAllByRole('checkbox')
+    .filter((box) => (box as HTMLInputElement).checked && /^Select (?!every)/.test(box.getAttribute('aria-label') ?? ''))
+    .map((box) => (box.getAttribute('aria-label') ?? '').replace(/^Select /, ''));
+}
+
+/** The crumbs with their links: the text, and the address of a link or `null` for the current page. */
+function crumbLinks(): [string, string | null][] {
+  return (createWrapper(document.body).findBreadcrumbGroup()?.findBreadcrumbLinks() ?? []).map((item) => {
+    const element = item.getElement();
+    const link = element.closest('a[href]') ?? element.querySelector('a[href]');
+    return [(element.textContent ?? '').trim(), link?.getAttribute('href') ?? null];
+  });
+}
+
+function typeObjectFilter(text: string) {
+  fireEvent.change(screen.getByRole('searchbox', { name: 'Find objects by prefix' }), { target: { value: text } });
+}
+
+describe('the tab "Objects", its rows', () => {
+  it('folders first, then objects: Key, Type, Last modified, Size, Storage class; a folder "Folder" and "-"', async () => {
+    await openObjects();
+
+    await expectKeys(['logs/', '한글/', 'a.txt', 'q?#%.txt']);
+    const headings = (objectsTable().findColumnHeaders() ?? []).map((header) => norm(header.getElement().textContent));
+    expect(headings.slice(1)).toEqual(['Key', 'Type', 'Last modified', 'Size', 'Storage class']);
+    const [logs, , a, q] = objectRowsShown();
+    expect(logs).toEqual(['logs/', 'Folder', '-', '-', '-']);
+    expect(a?.slice(0, 2)).toEqual(['a.txt', 'txt']);
+    expect(a?.[2]).toMatch(/^November 18, 2026, \d{2}:\d{2}:\d{2} \(UTC[+-]\d{2}:\d{2}\)$/);
+    expect(a?.slice(3)).toEqual(['12 B', 'STANDARD']);
+    expect(q?.slice(3)).toEqual(['1.5 KiB', 'STANDARD_IA']);
+    expect(objectsTable().findHeaderSlot()?.getElement().textContent).toContain('(4)');
+  });
+
+  it('asks ListObjectsV2 for the root with the delimiter /, 100 keys and no prefix, after the bucket was found', async () => {
+    await openObjects();
+    await expectKeys(['logs/', '한글/', 'a.txt', 'q?#%.txt']);
+
+    const [request] = engine.objectLists;
+    expect(request?.pathname).toMatch(/^\/alpha\/?$/);
+    expect(request?.searchParams.get('delimiter')).toBe('/');
+    expect(request?.searchParams.get('max-keys')).toBe('100');
+    expect(request?.searchParams.has('prefix')).toBe(false);
+    expect(engine.aws.findIndex(isList)).toBeLessThan(engine.aws.indexOf(request as URL));
+    // The tab "Properties" is not read on the tab "Objects".
+    for (const part of PARTS) {
+      expect(engine.reads(part), part).toEqual([]);
+    }
+  });
+
+  it('a folder’s link leads to its prefix’s address and shows its rows; each crumb part to its own prefix, the last not a link', async () => {
+    const { router } = await openObjects();
+    await expectKeys(['logs/', '한글/', 'a.txt', 'q?#%.txt']);
+
+    const logs = within(objectsTable().getElement()).getByRole('link', { name: 'logs/' });
+    expect(logs).toHaveAttribute('href', '/aws/s3/buckets/alpha?prefix=logs%2F');
+    fireEvent.click(logs);
+    await expectKeys(['2026/']);
+    fireEvent.click(within(objectsTable().getElement()).getByRole('link', { name: '2026/' }));
+    await expectKeys(['x.json', 'y.json']);
+
+    expect(router.state.location.search).toBe('?prefix=logs%2F2026%2F');
+    expect(engine.objectLists.at(-1)?.searchParams.get('prefix')).toBe('logs/2026/');
+    expect(crumbLinks().slice(3)).toEqual([
+      ['Buckets', '/aws/s3/buckets'],
+      ['alpha', '/aws/s3/buckets/alpha'],
+      ['logs', '/aws/s3/buckets/alpha?prefix=logs%2F'],
+      ['2026', null],
+    ]);
+    expect(screen.getByRole('tab', { name: 'Objects' })).toHaveAttribute('aria-selected', 'true');
+
+    const crumb = screen.getAllByRole('link', { name: 'logs' }).find((link) => link.closest('nav') !== null);
+    fireEvent.click(crumb as HTMLElement);
+    await expectKeys(['2026/']);
+    expect(router.state.location.search).toBe('?prefix=logs%2F');
+  });
+
+  it('an object’s key leads to its page, the key in the query', async () => {
+    await openObjects();
+    await expectKeys(['logs/', '한글/', 'a.txt', 'q?#%.txt']);
+
+    expect(within(objectsTable().getElement()).getByRole('link', { name: 'q?#%.txt' })).toHaveAttribute(
+      'href',
+      `/aws/s3/buckets/alpha/object?${new URLSearchParams({ key: 'q?#%.txt' }).toString()}`,
+    );
+  });
+
+  it('a key `<img src=x onerror=alert(1)>` is shown as text; the page holds no image', async () => {
+    const markup = '<img src=x onerror=alert(1)>';
+    await openObjects('/aws/s3/buckets/alpha', [{ key: markup }]);
+
+    await expectKeys([markup]);
+    expect(screen.getByRole('main').querySelector('img')).toBeNull();
+  });
+});
+
+describe('the tab "Objects", its states', () => {
+  it('while the listing is in flight → "Loading objects"; then the rows', async () => {
+    const answer = held();
+    engine.objectList = () => answer.answer;
+    await openObjects();
+
+    await waitFor(() => {
+      expect(objectsTable().findLoadingText()?.getElement()).toHaveTextContent('Loading objects');
+    });
+    answer.release(objectListing(APP_OBJECTS, new URL('http://x/alpha?list-type=2&delimiter=%2F')) );
+    await expectKeys(['logs/', '한글/', 'a.txt', 'q?#%.txt']);
+  });
+
+  it('an empty bucket → "No objects" and the root’s sentence', async () => {
+    await openObjects('/aws/s3/buckets/alpha', []);
+
+    await waitFor(() => {
+      expect(objectsEmptySlot()).toBe(
+        'No objects This bucket holds no objects yet. Upload a file, or write one from your app or the AWS CLI.',
+      );
+    });
+  });
+
+  it('an empty folder (its own empty object only) → "No objects" and "Nothing is stored under logs/."', async () => {
+    await openObjects('/aws/s3/buckets/alpha?prefix=logs%2F', [{ key: 'logs/' }]);
+
+    await waitFor(() => {
+      expect(objectsEmptySlot()).toBe('No objects Nothing is stored under logs/.');
+    });
+    expect(keysShown()).toEqual([]);
+  });
+
+  it('a filter with no match → "No matches" and the sentence with the folder and the text', async () => {
+    await openObjects('/aws/s3/buckets/alpha?prefix=logs%2F2026%2F');
+    await expectKeys(['x.json', 'y.json']);
+
+    typeObjectFilter('z');
+
+    await waitFor(() => {
+      expect(objectsEmptySlot()).toContain('No matches No key under logs/2026/ starts with z.');
+    });
+  });
+
+  it.each(['/aws/s3/buckets/alpha', '/aws/s3/buckets/alpha/objects'])(
+    'at %s, a bucket the emulator does not hold → "No bucket alpha", its sentence and "Go to Buckets"',
+    async (path) => {
+      engine.buckets = [];
+      open(path);
+
+      expect(await findOnPage('No bucket alpha')).toBeInTheDocument();
+      expect(screen.getByText('The local emulator holds no bucket of this name.')).toBeInTheDocument();
+      const link = screen.getByRole('link', { name: 'Go to Buckets' });
+      expect(link).toHaveAttribute('href', '/aws/s3/buckets');
+      expect(tabNames()).toEqual([]);
+    },
+  );
+
+  it('the listing answers NoSuchBucket → "No bucket alpha" in place of the table', async () => {
+    engine.objectList = () => errorAnswer(404, 'NoSuchBucket', 'The specified bucket does not exist');
+    await openObjects();
+
+    expect(await findOnPage('No bucket alpha')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Go to Buckets' })).toBeInTheDocument();
+    expect(screen.queryByRole('searchbox', { name: 'Find objects by prefix' })).toBeNull();
+  });
+
+  it('a failed listing → "The objects could not be read", the code and message, and "Retry", which asks again', async () => {
+    engine.objectList = () => errorAnswer(500, 'InternalError', 'something broke');
+    await openObjects();
+
+    await waitFor(() => {
+      expect(objectsEmptySlot()).toContain('The objects could not be read');
+    });
+    expect(objectsEmptySlot()).toContain('InternalError: something broke');
+    const asked = engine.objectLists.length;
+    engine.objectList = (url) => objectListing(engine.objects, url);
+    fireEvent.click(objectsAction('Retry'));
+
+    await expectKeys(['logs/', '한글/', 'a.txt', 'q?#%.txt']);
+    expect(engine.objectLists.length).toBe(asked + 1);
+  });
+
+  it('a 501 → "Not implemented by the emulator: ListObjectsV2", as information', async () => {
+    engine.objectList = () => errorAnswer(501, 'NotImplemented', 'operation ListObjectsV2 is scaffolded');
+    await openObjects();
+
+    await waitFor(() => {
+      expect(objectsEmptySlot()).toContain('Not implemented by the emulator: ListObjectsV2');
+    });
+    const status = within(objectsTable().getElement()).getByText('Not implemented by the emulator:', {
+      exact: false,
+    });
+    expect(status.closest('[class*="status-info"]')).not.toBeNull();
+  });
+});
+
+describe('the tab "Objects", its filter, "Refresh" and pages', () => {
+  it('"Find objects by prefix" asks with the folder plus the text, page 1', async () => {
+    await openObjects('/aws/s3/buckets/alpha?prefix=logs%2F2026%2F');
+    await expectKeys(['x.json', 'y.json']);
+
+    typeObjectFilter('x');
+
+    await expectKeys(['x.json']);
+    const last = engine.objectLists.at(-1);
+    expect(last?.searchParams.get('prefix')).toBe('logs/2026/x');
+    expect(last?.searchParams.has('continuation-token')).toBe(false);
+  });
+
+  it('"Refresh" asks page 1 again and shows an object written since; "Objects refreshed" is announced', async () => {
+    await openObjects();
+    await expectKeys(['logs/', '한글/', 'a.txt', 'q?#%.txt']);
+    const said = recordAnnouncements();
+    const asked = engine.objectLists.length;
+
+    engine.objects = [...APP_OBJECTS, { key: 'b.txt', size: 1 }];
+    fireEvent.click(objectsAction('Refresh'));
+
+    await expectKeys(['logs/', '한글/', 'a.txt', 'b.txt', 'q?#%.txt']);
+    expect(engine.objectLists.length).toBe(asked + 1);
+    expect(engine.objectLists.at(-1)?.searchParams.has('continuation-token')).toBe(false);
+    await waitFor(() => {
+      expect(said).toContain('Objects refreshed');
+    });
+  });
+
+  it('next and previous pages follow the tokens; the counter says more remain while truncated', async () => {
+    engine.objectPageSize = 2;
+    await openObjects();
+    await expectKeys(['logs/', '한글/']);
+    expect(objectsTable().findHeaderSlot()?.getElement().textContent).toContain('(2+)');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+    await expectKeys(['a.txt', 'q?#%.txt']);
+    expect(engine.objectLists.at(-1)?.searchParams.get('continuation-token')).toBe('2');
+    expect(objectsTable().findHeaderSlot()?.getElement().textContent).toContain('(2)');
+    expect(objectsTable().findHeaderSlot()?.getElement().textContent).not.toContain('+');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Previous page' }));
+    await expectKeys(['logs/', '한글/']);
+    expect(engine.objectLists.at(-1)?.searchParams.has('continuation-token')).toBe(false);
+  });
+});
+
+describe('the tab "Objects", its selection and "Copy S3 URI"', () => {
+  it('"Copy S3 URI" with one selected row puts s3://alpha/{key} on the clipboard and says so', async () => {
+    const writeText = vi.fn(() => Promise.resolve());
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+    await openObjects();
+    await expectKeys(['logs/', '한글/', 'a.txt', 'q?#%.txt']);
+    const said = recordAnnouncements();
+    const sent = engine.aws.length;
+
+    selectRow('q?#%.txt');
+    fireEvent.click(objectsAction('Copy S3 URI'));
+
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith('s3://alpha/q?#%.txt');
+    });
+    expect(await within(objectsTable().getElement()).findByText('S3 URI copied')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(said).toContain('S3 URI copied');
+    });
+    expect(engine.aws.length).toBe(sent);
+  });
+
+  it('a folder’s S3 URI is its whole prefix', async () => {
+    const writeText = vi.fn(() => Promise.resolve());
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+    await openObjects('/aws/s3/buckets/alpha?prefix=logs%2F');
+    await expectKeys(['2026/']);
+
+    selectRow('2026/');
+    fireEvent.click(objectsAction('Copy S3 URI'));
+
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith('s3://alpha/logs/2026/');
+    });
+  });
+
+  it('with no row or two rows selected, "Copy S3 URI" is unavailable', async () => {
+    await openObjects();
+    await expectKeys(['logs/', '한글/', 'a.txt', 'q?#%.txt']);
+
+    expect(isDisabled(objectsAction('Copy S3 URI'))).toBe(true);
+    selectRow('a.txt');
+    expect(isDisabled(objectsAction('Copy S3 URI'))).toBe(false);
+    selectRow('logs/');
+    expect(selectedNames()).toEqual(['logs/', 'a.txt']);
+    expect(isDisabled(objectsAction('Copy S3 URI'))).toBe(true);
+  });
+
+  it('the selection is cleared by a page change', async () => {
+    engine.objectPageSize = 2;
+    await openObjects();
+    await expectKeys(['logs/', '한글/']);
+    selectRow('logs/');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+    await expectKeys(['a.txt', 'q?#%.txt']);
+    fireEvent.click(screen.getByRole('button', { name: 'Previous page' }));
+    await expectKeys(['logs/', '한글/']);
+
+    expect(selectedNames()).toEqual([]);
+  });
+
+  it('the selection is cleared by a filter', async () => {
+    await openObjects();
+    await expectKeys(['logs/', '한글/', 'a.txt', 'q?#%.txt']);
+    selectRow('a.txt');
+
+    typeObjectFilter('a');
+    await expectKeys(['a.txt']);
+
+    expect(selectedNames()).toEqual([]);
+  });
+
+  it('the selection is cleared by "Refresh"', async () => {
+    await openObjects();
+    await expectKeys(['logs/', '한글/', 'a.txt', 'q?#%.txt']);
+    selectRow('a.txt');
+    const asked = engine.objectLists.length;
+
+    fireEvent.click(objectsAction('Refresh'));
+    await waitFor(() => {
+      expect(engine.objectLists.length).toBe(asked + 1);
+    });
+    await expectKeys(['logs/', '한글/', 'a.txt', 'q?#%.txt']);
+
+    expect(selectedNames()).toEqual([]);
+  });
+
+  it('the selection is cleared by a prefix change', async () => {
+    const { router } = await openObjects();
+    await expectKeys(['logs/', '한글/', 'a.txt', 'q?#%.txt']);
+    selectRow('a.txt');
+
+    fireEvent.click(within(objectsTable().getElement()).getByRole('link', { name: 'logs/' }));
+    await expectKeys(['2026/']);
+    act(() => {
+      router.navigate(-1) as unknown as void;
+    });
+    await expectKeys(['logs/', '한글/', 'a.txt', 'q?#%.txt']);
+
+    expect(selectedNames()).toEqual([]);
   });
 });
