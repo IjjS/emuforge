@@ -6,6 +6,7 @@ import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { engineEndpoint } from '../../../../../lib/aws/client-factory';
+import { RequestError } from '../../../../../lib/aws/request';
 import {
   FILTER_DELAY_MS,
   MOVE_TASKS_POLL_MS,
@@ -40,6 +41,8 @@ class FakeEngine {
   readonly handlers = new Map<string, Handler>();
   /** Operations whose answers wait for the case. */
   readonly held = new Set<string>();
+  /** Operations the emulator refuses: the queue is gone. */
+  readonly gone = new Set<string>();
 
   readonly fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const request = input instanceof Request ? input : new Request(String(input), init);
@@ -53,7 +56,20 @@ class FakeEngine {
         resolve(new Response(JSON.stringify(answerBody), { status: 200, headers: JSON_1_0 }));
       };
       this.sent.push({ operation, body, signal: request.signal, answer });
-      if (!this.held.has(operation)) {
+      if (this.gone.has(operation)) {
+        resolve(
+          new Response(
+            JSON.stringify({
+              __type: 'com.amazonaws.sqs#QueueDoesNotExist',
+              message: 'The specified queue does not exist.',
+            }),
+            {
+              status: 400,
+              headers: { ...JSON_1_0, 'x-amzn-query-error': 'AWS.SimpleQueueService.NonExistentQueue;Sender' },
+            },
+          ),
+        );
+      } else if (!this.held.has(operation)) {
         answer(this.handlers.get(operation)?.(body) ?? {});
       }
     });
@@ -231,6 +247,62 @@ describe('an action', () => {
       expect(engine.of('ListQueues').length).toBeGreaterThan(listBefore);
     },
   );
+
+  it.each([
+    ['send', 'SendMessage'],
+    ['delete', 'DeleteMessageBatch'],
+    ['purge', 'PurgeQueue'],
+    ['redrive', 'StartMessageMoveTask'],
+  ] as const)('%s that fails → nothing is read again, and the details stay as shown', async (action, operation) => {
+    playQueue('orders', () => 3);
+    engine.handlers.set('ListQueues', () => ({ QueueUrls: urls('orders') }));
+    engine.gone.add(operation);
+
+    const { result } = renderHook(
+      () => ({
+        queue: useQueue(endpoint, 'orders'),
+        list: useQueueListing({ endpoint, pageSize: 10, filter: '' }),
+        send: useSendMessage(endpoint),
+        remove: useDeleteMessages(endpoint),
+        purge: usePurgeQueue(endpoint),
+        start: useStartMoveTask(endpoint),
+      }),
+      { wrapper },
+    );
+    await waitFor(() => {
+      expect(result.current.queue.value).toMatchObject({ attributes: { ApproximateNumberOfMessages: '3' } });
+      expect(result.current.list.queues).toHaveLength(1);
+    });
+    const shown = result.current.queue.value;
+    const before = engine.sent.length;
+
+    const signal = new AbortController().signal;
+    const url = `${AWS_HOST}/orders`;
+    let refusal: unknown;
+    await act(async () => {
+      try {
+        if (action === 'send') {
+          await result.current.send({ url, fifo: false }, { body: 'x', attributes: [] }, signal);
+        } else if (action === 'delete') {
+          await result.current.remove(url, [{ id: 'm', receiptHandle: 'h' }], signal);
+        } else if (action === 'purge') {
+          await result.current.purge(url, signal);
+        } else {
+          await result.current.start({ sourceArn: `${ARN}:orders` }, signal);
+        }
+      } catch (error) {
+        refusal = error;
+      }
+    });
+
+    expect(refusal).toBeInstanceOf(RequestError);
+    expect((refusal as RequestError).failure).toMatchObject({ code: 'AWS.SimpleQueueService.NonExistentQueue' });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    // Only the action itself was sent.
+    expect(engine.sent.slice(before).map((sent) => sent.operation)).toEqual([operation]);
+    expect(result.current.queue.value).toBe(shown);
+    expect(result.current.queue.loading).toBe(false);
+  });
 });
 
 describe('the move tasks', () => {
