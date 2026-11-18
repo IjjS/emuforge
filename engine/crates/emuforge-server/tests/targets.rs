@@ -385,6 +385,42 @@ async fn add_body_of_4_kib_is_read_and_one_byte_more_is_413() {
     }
 }
 
+/// A request body that sends one chunk and then fails.
+struct FailsAfterOne(Option<Bytes>);
+
+impl hyper::body::Body for FailsAfterOne {
+    type Data = Bytes;
+    type Error = std::io::Error;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        _: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, std::io::Error>>> {
+        Poll::Ready(Some(match self.0.take() {
+            Some(chunk) => Ok(Frame::data(chunk)),
+            None => Err(std::io::Error::other("the client went away")),
+        }))
+    }
+}
+
+#[tokio::test]
+async fn add_body_that_fails_while_read_is_400_target_invalid_naming_body() {
+    let fixture = fixture();
+    let answer = fixture
+        .send(
+            request(Method::POST, TARGETS)
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::new(FailsAfterOne(Some(Bytes::from_static(
+                    b"{\"name\":",
+                )))))
+                .unwrap(),
+        )
+        .await;
+    answer.assert_error(StatusCode::BAD_REQUEST, "TargetInvalid", "failed body");
+    assert!(answer.message().contains("body"), "{answer:?}");
+    assert!(fixture.file_bytes().is_none());
+}
+
 /// A request body of these chunks with no length, as a chunked upload.
 struct Chunks(VecDeque<Bytes>);
 
