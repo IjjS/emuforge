@@ -55,8 +55,8 @@ export function SendMessageForm({ settings, form, onChange, sending, onSend }: S
     change({ attributes: form.attributes.map((row, at) => (at === index ? { ...row, ...next } : row)) });
   };
 
-  const handleSubmit = (event?: FormEvent) => {
-    event?.preventDefault();
+  const handleSubmit = (event: FormEvent) => {
+    event.preventDefault();
     if (sending) {
       return;
     }
@@ -80,7 +80,7 @@ export function SendMessageForm({ settings, form, onChange, sending, onSend }: S
             <Button formAction="none" variant="link" disabled={sending} onClick={handleClear}>
               Clear
             </Button>
-            <Button variant="primary" loading={sending} disabled={sending} onClick={() => handleSubmit()}>
+            <Button formAction="submit" variant="primary" loading={sending} disabled={sending}>
               Send
             </Button>
           </SpaceBetween>
