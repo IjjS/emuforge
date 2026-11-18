@@ -19,7 +19,8 @@ modules called for, one line per called-for module with the reason. Kinds:
          every module, nothing deferred
   only   --only: the named modules; a partial run, which never passes
   checks --checks: single integration checks; never a gate (below)
---full runs every module whatever changed; it cannot be combined with --only. The whole check of an issue is
+--full runs every module whatever changed, and the tier full of the integration checks (below); it cannot be
+combined with --only. The whole check of an issue is
 pm-check on the issue branch's worktree: its paths against main, integration included, where the integration step
 holds every check of no service and the checks of the services those paths touch (below).
 A step of a module that exists and was not called for is recorded "not-needed" (0 s, no log); it never counts as
@@ -66,6 +67,17 @@ option). It changes nothing else: not the scope, not which steps run, not what p
 option is a pass). --checks runs every id it names, on request or not (the suite starts with --on-request), and
 cannot be combined with --on-request; --stop and --list ignore it.
 
+The tier full (issue 482). A check whose manifest row is labelled `full` runs only in .github/workflows/full.yml,
+which the owner starts, and in a local run the owner asks for: the suite reports it `not-run` with the reason
+"full: runs only in the full run; run it with --full" in every other run, and no changed path calls it. The option
+--full (not a kind full of changes that cannot be read) starts the integration step as ./run --full, and its retry
+the same way; --checks starts the suite with --full, so an asked check of the tier runs. Either is passed only to a
+suite whose tests/integration/run (read up to 1 MiB, as UTF-8) names --full: a checkout cut before the tier gets
+nothing. No agent runs the tier on its own: a plan, a worker or the pm runs --full or --checks of a check of the
+tier only on the owner's word. The integration step's entry gets `full_tier` {of, left_out}, copied from this run's
+report.json (absent when there is none or it has no such key), and pm-check prints it after the step's line as
+`  full tier          <left_out> of <of> left out`.
+
 Services (issue 327). The decision ends with the services line of pm-scope (`  services     every service: <why>` or
 `  services     <names, or "none"> (<why>)`), the selection _pmscope.select makes of the same paths with the work
 tree's manifest and the merge base's, each the main manifest's rows and then each service's (issue 402). A path
@@ -87,8 +99,8 @@ run`); the last lines before the verdict name the failed and the error checks, t
 status still comes from its exit code alone, and `failed` stays the list of step names.
 
 Single checks. --checks runs only the integration step, limited to the named manifest ids: the suite starts with
---not-run and output/checks/checks-not-run.json, which lists every other id of the checkout's manifest, and
---on-request, so an asked check that is on request runs. --checks takes an id of the main manifest
+--not-run and output/checks/checks-not-run.json, which lists every other id of the checkout's manifest,
+--on-request and --full, so an asked check that is on request or of the tier full runs. --checks takes an id of the main manifest
 (tests/integration/manifest.jsonl) or of a service's manifest
 (tests/integration/studio/services/<service>/manifest.jsonl), the manifest every reader reads, main manifest first
 (issue 402). It is refused (exit 2, nothing written) for an id that is in neither, a part of the manifest that
@@ -403,6 +415,33 @@ def leave_out(co, sc):
     return list(ht["left_out"])
 
 
+def suite_knows_full(co):
+    """Whether the checkout's tests/integration/run names --full (the tier full, issue 482): read up to RUNNER_MAX
+    bytes as UTF-8; a suite that cannot be read, or is larger, is taken not to know it."""
+    try:
+        with open(co / STEPS["integration"][0] / STEPS["integration"][1], "rb") as f:
+            data = f.read(RUNNER_MAX + 1)
+        return len(data) <= RUNNER_MAX and "--full" in data.decode("utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+
+
+def report_full_tier(co, commit, started):
+    """The `full_tier` {of, left_out} of this run's report.json, or None when there is no such report or no such
+    key of that shape."""
+    data = this_report(co, commit, started)
+    v = data.get("full_tier") if isinstance(data, dict) else None
+    if isinstance(v, dict) and all(isinstance(v.get(k), int) and not isinstance(v.get(k), bool) for k in ("of", "left_out")):
+        return dict(of=v["of"], left_out=v["left_out"])
+    return None
+
+
+def full_tier_line(entry):
+    """`  full tier          <left_out> of <of> left out` of an integration step's entry, or None."""
+    ft = entry.get("full_tier")
+    return f"  {'full tier':18} {ft['left_out']} of {ft['of']} left out" if ft else None
+
+
 def manifest_ids(co):
     """The check ids of the checkout's manifest, in its order: the main manifest's, then each service's
     (_pmscope.manifest_parts). Refuses (exit 2) when the suite or the main manifest is missing, or when a part
@@ -441,7 +480,8 @@ def refuse_checks(co, asked):
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("checkout"); p.add_argument("--only", action="append", choices=list(STEPS)); p.add_argument("--list", action="store_true")
-    p.add_argument("--full", action="store_true", help="run every module whatever changed")
+    p.add_argument("--full", action="store_true",
+                   help="run every module whatever changed, and the integration checks of the tier full")
     p.add_argument("--checks", nargs="+", metavar="ID", help="run only these integration checks; never a gate")
     p.add_argument("--no-retry", action="store_true"); p.add_argument("--stop", action="store_true")
     p.add_argument("--on-request", action="store_true", help="run the checks labelled on-request with the others")
@@ -529,6 +569,8 @@ def run_all(a, co, mods, calls, env, logs, record, commit, held=(), target="main
         for name, cmd in steps:
             if mod == "integration" and a.on_request:
                 cmd = cmd + ["--on-request"]  # the first run and the retry alike
+            if mod == "integration" and a.full and suite_knows_full(co):
+                cmd = cmd + ["--full"]  # the first run and the retry alike
             if mod == "integration" and services is not None:
                 cmd = cmd + ["--services", str(services_json)]  # the first run and the retry alike
             if mod == "harness" and left:
@@ -554,6 +596,9 @@ def run_all(a, co, mods, calls, env, logs, record, commit, held=(), target="main
                 said, value = report_services(co, commit, started, services is not None)
                 if said:
                     results[-1]["services"] = value
+                ft = report_full_tier(co, commit, started)
+                if ft is not None:
+                    results[-1]["full_tier"] = ft
             if mod == "harness":
                 results[-1]["left_out"] = list(left)
             if status == "flaky":
@@ -561,6 +606,8 @@ def run_all(a, co, mods, calls, env, logs, record, commit, held=(), target="main
                 with open(RUN / "flakes.jsonl", "a") as f:
                     f.write(json.dumps(dict(at=now(), checkout=str(co), commit=commit, step=name, first_log=str(first))) + "\n")
             print(f"  {name:18} {status:7} {results[-1]['seconds']:>7}s  {log}", flush=True)
+            if full_tier_line(results[-1]):
+                print(full_tier_line(results[-1]), flush=True)
     return results, flaky
 
 
@@ -594,7 +641,8 @@ def checks_run(co, out, logs, env, record, commit, dirty, ports, sc, asked, ids)
     cpu = readings.get("cpu")
     try:
         t = time.time()
-        code = run_step(["./run", "--not-run", str(listed), "--on-request"], str(suite), env, log, record, "integration")
+        cmd = ["./run", "--not-run", str(listed), "--on-request"] + (["--full"] if suite_knows_full(co) else [])
+        code = run_step(cmd, str(suite), env, log, record, "integration")
     finally:
         record.unlink(missing_ok=True)
         done()
@@ -605,10 +653,15 @@ def checks_run(co, out, logs, env, record, commit, dirty, ports, sc, asked, ids)
     found = report_checks(co, commit, t)
     entry["checks"] = read_report(co, commit, t)
     entry["emulator"] = report_emulator(co, commit, t)
+    ft = report_full_tier(co, commit, t)
+    if ft is not None:
+        entry["full_tier"] = ft
     verdicts = {i: (v, m) for i, v, m in found or []}
     entry["asked"] = {i: verdicts[i][0] if i in verdicts else None for i in asked}
     entry["messages"] = {i: verdicts[i][1] for i in asked if i in verdicts and verdicts[i][0] != "passed"}
     print(f"  {'integration':18} {status:7} {entry['seconds']:>7}s  {log}", flush=True)
+    if full_tier_line(entry):
+        print(full_tier_line(entry), flush=True)
     summary = dict(at=now(), commit=commit, dirty=dirty, full=False, passed=False,
                    failed=["integration"] if status in ("failed", "error") else [], flaky=[], cpu_at_start=cpu,
                    waited=waited, ports=ports, scope=sc, steps=[entry])
