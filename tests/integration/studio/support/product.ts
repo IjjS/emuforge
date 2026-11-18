@@ -1,8 +1,8 @@
 // The product form (issues 34 and 437): EmuForge built into an image and started by Docker Compose from the
 // checkout's root, with an emulator of its own, the same on every platform and in every shell. This file is the one
 // place the product checks take their command lines from (`LINES`): the start line, the stop line, the line that
-// shows the emulator's log, the line that removes the volume too, and the start line that keeps the running
-// containers. `engine.product-readme-gives-the-commands-the-checks-run` compares the README with them (#437 R16).
+// shows the emulator's log, the line that removes the volume too, the line that shows the containers' states (#484),
+// and the start line that keeps the running containers. `engine.product-readme-gives-the-commands-the-checks-run` compares the README with them (#437 R16).
 //
 // A check's form (`Form`) runs on free loopback ports of its own, under the run's own image names
 // (`EMUFORGE_IMAGE`, `EMUFORGE_EMULATOR_IMAGE`, set by `run`), with an environment of exactly: `HOME` (the run's,
@@ -38,12 +38,16 @@ import { register } from './secrets';
 import { HEALTH_PATH } from './traffic';
 import { waitFor } from './wait';
 
-/** The command lines of the one form, as argument arrays, run at the checkout's root (#437 R9, R10, R5, T10). */
+/**
+ * The command lines of the one form, as argument arrays, run at the checkout's root (#437 R9, R10, R5, T10; #484 R10:
+ * the line that shows the emulator's container not running or not healthy).
+ */
 export const LINES = {
   start: ['docker', 'compose', 'up', '-d', '--build'],
   stop: ['docker', 'compose', 'down'],
   emulatorLogs: ['docker', 'compose', 'logs', 'aws-emulator'],
   removeVolume: ['docker', 'compose', 'down', '-v'],
+  status: ['docker', 'compose', 'ps', '-a'],
 };
 
 /** The variable that keeps the running containers on a second start line (#437 requirement T10). */

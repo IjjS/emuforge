@@ -23,17 +23,18 @@ import {
   dockerRead,
   entries,
   expectExit,
-  firstHealth,
   Form,
   freshHome,
   identities,
   inspectContainers,
   inspectJson,
   KEEP_VARIABLE,
+  LINES,
   madeUpKey,
   productTimeout,
   publishedBy,
   SERVICES,
+  UP_BOUND_MS,
   waitReachable,
   type HealthResult,
 } from './support/product';
@@ -81,12 +82,16 @@ function fileNames(dir: string): string[] {
   return fs.existsSync(dir) ? fs.readdirSync(dir).sort() : [];
 }
 
-/** `docker compose ps --format json` of the form: one object per container, whichever of the two shapes Compose prints. */
+/**
+ * `docker compose ps --format json` of the form, or with `all` the README's line `docker compose ps -a` (`LINES.status`,
+ * #484 R10) with `--format json`: one object per container, whichever of the two shapes Compose prints.
+ */
 async function composePs(
   form: Form,
   all = false,
 ): Promise<{ Service?: string; State?: string; Health?: string }[]> {
-  const result = await form.run(form.compose('ps', ...(all ? ['-a'] : []), '--format', 'json'), 60_000);
+  const line = all ? form.withFiles([...LINES.status, '--format', 'json']) : form.compose('ps', '--format', 'json');
+  const result = await form.run(line, 60_000);
   expectExit(result, 'zero');
   const text = result.stdout.trim();
   if (text.startsWith('[')) return JSON.parse(text) as { Service?: string; State?: string; Health?: string }[];
@@ -115,7 +120,7 @@ async function putBucket(form: Form, bucket: string) {
   expect(statusOf(answer), `PUT /${bucket} through ${form.project}`).toBe(200);
 }
 
-function shownFirst(result: HealthResult) {
+function shownHealth(result: HealthResult) {
   return 'error' in result ? { error: result.error } : result;
 }
 
@@ -123,11 +128,12 @@ test('engine.product-start-connects-to-its-own-emulator', async ({ ctx, page }) 
   test.setTimeout(productTimeout(1, 2));
   const form = await Form.create(ctx);
 
-  // The start line → exit 0, and the first answer health gives after it returns (repeated only while the
-  // connection is refused or reset) is 200, reachable, with the form's EMULATOR_PORT; no `reachable: false` is seen.
+  // The start line → exit 0, and health within the bound after it returns → 200, reachable, with the form's
+  // EMULATOR_PORT. The emulator starts after emuforge, so the first answers may be `reachable: false` (#484 R10,
+  // requirement section 4; `decisions.md`, PM decisions).
   expectExit(await form.start(), 'zero');
-  const first = await firstHealth(form.enginePort);
-  expect(shownFirst(first), 'the first answer of GET /__emuforge/health after the start line').toMatchObject({
+  const reached = await waitReachable(form.enginePort, true, UP_BOUND_MS);
+  expect(shownHealth(reached), 'GET /__emuforge/health within the bound after the start line').toMatchObject({
     status: 200,
     body: { emulator: { reachable: true, port: form.emulatorPort } },
   });
@@ -348,14 +354,15 @@ test('engine.product-start-says-when-the-emulator-did-not-come-up', async ({ ctx
   const deaf = await Form.create(ctx, { files: ['deaf'] });
   expectExit(await deaf.start(), 'zero');
 
-  // GET /__emuforge/health within the emulator's healthcheck window → 200, `reachable: false`.
+  // GET /__emuforge/health within the emulator's healthcheck window → 503, `reachable: false` (the engine's health
+  // answer for an emulator it cannot reach, as before #484).
   expect(await waitReachable(deaf.enginePort, false), 'GET /__emuforge/health of the engine').toMatchObject({
-    status: 200,
+    status: 503,
     body: { emulator: { reachable: false } },
   });
 
-  // `docker compose ps -a` once the healthcheck has given up (30 tries, 2 s apart) → the emulator's container not
-  // healthy, emuforge's running.
+  // `docker compose ps -a` (`LINES.status`) once the healthcheck has given up (30 tries, 2 s apart) → the
+  // emulator's container not healthy, emuforge's running.
   let seen: { Service?: string; State?: string; Health?: string }[] = [];
   await waitFor(GIVE_UP_BOUND_MS, async () => {
     seen = await composePs(deaf, true);
