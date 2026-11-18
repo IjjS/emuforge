@@ -49,8 +49,8 @@ SCREEN_STEP = {
     "console": "one reference spec per screen under specs/ per studio/references/console-reference.md. REVIEW spec r1.",
     "native": "a mock under mocks/ built from the design system of the screen's layer (studio/references/critique.md, "
               "native screens), showing the states the requirement names; capture it with pm-capture <root> mock-<id> "
-              "--file <mock.html>, then stop with BLOCKED i<id>-plan depends crit mock; the PM has crit score it; revise "
-              "until critique.md's Screen stage passes.",
+              "--file <mock.html>, then have crit score it (lead.md, Critique); revise until critique.md's Screen stage "
+              "passes.",
     "none": "(no screen stage for this grade)",
 }
 CONVENTIONS = {

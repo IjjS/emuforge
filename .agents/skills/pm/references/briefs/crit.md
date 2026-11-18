@@ -8,8 +8,8 @@ Issue #{{issue}}: {{title}}. Screen grade `{{grade}}`. Decisions: `.pm/issue-{{i
 scores: `{{root}}/.pm/bin/pm-critique table {{issue}}`.
 Target: {{targets}}, in `{{capture_wt}}`.
 
-You are prompted once per point with `SCORE <point> <paths or routes>`; points are `baseline`, `mock`, `revised`,
-`final`.
+Your issue's plan `i{{issue}}-plan` prompts you once per point with `SCORE <point> <paths or routes>`; points are
+`baseline`, `mock`, `revised`, `final`. Your `STAGE READY` line goes to it.
 
 1. Capture with `{{root}}/.pm/bin/pm-capture {{capture_wt}} <point> …`: 1280x800 and 390x844, light and dark,
    from the built app or the mock file, against a seeded emulator and once against an empty one. Same viewports
