@@ -89,7 +89,7 @@ describe('Studio with a second provider in the list', () => {
       within(studio)
         .getAllByRole('link')
         .map((link) => link.textContent),
-    ).toEqual(['Home', 'AWS', 'Test']);
+    ).toEqual(['Home', 'Connections', 'AWS', 'Test']);
     const providers = screen.getByRole('region', { name: 'Providers (2)' });
     const entry = within(providers).getByRole('link', { name: 'Test Cloud' });
     expect(entry).toHaveAttribute('href', '/test');

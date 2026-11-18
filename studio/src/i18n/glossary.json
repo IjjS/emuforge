@@ -117,5 +117,39 @@
       "vi": "cổng",
       "th": "พ\u2060อ\u2060ร์\u2060ต"
     }
+  },
+  "connection": {
+    "forms": ["connection", "connections"],
+    "exempt": [],
+    "stems": {
+      "ko": "연결",
+      "ja": "接続",
+      "es": "conexi",
+      "pt-BR": "conex",
+      "fr": "connexion",
+      "de": "Verbindung",
+      "ru": "подключ",
+      "it": "connession",
+      "pl": "połącz",
+      "vi": "kết nối",
+      "th": "เชื่อมต่อ"
+    }
+  },
+  "target": {
+    "forms": ["target", "targets"],
+    "exempt": [],
+    "stems": {
+      "ko": "대상",
+      "ja": "ターゲット",
+      "es": "destino",
+      "pt-BR": "destino",
+      "fr": "cible",
+      "de": "Ziel",
+      "ru": "цел",
+      "it": "destinazion",
+      "pl": "cel",
+      "vi": "mục tiêu",
+      "th": "เป้าหมาย"
+    }
   }
 }
