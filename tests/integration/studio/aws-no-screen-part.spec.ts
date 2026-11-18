@@ -13,12 +13,12 @@
 // nothing (R2), so a path that names a function or a role, and the long paths, are opened directly without one.
 //
 // Words and readers of the page: `support/no-screen-part.ts`; a bucket's page: `services/s3/s3-bucket-page.ts`; the
-// bucket list and the direct calls: `services/s3/s3.ts`; a function's page: `services/lambda/lambda-page.ts`, and the
-// functions a check makes: `services/lambda/lambda.ts`.
+// bucket list and the direct calls: `services/s3/s3.ts`.
 //
 // Issue 480 gave the bucket its "Objects" tab and removed the "Directory buckets" link and tab and the tiering section
-// (decisions.md, the listed checks): the tab that leads to this page is now the function page's "Test", a path below a
-// kept section stands for the tiering one, and `…/metrics`, still unbuilt, for `…/objects`.
+// (decisions.md, the listed checks and the Plan decision on this file): the page is reached from the bucket's page by
+// the buttons of kept sections, which still lead to it, and `…/metrics`, still unbuilt, stands for `…/objects`. The
+// tabs of a function's page that lead to it are Lambda's own check (`lambda-function-list.spec.ts`).
 //
 // The Tab walk of the keyboard check allows Cloudscape's own stops where Cloudscape places them, as the bucket list's
 // keyboard check does: "Close navigation" before the navigation's header, the toggle of the navigation's section
@@ -83,9 +83,6 @@ import {
   pathPlaceProblems,
 } from './support/no-screen-part';
 import { checkPrefix, scrollsSideways } from './support/service-screens';
-import { functionNamesDirect, LambdaSeeded } from './services/lambda/lambda';
-import { FUNCTIONS_PATH, listHeading as functionListHeading } from './services/lambda/lambda-list';
-import { functionPage, openFunction } from './services/lambda/lambda-page';
 import {
   H1 as BUCKETS_H1,
   LONGEST_NAME,
@@ -106,6 +103,7 @@ import {
   OBJECTS,
   openBucketPage,
   sectionButton,
+  NOTIFICATIONS,
   VERSIONING,
   WEBSITE,
 } from './services/s3/s3-bucket-page';
@@ -114,9 +112,8 @@ const S3 = PART_SERVICES.s3;
 const LAMBDA = PART_SERVICES.lambda;
 const IAM = PART_SERVICES.iam;
 
-/** The first action under S3 and under Lambda (R4.7). */
+/** The first action under S3 (R4.7). */
 const GO_TO_BUCKETS = goTo(S3.first);
-const GO_TO_FUNCTIONS = goTo(LAMBDA.first);
 
 const DIRECTORY_PATH = '/aws/s3/directory-buckets';
 
@@ -130,22 +127,14 @@ const websiteEditPath = (name: string) => `/aws/s3/bucket/${name}/property/websi
 const tieringCreatePath = (name: string) => `/aws/s3/bucket/${name}/property/intelligent-tiering/create`;
 const metricsPath = (name: string) => `${bucketPath(name)}/metrics`;
 
-/** A function's tab "Test" (`studio/src/providers/aws/area/services/lambda/pages/function-page.tsx`). */
-const testTabPath = (fn: string) => `${FUNCTIONS_PATH}/function/${fn}/test`;
+/** "Create event notification" of "Event notifications", for `name` (R2's table). */
+const notificationCreatePath = (name: string) => `/aws/s3/bucket/${name}/property/event-notification/create`;
 
-/** The crumbs of the page at a path below a bucket's page and below a function's page (R4.3). */
+/** The crumbs of the page at a path below a bucket's page (R4.3). */
 const bucketCrumbs = (name: string) => ['EmuForge', 'AWS', S3.crumb, 'Buckets', name, NO_SCREEN_PART_H1];
-const functionCrumbs = (fn: string) => ['EmuForge', 'AWS', LAMBDA.crumb, LAMBDA.first, fn, NO_SCREEN_PART_H1];
 
 /** The crumbs of the page at a path with no screen above, under S3 (R4.3). */
 const S3_CRUMBS = ['EmuForge', 'AWS', S3.crumb, NO_SCREEN_PART_H1];
-
-/** A function's tab on its page, waited for until it can be chosen. */
-async function chooseFunctionTab(page: Page, fn: string, label: string): Promise<void> {
-  const control = functionPage(page, fn).tab(label);
-  await expect(control, `the tab "${label}"`).toBeEnabled(ACTION);
-  await control.click(ACTION);
-}
 
 /** A section's button on a bucket's page, waited for until it can be chosen (the section shows it once read). */
 async function chooseSectionButton(page: Page, section: string, name: string): Promise<void> {
@@ -158,12 +147,6 @@ async function chooseSectionButton(page: Page, section: string, name: string): P
 async function expectBucketList(page: Page, at: string): Promise<void> {
   await expect(page).toHaveURL(addressOf(at));
   await expect(heading(page, BUCKETS_H1), `the bucket list's h1 "${BUCKETS_H1}"`).toBeVisible();
-}
-
-/** Waits for the function list at `at`: its `h1`. */
-async function expectFunctionList(page: Page, at: string): Promise<void> {
-  await expect(page).toHaveURL(addressOf(at));
-  await expect(functionListHeading(page), `the function list's h1 "${LAMBDA.first}"`).toBeVisible();
 }
 
 /** The current side navigation link's text, as a poll can compare it. */
@@ -185,50 +168,52 @@ test('studio.aws-no-screen-part-says-what-is-missing', async ({ ctx, page }) => 
   const lines = new Lines(ctx);
   const p = checkPrefix(ctx, 'part-says');
   const name = `${p}-b`;
-  const fn = `${p}-fn`;
-  const testTab = testTabPath(fn);
+  const edit = versioningEditPath(name);
   const seeded = new Seeded(ctx, port);
   await seeded.bucket(name);
-  await new LambdaSeeded(ctx, port, p).function(fn);
 
-  /** From the function's page, the tab "Test", without a document load; the page is not read here. */
-  async function fromTestTab(): Promise<void> {
-    await openFunction(page, fn);
+  /** From the bucket's page, "Edit" of "Bucket Versioning", without a document load; the page is not read here. */
+  async function fromVersioningEdit(): Promise<void> {
+    await openBucketPage(page, name);
     await markPage(page);
-    await chooseFunctionTab(page, fn, 'Test');
-    await expect(page).toHaveURL(addressOf(testTab));
-    expect(await stillSamePage(page), 'the tab "Test": no document was loaded').toBe(true);
+    await chooseSectionButton(page, VERSIONING, 'Edit');
+    await expect(page).toHaveURL(addressOf(edit));
+    expect(await stillSamePage(page), '"Edit" of "Bucket Versioning": no document was loaded').toBe(true);
   }
 
   await lines.line(
-    'With a function `<p>-fn` made directly, open its page and choose the tab "Test" → the address is `/aws/lambda/functions/function/<p>-fn/test`, without a document load; the `h1` is "No screen yet", the content holds the statement and nowhere the old sentence (regression)',
+    'With a bucket `<p>-b` made directly, open its page on "Properties" and choose "Edit" of "Bucket Versioning" → the address is `/aws/s3/bucket/<p>-b/property/versioning/edit`, without a document load; the `h1` is "No screen yet", the content holds the statement and nowhere the old sentence (regression)',
     async () => {
-      await fromTestTab();
-      await expectNoScreenPart(page, LAMBDA.label, testTab);
+      await fromVersioningEdit();
+      await expectNoScreenPart(page, S3.label, edit);
     },
   );
 
   await lines.line(
-    'On that page → "Path" shows `/aws/lambda/functions/function/<p>-fn/test`, and the sentence is shown',
+    'On that page → "Path" shows `/aws/s3/bucket/<p>-b/property/versioning/edit`, and the sentence is shown',
     async () => {
-      await fromTestTab();
-      await expectNoScreenPart(page, LAMBDA.label, testTab);
-      await expectPath(page, testTab);
+      await fromVersioningEdit();
+      await expectNoScreenPart(page, S3.label, edit);
+      await expectPath(page, edit);
       await expect(nothingChanged(page), 'the sentence').toBeVisible();
     },
   );
 
   await lines.line(
-    'On that page → the crumbs are "EmuForge", "AWS", "Lambda", "Event Functions", "`<p>-fn`", "No screen yet", the last no link; the side navigation has the header "Lambda" and the one link "Event Functions", which is current, and no link "Amazon Kinesis"',
+    'On that page → the crumbs are "EmuForge", "AWS", "S3", "Buckets", "`<p>-b`", "No screen yet", the last no link; the side navigation has the header "Amazon S3" and the one link "General purpose buckets", which is current, and no link "Amazon Kinesis"',
     async () => {
-      await fromTestTab();
-      await expectNoScreenPart(page, LAMBDA.label, testTab);
-      await expectCrumbs(page, functionCrumbs(fn));
+      await fromVersioningEdit();
+      await expectNoScreenPart(page, S3.label, edit);
+      await expectCrumbs(page, bucketCrumbs(name));
+      await expect
+        .poll(() => currentLinks(page), {
+          message: 'the current navigation link',
+        })
+        .toEqual([NAV_GENERAL]);
       const nav = await navigationShown(page);
       ctx.log(`side navigation: ${JSON.stringify(nav)}`);
-      expect(nav.header, 'the navigation header').toBe(LAMBDA.crumb);
-      expect(nav.links, 'the navigation links').toEqual([LAMBDA.first]);
-      expect(nav.current, 'the current navigation link').toEqual([LAMBDA.first]);
+      expect(nav.header, 'the navigation header').toBe(NAV_HEADER);
+      expect(nav.links, 'the navigation links').toEqual([NAV_GENERAL]);
       expect(nav.links, `no link "${NO_SCREEN_SERVICE.label}"`).not.toContain(NO_SCREEN_SERVICE.label);
     },
   );
@@ -236,45 +221,18 @@ test('studio.aws-no-screen-part-says-what-is-missing', async ({ ctx, page }) => 
   await lines.line(
     'On that page → the document title is "No screen yet | EmuForge Studio" and focus is on the content target named "No screen yet"',
     async () => {
-      await fromTestTab();
-      await expectNoScreenPart(page, LAMBDA.label, testTab);
-      await expect(page).toHaveTitle(titleOf(NO_SCREEN_PART_H1));
-      await expectTarget(page, NO_SCREEN_PART_H1, GO_TO_FUNCTIONS);
-    },
-  );
-
-  await lines.line(
-    'Choose the crumb "`<p>-fn`" → the function\'s page at `/aws/lambda/functions/function/<p>-fn` (`h1` the name), without a document load',
-    async () => {
-      await fromTestTab();
-      await expectNoScreenPart(page, LAMBDA.label, testTab);
-      await crumbLink(page, fn).click(ACTION);
-      await expect(page).toHaveURL(addressOf(`${FUNCTIONS_PATH}/function/${fn}`));
-      await expect(functionPage(page, fn).h1, `the function page's h1 "${fn}"`).toBeVisible();
-      await expect(functionPage(page, fn).tab('Code'), 'the tab "Code" selected').toHaveAttribute(
-        'aria-selected',
-        'true',
-      );
-      expect(await stillSamePage(page), 'no document was loaded').toBe(true);
-    },
-  );
-
-  await lines.line(
-    'With a bucket `<p>-b` made directly, on the bucket\'s page choose "Edit" of "Bucket Versioning" → the changed page at `/aws/s3/bucket/<p>-b/property/versioning/edit`, "Path" showing that path, the crumbs "EmuForge", "AWS", "S3", "Buckets", "`<p>-b`", "No screen yet", the navigation\'s one link "General purpose buckets" current; the crumb "`<p>-b`" → the bucket\'s page at `/aws/s3/buckets/<p>-b` on its tab "Objects"',
-    async () => {
-      const edit = versioningEditPath(name);
-      await openBucketPage(page, name);
-      await markPage(page);
-      await chooseSectionButton(page, VERSIONING, 'Edit');
+      await fromVersioningEdit();
       await expectNoScreenPart(page, S3.label, edit);
-      await expectPath(page, edit);
-      await expectCrumbs(page, bucketCrumbs(name));
-      await expect
-        .poll(() => currentLinks(page), {
-          message: 'the current navigation link',
-        })
-        .toEqual([NAV_GENERAL]);
-      expect((await navigationShown(page)).links, 'the navigation links').toEqual([NAV_GENERAL]);
+      await expect(page).toHaveTitle(titleOf(NO_SCREEN_PART_H1));
+      await expectTarget(page, NO_SCREEN_PART_H1, GO_TO_BUCKETS);
+    },
+  );
+
+  await lines.line(
+    'Choose the crumb "`<p>-b`" → the bucket\'s page at `/aws/s3/buckets/<p>-b` (`h1` the name) on its tab "Objects", without a document load',
+    async () => {
+      await fromVersioningEdit();
+      await expectNoScreenPart(page, S3.label, edit);
       await crumbLink(page, name).click(ACTION);
       await expect(page).toHaveURL(addressOf(bucketPath(name)));
       await expectBucketPage(page, name, OBJECTS);
@@ -283,52 +241,74 @@ test('studio.aws-no-screen-part-says-what-is-missing', async ({ ctx, page }) => 
   );
 
   await lines.line(
-    'From the tab "Test" again: "Go to Event Functions" → the address is `/aws/lambda`, the `h1` is "Event Functions", without a document load',
+    'On the bucket\'s page choose "Edit" of "Static website hosting" → the changed page at `/aws/s3/bucket/<p>-b/property/website/edit`, "Path" showing that path, the same six crumbs, "General purpose buckets" current; the crumb "`<p>-b`" → the bucket\'s page at `/aws/s3/buckets/<p>-b`',
     async () => {
-      await fromTestTab();
-      await expectNoScreenPart(page, LAMBDA.label, testTab);
-      await action(page, GO_TO_FUNCTIONS).click(ACTION);
-      await expectFunctionList(page, LAMBDA.firstPath);
+      const website = websiteEditPath(name);
+      await openBucketPage(page, name);
+      await markPage(page);
+      await chooseSectionButton(page, WEBSITE, 'Edit');
+      await expectNoScreenPart(page, S3.label, website);
+      await expectPath(page, website);
+      await expectCrumbs(page, bucketCrumbs(name));
+      await expect
+        .poll(() => currentLinks(page), {
+          message: 'the current navigation link',
+        })
+        .toEqual([NAV_GENERAL]);
+      await crumbLink(page, name).click(ACTION);
+      await expect(page).toHaveURL(addressOf(bucketPath(name)));
+      await expectBucketPage(page, name, OBJECTS);
       expect(await stillSamePage(page), 'no document was loaded').toBe(true);
     },
   );
 
   await lines.line(
-    'Back, then the crumb "Lambda" → the function list; Back, then the crumb "Event Functions" → `/aws/lambda/functions` and the function list; Back, then "Go to Home" → Studio\'s home at `/`',
+    'From "Edit" of "Bucket Versioning" again: "Go to Buckets" → the address is `/aws/s3`, the `h1` is "Buckets", without a document load',
     async () => {
-      // The Given: the function list reached by "Go to Event Functions" from the page.
-      await fromTestTab();
-      await expectNoScreenPart(page, LAMBDA.label, testTab);
-      await action(page, GO_TO_FUNCTIONS).click(ACTION);
-      await expectFunctionList(page, LAMBDA.firstPath);
+      await fromVersioningEdit();
+      await expectNoScreenPart(page, S3.label, edit);
+      await action(page, GO_TO_BUCKETS).click(ACTION);
+      await expectBucketList(page, S3.firstPath);
+      expect(await stillSamePage(page), 'no document was loaded').toBe(true);
+    },
+  );
+
+  await lines.line(
+    'Back, then the crumb "S3" → the bucket list; Back, then the crumb "Buckets" → `/aws/s3/buckets` and the bucket list; Back, then "Go to Home" → Studio\'s home at `/`',
+    async () => {
+      // The Given: the bucket list reached by "Go to Buckets" from the page.
+      await fromVersioningEdit();
+      await expectNoScreenPart(page, S3.label, edit);
+      await action(page, GO_TO_BUCKETS).click(ACTION);
+      await expectBucketList(page, S3.firstPath);
 
       await page.goBack();
-      await expectNoScreenPart(page, LAMBDA.label, testTab);
-      await crumbLink(page, LAMBDA.crumb).click(ACTION);
-      await expectFunctionList(page, LAMBDA.firstPath);
+      await expectNoScreenPart(page, S3.label, edit);
+      await crumbLink(page, S3.crumb).click(ACTION);
+      await expectBucketList(page, S3.firstPath);
 
       await page.goBack();
-      await expectNoScreenPart(page, LAMBDA.label, testTab);
-      await crumbLink(page, LAMBDA.first).click(ACTION);
-      await expectFunctionList(page, FUNCTIONS_PATH);
+      await expectNoScreenPart(page, S3.label, edit);
+      await crumbLink(page, 'Buckets').click(ACTION);
+      await expectBucketList(page, '/aws/s3/buckets');
 
       await page.goBack();
-      await expectNoScreenPart(page, LAMBDA.label, testTab);
+      await expectNoScreenPart(page, S3.label, edit);
       await action(page, GO_HOME).click(ACTION);
       await expectHome(page);
     },
   );
 
   await lines.line(
-    'Back from Home → the changed page at `/aws/lambda/functions/function/<p>-fn/test` again',
+    'Back from Home → the changed page at `/aws/s3/bucket/<p>-b/property/versioning/edit` again',
     async () => {
-      await fromTestTab();
-      await expectNoScreenPart(page, LAMBDA.label, testTab);
+      await fromVersioningEdit();
+      await expectNoScreenPart(page, S3.label, edit);
       await action(page, GO_HOME).click(ACTION);
       await expectHome(page);
       await page.goBack();
-      await expectNoScreenPart(page, LAMBDA.label, testTab);
-      await expectPath(page, testTab);
+      await expectNoScreenPart(page, S3.label, edit);
+      await expectPath(page, edit);
     },
   );
 
@@ -344,12 +324,10 @@ test('studio.aws-no-screen-part-changes-nothing-in-the-emulator', async ({ ctx, 
   const p = checkPrefix(ctx, 'part-nothing');
   const keep = `${p}-keep`;
   const none = `${p}-none`;
-  const fn = `${p}-fn`;
   const key = 'kept/object.txt';
   const seeded = new Seeded(ctx, port);
   await seeded.bucket(keep);
   await seeded.object(keep, key, 'kept by the check');
-  await new LambdaSeeded(ctx, port, p).function(fn);
   const record = EngineRecord.attach(ctx, context, stack.engine.url);
 
   /** One visit of a changed page: its path and the AWS requests the engine received while it was shown. */
@@ -384,18 +362,18 @@ test('studio.aws-no-screen-part-changes-nothing-in-the-emulator', async ({ ctx, 
     }
   }
 
-  const TAB = 'the tab "Test"';
   const VERSIONING_EDIT = '"Edit" of "Bucket Versioning"';
   const WEBSITE_EDIT = '"Edit" of "Static website hosting"';
-  const tabVisit = () =>
+  const NOTIFICATION_CREATE = '"Create event notification"';
+  const notificationVisit = () =>
     visit(
-      TAB,
-      testTabPath(fn),
-      () => openFunction(page, fn),
-      () => chooseFunctionTab(page, fn, 'Test'),
+      NOTIFICATION_CREATE,
+      notificationCreatePath(keep),
+      () => openBucketPage(page, keep),
+      () => chooseSectionButton(page, NOTIFICATIONS, 'Create event notification'),
       async () => {
-        await expectNoScreenPart(page, LAMBDA.label, testTabPath(fn));
-        await expectPath(page, testTabPath(fn));
+        await expectNoScreenPart(page, S3.label, notificationCreatePath(keep));
+        await expectPath(page, notificationCreatePath(keep));
       },
     );
   const editVisit = () =>
@@ -424,37 +402,36 @@ test('studio.aws-no-screen-part-changes-nothing-in-the-emulator', async ({ ctx, 
   /** The three visits, each made once; a visit a line before already made is not made again. */
   async function threeVisits(): Promise<void> {
     for (const [what, make] of [
-      [TAB, tabVisit],
       [VERSIONING_EDIT, editVisit],
       [WEBSITE_EDIT, websiteVisit],
+      [NOTIFICATION_CREATE, notificationVisit],
     ] as const) {
       if (!visits.has(what)) await make().catch(() => undefined);
     }
     expect([...visits.keys()].sort(), 'the three controls were followed').toEqual(
-      [TAB, VERSIONING_EDIT, WEBSITE_EDIT].sort(),
+      [VERSIONING_EDIT, WEBSITE_EDIT, NOTIFICATION_CREATE].sort(),
     );
   }
 
   await lines.line(
-    'With a bucket `<p>-keep` and one object in it and a function `<p>-fn` made directly, open the function\'s page and choose the tab "Test" → the changed page at `/aws/lambda/functions/function/<p>-fn/test`, "Path" showing that path',
-    tabVisit,
+    'With a bucket `<p>-keep` and one object in it made directly, open the bucket\'s page on "Properties" and choose "Edit" of "Bucket Versioning" → the changed page at `/aws/s3/bucket/<p>-keep/property/versioning/edit`, "Path" showing that path',
+    editVisit,
   );
 
   await lines.line(
-    'Open the bucket\'s page, choose "Edit" of "Bucket Versioning" → the changed page at `/aws/s3/bucket/<p>-keep/property/versioning/edit`; open it again, choose "Edit" of "Static website hosting" → the changed page at `/aws/s3/bucket/<p>-keep/property/website/edit`',
+    'Open it again, choose "Edit" of "Static website hosting" → the changed page at `/aws/s3/bucket/<p>-keep/property/website/edit`; open it again, choose "Create event notification" → the changed page at `/aws/s3/bucket/<p>-keep/property/event-notification/create`',
     async () => {
-      await editVisit();
       await websiteVisit();
+      await notificationVisit();
     },
   );
 
   await lines.line(
-    'After the three → a direct `ListBuckets` still returns `<p>-keep`, a direct `ListObjectsV2` of it returns the same one key, and a direct `ListFunctions` still returns `<p>-fn`',
+    'After the three → a direct `ListBuckets` still returns `<p>-keep`, and a direct `ListObjectsV2` of it returns the same one key',
     async () => {
       await threeVisits();
       expect(await bucketNamesDirect(ctx, port, p), `a direct ListBuckets under ${p}`).toContain(keep);
       expect(await objectKeysDirect(ctx, port, keep), `a direct ListObjectsV2 of ${keep}`).toEqual([key]);
-      expect(await functionNamesDirect(ctx, port, p), `a direct ListFunctions under ${p}`).toEqual([fn]);
     },
   );
 
