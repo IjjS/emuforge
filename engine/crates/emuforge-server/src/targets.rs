@@ -237,7 +237,7 @@ async fn info(
     };
     let target = match found(&settings, name) {
         Ok(target) => target,
-        Err(response) => return response,
+        Err(error) => return target_refusal(&error),
     };
     let emulator = Emulator::for_endpoint(&state.home, target.endpoint());
     let health = match (state.probe)(emulator.clone()).await {
@@ -267,7 +267,7 @@ async fn use_target(
 ) -> Response {
     let name = match parse_name(name) {
         Ok(name) => name,
-        Err(response) => return response,
+        Err(error) => return target_refusal(&error),
     };
     let mut changed = false;
     let result = state
@@ -322,7 +322,7 @@ async fn test(
     };
     let target = match found(&settings, name) {
         Ok(target) => target,
-        Err(response) => return response,
+        Err(error) => return target_refusal(&error),
     };
     let emulator = Emulator::for_endpoint(&state.home, target.endpoint());
     let report = (state.test)(emulator.clone()).await;
@@ -355,7 +355,7 @@ async fn remove(
 ) -> Response {
     let name = match parse_name(name) {
         Ok(name) => name,
-        Err(response) => return response,
+        Err(error) => return target_refusal(&error),
     };
     let mut endpoint = None;
     let result = state
@@ -380,25 +380,17 @@ async fn remove(
     }
 }
 
-/// The path's name; one that breaks the name rule is `404`, since no target can have it.
-fn parse_name(name: Result<Path<String>, PathRejection>) -> Result<TargetName, Response> {
+/// The path's name; one that breaks the name rule is not found, since no target can have it.
+fn parse_name(name: Result<Path<String>, PathRejection>) -> Result<TargetName, TargetError> {
     let text = name.map(|Path(text)| text).unwrap_or_default();
-    TargetName::parse(&text).map_err(|_| {
-        refusal(
-            StatusCode::NOT_FOUND,
-            "TargetNotFound",
-            "there is no target with that name; a name is 1 to 64 characters of a-z, 0-9, - and _"
-                .to_owned(),
-        )
-    })
+    TargetName::parse(&text).map_err(|_| TargetError::NotFound { name: text })
 }
 
 fn found(
     settings: &Settings,
     name: Result<Path<String>, PathRejection>,
-) -> Result<&Target, Response> {
-    let name = parse_name(name)?;
-    settings.get(&name).map_err(|error| target_refusal(&error))
+) -> Result<&Target, TargetError> {
+    settings.get(&parse_name(name)?)
 }
 
 fn change_refusal(error: &ChangeError) -> Response {
