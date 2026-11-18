@@ -344,17 +344,17 @@ describe('the queue list, loaded', () => {
     const headers = (table().findColumnHeaders() ?? []).map((header) => text(header.getElement()));
     expect(headers).toEqual([
       'Name',
-      'Type',
       'Available',
       'In flight',
       'Delayed',
+      'Type',
       'Dead-letter queue',
       'Dead-letter queue for',
     ]);
     expect(rows()).toEqual([
-      ['orders', 'Standard', '3', '1', '1', 'orders-dlq', '-'],
-      ['orders-dlq', 'Standard', '0', '0', '0', '-', 'orders'],
-      ['jobs.fifo', 'FIFO', '5', '0', '0', '-', '-'],
+      ['orders', '3', '1', '1', 'Standard', 'orders-dlq', '-'],
+      ['orders-dlq', '0', '0', '0', 'Standard', '-', 'orders'],
+      ['jobs.fifo', '5', '0', '0', 'FIFO', '-', '-'],
     ]);
 
     const [first, second, third] = (table().findRows() ?? []).map((row) => row.getElement());
@@ -416,9 +416,9 @@ describe('a row whose own reads fail', () => {
     await openLoaded();
 
     expect(rows()).toEqual([
-      ['orders', 'Standard', '3', '1', '1', 'orders-dlq', '-'],
+      ['orders', '3', '1', '1', 'Standard', 'orders-dlq', '-'],
       ['orders-dlq', 'The queue could not be read', '', '', '', '', ''],
-      ['jobs.fifo', 'FIFO', '5', '0', '0', '-', '-'],
+      ['jobs.fifo', '5', '0', '0', 'FIFO', '-', '-'],
     ]);
     const second = table().findRows()?.[1]?.getElement() as HTMLElement;
     expect(within(second).getByRole('link', { name: 'orders-dlq' })).toHaveAttribute(
@@ -441,7 +441,7 @@ describe('a row whose own reads fail', () => {
     await openLoaded();
 
     expect(rows()[2]).toEqual(['jobs.fifo', 'No longer in the emulator', '', '', '', '', '']);
-    expect(rows()[0]).toEqual(['orders', 'Standard', '3', '1', '1', 'orders-dlq', '-']);
+    expect(rows()[0]).toEqual(['orders', '3', '1', '1', 'Standard', 'orders-dlq', '-']);
   });
 });
 
@@ -587,7 +587,7 @@ describe('"Refresh"', () => {
     });
 
     await waitFor(() => {
-      expect(rows()[0]?.[2]).toBe('4');
+      expect(rows()[0]?.[1]).toBe('4');
     });
     expect(isDisabled(refreshButton())).toBe(false);
     expect(document.activeElement).toBe(refreshButton());
@@ -619,5 +619,65 @@ describe('pages', () => {
     await openLoaded();
 
     expect(isDisabled(nextPage())).toBe(true);
+  });
+
+  it('the counter: "(10+)" while a next page follows, the page’s count without a plus on the last page', async () => {
+    engine.queues = TWELVE;
+    open();
+    await expectNames(TWELVE.slice(0, 10).map((queue) => queue.name));
+    expect(text(screen.getByRole('heading', { level: 1 }))).toBe('Queues (10+)');
+
+    fireEvent.click(nextPage());
+
+    await expectNames(['q-11', 'q-12']);
+    expect(text(screen.getByRole('heading', { level: 1 }))).toBe('Queues (2)');
+  });
+});
+
+describe('the columns at a narrow width and dead letters', () => {
+  it('at 390 wide with the table 1200 wide: the name column sticks while the others scroll', async () => {
+    // jsdom lays nothing out: the table is given the width of its columns, everything else the viewport's.
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+      const width = this.tagName === 'TABLE' ? 1200 : this.tagName === 'TH' || this.tagName === 'TD' ? 150 : 390;
+      return {
+        x: 0,
+        y: 0,
+        top: 0,
+        left: 0,
+        bottom: 40,
+        right: width,
+        width,
+        height: 40,
+        toJSON: () => ({}),
+      } as DOMRect;
+    });
+    await openLoaded();
+
+    act(() => {
+      window.dispatchEvent(new Event('resize'));
+      table().getElement().querySelector('table')?.parentElement?.dispatchEvent(new Event('scroll'));
+    });
+
+    await waitFor(() => {
+      const headers = table()
+        .findColumnHeaders()
+        .map((header) => header.getElement().className);
+      expect(headers[0]).toMatch(/sticky-cell/);
+      expect(headers.slice(1).some((name) => /sticky-cell/.test(name))).toBe(false);
+    });
+    vi.restoreAllMocks();
+  });
+
+  it('a dead-letter queue of a source holding messages: its Available as a warning; any other queue’s count as text', async () => {
+    const holding: FakeQueue = { ...DLQ, attributes: standard('orders-dlq', [2, 0, 0]) };
+    const empty: FakeQueue = { name: 'pay-dlq', attributes: standard('pay-dlq'), sources: ['pay'] };
+    await openLoaded([ORDERS, holding, empty]);
+
+    const [first, second, third] = (table().findRows() ?? []).map((row) => row.getElement());
+    expect(within(second as HTMLElement).getByRole('img', { name: 'Dead letters waiting' })).toBeInTheDocument();
+    expect(rows()[1]?.[1]).toBe('2');
+    expect(within(first as HTMLElement).queryByRole('img', { name: 'Dead letters waiting' })).toBeNull();
+    expect(within(third as HTMLElement).queryByRole('img', { name: 'Dead letters waiting' })).toBeNull();
+    expect(rows()[0]?.[1]).toBe('3');
   });
 });
