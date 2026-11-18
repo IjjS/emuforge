@@ -94,7 +94,9 @@ token rate for the day; over it, no new pane is opened.
   becomes an issue file that waits for the owner's signal; other work goes on.
 - The whole set of checks runs in `.github/workflows/full.yml`, which only the owner starts, by hand; the `pm`
   never starts it and reads a run of it on the owner's word. The push run takes the checks of the services the
-  push touched, so between two runs of `full` a service no change touched is not checked.
+  push touched, so between two runs of `full` a service no change touched is not checked. The checks of the tier
+  `full` (the manifest's label, `tests/integration/AGENTS.md`) run only there and in a local run the owner asks
+  for; no agent runs them on its own, and no push run or whole check holds them.
 - Any other push, a release, anything written to GitHub and deleting a remote branch need the owner's explicit
   word.
 
