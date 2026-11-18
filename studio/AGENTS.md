@@ -1,608 +1,115 @@
 # studio
 
-Guidance for agents working in `studio/`. The root `AGENTS.md` applies first; this file adds what is specific
-to the web console. Stages for a studio issue are in `references/workflow.md`.
+What holds for every piece of work in `studio/`. The root `AGENTS.md` applies first. Stages, conventions of a layer
+and the critique are in `references/`; a brief names the ones its work needs ("References" below).
 
 ## What Studio is
 
-A local console for cloud emulators, through the EmuForge engine. It has two layers. Studio's own layer is
-EmuForge's frame and its own screens, in a design of its own. Inside it, each cloud provider has an area that
-follows the information structure and flow of that provider's console and is not a copy of it: the AWS area, at
-`/aws`, follows the structure and flow of an AWS console screen where one exists, and is a careful Cloudscape
-application where none does, built from Cloudscape in its default theme either way. Every page of the area says
-that it is a stand-alone local emulator and not AWS ("AWS screen policy" below). Studio shows what is really in the
-emulator, whoever created it, and it never pretends an operation works when the emulator answers HTTP 501.
+A local console for cloud emulators, through the EmuForge engine. Studio's own layer is EmuForge's frame and its own
+screens, in a design of its own (`DESIGN.md`). Inside it, each cloud provider has an area built from that provider's
+design system: the AWS area, at `/aws`, is a Cloudscape application whose screens serve the tasks a developer does
+with each service locally, as far as the emulator's API supports them; it is not a copy of the AWS console
+(`references/aws-area.md`). Studio shows what is really in the emulator, whoever created it, and never pretends an
+operation works when the emulator answers HTTP 501. Product context: `PRODUCT.md`.
 
-Product context (users, purpose, scope) is in `PRODUCT.md`; Studio's own design system is recorded in `DESIGN.md`.
+| Layer | Paths | Folders | Design system |
+|---|---|---|---|
+| Studio's own: the frame, Home, Studio's "Page not found", every EmuForge-only screen outside a provider | `/` and every path that is not a provider's | `app/`, `ui/`, `features/`, `i18n/` | Studio's own (`DESIGN.md`), imitating no provider's console |
+| A provider's area: everything of one provider, its EmuForge-only states included | its one first segment and below: `/aws`, `/aws/...` | `providers/<id>/area/` | the provider's, as published: Cloudscape in its default theme |
 
-## Two layers
-
-| Layer | What | Paths | Folders | Design system |
-|---|---|---|---|---|
-| Studio's own | the frame (top bar), Home with the connection status, Studio's "Page not found", every later screen that exists only in EmuForge outside a provider (settings, IAM simulation, Verify results) | `/` and every path that is not a provider's | `app/`, `ui/`, `features/` | Studio's own (`DESIGN.md`), original, imitating no provider's console |
-| Provider area | everything of one provider; today the AWS area | the provider's first segment and every path below it: `/aws`, `/aws/...` | `providers/<id>/area/` | the provider's, as published: Cloudscape in its default theme for AWS |
-
-- The root of the path space belongs to Studio's own layer. Each provider has exactly one first segment (`aws`), and
-  every path under it belongs to its area, including the area's EmuForge-only states (the area's index, "no screen
-  yet", the area's "Page not found"). Any other path that matches no Studio screen shows Studio's own "Page not
-  found". A service route is the provider's segment followed by the service's route: `/aws/s3`, `/aws/s3/buckets`.
-- The area sits in Studio's frame, below the top bar, and fills the rest of the page. Studio's frame is never built
-  from a provider's design system, and a provider's area holds nothing of Studio's own design.
-- A screen's grade follows from its layer (`references/workflow.md`, "Screen grade"): every screen of Studio's own
-  layer is `native` and is built from Studio's own design system. Inside a provider area, a screen that follows the
-  structure and flow of a screen of that provider's console is `console` and is built from the provider's design
-  system against a reference spec (`references/console-reference.md`); an EmuForge-only state inside the area is
-  `native` and is still built from the provider's design system, following that design system's published
-  patterns. Both follow "AWS screen policy" below.
-- Neither layer's style leaks into the other: "No leak either way" below.
+A path that matches no Studio screen shows Studio's own "Page not found", or the area's below its segment. Neither
+layer's style leaks into the other (`references/own-layer.md`, "No leak either way").
 
 ## Stack and structure
 
-- bun only, one `bun.lock`. Dependencies are pinned to exact versions that were checked to be stable.
-- React function components, Vite, TypeScript `strict`, React Router, TanStack Query, AWS SDK for JavaScript v3.
-  Cloudscape Design System for the AWS area.
-- One styling system per layer. Studio's own layer: plain CSS in Studio's own source with `--st-*` custom
-  properties ("Studio's own layer" below); no Tailwind, no CSS-in-JS, no third-party component library. A provider
-  area: that provider's design system only, Cloudscape for AWS; no other component library and no Studio component
-  next to it.
+- bun only, one `bun.lock`; dependencies pinned to exact versions checked to be stable. React function components,
+  Vite, TypeScript `strict`, React Router, TanStack Query, AWS SDK for JavaScript v3, Cloudscape for the AWS area.
+- One styling system per layer: plain CSS with `--st-*` properties in the `studio` cascade layer for Studio's own
+  (no Tailwind, no CSS-in-JS, no third-party component library); the provider's design system alone in its area.
 
 ```
 studio/
-  brand/                       EmuForge's brand files (DESIGN.md, The logo): the symbol, the four logos, the app
-                               icons and their PNGs, the social image and its PNG; for use outside Studio, never
-                               shown on a Studio screen
-  public/                      what Studio serves at a fixed path: favicon.svg, favicon.ico, apple-touch-icon.png;
-                               Vite copies it to the root of dist/
-  scripts/                     brand.ts (bun run brand), serve.ts (bun run serve), aws-area-styles.ts (the AWS
-                               area's scoped copies of Cloudscape's document-wide styles)
-  src/                         the app, below
+  brand/                       EmuForge's brand files (DESIGN.md, The logo), for use outside Studio, never shown on a
+                               Studio screen
+  public/                      what Studio serves at a fixed path: favicon.svg, favicon.ico, apple-touch-icon.png
+  scripts/                     brand.ts (bun run brand), serve.ts (bun run serve), aws-area-styles.ts
+  src/app/                     router, frame, providers list (provider-list.ts), query client, config
+  src/ui/                      Studio's own design system: tokens.css (--st-*), components, brand-paths.ts
+  src/features/<feature>/      Studio's own screens: home/, not-found/
+  src/i18n/                    the text of Studio's own layer: messages/<tag>.json, glossary.json, format, check
+  src/providers/aws/           provider.ts and services.ts (plain data); area/ the AWS area: layout, frame parts,
+                               its own pages, components/ shared inside it
+  src/providers/aws/area/services/<service>/
+                               one folder per service: service.json, screens.ts, api.ts, queries.ts, pages/, components/
+  src/lib/                     aws client factory, engine client, errors, env; no UI
+  src/test/                    test setup and shared test support
 ```
 
-```
-studio/src/
-  app/                         router, Studio's frame, the providers list (provider-list.ts), query client,
-                               config, colour scheme of Studio's own layer; routes stay thin
-  ui/                          Studio's own design system: tokens.css (--st-*), <component>.tsx, *.css,
-                               brand-paths.ts (the mark's geometry, as data)
-  features/<feature>/          Studio's own screens: home/ (with the connection status), not-found/
-  i18n/                        the text of Studio's own layer: messages/<tag>.json (one catalogue per language),
-                               glossary.json, the current language and its storage, the message function, time
-                               and number formatting, the catalogue check; no UI
-  providers/aws/provider.ts    the AWS entry of the providers list: names, segment, services (services.ts),
-                               the area loaded with import(); plain data, no UI import
-  providers/aws/area/          the AWS area: layout (AppLayout, SideNavigation, BreadcrumbGroup, colour mode),
-                               its frame parts (the emulator line, the local-emulator notice and its (i) control),
-                               its pages (index, "no screen yet", "Page not found"), components/ shared inside it
-  providers/aws/area/services/<service>/
-                               one folder per AWS service, named for its route: service.json (its label and
-                               crumb), screens.ts (its screens, which the area collects), api.ts, queries.ts,
-                               pages/, components/
-  lib/                         aws client factory, engine client, errors, env; no UI
-  test/                        test setup, and the support several test files share
-```
-
-- File names are kebab-case, components PascalCase, functions and variables camelCase. Event handlers are
-  `handle*`, event props `on*`.
-- A service folder imports nothing from another service folder. What two AWS services share moves to
-  `providers/aws/area/components/` or `lib/`. A service's screens are registered in its own `screens.ts`; the area
-  collects every `services/*/screens.ts` by pattern, and no file of the area outside `services/` names a service's
-  folder. `bun run lint` enforces both.
-- Screen state that one screen owns stays local. There is no global store.
-- `bun run brand` (`scripts/brand.ts`) writes every file of `brand/` and `public/` from `src/ui/brand-paths.ts` and
-  the `--st-*` tokens, and draws the rasters with the headless Chromium of `@playwright/test`. Rerun it after a
-  change of the geometry, the tokens or Instrument Sans, and commit what it writes; a build needs no browser. Its
-  font parser (`fontkit`) is a development dependency imported by that script alone: nothing under `src/` imports
-  it, or a file of `brand/` or `public/`.
-
-### Providers
-
-- Studio has one list of providers, `app/provider-list.ts`. An entry gives the provider's name ("Amazon Web
-  Services"), its short name for the frame ("AWS"), its first path segment (`aws`), its services for Home (label
-  and path) and its area: the component that renders everything under its segment, loaded with a dynamic
-  `import()`.
-- Studio hands an open area its connection as a plain value: the latest answer of the engine's connection status
-  (none before the first answer) and the engine's origin. Studio's frame checks the connection as Home does, when
-  a page of the area opens and again 5 seconds after each answer, for as long as a page of the area is open, so a
-  route change inside the area keeps the last answer. The area reads the connection from what Studio hands it and
-  its types from `lib/`, and imports nothing from `app/` or `features/` to learn it.
-- The frame, Home and the router read that list and name no provider themselves. Adding a provider is one new
-  entry and that provider's own folder (`providers/<id>/provider.ts`, `providers/<id>/area/`); it changes no file
-  of Studio's own screens and no file of another provider's area.
-- A provider's area brings its own design system and its own colour mode handling. Its code and styles load only
-  when a path of the area is opened: a fresh load of `/`, or of Studio's "Page not found", requests no script or
-  stylesheet of any area.
-- No provider is listed or shown before it is built; there is no "coming soon".
-
-### Import boundaries
-
-- `@cloudscape-design/*` is imported only under `providers/aws/area/`.
-- `providers/<id>/area/` imports nothing from `app/`, `ui/`, `features/` or another provider's folder.
-- `ui/` and `features/` import nothing from `providers/*/area/`.
-- Outside `providers/<id>/area/` nothing imports it statically; only its `provider.ts` loads it, with `import()`.
-  The one exception is data: `providers/aws/services.ts` collects each service's `service.json`.
-- `lib/` imports nothing from any UI folder (`app/`, `ui/`, `features/`, `providers/`). Every folder may import
-  `lib/`.
-- `i18n/` is Studio's own layer's only source of text. `app/`, `ui/` and `features/` may import it. `i18n/` imports
-  nothing from `app/`, `ui/`, `features/` or `providers/` (a test of `i18n/` may render what reads it).
-  `providers/<id>/area/` and `lib/` import nothing from `i18n/`: the AWS area is English in every language of
-  Studio, EmuForge's own words inside it included, which are English text of the area; and `lib/` has no text a
-  user reads.
-- `bun run lint` enforces these boundaries: it fails on a file that breaks one.
+- File names kebab-case, components PascalCase, functions and variables camelCase; handlers `handle*`, event props
+  `on*`. Screen state stays local to its screen; there is no global store.
+- A service folder imports nothing from another service folder; what two services share moves to the area's
+  `components/` or `lib/` when the second one needs it. A service registers its screens in its own `screens.ts`;
+  nothing of the area outside `services/` names a service's folder.
+- `@cloudscape-design/*` is imported only under `providers/aws/area/`. `providers/<id>/area/` imports nothing from
+  `app/`, `ui/`, `features/`, `i18n/` or another provider; outside it only its `provider.ts` loads it, with
+  `import()` (the one exception is data: `services.ts` collects each `service.json`). `ui/` and `features/` import
+  nothing from an area. `lib/` imports no UI folder and nothing from `i18n/`; `i18n/` imports no UI folder.
+- `bun run lint` enforces these boundaries and fails on a file that breaks one.
 
 ## Talking to AWS
 
 - AWS SDK clients are created only in `src/lib/aws`, from one factory that sets the endpoint to the engine,
-  `disableHostPrefix: true`, and path-style addressing for S3. A component never constructs a client. A service
-  hands its SDK client class to the factory from its `api.ts`; the factory constructs it, and a setting of the
-  factory cannot be given.
-- The endpoint is the engine on `127.0.0.1`. Never `localhost` (the SDK then moves the bucket name into the
-  host name), and never an AWS host. The factory refuses any other endpoint. The factory refuses, before it is
-  sent, any request whose address is not the engine's.
+  `disableHostPrefix: true`, and path-style addressing for S3. A component never constructs a client; a service
+  hands its SDK client class to the factory from its `api.ts`, and a setting of the factory cannot be given.
+- The endpoint is the engine on `127.0.0.1`. Never `localhost` (the SDK then moves the bucket name into the host
+  name), and never an AWS host. The factory refuses any other endpoint, and refuses, before it is sent, any request
+  whose address is not the engine's.
 - The browser holds no AWS key. The engine identifies the browser by its session and signs upstream itself.
 - A URL that arrives in a response (a queue URL, a presigned URL, an endpoint) is displayed, never fetched.
-- Each service has `api.ts` (SDK calls, mapped to plain typed results) and `queries.ts` (TanStack Query hooks),
-  in its folder under `providers/aws/area/services/`. Query keys include every filter, sort and page token.
-  Requests take the `AbortSignal`. A mutation invalidates the list and the detail it changed. A late response
-  never overwrites a newer one.
 - A service's `api.ts` sends every command through `sendRequest` of `src/lib/aws/request.ts`, with the
   operation's name. It maps a failed request to the kinds the states below are shown from (not implemented,
   access denied, the emulator did not answer, the engine did not answer, any other code or status line) and
   ends a request at once when its signal aborts. No service folder maps a failure or awaits a signal itself.
-- Pagination follows the API's own tokens. Never load "everything" to page on the client.
+- `queries.ts` holds a service's TanStack Query hooks. Requests take the `AbortSignal`; query keys include every
+  filter, sort and page token; a mutation invalidates the list and the detail it changed; a late response never
+  overwrites a newer one. Pagination follows the API's own tokens; never load "everything" to page on the client.
 
 ## Errors and states
 
-- Every data screen has four states: loading, empty, error, loaded. Each is built and each is tested.
-- HTTP 501 `NotImplemented` is its own state, not an error: "Not implemented by the emulator", with the
-  operation name. The action that led there is shown as unavailable, never hidden and never faked.
-- `AccessDenied` shows the reason the engine returned.
-- The engine being unreachable and the emulator being unreachable are different messages with different
-  recovery steps.
+- HTTP 501 `NotImplemented` is its own state, not an error: "Not implemented by the emulator", with the operation's
+  name. The action that led there is shown as unavailable, never hidden and never faked.
+- `AccessDenied` shows the reason the engine returned. The engine being unreachable and the emulator being
+  unreachable are different messages with different recovery steps.
 - No mock fallback, no canned data, no optimistic success outside tests.
-
-## Studio's own layer
-
-Applies to the frame, Home, Studio's "Page not found" and every other screen outside a provider area.
-
-- Built from Studio's own components in `ui/` and its tokens, as `DESIGN.md` records them. Not built from
-  Cloudscape or any provider's design system, and not imitating any provider's console.
-- Plain CSS in Studio's own source. Tokens are CSS custom properties named `--st-*`, defined in `ui/tokens.css`
-  for light and dark. Every rule of Studio's own sits in one CSS cascade layer named `studio`
-  (`@layer studio`), so it can be told apart from a provider's in the built app and never outranks a provider's
-  unlayered rules. No declaration in the `studio` layer is `!important`.
-- No font, image or other asset from another origin; Studio's fonts are served from the app's own origin. No text
-  that Studio shows is baked into an image: what a Studio screen shows as text is live text from `i18n/`. The logo
-  files and the social image in `brand/` hold letters as shapes; they are the exception, and no Studio screen shows
-  them (a decision of issue 36).
-- Light and dark follow the operating system's colour scheme, change with it while the page is open, and are not
-  stored; there is no toggle. Studio's own layer sets `color-scheme` on `html`. A provider area follows the same
-  scheme at the same time, through its own mode.
-- Every page has exactly one `main` landmark. On Studio's own pages it is Studio's own, holding the content below
-  the top bar; in a provider area it is the area's content region (`AppLayout`'s for AWS). The top bar is never
-  inside `main`.
-- Keyboard reaches every action in visible order with a visible focus indicator. Text and focus indicators meet
-  WCAG 2.2 AA contrast in light and dark. At 1280 and 390 wide no page scrolls sideways.
-- Its text comes from the catalogues of `i18n/`, in the current language ("Languages of Studio's own layer" below).
-  The English text follows the wording the requirement gives; a screen of this layer has no reference spec.
-- The language control sits in the frame's top bar on every page (`ui/language-control.tsx`), in Studio's own
-  design, never inside a provider area. Its menu is drawn above everything of an area: the area's holder
-  (`.st-area`) is its own stacking context (`isolation: isolate`, not inherited), so the area's own sticky and
-  overlay layers stay under Studio's bar.
-
-## Languages of Studio's own layer
-
-Studio's own layer is shown in one current language at a time; the AWS area is English in every language. The
-languages are the catalogue files in `i18n/messages/`, today twelve: `en` (the source and the fallback), `ko`, `ja`,
-`es`, `pt-BR`, `fr`, `de`, `ru`, `it`, `pl`, `vi`, `th`. Every page is left to right; `dir` is never set.
-
-### Where text lives
-
-- Every text a user reads or hears in Studio's own layer comes from a catalogue, never from a string written in a
-  component: visible text, the document title, the skip link, `aria-label`s and other accessible names,
-  screen-reader-only text, live-region announcements, the names of commands and command groups. A component reads
-  it with `useLanguage()` (`i18n/language-context.ts`): `t(key, values)` for a message, `plural(key, count, values)`
-  for a counted one.
-- No file under `app/`, `ui/` or `features/` holds a language tag other than `lang="en"`; `bun run test:unit` fails
-  on one. What depends on a language is in `i18n/` or in CSS by `:lang()`.
-- A catalogue is `i18n/messages/<tag>.json`, named by the language's BCP 47 tag: a flat JSON object from message key
-  to text, or, for a counted message, to an object from plural category to text. Keys name the part of the screen
-  they belong to (`connection.title`, `notice.startStep`). Two reserved entries sit beside the messages: `@name`,
-  the language's own name ("Deutsch"), and `@sameAsEnglish`, the keys whose text is intentionally the same as
-  English. A message key never starts with `@`.
-- English (`en.json`) is the source: its keys are the full set. At run time a message missing from the current
-  catalogue shows the English text; the catalogue check keeps that from happening on `main`.
-- The catalogues are bundled (`i18n/bundled.ts`, every file imported eagerly), so the first render and a change of
-  language need no request. Nothing else lists the languages.
-
-### Adding a string
-
-- A new text is a key in `en.json`, with the requirement's English wording, and the same key in every other
-  catalogue, in the same unit. A text is never left in English in another catalogue to be translated later.
-- Each catalogue keeps one register throughout, the polite one of software interfaces in that language (German
-  "Sie", French "vous", Korean 합니다체, Japanese です・ます), and one term per concept. The shared terms are fixed in
-  `i18n/glossary.json`: per English term ("engine", "emulator", "Refresh", "Home", "Studio", "command", "port") its
-  English `forms`, the message keys where it is `exempt`, and per language the `stems` every inflected form of it
-  holds. A text that contains a glossary term uses that language's stem. A new shared term adds an entry with a stem
-  for every language. `rev` reviews the register in the review of the unit that writes the text.
-- A text that is correctly the same as English in a language (a word the language borrows) is listed in that
-  catalogue's `@sameAsEnglish`; that list is the only exemption.
-- `bun run test:unit` runs the catalogue check (`i18n/catalogue-check.ts`) on every catalogue and fails, naming the
-  catalogue and the key, on a key of English the catalogue lacks, a key English lacks, a placeholder dropped or
-  renamed, a plural category the language needs and lacks, a text equal to English that `@sameAsEnglish` does not
-  list, a glossary term without its stem, and a form of a counted message in which an ordinary space (U+0020)
-  directly follows `{count}` ("Placeholders and plurals").
-
-### Adding a language
-
-- A language whose script already has a face (`DESIGN.md`, Typography) is one catalogue file
-  `i18n/messages/<tag>.json`, with every key of English and its `@name`, and its stem in every term of
-  `glossary.json`. It changes no screen code; the language control offers it from the file.
-- A language in a script without a face also adds that script's face (`ui/fonts/`, its rule in `ui/fonts.css`, the
-  font stack in `ui/tokens.css`) and its entry in `DESIGN.md`, Typography. A right-to-left language is not added
-  without an issue of its own: Studio has no right-to-left layout.
-- Removing a language is removing its file and its glossary stems.
-
-### Placeholders and plurals
-
-- A sentence that holds a value or an element (an origin, a port, a path, inline code, a count) is one message with
-  a named placeholder, `{name}`, so each language places the value where its grammar needs it. A sentence is never
-  assembled from separately translated pieces, and punctuation between a value and a text is part of the message
-  (`"{code}: {message}"`).
-- A placeholder's value is text or a React element (`InlineCode`, the engine's text), inserted as it is; never HTML.
-- A counted message gives a form for every plural category its language has in `Intl.PluralRules`: English and
-  German `one`, `other`; French, Spanish, Italian and Portuguese `one`, `many`, `other`; Russian and Polish `one`,
-  `few`, `many`, `other`; Korean, Japanese, Vietnamese and Thai `other` only. `plural()` picks the form and fills
-  `{count}` with the count formatted in that language. A category the browser asks for that the catalogue lacks
-  shows that language's `other` form, never English.
-- In every form of a counted message, a space between `{count}` and its unit is U+00A0 NO-BREAK SPACE, so a line
-  never parts the count from its unit (`"{count}\u00a0seconds"`); a language with no space there (Korean) keeps none.
-  In the `many` forms of Spanish, French, Italian and Portuguese ("{count} de segundos") the space after "de" or "di"
-  is U+00A0 as well. A catalogue spells it as the escape `\u00a0`, never the character itself, so it shows in the
-  file and in a diff; an editor or a heredoc may turn a typed escape into the character, so read the file back after
-  editing it.
-
-### Dates and numbers
-
-- Times, counts and durations of Studio's own layer are formatted in the current language through `i18n/format.ts`
-  (the language's `formatTime` and `formatNumber`): a time of day with `Intl.DateTimeFormat`, hours 00 to 23, hour,
-  minute and second; a count or a duration with `Intl.NumberFormat`. A formatted value changes with the language,
-  not only when it is next computed.
-- Ports, addresses, paths and HTTP status codes are literal text, put into a message as the text they are, never
-  through `formatNumber`: port 9297 is "9297" in German, never "9.297".
-
-### What is not translated
-
-The same in every language, put into a message as a placeholder's value or shown beside it, never in a catalogue as
-text to translate:
-
-- the names "EmuForge" and "EmuForge Studio" (the wordmark and the document title's suffix), a provider's names
-  ("Amazon Web Services", "AWS") and its service labels on Home (`providers/aws/services.ts`);
-- commands, addresses, origins, ports, paths, container names, HTTP status codes and the engine's error codes;
-- the engine's `message`, shown as it came, in an element with `lang="en"`;
-- an area page's title where Studio's own layer shows or announces it, in an element with `lang="en"`; on a page of
-  the area the document title stays `<area page title> | EmuForge Studio`, in English;
-- a language's own name, the same in every language, in an element with that language's `lang`.
-
-The engine's and the emulator's codes, reasons and messages do not depend on the browser's language; Studio maps a
-`code` or a `reason` to its own words from the catalogues and shows a `message` as it came.
-
-### `lang` attributes
-
-- `<html lang>` is the current language's tag. `main.tsx` resolves the current language and sets it before the first
-  render, so nothing is ever shown in English first; `LanguageProvider` keeps it in step after each change.
-  `index.html` keeps `<html lang="en">` and the title "EmuForge Studio", which hold only until that first render.
-- Text in another language than the page carries its own `lang`: the engine's message and an area page title
-  `lang="en"`, a language's own name `lang="<tag>"`. The AWS area's root carries `lang="en"`.
-- An element with its own `lang` is drawn in its own language's face and gets `hyphens: manual`, so it is never
-  hyphenated by the page's rules.
-
-### The current language and its storage
-
-- Resolved once, at start (`i18n/language.ts`): a stored choice, else the first of the browser's preferred languages
-  (`navigator.languages`, or `navigator.language` when that list is empty) that equals a catalogue's tag ignoring
-  case or has its primary subtag (`de-AT` → `de`, `pt-PT` → `pt-BR`, `es-419` → `es`), else English. A change of the
-  browser's languages, or a choice made in another tab, applies at the next load.
-- A choice is stored in `localStorage` under the key `emuforge.studio.language`, its value the language's tag.
-  "Browser language" removes the key; a stored value that is not a catalogue's tag is ignored and removed. When
-  storage is blocked the choice still applies to the open page and nothing shows an error. That key is the only
-  thing Studio stores.
-- A change of language re-renders Studio's own layer in place, in one step: same path, no reload, no request to the
-  engine, focus, scroll position and what is open kept. The AWS area is not re-rendered from scratch.
-
-### Faces and layout in every language
-
-- Faces per script are recorded in `DESIGN.md`, Typography: Latin runs in Instrument Sans in every language, each
-  other script's runs in the face recorded for it, Vietnamese wholly in its own face, the wordmark in Instrument Sans,
-  the code face unchanged. A system face is used only where the check environment draws every character of the
-  language's catalogue with it; any other face is served from the app's own origin.
-- The font stack is the `--st-font-ui` token, set per language with `:lang()` in `ui/tokens.css`. Every inherited
-  text property that depends on a language (font stack, hyphenation, wrapping, line height, letter spacing) is set
-  on `.st-bar` and `.st-main` or inside them, per language as `.st-main:lang(th)` or through a
-  `--st-*` token read there; never on `html`, `body`, Studio's root or the area's holder ("No leak either way"). A
-  `--st-*` token on `:root` is a custom property, not such a property.
-- Every text of Studio's own layer hyphenates where its language allows or breaks inside its box (`hyphens: auto`,
-  `overflow-wrap: break-word`); commands keep their unbroken lines. Thai, Korean and Japanese text has no negative
-  letter spacing.
-- Korean text breaks a line only at white space, never inside a word: `word-break: keep-all` by `:lang(ko)` on
-  `.st-bar` and `.st-main` or inside them (a Korean bar or page, and an element with `lang="ko"` on a page in another
-  language), and `word-break: normal` on an element inside them whose `lang` is another language. The long-word
-  guard still breaks a Korean word wider than its box. Korean text of the page has `text-wrap: pretty`, and a
-  notice's heading in Korean `text-wrap: balance`.
-- At 1280 and 390 wide, light and dark, in every language, no page scrolls sideways, no text overflows its control
-  or panel, and no label is cut; at 390 the top bar shows the wordmark, every navigation link and the language
-  control (the globe alone at 480 and below).
-
-## AWS screen policy
-
-The owner's decisions of 2026-11-16 (issue #45). This section is the policy's home: `PRODUCT.md`,
-`references/workflow.md`, `references/critique.md` and `references/console-reference.md` point here. It applies to
-every page of the AWS area, at `/aws` and below, the area's own pages included. Nothing in Studio's guides asks an
-AWS screen to look like, mirror or copy the AWS console.
-
-1. **Structure and flow, not a copy.** An AWS screen follows the AWS console's information structure and flow:
-   which screens there are, how one leads to the next, which parts a screen has and in what order. It is not a
-   copy of the console.
-2. **The console's words.** The service's vocabulary follows the console word for word: control labels, column
-   names, action names, navigation entries, and their arrangement and order. They are not paraphrased. A `console`
-   screen's reference spec records them (`references/console-reference.md`).
-3. **EmuForge's own words.** Descriptions, help, guidance, and the empty, loading and error states are EmuForge's
-   own words, never the console's. The area's frame says on every page that this is a stand-alone local emulator
-   and not AWS or an AWS feature (point 7); a page's own words say it again only where a sentence needs it ("What
-   every AWS screen does"), and they say only what the engine knows: an endpoint comes from the engine's connection
-   status, never from a constant, and a claim about the emulator's behavior needs a check that shows it.
-4. **Only the parts the emulator has.** A part (a panel, a tab, a navigation entry, a badge) is on a screen only if
-   the emulator really has it, shown by calling the emulator at the Requirement stage. A part it lacks is left out
-   and recorded in the screen's reference spec under `omitted` with that reason.
-5. **The actions stay.** An action on a resource the emulator has is never such a part: the console's action
-   stays, and when the emulator answers HTTP 501 the screen reports it as "not implemented by the emulator"
-   ("Errors and states").
-6. **Cloudscape as published.** Cloudscape and its default theme are used as published; a screen is not made to
-   look the same as the console. Layout follows the Cloudscape published pattern that keeps the console's flow.
-   EmuForge's own states use Cloudscape's patterns as well: a `Flashbar` for an action's result, an error status
-   with a retry for a failed load.
-7. **The emulator line and the notice.** Every page of the area carries the emulator line, which cannot be
-   dismissed; a screen that shows resources of the emulator also carries the local-emulator notice, worded for its
-   resources, closable, with the (i) control that brings it back. Both are described below.
-8. **Breadcrumbs start at EmuForge.** `EmuForge > AWS > <service> > …`, for example `EmuForge > AWS > S3 >
-   Buckets`. "EmuForge" leads to Home (`/`), "AWS" to the area's index (`/aws`), a service's crumb to the
-   service's route; the last crumb is the current page and is not a link. A service's crumb is its short name: its
-   label without a leading "Amazon " or "AWS ", the acronym where the service's route abbreviates the name (`S3`,
-   `EC2`, `IAM`), "Systems Manager" for `ssm`. No crumb reads "Amazon Web Services".
-9. **No AWS artwork.** No AWS logo, no AWS service icon and no resource icon. Service and resource names are
-   written as text. Cloudscape's own interface icons (status, refresh, close and the like) are Cloudscape's and are
-   used.
-10. **Captures are reference for structure only.** The owner's captures of the real console are under
-    `docs/aws-console/` (`.png` and `.mhtml`), which is not in git. Of `docs/`, only that folder is read. Nothing of
-    the captures (markup, styles, scripts, images, descriptive text) is copied into the repository.
-11. **Studio's own layer is its own.** Studio's own layer keeps its own design tokens and components, shaped by the
-    critique ("Studio's own layer").
-
-### The emulator line
-
-- Every page of the area shows one line, the emulator line, between the breadcrumbs and the page's content, at
-  every width and in every state of the page. It has no control that closes or hides it, and it is not inside the
-  side navigation or anything else that can be collapsed.
-- It is the constant label "Local emulator, not AWS" followed by the connection's state, as the engine reports it
-  in the connection Studio hands the area ("Providers"), and from nothing else:
-
-| State | Status after the label | Cloudscape status type |
-|---|---|---|
-| No check has answered yet | "Checking" | loading |
-| The emulator is connected | "Connected at `{endpoint}`" | success |
-| The emulator is not started | "Not started on port `{port}`" | stopped |
-| The emulator does not answer, for any other reason | "Not answering at `{endpoint}`" | error |
-| The engine does not answer | "The EmuForge engine at `{engine origin}` is not answering" | error |
-| The engine answers with an error that has a code | "The EmuForge engine answered with an error: `{code}`" | error |
-| The engine answers with an error without a code | "The EmuForge engine answered with HTTP status `{status}`" | error |
-
-- `{endpoint}` and `{port}` are the emulator's as the engine reported them in that answer, `{engine origin}` the
-  engine's address the page is configured with. Every value is rendered as text; no endpoint, port or origin is a
-  constant in the area's source, and a state in which the engine does not answer or answers with an error names
-  no emulator endpoint.
-- In every state but "Checking" and connected the line ends with the link "Connection status" to Home, a route
-  change like a crumb's.
-- The line stays current while a page of the area is open (the 5-second rhythm of "Providers"); while a later
-  check is in flight it keeps showing the last answer's state. A change of state is announced once, label and new
-  status together, in a polite live region that does not hold the link; a check that finds the same state
-  announces nothing, and the first answer is announced only when it is not connected.
-- The line's height is not fixed: at 390 wide a long status may take a row more, so a check that compares
-  positions on a page of the area measures after the line shows its first answer.
-
-### The local-emulator notice
-
-- A screen of the area that shows resources of the emulator carries a notice directly under the emulator line,
-  worded for its resources: "These {resources} are in your local emulator", with the plural word the screen gives
-  ("These buckets are in your local emulator"), or "These resources are in your local emulator" when it gives
-  none. A screen turns the notice on by naming its resources to the area's frame.
-- Its body is the same in every state of the connection: "They are not in an AWS account. EmuForge Studio is a
-  stand-alone local tool, not an AWS feature." The endpoint is written once on a page, in the emulator line.
-- It is an informational Cloudscape notice with a close control (X) named "Close the local emulator notice".
-  Closing it removes it from every page of the area until the document is reloaded; nothing is stored.
-- On a page that carries the notice the emulator line ends with an (i) control, a button named "About the local
-  emulator" that says whether the notice is open (`aria-expanded`). Activating it opens a closed notice and moves
-  focus to it, or closes an open one; closing the notice with its X moves focus to the (i) control. The (i)
-  control is never removed.
-- The area's own pages (index, "no screen yet", "Page not found") show no resources: they carry the emulator line
-  and neither the notice nor the (i) control.
-
-### Where the line and the notice sit
-
-- Both are inside the area's content target, before the page's `h1`: the content target holds the line, the
-  notice when the page carries it, then the `h1` and the page's controls, and is still named by the `h1`. "Skip to
-  content" and every route change therefore put focus where the next thing read is "Local emulator, not AWS". A
-  result of an action (the area's `Flashbar`) sits after the notice and before the `h1`.
-- Tab order: the breadcrumbs, then the line's controls ("Connection status" when shown, then the (i) control when
-  the page has it), then the notice's close control when it is open, then a flash's "Dismiss" when one is shown,
-  then the page's content. While connected on a page without the notice the line adds no Tab stop.
-- They are Cloudscape components styled with Cloudscape tokens only, inside the area's root, under every rule of
-  "Inside a provider area" below. At 1280 and 390 wide, light and dark, the line wraps inside the page (a long
-  endpoint breaks rather than overflowing) and stays visible at 390 with the side navigation closed.
-
-### What every AWS screen does
-
-Five rules every screen of the area follows, settled on 2026-11-18 from what four critiques of AWS screens repeated.
-Each is followed by its reason. The area's shared parts that carry them are in `providers/aws/area/components/`:
-the value element (`value-text.tsx`), the value with its copy control (`copy-value.tsx`) and the discard dialog
-(`discard-dialog.tsx`).
-
-1. **The frame says where the resources are; the page's own text does not say it again.** On a page of the area,
-   that what it shows is in the local emulator and not in AWS is said in one place, the area's frame, and the
-   emulator's endpoint is written in one place, the emulator line. The line is the statement, always there; the
-   local-emulator notice is the line's own explanation, opened and closed from the line's (i) control, and it does
-   not write the endpoint again: its body is the same in every state of the connection. So with the notice closed a
-   page says it once, in the line, and with the notice open the line is followed by its explanation, whose heading
-   and body say what the line's four words mean, and the endpoint is written once, in the line. Text of the page
-   above its content (the `h1`'s description, a wizard step's description, a section header's description) does not
-   say it again: it does not say where the resources are or that they are not in an AWS account, and it names no
-   endpoint. A description says what the page is for or what is particular to it (a filter's rule, what a column
-   reports, what a form creates besides the resource), in one or two sentences of EmuForge's words, and is left out
-   when it would only repeat the title. Below the header, a sentence names the local emulator or its endpoint only
-   where it would be unclear without it: the sentence that says what a destructive action removes, the result of an
-   action, and an empty, not-found or failure state. The help panel, opened on demand, is not such text.
-   Reason: the line cannot be closed and is the first thing read after the crumbs, so the same statement said again
-   by each page becomes boilerplate that hides it, and at 390 wide pushes the page's content down.
-2. **A field's rule is shown before the first submit.** A single text field of a form, a wizard or a dialog whose
-   value is checked against a length, an alphabet or a number range shows that rule under it from the start, as
-   Cloudscape constraint text, in EmuForge's words: the length first, then the characters, then what a name must
-   begin or end with. It states what the form itself lets through, and each of its limits is one the emulator's
-   answer found at the Requirement stage was seen to enforce, or a narrower one the form already keeps. The message a
-   field shows after a failed check stays and still names the rule that failed; the constraint text stays beside it.
-   A field checked only for being filled, a field of a row that repeats (a tag editor's key and value) and a
-   confirmation field (a name or a word typed to confirm) carry no constraint text.
-   Reason: a rule learned by failing costs a round trip, and the names of the services have unlike rules (a bucket's
-   lower case, a function's `_`, a role's `+=,.@`).
-3. **A value taken elsewhere has a copy control.** On a page of one resource, a value that names a resource to
-   another tool (an ARN, a URL, an id the emulator assigned) is shown with Cloudscape's `CopyToClipboard`, variant
-   `inline`: an icon button directly before the value's text. The button is named "Copy {label}" with the field's
-   label; a press puts the value, exactly as the emulator gave it, on the clipboard and shows "{label} copied", or
-   "{label} could not be copied" when the browser refuses. A value that is absent ("-"), a status or a failed read
-   has no control. The value's text follows entry 4; the popover stays inside the area (no portal). In a table,
-   values are not given a control each: where the console's screen has an action for it (an action the screen's
-   reference spec lists, such as the S3 bucket list's "Copy ARN"), that action is the way.
-   Reason: an ARN or a URL is read here to be used in a terminal or an IaC file, and selecting by hand a value that
-   wraps over five lines at 390 wide is the slow path.
-4. **How a long value breaks.** At 1280 and 390 wide no page scrolls sideways, no value is cut or clipped, and a
-   table may scroll inside itself. Within that, a value is never broken inside while it fits the line it is on. What
-   happens when it does not depends on what it is:
-
-   | Kind | Values | Breaks |
-   |---|---|---|
-   | An address | an ARN, a URL, a path | only directly after `:` or `/` (a URL also after `?` and `&`), so each line but the last ends with one of them, while every part between two of them fits a line; a part longer than a line breaks anywhere |
-   | A name | a resource's name, a key, an id | whole on one line where the line is wide enough for it; longer than its line, anywhere. In a table a name's column keeps room for 24 characters, so a name of up to 24 is on one line at 1280 and 390 |
-   | A fixed word | a status, an enumerated value ("Enabled", "Zip"), a Region, a date, a number | never inside a word; in a table its column is as wide as its longest word |
-   | Free text | a description, a reason, a message, a tag's value | at spaces; a word longer than its line breaks anywhere |
-
-   Nothing is added to a value to make it break: its text is the emulator's value character for character, and
-   selecting it copies exactly that. The one way of breaking is the area's (`providers/aws/area/components/`), used
-   by every service, and a page states for each value which of the four kinds it is; a service keeps no breaking
-   rule of its own. A table's name column follows it too: a name longer than its cell breaks inside the cell instead
-   of widening its column. Preformatted text (a trust policy's lines, kept as sent) keeps its own rule.
-   Reason: `overflow-wrap: anywhere` on every value (2026-11-17) stopped pages scrolling sideways by letting any
-   column shrink to one character, so short values broke mid-word and an ARN broke inside its name, while an ARN is
-   read part by part and a name is compared whole.
-5. **"Cancel" asks before it discards what was entered.** On a create form or wizard, "Cancel" leaves at once while
-   nothing differs from what the form showed when it opened (what its address preselected included). Once any
-   field, choice or row differs, on any step, "Cancel" opens a Cloudscape `Modal` (the area's `AreaModal`) and
-   nothing else happens until it is answered:
-   - header "Discard what you entered?"; body "What you entered on this page is not kept.";
-   - "Keep editing" (link) closes it, the form as it was, focus on "Cancel"; so do Esc and the close control, named
-     "Close";
-   - "Discard" (primary) leaves as "Cancel" did before, to the same page, and nothing is created.
-
-   A value typed and removed again does not differ. A form that holds only a confirmation field and a dialog's own
-   "Cancel" are not asked about. Leaving another way (a crumb, the side navigation, the browser's back, a reload) is
-   not asked about.
-   Reason: "Cancel" sits beside the submit button and is one press, and a wizard holds steps of work, a create form
-   many sections.
-
-## Inside a provider area: AWS and Cloudscape
-
-Applies to everything under `providers/aws/area/`, at `/aws` and below.
-
-- Use Cloudscape components and patterns as they are: `AppLayout`, `SideNavigation`, `BreadcrumbGroup`,
-  `Header` with actions, `Table` with `collection-hooks`, `PropertyFilter` or `TextFilter`, `Pagination`,
-  `Form` with `Container` and `FormField`, `Wizard`, `Modal`, `Flashbar`. A screen with a console screen follows
-  that screen's information structure and flow; the area's EmuForge-only states, and EmuForge's own states on
-  every screen, follow Cloudscape's published patterns ("AWS screen policy").
-- Style with Cloudscape design tokens only. No hardcoded color, spacing or font. No CSS that restyles a
-  Cloudscape component's internals. No rule of the area names a `--st-*` property.
-- Light and dark through Cloudscape's mode, applied to the area's root element only: in dark that element
-  carries `awsui-dark-mode`. `html` and `body` never carry an `awsui-` class. Both modes are checked.
-- The token declarations Cloudscape's base theme makes on `body` are made on the area's root as well, so an alias
-  token (one defined as another token, such as the side navigation's panel background) resolves at the area's
-  root and takes the dark value there in dark.
-- Cloudscape's base applies inside the area: the rules of `@cloudscape-design/global-styles/index-base.css`
-  (normalize and its `html` and `body` rules) are scoped to the area, their `html` and `body` rules to the area's
-  root, and match nothing outside it. `@cloudscape-design/global-styles/index.css` is never applied to the
-  document as a whole. Cloudscape's fonts (`global-styles/fonts.css`, `@font-face` only) are served from the
-  app's own origin.
-- Overlays stay in the area: no component uses `expandToViewport`, and a `Modal` renders into the area's root
-  (`getModalRoot`), so no Cloudscape element is rendered outside the area. `bun run lint` fails on a use of
-  `expandToViewport` under `providers/aws/area/`, and on a file under `providers/aws/area/services/` (tests
-  included) that imports Cloudscape's `Modal` or names a modal root of its own (`getModalRoot`, `removeModalRoot`,
-  `modalRoot`): a service's dialog is the area's `AreaModal`, and a `CollectionPreferences` takes the area's root
-  from `useAreaModalRoot()` (`components/area-modal.tsx`).
-- A destructive action is confirmed in a `Modal`, or on the console's own confirmation page where the console has
-  one; where the AWS console asks the user to type a word or the resource name, so does Studio.
-- The result of an action is announced in the `Flashbar`. A save in progress disables its button and keeps
-  focus where it was.
-- Fill every `ariaLabel` and `i18nStrings` a component asks for. A dialog traps focus, closes on Esc, and
-  returns focus to what opened it.
-- UI text is English, in every language of Studio, and of two kinds ("AWS screen policy", points 2 and 3). The
-  console's vocabulary (control labels, column names, action names, navigation entries, and their order) follows
-  the screen's reference spec word for word and is not paraphrased. EmuForge's own words (descriptions, help,
-  guidance, the empty, loading and error states, the emulator line and the notice) are written in the requirement,
-  never taken from the console, and are English text of the area. The area imports nothing from `i18n/`; its root
-  carries `lang="en"`; and everything it renders sits inside Cloudscape's `I18nProvider` with locale `en` and
-  Cloudscape's English messages (`i18n/messages/all.en`). Cloudscape otherwise takes its locale from `<html lang>`
-  and the browser's language, so a date, a number or a component's built-in text would follow Studio's language.
-- A change of Studio's language does not re-render the area from scratch: its text, focus and state stay as they
-  were. On a page of the area the frame is in Studio's language and the area in English, each marked by its `lang`.
-
-## No leak either way
-
-- Outside a provider area (the frame on every page, Studio's own screens, `html` and `body`) no element carries a
-  Cloudscape class (`awsui*`), and no CSS rule outside the `studio` layer that sets a property other than a custom
-  property matches any element. This holds on a fresh load and after visiting an area and coming back without a
-  reload.
-- The `data-awsui-focus-visible` attribute that Cloudscape sets on `body` while one of its components is mounted is
-  Cloudscape's own and allowed; its focus rings depend on it.
-- No rule of the `studio` layer matches an area's root or any element inside it. On the area's ancestors (`html`,
-  `body`, any element that holds the area) the `studio` layer sets no inherited property other than
-  `color-scheme` and Studio's own `--st-*` custom properties, so at the area's root every inherited text property
-  computes to what Cloudscape's own base gives it.
 
 ## Security
 
-- No `dangerouslySetInnerHTML`. Content that comes from the emulator (an S3 object, a log line, a tag value)
-  is untrusted: rendered as text, never as HTML, never as a link that is followed automatically.
-- The session token is kept in memory. It is never put in a URL, in `localStorage` or `sessionStorage`, or in a log.
-  The one thing Studio puts in `localStorage` is the language choice (`emuforge.studio.language`).
+- No `dangerouslySetInnerHTML`. Content that comes from the emulator (an S3 object, a log line, a tag value) is
+  untrusted: rendered as text, never as HTML, never as a link that is followed automatically.
+- No request but to the engine and Studio's own origin: no font, image, script or other asset from another origin.
+  No text that Studio shows is baked into an image: what a Studio screen shows as text is live text from `i18n/`.
+  The logo files and the social image in `brand/` hold letters as shapes; they are the exception, and no Studio
+  screen shows them (a decision of issue 36).
+- The session token is kept in memory: never in a URL, in `localStorage` or `sessionStorage`, or in a log. The one
+  thing Studio stores is the language choice, in `localStorage` under `emuforge.studio.language`.
 - `VITE_*` values are public. No secret goes there.
+- No AWS logo, AWS service icon or resource icon; names are text (Cloudscape's own interface icons are used).
+- The owner's console captures under `docs/aws-console/` (not in git) are the only part of `docs/` that is read,
+  and nothing of them (markup, styles, scripts, images, descriptive text) is copied into the repository.
 
 ## Tests
 
-- Vitest for pure logic: mapping, formatting, query-key building, validation. Components are tested through
-  what a user sees and does, with Testing Library, not through their internals.
-- Playwright for flows a user can observe, against the real engine and a real emulator. These live in
-  `/tests/integration/studio`, not here.
-- Never replace `bun run test:unit` with `bun test`.
-- Fixtures and fakes exist only in test files and under `src/test/`.
-- A test reads Studio's English text unless it tests a language. A test about a language sets it the way a user's
-  browser does (a stored choice, the browser's languages) or gives `i18n/` test catalogues; it never changes a
-  catalogue of `i18n/messages/` or Studio's code for the test.
+- Vitest for logic and components (`bun run test:unit`, never `bun test`); components are tested through what a
+  user sees and does, with Testing Library. A worker writes the unit tests its brief's scenarios ask.
+- Flows through the built app against the real engine and a real emulator are integration checks, in
+  `/tests/integration/studio`, written by the plan.
+- Fixtures and fakes exist only in test files and under `src/test/`. A test reads Studio's English text unless it
+  tests a language, and sets a language the way a user's browser does, never by changing a catalogue or the code.
 
-## Checks before review
+## Checks
 
-```
-bun run typecheck
-bun run lint
-bun run format:check
-bun run test:unit
-bun run build
-```
-
-All pass, with output saved under the worktree's `output/logs/`, before a review is requested.
+`bun run typecheck`, `bun run lint`, `bun run format:check`, `bun run test:unit` and `bun run build` all pass. They
+run in `pm-check`, which records them and keeps their logs under the worktree's `output/logs/`.
 
 ## References
 
@@ -610,10 +117,14 @@ All pass, with output saved under the worktree's `output/logs/`, before a review
 PRODUCT.md               product context: users, purpose, scope
 DESIGN.md                Studio's own design system: tokens, type, components, the studio cascade layer
 references/
-  workflow.md            stages of a studio issue and what each produces, the grade by layer
-  console-reference.md   reference specs for screens that follow the structure and flow of a provider's console
-                         screen, and the structure score
-  critique.md            how screens are scored and what score lets a screen through
-  test-criteria.md       form of the test cases, coverage axes
-  console/               the reference specs, one file per screen
+  workflow.md            the stages of a studio issue: tasks, design, test criteria, build, critique (the plan)
+  test-criteria.md       the scenarios: integration scenarios of the tasks, unit-test scenarios per unit (the plan)
+  critique.md            how a screen is critiqued on the built app (the plan, crit)
+  aws-area.md            the AWS screen policy, the emulator line and notice, Cloudscape in the area, the area in
+                         Studio's frame, and what earlier critiques found: a unit with files under providers/aws/area/
+  own-layer.md           the rules of Studio's own layer and "No leak either way": a unit with files in app/, ui/,
+                         features/ or i18n/
+  languages.md           the languages of Studio's own layer: a unit that adds or changes a text there, or a language
 ```
+
+The plan reads every file; a worker's brief names the ones of its unit with `pm-brief worker --conventions`.

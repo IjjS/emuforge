@@ -1,104 +1,68 @@
 # Studio test criteria
 
-Conditions that show a feature works and is finished, stated as what is visible on screen and what the
-emulator holds afterwards. Written before implementation. Read this at the `Test Criteria` stage of
-`references/workflow.md`.
+The scenarios that show a studio issue works, written by the plan from the requirement and the design, before any
+code. Read this at the `Test Criteria` stage of `references/workflow.md`. Every line becomes an automated test, or is
+left out with its reason; nobody walks this list by hand.
 
-Nobody walks this list by hand. Every line becomes an automated test, so every line must be something a test
-can observe.
+## Two kinds of scenario
 
-## Two kinds of case
+- **Integration** (Playwright, in `/tests/integration/studio`, written by the plan after the build): a business
+  scenario of one task, through the built app, against the real engine and a real emulator.
+- **Unit** (Vitest, in `studio/`, written by the unit's worker): logic and single components, such as mapping an SDK
+  result, formatting, validation, building a query key, a component in each of its states. Grouped per unit: they
+  are the end condition its brief carries.
 
-- **Unit** (Vitest, in `studio/`): pure logic and single components. Mapping an SDK result, formatting,
-  validation, building a query key, a component rendering each of its states.
-- **Flow** (Playwright, in `/tests/integration/studio`): a user path through the built app against the real
-  engine and a real emulator.
-
-Put a case at the lowest level that can prove it.
+Put a scenario at the lowest level that can prove it.
 
 ## Form
 
-Group cases under one heading per target.
-
-- `### Unit — <path under src>` maps to one test file.
-- `### Flow — <check id>` maps to one Playwright check. The id is `studio.<slug>`, for example
-  `studio.s3-create-bucket-appears-in-list`.
-
 ```
-- [ ] <action> → <observable result>
+### Integration — <check id>            one Playwright check; the id is studio.<slug>
+- Given <what the emulator holds, and where it came from>
+  - [ ] <the developer does the task> → <what the screen shows> and <what the emulator holds afterwards>
+
+### Unit <unit> — <path under src>       one test file of that unit
+- [ ] <input or action> → <observable result>
 ```
 
-- Write what is visible on screen or what the emulator reports. No function names, no state names, no HTTP
-  status codes; the one exception is the "not implemented" state, which the user does see.
-- Pair a success condition with its failure condition wherever an action can fail.
-- A flow that creates, changes or deletes something ends by asking the emulator directly, not only by reading
+- A business scenario is a developer doing a task: "a bucket made with the AWS CLI is listed, and an object put into
+  it from Studio is in the emulator", not "the table renders rows".
+- Write what is visible on screen or what the emulator reports. No function names, no state names, no HTTP status
+  codes; the one exception is the "not implemented" state, which the user does see.
+- A scenario that creates, changes or deletes something ends by asking the emulator directly, not only by reading
   the screen back.
-- Append the scope only when a condition does not hold everywhere: `— 390 wide`, `— dark`.
-- A case reads Studio's English text and runs with an English browser unless it tests a language. A case about a
-  language names the language and sets it as a user's browser does: a stored choice or the browser's languages,
-  never a change of Studio's code or catalogues. It reads another language's text from that language's catalogue,
-  not from a copy of it.
-- For a `bug`, append `(regression)` to the case that reproduces the reported defect.
+- Pair a task's success with the failure the emulator can give it.
+- A scenario reads Studio's English text and runs with an English browser unless it is about a language; one that is
+  sets the language as a user's browser does and reads that language's text from its catalogue.
+- For a `bug`, append `(regression)` to the scenario that reproduces the reported defect.
 
-Good: `- [ ] Create a bucket with an empty name → the field shows its constraint text and no bucket exists in the emulator`
+Good: `- [ ] Create a bucket with a name the emulator refuses → the form says why and no bucket exists in the emulator`
 Bad: `- [ ] validateBucketName rejects an empty string` — implementation, not observable.
 Bad: `- [ ] Bucket creation works` — not a checkable condition.
 
-## Coverage
+## What to consider
 
-Nine axes. Each is accounted for in the checklist below whether or not it produces a case.
+For each task the issue builds, account for these; each is a scenario or a line saying why it is not one:
 
-1. **Happy path**: every goal in the requirement reached end to end.
-2. **Input validation**: empty, whitespace only, over the maximum, duplicate, characters the service forbids;
-   the message is the one the reference shows.
-3. **States**: loading, empty, error, not implemented by the emulator (501), access denied, engine
-   unreachable, emulator unreachable, retry after failure.
-4. **Boundaries**: a list with zero, one and many items; more than one page; very long names; missing values.
-5. **Navigation**: back, a deep link straight into the screen, refresh, a link to a resource that no longer
-   exists.
-6. **Repetition**: double click on submit, repeated submit, leaving a form or wizard midway and returning.
-7. **Data propagation, both ways**: what Studio creates, changes or deletes is so in the emulator; what was
-   created outside Studio (AWS CLI, an IaC tool) appears in Studio; every screen showing the same resource
-   reflects the change.
-8. **Emulator lifecycle**: the emulator restarts and Studio reconnects without a reload, showing the now empty
-   account rather than stale data.
-9. **Finish**: keyboard reaches every action, focus returns after a dialog, light and dark, 1280 and 390 wide
-   without horizontal overflow. For a screen of Studio's own layer the layout holds in every language of Studio
-   (`studio/AGENTS.md`, "Languages of Studio's own layer"): no sideways scroll, no text overflowing its control or
-   panel, no label cut, long words (German) and Thai included.
+- the task done end to end, from the state a developer would have;
+- data made outside Studio (the AWS CLI, an IaC tool) shown, and what Studio did seen from outside;
+- the failure the emulator can give: a name it refuses, a resource that is gone, an operation it answers 501;
+- the emulator restarted while a page is open: Studio reconnects and shows the empty account, not stale data.
 
-## Coverage checklist
+Keyboard and safety are not scenarios of a screen. They are checked once, for the app and for the area, by checks of
+no service (keyboard reaches every action of the frame and the area's frame; no request leaves for anything but the
+engine and Studio's own origin; nothing but the language choice is stored); a service issue adds none of its own.
+How a screen looks at a width, in a theme or in a language is the critique's (`critique.md`), not a scenario.
 
-The test criteria always end with this fixed block. Check an axis once its cases are written; append
-`(Not Scope)` to one the issue does not touch.
+## Left out
 
-```
-### Coverage
-- [ ] Happy path
-- [ ] Input validation
-- [ ] States
-- [ ] Boundaries
-- [ ] Navigation
-- [ ] Repetition
-- [ ] Data propagation
-- [ ] Emulator lifecycle
-- [ ] Finish
-```
-
-## Lightweight path
-
-`bug` and `gap` issues do not walk all nine axes. Required:
-
-- the reported steps no longer reproduce it
-- the intended behavior completes end to end (axis 1)
-- the neighbouring actions on the same screen still work
-
-Then add only the axis the cause sits in; the rest are `(Not Scope)`.
+The plan may leave an integration scenario out when the issue is too slight or the test would cost more than it
+shows. It says so here, with the reason, when it can tell before the build, and in its `report.md` at the end. When
+it cannot tell, it asks the `pm` (`lead.md`).
 
 ## Scope
 
-- Derive conditions only from the confirmed requirement and the screen's reference spec or design. A condition
-  that cannot be decided from them is a question for the `pm`, not a rule to invent.
+- Derive scenarios only from the confirmed requirement and design. A scenario that cannot be decided from them is a
+  question for the `pm`, not a rule to invent.
 - An operation the emulator answers with 501 is asserted as the "not implemented" state, never as working.
-- Do not restate one condition per viewport or theme; use the scope suffix.
 - No performance number unless the requirement set one.

@@ -50,9 +50,14 @@ class Rules(unittest.TestCase):
     def test_rule_3_the_guides_and_references(self):
         """Issue 478 (part 3, the pm's answer Q1 a): the AGENTS.md guides and the modules' references call for the
         harness alone; no product step reads them."""
-        self.assertCalls(["AGENTS.md", "engine/AGENTS.md", "studio/AGENTS.md", "tests/integration/AGENTS.md",
+        self.assertCalls(["AGENTS.md", "engine/AGENTS.md", "tests/integration/AGENTS.md",
                           "engine/references/workflow.md", "tests/integration/references/a.md",
                           "studio/references/critique.md", "studio/references/console/s3/a.yaml"], HARNESS)
+
+    def test_rule_3_studio_agents_is_read_by_studio_unit_tests(self):
+        """Two Studio unit tests read studio/AGENTS.md (request-module.test.ts, brand-files.test.ts), so a change of it
+        calls for the Studio steps as well as the harness."""
+        self.assertCalls(["studio/AGENTS.md"], {"studio", "harness"})
 
     def test_rule_3_is_the_guides_only(self):
         self.assertCalls(["studio/references/shot.png", "engine/references/a.rs", "studio/PRODUCT.md",
