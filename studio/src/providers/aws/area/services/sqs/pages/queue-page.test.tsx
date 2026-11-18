@@ -332,20 +332,22 @@ async function expectFlash(expected: [string, string][]) {
 
 /** The details' values, by label, as text. */
 function details(): Record<string, string> {
-  const pairs = PAGE.findKeyValuePairs();
-  expect(pairs).not.toBeNull();
+  const pairs = PAGE.findAllKeyValuePairs();
+  expect(pairs.length).toBeGreaterThan(0);
   return Object.fromEntries(
-    (pairs?.findItems() ?? []).map((item) => [
-      text(item.findLabel()?.getElement() as HTMLElement),
-      text(item.findValue()?.getElement() as HTMLElement),
-    ]),
+    pairs
+      .flatMap((each) => each.findItems())
+      .map((item) => [
+        text(item.findLabel()?.getElement() as HTMLElement),
+        text(item.findValue()?.getElement() as HTMLElement),
+      ]),
   );
 }
 
 function detailValue(label: string): HTMLElement {
-  const item = (PAGE.findKeyValuePairs()?.findItems() ?? []).find(
-    (found) => text(found.findLabel()?.getElement() as HTMLElement) === label,
-  );
+  const item = PAGE.findAllKeyValuePairs()
+    .flatMap((each) => each.findItems())
+    .find((found) => text(found.findLabel()?.getElement() as HTMLElement) === label);
   expect(item).toBeDefined();
   return item?.findValue()?.getElement() as HTMLElement;
 }
@@ -640,10 +642,9 @@ describe('a read of messages', () => {
       },
     ]);
     const headers = (table().findColumnHeaders() ?? []).map((header) => text(header.getElement()));
-    expect(headers.slice(1)).toEqual(['Message ID', 'Body', 'Sent', 'Receive count']);
+    expect(headers.slice(1)).toEqual(['Message ID', 'Receive count', 'Body', 'Sent']);
     expect(rows().map((row) => row[0])).toEqual(engine.messages.map((message) => message['MessageId']));
-    expect(rows()[0]?.slice(0, 2)).toEqual(['m01', 'first line…']);
-    expect(rows()[0]?.[3]).toBe('1');
+    expect(rows()[0]?.slice(0, 3)).toEqual(['m01', '1', 'first line…']);
     expect(text(table().findHeaderSlot()?.getElement() as HTMLElement)).toMatch(/Read at \w+ \d+, \d{4}, /);
     expect(
       screen.getByText(
@@ -653,6 +654,68 @@ describe('a read of messages', () => {
     await waitFor(() => {
       expect(engine.of('GetQueueAttributes').length).toBeGreaterThan(attributeReads);
     });
+  });
+
+  it('on a queue with a redrive policy: the header also says when a read moves a message', async () => {
+    engine.messages = [wire('m1', 'a')];
+    const { unmount } = await openQueue(ORDERS, [DLQ]);
+    await readMessages();
+    expect(text(table().findHeaderSlot()?.getElement() as HTMLElement)).toContain(
+      'Moved to orders-dlq after 2 receives in this queue.',
+    );
+    unmount();
+
+    await openQueue(PLAIN);
+    await readMessages();
+    expect(text(table().findHeaderSlot()?.getElement() as HTMLElement)).not.toContain('Moved to');
+  });
+
+  it('the after-read sentence is in a polite live region', async () => {
+    engine.messages = [wire('m1', 'a')];
+    await openQueue(PLAIN);
+    const region = document.querySelector('[role="status"][aria-live="polite"]');
+    expect(region).not.toBeNull();
+    await readMessages();
+
+    const sentence = screen.getByText(
+      'Showing the first 1 of 15 available messages. A read returns the same first messages each time, at most 10.',
+    );
+    expect(sentence.closest('[aria-live="polite"]')).toBe(region);
+  });
+
+  it('a policy queue whose read returned fewer than were available: the move sentence with the DLQ’s link', async () => {
+    engine.messages = [];
+    await openQueue(ORDERS, [DLQ]);
+    // The read moves the messages: the emulator then holds none available.
+    engine.on('ReceiveMessage', () => {
+      engine.queues = [{ ...ORDERS, attributes: standard('orders', [0, 0, 0], ORDERS.attributes) }, DLQ];
+      return ok({ Messages: [] });
+    });
+    await readMessages();
+
+    const sentence = await screen.findByText(/were moved to/);
+    expect(text(sentence)).toBe(
+      'Messages received 2 times in this queue were moved to orders-dlq by this read instead of being shown.',
+    );
+    expect(within(sentence).getByRole('link', { name: 'orders-dlq' })).toHaveAttribute(
+      'href',
+      '/aws/sqs/queues/queue/orders-dlq',
+    );
+    expect(sentence.closest('[aria-live="polite"]')).not.toBeNull();
+    expect(screen.queryByText(/No message is available to read/)).toBeNull();
+  });
+
+  it('a policy queue with nothing available: an empty read keeps the empty-read sentence', async () => {
+    engine.messages = [];
+    await openQueue({ ...ORDERS, attributes: { ...ORDERS.attributes, ApproximateNumberOfMessages: '0' } }, [DLQ]);
+    await readMessages();
+
+    expect(
+      screen.getByText(
+        'No message is available to read. Messages in flight or delayed are not returned until they are visible again.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/were moved to/)).toBeNull();
   });
 
   it('the wait chosen is sent; the button is disabled while the read waits', async () => {
@@ -685,7 +748,7 @@ describe('a read of messages', () => {
     await readMessages();
 
     const headers = (table().findColumnHeaders() ?? []).map((header) => text(header.getElement()));
-    expect(headers.slice(1)).toEqual(['Message ID', 'Body', 'Sent', 'Receive count', 'Group']);
+    expect(headers.slice(1)).toEqual(['Message ID', 'Receive count', 'Body', 'Sent', 'Group']);
     expect(rows()[0]?.[4]).toBe('g1');
     expect(
       screen.getByText(
@@ -700,7 +763,7 @@ describe('a read of messages', () => {
     await readMessages();
 
     const headers = (table().findColumnHeaders() ?? []).map((header) => text(header.getElement()));
-    expect(headers.slice(1)).toEqual(['Message ID', 'Body', 'Sent', 'Receive count', 'From']);
+    expect(headers.slice(1)).toEqual(['Message ID', 'Receive count', 'Body', 'Sent', 'From']);
     const row = table().findRows()[0]?.getElement() as HTMLElement;
     expect(within(row).getByRole('link', { name: 'orders' })).toHaveAttribute('href', '/aws/sqs/queues/queue/orders');
   });
@@ -872,7 +935,7 @@ describe('the send form', () => {
   it('an empty body, a body over MaximumMessageSize, a delay outside 0 to 900 → refused before sending', async () => {
     await openSend(PLAIN);
 
-    expect(text(field('Body').findConstraint()?.getElement() as HTMLElement)).toBe('Up to 1024 bytes.');
+    expect(text(field('Body').findConstraint()?.getElement() as HTMLElement)).toBe('Up to 1,024 bytes.');
     expect(text(field('Delay').findConstraint()?.getElement() as HTMLElement)).toBe('0 to 900 seconds.');
     send();
     expect(error('Body')).toBe('Enter a body.');
@@ -906,6 +969,22 @@ describe('the send form', () => {
     expect(editor().findRows()).toHaveLength(10);
     expect(isDisabled(editor().findAddButton().getElement())).toBe(true);
     expect(text(editor().findAdditionalInfo()?.getElement() as HTMLElement)).toBe('Up to 10 attributes.');
+  });
+
+  it('FIFO: Group ID and Deduplication ID are two fields of the form’s spacing', async () => {
+    await openSend(FIFO);
+
+    const child = (label: string) => field(label).getElement().closest('[class*="awsui_child"]');
+    expect(child('Group ID')).not.toBeNull();
+    expect(child('Group ID')).not.toBe(child('Deduplication ID'));
+    expect(child('Group ID')?.parentElement).toBe(child('Deduplication ID')?.parentElement);
+    expect(child('Body')?.parentElement).toBe(child('Group ID')?.parentElement);
+  });
+
+  it('the size rule: grouped, and in MiB when a whole number of them', async () => {
+    await openSend({ ...PLAIN, attributes: { ...PLAIN.attributes, MaximumMessageSize: '1048576' } });
+
+    expect(text(field('Body').findConstraint()?.getElement() as HTMLElement)).toBe('Up to 1,048,576 bytes (1 MiB).');
   });
 
   it('FIFO: Group ID required, Deduplication ID required, no Delay', async () => {
@@ -1100,6 +1179,20 @@ describe('purging', () => {
     expect(isDisabled(confirm)).toBe(false);
     fireEvent.click(confirm);
   }
+
+  it('"Purge" is disabled while the queue is read, with its reason', async () => {
+    const answer = deferred<Answer>();
+    engine.queues = [PLAIN];
+    engine.on('GetQueueUrl', () => answer.promise);
+    open('/aws/sqs/queues/queue/plain');
+
+    const purge = await screen.findByRole('button', { name: 'Purge' });
+    expect(isDisabled(purge)).toBe(true);
+    expect(purge).toHaveAccessibleDescription('Reading the queue');
+    answer.resolve(ok({ QueueUrl: urlOf('plain') }));
+    await screen.findByRole('heading', { name: 'Details' });
+    expect(isDisabled(button('Purge'))).toBe(false);
+  });
 
   it('the dialog needs "purge" typed; success → "Purged {name}" and the read result cleared', async () => {
     engine.messages = [wire('m1', 'a')];
