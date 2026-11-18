@@ -1217,6 +1217,9 @@ describe('the send form', () => {
     expect(PAGE.findAllFormFields().map((each) => text(each.findLabel()?.getElement() as HTMLElement))).not.toContain(
       'Delay',
     );
+    expect(text(field('Deduplication ID').findConstraint()?.getElement() as HTMLElement)).toBe(
+      'A message that repeats one already sent is accepted but not added to the queue.',
+    );
     expect(error('Group ID')).toBe('Enter a group ID.');
     expect(error('Deduplication ID')).toBe('Enter a deduplication ID.');
     expect(engine.of('SendMessage')).toEqual([]);
@@ -1226,6 +1229,9 @@ describe('the send form', () => {
     await openSend(FIFO_CBD);
     expect(text(field('Deduplication ID - optional').findDescription()?.getElement() as HTMLElement)).toBe(
       'Leave empty to deduplicate by the body.',
+    );
+    expect(text(field('Deduplication ID - optional').findConstraint()?.getElement() as HTMLElement)).toBe(
+      'A message that repeats one already sent is accepted but not added to the queue.',
     );
     engine.on('SendMessage', (body) => sentAnswer(body, 'fifo-1', '18800000000000000001'));
     setBody('hello');
