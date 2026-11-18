@@ -668,19 +668,19 @@ describe('the columns at a narrow width and dead letters', () => {
     vi.restoreAllMocks();
   });
 
-  it('a dead-letter queue of a source holding messages: its Available as a warning with "Dead letters waiting" as visible text; any other queue’s count alone', async () => {
+  it('a dead-letter queue of a source holding messages: its Available as a warning with "dead letters waiting" as visible text after the count; any other queue’s count alone', async () => {
     const holding: FakeQueue = { ...DLQ, attributes: standard('orders-dlq', [2, 0, 0]) };
     const empty: FakeQueue = { name: 'pay-dlq', attributes: standard('pay-dlq'), sources: ['pay'] };
     await openLoaded([ORDERS, holding, empty]);
 
     const [first, second, third] = (table().findRows() ?? []).map((row) => row.getElement());
-    const label = within(second as HTMLElement).getByText('Dead letters waiting');
+    const label = within(second as HTMLElement).getByText('dead letters waiting');
     expect(label).toBeVisible();
     const indicator = createWrapper(second as HTMLElement).findStatusIndicator();
     expect(indicator?.getElement().className).toMatch(/status-warning/);
-    expect(rows()[1]?.[1]).toBe('2 Dead letters waiting');
-    expect(within(first as HTMLElement).queryByText('Dead letters waiting')).toBeNull();
-    expect(within(third as HTMLElement).queryByText('Dead letters waiting')).toBeNull();
+    expect(rows()[1]?.[1]).toBe('2 dead letters waiting');
+    expect(within(first as HTMLElement).queryByText('dead letters waiting')).toBeNull();
+    expect(within(third as HTMLElement).queryByText('dead letters waiting')).toBeNull();
     expect(rows()[0]?.[1]).toBe('3');
     expect(rows()[2]?.[1]).toBe('0');
   });

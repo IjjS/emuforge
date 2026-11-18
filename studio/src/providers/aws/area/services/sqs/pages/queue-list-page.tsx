@@ -150,11 +150,11 @@ function counterText(rows: number, openEnd: boolean): string {
 }
 
 /** The visible label beside the Available count of a dead-letter queue that holds messages. */
-const DEAD_LETTERS = 'Dead letters waiting';
+const DEAD_LETTERS = 'dead letters waiting';
 
 /**
  * A queue's Available count; on a dead-letter queue of at least one source that holds messages, a warning with the
- * words "Dead letters waiting" beside the count, so dead letters stand out from the counts of any other queue, to the
+ * words "dead letters waiting" after the count, so dead letters stand out from the counts of any other queue, to the
  * eye and to a screen reader alike.
  */
 function AvailableCount({ settings, deadLetters }: { settings: QueueSettings; deadLetters: boolean }) {
