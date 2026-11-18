@@ -144,6 +144,30 @@ function count(value: number | undefined): string | undefined {
   return value === undefined ? undefined : String(value);
 }
 
+/** The header's counter: the page's rows, with a plus while a next page follows ("(10+)"). */
+function counterText(rows: number, openEnd: boolean): string {
+  return `(${String(rows)}${openEnd ? '+' : ''})`;
+}
+
+/** The label of the warning on the Available count of a dead-letter queue that holds messages. */
+const DEAD_LETTERS = 'Dead letters waiting';
+
+/**
+ * A queue's Available count; on a dead-letter queue of at least one source that holds messages, a warning, so dead
+ * letters stand out from the counts of any other queue.
+ */
+function AvailableCount({ settings, deadLetters }: { settings: QueueSettings; deadLetters: boolean }) {
+  const available = settings.available;
+  if (deadLetters && available !== undefined && available > 0) {
+    return (
+      <StatusIndicator type="warning" iconAriaLabel={DEAD_LETTERS}>
+        <ValueText kind="fixed" value={String(available)} />
+      </StatusIndicator>
+    );
+  }
+  return <ValueText kind="fixed" value={count(available)} none={NONE} />;
+}
+
 /**
  * `/aws/sqs` and `/aws/sqs/queues`: the emulator's queues, read through the engine on every opening, refresh, search
  * and page. The table keeps its heading, controls and columns in every state and shows the state in its body. A
@@ -254,7 +278,7 @@ export function QueueListPage({ connection }: { connection: AreaConnection }) {
     </Link>
   );
 
-  /** A cell of a row whose reads failed is empty: the row's status, in "Type", stands in their place. */
+  /** A cell of a row whose reads failed is empty: the row's status, in "Available", stands in their place. */
   const value = (row: Row, cell: (read: NonNullable<Row['read']>) => ReactNode): ReactNode =>
     row.read === undefined ? null : cell(row.read);
 
@@ -267,22 +291,16 @@ export function QueueListPage({ connection }: { connection: AreaConnection }) {
       cell: (row) => queueLink(row.name),
     },
     {
-      id: 'type',
-      header: 'Type',
+      id: 'available',
+      header: 'Available',
       cell: (row) =>
         row.read === undefined ? (
           <StatusIndicator type="error">
             <ValueText kind="text" value={row.status} />
           </StatusIndicator>
         ) : (
-          <ValueText kind="fixed" value={queueType(row.read.settings)} />
+          <AvailableCount settings={row.read.settings} deadLetters={row.read.sources.length > 0} />
         ),
-    },
-    {
-      id: 'available',
-      header: 'Available',
-      cell: (row) =>
-        value(row, ({ settings }) => <ValueText kind="fixed" value={count(settings.available)} none={NONE} />),
     },
     {
       id: 'inFlight',
@@ -295,6 +313,11 @@ export function QueueListPage({ connection }: { connection: AreaConnection }) {
       header: 'Delayed',
       cell: (row) =>
         value(row, ({ settings }) => <ValueText kind="fixed" value={count(settings.delayed)} none={NONE} />),
+    },
+    {
+      id: 'type',
+      header: 'Type',
+      cell: (row) => value(row, ({ settings }) => <ValueText kind="fixed" value={queueType(settings)} />),
     },
     {
       id: 'deadLetterQueue',
@@ -330,6 +353,7 @@ export function QueueListPage({ connection }: { connection: AreaConnection }) {
         variant="full-page"
         items={rows}
         trackBy="url"
+        stickyColumns={{ first: 1 }}
         columnDefinitions={columns}
         wrapLines={preferences.wrapLines}
         loading={state.kind === 'loading'}
@@ -338,7 +362,7 @@ export function QueueListPage({ connection }: { connection: AreaConnection }) {
         header={
           <Header
             variant="awsui-h1-sticky"
-            counter={queues === undefined ? undefined : `(${String(queues.length)})`}
+            counter={queues === undefined ? undefined : counterText(queues.length, listing.openEnd)}
             description={DESCRIPTION}
             actions={
               <Button
