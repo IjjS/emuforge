@@ -34,6 +34,9 @@ const TYPES: readonly SelectProps.Option[] = [
   { value: 'Binary', label: 'Binary' },
 ];
 
+/** What a FIFO queue does with a repeat (probe §2–§3): the send succeeds and nothing is added. */
+const DEDUPLICATION_RULE = 'A message that repeats one already sent is accepted but not added to the queue.';
+
 const MIB = 1024 * 1024;
 
 /** "Up to 1,048,576 bytes (1 MiB).": the number grouped, and in MiB when it is a whole number of them. */
@@ -127,6 +130,7 @@ export function SendMessageForm({ settings, form, onChange, sending, onSend }: S
                 {...(settings.contentBasedDeduplication
                   ? { description: 'Leave empty to deduplicate by the body.' }
                   : {})}
+                constraintText={DEDUPLICATION_RULE}
                 errorText={messages.deduplicationId}
               >
                 <Input
