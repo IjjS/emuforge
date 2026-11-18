@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: studio|sqs|queues-list
-Issue-Check-Ids: studio.sqs-queues-made-outside-are-listed-with-counts,studio.sqs-routes-lead-to-the-queue-screens,studio.sqs-queue-search-and-pages,studio.sqs-read-messages-leaves-them-in-the-queue,studio.sqs-read-on-a-redrive-queue-warns-and-moves,studio.sqs-read-fifo-queue-shows-groups,studio.sqs-send-message-reaches-the-emulator,studio.sqs-send-fifo-message,studio.sqs-delete-read-messages,studio.sqs-purge-queue,studio.sqs-redrive-dead-letters-back-to-their-source,studio.sqs-redrive-to-another-queue-and-cancel,studio.sqs-queue-gone-while-open,studio.sqs-emulator-restart-shows-the-empty-emulator
+Issue-Check-Ids: studio.sqs-queues-made-outside-are-listed-with-counts studio.sqs-routes-lead-to-the-queue-screens studio.sqs-queue-search-and-pages studio.sqs-read-messages-leaves-them-in-the-queue studio.sqs-read-on-a-redrive-queue-warns-and-moves studio.sqs-read-fifo-queue-shows-groups studio.sqs-send-message-reaches-the-emulator studio.sqs-send-fifo-message studio.sqs-delete-read-messages studio.sqs-purge-queue studio.sqs-redrive-dead-letters-back-to-their-source studio.sqs-redrive-to-another-queue-and-cancel studio.sqs-queue-gone-while-open studio.sqs-emulator-restart-shows-the-empty-emulator
 Issue-Commit: fe28fb4faecc4a824bf214f5b547ac759ca7f7aa
 
 # Show the emulator's SQS queues: the Queues screen
