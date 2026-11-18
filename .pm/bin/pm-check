@@ -93,8 +93,8 @@ Single checks. --checks runs only the integration step, limited to the named man
 (tests/integration/studio/services/<service>/manifest.jsonl), the manifest every reader reads, main manifest first
 (issue 402). It is refused (exit 2, nothing written) for an id that is in neither, a part of the manifest that
 cannot be read (named), a checkout without the main manifest or tests/integration/run, and with --full, --only or
---on-request. It takes a check slot like every run that starts
-the suite, runs the step once (no retry, no flakes.jsonl line), logs to output/logs/checks-integration.log and
+--on-request. It asks for room like every run that starts
+the suite (Load, below), runs the step once (no retry, no flakes.jsonl line), logs to output/logs/checks-integration.log and
 records to output/checks/checks.json and a timestamped *-checks.json (kind checks, passed false, the step's
 `asked` {id: verdict}); last.json and the check-<step>.log files are not touched. Each asked check is printed
 with its verdict, and the last line says it is a partial run pm-merge does not accept. Exit 0 when every asked
@@ -106,10 +106,25 @@ kept as check-<step>.attempt1.log, and a line goes to <root>/.pm/run/flakes.json
 file. So one intermittent failure costs a rerun of one step, not the unit's merge, and it is never lost. A step
 that fails twice is failed. Format, lint, type and build steps are never retried. --no-retry turns this off.
 
-Load. At most two pm-check runs that build or test the product (engine, studio, integration) run at the same
-time across all worktrees; a third waits for a slot (<root>/.pm/run/check-slots/). Before its first step such a
-run also waits, up to five minutes, for the CPU to drop under 90%. Both are printed. A run that calls for no
-product module that exists (harness only, or nothing) does not wait.
+Load (issue 478). A run that calls for a module that builds or tests the product (engine, studio, integration) and
+exists, and every --checks run, asks for room before its first step: _pmlib.check_room judges the machine against
+the limits of _pmlib (memory, swap, CPU as measured; an unknown reading is room) and counts a heavy run that started
+under 60 s ago as no room (its load is not measured yet); the ask is taken under a lock, <root>/.pm/run/checks/
+.start.lock, so two asks never start on one reading. There is no limit on the number of runs: with room the run
+starts, however many already run. Without room it writes no record and no log, prints one line and exits 75:
+  WAIT <n>s: <why>; running: <worktree> <step> (about <s>s left), ...; expected room at <HH:MM:SS>; <tail>
+where <n> is the least any running heavy run still needs (the rest of its step, at least 30 s, then its later
+steps, each the median of the step's last 20 recorded durations, 300 s for a step never recorded), the rest of the
+60 s for a run that started under it, or 60 s when none runs. For a caller that is a registered pane the tail is
+`end your turn: EVENT room <name> check <checkout> comes when there is room`, and the pane is remembered in
+<root>/.pm/run/waiting.json: pm-watchd prompts it that line once there is room. For any other caller (the pm, a
+terminal) it is `run pm-check again after it`. A run that calls for no product module that exists (harness only,
+or nothing) never asks. Each heavy run is recorded in <root>/.pm/run/checks/<pid>.json (its checkout, its start,
+the steps it will run and the one it runs) while it lasts; every step that ran appends {at, step, seconds, status}
+to <root>/.pm/run/check-durations.jsonl (a --checks run as step `integration-checks`). A record (last.json,
+checks.json) holds `waited` {seconds, asks}: the time from the first WAIT answer this checkout got since its last
+start, and how many asks were answered WAIT; {0, 0} when none was (<checkout>/output/checks/waited.json keeps them
+in between).
 
 Processes. Each step runs in its own process group, recorded in <checkout>/output/checks/running.json while the
 run lasts. `pm-check <worktree> --stop` ends that worktree's run and nothing else: SIGTERM to the recorded group
@@ -117,6 +132,7 @@ and the recorded pm-check, SIGKILL after ten seconds. Never stop a check by proc
 ends other worktrees' runs too. A pm-check that receives SIGTERM or SIGINT stops its own step the same way.
 """
 import argparse
+import datetime as dt
 import fcntl
 import json
 import os
@@ -128,7 +144,8 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _pmlib import LIMITS, ROOT, RUN, cpu_pct, now
+from _pmlib import (CHECKS, ROOT, RUN, caller, check_room, end_check, note_check, now, record_duration,
+                    wait_for_check_room)
 from _pmscope import called, deferred, lines, manifest_parts, scope, services_file
 
 STEPS = {
@@ -158,48 +175,77 @@ SCRUB = ("AWS_PROFILE", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSI
 
 RETRY = ("engine-test", "studio-unit", "integration", "harness-test")  # steps whose failure can be intermittent
 HEAVY = ("engine", "studio", "integration")  # modules whose steps load the machine
-CPU_WAIT = 300  # seconds a heavy run waits for the CPU to drop under the limit before it starts anyway
+WAIT_EXIT = 75  # EX_TEMPFAIL: no room now; ask again after the wait the answer names
 current = None  # the running step's Popen
+this_run = None  # this run's entry in <root>/.pm/run/checks/ while a heavy run lasts
 CHECK_ID = re.compile(r"[a-z]+\.[a-z0-9-]+")  # the form of a manifest id; nothing else reaches a file
 NAMED = 10  # failed or error checks named in the output, per verdict
 MTIME_SLACK = 1  # seconds: a file's time can lag the clock by a tick; a report older than that is not this run's
 RUNNER_MAX = 1024 * 1024  # bytes of the harness runner read to see whether it takes --leave-out
 
 
-def take_slot():
-    """Hold one of LIMITS['checks'] locks for the life of this process; wait while all are taken. The lock is a
-    flock, so a run that dies frees its slot."""
-    d = RUN / "check-slots"
-    d.mkdir(parents=True, exist_ok=True)
-    said = False
-    while True:
-        for i in range(LIMITS["checks"]):
-            f = open(d / f"slot-{i}.lock", "w")
-            try:
-                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                f.write(f"{os.getpid()}\n"); f.flush()
-                return f
-            except BlockingIOError:
-                f.close()
-        if not said:
-            print(f"  queued: {LIMITS['checks']} pm-check runs are already building or testing; waiting for a slot", flush=True)
-            said = True
-        time.sleep(2)
+def fmt_s(n):
+    n = int(round(n))
+    return f"{n // 60}m{n % 60:02d}s" if n >= 60 else f"{n}s"
 
 
-def wait_for_cpu():
-    """Wait up to CPU_WAIT for the CPU to be under the limit. Returns the last reading (None when unknown)."""
-    start, said = time.time(), False
-    while True:
-        cpu = cpu_pct()
-        if cpu is None or cpu <= LIMITS["cpu_pct"] or time.time() - start > CPU_WAIT:
-            if said:
-                print(f"  cpu {cpu}%: starting", flush=True)
-            return cpu
-        if not said:
-            print(f"  waiting: cpu {cpu}% > {LIMITS['cpu_pct']}% (at most {CPU_WAIT}s)", flush=True)
-            said = True
-        time.sleep(10)
+def waited_file(co):
+    return co / "output" / "checks" / "waited.json"
+
+
+def ask(co, steps):
+    """Ask for room for a heavy run of `steps`. With room: record this run in CHECKS and return
+    (readings, waited {seconds, asks}). Without: remember the asker, print the WAIT line and exit WAIT_EXIT."""
+    global this_run
+    CHECKS.mkdir(parents=True, exist_ok=True)
+    wf = waited_file(co)
+    with open(CHECKS / ".start.lock", "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        readings = {}
+        why, wait, left = check_room(readings=readings)
+        at = time.time()
+        if why is None:
+            this_run = dict(pid=os.getpid(), checkout=str(co), started=at, steps=list(steps),
+                            step=steps[0] if steps else None, step_started=at)
+            note_check(this_run)
+    try:
+        w = json.loads(wf.read_text())
+    except (OSError, ValueError):
+        w = {}
+    if why is None:
+        wf.unlink(missing_ok=True)
+        first = w.get("first_at")
+        waited = dict(seconds=round(at - first, 1) if isinstance(first, (int, float)) else 0,
+                      asks=w.get("asks", 0) if isinstance(w.get("asks"), int) else 0)
+        return readings, waited
+    wf.parent.mkdir(parents=True, exist_ok=True)
+    w = dict(first_at=w.get("first_at") if isinstance(w.get("first_at"), (int, float)) else at,
+             asks=(w.get("asks") if isinstance(w.get("asks"), int) else 0) + 1)
+    wf.write_text(json.dumps(w))
+    expected = dt.datetime.fromtimestamp(at + wait).astimezone()
+    runs = ", ".join(f"{pathlib.Path(c or '?').name} {st or '?'} (about {fmt_s(n)} left)" for c, st, n in left)
+    me = caller()
+    if me:
+        wait_for_check_room(me["name"], str(co), me.get("issue"), why, expected.isoformat(timespec="seconds"))
+        tail = f"end your turn: EVENT room {me['name']} check {co} comes when there is room"
+    else:
+        tail = "run pm-check again after it"
+    print(f"WAIT {wait}s: {why}; running: {runs or 'no check'}; expected room at {expected:%H:%M:%S}; {tail}",
+          flush=True)
+    sys.exit(WAIT_EXIT)
+
+
+def at_step(name):
+    """Note in this run's CHECKS entry that it now runs step `name` (a name not among its steps is the one it has)."""
+    if this_run is not None and name in this_run["steps"]:
+        this_run.update(step=name, step_started=time.time())
+        note_check(this_run)
+
+
+def done():
+    """This heavy run has ended: its CHECKS entry goes."""
+    if this_run is not None:
+        end_check(this_run["pid"])
 
 
 def end_group(pgid, grace=10):
@@ -222,6 +268,7 @@ def end_group(pgid, grace=10):
 def on_signal(signum, _frame):
     if current is not None and current.poll() is None:
         end_group(current.pid)
+    done()
     sys.exit(128 + signum)
 
 
@@ -262,6 +309,7 @@ def run_step(cmd, cwd, env, log, record, name):
             f.write(f"{e}\n")
             return 127
         record.write_text(json.dumps(dict(pm_check_pid=os.getpid(), pgid=current.pid, step=name, started=now())))
+        at_step(name)
         try:
             return current.wait()
         finally:
@@ -433,20 +481,23 @@ def main():
         return
     calls = called(sc)
     mods = a.only or list(STEPS)
-    cpu = None
-    slot = None
-    if any(m in HEAVY and (co / STEPS[m][0] / STEPS[m][1]).exists() for m in calls):
-        slot = take_slot()
-        cpu = wait_for_cpu()
+    held = deferred(sc)
+    present = [m for m in mods if (co / STEPS[m][0] / STEPS[m][1]).exists()]
+    cpu, waited = None, dict(seconds=0, asks=0)
+    if any(m in HEAVY for m in present if m in calls and m not in held):
+        steps = [n for m in present if m in calls and m not in held for n, _ in STEPS[m][2]]
+        readings, waited = ask(co, steps)
+        cpu = readings.get("cpu")
+    else:
+        waited_file(co).unlink(missing_ok=True)
     results, flaky = [], []
     try:
-        results, flaky = run_all(a, co, mods, calls, env, logs, record, commit, deferred(sc), sc["target"],
+        results, flaky = run_all(a, co, mods, calls, env, logs, record, commit, held, sc["target"],
                                  leave_out(co, sc), services_file(sc))
     finally:
         record.unlink(missing_ok=True)
-        if slot:
-            slot.close()
-    finish(co, out, commit, dirty, ports, sc, results, flaky, cpu, bool(a.on_request))
+        done()
+    finish(co, out, commit, dirty, ports, sc, results, flaky, cpu, bool(a.on_request), waited)
 
 
 def run_all(a, co, mods, calls, env, logs, record, commit, held=(), target="main", left=(), services=None):
@@ -494,6 +545,7 @@ def run_all(a, co, mods, calls, env, logs, record, commit, held=(), target="main
                 code = run_step(cmd, str(co / sub), env, log, record, name)
             status = "error" if code == 127 else "failed" if code != 0 else "flaky" if first else "passed"
             results.append(dict(name=name, module=mod, status=status, seconds=round(time.time() - t, 1), log=str(log)))
+            record_duration(name, results[-1]["seconds"], status)
             if first:
                 results[-1]["first_log"] = str(first)
             if mod == "integration":
@@ -538,15 +590,16 @@ def checks_run(co, out, logs, env, record, commit, dirty, ports, sc, asked, ids)
     listed.write_text(json.dumps(dict(checks=[dict(id=i, reason="not asked for (pm-check --checks)")
                                               for i in ids if i not in asked]), indent=1))
     log = logs / "checks-integration.log"
-    slot = take_slot()  # the suite builds and starts an emulator, whatever it is asked
+    readings, waited = ask(co, ["integration-checks"])  # the suite builds and starts an emulator, whatever it is asked
+    cpu = readings.get("cpu")
     try:
-        cpu = wait_for_cpu()
         t = time.time()
         code = run_step(["./run", "--not-run", str(listed), "--on-request"], str(suite), env, log, record, "integration")
     finally:
         record.unlink(missing_ok=True)
-        slot.close()
+        done()
     status = "error" if code == 127 else "failed" if code != 0 else "passed"
+    record_duration("integration-checks", round(time.time() - t, 1), status)
     entry = dict(name="integration", module="integration", status=status, seconds=round(time.time() - t, 1),
                  log=str(log))
     found = report_checks(co, commit, t)
@@ -558,7 +611,7 @@ def checks_run(co, out, logs, env, record, commit, dirty, ports, sc, asked, ids)
     print(f"  {'integration':18} {status:7} {entry['seconds']:>7}s  {log}", flush=True)
     summary = dict(at=now(), commit=commit, dirty=dirty, full=False, passed=False,
                    failed=["integration"] if status in ("failed", "error") else [], flaky=[], cpu_at_start=cpu,
-                   ports=ports, scope=sc, steps=[entry])
+                   waited=waited, ports=ports, scope=sc, steps=[entry])
     (out / "checks.json").write_text(json.dumps(summary, indent=1))
     (out / f"{now()[:19].replace(':', '')}-checks.json").write_text(json.dumps(summary, indent=1))
     if emulator_line(entry):
@@ -576,7 +629,7 @@ def checks_run(co, out, logs, env, record, commit, dirty, ports, sc, asked, ids)
     sys.exit(0 if ok else 1)
 
 
-def finish(co, out, commit, dirty, ports, sc, results, flaky, cpu, on_request=False):
+def finish(co, out, commit, dirty, ports, sc, results, flaky, cpu, on_request=False, waited=None):
     failed = [r["name"] for r in results if r["status"] in ("failed", "error")]
     present = [r for r in results if r["status"] != "absent"]
     ran = [r for r in present if r["status"] not in ("not-needed", "deferred")]
@@ -584,7 +637,8 @@ def finish(co, out, commit, dirty, ports, sc, results, flaky, cpu, on_request=Fa
     partial = sc["kind"] == "only"
     passed = not failed and not dirty and not partial  # a run that called for nothing passes on a clean tree
     summary = dict(at=now(), commit=commit, dirty=dirty, full=full, on_request=on_request, passed=passed, failed=failed,
-                   flaky=flaky, cpu_at_start=cpu, ports=ports, scope=sc, steps=results)
+                   flaky=flaky, cpu_at_start=cpu, waited=waited or dict(seconds=0, asks=0), ports=ports, scope=sc,
+                   steps=results)
     (out / "last.json").write_text(json.dumps(summary, indent=1))
     (out / f"{now()[:19].replace(':', '')}.json").write_text(json.dumps(summary, indent=1))
     notes = []
