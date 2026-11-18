@@ -35,7 +35,7 @@ test('studio.connections-target-changed-outside-studio', async ({ page, ctx }) =
   await page.goto(BUCKETS_PATH);
   await expectLine(page, connectedAt(a));
   await expect.poll(() => shownBuckets(page, [onA, onB]), ACTION).toEqual([onA]);
-  const refresh = page.getByRole('main').getByRole('button', { name: 'Refresh', exact: true }).first();
+  const refresh = page.getByRole('main').getByRole('button', { name: 'Refresh Buckets', exact: true }).first();
   await refresh.focus(ACTION);
   const path = new URL(page.url()).pathname;
 
