@@ -15,8 +15,8 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{MethodRouter, get, post};
 use axum::{Json, Router};
 use emuforge_core::{
-    ChangeError, Emulator, Health, Outcome, Settings, SettingsError, Target, TargetError,
-    TargetName, TestReport,
+    ChangeError, Emulator, Health, Outcome, Reason, Settings, SettingsError, Step, Target,
+    TargetError, TargetName, TestReport,
 };
 use http_body::Body as _;
 use serde::Serialize;
@@ -334,7 +334,7 @@ async fn test(
             status: outcome.status(),
             reason: outcome.reason().map(|reason| reason.code()),
             message: match outcome {
-                Outcome::Failed(reason) => Some(reason.message(&emulator)),
+                Outcome::Failed(reason) => Some(step_message(*step, reason, &emulator)),
                 Outcome::Passed | Outcome::NotRun => None,
             },
         })
@@ -346,6 +346,18 @@ async fn test(
         checks,
     };
     (StatusCode::OK, Json(body)).into_response()
+}
+
+/// A failed step's message. The shared reason's message names the health route; the `credentials` step sent the
+/// signed STS request instead, so an unexpected status there names that request.
+fn step_message(step: Step, reason: &Reason, emulator: &Emulator) -> String {
+    match (step, reason) {
+        (Step::Credentials, Reason::UnexpectedResponse { status }) => format!(
+            "the emulator on {} answered the signed STS GetCallerIdentity with status {status}, not 200",
+            emulator.endpoint()
+        ),
+        _ => reason.message(emulator),
+    }
 }
 
 /// `DELETE /__emuforge/targets/<name>`. The emulator is not touched.

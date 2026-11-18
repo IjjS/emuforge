@@ -643,6 +643,30 @@ async fn test_of_a_held_target_is_200_with_the_fake_checks_and_its_address() {
 }
 
 #[tokio::test]
+async fn test_credentials_unexpected_response_names_the_signed_sts_request_not_the_health_route() {
+    let fixture = fixture_with(Options {
+        report: report(&[(
+            Step::Credentials,
+            Reason::UnexpectedResponse { status: 500 },
+        )]),
+        ..Options::default()
+    });
+    let body = fixture
+        .call(Method::POST, &format!("{TARGETS}/local/test"))
+        .await
+        .json();
+    let credentials = &body["checks"][4];
+    assert_eq!(credentials["check"], "credentials");
+    assert_eq!(credentials["reason"], "unexpected_response");
+    let message = credentials["message"].as_str().unwrap();
+    assert_eq!(
+        message,
+        "the emulator on https://127.0.0.1:9391 answered the signed STS GetCallerIdentity with status 500, not 200"
+    );
+    assert!(!message.contains("/__admin/health"), "{message}");
+}
+
+#[tokio::test]
 async fn remove_is_204_for_a_held_target_409_for_the_active_and_404_for_none() {
     let fixture = fixture();
     fixture.add_target("second", "https://127.0.0.2:9400").await;
@@ -819,30 +843,45 @@ async fn a_targets_route_with_32_in_flight_is_503_busy() {
     }
 }
 
-/// The lines of every `tracing` event while `run` runs, the subscriber set on this thread only.
-async fn captured<F: std::future::Future<Output = ()>>(run: F) -> String {
-    #[derive(Clone)]
-    struct Lines(Arc<Mutex<Vec<u8>>>);
-    impl std::io::Write for Lines {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(bytes);
-            Ok(bytes.len())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
+thread_local! {
+    /// Where this thread's `tracing` lines go while [`captured`] runs.
+    static CAPTURE: std::cell::RefCell<Option<Arc<Mutex<Vec<u8>>>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Writes into this thread's capture, or nowhere.
+struct ThreadWriter;
+
+impl std::io::Write for ThreadWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        CAPTURE.with(|capture| {
+            if let Some(lines) = capture.borrow().as_ref() {
+                lines.lock().unwrap().extend_from_slice(bytes);
+            }
+        });
+        Ok(bytes.len())
     }
-    let lines = Lines(Arc::new(Mutex::new(Vec::new())));
-    let writer = lines.clone();
-    let subscriber = tracing_subscriber::fmt()
-        .with_writer(move || writer.clone())
-        .with_ansi(false)
-        .with_max_level(tracing::Level::TRACE)
-        .finish();
-    let guard = tracing::subscriber::set_default(subscriber);
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// The lines of every `tracing` event this thread emits while `run` runs. One global subscriber serves every
+/// test, so no callsite's interest is decided while another thread has no subscriber.
+async fn captured<F: std::future::Future<Output = ()>>(run: F) -> String {
+    static GLOBAL: std::sync::Once = std::sync::Once::new();
+    GLOBAL.call_once(|| {
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(|| ThreadWriter)
+            .with_ansi(false)
+            .with_max_level(tracing::Level::TRACE)
+            .finish();
+        tracing::subscriber::set_global_default(subscriber).unwrap();
+    });
+    let lines = Arc::new(Mutex::new(Vec::new()));
+    CAPTURE.with(|capture| *capture.borrow_mut() = Some(lines.clone()));
     run.await;
-    drop(guard);
-    String::from_utf8(lines.0.lock().unwrap().clone()).unwrap()
+    CAPTURE.with(|capture| *capture.borrow_mut() = None);
+    String::from_utf8(lines.lock().unwrap().clone()).unwrap()
 }
 
 fn info_lines(log: &str) -> Vec<&str> {
