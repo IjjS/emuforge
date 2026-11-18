@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: bug
 Issue-Source: finder
 Issue-Key: harness|pm-pane|reset-leaves-test-processes-running
-Issue-Check-Ids:
+Issue-Check-Ids: harness.orphans harness.orphan-event
 Issue-Commit: 3e36c96a2db31f77f893d9518d270975129c5fd1
 
 # Stop a pane's test processes when pm-pane resets or closes it
