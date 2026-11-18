@@ -244,6 +244,7 @@ def cmd_refresh():
         code = already_running(lock_pid_text(held))
         os.close(held)
         return code
+    write_pid(fd, os.getpid())  # a reader sees a live pid until the worker's replaces it
     with open(REFRESH_LOG, "w") as out:
         worker = subprocess.Popen([os.path.abspath(__file__), "refresh", "--foreground", "--inherited-lock", str(fd)],
                                   stdin=subprocess.DEVNULL, stdout=out, stderr=out, pass_fds=(fd,),
