@@ -28,6 +28,7 @@ import { runAt } from './support/product-inspect';
 import {
   commandLine,
   ENGINE_FILES_DIR,
+  ENGINE_SETTINGS_DIR,
   EMULATOR_FILES_DIR,
   Form,
   KEEP_START_LINE,
@@ -113,8 +114,9 @@ test('engine.product-configuration-names-loopback-and-the-emulator-only', async 
     'services with a profile',
   ).toEqual([]);
 
-  // The mounts → emuforge one, the volume `emulator`, read-only, at its files' folder; the emulator one, the same
-  // volume, at its files' folder; no mount of type bind.
+  // The mounts → emuforge two: the volume `emulator`, read-only, at its files' folder, and the volume `settings`,
+  // read-write, at the Compose form's settings folder (#485); the emulator one, the volume `emulator`, at its files'
+  // folder; no mount of type bind.
   const mounts = (name: string) =>
     (services[name]?.volumes ?? []).map((v) => ({
       type: v.type,
@@ -124,6 +126,7 @@ test('engine.product-configuration-names-loopback-and-the-emulator-only', async 
     }));
   expect(mounts('emuforge'), "emuforge's mounts").toEqual([
     { type: 'volume', source: 'emulator', target: ENGINE_FILES_DIR, read_only: true },
+    { type: 'volume', source: 'settings', target: ENGINE_SETTINGS_DIR, read_only: false },
   ]);
   expect(
     mounts('aws-emulator').map(({ type, source, target }) => ({ type, source, target })),
@@ -155,8 +158,14 @@ test('engine.product-configuration-names-loopback-and-the-emulator-only', async 
       .map((port) => ({ service: 'emuforge', host_ip: '127.0.0.1', published: String(port), target: port })),
   );
 
-  // emuforge's command → `serve --listen-address 0.0.0.0` (#484 R8).
-  expect(services.emuforge?.command ?? null, "emuforge's command").toEqual(['serve', '--listen-address', '0.0.0.0']);
+  // emuforge's command → `serve --listen-address 0.0.0.0 --form compose` (#484 R8, #485).
+  expect(services.emuforge?.command ?? null, "emuforge's command").toEqual([
+    'serve',
+    '--listen-address',
+    '0.0.0.0',
+    '--form',
+    'compose',
+  ]);
 
   // The emulator's service → user 1000:0, command `-p <EMULATOR_PORT> -t off`, emuforge's network namespace, a
   // healthcheck, every capability dropped, no-new-privileges, no container_name, pull_policy build.

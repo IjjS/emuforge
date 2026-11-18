@@ -1,7 +1,7 @@
 // The product checks that inspect a running one form (issue 437, test-criteria.md): what it publishes and where, and
-// what its images, its containers' output, environment, command lines, mounts, users and capabilities hold. One
-// case each, the same on every platform. Each form is started with the start line alone, without the checks' own
-// files.
+// what its images, its containers' output, environment, command lines, mounts, users and capabilities hold, and its
+// volume `settings` (#485). One case each, the same on every platform. Each form is started with the start line
+// alone, without the checks' own files.
 //
 // `engine.product-ports-are-published-on-loopback-only`, `engine.product-holds-no-key-and-one-read-only-mount`.
 
@@ -15,10 +15,12 @@ import {
   searchImage,
   signedVia,
   statusOf,
+  volumeFiles,
 } from './support/product-inspect';
 import {
   dockerRead,
   ENGINE_FILES_DIR,
+  ENGINE_SETTINGS_DIR,
   EMULATOR_FILES_DIR,
   expectExit,
   firstHealth,
@@ -27,6 +29,7 @@ import {
   madeUpKey,
   productTimeout,
   publishedBy,
+  SETTINGS_FILE,
   STOP_BOUND_MS,
   waitReachable,
   type FormEmulatorFiles,
@@ -110,10 +113,13 @@ test('engine.product-holds-no-key-and-one-read-only-mount', async ({ ctx }) => {
   });
   expect(statusOf(await signedVia(form.enginePort, madeUpKey(), 'GET', '/')), 'the Given: s3:ListBuckets').toBe(200);
   const services = await form.byService();
-  const volume = (await form.volumes())[0] ?? '';
-  expect(volume, `the Given: the volume of ${form.project}`).not.toBe('');
+  const volume = await form.volume('emulator');
+  expect(volume, `the Given: the volume emulator of ${form.project}`).not.toBe('');
+  const settings = await form.volume('settings');
+  expect(settings, `the Given: the volume settings of ${form.project}`).not.toBe('');
 
-  // emuforge's mounts → one: the project's volume at /home/emuforge/.aws/emulator, read-only; a write there from
+  // emuforge's mounts → two: the project's volume `emulator` at /home/emuforge/.aws/emulator, read-only, and its
+  // volume `settings` at the Compose form's settings folder, read-write (#485); a write to the first from
   // inside the container is refused.
   const mounts: Record<string, Mount[]> = {};
   for (const [service, container] of Object.entries(services)) {
@@ -122,9 +128,14 @@ test('engine.product-holds-no-key-and-one-read-only-mount', async ({ ctx }) => {
   ctx.log(`mounts: ${JSON.stringify(mounts)}`);
   const shown = (list: Mount[]) =>
     list.map((m) => ({ type: m.Type, name: m.Name, destination: m.Destination, rw: m.RW }));
-  expect(shown(mounts.emuforge), "emuforge's mounts").toEqual([
-    { type: 'volume', name: volume, destination: ENGINE_FILES_DIR, rw: false },
-  ]);
+  const byDestination = (a: { destination?: string }, b: { destination?: string }) =>
+    String(a.destination).localeCompare(String(b.destination));
+  expect(shown(mounts.emuforge).sort(byDestination), "emuforge's mounts").toEqual(
+    [
+      { type: 'volume', name: volume, destination: ENGINE_FILES_DIR, rw: false },
+      { type: 'volume', name: settings, destination: ENGINE_SETTINGS_DIR, rw: true },
+    ].sort(byDestination),
+  );
   const name = `emuforge-it-write-${ctx.runId}`;
   const write = await docker(['exec', services.emuforge.id, 'touch', `${ENGINE_FILES_DIR}/${name}`]);
   ctx.log(`touch ${ENGINE_FILES_DIR}/${name} in emuforge's container: ok ${String(write.ok)} ${write.stderr}`);
@@ -218,6 +229,13 @@ test('engine.product-holds-no-key-and-one-read-only-mount', async ({ ctx }) => {
     inConfig.push(...findSecrets(`the environment or command line of ${container.name}`, config, secrets));
   }
   expect(inConfig, "the emulator's key in the containers' environment and command lines").toEqual([]);
+  // The volume `settings` → it holds the settings file, and none of its files holds the key (#485).
+  const settingsFiles = await volumeFiles(ctx, settings);
+  expect([...settingsFiles.keys()], `the files in ${settings}`).toContain(SETTINGS_FILE);
+  expect(
+    [...settingsFiles].flatMap(([file, data]) => findSecrets(`${settings}/${file}`, data, secrets)),
+    "the emulator's key in the volume settings",
+  ).toEqual([]);
   const logs = await form.run(form.compose('logs', '--no-color'), STOP_BOUND_MS);
   expectExit(logs, 'zero');
   expect(

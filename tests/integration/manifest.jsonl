@@ -150,3 +150,4 @@
 {"check_id": "engine.targets-test-follows-an-emulator-restart", "path": "tests/integration/engine/tests/targets.rs", "module": "engine", "operations": ["sts:GetCallerIdentity"], "labels": ["own-emulator", "lifecycle"], "issue": 485}
 {"check_id": "engine.targets-hold-no-key", "path": "tests/integration/engine/tests/targets.rs", "module": "engine", "operations": ["sts:GetCallerIdentity"], "labels": ["safety"], "issue": 485}
 {"check_id": "engine.checks-engines-keep-their-settings-in-the-run", "path": "tests/integration/engine/tests/targets.rs", "module": "engine", "operations": [], "labels": ["safety"], "issue": 485}
+{"check_id": "engine.product-targets-compose-holds-one-target", "path": "tests/integration/studio/product-targets.spec.ts", "module": "engine", "operations": [], "labels": [], "issue": 485}

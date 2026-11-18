@@ -83,6 +83,12 @@ export const EMULATOR_FILES_DIR = '/home/emulator/.aws/emulator';
 /** Where `emuforge`'s container mounts the volume, read-only (#437 R3, #484 R8). */
 export const ENGINE_FILES_DIR = '/home/emuforge/.aws/emulator';
 
+/** Where `emuforge`'s container mounts the volume `settings`, read-write: the Compose form's settings folder (#485). */
+export const ENGINE_SETTINGS_DIR = '/home/emuforge/.config/emuforge-compose';
+
+/** The settings file the engine keeps its targets in (#485). */
+export const SETTINGS_FILE = 'targets.json';
+
 /** The files an emulator writes into `<files dir>/<port>/`. */
 export const EMULATOR_FILES = ['ca.pem', 'config', 'emulator_credentials', 'truststore.p12'];
 
@@ -776,6 +782,26 @@ export class Form {
     return (await dockerRead(['volume', 'ls', '--format', '{{.Name}}', '--filter', this.label()]))
       .split('\n')
       .filter((name) => name !== '');
+  }
+
+  /** The name of the form's volume `key` (`emulator`, `settings`): the one that carries both labels; `''` when none. */
+  async volume(key: string): Promise<string> {
+    const names = (
+      await dockerRead([
+        'volume',
+        'ls',
+        '--format',
+        '{{.Name}}',
+        '--filter',
+        this.label(),
+        '--filter',
+        `label=com.docker.compose.volume=${key}`,
+      ])
+    )
+      .split('\n')
+      .filter((name) => name !== '');
+    expect(names.length, `the volumes ${key} of ${this.project}: ${names.join(' ')}`).toBeLessThanOrEqual(1);
+    return names[0] ?? '';
   }
 
   /** The form's container of `service`; fails the check when there is none, or more than one. */

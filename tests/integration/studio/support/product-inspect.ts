@@ -62,6 +62,38 @@ export function docker(args: string[], timeoutMs = 60_000): Promise<{ ok: boolea
   });
 }
 
+/**
+ * The regular files of the volume `volume` (#485): read from a container of the run's product image that mounts it
+ * read-only, with no network, as the engine's user; path below the volume's root → bytes. `EnvError` when Docker
+ * cannot run it.
+ */
+export async function volumeFiles(ctx: Ctx, volume: string): Promise<Map<string, Buffer>> {
+  const script =
+    'cd /v && find . -type f -exec sh -c \'for f; do printf "%s\\t" "$f"; base64 -w0 "$f"; printf "\\n"; done\' _ {} +';
+  const read = await docker([
+    'run',
+    '--rm',
+    '--network',
+    'none',
+    '--user',
+    '1000:1000',
+    '--entrypoint',
+    'sh',
+    '-v',
+    `${volume}:/v:ro`,
+    ctx.productImage,
+    '-c',
+    script,
+  ]);
+  if (!read.ok) throw new EnvError(`reading the volume ${volume}: ${read.stderr}`);
+  const files = new Map<string, Buffer>();
+  for (const line of read.stdout.split('\n').filter((l) => l !== '')) {
+    const tab = line.indexOf('\t');
+    files.set(line.slice(0, tab).replace(/^\.\//, ''), Buffer.from(line.slice(tab + 1), 'base64'));
+  }
+  return files;
+}
+
 /** The current files of the emulator on `port` under the run's `HOME`; `EnvError` when they are incomplete. */
 export function emulatorKey(ctx: Ctx, port: number): EmulatorFiles {
   const dir = emulatorDir(ctx.home, port);
