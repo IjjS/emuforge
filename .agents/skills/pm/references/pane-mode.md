@@ -105,6 +105,12 @@ Start your own emulator on your worktree's `emulator` port and stop it when you 
 unit's. Sign only with the keys under `~/.aws/emulator/<your port>/`. Never read `~/.aws/credentials` or
 `~/.aws/config`, never set `AWS_PROFILE`, never point anything at an AWS host.
 
+No pane builds or tags the name `aws-emulator`: it is the machine's image, which only the `pm`'s
+`pm-emulator-image refresh` moves. A unit that changes `infra/aws-emulator/` is checked on the image its own check
+run builds from its worktree, whatever package that build installs. A check run that stops with
+`the emulator built for this run is …` is reported as `BLOCKED <name> depends emulator image`, never worked around:
+you do not run the refresh, build or tag the image, or change the check.
+
 A stopped emulator leaves its folder `~/.aws/emulator/<port>/`, and the next worktree on that port finds it. Once
 you have stopped an emulator you started and removed its container, remove its folder with
 `<Root>/.pm/bin/pm-emulator-dir rm --worktree <your worktree>` for your worktree's port, or

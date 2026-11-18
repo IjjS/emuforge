@@ -22,14 +22,18 @@ issue files, merge or archive; they refuse a plan anything outside its own issue
    tell which pane you are, run `pm-watchd start --pm <pane-id>`. Pane events then arrive in this chat as prompts
    starting with `EVENT`. The daemon listens on herdr's event socket and is signalled by `pm-report`, so an event
    reaches you within a second of its cause. Never poll herdr yourself.
-2. Panes run on the kind and model the owner names for this session; without one, `claude` on Opus. Ask only if
+2. `.pm/bin/pm-emulator-image refresh`: it rebuilds the machine's emulator image `aws-emulator` from
+   `infra/aws-emulator` on the latest package in a process of its own and returns at once; the session does not
+   wait for it. Its outcome arrives as `EVENT emulator-image refreshed …` or `EVENT emulator-image failed …`
+   (Events); `pm-emulator-image status` shows the image and the last refresh.
+3. Panes run on the kind and model the owner names for this session; without one, `claude` on Opus. Ask only if
    the owner has not said and a pane is about to start. When the owner names a token rate for the day, set it
    with `pm-tokens target <rate>`; without one nothing is limited, and you do not ask for one.
-3. Open work: list every `.pm/issue-*/state.md` in one line each and continue from it. Then `pm-ready list`: each
+4. Open work: list every `.pm/issue-*/state.md` in one line each and continue from it. Then `pm-ready list`: each
    line is a go signal the owner gave while no PM was running. Then `pm-issue list`: the open issue files.
-4. Issues are independent. Several run at once: take every issue's event to its own next step the moment it
+5. Issues are independent. Several run at once: take every issue's event to its own next step the moment it
    arrives, and never hold a finished issue until another catches up.
-5. Compaction replaces your history with a summary, so keep `state.md` current enough that nothing is lost, and
+6. Compaction replaces your history with a summary, so keep `state.md` current enough that nothing is lost, and
    after a compaction re-read every open issue's `state.md` before acting on the next event.
 
 ## Code of conduct
@@ -218,9 +222,9 @@ Work does not stop at the report. Open issue files come from four places: a `pla
 something outside its own issue and filed it instead of fixing it in passing; a failed or flaky run of the
 workflow on GitHub Actions after a push of `main`, filed with `--source finder` (flow step 3), which waits for the
 owner's signal; a check that fails when you run the full checks on `main` by hand; and the owner. Run
-`pm-check .` on `main` by hand only when the owner asks for it or the pinned emulator version changes, never as a
-condition of a merge or a push; a check it fails that no open issue lists in `Issue-Check-Ids` you file with
-`--source finder` and the failing log as evidence.
+`pm-check .` on `main` by hand only when the owner asks for it or the emulator version changes
+(`EVENT emulator-image refreshed`), never as a condition of a merge or a push; a check it fails that no open issue
+lists in `Issue-Check-Ids` you file with `--source finder` and the failing log as evidence.
 
 When every worktree of the issues in flight is merged and archived, run `pm-issue list` and start the next one at
 flow step 1:
@@ -257,11 +261,14 @@ flow step 1:
 | line | you do |
 |---|---|
 | `EVENT go github#<n>` | flow step 0 for that issue |
+| `EVENT emulator-image refreshed <before> -> <after>` | the emulator version changed: run the full checks on `main`, as `Next issue` allows. That is `pm-check .` in your own checkout. File each check it fails that no open issue lists with `--source finder`; the line goes into the next report to the owner |
+| `EVENT emulator-image failed <reason>` | `aws-emulator` was left as it was: the refresh is not retried, in a loop or otherwise; the line goes into the next report to the owner, with `.pm/run/emulator-image-refresh.log` |
 | `EVENT ready <pane> ISSUE READY feat/<id> report=…` | flow step 2 for that issue |
 | `EVENT ready <pane> STAGE READY …` | a harness-engineer's plan: read its `output/plan.md` and answer once (flow step 1); for an issue begun before issue 478, the next step of that issue's flow |
 | `EVENT ready <pane> UNIT READY <branch>` | a harness-engineer: judge its change and merge it (flow step 1); for an issue begun before issue 478, note it in `state.md` and take it when its turn in the order comes |
 | `EVENT ready <pane> DONE <what>` | a post-processing order finished: note it; report at ② or in three lines if ② already went |
 | `EVENT ready <pane> BLOCKED decision-needed …` | read the pane's line in `decisions-needed.md`; decide from `decisions.md` and the references and record it under `## PM decisions`, or put it to the owner as ①; answer the pane in one line |
+| `EVENT ready <pane> BLOCKED depends emulator image` | the pane's check run stopped because the emulator it built differs from the machine's image `aws-emulator` of the same files: `pm-emulator-image refresh` (a `refresh is already running` line means one is on its way); on its `EVENT emulator-image refreshed`, or when `pm-emulator-image status` shows it ended `unchanged` (that outcome sends no event), tell the pane in one line to run its check again; after `EVENT emulator-image failed` the pane waits and the line goes to the owner |
 | `EVENT ready <pane> BLOCKED depends <unit> <what>` | check the parent unit's branch (`git log -1 <branch>`, `state.md`); answer in one line, or tell the pane to wait for the parent's `UNIT READY` |
 | `EVENT ready <pane> BLOCKED review <stage>` | three rounds failed: read both positions in `decisions-needed.md`, decide and record it; answer the lead and rev in one line each |
 | `EVENT ready <pane> BLOCKED check <id>` | a plan believes a confirmed criteria line is wrong: read its line in `decisions-needed.md`; if it is right, record why and tell the plan to correct the line and its test; never tell the implementing worker to edit it |
@@ -307,6 +314,7 @@ a reporting line are logged in `.pm/run/events.log` and never delivered. Talk to
 | `pm-ready` | the owner's READY comments: `poll`, `list`, `take`, `schedule` |
 | `pm-issue` | issue files: `new`, `list`, `show`, `close`, `commit` (commits the new issue files as `issue: file #<id> …`) |
 | `pm-worktree` | worktrees and their ports: `new <id>` an issue's issue branch `feat/<id>` and its worktree, `new <id> <unit>` a unit (based on the issue branch when the issue has one), `rm`, `list`; a plan runs `new` and `rm` of a unit for its own issue |
+| `pm-emulator-image` | the machine's emulator image `aws-emulator` on the latest package: `refresh` at session start (returns at once; the outcome comes as `EVENT emulator-image …`), `refresh --foreground` by hand, `status` |
 | `pm-emulator-dir` | a port folder under `~/.aws/emulator` once nothing uses it: `rm --worktree` (run by `pm-merge` and `pm-worktree rm`), `rm --port`, `orphans [--remove]` on the owner's request |
 | `pm-brief` | a pane's brief from its template: `plan` (also writes rev's), `harness-engineer`, `worker`, `crit`, `show`; a plan runs `worker` and `crit` for its own issue |
 | `pm-pane` | panes: `new`, `reset`, `close`, `list`; a plan runs `new` of a worker, rev or crit and `reset` and `close` of those panes for its own issue; a `QUEUE` answer to a plan becomes `EVENT room` to it later |

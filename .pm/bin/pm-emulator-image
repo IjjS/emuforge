@@ -1,0 +1,451 @@
+#!/usr/bin/env -S python3 -I
+"""Keep the machine's emulator image `aws-emulator` on the latest package, one refresh at a time, and say what it did.
+
+  pm-emulator-image refresh [--foreground]     rebuild infra/aws-emulator of the main checkout and move the name
+  pm-emulator-image status                     the name's version and source tree, the last refresh, a running one
+
+`refresh` returns at once with one line (`refresh started (pid <n>); last known image <version|unknown>; log
+<path>`) and makes no Docker call itself: the work goes on in a process of its own, which holds the lock
+.pm/run/emulator-image.lock until it ends however it ends. `--foreground` does the work in the calling process and
+prints the outcome line instead. A second refresh while one runs prints `a refresh is already running (pid <n>)`,
+exit 1. The PM starts a refresh at every session start (the PM skill, Session start).
+
+The work: the folder must be committed (`git rev-parse HEAD:infra/aws-emulator`, `git status --porcelain`); Docker
+must answer (`docker info`); the name's image is read before (its id and `--version`); the folder is built with
+`--pull --no-cache` under `aws-emulator:refresh-<pid>` with the label `emuforge.source-tree=<tree id>`; the new
+image's version is read in a one-shot container without network (`--rm --pull never --network none`); only then is
+the name `aws-emulator` moved to it (`docker tag`) and the refresh's own name removed. A failure before the move
+leaves the name as it was and removes the refresh's own name; that is the one image this script ever removes. No
+container is started, stopped or removed but the one-shot version reads.
+
+The outcome is one line, `pm-emulator-image: refreshed <before> -> <after>` | `unchanged <version>` | `failed:
+<reason>; image left as it was (<version|none>)`, appended to .pm/run/events.log and kept with the versions, ids,
+source tree and time in .pm/run/emulator-image.json. `refreshed` and `failed` also go to the PM through pm-watchd's
+inbox as `EVENT emulator-image refreshed <before> -> <after>` and `EVENT emulator-image failed <reason>`. A reason is
+always one of the fixed texts of this script: what Docker or git printed is only in the refresh log,
+.pm/run/emulator-image-refresh.log, replaced by each refresh. A version or commit is accepted only in the shape
+[0-9A-Za-z._+-]{1,64}.
+
+Every child is an argument array with the environment PATH, HOME, DOCKER_HOST, DOCKER_CONTEXT, DOCKER_CONFIG,
+XDG_RUNTIME_DIR and TMPDIR only, and has a bound (the named constants below): at the bound its process group gets
+SIGTERM, then SIGKILL after 10 s.
+
+Exit 0: started, refreshed, unchanged, status. Exit 1: failed, or a refresh is already running. Exit 2: usage.
+"""
+import errno
+import fcntl
+import json
+import os
+import re
+import signal
+import subprocess
+import sys
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _pmlib import ROOT, RUN, log, now, save, wake_watchd
+
+READ_BOUND = 10     # seconds: docker info, docker image inspect, git
+IMAGE_BOUND = 30    # seconds: docker run --version, docker tag, docker image rm
+BUILD_BOUND = 600   # seconds: docker build
+KILL_GRACE = 10     # seconds between SIGTERM and SIGKILL of a child's process group
+
+PREFIX = "pm-emulator-image: "
+USAGE = "usage: pm-emulator-image refresh [--foreground] | status"
+NAME = "aws-emulator"
+LABEL = "emuforge.source-tree"
+FOLDER = ROOT / "infra" / "aws-emulator"
+RECORD = RUN / "emulator-image.json"
+LOCK = RUN / "emulator-image.lock"
+REFRESH_LOG = RUN / "emulator-image-refresh.log"
+INBOX = RUN / "inbox.jsonl"
+ENV_ALLOWED = ("PATH", "HOME", "DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG", "XDG_RUNTIME_DIR", "TMPDIR")
+SHAPE = re.compile(r"[0-9A-Za-z._+-]{1,64}")
+IMAGE_ID = re.compile(r"[0-9a-z]{1,16}:[0-9a-f]{12,128}")
+TREE_ID = re.compile(r"[0-9a-f]{40,64}")
+SCRIPT_ARG = re.compile(r"(^|[\s/])pm-emulator-image(\s|$)")
+
+
+class Usage(Exception):
+    pass
+
+
+class Failed(Exception):
+    """A step of the work failed; the text is one of the fixed reasons."""
+
+
+def child_env():
+    return {k: os.environ[k] for k in ENV_ALLOWED if k in os.environ}
+
+
+def call(args, bound, out=None):
+    """Run `args` in a session of its own with the allowlisted environment, bounded at `bound` seconds.
+    (exit code or None at the bound, stdout text or '' when `out` takes it)."""
+    try:
+        p = subprocess.Popen(args, stdin=subprocess.DEVNULL, env=child_env(), start_new_session=True,
+                             stdout=out if out is not None else subprocess.PIPE,
+                             stderr=out if out is not None else subprocess.DEVNULL, text=True)
+    except OSError:
+        return 127, ""
+    try:
+        stdout, _ = p.communicate(timeout=bound)
+        return p.returncode, stdout or ""
+    except subprocess.TimeoutExpired:
+        end_group(p)
+        return None, ""
+
+
+def end_group(p):
+    """SIGTERM to the child's process group, SIGKILL after KILL_GRACE when it is still there."""
+    for sig, wait in ((signal.SIGTERM, KILL_GRACE), (signal.SIGKILL, KILL_GRACE)):
+        try:
+            os.killpg(p.pid, sig)
+        except (ProcessLookupError, PermissionError):
+            pass
+        try:
+            p.communicate(timeout=wait)
+            if sig == signal.SIGTERM and group_alive(p.pid):
+                continue
+            return
+        except subprocess.TimeoutExpired:
+            continue
+
+
+def group_alive(pgid):
+    try:
+        os.killpg(pgid, 0)
+        return True
+    except (ProcessLookupError, PermissionError):
+        return False
+
+
+def docker(*args, bound=READ_BOUND, out=None):
+    return call(["docker", *args], bound, out)
+
+
+def git(*args):
+    return call(["git", "-C", str(ROOT), *args], READ_BOUND)
+
+
+def shaped(value):
+    return value if isinstance(value, str) and SHAPE.fullmatch(value) else None
+
+
+def version_of(ref):
+    """(version, commit) of an image by its id or name, each None when it cannot be read in shape."""
+    code, out = docker("run", "--rm", "--pull", "never", "--network", "none", "--entrypoint", "aws-emulator", ref,
+                       "--version", bound=IMAGE_BOUND)
+    if code != 0:
+        return None, None
+    found = {}
+    for line in out.splitlines():
+        key, _, value = line.partition(":")
+        if key.strip() in ("Version", "Commit") and key.strip() not in found:
+            found[key.strip()] = value.strip()
+    return shaped(found.get("Version")), shaped(found.get("Commit"))
+
+
+def image_id(ref):
+    """The id of `ref`, or None when there is no such image (or Docker gave no id)."""
+    code, out = docker("image", "inspect", "-f", "{{.Id}}", ref)
+    lines = out.split()
+    return lines[0] if code == 0 and len(lines) == 1 and IMAGE_ID.fullmatch(lines[0]) else None
+
+
+def read_record():
+    """The last outcome, or None when there is none or it cannot be read."""
+    try:
+        rec = json.loads(RECORD.read_text())
+    except (OSError, ValueError):
+        return None
+    return rec if isinstance(rec, dict) else None
+
+
+def last_after(rec):
+    """The `after` of a record as a {version, commit, id} dict, or None."""
+    after = (rec or {}).get("after")
+    if not isinstance(after, dict):
+        return None
+    return {k: (after.get(k) if isinstance(after.get(k), str) else None) for k in ("version", "commit", "id")}
+
+
+def say(text, file=sys.stdout):
+    print(PREFIX + text, file=file, flush=True)
+
+
+# ---- the lock
+
+
+def open_lock():
+    return os.open(LOCK, os.O_RDWR | os.O_CREAT, 0o644)
+
+
+def lock_pid_text(fd=None):
+    try:
+        if fd is None:
+            text = LOCK.read_text()
+        else:
+            os.lseek(fd, 0, os.SEEK_SET)
+            text = os.read(fd, 64).decode(errors="replace")
+    except OSError:
+        return "unknown"
+    text = text.strip()
+    return text if text.isdigit() else "unknown"
+
+
+def take_lock():
+    """The lock's descriptor, held; or None when another process holds it."""
+    fd = open_lock()
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError as e:
+        if e.errno in (errno.EWOULDBLOCK, errno.EAGAIN, errno.EACCES):
+            return None, fd
+        raise
+    return fd, None
+
+
+def write_pid(fd, pid):
+    os.ftruncate(fd, 0)
+    os.lseek(fd, 0, os.SEEK_SET)
+    os.write(fd, f"{pid}\n".encode())
+
+
+def inherited(text):
+    """The descriptor named by --inherited-lock when it is the lock file and holds its lock; else Usage."""
+    if not text.isdigit():
+        raise Usage()
+    fd = int(text)
+    try:
+        st, lk = os.fstat(fd), os.stat(LOCK)
+    except OSError:
+        raise Usage()
+    if (st.st_dev, st.st_ino) != (lk.st_dev, lk.st_ino):
+        raise Usage()
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)  # succeeds only on the open file that holds it (or nobody does)
+    except OSError:
+        raise Usage()
+    return fd
+
+
+def already_running(pid_text):
+    say(f"a refresh is already running (pid {pid_text})")
+    return 1
+
+
+# ---- refresh
+
+
+def cmd_refresh():
+    """Start the work in a process of its own and return at once."""
+    fd, held = take_lock()
+    if fd is None:
+        code = already_running(lock_pid_text(held))
+        os.close(held)
+        return code
+    write_pid(fd, os.getpid())  # a reader sees a live pid until the worker's replaces it
+    with open(REFRESH_LOG, "w") as out:
+        worker = subprocess.Popen([os.path.abspath(__file__), "refresh", "--foreground", "--inherited-lock", str(fd)],
+                                  stdin=subprocess.DEVNULL, stdout=out, stderr=out, pass_fds=(fd,),
+                                  start_new_session=True, env=child_env())
+    write_pid(fd, worker.pid)
+    os.close(fd)
+    last = (last_after(read_record()) or {}).get("version") or "unknown"
+    say(f"refresh started (pid {worker.pid}); last known image {last}; log {REFRESH_LOG}")
+    return 0
+
+
+def cmd_work(lock_arg):
+    """The work of one refresh, in this process: the outcome line, the record, the event; the exit code."""
+    if lock_arg is None:
+        fd, held = take_lock()
+        if fd is None:
+            code = already_running(lock_pid_text(held))
+            os.close(held)
+            return code
+        write_pid(fd, os.getpid())
+        build_out = open(REFRESH_LOG, "w")
+    else:
+        fd = inherited(lock_arg)  # the pid is already in the lock file, written by the part that started this one
+        build_out = sys.stdout  # the refresh log, opened by that part
+    started = time.time()
+    pid = os.getpid()
+    w = Work(pid, build_out)
+    try:
+        w.run()
+        outcome, line = w.outcome()
+        reason = None
+    except Failed as e:
+        reason = str(e)
+        w.cleanup()
+        w.after = w.before
+        outcome = "failed"
+        line = f"{PREFIX}failed: {reason}; image left as it was ({(w.before or {}).get('version') or 'none'})"
+    finally:
+        build_out.flush()
+    log(line)
+    save(RECORD, {"at": now(), "outcome": outcome, "line": line, "before": w.before, "after": w.after,
+                  "reason": reason, "source_tree": w.tree, "seconds": round(time.time() - started, 1)})
+    event = {"refreshed": f"EVENT emulator-image {line[len(PREFIX):]}",
+             "failed": f"EVENT emulator-image failed {reason}"}.get(outcome)
+    if event:
+        with INBOX.open("a") as f:
+            f.write(json.dumps({"ts": now(), "line": event}) + "\n")
+        wake_watchd()
+    print(line, flush=True)
+    if lock_arg is None:
+        build_out.close()
+    os.close(fd)
+    return 1 if outcome == "failed" else 0
+
+
+class Work:
+    def __init__(self, pid, build_out):
+        self.pid, self.out = pid, build_out
+        self.tag = f"{NAME}:refresh-{pid}"
+        self.before = last_after(read_record())  # until step d reads the image (decisions.md, t1)
+        self.after = None
+        self.tree = None
+        self.built = False
+
+    def note(self, text):
+        print(f"{PREFIX}{text}", file=self.out, flush=True)
+
+    def run(self):
+        # b: the folder, committed
+        code, tree = git("rev-parse", "HEAD:infra/aws-emulator")
+        tree = tree.strip()
+        if code != 0 or not FOLDER.is_dir() or not TREE_ID.fullmatch(tree):
+            raise Failed("infra/aws-emulator of the main checkout is missing")
+        code, dirty = git("status", "--porcelain", "--", "infra/aws-emulator")
+        if code != 0 or dirty.strip():
+            raise Failed("infra/aws-emulator of the main checkout has uncommitted changes")
+        self.tree = tree
+        # c: Docker answers
+        if docker("info")[0] != 0:
+            raise Failed("docker does not answer")
+        # d: the image before
+        old = image_id(NAME)
+        if old is None:
+            self.before = None
+        else:
+            v, c = version_of(old)
+            self.before = {"version": v or "unknown", "commit": c or "unknown", "id": old}
+        # e: the build, under the refresh's own name
+        self.built = True
+        self.note(f"build of {FOLDER} as {self.tag}")
+        code, _ = docker("build", "--pull", "--no-cache", "--label", f"{LABEL}={tree}", "--tag", self.tag, str(FOLDER),
+                         bound=BUILD_BOUND, out=self.out)
+        if code is None:
+            raise Failed(f"the build did not end within {BUILD_BOUND} s")
+        if code != 0:
+            raise Failed(f"the build failed (exit {code})")
+        # f: the new image's version, read without network
+        v, c = version_of(self.tag)
+        if v is None or c is None:
+            raise Failed("the new image's version cannot be read")
+        self.after = {"version": v, "commit": c, "id": image_id(self.tag)}
+        # g: the name moves, in one step
+        if docker("tag", self.tag, NAME, bound=IMAGE_BOUND)[0] != 0:
+            raise Failed(f"the name {NAME} could not be moved")
+        self.built = False
+        # h: the refresh's own name goes; the image keeps the name aws-emulator
+        code, _ = docker("image", "rm", self.tag, bound=IMAGE_BOUND)
+        if code != 0:
+            self.note(f"docker image rm {self.tag} ended {code}; the outcome stands")
+
+    def outcome(self):
+        b, a = self.before, self.after
+        same = b is not None and (b["version"], b["commit"]) == (a["version"], a["commit"])
+        if same and "unknown" not in (b["version"], b["commit"]):  # unknown differs from every version
+            return "unchanged", f"{PREFIX}unchanged {a['version']}"
+        return "refreshed", f"{PREFIX}refreshed {(b or {}).get('version') or 'none'} -> {a['version']}"
+
+    def cleanup(self):
+        """After a failure: remove the refresh's own name when it exists."""
+        if self.built and image_id(self.tag) is not None:
+            code, _ = docker("image", "rm", self.tag, bound=IMAGE_BOUND)
+            if code != 0:
+                self.note(f"docker image rm {self.tag} ended {code}")
+
+
+# ---- status
+
+
+def machine_image():
+    """(id, label) of the name: (None, None) when there is no image, 'unknown' for both when Docker does not answer."""
+    code, out = docker("image", "inspect", NAME)
+    try:
+        doc = json.loads(out) if out.strip() else None
+    except ValueError:
+        doc = None
+    if code is None or not isinstance(doc, list):
+        return "unknown", "unknown"
+    if code != 0 or not doc:
+        return (None, None) if doc == [] else ("unknown", "unknown")
+    obj = doc[0] if len(doc) == 1 and isinstance(doc[0], dict) else {}
+    iid = obj.get("Id") if isinstance(obj.get("Id"), str) else None
+    if iid is None:
+        return "unknown", "unknown"
+    labels = (obj.get("Config") or {}).get("Labels") or {}
+    label = labels.get(LABEL) if isinstance(labels, dict) else None
+    return iid, (label if isinstance(label, str) and TREE_ID.fullmatch(label) else None)
+
+
+def running_pid():
+    """The lock file's pid when that process is alive and is this script; never a try of the lock."""
+    text = lock_pid_text()
+    if not text.isdigit():
+        return None
+    try:
+        os.kill(int(text), 0)
+    except (ProcessLookupError, PermissionError, OverflowError):
+        return None
+    p = call(["ps", "-o", "stat=,command=", "-p", text], READ_BOUND)
+    stat, _, command = p[1].strip().partition(" ")
+    if p[0] != 0 or stat.startswith("Z") or not SCRIPT_ARG.search(command):
+        return None
+    return int(text)
+
+
+def cmd_status():
+    iid, label = machine_image()
+    if iid == "unknown":
+        image, tree = "unknown", "unknown"
+    elif iid is None:
+        image, tree = "none", "none"
+    else:
+        image, tree = version_of(iid)[0] or "unknown", label or "none"
+    rec = read_record()
+    line = rec.get("line") if rec else None
+    if isinstance(line, str) and line.startswith(PREFIX) and isinstance(rec.get("at"), str):
+        last = f"{line[len(PREFIX):]} at {rec['at']}"
+    else:
+        last = "none"
+    text = f"image {image} source-tree {tree}; last refresh {last}"
+    pid = running_pid()
+    if pid:
+        text += f"; a refresh is running (pid {pid})"
+    say(text)
+    return 0
+
+
+def main(argv):
+    if argv == ["status"]:
+        return cmd_status()
+    if argv == ["refresh"]:
+        return cmd_refresh()
+    if argv == ["refresh", "--foreground"]:
+        return cmd_work(None)
+    if len(argv) == 4 and argv[:3] == ["refresh", "--foreground", "--inherited-lock"]:
+        return cmd_work(argv[3])
+    raise Usage()
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except Usage:
+        print(USAGE, file=sys.stderr)
+        sys.exit(2)

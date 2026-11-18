@@ -322,6 +322,22 @@ def report_services(co, commit, started, narrowed):
     return False, None
 
 
+def report_emulator(co, commit, started):
+    """{version, commit} of the emulator this run's report.json (this_report) names, or None when there is no such
+    report or either value is not a string."""
+    data = this_report(co, commit, started)
+    if data is None:
+        return None
+    v, c = data.get("emulator_version"), data.get("emulator_commit")
+    return dict(version=v, commit=c) if isinstance(v, str) and isinstance(c, str) else None
+
+
+def emulator_line(entry):
+    """`emulator <version> commit <commit>` of an integration step's entry, or None."""
+    e = entry.get("emulator")
+    return f"emulator {e['version']} commit {e['commit']}" if e else None
+
+
 def leave_out(co, sc):
     """The test files the harness step leaves out: the scope's `harness_tests` left_out when the checkout's runner
     names --leave-out, else []. A runner over RUNNER_MAX bytes, or one that cannot be read as UTF-8, is taken not to
@@ -482,6 +498,7 @@ def run_all(a, co, mods, calls, env, logs, record, commit, held=(), target="main
                 results[-1]["first_log"] = str(first)
             if mod == "integration":
                 results[-1]["checks"] = read_report(co, commit, started)  # of its last run
+                results[-1]["emulator"] = report_emulator(co, commit, started)
                 said, value = report_services(co, commit, started, services is not None)
                 if said:
                     results[-1]["services"] = value
@@ -501,6 +518,8 @@ def named_lines(results):
     for r in results:
         if "checks" not in r:
             continue
+        if emulator_line(r):
+            out.append(emulator_line(r))
         if r["checks"] is None:
             out.append(f"{r['module']}: no report of this run")
             continue
@@ -532,6 +551,7 @@ def checks_run(co, out, logs, env, record, commit, dirty, ports, sc, asked, ids)
                  log=str(log))
     found = report_checks(co, commit, t)
     entry["checks"] = read_report(co, commit, t)
+    entry["emulator"] = report_emulator(co, commit, t)
     verdicts = {i: (v, m) for i, v, m in found or []}
     entry["asked"] = {i: verdicts[i][0] if i in verdicts else None for i in asked}
     entry["messages"] = {i: verdicts[i][1] for i in asked if i in verdicts and verdicts[i][0] != "passed"}
@@ -541,6 +561,8 @@ def checks_run(co, out, logs, env, record, commit, dirty, ports, sc, asked, ids)
                    ports=ports, scope=sc, steps=[entry])
     (out / "checks.json").write_text(json.dumps(summary, indent=1))
     (out / f"{now()[:19].replace(':', '')}-checks.json").write_text(json.dumps(summary, indent=1))
+    if emulator_line(entry):
+        print(emulator_line(entry))
     if found is None:
         print("integration: no report of this run")
     for i in asked if found is not None else ():
