@@ -1,6 +1,7 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { useState, useSyncExternalStore } from 'react';
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -1181,6 +1182,62 @@ describe('preferences and wrapping', () => {
     expect(link.textContent).toBe(name);
     expect(link.textContent).toHaveLength(63);
     expect(tableElement().textContent).not.toContain('…');
+  });
+
+  /** Opens "Preferences" and chooses "50 buckets" from "25 buckets" with the arrow keys, as a keyboard user does. */
+  async function chooseFiftyWithArrowKeys(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(screen.getByRole('button', { name: 'Preferences' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Preferences' });
+    const chosen = within(dialog).getByRole('radio', { name: '25 buckets' });
+    expect(chosen).toBeChecked();
+    act(() => {
+      chosen.focus();
+    });
+    await user.keyboard('{ArrowDown}');
+    const fifty = within(dialog).getByRole('radio', { name: '50 buckets' });
+    expect(fifty).toBeChecked();
+    expect(document.activeElement).toBe(fifty);
+    return { dialog, fifty };
+  }
+
+  // Issue 462, "Unit — …/s3/pages/bucket-list-page.test.tsx": the page re-renders on every connection answer, a new
+  // object in the same state, as the frame hands it every 5 seconds.
+  it('"Preferences" open, "50 buckets" chosen with the arrow keys, then a new connection answer: the same dialog, "50 buckets" has focus and is chosen (regression)', async () => {
+    const user = userEvent.setup();
+    await openLoaded();
+    const { dialog, fifty } = await chooseFiftyWithArrowKeys(user);
+
+    connection.set(connectedResult());
+    // Cloudscape's portal asks for its container in a promise; a new container would be made in this tick.
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(dialog.isConnected).toBe(true);
+    expect(screen.getByRole('dialog', { name: 'Preferences' })).toBe(dialog);
+    expect(fifty.isConnected).toBe(true);
+    expect(document.activeElement).toBe(fifty);
+    expect(fifty).toBeChecked();
+  });
+
+  it('60 buckets: "50 buckets" chosen with the arrow keys, then "Confirm": the dialog closes, focus on "Preferences", the table shows the first 50 buckets', async () => {
+    const user = userEvent.setup();
+    const sixty = Array.from({ length: 60 }, (_, index) => bucket(`bucket-${String(index + 1).padStart(2, '0')}`));
+    engine.buckets = sixty;
+    open();
+    await expectNames(sixty.slice(0, 25).map((b) => b.name));
+    const { dialog } = await chooseFiftyWithArrowKeys(user);
+
+    await user.click(footerButton(dialog, 'Confirm'));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'Preferences' })).toBeNull();
+    });
+    await waitFor(() => {
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Preferences' }));
+    });
+    expect(engine.lists.at(-1)?.searchParams.get('max-buckets')).toBe('50');
+    await expectNames(sixty.slice(0, 50).map((b) => b.name));
   });
 
   it('unmounted after "10 buckets" and "Wrap lines" off, mounted again: 25 buckets asked for, "25 buckets" and "Wrap lines" on', async () => {

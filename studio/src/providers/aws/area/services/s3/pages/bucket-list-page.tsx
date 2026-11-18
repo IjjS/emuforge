@@ -12,11 +12,11 @@ import StatusIndicator, { type StatusIndicatorProps } from '@cloudscape-design/c
 import Table, { type TableProps } from '@cloudscape-design/components/table';
 import Tabs, { type TabsProps } from '@cloudscape-design/components/tabs';
 import TextFilter, { type TextFilterProps } from '@cloudscape-design/components/text-filter';
-import { useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
 
 import '../../../styles/emulator-line.css';
-import { AreaRootContext } from '../../../area-root';
+import { useAreaModalRoot } from '../../../components/area-modal';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { creationDateText } from '../../../components/format-date';
 import { usePageHelp } from '../../../components/page-help';
@@ -270,26 +270,6 @@ function useAnnouncer(): [ReactNode, (text: string) => void] {
     </div>
   );
   return [region, announce];
-}
-
-/** Cloudscape's modal root for "Preferences" in the area's root, never under `document.body` (`AreaModal`). */
-function useAreaModalRoot(): Pick<CollectionPreferencesProps, 'getModalRoot' | 'removeModalRoot'> {
-  const root = useContext(AreaRootContext);
-  return {
-    getModalRoot: () =>
-      Promise.resolve().then(() => {
-        const area = root.current;
-        if (area === null) {
-          throw new Error('A modal of the AWS area opened outside the area.');
-        }
-        const container = document.createElement('div');
-        area.appendChild(container);
-        return container;
-      }),
-    removeModalRoot: (container: HTMLElement | null) => {
-      container?.remove();
-    },
-  };
 }
 
 interface TableBodyProps {
