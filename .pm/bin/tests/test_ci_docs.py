@@ -69,8 +69,8 @@ def flat(text):
 class Skill(unittest.TestCase):
     def setUp(self):
         self.text = SKILL.read_text()
-        self.merge = part(self.text, "### 5. Gate review 2 and merge (you)")
-        self.report = part(self.text, "### 6. Report and archive")
+        self.merge = part(self.text, "### 2. Close (you)")
+        self.report = part(self.text, "### 3. Report and archive")
 
     def pointed_to(self):
         """Section 6 and what it points to: a reference file it names, a section of the skill it names in quotes,
@@ -80,7 +80,7 @@ class Skill(unittest.TestCase):
             texts.append((PM / name).read_text())
         for line in self.text.splitlines():
             m = re.match(r"#+ (?:\d+\. )?(.+)$", line)
-            if m and line != "### 6. Report and archive":
+            if m and line != "### 3. Report and archive":
                 title = m.group(1).strip()
                 if any(f"{o}{title}{c}" in self.report for o, c in (('"', '"'), ("[", "]"), ("**", "**"))):
                     texts.append(part(self.text, line))

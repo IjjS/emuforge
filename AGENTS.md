@@ -12,7 +12,7 @@ emuforge/
   tests/integration/   checks that run against a real emulator
   infra/aws-emulator/  emulator image, Compose file, shell environment
   issues/              work items as files (issues/README.md)
-  .agents/skills/pm/   the PM skill, pane rules, review protocol, briefs
+  .agents/skills/pm/   the PM skill, pane rules, how a plan leads, review protocol, briefs
   .pm/bin/             harness scripts
 ```
 
@@ -20,29 +20,34 @@ Module guides: `engine/AGENTS.md`, `studio/AGENTS.md`, `tests/integration/AGENTS
 folder that holds its stages and rules.
 
 A session in the main checkout starts by invoking the `pm` skill (`.agents/skills/pm`) and follows it. A pane
-opened by the PM follows `.agents/skills/pm/references/pane-mode.md` and its brief instead. The scripts every PM
-and pane uses are in `.pm/bin/`; working files are in `.pm/issue-<id>/`, summaries in `.pm/archive/`. Of `.pm/`,
-only `bin/` is tracked.
+follows `.agents/skills/pm/references/pane-mode.md` and its brief instead; a `plan` also
+`.agents/skills/pm/references/lead.md`. The scripts every PM and pane uses are in `.pm/bin/`; working files are in
+`.pm/issue-<id>/`, summaries in `.pm/archive/`. Of `.pm/`, only `bin/` is tracked.
 
 ## Agents
 
 This repository is written for any coding agent, not one vendor's. `AGENTS.md` and `.agents/` are the source;
 `CLAUDE.md` and `.claude/skills` are symlinks to them. Never write a rule into a `CLAUDE.md` or under `.claude/`.
 
-Planners, workers, reviewers and critics run as herdr panes opened by the `pm`. Nothing in the harness starts an agent
-any other way.
+Every agent but the `pm` runs as a herdr pane, opened with `.pm/bin/pm-pane`: a `plan` or a `harness-engineer` by the
+`pm`, an issue's workers, `rev` and `crit` by that issue's `plan`. Nothing in the harness starts an agent any other
+way.
 
 ## Roles
 
-Five roles, no more. A role is a separation of duty, not a head count.
+Six roles, no more. A role is a separation of duty, not a head count.
 
 | Role | Does | Never does |
 |---|---|---|
-| `pm` | Manages the work: turns a request or GitHub issue into an issue file, opens and answers panes, gates each phase, collects an issue's units on its issue branch, checks the issue branch whole once and merges it into local `main` (an issue of one unit: its unit's branch), reads the GitHub Actions run of each push of `main`, picks the next issue, talks to the owner | Edits product code, writes the plan |
-| `plan` | Plans one issue: requirement, design or screen, test criteria, breakdown into units | Edits product code, talks to the owner |
-| `worker` | Implements one unit in its own worktree against the confirmed test criteria | Changes a confirmed check, touches files outside its unit, merges |
-| `rev` | Reviews every deliverable of an issue from files only: requirement, design, test criteria, checks, implementation | Edits anything, sees the author's reasoning |
-| `crit` | Scores Studio screens | Fixes anything |
+| `pm` | Orders the issues and gives each to its lead (a `plan`, or for a harness issue a `harness-engineer`); answers their `BLOCKED` lines; reviews the severity of each issue a plan's closing report names and may change it; looks the change over while it merges and, at its own discretion, files a further critical fault it finds, and only that; merges an issue's collecting branch (its issue branch `feat/<id>`) into local `main`, pushes, reads the run; judges a harness-engineer's plan and change itself; talks to the owner | Edits product code, writes the plan |
+| `plan` | Leads one issue to its end: requirement, design or screen, test criteria, the cut into units, their worktrees, briefs and worker panes, merging the units into the collecting branch `feat/<id>`, the integration tests, the whole check, the end review and critique, the closing report with a severity for each issue it filed | Writes code other than integration tests (no product code, no unit tests of a worker), acts outside its own issue, merges into `main`, talks to the owner |
+| `worker` | Implements one unit, engine or Studio, in its own worktree, with the unit tests its brief's scenarios ask | Writes integration tests, changes a confirmed check, touches files outside its unit, merges |
+| `rev` | Reviews an issue from files only: the stage documents before the build, and at the end the implementation and whether the integration tests are the scenarios | Edits anything, sees the author's reasoning |
+| `crit` | Scores Studio screens with the impeccable critique, on the built app | Fixes anything |
+| `harness-engineer` | Plans and implements a harness issue alone, judged by the `pm` directly; runs the harness tests of what it touches and nothing else | Merges, opens panes |
+
+Test author (`plan`), implementer (`worker`) and reviewer (`rev`) stay three. The machine's room (panes, CPU,
+memory) is judged by the scripts, never by a pane.
 
 ## Work items
 
@@ -72,16 +77,17 @@ token rate for the day; over it, no new pane is opened.
 ## Branches and main
 
 - Work happens on branches in worktrees (an issue's issue branch and its units' branches), never on `main`.
-- There are no pull requests. An issue with more than one unit collects its units on its issue branch
-  `feat/<id>`: the `pm` merges a unit's branch into the issue branch when `rev` has passed the unit and its fast
-  check passes, which leaves the integration checks to the issue branch.
-- The issue branch is checked whole once, integration checks included, and then the `pm` merges it into local
-  `main`.
-- An issue of one unit has no issue branch: the `pm` merges its unit's branch into local `main` when its checks
-  pass and `rev` has passed it. With several worktrees open, the `pm` decides the order.
+- There are no pull requests. An issue led by a `plan` collects its units on its issue branch `feat/<id>`, even
+  an issue of one unit: the `plan` merges a unit's branch into it when the unit's fast check passes, which leaves
+  the integration checks to the issue branch.
+- The issue branch is checked whole once, integration checks included, and reviewed whole by `rev`; then the `pm`
+  merges it into local `main`. With several issues finished, the `pm` decides the order.
+- A harness issue has no issue branch: the `pm` merges its unit's branch into local `main` when its check passes
+  and the `pm` has judged it.
 - On `main` the `pm` commits only issue files it created and merges made by `.pm/bin/pm-merge`.
-- The `pm` pushes `main` to `origin` each time an issue is finished: merged into `main` on its own passing
-  check (its issue branch's whole check, or its unit's check). Only `main`, never forced, never an issue branch.
+- Only the `pm` merges into `main` and pushes. It pushes `main` to `origin` each time an issue is finished:
+  merged into `main` on its own passing check (its issue branch's whole check, or its unit's check). Only `main`,
+  never forced, never an issue branch.
 - Every push of `main` is checked on GitHub Actions, on Ubuntu, by `.github/workflows/main.yml`, with every
   check of no service and the browser checks of the services the push touched (every service's when a shared
   path changed); the `pm` reads the run of the pushed commit with `gh` and writes nothing to GitHub. A failed run
@@ -94,6 +100,8 @@ token rate for the day; over it, no new pane is opened.
 ## Checks decide, not agents
 
 - Test criteria are written and confirmed before implementation starts, from the requirement alone.
+- The integration tests are the `plan`'s, written after the build from the scenarios confirmed before it; a
+  `worker` writes the unit tests its brief's scenarios ask and never an integration test.
 - A confirmed check is changed only on the `pm`'s decision with a recorded reason, never by the `worker` whose
   code it tests.
 - An issue is closed by its checks passing. A worker's statement that something works is not evidence.

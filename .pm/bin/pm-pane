@@ -14,7 +14,11 @@ orphaned processes of <worktree>: <pid> <name>, …`, `no orphaned processes in 
 logs it. Only processes of the worktree are signalled, by PID after a check that each is still the same process;
 nothing by name, no process group, no container. A pane in the main checkout is not swept.
 
-Roles: plan, worker, rev, crit. Name = i<issue>-<role>[-<unit>], e.g. i12-plan, i12-worker-s1, i12-rev (herdr names must start with a letter).
+Roles: plan, worker, rev, crit, harness-engineer. Name = i<issue>-<role>[-<unit>], e.g. i12-plan, i12-worker-s1, i12-rev,
+i12-harness-engineer (herdr names must start with a letter).
+Who may run it: the pm, and a plan for its own issue: `new <its issue> worker|rev|crit`, and `reset` and `close` of a
+pane of its own issue other than itself (by name). Every other pane is refused all but `list`. A plan answered QUEUE
+is remembered in .pm/run/waiting.json and pm-watchd prompts it `EVENT room <plan> pane <role> <side>` once there is room.
 A unit name starts with its side: s<n> studio, e<n> engine, t<n> tests, h<n> harness.
 Tab: "#<issue>" in the PM's workspace; created when missing. New agents are panes inside that tab.
 Limits (enforced unless --no-limit): worker panes per side (studio 8, engine 8, tests 8, harness 8), total live panes 24,
@@ -30,8 +34,8 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _pmlib import (LIMITS, MODEL_IDS, PANES, PANES_HISTORY, PMINFO, ROOT, agent_by_name, cpu_pct, find_key, herdr, load, log,
-                    mem_gb, now, panes, save, side_of, tabs)
+from _pmlib import (LIMITS, MODEL_IDS, PANE_ROLES, PANES, PANES_HISTORY, PLAN_OPENS, PMINFO, ROOT, agent_by_name, cpu_pct,
+                    find_key, guard, herdr, load, log, mem_gb, now, panes, room, save, side_of, tabs, wait_for_room)
 from _pmorphans import line, sweep, worktree_paths
 
 
@@ -135,11 +139,34 @@ def brief_text(entry, resumed=False):
     return t
 
 
+def queue(asker, a, side, why, tail=""):
+    """Answer QUEUE; a pane that asked is remembered, so pm-watchd tells it when there is room."""
+    if asker:
+        wait_for_room(asker["name"], a.role, side, a.issue, why)
+        tail = f"; end your turn: EVENT room {asker['name']} pane {a.role} {side} comes when there is room"
+    sys.exit(f"QUEUE: {why}{tail}")
+
+
+def own_pane(asker, name, reg):
+    """For a plan: the pane it names must be of its own issue and not itself."""
+    if asker is None:
+        return
+    entry = next((r for r in reg if r["name"] == name), None)
+    if not entry or entry.get("issue") != str(asker.get("issue")) or name == asker["name"]:
+        sys.exit(f"refused: {asker['name']} resets and closes only the worker, rev and crit panes of #{asker.get('issue')}; not {name}")
+
+
 def cmd_new(a):
+    asker = guard(f"pm-pane new {a.issue} {a.role}", issue=a.issue, plan_may=True)
+    if asker and a.role not in PLAN_OPENS:
+        sys.exit(f"refused: a plan opens only {', '.join(PLAN_OPENS)} panes; {a.role} is the pm's")
+    if asker and (a.no_limit or a.adopt):
+        sys.exit("refused: --no-limit and --adopt are the pm's")
+    side = side_of(a.unit)
     from _pmquota import start_allowed
     quota_reason = start_allowed(a.issue)
     if quota_reason:
-        sys.exit(f"QUEUE: {quota_reason}")
+        queue(asker, a, side, quota_reason)
     reg = registry()
     name = f"i{a.issue}-{a.role}" + (f"-{a.unit}" if a.unit else "")
     existing = agent_by_name(name)
@@ -158,28 +185,10 @@ def cmd_new(a):
         p_old = next((p for p in (panes() or []) if p["pane_id"] == old["pane_id"]), None)
         if p_old and not p_old.get("agent"):
             reuse = old["pane_id"]
-    side = side_of(a.unit)
     if not a.no_limit:
-        used, su, st = mem_gb()
-        if used > LIMITS["mem_gb"]:
-            sys.exit(f"QUEUE: memory {used:.1f}GB > {LIMITS['mem_gb']}GB; close or wait, then retry")
-        if st and st - su < 0.25:
-            sys.exit(f"QUEUE: swap free {(st - su) * 1024:.0f}MB < 256MB; close or wait, then retry")
-        cpu = cpu_pct()
-        if cpu is not None and cpu > LIMITS["cpu_pct"]:
-            sys.exit(f"QUEUE: cpu {cpu:.0f}% > {LIMITS['cpu_pct']}%; wait for it to drop (EVENT cpu ok), then retry")
-        from _pmtokens import fmt, status as token_status
-        rate, tgt, over = token_status()
-        if over:
-            sys.exit(f"QUEUE: token rate {fmt(tgt, rate)} is over today's target {fmt(tgt, tgt['per_hour'])}; wait for EVENT tokens ok")
-        alive = live(reg)
-        if len(alive) >= LIMITS["total"]:
-            sys.exit(f"QUEUE: {len(alive)} live panes >= {LIMITS['total']}")
-        if a.role == "worker":
-            n = sum(1 for r in alive if r["role"] == "worker" and r.get("side") == side)
-            cap = LIMITS.get(f"{side}_worker", LIMITS["engine_worker"])
-            if n >= cap:
-                sys.exit(f"QUEUE: {n} {side} worker panes >= {cap}")
+        why = room(a.role, side, a.issue, alive=live(reg))
+        if why:
+            queue(asker, a, side, why, "; close or wait (EVENT mem ok, cpu ok, tokens ok), then retry")
     info = load(PMINFO, {})
     workspace = info.get("workspace") or os.environ.get("HERDR_WORKSPACE_ID")
     if a.adopt:
@@ -229,7 +238,13 @@ def cmd_new(a):
                      f"inspect with herdr agent read {name}, then herdr agent prompt {name} \"{text}\"")
 
 
+def issue_of(name):
+    return next((r.get("issue") for r in load(PANES, []) if r["name"] == name), None)
+
+
 def cmd_reset(a):
+    asker = guard(f"pm-pane reset {a.name}", issue=issue_of(a.name), plan_may=True)
+    own_pane(asker, a.name, load(PANES, []))
     reg = registry()
     entry = next((r for r in live(reg) if r["name"] == a.name), None)
     if not entry:
@@ -283,6 +298,11 @@ def cmd_reset(a):
 
 
 def cmd_close(a):
+    if a.issue:
+        guard(f"pm-pane close --issue {a.issue}")
+    else:
+        asker = guard(f"pm-pane close {a.name}", issue=issue_of(a.name), plan_may=True)
+        own_pane(asker, a.name, load(PANES, []))
     reg = registry()
     targets = [r for r in reg if (a.name and r["name"] == a.name) or (a.issue and r["issue"] == str(a.issue))]
     if not targets:
@@ -314,7 +334,7 @@ def cmd_list(a):
 
 p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 sp = p.add_subparsers(dest="cmd", required=True)
-n = sp.add_parser("new"); n.add_argument("issue"); n.add_argument("role", choices=["plan", "worker", "rev", "crit"])
+n = sp.add_parser("new"); n.add_argument("issue"); n.add_argument("role", choices=PANE_ROLES)
 n.add_argument("--unit"); n.add_argument("--kind", default="claude", choices=["claude", "codex"]); n.add_argument("--model")
 n.add_argument("--cwd"); n.add_argument("--brief"); n.add_argument("--text"); n.add_argument("--no-limit", action="store_true")
 n.add_argument("--adopt", action="store_true", help="register an exact-name/cwd/kind agent left after a startup trust dialog")

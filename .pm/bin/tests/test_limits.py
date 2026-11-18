@@ -1,12 +1,12 @@
 """The pane limits of `_pmlib.LIMITS` and the two texts that state them (issue 67, requirement section 9).
 
 `Limits` holds the worker limits at 8 per side and the total of live panes at 24 (H1, H2), the other limits as
-they are (H3), and ties `pm-pane`'s help text and the PM skill's sentence to `LIMITS` (H4, H5): a later change of
-the numbers in the code or in a text alone fails here. On `main` before the issue the first two cases fail.
+they are (H3), and ties `pm-pane`'s help text to `LIMITS` (H4): a later change of the numbers in the code or in the
+help alone fails here. The PM skill's sentence (H5) was removed by issue 478: the machine's room is judged by the
+scripts alone (decisions.md of issue 478, PM decisions), so no guide restates the numbers. On `main` before the issue the first two cases fail.
 """
 import os
 import pathlib
-import re
 import subprocess
 import sys
 import unittest
@@ -16,23 +16,6 @@ from _pmlib import LIMITS, SIDES
 HERE = pathlib.Path(__file__).resolve().parent
 BIN = HERE.parent
 CHECKOUT = BIN.parents[1]
-SKILL = CHECKOUT / ".agents" / "skills" / "pm" / "SKILL.md"
-BUILD = "### 3. Build (worker panes and rev)"
-SENTENCE = "Worker panes are counted per side:"
-
-
-def part(text, heading):
-    """The body under the heading line `heading`, up to the next heading of the same or a higher level."""
-    lines = text.splitlines()
-    start = lines.index(heading)  # ValueError names the missing heading
-    level = len(heading) - len(heading.lstrip("#"))
-    body = []
-    for line in lines[start + 1:]:
-        m = re.match(r"(#+) ", line)
-        if m and len(m.group(1)) <= level:
-            break
-        body.append(line)
-    return "\n".join(body)
 
 
 def per_side():
@@ -71,14 +54,6 @@ class Limits(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("memory 22.5 GB", r.stdout)
         self.assertIn("CPU 90%", r.stdout)
-
-    def test_skill_sentence_states_the_worker_limits_only(self):
-        body = " ".join(part(SKILL.read_text(), BUILD).split())
-        start = body.index(SENTENCE)  # ValueError names a missing sentence
-        sentence = body[start:body.index(".", start) + 1]
-        self.assertEqual(sentence, f"{SENTENCE} {per_side()}.")
-        self.assertEqual(re.findall(r"\d+(?:\.\d+)?", sentence),
-                         [str(LIMITS[side + "_worker"]) for side in SIDES.values()])
 
 
 if __name__ == "__main__":

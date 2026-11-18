@@ -149,4 +149,7 @@ x = sp.add_parser("take"); x.add_argument("issue", type=int); x.set_defaults(f=c
 x = sp.add_parser("schedule"); x.add_argument("--minutes", type=int, default=5); x.set_defaults(f=cmd_schedule)
 x = sp.add_parser("unschedule"); x.set_defaults(f=cmd_unschedule)
 a = p.parse_args()
+if a.cmd != "list":
+    from _pmlib import guard
+    guard(f"pm-ready {a.cmd}")  # the pm's alone (issue 478); a pane may only list
 a.f(a)

@@ -1,0 +1,124 @@
+# Lead: how a plan leads its issue
+
+A `plan` leads one issue from its requirement to its closing report. The `pm` gave it the issue and hears of it
+again only through the plan's `BLOCKED` lines and its closing line `ISSUE READY`. Everything in between is the
+plan's: the stage documents, the cut into units, the worktrees, briefs and panes of its workers, the merges into the
+issue's collecting branch `feat/<id>`, the integration tests, the whole check, the end review and critique.
+
+## What you may do
+
+- You act only on your own issue: its branches (`feat/<id>` and its units'), its worktrees and its panes (its
+  workers, `rev` and `crit`). `pm-pane`, `pm-worktree`, `pm-merge` and `pm-brief` refuse you anything else, and
+  every other script of the `pm`'s refuses you entirely.
+- Of code you write integration tests only: never product code and never a worker's unit tests. You write the stage
+  documents under `.pm/issue-<id>/`.
+- You never merge into `main`, push, talk to the owner or start an issue. Only the `pm` does.
+- The machine's limits are the scripts' to judge. `pm-pane` answers `QUEUE` when there is no room; end your turn,
+  and `EVENT room <you> pane <role> <side>` arrives when there is.
+
+## Stages before the build
+
+Each stage document is reviewed by `rev` per `review-protocol.md` before the next. The module's
+`references/workflow.md` and `references/test-criteria.md` say what each holds.
+
+1. `requirement.md`. Find out what the emulator answers today by calling one (start it on a free port, stop it
+   after); never from memory.
+2. The design or screen stage your brief names.
+3. `test-criteria.md`: per unit, the unit-test scenarios that are its worker's end condition; for the issue, the
+   scenarios its integration tests will be. When you can already tell that an integration test will be left out
+   (the issue is too slight, or the test would cost more than it shows), say so here, with the reason.
+4. `breakdown.md`: the units, each with a one-line summary, its owned files, its base and the order they land in.
+
+## The cut
+
+- A unit is `e<n>` (engine, CLI, IAM, Verify) or `s<n>` (Studio), never both; an issue has as many of each as its
+  size asks. No unit takes more than a day.
+- Units with overlapping owned files are sequential: the later one is stacked on the earlier
+  (`--base feat/<id>-<unit>`).
+- You decide the cut. When you cannot, stop with `BLOCKED i<id>-plan decision-needed cut <what the work is>`; the
+  `pm` decides.
+
+## Build
+
+1. `pm-worktree new <id>`: the collecting branch `feat/<id>` and the issue's worktree `emuforge-<id>`, even for an
+   issue of one unit.
+2. Per unit: `pm-worktree new <id> <unit> [--base <unit branch>]`, then
+   `pm-brief worker <id> <unit> --summary "<its line in breakdown.md>" [--scenarios "<where>"] [--close "<ids>"]`
+   (`--close` for the unit that closes the issue), then
+   `pm-pane new <id> worker --unit <unit> --cwd <its worktree> --brief .pm/issue-<id>/brief-<unit>.md`.
+3. On a worker's `UNIT READY`: `pm-merge <id> <unit>` merges its branch into `feat/<id>` on its fast check. A unit
+   is merged as many times as it is fixed.
+4. After a merge, tell only a pane whose branch was cut from `feat/<id>` and that needs what it gained:
+   `herdr agent prompt <pane> "feat/<id> is at <sha>; merge it into your branch"`. Telling every pane makes each
+   check again for nothing.
+
+## Integration tests
+
+When every unit is merged, write the integration tests yourself in `emuforge-<id>` on `feat/<id>`: one per
+integration scenario of `test-criteria.md`, as `tests/integration/AGENTS.md` says, and commit them. One that is left
+out is said so in `test-criteria.md` before the build when you could tell then, and in `report.md` at the end. When
+you cannot tell whether to leave one out, stop with `BLOCKED i<id>-plan decision-needed integration <scenario>`.
+Leaving tests out does not leave the whole check out: `pm-merge` into `main` asks for its record.
+
+## Whole check
+
+`pm-merge <id> --take-main`, then `pm-check emuforge-<id>`, the whole check, `integration` included. In the whole
+check the integration step of the issue branch runs every check of no service and the browser checks of the
+services its paths touch, every service's when a shared path changed; the `services` line of `pm-scope` and
+`pm-check` names them, and `pm-merge` refuses a record that ran fewer. A failed check goes to the unit that owns
+what failed, by `breakdown.md`. It fixes it on its branch, merges `feat/<id>` into its own when `pm-merge` asks,
+passes its fast check, and is merged again. `feat/<id>` has then moved, so run the whole check again.
+
+## End review and critique
+
+- `REVIEW impl r1 <changed paths> emuforge-<id>/output/checks/last.json` to `rev`: the whole diff
+  `main...feat/<id>`, and whether the integration tests are the scenarios.
+- For a Studio screen: `pm-brief crit <id> --targets "<routes>" --capture-wt emuforge-<id>`, then
+  `pm-pane new <id> crit --brief .pm/issue-<id>/brief-crit.md`, and prompt it `SCORE final <routes>`. A screen mock
+  of the screen stage is scored the same way, at point `mock`.
+- A fault found, by its size:
+  - Small and inside the issue: give it to the owning worker at once. It is fixed, merged again, and checked
+    whole again, and then the next review round follows.
+  - Large, or outside the issue: file it with `pm-issue new --source plan --severity <S> … --in emuforge-<id>` and
+    `pm-issue commit --in emuforge-<id>`. It reaches `main` with the issue.
+
+## Close
+
+Write `.pm/issue-<id>/report.md`:
+
+- the tasks built;
+- the scenarios, which became integration tests, which were left out and why;
+- the record `feat/<id>` passed on, with its path;
+- the review rounds;
+- the critique's findings;
+- every issue you filed, with the severity you gave it and one line of reason;
+- what was not done.
+
+The `pm` reviews those severities and may change them. Close your workers, `rev` and `crit`
+(`pm-pane close <name>`). Then
+`pm-report "ISSUE READY i<id>-plan feat/<id> report=.pm/issue-<id>/report.md [filed #<n> …]"`, print the same
+line and stop. The `pm` merges `feat/<id>` into `main` and then closes you.
+
+## Events that reach you
+
+The events of your issue's panes come to you as prompts starting with `EVENT`. Your own lines, a dialog in one of
+your panes (`EVENT blocked`), a pane's `BLOCKED … memory`, `cpu` or `depends emulator image`, and the machine's
+events go to the `pm`.
+
+| line | you do |
+|---|---|
+| `EVENT ready <worker> UNIT READY <branch>` | Build step 3 |
+| `EVENT ready <pane> DONE <what>` | an order you sent finished: note it in `state-plan.md` |
+| `EVENT ready <pane> STAGE READY …` | `crit` recorded its scores: read the review file's header, go on |
+| `EVENT ready <pane> BLOCKED decision-needed …` | decide from `decisions.md` and the references, record it under `## Plan decisions` and answer the pane in one line; a question only the owner can answer goes to the `pm` as your own `BLOCKED i<id>-plan decision-needed …` |
+| `EVENT ready <pane> BLOCKED depends <unit> <what>` | answer in one line, or tell the pane to wait for the parent's `UNIT READY` |
+| `EVENT ready <pane> BLOCKED check <id>` | a worker believes a confirmed check is wrong: a wrong criteria line is changed only on the `pm`'s decision, so stop with `BLOCKED i<id>-plan check <id>`; an integration test of yours that does not do what its criteria line says you fix yourself, and record why under `## Plan decisions` |
+| `EVENT ready <pane> BLOCKED review <stage>` | three rounds failed: stop with `BLOCKED i<id>-plan review <stage>` |
+| `EVENT ctx <pane> <n>K` | `pm-pane reset <pane>` with the command timeout set to 10 minutes |
+| `EVENT stale <pane>` | `herdr agent read <pane> --lines 80`; if it loops, `pm-pane reset <pane>` |
+| `EVENT gone <pane>` | reopen it with the same brief; its worktree and state file are still there |
+| `EVENT check still <worktree> <step> <n>m` | read the end of `<worktree>/output/logs/check-<step>.log`; a step that still writes is left alone; a hung one: `pm-check <worktree> --stop` and tell its pane in one line |
+| `EVENT room <you> pane <role> <side>` | run the `pm-pane new` that was answered `QUEUE` again |
+
+`REVIEWED` lines come straight from `rev` as your next prompt. Talk to your panes with
+`herdr agent prompt <pane> "<one line>"`.

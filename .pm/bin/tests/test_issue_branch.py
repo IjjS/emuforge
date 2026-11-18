@@ -921,7 +921,7 @@ class BriefAndArchive(IssueCase):
 
     def test_guard_brief_of_the_issue_branch_is_refused(self):
         self.brief_fixture()
-        self.assertRefused(self.script("pm-brief", "worker", 9, "issue", "--summary", "x"), "expected t<n>")
+        self.assertRefused(self.script("pm-brief", "worker", 9, "issue", "--summary", "x"), "expected e<n>")
 
     def archive_given(self):
         """Issue 99963 with its issue branch and unit h1, merged into the issue branch with pm-merge."""

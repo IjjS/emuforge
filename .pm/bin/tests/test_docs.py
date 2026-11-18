@@ -60,7 +60,7 @@ class Guides(unittest.TestCase):
         text = SKILL.read_text()
         scripts = section(text, "## Scripts")
         self.assertTrue(any(ln.startswith("| `pm-structure`") for ln in scripts.splitlines()), scripts)
-        report = section(text, "### 6. Report and archive")
+        report = section(text, "### 3. Report and archive")
         self.assertIn("pm-structure --table", report)
         not_built = section(text, "## Not built yet")
         self.assertNotIn("structure score", not_built.lower())

@@ -22,8 +22,8 @@ What it does, in order:
 
 ## Keep list
 
-`requirement.md`, `decisions.md`, `test-criteria.md`, `critique-scores.json`, `structure-scores.json`, `cost.json`,
-`state.md`, moved to `.pm/archive/<id>/`. Everything else (briefs, `design.md`, mocks, review rounds, drafts) is
+`requirement.md`, `decisions.md`, `test-criteria.md`, `report.md`, `critique-scores.json`, `structure-scores.json`,
+`cost.json`, `state.md`, moved to `.pm/archive/<id>/`. Everything else (briefs, `design.md`, mocks, review rounds, drafts) is
 deleted; what was built is in the repository, the issue file is under `issues/things-that-now-work/`, and the
 reviews are summarized in the archive.
 

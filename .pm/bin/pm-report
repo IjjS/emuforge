@@ -1,11 +1,12 @@
 #!/usr/bin/env -S python3 -I
 """Report a pane's line to the PM through a file instead of the terminal screen.
 
-  pm-report "<STAGE READY|UNIT READY|BLOCKED|DONE|RESET READY> <pane-name> …"
+  pm-report "<STAGE READY|UNIT READY|ISSUE READY|BLOCKED|DONE|RESET READY> <pane-name> …"
   pm-report --from <pane-name> "REVIEWED <stage> r<k> …"
 
-Appends {ts, seq, pane, line} to .pm/run/reports.jsonl; pm-watchd is signalled, reads the file and delivers PM lines
-(STAGE READY, UNIT READY, BLOCKED, DONE) to the PM verbatim. Screen scraping stays as a fallback, but the file is
+Appends {ts, seq, pane, line} to .pm/run/reports.jsonl; pm-watchd is signalled, reads the file and delivers the
+reporting lines (STAGE READY, UNIT READY, ISSUE READY, BLOCKED, DONE) verbatim to whoever hears the pane: the plan
+of its issue for a worker, rev or crit pane of a plan-led issue, else the PM (_pmroute.py). Screen scraping stays as a fallback, but the file is
 exact: no wrapped URLs, no Claude/Codex rendering differences, no duplicates. The pane name must be a registered,
 live pane (pm-pane list), so a stray call cannot wake the PM. Print the same line in your reply as well.
 """
@@ -19,7 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _pmlib import PANES, RUN, load, now, wake_watchd
 
 REPORTS = RUN / "reports.jsonl"
-PREFIXES = ("STAGE READY", "UNIT READY", "BLOCKED", "DONE", "RESET READY", "REVIEWED")
+PREFIXES = ("STAGE READY", "UNIT READY", "ISSUE READY", "BLOCKED", "DONE", "RESET READY", "REVIEWED")
 
 
 def main():

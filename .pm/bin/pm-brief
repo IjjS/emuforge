@@ -3,21 +3,28 @@
 
   pm-brief plan <issue> [--grade console|native|none] [--precedent <archived id>]...
         writes brief-plan.md and brief-rev.md (one rev pane serves the whole issue)
-  pm-brief worker <issue> <unit> --summary "<what the unit does>" [--owned "<files>"]
+        and marks the issue `lead: plan` in brief.json (pm-merge reads it)
+  pm-brief worker <issue> <unit> --summary "<what the unit does>" [--owned "<files>"] [--scenarios "<where>"]
         [--close "<check ids>" | --close auto] [--precedent <id>]... [--inputs "<a, b>"] [--conventions "<a, b>"]
-        writes brief-<unit>.md. --owned defaults to "the files breakdown.md lists for `<unit>`"; --close names
-        the check ids for the unit that closes the issue (auto: "the ids breakdown.md and test-criteria.md give")
+        writes brief-<unit>.md, for an engine (e<n>) or studio (s<n>) unit. --owned defaults to "the files
+        breakdown.md lists for `<unit>`"; --scenarios, the unit-test scenarios that are the unit's end condition,
+        defaults to "the unit-test scenarios test-criteria.md lists for `<unit>`"; --close names the check ids for
+        the unit that closes the issue (auto: "the ids breakdown.md and test-criteria.md give")
+  pm-brief harness-engineer <issue> <unit> --part "<what this pane plans and builds>" [--precedent <id>]...
+        writes brief-harness-engineer.md for the unit's worktree and marks the issue `lead: harness-engineer`
   pm-brief crit <issue> --targets "<routes or mock files>" --capture-wt <worktree> [--grade console|native]
         writes brief-crit.md
   pm-brief show <issue>
         the briefs written so far and the values remembered for the issue
 
-Templates: .agents/skills/pm/references/briefs/{plan,rev,worker,crit}.md; what each placeholder means:
+Templates: .agents/skills/pm/references/briefs/{plan,rev,worker,crit,harness-engineer}.md; what each placeholder means:
 briefs/README.md. Everything that can be looked up is looked up:
   issue, title, module, kind, issue file   from the issue file (open or closed)
   worktree, branch, base                   from the worktree registry (run pm-worktree new first)
   references to read                       from the module (its AGENTS.md and every file in its references/)
-  inputs, conventions, the work block      from the unit's side (its first letter: t, e, s, h) and the screen grade
+  inputs, conventions                      from the unit's side (its first letter: e, s) and the screen grade
+Who may run it: the pm, and a plan for its own issue (`worker`, `crit`, `show`); `plan` and `harness-engineer` are
+the pm's. Every other pane is refused all but `show`.
 A studio issue needs its screen grade once (--grade on `plan`); it is remembered in brief.json for the worker and
 crit briefs. The command fails, and writes nothing, when a placeholder is left unfilled or a value it needs is
 missing. Pass the written file to `pm-pane new … --brief <file>`.
@@ -29,7 +36,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _pmlib import PM, ROOT, WORKTREES, issue_dir, load, save
+from _pmlib import PM, ROOT, WORKTREES, guard, issue_dir, load, save
 
 BRIEFS = ROOT / ".agents" / "skills" / "pm" / "references" / "briefs"
 ISSUE_DIRS = ("issues/things-that-do-not-work", "issues/things-that-now-work")
@@ -42,18 +49,14 @@ SCREEN_STEP = {
     "console": "one reference spec per screen under specs/ per studio/references/console-reference.md. REVIEW spec r1.",
     "native": "a mock under mocks/ built from the design system of the screen's layer (studio/references/critique.md, "
               "native screens), showing the states the requirement names; capture it with pm-capture <root> mock-<id> "
-              "--file <mock.html>, then stop with BLOCKED i<id>-plan depends crit mock; the PM has crit score it; revise "
-              "until critique.md's Screen stage passes.",
+              "--file <mock.html>, then have crit score it (lead.md, Critique); revise until critique.md's Screen stage "
+              "passes.",
     "none": "(no screen stage for this grade)",
 }
 CONVENTIONS = {
-    "t": "`tests/integration/AGENTS.md`",
     "e": "`engine/AGENTS.md`, `engine/references/security-review.md`, `engine/references/relay-fidelity.md`",
     "s": "`studio/AGENTS.md`",
-    "h": "`AGENTS.md`",
 }
-BLOCK_TESTS = "<!-- block: tests (unit t<n>) -->\n"
-BLOCK_IMPL = "<!-- block: implementation (unit e<n>, s<n>, h<n>) -->\n"
 
 
 def issue(n):
@@ -119,7 +122,15 @@ def write(n, name, text):
     print(path)
 
 
+def mark_lead(n, who):
+    """Who leads the issue: `plan` or `harness-engineer`, for pm-merge's review rule."""
+    memo = load(issue_dir(n) / "brief.json", {})
+    if memo.get("lead") != who:
+        save(issue_dir(n) / "brief.json", {**memo, "lead": who})
+
+
 def cmd_plan(a):
+    guard(f"pm-brief plan {a.issue}")
     v = issue(a.issue)
     grade = grade_of(a.issue, v["module"], a.grade)
     refs = module_refs(v["module"])
@@ -130,44 +141,49 @@ def cmd_plan(a):
     texts = [("plan", fill((BRIEFS / "plan.md").read_text(), plan)), ("rev", fill((BRIEFS / "rev.md").read_text(), rev))]
     for name, text in texts:  # both filled before either is written
         write(a.issue, name, text)
+    mark_lead(a.issue, "plan")
 
 
 def cmd_worker(a):
+    guard(f"pm-brief worker {a.issue} {a.unit}", issue=a.issue, plan_may=True)
     v = issue(a.issue)
     side = a.unit[:1]
-    if side not in CONVENTIONS or not re.fullmatch(r"[tesh]\d+", a.unit):
-        sys.exit(f"unit {a.unit!r}: expected t<n>, e<n>, s<n> or h<n>")
+    if not re.fullmatch(r"[es]\d+", a.unit):
+        sys.exit(f"unit {a.unit!r}: expected e<n> (engine) or s<n> (studio); a harness issue goes to pm-brief harness-engineer")
     wt = next((w for w in load(WORKTREES, []) if w["issue"] == str(a.issue) and w["unit"] == a.unit), None)
     if not wt:
         sys.exit(f"no registered worktree for issue {a.issue} unit {a.unit}; run pm-worktree new first")
     grade = grade_of(a.issue, v["module"], None) if v["module"] == "studio" else None
     if a.inputs:
         inputs = a.inputs
-    elif side == "t":
-        inputs = "`requirement.md`, `test-criteria.md`" + (", `specs/`" if grade == "console" else "")
     elif side == "s":
         inputs = "`requirement.md`, `decisions.md`, `test-criteria.md`" + {"console": ", `specs/`", "native": ", `mocks/`"}.get(grade, "")
     else:  # a studio issue has no design.md
         inputs = "`requirement.md`, `decisions.md`, " + ("" if v["module"] == "studio" else "`design.md`, ") + "`test-criteria.md`"
-    if a.close and side == "t":
-        sys.exit("--close: a test unit does not close the issue")
     ids = "<the check ids breakdown.md and test-criteria.md give this issue>" if a.close == "auto" else a.close
     close = (f'Run {{{{root}}}}/.pm/bin/pm-issue close {{{{issue}}}} --checks "{ids}" --in {{{{worktree}}}} and commit the '
              "move with your last commit.") if a.close else "(This unit does not close the issue; nothing to do in this step.)"
-    template = (BRIEFS / "worker.md").read_text()
-    try:
-        head, rest = template.split(BLOCK_TESTS)
-        tests, impl = rest.split(BLOCK_IMPL)
-    except ValueError:
-        sys.exit(f"{BRIEFS / 'worker.md'}: the two block markers are not both present exactly once")
     values = dict(v, root=str(ROOT), unit=a.unit, unit_summary=a.summary.strip(), owned_files=(a.owned or f"the files breakdown.md lists for `{a.unit}`").strip(),
+                  scenarios=(a.scenarios or f"the unit-test scenarios `test-criteria.md` lists for `{a.unit}`").strip(),
                   worktree=wt["path"], branch=wt["branch"], base=wt.get("base") or "main", inputs=inputs,
-                  conventions=a.conventions or CONVENTIONS[side], precedents=precedents(a.precedent), close_step=close,
-                  work=(tests if side == "t" else impl).rstrip("\n"))
-    write(a.issue, a.unit, fill(head.rstrip("\n") + "\n", values))
+                  conventions=a.conventions or CONVENTIONS[side], precedents=precedents(a.precedent), close_step=close)
+    write(a.issue, a.unit, fill((BRIEFS / "worker.md").read_text(), values))
+
+
+def cmd_harness(a):
+    guard(f"pm-brief harness-engineer {a.issue}")
+    v = issue(a.issue)
+    wt = next((w for w in load(WORKTREES, []) if w["issue"] == str(a.issue) and w["unit"] == a.unit), None)
+    if not wt:
+        sys.exit(f"no registered worktree for issue {a.issue} unit {a.unit}; run pm-worktree new {a.issue} {a.unit} first")
+    values = dict(v, root=str(ROOT), unit=a.unit, part=a.part.strip(), worktree=wt["path"], branch=wt["branch"],
+                  base=wt.get("base") or "main", precedents=precedents(a.precedent))
+    write(a.issue, "harness-engineer", fill((BRIEFS / "harness-engineer.md").read_text(), values))
+    mark_lead(a.issue, "harness-engineer")
 
 
 def cmd_crit(a):
+    guard(f"pm-brief crit {a.issue}", issue=a.issue, plan_may=True)
     v = issue(a.issue)
     grade = grade_of(a.issue, v["module"], a.grade)
     if grade not in ("console", "native"):
@@ -191,9 +207,11 @@ sp = p.add_subparsers(dest="cmd", required=True)
 x = sp.add_parser("plan"); x.add_argument("issue"); x.add_argument("--grade", choices=GRADES)
 x.add_argument("--precedent", action="append", default=[]); x.set_defaults(f=cmd_plan)
 x = sp.add_parser("worker"); x.add_argument("issue"); x.add_argument("unit")
-x.add_argument("--summary", required=True); x.add_argument("--owned"); x.add_argument("--close")
+x.add_argument("--summary", required=True); x.add_argument("--owned"); x.add_argument("--close"); x.add_argument("--scenarios")
 x.add_argument("--precedent", action="append", default=[]); x.add_argument("--inputs"); x.add_argument("--conventions")
 x.set_defaults(f=cmd_worker)
+x = sp.add_parser("harness-engineer"); x.add_argument("issue"); x.add_argument("unit"); x.add_argument("--part", required=True)
+x.add_argument("--precedent", action="append", default=[]); x.set_defaults(f=cmd_harness)
 x = sp.add_parser("crit"); x.add_argument("issue"); x.add_argument("--targets", required=True)
 x.add_argument("--capture-wt", required=True); x.add_argument("--grade", choices=("console", "native")); x.set_defaults(f=cmd_crit)
 x = sp.add_parser("show"); x.add_argument("issue"); x.set_defaults(f=cmd_show)

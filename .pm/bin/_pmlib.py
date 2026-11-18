@@ -241,3 +241,107 @@ def issue_dir(n):
 def side_of(unit):
     """studio | engine | tests | harness from a unit name (s1, e2, t1, h1); 'other' for a pane without a unit."""
     return SIDES.get((unit or "")[:1], "other")
+
+
+# --- who calls, and what a pane may run (issue 478) ------------------------------------------------------------
+# A plan leads one issue: it may open, reset and close that issue's worker, rev and crit panes, make its worktrees,
+# write its worker and crit briefs and merge its units into feat/<issue>. Everything else these scripts do is the pm's.
+WAITING = RUN / "waiting.json"  # panes a QUEUE answer told to wait for room: [{asker, role, side, issue, reason, at}]
+PANE_ROLES = ("plan", "worker", "rev", "crit", "harness-engineer")
+PLAN_OPENS = ("worker", "rev", "crit")  # the roles a plan opens for its own issue
+
+
+def _ancestors():
+    pids, pid = set(), os.getpid()
+    for _ in range(40):
+        try:
+            out = subprocess.run(["ps", "-o", "ppid=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+        except OSError:
+            break
+        if not out.isdigit() or int(out) <= 1:
+            break
+        pid = int(out)
+        pids.add(pid)
+    return pids
+
+
+def _shell_pid(pane_id):
+    try:
+        info = herdr("pane", "process-info", "--pane", pane_id, check=False) or {}
+    except OSError:  # no herdr on this machine
+        return None
+    pi = find_key(info, "process_info")
+    return pi.get("shell_pid") if isinstance(pi, dict) else None
+
+
+def caller():
+    """The live registered pane this command runs in, or None for the pm.
+
+    None also stands for a caller no script can tie to a registered pane (the owner's own terminal, a test
+    fixture): it has the pm's rights (decisions.md, issue 478, review decision 3a). HERDR_PANE_ID is tried first,
+    with no herdr call; when it names neither the pm's pane nor a registered pane (Codex freezes it, see pm-watchd),
+    the pane whose shell is an ancestor of this process decides."""
+    reg = [r for r in load(PANES, []) if not r.get("gone")]
+    if not reg:
+        return None
+    env = os.environ.get("HERDR_PANE_ID")
+    if env and env == load(PMINFO, {}).get("pm_pane"):
+        return None
+    hit = next((r for r in reg if r.get("pane_id") == env), None)
+    if hit:
+        return hit
+    anc = _ancestors()
+    return next((r for r in reg if _shell_pid(r["pane_id"]) in anc), None)
+
+
+def guard(what, issue=None, plan_may=False):
+    """Refuse (exit 1, one line) when a pane runs what is the pm's. With plan_may, a plan may run it for its own issue.
+    Returns the calling pane's entry, or None for the pm."""
+    c = caller()
+    if c is None:
+        return None
+    who = f"{c['name']} ({c.get('role')} of #{c.get('issue')})"
+    if plan_may and c.get("role") == "plan":
+        if issue is not None and str(issue) == str(c.get("issue")):
+            return c
+        sys.exit(f"refused: {who} acts only on its own issue #{c.get('issue')}; {what} names #{issue}")
+    sys.exit(f"refused: {what} is the pm's" + ("; a plan may run it for its own issue" if plan_may else "")
+             + f"; {who} may not")
+
+
+def room(role, side, issue, alive=None, tokens=True):
+    """Why a new pane of this role and side may not start now, or None when there is room. The one judgement of the
+    machine's limits that pm-pane (its QUEUE answer) and pm-watchd (EVENT room) share."""
+    from _pmquota import start_allowed
+    why = start_allowed(issue)
+    if why:
+        return why
+    used, su, st = mem_gb()
+    if used > LIMITS["mem_gb"]:
+        return f"memory {used:.1f}GB > {LIMITS['mem_gb']}GB"
+    if st and st - su < 0.25:
+        return f"swap free {(st - su) * 1024:.0f}MB < 256MB"
+    cpu = cpu_pct()
+    if cpu is not None and cpu > LIMITS["cpu_pct"]:
+        return f"cpu {cpu:.0f}% > {LIMITS['cpu_pct']}%"
+    if tokens:
+        from _pmtokens import fmt, status as token_status
+        rate, tgt, over = token_status()
+        if over:
+            return f"token rate {fmt(tgt, rate)} is over today's target {fmt(tgt, tgt['per_hour'])}"
+    alive = [r for r in load(PANES, []) if not r.get("gone")] if alive is None else alive
+    if len(alive) >= LIMITS["total"]:
+        return f"{len(alive)} live panes >= {LIMITS['total']}"
+    if role == "worker":
+        n = sum(1 for r in alive if r.get("role") == "worker" and r.get("side") == side)
+        cap = LIMITS.get(f"{side}_worker", LIMITS["engine_worker"])
+        if n >= cap:
+            return f"{n} {side} worker panes >= {cap}"
+    return None
+
+
+def wait_for_room(asker, role, side, issue, reason):
+    """Remember that a pane was told QUEUE; pm-watchd sends it `EVENT room <asker> pane <role> <side>` once there is room."""
+    rows = [w for w in load(WAITING, []) if not (w.get("asker") == asker and w.get("role") == role and w.get("side") == side)]
+    rows.append(dict(asker=asker, role=role, side=side, issue=str(issue), reason=reason, at=now()))
+    save(WAITING, rows)

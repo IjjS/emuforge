@@ -107,7 +107,8 @@ ON_TOUCH = [
     dict(test="test_capture.py",
          why="pm-structure captures its fixture pages with the Playwright, Vite and Cloudscape Studio installs",
          sources=[_T + "test_capture.py", _T + "fixtures/structure/", _B + "pm-structure",
-                  _B + "_pmstructure_capture.mjs", *_SCORE, _B + "_pmlib.py", "studio/package.json",
+                  _B + "_pmstructure_capture.mjs", *_SCORE, _B + "_pmlib.py", _B + "_pmquota.py",
+                  _B + "_pmtokens.py", "studio/package.json",
                   "studio/bun.lock"]),
     dict(test="test_hang.py",
          why="the stand-ins of a capture that hangs and the ending of their process groups",
@@ -119,7 +120,9 @@ ON_TOUCH = [
     dict(test="test_check_issue.py",
          why="pm-check and pm-merge on the issue branch of a fixture checkout",
          sources=[_T + "test_check_issue.py", _T + "test_issue_branch.py", _T + "_fixture.py", _B + "pm-check",
-                  _B + "pm-merge", _B + "pm-worktree", _B + "pm-emulator-dir", _B + "_pmlib.py", _B + "_pmorphans.py"]),
+                  _B + "pm-merge", _B + "pm-worktree", _B + "pm-emulator-dir", _B + "_pmlib.py", _B + "_pmquota.py",
+                  _B + "_pmtokens.py",
+                  _B + "_pmorphans.py"]),
     dict(test="test_emulator_telemetry.py",
          why="an emulator started from the compose files, and their telemetry setting",
          sources=[_T + "test_emulator_telemetry.py", _T + "_emulator_telemetry.py", _T + "fixtures/emulator-telemetry/",
@@ -134,7 +137,7 @@ ON_TOUCH = [
          why="real stand-in orphans found and stopped, and pm-pane reset and close and pm-worktree on fixture checkouts",
          sources=[_T + "test_orphans.py", _T + "_fixture.py", _B + "pm-pane", _B + "pm-worktree", _B + "pm-watchd",
                   _B + "pm-emulator-dir", _B + "_pmorphans.py", _B + "_pmorphanevent.py", _B + "_pmlib.py",
-                  _B + "_pmquota.py", _B + "_pmtokens.py", _B + "_pmstill.py", _B + "_pmwake.py"]),
+                  _B + "_pmquota.py", _B + "_pmtokens.py", _B + "_pmstill.py", _B + "_pmwake.py", _B + "_pmroute.py"]),
 ]
 
 

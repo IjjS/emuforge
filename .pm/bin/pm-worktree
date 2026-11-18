@@ -21,6 +21,10 @@ has an issue branch, so is a --branch that is not <feat|refactor|fix>/<issue>-<n
 has a branch whose target is the issue branch. Every worktree gets output/{captures,logs} and three ports in output/ports.json:
 studio (8100+), engine (8300+) and emulator (9300+), so parallel units never share a server or an emulator.
 When studio/package.json exists, `bun install` runs there (log in output/logs/install.log).
+Who may run it: the pm, and a plan for its own issue: `new <its issue>`, `new <its issue> <e<n>|s<n>>` once the issue
+branch is registered (based on it, or with --base on a unit branch <type>/<issue>-<name> of the issue), and `rm` of a
+unit worktree of its issue (the issue's own worktree goes with pm-archive); `orphans` is the pm's alone. Every
+other pane is refused all but `list`.
 rm removes the worktree, frees its ports and deletes the branch only when it is merged into local main. It first
 stops the worktree's orphaned processes, as `orphans <name> --stop` does, and prints its line; then it runs
 `pm-emulator-dir rm --worktree` for the worktree, merged or not, and prints its line: the folder the worktree's
@@ -44,7 +48,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _pmlib import BIN, PORTS, ROOT, WORKTREES, load, log, now, save
+from _pmlib import BIN, PORTS, ROOT, WORKTREES, guard, load, log, now, save
 from _pmorphans import CannotTell, line, scan, sweep, table, worktree_paths
 from _pmscope import Unreadable, run_git
 
@@ -80,7 +84,21 @@ def issue_entry(wts, issue):
     return next((w for w in wts if w.get("issue") == str(issue) and w.get("unit") == ISSUE), None)
 
 
+def plan_may_make(a):
+    """A plan makes its issue's branch, and engine or studio units cut from it (or stacked on one of its units)."""
+    asker = guard(f"pm-worktree new {a.issue}", issue=a.issue, plan_may=True)
+    if not asker or a.unit is None:
+        return
+    if not re.fullmatch(r"[es]\d+", a.unit):
+        sys.exit(f"refused: a plan's units are e<n> (engine) or s<n> (studio); not {a.unit}")
+    if issue_entry(load(WORKTREES, []), a.issue) is None:
+        sys.exit(f"refused: make the issue branch first (pm-worktree new {a.issue}); a plan's units are cut from it")
+    if a.base and not re.fullmatch(rf"(feat|refactor|fix)/{re.escape(str(a.issue))}(-.+)?", a.base):
+        sys.exit(f"refused: a plan's unit is based on feat/{a.issue} or on a unit branch of #{a.issue}; not {a.base}")
+
+
 def cmd_new(a):
+    plan_may_make(a)
     if a.unit is None:
         return cmd_new_issue(a)
     if a.unit == ISSUE:
@@ -206,8 +224,11 @@ def cmd_rm(a):
     wts = load(WORKTREES, [])
     key = os.path.basename(os.path.abspath(a.target)) if "/" in a.target else a.target
     wt = next((w for w in wts if w["name"] == key), None)
+    asker = guard(f"pm-worktree rm {key}", issue=(wt or {}).get("issue"), plan_may=True)
     if not wt:
         sys.exit(f"{key} not in registry; remove it by hand with git worktree remove")
+    if asker and wt.get("unit") == ISSUE:
+        sys.exit(f"refused: the issue's own worktree {key} is removed by pm-archive, the pm's")
     swept = [w for w in worktree_paths() if w[0] == wt["name"]]
     if swept:
         text = line(wt["name"], sweep(swept)[wt["name"]])
@@ -230,6 +251,7 @@ def cmd_rm(a):
 
 
 def cmd_orphans(a):
+    guard("pm-worktree orphans" + (f" {a.name}" if a.name else "") + (" --stop" if a.stop else ""))
     wts = worktree_paths()
     if a.name is not None:
         wts = [w for w in wts if w[0] == a.name]
