@@ -5,6 +5,9 @@ evaluation and IaC verification. This file holds the rules that apply to every a
 module adds its own stages, conventions and references in its own `AGENTS.md`; follow those inside the module
 and never restate or override them here.
 
+What EmuForge is to become, and in what order, is the owner's product plan in `PRODUCT.md`; a guide that differs
+from it names the issue that brings it there.
+
 ```
 emuforge/
   studio/              web console (React, TypeScript, Vite, Cloudscape, bun)

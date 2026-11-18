@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: bug
 Issue-Source: finder
 Issue-Key: studio|unit|fifty-tags-cases-time-out-on-the-runner
-Issue-Check-Ids:
+Issue-Check-Ids: studio-unit:src/providers/aws/area/services/s3/components/bucket-tags.test.tsx studio-unit:src/providers/aws/area/services/iam/components/role-tags.test.tsx studio-unit:src/test/case-bounds.test.ts
 Issue-Commit: d0b7b289ae4b0fb49d6caaee89585c76f72641ff
 
 # Keep the two unit cases that fill fifty tags within their time on the GitHub Actions runner

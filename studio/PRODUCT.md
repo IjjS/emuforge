@@ -2,9 +2,11 @@
 
 <!-- impeccable:product-schema 1 -->
 
-Sources: the owner's answers of 2026-11-15 (issue #16), the owner's two-layer decision of the same day, the owner's
-decisions of 2026-11-16 on AWS screens (issue #45), the BRD's one-line definition, principles and MVP scope, and the
-safety rules of the root `AGENTS.md`. Anything those do not confirm is listed as undecided below.
+Sources: the owner's product plan of 2026-11-18 (the root `PRODUCT.md`, which holds the roadmap, the parts and
+their ports, and the two deliveries), the owner's answers of 2026-11-15 (issue #16), the owner's two-layer decision
+of the same day, the owner's decisions of 2026-11-16 on AWS screens (issue #45), the earlier BRD's one-line
+definition, principles and MVP scope, and the safety rules of the root `AGENTS.md`. Anything those do not confirm is
+listed as undecided below.
 
 ## Platform
 
@@ -31,9 +33,13 @@ EmuForge is a local workbench on top of AWS's official `aws-emulator`. It does n
 a web console (EmuForge Studio), a CLI, IAM policy evaluation and IaC verification on top of it.
 
 EmuForge is a multi-cloud local workbench. AWS is the first provider. Google Cloud and Azure are the planned
-direction, not merely a possibility left open.
+direction, not merely a possibility left open (the owner's decision of 2026-11-15; the plan of 2026-11-18 supports
+AWS's emulator alone at first, designed to extend to other providers).
 
-MVP success, as the BRD states it:
+Studio is phase 1 of the owner's plan (root `PRODUCT.md`, "Roadmap"); the CLI, the IAM simulator and IaC
+verification follow it.
+
+MVP success, as the earlier BRD states it:
 
 - Studio and the engine start with Docker Compose and are reached in a browser.
 - The main create, read, update and delete operations of S3 and DynamoDB are verified by integration checks.
@@ -53,8 +59,10 @@ EmuForge is an independent project. It is not affiliated with, endorsed by or sp
 
 ## Operating Context
 
-- Runs on the user's own machine. The emulator runs separately (on a port the user names); the engine connects to
-  it on loopback, and Studio talks only to the engine, never to the emulator and never to AWS.
+- Runs on the user's own machine. The emulator runs separately; Studio talks only to the engine, never to the
+  emulator and never to AWS. In the plan the engine reaches the emulator of the chosen target: an endpoint the user
+  registers in the native CLI's form, the emulator's Compose service in the Compose form. Today the engine connects
+  to one emulator, on a port the user names, on loopback; issues 484 and 485 change that.
 - The emulator's keys and certificates change on every emulator start; the engine reads them again, and Studio
   reconnects.
 - Users work alongside their own tools: application code, the AWS CLI, Terraform and other IaC, whose resources
@@ -70,9 +78,11 @@ EmuForge is an independent project. It is not affiliated with, endorsed by or sp
 
 ## Capabilities and Constraints
 
-Confirmed MVP scope for Studio and the engine (BRD):
+Confirmed MVP scope for Studio and the engine (the earlier BRD, and phase 1 of the owner's plan of 2026-11-18):
 
 - Connect to a running emulator on a given port; read the keys and certificates again after a restart.
+- Emulator connections (phase 1 of the plan; issues 485 and 486): register, choose, test and remove several
+  emulators; switch the target Studio's screens read; show whether it is connected, the error and the endpoint.
 - Home: connection status, emulator version, endpoint, recent errors, and the engine process's own CPU and memory
   use (never the host's or other processes').
 - AWS service screens that follow the AWS console's structure and flow and are not a copy of it (Cloudscape): list,
@@ -80,7 +90,8 @@ Confirmed MVP scope for Studio and the engine (BRD):
   DynamoDB. The IAM console is built on the emulator's IAM API the same way as the other service screens.
 - An HTTP 501 answer is shown clearly as "not implemented by the emulator".
 - Destructive actions are confirmed. Light and dark mode.
-- One Docker Compose start brings up Studio and the engine (and the emulator when needed).
+- One Docker Compose start brings up Studio and the engine (and the emulator when needed). In the plan they are one
+  emuforge binary in one image, on two ports, beside the emulator in its own container (issue 484).
 
 Constraints (BRD principles and the owner's decisions):
 
