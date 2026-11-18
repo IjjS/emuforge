@@ -129,7 +129,7 @@ class Select(unittest.TestCase):
     # Given select(paths, M, M)
 
     def test_a_service_folder_and_a_file_of_its_checks_give_the_service(self):
-        for path in (S + "alpha/pages/a.tsx", "studio/references/console/alpha/list.yaml",
+        for path in (S + "alpha/pages/a.tsx", "tests/integration/studio/services/alpha/alpha.ts",
                      "tests/integration/studio/alpha-one.spec.ts"):
             with self.subTest(path):
                 self.assertNames([path], ["alpha"])

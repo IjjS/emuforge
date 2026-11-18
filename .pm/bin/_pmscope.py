@@ -50,7 +50,7 @@ SERVICE = re.compile(r"[a-z][a-z0-9]*(-[a-z0-9]+)*")  # matched with fullmatch
 # A service's folder of checks (issue 402): its support, its seed script and its manifest. A path under it is its
 # service's, as a path under a folder of its screens is.
 SERVICE_CHECKS = "tests/integration/studio/services/"
-SERVICE_FOLDERS = ("studio/src/providers/aws/area/services/", "studio/references/console/", SERVICE_CHECKS)
+SERVICE_FOLDERS = ("studio/src/providers/aws/area/services/", SERVICE_CHECKS)
 # The manifest (issue 402, R3.2) is the rows of the main manifest, in its order, then the rows of each service's
 # manifest, SERVICE_CHECKS + <s> + "/" + SERVICE_MANIFEST, the services in name order. A folder under
 # SERVICE_CHECKS whose name is not of the form SERVICE, or that holds no manifest, adds no row; a checkout without
@@ -70,8 +70,11 @@ RULES = [
          why="Studio code that a harness test also reads"),
     dict(paths=["studio/package.json", "studio/bun.lock"], calls=PRODUCT + HARNESS,
          why="they install the Playwright and Cloudscape the harness tests run"),
-    dict(paths=["studio/references/*.md"], calls=HARNESS,
-         why="guides a harness test reads; Prettier leaves the folder out and no product step reads Markdown there"),
+    dict(paths=["AGENTS.md", "engine/AGENTS.md", "studio/AGENTS.md", "tests/integration/AGENTS.md",
+                "engine/references/*.md", "tests/integration/references/*.md", "studio/references/*.md",
+                "studio/references/*.yaml"], calls=HARNESS,
+         why="guides a harness test reads; no product step reads them (Prettier leaves AGENTS.md and references/ "
+             "out, Cargo and the integration run read no Markdown there)"),
     dict(paths=["tests/integration/run", "tests/integration/engine/support/emulator.rs",
                 "tests/integration/studio/support/emulator.ts"], calls=PRODUCT + HARNESS,
          why="places that start an emulator, which a harness test asserts on by name"),
@@ -285,7 +288,7 @@ def select(paths, head, base):
     rows, then each service's manifest's.
 
     Each path is compared as text, never opened, and decided by the first line it matches:
-      1 under one of SERVICE_FOLDERS (studio/src/providers/aws/area/services/, studio/references/console/ and
+      1 under one of SERVICE_FOLDERS (studio/src/providers/aws/area/services/ and
         tests/integration/studio/services/, the service's folder of checks), a folder segment <s> followed by "/":
         the service <s>, or every service when <s> is not of the form SERVICE (a file directly under the folder
         falls to line 6); a service's manifest, tests/integration/studio/services/<s>/manifest.jsonl, also asks
