@@ -516,6 +516,9 @@ class Tick(unittest.TestCase):
         self.assertTrue(own.alive())
         (f.wt["wt-a"] / "output" / "checks" / "running.json").unlink()
         self.assertEqual(d.tick(t + 90), [], "the check ended: its stand-in's first look as an orphan")
+        for o in (other, own, check):  # the name ps gives now: a Python stand-in may have re-executed since its start
+            row = ps_row(o.pid)
+            o.name = os.path.basename(row[3].split()[0]) if row and row[3].split() else o.name
         self.assertLines(d.tick(t + 150), [event("wt-a", [other, own, check])], "60 s after the check ended")
 
     def test_a_live_crit_s_live_server_is_not_told_and_an_orphan_beside_it_is(self):
