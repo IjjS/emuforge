@@ -1,14 +1,21 @@
 #![cfg(test)]
 
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::num::NonZeroU16;
 
 use clap::error::ErrorKind;
-use clap::{CommandFactory, Parser};
-use emuforge_server::{Config, Error, listen_addr};
+use clap::{Args, FromArgMatches};
+use emuforge_server::{Config, Error, LISTEN_IP, engine_addr};
+
+/// `Config` augmented onto a command, as a binary flattens it.
+fn command() -> clap::Command {
+    Config::augment_args(clap::Command::new("emuforge-server"))
+}
 
 fn parse(args: &[&str]) -> Result<Config, clap::Error> {
-    Config::try_parse_from(std::iter::once("emuforge-server").chain(args.iter().copied()))
+    let matches = command()
+        .try_get_matches_from(std::iter::once("emuforge-server").chain(args.iter().copied()))?;
+    Config::from_arg_matches(&matches)
 }
 
 fn port(value: u16) -> NonZeroU16 {
@@ -101,7 +108,7 @@ fn config_rejects_an_address_flag_as_unknown() {
 
 #[test]
 fn config_help_shows_defaults_and_variables() {
-    let help = Config::command().render_help().to_string();
+    let help = command().render_help().to_string();
     let line = |flag: &str| {
         help.lines()
             .find(|line| line.trim_start().starts_with(flag))
@@ -141,9 +148,10 @@ fn listen_addr_is_loopback_with_the_engine_port() {
             port: port(value),
             emulator_port: port(9400),
             studio_port: port(8296),
+            listen_address: IpAddr::V4(LISTEN_IP),
         };
         assert_eq!(
-            listen_addr(&config),
+            engine_addr(&config),
             SocketAddr::new(Ipv4Addr::LOCALHOST.into(), value),
             "case {name}"
         );
