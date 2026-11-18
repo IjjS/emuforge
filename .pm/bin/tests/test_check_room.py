@@ -13,6 +13,7 @@ import json
 import os
 import pathlib
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -76,9 +77,10 @@ class RoomCase(unittest.TestCase):
         prog = d / "pm-check"
         prog.write_text("#!/bin/sh\nsleep 120\n")
         prog.chmod(0o755)
+        # in a session of its own, ended whole: the shell's `sleep` must not outlive the case as an orphan
         proc = subprocess.Popen([str(prog)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                stderr=subprocess.DEVNULL)
-        self.addCleanup(lambda: (proc.kill(), proc.wait()))
+                                stderr=subprocess.DEVNULL, start_new_session=True)
+        self.addCleanup(self.end_group, proc)
         now = time.time()
         steps = list(steps)
         entry = dict(pid=proc.pid, checkout=f"/x/emuforge-{proc.pid}", started=now - started_ago, steps=steps,
@@ -87,6 +89,14 @@ class RoomCase(unittest.TestCase):
         d.mkdir(parents=True, exist_ok=True)
         (d / f"{proc.pid}.json").write_text(json.dumps(entry))
         return entry
+
+    @staticmethod
+    def end_group(proc):
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        proc.wait()
 
     def durations(self, rows):
         self.run_dir.mkdir(parents=True, exist_ok=True)
