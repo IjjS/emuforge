@@ -199,6 +199,7 @@ describe('Home and the frame with a marked test catalogue: no text written in a 
     expect(unmarkedText()).toEqual([]);
   });
 
+  // Bound: waits up to AREA_LOAD (10 s) for the AWS area's first import, Cloudscape's modules (issue 17 s2, 2b9e409).
   it(
     'the frame on an AWS area page: every text of Studio outside the area is marked or kept as it is',
     async () => {
@@ -215,6 +216,7 @@ describe('Home and the frame with a marked test catalogue: no text written in a 
     AREA_TEST_MS,
   );
 
+  // Bound: waits up to AREA_LOAD (10 s) for the AWS area's first import, on each path (issue 17 s4, d5949df).
   it.each(['/', '/does-not-exist', NO_SCREEN_SERVICE.path])(
     'the frame on %s with the language menu open: every text of Studio outside the area is marked or kept as it is',
     async (path) => {

@@ -477,6 +477,7 @@ describe('the frame in each of the twelve languages (R5.2, R2.7)', () => {
     document.title = '';
   });
 
+  // Bound: waits up to AREA_LOAD_MS (10 s) for the AWS area's first import, Cloudscape's modules, in every catalogue (issue 17 s3, 2e26d93).
   it.each([...BUNDLED_CATALOGUES.byTag.keys()])(
     "%s: from / to /does-not-exist the route change announces the catalogue's page title; to /aws/kinesis, the area's",
     async (tag) => {
@@ -499,6 +500,7 @@ describe('the frame in each of the twelve languages (R5.2, R2.7)', () => {
     20_000,
   );
 
+  // Bound: waits up to AREA_LOAD_MS (10 s) for the AWS area's first import, Cloudscape's modules, after Home and "Page not found" (issue 17 s3, 2e26d93).
   it('German: the document title is EmuForge Studio on Home, the German page title on "Page not found", English in the area', async () => {
     const { router } = openStudioIn('/', 'de');
     await waitFor(() => {
@@ -643,6 +645,7 @@ describe('the language control (R3)', () => {
     document.documentElement.lang = 'en';
   });
 
+  // Bound: waits up to AREA_LOAD_MS (10 s) for the AWS area's first import, Cloudscape's modules, on /aws (issue 17 s4, d5949df).
   it.each(['/', '/does-not-exist', AREA_PATH])(
     'on %s: the banner holds the control, after the navigation "Studio"',
     async (path) => {
@@ -1089,6 +1092,7 @@ describe('a press outside the open menu only puts it away (issue 32, R2, R3.3, R
     expect(path()).toBe('/aws');
   });
 
+  // Bound: waits up to AREA_LOAD_MS (10 s) for the AWS area's first import, Cloudscape's modules, opened by openArea (issue 32 s2, ec365be).
   it('on /aws with the menu open, a click on a service link inside the area: closed, the path is still /aws; again: the service', async () => {
     const { user, path } = await openArea();
     await openMenu(user);
@@ -1276,6 +1280,7 @@ describe('the tile in the wordmark link (issue #36, R6)', () => {
     expect(follows(tile, screen.getByText('EmuForge'))).toBe(true);
   });
 
+  // Bound: waits up to AREA_LOAD_MS (10 s) for the AWS area's first import, Cloudscape's modules, on its paths (issue 36 s3, 26bb25c).
   it.each(['/', '/does-not-exist', '/aws', NO_SCREEN_SERVICE.below])(
     'on %s: the banner holds exactly one tile, inside the wordmark link, and no other image',
     async (path) => {
