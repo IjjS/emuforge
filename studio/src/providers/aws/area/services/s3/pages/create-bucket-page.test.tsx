@@ -408,7 +408,8 @@ describe('the create form, its fields', () => {
     expect(within(main()).queryByRole('radiogroup', { name: 'Bucket Key' })).toBeNull();
   });
 
-  it('"Add tag" → "Key", "Value" and "Remove"; "Remove" → gone; with 50 tags "Add tag" is disabled with the reason', async () => {
+  // The limit of fifty tags is a case of the "Tags" container, from forty-nine given rows (`bucket-tags.test.tsx`).
+  it('"Add tag" → "Key", "Value" and "Remove"; "Remove" → gone', async () => {
     await open();
     fireEvent.click(button('Add tag'));
     expect(keys()).toHaveLength(1);
@@ -416,13 +417,6 @@ describe('the create form, its fields', () => {
     fireEvent.click(button('Remove'));
     expect(keys()).toHaveLength(0);
     expect(within(main()).queryByRole('button', { name: 'Remove' })).toBeNull();
-
-    for (let i = 0; i < 50; i++) {
-      fireEvent.click(button('Add tag'));
-    }
-    expect(keys()).toHaveLength(50);
-    expect(button('Add tag')).toHaveAttribute('aria-disabled', 'true');
-    expect(within(main()).getByText('A bucket can have up to 50 tags.')).toBeInTheDocument();
   });
 
   it('Object Lock "Enable" → versioning "Enable", not changeable, the sentence; "Disable" → changeable, still "Enable"', async () => {
