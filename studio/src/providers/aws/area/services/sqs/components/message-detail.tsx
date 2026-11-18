@@ -132,7 +132,7 @@ export function MessageDetail({ message }: { message: ReadMessage }) {
             </SpaceBetween>
             <Box variant="code" display="block">
               <span className="aws-sqs-message-body">
-                {format && formatted !== undefined ? formatted : message.body}
+                <ValueText kind="text" value={format && formatted !== undefined ? formatted : message.body} />
               </span>
             </Box>
           </SpaceBetween>
