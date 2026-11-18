@@ -5,6 +5,7 @@ import Form from '@cloudscape-design/components/form';
 import FormField from '@cloudscape-design/components/form-field';
 import Header from '@cloudscape-design/components/header';
 import Input from '@cloudscape-design/components/input';
+import Link from '@cloudscape-design/components/link';
 import RadioGroup, { type RadioGroupProps } from '@cloudscape-design/components/radio-group';
 import Select, { type SelectProps } from '@cloudscape-design/components/select';
 import SpaceBetween from '@cloudscape-design/components/space-between';
@@ -16,9 +17,10 @@ import type { AreaConnection } from '../../../components/emulator-line';
 import { actionFailureItem, readFailureState, ReadFailure } from '../../../components/failure-states';
 import { creationDateText } from '../../../components/format-date';
 import { usePageFlash } from '../../../components/page-flash';
+import { useFollow } from '../../../components/use-follow';
 import { ValueText } from '../../../components/value-text';
 import { NO_SUCH_QUEUE, OPERATIONS, type MoveRequest, type MoveTask, type QueueDetails } from '../api';
-import { nameFromArn, NONE, wholeNumber, type QueueSettings } from '../format';
+import { nameFromArn, NONE, queuePath, wholeNumber, type QueueSettings } from '../format';
 import {
   useCancelMoveTask,
   useMoveTasks,
@@ -107,6 +109,7 @@ export function RedriveTab({ details, settings, connection }: RedriveTabProps) {
   const name = details.name;
   const sourceArn = settings.arn;
   const flash = usePageFlash();
+  const handleFollow = useFollow();
   const pageSignal = usePageSignal();
   const tasks = useMoveTasks(engineOrigin, name, sourceArn);
   const readArn = useQueueArn(engineOrigin);
@@ -231,7 +234,10 @@ export function RedriveTab({ details, settings, connection }: RedriveTabProps) {
           flash.show([
             {
               type: 'success',
-              content: `Cancelled the move of ${name}: ${moved === undefined ? `${NONE} messages` : messages(moved)} moved`,
+              content:
+                moved === undefined
+                  ? `Cancelled the move of ${name}`
+                  : `Cancelled the move of ${name}: ${messages(moved)} moved`,
             },
           ]);
         }
@@ -245,11 +251,20 @@ export function RedriveTab({ details, settings, connection }: RedriveTabProps) {
     );
   };
 
-  const options: SelectProps.Option[] = (choices.value ?? []).map((queue) => ({
-    value: queue.url,
-    label: queue.name,
-    ...(manySources && sourceNames.has(queue.name) ? { description: `A source of ${name}` } : {}),
-  }));
+  // A move of the queue's messages to itself is no destination: the queue is left out of the choices.
+  const options: SelectProps.Option[] = (choices.value ?? [])
+    .filter((queue) => queue.url !== details.url)
+    .map((queue) => ({
+      value: queue.url,
+      label: queue.name,
+      ...(manySources && sourceNames.has(queue.name) ? { description: `A source of ${name}` } : {}),
+    }));
+  let startDisabledReason: string | undefined;
+  if (sourceArn === undefined) {
+    startDisabledReason = 'The emulator gave no QueueArn for this queue';
+  } else if (another && chosen !== undefined && chosen.arn === undefined) {
+    startDisabledReason = "Reading the queue's ARN";
+  }
   let statusType: 'finished' | 'loading' | 'error' = 'finished';
   if (choices.loading) {
     statusType = 'loading';
@@ -266,7 +281,9 @@ export function RedriveTab({ details, settings, connection }: RedriveTabProps) {
         task.destinationArn === undefined ? (
           'Source queues'
         ) : (
-          <ValueText kind="name" value={nameFromArn(task.destinationArn)} />
+          <Link href={queuePath(nameFromArn(task.destinationArn))} onFollow={handleFollow}>
+            <ValueText kind="name" value={nameFromArn(task.destinationArn)} />
+          </Link>
         ),
     },
     { id: 'moved', header: 'Moved', cell: (task) => `${count(task.moved)} of ${count(task.toMove)}` },
@@ -310,7 +327,7 @@ export function RedriveTab({ details, settings, connection }: RedriveTabProps) {
               disabled={
                 starting || sourceArn === undefined || (another && chosen !== undefined && chosen.arn === undefined)
               }
-              disabledReason={sourceArn === undefined ? 'The emulator gave no QueueArn for this queue' : undefined}
+              disabledReason={startDisabledReason}
             >
               Start
             </Button>
