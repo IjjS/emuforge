@@ -1,0 +1,6 @@
+/* "In flight" among the three counts of a queue's details (issue 481, final critique r3): the label keeps one line
+   in its narrow column at 390 wide. The area's own element inside Cloudscape's key-value label; it sets no colour,
+   spacing or font. */
+.aws-sqs-count-label {
+  white-space: nowrap;
+}
