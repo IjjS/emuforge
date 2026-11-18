@@ -11,6 +11,17 @@ import { type Ctx } from './check';
 import { ensurePortFree } from './net';
 import { Proc } from './process';
 
+/** The checks whose settings folder is already cleared: the first engine a check starts clears it. */
+const settingsCleared = new WeakSet<Ctx>();
+
+/**
+ * The settings folder every engine a check starts is given (`EMUFORGE_SETTINGS_DIR`, issue 485):
+ * `<run output>/tmp/settings/<id>`, as the engine checks' (`engine/support/check.rs`).
+ */
+function settingsDir(ctx: Ctx): string {
+  return path.join(ctx.tmp, 'settings', ctx.id);
+}
+
 /** How long a started engine may take to accept a connection on its port. */
 const LISTEN_BOUND_MS = 10_000;
 
@@ -45,6 +56,14 @@ export class Engine {
 
   /** Starts an engine and waits until it accepts a connection on its port. */
   static async start(ctx: Ctx, options: EngineOptions = {}): Promise<Engine> {
+    // The check's settings folder is empty when its first engine starts and removed when the check ends (after its
+    // engines), so a file an earlier run of the same check left is never read.
+    if (!settingsCleared.has(ctx)) {
+      settingsCleared.add(ctx);
+      const dir = settingsDir(ctx);
+      fs.rmSync(dir, { recursive: true, force: true });
+      ctx.own({ dispose: async () => fs.rmSync(dir, { recursive: true, force: true }) });
+    }
     const engine = new Engine(ctx, options);
     ctx.own(engine);
     await engine.startAgain();
@@ -74,7 +93,7 @@ export class Engine {
     const env = {
       HOME: this.ctx.home,
       PATH: process.env.PATH ?? '',
-      EMUFORGE_SETTINGS_DIR: path.join(this.ctx.tmp, 'settings', this.ctx.id),
+      EMUFORGE_SETTINGS_DIR: settingsDir(this.ctx),
     };
     this.proc = Proc.spawn(this.ctx, 'engine', bin, args, this.ctx.checkout, env);
     const ready = await this.proc.waitListening(this.port, LISTEN_BOUND_MS);
