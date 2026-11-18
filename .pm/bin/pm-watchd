@@ -15,8 +15,11 @@ something happens. --interval is only the fallback: the longest it sleeps when n
 cadence while the socket is unreachable (logged once when that starts and once when it ends). What happened is
 always judged from `herdr agent list` and the report files, never from the event itself.
 
-Events, each delivered as one prompt line to the PM:
-  EVENT ready <pane> <STAGE READY|UNIT READY|BLOCKED|DONE line> a registered pane finished a turn with a line for the PM
+Events, each delivered as one prompt line to the PM, or to the plan that leads the issue the line is about (issue 478,
+_pmroute.py): a line about a worker, rev or crit pane of an issue, or about a worktree of it, goes to its live plan
+`i<n>-plan`; everything else, and everything of an issue with no live plan, to the PM:
+  EVENT ready <pane> <STAGE READY|UNIT READY|ISSUE READY|BLOCKED|DONE line> a registered pane finished a turn with a reporting line
+  EVENT room <pane> pane <role> <side>                          to the pane a QUEUE answer of pm-pane told to wait: there is room now
   EVENT go github#<n>                                           the owner commented READY on a GitHub issue (pm-ready poll)
   EVENT blocked <pane>                                          a pane waits at a permission/question dialog
   EVENT gone <pane>                                             a registered pane disappeared
@@ -46,15 +49,16 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _pmlib import (EVENTS, PANES, PMINFO, ROOT, RUN, agents, cpu_pct, find_key, herdr, load, log, mem_gb, notify, now, pane_rss_gb,
-                    save, transcript_ctx)
+from _pmlib import (EVENTS, PANES, PMINFO, ROOT, RUN, WAITING, WORKTREES, agents, cpu_pct, find_key, herdr, load, log, mem_gb,
+                    notify, now, pane_rss_gb, room, save, transcript_ctx)
+from _pmroute import PM as TO_PM, route
 from _pmwake import Waker
 
 PID = RUN / "watchd.pid"
 WAKE = RUN / "watchd.wake"  # this daemon's pid while it handles SIGUSR1 (_pmlib.wake_watchd reads it)
 LOG = RUN / "watchd.log"
 STATE = RUN / "watchd-state.json"
-PM_LINES = ("STAGE READY", "UNIT READY", "BLOCKED", "DONE")
+PM_LINES = ("STAGE READY", "UNIT READY", "ISSUE READY", "BLOCKED", "DONE")
 INBOX = RUN / "inbox.jsonl"  # lines other scripts want delivered to the PM (pm-ready)
 LOGGED_LINES = ("REVIEWED", "RESET READY")
 CTX_REARM = 50_000
@@ -71,6 +75,42 @@ def alive():
 
 def find_pm(ags, pm):
     return next((x for x in ags if x.get("pane_id") == pm or x.get("name") == pm), None)
+
+
+def send_to(name, ags_list, lines):
+    """Deliver lines to a pane other than the PM (a plan, or the pane a room line is for). False: keep them queued."""
+    a_ = next((x for x in ags_list if x.get("name") == name), None)
+    if not a_ or a_.get("agent_status") == "blocked":
+        return False
+    text = " | ".join(lines)
+    if herdr("agent", "prompt", name, text, check=False) is None:
+        return False
+    log(f"deliver to {name} " + text)
+    return True
+
+
+def room_tick(st, reg):
+    """EVENT room for each pane in waiting.json whose limit has cleared; at most every 30 s, and only while one waits."""
+    waiting = load(WAITING, [])
+    if not waiting or time.time() - st.get("room_checked", 0) < 30:
+        return []
+    st["room_checked"] = time.time()
+    live = {r["name"] for r in reg}
+    done, out, judged = [], [], {}
+    for w in waiting:
+        if w.get("asker") not in live:
+            done.append(w)
+            continue
+        key = (w.get("role"), w.get("side"), w.get("issue"))
+        if key not in judged:
+            why = "token rate over today's target" if st.get("tokens_over") else room(*key, alive=reg, tokens=False)
+            judged[key] = why
+        if judged[key] is None:
+            out.append(f"EVENT room {w['asker']} pane {w.get('role')} {w.get('side')}")
+            done.append(w)
+    if done:
+        save(WAITING, [w for w in load(WAITING, []) if w not in done])  # re-read: pm-pane may have added one meanwhile
+    return out
 
 
 def deliver(pm_a, lines, st):
@@ -259,6 +299,7 @@ def run(a):
             events.extend(quota_tick(ags_list))
             from _pmstill import tick as still_tick
             events.extend(still_tick(st))
+            events.extend(room_tick(st, reg))
             seen = st["seen"]
             # primary channel: lines the panes reported through pm-report (exact, agent-independent)
             events.extend(inbox_lines(st))
@@ -343,7 +384,22 @@ def run(a):
                 for e in events:
                     if e not in (st.get("queue") or []):
                         log(e)
-                deliver(pm_a, events, st)
+                full_reg, wts = load(PANES, []), load(WORKTREES, [])
+                to_pm, others = [], {}
+                for e in events:
+                    target = route(e, full_reg, wts)
+                    if target == "":
+                        log("dropped (its pane is gone) " + e)
+                    elif target is TO_PM:
+                        to_pm.append(e)
+                    else:
+                        others.setdefault(target, []).append(e)
+                stuck = [e for name, lines in others.items() if not send_to(name, ags_list, lines) for e in lines]
+                if to_pm:
+                    deliver(pm_a, to_pm, st)
+                else:
+                    st["queue"] = []
+                st["queue"] = list(st.get("queue") or []) + stuck
             # PM responsiveness: a working PM consumes queued prompts inside its turn; only an idle PM with no
             # state change since the delivery gets the line again.
             pend = st.get("pending")
@@ -423,6 +479,9 @@ def main():
     p.add_argument("--cpu", type=float, default=90)
     p.add_argument("--ctx", type=int, default=300000); p.add_argument("--pm-ctx", type=int, default=1000000); p.add_argument("--stale-hours", type=float, default=3)
     a = p.parse_args()
+    if a.cmd in ("start", "stop"):
+        from _pmlib import guard
+        guard(f"pm-watchd {a.cmd}")  # the pm's alone (issue 478)
     if a.cmd == "status":
         pid = alive()
         print(f"running pid {pid}" if pid else "not running", load(PMINFO, {}))

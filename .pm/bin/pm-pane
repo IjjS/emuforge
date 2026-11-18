@@ -211,11 +211,14 @@ def cmd_new(a):
                      f"inspect with herdr agent read {name}, then herdr agent prompt {name} \"{text}\"")
 
 
+def issue_of(name):
+    return next((r.get("issue") for r in load(PANES, []) if r["name"] == name), None)
+
+
 def cmd_reset(a):
+    asker = guard(f"pm-pane reset {a.name}", issue=issue_of(a.name), plan_may=True)
+    own_pane(asker, a.name, load(PANES, []))
     reg = registry()
-    asker = guard(f"pm-pane reset {a.name}", issue=(next((r for r in reg if r["name"] == a.name), {}) or {}).get("issue"),
-                  plan_may=True)
-    own_pane(asker, a.name, reg)
     entry = next((r for r in live(reg) if r["name"] == a.name), None)
     if not entry:
         sys.exit(f"no live pane {a.name}")
@@ -264,13 +267,12 @@ def cmd_reset(a):
 
 
 def cmd_close(a):
-    reg = registry()
     if a.issue:
         guard(f"pm-pane close --issue {a.issue}")
     else:
-        asker = guard(f"pm-pane close {a.name}", issue=(next((r for r in reg if r["name"] == a.name), {}) or {}).get("issue"),
-                      plan_may=True)
-        own_pane(asker, a.name, reg)
+        asker = guard(f"pm-pane close {a.name}", issue=issue_of(a.name), plan_may=True)
+        own_pane(asker, a.name, load(PANES, []))
+    reg = registry()
     targets = [r for r in reg if (a.name and r["name"] == a.name) or (a.issue and r["issue"] == str(a.issue))]
     if not targets:
         sys.exit("nothing to close")

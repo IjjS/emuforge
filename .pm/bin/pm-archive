@@ -20,7 +20,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _pmlib import BIN, PM, PMINFO, ROOT, WORKTREES, issue_dir, load, log, now, tabs, herdr
+from _pmlib import BIN, PM, PMINFO, ROOT, WORKTREES, guard, issue_dir, load, log, now, tabs, herdr
 
 KEEP = {"requirement.md", "decisions.md", "test-criteria.md", "critique-scores.json", "structure-scores.json", "cost.json",
         "state.md"}
@@ -46,6 +46,7 @@ def main():
     p.add_argument("issue"); p.add_argument("--yes", action="store_true"); p.add_argument("--force", action="store_true")
     p.add_argument("--pm-session", help="PM session id; default: the one pm-watchd start recorded in .pm/run/pm.json")
     a = p.parse_args()
+    guard(f"pm-archive {a.issue}")  # the pm's alone (issue 478); every pane is refused
     if not a.yes:
         sys.exit("add --yes once every unit is merged into main")
     d = issue_dir(a.issue)
