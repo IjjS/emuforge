@@ -472,6 +472,31 @@ describe('the dialog', () => {
     expect(isDisabled(confirmButton(dialog))).toBe(false);
   });
 
+  it('"Delete 1 role?" open, delete typed one character at a time with a new connection answer after the third: the same dialog and field, focus in the field, it holds delete and "Delete" is enabled (issue 462)', async () => {
+    const { dialog } = await openDialog([{ name: 'solo' }]);
+    const input = field(dialog);
+    act(() => {
+      input.focus();
+    });
+
+    for (const typed of ['d', 'de', 'del', 'dele', 'delet', 'delete']) {
+      typeWord(dialog, typed);
+      await act(() => Promise.resolve());
+      if (typed === 'del') {
+        // What the area's page sees every 5 seconds: a new answer of the same state.
+        connection.set(connectedResult());
+        await act(() => Promise.resolve());
+      }
+    }
+    expect(dialog.isConnected).toBe(true);
+    expect(input.isConnected).toBe(true);
+    expect(screen.getByRole('dialog', { name: 'Delete 1 role?' })).toBe(dialog);
+    expect(field(dialog)).toBe(input);
+    expect(document.activeElement).toBe(input);
+    expect(input.value).toBe('delete');
+    expect(isDisabled(confirmButton(dialog))).toBe(false);
+  });
+
   it('"Cancel" and Esc close it without a request, focus on the list’s "Delete"; while open, Tab stays inside', async () => {
     const { dialog } = await openDialog([{ name: 'solo' }]);
     const sent = engine.sent.length;
