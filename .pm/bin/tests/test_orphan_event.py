@@ -16,16 +16,17 @@ never read or written) whose `.pm/run/worktrees.json` names three worktrees, fol
 
 `tick` runs in a driver: a child process that imports the fixture's `_pmorphanevent`, keeps one state dict across
 the calls of a case, and answers each call with the lines `tick` returned or the exception it raised. A restarted
-daemon is a new driver process that starts from the state the first one had, written to a JSON file. When the module cannot be imported every call
-answers with that error, so each case fails on its own. On Linux the driver makes itself a child subreaper and
-passes `{1, <its PID>}` as the reapers; on macOS `{1}`.
+daemon is a new driver process that starts from the state the first one had, written to a JSON file. When the
+module cannot be imported every call answers with that error, so each case fails on its own. On Linux the driver
+makes itself a child subreaper and passes `{1, <its PID>}` as the reapers; on macOS `{1}`.
 
 The orphans are stand-ins this file writes, started by the driver: `orphan.py <cwd> <pidfile> [<program> <arg>…]`
 forks, the starter exits at once (so the child's parent is a reaper), and the child moves to `<cwd>`, writes its
 PID and sleeps until a 120 s bound. With a program the child moves to `<cwd>` and becomes `/bin/sleep 120` (exec),
-so a case has orphans of two names; the starter writes the PID once the exec has happened and then exits. No stand-in spins a core. A case signals only the stand-ins it started, by PID and after checking that
-the PID still has the start time it had when it was made; every one is killed at the case's end, passed or not.
-Nothing is signalled by name, pattern or group.
+so a case has orphans of two names; the starter writes the PID once the exec has happened and then exits. No
+stand-in spins a core. A case signals only the stand-ins it started, by PID and after checking that the PID still
+has the start time it had when it was made; every one is killed at the case's end, passed or not. Nothing is
+signalled by name, pattern or group.
 
 On a checkout without the change every case fails on its own for the reason under its heading: `_pmorphanevent`
 does not exist (Tick), `pm-watchd` does not call it (Daemon), no text names the event, the sweep or the rule
@@ -119,8 +120,9 @@ for line in sys.stdin:
     try:
         if cmd["op"] == "spawn":
             pidfile = cmd["pidfile"]
-            subprocess.run([sys.executable, "-I", cmd["orphan"], cmd["cwd"], pidfile, *cmd["program"]], stdin=subprocess.DEVNULL,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30, check=True)
+            subprocess.run([sys.executable, "-I", cmd["orphan"], cmd["cwd"], pidfile, *cmd["program"]],
+                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30,
+                           check=True)
             end = time.time() + 10
             while not os.path.exists(pidfile) and time.time() < end:
                 time.sleep(0.02)
