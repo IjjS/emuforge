@@ -178,9 +178,7 @@ impl Store {
         })
         .map_err(|error| failed(error.into()))?;
         bytes.push(b'\n');
-        tokio::fs::create_dir_all(&self.dir)
-            .await
-            .map_err(failed)?;
+        tokio::fs::create_dir_all(&self.dir).await.map_err(failed)?;
         let temp = self.dir.join(format!(
             "{SETTINGS_FILE}.{}.{}.tmp",
             std::process::id(),

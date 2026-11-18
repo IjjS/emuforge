@@ -45,7 +45,8 @@ pub struct TargetName(String);
 
 impl TargetName {
     pub fn parse(text: &str) -> Result<TargetName, TargetError> {
-        let allowed = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_';
+        let allowed =
+            |c: char| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_';
         let starts_well = text
             .chars()
             .next()
