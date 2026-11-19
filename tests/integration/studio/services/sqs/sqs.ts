@@ -548,8 +548,28 @@ export function queueRadio(page: Page, name: string): Locator {
   return page.getByRole('main').getByRole('radio', { name, exact: true });
 }
 
-/** Types `prefix` into the queue list's search and waits until the names it shows are `want`. */
-export async function expectListed(page: Page, prefix: string, want: string[]): Promise<void> {
+/**
+ * Types `prefix` into the queue list's search and waits for the page's `ListQueues` of that prefix to be answered, so
+ * nothing that follows meets the list while it is read again; then waits until the names it shows are `want`.
+ */
+export async function searchQueues(page: Page, prefix: string, want: string[]): Promise<void> {
+  const answer = page.waitForResponse(
+    (r) => {
+      if (!isOperation(r.request().headers(), 'ListQueues')) return false;
+      try {
+        return ((JSON.parse(r.request().postData() ?? '{}') as Record<string, unknown>).QueueNamePrefix ?? '') === prefix;
+      } catch {
+        return false;
+      }
+    },
+    { timeout: 30_000 },
+  );
   await page.getByRole('searchbox', { name: SEARCH, exact: true }).fill(prefix, ACTION);
-  await expectRows(page.locator(TABLE).first(), (r) => r.Name, want, `the queues listed under ${prefix}`);
+  await answer;
+  await expectListed(page, want);
+}
+
+/** Waits until the names the queue list shows are `want`. */
+export async function expectListed(page: Page, want: string[]): Promise<void> {
+  await expectRows(page.locator(TABLE).first(), (r) => r.Name, want, `the queues listed: ${want.join(', ') || 'none'}`);
 }
