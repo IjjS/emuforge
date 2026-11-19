@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: plan
 Issue-Key: studio|iam|role-trust-relationships
-Issue-Check-Ids:
+Issue-Check-Ids: studio.iam-role-page-shows-each-policy-document-and-the-trust-policy studio.iam-role-trust-policy-edit-reaches-the-emulator
 Issue-Commit: 33aff70325c3014dd960a1dbd161ad56a11d72b4
 
 # Build an IAM role's "Trust relationships" tab: the trust policy and "Edit trust policy"

@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: plan
 Issue-Key: studio|iam|policies
-Issue-Check-Ids:
+Issue-Check-Ids: studio.iam-policy-list-shows-what-the-emulator-holds studio.iam-policy-page-shows-the-policy studio.iam-policy-create-and-versions-reach-the-emulator studio.iam-policy-create-and-edit-refusals-change-nothing studio.iam-policy-delete-detaches-and-removes
 Issue-Commit: 33aff70325c3014dd960a1dbd161ad56a11d72b4
 
 # Build the IAM policy screens: the Policies list, a policy's page with its versions, create, edit, delete

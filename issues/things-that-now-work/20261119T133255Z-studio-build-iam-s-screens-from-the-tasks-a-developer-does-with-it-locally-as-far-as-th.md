@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: studio|iam|tasks-by-the-emulator-api
-Issue-Check-Ids:
+Issue-Check-Ids: studio.iam-role-page-shows-each-policy-document-and-the-trust-policy studio.iam-role-trust-policy-edit-reaches-the-emulator studio.iam-role-delete-from-its-page studio.iam-role-permission-changes-reach-the-emulator studio.iam-role-permission-refusals-change-nothing studio.iam-policy-list-shows-what-the-emulator-holds studio.iam-policy-page-shows-the-policy studio.iam-policy-create-and-versions-reach-the-emulator studio.iam-policy-create-and-edit-refusals-change-nothing studio.iam-policy-delete-detaches-and-removes
 Issue-Commit: a133f4428c647a63622bd88a819adbb2ec7b92c5
 
 # Build IAM's screens from the tasks a developer does with it locally, as far as the emulator's API supports them
