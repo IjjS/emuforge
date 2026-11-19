@@ -269,6 +269,9 @@ describe('routes', () => {
     ['/aws/iam/roles', 'Roles'],
     ['/aws/iam/roles/create', 'Select trusted entity'],
     ['/aws/iam/roles/details/abc', 'abc'],
+    ['/aws/iam/policies', 'Policies'],
+    ['/aws/iam/policies/details?arn=arn%3Aaws%3Aiam%3A%3A000000000000%3Apolicy%2Fmine', 'mine'],
+    ['/aws/iam/policies/create', 'Create policy'],
   ])('opens %s as its IAM screen (its h1 "%s"), not the "no screen yet" page', async (path, title) => {
     stubRoleEngine(['abc']);
     open(path);
@@ -285,7 +288,7 @@ describe('routes', () => {
   // Issue 57 (test-criteria.md, "Unit — app/routes.test.tsx", rewritten): a path below a service that has screens,
   // which no screen matches, shows the "no screen yet" page for that part of the service.
   // Bound: waits up to AREA_LOAD_MS (10 s) for the h1, so the find reports what is missing before the case ends (issue 57 t1, 9249783).
-  it.each(['/aws/iam/policies', '/aws/iam/roles/details/abc/tags'])(
+  it.each(['/aws/iam/users', '/aws/iam/roles/details/abc/tags'])(
     'opens %s as the "no screen yet" page for that part of AWS Identity and Access Management',
     async (path) => {
       open(path);
