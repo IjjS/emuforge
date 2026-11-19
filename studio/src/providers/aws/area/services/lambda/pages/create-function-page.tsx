@@ -25,7 +25,7 @@ import { quoting } from '../components/quoting';
 import { RoleSelect } from '../components/role-select';
 import { FUNCTIONS_PATH, functionPath } from '../format';
 import { useCreateFunction } from '../queries';
-import { RUNTIMES } from '../runtimes';
+import { offeredRuntime, RUNTIMES } from '../runtimes';
 import { isZipArchive } from '../zip';
 
 // "Create Event Function" (issue 84, requirement R6, R9.4, R10.3): the console's form "Author from scratch" in the
@@ -88,6 +88,12 @@ function nameMessage(name: string): string | undefined {
     return NAME_TOO_LONG;
   }
   return NAME_ALPHABET_PATTERN.test(name) ? undefined : NAME_ALPHABET;
+}
+
+/** What "Handler" says a handler is, with an example in the language of the runtime `runtime`. */
+export function handlerDescription(runtime: string | undefined): string {
+  const example = offeredRuntime(runtime)?.language === 'python' ? 'lambda_function.lambda_handler' : 'index.handler';
+  return `The function the emulator calls, as file.function: for example ${example}.`;
 }
 
 /** The message under "Handler" for `handler`, or `undefined` when the form lets it through. */
@@ -471,7 +477,7 @@ export function CreateFunctionPage({ connection }: ScreenPageProps) {
                     ]}
                   />
                   {choosesZip && (
-                    <>
+                    <SpaceBetween size="l">
                       <FormField label={FILE} constraintText={FILE_RULE} errorText={fileError}>
                         <FileUpload
                           ref={fileRef}
@@ -491,7 +497,12 @@ export function CreateFunctionPage({ connection }: ScreenPageProps) {
                           }}
                         />
                       </FormField>
-                      <FormField label={HANDLER} constraintText={HANDLER_RULE} errorText={handlerError}>
+                      <FormField
+                        label={HANDLER}
+                        description={handlerDescription(runtime.value)}
+                        constraintText={HANDLER_RULE}
+                        errorText={handlerError}
+                      >
                         <Input
                           ref={handlerRef}
                           value={handler}
@@ -503,7 +514,7 @@ export function CreateFunctionPage({ connection }: ScreenPageProps) {
                           spellcheck={false}
                         />
                       </FormField>
-                    </>
+                    </SpaceBetween>
                   )}
                 </SpaceBetween>
               </Container>
