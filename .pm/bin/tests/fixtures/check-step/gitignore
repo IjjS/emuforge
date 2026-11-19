@@ -1,4 +1,0 @@
-output/
-.pm/*
-!.pm/bin/
-__pycache__/
