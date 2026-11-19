@@ -16,8 +16,8 @@ import { useFunctionChoices, useQueueChoices, type Choices } from '../queries';
 
 // S4's choice of the endpoint (issue 536, design task 2 step 2): the queues (`ListQueues`) or the functions
 // (`ListFunctions`) the emulator holds, each by its name, read a page of 50 at a time by the API's own token, never all
-// at once. A further page is added below the ones shown when the list's end is reached or "Load more" is pressed, for
-// as long as the last answer gave a token. For queues the typed text is sent as `QueueNamePrefix` and the choices
+// at once. A further page is added below the ones shown when "Load more" is pressed at the list's end, for as long as
+// the last answer gave a token. For queues the typed text is sent as `QueueNamePrefix` and the choices
 // start again from its first page; `ListFunctions` has no filter, so a function is found by paging.
 
 /** The endpoint chosen: a queue by its URL, a function by its ARN. */
@@ -115,9 +115,9 @@ function EndpointField<T>({
     statusType = 'error';
   } else if (choices.loading) {
     statusType = 'loading';
-  } else if (choices.more) {
-    statusType = 'pending';
   }
+  // A further page is read when the developer asks for it with "Load more" at the list's end, never by itself.
+  const more = statusType === 'finished' && choices.more;
   const failed =
     choices.failure === undefined
       ? ''
@@ -156,8 +156,6 @@ function EndpointField<T>({
           if (detail.samePage) {
             // "Retry" asks again for the page that failed, the first or a further one.
             choices.retry();
-          } else if (!detail.firstPage) {
-            choices.loadMore();
           }
           onFilter?.(detail.filteringText);
         }}
@@ -168,7 +166,7 @@ function EndpointField<T>({
         empty={empty}
         dropdownRole="dialog"
         renderDropdownFooter={() =>
-          statusType === 'pending' ? (
+          more ? (
             <Box padding={{ vertical: 'xs', horizontal: 's' }}>
               <Button variant="inline-link" formAction="none" onClick={choices.loadMore}>
                 Load more
