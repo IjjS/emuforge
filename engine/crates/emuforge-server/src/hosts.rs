@@ -194,7 +194,7 @@ mod tests {
     /// A name of exactly `length` characters: labels of 63 `a` separated by `.`, the last one shorter.
     fn name_of(length: usize) -> String {
         let mut name = String::new();
-        while name.len() + LABEL_MAX + 1 <= length {
+        while name.len() + LABEL_MAX < length {
             name.push_str(&label(LABEL_MAX));
             name.push('.');
         }
