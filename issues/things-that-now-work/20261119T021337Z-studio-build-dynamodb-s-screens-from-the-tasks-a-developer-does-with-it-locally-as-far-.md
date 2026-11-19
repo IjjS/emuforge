@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: studio|dynamodb|tasks-by-the-emulator-api
-Issue-Check-Ids:
+Issue-Check-Ids: studio.dynamodb-tables-made-outside-are-listed studio.dynamodb-routes-lead-to-the-table-screens studio.dynamodb-table-search-and-pages studio.dynamodb-table-details-show-what-the-emulator-holds studio.dynamodb-scan-shows-items-of-every-type studio.dynamodb-scan-pages-follow-the-emulator studio.dynamodb-query-by-key-and-condition studio.dynamodb-create-a-table-and-its-first-item studio.dynamodb-create-table-provisioned-and-refused studio.dynamodb-edit-an-item studio.dynamodb-delete-items studio.dynamodb-delete-a-table studio.dynamodb-table-gone-while-open studio.dynamodb-emulator-restart-shows-the-empty-emulator
 Issue-Commit: 3690c34ad1434164a960c06643b9e8d9fdf1374d
 
 # Build DynamoDB's screens from the tasks a developer does with it locally, as far as the emulator's API supports them

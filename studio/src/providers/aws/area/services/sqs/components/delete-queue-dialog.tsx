@@ -2,7 +2,7 @@ import SpaceBetween from '@cloudscape-design/components/space-between';
 import { Fragment } from 'react';
 
 import { ValueText } from '../../../components/value-text';
-import { ConfirmDialog } from './confirm-dialog';
+import { ConfirmDialog } from '../../../components/confirm-dialog';
 
 // "Delete" of a queue (issue 490, design task 8), from the queue list and from the queue's page: S2's `ConfirmDialog`,
 // confirmed by typing `delete`, as every removal that cannot be undone asks (`aws-area.md`). On a dead-letter queue it
