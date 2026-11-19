@@ -41,6 +41,12 @@ import {
 // starts a new exploration at page 1; the pages follow the emulator's own `LastEvaluatedKey`. Every value from the
 // emulator is rendered as text.
 
+/** A key column keeps room for a name of 24 characters (`aws-area.md`, entry 4), as the table list's name column. */
+const NAME_MIN_WIDTH = '28ch';
+
+/** Every other attribute's column keeps this floor, so the items scroll inside the table instead of narrowing. */
+const VALUE_MIN_WIDTH = '16ch';
+
 /** The result's columns: the table's partition key and sort key, then every other name on the page by code point. */
 function columnNames(table: TableDescription, items: readonly Item[]): { keys: string[]; others: string[] } {
   const keys = [table.partitionKey?.name, table.sortKey?.name].filter(
@@ -305,6 +311,7 @@ export function ItemsTab({ table, explorer, connection, selection, onSelectionCh
       id: `key-${String(position)}`,
       header: <ValueText kind="name" value={name} />,
       isRowHeader: position === 0,
+      minWidth: NAME_MIN_WIDTH,
       cell: (item: Item) =>
         position === 0 ? (
           <Link
@@ -322,6 +329,7 @@ export function ItemsTab({ table, explorer, connection, selection, onSelectionCh
     ...others.map((name, position) => ({
       id: `attribute-${String(position)}`,
       header: <ValueText kind="name" value={name} />,
+      minWidth: VALUE_MIN_WIDTH,
       cell: (item: Item) => <Cell item={item} name={name} kind="text" />,
     })),
   ];
@@ -336,6 +344,7 @@ export function ItemsTab({ table, explorer, connection, selection, onSelectionCh
         variant="container"
         items={items}
         selectionType="multi"
+        stickyColumns={{ first: 1 }}
         trackBy={trackBy}
         selectedItems={selected}
         onSelectionChange={({ detail }) => {
