@@ -384,6 +384,27 @@ describe('the Upload page, the files chosen', () => {
     expect(statusOf('new.txt')).toBe('-');
     expect(engine.requests('HeadObject').map((seen) => seen.key)).toEqual(['logs/old.txt', 'logs/new.txt']);
   });
+
+  it('a file of a name already listed takes its row; of one name in one pick the last is kept', async () => {
+    open('logs/');
+    await shownPage();
+    addFiles(textFile('note.txt', 'first'), textFile('other.txt', 'o'));
+    await waitFor(() => {
+      expect(fileRows().map((cells) => cells[0])).toEqual(['note.txt', 'other.txt']);
+    });
+    addFiles(textFile('note.txt', 'the second, longer'));
+    await waitFor(() => {
+      expect(fileRows()).toEqual([
+        ['note.txt', '18 B', 'text/plain', '-'],
+        ['other.txt', '1 B', 'text/plain', '-'],
+      ]);
+    });
+    addFiles(textFile('pair.txt', 'aa'), textFile('pair.txt', 'bbbb'));
+    await waitFor(() => {
+      expect(fileRows().filter((cells) => cells[0] === 'pair.txt')).toEqual([['pair.txt', '4 B', 'text/plain', '-']]);
+    });
+    expect(fileRows().map((cells) => cells[0])).toEqual(['note.txt', 'other.txt', 'pair.txt']);
+  });
 });
 
 describe('the Upload page, the puts', () => {
