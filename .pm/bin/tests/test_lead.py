@@ -199,6 +199,44 @@ class ReviewRule(LeadCase):
         self.assertRefused(self.script("pm-merge", 9, "s1", "--dry-run"), "review-impl-s1")
 
 
+class HarnessClose(LeadCase):
+    """A harness-engineer's last part closes its issue on its branch: pm-merge refuses it while the issue's file is open
+    there, unless brief.json records the part `not-last` (issue 504)."""
+    OPEN, SHUT = "issues/things-that-do-not-work/9-harness.md", "issues/things-that-now-work/9-harness.md"
+
+    def given(self, parts=None):
+        self.fixture(extra={self.OPEN: ISSUE_99963.format(id=9)})
+        self.lead(9, "harness-engineer")
+        if parts:
+            (self.co / ".pm" / "issue-9" / "brief.json").write_text(json.dumps(dict(lead="harness-engineer", parts=parts)))
+        self.h1 = self.unit(9, "h1", [HARNESS_PATH])
+        self.record(self.h1, harness="passed")
+
+    def test_an_open_issue_file_is_refused_until_the_part_closes_it(self):
+        self.given()
+        self.assertRefused(self.script("pm-merge", 9, "h1", "--dry-run"), "still open", self.OPEN, "pm-issue close 9")
+        self.commit(self.h1, {self.OPEN: None, self.SHUT: ISSUE_99963.format(id=9)}, "close")
+        self.record(self.h1, harness="passed")
+        p = self.ok(self.script("pm-merge", 9, "h1"))
+        self.assertIn("the pm's own judgement", p.stdout)
+
+    def test_a_last_part_by_record_is_refused_too(self):
+        self.given(parts={"h1": "last"})
+        self.assertRefused(self.script("pm-merge", 9, "h1", "--dry-run"), "still open")
+
+    def test_a_part_that_is_not_the_last_merges_with_the_file_open(self):
+        self.given(parts={"h1": "not-last"})
+        self.ok(self.script("pm-merge", 9, "h1"))
+
+    def test_a_plan_led_issue_is_not_asked(self):
+        self.fixture(extra={self.OPEN: ISSUE_99963.format(id=9)})
+        self.lead(9, "plan")
+        self.issue_branch()
+        s1 = self.unit(9, "s1", [HARNESS_PATH])
+        self.record(s1, integration="deferred", harness="passed")
+        self.ok(self.script("pm-merge", 9, "s1", "--dry-run"))
+
+
 class Route(unittest.TestCase):
     WTS = [dict(name="emuforge-9", path="/x/emuforge-9", issue="9", unit="issue"),
            dict(name="emuforge-9-e1", path="/x/emuforge-9-e1", issue="9", unit="e1"),
@@ -273,7 +311,18 @@ class Templates(LeadCase):
                 self.assertNotIn("{{", text)
         e1 = (self.co / ".pm" / "issue-5" / "brief-e1.md").read_text()
         self.assertIn("the unit-test scenarios `test-criteria.md` lists for `e1`", e1)
-        self.assertIn("part one", (self.co / ".pm" / "issue-9" / "brief-harness-engineer.md").read_text())
+        h = (self.co / ".pm" / "issue-9" / "brief-harness-engineer.md").read_text()
+        self.assertIn("part one", h)
+        # the part closes the issue by default (issue 504), before its pm-check
+        self.assertIn(f'{self.co}/.pm/bin/pm-issue close 9 --checks "', h)
+        self.assertLess(h.index("pm-issue close 9"), h.index("/.pm/bin/pm-check"))
+        self.assertEqual(json.loads((self.co / ".pm" / "issue-9" / "brief.json").read_text())["parts"], {"h1": "last"})
+        self.ok(self.script("pm-brief", "harness-engineer", 9, "h1", "--part", "part one", "--not-last"))
+        h = (self.co / ".pm" / "issue-9" / "brief-harness-engineer.md").read_text()
+        self.assertNotIn("pm-issue close", h)
+        self.assertIn("This part does not close the issue", h)
+        memo = json.loads((self.co / ".pm" / "issue-9" / "brief.json").read_text())
+        self.assertEqual((memo["lead"], memo["parts"]), ("harness-engineer", {"h1": "not-last"}))
 
     def test_worker_brief_takes_engine_and_studio_units_only(self):
         self.fixture(extra={"issues/things-that-do-not-work/9-harness.md": ISSUE_99963.format(id=9)},

@@ -21,6 +21,8 @@ has an issue branch, so is a --branch that is not <feat|refactor|fix>/<issue>-<n
 has a branch whose target is the issue branch. Every worktree gets output/{captures,logs} and three ports in output/ports.json:
 studio (8100+), engine (8300+) and emulator (9300+), so parallel units never share a server or an emulator.
 When studio/package.json exists, `bun install` runs there (log in output/logs/install.log).
+worktrees.json and ports.json are changed only under their lock (_pmlib.update), so worktrees made or removed at the
+same moment lose no entry and never share a slot (issue 504).
 Who may run it: the pm, and a plan for its own issue: `new <its issue>`, `new <its issue> <e<n>|s<n>>` once the issue
 branch is registered (based on it, or with --base on a unit branch <type>/<issue>-<name> of the issue), and `rm` of a
 unit worktree of its issue (the issue's own worktree goes with pm-archive); `orphans` is the pm's alone. Every
@@ -53,7 +55,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _pmlib import BIN, PORTS, ROOT, WORKTREES, guard, load, log, now, save
+from _pmlib import BIN, PORTS, ROOT, WORKTREES, guard, load, log, now, update
 from _pmorphans import CannotTell, kept_text, line, scan_left, sweep, table, worktree_paths
 from _pmscope import Unreadable, run_git
 
@@ -74,13 +76,13 @@ def run(cmd, cwd=None, out=None):
 
 
 def alloc_slot(path):
-    """One slot number per worktree; each port is its base plus the slot."""
-    slots = load(PORTS, {})
-    for slot in range(0, 100):
-        if str(slot) not in slots:
-            slots[str(slot)] = str(path)
-            save(PORTS, slots)
-            return slot
+    """One slot number per worktree; each port is its base plus the slot. Taken under the lock of ports.json, so two
+    worktrees made at the same moment never get one slot (issue 504)."""
+    with update(PORTS, {}) as slots:
+        for slot in range(0, 100):
+            if str(slot) not in slots:
+                slots[str(slot)] = str(path)
+                return slot
     sys.exit("no free port slot (100 worktrees registered?)")
 
 
@@ -203,9 +205,8 @@ def register(path, name, issue, unit, branch, base):
         print("bun install in studio (log: output/logs/install.log) ...")
         if run(["bun", "install"], cwd=str(path / "studio"), out=str(path / "output/logs/install.log")) != 0:
             print("WARN bun install failed; see output/logs/install.log")
-    wts = load(WORKTREES, [])
-    wts.append(dict(name=name, path=str(path), issue=str(issue), unit=unit, branch=branch, base=base, slot=slot, ports=ports, created=now()))
-    save(WORKTREES, wts)
+    with update(WORKTREES, []) as wts:  # the registry as it is now: another worktree may be added at this moment
+        wts.append(dict(name=name, path=str(path), issue=str(issue), unit=unit, branch=branch, base=base, slot=slot, ports=ports, created=now()))
     log(f"worktree new {name} {branch} slot={slot}")
     print(f"{path} branch={branch} base={base} ports={ports}")
 
@@ -247,10 +248,10 @@ def cmd_rm(a):
         run(["git", "-C", str(ROOT), "branch", "-D", wt["branch"]])
     elif not merged:
         print(f"branch {wt['branch']} is not merged into main; kept")
-    slots = load(PORTS, {})
-    slots.pop(str(wt.get("slot")), None)
-    save(PORTS, slots)
-    save(WORKTREES, [w for w in wts if w is not wt])
+    with update(PORTS, {}) as slots:
+        slots.pop(str(wt.get("slot")), None)
+    with update(WORKTREES, []) as now_wts:
+        now_wts[:] = [w for w in now_wts if w.get("name") != wt["name"]]
     log(f"worktree rm {wt['name']}")
     print(f"removed {wt['path']}")
 
