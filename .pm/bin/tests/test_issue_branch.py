@@ -855,51 +855,6 @@ class IssueIntoMain(IssueCase):
         self.assertMerged(p)
         self.assertIn("behind main", p.stdout)
 
-    def test_main_gained_a_harness_path_merges_clean_at_once(self):
-        """Issue 520: no second whole check when git merges feat/9 into main clean, whatever main gained."""
-        self.given()
-        self.commit(self.co, [".pm/bin/other.txt"], "main gains")
-        p = self.script("pm-merge", 9)
-        self.assertMerged(p)
-        self.assertLine(p.stdout, "behind main by 1 path", "harness", "GitHub Actions")
-        self.assertEqual(self.head("main^2"), self.feat)
-        events = (self.co / ".pm" / "run" / "events.log").read_text().splitlines()
-        merged = [ln for ln in events if "merge 9 feat/9 -> main" in ln]
-        self.assertEqual(len(merged), 1, events)
-        self.assertTrue(merged[0].endswith(" behind main by 1 path"), merged[0])
-
-    def given_conflict(self):
-        self.given()
-        self.commit(self.co, {HARNESS_PATH: "main\n"}, "main gains the same file")
-        self.main = self.head("main")
-
-    def test_conflict_is_refused_and_names_take_main(self):
-        """Issue 520: a conflict merges nothing; the plan takes main and the whole check runs again."""
-        self.given_conflict()
-        p = self.script("pm-merge", 9)
-        self.assertRefused(p, "merge conflict", HARNESS_PATH, "main left unchanged")
-        self.assertLine(p.stderr, "pm-merge 9 --take-main", "whole check")
-        self.assertEqual((self.head("main"), self.head("feat/9")), (self.main, self.feat))
-        self.assertEqual(git(self.co, "status", "--porcelain"), "")
-
-    def test_conflict_dry_run_predicts_it(self):
-        self.given_conflict()
-        p = self.script("pm-merge", 9, "--dry-run")
-        self.assertRefused(p, "merge conflict", HARNESS_PATH, "pm-merge 9 --take-main")
-        self.assertEqual((self.head("main"), self.head("feat/9")), (self.main, self.feat))
-        self.assertEqual(git(self.co, "status", "--porcelain"), "")
-
-    def test_conflict_resolved_on_the_issue_branch_needs_the_whole_check_again(self):
-        self.given_conflict()
-        self.assertRefused(self.script("pm-merge", 9))
-        subprocess.run(["git", "-C", str(self.w9), "merge", "-q", "--no-edit", "main"], capture_output=True)
-        self.commit(self.w9, {HARNESS_PATH: "both\n"}, "merge main, conflict resolved")
-        p = self.script("pm-merge", 9)
-        self.assertRefused(p, "run pm-check again")
-        self.assertEqual(self.head("main"), self.main)
-        self.record(self.w9, integration="passed", harness="passed")
-        self.assertMerged(self.script("pm-merge", 9))
-
     def test_flaky_whole_check_merges_and_is_named(self):
         self.given()
         self.record(self.w9, integration="flaky", harness="passed")

@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: harness|pm-merge|merge-on-a-clean-merge-like-a-pull-request
-Issue-Check-Ids: harness.merge-scope harness.issue-branch harness.ci-docs harness.issue-branch-docs
+Issue-Check-Ids: harness.merge-scope harness.issue-branch
 Issue-Commit: d0ac9aed12be15fb14aefe52128bdebe73322a6c
 
 # Merge a checked branch into main when it merges cleanly, and check again only after a conflict

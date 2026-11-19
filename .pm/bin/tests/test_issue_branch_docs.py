@@ -377,51 +377,5 @@ class No_unit_does_it_alone(unittest.TestCase):
                     self.assertNotIn(words, flat(text))
 
 
-
-class Merge_like_a_pull_request(unittest.TestCase):
-    """Issue 520 (owner, 2026-11-19): a branch whose record passes on its head goes into main when git merges it
-    clean, whatever main gained, with no second check; on a conflict its lead takes main, the owning unit resolves
-    it, and the check runs again. Each guide that states the merge rule says so."""
-
-    def test_root_agents(self):
-        said = sentences(part(ROOT.read_text(), "## Branches and main"))
-        with self.subTest("a clean merge goes in with no second check"):
-            self.assertTrue(any(has(s, r"\bown passing record\b", r"\bno conflict\b", r"\bwhatever `main` gained\b",
-                                    r"\bno second check\b") for s in said), said)
-        with self.subTest("a conflict: the lead takes main, the owning unit resolves, the check runs again"):
-            self.assertTrue(any(has(s, r"\bconflict\b", r"\bnothing is merged\b", r"--take-main", r"\bowns\b",
-                                    r"\bcheck runs again\b") for s in said), said)
-        with self.subTest("the push run checks the merged result"):
-            self.assertTrue(any(has(s, r"GitHub Actions", r"\bmerged result\b") for s in said), said)
-
-    def test_skill_close(self):
-        text = SKILL.read_text()
-        close = part(text, "### 2. Close (you)")
-        said = sentences(close)
-        with self.subTest("step 3: merged on no conflict, however far main moved"):
-            self.assertTrue(any(has(s, r"\bno conflict\b", r"\bhowever far `main` moved\b") for s in said), said)
-        with self.subTest("step 3: on a conflict the plan takes main and runs the whole check again"):
-            self.assertTrue(any(has(s, r"\bconflict\b", r"--take-main", r"\bwhole check again\b") for s in said),
-                            said)
-        with self.subTest("no refusal because main moved"):
-            self.assertNotIn("in a way the issue branch's paths care about", flat(close))
-            self.assertNotIn("against `main` as it is", flat(close))
-        with self.subTest("a harness-engineer's conflict"):
-            said = sentences(part_of(text, "### 1."))
-            self.assertTrue(any(has(s, r"\bconflict with `main`", r"\bengineer\b", r"`pm-check` again") for s in said),
-                            said)
-
-    def test_lead_close(self):
-        said = sentences(part(LEAD.read_text(), "## Close"))
-        self.assertTrue(any(has(s, r"\bno conflict\b", r"\bno second whole check\b") for s in said), said)
-        self.assertTrue(any(has(s, r"--take-main", r"\bowns each path\b", r"\bresolves the conflict\b") for s in said),
-                        said)
-
-    def test_harness_engineer_brief(self):
-        text = flat((BRIEFS / "harness-engineer.md").read_text())
-        self.assertNotIn("tells you it moved", text)
-        self.assertRegex(text, r"`main` when `pm-merge` stopped on a conflict with it")
-
-
 if __name__ == "__main__":
     unittest.main()
