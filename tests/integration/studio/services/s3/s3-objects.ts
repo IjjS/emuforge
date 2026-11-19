@@ -36,7 +36,8 @@ const TABLE = createWrapper().findTable().toSelector();
 /** The tab's parts a check acts on or reads. */
 export function objectsTab(page: Page) {
   const main = page.getByRole('main');
-  const table = main.locator(TABLE);
+  // The selector starts at `body`, so it is not scoped inside `main`; the tab has one table.
+  const table = page.locator(TABLE);
   return {
     table,
     /** The table's heading (level 2), its counter included in its name: "Objects (100+)". */
