@@ -227,8 +227,14 @@ function UploadView({ bucket, prefix, connection }: UploadViewProps) {
     [navigate, back],
   );
 
+  // The page keeps its `h1` in this state too, so the area's content target is still named by it.
   if (lookup.value === NO_SUCH_BUCKET) {
-    return <ObjectsBucketGone name={bucket} />;
+    return (
+      <SpaceBetween size="l">
+        <Header variant="h1">Upload</Header>
+        <ObjectsBucketGone name={bucket} />
+      </SpaceBetween>
+    );
   }
 
   const columns: TableProps.ColumnDefinition<FileRow>[] = [

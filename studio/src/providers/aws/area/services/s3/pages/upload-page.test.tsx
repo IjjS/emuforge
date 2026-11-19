@@ -671,6 +671,18 @@ describe('the Upload page, "Cancel" and leaving', () => {
 });
 
 describe('the Upload page, its frame', () => {
+  it('a bucket the emulator does not hold → the h1 "Upload" stays, then "No bucket {name}" and no file picker', async () => {
+    open('', 'gone');
+    await waitFor(() => {
+      expect(screen.getByText('The local emulator holds no bucket of this name.')).toBeInTheDocument();
+    });
+    const headings = screen.getAllByRole('heading', { level: 1 });
+    expect(headings.map((heading) => heading.textContent)).toEqual(['Upload']);
+    expect(screen.getByRole('link', { name: 'Go to Buckets' })).toBeInTheDocument();
+    expect(createWrapper(document.body).findFileUpload()).toBeNull();
+    expect(engine.writes()).toEqual([]);
+  });
+
   it('crumbs carry the prefix trail, each part a link to the tab at it, then "Upload"; the notice names objects', async () => {
     open('logs/2026/');
     await shownPage();
