@@ -112,7 +112,7 @@ recording the answer under `## Review decisions`. On its `UNIT READY` read its `
 (`git diff main...<branch>`) and judge it yourself: send what must change in one prompt, or merge it with
 `pm-merge <id> h1`, which asks for its `pm-check` record and no review file. An issue given in parts takes the
 next part as `h2`, from `main` after the merge. The engineer closes the issue's file on its branch with
-`pm-issue close`, and `pm-merge` refuses its part while the file is still open there, unless you wrote its brief with
+`pm-issue close` (with `--checks harness.guards` only when a kept guard shows the fix), and `pm-merge` refuses its part while the file is still open there, unless you wrote its brief with
 `--not-last` because another part follows.
 
 An issue begun before issue 478 (its `brief.json` has no `lead`) finishes as its `state.md` says, under the rules of
@@ -140,20 +140,13 @@ when the record is a pass on that commit and covers what the branch changes agai
 included, so a `deferred` step never reaches `main`. Nothing else is run at a merge; `main` is checked on GitHub
 Actions after its push (flow step 3).
 
-**Harness test files.** The harness step leaves out a slow test file that no changed path touches: each on-touch
-file has an entry in the map of `.pm/bin/_pmscope.py` with its sources (the scripts, helpers, fixtures and other
-files its cases run or read), and runs only when a changed path matches one of them; every other test file runs
-on every harness change. `pm-scope` and `pm-check` name the left-out files (`harness tests left out: …`), the
-record's `harness-test` step holds them as `left_out`, and `pm-merge` refuses a record that left out a file the
-branch's paths call for. A change of `_pmscope.py` or the runner runs every file. `pm-check --full` runs every
-harness test file, as does `pm-check --only harness` (a partial run) or `.pm/bin/tests/run` by hand. A new slow
-test file gets its entry in `_pmscope.py`; adding a source needs no decision, but a new entry or a source taken
-away changes what a run checks and is made only on the `pm`'s decision, recorded in the issue's `decisions.md`.
-What a left-out file leaves unseen until a run calls for it: a case that depends on a file the map does not name
-as its source, and a break from outside the repository (a new emulator image, a new Chromium, the machine). Name
-this in the report of an issue whose units left files out, and run `pm-check --only harness` when in doubt:
-`pm-check --full` also runs the integration checks of the tier `full`, which the `pm` runs only on the owner's word
-(`tests/integration/AGENTS.md`, Full tier).
+**Harness guards.** The harness keeps no tests but three guards, in `.pm/bin/tests/test_guards.py` (issue 523):
+what the orphan sweep may stop, what a check's clean-up may remove of containers, volumes and images, and what
+`pm-worktree rm` may delete. They use stand-ins only and run in under 30 s in all; past that, the slow case goes.
+`pm-check`'s harness step runs them whenever a path of `.pm/bin/` changed. A harness issue adds no test: a fault
+found in use is fixed in the script, and a new guard is written only on your decision, recorded in the issue's
+`decisions.md`, for a new way a script could delete, stop or remove what is not its own. You judge a harness change
+by reading it and, where you can, by running it once.
 
 **Intermittent failures.** `pm-check` runs a failed test step once more; when the second run passes, the step is
 `flaky`, the run passes and the unit is not held up. Every flake is a line in `.pm/run/flakes.jsonl` (step,
@@ -246,7 +239,8 @@ flow step 1:
   tab:
   - The oldest issue of the batch is its host. Its `.pm/issue-<host>/` holds the batch's stage documents, and
     `decisions.md` names the other issue files. One `plan` pane leads all five, with one requirement, one set of
-    test criteria and one breakdown, and its one `rev` pane reviews each stage once for the whole batch.
+    test criteria and one breakdown, and its one `rev` pane reviews the requirement, the plan set and the
+    implementation once each for the whole batch.
   - The batch is one issue branch of its host: `pm-worktree new <host>` makes it, and the units belong to the host
     (`pm-worktree new <host> <unit>`) and are cut as for one issue: a unit may fix
     several of the five and names the ones it fixes; `rev` reviews the whole once. The unit that fixes an issue runs
@@ -331,7 +325,7 @@ logged in `.pm/run/events.log` and never delivered; a turn with none wakes you a
 | `pm-brief` | a pane's brief from its template: `plan` (also writes rev's), `harness-engineer`, `worker`, `crit`, `show`; a plan runs `worker` and `crit` for its own issue |
 | `pm-pane` | panes: `new` (`--kind`, `--model`, `--effort`), `reset`, `close`, `list`; a plan runs `new` of a worker, rev or crit and `reset` and `close` of those panes for its own issue; a `QUEUE` answer to a plan becomes `EVENT room` to it later |
 | `pm-report` | a pane's typed line that ends its turn, to its lead (you, or the plan of its issue) or to the log |
-| `pm-check` | the checks of a checkout, recorded; on a unit of an issue branch the fast check (`integration` left to the issue branch), on the issue's worktree the whole check; `--checks <id>…` single integration checks, never a gate; retries a failed test step once (`flaky`), a heavy run asks for room and starts or answers `WAIT <n>s` (exit 75; `EVENT room <pane> check <worktree>` follows), the record holds how long it `waited`, `--stop` ends one worktree's run; the harness step leaves out the on-touch test files no changed path touches (`left_out`), `--full` runs every file |
+| `pm-check` | the checks of a checkout, recorded; on a unit of an issue branch the fast check (`integration` left to the issue branch), on the issue's worktree the whole check; `--checks <id>…` single integration checks, never a gate; retries a failed test step once (`flaky`), a heavy run asks for room and starts or answers `WAIT <n>s` (exit 75; `EVENT room <pane> check <worktree>` follows), the record holds how long it `waited`, `--stop` ends one worktree's run; the harness step runs the three guards |
 | `pm-capture` | screen captures and contact sheets |
 | `pm-critique` | impeccable scores: `record`, `table`, `check` (fails while the last `final` has a P0 or P1) |
 | `pm-merge` | `<id> <unit>` a unit's branch into its target (the issue branch, or local `main` for an issue without one); `<id> --take-main` local `main` into the issue branch; `<id>` the issue branch into local `main`; a plan runs the first two for its own issue, into `feat/<id>` only; the review it asks follows the issue's `lead` |

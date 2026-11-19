@@ -19,7 +19,9 @@ parent unit's branch for a stacked unit. Nothing is fetched, because local main 
 unit "issue" and a branch <feat|refactor|fix>/<digits> (the name of an issue branch) are refused; while the issue
 has an issue branch, so is a --branch that is not <feat|refactor|fix>/<issue>-<name>, so every unit of the issue
 has a branch whose target is the issue branch. Every worktree gets output/{captures,logs} and three ports in output/ports.json:
-studio (8100+), engine (8300+) and emulator (9300+), so parallel units never share a server or an emulator.
+studio (8100+), engine (8300+) and emulator (9300+), so parallel units never share a server or an emulator. A slot
+is passed over while one of its ports, or the port beside its emulator's, is taken (9297, something accepts on
+127.0.0.1 there, or ~/.aws/emulator/<port> exists), stepping on by 2 until a free slot.
 When studio/package.json exists, `bun install` runs there (log in output/logs/install.log).
 worktrees.json and ports.json are changed only under their lock (_pmlib.update), so worktrees made or removed at the
 same moment lose no entry and never share a slot (issue 504).
@@ -27,7 +29,9 @@ Who may run it: the pm, and a plan for its own issue: `new <its issue>`, `new <i
 branch is registered (based on it, or with --base on a unit branch <type>/<issue>-<name> of the issue), and `rm` of a
 unit worktree of its issue (the issue's own worktree goes with pm-archive); `orphans` is the pm's alone. Every
 other pane is refused all but `list`.
-rm removes the worktree, frees its ports and deletes the branch only when it is merged into local main. It first
+rm removes the worktree, frees its ports and deletes the branch only when it is merged into local main. It refuses,
+and removes nothing, a registry entry whose path is not absolute or is the main checkout, a folder under it or one
+of its ancestors. It first
 stops the worktree's orphaned processes, as `orphans <name> --stop` does, and prints its line; then it runs
 `pm-emulator-dir rm --worktree` for the worktree, merged or not, and prints its line: the folder the worktree's
 emulator port left under ~/.aws/emulator. Neither a refusal there nor a sweep that cannot tell or left
@@ -51,12 +55,13 @@ import argparse
 import json
 import os
 import re
+import socket
 import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _pmlib import BIN, PORTS, ROOT, WORKTREES, guard, load, log, now, update
-from _pmorphans import CannotTell, kept_text, line, scan_left, sweep, table, worktree_paths
+from _pmorphans import CannotTell, inside, kept_text, line, scan_left, sweep, table, worktree_paths
 from _pmscope import Unreadable, run_git
 
 BRANCH_TYPES = ("feat", "refactor", "fix")
@@ -64,6 +69,8 @@ ISSUE = "issue"  # the registry's unit of an issue branch; no unit can be called
 ISSUE_BRANCH = re.compile(r"(feat|refactor|fix)/\d+")  # the name of an issue branch, matched whole
 ADD_TIMEOUT = 120  # seconds the issue branch's `git worktree add` may take
 PORT_BASES = {"studio": 8100, "engine": 8300, "emulator": 9300}
+OWNER_PORT = 9297  # the owner's emulator; never a worktree's
+SLOT_STEP = 2  # a slot whose ports are taken is passed over by 2: the emulator's port and the one beside it
 EMULATOR_DIR = "pm-emulator-dir: "
 
 
@@ -75,15 +82,41 @@ def run(cmd, cwd=None, out=None):
     return subprocess.run(cmd, cwd=cwd).returncode
 
 
+def port_taken(port):
+    """True when a worktree cannot have `port`: the owner's 9297, something accepts on 127.0.0.1:<port>, or a folder
+    ~/.aws/emulator/<port> exists (only its existence is asked; nothing in it is read)."""
+    if port == OWNER_PORT:
+        return True
+    if os.path.lexists(os.path.join(os.path.expanduser("~"), ".aws", "emulator", str(port))):
+        return True
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+            return True
+    except OSError:
+        return False
+
+
+def slot_taken(slot):
+    """True when one of the slot's ports, or the port beside its emulator's, is taken (port_taken)."""
+    ports = [base + slot for base in PORT_BASES.values()] + [PORT_BASES["emulator"] + slot + 1]
+    return any(port_taken(p) for p in ports)
+
+
 def alloc_slot(path):
-    """One slot number per worktree; each port is its base plus the slot. Taken under the lock of ports.json, so two
-    worktrees made at the same moment never get one slot (issue 504)."""
+    """One slot number per worktree; each port is its base plus the slot. A registered slot is passed over by 1; a
+    slot whose ports are taken by something else (slot_taken) is passed over by 2, until a free one. Taken under the
+    lock of ports.json, so two worktrees made at the same moment never get one slot (issue 504)."""
     with update(PORTS, {}) as slots:
-        for slot in range(0, 100):
-            if str(slot) not in slots:
+        slot = 0
+        while slot < 100:
+            if str(slot) in slots:
+                slot += 1
+            elif slot_taken(slot):
+                slot += SLOT_STEP
+            else:
                 slots[str(slot)] = str(path)
                 return slot
-    sys.exit("no free port slot (100 worktrees registered?)")
+    sys.exit("no free port slot (100 worktrees registered, or their ports taken?)")
 
 
 def issue_entry(wts, issue):
@@ -235,6 +268,11 @@ def cmd_rm(a):
         sys.exit(f"{key} not in registry; remove it by hand with git worktree remove")
     if asker and wt.get("unit") == ISSUE:
         sys.exit(f"refused: the issue's own worktree {key} is removed by pm-archive, the pm's")
+    path, root = wt.get("path"), os.path.realpath(ROOT)
+    real = os.path.realpath(path) if isinstance(path, str) and os.path.isabs(path) else None
+    if real is None or inside(real, root) or inside(root, real):
+        sys.exit(f"refused: the registry's path of {key} ({path!r}) is the main checkout, one of its folders or "
+                 f"an ancestor of it; nothing removed")
     swept = [w for w in worktree_paths() if w[0] == wt["name"]]
     if swept:
         text = line(wt["name"], sweep(swept)[wt["name"]])

@@ -47,7 +47,7 @@ Six roles, no more. A role is a separation of duty, not a head count.
 | `worker` | Implements one unit, engine or Studio, in its own worktree, with the unit tests its brief's scenarios ask | Writes integration tests, changes a confirmed check, touches files outside its unit, merges |
 | `rev` | Reviews an issue from files only: the stage documents before the build, and at the end the implementation and whether the integration tests are the scenarios | Edits anything, sees the author's reasoning |
 | `crit` | Scores Studio screens with the impeccable critique, on the built app | Fixes anything |
-| `harness-engineer` | Plans and implements a harness issue alone, judged by the `pm` directly; runs the harness tests of what it touches and nothing else | Merges, opens panes |
+| `harness-engineer` | Plans and implements a harness issue alone, judged by the `pm` directly; runs `pm-check`, whose harness step is the three guards, and adds no test | Merges, opens panes |
 
 Test author (`plan`), implementer (`worker`) and reviewer (`rev`) stay three. The machine's room (panes, CPU,
 memory) is judged by the scripts, never by a pane.

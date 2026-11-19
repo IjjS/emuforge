@@ -13,14 +13,15 @@ Steps:
 1. Plan in `output/plan.md`: what changes in which file, what you leave, and each question for the `pm` with its
    options, your recommendation first. Then `{{root}}/.pm/bin/pm-report "STAGE READY i{{issue}}-harness-engineer
    plan output/plan.md"`, print the same line and stop. The `pm` answers once; build on that answer.
-2. Build, committing in small steps. A new behaviour of a script gets a harness test; changed guide text gets the
-   doc tests that read it. A test does not assert how many entries a list has when the list grows with the product
-   or the harness (checks, scan rules, manifest rows, board keys); it asserts the property the number stood in for
-   (each entry well formed, two lists equal, no entry twice by its key, the list not empty). A number that is the
-   behaviour under test stays.
+2. Build, committing in small steps. Add no test: the harness keeps only the guards of `.pm/bin/tests/test_guards.py`
+   (issue 523). A new guard is written only on the `pm`'s decision, recorded in `decisions.md`, for a new way a
+   script could delete, stop or remove what is not its own, and the guards stay under 30 s in all. A guard does not
+   assert how many entries a list has when the list grows with the product or the harness (checks, scan rules,
+   manifest rows, board keys); it asserts the property the number stood in for (each entry well formed, two lists
+   equal, no entry twice by its key, the list not empty). A number that is the behaviour under test stays.
 3. {{close_step}}
 4. `{{root}}/.pm/bin/pm-check {{worktree}}` until it prints `PASSED`. On a harness change it runs the harness
-   tests of what the change touches and the doc tests, and nothing else; run nothing else. A `WAIT` answer: end
+   guards and nothing else; run nothing else. A `WAIT` answer: end
    your turn until `EVENT room`.
 5. Write `output/report.md`: the commit, the files changed, what ran (with the record's path), and what the `pm`
    should look at first. Then `{{root}}/.pm/bin/pm-report "UNIT READY i{{issue}}-harness-engineer {{branch}}

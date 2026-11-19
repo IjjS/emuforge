@@ -12,7 +12,7 @@ the first rule it matches. Before the first step it prints the decision: one lin
 modules called for, one line per called-for module with the reason. Kinds:
   diff   the branch has commits of its own: what its paths call for (a path no rule knows: every module)
   main   the head is main's commit or an ancestor (the main checkout, a new branch): the product modules
-         engine, studio and integration; the harness tests are left out
+         engine, studio and integration; the harness guards are left out
   unit   the fast check of a unit of an issue branch: what its own paths against feat/<id> call for, except
          integration, which is left to the issue branch: its step is recorded "deferred" (0 s, no log)
   full   --full, or the changes cannot be read (no branch main, no commit shared with the target, git failed):
@@ -31,33 +31,22 @@ for integration. The steps, for each module that exists in the checkout:
                (a check's result is evidence about the commit, and Vitest's cache of transformed modules is
                keyed by each module's own text, so it can hold the result of an earlier tree)
   integration  tests/integration/run (the suite's own entry point), given the worktree's engine and emulator ports
-  harness      .pm/bin/tests/run [--leave-out <test file> ...] (unittest discovery of the .pm/bin tools' tests)
+  harness      .pm/bin/tests/run (the harness guards, issue 523: unittest discovery, under 30 s in all)
 A module whose manifest is missing (engine/Cargo.toml, studio/package.json, tests/integration/run,
 .pm/bin/tests/run) is reported as "absent" and does not count as a failure, called for or not. A checkout where
 every module is absent, or where nothing was called for (only issue files changed), passes on a clean tree.
 Each step's output goes to <checkout>/output/logs/check-<step>.log. The summary goes to
 <checkout>/output/checks/last.json: {commit, dirty, full, on_request, passed, failed: [steps], scope, steps: [{name,
-module, status, seconds, log}]}, with `left_out` on a harness-test step that ran. `scope` is what `pm-scope
+module, status, seconds, log}]}. `scope` is what `pm-scope
 <checkout> --json` prints: kind, reason, main's commit, the merge base, the number of changed paths, per module
-whether it was called for and why, and `harness_tests` when harness is. `full` is true only when every module was
+whether it was called for and why. `full` is true only when every module was
 called for. pm-merge refuses a unit whose last.json is not a pass on the branch's current
 commit, or whose steps do not cover every module the branch's changes call for (it decides that again itself).
 Exit code 0 only when no step that ran failed, the tree was clean and the run was not --only.
 
-Harness test files. The harness step leaves out the slow test files that no changed path touches: for kinds diff
-and unit, the scope's `harness_tests` (_pmscope.harness_tests of the same paths, a unit's against feat/<id>, the
-issue branch's against main, so the whole check of an issue runs every on-touch file any of its units called for)
-names the on-touch files of _pmscope.ON_TOUCH whose sources no changed path matches, and pm-check prints them with
-the decision (`  harness tests left out: …`, or `  harness tests every file: <why>`). It gives them to the runner
-as ./run --leave-out <file> ..., in name order, for the first run of the step and its retry alike, and only those
-that exist in the checkout and only to a runner whose text (read up to 1 MiB, as UTF-8) names --leave-out: a
-checkout cut before this option has a runner that ignores arguments, and gets none. A change of _pmscope.py or
-.pm/bin/tests/run, or a path no rule knows, runs every file. The harness-test entry of a step that ran gets
-`left_out`: the file names given to the runner, [] when none; the runner's log names each left-out file, and its
-cases are in no count. Kind main and --checks do not run the harness step. On request, every harness test file
-runs with pm-check <worktree> --full (every module and every file, a record pm-merge accepts), pm-check <worktree>
---only harness (every file, a partial run that never passes), or .pm/bin/tests/run by hand without arguments; the
-scope of --full and --only harness says `every file` with the option as the reason.
+Harness guards (issue 523). The harness step runs .pm/bin/tests/run with no argument: every guard of what a script
+may delete, stop or remove, in under 30 s. A path of .pm/bin/ calls it; no other path does. Kind main and --checks
+do not run the harness step.
 
 On request. A check whose manifest row is labelled `on-request` is not part of a default run: the suite reports it
 `not-run` with the reason "on request: not part of a default run; run it with --on-request" and counts it in
@@ -215,7 +204,7 @@ this_run = None  # this run's entry in <root>/.pm/run/checks/ while a heavy run 
 CHECK_ID = re.compile(r"[a-z]+\.[a-z0-9-]+")  # the form of a manifest id; nothing else reaches a file
 NAMED = 10  # failed or error checks named in the output, per verdict
 MTIME_SLACK = 1  # seconds: a file's time can lag the clock by a tick; a report older than that is not this run's
-RUNNER_MAX = 1024 * 1024  # bytes of the harness runner read to see whether it takes --leave-out
+RUNNER_MAX = 1024 * 1024  # bytes of the integration runner read to see whether it takes --full
 
 
 def fmt_s(n):
@@ -478,23 +467,6 @@ def emulator_line(entry):
     return f"emulator {e['version']} commit {e['commit']}" if e else None
 
 
-def leave_out(co, sc):
-    """The test files the harness step leaves out: the scope's `harness_tests` left_out when the checkout's runner
-    names --leave-out, else []. A runner over RUNNER_MAX bytes, or one that cannot be read as UTF-8, is taken not to
-    know the option."""
-    ht = sc.get("harness_tests")
-    if not ht or ht.get("all") or not ht.get("left_out"):
-        return []
-    try:
-        with open(co / STEPS["harness"][0] / STEPS["harness"][1], "rb") as f:
-            data = f.read(RUNNER_MAX + 1)
-        if len(data) > RUNNER_MAX or "--leave-out" not in data.decode("utf-8"):
-            return []
-    except (OSError, UnicodeDecodeError):
-        return []
-    return list(ht["left_out"])
-
-
 def suite_knows_full(co):
     """Whether the checkout's tests/integration/run names --full (the tier full, issue 482): read up to RUNNER_MAX
     bytes as UTF-8; a suite that cannot be read, or is larger, is taken not to know it."""
@@ -616,14 +588,14 @@ def main():
     results, flaky = [], []
     try:
         results, flaky = run_all(a, co, mods, calls, env, logs, record, commit, held, sc["target"],
-                                 leave_out(co, sc), services_file(sc))
+                                 services_file(sc))
     finally:
         record.unlink(missing_ok=True)
         done()
     finish(co, out, commit, dirty, ports, sc, results, flaky, cpu, bool(a.on_request), waited)
 
 
-def run_all(a, co, mods, calls, env, logs, record, commit, held=(), target="main", left=(), services=None):
+def run_all(a, co, mods, calls, env, logs, record, commit, held=(), target="main", services=None):
     """Run the called-for steps. `services` is the services file's object (services_file) when the integration
     step is narrowed to a set of services, else None."""
     results, flaky = [], []
@@ -656,8 +628,6 @@ def run_all(a, co, mods, calls, env, logs, record, commit, held=(), target="main
                 cmd = cmd + ["--full"]  # the first run and the retry alike
             if mod == "integration" and services is not None:
                 cmd = cmd + ["--services", str(services_json)]  # the first run and the retry alike
-            if mod == "harness" and left:
-                cmd = cmd + ["--leave-out", *left]  # the first run and the retry alike
             log = logs / f"check-{name}.log"
             t = started = time.time()
             code = run_step(cmd, str(co / sub), env, log, record, name)
@@ -682,8 +652,6 @@ def run_all(a, co, mods, calls, env, logs, record, commit, held=(), target="main
                 ft = report_full_tier(co, commit, started)
                 if ft is not None:
                     results[-1]["full_tier"] = ft
-            if mod == "harness":
-                results[-1]["left_out"] = list(left)
             if status == "flaky":
                 flaky.append(name)
                 with open(RUN / "flakes.jsonl", "a") as f:

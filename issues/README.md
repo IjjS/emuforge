@@ -64,7 +64,9 @@ What this issue deliberately leaves alone.
 - A fix commit moves the file to `things-that-now-work/` unchanged except for the header; it never edits the
   description to match what was built.
 - An issue is closed by its checks passing, not by the fixer's word. `Issue-Check-Ids` must be non-empty when
-  the file moves.
+  the file moves. A `harness` issue is the exception (issue 523): the harness keeps no tests but its guards, so one
+  that no guard shows is closed with `none (harness issue, no kept guard shows it)`, which `pm-issue close` writes
+  when `--checks` is left out. A harness issue adds no test.
 - A check that fails because aws-emulator itself does not implement an operation (HTTP 501) is not an
   EmuForge issue. Record it as a known emulator gap in the check's metadata and report it upstream at
   https://github.com/aws/aws-emulator/issues.

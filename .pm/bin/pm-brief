@@ -47,9 +47,11 @@ ISSUE_DIRS = ("issues/things-that-do-not-work", "issues/things-that-now-work")
 MODULE_DIR = {"studio": "studio", "engine": "engine", "cli": "engine", "iam": "engine", "verify": "engine", "harness": "engine"}
 DESIGN_STEP = {
     "engine": "`design.md` per engine/references/workflow.md stage 2, with the security review rows for everything the "
-              "change touches. REVIEW design r1.",
+              "change touches. Written with `test-criteria.md` and `breakdown.md` and sent with them as one set: "
+              "REVIEW plan-set r1.",
     "studio": "`design.md` per studio/references/workflow.md stage 2: per task, its flow through the screens and the API "
-              "call behind each action, the console captures read for its UX, and what is shared. REVIEW design r1.",
+              "call behind each action, the console captures read for its UX, and what is shared. Written with "
+              "`test-criteria.md` and `breakdown.md` and sent with them as one set: REVIEW plan-set r1.",
 }
 CONVENTIONS = {
     "e": "`engine/AGENTS.md`, `engine/references/security-review.md`, `engine/references/relay-fidelity.md`",
@@ -156,9 +158,9 @@ def cmd_harness(a):
         close = ("(This part does not close the issue: another part follows. Leave its file under "
                  "issues/things-that-do-not-work/.)")
     else:
-        close = ('Close the issue on your branch: {{root}}/.pm/bin/pm-issue close {{issue}} --checks "<the harness check '
-                 'ids of the tests that show the fix, harness.<test file name without test_ and .py, - for _>>" '
-                 "--in {{worktree}}, and commit the move with your last commit, before pm-check. pm-merge refuses "
+        close = ("Close the issue on your branch: {{root}}/.pm/bin/pm-issue close {{issue}} --in {{worktree}}, with "
+                 '--checks "harness.guards" only when a kept guard shows the fix (issue 523), and commit the move with '
+                 "your last commit, before pm-check. pm-merge refuses "
                  "this part while the issue's file is still under issues/things-that-do-not-work/ on your branch.")
     values = dict(v, root=str(ROOT), unit=a.unit, part=a.part.strip(), worktree=wt["path"], branch=wt["branch"],
                   base=wt.get("base") or "main", precedents=precedents(a.precedent), close_step=close)
