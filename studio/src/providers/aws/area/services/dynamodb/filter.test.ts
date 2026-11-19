@@ -35,7 +35,7 @@ describe('the types each comparison offers', () => {
     expect(typesOf(comparison)).toEqual(types);
   });
 
-  it('the labels are the sort key condition\'s and the requirement\'s', () => {
+  it("the labels are the sort key condition's and the requirement's", () => {
     expect(COMPARISONS.map(({ label }) => label)).toEqual([
       'Equal to',
       'Not equal to',
@@ -132,9 +132,9 @@ describe('the checks "Run" makes', () => {
     expect(checkConditions([condition('b', { type: 'B', value: 'not base64' })])).toEqual([
       { value: 'Enter the value in base64.' },
     ]);
-    expect(
-      checkConditions([condition('b', { comparison: 'between', type: 'B', value: 'AQI=', upper: '!!' })]),
-    ).toEqual([{ upper: 'Enter the value in base64.' }]);
+    expect(checkConditions([condition('b', { comparison: 'between', type: 'B', value: 'AQI=', upper: '!!' })])).toEqual(
+      [{ upper: 'Enter the value in base64.' }],
+    );
   });
 
   it('a Number that is no number, an empty value, bounds in the wrong order → no message', () => {

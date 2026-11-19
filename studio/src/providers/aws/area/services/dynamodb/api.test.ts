@@ -823,7 +823,12 @@ describe('a filtered scan and query (issue 512)', () => {
   });
 
   it('a scan and a query without conditions: exactly the members issue 496 sends', async () => {
-    await readItems(endpoint, { table: 'orders', pageSize: 25, read: { kind: 'scan' }, filter: [] }, undefined, signal());
+    await readItems(
+      endpoint,
+      { table: 'orders', pageSize: 25, read: { kind: 'scan' }, filter: [] },
+      undefined,
+      signal(),
+    );
     await readItems(
       endpoint,
       {

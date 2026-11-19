@@ -123,11 +123,7 @@ function noneOfRead(read: number): string {
 }
 
 /** A filtered page that matched none, by whether more remain, its position and the read's kind (design.md). */
-function filteredNone(
-  exploration: ItemsExplorer['exploration'],
-  kind: 'scan' | 'query',
-  name: ReactNode,
-): BodyState {
+function filteredNone(exploration: ItemsExplorer['exploration'], kind: 'scan' | 'query', name: ReactNode): BodyState {
   const read = exploration.read ?? 0;
   if (exploration.more) {
     return {

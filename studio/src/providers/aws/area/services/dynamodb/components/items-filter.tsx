@@ -83,7 +83,11 @@ export function ItemsFilter({ conditions, errors, onAdd, onChange, onRemove }: I
     onRemove(position);
     const left = conditions.length - 1;
     setFocus(
-      position < left ? { kind: 'row', position } : position > 0 ? { kind: 'row', position: position - 1 } : { kind: 'add' },
+      position < left
+        ? { kind: 'row', position }
+        : position > 0
+          ? { kind: 'row', position: position - 1 }
+          : { kind: 'add' },
     );
     setSaid((current) => ({ text: `Condition ${String(position + 1)} removed.`, id: current.id + 1 }));
   };

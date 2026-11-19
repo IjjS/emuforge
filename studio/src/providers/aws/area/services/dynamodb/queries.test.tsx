@@ -366,7 +366,10 @@ describe('a filtered exploration (issue 512)', () => {
   it('a run with other conditions starts at page 1 with earlier pages dropped; "next page" keeps the conditions', async () => {
     const exploration = renderItems({ request: FILTERED });
     const first = await engine.request('Scan');
-    expect(first.body).toMatchObject({ FilterExpression: '#f0 = :f0', ExpressionAttributeValues: { ':f0': { S: 'open' } } });
+    expect(first.body).toMatchObject({
+      FilterExpression: '#f0 = :f0',
+      ExpressionAttributeValues: { ':f0': { S: 'open' } },
+    });
     first.respond(counted(['a'], 25, 'k1'));
     await shownItems(exploration.result, ['a']);
 

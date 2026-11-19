@@ -1,6 +1,7 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { useState, useSyncExternalStore } from 'react';
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -12,7 +13,7 @@ import AwsArea from '../../../index';
 
 // DynamoDB's table page, S2, rendered inside the area's layout as Studio's frame renders the area, against a fake
 // engine behind the page's `fetch` that answers DynamoDB's JSON 1.0 protocol (issue 496, test-criteria.md, "Unit s3 —
-// .../dynamodb/pages/table-page.test.tsx").
+// .../dynamodb/pages/table-page.test.tsx"), and its filter (issue 512).
 
 // ---------------------------------------------------------------------------------------------------------------
 // The fake engine.
@@ -1126,5 +1127,443 @@ describe('"Delete table"', () => {
     await waitFor(() => {
       expect(document.body.textContent).toContain('Table orders is being deleted.');
     });
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// The filter (issue 512, test-criteria.md "Unit s1 — .../dynamodb/pages/table-page.test.tsx").
+// ---------------------------------------------------------------------------------------------------------------
+
+function addCondition() {
+  fireEvent.click(within(tabContent()).getByRole('button', { name: 'Add condition' }));
+}
+
+function conditionInput(label: string): HTMLInputElement {
+  return within(tabContent()).getByRole('textbox', { name: label });
+}
+
+function typeCondition(label: string, value: string) {
+  fireEvent.change(conditionInput(label), { target: { value } });
+}
+
+/** An element's name from its `aria-labelledby`. */
+function labelledName(element: Element): string {
+  return (element.getAttribute('aria-labelledby') ?? '')
+    .split(' ')
+    .map((id) => text(document.getElementById(id) ?? document.createElement('i')))
+    .join(' ');
+}
+
+/** A condition's select, by its field's label and its row ("Comparison, condition 1"). */
+function conditionSelect(label: string) {
+  const name = `${label.replace(', ', ' ')} `;
+  const found = createWrapper(tabContent())
+    .findAllSelects()
+    .find((each) => labelledName(each.findTrigger().getElement()).startsWith(name));
+  expect(found, `the select "${label}"`).toBeDefined();
+  return found as NonNullable<typeof found>;
+}
+
+function chooseCondition(label: string, value: string) {
+  const found = conditionSelect(label);
+  found.openDropdown();
+  found.selectOptionByValue(value);
+}
+
+/** The result's heading, its counter included. */
+function heading(): string {
+  return text(within(itemsTable().findHeaderSlot()?.getElement() as HTMLElement).getByRole('heading', { level: 2 }));
+}
+
+function headerText(): string {
+  return text(itemsTable().findHeaderSlot()?.getElement() as HTMLElement);
+}
+
+/** A filtered page's answer: `items`, the number read, and a last key when more remain. */
+function filteredPage(items: WireItem[], read: number, next?: WireItem): Answer {
+  return ok({
+    Items: items,
+    Count: items.length,
+    ScannedCount: read,
+    ...(next === undefined ? {} : { LastEvaluatedKey: next }),
+  });
+}
+
+/** Answers every filtered `operation` with `answer`, and every unfiltered one as the emulator. */
+function onFiltered(operation: string, answer: (body: Record<string, unknown>) => EngineAnswer) {
+  engine.on(operation, (body) => ('FilterExpression' in body ? answer(body) : undefined));
+}
+
+const C1 = order('c1', 1, { status: { S: 'open' } });
+const C2 = order('c2', 2, { status: { S: 'closed' } });
+
+describe('the filter', () => {
+  it('conditions added and not run: the request sent before, the heading and the rows unchanged', async () => {
+    await openTable(ORDERS, [C1, C2]);
+    await expectFirstCells(['S c1', 'S c2']);
+
+    addCondition();
+    typeCondition('Attribute name, condition 1', 'status');
+    typeCondition('Value, condition 1', 'open');
+    chooseCondition('Comparison, condition 1', '<>');
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(engine.of('Scan').map((sent) => sent.body)).toEqual([{ TableName: 'orders', Limit: 25 }]);
+    expect(heading()).toBe('Scan of orders (2)');
+    expect(firstCells()).toEqual(['S c1', 'S c2']);
+  });
+
+  it('"Run" with an empty name or a Binary value not base64: the message under its field, nothing sent; with a query\'s empty partition key both messages', async () => {
+    await openTable();
+    addCondition();
+    run();
+    expect(text(tabContent())).toContain('Enter an attribute name.');
+
+    typeCondition('Attribute name, condition 1', 'bin');
+    chooseCondition('Type, condition 1', 'B');
+    typeCondition('Value, condition 1', 'not base64!');
+    run();
+    expect(text(tabContent())).not.toContain('Enter an attribute name.');
+    expect(text(tabContent())).toContain('Enter the value in base64.');
+
+    segment('Query');
+    typeCondition('Attribute name, condition 1', '');
+    run();
+    expect(errorOf('customer (String)')).toBe('Enter a value for customer.');
+    expect(text(tabContent())).toContain('Enter an attribute name.');
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(engine.of('Scan')).toHaveLength(1);
+    expect(engine.of('Query')).toHaveLength(0);
+  });
+
+  it('"Run" with one condition, then two: the filtered heading; for a query "Query of"; for an index its name', async () => {
+    await openTable(ORDERS, [C1, C2]);
+    onFiltered('Scan', () => filteredPage([C1], 2));
+    onFiltered('Query', () => filteredPage([C1], 1));
+
+    addCondition();
+    typeCondition('Attribute name, condition 1', 'status');
+    typeCondition('Value, condition 1', 'open');
+    run();
+    await waitFor(() => {
+      expect(heading()).toBe('Scan of orders, filtered by 1 condition (1)');
+    });
+    expect(engine.of('Scan').at(-1)?.body).toEqual({
+      TableName: 'orders',
+      Limit: 25,
+      FilterExpression: '#f0 = :f0',
+      ExpressionAttributeNames: { '#f0': 'status' },
+      ExpressionAttributeValues: { ':f0': { S: 'open' } },
+    });
+
+    addCondition();
+    typeCondition('Attribute name, condition 2', 'total');
+    chooseCondition('Comparison, condition 2', 'exists');
+    run();
+    await waitFor(() => {
+      expect(heading()).toBe('Scan of orders, filtered by 2 conditions (1)');
+    });
+
+    segment('Query');
+    type('customer (String)', 'c1');
+    run();
+    await waitFor(() => {
+      expect(heading()).toBe('Query of orders, filtered by 2 conditions (1)');
+    });
+    expect(engine.of('Query').at(-1)?.body).toEqual({
+      TableName: 'orders',
+      Limit: 25,
+      KeyConditionExpression: '#pk = :pk',
+      FilterExpression: '#f0 = :f0 AND attribute_exists(#f1)',
+      ExpressionAttributeNames: { '#pk': 'customer', '#f0': 'status', '#f1': 'total' },
+      ExpressionAttributeValues: { ':pk': { S: 'c1' }, ':f0': { S: 'open' } },
+    });
+
+    segment('Scan');
+    choose('Table or index', 'by-status');
+    run();
+    await waitFor(() => {
+      expect(heading()).toBe('Scan of by-status, filtered by 2 conditions (1)');
+    });
+    expect(engine.of('Scan').at(-1)?.body).toMatchObject({
+      IndexName: 'by-status',
+      FilterExpression: expect.any(String),
+    });
+  });
+
+  it('a page of items under a filter: "{read} items read, {matched} match the filter."; at one, the singulars; without a filter no such line', async () => {
+    await openTable(ORDERS, [C1, C2]);
+    expect(headerText()).not.toContain('match the filter');
+    let answer = filteredPage([C1, C2], 25, { customer: { S: 'c2' }, placed: { N: '2' } });
+    onFiltered('Scan', () => answer);
+
+    addCondition();
+    typeCondition('Attribute name, condition 1', 'status');
+    run();
+    await waitFor(() => {
+      expect(headerText()).toContain('25 items read, 2 match the filter.');
+    });
+
+    answer = filteredPage([C1], 1);
+    run();
+    await waitFor(() => {
+      expect(headerText()).toContain('1 item read, 1 matches the filter.');
+    });
+  });
+
+  describe('under a filter, a page of none', () => {
+    const LAST = { customer: { S: 'c9' }, placed: { N: '9' } };
+
+    async function filtered(answers: Answer[], query = false) {
+      await openTable();
+      let at = 0;
+      onFiltered(query ? 'Query' : 'Scan', () => answers[Math.min(at++, answers.length - 1)] as Answer);
+      if (query) {
+        segment('Query');
+        type('customer (String)', 'c1');
+      }
+      addCondition();
+      typeCondition('Attribute name, condition 1', 'status');
+      run();
+    }
+
+    async function expectSlot(lines: string[], absent: string[] = []) {
+      await waitFor(() => {
+        for (const line of lines) {
+          expect(text(slot())).toContain(line);
+        }
+      });
+      for (const line of absent) {
+        expect(text(slot())).not.toContain(line);
+      }
+      expect(headerText()).not.toContain('match the filter');
+    }
+
+    it('a last key: "No matching items on this page" with the number read, next page available; at one the singular', async () => {
+      await filtered([filteredPage([], 25, LAST), filteredPage([], 1, LAST)]);
+      await expectSlot([
+        'No matching items on this page',
+        'None of the 25 items this page read matches the filter. More items remain: go to the next page.',
+      ]);
+      expect(isDisabled(nextPage())).toBe(false);
+
+      fireEvent.click(nextPage());
+      await expectSlot([
+        'No matching items on this page',
+        'The 1 item this page read does not match the filter. More items remain: go to the next page.',
+      ]);
+      expect(engine.of('Scan').at(-1)?.body).toMatchObject({ ExclusiveStartKey: LAST, FilterExpression: '#f0 = :f0' });
+      expect(isDisabled(nextPage())).toBe(false);
+    });
+
+    it('no key on page 1 of a scan: "No item of {target} matches the filter."', async () => {
+      await filtered([filteredPage([], 10)]);
+      await expectSlot(['No matching items', 'No item of orders matches the filter.'], ['on this page']);
+      expect(isDisabled(nextPage())).toBe(true);
+    });
+
+    it('no key on page 1 of a query: "No item of {target} matches this query and its filter."', async () => {
+      await filtered([filteredPage([], 6)], true);
+      await expectSlot(['No matching items', 'No item of orders matches this query and its filter.']);
+    });
+
+    it('no key after page 1: "No more matching items" with the number read; none read: "No more items"', async () => {
+      await filtered([filteredPage([C1], 25, LAST), filteredPage([], 10)]);
+      await expectFirstCells(['S c1']);
+      fireEvent.click(nextPage());
+      await expectSlot(['No more matching items', 'None of the 10 items this page read matches the filter.']);
+      expect(isDisabled(nextPage())).toBe(true);
+    });
+
+    it('the singular after page 1, and a last page that read none', async () => {
+      await filtered([
+        filteredPage([C1], 25, LAST),
+        filteredPage([], 1),
+        filteredPage([C1], 25, LAST),
+        filteredPage([], 0),
+      ]);
+      await expectFirstCells(['S c1']);
+      fireEvent.click(nextPage());
+      await expectSlot(['No more matching items', 'The 1 item this page read does not match the filter.']);
+
+      run();
+      await expectFirstCells(['S c1']);
+      fireEvent.click(nextPage());
+      await waitFor(() => {
+        expect(text(slot())).toBe('No more items');
+      });
+    });
+  });
+
+  it('a filtered read refused, answered 501 or AccessDeniedException: shown in place of the items, the conditions as written', async () => {
+    await openTable(ORDERS, [C1]);
+    let answer: Answer = refused(
+      400,
+      'ValidationException',
+      'The parameter cannot be converted to a numeric value: abc',
+    );
+    onFiltered('Scan', () => answer);
+    addCondition();
+    typeCondition('Attribute name, condition 1', 'total');
+    chooseCondition('Comparison, condition 1', '>');
+    chooseCondition('Type, condition 1', 'N');
+    typeCondition('Value, condition 1', 'abc');
+    run();
+
+    await waitFor(() => {
+      expect(text(slot())).toContain('ValidationException: The parameter cannot be converted to a numeric value: abc');
+    });
+    expect(firstCells()).toEqual([]);
+    const asWritten = () => {
+      expect(conditionInput('Attribute name, condition 1').value).toBe('total');
+      expect(text(conditionSelect('Comparison, condition 1').findTrigger().getElement())).toBe('Greater than');
+      expect(text(conditionSelect('Type, condition 1').findTrigger().getElement())).toBe('Number');
+      expect(conditionInput('Value, condition 1').value).toBe('abc');
+    };
+    asWritten();
+
+    answer = { status: 501, body: { __type: 'NotImplemented', message: 'not here' } };
+    run();
+    await waitFor(() => {
+      expect(text(slot())).toContain('Not implemented by the emulator');
+    });
+    expect(text(slot())).toContain('Scan');
+
+    answer = refused(403, 'AccessDeniedException', 'no scan');
+    run();
+    await waitFor(() => {
+      expect(text(slot())).toContain('Access denied');
+    });
+    expect(text(slot())).toContain('Scan was refused: no scan');
+    asWritten();
+  });
+
+  it('Enter in a condition\'s field: the same as "Run"', async () => {
+    await openTable(ORDERS, [C1]);
+    onFiltered('Scan', () => filteredPage([C1], 1));
+    addCondition();
+    const user = userEvent.setup();
+    await user.type(conditionInput('Attribute name, condition 1'), 'status{Enter}');
+
+    await waitFor(() => {
+      expect(engine.of('Scan')).toHaveLength(2);
+    });
+    expect(engine.of('Scan').at(-1)?.body).toMatchObject({ ExpressionAttributeNames: { '#f0': 'status' } });
+    await waitFor(() => {
+      expect(heading()).toBe('Scan of orders, filtered by 1 condition (1)');
+    });
+  });
+
+  it('every condition removed and "Run": the request without a filter and the heading "Scan of {target}"', async () => {
+    await openTable(ORDERS, [C1, C2]);
+    onFiltered('Scan', () => filteredPage([C1], 2));
+    addCondition();
+    typeCondition('Attribute name, condition 1', 'status');
+    run();
+    await waitFor(() => {
+      expect(heading()).toBe('Scan of orders, filtered by 1 condition (1)');
+    });
+
+    fireEvent.click(within(tabContent()).getByRole('button', { name: 'Remove condition 1' }));
+    run();
+
+    await expectFirstCells(['S c1', 'S c2']);
+    expect(engine.of('Scan').at(-1)?.body).toEqual({ TableName: 'orders', Limit: 25 });
+    expect(heading()).toBe('Scan of orders (2)');
+    expect(headerText()).not.toContain('match the filter');
+  });
+
+  it('"Read", "Table or index" or a query field changed: the conditions stay; "Details" and back: the conditions, the applied filter and the page stay', async () => {
+    await openTable(ORDERS, [C1, C2]);
+    onFiltered('Scan', () => filteredPage([C1], 2));
+    addCondition();
+    typeCondition('Attribute name, condition 1', 'status');
+    typeCondition('Value, condition 1', 'open');
+    run();
+    await waitFor(() => {
+      expect(heading()).toBe('Scan of orders, filtered by 1 condition (1)');
+    });
+
+    segment('Query');
+    choose('Table or index', 'by-status');
+    type('status (String)', 'open');
+    expect(conditionInput('Attribute name, condition 1').value).toBe('status');
+    expect(conditionInput('Value, condition 1').value).toBe('open');
+
+    showTab('details');
+    showTab('items');
+
+    await expectFirstCells(['S c1']);
+    expect(heading()).toBe('Scan of orders, filtered by 1 condition (1)');
+    expect(headerText()).toContain('2 items read, 1 matches the filter.');
+    expect(conditionInput('Attribute name, condition 1').value).toBe('status');
+    expect(conditionInput('Value, condition 1').value).toBe('open');
+  });
+
+  it('"Items per page" changed, the header\'s "Refresh", an item saved and items deleted: read again with the applied conditions', async () => {
+    await openTable(ORDERS, [C1, C2]);
+    onFiltered('Scan', () => filteredPage([C1], 2));
+    addCondition();
+    typeCondition('Attribute name, condition 1', 'status');
+    typeCondition('Value, condition 1', 'open');
+    run();
+    await expectFirstCells(['S c1']);
+    const filter = {
+      FilterExpression: '#f0 = :f0',
+      ExpressionAttributeNames: { '#f0': 'status' },
+      ExpressionAttributeValues: { ':f0': { S: 'open' } },
+    };
+    let reads = engine.of('Scan').length;
+    async function readAgain(limit = 25) {
+      await waitFor(() => {
+        expect(engine.of('Scan').length).toBeGreaterThan(reads);
+      });
+      expect(engine.of('Scan').at(-1)?.body).toEqual({ TableName: 'orders', Limit: limit, ...filter });
+      reads = engine.of('Scan').length;
+      await expectFirstCells(['S c1']);
+    }
+
+    const preferences = itemsTable().findCollectionPreferences();
+    preferences?.findTriggerButton().click();
+    const modal = await waitFor(() => {
+      const found = preferences?.findModal();
+      expect(found).not.toBeNull();
+      return found as NonNullable<typeof found>;
+    });
+    fireEvent.click(within(modal.getElement()).getByRole('radio', { name: '50 items' }));
+    modal.findConfirmButton()?.click();
+    await readAgain(50);
+
+    fireEvent.click(headerButton('Refresh'));
+    await readAgain(50);
+
+    fireEvent.click(
+      within(itemsTable().findHeaderSlot()?.getElement() as HTMLElement).getByRole('button', { name: 'Create item' }),
+    );
+    const editor = await waitFor(() => {
+      const found = PAGE.findModal();
+      expect(found).not.toBeNull();
+      return found as NonNullable<typeof found>;
+    });
+    editor
+      .findContent()
+      .findTextarea()
+      ?.setTextareaValue(JSON.stringify({ customer: { S: 'c3' }, placed: { N: '3' } }, null, 2));
+    fireEvent.click(within(editor.getElement()).getByRole('button', { name: 'Save' }));
+    await readAgain(50);
+
+    itemsTable().findRowSelectionArea(1)?.click();
+    fireEvent.click(
+      within(itemsTable().findHeaderSlot()?.getElement() as HTMLElement).getByRole('button', { name: 'Delete' }),
+    );
+    const dialog = await waitFor(() => {
+      const found = PAGE.findModal();
+      expect(found).not.toBeNull();
+      return found as NonNullable<typeof found>;
+    });
+    fireEvent.change(within(dialog.getElement()).getByRole('textbox'), { target: { value: 'delete' } });
+    fireEvent.click(within(dialog.getElement()).getByRole('button', { name: 'Delete' }));
+    await readAgain(50);
   });
 });
