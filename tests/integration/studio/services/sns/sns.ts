@@ -49,9 +49,9 @@ function xmlText(raw: string): string {
     .replace(/&amp;/g, '&');
 }
 
-/** The content of the first element `tag` of `xml`, decoded; `null` when it has none. */
+/** The content of the first element `tag` of `xml`, decoded; `null` when it has none. The tag may carry attributes. */
 function element(xml: string, tag: string): string | null {
-  const found = new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`).exec(xml);
+  const found = new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)</${tag}>`).exec(xml);
   return found === null ? null : xmlText(found[1] ?? '');
 }
 
@@ -142,7 +142,7 @@ export async function topicAttributesDirect(ctx: Ctx, port: number, arn: string)
   if (answer.status === 404) return null;
   if (answer.status !== 200) throw new Error(`direct GetTopicAttributes ${arn} answered ${String(answer.status)}`);
   const attributes: Record<string, string> = {};
-  for (const m of answer.body.matchAll(/<entry>\s*<key>([^<]*)<\/key>\s*<value>([\s\S]*?)<\/value>\s*<\/entry>/g)) {
+  for (const m of answer.body.matchAll(/<entry(?:\s[^>]*)?>\s*<key>([^<]*)<\/key>\s*<value>([\s\S]*?)<\/value>\s*<\/entry>/g)) {
     attributes[xmlText(m[1] ?? '')] = xmlText(m[2] ?? '');
   }
   return attributes;
@@ -165,7 +165,8 @@ export async function subscriptionsDirect(ctx: Ctx, port: number, arn: string): 
       ...(token === null ? {} : { NextToken: token }),
     });
     if (answer.status !== 200) throw new Error(`direct ListSubscriptionsByTopic answered ${String(answer.status)}`);
-    for (const m of answer.body.matchAll(/<member>([\s\S]*?)<\/member>/g)) {
+    // The emulator writes each `member` with its namespace as an attribute (probe-5.log).
+    for (const m of answer.body.matchAll(/<member(?:\s[^>]*)?>([\s\S]*?)<\/member>/g)) {
       const member = m[1] ?? '';
       found.push({
         arn: element(member, 'SubscriptionArn') ?? '',
@@ -672,6 +673,12 @@ const wrapper = createWrapper();
 export const TABLE = wrapper.findTable().toSelector().replace(/^body /, '');
 const ALERT = wrapper.findAlert().toSelector().replace(/^body /, '');
 const SELECT_TRIGGER = wrapper.findSelect().findTrigger().toSelector().replace(/^body /, '');
+const CONTAINER = wrapper.findContainer().toSelector().replace(/^body /, '');
+/** The trigger of the "Type" select (the second field) of the attribute editor's row `n`, counted from 1. */
+function attributeTypeTrigger(n: number): string {
+  const select = wrapper.findAttributeEditor().findRow(n).findField(2).findControl().findSelect();
+  return select.findTrigger().toSelector().replace(/^body /, '');
+}
 
 /** Opens `path` and waits for its `h1` `name`. */
 export async function open(page: Page, path: string, h1: string): Promise<void> {
@@ -687,7 +694,8 @@ export async function openTopic(page: Page, arn: string): Promise<void> {
 
 /**
  * The data rows of the table `table` as shown, each a record of its column headings' texts to its cells' texts (the
- * selection column has no heading and is left out). A row whose only cell spans the table is not a data row.
+ * selection column, whose cells hold only the row's radio or checkbox, is left out). A row whose only cell spans the
+ * table is not a data row.
  */
 export async function rowsOf(table: Locator): Promise<Record<string, string>[]> {
   return table.evaluate((root) => {
@@ -702,7 +710,8 @@ export async function rowsOf(table: Locator): Promise<Record<string, string>[]> 
       const row: Record<string, string> = {};
       cells.forEach((cell, i) => {
         const header = headers[i] ?? '';
-        if (header !== '') row[header] = norm(cell.textContent);
+        const selection = cell.querySelector('input[type="radio"], input[type="checkbox"]') !== null;
+        if (header !== '' && !(selection && norm(cell.textContent) === '')) row[header] = norm(cell.textContent);
       });
       rows.push(row);
     }
@@ -878,7 +887,9 @@ export function publishScreen(page: Page) {
     addAttribute: panel.getByRole('button', { name: 'Add attribute', exact: true }),
     attributeName: (n: number) => panel.getByRole('textbox', { name: `Name of attribute ${String(n)}`, exact: true }),
     attributeValue: (n: number) => panel.getByRole('textbox', { name: `Value of attribute ${String(n)}`, exact: true }),
-    attributeType: (n: number) => panel.getByRole('button', { name: new RegExp(`^Type of attribute ${String(n)}`) }),
+    attributeType: (n: number) => panel.locator(attributeTypeTrigger(n)),
+    /** "Result", where the outcome of a publish is shown (the tab also says it once in a live region). */
+    result: panel.locator(CONTAINER).filter({ has: page.getByRole('heading', { name: 'Result', exact: true }) }),
     publish: panel.getByRole('button', { name: PUBLISH, exact: true }),
   };
 }
@@ -914,9 +925,9 @@ export async function addAttribute(
 export async function publishAndRead(page: Page): Promise<string> {
   const s = publishScreen(page);
   await answered(page, 'Publish', () => s.publish.click(ACTION));
-  await expect(s.panel.getByText(PUBLISHED, { exact: true }), `"${PUBLISHED}"`).toBeVisible({ timeout: 15_000 });
+  await expect(s.result.getByText(PUBLISHED, { exact: true }), `"${PUBLISHED}"`).toBeVisible({ timeout: 15_000 });
   await expect(s.publish, '"Publish" after its answer').toBeEnabled({ timeout: 15_000 });
-  const id = await valueOf(s.panel, 'Message ID');
+  const id = await valueOf(s.result, 'Message ID');
   if (id === null || id === '') throw new Error('the result shows no message ID');
   return id;
 }

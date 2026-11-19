@@ -95,7 +95,7 @@ test('studio.sns-publish-to-a-fifo-topic-and-refusals', async ({ ctx, page }) =>
       await s.message.fill('x', ACTION);
       await addAttribute(page, 1, 'n', 'Number', 'abc');
       await answered(page, 'Publish', () => s.publish.click(ACTION));
-      await expect(s.panel.getByText(NOT_PUBLISHED, { exact: true })).toBeVisible({ timeout: 15_000 });
+      await expect(s.result.getByText(NOT_PUBLISHED, { exact: true })).toBeVisible({ timeout: 15_000 });
       await expect(s.panel, 'the emulator\'s code').toContainText('ParameterValueInvalid');
       await expect(s.panel, 'the emulator\'s sentence names the attribute').toContainText(/attribute[^.]*\bn\b/i);
       await expect(s.message).toHaveValue('x');
@@ -112,7 +112,7 @@ test('studio.sns-publish-to-a-fifo-topic-and-refusals', async ({ ctx, page }) =>
     await seeded.deleteTopic(standard);
     expect(await topicAttributesDirect(ctx, port, standard), 'the topic, directly').toBeNull();
     await answered(page, 'Publish', () => s.publish.click(ACTION));
-    await expect(s.panel.getByText(NOT_PUBLISHED, { exact: true })).toBeVisible({ timeout: 15_000 });
+    await expect(s.result.getByText(NOT_PUBLISHED, { exact: true })).toBeVisible({ timeout: 15_000 });
     await expect(s.panel, 'the emulator\'s code').toContainText('NotFound');
   });
 

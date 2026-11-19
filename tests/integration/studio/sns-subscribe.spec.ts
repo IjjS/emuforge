@@ -166,7 +166,7 @@ test('studio.sns-subscribe-a-queue-and-a-published-message-arrives', async ({ ct
       await expect(s.attributeValue(1)).toHaveValue('red');
       await expect(s.attributeName(2)).toHaveValue('price');
       await expect(s.attributeValue(2)).toHaveValue('12.5');
-      await expect(s.panel.getByText(PUBLISHED, { exact: true })).toBeVisible();
+      await expect(s.result.getByText(PUBLISHED, { exact: true })).toBeVisible();
       expect(await valueOf(s.panel, 'Message ID'), 'the result\'s message ID').toBe(messageId);
     },
   );
