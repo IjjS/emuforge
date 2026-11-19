@@ -1,5 +1,7 @@
 import { creationDateText, NO_DATE } from '../../components/format-date';
-import { AWS_PATH } from '../../../identity';
+import { CREATE_FUNCTION_PATH, FUNCTIONS_PATH, LAMBDA_PATH, functionPath } from '../../components/resource-paths';
+
+export { CREATE_FUNCTION_PATH, FUNCTIONS_PATH, LAMBDA_PATH, functionPath };
 
 // How the Lambda screens write a function's values (issue 84, requirement R4.2, R5.3, R5.5), and the routes their
 // controls lead to (R0, R8; issue 516, design "The function's page"). Times are written by the area's shared
@@ -7,20 +9,6 @@ import { AWS_PATH } from '../../../identity';
 
 /** Shown for a value the answer lacks. */
 export const NONE = '-';
-
-/** Lambda's route in the area, `/aws/lambda`. */
-export const LAMBDA_PATH = `${AWS_PATH}/lambda`;
-
-/** The function list, "Event Functions". */
-export const FUNCTIONS_PATH = `${LAMBDA_PATH}/functions`;
-
-/** "Create Event Function". */
-export const CREATE_FUNCTION_PATH = `${FUNCTIONS_PATH}/create`;
-
-/** A function's own page; the segment `function/` keeps a function named `create` off the create form's route. */
-export function functionPath(name: string): string {
-  return `${FUNCTIONS_PATH}/function/${encodeURIComponent(name)}`;
-}
 
 /** The tabs of a function's page, each addressed by the query of the function's one address (issue 516, design). */
 export type FunctionTab = 'test' | 'code' | 'configuration';
