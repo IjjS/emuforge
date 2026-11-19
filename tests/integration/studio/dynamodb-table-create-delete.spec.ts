@@ -161,7 +161,12 @@ test('studio.dynamodb-delete-a-table', async ({ ctx, page }) => {
       await s.del.click(ACTION);
       await confirmWith(page, d1, 'Delete');
       await expectFlash(page, 'success', beingDeleted(d1));
-      const { seen, reached } = await seenUntil(30_000, () => statusOf(d1), (status) => status === null);
+      // While the list reads again it shows no row: D1's status is read only from a list that shows D2's row.
+      const { seen, reached } = await seenUntil(
+        30_000,
+        async () => ((await statusOf(d2)) === null ? 'not read yet' : await statusOf(d1)),
+        (status) => status === null,
+      );
       ctx.log(`D1's status in the list after the delete: ${JSON.stringify(seen)}`);
       expect(reached, 'D1\'s row is gone without "Refresh"').toBe(true);
       expect(seen, 'D1\'s row read "Deleting" before it was gone').toContain('Deleting');

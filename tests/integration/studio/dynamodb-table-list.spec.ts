@@ -217,7 +217,8 @@ test('studio.dynamodb-table-search-and-pages', async ({ ctx, page }) => {
       await search(page, changed);
       await expect(s.table.getByText(NO_MATCHES, { exact: true })).toBeVisible({ timeout: 15_000 });
       await expect(s.table.getByText(noMatchText(changed))).toBeVisible();
-      await s.table.getByRole('button', { name: CLEAR_SEARCH, exact: true }).click(ACTION);
+      // The search field has a button of the same name: the empty state's is the one inside the table itself.
+      await page.getByRole('table').getByRole('button', { name: CLEAR_SEARCH, exact: true }).click(ACTION);
       await expect
         .poll(async () => (await rowsOf(s.table)).length, { message: 'rows after "Clear search"', timeout: 15_000 })
         .toBeGreaterThan(0);

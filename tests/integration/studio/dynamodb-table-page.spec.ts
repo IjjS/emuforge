@@ -36,6 +36,7 @@ import {
   sorted,
   TAB_DETAILS,
   tablePath,
+  TABLES_PATH,
   tableScreen,
   valueOf,
   type Item,
@@ -312,7 +313,7 @@ test('studio.dynamodb-query-by-key-and-condition', async ({ ctx, page }) => {
           ['S p2', 'N 1', 'S x'],
         ]);
       expect(await headersOf(s.table), 'the columns').not.toContain('v');
-      await rowWith(s.table, 'S p1').getByRole('link').click(ACTION);
+      await rowWith(s.table, 'S p1').getByRole('button').click(ACTION);
       await expect(s.dialog.getByRole('heading', { name: EDIT_ITEM }), `"${EDIT_ITEM}"`).toBeVisible();
       const shown = await editorItem(page);
       expect(shown.v, '`v` in the editor').toEqual({ S: 'full' });
@@ -355,7 +356,7 @@ test('studio.dynamodb-query-by-key-and-condition', async ({ ctx, page }) => {
         timeout: 15_000,
       });
       await expectRows(s.table, (r) => [r.id, r.v], [[`B ${BYTES}`, 'S bin']], 'the item with those bytes');
-      await rowWith(s.table, `B ${BYTES}`).getByRole('link').click(ACTION);
+      await rowWith(s.table, `B ${BYTES}`).getByRole('button').click(ACTION);
       await expect(s.dialog.getByRole('heading', { name: EDIT_ITEM }), `"${EDIT_ITEM}"`).toBeVisible();
       expect((await editorItem(page)).id, '`id` in the editor').toEqual({ B: BYTES });
       await closeDialog(page);
@@ -399,7 +400,11 @@ test('studio.dynamodb-table-gone-while-open', async ({ ctx, page }) => {
       await closeDialog(page);
       await s.refresh.click(ACTION);
       await expect(s.main, `"${NOT_FOUND} ${name}"`).toContainText(`${NOT_FOUND} ${name}`, { timeout: 15_000 });
-      await expect(s.main.getByRole('link', { name: 'Tables', exact: true }), 'a link to the tables').toBeVisible();
+      // The side navigation and the crumbs hold a link "Tables" too: the page's own is the last in the document.
+      const link = page.getByRole('link', { name: 'Tables', exact: true }).last();
+      await expect(link, 'a link to the tables').toBeVisible();
+      await expect(link, 'it leads to the tables').toHaveAttribute('href', TABLES_PATH);
+      expect(await link.evaluate((a) => a.closest('nav') === null), 'the link is the page\'s own, in no navigation').toBe(true);
     },
   );
 

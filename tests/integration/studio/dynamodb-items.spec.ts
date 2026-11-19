@@ -80,7 +80,7 @@ test('studio.dynamodb-create-a-table-and-its-first-item', async ({ ctx, page }) 
       await main.getByRole('textbox', { name: 'Table name', exact: true }).fill(name, ACTION);
       await main.getByRole('textbox', { name: 'Partition key', exact: true }).fill('pk', ACTION);
       await main.getByRole('textbox', { name: /^Sort key/ }).fill('n', ACTION);
-      await main.getByRole('button', { name: /^Sort key type/ }).click(ACTION);
+      await main.getByRole('button', { name: /Sort key type/ }).click(ACTION);
       await page.getByRole('option', { name: 'Number', exact: true }).click(ACTION);
       await expect(main.getByRole('radio', { name: 'On-demand', exact: true }), 'On-demand at start').toBeChecked();
       await main.getByRole('button', { name: CREATE_TABLE, exact: true }).click(ACTION);
@@ -198,7 +198,7 @@ test('studio.dynamodb-edit-an-item', async ({ ctx, page }) => {
     await seeded.items(name, [item]);
     await open(page, tablePath(name), name);
     await expect(rowWith(s.table, 'S k', `S ${sk}`), `the row of k/${sk}`).toHaveCount(1, { timeout: 20_000 });
-    await rowWith(s.table, 'S k', `S ${sk}`).getByRole('link').click(ACTION);
+    await rowWith(s.table, 'S k', `S ${sk}`).getByRole('button').click(ACTION);
     await expect(s.dialog.getByRole('heading', { name: EDIT_ITEM }), `"${EDIT_ITEM}"`).toBeVisible();
   };
 
@@ -256,7 +256,7 @@ test('studio.dynamodb-edit-an-item', async ({ ctx, page }) => {
       const row = rowWith(s.table, 'S k', 'S 3');
       await expect(row, 'k/3 is listed').toHaveCount(1, { timeout: 20_000 });
       await deleteItemDirect(ctx, port, name, key('3'));
-      await row.getByRole('link').click(ACTION);
+      await row.getByRole('button').click(ACTION);
       await expectFlash(page, 'warning', `${noLongerThere(name)} It may have been deleted.`);
       await expect(s.dialog, 'no dialog').toHaveCount(0);
       await expect
