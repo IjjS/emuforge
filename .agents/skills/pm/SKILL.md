@@ -103,7 +103,7 @@ A harness issue goes to one harness-engineer, in a unit worktree of its own:
 
 ```
 .pm/bin/pm-worktree new <id> h1
-.pm/bin/pm-brief harness-engineer <id> h1 --part "<what this pane plans and builds>"
+.pm/bin/pm-brief harness-engineer <id> h1 --part "<what this pane plans and builds>" [--not-last]
 .pm/bin/pm-pane new <id> harness-engineer --cwd <its worktree> --brief .pm/issue-<id>/brief-harness-engineer.md
 ```
 
@@ -111,7 +111,9 @@ It has no plan, rev or crit. On its `STAGE READY` read its `output/plan.md` and 
 recording the answer under `## Review decisions`. On its `UNIT READY` read its `output/report.md` and the change
 (`git diff main...<branch>`) and judge it yourself: send what must change in one prompt, or merge it with
 `pm-merge <id> h1`, which asks for its `pm-check` record and no review file. An issue given in parts takes the
-next part as `h2`, from `main` after the merge.
+next part as `h2`, from `main` after the merge. The engineer closes the issue's file on its branch with
+`pm-issue close`, and `pm-merge` refuses its part while the file is still open there, unless you wrote its brief with
+`--not-last` because another part follows.
 
 An issue begun before issue 478 (its `brief.json` has no `lead`) finishes as its `state.md` says, under the rules of
 the commit it began at (`git show f0cbdfa:.agents/skills/pm/SKILL.md`), less the structure score, which issue 478
@@ -294,6 +296,7 @@ flow step 1:
 | `EVENT orphans <worktree> … pids=<pid>,… pane=<pane>` | processes of that pane's worktree have no parent left (a run killed in part). First look: `pm-worktree orphans <worktree>` lists what is an orphan now, and leaves out what a sweep leaves running (a running check's own processes, a live crit's live-server, named on its `left running` line). Then prompt that pane in one line with the PIDs it still lists, to stop each by its PID (nothing that started them is left, so only their PIDs can stop them); a PID it no longer lists is left alone; nothing else |
 | `EVENT orphans again <worktree> …`, and `EVENT orphans <worktree> …` without `pane=` | `pm-worktree orphans <worktree> --stop`, which stops only what is an orphan now and leaves what a running check of the worktree or a live crit uses (its `left running` part names them); nothing else |
 | `EVENT gone <pane>` | reopen with the same brief; the worktree and its `output/state.md` are still there |
+| `EVENT unregistered <pane> <pane id>` | herdr runs that pane but the registry lost it, so its lines reach nobody: register it with `pm-pane new <id> <role> [--unit <u>] --cwd <its cwd> --kind <its kind> --brief <its brief> --adopt` (cwd and kind from `herdr agent list`; the brief is recorded, not sent again), then `pm-pane list`; `pm-report` refused its lines while it was lost, so read its screen (`herdr agent read <pane> --lines 80`) for a typed line that reached nobody and handle it as its event. A pane that never got its brief (it printed none of its steps) gets it by hand with the `herdr agent prompt` line `--adopt` prints |
 
 The events of a plan's worker, rev and crit panes go to the plan (`lead.md`, Events), all but a dialog
 (`EVENT blocked`) and a `BLOCKED … memory`, `cpu` or `depends emulator image` line. You hear the plans, the

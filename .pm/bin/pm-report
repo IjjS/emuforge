@@ -19,7 +19,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _pmlib import PANES, RUN, load, now, wake_watchd
+from _pmlib import PANES, RUN, load, locked, now, save, wake_watchd
 
 REPORTS = RUN / "reports.jsonl"
 PREFIXES = ("STAGE READY", "UNIT READY", "ISSUE READY", "BLOCKED", "DONE", "WAITING", "RESET READY", "REVIEWED")
@@ -40,10 +40,11 @@ def main():
     live = {r["name"] for r in load(PANES, []) if not r.get("gone")}
     if not pane or pane not in live:
         sys.exit(f"pane {pane!r} is not a live registered pane ({', '.join(sorted(live)) or 'none'}); the line must name your pane")
-    seq = int(load(RUN / "reports.seq", 0) or 0) + 1
-    (RUN / "reports.seq").write_text(str(seq))
-    with REPORTS.open("a") as f:
-        f.write(json.dumps(dict(ts=now(), seq=seq, pane=pane, line=line), ensure_ascii=False) + "\n")
+    with locked(RUN / "reports.seq"):  # the number and the line under one lock: no two lines get one number (issue 504)
+        seq = int(load(RUN / "reports.seq", 0) or 0) + 1
+        save(RUN / "reports.seq", seq)
+        with REPORTS.open("a") as f:
+            f.write(json.dumps(dict(ts=now(), seq=seq, pane=pane, line=line), ensure_ascii=False) + "\n")
     wake_watchd()
     print(f"reported #{seq}: {line[:100]}")
 

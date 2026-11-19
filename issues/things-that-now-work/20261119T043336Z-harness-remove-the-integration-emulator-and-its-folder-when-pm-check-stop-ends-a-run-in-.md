@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: bug
 Issue-Source: worker
 Issue-Key: harness|pm-check-stop|integration-emulator-left
-Issue-Check-Ids:
+Issue-Check-Ids: harness.check-stop
 Issue-Commit: 682def9105d1691bd07be0f0226ea10ea3fe736f
 
 # Remove the integration emulator and its folder when pm-check --stop ends a run in its integration step

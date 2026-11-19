@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: bug
 Issue-Source: plan
 Issue-Key: harness|pm-check-stop|leaves-run-emulator
-Issue-Check-Ids:
+Issue-Check-Ids: harness.check-stop
 Issue-Commit: 82a6572d6c2f07ce6002d179f1d96a9d4c8c0670
 
 # Make pm-check --stop remove the integration run's emulator container, folder and images

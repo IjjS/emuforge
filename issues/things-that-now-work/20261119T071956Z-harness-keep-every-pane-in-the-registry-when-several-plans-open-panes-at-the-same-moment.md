@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: bug
 Issue-Source: finder
 Issue-Key: harness|pm-pane|registry-loses-panes-opened-at-once
-Issue-Check-Ids:
+Issue-Check-Ids: harness.registry harness.lead
 Issue-Commit: 8da89c5ccae3269a6ad9fb32d7ef984f7254a7d6
 
 # Keep every pane in the registry when several plans open panes at the same moment
