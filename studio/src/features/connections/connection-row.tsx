@@ -1,4 +1,4 @@
-import { useId, type Ref } from 'react';
+import { Fragment, useId, type Ref } from 'react';
 
 import { useLanguage } from '../../i18n/language-context';
 import type { Target, TargetInfo } from '../../lib/engine/targets-client';
@@ -30,6 +30,29 @@ function EmulatorStatus({ state }: { state: InfoState }) {
     <StatusLine kind={kind} status={t(health.reason === 'not_started' ? 'status.notStarted' : 'status.unreachable')}>
       {health.message === '' ? undefined : <span lang="en">{health.message}</span>}
     </StatusLine>
+  );
+}
+
+/**
+ * A folder's path, which may break only after a `/` (a `<wbr>` there) and is never hyphenated: what is read and
+ * copied is the path as it is.
+ */
+function PathText({ path }: { path: string }) {
+  const parts = path.split('/');
+  return (
+    <>
+      {parts.map((part, index) => (
+        // The parts of one path, in order; an index is their identity.
+        <Fragment key={index}>
+          {part}
+          {index < parts.length - 1 && (
+            <>
+              /<wbr />
+            </>
+          )}
+        </Fragment>
+      ))}
+    </>
   );
 }
 
@@ -86,7 +109,13 @@ export function ConnectionRow({ target, info, test, work, onUse, onTest, onRemov
         <Field label={t('connections.column.keys')}>
           {info.kind === 'read' ? (
             <span className="st-keys">
-              {t('connections.keysFrom', { dir: <InlineCode>{info.info.credentialsDir}</InlineCode> })}
+              {t('connections.keysFrom', {
+                dir: (
+                  <InlineCode>
+                    <PathText path={info.info.credentialsDir} />
+                  </InlineCode>
+                ),
+              })}
             </span>
           ) : (
             <NotKnown />
@@ -134,7 +163,10 @@ export function ConnectionRow({ target, info, test, work, onUse, onTest, onRemov
           </p>
         )}
       </div>
-      <TestResult state={test} />
+      <TestResult
+        state={test}
+        shownMessage={info.kind === 'read' && !info.info.health.reachable ? info.info.health.message : undefined}
+      />
     </Record>
   );
 }

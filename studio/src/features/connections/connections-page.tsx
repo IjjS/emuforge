@@ -219,9 +219,24 @@ export function ConnectionsPage() {
     }
   };
 
+  // Where focus goes once the dialog is gone: while it is open, the rest of the document is inert.
+  const focusAfterDialog = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (removing === undefined && focusAfterDialog.current !== null) {
+      focusAfterDialog.current.focus();
+      focusAfterDialog.current = null;
+    }
+  }, [removing]);
+
   const closeRemove = (name: string) => {
+    focusAfterDialog.current = removeButtons.current.get(name) ?? null;
     setRemoving(undefined);
-    removeButtons.current.get(name)?.focus();
+  };
+
+  /** Closes the dialog after its "Remove" was answered; focus goes to the list's heading, as the row may be gone. */
+  const endRemove = () => {
+    focusAfterDialog.current = listHeading.current;
+    setRemoving(undefined);
   };
 
   const handleConfirmRemove = () => {
@@ -233,14 +248,13 @@ export function ConnectionsPage() {
     void (async () => {
       try {
         await client.remove(name, controller.current.signal);
-        setRemoving(undefined);
+        endRemove();
         setResult({ tone: 'ok', key: 'connections.result.removed', name });
         await readAgain();
       } catch (error) {
-        setRemoving(undefined);
+        endRemove();
         await changeFailed(error, name, 'connections.result.alreadyRemoved', 'remove');
       }
-      listHeading.current?.focus();
     })();
   };
 

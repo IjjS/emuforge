@@ -165,14 +165,18 @@ describe('the list (R1, R7, R8)', () => {
 
     await advance(500);
     expect(field(rowOf('local'), 'Emulator')).toBe('Connected');
-    expect(field(rowOf('local'), 'Keys')).toBe('Keys are read by the engine from ~/.aws/emulator/9301/');
+    expect(norm(within(rowOf('local')).getByText('Keys', { selector: 'dt' }).nextElementSibling?.textContent)).toBe(
+      'Keys are read by the engine from ~/.aws/emulator/9301/',
+    );
     expect(field(rowOf('second'), 'Emulator')).toBe('Checking');
 
     await advance(1000);
     expect(field(rowOf('second'), 'Emulator')).toBe('Not started there are no emulator files for port 9302');
     const message = within(rowOf('second')).getByText('there are no emulator files for port 9302');
     expect(message).toHaveAttribute('lang', 'en');
-    expect(field(rowOf('second'), 'Keys')).toBe('Keys are read by the engine from ~/.aws/emulator/9302/');
+    expect(norm(within(rowOf('second')).getByText('Keys', { selector: 'dt' }).nextElementSibling?.textContent)).toBe(
+      'Keys are read by the engine from ~/.aws/emulator/9302/',
+    );
   });
 
   it('six connections → at most 4 info requests in flight at once, started in list order', async () => {
@@ -488,6 +492,19 @@ describe('test (R5)', () => {
     ]);
   });
 
+  it('a failed check whose message the row already shows → the message once, the check still Failed', async () => {
+    const message = 'there are no emulator files for port 9302';
+    engine.answerTargets('info', targetInfo(LOCAL, true), targetInfo(SECOND, false, message));
+    await openPage();
+    engine.answerTargets('test', targetTest(SECOND, message));
+
+    await click(button('Test second'));
+
+    const row = rowOf('second');
+    expect(within(row).getAllByText(message, { exact: false })).toHaveLength(1);
+    expect(spaced(within(row).getAllByRole('listitem')[0])).toBe('Emulator files Failed');
+  });
+
   it('no answer in 15 s → "The test did not finish in 15 seconds."; the list is not read again', async () => {
     await openPage();
     engine.answerTargets('test', { hang: true });
@@ -528,6 +545,38 @@ describe('remove (R5)', () => {
     fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
     await advance();
     expect(screen.queryByRole('dialog')).toBeNull();
+    expect(document.activeElement).toBe(button('Remove second'));
+    expect(engine.targetRequests('remove')).toEqual([]);
+  });
+
+  it('the dialog makes the rest inert; a press on the veil cancels, a press on the panel does not; Escape anywhere closes it', async () => {
+    await openPage();
+    await click(button('Remove second'));
+    const dialog = screen.getByRole('dialog', { name: 'Remove second?' });
+
+    const banner = present(document.querySelector('header.st-bar'), 'the bar');
+    const heading = screen.getByRole('heading', { level: 1, hidden: true });
+    expect(banner.closest('[inert]')).not.toBeNull();
+    expect(heading.closest('[inert]')).not.toBeNull();
+    expect(rowOf('second').closest('[inert]')).not.toBeNull();
+    expect(dialog.closest('[inert]')).toBeNull();
+
+    fireEvent.mouseDown(dialog);
+    await advance();
+    expect(screen.getByRole('dialog')).toBe(dialog);
+
+    fireEvent.mouseDown(present(dialog.parentElement, 'the veil'));
+    await advance();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(document.querySelector('[inert]')).toBeNull();
+    expect(document.activeElement).toBe(button('Remove second'));
+
+    await click(button('Remove second'));
+    (document.activeElement as HTMLElement | null)?.blur();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    await advance();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(document.querySelector('[inert]')).toBeNull();
     expect(document.activeElement).toBe(button('Remove second'));
     expect(engine.targetRequests('remove')).toEqual([]);
   });
@@ -599,6 +648,17 @@ describe('the rows and the form', () => {
     expect(button('Remove compose', row)).toHaveAttribute('aria-disabled', 'true');
     await click(button('Test compose', row));
     expect(within(row).getByText('Test passed')).toBeInTheDocument();
+  });
+
+  it("the keys' folder breaks only after a /: a <wbr> after each /", async () => {
+    await openPage();
+    const code = present(rowOf('second').querySelector<HTMLElement>('.st-keys code'), 'the keys code');
+    expect(code.textContent).toBe('~/.aws/emulator/9302/');
+    const breaks = [...code.querySelectorAll('wbr')];
+    expect(breaks).toHaveLength(4);
+    for (const wbr of breaks) {
+      expect(wbr.previousSibling?.textContent?.endsWith('/')).toBe(true);
+    }
   });
 
   it('each row\'s controls are named "Make {name} the target", "Test {name}", "Remove {name}"', async () => {

@@ -11,6 +11,7 @@ import {
   useRef,
   useState,
   type ComponentType,
+  type FocusEvent,
   type MouseEvent,
   type ReactNode,
   type RefObject,
@@ -108,6 +109,14 @@ export function Frame() {
   }, []);
   const pageFocus = useMemo(() => ({ routeChanges, nameContentTarget }), [routeChanges, nameContentTarget]);
 
+  /**
+   * A tab that takes focus is scrolled into the tab list's view, should the list be wider than the bar (issue 486):
+   * focus never lands on a tab out of sight.
+   */
+  const handleNavFocus = (event: FocusEvent<HTMLElement>) => {
+    event.target.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+  };
+
   /** "Skip to content": focuses the content target the page named, and never follows its address. */
   const handleSkip = (event: MouseEvent<HTMLAnchorElement>) => {
     event.preventDefault();
@@ -130,7 +139,7 @@ export function Frame() {
             <div className="st-wordmark-studio"> Studio</div>
           </div>
         </Link>
-        <nav className="st-nav" aria-label={t('frame.nav')}>
+        <nav className="st-nav" aria-label={t('frame.nav')} onFocus={handleNavFocus}>
           <Link to="/" aria-current={currentOf(pathname, '/', false)}>
             {t('frame.home')}
           </Link>
