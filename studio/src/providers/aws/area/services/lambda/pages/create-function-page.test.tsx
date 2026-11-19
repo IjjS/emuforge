@@ -1,4 +1,5 @@
 import createWrapper, { type SelectWrapper } from '@cloudscape-design/components/test-utils/dom';
+import SpaceBetweenWrapper from '@cloudscape-design/components/test-utils/dom/space-between';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState, useSyncExternalStore } from 'react';
@@ -9,6 +10,8 @@ import { engineEndpoint } from '../../../../../../lib/aws/client-factory';
 import type { CheckResult } from '../../../../../../lib/engine/engine-client';
 import type { AreaConnection } from '../../../components/emulator-line';
 import AwsArea from '../../../index';
+import { starterCode } from '../starter-code';
+import { storedZip } from '../zip';
 
 // "Create Event Function" rendered inside the area's layout, as Studio's frame renders the area, against a fake engine
 // behind the page's `fetch` that answers the Lambda and IAM requests of the form (test-criteria.md, issue 84, "Unit —
@@ -490,7 +493,18 @@ describe('the form as it opens', () => {
     expect(nameField().value).toBe('');
     expect(norm(selectOf('Runtime').findTrigger().getElement().textContent)).toBe('Node.js 24.x');
     selectOf('Runtime').openDropdown();
-    expect(optionTexts('Runtime')).toEqual(['Node.js 24.x', 'Node.js 22.x', 'Python 3.14', 'Python 3.13']);
+    expect(optionTexts('Runtime')).toEqual([
+      'Node.js 24.x',
+      'Node.js 22.x',
+      'Node.js 20.x',
+      'Node.js 18.x',
+      'Python 3.14',
+      'Python 3.13',
+      'Python 3.12',
+      'Python 3.11',
+      'Python 3.10',
+      'Python 3.9',
+    ]);
     selectOf('Runtime').closeDropdown();
     expect(radio('x86_64').checked).toBe(true);
     expect(radio('arm64').checked).toBe(false);
@@ -927,10 +941,11 @@ async function cancelLeaves(router: { state: { location: { pathname: string } } 
 }
 
 describe('issue 467', () => {
-  it('the form as opened: the description says what it creates besides the function; under "Function name" its rule and no message', async () => {
+  it('the form as opened: the header has no description (issue 516 moved it to "Starter code"); under "Function name" its rule and no message', async () => {
     await openForm();
 
-    expect(headerDescription()).toBe('The function is created with starter code that returns a greeting.');
+    expect(headerDescription()).toBe('');
+    expect(screen.queryByText('The function is created with starter code that returns a greeting.')).toBeNull();
     expect(constraintOf('Function name')).toBe(NAME_RULE);
     expect(messageOf('Function name')).toBeUndefined();
   });
@@ -1032,5 +1047,229 @@ describe('issue 467', () => {
     expect(names).toEqual([role]);
     const texts = [...(alert?.querySelectorAll('.aws-area-value-text') ?? [])].map((found) => found.textContent);
     expect(texts).toEqual(['The role “', '” was created in the local emulator and is still there.']);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// Issue 516, unit s4 (test-criteria.md, "Unit s4 — providers/aws/area/services/lambda/pages/create-function-page.test.tsx"):
+// the choice of the code on the create form.
+// ---------------------------------------------------------------------------------------------------------------
+
+/** A .zip archive the user chose: Studio's own writer makes a real one. */
+function zipFile(name = 'app.zip'): File {
+  return new File([new Uint8Array(storedZip('app.py', 'def handler(event, context):\n    return 1\n'))], name);
+}
+
+/** The base64 of `bytes`, as the SDK sends `Code.ZipFile` in the JSON body. */
+function base64(bytes: Uint8Array): string {
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+/** The radios of "Code": each one's label and description, in order. */
+function codeChoices(): string[] {
+  const group = screen.getByRole('radiogroup', { name: 'Code' });
+  return within(group)
+    .getAllByRole('radio')
+    .map((input) => textOf(input.closest('[class*="radio"]')?.parentElement ?? input.parentElement));
+}
+
+/** Chooses `file` in "File", as a user's pick does. */
+function chooseFile(file: File): void {
+  const upload = formField('File')?.findControl()?.findFileUpload() ?? null;
+  if (upload === null) throw new Error('No file field "File"');
+  const input = upload.findNativeInput().getElement();
+  Object.defineProperty(input, 'files', { value: [file], configurable: true });
+  fireEvent.change(input);
+}
+
+function handlerField(): HTMLInputElement {
+  return screen.getByRole('textbox', { name: 'Handler' }) as HTMLInputElement;
+}
+
+/** The message under "File", read as a reader meets it. */
+function fileMessage(): string {
+  return textOf(formField('File')?.findError()?.getElement());
+}
+
+/**
+ * "Create Event Function" with "Upload a .zip file": the press, then the wait while the form reads the file (the zip
+ * check and the bytes are read asynchronously by the browser's `File`), before anything is read off the page.
+ */
+async function pressWithFile(): Promise<void> {
+  press();
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  });
+}
+
+describe('issue 516: the code of a new function', () => {
+  it('as opened: "Code" on "Starter code" with its description; no "File" and no "Handler"; the runtime’s description; ten runtimes', async () => {
+    await openForm();
+
+    expect(screen.getByRole('heading', { level: 2, name: 'Code' })).toBeInTheDocument();
+    expect(radio('Starter code').checked).toBe(true);
+    expect(radio('Upload a .zip file').checked).toBe(false);
+    expect(codeChoices()).toEqual([
+      'Starter code A handler that returns a greeting.',
+      'Upload a .zip file Your own code and its handler.',
+    ]);
+    expect(formField('File')).toBeUndefined();
+    expect(formField('Handler')).toBeUndefined();
+    expect(norm(formField('Runtime')?.findDescription()?.getElement().textContent)).toBe(
+      'The emulator runs Node.js and Python code only.',
+    );
+    selectOf('Runtime').openDropdown();
+    expect(optionTexts('Runtime')).toHaveLength(10);
+  });
+
+  it('"Upload a .zip file": "File" with "One .zip file." and "Handler", empty, with its constraint text', async () => {
+    await openForm();
+
+    fireEvent.click(radio('Upload a .zip file'));
+    expect(formField('File')).toBeDefined();
+    expect(constraintOf('File')).toBe('One .zip file.');
+    expect(handlerField().value).toBe('');
+    expect(constraintOf('Handler')).toBe('1 to 128 characters, no spaces.');
+    expect(norm(formField('Handler')?.findDescription()?.getElement().textContent)).toBe(
+      'The function the emulator calls, as file.function: for example index.handler.',
+    );
+    // The two fields do not touch: they are two items of one SpaceBetween.
+    const fileElement = formField('File')?.getElement() ?? null;
+    const handlerElement = formField('Handler')?.getElement() ?? null;
+    let common = fileElement?.parentElement ?? null;
+    while (common !== null && handlerElement !== null && !common.contains(handlerElement)) {
+      common = common.parentElement;
+    }
+    expect(common?.matches(`.${SpaceBetweenWrapper.rootSelector}`)).toBe(true);
+    const itemOf = (element: Element | null) =>
+      [...(common?.children ?? [])].find((child) => element !== null && child.contains(element));
+    expect(itemOf(fileElement)).not.toBe(itemOf(handlerElement));
+    chooseRuntime('Python 3.12');
+    expect(norm(formField('Handler')?.findDescription()?.getElement().textContent)).toBe(
+      'The function the emulator calls, as file.function: for example lambda_function.lambda_handler.',
+    );
+    expect(constraintOf('Handler')).toBe('1 to 128 characters, no spaces.');
+    expect(messageOf('File')).toBeUndefined();
+    expect(messageOf('Handler')).toBeUndefined();
+  });
+
+  it('"Create Event Function" with "Upload a .zip file": no file, a file that is no archive, no handler: each its message, nothing sent, no role created', async () => {
+    await openForm();
+    fireEvent.change(nameField(), { target: { value: 'orders' } });
+    fireEvent.click(radio('Upload a .zip file'));
+
+    await pressWithFile();
+    await waitFor(() => {
+      expect(messageOf('File')).toBe('Choose a .zip file.');
+    });
+    expect(messageOf('Handler')).toBe('Enter a handler.');
+    expect(engine.aws).toEqual([]);
+
+    chooseFile(new File(['just some text'], 'notes.zip'));
+    await pressWithFile();
+    await waitFor(() => {
+      expect(fileMessage()).toBe('notes.zip is not a .zip archive.');
+    });
+    expect(engine.aws).toEqual([]);
+
+    chooseFile(zipFile());
+    await pressWithFile();
+    await waitFor(() => {
+      expect(messageOf('File')).toBeUndefined();
+    });
+    expect(messageOf('Handler')).toBe('Enter a handler.');
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(engine.aws).toEqual([]);
+    expect(engine.roles).toEqual([]);
+
+    fireEvent.change(handlerField(), { target: { value: 'app handler' } });
+    await pressWithFile();
+    await waitFor(() => {
+      expect(messageOf('Handler')).toBe('The handler cannot contain spaces.');
+    });
+    fireEvent.change(handlerField(), { target: { value: 'a'.repeat(129) } });
+    expect(messageOf('Handler')).toBe('The handler can have up to 128 characters.');
+    expect(engine.aws).toEqual([]);
+  });
+
+  it('a file and a handler: the role first with the default role, then the function with the file’s bytes and the handler typed; then the function’s page', async () => {
+    const file = zipFile();
+    const { router } = await openForm();
+    fireEvent.change(nameField(), { target: { value: 'orders' } });
+    fireEvent.click(radio('Upload a .zip file'));
+    chooseFile(file);
+    fireEvent.change(handlerField(), { target: { value: 'app.handler' } });
+
+    await pressWithFile();
+    await screen.findByRole('heading', { level: 1, name: 'orders' });
+    expect(router.state.location.pathname).toBe('/aws/lambda/functions/function/orders');
+    expect(engine.creating).toEqual(['CreateRole', 'AttachRolePolicy', 'CreateFunction']);
+    const sent = engine.sentOf('CreateFunction')[0]?.params;
+    expect(sent?.['Handler']).toBe('app.handler');
+    expect(sent?.['Code']).toEqual({ ZipFile: base64(new Uint8Array(await file.arrayBuffer())) });
+  });
+
+  it('back on "Starter code" after choosing a file and a handler: created with the starter code and its handler; the file is not sent', async () => {
+    await openForm();
+    fireEvent.change(nameField(), { target: { value: 'orders' } });
+    chooseRuntime('Python 3.12');
+    fireEvent.click(radio('Upload a .zip file'));
+    chooseFile(zipFile());
+    fireEvent.change(handlerField(), { target: { value: 'app.handler' } });
+    fireEvent.click(radio('Starter code'));
+    expect(formField('File')).toBeUndefined();
+
+    await pressWithFile();
+    await screen.findByRole('heading', { level: 1, name: 'orders' });
+    const starter = starterCode('python3.12');
+    if (starter === undefined) throw new Error('No starter code for python3.12');
+    const sent = engine.sentOf('CreateFunction')[0]?.params;
+    expect(sent?.['Handler']).toBe('lambda_function.lambda_handler');
+    expect(sent?.['Code']).toEqual({ ZipFile: base64(storedZip(starter.fileName, starter.text)) });
+  });
+
+  it('a 413: "The emulator refused {file} as too large." under "File" beside the status, the form as filled', async () => {
+    engine.answerCreateFunction = () => ({ status: 413, body: '' });
+    await openForm();
+    fireEvent.change(nameField(), { target: { value: 'orders' } });
+    fireEvent.click(radio('Upload a .zip file'));
+    chooseFile(zipFile('big.zip'));
+    fireEvent.change(handlerField(), { target: { value: 'app.handler' } });
+
+    await pressWithFile();
+    await waitFor(() => {
+      expect(fileMessage()).toMatch(/^The emulator refused big\.zip as too large\. HTTP 413/);
+    });
+    expect(failureAlert()?.getElement().textContent ?? '').not.toContain('Creating the function failed');
+    expect(nameField().value).toBe('orders');
+    expect(radio('Upload a .zip file').checked).toBe(true);
+    expect(handlerField().value).toBe('app.handler');
+    expect(textOf(formField('File')?.findControl()?.getElement())).toContain('big.zip');
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Create Event Function');
+  });
+
+  it('"Cancel" after only the code choice, the file or the handler changed: the discard dialog', async () => {
+    const first = await openForm();
+    fireEvent.click(radio('Upload a .zip file'));
+    await cancelAsks();
+    first.unmount();
+
+    const second = await openForm();
+    fireEvent.click(radio('Upload a .zip file'));
+    chooseFile(zipFile());
+    fireEvent.click(radio('Starter code'));
+    await cancelAsks();
+    second.unmount();
+
+    await openForm();
+    fireEvent.click(radio('Upload a .zip file'));
+    fireEvent.change(handlerField(), { target: { value: 'app.handler' } });
+    fireEvent.click(radio('Starter code'));
+    await cancelAsks();
+    expect(engine.aws).toEqual([]);
   });
 });

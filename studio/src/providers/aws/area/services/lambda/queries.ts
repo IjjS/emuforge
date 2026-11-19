@@ -1,14 +1,23 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { requestFailure, type RequestFailure } from '../../../../../lib/aws/request';
 import {
   createFunction,
   CreateFunctionError,
   deleteFunctions,
+  INVOKE,
+  invoke,
+  isFunctionNotFound,
   LambdaRequestError,
   listFunctions,
   listRoles,
   readFunction,
+  UPDATE_FUNCTION_CODE,
+  UPDATE_FUNCTION_CONFIGURATION,
+  updateFunctionCode,
+  updateFunctionConfiguration,
+  type ConfigurationChange,
   type CreatedFunction,
   type CreatedRole,
   type CreateFunctionRequest,
@@ -16,6 +25,7 @@ import {
   type FunctionPage,
   type FunctionRead,
   type FunctionSummary,
+  type InvokeAnswer,
   type LambdaFailure,
   type Role,
 } from './api';
@@ -32,6 +42,11 @@ export function lambdaKey(endpoint: string | undefined): readonly unknown[] {
 /** The key of the generation every listing and function reading of `endpoint` holds in its own key. */
 function generationKey(endpoint: string | undefined): unknown[] {
   return [...lambdaKey(endpoint), 'listing-generation'];
+}
+
+/** The prefix of every key of the readings of the function `name`: invalidating it reads the function again. */
+export function functionKey(endpoint: string | undefined, name: string): unknown[] {
+  return [...lambdaKey(endpoint), 'function', name];
 }
 
 /** What one page of the function list is read with. */
@@ -322,7 +337,7 @@ export function useFunctionReading({ endpoint, name, connected }: FunctionReadin
   const stopped = rereading.reading === readings && rereading.stopped;
 
   const query = useQuery({
-    queryKey: [...lambdaKey(endpoint), 'function', name, mount, generation, readings],
+    queryKey: [...functionKey(endpoint, name), mount, generation, readings],
     queryFn: ({ signal }) => {
       if (endpoint === undefined) {
         throw new Error('The engine endpoint is not known yet.');
@@ -550,4 +565,185 @@ export function useRoleList(endpoint: string | undefined): RoleList {
     load,
     retry,
   };
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Invoke, change the code, change the configuration (issue 516, design "Task 2", "Task 3", "Task 5")
+
+/**
+ * Reads the function `name` again where its page shows it, keeping what is shown until the answer arrives: its
+ * reading is refetched under its own key.
+ */
+function useReadAgain(endpoint: string | undefined, name: string): () => Promise<void> {
+  const client = useQueryClient();
+  return useCallback(
+    () => client.invalidateQueries({ queryKey: functionKey(endpoint, name) }),
+    [client, endpoint, name],
+  );
+}
+
+/** A new signal per request; the last one aborts when the screen unmounts. */
+function useAbortOnUnmount(): () => AbortSignal {
+  const controller = useRef<AbortController | undefined>(undefined);
+  useEffect(
+    () => () => {
+      controller.current?.abort();
+    },
+    [],
+  );
+  return useCallback(() => {
+    controller.current = new AbortController();
+    return controller.current.signal;
+  }, []);
+}
+
+/** An invoke of the function's page: the mutation's `mutate` and `isPending`, and the last answer or failure. */
+export interface Invocation {
+  /** Sends one `Invoke` with the event text as typed; a call while one is in flight sends nothing. */
+  mutate: (eventText: string) => void;
+  /** An invoke is in flight. */
+  isPending: boolean;
+  /** The last answer, kept until the next answer or failure replaces it (an invoke in flight does not). */
+  data: InvokeAnswer | undefined;
+  /** The last failure, kept as `data` is; never both. */
+  error: RequestFailure | undefined;
+  /** One more per answer or failure, so a screen says each outcome once. */
+  answers: number;
+}
+
+/**
+ * Invokes the function `name` through the engine at `endpoint` (task 2). After any answer, the function's own
+ * failure and a refusal of the emulator included, the function is read again; leaving the page aborts the request.
+ */
+export function useInvoke(endpoint: string | undefined, name: string): Invocation {
+  const readAgain = useReadAgain(endpoint, name);
+  const nextSignal = useAbortOnUnmount();
+  const [last, setLast] = useState<{
+    data: InvokeAnswer | undefined;
+    error: RequestFailure | undefined;
+    answers: number;
+  }>({ data: undefined, error: undefined, answers: 0 });
+  const mutation = useMutation<InvokeAnswer, unknown, { eventText: string; signal: AbortSignal }>({
+    mutationFn: ({ eventText, signal }) => {
+      if (endpoint === undefined) {
+        throw new Error('The engine endpoint is not known yet.');
+      }
+      return invoke(endpoint, name, eventText, signal);
+    },
+    onSuccess: (data) => {
+      setLast((current) => ({ data, error: undefined, answers: current.answers + 1 }));
+      return readAgain();
+    },
+    onError: (error, { signal }) => {
+      if (signal.aborted) {
+        return;
+      }
+      setLast((current) => ({
+        data: undefined,
+        error: requestFailure(INVOKE, error),
+        answers: current.answers + 1,
+      }));
+      return readAgain();
+    },
+  });
+  const { mutate: send, isPending } = mutation;
+  const mutate = useCallback(
+    (eventText: string) => {
+      if (!isPending) {
+        send({ eventText, signal: nextSignal() });
+      }
+    },
+    [isPending, send, nextSignal],
+  );
+  return { mutate, isPending, data: last.data, error: last.error, answers: last.answers };
+}
+
+/** What a change of the function asks of the screen that sends it. */
+export interface ChangeCallbacks {
+  /** The emulator accepted the change. */
+  onSuccess?: () => void;
+  /** The change failed; not called once the screen has left. */
+  onError?: (failure: RequestFailure) => void;
+}
+
+/** A change of a function (an upload, a "Save"): one request at a time, and its failure as the area words it. */
+export interface FunctionChange<Input> {
+  /** Sends the change; a call while one is in flight sends nothing. */
+  mutate: (input: Input, callbacks?: ChangeCallbacks) => void;
+  /** The change is in flight. */
+  isPending: boolean;
+  /** Why the last change failed; `undefined` while none did, while one is in flight, or after `reset`. */
+  error: RequestFailure | undefined;
+  /** Forgets the last failure. */
+  reset: () => void;
+}
+
+function useFunctionChange<Input>(
+  endpoint: string | undefined,
+  name: string,
+  operation: string,
+  send: (endpoint: string, input: Input, signal: AbortSignal) => Promise<void>,
+): FunctionChange<Input> {
+  const readAgain = useReadAgain(endpoint, name);
+  const nextSignal = useAbortOnUnmount();
+  const mutation = useMutation<unknown, unknown, { input: Input; signal: AbortSignal }>({
+    mutationFn: ({ input, signal }) => {
+      if (endpoint === undefined) {
+        throw new Error('The engine endpoint is not known yet.');
+      }
+      return send(endpoint, input, signal);
+    },
+    onSuccess: () => readAgain(),
+    onError: (error, { signal }) => {
+      // A function deleted elsewhere: its page then shows "Function not found".
+      if (!signal.aborted && isFunctionNotFound(requestFailure(operation, error))) {
+        return readAgain();
+      }
+      return undefined;
+    },
+  });
+  const { mutate: run, isPending, error, reset } = mutation;
+  const mutate = useCallback(
+    (input: Input, callbacks?: ChangeCallbacks) => {
+      if (isPending) {
+        return;
+      }
+      const signal = nextSignal();
+      run(
+        { input, signal },
+        {
+          onSuccess: () => callbacks?.onSuccess?.(),
+          onError: (failed) => {
+            if (!signal.aborted) {
+              callbacks?.onError?.(requestFailure(operation, failed));
+            }
+          },
+        },
+      );
+    },
+    [isPending, run, nextSignal, operation],
+  );
+  return {
+    mutate,
+    isPending,
+    error: error === null ? undefined : requestFailure(operation, error),
+    reset,
+  };
+}
+
+/** Uploads a .zip file's bytes as the code of the function `name` (task 3); a success reads the function again. */
+export function useUpdateFunctionCode(endpoint: string | undefined, name: string): FunctionChange<Uint8Array> {
+  return useFunctionChange(endpoint, name, UPDATE_FUNCTION_CODE, (at, zipFile: Uint8Array, signal) =>
+    updateFunctionCode(at, name, zipFile, signal),
+  );
+}
+
+/** Saves one form's fields of the function `name` (task 5); a success reads the function again. */
+export function useUpdateFunctionConfiguration(
+  endpoint: string | undefined,
+  name: string,
+): FunctionChange<ConfigurationChange> {
+  return useFunctionChange(endpoint, name, UPDATE_FUNCTION_CONFIGURATION, (at, change: ConfigurationChange, signal) =>
+    updateFunctionConfiguration(at, name, change, signal),
+  );
 }

@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: plan
 Issue-Key: studio|lambda|function-code
-Issue-Check-Ids:
+Issue-Check-Ids: studio.lambda-upload-zip-changes-the-code studio.lambda-upload-refusals-leave-the-code studio.lambda-configuration-edits-reach-the-emulator
 Issue-Commit: 4ca29569e47c1758061cad1aefa03f1e144e79c8
 
 # Build a Lambda function's code: "Code source", upload a .zip file, edit "Runtime settings"

@@ -1,38 +1,37 @@
 import { describe, expect, it } from 'vitest';
 
-import { RUNTIMES, starterCode } from './starter-code';
+import { RUNTIMES } from './runtimes';
+import { starterCode } from './starter-code';
 
-// The runtimes the create form offers and the starter code of each (issue 84, requirement R6.2, R6.5).
+// The starter code of each runtime offered, one file per language (issue 516, test criteria "Unit s1 —
+// starter-code.test.ts"; issue 84, requirement R6.5).
 
-describe('the runtimes offered', () => {
-  it('are Node.js 24.x, Node.js 22.x, Python 3.14 and Python 3.13, in that order, with their identifiers', () => {
-    expect(RUNTIMES).toEqual([
-      { label: 'Node.js 24.x', value: 'nodejs24.x' },
-      { label: 'Node.js 22.x', value: 'nodejs22.x' },
-      { label: 'Python 3.14', value: 'python3.14' },
-      { label: 'Python 3.13', value: 'python3.13' },
-    ]);
-  });
-});
+const NODE = RUNTIMES.filter(({ value }) => value.startsWith('nodejs')).map(({ value }) => value);
+const PYTHON = RUNTIMES.filter(({ value }) => value.startsWith('python')).map(({ value }) => value);
 
 describe('the starter code', () => {
-  it.each(['nodejs24.x', 'nodejs22.x'])('of %s is index.mjs with the handler index.handler', (runtime) => {
+  it('covers the four Node.js runtimes and the six Python ones', () => {
+    expect(NODE).toEqual(['nodejs24.x', 'nodejs22.x', 'nodejs20.x', 'nodejs18.x']);
+    expect(PYTHON).toEqual(['python3.14', 'python3.13', 'python3.12', 'python3.11', 'python3.10', 'python3.9']);
+  });
+
+  it.each(NODE)('of %s is index.mjs with the handler index.handler', (runtime) => {
     expect(starterCode(runtime)).toMatchObject({ fileName: 'index.mjs', handler: 'index.handler' });
   });
 
-  it.each(['python3.14', 'python3.13'])(
-    'of %s is lambda_function.py with the handler lambda_function.lambda_handler',
+  it.each(PYTHON)('of %s is lambda_function.py with the handler lambda_function.lambda_handler', (runtime) => {
+    expect(starterCode(runtime)).toMatchObject({
+      fileName: 'lambda_function.py',
+      handler: 'lambda_function.lambda_handler',
+    });
+  });
+
+  it.each(['java21', 'nodejs16.x', 'python3.8', 'provided.al2023', ''])(
+    'is none for a runtime outside the ten (%s)',
     (runtime) => {
-      expect(starterCode(runtime)).toMatchObject({
-        fileName: 'lambda_function.py',
-        handler: 'lambda_function.lambda_handler',
-      });
+      expect(starterCode(runtime)).toBeUndefined();
     },
   );
-
-  it('is none for a runtime the form does not offer', () => {
-    expect(starterCode('java21')).toBeUndefined();
-  });
 
   it.each(RUNTIMES.map(({ value }) => value))(
     'of %s holds "Hello from EmuForge Studio!" and no other sentence a user reads',

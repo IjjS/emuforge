@@ -103,3 +103,33 @@ export function storedZip(fileName: string, text: string): Uint8Array {
 
   return bytes;
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// The zip check (issue 516, design "Task 3"): the one thing Studio looks at in a file the user chose.
+
+/** The end record's 22 bytes and the longest archive comment: the record lies within this many bytes of the end. */
+export const ZIP_TAIL_SIZE = END_RECORD_SIZE + 0xffff;
+
+/**
+ * `tail`, the last bytes of a file of `fileSize` bytes, holds a zip end-of-central-directory record: its signature
+ * `PK\x05\x06` at a place where the comment length it names ends the file or lies inside it.
+ */
+export function holdsEndRecord(tail: Uint8Array, fileSize: number = tail.length): boolean {
+  const view = new DataView(tail.buffer, tail.byteOffset, tail.byteLength);
+  const offset = fileSize - tail.length;
+  for (let at = tail.length - END_RECORD_SIZE; at >= 0; at -= 1) {
+    if (view.getUint32(at, true) === END_OF_CENTRAL_DIRECTORY) {
+      const commentLength = view.getUint16(at + 20, true);
+      if (offset + at + END_RECORD_SIZE + commentLength <= fileSize) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/** `file` is a .zip archive by its end record; only its last `ZIP_TAIL_SIZE` bytes are read. */
+export async function isZipArchive(file: Blob): Promise<boolean> {
+  const tail = file.slice(Math.max(0, file.size - ZIP_TAIL_SIZE), file.size);
+  return holdsEndRecord(new Uint8Array(await tail.arrayBuffer()), file.size);
+}

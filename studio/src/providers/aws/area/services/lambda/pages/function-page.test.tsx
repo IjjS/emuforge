@@ -9,9 +9,65 @@ import { engineEndpoint } from '../../../../../../lib/aws/client-factory';
 import type { CheckResult } from '../../../../../../lib/engine/engine-client';
 import type { AreaConnection } from '../../../components/emulator-line';
 import AwsArea from '../../../index';
+import type { CodeTabProps } from '../components/code-tab';
+import type { ConfigurationTabProps } from '../components/configuration-tab';
+import type { TestTabProps } from '../components/test-tab';
 
 // A function's page rendered inside the area's layout, as Studio's frame renders the area, against a fake engine
-// behind the page's `fetch` (test-criteria.md, issue 84, "Unit — services/lambda/pages/function-page.test.tsx").
+// behind the page's `fetch` (test-criteria.md, issue 84, "Unit — services/lambda/pages/function-page.test.tsx";
+// issue 516, "Unit s1 — pages/function-page.test.tsx"). The three tabs are stand-ins of this file: the page is read
+// for what it hands them, never for their markup, which `components/*-tab.test.tsx` read.
+
+// ---------------------------------------------------------------------------------------------------------------
+// The tabs' stand-ins.
+// ---------------------------------------------------------------------------------------------------------------
+
+/** What each tab was handed at its last render. */
+const handed = vi.hoisted(() => ({
+  test: undefined as TestTabProps | undefined,
+  code: undefined as CodeTabProps | undefined,
+  configuration: undefined as ConfigurationTabProps | undefined,
+}));
+
+vi.mock('../components/test-tab', () => ({
+  TestTab: (props: TestTabProps) => {
+    handed.test = props;
+    return (
+      <div data-testid="stand-in-test">
+        <button
+          type="button"
+          onClick={() => {
+            props.onEventTextChange('{"tag": "kept"}');
+          }}
+        >
+          Stand-in type event
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            props.invoke.mutate(props.eventText);
+          }}
+        >
+          Stand-in invoke
+        </button>
+      </div>
+    );
+  },
+}));
+
+vi.mock('../components/code-tab', () => ({
+  CodeTab: (props: CodeTabProps) => {
+    handed.code = props;
+    return <div data-testid="stand-in-code" />;
+  },
+}));
+
+vi.mock('../components/configuration-tab', () => ({
+  ConfigurationTab: (props: ConfigurationTabProps) => {
+    handed.configuration = props;
+    return <div data-testid="stand-in-configuration" />;
+  },
+}));
 
 // ---------------------------------------------------------------------------------------------------------------
 // The fake engine.
@@ -54,6 +110,7 @@ interface SentRequest {
 
 const FUNCTION_PATH = /^\/2015-03-31\/functions\/([^/]+)$/;
 const URL_PATH = /^\/2021-10-31\/functions\/([^/]+)\/url$/;
+const INVOKE_PATH = /^\/2015-03-31\/functions\/([^/]+)\/invocations$/;
 
 function json(status: number, body: unknown): Answer {
   return { status, body: JSON.stringify(body), headers: { 'content-type': 'application/json' } };
@@ -77,6 +134,8 @@ class FakeEngine {
   readonly aws: SentRequest[] = [];
   /** The answer to `GetFunction`; by default the emulator's. */
   answerFunction: (request: SentRequest) => EngineAnswer = (request) => this.emulator(request);
+  /** The invocations answered so far. */
+  invocations = 0;
   /** The answer to `GetFunctionUrlConfig`; by default the emulator's. */
   answerUrl: (request: SentRequest) => EngineAnswer = (request) => this.emulator(request);
 
@@ -116,6 +175,24 @@ class FakeEngine {
         Code: { RepositoryType: 'S3', Location: SIGNED_CODE_URL },
       });
     }
+    if (method === 'DELETE' && FUNCTION_PATH.test(url.pathname)) {
+      const fn = this.find(FUNCTION_PATH, url);
+      if (fn === undefined) {
+        const name = decodeURIComponent(FUNCTION_PATH.exec(url.pathname)?.[1] ?? '');
+        return errorAnswer(404, 'ResourceNotFoundException', `Function not found: ${ACCOUNT_ARN}:${name}`);
+      }
+      this.functions = this.functions.filter((other) => other !== fn);
+      return { status: 204, body: '' };
+    }
+    const invocation = INVOKE_PATH.exec(url.pathname);
+    if (method === 'POST' && invocation !== null) {
+      const name = decodeURIComponent(invocation[1] ?? '');
+      if (!this.functions.some((fn) => fn.name === name)) {
+        return errorAnswer(404, 'ResourceNotFoundException', `Function not found: ${ACCOUNT_ARN}:${name}`);
+      }
+      this.invocations += 1;
+      return json(200, { invocation: this.invocations });
+    }
     if (method === 'GET' && URL_PATH.test(url.pathname)) {
       const fn = this.find(URL_PATH, url);
       if (fn?.url === undefined) {
@@ -151,7 +228,7 @@ class FakeEngine {
     if (answer === 'network-error') {
       throw new TypeError('Failed to fetch');
     }
-    return new Response(answer.body, {
+    return new Response(answer.status === 204 ? null : answer.body, {
       status: answer.status,
       ...(answer.headers === undefined ? {} : { headers: answer.headers }),
     });
@@ -253,6 +330,9 @@ function matchMedia(query: string): MediaQueryList {
 }
 
 beforeEach(() => {
+  handed.test = undefined;
+  handed.code = undefined;
+  handed.configuration = undefined;
   engine = new FakeEngine();
   vi.stubGlobal('fetch', engine.fetch);
   vi.stubGlobal('matchMedia', matchMedia);
@@ -323,6 +403,20 @@ function value(title: string, label: string): string | undefined {
 
 function tabs() {
   return PAGE.findTabs();
+}
+
+function tabLabels(): string[] {
+  return (tabs()?.findTabLinks() ?? []).map((tab) => norm(tab.getElement().textContent));
+}
+
+function activeTab(): string {
+  return norm(tabs()?.findActiveTab()?.getElement().textContent);
+}
+
+function tabLink(label: string): HTMLElement {
+  const found = (tabs()?.findTabLinks() ?? []).find((tab) => norm(tab.getElement().textContent) === label);
+  expect(found).toBeDefined();
+  return (found as NonNullable<typeof found>).getElement();
 }
 
 /** Every text said in a polite live region from now on, in order. */
@@ -408,40 +502,26 @@ async function openLoaded(fn: FakeFunction = ORDERS) {
 // ---------------------------------------------------------------------------------------------------------------
 
 describe('a function loaded', () => {
-  it('the h1 its name, "Refresh", the six tabs with "Code" current, "Function overview" and "Runtime settings" with their fields in order', async () => {
+  it('the h1 its name, "Refresh", "Delete", "Function overview" with its fields in order, and the tabs "Test", "Code", "Configuration" and no other, "Test" selected', async () => {
     await openLoaded();
 
     expect(headingText()).toBe('orders');
     expect(within(header()).getByRole('button', { name: 'Refresh' })).toBeInTheDocument();
-    const found = tabs();
-    expect(found).not.toBeNull();
-    expect((found?.findTabLinks() ?? []).map((tab) => norm(tab.getElement().textContent))).toEqual([
-      'Code',
-      'Test',
-      'Monitor',
-      'Configuration',
-      'Aliases',
-      'Versions',
-    ]);
-    expect(norm(found?.findActiveTab()?.getElement().textContent)).toBe('Code');
+    expect(within(header()).getByRole('button', { name: 'Delete' })).toBeInTheDocument();
+    expect(tabLabels()).toEqual(['Test', 'Code', 'Configuration']);
+    expect(activeTab()).toBe('Test');
     expect(pairs('Function overview').map(([label]) => label)).toEqual([
       'Description',
       'Last modified',
       'Function ARN',
       'Function URL',
     ]);
-    expect(pairs('Runtime settings')).toEqual([
-      ['Runtime', 'Node.js 22.x'],
-      ['Handler', 'index.handler'],
-      ['Architecture', 'arm64'],
-    ]);
     expect(value('Function overview', 'Description')).toBe('Takes the orders');
     expect(value('Function overview', 'Last modified')).toMatch(
       /^November \d{1,2}, 2026, \d{2}:\d{2}:\d{2} \(UTC[+-]\d{2}:\d{2}\)$/,
     );
     expect(value('Function overview', 'Function ARN')).toBe(`${ACCOUNT_ARN}:orders`);
-    // "Runtime settings" is the content of the tab "Code".
-    expect(found?.findTabContent()?.getElement()).toContainElement(section('Runtime settings'));
+    expect(tabs()?.findTabContent()?.getElement()).toContainElement(screen.getByTestId('stand-in-test'));
     expect(screen.queryByRole('heading', { name: 'Code source' })).toBeNull();
   });
 
@@ -466,24 +546,6 @@ describe('a function loaded', () => {
     expect(PAGE.findSideNavigation()?.findActiveLink()?.getElement()).toHaveAttribute('href', '/aws/lambda/functions');
   });
 
-  it('each tab but "Code" leads to its route below the function’s path', async () => {
-    const { router } = await openLoaded();
-
-    const links = tabs()?.findTabLinks() ?? [];
-    const hrefs = links.map((tab) => tab.getElement().getAttribute('href'));
-    expect(hrefs.slice(1)).toEqual(
-      ['test', 'monitor', 'configuration', 'aliases', 'versions'].map((tab) => `${pagePath('orders')}/${tab}`),
-    );
-    const sent = engine.gets.length;
-    fireEvent.click(links[1]?.getElement() as HTMLElement);
-    await waitFor(() => {
-      expect(router.state.location.pathname).toBe(`${pagePath('orders')}/test`);
-    });
-    // A route change of the area, with nothing sent to the emulator.
-    expect(engine.gets).toHaveLength(sent);
-    expect(screen.queryByRole('heading', { level: 2, name: 'Function overview' })).toBeNull();
-  });
-
   it('"Function URL": the URL as text and not a link; "-" without one; "Not read" when it failed; "Not implemented by the emulator" on 501; the other values shown each time', async () => {
     const first = await openLoaded();
     expect(value('Function overview', 'Function URL')).toBe(ORDERS.url);
@@ -500,17 +562,15 @@ describe('a function loaded', () => {
     expect(statusIn(section('Function overview'))).toEqual({ type: 'warning', text: 'Not read' });
     expect(value('Function overview', 'Function URL')).toBe('Not read');
     expect(value('Function overview', 'Function ARN')).toBe(`${ACCOUNT_ARN}:orders`);
-    expect(value('Runtime settings', 'Handler')).toBe('index.handler');
     third.unmount();
 
     engine.answerUrl = () => errorAnswer(501, 'NotImplemented', 'GetFunctionUrlConfig is not implemented');
     await openLoaded();
     expect(value('Function overview', 'Function URL')).toBe('Not implemented by the emulator');
     expect(value('Function overview', 'Description')).toBe('Takes the orders');
-    expect(value('Runtime settings', 'Runtime')).toBe('Node.js 22.x');
   });
 
-  it('the page shows neither the signed URL of the code nor an environment variable of the answer', async () => {
+  it('the page as it opens, on "Test", shows neither the signed URL of the code nor an environment variable of the answer', async () => {
     await openLoaded();
 
     expect(document.body.textContent).not.toContain('X-Amz-Signature');
@@ -640,7 +700,7 @@ describe('a function the emulator does not hold', () => {
     );
     expect(tabs()).toBeNull();
     expect(screen.queryByRole('heading', { name: 'Function overview' })).toBeNull();
-    expect(screen.queryByRole('heading', { name: 'Runtime settings' })).toBeNull();
+    expect(screen.queryByTestId('stand-in-code')).toBeNull();
     // The content's link, not the crumb's or the side navigation's.
     const link = within(content?.getElement() as HTMLElement).getByRole('link', { name: 'Event Functions' });
     expect(link).toHaveAttribute('href', '/aws/lambda/functions');
@@ -846,14 +906,6 @@ describe('issue 467', () => {
     }
   });
 
-  it('"Runtime settings": "Runtime" and "Architecture" fixed words, "Handler" a name', async () => {
-    await openLoaded();
-
-    expect(kindsIn(valueElement('Runtime settings', 'Runtime'))).toEqual(['fixed']);
-    expect(kindsIn(valueElement('Runtime settings', 'Handler'))).toEqual(['name']);
-    expect(kindsIn(valueElement('Runtime settings', 'Architecture'))).toEqual(['fixed']);
-  });
-
   it('a loaded function: the `h1` shows its name as a name; the last crumb its whole name', async () => {
     const name = 'x'.repeat(64);
     await openLoaded({ ...ORDERS, name });
@@ -864,5 +916,258 @@ describe('issue 467', () => {
     // The crumb is Cloudscape's, a text the area's layout gives it (decisions-needed.md, worker s2).
     const crumbs = PAGE.findBreadcrumbGroup()?.findBreadcrumbLinks() ?? [];
     expect(norm(crumbs.at(-1)?.getElement().textContent)).toBe(name);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// Issue 516: the three tabs by the query, the state of "Test", "Delete", ready.
+// ---------------------------------------------------------------------------------------------------------------
+
+/** The area's Flashbar items as text: header and content. */
+function flashTexts(): string[] {
+  return (PAGE.findFlashbar()?.findItems() ?? []).map((flash) =>
+    norm(
+      `${flash.findHeader()?.getElement().textContent ?? ''} ${flash.findContent()?.getElement().textContent ?? ''}`,
+    ),
+  );
+}
+
+describe('the tabs by ?tab=', () => {
+  it.each([
+    ['', 'Test', 'stand-in-test'],
+    ['?tab=code', 'Code', 'stand-in-code'],
+    ['?tab=configuration', 'Configuration', 'stand-in-configuration'],
+    ['?tab=nonsense', 'Test', 'stand-in-test'],
+    ['?tab=', 'Test', 'stand-in-test'],
+  ])('%s selects "%s" and shows its content alone', async (query, label, testId) => {
+    engine.functions = [ORDERS];
+    open(`${pagePath('orders')}${query}`);
+    await screen.findByRole('heading', { level: 2, name: 'Function overview' });
+
+    expect(tabLabels()).toEqual(['Test', 'Code', 'Configuration']);
+    expect(activeTab()).toBe(label);
+    expect(tabs()?.findTabContent()?.getElement()).toContainElement(screen.getByTestId(testId));
+  });
+
+  it('each tab links to its address: the function’s path, ?tab=code, ?tab=configuration', async () => {
+    await openLoaded();
+
+    expect(tabLink('Test')).toHaveAttribute('href', pagePath('orders'));
+    expect(tabLink('Code')).toHaveAttribute('href', `${pagePath('orders')}?tab=code`);
+    expect(tabLink('Configuration')).toHaveAttribute('href', `${pagePath('orders')}?tab=configuration`);
+  });
+
+  it('choosing a tab changes the address’s query and not its path, adds an entry to the history, and reads nothing again', async () => {
+    const { router } = await openLoaded();
+    const reads = engine.gets.length;
+    const overview = screen.getByRole('heading', { level: 2, name: 'Function overview' });
+
+    fireEvent.click(tabLink('Code'));
+    await waitFor(() => {
+      expect(router.state.location.search).toBe('?tab=code');
+    });
+    expect(router.state.location.pathname).toBe(pagePath('orders'));
+    expect(router.state.historyAction).toBe('PUSH');
+    expect(activeTab()).toBe('Code');
+
+    fireEvent.click(tabLink('Configuration'));
+    await waitFor(() => {
+      expect(router.state.location.search).toBe('?tab=configuration');
+    });
+
+    // The browser's back: "Code" again, the earlier entry kept.
+    await act(() => router.navigate(-1));
+    expect(router.state.location.search).toBe('?tab=code');
+    expect(activeTab()).toBe('Code');
+    // The page stayed mounted and asked nothing of the engine.
+    expect(screen.getByRole('heading', { level: 2, name: 'Function overview' })).toBe(overview);
+    expect(engine.gets).toHaveLength(reads);
+  });
+
+  it('each tab is handed the function read; "Test" its name, the event text {}, its setter and the invoke', async () => {
+    const { router } = await openLoaded();
+
+    expect(handed.test?.functionName).toBe('orders');
+    expect(handed.test?.eventText).toBe('{}');
+    expect(typeof handed.test?.onEventTextChange).toBe('function');
+    expect(handed.test?.invoke).toMatchObject({ isPending: false, data: undefined, error: undefined });
+    expect(typeof handed.test?.invoke.mutate).toBe('function');
+
+    fireEvent.click(tabLink('Code'));
+    await waitFor(() => {
+      expect(router.state.location.search).toBe('?tab=code');
+    });
+    expect(handed.code?.name).toBe('orders');
+    expect(handed.code?.ready).toBe(true);
+    expect(handed.code?.fn).toMatchObject({
+      name: 'orders',
+      runtime: 'nodejs22.x',
+      handler: 'index.handler',
+      architectures: ['arm64'],
+      environment: [{ key: 'SECRET', value: 'orders-secret-value' }],
+    });
+
+    fireEvent.click(tabLink('Configuration'));
+    await waitFor(() => {
+      expect(router.state.location.search).toBe('?tab=configuration');
+    });
+    expect(handed.configuration?.fn).toBe(handed.code?.fn);
+    expect(handed.configuration?.name).toBe('orders');
+    expect(handed.configuration?.ready).toBe(true);
+    expect(handed.configuration?.connection.engineOrigin).toBe(engineOrigin);
+  });
+
+  it('the event text set through "Test" and the invoke’s last result are handed to "Test" unchanged after "Code" and back', async () => {
+    const { router } = await openLoaded();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Stand-in type event' }));
+    await waitFor(() => {
+      expect(handed.test?.eventText).toBe('{"tag": "kept"}');
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Stand-in invoke' }));
+    await waitFor(() => {
+      expect(handed.test?.invoke.data).toEqual({ payload: '{"invocation":1}', log: '' });
+    });
+    const invoke = handed.test?.invoke;
+
+    fireEvent.click(tabLink('Code'));
+    await waitFor(() => {
+      expect(router.state.location.search).toBe('?tab=code');
+    });
+    expect(screen.queryByTestId('stand-in-test')).toBeNull();
+    fireEvent.click(tabLink('Test'));
+    await screen.findByTestId('stand-in-test');
+
+    expect(handed.test?.eventText).toBe('{"tag": "kept"}');
+    expect(handed.test?.invoke.data).toEqual(invoke?.data);
+    expect(handed.test?.invoke.answers).toBe(1);
+    expect(engine.invocations).toBe(1);
+  });
+
+  it.each(['', '?tab=code', '?tab=configuration', '?tab=nonsense'])(
+    '"Function not found" in the place of the tabs at %s',
+    async (query) => {
+      open(`${pagePath('gone')}${query}`);
+
+      await screen.findByText('Function not found');
+      expect(tabs()).toBeNull();
+      expect(screen.queryByTestId(/^stand-in-/)).toBeNull();
+    },
+  );
+
+  it.each(['?tab=code', '?tab=configuration'])(
+    'loading and a failure in the place of the tabs at %s',
+    async (query) => {
+      let answer: (value: Answer) => void = () => undefined;
+      engine.answerFunction = () =>
+        new Promise<Answer>((resolve) => {
+          answer = resolve;
+        });
+      open(`${pagePath('orders')}${query}`);
+
+      expect(await screen.findByText('Loading function')).toBeInTheDocument();
+      expect(tabs()).toBeNull();
+      answer(errorAnswer(403, 'AccessDeniedException', 'may not read'));
+
+      expect(await screen.findByRole('button', { name: 'Retry' })).toBeInTheDocument();
+      expect(screen.getAllByText('Access denied').length).toBeGreaterThan(0);
+      expect(tabs()).toBeNull();
+      expect(screen.queryByTestId(/^stand-in-/)).toBeNull();
+    },
+  );
+});
+
+describe('"Delete" in the header', () => {
+  async function openDialog(): Promise<HTMLElement> {
+    fireEvent.click(within(header()).getByRole('button', { name: 'Delete' }));
+    return screen.findByRole('dialog', { name: 'Delete functions' });
+  }
+
+  function confirmAndDelete(dialog: HTMLElement) {
+    fireEvent.change(within(dialog).getByLabelText('To confirm deletion, type "confirm" in the field.'), {
+      target: { value: 'confirm' },
+    });
+    const button = within(dialog)
+      .getAllByRole('button', { name: 'Delete' })
+      .find((found) => norm(found.textContent) === 'Delete');
+    fireEvent.click(button as HTMLElement);
+  }
+
+  it('opens main’s dialog holding this one function; deleted: the list’s route with the result in its Flashbar', async () => {
+    const { router } = await openLoaded();
+
+    const dialog = await openDialog();
+    expect(
+      within(dialog)
+        .getAllByRole('listitem')
+        .map((item) => norm(item.textContent)),
+    ).toEqual(['orders']);
+    confirmAndDelete(dialog);
+
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe('/aws/lambda/functions');
+    });
+    await waitFor(() => {
+      expect(flashTexts()).toEqual(['1 function was deleted from the local emulator.']);
+    });
+    expect(engine.functions).toEqual([]);
+  });
+
+  it('failed: the page stays, shows the failure and reads the function again, which is then not found', async () => {
+    const { router } = await openLoaded();
+    const dialog = await openDialog();
+    // Deleted elsewhere meanwhile.
+    engine.functions = [];
+    const reads = engine.gets.length;
+
+    confirmAndDelete(dialog);
+
+    await waitFor(() => {
+      expect(flashTexts()).toEqual([
+        `Deleting orders failed ResourceNotFoundException: Function not found: ${ACCOUNT_ARN}:orders`,
+      ]);
+    });
+    expect(router.state.location.pathname).toBe(pagePath('orders'));
+    expect(await screen.findByText('Function not found')).toBeInTheDocument();
+    expect(engine.gets.length).toBeGreaterThan(reads);
+  });
+
+  it('is not offered while the function is not found', async () => {
+    open(pagePath('gone'));
+
+    await screen.findByText('Function not found');
+    expect(within(header()).queryByRole('button', { name: 'Delete' })).toBeNull();
+  });
+});
+
+describe('ready', () => {
+  it('while the function is being created or updated each tab is told it is not ready; once the read says it is done, ready', async () => {
+    engine.functions = [
+      {
+        ...ORDERS,
+        moments: [
+          { state: 'Active', lastUpdateStatus: 'InProgress' },
+          { state: 'Active', lastUpdateStatus: 'Successful' },
+        ],
+      },
+    ];
+    open(`${pagePath('orders')}?tab=code`);
+    await screen.findByTestId('stand-in-code');
+    expect(handed.code?.ready).toBe(false);
+
+    await waitFor(
+      () => {
+        expect(handed.code?.ready).toBe(true);
+      },
+      { timeout: 3000 },
+    );
+  });
+
+  it('a Pending function hands "Configuration" not ready, and "Test" its invoke all the same', async () => {
+    engine.functions = [{ ...ORDERS, moments: [{ state: 'Pending' }, { state: 'Pending' }] }];
+    open(`${pagePath('orders')}?tab=configuration`);
+    await screen.findByTestId('stand-in-configuration');
+
+    expect(handed.configuration?.ready).toBe(false);
   });
 });

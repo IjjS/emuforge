@@ -322,7 +322,9 @@ test('studio.lambda-function-screens-keyboard-and-layout', async ({ ctx, page, c
   await grantClipboard(context, stack.studio.origin);
 
   await lines.line(
-    'With the keyboard only on the page of a function with a URL → "Refresh", "Copy Function ARN", "Copy Function URL" and the six tabs are reached in that order, focus visible on each; Enter on "Copy Function ARN" shows "Function ARN copied" and focus stays on the control; on the create form with "Use another role" → the fields in visible order, then "Cancel", "Create Event Function"',
+    // Issue 516 (test-criteria.md, "Rewritten lines of checks on `main`"; the pm's decision of 2026-11-19). This
+    // check is of the tier `full`: the plan of issue 516 rewrote these lines and did not run them.
+    'With the keyboard only on the page of a function with a URL → "Refresh", "Delete", "Copy Function ARN", "Copy Function URL", the tab list (one stop; the arrow keys move between "Test", "Code", "Configuration") and then the selected tab\'s controls are reached in that order, focus visible on each; Enter on "Copy Function ARN" shows "Function ARN copied" and focus stays on the control; on the create form with "Use another role" → the fields in visible order, the code choice between the execution role and the buttons, then "Cancel", "Create Event Function"',
     async () => {
       const found: string[] = [];
       const name = withUrl;
@@ -344,7 +346,7 @@ test('studio.lambda-function-screens-keyboard-and-layout', async ({ ctx, page, c
       else {
         if (stop.ring === null) found.push(`"${REFRESH}" draws no focus indicator`);
         const reached: string[] = [];
-        for (const control of [copyControl(FUNCTION_ARN), copyControl(FUNCTION_URL)]) {
+        for (const control of ['Delete', copyControl(FUNCTION_ARN), copyControl(FUNCTION_URL)]) {
           await page.keyboard.press('Tab');
           stop = await focusedStop(page);
           reached.push(shown(stop));
@@ -366,8 +368,22 @@ test('studio.lambda-function-screens-keyboard-and-layout', async ({ ctx, page, c
             if (stop.ring === null) found.push(`the tab "${tab}" draws no focus indicator`);
           }
         }
+        // The arrow keys ended on "Configuration": its first control, "Edit" of "General configuration", comes
+        // next (the tab's panel may be a stop of its own before it).
+        if (found.length === 0) {
+          let onEdit = false;
+          for (let i = 0; i < 2 && !onEdit; i++) {
+            await page.keyboard.press('Tab');
+            stop = await focusedStop(page);
+            reached.push(shown(stop));
+            onEdit = stop !== null && named('Edit general configuration', 'button')(stop);
+          }
+          if (!onEdit) found.push(`expected "Edit general configuration" after the tabs, reached ${shown(stop)}`);
+          else if (stop?.ring === null) found.push('"Edit general configuration" draws no focus indicator');
+        }
         ctx.log(`after "${REFRESH}": ${reached.join(', ')}`);
-        if (!addressOf(functionPath(name)).test(page.url()))
+        // A tab is the function's own address with a query (issue 516): the path is the function's still.
+        if (new URL(page.url()).pathname !== new URL(`http://127.0.0.1${functionPath(name)}`).pathname)
           found.push(`reaching the tabs left the page for ${page.url()}`);
       }
 
@@ -405,6 +421,7 @@ test('studio.lambda-function-screens-keyboard-and-layout', async ({ ctx, page, c
           match: named(USE_ANOTHER_ROLE, 'radio'),
         },
         { what: `"${EXISTING_ROLE}"`, match: (x) => x.role === 'button' && /^Existing role(\s|$)/.test(x.name) },
+        { what: 'the choice "Code" (its chosen "Starter code")', match: named('Starter code', 'radio') },
         { what: `"${CANCEL}"`, match: named(CANCEL, 'button') },
         { what: `"${CREATE}"`, match: named(CREATE, 'button') },
       ];
