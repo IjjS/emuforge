@@ -230,6 +230,28 @@ class Lead(unittest.TestCase):
         self.assertIn("before the whole check, which runs only when the last `final` has no P0 or P1", critique)
         self.assertNotIn("after the whole check passes", critique)
 
+    def test_a_failed_whole_check_is_acted_on_by_its_cause_issue_497(self):
+        """Owner, 2026-11-19 (issue 497, point 9): the cause first, then the order by it; never again unwritten."""
+        whole = blocks(part(self.text, "## Whole check"))
+        causes = [b for b in whole if re.match(r"\d+\. ", b)]
+        starts = ["1. A fault of product code", "2. A fault of your own integration test", "3. A criteria line that is wrong",
+                  "4. A flaky step", "5. The environment", "6. A fault of `main` outside the issue"]
+        self.assertEqual([b[:len(w)] for b, w in zip(causes, starts)], starts, causes)
+        self.assertIn("`BLOCKED i<id>-plan check <id>`", causes[2])
+        self.assertIn("`depends emulator image`", causes[4])
+        self.assertRegex(causes[5], r"its own issue first.*--take-main")
+        self.assertTrue(any("Never run the whole check again without the cause of its failure written" in b for b in whole))
+
+    def test_end_review_and_who_files_issue_497(self):
+        review = " ".join(blocks(part(self.text, "## End review")))
+        self.assertRegex(review, r"When the whole check passes: `REVIEW impl r1")
+        self.assertRegex(review, r"A P1 of the review is fixed.*whole check again")
+        own = " ".join(blocks(part(self.text, "## What becomes its own issue")))
+        for wanted in ("You decide first", "A P0 or P1 of the critique is always fixed in the issue, never filed",
+                       "The `pm` reviews the severity of each issue you filed at the close"):
+            with self.subTest(wanted):
+                self.assertIn(wanted, own)
+
     def test_no_t_unit(self):
         cut = blocks(part(self.text, "## The cut"))
         with self.subTest("a unit is e<n> or s<n>"):
