@@ -57,9 +57,19 @@ const TYPES: readonly SelectProps.Option[] = [
 
 const PUBLISHED = 'Published';
 const NOT_PUBLISHED = 'The message was not published';
-const ACCEPTED = 'The emulator accepted the message. It delivers to each subscriber whose policy allows this topic.';
+const ACCEPTED = 'The emulator accepted the message.';
+const DELIVERS_WHERE_ALLOWED =
+  'The emulator accepted the message. A subscription receives it only if the policy of its queue or function allows this topic; Delivery on the Subscriptions tab says which do.';
 const NO_SUBSCRIPTIONS = 'This topic has no subscriptions, so the message was delivered nowhere.';
 const NO_FAULTS: PublishFaults = { attributes: [] };
+
+/** Where a published message went, as far as the tab's read of the subscriptions says; no read, no claim. */
+function sentenceOf(subscribed: boolean | undefined): string {
+  if (subscribed === undefined) {
+    return ACCEPTED;
+  }
+  return subscribed ? DELIVERS_WHERE_ALLOWED : NO_SUBSCRIPTIONS;
+}
 
 /** The outcome of a publish that failed, after its heading: the emulator's code and message, or what did not answer. */
 function FailureWords({
@@ -116,7 +126,7 @@ function Result({
         <StatusIndicator type="success">{PUBLISHED}</StatusIndicator>
         <KeyValuePairs columns={2} items={items} />
         <SpaceBetween size="xxs">
-          <Box variant="p">{subscribed === false ? NO_SUBSCRIPTIONS : ACCEPTED}</Box>
+          <Box variant="p">{sentenceOf(subscribed)}</Box>
           <Link href={topicHref(topicArn)} onFollow={handleFollow}>
             See this topic&apos;s subscriptions
           </Link>

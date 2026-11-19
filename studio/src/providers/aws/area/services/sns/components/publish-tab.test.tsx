@@ -194,7 +194,7 @@ describe('the Publish tab', () => {
     expect(screen.getByRole('button', { name: 'Copy Message ID' })).toBeInTheDocument();
     expect(
       screen.getByText(
-        'The emulator accepted the message. It delivers to each subscriber whose policy allows this topic.',
+        'The emulator accepted the message. A subscription receives it only if the policy of its queue or function allows this topic; Delivery on the Subscriptions tab says which do.',
       ),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole('link', { name: "See this topic's subscriptions" }));
@@ -234,6 +234,34 @@ describe('the Publish tab', () => {
     expect(
       await screen.findByText('This topic has no subscriptions, so the message was delivered nowhere.'),
     ).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: "See this topic's subscriptions" })).toBeInTheDocument();
+  });
+
+  it('published while the subscriptions could not be read → "The emulator accepted the message." alone, with the link', async () => {
+    vi.mocked(api.listSubscriptions).mockRejectedValue(
+      new RequestError({ kind: 'other', operation: 'ListSubscriptionsByTopic', code: 'InternalError' }),
+    );
+    vi.mocked(api.publish).mockResolvedValue({ messageId: 'm-1' });
+    open();
+    await waitFor(() => {
+      expect(api.listSubscriptions).toHaveBeenCalled();
+    });
+    typeInto('Message', 'hello');
+    press();
+    expect(await screen.findByText('The emulator accepted the message.')).toBeInTheDocument();
+    expect(result()).not.toContain('Delivery on the Subscriptions tab');
+    expect(result()).not.toContain('no subscriptions');
+    expect(screen.getByRole('link', { name: "See this topic's subscriptions" })).toBeInTheDocument();
+  });
+
+  it('published before the subscriptions are read → "The emulator accepted the message." alone, with the link', async () => {
+    vi.mocked(api.listSubscriptions).mockImplementation(() => new Promise<api.SubscriptionPage>(() => undefined));
+    vi.mocked(api.publish).mockResolvedValue({ messageId: 'm-1' });
+    open();
+    typeInto('Message', 'hello');
+    press();
+    expect(await screen.findByText('The emulator accepted the message.')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: "See this topic's subscriptions" })).toBeInTheDocument();
   });
 
   it('refused → "The message was not published" with the code and message; the form is kept', async () => {
