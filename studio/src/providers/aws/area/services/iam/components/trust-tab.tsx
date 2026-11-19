@@ -3,7 +3,7 @@ import Button from '@cloudscape-design/components/button';
 import Container from '@cloudscape-design/components/container';
 import Header from '@cloudscape-design/components/header';
 import SpaceBetween from '@cloudscape-design/components/space-between';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import type { AreaConnection } from '../../../components/emulator-line';
 import { ValueText } from '../../../components/value-text';
@@ -25,6 +25,11 @@ export const SERVICE_LINKED_REASON =
 export interface TrustTabProps {
   role: Role;
   connection: AreaConnection;
+  /**
+   * Told whether "Edit trust policy" is open, so the page keeps the tab, and the typed text, through a failed read
+   * of the role behind the dialog (issue 535, fix-s6).
+   */
+  onDialogOpen?: (open: boolean) => void;
 }
 
 /** The trust policy as it is shown: percent-decoded once, indented when it is JSON, as it came otherwise. */
@@ -32,13 +37,26 @@ function trustPolicyText(role: Role): string {
   return indentJson(decodeDocument(role.trustPolicy));
 }
 
-export function TrustTab({ role, connection }: TrustTabProps) {
+export function TrustTab({ role, connection, onDialogOpen }: TrustTabProps) {
   const text = trustPolicyText(role);
   const [editing, setEditing] = useState(false);
+  useEffect(() => {
+    onDialogOpen?.(editing);
+    // Unmounted with the dialog open (the tab left), the page no longer keeps it.
+    return () => {
+      onDialogOpen?.(false);
+    };
+  }, [editing, onDialogOpen]);
   const serviceLinked = isServiceLinked(role.path);
   return (
     <SpaceBetween size="l">
-      <Container header={<Header variant="h2">Trusted entities</Header>}>
+      <Container
+        header={
+          <Header variant="h2" description="Who may assume this role.">
+            Trusted entities
+          </Header>
+        }
+      >
         <Box variant="p">
           <ValueText kind="text" value={trustedEntitiesText(role.trustPolicy, role.path)} />
         </Box>
