@@ -82,6 +82,9 @@ export function UploadCode({ name, engineOrigin, ready }: UploadCodeProps) {
     let bytes: Uint8Array | undefined;
     try {
       bytes = (await isZipArchive(file)) ? new Uint8Array(await file.arrayBuffer()) : undefined;
+    } catch {
+      // The file could not be read (moved or deleted after it was chosen): said as the create form says it.
+      bytes = undefined;
     } finally {
       setChecking(false);
     }
