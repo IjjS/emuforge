@@ -5,11 +5,15 @@ import { engineEndpoint } from '../../../../../lib/aws/client-factory';
 import { RequestError, type RequestFailure } from '../../../../../lib/aws/request';
 import {
   cancelMessageMoveTask,
+  createQueue,
   deleteMessages,
+  deleteQueue,
   getQueueArn,
   getQueueAttributes,
   getQueueUrl,
   isNoSuchQueue,
+  isQueueNameTaken,
+  listDeadLetterChoices,
   listMessageMoveTasks,
   listQueuePage,
   NO_SUCH_QUEUE,
@@ -552,5 +556,141 @@ describe('the queue list', () => {
       sources: ['orders'],
     });
     expect(engine.of('GetQueueUrl')[0]?.body).toEqual({ QueueName: 'orders-dlq' });
+  });
+});
+
+describe('create a queue (issue 489)', () => {
+  const created = (name: string) => () => ok({ QueueUrl: `${AWS_HOST}/${name}` });
+
+  it('standard: CreateQueue with the name and no FifoQueue, ContentBasedDeduplication or RedrivePolicy', async () => {
+    engine.on('CreateQueue', created('orders'));
+
+    await expect(
+      createQueue(endpoint, { name: 'orders', kind: 'standard', contentBasedDeduplication: true }, signal()),
+    ).resolves.toBe(`${AWS_HOST}/orders`);
+
+    expect(engine.of('CreateQueue').map((sent) => sent.body)).toEqual([{ QueueName: 'orders' }]);
+  });
+
+  it('FIFO, deduplication off: FifoQueue "true" and ContentBasedDeduplication "false"', async () => {
+    engine.on('CreateQueue', created('orders.fifo'));
+
+    await createQueue(endpoint, { name: 'orders.fifo', kind: 'fifo', contentBasedDeduplication: false }, signal());
+
+    expect(engine.of('CreateQueue')[0]?.body).toEqual({
+      QueueName: 'orders.fifo',
+      Attributes: { FifoQueue: 'true', ContentBasedDeduplication: 'false' },
+    });
+  });
+
+  it('with a dead-letter queue: RedrivePolicy {"deadLetterTargetArn":"<arn>","maxReceiveCount":"3"}', async () => {
+    engine.on('CreateQueue', created('orders'));
+
+    await createQueue(
+      endpoint,
+      {
+        name: 'orders',
+        kind: 'standard',
+        contentBasedDeduplication: false,
+        deadLetter: { arn: `${ARN}:dead`, maxReceiveCount: 3 },
+      },
+      signal(),
+    );
+
+    const attributes = engine.of('CreateQueue')[0]?.body['Attributes'] as Record<string, string>;
+    expect(Object.keys(attributes)).toEqual(['RedrivePolicy']);
+    expect(attributes['RedrivePolicy']).toBe(`{"deadLetterTargetArn":"${ARN}:dead","maxReceiveCount":"3"}`);
+  });
+
+  it('a refusal rejects with its code and message', async () => {
+    engine.on('CreateQueue', () =>
+      refused(
+        400,
+        'InvalidParameterValue',
+        'Value {...} for parameter RedrivePolicy is invalid. Reason: Dead letter target does not exist.',
+      ),
+    );
+    expect(
+      await failure(
+        createQueue(endpoint, { name: 'orders', kind: 'standard', contentBasedDeduplication: false }, signal()),
+      ),
+    ).toEqual({
+      kind: 'other',
+      operation: 'CreateQueue',
+      code: 'InvalidParameterValue',
+      message: 'Value {...} for parameter RedrivePolicy is invalid. Reason: Dead letter target does not exist.',
+    });
+  });
+
+  it('is a name taken: a URL → taken; NonExistentQueue → free; another failure → that failure', async () => {
+    engine.on('GetQueueUrl', () => ok({ QueueUrl: `${AWS_HOST}/orders` }));
+    await expect(isQueueNameTaken(endpoint, 'orders', signal())).resolves.toBe(true);
+    expect(engine.of('GetQueueUrl')[0]?.body).toEqual({ QueueName: 'orders' });
+
+    engine.on('GetQueueUrl', () =>
+      refused(
+        400,
+        'QueueDoesNotExist',
+        'The specified queue does not exist.',
+        'AWS.SimpleQueueService.NonExistentQueue',
+      ),
+    );
+    await expect(isQueueNameTaken(endpoint, 'orders', signal())).resolves.toBe(false);
+
+    engine.on('GetQueueUrl', () => ({ status: 501, body: { __type: 'NotImplemented', message: 'no' } }));
+    expect(await failure(isQueueNameTaken(endpoint, 'orders', signal()))).toEqual({
+      kind: 'not-implemented',
+      operation: 'GetQueueUrl',
+    });
+  });
+});
+
+describe('delete a queue (issue 490)', () => {
+  it('DeleteQueue with the queue’s URL; a refusal rejects with its code and message', async () => {
+    await deleteQueue(endpoint, `${AWS_HOST}/orders`, signal());
+    expect(engine.of('DeleteQueue').map((sent) => sent.body)).toEqual([{ QueueUrl: `${AWS_HOST}/orders` }]);
+
+    engine.on('DeleteQueue', () =>
+      refused(
+        400,
+        'QueueDoesNotExist',
+        'The specified queue does not exist.',
+        'AWS.SimpleQueueService.NonExistentQueue',
+      ),
+    );
+    expect(await failure(deleteQueue(endpoint, `${AWS_HOST}/orders`, signal()))).toEqual({
+      kind: 'other',
+      operation: 'DeleteQueue',
+      code: 'AWS.SimpleQueueService.NonExistentQueue',
+      message: 'The specified queue does not exist.',
+    });
+  });
+});
+
+describe('the dead-letter choices (issue 489)', () => {
+  const urls = ['dead', 'dead.fifo', 'plain', 'jobs.fifo'].map((name) => `${AWS_HOST}/${name}`);
+
+  it('ListQueues with the typed prefix and the page token; only names of the type kept; the next token returned', async () => {
+    engine.on('ListQueues', () => ok({ QueueUrls: urls, NextToken: 'next-2' }));
+
+    await expect(
+      listDeadLetterChoices(endpoint, { kind: 'fifo', prefix: 'd', token: 'next-1' }, signal()),
+    ).resolves.toEqual({
+      choices: [
+        { name: 'dead.fifo', url: `${AWS_HOST}/dead.fifo` },
+        { name: 'jobs.fifo', url: `${AWS_HOST}/jobs.fifo` },
+      ],
+      nextToken: 'next-2',
+    });
+    expect(engine.of('ListQueues')[0]?.body).toEqual({ MaxResults: 50, QueueNamePrefix: 'd', NextToken: 'next-1' });
+
+    engine.on('ListQueues', () => ok({ QueueUrls: urls }));
+    await expect(listDeadLetterChoices(endpoint, { kind: 'standard', prefix: '' }, signal())).resolves.toEqual({
+      choices: [
+        { name: 'dead', url: `${AWS_HOST}/dead` },
+        { name: 'plain', url: `${AWS_HOST}/plain` },
+      ],
+    });
+    expect(engine.of('ListQueues')[1]?.body).toEqual({ MaxResults: 50 });
   });
 });
