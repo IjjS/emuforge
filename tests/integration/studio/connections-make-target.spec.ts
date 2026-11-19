@@ -52,8 +52,9 @@ test('studio.connections-make-target-switches-aws-screens', async ({ page, ctx }
 
   await test.step("Open the bucket list through the navigation, same document: B's buckets, never A's", async () => {
     await studioNav(page).getByRole('link', { name: 'AWS', exact: true }).click(ACTION);
-    await page.locator(`a[href="${BUCKETS_PATH}"]`).first().click(ACTION);
-    await expect(page).toHaveURL(new RegExp(`${BUCKETS_PATH}$`), ACTION);
+    // The area's navigation names the service; its route and /aws/s3/buckets are the same bucket list (screens.ts).
+    await page.getByRole('link', { name: 'Amazon Simple Storage Service', exact: true }).first().click(ACTION);
+    await expect(page).toHaveURL(/\/aws\/s3(\/buckets)?$/, ACTION);
     await expectLine(page, connectedAt(b.port));
     await expect.poll(async () => (await lineText(page)) ?? '', ACTION).toContain(`Target ${second}`);
     await expect.poll(() => shownBuckets(page, [onA, onB]), ACTION).toEqual([onB]);
