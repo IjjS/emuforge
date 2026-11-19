@@ -6,7 +6,7 @@ import Pagination from '@cloudscape-design/components/pagination';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Table, { type TableProps } from '@cloudscape-design/components/table';
 import TextFilter, { type TextFilterProps } from '@cloudscape-design/components/text-filter';
-import { useCallback, useRef, useState, type KeyboardEvent } from 'react';
+import { useCallback, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 
 import type { AreaConnection } from '../../../components/emulator-line';
 import type { Policy } from '../api';
@@ -66,17 +66,34 @@ function chosenAfter(chosen: readonly Policy[], page: readonly Policy[], checked
   return [...kept, ...added];
 }
 
-export interface PermissionsStepProps {
+export interface PolicyChoiceTableProps {
   connection: AreaConnection;
-  /** The chosen policies, in step 3's order. */
+  /** The chosen policies, in the order they were chosen. */
   chosen: readonly Policy[];
   onChoose: (chosen: Policy[]) => void;
-  /** "A role can have at most 10 managed policies in the emulator.", when shown. */
-  message: string | undefined;
+  /** The table's header; it is given the count of the chosen policies. */
+  header: (chosenCount: number) => ReactNode;
+  /** The table's name for assistive technology. */
+  label: string;
+  /** The ARNs of policies that are marked "Attached" and cannot be chosen (issue 535, task 3). */
+  attached?: ReadonlySet<string>;
+  variant?: TableProps.Variant;
 }
 
-/** Step 2's content: the rule's message above the table, then the table with its filter and pagination. */
-export function PermissionsStep({ connection, chosen, onChoose, message }: PermissionsStepProps) {
+/**
+ * The emulator's managed policies, one page of `ListPolicies` at a time, read when the table mounts, with the filter
+ * and the pages; the choice is the caller's and outlives pages and filters. Lifted from step 2 of "Create role" for
+ * "Attach policies" of a role's page (issue 535, task 3).
+ */
+export function PolicyChoiceTable({
+  connection,
+  chosen,
+  onChoose,
+  header,
+  label,
+  attached,
+  variant = 'container',
+}: PolicyChoiceTableProps) {
   const [filter, setFilter] = useState('');
   const [starter, setStarter] = useState<Starter>(null);
   const filterRef = useRef<TextFilterProps.Ref>(null);
@@ -92,7 +109,7 @@ export function PermissionsStep({ connection, chosen, onChoose, message }: Permi
   }, [refresh]);
 
   // A failure state is announced once, with its first line; once the connection is connected again after a failed
-  // read, the step reads again by itself (R10.2).
+  // read, the table reads again by itself (R10.2).
   const failureLine = state.kind === 'failure' ? state.firstText : undefined;
   const [seenFailureLine, setSeenFailureLine] = useState<string>();
   if (failureLine !== seenFailureLine) {
@@ -136,23 +153,32 @@ export function PermissionsStep({ connection, chosen, onChoose, message }: Permi
   const columns: TableProps.ColumnDefinition<Policy>[] = [
     { id: 'name', header: 'Policy name', isRowHeader: true, cell: (policy) => policy.name },
     { id: 'type', header: 'Type', cell: (policy) => policy.type },
+    ...(attached === undefined
+      ? []
+      : [
+          {
+            id: 'attached',
+            header: 'Attached',
+            cell: (policy: Policy) => (attached.has(policy.arn) ? 'Attached' : '-'),
+          },
+        ]),
   ];
 
   const count = loaded ? listing.count : undefined;
 
   return (
-    <SpaceBetween size="l">
-      {message !== undefined && <Alert type="error">{message}</Alert>}
+    <>
       <Table<Policy>
-        variant="container"
+        variant={variant}
         items={policies ?? []}
         trackBy="arn"
         columnDefinitions={columns}
         selectionType="multi"
         selectedItems={selected}
         onSelectionChange={handleSelection}
+        {...(attached !== undefined && { isItemDisabled: (policy: Policy) => attached.has(policy.arn) })}
         ariaLabels={{
-          tableLabel: POLICIES_TITLE,
+          tableLabel: label,
           selectionGroupLabel: 'Policy selection',
           allItemsSelectionLabel: () => 'All items',
           itemSelectionLabel: (_, policy) => policy.name,
@@ -160,11 +186,7 @@ export function PermissionsStep({ connection, chosen, onChoose, message }: Permi
         loading={state.kind === 'loading'}
         loadingText="Loading policies"
         empty={<PoliciesBody state={state} onClearFilter={handleClearFilter} onRetry={startReading} />}
-        header={
-          <Header variant="h2" counter={`(${String(chosen.length)} selected)`} description={POLICIES_HELP}>
-            {POLICIES_TITLE}
-          </Header>
-        }
+        header={header(chosen.length)}
         filter={
           <div onKeyDown={handleFilterKey}>
             <TextFilter
@@ -200,6 +222,35 @@ export function PermissionsStep({ connection, chosen, onChoose, message }: Permi
         }
       />
       {announcement}
+    </>
+  );
+}
+
+export interface PermissionsStepProps {
+  connection: AreaConnection;
+  /** The chosen policies, in step 3's order. */
+  chosen: readonly Policy[];
+  onChoose: (chosen: Policy[]) => void;
+  /** "A role can have at most 10 managed policies in the emulator.", when shown. */
+  message: string | undefined;
+}
+
+/** Step 2's content: the rule's message above the table, then the table with its filter and pagination. */
+export function PermissionsStep({ connection, chosen, onChoose, message }: PermissionsStepProps) {
+  return (
+    <SpaceBetween size="l">
+      {message !== undefined && <Alert type="error">{message}</Alert>}
+      <PolicyChoiceTable
+        connection={connection}
+        chosen={chosen}
+        onChoose={onChoose}
+        label={POLICIES_TITLE}
+        header={(count) => (
+          <Header variant="h2" counter={`(${String(count)} selected)`} description={POLICIES_HELP}>
+            {POLICIES_TITLE}
+          </Header>
+        )}
+      />
     </SpaceBetween>
   );
 }

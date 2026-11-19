@@ -2,9 +2,23 @@ import { ListRolesCommand } from '@aws-sdk/client-iam';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { EndpointRefusedError, engineEndpoint } from '../../../../../lib/aws/client-factory';
+import { RequestError } from '../../../../../lib/aws/request';
 import {
+  attachRolePolicies,
+  createPolicy,
+  createPolicyVersion,
   createRole,
+  deletePolicy,
+  deletePolicyVersion,
+  deleteRolePolicy,
   deleteRoles,
+  detachRolePolicy,
+  getPolicy,
+  getPolicyDocument,
+  getRolePolicyDocument,
+  putRolePolicy,
+  setDefaultPolicyVersion,
+  updateTrustPolicy,
   getCallerAccount,
   getRole,
   iamClient,
@@ -620,8 +634,13 @@ describe('the policy list', () => {
     expect(params?.get('Marker')).toBe('marker-1');
     expect(page).toEqual({
       policies: [
-        { name: 'mine', arn: 'arn:aws:iam::000000000000:policy/mine', type: 'Customer managed' },
-        { name: 'ReadOnlyAccess', arn: 'arn:aws:iam::aws:policy/ReadOnlyAccess', type: 'AWS managed' },
+        { name: 'mine', arn: 'arn:aws:iam::000000000000:policy/mine', type: 'Customer managed', attachmentCount: 0 },
+        {
+          name: 'ReadOnlyAccess',
+          arn: 'arn:aws:iam::aws:policy/ReadOnlyAccess',
+          type: 'AWS managed',
+          attachmentCount: 0,
+        },
       ],
       next: { marker: 'marker-2', skip: 0 },
     });
@@ -1103,5 +1122,608 @@ describe('an aborted call', () => {
     await expect(getRole(endpoint, 'r', controller.signal)).rejects.toBe(reason);
     await expect(createRole(endpoint, { name: 'r', trustPolicy: '{}' }, controller.signal)).rejects.toBe(reason);
     expect(engine.sent).toHaveLength(0);
+  });
+});
+
+// Test criteria, "Unit s1 — providers/aws/area/services/iam/api.test.ts" (issue 535, design "The calls").
+
+/** A document written over several lines with two spaces between two tokens, so a rewritten text is told apart. */
+const DOC_A =
+  '{\n  "Version": "2012-10-17",\n  "Statement": [{"Effect": "Allow",  "Action": "s3:GetObject", "Resource": "*"}]\n}';
+const POLICY_ARN = 'arn:aws:iam::000000000000:policy/team/mine';
+
+function getRolePolicyAnswer(role: string, name: string, document: string): Answer {
+  return ok(
+    'GetRolePolicy',
+    `<RoleName>${esc(role)}</RoleName><PolicyName>${esc(name)}</PolicyName><PolicyDocument>${encodeURIComponent(document)}</PolicyDocument>`,
+  );
+}
+
+function getPolicyAnswer(arn: string, defaultVersion = 'v2'): Answer {
+  return ok(
+    'GetPolicy',
+    `<Policy><PolicyName>${esc(arn.slice(arn.lastIndexOf('/') + 1))}</PolicyName><PolicyId>ANPA1</PolicyId><Arn>${esc(arn)}</Arn><Path>/team/</Path><DefaultVersionId>${defaultVersion}</DefaultVersionId><AttachmentCount>2</AttachmentCount><IsAttachable>true</IsAttachable><Description>Read &lt;b&gt;</Description><CreateDate>2026-11-17T09:05:03Z</CreateDate><UpdateDate>2026-11-18T10:00:00Z</UpdateDate></Policy>`,
+  );
+}
+
+function getPolicyVersionAnswer(version: string, document: string, isDefault: boolean): Answer {
+  return ok(
+    'GetPolicyVersion',
+    `<PolicyVersion><Document>${encodeURIComponent(document)}</Document><VersionId>${version}</VersionId><IsDefaultVersion>${String(isDefault)}</IsDefaultVersion><CreateDate>2026-11-17T09:05:03Z</CreateDate></PolicyVersion>`,
+  );
+}
+
+function versionsAnswer(versions: [string, boolean][], marker?: string): Answer {
+  const members = versions
+    .map(
+      ([id, isDefault]) =>
+        `<member><VersionId>${id}</VersionId><IsDefaultVersion>${String(isDefault)}</IsDefaultVersion><CreateDate>2026-11-17T09:05:03Z</CreateDate></member>`,
+    )
+    .join('');
+  return ok('ListPolicyVersions', `<Versions>${members}</Versions>${truncation(marker)}`);
+}
+
+function entitiesAnswer(
+  { roles = [], users = [], groups = [] }: { roles?: string[]; users?: string[]; groups?: string[] },
+  marker?: string,
+): Answer {
+  const member = (tag: string) => (name: string) => `<member><${tag}>${esc(name)}</${tag}></member>`;
+  return ok(
+    'ListEntitiesForPolicy',
+    `<PolicyGroups>${groups.map(member('GroupName')).join('')}</PolicyGroups><PolicyUsers>${users.map(member('UserName')).join('')}</PolicyUsers><PolicyRoles>${roles.map(member('RoleName')).join('')}</PolicyRoles>${truncation(marker)}`,
+  );
+}
+
+/** Answers each request of an action in turn with the next of `answers`. */
+function inTurn(answers: Answer[]): Handler {
+  let next = 0;
+  return () => {
+    const answer = answers[next] ?? answers[answers.length - 1] ?? { status: 500 };
+    next += 1;
+    return answer;
+  };
+}
+
+/** The failure a call of issue 535 rejected with. */
+async function requestFailure(promise: Promise<unknown>): Promise<IamFailure> {
+  try {
+    await promise;
+  } catch (error) {
+    expect(error).toBeInstanceOf(RequestError);
+    return (error as RequestError).failure;
+  }
+  throw new Error('the call resolved');
+}
+
+/** Every request was sent after the previous one's answer. */
+function oneAfterAnother(log: string[]): void {
+  for (let index = 0; index < log.length; index += 2) {
+    expect(log[index]?.startsWith('sent ')).toBe(true);
+    expect(log[index + 1]).toBe(`answered ${(log[index] ?? '').slice('sent '.length)}`);
+  }
+}
+
+describe('the calls of a role’s documents and permissions', () => {
+  it('reads an inline policy with GetRolePolicy and gives its text percent-decoded once', async () => {
+    engine.handlers.GetRolePolicy = (request) =>
+      getRolePolicyAnswer(request.params.get('RoleName') ?? '', request.params.get('PolicyName') ?? '', DOC_A);
+
+    expect(await getRolePolicyDocument(endpoint, 'role-a', 'inline-a', signal())).toEqual({
+      kind: 'found',
+      text: DOC_A,
+    });
+    expect(engine.actions()).toEqual(['GetRolePolicy']);
+    expect(engine.sent[0]?.params.get('RoleName')).toBe('role-a');
+    expect(engine.sent[0]?.params.get('PolicyName')).toBe('inline-a');
+  });
+
+  it('is "not found" for an inline policy the emulator does not hold', async () => {
+    engine.handlers.GetRolePolicy = () => errorAnswer(404, 'NoSuchEntity', 'The role policy cannot be found.');
+
+    expect(await getRolePolicyDocument(endpoint, 'r', 'p', signal())).toEqual({ kind: 'not-found' });
+  });
+
+  it('reads a managed policy without a version: GetPolicy for its default, then GetPolicyVersion of it', async () => {
+    engine.handlers.GetPolicy = () => getPolicyAnswer(POLICY_ARN, 'v3');
+    engine.handlers.GetPolicyVersion = () => getPolicyVersionAnswer('v3', DOC_A, true);
+
+    expect(await getPolicyDocument(endpoint, POLICY_ARN, undefined, signal())).toEqual({
+      kind: 'found',
+      text: DOC_A,
+      versionId: 'v3',
+      isDefault: true,
+    });
+    expect(engine.actions()).toEqual(['GetPolicy', 'GetPolicyVersion']);
+    oneAfterAnother(engine.log);
+    expect(engine.of('GetPolicy')[0]?.params.get('PolicyArn')).toBe(POLICY_ARN);
+    expect(engine.of('GetPolicyVersion')[0]?.params.get('PolicyArn')).toBe(POLICY_ARN);
+    expect(engine.of('GetPolicyVersion')[0]?.params.get('VersionId')).toBe('v3');
+  });
+
+  it('reads a named version of a managed policy with GetPolicyVersion alone', async () => {
+    engine.handlers.GetPolicyVersion = () => getPolicyVersionAnswer('v1', DOC_A, false);
+
+    expect(await getPolicyDocument(endpoint, POLICY_ARN, 'v1', signal())).toEqual({
+      kind: 'found',
+      text: DOC_A,
+      versionId: 'v1',
+      isDefault: false,
+    });
+    expect(engine.actions()).toEqual(['GetPolicyVersion']);
+  });
+
+  it('is "not found" when GetPolicy or GetPolicyVersion answers NoSuchEntity', async () => {
+    engine.handlers.GetPolicy = () => errorAnswer(404, 'NoSuchEntity', 'Policy absent was not found.');
+    expect(await getPolicyDocument(endpoint, POLICY_ARN, undefined, signal())).toEqual({ kind: 'not-found' });
+    expect(engine.actions()).toEqual(['GetPolicy']);
+
+    engine.handlers.GetPolicy = () => getPolicyAnswer(POLICY_ARN);
+    engine.handlers.GetPolicyVersion = () => errorAnswer(404, 'NoSuchEntity', 'Version v2 was not found.');
+    expect(await getPolicyDocument(endpoint, POLICY_ARN, undefined, signal())).toEqual({ kind: 'not-found' });
+  });
+
+  it('attaches policies one after another, in the order given', async () => {
+    const policies = [
+      { name: 'a', arn: 'arn:aws:iam::aws:policy/a' },
+      { name: 'b', arn: 'arn:aws:iam::000000000000:policy/b' },
+    ];
+
+    expect(await attachRolePolicies(endpoint, 'role-a', policies, signal())).toEqual({ attached: policies });
+    expect(engine.actions()).toEqual(['AttachRolePolicy', 'AttachRolePolicy']);
+    expect(engine.sent.map((request) => request.params.get('PolicyArn'))).toEqual(policies.map(({ arn }) => arn));
+    expect(engine.sent.every((request) => request.params.get('RoleName') === 'role-a')).toBe(true);
+    oneAfterAnother(engine.log);
+  });
+
+  it('stops attaching at the first refusal: the first attached, the second with its failure, the third never sent', async () => {
+    const policies = [
+      { name: 'a', arn: 'arn:aws:iam::aws:policy/a' },
+      { name: 'b', arn: 'arn:aws:iam::aws:policy/b' },
+      { name: 'c', arn: 'arn:aws:iam::aws:policy/c' },
+    ];
+    engine.handlers.AttachRolePolicy = (request) =>
+      request.params.get('PolicyArn') === policies[1]?.arn
+        ? errorAnswer(404, 'NoSuchEntity', 'Policy b does not exist.')
+        : ok('AttachRolePolicy', '');
+
+    expect(await attachRolePolicies(endpoint, 'r', policies, signal())).toEqual({
+      attached: [policies[0]],
+      failed: {
+        policy: policies[1],
+        failure: {
+          kind: 'other',
+          operation: 'AttachRolePolicy',
+          code: 'NoSuchEntity',
+          message: 'Policy b does not exist.',
+        },
+      },
+    });
+    expect(engine.sent.map((request) => request.params.get('PolicyArn'))).toEqual([policies[0]?.arn, policies[1]?.arn]);
+  });
+
+  it('sends DetachRolePolicy, PutRolePolicy, DeleteRolePolicy and UpdateAssumeRolePolicy with their inputs, texts as given', async () => {
+    await detachRolePolicy(endpoint, 'r', POLICY_ARN, signal());
+    await putRolePolicy(endpoint, 'r', 'inline-a', DOC_A, signal());
+    await deleteRolePolicy(endpoint, 'r', 'inline-a', signal());
+    await updateTrustPolicy(endpoint, 'r', DOC_A, signal());
+
+    expect(engine.actions()).toEqual([
+      'DetachRolePolicy',
+      'PutRolePolicy',
+      'DeleteRolePolicy',
+      'UpdateAssumeRolePolicy',
+    ]);
+    const [detach, put, remove, trust] = engine.sent;
+    expect(Object.fromEntries(detach?.params ?? [])).toMatchObject({ RoleName: 'r', PolicyArn: POLICY_ARN });
+    expect(Object.fromEntries(put?.params ?? [])).toMatchObject({
+      RoleName: 'r',
+      PolicyName: 'inline-a',
+      PolicyDocument: DOC_A,
+    });
+    expect(Object.fromEntries(remove?.params ?? [])).toMatchObject({ RoleName: 'r', PolicyName: 'inline-a' });
+    expect(Object.fromEntries(trust?.params ?? [])).toMatchObject({ RoleName: 'r', PolicyDocument: DOC_A });
+  });
+});
+
+describe('the calls of customer managed policies', () => {
+  it('sends the scope given with ListPolicies, and gives each entry its attachment count and last change', async () => {
+    engine.handlers.ListPolicies = () =>
+      ok(
+        'ListPolicies',
+        `<Policies><member><PolicyName>mine</PolicyName><Arn>${POLICY_ARN}</Arn><Path>/team/</Path><AttachmentCount>3</AttachmentCount><UpdateDate>2026-11-18T10:00:00Z</UpdateDate></member></Policies>${truncation()}`,
+      );
+
+    for (const scope of ['Local', 'AWS', 'All'] as const) {
+      const page = await listPolicies(endpoint, { pageSize: 2 }, signal(), scope);
+      expect(page.policies).toEqual([
+        {
+          name: 'mine',
+          arn: POLICY_ARN,
+          type: 'Customer managed',
+          attachmentCount: 3,
+          updateDate: new Date('2026-11-18T10:00:00Z'),
+        },
+      ]);
+    }
+    expect(engine.of('ListPolicies').map((request) => request.params.get('Scope'))).toEqual(['Local', 'AWS', 'All']);
+    expect(engine.of('ListPolicies').map((request) => request.params.get('MaxItems'))).toEqual(['2', '2', '2']);
+  });
+
+  it('reads a policy, then its versions and its entities, each to its end by Marker, one after another', async () => {
+    engine.handlers.GetPolicy = () => getPolicyAnswer(POLICY_ARN);
+    engine.handlers.ListPolicyVersions = inTurn([
+      versionsAnswer([['v2', true]], 'mv'),
+      versionsAnswer([['v1', false]]),
+    ]);
+    engine.handlers.ListEntitiesForPolicy = inTurn([
+      entitiesAnswer({ roles: ['role-a'], users: ['user-a'] }, 'me'),
+      entitiesAnswer({ groups: ['group-a'] }),
+    ]);
+
+    const read = await getPolicy(endpoint, POLICY_ARN, signal());
+
+    expect(engine.actions()).toEqual([
+      'GetPolicy',
+      'ListPolicyVersions',
+      'ListPolicyVersions',
+      'ListEntitiesForPolicy',
+      'ListEntitiesForPolicy',
+    ]);
+    oneAfterAnother(engine.log);
+    expect(engine.of('ListPolicyVersions').map((request) => request.params.get('Marker'))).toEqual([null, 'mv']);
+    expect(engine.of('ListEntitiesForPolicy').map((request) => request.params.get('Marker'))).toEqual([null, 'me']);
+    expect(engine.sent.every((request) => request.params.get('PolicyArn') === POLICY_ARN)).toBe(true);
+    expect(read).toEqual({
+      kind: 'found',
+      policy: {
+        name: 'mine',
+        arn: POLICY_ARN,
+        type: 'Customer managed',
+        id: 'ANPA1',
+        path: '/team/',
+        description: 'Read <b>',
+        createDate: new Date('2026-11-17T09:05:03Z'),
+        updateDate: new Date('2026-11-18T10:00:00Z'),
+        defaultVersionId: 'v2',
+        attachmentCount: 2,
+      },
+      versions: {
+        kind: 'read',
+        items: [
+          { id: 'v2', isDefault: true, createDate: new Date('2026-11-17T09:05:03Z') },
+          { id: 'v1', isDefault: false, createDate: new Date('2026-11-17T09:05:03Z') },
+        ],
+      },
+      entities: {
+        kind: 'read',
+        items: [
+          { kind: 'role', name: 'role-a' },
+          { kind: 'user', name: 'user-a' },
+          { kind: 'group', name: 'group-a' },
+        ],
+      },
+    });
+  });
+
+  it('is "not found" when GetPolicy answers NoSuchEntity, and reads nothing more', async () => {
+    engine.handlers.GetPolicy = () => errorAnswer(404, 'NoSuchEntity', 'Policy was not found.');
+
+    expect(await getPolicy(endpoint, POLICY_ARN, signal())).toEqual({ kind: 'not-found' });
+    expect(engine.actions()).toEqual(['GetPolicy']);
+  });
+
+  it('gives a refused versions or entities list as that part’s failure, and the policy still', async () => {
+    engine.handlers.GetPolicy = () => getPolicyAnswer(POLICY_ARN);
+    engine.handlers.ListPolicyVersions = () => errorAnswer(403, 'AccessDenied', 'no versions for you');
+    engine.handlers.ListEntitiesForPolicy = () => entitiesAnswer({});
+
+    const read = await getPolicy(endpoint, POLICY_ARN, signal());
+    expect(read.kind === 'found' && read.versions).toEqual({
+      kind: 'failed',
+      failure: { kind: 'access-denied', operation: 'ListPolicyVersions', message: 'no versions for you' },
+    });
+    expect(read.kind === 'found' && read.entities).toEqual({ kind: 'read', items: [] });
+    expect(read.kind === 'found' && read.policy.name).toBe('mine');
+
+    engine.handlers.ListPolicyVersions = () => versionsAnswer([['v1', true]]);
+    engine.handlers.ListEntitiesForPolicy = () => errorAnswer(501, 'NotImplemented', 'not implemented');
+    const again = await getPolicy(endpoint, POLICY_ARN, signal());
+    expect(again.kind === 'found' && again.entities).toEqual({
+      kind: 'failed',
+      failure: { kind: 'not-implemented', operation: 'ListEntitiesForPolicy' },
+    });
+    expect(again.kind === 'found' && again.versions).toEqual({
+      kind: 'read',
+      items: [expect.objectContaining({ id: 'v1' })],
+    });
+  });
+
+  it('sends CreatePolicy with the name, the description when not empty and the text as given', async () => {
+    engine.handlers.CreatePolicy = (request) =>
+      ok(
+        'CreatePolicy',
+        `<Policy><PolicyName>${esc(request.params.get('PolicyName') ?? '')}</PolicyName><Arn>arn:aws:iam::000000000000:policy/${esc(request.params.get('PolicyName') ?? '')}</Arn></Policy>`,
+      );
+
+    expect(await createPolicy(endpoint, { name: 'p1', description: 'Reads', document: DOC_A }, signal())).toBe(
+      'arn:aws:iam::000000000000:policy/p1',
+    );
+    expect(await createPolicy(endpoint, { name: 'p2', description: '', document: DOC_A }, signal())).toBe(
+      'arn:aws:iam::000000000000:policy/p2',
+    );
+    const [first, second] = engine.of('CreatePolicy');
+    expect(Object.fromEntries(first?.params ?? [])).toMatchObject({
+      PolicyName: 'p1',
+      Description: 'Reads',
+      PolicyDocument: DOC_A,
+    });
+    expect(second?.params.get('PolicyName')).toBe('p2');
+    expect(second?.params.has('Description')).toBe(false);
+    expect(second?.params.get('PolicyDocument')).toBe(DOC_A);
+  });
+
+  it('sends CreatePolicyVersion with SetAsDefault true, SetDefaultPolicyVersion and DeletePolicyVersion with their inputs', async () => {
+    engine.handlers.CreatePolicyVersion = () =>
+      ok(
+        'CreatePolicyVersion',
+        '<PolicyVersion><VersionId>v3</VersionId><IsDefaultVersion>true</IsDefaultVersion></PolicyVersion>',
+      );
+
+    expect(await createPolicyVersion(endpoint, POLICY_ARN, DOC_A, signal())).toBe('v3');
+    await setDefaultPolicyVersion(endpoint, POLICY_ARN, 'v1', signal());
+    await deletePolicyVersion(endpoint, POLICY_ARN, 'v2', signal());
+
+    expect(engine.actions()).toEqual(['CreatePolicyVersion', 'SetDefaultPolicyVersion', 'DeletePolicyVersion']);
+    const [create, setDefault, remove] = engine.sent;
+    expect(Object.fromEntries(create?.params ?? [])).toMatchObject({
+      PolicyArn: POLICY_ARN,
+      PolicyDocument: DOC_A,
+      SetAsDefault: 'true',
+    });
+    expect(Object.fromEntries(setDefault?.params ?? [])).toMatchObject({ PolicyArn: POLICY_ARN, VersionId: 'v1' });
+    expect(Object.fromEntries(remove?.params ?? [])).toMatchObject({ PolicyArn: POLICY_ARN, VersionId: 'v2' });
+  });
+});
+
+describe('deleting a policy', () => {
+  function answerEverything(): void {
+    engine.handlers.ListEntitiesForPolicy = inTurn([
+      entitiesAnswer({ roles: ['role-a'] }, 'me'),
+      entitiesAnswer({ users: ['user-a'], groups: ['group-a'] }),
+    ]);
+    engine.handlers.ListPolicyVersions = () =>
+      versionsAnswer([
+        ['v3', false],
+        ['v2', true],
+        ['v1', false],
+      ]);
+  }
+
+  it('detaches from each role, user and group, deletes each version but the default, then the policy, one after another', async () => {
+    answerEverything();
+
+    expect(await deletePolicy(endpoint, POLICY_ARN, signal())).toEqual({ kind: 'deleted', detachedRoles: ['role-a'] });
+    expect(engine.actions()).toEqual([
+      'ListEntitiesForPolicy',
+      'ListEntitiesForPolicy',
+      'DetachRolePolicy',
+      'DetachUserPolicy',
+      'DetachGroupPolicy',
+      'ListPolicyVersions',
+      'DeletePolicyVersion',
+      'DeletePolicyVersion',
+      'DeletePolicy',
+    ]);
+    oneAfterAnother(engine.log);
+    expect(engine.of('ListEntitiesForPolicy')[1]?.params.get('Marker')).toBe('me');
+    expect(engine.of('DetachRolePolicy')[0]?.params.get('RoleName')).toBe('role-a');
+    expect(engine.of('DetachUserPolicy')[0]?.params.get('UserName')).toBe('user-a');
+    expect(engine.of('DetachGroupPolicy')[0]?.params.get('GroupName')).toBe('group-a');
+    expect(engine.of('DeletePolicyVersion').map((request) => request.params.get('VersionId'))).toEqual(['v3', 'v1']);
+    expect(engine.sent.every((request) => request.params.get('PolicyArn') === POLICY_ARN)).toBe(true);
+  });
+
+  const refused = errorAnswer(409, 'DeleteConflict', 'Cannot delete.');
+  const steps: [string, string, unknown, string[]][] = [
+    ['reading what it is attached to', 'ListEntitiesForPolicy', { kind: 'read-entities' }, []],
+    ['detaching from a role', 'DetachRolePolicy', { kind: 'detach', entity: { kind: 'role', name: 'role-a' } }, []],
+    [
+      'detaching from a user',
+      'DetachUserPolicy',
+      { kind: 'detach', entity: { kind: 'user', name: 'user-a' } },
+      ['role-a'],
+    ],
+    [
+      'detaching from a group',
+      'DetachGroupPolicy',
+      { kind: 'detach', entity: { kind: 'group', name: 'group-a' } },
+      ['role-a'],
+    ],
+    ['reading its versions', 'ListPolicyVersions', { kind: 'read-versions' }, ['role-a']],
+    ['deleting a version', 'DeletePolicyVersion', { kind: 'delete-version', versionId: 'v3' }, ['role-a']],
+    ['deleting the policy', 'DeletePolicy', { kind: 'delete-policy' }, ['role-a']],
+  ];
+
+  it.each(steps)(
+    'names the step refused when %s, with its failure, and sends nothing after it',
+    async (_, action, step, detached) => {
+      answerEverything();
+      engine.handlers[action] = () => refused;
+
+      expect(await deletePolicy(endpoint, POLICY_ARN, signal())).toEqual({
+        kind: 'failed',
+        step,
+        failure: { kind: 'other', operation: action, code: 'DeleteConflict', message: 'Cannot delete.' },
+        detachedRoles: detached,
+      });
+      expect(engine.actions().at(-1)).toBe(action);
+      expect(engine.actions().filter((sent) => sent === action)).toHaveLength(1);
+    },
+  );
+});
+
+describe('a failed request of the calls of issue 535', () => {
+  const docA = DOC_A;
+  /** Each new function, with the failure its first operation's refusal gives. */
+  const calls: [string, string, () => Promise<IamFailure>][] = [
+    [
+      'getRolePolicyDocument',
+      'GetRolePolicy',
+      () => requestFailure(getRolePolicyDocument(endpoint, 'r', 'p', signal())),
+    ],
+    [
+      'getPolicyDocument',
+      'GetPolicy',
+      () => requestFailure(getPolicyDocument(endpoint, POLICY_ARN, undefined, signal())),
+    ],
+    [
+      'attachRolePolicies',
+      'AttachRolePolicy',
+      async () => {
+        const result = await attachRolePolicies(endpoint, 'r', [{ name: 'a', arn: POLICY_ARN }], signal());
+        if (result.failed === undefined) throw new Error('nothing failed');
+        return result.failed.failure;
+      },
+    ],
+    [
+      'detachRolePolicy',
+      'DetachRolePolicy',
+      () => requestFailure(detachRolePolicy(endpoint, 'r', POLICY_ARN, signal())),
+    ],
+    ['putRolePolicy', 'PutRolePolicy', () => requestFailure(putRolePolicy(endpoint, 'r', 'p', docA, signal()))],
+    ['deleteRolePolicy', 'DeleteRolePolicy', () => requestFailure(deleteRolePolicy(endpoint, 'r', 'p', signal()))],
+    [
+      'updateTrustPolicy',
+      'UpdateAssumeRolePolicy',
+      () => requestFailure(updateTrustPolicy(endpoint, 'r', docA, signal())),
+    ],
+    ['getPolicy', 'GetPolicy', () => requestFailure(getPolicy(endpoint, POLICY_ARN, signal()))],
+    [
+      'createPolicy',
+      'CreatePolicy',
+      () => requestFailure(createPolicy(endpoint, { name: 'p', document: docA }, signal())),
+    ],
+    [
+      'createPolicyVersion',
+      'CreatePolicyVersion',
+      () => requestFailure(createPolicyVersion(endpoint, POLICY_ARN, docA, signal())),
+    ],
+    [
+      'setDefaultPolicyVersion',
+      'SetDefaultPolicyVersion',
+      () => requestFailure(setDefaultPolicyVersion(endpoint, POLICY_ARN, 'v1', signal())),
+    ],
+    [
+      'deletePolicyVersion',
+      'DeletePolicyVersion',
+      () => requestFailure(deletePolicyVersion(endpoint, POLICY_ARN, 'v1', signal())),
+    ],
+    [
+      'deletePolicy',
+      'ListEntitiesForPolicy',
+      async () => {
+        const result = await deletePolicy(endpoint, POLICY_ARN, signal());
+        if (result.kind !== 'failed') throw new Error('nothing failed');
+        return result.failure;
+      },
+    ],
+  ];
+
+  it.each(calls)('%s: 501 is "not implemented" with %s', async (_, operation, call) => {
+    engine.fallback = () => errorAnswer(501, 'NotImplemented', 'not implemented');
+    expect(await call()).toEqual({ kind: 'not-implemented', operation });
+  });
+
+  it.each(calls)('%s: AccessDenied is "access denied" with the message (%s)', async (_, operation, call) => {
+    engine.fallback = () => errorAnswer(403, 'AccessDenied', `not authorized to perform iam:${operation}`);
+    expect(await call()).toEqual({
+      kind: 'access-denied',
+      operation,
+      message: `not authorized to perform iam:${operation}`,
+    });
+  });
+
+  it.each(calls)(
+    '%s: the engine’s codes for a silent emulator are "emulator did not answer" (%s)',
+    async (_, operation, call) => {
+      engine.fallback = () => engineRefusal(503, 'EmulatorUnavailable', 'connection refused');
+      expect(await call()).toEqual({ kind: 'emulator-did-not-answer', operation, message: 'connection refused' });
+      engine.fallback = () => engineRefusal(504, 'EmulatorTimeout', 'no answer in 30 seconds');
+      expect(await call()).toEqual({ kind: 'emulator-did-not-answer', operation, message: 'no answer in 30 seconds' });
+    },
+  );
+
+  it.each(calls)('%s: no answer at all is "engine did not answer" (%s)', async (_, operation, call) => {
+    engine.fallback = () => 'network-error';
+    expect(await call()).toEqual({ kind: 'engine-did-not-answer', operation });
+  });
+
+  it.each(calls)('%s: another code is that code with its message (%s)', async (_, operation, call) => {
+    engine.fallback = () => errorAnswer(400, 'MalformedPolicyDocument', 'Syntax errors in policy.');
+    expect(await call()).toEqual({
+      kind: 'other',
+      operation,
+      code: 'MalformedPolicyDocument',
+      message: 'Syntax errors in policy.',
+    });
+    engine.fallback = () => ({ status: 418, statusText: "I'm a teapot", body: '' });
+    expect(await call()).toEqual({ kind: 'other', operation, code: "HTTP 418 I'm a teapot" });
+  });
+});
+
+describe('an aborted call of issue 535', () => {
+  const calls: [string, (abort: AbortSignal) => Promise<unknown>][] = [
+    ['getRolePolicyDocument', (s) => getRolePolicyDocument(endpoint, 'r', 'p', s)],
+    ['getPolicyDocument', (s) => getPolicyDocument(endpoint, POLICY_ARN, undefined, s)],
+    ['attachRolePolicies', (s) => attachRolePolicies(endpoint, 'r', [{ name: 'a', arn: POLICY_ARN }], s)],
+    ['detachRolePolicy', (s) => detachRolePolicy(endpoint, 'r', POLICY_ARN, s)],
+    ['putRolePolicy', (s) => putRolePolicy(endpoint, 'r', 'p', DOC_A, s)],
+    ['deleteRolePolicy', (s) => deleteRolePolicy(endpoint, 'r', 'p', s)],
+    ['updateTrustPolicy', (s) => updateTrustPolicy(endpoint, 'r', DOC_A, s)],
+    ['getPolicy', (s) => getPolicy(endpoint, POLICY_ARN, s)],
+    ['createPolicy', (s) => createPolicy(endpoint, { name: 'p', document: DOC_A }, s)],
+    ['createPolicyVersion', (s) => createPolicyVersion(endpoint, POLICY_ARN, DOC_A, s)],
+    ['setDefaultPolicyVersion', (s) => setDefaultPolicyVersion(endpoint, POLICY_ARN, 'v1', s)],
+    ['deletePolicyVersion', (s) => deletePolicyVersion(endpoint, POLICY_ARN, 'v1', s)],
+    ['deletePolicy', (s) => deletePolicy(endpoint, POLICY_ARN, s)],
+  ];
+
+  it.each(calls)('%s ends at once with the signal’s reason, and reports no failure', async (_, call) => {
+    engine.fallback = () => 'hold';
+    const controller = new AbortController();
+    const reason = new Error('left the page');
+
+    const settled = call(controller.signal).then(
+      (result) => ({ resolved: result }),
+      (error: unknown) => ({ rejected: error }),
+    );
+    await vi.waitFor(() => {
+      expect(engine.sent).toHaveLength(1);
+    });
+    controller.abort(reason);
+
+    const outcome = await settled;
+    expect(outcome).toEqual({ rejected: reason });
+    expect((outcome as { rejected: unknown }).rejected).toBe(reason);
+    expect(engine.sent).toHaveLength(1);
+  });
+
+  it('a policy’s read ends with the reason when its versions list is aborted, not with that part’s failure', async () => {
+    engine.handlers.GetPolicy = () => getPolicyAnswer(POLICY_ARN);
+    engine.handlers.ListPolicyVersions = () => 'hold';
+    const controller = new AbortController();
+    const reason = new Error('left the page');
+
+    const settled = getPolicy(endpoint, POLICY_ARN, controller.signal).then(
+      (result) => ({ resolved: result as unknown }),
+      (error: unknown) => ({ rejected: error }),
+    );
+    await vi.waitFor(() => {
+      expect(engine.of('ListPolicyVersions')).toHaveLength(1);
+    });
+    controller.abort(reason);
+
+    expect(await settled).toEqual({ rejected: reason });
+    expect(engine.of('ListEntitiesForPolicy')).toHaveLength(0);
   });
 });

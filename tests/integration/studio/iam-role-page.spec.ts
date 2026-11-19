@@ -57,6 +57,8 @@ const AWS_MANAGED = 'AWS managed';
 const CUSTOMER_MANAGED = 'Customer managed';
 const CUSTOMER_INLINE = 'Customer inline';
 const NO_POLICIES = 'No policies';
+/** The page's tabs (issue 535). */
+const TABS = ['Permissions', 'Trust relationships'];
 const NOT_SET = 'Not set';
 
 /** "Role not found" (R5.4). */
@@ -314,6 +316,28 @@ test('studio.iam-role-page-shows-the-role', async ({ ctx, page }) => {
       ).toEqual([AWS_MANAGED, CUSTOMER_INLINE, CUSTOMER_MANAGED].sort());
       await expect.poll(() => shownPolicyRows(page), { message: `the rows of "${POLICIES}"` }).toEqual(rows);
       await expect.poll(() => sectionText(s.main, BOUNDARY), { message: `"${BOUNDARY}"` }).toContain(boundary);
+    },
+  );
+
+  // Issue 535 (its test-criteria.md, "Rewritten lines of checks on `main`"): the page's tab bar is two tabs, and a
+  // policy's document is read only when it is asked for.
+  await lines.line(
+    'The tab list is "Permissions", "Trust relationships"; the policies are listed with their types, and no policy\'s document is on the page as it opens',
+    async () => {
+      await openRole(page, full);
+      const rows = await expectedPolicyRows(ctx, port, full);
+      await expect.poll(() => shownPolicyRows(page), { message: `the rows of "${POLICIES}"` }).toEqual(rows);
+      expect(
+        (await s.tabs.allInnerTexts()).map((t) => t.replace(/\s+/g, ' ').trim()),
+        'the tabs of the page',
+      ).toEqual(TABS);
+      expect(await s.policies.locator('code').count(), 'documents shown as the page opens').toBe(0);
+      for (const [name] of rows) {
+        await expect(
+          s.policies.getByRole('button', { name: `Show document of ${name}`, exact: true }),
+          `the document of ${name} waits to be asked for`,
+        ).toHaveAttribute('aria-expanded', 'false');
+      }
     },
   );
 

@@ -4,9 +4,25 @@ import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { engineEndpoint } from '../../../../../lib/aws/client-factory';
+import { RequestError } from '../../../../../lib/aws/request';
 import {
+  failureOf,
   FILTER_DELAY_MS,
+  useAttachRolePolicies,
+  useCreatePolicyVersion,
+  useDeletePolicy,
+  useDeletePolicyVersion,
   useDeleteRoles,
+  useDeleteRolePolicy,
+  useDetachRolePolicy,
+  useInlinePolicyDocument,
+  useManagedPolicyDocument,
+  usePolicy,
+  usePolicyListing,
+  usePutRolePolicy,
+  useSetDefaultPolicyVersion,
+  useUpdateTrustPolicy,
+  type PolicyListingOptions,
   useRole,
   useRoleListing,
   useUpdateRole,
@@ -454,5 +470,344 @@ describe('a finished update of a role', () => {
     });
     expect(engine.of('ListRoles')).toHaveLength(1);
     expect(engine.of('GetRole')).toHaveLength(3);
+  });
+});
+
+// Test criteria, "Unit s1 — providers/aws/area/services/iam/queries.test.tsx" (issue 535). The engine below answers
+// every operation at once from `answers`, but `ListPolicies` while `holdPolicies` is set: then each waits until the
+// case answers it, so a case decides the order in which the answers of two scopes arrive.
+
+const POLICY_ARN = 'arn:aws:iam::000000000000:policy/mine';
+const DOC = '{\n  "Version":  "2012-10-17"\n}';
+
+interface HeldList {
+  params: URLSearchParams;
+  answer: (names: string[]) => void;
+}
+
+function policyEngineAnswer(action: string, params: URLSearchParams): string {
+  switch (action) {
+    case 'GetRole':
+      return ok('GetRole', `<Role>${roleXml(params.get('RoleName') ?? '')}<RoleLastUsed/></Role>`);
+    case 'ListAttachedRolePolicies':
+      return ok(action, '<AttachedPolicies/><IsTruncated>false</IsTruncated>');
+    case 'ListRolePolicies':
+      return ok(action, '<PolicyNames/><IsTruncated>false</IsTruncated>');
+    case 'GetRolePolicy':
+      return ok(
+        action,
+        `<RoleName>r</RoleName><PolicyName>${params.get('PolicyName') ?? ''}</PolicyName><PolicyDocument>${encodeURIComponent(DOC)}</PolicyDocument>`,
+      );
+    case 'GetPolicy':
+      return ok(
+        action,
+        `<Policy><PolicyName>mine</PolicyName><Arn>${POLICY_ARN}</Arn><DefaultVersionId>v1</DefaultVersionId></Policy>`,
+      );
+    case 'GetPolicyVersion':
+      return ok(
+        action,
+        `<PolicyVersion><Document>${encodeURIComponent(DOC)}</Document><VersionId>${params.get('VersionId') ?? ''}</VersionId><IsDefaultVersion>true</IsDefaultVersion></PolicyVersion>`,
+      );
+    case 'ListPolicyVersions':
+      return ok(
+        action,
+        '<Versions><member><VersionId>v1</VersionId><IsDefaultVersion>true</IsDefaultVersion></member></Versions><IsTruncated>false</IsTruncated>',
+      );
+    case 'ListEntitiesForPolicy':
+      return ok(
+        action,
+        '<PolicyGroups/><PolicyUsers/><PolicyRoles><member><RoleName>role-a</RoleName></member></PolicyRoles><IsTruncated>false</IsTruncated>',
+      );
+    case 'ListPolicies':
+      return policyList(['mine']);
+    case 'CreatePolicyVersion':
+      return ok(action, '<PolicyVersion><VersionId>v2</VersionId></PolicyVersion>');
+    default:
+      return ok(action, '');
+  }
+}
+
+function policyList(names: string[]): string {
+  const members = names
+    .map((name) => `<member><PolicyName>${name}</PolicyName><Arn>arn:aws:iam::aws:policy/${name}</Arn></member>`)
+    .join('');
+  return ok('ListPolicies', `<Policies>${members}</Policies><IsTruncated>false</IsTruncated>`);
+}
+
+class PolicyEngine {
+  readonly sent: { action: string; params: URLSearchParams }[] = [];
+  readonly held: HeldList[] = [];
+  holdPolicies = false;
+  refusals: Record<string, string> = {};
+
+  readonly fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const request = input instanceof Request ? input : new Request(String(input), init);
+    if (new URL(request.url).pathname === '/__emuforge/session') {
+      return new Response(JSON.stringify({ token: 'emuforge-test-token-535' }), { status: 200 });
+    }
+    const params = new URLSearchParams(await request.text());
+    const action = params.get('Action') ?? '';
+    this.sent.push({ action, params });
+    const refusal = this.refusals[action];
+    if (refusal !== undefined) {
+      return new Response(
+        `<ErrorResponse><Error><Type>Sender</Type><Code>${refusal}</Code><Message>refused ${action}</Message></Error></ErrorResponse>`,
+        { status: refusal === 'AccessDenied' ? 403 : 400 },
+      );
+    }
+    if (action === 'ListPolicies' && this.holdPolicies) {
+      return new Promise((resolve) => {
+        this.held.push({
+          params,
+          answer: (names) => {
+            resolve(new Response(policyList(names), { status: 200 }));
+          },
+        });
+      });
+    }
+    return new Response(policyEngineAnswer(action, params), { status: 200 });
+  };
+
+  count(action: string): number {
+    return this.sent.filter((request) => request.action === action).length;
+  }
+}
+
+describe('the reads and actions of issue 535', () => {
+  let policies: PolicyEngine;
+
+  beforeEach(() => {
+    policies = new PolicyEngine();
+    vi.stubGlobal('fetch', policies.fetch);
+  });
+
+  it('asks for no document until its hook is enabled, and reads it again after its policy is changed', async () => {
+    const { result, rerender } = renderHook(
+      ({ enabled }: { enabled: boolean }) => ({
+        inline: useInlinePolicyDocument({ endpoint, role: 'Role-A', policy: 'inline-a', enabled }),
+        managed: useManagedPolicyDocument({ endpoint, arn: POLICY_ARN, enabled }),
+        put: usePutRolePolicy(endpoint),
+        edit: useCreatePolicyVersion(endpoint),
+      }),
+      { initialProps: { enabled: false }, wrapper },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(policies.sent).toEqual([]);
+    expect(result.current.inline.loading).toBe(false);
+
+    rerender({ enabled: true });
+    await waitFor(() => {
+      expect(result.current.inline.read).toEqual({ kind: 'found', text: DOC });
+      expect(result.current.managed.read).toEqual({ kind: 'found', text: DOC, versionId: 'v1', isDefault: true });
+    });
+    expect(policies.count('GetRolePolicy')).toBe(1);
+    expect(policies.count('GetPolicyVersion')).toBe(1);
+
+    // The role's name in another case is the same role (the emulator matches names ignoring case).
+    await act(() => result.current.put.mutateAsync({ role: 'role-a', name: 'inline-a', document: DOC }));
+    await waitFor(() => {
+      expect(policies.count('GetRolePolicy')).toBe(2);
+    });
+    expect(policies.count('GetPolicyVersion')).toBe(1);
+
+    await act(() => result.current.edit.mutateAsync({ arn: POLICY_ARN, document: DOC }));
+    await waitFor(() => {
+      expect(policies.count('GetPolicyVersion')).toBe(2);
+    });
+    expect(policies.count('GetRolePolicy')).toBe(2);
+  });
+
+  function renderReads() {
+    return renderHook(
+      () => ({
+        role: useRole({ endpoint, name: 'role-a' }),
+        list: usePolicyListing({ endpoint, pageSize: 20, filter: '', scope: 'Local' }),
+        policy: usePolicy({ endpoint, arn: POLICY_ARN }),
+        document: useManagedPolicyDocument({ endpoint, arn: POLICY_ARN, enabled: true }),
+        attach: useAttachRolePolicies(endpoint),
+        detach: useDetachRolePolicy(endpoint),
+        put: usePutRolePolicy(endpoint),
+        deleteInline: useDeleteRolePolicy(endpoint),
+        trust: useUpdateTrustPolicy(endpoint),
+        edit: useCreatePolicyVersion(endpoint),
+        setDefault: useSetDefaultPolicyVersion(endpoint),
+        deleteVersion: useDeletePolicyVersion(endpoint),
+        deletePolicy: useDeletePolicy(endpoint),
+      }),
+      { wrapper },
+    );
+  }
+
+  type Reads = ReturnType<typeof renderReads>['result'];
+
+  /** How many times each read was sent so far. */
+  function counts() {
+    return {
+      role: policies.count('GetRole'),
+      lists: policies.count('ListPolicies'),
+      policy: policies.count('ListPolicyVersions'),
+      document: policies.count('GetPolicyVersion'),
+    };
+  }
+
+  async function settled(result: Reads) {
+    await waitFor(() => {
+      expect(result.current.role.loading).toBe(false);
+      expect(result.current.list.loading).toBe(false);
+      expect(result.current.policy.loading).toBe(false);
+      expect(result.current.document.loading).toBe(false);
+    });
+  }
+
+  const roleActions: [string, (result: Reads) => Promise<unknown>][] = [
+    [
+      'attach',
+      (result) => result.current.attach.mutateAsync({ role: 'role-a', policies: [{ name: 'x', arn: 'arn:x' }] }),
+    ],
+    ['detach', (result) => result.current.detach.mutateAsync({ role: 'role-a', arn: 'arn:x' })],
+    [
+      'add or edit an inline policy',
+      (result) => result.current.put.mutateAsync({ role: 'role-a', name: 'p', document: DOC }),
+    ],
+    ['delete an inline policy', (result) => result.current.deleteInline.mutateAsync({ role: 'role-a', name: 'p' })],
+    ['edit the trust policy', (result) => result.current.trust.mutateAsync({ role: 'role-a', document: DOC })],
+  ];
+
+  it.each(roleActions)('reads the role and the policy lists again after "%s"', async (_, action) => {
+    const { result } = renderReads();
+    await settled(result);
+    const before = counts();
+
+    await act(() => action(result));
+    await waitFor(() => {
+      expect(counts().role).toBe(before.role + 1);
+      expect(counts().lists).toBe(before.lists + 1);
+    });
+  });
+
+  it.each(roleActions)('reads the role and the lists again after a refused "%s" too', async (_, action) => {
+    const { result } = renderReads();
+    await settled(result);
+    const before = counts();
+    for (const operation of [
+      'AttachRolePolicy',
+      'DetachRolePolicy',
+      'PutRolePolicy',
+      'DeleteRolePolicy',
+      'UpdateAssumeRolePolicy',
+    ]) {
+      policies.refusals[operation] = 'UnmodifiableEntity';
+    }
+
+    await act(() => action(result).catch(() => undefined));
+    await waitFor(() => {
+      expect(counts().role).toBe(before.role + 1);
+      expect(counts().lists).toBe(before.lists + 1);
+    });
+  });
+
+  const policyActions: [string, (result: Reads) => Promise<unknown>][] = [
+    ['save a new version', (result) => result.current.edit.mutateAsync({ arn: POLICY_ARN, document: DOC })],
+    ['set the default', (result) => result.current.setDefault.mutateAsync({ arn: POLICY_ARN, versionId: 'v1' })],
+    ['delete a version', (result) => result.current.deleteVersion.mutateAsync({ arn: POLICY_ARN, versionId: 'v2' })],
+  ];
+
+  it.each(policyActions)('reads the policy, its documents and the lists again after "%s"', async (_, action) => {
+    const { result } = renderReads();
+    await settled(result);
+    const before = counts();
+
+    await act(() => action(result));
+    await waitFor(() => {
+      expect(counts().policy).toBe(before.policy + 1);
+      expect(counts().document).toBe(before.document + 1);
+      expect(counts().lists).toBe(before.lists + 1);
+    });
+    expect(counts().role).toBe(before.role);
+  });
+
+  it('reads the lists and the roles a deleted policy was detached from again', async () => {
+    const { result } = renderReads();
+    await settled(result);
+    const before = counts();
+
+    const outcome = await act(() => result.current.deletePolicy.mutateAsync(POLICY_ARN));
+    expect(outcome).toEqual({ kind: 'deleted', detachedRoles: ['role-a'] });
+    await waitFor(() => {
+      expect(counts().lists).toBe(before.lists + 1);
+      expect(counts().role).toBe(before.role + 1);
+    });
+  });
+
+  function renderPolicyListing(scope: 'Local' | 'AWS' | 'All') {
+    return renderHook((props: PolicyListingOptions) => usePolicyListing(props), {
+      initialProps: { endpoint, pageSize: 2, filter: '', scope },
+      wrapper,
+    });
+  }
+
+  async function held(n: number): Promise<HeldList> {
+    await waitFor(() => {
+      expect(policies.held.length).toBeGreaterThan(n);
+    });
+    return policies.held[n] as HeldList;
+  }
+
+  it('sends its scope, and starts again at page 1 when the scope changes', async () => {
+    policies.holdPolicies = true;
+    const { result, rerender } = renderPolicyListing('Local');
+    const first = await held(0);
+    expect(first.params.get('Scope')).toBe('Local');
+    first.answer(['mine']);
+    await waitFor(() => {
+      expect(result.current.items?.map((policy) => policy.name)).toEqual(['mine']);
+    });
+
+    rerender({ endpoint, pageSize: 2, filter: '', scope: 'AWS' });
+    const second = await held(1);
+    expect(second.params.get('Scope')).toBe('AWS');
+    expect(second.params.has('Marker')).toBe(false);
+    expect(result.current.items).toBeUndefined();
+    expect(result.current.currentPage).toBe(1);
+    second.answer(['ReadOnlyAccess']);
+    await waitFor(() => {
+      expect(result.current.items?.map((policy) => policy.name)).toEqual(['ReadOnlyAccess']);
+    });
+  });
+
+  it('never lets a late answer of the scope before replace the newer one', async () => {
+    policies.holdPolicies = true;
+    const { result, rerender } = renderPolicyListing('Local');
+    const local = await held(0);
+
+    rerender({ endpoint, pageSize: 2, filter: '', scope: 'AWS' });
+    const aws = await held(1);
+    aws.answer(['ReadOnlyAccess']);
+    await waitFor(() => {
+      expect(result.current.items?.map((policy) => policy.name)).toEqual(['ReadOnlyAccess']);
+    });
+
+    local.answer(['mine']);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(result.current.items?.map((policy) => policy.name)).toEqual(['ReadOnlyAccess']);
+    expect(result.current.count).toEqual({ total: 1, more: false });
+  });
+
+  it('gives a failure of a new call to a screen as a failure of main’s calls is given', async () => {
+    policies.refusals.GetPolicy = 'AccessDenied';
+    const { result } = renderHook(() => usePolicy({ endpoint, arn: POLICY_ARN }), { wrapper });
+
+    await waitFor(() => {
+      expect(result.current.failure).toEqual({
+        kind: 'access-denied',
+        operation: 'GetPolicy',
+        message: 'refused GetPolicy',
+      });
+    });
+    expect(result.current.read).toBeUndefined();
+    expect(result.current.loading).toBe(false);
+
+    const failure = { kind: 'not-implemented', operation: 'GetPolicyVersion' } as const;
+    expect(failureOf(new RequestError(failure))).toEqual(failure);
   });
 });
