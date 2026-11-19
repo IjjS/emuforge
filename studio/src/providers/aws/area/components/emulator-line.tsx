@@ -93,10 +93,13 @@ interface LineState {
   target: string | undefined;
 }
 
-/** The whole line as it is read: the status, then "Target" and the name when the answer named one. */
+/**
+ * The whole line as it is read: the status, then, as a sentence of its own, "Target" and the name when the answer
+ * named one.
+ */
 function lineText({ status, target }: LineState): string {
   const text = statusText(status);
-  return target === undefined ? text : `${text} ${TARGET_WORD} ${target}`;
+  return target === undefined ? text : `${text}. ${TARGET_WORD} ${target}`;
 }
 
 /**
@@ -172,12 +175,12 @@ export function EmulatorLine({ connection, about, aboutRef }: EmulatorLineProps)
         {status.after}
       </StatusIndicator>
       {target !== undefined && (
-        <span className="aws-area-emulator-target">
+        <Box variant="span" className="aws-area-emulator-target">
           {TARGET_WORD}{' '}
           <Box variant="code" display="inline">
             {target}
           </Box>
-        </span>
+        </Box>
       )}
       {status.recovery && (
         <Link href="/" onFollow={handleFollow}>
