@@ -114,14 +114,18 @@ export function deleteFailedText(name: string): string {
   return `Deleting ${name} failed`;
 }
 
-/** The tabs of a function's page that lead to a route without a screen, and the route's last segment (R8). */
-export const TAB_ROUTES: { tab: string; segment: string }[] = [
-  { tab: 'Test', segment: 'test' },
-  { tab: 'Monitor', segment: 'monitor' },
-  { tab: 'Configuration', segment: 'configuration' },
-  { tab: 'Aliases', segment: 'aliases' },
-  { tab: 'Versions', segment: 'versions' },
+/**
+ * The tabs of a function's page (issue 516): each is the function's own address with this query, and shows the
+ * section named; "Test" is the address itself.
+ */
+export const TAB_QUERIES: { tab: string; query: string; section: string }[] = [
+  { tab: 'Test', query: '', section: 'Event' },
+  { tab: 'Code', query: '?tab=code', section: 'Package' },
+  { tab: 'Configuration', query: '?tab=configuration', section: 'General configuration' },
 ];
+
+/** The last segments below a function's address that are no screen (issue 516): no tab is a path. */
+export const NO_SCREEN_SEGMENTS = ['code', 'configuration', 'test', 'monitor', 'aliases', 'versions'];
 
 /** The create form's words the delete check uses (R6.2, R6.5). */
 export const FUNCTION_NAME_FIELD = 'Function name';

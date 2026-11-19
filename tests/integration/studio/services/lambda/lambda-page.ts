@@ -24,8 +24,8 @@ import { CREATE, CREATE_PATH, functionPath } from './lambda-list';
 // A function's page (R5).
 // ---------------------------------------------------------------------------------------------------------------
 
-/** The tabs, in order; "Code" is the page itself (R5.4). */
-export const PAGE_TABS = ['Code', 'Test', 'Monitor', 'Configuration', 'Aliases', 'Versions'];
+/** The tabs, in order; "Test" is the page itself, selected as it opens (issue 516). */
+export const PAGE_TABS = ['Test', 'Code', 'Configuration'];
 
 /** The sections and their fields, in order (R5.3, R5.5). */
 export const OVERVIEW = 'Function overview';
@@ -209,8 +209,14 @@ export const CANCEL = 'Cancel';
 export const RUNTIMES: { label: string; id: string; handler: string }[] = [
   { label: 'Node.js 24.x', id: 'nodejs24.x', handler: 'index.handler' },
   { label: 'Node.js 22.x', id: 'nodejs22.x', handler: 'index.handler' },
+  { label: 'Node.js 20.x', id: 'nodejs20.x', handler: 'index.handler' },
+  { label: 'Node.js 18.x', id: 'nodejs18.x', handler: 'index.handler' },
   { label: 'Python 3.14', id: 'python3.14', handler: 'lambda_function.lambda_handler' },
   { label: 'Python 3.13', id: 'python3.13', handler: 'lambda_function.lambda_handler' },
+  { label: 'Python 3.12', id: 'python3.12', handler: 'lambda_function.lambda_handler' },
+  { label: 'Python 3.11', id: 'python3.11', handler: 'lambda_function.lambda_handler' },
+  { label: 'Python 3.10', id: 'python3.10', handler: 'lambda_function.lambda_handler' },
+  { label: 'Python 3.9', id: 'python3.9', handler: 'lambda_function.lambda_handler' },
 ];
 export function runtimeOf(label: string): { label: string; id: string; handler: string } {
   const r = RUNTIMES.find((x) => x.label === label);
@@ -387,6 +393,17 @@ export async function shownAboveButtons(page: Page, parts: string[]): Promise<bo
 /** The texts of the options the open select lists now, in order, each white space collapsed. */
 export async function optionTexts(page: Page): Promise<string[]> {
   return (await page.getByRole('option').allInnerTexts()).map((t) => t.replace(/\s+/g, ' ').trim());
+}
+
+/**
+ * The labels of the options the open select lists now, in order: `optionTexts` without what the select adds to the
+ * chosen option for a screen reader ("<label> Selected <label>").
+ */
+export async function optionLabels(page: Page): Promise<string[]> {
+  return (await optionTexts(page)).map((t) => {
+    const at = t.indexOf(' Selected ');
+    return at > 0 && t.slice(at + ' Selected '.length) === t.slice(0, at) ? t.slice(0, at) : t;
+  });
 }
 
 /** The first word of each option the open select lists: a role's name (R6.2: its name, then its path). */

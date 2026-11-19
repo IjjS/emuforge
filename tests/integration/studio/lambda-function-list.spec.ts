@@ -52,7 +52,8 @@ import {
   SERVICE_LABEL,
   shownNames,
   shownRows,
-  TAB_ROUTES,
+  NO_SCREEN_SEGMENTS,
+  TAB_QUERIES,
   tokenTexts,
 } from './services/lambda/lambda-list';
 import { Lines } from './support/lines';
@@ -304,28 +305,62 @@ test('studio.lambda-function-list-actions-lead-to-their-routes', async ({ ctx, p
   );
 
   await lines.line(
-    'A function\'s name → `/aws/lambda/functions/function/<name>` with `h1` the name; each of the tabs "Test", "Monitor", "Configuration", "Aliases", "Versions" → its route of R8 and the "no screen yet" page for that part of AWS Lambda',
+    // Issue 516 (test-criteria.md, "Rewritten lines of checks on `main`"; the pm's decision of 2026-11-19).
+    'A function\'s name → `/aws/lambda/functions/function/<name>` with `h1` the name and the tabs "Test", "Code", "Configuration", "Test" selected; "Code" → the same path with `?tab=code` and the section "Package"; "Configuration" → `?tab=configuration` and the section "General configuration"; the browser\'s back → "Code" again; a reload at `?tab=configuration` → "Configuration" selected; `?tab=other` → "Test" selected',
     async () => {
+      const main = page.getByRole('main');
+      const tab = (name: string) => main.getByRole('tab', { name, exact: true });
+      const section = (name: string) => main.getByRole('heading', { name, exact: true });
+      const [test, code, configuration] = TAB_QUERIES;
       await openList(page);
       await listed();
       await markPage(page);
       await s.nameLink(one).click(ACTION);
       await expect(page).toHaveURL(addressOf(functionPath(one)));
       await expect(heading(page, one), `the h1 "${one}"`).toBeVisible();
-      for (const { tab, segment } of TAB_ROUTES) {
-        const main = page.getByRole('main');
-        await main
-          .getByRole('tab', { name: tab, exact: true })
-          .or(main.getByRole('link', { name: tab, exact: true }))
-          .first()
-          .click(ACTION);
-        // Issue 57 (test-criteria.md, "Existing checks rewritten"): the page for that part of the service.
-        await expectNoScreenPart(page, SERVICE_LABEL, `${functionPath(one)}/${segment}`);
-        await page.goBack();
-        await expect(page).toHaveURL(addressOf(functionPath(one)));
-        await expect(heading(page, one), `the h1 "${one}" after Back`).toBeVisible();
+      await expect(tab(test.tab), `the tab "${test.tab}", selected`).toHaveAttribute('aria-selected', 'true');
+      expect(
+        (await main.getByRole('tab').allInnerTexts()).map((t) => t.replace(/\s+/g, ' ').trim()),
+        'the tabs',
+      ).toEqual(TAB_QUERIES.map((t) => t.tab));
+      await expect(section(test.section), `the section "${test.section}"`).toBeVisible();
+      for (const { tab: name, query, section: title } of [code, configuration]) {
+        await tab(name).click(ACTION);
+        await expect(page).toHaveURL(addressOf(`${functionPath(one)}${query}`));
+        await expect(tab(name), `the tab "${name}", selected`).toHaveAttribute('aria-selected', 'true');
+        await expect(section(title), `the section "${title}"`).toBeVisible();
       }
+      await page.goBack();
+      await expect(page).toHaveURL(addressOf(`${functionPath(one)}${code.query}`));
+      await expect(tab(code.tab), `the tab "${code.tab}" after Back`).toHaveAttribute('aria-selected', 'true');
+      await expect(section(code.section), `the section "${code.section}" after Back`).toBeVisible();
       expect(await stillSamePage(page), 'no document was loaded').toBe(true);
+
+      await page.goto(`${functionPath(one)}${configuration.query}`);
+      await expect(tab(configuration.tab), `"${configuration.tab}" at its own address`).toHaveAttribute(
+        'aria-selected',
+        'true',
+      );
+      await page.reload();
+      await expect(tab(configuration.tab), `"${configuration.tab}" after a reload`).toHaveAttribute(
+        'aria-selected',
+        'true',
+      );
+      await expect(section(configuration.section), `the section "${configuration.section}"`).toBeVisible();
+      await page.goto(`${functionPath(one)}?tab=other`);
+      await expect(tab(test.tab), `"${test.tab}" at ?tab=other`).toHaveAttribute('aria-selected', 'true');
+      await expect(section(test.section), `the section "${test.section}" at ?tab=other`).toBeVisible();
+    },
+  );
+
+  await lines.line(
+    '`…/function/<name>/code`, `/configuration`, `/test`, `/monitor`, `/aliases` and `/versions` → the area\'s "No screen yet" page',
+    async () => {
+      for (const segment of NO_SCREEN_SEGMENTS) {
+        const path = `${functionPath(one)}/${segment}`;
+        await page.goto(path);
+        await expectNoScreenPart(page, SERVICE_LABEL, path);
+      }
     },
   );
 

@@ -621,6 +621,12 @@ export interface FunctionOptions {
   /** A durable function (`DurableConfig`, R2). */
   durable?: boolean;
   environment?: Record<string, string>;
+  /** The function's own archive and the handler in it (issue 516); without it the check's one-file code. */
+  code?: { zip: Buffer; handler: string };
+  /** `Timeout` in seconds; default the emulator's. */
+  timeout?: number;
+  /** `MemorySize` in MB; default the emulator's. */
+  memorySize?: number;
 }
 
 /** A direct `CreateFunction name` with the check's own code; the caller asserts the answer. */
@@ -631,14 +637,20 @@ export async function createFunctionDirect(
   options: FunctionOptions,
 ): Promise<Direct> {
   const runtime = options.runtime ?? 'nodejs22.x';
-  const code = checkCode(runtime);
+  let code = options.code;
+  if (code === undefined) {
+    const own = checkCode(runtime);
+    code = { zip: storedZip(own.file, own.text), handler: own.handler };
+  }
   const input: Record<string, unknown> = {
     FunctionName: name,
     Runtime: runtime,
     Role: options.role,
     Handler: code.handler,
-    Code: { ZipFile: storedZip(code.file, code.text).toString('base64') },
+    Code: { ZipFile: code.zip.toString('base64') },
   };
+  if (options.timeout !== undefined) input.Timeout = options.timeout;
+  if (options.memorySize !== undefined) input.MemorySize = options.memorySize;
   if (options.architecture !== undefined) input.Architectures = [options.architecture];
   if (options.description !== undefined) input.Description = options.description;
   if (options.durable) input.DurableConfig = { ExecutionTimeout: 60, RetentionPeriodInDays: 1 };

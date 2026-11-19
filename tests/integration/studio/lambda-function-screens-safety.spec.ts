@@ -28,7 +28,14 @@ import {
   screen,
   shownRows,
 } from './services/lambda/lambda-list';
-import { createForm, DESCRIPTION, openFunction, OVERVIEW, pairFirstLine } from './services/lambda/lambda-page';
+import {
+  createForm,
+  DESCRIPTION,
+  functionPage,
+  openFunction,
+  OVERVIEW,
+  pairFirstLine,
+} from './services/lambda/lambda-page';
 import { Lines } from './support/lines';
 import { checkPrefix } from './support/service-screens';
 import { Traffic } from './support/traffic';
@@ -166,7 +173,8 @@ test('studio.lambda-function-screens-talk-only-to-the-engine', async ({ ctx, pag
   );
 
   await lines.line(
-    "A function made directly with the description `<img src=x onerror=alert(1)>` and an environment variable `SECRET` = `<p>-secret-value`, shown in the list and on its page → the description is shown as text, the page holds no image made from it and no dialog opened; neither screen holds `<p>-secret-value` or the signed URL of the function's code",
+    // Issue 516 (test-criteria.md, "Rewritten lines of checks on `main`"; the pm's decision of 2026-11-19).
+    'A function made directly with the description `<img src=x onerror=alert(1)>` and an environment variable `SECRET` = `<p>-secret-value`, shown in the list and on its page → the description is shown as text, the page holds no image made from it and no dialog opened; the list, and the page on "Test" and on "Code", do not hold `<p>-secret-value`; "Configuration" shows it as text beside `SECRET`; no screen and no tab holds the signed address of the function\'s code',
     async () => {
       const name = `${p}-markup`;
       const description = '<img src=x onerror=alert(1)>';
@@ -177,13 +185,14 @@ test('studio.lambda-function-screens-talk-only-to-the-engine', async ({ ctx, pag
       const codeLocation = read.found ? read.codeLocation : null;
       expect(codeLocation, `a direct GetFunction ${name} returns the signed URL of its code`).toBeTruthy();
       const found: string[] = [];
-      const look = async (screenName: string) => {
+      const look = async (screenName: string, holdsTheValue = false) => {
         const imgs = await page.evaluate(() =>
           [...document.querySelectorAll('img')].map((img) => img.getAttribute('src') ?? ''),
         );
         if (imgs.includes('x')) found.push(`${screenName}: an image made from the description`);
         const text = await documentText(page);
-        if (text.includes(secret)) found.push(`${screenName}: the environment variable's value`);
+        if (text.includes(secret) !== holdsTheValue)
+          found.push(`${screenName}: the environment variable's value is ${holdsTheValue ? 'not shown' : 'shown'}`);
         if (codeLocation) {
           const forms = [codeLocation, codeLocation.replace(/&/g, '&amp;')];
           if (forms.some((form) => text.includes(form))) found.push(`${screenName}: the signed URL of the code`);
@@ -202,7 +211,16 @@ test('studio.lambda-function-screens-talk-only-to-the-engine', async ({ ctx, pag
       await expect
         .poll(() => pairFirstLine(page, OVERVIEW, DESCRIPTION), { message: 'the description on the page' })
         .toBe(description);
-      await look('the page');
+      await look('the page on "Test"');
+      const f = functionPage(page, name);
+      await f.tab('Code').click(ACTION);
+      await expect(f.section('Package'), 'the section "Package"').toBeVisible();
+      await look('the page on "Code"');
+      await f.tab('Configuration').click(ACTION);
+      await expect(f.section('Environment variables'), 'the section "Environment variables"').toBeVisible();
+      const row = page.getByRole('main').getByRole('row').filter({ hasText: 'SECRET' });
+      await expect(row.getByText(secret, { exact: true }), 'the value beside SECRET, as text').toBeVisible();
+      await look('the page on "Configuration"', true);
 
       expect(found, 'what the screens hold').toEqual([]);
       expect(dialogs, 'dialogs the page opened').toEqual([]);
