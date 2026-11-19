@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: studio|s3|tasks-by-the-emulator-api
-Issue-Check-Ids:
+Issue-Check-Ids: studio.s3-objects-show-what-an-app-wrote,studio.s3-objects-page-through-the-emulator-answer,studio.s3-objects-of-a-bucket-that-is-gone,studio.s3-objects-follow-emulator-restart,studio.s3-object-page-shows-what-the-object-holds,studio.s3-object-page-of-an-object-that-is-gone,studio.s3-object-page-follows-emulator-restart,studio.s3-upload-puts-files-in-a-folder,studio.s3-upload-shows-the-emulator-refusal,studio.s3-upload-in-parts-aborts-on-refusal,studio.s3-create-folder,studio.s3-delete-objects-and-folders,studio.s3-delete-in-a-versioned-bucket-keeps-versions,studio.s3-delete-says-when-the-bucket-is-gone
 Issue-Commit: 6859ed2abb063e63a71abbc420aa0020bf4a3c48
 
 # Build S3's screens from the tasks a developer does with it locally, as far as the emulator's API supports them

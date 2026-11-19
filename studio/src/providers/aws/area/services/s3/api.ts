@@ -1,5 +1,8 @@
 import {
+  AbortMultipartUploadCommand,
+  CompleteMultipartUploadCommand,
   CreateBucketCommand,
+  CreateMultipartUploadCommand,
   DeleteBucketCommand,
   DeleteObjectsCommand,
   GetBucketEncryptionCommand,
@@ -15,7 +18,9 @@ import {
   ListObjectVersionsCommand,
   PutBucketEncryptionCommand,
   PutBucketVersioningCommand,
+  PutObjectCommand,
   PutPublicAccessBlockCommand,
+  UploadPartCommand,
   type FilterRule,
   type GetBucketNotificationConfigurationCommandOutput,
   type HeadObjectCommandOutput,
@@ -163,6 +168,11 @@ export const OPERATIONS = {
   headObject: 'HeadObject',
   getObjectTagging: 'GetObjectTagging',
   getObject: 'GetObject',
+  putObject: 'PutObject',
+  createMultipartUpload: 'CreateMultipartUpload',
+  uploadPart: 'UploadPart',
+  completeMultipartUpload: 'CompleteMultipartUpload',
+  abortMultipartUpload: 'AbortMultipartUpload',
 } as const;
 
 /** The code of an answer that is neither a success nor a failure kind of its own, else `undefined`. */
@@ -952,4 +962,159 @@ export async function deleteKeys(
       message: Message ?? '',
     })),
   };
+}
+
+// Issue 480, task 3: putting files, whole or in parts, and a folder's marker.
+
+/**
+ * `PutObject` of `body` under `key`, with `contentType` when given. The body is bytes: the SDK then computes its
+ * checksum from them, where a browser `Blob` would need a stream it cannot read. Every failure rejects as it came.
+ */
+export async function putObject(
+  endpoint: string,
+  bucket: string,
+  key: string,
+  body: Uint8Array,
+  contentType: string | undefined,
+  signal: AbortSignal,
+): Promise<void> {
+  await sendRequest(
+    OPERATIONS.putObject,
+    (abortSignal) =>
+      s3Client(endpoint).send(
+        new PutObjectCommand({
+          Bucket: bucket,
+          Key: key,
+          Body: body,
+          ...(contentType === undefined ? {} : { ContentType: contentType }),
+        }),
+        { abortSignal },
+      ),
+    signal,
+  );
+}
+
+/** `CreateMultipartUpload` of `key`: the upload's id. An answer without one rejects. */
+export async function createMultipartUpload(
+  endpoint: string,
+  bucket: string,
+  key: string,
+  contentType: string | undefined,
+  signal: AbortSignal,
+): Promise<string> {
+  const output = await sendRequest(
+    OPERATIONS.createMultipartUpload,
+    (abortSignal) =>
+      s3Client(endpoint).send(
+        new CreateMultipartUploadCommand({
+          Bucket: bucket,
+          Key: key,
+          ...(contentType === undefined ? {} : { ContentType: contentType }),
+        }),
+        { abortSignal },
+      ),
+    signal,
+  );
+  const uploadId = text(output.UploadId);
+  if (uploadId === undefined) {
+    throw new RequestError({
+      kind: 'other',
+      operation: OPERATIONS.createMultipartUpload,
+      code: 'NoUploadId',
+      message: 'The answer named no upload id.',
+    });
+  }
+  return uploadId;
+}
+
+/** One part put, as `CompleteMultipartUpload` names it. */
+export interface UploadedPart {
+  partNumber: number;
+  etag: string;
+}
+
+/** `UploadPart` number `partNumber` of upload `uploadId`: the part's ETag. */
+export async function uploadPart(
+  endpoint: string,
+  bucket: string,
+  key: string,
+  uploadId: string,
+  partNumber: number,
+  body: Uint8Array,
+  signal: AbortSignal,
+): Promise<UploadedPart> {
+  const output = await sendRequest(
+    OPERATIONS.uploadPart,
+    (abortSignal) =>
+      s3Client(endpoint).send(
+        new UploadPartCommand({ Bucket: bucket, Key: key, UploadId: uploadId, PartNumber: partNumber, Body: body }),
+        { abortSignal },
+      ),
+    signal,
+  );
+  return { partNumber, etag: text(output.ETag) ?? '' };
+}
+
+/** `CompleteMultipartUpload` of upload `uploadId` with its parts, in order. */
+export async function completeMultipartUpload(
+  endpoint: string,
+  bucket: string,
+  key: string,
+  uploadId: string,
+  parts: readonly UploadedPart[],
+  signal: AbortSignal,
+): Promise<void> {
+  await sendRequest(
+    OPERATIONS.completeMultipartUpload,
+    (abortSignal) =>
+      s3Client(endpoint).send(
+        new CompleteMultipartUploadCommand({
+          Bucket: bucket,
+          Key: key,
+          UploadId: uploadId,
+          MultipartUpload: { Parts: parts.map(({ partNumber, etag }) => ({ PartNumber: partNumber, ETag: etag })) },
+        }),
+        { abortSignal },
+      ),
+    signal,
+  );
+}
+
+/** `AbortMultipartUpload` of upload `uploadId`: the emulator drops its parts. */
+export async function abortMultipartUpload(
+  endpoint: string,
+  bucket: string,
+  key: string,
+  uploadId: string,
+  signal: AbortSignal,
+): Promise<void> {
+  await sendRequest(
+    OPERATIONS.abortMultipartUpload,
+    (abortSignal) =>
+      s3Client(endpoint).send(new AbortMultipartUploadCommand({ Bucket: bucket, Key: key, UploadId: uploadId }), {
+        abortSignal,
+      }),
+    signal,
+  );
+}
+
+/**
+ * Whether anything is stored under `prefix` (`ListObjectsV2` with `MaxKeys` 1): a key or a common prefix. Every
+ * failure, "no such bucket" included, rejects as it came.
+ */
+export async function holdsAnyUnder(
+  endpoint: string,
+  bucket: string,
+  prefix: string,
+  signal: AbortSignal,
+): Promise<boolean> {
+  const output = await sendRequest(
+    OPERATIONS.listObjectsV2,
+    (abortSignal) =>
+      s3Client(endpoint).send(new ListObjectsV2Command({ Bucket: bucket, Prefix: prefix, MaxKeys: 1 }), {
+        abortSignal,
+      }),
+    signal,
+  );
+  return (output.Contents ?? []).length > 0 || (output.CommonPrefixes ?? []).length > 0;
 }

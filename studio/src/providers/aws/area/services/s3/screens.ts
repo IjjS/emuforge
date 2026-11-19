@@ -15,6 +15,8 @@ import { CreateBucketPage } from './pages/create-bucket-page';
 import { DeleteBucketPage } from './pages/delete-bucket-page';
 import { EmptyBucketPage } from './pages/empty-bucket-page';
 import { ObjectPage } from './pages/object-page';
+import { UploadPage } from './pages/upload-page';
+import { withAbandonedUploads } from './components/upload-abandoned-flash';
 
 /** S3's own side navigation, "General purpose buckets" current on every screen of a general purpose bucket. */
 const NAVIGATION: ScreenNavigation = {
@@ -64,8 +66,24 @@ function objectCrumbs(name: string, query: URLSearchParams): ScreenCrumbs {
   ];
 }
 
-/** S3's screens, which the area collects (issue 386, R3.1). */
-export const SCREENS: readonly ServiceScreen[] = [
+/**
+ * The crumbs of "Upload" (issue 480, task 3): "Buckets", the bucket's name, each part of the folder the files go to,
+ * every one a link to the tab "Objects" at its prefix, then "Upload".
+ */
+function uploadCrumbs(name: string, query: URLSearchParams): ScreenCrumbs {
+  return [
+    BUCKETS_CRUMB,
+    { text: name, href: objectsPath(name) },
+    ...prefixParts(query.get('prefix') ?? '').map((part) => ({
+      text: part.text,
+      href: objectsPath(name, part.prefix),
+    })),
+    { text: 'Upload' },
+  ];
+}
+
+/** S3's screens as written, before each page is made to show the uploads "Upload" could not abort. */
+const OWN_SCREENS: readonly ServiceScreen[] = [
   // The general purpose bucket list (issue 56): at the service's route and at its own, neither redirecting.
   {
     paths: [S3_PATH, BUCKETS_PATH],
@@ -93,6 +111,14 @@ export const SCREENS: readonly ServiceScreen[] = [
     crumbs: ({ name }, query) => objectCrumbs(name ?? '', query),
     navigation: NAVIGATION,
     Page: ObjectPage,
+  },
+  // "Upload" into a folder of a bucket (issue 480, task 3): the folder in the query, `?prefix=`.
+  {
+    paths: [`${S3_PATH}/bucket/{name}/upload`],
+    title: 'Upload',
+    crumbs: ({ name }, query) => uploadCrumbs(name ?? '', query),
+    navigation: NAVIGATION,
+    Page: UploadPage,
   },
   // S2, "Create bucket" (issue 256, R0, R4, R6): below "Buckets", without help.
   {
@@ -124,3 +150,12 @@ export const SCREENS: readonly ServiceScreen[] = [
     Page: DeleteBucketPage,
   },
 ];
+
+/**
+ * S3's screens, which the area collects (issue 386, R3.1). Each page shows, in the area's flash, a multipart upload the
+ * Upload page left unfinished because its abort failed, also once the Upload page is gone (issue 480, task 3).
+ */
+export const SCREENS: readonly ServiceScreen[] = OWN_SCREENS.map((screen) => ({
+  ...screen,
+  Page: withAbandonedUploads(screen.Page),
+}));

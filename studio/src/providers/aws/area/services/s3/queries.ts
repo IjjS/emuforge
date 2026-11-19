@@ -3,6 +3,12 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { RequestError, type RequestFailure } from '../../../../../lib/aws/request';
 import {
+  abortMultipartUpload,
+  completeMultipartUpload,
+  createMultipartUpload,
+  holdsAnyUnder,
+  putObject,
+  uploadPart,
   deleteBucket,
   deleteKeys,
   deleteObjects,
@@ -39,6 +45,7 @@ import { createOperations, submitBucketForm, type BucketForm, type CreateOutcome
 import type { EmptyingOperations } from './empty-bucket';
 import { loadPreview, type Preview } from './preview';
 import type { DeletionOperations } from './components/object-deletion';
+import type { UploadOperations } from './upload';
 
 // The bucket list's listing (issue 56, requirement R4.1, R4.4, R4.5, R4.7, R4.9): pages that follow the API's
 // tokens, a filter sent as `prefix`, and a new listing at page 1 on every refresh, filter and page size. Nothing is
@@ -734,6 +741,91 @@ export function useDeletionOperations(endpoint: string | undefined, bucket: stri
           drop();
         }
       },
+    };
+  }, [endpoint, bucket, drop]);
+}
+
+// Issue 480, task 3: the calls of the Upload page and of "Create folder". S3's reads are dropped once each put has
+// ended, whatever it answered, so the Objects tab lists what the emulator now holds.
+
+/** The Upload page's calls on bucket `bucket`; `undefined` while the engine's address is not known. */
+export function useUploadOperations(endpoint: string | undefined, bucket: string): UploadOperations | undefined {
+  const drop = useDropS3Reads();
+  return useMemo(() => {
+    if (endpoint === undefined) {
+      return undefined;
+    }
+    const dropping =
+      <A extends unknown[], R>(call: (...args: A) => Promise<R>) =>
+      async (...args: A): Promise<R> => {
+        try {
+          return await call(...args);
+        } finally {
+          drop();
+        }
+      };
+    return {
+      putObject: dropping((key: string, body: Uint8Array, contentType: string, signal: AbortSignal) =>
+        putObject(endpoint, bucket, key, body, contentType, signal),
+      ),
+      createMultipartUpload: (key, contentType, signal) =>
+        createMultipartUpload(endpoint, bucket, key, contentType, signal),
+      uploadPart: (key, uploadId, partNumber, body, signal) =>
+        uploadPart(endpoint, bucket, key, uploadId, partNumber, body, signal),
+      completeMultipartUpload: dropping(
+        (key: string, uploadId: string, parts: Parameters<UploadOperations['completeMultipartUpload']>[2], signal) =>
+          completeMultipartUpload(endpoint, bucket, key, uploadId, parts, signal),
+      ),
+      abortMultipartUpload: (key, uploadId, signal) => abortMultipartUpload(endpoint, bucket, key, uploadId, signal),
+    };
+  }, [endpoint, bucket, drop]);
+}
+
+/**
+ * Whether bucket `bucket` holds an object of `key` (`HeadObject`), so the Upload page can say a file replaces it;
+ * `undefined` while the engine's address is not known. A failure rejects as it came.
+ */
+export function useObjectExists(
+  endpoint: string | undefined,
+  bucket: string,
+): ((key: string, signal: AbortSignal) => Promise<boolean>) | undefined {
+  return useMemo(
+    () =>
+      endpoint === undefined
+        ? undefined
+        : async (key: string, signal: AbortSignal) => (await headObject(endpoint, bucket, key, signal)) !== NOT_FOUND,
+    [endpoint, bucket],
+  );
+}
+
+/** What "Create folder" did: put the folder's empty object, or found the folder there already and put nothing. */
+export type CreateFolderOutcome = 'created' | 'exists';
+
+/**
+ * "Create folder" `name` under `prefix` of bucket `bucket`: `ListObjectsV2` of `prefix+name+/` with max-keys 1, then,
+ * unless it found a key or a common prefix, `PutObject` of the empty object `prefix+name+/`. A failure rejects as it
+ * came; S3's reads are dropped once a put has ended.
+ */
+export function useCreateFolder(
+  endpoint: string | undefined,
+  bucket: string,
+): ((prefix: string, name: string, signal: AbortSignal) => Promise<CreateFolderOutcome>) | undefined {
+  const drop = useDropS3Reads();
+  return useMemo(() => {
+    if (endpoint === undefined) {
+      return undefined;
+    }
+    return async (prefix, name, signal) => {
+      const key = `${prefix}${name}/`;
+      if (await holdsAnyUnder(endpoint, bucket, key, signal)) {
+        return 'exists';
+      }
+      try {
+        await putObject(endpoint, bucket, key, new Uint8Array(), undefined, signal);
+      } finally {
+        drop();
+      }
+      return 'created';
     };
   }, [endpoint, bucket, drop]);
 }
