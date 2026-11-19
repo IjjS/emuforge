@@ -388,13 +388,14 @@ function policiesTable() {
   return found as NonNullable<typeof found>;
 }
 
+/** Each row's name and type; its third cell holds the document's control (issue 535). */
 function policyRows(): string[][] {
   return policiesTable()
     .findRows()
     .map((row) =>
-      [...row.getElement().querySelectorAll('td, th')].map((cell) =>
-        (cell.textContent ?? '').replace(/\s+/g, ' ').trim(),
-      ),
+      [...row.getElement().querySelectorAll('td, th')]
+        .slice(0, 2)
+        .map((cell) => (cell.textContent ?? '').replace(/\s+/g, ' ').trim()),
     );
 }
 
@@ -475,6 +476,23 @@ function recordAnnouncements(): string[] {
   return said;
 }
 
+/** The items of the area's flash: each one's type and its text. */
+function flashItems(): { type: string; text: string }[] {
+  const flashbar = PAGE.findFlashbar();
+  if (flashbar === null) {
+    return [];
+  }
+  return (['success', 'error', 'info', 'warning'] as const).flatMap((type) =>
+    flashbar.findItemsByType(type).map((item) => ({
+      type,
+      text: [item.findHeader(), item.findContent()]
+        .map((part) => (part?.getElement().textContent ?? '').replace(/\s+/g, ' ').trim())
+        .filter((part) => part !== '')
+        .join(' '),
+    })),
+  );
+}
+
 /** Holds every answer of `action` until the returned call lets them go. */
 function holdAnswers(action: string): () => void {
   const waiting: (() => void)[] = [];
@@ -523,9 +541,6 @@ describe('a loaded role', () => {
     expect(tabs()).toEqual([
       { label: 'Permissions', selected: true, disabled: false },
       { label: 'Trust relationships', selected: false, disabled: false },
-      { label: 'Tags', selected: false, disabled: false },
-      { label: 'Last Accessed', selected: false, disabled: false },
-      { label: 'Revoke sessions', selected: false, disabled: false },
     ]);
     const shown = crumbs();
     expect(shown.map((crumb) => crumb.text)).toEqual(['EmuForge', 'AWS', 'IAM', 'Roles', 'team-role']);
@@ -594,7 +609,7 @@ describe('a loaded role', () => {
     expect(within(main()).queryByText('Service-linked role')).toBeNull();
   });
 
-  it('two attached policies and one inline: the table "Permissions policies", attached then inline, their types; no link and no check box', async () => {
+  it('two attached policies and one inline: the table "Permissions policies", attached then inline, their types; a managed name links to its page, an inline one does not; no check box', async () => {
     await openLoaded({ name: 'team-role', attached: [READ_ONLY, OWN], inline: ['inline-one'] });
 
     expect(within(main()).getByRole('heading', { level: 2, name: 'Permissions policies' })).toBeInTheDocument();
@@ -602,14 +617,17 @@ describe('a loaded role', () => {
     const headings = policiesTable()
       .findColumnHeaders()
       .map((header) => (header.getElement().textContent ?? '').trim());
-    expect(headings).toEqual(['Policy name', 'Type']);
+    expect(headings).toEqual(['Policy name', 'Type', 'Document']);
     expect(policyRows()).toEqual([
       ['ReadOnlyAccess', 'AWS managed'],
       ['team-policy', 'Customer managed'],
       ['inline-one', 'Customer inline'],
     ]);
     const table = policiesTable().getElement();
-    expect(within(table).queryAllByRole('link')).toEqual([]);
+    expect(within(table).getAllByRole('link').map((link) => [link.textContent, link.getAttribute('href')])).toEqual([
+      ['ReadOnlyAccess', `/aws/iam/policies/details?arn=${encodeURIComponent(READ_ONLY.arn)}`],
+      ['team-policy', `/aws/iam/policies/details?arn=${encodeURIComponent(OWN.arn)}`],
+    ]);
     expect(within(table).queryAllByRole('checkbox')).toEqual([]);
     expect(within(table).queryAllByRole('radio')).toEqual([]);
   });
@@ -816,21 +834,49 @@ describe('the policies failing while the role does not', () => {
 });
 
 describe('the tabs and "Refresh role"', () => {
-  it.each([
-    ['Trust relationships', 'trust-relationships'],
-    ['Tags', 'tags'],
-    ['Last Accessed', 'last-accessed'],
-    ['Revoke sessions', 'revoke-sessions'],
-  ])('"%s" leads to the role’s path ending in %s, without a request to the engine', async (label, ending) => {
+  it('the tabs are "Permissions" and "Trust relationships"; ?tab=trust selects the second, any other value the first', async () => {
+    await openLoaded({ name: 'team-role' }, `${pagePath('team-role')}?tab=trust`);
+    expect(tabs()).toEqual([
+      { label: 'Permissions', selected: false, disabled: false },
+      { label: 'Trust relationships', selected: true, disabled: false },
+    ]);
+    expect(within(main()).getByRole('heading', { level: 2, name: 'Trust policy' })).toBeInTheDocument();
+    expect(within(main()).queryByRole('heading', { level: 2, name: 'Permissions policies' })).toBeNull();
+  });
+
+  it.each(['permissions', 'tags', 'Trust', 'trust-relationships', ''])(
+    '?tab=%s selects "Permissions"',
+    async (value) => {
+      await openLoaded({ name: 'team-role' }, `${pagePath('team-role')}?tab=${value}`);
+      expect(tabs().map((shown) => [shown.label, shown.selected])).toEqual([
+        ['Permissions', true],
+        ['Trust relationships', false],
+      ]);
+      expect(within(main()).getByRole('heading', { level: 2, name: 'Permissions policies' })).toBeInTheDocument();
+    },
+  );
+
+  it('choosing a tab changes the query alone, as a new entry of the history, and reads nothing again', async () => {
     const name = 'a+b=c';
     const { router } = await openLoaded({ name });
     const sent = engine.sent.length;
 
-    fireEvent.click(tab(label));
+    fireEvent.click(tab('Trust relationships'));
 
     await waitFor(() => {
-      expect(router.state.location.pathname).toBe(`/aws/iam/roles/details/${encodeURIComponent(name)}/${ending}`);
+      expect(router.state.location.search).toBe('?tab=trust');
     });
+    expect(router.state.location.pathname).toBe(pagePath(name));
+    expect(router.state.historyAction).toBe('PUSH');
+    expect(within(main()).getByRole('heading', { level: 2, name: 'Trusted entities' })).toBeInTheDocument();
+
+    fireEvent.click(tab('Permissions'));
+
+    await waitFor(() => {
+      expect(router.state.location.search).toBe('');
+    });
+    expect(router.state.location.pathname).toBe(pagePath(name));
+    expect(within(main()).getByRole('heading', { level: 2, name: 'Permissions policies' })).toBeInTheDocument();
     expect(engine.sent.slice(sent)).toEqual([]);
   });
 
@@ -888,7 +934,7 @@ describe('not found and loading', () => {
     });
   });
 
-  it('a request in flight: "Loading role"; the h1 is the address’s name; the five tabs with the four others disabled; no sections, no "Edit"', async () => {
+  it('a request in flight: "Loading role"; the h1 is the address’s name; no tabs, no sections, no "Edit"; "Delete" unavailable', async () => {
     const release = holdAnswers('GetRole');
     engine.roles = [{ name: 'Slow-Role' }];
     open(pagePath('slow-role'));
@@ -897,13 +943,8 @@ describe('not found and loading', () => {
       expect(within(main()).getByText('Loading role')).toBeInTheDocument();
     });
     expect(h1()).toHaveTextContent('slow-role');
-    expect(tabs()).toEqual([
-      { label: 'Permissions', selected: true, disabled: false },
-      { label: 'Trust relationships', selected: false, disabled: true },
-      { label: 'Tags', selected: false, disabled: true },
-      { label: 'Last Accessed', selected: false, disabled: true },
-      { label: 'Revoke sessions', selected: false, disabled: true },
-    ]);
+    expect(tabs()).toEqual([]);
+    expect(within(main()).getByRole('button', { name: 'Delete' })).toBeDisabled();
     expect(sectionHeadings()).toEqual([]);
     expect(within(main()).queryByRole('button', { name: 'Edit' })).toBeNull();
 
@@ -1018,5 +1059,175 @@ describe('failure states', () => {
     await waitFor(() => {
       expect(within(main()).getByText('Role not found')).toBeInTheDocument();
     });
+  });
+});
+
+// Test criteria, "Unit s2 — providers/aws/area/services/iam/pages/role-page.test.tsx" (issue 535, task 5).
+describe('"Delete" in the header', () => {
+  /** The emulator's answers to a delete: no instance profile, and the role removed. */
+  function deletes() {
+    engine.handlers.ListInstanceProfilesForRole = () =>
+      ok('ListInstanceProfilesForRole', '<InstanceProfiles/><IsTruncated>false</IsTruncated>');
+    engine.handlers.DeleteRole = (params) => {
+      const answer = engine.emulator('DeleteRole', params);
+      engine.roles = engine.roles.filter((role) => role.name !== params.get('RoleName'));
+      return answer;
+    };
+  }
+
+  async function confirmFromHeader(role: FakeRole, path?: string) {
+    const opened = await openLoaded(role, path);
+    fireEvent.click(within(main()).getByRole('button', { name: 'Delete' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Delete 1 role?' });
+    expect(within(dialog).getByRole('table', { name: 'Roles to delete' })).toHaveTextContent(role.name);
+    fireEvent.change(within(dialog).getByLabelText('To confirm, type delete'), { target: { value: 'delete' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+    return opened;
+  }
+
+  it('the header holds "Refresh role" then "Delete"', async () => {
+    await openLoaded(PLAIN);
+    const refresh = within(main()).getByRole('button', { name: 'Refresh role' });
+    const remove = within(main()).getByRole('button', { name: 'Delete' });
+    expect(refresh.compareDocumentPosition(remove) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+    expect(remove).toBeEnabled();
+  });
+
+  it('opens the delete dialog for this role; "Cancel" closes it without a request', async () => {
+    await openLoaded({ name: 'team-role' });
+    const before = engine.sent.length;
+    fireEvent.click(within(main()).getByRole('button', { name: 'Delete' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Delete 1 role?' });
+    expect(within(dialog).getByRole('table', { name: 'Roles to delete' })).toHaveTextContent('team-role');
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
+    expect(engine.sent.slice(before)).toEqual([]);
+  });
+
+  it.each([
+    ['"Permissions"', undefined],
+    ['"Trust relationships"', `${pagePath('team-role')}?tab=trust`],
+  ])('deleted from %s: the role list opens with the dialog’s result', async (_, path) => {
+    deletes();
+    const { router } = await confirmFromHeader({ name: 'team-role' }, path);
+
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe('/aws/iam/roles');
+    });
+    expect(engine.of('DeleteRole').map((sent) => sent.params.get('RoleName'))).toEqual(['team-role']);
+    await waitFor(() => {
+      expect(flashItems()).toEqual([{ type: 'success', text: '1 role was deleted from the local emulator.' }]);
+    });
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('a refused delete: the page stays, shows the dialog’s result and reads the role again', async () => {
+    deletes();
+    engine.handlers.DeleteRole = () => errorAnswer(409, 'DeleteConflict', 'Cannot delete entity.');
+    const { router } = await openLoaded({ name: 'team-role' });
+    const reads = engine.of('GetRole').length;
+    fireEvent.click(within(main()).getByRole('button', { name: 'Delete' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Delete 1 role?' });
+    fireEvent.change(within(dialog).getByLabelText('To confirm, type delete'), { target: { value: 'delete' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
+    await waitFor(() => {
+      expect(flashItems()).toEqual([
+        { type: 'error', text: 'Deleting team-role failed DeleteConflict: Cannot delete entity.' },
+      ]);
+    });
+    expect(router.state.location.pathname).toBe(pagePath('team-role'));
+    await waitFor(() => {
+      expect(engine.of('GetRole').length).toBe(reads + 1);
+    });
+    expect(h1()).toHaveTextContent('team-role');
+  });
+
+  it('a delete that failed because the role is already gone: the result shown, then "Role not found"', async () => {
+    deletes();
+    engine.handlers.DeleteRole = (params) => {
+      engine.roles = [];
+      return errorAnswer(404, 'NoSuchEntity', `The role with name ${params.get('RoleName') ?? ''} cannot be found.`);
+    };
+    await confirmFromHeader({ name: 'team-role' });
+
+    await waitFor(() => {
+      expect(within(main()).getByText('Role not found')).toBeInTheDocument();
+    });
+    expect(flashItems().map((item) => item.type)).toEqual(['error']);
+  });
+});
+
+// Test criteria, "Unit s2 — providers/aws/area/services/iam/pages/role-page.test.tsx" (issue 535): the states of
+// `main`'s page hold on the tab "Trust relationships" as on "Permissions".
+describe('the states on "Trust relationships"', () => {
+  const TRUST = `${pagePath(PLAIN.name)}?tab=trust`;
+
+  it('loading: "Loading role", no tabs; then the tab "Trust relationships" selected', async () => {
+    const release = holdAnswers('GetRole');
+    engine.roles = [PLAIN];
+    open(TRUST);
+    await waitFor(() => {
+      expect(within(main()).getByText('Loading role')).toBeInTheDocument();
+    });
+    expect(tabs()).toEqual([]);
+
+    release();
+    await waitFor(() => {
+      expect(tabs().find((shown) => shown.selected)?.label).toBe('Trust relationships');
+    });
+  });
+
+  it('NoSuchEntity: "Role not found", no tabs', async () => {
+    open(TRUST);
+    await waitFor(() => {
+      expect(within(main()).getByText('Role not found')).toBeInTheDocument();
+    });
+    expect(tabs()).toEqual([]);
+    expect(within(main()).getByRole('button', { name: 'Delete' })).toBeDisabled();
+  });
+
+  it.each<[string, () => EngineAnswer, string]>([
+    ['501', () => errorAnswer(501, 'NotImplemented', 'no'), 'Not implemented by the emulator'],
+    ['AccessDenied', () => errorAnswer(403, 'AccessDenied', 'no'), 'Access denied'],
+    [
+      'EmulatorUnavailable',
+      () => engineRefusal(503, 'EmulatorUnavailable', 'unreachable'),
+      'The emulator did not answer',
+    ],
+    ['any other error', () => errorAnswer(400, 'ServiceFailure', 'it broke'), 'The role could not be read'],
+  ])('%s: its state with "Retry", which reads again and shows the tab', async (_, answer, text) => {
+    engine.roles = [PLAIN];
+    engine.handlers.GetRole = answer;
+    open(TRUST);
+    await waitFor(() => {
+      expect(within(main()).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    });
+    expect(status(failureBox()).text).toBe(text);
+    expect(tabs()).toEqual([]);
+
+    delete engine.handlers.GetRole;
+    fireEvent.click(within(main()).getByRole('button', { name: 'Retry' }));
+    await waitFor(() => {
+      expect(within(main()).getByRole('heading', { level: 2, name: 'Trust policy' })).toBeInTheDocument();
+    });
+    expect(tabs().find((shown) => shown.selected)?.label).toBe('Trust relationships');
+  });
+
+  it('no answer from the engine: "The EmuForge engine at <engine origin> did not answer"', async () => {
+    engine.roles = [PLAIN];
+    engine.handlers.GetRole = () => 'network-error';
+    open(TRUST);
+    await waitFor(() => {
+      expect(within(main()).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    });
+    expect(status(failureBox()).text).toBe(`The EmuForge engine at ${engineOrigin} did not answer`);
   });
 });
