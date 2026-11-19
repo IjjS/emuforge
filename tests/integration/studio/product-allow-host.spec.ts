@@ -105,11 +105,19 @@ function s3ViaChannel(
   return onStudio(form, host, method, pathname, { ...signed, ...extra }, body);
 }
 
-/** The session token the channel gives a request under `host`; registered for redaction. */
-async function channelToken(form: Form, host: string): Promise<string> {
+/**
+ * The session token the channel gives a request under `host`; registered for redaction. `seen` gets the session
+ * answer, for a check that searches it.
+ */
+async function channelToken(
+  form: Form,
+  host: string,
+  seen?: (what: string, answer: ReturnType<typeof answered>) => void,
+): Promise<string> {
   const what = `GET ${CHANNEL}${SESSION_PATH} with Host ${host}`;
   const answer = answered(await onStudio(form, host, 'GET', `${CHANNEL}${SESSION_PATH}`), what);
   expect(answer.status, `${what}: status`).toBe(200);
+  seen?.(what, answer);
   const token = (JSON.parse(answer.body.toString('utf8')) as { token?: unknown }).token;
   expect(typeof token === 'string' && token.length > 0, `${what}: the body holds a token`).toBe(true);
   registerSecret([token as string]);
@@ -258,7 +266,10 @@ test('engine.product-allow-host-start-warns-and-keeps-secrets', async ({ ctx }) 
   const found: string[] = [];
 
   // The Given: a session, and one bucket created and deleted through the channel; each answer searched for the key.
-  const token = await channelToken(form, host);
+  const token = await channelToken(form, host, (what, answer) => {
+    found.push(...findSecrets(`the body of ${what}`, answer.body, secrets));
+    found.push(...findSecrets(`the headers of ${what}`, JSON.stringify(answer.headers), secrets));
+  });
   const bucket = `${runPrefix(ctx)}-pws`;
   for (const method of ['PUT', 'DELETE']) {
     const what = `${method} ${CHANNEL}/${bucket} with Host ${host} and the token`;
