@@ -96,7 +96,7 @@ function withComment(archive: Uint8Array, length: number): Uint8Array {
 const STARTER = storedZip('index.mjs', 'export const handler = async () => 1;\n');
 
 function file(bytes: Uint8Array, name = 'code.zip'): File {
-  return new File([bytes], name);
+  return new File([new Uint8Array(bytes)], name);
 }
 
 describe('the zip check', () => {

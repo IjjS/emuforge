@@ -8,7 +8,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { engineEndpoint } from '../../../../../../lib/aws/client-factory';
 import type { CheckResult } from '../../../../../../lib/engine/engine-client';
 import type { AreaConnection } from '../../../components/emulator-line';
+import { AreaRootContext } from '../../../area-root';
+import { PageFlashContext, type FlashResult, type PageFlash } from '../../../components/page-flash';
 import AwsArea from '../../../index';
+import { DeleteFunctionsDialog } from './delete-functions-dialog';
 
 // "Delete functions" opened from the function list, inside the area's layout as Studio's frame renders the area,
 // against a fake engine behind the page's `fetch` (test-criteria.md, issue 84, "Unit —
@@ -646,5 +649,97 @@ describe('closing without deleting', () => {
     await waitFor(() => {
       expect(document.activeElement).toBe(action('Actions'));
     });
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// `onDeleted`, as the function's page gives it (issue 516, test criteria "Unit s1 —
+// components/delete-functions-dialog.test.tsx").
+
+/** The dialog alone in an area root, its flash recorded, for `names`, with `onDeleted` when given. */
+function renderDialog(names: string[], onDeleted?: (result: FlashResult) => void) {
+  const shown: FlashResult[] = [];
+  const flash: PageFlash = {
+    show: (result) => {
+      shown.push(result);
+    },
+    handOver: () => undefined,
+  };
+  const onClose = vi.fn();
+  const root = { current: null as HTMLDivElement | null };
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={client}>
+      <AreaRootContext.Provider value={root}>
+        <PageFlashContext.Provider value={flash}>
+          <div
+            ref={(element) => {
+              root.current = element;
+            }}
+          >
+            <DeleteFunctionsDialog
+              names={names}
+              connection={connection.value}
+              onClose={onClose}
+              {...(onDeleted === undefined ? {} : { onDeleted })}
+            />
+          </div>
+        </PageFlashContext.Provider>
+      </AreaRootContext.Provider>
+    </QueryClientProvider>,
+  );
+  return { shown, onClose };
+}
+
+async function confirmDelete() {
+  const dialog = await screen.findByRole('dialog', { name: 'Delete functions' });
+  type(dialog, 'confirm');
+  fireEvent.click(deleteButton(dialog));
+}
+
+describe('the dialog given onDeleted', () => {
+  it('every function deleted: onDeleted is called once with the result, the dialog shows nothing itself, then closes', async () => {
+    engine.functions = [ORDERS];
+    const onDeleted = vi.fn();
+    const { shown, onClose } = renderDialog(['orders'], onDeleted);
+
+    await confirmDelete();
+
+    await waitFor(() => {
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+    expect(onDeleted).toHaveBeenCalledTimes(1);
+    expect(onDeleted).toHaveBeenCalledWith([
+      { type: 'success', content: '1 function was deleted from the local emulator.' },
+    ]);
+    expect(shown).toEqual([]);
+    expect(engine.deletes).toEqual(['orders']);
+  });
+
+  it('the delete failed: onDeleted is not called, the failure is shown in the Flashbar, and the dialog closes', async () => {
+    engine.functions = [];
+    const onDeleted = vi.fn();
+    const { shown, onClose } = renderDialog(['orders'], onDeleted);
+
+    await confirmDelete();
+
+    await waitFor(() => {
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+    expect(onDeleted).not.toHaveBeenCalled();
+    expect(shown).toHaveLength(1);
+    expect(shown[0]?.[0]).toMatchObject({ type: 'error', header: 'Deleting orders failed' });
+  });
+
+  it('without onDeleted, every function deleted: the result is shown in the Flashbar, as on main', async () => {
+    engine.functions = [ORDERS];
+    const { shown, onClose } = renderDialog(['orders']);
+
+    await confirmDelete();
+
+    await waitFor(() => {
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+    expect(shown).toEqual([[{ type: 'success', content: '1 function was deleted from the local emulator.' }]]);
   });
 });

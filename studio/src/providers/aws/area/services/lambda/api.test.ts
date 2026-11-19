@@ -642,7 +642,13 @@ describe('creating a function', () => {
 
     const created = await createFunction(
       endpoint,
-      { name: 'orders', runtime: 'nodejs24.x', architecture: 'x86_64', role: { kind: 'default' }, code: { kind: 'starter' } },
+      {
+        name: 'orders',
+        runtime: 'nodejs24.x',
+        architecture: 'x86_64',
+        role: { kind: 'default' },
+        code: { kind: 'starter' },
+      },
       signal(),
     );
 
@@ -685,7 +691,13 @@ describe('creating a function', () => {
 
     const created = await createFunction(
       endpoint,
-      { name: 'reports', runtime: 'python3.13', architecture: 'arm64', role: { kind: 'existing', arn }, code: { kind: 'starter' } },
+      {
+        name: 'reports',
+        runtime: 'python3.13',
+        architecture: 'arm64',
+        role: { kind: 'existing', arn },
+        code: { kind: 'starter' },
+      },
       signal(),
     );
 
@@ -711,7 +723,13 @@ describe('creating a function', () => {
     const error = await rejection(
       createFunction(
         endpoint,
-        { name: 'orders', runtime: 'nodejs24.x', architecture: 'x86_64', role: { kind: 'default' }, code: { kind: 'starter' } },
+        {
+          name: 'orders',
+          runtime: 'nodejs24.x',
+          architecture: 'x86_64',
+          role: { kind: 'default' },
+          code: { kind: 'starter' },
+        },
         signal(),
       ),
     );
@@ -735,7 +753,12 @@ describe('creating a function', () => {
       request.operation === 'AttachRolePolicy' && attachFails
         ? iamError(404, 'NoSuchEntity', 'Policy missing')
         : defaultAnswer(request);
-    const request = { name: 'orders', runtime: 'nodejs24.x', architecture: 'x86_64', code: { kind: 'starter' as const } };
+    const request = {
+      name: 'orders',
+      runtime: 'nodejs24.x',
+      architecture: 'x86_64',
+      code: { kind: 'starter' as const },
+    };
 
     const first = (await rejection(
       createFunction(endpoint, { ...request, role: { kind: 'default' } }, signal()),
@@ -763,7 +786,12 @@ describe('creating a function', () => {
       request.operation === 'CreateFunction' && createFails
         ? lambdaError(409, 'ResourceConflictException', 'Function already exist: orders')
         : defaultAnswer(request);
-    const request = { name: 'orders', runtime: 'nodejs24.x', architecture: 'x86_64', code: { kind: 'starter' as const } };
+    const request = {
+      name: 'orders',
+      runtime: 'nodejs24.x',
+      architecture: 'x86_64',
+      code: { kind: 'starter' as const },
+    };
 
     const first = (await rejection(
       createFunction(endpoint, { ...request, role: { kind: 'default' } }, signal()),
@@ -796,7 +824,13 @@ describe('creating a function', () => {
 
     await createFunction(
       endpoint,
-      { name: 'invoices', runtime: 'nodejs22.x', architecture: 'x86_64', role: { kind: 'default', created: role }, code: { kind: 'starter' } },
+      {
+        name: 'invoices',
+        runtime: 'nodejs22.x',
+        architecture: 'x86_64',
+        role: { kind: 'default', created: role },
+        code: { kind: 'starter' },
+      },
       signal(),
     );
 
@@ -925,7 +959,13 @@ describe('a failure', () => {
     const error = (await rejection(
       createFunction(
         endpoint,
-        { name: 'f', runtime: 'nodejs24.x', architecture: 'x86_64', role: { kind: 'default' }, code: { kind: 'starter' } },
+        {
+          name: 'f',
+          runtime: 'nodejs24.x',
+          architecture: 'x86_64',
+          role: { kind: 'default' },
+          code: { kind: 'starter' },
+        },
         signal(),
       ),
     )) as CreateFunctionError;
@@ -945,7 +985,13 @@ describe('an aborted request', () => {
       (s) =>
         createFunction(
           endpoint,
-          { name: 'f', runtime: 'nodejs24.x', architecture: 'x86_64', role: { kind: 'default' }, code: { kind: 'starter' } },
+          {
+            name: 'f',
+            runtime: 'nodejs24.x',
+            architecture: 'x86_64',
+            role: { kind: 'default' },
+            code: { kind: 'starter' },
+          },
           s,
         ),
       (s) => deleteFunctions(endpoint, ['a', 'b'], s),

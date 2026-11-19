@@ -97,9 +97,7 @@ describe('the address of a function’s tab', () => {
   it('is the function’s path without a query for "Test", with ?tab=code for "Code", ?tab=configuration for "Configuration"', () => {
     expect(functionTabHref('orders', 'test')).toBe('/aws/lambda/functions/function/orders');
     expect(functionTabHref('orders', 'code')).toBe('/aws/lambda/functions/function/orders?tab=code');
-    expect(functionTabHref('orders', 'configuration')).toBe(
-      '/aws/lambda/functions/function/orders?tab=configuration',
-    );
+    expect(functionTabHref('orders', 'configuration')).toBe('/aws/lambda/functions/function/orders?tab=configuration');
   });
 
   it('encodes a name with characters that need encoding once', () => {

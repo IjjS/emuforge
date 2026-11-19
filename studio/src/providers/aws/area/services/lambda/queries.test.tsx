@@ -10,7 +10,10 @@ import {
   useDeleteFunctions,
   useFunctionListing,
   useFunctionReading,
+  useInvoke,
   useRoleList,
+  useUpdateFunctionCode,
+  useUpdateFunctionConfiguration,
   type FunctionListingOptions,
   type FunctionReadingOptions,
 } from './queries';
@@ -550,5 +553,240 @@ describe('the roles of "Existing role"', () => {
       expect(result.current.status).toBe('finished');
     });
     expect(result.current.roles.map(({ name }) => name)).toEqual(['a', 'b', 'c']);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// Invoke, upload, save (issue 516, test criteria "Unit s1 — queries.test.tsx").
+
+function invokeAnswer(payload: string, functionError?: string): Response {
+  return new Response(payload, {
+    status: 200,
+    headers: {
+      'content-type': 'application/json',
+      ...(functionError === undefined ? {} : { 'x-amz-function-error': functionError }),
+    },
+  });
+}
+
+/** The page's reading of `orders` with the three actions of its tabs, as the function's page holds them. */
+function renderPage() {
+  return renderHook(
+    () => ({
+      reading: useFunctionReading({ endpoint, name: 'orders', connected: true }),
+      invocation: useInvoke(endpoint, 'orders'),
+      upload: useUpdateFunctionCode(endpoint, 'orders'),
+      save: useUpdateFunctionConfiguration(endpoint, 'orders'),
+    }),
+    { wrapper },
+  );
+}
+
+/** The page opened on an Active function, its first reading answered. */
+async function openedPage() {
+  answerUrlsAtOnce();
+  const page = renderPage();
+  (await nthGetFunction(0)).respond(functionAnswer('Active', 'Successful'));
+  await waitFor(() => {
+    expect(page.result.current.reading.read?.found).toBe(true);
+  });
+  return page;
+}
+
+function sentOf(fragment: string): SentRequest[] {
+  return engine.sent.filter(({ url }) => url.pathname.endsWith(fragment));
+}
+
+async function nthOf(fragment: string, n: number): Promise<SentRequest> {
+  await waitFor(() => {
+    expect(sentOf(fragment).length).toBeGreaterThan(n);
+  });
+  return sentOf(fragment)[n] as SentRequest;
+}
+
+describe('the actions of a function’s page', () => {
+  it('a finished invoke reads the function again, keeping the function shown meanwhile', async () => {
+    const page = await openedPage();
+
+    act(() => {
+      page.result.current.invocation.mutate('{}');
+    });
+    (await nthOf('/invocations', 0)).respond(invokeAnswer('"ok"'));
+
+    const reread = await nthGetFunction(1);
+    expect(page.result.current.reading.read?.found).toBe(true);
+    reread.respond(functionAnswer('Active', 'Successful'));
+    await waitFor(() => {
+      expect(page.result.current.invocation.data).toEqual({ payload: '"ok"', log: '' });
+    });
+  });
+
+  it('an invoke that fails with ResourceNotFoundException reads the function again, which is then not found', async () => {
+    const page = await openedPage();
+
+    act(() => {
+      page.result.current.invocation.mutate('{}');
+    });
+    (await nthOf('/invocations', 0)).respond(notFound());
+
+    (await nthGetFunction(1)).respond(notFound());
+    await waitFor(() => {
+      expect(page.result.current.reading.read).toEqual({ found: false });
+    });
+    expect(page.result.current.invocation.error).toMatchObject({
+      kind: 'other',
+      operation: 'Invoke',
+      code: 'ResourceNotFoundException',
+    });
+  });
+
+  it('a finished upload reads the function again', async () => {
+    const page = await openedPage();
+    const onSuccess = vi.fn();
+
+    act(() => {
+      page.result.current.upload.mutate(new Uint8Array([80, 75, 5, 6]), { onSuccess });
+    });
+    (await nthOf('/code', 0)).respond(json(200, { FunctionName: 'orders', LastUpdateStatus: 'InProgress' }));
+
+    (await nthGetFunction(1)).respond(functionAnswer('Active', 'InProgress'));
+    await waitFor(() => {
+      expect(onSuccess).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('a finished save reads the function again; a refused one does not, and gives its failure', async () => {
+    const page = await openedPage();
+    const onError = vi.fn();
+
+    act(() => {
+      page.result.current.save.mutate({ timeout: 1 }, { onError });
+    });
+    (await nthOf('/configuration', 0)).respond(refused());
+    await waitFor(() => {
+      expect(onError).toHaveBeenCalledWith({
+        kind: 'other',
+        operation: 'UpdateFunctionConfiguration',
+        code: 'InvalidParameterValueException',
+        message: 'refused for the test',
+      });
+    });
+    expect(page.result.current.save.error).toMatchObject({ code: 'InvalidParameterValueException' });
+    expect(getFunctions()).toHaveLength(1);
+
+    act(() => {
+      page.result.current.save.mutate({ timeout: 2 });
+    });
+    (await nthOf('/configuration', 1)).respond(json(200, { FunctionName: 'orders' }));
+    await nthGetFunction(1);
+  });
+
+  it('an upload or save refused with ResourceNotFoundException reads the function again', async () => {
+    const page = await openedPage();
+
+    act(() => {
+      page.result.current.save.mutate({ description: 'x' });
+    });
+    (await nthOf('/configuration', 0)).respond(notFound());
+
+    (await nthGetFunction(1)).respond(notFound());
+    await waitFor(() => {
+      expect(page.result.current.reading.read).toEqual({ found: false });
+    });
+  });
+
+  it('a second invoke while one is in flight sends nothing', async () => {
+    const page = await openedPage();
+
+    act(() => {
+      page.result.current.invocation.mutate('{}');
+    });
+    await nthOf('/invocations', 0);
+    await waitFor(() => {
+      expect(page.result.current.invocation.isPending).toBe(true);
+    });
+    act(() => {
+      page.result.current.invocation.mutate('{"again": true}');
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(sentOf('/invocations')).toHaveLength(1);
+  });
+
+  it('an invoke in flight when the page unmounts is aborted', async () => {
+    const page = await openedPage();
+
+    act(() => {
+      page.result.current.invocation.mutate('{}');
+    });
+    const request = await nthOf('/invocations', 0);
+    expect(request.signal.aborted).toBe(false);
+
+    page.unmount();
+
+    expect(request.signal.aborted).toBe(true);
+  });
+
+  it('an upload in flight when the page unmounts is aborted', async () => {
+    const page = await openedPage();
+
+    act(() => {
+      page.result.current.upload.mutate(new Uint8Array([1]));
+    });
+    const request = await nthOf('/code', 0);
+
+    page.unmount();
+
+    expect(request.signal.aborted).toBe(true);
+  });
+
+  it('the last result of an invoke stays readable until the next answer replaces it', async () => {
+    const page = await openedPage();
+    engine.auto = (request) =>
+      request.url.pathname.endsWith('/url')
+        ? notFound()
+        : /^\/2015-03-31\/functions\/[^/]+$/.test(request.url.pathname)
+          ? functionAnswer('Active', 'Successful')
+          : undefined;
+
+    act(() => {
+      page.result.current.invocation.mutate('{}');
+    });
+    (await nthOf('/invocations', 0)).respond(invokeAnswer('{"first":1}'));
+    await waitFor(() => {
+      expect(page.result.current.invocation.data?.payload).toBe('{"first":1}');
+    });
+    expect(page.result.current.invocation.answers).toBe(1);
+
+    act(() => {
+      page.result.current.invocation.mutate('{}');
+    });
+    const second = await nthOf('/invocations', 1);
+    await waitFor(() => {
+      expect(page.result.current.invocation.isPending).toBe(true);
+    });
+    // In flight: the earlier answer is still there.
+    expect(page.result.current.invocation.data?.payload).toBe('{"first":1}');
+    expect(page.result.current.invocation.answers).toBe(1);
+
+    second.respond(invokeAnswer('{"errorMessage":"boom"}', 'Unhandled'));
+    await waitFor(() => {
+      expect(page.result.current.invocation.data).toEqual({
+        payload: '{"errorMessage":"boom"}',
+        log: '',
+        functionError: 'Unhandled',
+      });
+    });
+    expect(page.result.current.invocation.answers).toBe(2);
+
+    act(() => {
+      page.result.current.invocation.mutate('{}');
+    });
+    (await nthOf('/invocations', 2)).respond(refused());
+    await waitFor(() => {
+      expect(page.result.current.invocation.error).toMatchObject({ code: 'InvalidParameterValueException' });
+    });
+    expect(page.result.current.invocation.data).toBeUndefined();
+    expect(page.result.current.invocation.answers).toBe(3);
   });
 });
