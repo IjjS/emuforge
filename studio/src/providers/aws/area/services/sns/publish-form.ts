@@ -20,8 +20,13 @@ export interface PublishForm {
   deduplicationId: string;
 }
 
-/** The last publish's outcome: what the emulator answered, or why it was not published. */
-export type PublishResult = { kind: 'published'; published: Published } | { kind: 'refused'; failure: RequestFailure };
+/**
+ * The last publish's outcome: what the emulator answered, or why it was not published. A published one keeps whether
+ * the topic had a subscription, read once when the publish was answered (absent when that read failed), so a later
+ * change of the subscriptions does not change what an earlier publish says.
+ */
+export type PublishResult =
+  { kind: 'published'; published: Published; subscribed?: boolean } | { kind: 'refused'; failure: RequestFailure };
 
 /** The form as the page opens. */
 export const EMPTY_FORM: PublishForm = { message: '', subject: '', attributes: [], groupId: '', deduplicationId: '' };

@@ -53,17 +53,35 @@ interface Topic {
 function Page({ topic }: { topic: Topic }) {
   const [form, setForm] = useState<PublishForm>(topic.form ?? EMPTY_FORM);
   const [result, setResult] = useState<PublishResult | undefined>(undefined);
+  // The page's other tab: the publish tab is unmounted while it is shown, its form and result kept here.
+  const [away, setAway] = useState(false);
+  const toggle = (
+    <button
+      type="button"
+      onClick={() => {
+        setAway((current) => !current);
+      }}
+    >
+      Other tab
+    </button>
+  );
+  if (away) {
+    return toggle;
+  }
   return (
-    <PublishTab
-      topicArn={topic.arn ?? ARN}
-      fifo={topic.fifo ?? false}
-      contentBasedDeduplication={topic.contentBasedDeduplication ?? false}
-      connection={connection}
-      form={form}
-      onFormChange={setForm}
-      result={result}
-      onResultChange={setResult}
-    />
+    <>
+      {toggle}
+      <PublishTab
+        topicArn={topic.arn ?? ARN}
+        fifo={topic.fifo ?? false}
+        contentBasedDeduplication={topic.contentBasedDeduplication ?? false}
+        connection={connection}
+        form={form}
+        onFormChange={setForm}
+        result={result}
+        onResultChange={setResult}
+      />
+    </>
   );
 }
 
@@ -116,7 +134,7 @@ describe('the Publish tab', () => {
   it('a standard topic → message, subject and attributes, no FIFO field', () => {
     open();
     expect(labels()).toEqual(['Message', 'Subject - optional', 'Message attributes - optional']);
-    expect(screen.getByText('The text every subscriber receives.')).toBeInTheDocument();
+    expect(screen.getByText("The message body sent to the topic's subscriptions.")).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Add attribute' })).toBeInTheDocument();
   });
 
@@ -226,9 +244,6 @@ describe('the Publish tab', () => {
     vi.mocked(api.listSubscriptions).mockResolvedValue({ subscriptions: [] });
     vi.mocked(api.publish).mockResolvedValue({ messageId: 'm-1' });
     open();
-    await waitFor(() => {
-      expect(api.listSubscriptions).toHaveBeenCalled();
-    });
     typeInto('Message', 'hello');
     press();
     expect(
@@ -243,9 +258,6 @@ describe('the Publish tab', () => {
     );
     vi.mocked(api.publish).mockResolvedValue({ messageId: 'm-1' });
     open();
-    await waitFor(() => {
-      expect(api.listSubscriptions).toHaveBeenCalled();
-    });
     typeInto('Message', 'hello');
     press();
     expect(await screen.findByText('The emulator accepted the message.')).toBeInTheDocument();
@@ -254,14 +266,85 @@ describe('the Publish tab', () => {
     expect(screen.getByRole('link', { name: "See this topic's subscriptions" })).toBeInTheDocument();
   });
 
-  it('published before the subscriptions are read → "The emulator accepted the message." alone, with the link', async () => {
-    vi.mocked(api.listSubscriptions).mockImplementation(() => new Promise<api.SubscriptionPage>(() => undefined));
+  it('the subscriptions are read once, when the publish is answered, not when the tab opens', async () => {
+    let answer: (published: api.Published) => void = () => undefined;
+    vi.mocked(api.publish).mockImplementation(
+      () =>
+        new Promise<api.Published>((resolve) => {
+          answer = resolve;
+        }),
+    );
+    open();
+    typeInto('Message', 'hello');
+    press();
+    await waitFor(() => {
+      expect(api.publish).toHaveBeenCalledTimes(1);
+    });
+    expect(api.listSubscriptions).not.toHaveBeenCalled();
+    act(() => {
+      answer({ messageId: 'm-1' });
+    });
+    await waitFor(() => {
+      expect(result()).toContain('Delivery on the Subscriptions tab says which do.');
+    });
+    expect(api.listSubscriptions).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(api.listSubscriptions).mock.calls[0]?.slice(1, 3)).toEqual([ARN, undefined]);
+  });
+
+  it('a refused publish reads no subscriptions', async () => {
+    vi.mocked(api.publish).mockRejectedValue(
+      new RequestError({ kind: 'other', operation: 'Publish', code: 'NotFound', message: 'Topic does not exist' }),
+    );
+    open();
+    typeInto('Message', 'x');
+    press();
+    await waitFor(() => {
+      expect(result()).toContain('The message was not published');
+    });
+    expect(api.listSubscriptions).not.toHaveBeenCalled();
+  });
+
+  it('the sentence is kept with the result: subscriptions deleted afterwards do not change it', async () => {
     vi.mocked(api.publish).mockResolvedValue({ messageId: 'm-1' });
     open();
     typeInto('Message', 'hello');
     press();
-    expect(await screen.findByText('The emulator accepted the message.')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: "See this topic's subscriptions" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(result()).toContain('Delivery on the Subscriptions tab says which do.');
+    });
+    // The last subscription deleted on the other tab, then back on "Publish".
+    vi.mocked(api.listSubscriptions).mockResolvedValue({ subscriptions: [] });
+    fireEvent.click(screen.getByRole('button', { name: 'Other tab' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Other tab' }));
+    expect(result()).toContain('m-1');
+    expect(result()).toContain('Delivery on the Subscriptions tab says which do.');
+    expect(result()).not.toContain('no subscriptions');
+    expect(api.listSubscriptions).toHaveBeenCalledTimes(1);
+  });
+
+  it('the sentence is kept with the result: a subscription made afterwards does not change it', async () => {
+    vi.mocked(api.listSubscriptions).mockResolvedValue({ subscriptions: [] });
+    vi.mocked(api.publish).mockResolvedValue({ messageId: 'm-1' });
+    open();
+    typeInto('Message', 'hello');
+    press();
+    expect(
+      await screen.findByText('This topic has no subscriptions, so the message was delivered nowhere.'),
+    ).toBeInTheDocument();
+    vi.mocked(api.listSubscriptions).mockResolvedValue(ONE_SUBSCRIPTION);
+    fireEvent.click(screen.getByRole('button', { name: 'Other tab' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Other tab' }));
+    expect(
+      screen.getByText('This topic has no subscriptions, so the message was delivered nowhere.'),
+    ).toBeInTheDocument();
+    expect(api.listSubscriptions).toHaveBeenCalledTimes(1);
+  });
+
+  it('the Message field says it is the body sent to the subscriptions', () => {
+    open();
+    expect(text(fieldByLabel('Message')?.findDescription()?.getElement())).toBe(
+      "The message body sent to the topic's subscriptions.",
+    );
   });
 
   it('refused → "The message was not published" with the code and message; the form is kept', async () => {

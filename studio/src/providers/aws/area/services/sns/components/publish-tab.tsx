@@ -19,7 +19,7 @@ import type { AreaConnection } from '../../../components/emulator-line';
 import { actionFailureItem, CodeAndMessage, useAnnouncer } from '../../../components/failure-states';
 import { useFollow } from '../../../components/use-follow';
 import { ValueText } from '../../../components/value-text';
-import { OPERATIONS, type OutgoingMessage } from '../api';
+import { listSubscriptions, OPERATIONS, type OutgoingMessage } from '../api';
 import { topicHref } from '../format';
 import {
   firstFault,
@@ -29,7 +29,7 @@ import {
   type PublishForm,
   type PublishResult,
 } from '../publish-form';
-import { failureOf, usePublish, useSubscriptionListing } from '../queries';
+import { failureOf, usePublish } from '../queries';
 
 // S3's "Publish" tab (issue 536, design task 3): the message, the subject, message attributes and, for a FIFO topic,
 // the message group ID and deduplication ID; "Publish" sends one `Publish` once `publish-form.ts` finds nothing at
@@ -98,13 +98,10 @@ function FailureWords({
 function Result({
   result,
   topicArn,
-  subscribed,
   engineOrigin,
 }: {
   result: PublishResult | undefined;
   topicArn: string;
-  /** Whether the topic has a subscription; `undefined` while it is read or when the read failed. */
-  subscribed: boolean | undefined;
   engineOrigin: string | undefined;
 }) {
   const handleFollow = useFollow();
@@ -126,7 +123,7 @@ function Result({
         <StatusIndicator type="success">{PUBLISHED}</StatusIndicator>
         <KeyValuePairs columns={2} items={items} />
         <SpaceBetween size="xxs">
-          <Box variant="p">{sentenceOf(subscribed)}</Box>
+          <Box variant="p">{sentenceOf(result.subscribed)}</Box>
           <Link href={topicHref(topicArn)} onFollow={handleFollow}>
             See this topic&apos;s subscriptions
           </Link>
@@ -159,8 +156,6 @@ export function PublishTab({
 }: PublishTabProps) {
   const engineOrigin = connection.engineOrigin;
   const send = usePublish(engineOrigin);
-  const subscriptions = useSubscriptionListing(engineOrigin, topicArn);
-  const subscribed = subscriptions.items === undefined ? undefined : subscriptions.items.length > 0;
   const [announcement, announce] = useAnnouncer();
 
   // The messages are shown once "Publish" has been pressed, and follow what is typed after.
@@ -209,6 +204,22 @@ export function PublishTab({
     return true;
   };
 
+  /**
+   * Whether the topic has a subscription, from one read of its first page made now; `undefined` when it cannot be
+   * read. A one-off read, not a listing: what it decides is kept with the result and never read again.
+   */
+  const subscribedNow = async (signal: AbortSignal): Promise<boolean | undefined> => {
+    if (engineOrigin === undefined) {
+      return undefined;
+    }
+    try {
+      const page = await listSubscriptions(engineOrigin, topicArn, undefined, signal);
+      return page.subscriptions.length > 0;
+    } catch {
+      return undefined;
+    }
+  };
+
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
     if (busy.current) {
@@ -233,11 +244,18 @@ export function PublishTab({
     }
     busy.current = true;
     setPublishing(true);
+    const signal = new AbortController().signal;
     let outcome: PublishResult;
     try {
-      outcome = { kind: 'published', published: await send(message, new AbortController().signal) };
+      outcome = { kind: 'published', published: await send(message, signal) };
     } catch (error) {
       outcome = { kind: 'refused', failure: failureOf(error, OPERATIONS.publish) };
+    }
+    if (outcome.kind === 'published') {
+      const subscribed = await subscribedNow(signal);
+      if (subscribed !== undefined) {
+        outcome.subscribed = subscribed;
+      }
     }
     busy.current = false;
     setPublishing(false);
@@ -260,7 +278,7 @@ export function PublishTab({
             <SpaceBetween size="l">
               <FormField
                 label="Message"
-                description="The text every subscriber receives."
+                description="The message body sent to the topic's subscriptions."
                 errorText={faults.message}
                 stretch
               >
@@ -375,7 +393,7 @@ export function PublishTab({
           </Container>
         </Form>
       </form>
-      <Result result={result} topicArn={topicArn} subscribed={subscribed} engineOrigin={engineOrigin} />
+      <Result result={result} topicArn={topicArn} engineOrigin={engineOrigin} />
     </SpaceBetween>
   );
 }
