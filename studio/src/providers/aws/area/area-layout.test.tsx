@@ -2304,7 +2304,7 @@ function connectedTo(target: string, port: number): CheckResult {
 // Test screens of a change of target (issue 486, R3), under Amazon Kinesis: each with state of its own to see a remount.
 const PROBE_PATH = '/aws/kinesis/probe';
 const OTHER_PROBE_PATH = '/aws/kinesis/probe/other';
-const TARGET_CHANGED = 'The target is now second. This page was read again from its emulator.';
+const TARGET_CHANGED = 'The target is now second. This page now reads from it.';
 
 /** A screen's page that names its resources (so the notice is open) and keeps a count of its own, from 0. */
 function ProbePage({ title }: { title: string }) {

@@ -181,8 +181,8 @@ Applies to everything under `providers/aws/area/`, at `/aws` and below.
   included, with no "Discard what you entered?" asked. The line, the notice and the layout stay mounted with their
   state. No route changed, so no focus is moved for one: focus that was inside the page moves to the content target,
   and focus anywhere else (the line, the notice, the flash, the side navigation, Studio's bar) stays where it is. On a
-  screen's page the flash shows the info result "The target is now `{target}`. This page was read again from its
-  emulator.", announced once as any flash, as soon as the connection Studio hands names a target other than the
+  screen's page the flash shows the info result "The target is now `{target}`. This page now reads from it.",
+  announced once as any flash, as soon as the connection Studio hands names a target other than the
   one before the change. An area that mounts with the number already above `0` remounts nothing and shows no
   flash, and a route change with the same number is as any route change.
 - The frame, Home and the router read that list and name no provider themselves. Adding a provider is one new
