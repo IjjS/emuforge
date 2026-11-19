@@ -39,10 +39,12 @@ const REFRESHED = 'Role refreshed';
 /** What a failed read names (R10.1). */
 const THING = 'role';
 
+type FoundRead = Extract<RoleRead, { kind: 'found' }>;
+
 /** What the page shows below its header (R5, R10). */
 type PageState =
   | { kind: 'loading' }
-  | { kind: 'found'; read: Extract<RoleRead, { kind: 'found' }> }
+  | { kind: 'found'; read: FoundRead }
   | { kind: 'not-found' }
   | ({ kind: 'failure' } & ReadFailureState);
 
@@ -60,6 +62,11 @@ function pageState(query: ReturnType<typeof useRole>, connection: ScreenPageProp
     return { kind: 'loading' };
   }
   return query.read.kind === 'found' ? { kind: 'found', read: query.read } : { kind: 'not-found' };
+}
+
+/** Whether a page state is one a dialog keeps the last answer through: a failed read, or a read in flight. */
+function heldThrough(state: PageState): boolean {
+  return state.kind === 'failure' || state.kind === 'loading';
 }
 
 /** "Role not found" (R5.4): the sentence with the address's name, and the link to the list. */
@@ -107,7 +114,21 @@ export function RolePage({ connection, params }: ScreenPageProps) {
 
   const query = useRole({ endpoint: connection.engineOrigin, name });
   const { refresh } = query;
-  const state = pageState(query, connection);
+  // Whether a dialog of a tab is open, per tab: the page then keeps the role it last showed through a read that
+  // fails or is in flight behind the dialog, so the dialog, what was typed in it and its own result stay (issue 535,
+  // fix-s6). A read that finds the role gone still shows "Role not found". Once no dialog is open the newest read
+  // decides again.
+  const [permissionsDialog, setPermissionsDialog] = useState(false);
+  const [trustDialog, setTrustDialog] = useState(false);
+  const [lastFound, setLastFound] = useState<FoundRead>();
+  const queried = pageState(query, connection);
+  if (queried.kind === 'found' && queried.read !== lastFound) {
+    setLastFound(queried.read);
+  }
+  const state: PageState =
+    (permissionsDialog || trustDialog) && heldThrough(queried) && lastFound !== undefined
+      ? { kind: 'found', read: lastFound }
+      : queried;
   const role: Role | undefined = state.kind === 'found' ? state.read.role : undefined;
 
   // The role "Edit summary" is open for; `undefined` while it is closed.
@@ -241,13 +262,14 @@ export function RolePage({ connection, params }: ScreenPageProps) {
               href: roleTabHref(found.role.name, id),
               content:
                 id === 'trust' ? (
-                  <TrustTab role={found.role} connection={connection} />
+                  <TrustTab role={found.role} connection={connection} onDialogOpen={setTrustDialog} />
                 ) : (
                   <PermissionsTab
                     role={found.role}
                     policies={found.policies}
                     connection={connection}
                     onRetry={refresh}
+                    onDialogOpen={setPermissionsDialog}
                   />
                 ),
             }))}

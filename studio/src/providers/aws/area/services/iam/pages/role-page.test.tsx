@@ -1237,3 +1237,145 @@ describe('the states on "Trust relationships"', () => {
     expect(status(failureBox()).text).toBe(`The EmuForge engine at ${engineOrigin} did not answer`);
   });
 });
+
+// Fix s6 (issue 535, `.pm/issue-535/fix-s6.md`): an open editor and its typed text outlive a failed read of the role
+// behind it; with no dialog open the page's read states are `main`'s.
+describe('a dialog open while the role’s read fails', () => {
+  const DOCUMENT = '{"Version": "2012-10-17", "Statement": []}';
+  const TYPED_TRUST =
+    '{"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Principal": {"Service": "ec2.amazonaws.com"}, "Action": "sts:AssumeRole"}]}';
+
+  function dialogNamed(name: string): HTMLElement {
+    return screen.getByRole('dialog', { name });
+  }
+
+  /** The engine stops answering: every request from now on fails as no answer. */
+  function engineStops() {
+    for (const action of [
+      'GetRole',
+      'ListAttachedRolePolicies',
+      'ListRolePolicies',
+      'PutRolePolicy',
+      'UpdateAssumeRolePolicy',
+    ]) {
+      engine.handlers[action] = () => 'network-error';
+    }
+  }
+
+  async function typedAndFailed(open: () => Promise<{ dialog: string; field: string; text: string; save: string }>) {
+    const { dialog, field, text, save } = await open();
+    const reads = engine.of('GetRole').length;
+    engineStops();
+    fireEvent.click(within(dialogNamed(dialog)).getByRole('button', { name: save }));
+    await waitFor(() => {
+      expect(within(dialogNamed(dialog)).getByText(/did not answer/)).toBeInTheDocument();
+    });
+    // The read the save starts has run and failed too.
+    await waitFor(() => {
+      expect(engine.of('GetRole').length).toBeGreaterThan(reads);
+    });
+    return { dialog, field, text };
+  }
+
+  async function addInlinePolicy() {
+    fireEvent.click(within(main()).getByRole('button', { name: 'Add inline policy' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Add inline policy' });
+    fireEvent.change(within(dialog).getByRole('textbox', { name: /Policy name/ }), { target: { value: 'fresh' } });
+    fireEvent.change(within(dialog).getByRole('textbox', { name: /Policy document/ }), {
+      target: { value: DOCUMENT },
+    });
+    return { dialog: 'Add inline policy', field: 'Policy document', text: DOCUMENT, save: 'Add policy' };
+  }
+
+  async function editTrustPolicy() {
+    fireEvent.click(within(main()).getByRole('button', { name: 'Edit trust policy' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Edit trust policy' });
+    fireEvent.change(within(dialog).getByRole('textbox', { name: /Trust policy/ }), {
+      target: { value: TYPED_TRUST },
+    });
+    return { dialog: 'Edit trust policy', field: 'Trust policy', text: TYPED_TRUST, save: 'Save changes' };
+  }
+
+  function expectStillOpen({ dialog, field, text }: { dialog: string; field: string; text: string }) {
+    const open = dialogNamed(dialog);
+    expect((within(open).getByRole('textbox', { name: new RegExp(field) }) as HTMLTextAreaElement).value).toBe(text);
+    expect(open).toHaveTextContent(`The EmuForge engine at ${engineOrigin} did not answer`);
+    expect(within(main()).queryByText('The role could not be read.')).toBeNull();
+    expect(within(main()).queryByRole('button', { name: 'Retry' })).toBeNull();
+    expect(within(main()).getByRole('heading', { level: 2, name: 'Summary' })).toBeInTheDocument();
+  }
+
+  it('"Add inline policy" on "Permissions": the save and the read after it fail → the dialog stays with the text and the save’s failure; the page is not "The role could not be read."', async () => {
+    await openLoaded(PLAIN);
+    expectStillOpen(await typedAndFailed(addInlinePolicy));
+  });
+
+  it('"Edit trust policy" on ?tab=trust: the same', async () => {
+    await openLoaded(PLAIN, `${pagePath(PLAIN.name)}?tab=trust`);
+    expectStillOpen(await typedAndFailed(editTrustPolicy));
+  });
+
+  it.each<[string, string | undefined, () => Promise<{ dialog: string; field: string; text: string; save: string }>]>(
+    [
+      ['"Add inline policy"', undefined, addInlinePolicy],
+      ['"Edit trust policy"', 'trust', editTrustPolicy],
+    ],
+  )(
+    '%s then closed ("Discard") → "The role could not be read." with the status and "Retry"; nothing of the last answer as current',
+    async (_, tabId, step) => {
+      connection.value = { result: connectedResult(), engineOrigin };
+      await openLoaded(PLAIN, tabId === undefined ? pagePath(PLAIN.name) : `${pagePath(PLAIN.name)}?tab=${tabId}`);
+      const { dialog } = await typedAndFailed(step);
+
+      connection.set(notStartedResult());
+      fireEvent.click(within(dialogNamed(dialog)).getByRole('button', { name: 'Cancel' }));
+      fireEvent.click(
+        within(await screen.findByRole('dialog', { name: 'Discard what you entered?' })).getByRole('button', {
+          name: 'Discard',
+        }),
+      );
+
+      await waitFor(() => {
+        expect(within(main()).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+      });
+      expect(screen.queryByRole('dialog', { name: dialog })).toBeNull();
+      expect(main()).toHaveTextContent('The role could not be read.');
+      expect(status(failureBox())).toEqual({ type: 'stopped', text: `Not started on port ${String(EMULATOR_PORT)}` });
+      expect(within(main()).queryByRole('heading', { level: 2, name: 'Summary' })).toBeNull();
+      expect(tabs()).toEqual([]);
+    },
+  );
+
+  it('no dialog open: "Refresh role" whose read fails → the failure state at once', async () => {
+    await openLoaded(PLAIN);
+    engineStops();
+
+    fireEvent.click(within(main()).getByRole('button', { name: 'Refresh role' }));
+
+    await waitFor(() => {
+      expect(within(main()).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    });
+    expect(status(failureBox()).text).toBe(`The EmuForge engine at ${engineOrigin} did not answer`);
+    expect(within(main()).queryByRole('heading', { level: 2, name: 'Summary' })).toBeNull();
+  });
+
+  it('no dialog open: the connection comes back and the role is gone → "Role not found" with no action', async () => {
+    await openLoaded(PLAIN);
+    connection.set(notStartedResult());
+    engineStops();
+    fireEvent.click(within(main()).getByRole('button', { name: 'Refresh role' }));
+    await waitFor(() => {
+      expect(within(main()).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    });
+
+    engine.handlers = {};
+    engine.roles = [];
+    connection.set(connectedResult());
+
+    await waitFor(() => {
+      expect(within(main()).getByText('Role not found')).toBeInTheDocument();
+    });
+    expect(within(main()).queryByRole('button', { name: 'Retry' })).toBeNull();
+    expect(within(main()).getByRole('button', { name: 'Delete' })).toBeDisabled();
+  });
+});
