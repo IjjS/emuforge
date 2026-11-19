@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: harness|product|brd-into-the-guides
-Issue-Check-Ids:
+Issue-Check-Ids: harness.product-docs
 Issue-Commit: aa4c03efad86f9b110d88c61c26e552f651ddd90
 
 # Put the owner's product plan of 2026-11-18 into the repository as its product guide, and bring the guides that differ to it
