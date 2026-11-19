@@ -1,5 +1,5 @@
 import Box from '@cloudscape-design/components/box';
-import Button from '@cloudscape-design/components/button';
+import Button, { type ButtonProps } from '@cloudscape-design/components/button';
 import CollectionPreferences, {
   type CollectionPreferencesProps,
 } from '@cloudscape-design/components/collection-preferences';
@@ -15,17 +15,27 @@ import { useCallback, useRef, useState, type ReactNode } from 'react';
 
 import { useAreaModalRoot } from '../../../components/area-modal';
 import type { AreaConnection } from '../../../components/emulator-line';
-import { readFailureState, ReadFailure, useAnnouncer, type ReadFailureState } from '../../../components/failure-states';
+import {
+  actionFailureItem,
+  readFailureState,
+  ReadFailure,
+  useAnnouncer,
+  type ReadFailureState,
+} from '../../../components/failure-states';
+import { usePageFlash } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
 import { ValueText } from '../../../components/value-text';
-import type { QueueRow } from '../api';
-import { NONE, queuePath, queueSettings, queueType, type QueueSettings } from '../format';
-import { useQueueListing, type QueueListing } from '../queries';
+import { OPERATIONS, type QueueRow } from '../api';
+import { DeleteQueueDialog } from '../components/delete-queue-dialog';
+import { actionFailureOf, usePageSignal } from '../components/page-signal';
+import { CREATE_QUEUE_PATH, NONE, queuePath, queueSettings, queueType, type QueueSettings } from '../format';
+import { useDeleteQueue, useQueueListing, type QueueListing } from '../queries';
 
 // SQS's queue list, S1 (issue 481, design task 1): every queue of the emulator, a page at a time on `ListQueues`' own
 // tokens, each row with its type, its three counts and its dead-letter links, read with the page. Every value from the
-// emulator is rendered as text, each as the kind of value it is (`aws-area.md`, entry 4).
+// emulator is rendered as text, each as the kind of value it is (`aws-area.md`, entry 4). Issues 489 and 490: "Create
+// queue" leads to S3, and "Delete" deletes the one selected queue, confirmed in a dialog.
 
 /** The page's title, its `h1` and its crumb. */
 export const QUEUES_TITLE = 'Queues';
@@ -38,6 +48,7 @@ const FILTER_RULE = 'Matches the start of a name, upper and lower case told apar
 const REFRESHED = 'Queue list refreshed';
 const READING = 'Reading the queues';
 const GONE = 'No longer in the emulator';
+const SELECT_FIRST = 'Select a queue';
 
 /** A queue's name keeps room for 24 characters (`aws-area.md`, entry 4). */
 const NAME_MIN_WIDTH = '28ch';
@@ -181,6 +192,14 @@ export function QueueListPage({ connection }: { connection: AreaConnection }) {
   const modalRoot = useAreaModalRoot();
   const [announcement, announce] = useAnnouncer();
   const filterRef = useRef<TextFilterProps.Ref>(null);
+  const flash = usePageFlash();
+  const pageSignal = usePageSignal();
+  const removeQueue = useDeleteQueue(connection.engineOrigin);
+  const deleteRef = useRef<ButtonProps.Ref>(null);
+  // The selected queue, by its URL; dropped whenever the page shown changes (a page, a filter, a refresh).
+  const [selectedUrl, setSelectedUrl] = useState<string>();
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const [filter, setFilter] = useState('');
   const [preferences, setPreferences] = useState(START_PREFERENCES);
@@ -193,6 +212,7 @@ export function QueueListPage({ connection }: { connection: AreaConnection }) {
 
   const startListing = useCallback(() => {
     setStarter(null);
+    setSelectedUrl(undefined);
     refresh();
   }, [refresh]);
 
@@ -200,6 +220,7 @@ export function QueueListPage({ connection }: { connection: AreaConnection }) {
   const { currentPage, goToPage } = listing;
   const handleRetry = useCallback(() => {
     setStarter(null);
+    setSelectedUrl(undefined);
     goToPage(currentPage);
   }, [goToPage, currentPage]);
 
@@ -245,11 +266,13 @@ export function QueueListPage({ connection }: { connection: AreaConnection }) {
 
   const handleFilterChange = useCallback(({ detail }: { detail: TextFilterProps.ChangeDetail }) => {
     setStarter('filter');
+    setSelectedUrl(undefined);
     setFilter(detail.filteringText);
   }, []);
 
   const handleClearFilter = useCallback(() => {
     setStarter('filter');
+    setSelectedUrl(undefined);
     setFilter('');
     filterRef.current?.focus();
   }, []);
@@ -257,6 +280,7 @@ export function QueueListPage({ connection }: { connection: AreaConnection }) {
   const handlePageChange = useCallback(
     ({ detail }: { detail: { currentPageIndex: number } }) => {
       setStarter('pagination');
+      setSelectedUrl(undefined);
       goToPage(detail.currentPageIndex);
     },
     [goToPage],
@@ -267,6 +291,7 @@ export function QueueListPage({ connection }: { connection: AreaConnection }) {
       const pageSize = detail.pageSize ?? preferences.pageSize;
       if (pageSize !== preferences.pageSize) {
         setStarter('preferences');
+        setSelectedUrl(undefined);
       }
       setPreferences({ pageSize, wrapLines: detail.wrapLines ?? preferences.wrapLines });
     },
@@ -347,6 +372,44 @@ export function QueueListPage({ connection }: { connection: AreaConnection }) {
   ];
 
   const rows = (queues ?? []).map((queue) => rowOf(queue, connection));
+  // A selection is kept only while its queue is on the page shown.
+  const selected = loaded ? rows.find((row) => row.url === selectedUrl) : undefined;
+
+  const handleDelete = () => {
+    if (selected === undefined) {
+      return;
+    }
+    const { name, url } = selected;
+    const signal = pageSignal();
+    setDeleting(true);
+    removeQueue(name, url, signal).then(
+      () => {
+        if (signal.aborted) {
+          return;
+        }
+        setDeleting(false);
+        setDeleteOpen(false);
+        setSelectedUrl(undefined);
+        flash.show([{ type: 'success', content: `Deleted queue ${name}` }]);
+        // "Delete" stays focusable while disabled, so focus goes back to it, not to the page's start.
+        deleteRef.current?.focus();
+      },
+      (error: unknown) => {
+        if (signal.aborted) {
+          return;
+        }
+        setDeleting(false);
+        setDeleteOpen(false);
+        flash.show([
+          actionFailureItem(
+            actionFailureOf(error, OPERATIONS.deleteQueue),
+            `Delete queue ${name}`,
+            connection.engineOrigin,
+          ),
+        ]);
+      },
+    );
+  };
 
   return (
     <>
@@ -354,6 +417,15 @@ export function QueueListPage({ connection }: { connection: AreaConnection }) {
         variant="full-page"
         items={rows}
         trackBy="url"
+        selectionType="single"
+        selectedItems={selected === undefined ? [] : [selected]}
+        onSelectionChange={({ detail }) => {
+          setSelectedUrl(detail.selectedItems[0]?.url);
+        }}
+        ariaLabels={{
+          selectionGroupLabel: 'Queue selection',
+          itemSelectionLabel: (_, row) => row.name,
+        }}
         stickyColumns={{ first: 1 }}
         columnDefinitions={columns}
         wrapLines={preferences.wrapLines}
@@ -366,13 +438,28 @@ export function QueueListPage({ connection }: { connection: AreaConnection }) {
             counter={queues === undefined ? undefined : counterText(queues.length, listing.openEnd)}
             description={DESCRIPTION}
             actions={
-              <Button
-                iconName="refresh"
-                ariaLabel="Refresh"
-                disabled={reading}
-                disabledReason={READING}
-                onClick={handleRefresh}
-              />
+              <SpaceBetween direction="horizontal" size="xs">
+                <Button
+                  iconName="refresh"
+                  ariaLabel="Refresh"
+                  disabled={reading}
+                  disabledReason={READING}
+                  onClick={handleRefresh}
+                />
+                <Button
+                  ref={deleteRef}
+                  disabled={selected === undefined}
+                  disabledReason={SELECT_FIRST}
+                  onClick={() => {
+                    setDeleteOpen(true);
+                  }}
+                >
+                  Delete
+                </Button>
+                <Button variant="primary" href={CREATE_QUEUE_PATH} onFollow={handleFollow}>
+                  Create queue
+                </Button>
+              </SpaceBetween>
             }
           >
             {QUEUES_TITLE}
@@ -422,6 +509,18 @@ export function QueueListPage({ connection }: { connection: AreaConnection }) {
           />
         }
       />
+      {selected !== undefined && (
+        <DeleteQueueDialog
+          visible={deleteOpen}
+          name={selected.name}
+          sources={selected.read?.sources}
+          pending={deleting}
+          onConfirm={handleDelete}
+          onDismiss={() => {
+            setDeleteOpen(false);
+          }}
+        />
+      )}
       {announcement}
     </>
   );

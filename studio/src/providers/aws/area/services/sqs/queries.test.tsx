@@ -10,7 +10,10 @@ import { RequestError } from '../../../../../lib/aws/request';
 import {
   FILTER_DELAY_MS,
   MOVE_TASKS_POLL_MS,
+  useCreateQueue,
+  useDeadLetterChoices,
   useDeleteMessages,
+  useDeleteQueue,
   useMoveTasks,
   usePurgeQueue,
   useQueue,
@@ -376,5 +379,161 @@ describe('the move tasks', () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(engine.sent).toEqual([]);
     expect(result.current.value).toBeUndefined();
+  });
+});
+
+describe('create and delete a queue (issues 489 and 490)', () => {
+  it('a created queue → the queue listing is read again', async () => {
+    engine.gone.add('GetQueueUrl');
+    engine.handlers.set('ListQueues', () => ({ QueueUrls: [] }));
+    engine.handlers.set('CreateQueue', () => ({ QueueUrl: `${AWS_HOST}/orders` }));
+    const { result } = renderHook(
+      () => ({ list: useQueueListing({ endpoint, pageSize: 10, filter: '' }), create: useCreateQueue(endpoint) }),
+      { wrapper },
+    );
+    await waitFor(() => {
+      expect(result.current.list.queues).toEqual([]);
+    });
+    engine.handlers.set('ListQueues', () => ({ QueueUrls: urls('orders') }));
+
+    let outcome: unknown;
+    await act(async () => {
+      outcome = await result.current.create(
+        { name: 'orders', kind: 'standard', contentBasedDeduplication: false },
+        new AbortController().signal,
+      );
+    });
+
+    expect(outcome).toEqual({ outcome: 'created', url: `${AWS_HOST}/orders` });
+    expect(engine.of('GetQueueUrl').map((sent) => sent.body)).toEqual([{ QueueName: 'orders' }]);
+    await waitFor(() => {
+      expect(result.current.list.queues?.map((queue) => queue.name)).toEqual(['orders']);
+    });
+    expect(engine.of('ListQueues')).toHaveLength(2);
+  });
+
+  it('a taken name → no CreateQueue and nothing read again', async () => {
+    engine.handlers.set('GetQueueUrl', () => ({ QueueUrl: `${AWS_HOST}/orders` }));
+    const { result } = renderHook(() => useCreateQueue(endpoint), { wrapper });
+
+    let outcome: unknown;
+    await act(async () => {
+      outcome = await result.current(
+        { name: 'orders', kind: 'standard', contentBasedDeduplication: false },
+        new AbortController().signal,
+      );
+    });
+
+    expect(outcome).toEqual({ outcome: 'taken' });
+    expect(engine.of('CreateQueue')).toHaveLength(0);
+  });
+
+  it('a deleted queue → the queue listing is read again and the queue’s detail is dropped', async () => {
+    engine.handlers.set('ListQueues', () => ({ QueueUrls: urls('orders') }));
+    engine.handlers.set('GetQueueAttributes', () => ({ Attributes: { QueueArn: `${ARN}:orders` } }));
+    engine.handlers.set('ListDeadLetterSourceQueues', () => ({ queueUrls: [] }));
+    client.setQueryData(['aws', 'sqs', 'queue', 'orders', 'details', endpoint, 0, 0], { name: 'orders' });
+    const { result } = renderHook(
+      () => ({ list: useQueueListing({ endpoint, pageSize: 10, filter: '' }), remove: useDeleteQueue(endpoint) }),
+      { wrapper },
+    );
+    await waitFor(() => {
+      expect(result.current.list.queues).toHaveLength(1);
+    });
+    engine.handlers.set('ListQueues', () => ({ QueueUrls: [] }));
+
+    await act(async () => {
+      await result.current.remove('orders', `${AWS_HOST}/orders`, new AbortController().signal);
+    });
+
+    expect(engine.of('DeleteQueue').map((sent) => sent.body)).toEqual([{ QueueUrl: `${AWS_HOST}/orders` }]);
+    await waitFor(() => {
+      expect(result.current.list.queues).toEqual([]);
+    });
+    const queueKeys = client
+      .getQueryCache()
+      .getAll()
+      .filter((query) => query.queryKey[2] === 'queue');
+    expect(queueKeys).toEqual([]);
+  });
+
+  it('a refused delete → it rejects, and the listing is read again', async () => {
+    engine.handlers.set('ListQueues', () => ({ QueueUrls: urls('orders') }));
+    engine.handlers.set('GetQueueAttributes', () => ({ Attributes: {} }));
+    engine.handlers.set('ListDeadLetterSourceQueues', () => ({ queueUrls: [] }));
+    engine.gone.add('DeleteQueue');
+    const { result } = renderHook(
+      () => ({ list: useQueueListing({ endpoint, pageSize: 10, filter: '' }), remove: useDeleteQueue(endpoint) }),
+      { wrapper },
+    );
+    await waitFor(() => {
+      expect(result.current.list.queues).toHaveLength(1);
+    });
+
+    let rejected: unknown;
+    await act(async () => {
+      await result.current
+        .remove('orders', `${AWS_HOST}/orders`, new AbortController().signal)
+        .catch((error: unknown) => {
+          rejected = error;
+        });
+    });
+
+    expect(rejected).toBeInstanceOf(RequestError);
+    await waitFor(() => {
+      expect(engine.of('ListQueues')).toHaveLength(2);
+    });
+  });
+
+  it('the dead-letter choices’ key holds the prefix and the type: a change of either asks again', async () => {
+    engine.handlers.set('ListQueues', () => ({ QueueUrls: urls('dead', 'dead.fifo', 'plain') }));
+    const { result, rerender } = renderHook(
+      ({ kind, filter }: { kind: 'standard' | 'fifo'; filter: string }) =>
+        useDeadLetterChoices(endpoint, kind, filter, true),
+      { initialProps: { kind: 'standard' as 'standard' | 'fifo', filter: '' }, wrapper },
+    );
+    await waitFor(() => {
+      expect(result.current.choices?.map((choice) => choice.name)).toEqual(['dead', 'plain']);
+    });
+    const keys = () =>
+      client
+        .getQueryCache()
+        .getAll()
+        .map((query) => [...query.queryKey])
+        .filter((key) => key[2] === 'dead-letter-choices');
+    expect(keys()[0]).toEqual(expect.arrayContaining(['standard', '']));
+
+    rerender({ kind: 'fifo', filter: '' });
+    await waitFor(() => {
+      expect(result.current.choices?.map((choice) => choice.name)).toEqual(['dead.fifo']);
+    });
+    expect(engine.of('ListQueues')).toHaveLength(2);
+
+    rerender({ kind: 'fifo', filter: 'de' });
+    await waitFor(() => {
+      expect(engine.of('ListQueues')).toHaveLength(3);
+    });
+    expect(engine.of('ListQueues')[2]?.body).toEqual({ MaxResults: 50, QueueNamePrefix: 'de' });
+    expect(keys().some((key) => key.includes('fifo') && key.includes('de'))).toBe(true);
+  });
+
+  it('the dead-letter choices read the next page on the last page’s token', async () => {
+    engine.handlers.set('ListQueues', (body) =>
+      body['NextToken'] === undefined ? { QueueUrls: urls('a'), NextToken: 'tok-2' } : { QueueUrls: urls('b') },
+    );
+    const { result } = renderHook(() => useDeadLetterChoices(endpoint, 'standard', '', true), { wrapper });
+    await waitFor(() => {
+      expect(result.current.more).toBe(true);
+    });
+
+    act(() => {
+      result.current.loadMore();
+    });
+
+    await waitFor(() => {
+      expect(result.current.choices?.map((choice) => choice.name)).toEqual(['a', 'b']);
+    });
+    expect(engine.of('ListQueues')[1]?.body).toEqual({ MaxResults: 50, NextToken: 'tok-2' });
+    expect(result.current.more).toBe(false);
   });
 });
