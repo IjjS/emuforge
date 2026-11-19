@@ -50,8 +50,9 @@ test('studio.connections-make-target-switches-aws-screens', async ({ page, ctx }
     expect((await listTargets(stack.engine.port, 'after Make target')).active).toBe(second);
   });
 
-  await test.step('Go back to the bucket list in the same document: B\'s buckets, never A\'s', async () => {
-    await page.goBack(ACTION);
+  await test.step("Open the bucket list through the navigation, same document: B's buckets, never A's", async () => {
+    await studioNav(page).getByRole('link', { name: 'AWS', exact: true }).click(ACTION);
+    await page.locator(`a[href="${BUCKETS_PATH}"]`).first().click(ACTION);
     await expect(page).toHaveURL(new RegExp(`${BUCKETS_PATH}$`), ACTION);
     await expectLine(page, connectedAt(b.port));
     await expect.poll(async () => (await lineText(page)) ?? '', ACTION).toContain(`Target ${second}`);
