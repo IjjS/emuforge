@@ -49,8 +49,17 @@ The critique's second round (`review-final-r2.md`) added, on the same screens:
     `components/policy-sections.tsx`: "Select a version first" lacks its period;
     `components/edit-policy-dialog.tsx`: the editor's not-found text reuses "A role can still name it.".
 
+The third round (`review-final-r3.md`) added:
+
+14. `pages/role-page.tsx`, `pages/policy-page.tsx`: an editor with typed text is unmounted without a question when
+    the read after the connection came back finds the role or the policy gone (an emulator restart under an open
+    editor).
+15. `components/edit-policy-dialog.tsx`: "Save changes" with the text unchanged makes a new version (one of five),
+    and at five versions an edit can be typed before the emulator refuses it.
+16. "Policy not found" does not name the ARN.
+
 ## Evidence
-`.pm/issue-535/review-final.md` and `review-final-r2.md` ("## P2", "## P3"), with the critique's snapshot
+`.pm/issue-535/review-final.md` and `review-final-r2.md`, `review-final-r3.md` ("## P2", "## P3"), with the critique's snapshot
 `studio/.impeccable/critique/2026-11-19T15-05-12Z__src-providers-aws-area-services-iam-pages.md` in the worktree of
 issue 535 and its captures under `output/captures/final/` and `final-empty/` there (ignored paths: capture again
 with `pm-capture` on the built app). For 5: issue 535's probe 2 (`.pm/issue-535/probe/probe-2.log`), where
@@ -83,6 +92,11 @@ with `pm-capture` on the built app). For 5: issue 535's probe 2 (`.pm/issue-535/
   version than the default is shown.
 - At 390 wide "Show document" of a role's policy is reachable without scrolling the table sideways.
 - After a policy is detached or deleted the focus is on a control or heading of "Permissions policies".
+- An editor with typed text stays, with its save unavailable and a line saying its target is gone, when the role or
+  policy is found gone behind it.
+- "Save changes" of a policy is unavailable while the text is unchanged, and the dialog says so beforehand when the
+  policy already holds five versions.
+- "Policy not found" names the ARN asked for.
 - A delete in flight says so; "Select a version first." ends with its period; the policy editor's not-found text is
   its own.
 
