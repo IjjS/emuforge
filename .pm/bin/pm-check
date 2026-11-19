@@ -139,9 +139,26 @@ start, and how many asks were answered WAIT; {0, 0} when none was (<checkout>/ou
 in between).
 
 Processes. Each step runs in its own process group, recorded in <checkout>/output/checks/running.json while the
-run lasts. `pm-check <worktree> --stop` ends that worktree's run and nothing else: SIGTERM to the recorded group
-and the recorded pm-check, SIGKILL after ten seconds. Never stop a check by process name (pkill, killall): that
-ends other worktrees' runs too. A pm-check that receives SIGTERM or SIGINT stops its own step the same way.
+run lasts. `pm-check <worktree> --stop` ends that worktree's run and nothing else: SIGTERM to the recorded
+pm-check, which sends SIGTERM to its step's group and SIGKILL to what is left of it after the step's grace: 60 s for
+the integration step, whose run removes its emulator in its EXIT trap, ten seconds for every other step. --stop
+waits for the stopped pm-check to end, and ends the group itself only when that pm-check has not ended within the
+grace and the sweep's bound. Never stop a check by process name (pkill, killall): that ends other worktrees' runs
+too. A pm-check that receives SIGTERM, SIGINT or SIGHUP stops its own step the same way and ignores a further one.
+
+Leftovers of an integration run (issue 342). tests/integration/run names its run on its first line (`integration:
+run <id>, emulator port <port>, ...`). When an integration step ends, by itself or stopped, pm-check sweeps that
+run (_pmitrun.py): it removes, by the run's id alone, the containers labelled emuforge-it-run=<id> and those created
+under one of the run's image names, the volumes labelled with the id or mounted by them, the networks of their
+Compose projects that no container uses, and the run's images emuforge-it-product-<id>, emuforge-it-emulator-<id>
+and aws-emulator:it-<id>; then the folders ~/.aws/emulator/<port>/ of the run's port and of its checks' emulators,
+through pm-emulator-dir (rm --worktree for the checkout's own port, else rm --port), which refuses one in use. A
+run's trap that finished leaves nothing to find. At its start every pm-check (not --stop, not --list) sweeps each
+run an earlier integration log of the checkout names (check-integration.log, its attempt1 log,
+checks-integration.log) and that <checkout>/output/checks/swept.json does not hold, unless running.json names
+another live pm-check; a sweep is recorded there when Docker answered every call and nothing was refused. What a
+sweep removed, kept or could not ask Docker is printed as `integration: leftovers of run <id> ...` lines; --stop
+prints the stopped run's.
 """
 import argparse
 import datetime as dt
@@ -159,6 +176,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _pmlib import (CHECKS, ROOT, RUN, caller, check_room, end_check, note_check, now, record_duration,
                     wait_for_check_room)
 from _pmscope import called, deferred, lines, manifest_parts, scope, services_file
+from _pmitrun import SWEEP_BOUND, sweep_earlier, sweep_log
 
 STEPS = {
     "engine": ("engine", "Cargo.toml", [
@@ -189,6 +207,10 @@ RETRY = ("engine-test", "studio-unit", "integration", "harness-test")  # steps w
 HEAVY = ("engine", "studio", "integration")  # modules whose steps load the machine
 WAIT_EXIT = 75  # EX_TEMPFAIL: no room now; ask again after the wait the answer names
 current = None  # the running step's Popen
+current_step = None  # the running step's name
+GRACE = 10  # seconds a step's group has between SIGTERM and SIGKILL when the step is stopped
+STOP_GRACE = {"integration": 60}  # a longer grace: the integration run's EXIT trap removes its emulator (issue 342)
+BIN_DIR = os.path.dirname(os.path.abspath(__file__))  # pm-emulator-dir is the sweep's, beside this script
 this_run = None  # this run's entry in <root>/.pm/run/checks/ while a heavy run lasts
 CHECK_ID = re.compile(r"[a-z]+\.[a-z0-9-]+")  # the form of a manifest id; nothing else reaches a file
 NAMED = 10  # failed or error checks named in the output, per verdict
@@ -277,11 +299,27 @@ def end_group(pgid, grace=10):
     return False
 
 
+def grace_of(step):
+    return STOP_GRACE.get(step, GRACE)
+
+
 def on_signal(signum, _frame):
+    for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(s, signal.SIG_IGN)  # a second signal never cuts the step's end or the sweep short
     if current is not None and current.poll() is None:
-        end_group(current.pid)
+        end_group(current.pid, grace=grace_of(current_step))
     done()
-    sys.exit(128 + signum)
+    sys.exit(128 + signum)  # run_step's `finally` sweeps an integration step's run
+
+
+def alive(pid):
+    """Whether the process runs: it exists and is not a zombie."""
+    try:
+        os.kill(pid, 0)
+    except (ProcessLookupError, PermissionError):
+        return False
+    r = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True)
+    return r.returncode == 0 and not r.stdout.strip().startswith("Z")
 
 
 def stop(co):
@@ -302,17 +340,54 @@ def stop(co):
         rec.unlink(missing_ok=True)
         print(f"the recorded run (pid {r.get('pm_check_pid')}) is no longer alive; record removed")
         return
-    # the run's own handler ends its step's group; the group is ended here as well in case the run is stuck
-    os.kill(int(r["pm_check_pid"]), signal.SIGTERM)
+    # The run's own handler ends its step's group, with the step's grace, and sweeps an integration run; this waits
+    # for it, and ends the group and sweeps here only when the run is stuck past that.
+    pid, step = int(r["pm_check_pid"]), r.get("step")
+    os.kill(pid, signal.SIGTERM)
+    end = time.time() + grace_of(step) + 2 + SWEEP_BOUND
+    while alive(pid) and time.time() < end:
+        time.sleep(0.2)
+    stuck = alive(pid)
     if r.get("pgid"):
-        end_group(int(r["pgid"]))
+        end_group(int(r["pgid"]), grace=GRACE if stuck else 2)
+    said = []
+    if step == "integration" and isinstance(r.get("log"), str):
+        if stuck:
+            said = sweep_log(co, r["log"], BIN_DIR)
+        else:
+            said = swept_lines(co, r["log"])
     rec.unlink(missing_ok=True)
-    print(f"stopped pm-check pid {r['pm_check_pid']} (step {r.get('step')}) of {co}")
+    print(f"stopped pm-check pid {pid} (step {step}) of {co}" + ("" if not stuck else
+          f"; it did not end within {fmt_s(grace_of(step) + 2 + SWEEP_BOUND)}, its step's group was ended here"))
+    for line in said:
+        print(line)
+
+
+def swept_lines(co, log):
+    """The lines of the sweep a stopped run recorded for the run its log names (stop's report), or a line saying it
+    did not record one."""
+    from _pmitrun import lines, run_of, swept
+    run = run_of(log)
+    if run is None:
+        return []
+    entry = swept(co).get(run[0])
+    if entry is None:
+        return [f"integration: leftovers of run {run[0]} were not all removed; the next pm-check of {co} tries again"]
+    return lines(entry) or [f"integration: nothing of run {run[0]} was left"]
+
+
+def other_run(record):
+    """Whether the checkout's running.json names a live pm-check other than this one: its run is not a leftover."""
+    try:
+        pid = int(json.loads(record.read_text())["pm_check_pid"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+    return pid != os.getpid() and alive(pid)
 
 
 def run_step(cmd, cwd, env, log, record, name):
     """Run one step in its own process group with its output in `log`; return the exit code (127: not found)."""
-    global current
+    global current, current_step
     with open(log, "w") as f:
         try:
             current = subprocess.Popen(cmd, cwd=cwd, stdout=f, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
@@ -320,13 +395,18 @@ def run_step(cmd, cwd, env, log, record, name):
         except FileNotFoundError as e:
             f.write(f"{e}\n")
             return 127
-        record.write_text(json.dumps(dict(pm_check_pid=os.getpid(), pgid=current.pid, step=name, started=now())))
+        record.write_text(json.dumps(dict(pm_check_pid=os.getpid(), pgid=current.pid, step=name, started=now(),
+                                          log=str(log))))
+        current_step = name
         at_step(name)
         try:
             return current.wait()
         finally:
             end_group(current.pid, grace=2)  # nothing a step started outlives it
-            current = None
+            current = current_step = None
+            if name == "integration":  # what the run's EXIT trap could not remove (issue 342)
+                for line in sweep_log(pathlib.Path(record).parents[2], log, BIN_DIR):
+                    print(line, flush=True)
 
 
 def this_report(co, commit, started):
@@ -514,6 +594,9 @@ def main():
     record = out / "running.json"
     for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(s, on_signal)
+    if not other_run(record):  # what an earlier stopped integration run left (issue 342)
+        for line in sweep_earlier(co, BIN_DIR):
+            print(line, flush=True)
     sc = scope(co, full=a.full, only=a.only, checks=a.checks)
     print("\n".join(lines(sc)), flush=True)
     if a.checks:

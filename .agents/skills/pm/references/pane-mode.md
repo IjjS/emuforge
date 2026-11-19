@@ -119,6 +119,11 @@ you have stopped an emulator you started and removed its container, remove its f
 `<Root>/.pm/bin/pm-emulator-dir rm --port <port>` for a port outside a worktree (a plan's probe, a crit's capture).
 It refuses while anything uses the port and never reads the files. Never `rm` or `rmdir` the folder by hand.
 
+The emulator of an integration run is the run's, not yours. When the run ends, or `pm-check --stop` ends it,
+`pm-check` removes what the run left (its containers, volumes, images, and its folder through `pm-emulator-dir`), and
+the next `pm-check` of your worktree removes what an earlier stopped run left; you remove none of it by hand. A line
+`integration: leftovers of run <id> kept: …` or `… not swept: …` says what is still there and why.
+
 ## Machine
 
 Memory budget 22.5 GB used, CPU 90% (`<Root>/.pm/bin/pm-mem`). Before `cargo build`, Playwright, a dev server or
