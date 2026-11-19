@@ -244,13 +244,13 @@ describe('"Create folder", the calls', () => {
     await screen.findByRole('link', { name: 'reports/' });
   });
 
-  it('a key found under the name → "A folder {name} already exists here." and nothing put', async () => {
+  it('a key found under the name → "A folder {name} already exists here." in the open dialog, and nothing put', async () => {
     engine.keys = ['logs/a.txt'];
     const dialog = await openDialog();
     typeName(dialog, 'logs');
     create(dialog);
     await waitFor(() => {
-      expect(field(dialog).findError()?.getElement().textContent).toBe('A folder logs already exists here.');
+      expect(createWrapper(dialog).findAlert()?.getElement().textContent).toBe('A folder logs already exists here.');
     });
     expect(engine.checks().map((seen) => seen.url.searchParams.get('prefix'))).toEqual(['logs/']);
     expect(engine.puts()).toEqual([]);
@@ -276,7 +276,7 @@ describe('"Create folder", the calls', () => {
     typeName(dialog, 'logs');
     create(dialog);
     await waitFor(() => {
-      expect(field(dialog).findError()?.getElement().textContent).toBe('A folder logs already exists here.');
+      expect(createWrapper(dialog).findAlert()?.getElement().textContent).toBe('A folder logs already exists here.');
     });
     expect(engine.puts()).toEqual([]);
   });
@@ -293,12 +293,18 @@ describe('"Create folder", the calls', () => {
   });
 
   it("another failure → the emulator's message, in the open dialog", async () => {
-    engine.put = errorAnswer(400, 'ValidationException', 'the bucket "alpha" already holds the maximum of 1000 objects');
+    engine.put = errorAnswer(
+      400,
+      'ValidationException',
+      'the bucket "alpha" already holds the maximum of 1000 objects',
+    );
     const dialog = await openDialog();
     typeName(dialog, 'reports');
     create(dialog);
     await within(dialog).findByText('Creating the folder failed');
-    expect(dialog.textContent).toContain('ValidationException: the bucket "alpha" already holds the maximum of 1000 objects');
+    expect(dialog.textContent).toContain(
+      'ValidationException: the bucket "alpha" already holds the maximum of 1000 objects',
+    );
     expect(screen.getByRole('dialog')).toBe(dialog);
   });
 });

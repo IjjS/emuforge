@@ -439,7 +439,7 @@ describe('the Upload page, the puts', () => {
     expect(statusOf('big.bin')).toBe('Uploaded');
   });
 
-  it("a part's failure → AbortMultipartUpload and the row \"Failed:\" with the message", async () => {
+  it('a part\'s failure → AbortMultipartUpload and the row "Failed:" with the message', async () => {
     engine.own = (seen) =>
       seen.operation === 'UploadPart' && seen.url.searchParams.get('partNumber') === '2'
         ? errorAnswer(
@@ -535,9 +535,7 @@ describe('the Upload page, the puts', () => {
 
   it('501 on PutObject or a multipart operation → "Not implemented by the emulator" with its name, in the row', async () => {
     engine.own = (seen) =>
-      seen.operation === 'PutObject' || seen.operation === 'UploadPart'
-        ? { status: 501, body: null }
-        : undefined;
+      seen.operation === 'PutObject' || seen.operation === 'UploadPart' ? { status: 501, body: null } : undefined;
     open();
     await shownPage();
     addFiles(textFile('small.txt', 's'), bigFile('big.bin', PART_SIZE + 1));

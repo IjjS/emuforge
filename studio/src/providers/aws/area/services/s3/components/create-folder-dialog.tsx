@@ -44,7 +44,7 @@ export function CreateFolderDialog({ visible, endpoint, bucket, prefix, onClose 
   const flash = usePageFlash();
   const createFolder = useCreateFolder(endpoint, bucket);
   const [name, setName] = useState('');
-  const [error, setError] = useState<ReactNode>();
+  const [error, setError] = useState<string>();
   const [failed, setFailed] = useState<{ type: 'error' | 'info'; header: ReactNode; detail?: ReactNode }>();
   const [running, setRunning] = useState(false);
   const controller = useRef<AbortController | null>(null);
@@ -91,7 +91,7 @@ export function CreateFolderDialog({ visible, endpoint, bucket, prefix, onClose 
       (outcome) => {
         setRunning(false);
         if (outcome === 'exists') {
-          setError(<Quoted before="A folder " name={name} after=" already exists here." />);
+          setFailed({ type: 'error', header: <Quoted before="A folder " name={name} after=" already exists here." /> });
           return;
         }
         flash.show([{ type: 'success', content: <Quoted before="Folder " name={name} after=" created." /> }]);
