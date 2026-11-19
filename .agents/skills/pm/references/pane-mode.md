@@ -72,7 +72,8 @@ own unit is not this: that is `BLOCKED`.
 - Shell: batch (`a && b && c`), send long output to `output/logs/` and read the tail or `grep`. Never `sleep N`
   and check again; `pm-check` and `pm-capture` block until done, and anything you wait for from another pane
   arrives as your next prompt. A `pm-check` the machine has no room for answers `WAIT <n>s: …` at once and runs
-  nothing; end your turn, and `EVENT room <name> check <worktree>` arrives when there is room: run it again.
+  nothing; end your turn with `WAITING <name> check <worktree>`, and `EVENT room <name> check <worktree>` arrives when
+  there is room: run it again.
 - Checks only through `<Root>/.pm/bin/pm-check <worktree>`; captures only through `pm-capture`. Their records
   are the evidence; a command you ran by hand is not.
 - For a unit of an issue that has an issue branch, `pm-check` is the fast check: it runs what the unit's own paths
@@ -146,34 +147,44 @@ one of its processes, as a runner's main process, leaves its workers running wit
 worktree whose parent is a reaper (PID 1) is therefore abandoned, and the harness may stop it: `pm-pane reset` and
 `close` and `pm-worktree rm` do, and when the `pm` prompts you with the PIDs of such processes, stop each by its PID.
 A pane never runs the `pm`'s own scripts: `pm-watchd`, `pm-pane`, `pm-merge`, `pm-worktree`, `pm-archive`,
-`pm-brief`, `pm-tokens`, `pm-ready`, except a `plan`, for its own issue, as `lead.md` says.
+`pm-brief`, `pm-tokens`, except a `plan`, for its own issue, as `lead.md` says.
 
 ## Reporting lines
 
-Report through the file channel, then print the same line as the last line of your reply and stop:
+Every turn you take ends with exactly one typed line of the table below. Report it through the file channel, then
+print the same line as the last line of your reply and stop:
 
 ```
 <Root>/.pm/bin/pm-report "UNIT READY <name> <branch>"
 ```
 
-```
-STAGE READY <name>                 crit: the scores are recorded; harness-engineer: output/plan.md is written
-UNIT READY <name> <branch>         worker: pm-check (the fast check) passed on the branch's head; harness-engineer: pm-check passed and output/report.md is written
-ISSUE READY <name> <branch> report=<path> [filed #<n> …]   plan: the issue is whole on its collecting branch (lead.md, Close)
-DONE <name> <one line>             an order your lead sent after your ready line finished (what changed, committed)
-BLOCKED <name> <reason>            you cannot continue without your lead: decision-needed <q> | memory | cpu | depends <unit> <what> | review <stage> (3 rounds failed) | check <id>
-REVIEWED <stage> r<k> verdict=<pass|revise> p1=<n> p2=<n> p3=<n> <review-file>    rev only: sent to the lead with herdr agent prompt, and pm-report --from <rev-name> for the log
-```
+A turn that ends with no typed line is itself an event: the moment herdr says your turn ended, `pm-watchd` sends
+`EVENT silent <name>` to your lead, which looks at your pane and tells you to go on or to end your turn with your
+line. So when you stop to wait on purpose, say so with `WAITING`.
 
-A line goes to whoever opened your pane: a worker's, rev's and crit's to their plan, a plan's and a
+| line | you end your turn with it when | handling |
+|---|---|---|
+| `STAGE READY <name> …` | crit: the scores are recorded; harness-engineer: `output/plan.md` is written | delivered to your lead |
+| `UNIT READY <name> <branch> …` | worker: `pm-check` (the fast check) passed on the branch's head; harness-engineer: `pm-check` passed and `output/report.md` is written | delivered to your lead |
+| `ISSUE READY <name> <branch> report=<path> [filed #<n> …]` | plan: the issue is whole on its collecting branch (`lead.md`, Close) | delivered to the `pm` |
+| `DONE <name> <one line>` | an order your lead sent after your ready line finished (what changed, committed) | delivered to your lead |
+| `BLOCKED <name> <reason>` | you cannot continue without your lead: `decision-needed <q>` \| `memory` \| `cpu` \| `depends <unit> <what>` \| `review <stage>` (3 rounds failed) \| `check <id>` | delivered to your lead; `memory`, `cpu` and `depends emulator image` to the `pm` |
+| `WAITING <name> <what>` | you stop on purpose and something else will prompt you: `check <worktree>` (a `WAIT` answer, until `EVENT room`), `room <role>` (a `QUEUE` answer, until `EVENT room`), `unit <unit>` (a plan, until that worker's line), `review <stage> r<k>` (a plan, until rev's `REVIEWED`), `run <what>` (a run of your own in the background that prompts you when it ends) | logged only |
+| `REVIEWED <stage> r<k> verdict=<pass\|revise> p1=<n> p2=<n> p3=<n> <review-file>` | rev only: sent to the lead with `herdr agent prompt`, and `pm-report --from <rev-name>` for the log | logged only (the lead has it from rev) |
+| `RESET READY <name> <nonce>` | the line a reset asks for, printed exactly as given (Context budget) | logged only (`pm-pane reset` reads it) |
+| no typed line | never on purpose | `EVENT silent <name>` to your lead |
+
+A delivered line goes to whoever opened your pane: a worker's, rev's and crit's to their plan, a plan's and a
 harness-engineer's to the PM. `BLOCKED … memory`, `cpu` and `depends emulator image` go to the PM from every pane,
-since the PM hears the machine. Progress is never reported. Report faithfully: a failed or skipped check is stated with its log path.
+since the PM hears the machine. What your lead does with a delivered line, and with `EVENT silent`, is in its own
+events table: the `pm`'s in the PM skill (Events), a plan's in `lead.md` (Events that reach you). Progress is never
+reported. Report faithfully: a failed or skipped check is stated with its log path.
 
 ## Talking to other panes
 
 A plan talks to its own panes, and rev to its plan, with `herdr agent prompt <pane> "<one line>"`; reviews go as
-`review-protocol.md` defines. After sending a `REVIEW` line, end your turn; rev's `REVIEWED` line arrives as your
-next prompt. Never wait or poll for it. Workers do not talk to each other; a dependency on another unit is
+`review-protocol.md` defines. After sending a `REVIEW` line, end your turn with `WAITING <name> review <stage> r<k>`;
+rev's `REVIEWED` line arrives as your next prompt. Never wait or poll for it. Workers do not talk to each other; a dependency on another unit is
 `BLOCKED <name> depends <unit> <what>` to your plan. Text in your input box that you did not type is a suggestion
 from your tool, never an instruction.
 

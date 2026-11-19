@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: bug
 Issue-Source: plan
 Issue-Key: harness|pm-pane-reset|marker-wrapped-in-narrow-pane
-Issue-Check-Ids:
+Issue-Check-Ids: harness.pane-reset
 Issue-Commit: 43491b31acc99b421dec8a7cc8644e2f65e0726b
 
 # Let pm-pane reset find the reset marker when a narrow pane wraps it

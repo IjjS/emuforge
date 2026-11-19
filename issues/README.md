@@ -25,7 +25,7 @@ Plain `Key: value` lines at the top of the file, before the title.
 | `Issue-Severity` | `CRITICAL`, `HIGH`, `MEDIUM`, `LOW` | `CRITICAL` blocks a whole workflow; `LOW` is cosmetic |
 | `Issue-Module` | `studio`, `engine`, `cli`, `iam`, `verify`, `harness` | The module that owns the fix. One module per file; split an issue that spans two. `studio` follows `studio/references/workflow.md`; `engine`, `cli`, `iam` and `verify` follow `engine/references/workflow.md` |
 | `Issue-Kind` | `gap`, `bug`, `feature` | `gap`: differs from the reference (AWS console, AWS CLI, direct emulator call). `bug`: breaks its own stated behavior. `feature`: new capability |
-| `Issue-Source` | `github#<n>`, `owner`, `finder`, `plan`, `worker` | Where it came from. `finder`: a check that failed on `main`. `plan`, `worker`: found while working on another issue and filed instead of fixed in passing. `github#<n>` waits for the owner's `READY`; the others are picked up by the `pm` in severity order |
+| `Issue-Source` | `github#<n>`, `owner`, `finder`, `plan`, `worker` | Where it came from. `finder`: a check that failed on `main`. `plan`, `worker`: found while working on another issue and filed instead of fixed in passing. `github#<n>` waits for the owner's word in chat; the others are picked up by the `pm` in severity order |
 | `Issue-Key` | `<module>\|<subject>\|<class>` | Stable identity used to detect duplicates, e.g. `studio\|s3.bucket-list\|missing-column` |
 | `Issue-Check-Ids` | space-separated check ids | Checks that fail because of this issue and pass once it is fixed. Empty for a `feature` until its checks are written |
 | `Issue-Commit` | full commit sha | The commit the issue was identified against |
