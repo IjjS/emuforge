@@ -29,6 +29,13 @@ of the filter works; these are rough edges of its layout and of what it tells. T
 5. "More items remain: go to the next page." names a control that is not in the message: the developer has to find
    "Next page" in the table's header.
 
+And one finding of issue 512's review of the whole (`review-impl-r1.md`, P2):
+
+6. The refused filtered read (`components/items-tab.tsx`, `Body`, case `refused`) copies the markup of the area's
+   shared `ReadFailure` (`providers/aws/area/components/failure-states.tsx`) to give its action another label and
+   handler ("Run", the request as the fields now hold it). The two match today; a later change of `ReadFailure` would
+   not reach the copy, which already leaves out its "Connection status" link.
+
 ## Evidence
 
 `.pm/archive/512/` once issue 512 is archived (until then `.pm/issue-512/`): `review-final.md`, round 2, "P2", each
@@ -57,6 +64,8 @@ in issue 512's worktree. Files: `studio/src/providers/aws/area/services/dynamodb
   check moves focus to the first field with a message; a refused filtered read says to correct the conditions and
   run again.
 - A page that matched none while more remain offers "Next page" in its message, the same move as the pagination's.
+- The refused filtered read is shown by the area's `ReadFailure` itself, which takes the action's label and handler;
+  the Items tab holds no copy of its markup, and every other use of `ReadFailure` shows what it shows today.
 
 ## Out of scope
 
