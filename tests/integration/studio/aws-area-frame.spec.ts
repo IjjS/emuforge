@@ -91,16 +91,18 @@ test('studio.aws-area-breadcrumbs-start-at-emuforge', async ({ ctx, page }) => {
   });
 
   await lines.line(
-    'Open `/aws/kinesis` → the crumbs are "EmuForge", "AWS", "Kinesis"; open `/aws/dynamodb/tables/orders` → "EmuForge", "AWS", "DynamoDB"',
+    // Issue 496 (decisions.md, Review decisions of 2026-11-19, as issue 72 had decided): the path below a service without screens is the example service's,
+    // since DynamoDB has screens of its own from that issue on.
+    '(changed, issue 496) Open `/aws/kinesis` → the crumbs are "EmuForge", "AWS", "Kinesis"; open `/aws/kinesis/streams` → "EmuForge", "AWS", "Kinesis"',
     async () => {
       await open(page, NO_SCREEN_SERVICE.path, NO_SCREEN_SERVICE.label);
       await expect
         .poll(() => crumbs(page), { message: `the crumbs on ${NO_SCREEN_SERVICE.path}` })
         .toEqual(['EmuForge', 'AWS', NO_SCREEN_SERVICE.crumb]);
-      await open(page, '/aws/dynamodb/tables/orders', 'Amazon DynamoDB');
+      await open(page, NO_SCREEN_SERVICE.below, NO_SCREEN_SERVICE.label);
       await expect
-        .poll(() => crumbs(page), { message: 'the crumbs on /aws/dynamodb/tables/orders' })
-        .toEqual(['EmuForge', 'AWS', 'DynamoDB']);
+        .poll(() => crumbs(page), { message: `the crumbs on ${NO_SCREEN_SERVICE.below}` })
+        .toEqual(['EmuForge', 'AWS', NO_SCREEN_SERVICE.crumb]);
     },
   );
 
@@ -110,13 +112,13 @@ test('studio.aws-area-breadcrumbs-start-at-emuforge', async ({ ctx, page }) => {
   });
 
   await lines.line(
-    'On each of those pages → no crumb reads "Amazon Web Services", and the frame\'s "AWS" is marked current: `aria-current="page"` on `/aws`, `"true"` on the pages below it (changed, issue 45 PM decision)',
+    'On each of those pages → no crumb reads "Amazon Web Services", and the frame\'s "AWS" is marked current: `aria-current="page"` on `/aws`, `"true"` on the pages below it (changed, issue 45 PM decision; issue 496: `/aws/kinesis/streams` in place of `/aws/dynamodb/tables/orders`)',
     async () => {
       const found: string[] = [];
       for (const { path, h1, marked } of [
         { path: '/aws', h1: AWS, marked: 'page' },
         { path: NO_SCREEN_SERVICE.path, h1: NO_SCREEN_SERVICE.label, marked: 'true' },
-        { path: '/aws/dynamodb/tables/orders', h1: 'Amazon DynamoDB', marked: 'true' },
+        { path: NO_SCREEN_SERVICE.below, h1: NO_SCREEN_SERVICE.label, marked: 'true' },
         { path: '/aws/does-not-exist', h1: NOT_FOUND, marked: 'true' },
       ]) {
         await open(page, path, h1);
