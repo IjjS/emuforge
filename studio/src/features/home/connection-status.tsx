@@ -1,3 +1,5 @@
+import './connection-status.css';
+
 import { useEffect, useRef, type FocusEvent } from 'react';
 
 import type { MessageKey } from '../../i18n/catalogue';
@@ -149,11 +151,11 @@ export function ConnectionStatus(props: ConnectionStatusProps) {
           </StatusRows>
           {/* Outside the rows, which stay as they were; the live region below does not name the target, so a change
               of target alone announces nothing. */}
-          <div className="st-row">
-            <div className="st-section-head">
-              {target !== undefined && <p className="st-meta">{t('connection.target', { target })}</p>}
-              <ButtonLink to="/connections">{t('connection.manage')}</ButtonLink>
-            </div>
+          <div className="st-target-strip">
+            {target !== undefined && (
+              <p>{t('connection.target', { target: <code className="st-code">{target}</code> })}</p>
+            )}
+            <ButtonLink to="/connections">{t('connection.manage')}</ButtonLink>
           </div>
           {engineOrigin !== undefined && enginePort !== undefined && hasNotice(result) && (
             <div onFocus={handleFocus} onBlur={handleBlur}>
