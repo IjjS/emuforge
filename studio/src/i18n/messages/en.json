@@ -82,6 +82,10 @@
     "one": "{count}\u00a0service · no Studio screen yet",
     "other": "{count}\u00a0services · no Studio screen yet"
   },
+  "providers.servicesWithScreens": {
+    "one": "{count}\u00a0service · {screens} with a Studio screen",
+    "other": "{count}\u00a0services · {screens} with a Studio screen"
+  },
   "notFound.title": "Page not found",
   "notFound.statement": "Studio has no page at {path}.",
   "notFound.path": "Path",

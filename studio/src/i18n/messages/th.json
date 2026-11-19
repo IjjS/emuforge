@@ -79,6 +79,9 @@
   "providers.services": {
     "other": "{count}\u00a0บริการ · ยังไม่มีหน้าจอใน Studio"
   },
+  "providers.servicesWithScreens": {
+    "other": "{count}\u00a0บริการ · มีหน้าจอใน Studio {screens}\u00a0บริการ"
+  },
   "notFound.title": "ไม่พบหน้า",
   "notFound.statement": "Studio ไม่มีหน้า {path}",
   "notFound.path": "เส้นทาง",

@@ -79,6 +79,9 @@
   "providers.services": {
     "other": "서비스 {count}개 · 아직 Studio 화면 없음"
   },
+  "providers.servicesWithScreens": {
+    "other": "서비스 {count}개 · Studio 화면 있음 {screens}개"
+  },
   "notFound.title": "페이지를 찾을 수 없음",
   "notFound.statement": "Studio에 {path} 페이지가 없습니다.",
   "notFound.path": "경로",

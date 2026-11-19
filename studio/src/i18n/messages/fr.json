@@ -85,6 +85,11 @@
     "many": "{count}\u00a0de\u00a0services · pas encore d’écran Studio",
     "other": "{count}\u00a0services · pas encore d’écran Studio"
   },
+  "providers.servicesWithScreens": {
+    "one": "{count}\u00a0service · {screens} avec un écran Studio",
+    "many": "{count}\u00a0de\u00a0services · {screens} avec un écran Studio",
+    "other": "{count}\u00a0services · {screens} avec un écran Studio"
+  },
   "notFound.title": "Page introuvable",
   "notFound.statement": "Studio n’a aucune page à {path}.",
   "notFound.path": "Chemin",

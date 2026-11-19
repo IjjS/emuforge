@@ -33,8 +33,9 @@ import tseslint from 'typescript-eslint';
 //   its own (a JSX attribute or an object property `getModalRoot`, `removeModalRoot` or `modalRoot`): a dialog of a
 //   service is the area's `AreaModal`, and a `CollectionPreferences` takes the area's root from `useAreaModalRoot()`;
 // - a file pattern (`import.meta.glob`) is no import to the rules above, so it has its own (R8.1): none outside
-//   `providers/<id>/area/` but the one pattern `./area/services/*/service.json` of `providers/aws/services.ts` (data
-//   only, R13.3) and the catalogues' `./messages/*.json` of `i18n/bundled.ts`; inside the area outside `services/`,
+//   `providers/<id>/area/` but the two patterns `./area/services/*/service.json` and `./area/services/*/screens.ts` of
+//   `providers/aws/services.ts` (data only, R13.3; the second read for its keys alone, issue 494) and the catalogues'
+//   `./messages/*.json` of `i18n/bundled.ts`; inside the area outside `services/`,
 //   none that names a service's folder rather than `services/*`; inside a service folder, none that leaves it. A test
 //   may use any.
 
@@ -202,20 +203,22 @@ function globPatterns(node) {
 
 /**
  * The patterns allowed outside an area, by file: `providers/aws/services.ts` collects each service's `service.json`
- * (R13.3), and `i18n/bundled.ts` bundles Studio's own catalogues, which are no file of an area.
+ * (R13.3) and reads which service folders hold a `screens.ts`, by the keys of that pattern alone (issue 494), and
+ * `i18n/bundled.ts` bundles Studio's own catalogues, which are no file of an area.
  */
 const PATTERNS_OUTSIDE_AREAS = new Map([
-  [path.join('providers', 'aws', 'services.ts'), './area/services/*/service.json'],
-  [path.join('i18n', 'bundled.ts'), './messages/*.json'],
+  [path.join('providers', 'aws', 'services.ts'), ['./area/services/*/service.json', './area/services/*/screens.ts']],
+  [path.join('i18n', 'bundled.ts'), ['./messages/*.json']],
 ]);
 
 /** Why `from`, at `file`, may not use the file patterns `patterns`, or `undefined` when it may. */
 function brokenPattern(file, from, patterns) {
   if (from.kind !== 'area') {
-    if (patterns.length === 1 && patterns[0] === PATTERNS_OUTSIDE_AREAS.get(from.rel)) {
+    const allowed = PATTERNS_OUTSIDE_AREAS.get(from.rel) ?? [];
+    if (patterns.length === 1 && allowed.includes(patterns[0])) {
       return undefined;
     }
-    return "import.meta.glob is used only inside a provider's area, but for providers/aws/services.ts's ./area/services/*/service.json and i18n/bundled.ts's ./messages/*.json.";
+    return "import.meta.glob is used only inside a provider's area, but for providers/aws/services.ts's ./area/services/*/service.json and ./area/services/*/screens.ts, and i18n/bundled.ts's ./messages/*.json.";
   }
   for (const pattern of patterns) {
     if (pattern === undefined) {

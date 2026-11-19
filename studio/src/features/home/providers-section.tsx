@@ -7,9 +7,14 @@ import { useLanguage } from '../../i18n/language-context';
 import { ArrowIcon } from '../../ui/icons';
 import { Panel, Section } from '../../ui/section';
 
-/** One provider: its name linking to its area, how many services it has, and each service's link. */
+/**
+ * One provider: its name linking to its area, how many services it has and how many of them have a Studio screen
+ * (issue 494), and each service's link.
+ */
 function ProviderEntry({ provider }: { provider: Provider }) {
-  const { plural } = useLanguage();
+  const { plural, formatNumber } = useLanguage();
+  const count = provider.services.length;
+  const screens = provider.services.filter((service) => service.hasScreen).length;
   return (
     <Panel className="st-provider">
       <div className="st-provider-head">
@@ -17,7 +22,11 @@ function ProviderEntry({ provider }: { provider: Provider }) {
           {provider.name}
           <ArrowIcon />
         </Link>
-        <p>{plural('providers.services', provider.services.length)}</p>
+        <p>
+          {screens > 0
+            ? plural('providers.servicesWithScreens', count, { screens: formatNumber(screens) })
+            : plural('providers.services', count)}
+        </p>
       </div>
       <ul className="st-services">
         {provider.services.map((service) => (

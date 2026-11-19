@@ -56,6 +56,8 @@ export interface ProviderService {
   label: string;
   /** The service's page, under the provider's segment (`/aws/s3`). */
   path: string;
+  /** Whether the service has a Studio screen; Home counts these (issue 494). */
+  hasScreen: boolean;
 }
 
 /**
