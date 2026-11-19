@@ -1056,7 +1056,7 @@ describe('issue 467', () => {
 
 /** A .zip archive the user chose: Studio's own writer makes a real one. */
 function zipFile(name = 'app.zip'): File {
-  return new File([storedZip('app.py', 'def handler(event, context):\n    return 1\n')], name);
+  return new File([new Uint8Array(storedZip('app.py', 'def handler(event, context):\n    return 1\n'))], name);
 }
 
 /** The base64 of `bytes`, as the SDK sends `Code.ZipFile` in the JSON body. */
@@ -1090,6 +1090,17 @@ function handlerField(): HTMLInputElement {
 /** The message under "File", read as a reader meets it. */
 function fileMessage(): string {
   return textOf(formField('File')?.findError()?.getElement());
+}
+
+/**
+ * "Create Event Function" with "Upload a .zip file": the press, then the wait while the form reads the file (the zip
+ * check and the bytes are read asynchronously by the browser's `File`), before anything is read off the page.
+ */
+async function pressWithFile(): Promise<void> {
+  press();
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  });
 }
 
 describe('issue 516: the code of a new function', () => {
@@ -1129,7 +1140,7 @@ describe('issue 516: the code of a new function', () => {
     fireEvent.change(nameField(), { target: { value: 'orders' } });
     fireEvent.click(radio('Upload a .zip file'));
 
-    press();
+    await pressWithFile();
     await waitFor(() => {
       expect(messageOf('File')).toBe('Choose a .zip file.');
     });
@@ -1137,14 +1148,14 @@ describe('issue 516: the code of a new function', () => {
     expect(engine.aws).toEqual([]);
 
     chooseFile(new File(['just some text'], 'notes.zip'));
-    press();
+    await pressWithFile();
     await waitFor(() => {
       expect(fileMessage()).toBe('notes.zip is not a .zip archive.');
     });
     expect(engine.aws).toEqual([]);
 
     chooseFile(zipFile());
-    press();
+    await pressWithFile();
     await waitFor(() => {
       expect(messageOf('File')).toBeUndefined();
     });
@@ -1156,7 +1167,7 @@ describe('issue 516: the code of a new function', () => {
     expect(engine.roles).toEqual([]);
 
     fireEvent.change(handlerField(), { target: { value: 'app handler' } });
-    press();
+    await pressWithFile();
     await waitFor(() => {
       expect(messageOf('Handler')).toBe('The handler cannot contain spaces.');
     });
@@ -1173,7 +1184,7 @@ describe('issue 516: the code of a new function', () => {
     chooseFile(file);
     fireEvent.change(handlerField(), { target: { value: 'app.handler' } });
 
-    press();
+    await pressWithFile();
     await screen.findByRole('heading', { level: 1, name: 'orders' });
     expect(router.state.location.pathname).toBe('/aws/lambda/functions/function/orders');
     expect(engine.creating).toEqual(['CreateRole', 'AttachRolePolicy', 'CreateFunction']);
@@ -1192,7 +1203,7 @@ describe('issue 516: the code of a new function', () => {
     fireEvent.click(radio('Starter code'));
     expect(formField('File')).toBeUndefined();
 
-    press();
+    await pressWithFile();
     await screen.findByRole('heading', { level: 1, name: 'orders' });
     const starter = starterCode('python3.12');
     if (starter === undefined) throw new Error('No starter code for python3.12');
@@ -1209,7 +1220,7 @@ describe('issue 516: the code of a new function', () => {
     chooseFile(zipFile('big.zip'));
     fireEvent.change(handlerField(), { target: { value: 'app.handler' } });
 
-    press();
+    await pressWithFile();
     await waitFor(() => {
       expect(fileMessage()).toMatch(/^The emulator refused big\.zip as too large\. HTTP 413/);
     });

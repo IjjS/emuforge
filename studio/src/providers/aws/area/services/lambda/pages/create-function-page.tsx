@@ -11,7 +11,7 @@ import Input, { type InputProps } from '@cloudscape-design/components/input';
 import RadioGroup from '@cloudscape-design/components/radio-group';
 import Select, { type SelectProps } from '@cloudscape-design/components/select';
 import SpaceBetween from '@cloudscape-design/components/space-between';
-import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 
 import { DiscardDialog, type DiscardAnswer } from '../../../components/discard-dialog';
@@ -198,6 +198,8 @@ export function CreateFunctionPage({ connection }: ScreenPageProps) {
   const [codeChoice, setCodeChoice] = useState<CodeChoice>('starter');
   const [file, setFile] = useState<File | null>(null);
   const [handler, setHandler] = useState('');
+  /** The file field's value: one array per file chosen, since the field compares it by reference. */
+  const fileValue = useMemo(() => (file === null ? [] : [file]), [file]);
   /** The zip check's verdict on the file it last read, at "Create Event Function". */
   const [archive, setArchive] = useState<{ file: File; zip: boolean } | undefined>(undefined);
   /** The file the last "Create Event Function" sent, which a refusal as too large names. */
@@ -381,13 +383,7 @@ export function CreateFunctionPage({ connection }: ScreenPageProps) {
 
   return (
     <>
-      <ContentLayout
-        header={
-          <Header variant="h1">
-            {CREATE_FUNCTION_TITLE}
-          </Header>
-        }
-      >
+      <ContentLayout header={<Header variant="h1">{CREATE_FUNCTION_TITLE}</Header>}>
         <form onSubmit={handleSubmit} noValidate>
           <Form
             actions={
@@ -480,15 +476,16 @@ export function CreateFunctionPage({ connection }: ScreenPageProps) {
                         <FileUpload
                           ref={fileRef}
                           accept=".zip"
-                          value={file === null ? [] : [file]}
+                          value={fileValue}
                           onChange={({ detail }) => {
                             setFile(detail.value[0] ?? null);
                           }}
-                          showFileSize
                           i18nStrings={{
                             uploadButtonText: () => 'Choose file',
                             dropzoneText: () => 'Drop the file to choose it',
                             removeFileAriaLabel: () => 'Remove the file',
+                            limitShowFewer: 'Show fewer files',
+                            limitShowMore: 'Show more files',
                             errorIconAriaLabel: 'Error',
                             warningIconAriaLabel: 'Warning',
                           }}
