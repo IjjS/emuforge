@@ -272,9 +272,23 @@ function table() {
 
 const text = (element: Element) => (element.textContent ?? '').replace(/\s+/g, ' ').trim();
 
-/** The data rows' cells as text, in the columns' order. */
+/** The selection's cell of a row or of the header (issue 490): not a column's. */
+function isSelectionCell(cell: Element): boolean {
+  return /selection-control/.test(cell.className) || cell.querySelector('[class*="selection-control"]') !== null;
+}
+
+/** The column headers, the selection's cell left out. */
+function columnHeaders(): HTMLElement[] {
+  return (table().findColumnHeaders() ?? [])
+    .map((header) => header.getElement())
+    .filter((cell) => !isSelectionCell(cell));
+}
+
+/** The data rows' cells as text, in the columns' order; the selection's cell (issue 490) is not a column's. */
 function rows(): string[][] {
-  return (table().findRows() ?? []).map((row) => [...row.getElement().querySelectorAll('td, th')].map(text));
+  return (table().findRows() ?? []).map((row) =>
+    [...row.getElement().querySelectorAll('td, th')].filter((cell) => !isSelectionCell(cell)).map(text),
+  );
 }
 
 function names(): string[] {
@@ -341,7 +355,7 @@ describe('the queue list, loaded', () => {
   it('one row per queue with its name link, type, the three counts, dead-letter links and "-" where none', async () => {
     await openLoaded();
 
-    const headers = (table().findColumnHeaders() ?? []).map((header) => text(header.getElement()));
+    const headers = columnHeaders().map(text);
     expect(headers).toEqual([
       'Name',
       'Available',
@@ -638,7 +652,9 @@ describe('the columns at a narrow width and dead letters', () => {
   it('at 390 wide with the table 1200 wide: the name column sticks while the others scroll', async () => {
     // jsdom lays nothing out: the table is given the width of its columns, everything else the viewport's.
     vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
-      const width = this.tagName === 'TABLE' ? 1200 : this.tagName === 'TH' || this.tagName === 'TD' ? 150 : 390;
+      // The selection's cell is as narrow as its control (issue 490).
+      const cell = this.tagName === 'TH' || this.tagName === 'TD';
+      const width = this.tagName === 'TABLE' ? 1200 : cell && isSelectionCell(this) ? 40 : cell ? 150 : 390;
       return {
         x: 0,
         y: 0,
@@ -659,9 +675,7 @@ describe('the columns at a narrow width and dead letters', () => {
     });
 
     await waitFor(() => {
-      const headers = table()
-        .findColumnHeaders()
-        .map((header) => header.getElement().className);
+      const headers = columnHeaders().map((header) => header.className);
       expect(headers[0]).toMatch(/sticky-cell/);
       expect(headers.slice(1).some((name) => /sticky-cell/.test(name))).toBe(false);
     });

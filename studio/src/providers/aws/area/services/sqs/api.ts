@@ -19,14 +19,7 @@ import {
 
 import { createAwsClient } from '../../../../../lib/aws/client-factory';
 import { RequestError, sendRequest, type RequestFailure } from '../../../../../lib/aws/request';
-import {
-  base64ToBytes,
-  bytesToBase64,
-  isNameOfKind,
-  queueNameFromUrl,
-  wholeNumber,
-  type QueueKind,
-} from './format';
+import { base64ToBytes, bytesToBase64, isNameOfKind, queueNameFromUrl, wholeNumber, type QueueKind } from './format';
 
 // The SQS calls of the AWS area (issue 481, design tasks 1 to 5), through the engine, mapped to plain typed results.
 // Every command goes through the shared `sendRequest` with its operation's name, so a failed request rejects with

@@ -611,7 +611,9 @@ describe('create a queue (issue 489)', () => {
       ),
     );
     expect(
-      await failure(createQueue(endpoint, { name: 'orders', kind: 'standard', contentBasedDeduplication: false }, signal())),
+      await failure(
+        createQueue(endpoint, { name: 'orders', kind: 'standard', contentBasedDeduplication: false }, signal()),
+      ),
     ).toEqual({
       kind: 'other',
       operation: 'CreateQueue',
@@ -626,7 +628,12 @@ describe('create a queue (issue 489)', () => {
     expect(engine.of('GetQueueUrl')[0]?.body).toEqual({ QueueName: 'orders' });
 
     engine.on('GetQueueUrl', () =>
-      refused(400, 'QueueDoesNotExist', 'The specified queue does not exist.', 'AWS.SimpleQueueService.NonExistentQueue'),
+      refused(
+        400,
+        'QueueDoesNotExist',
+        'The specified queue does not exist.',
+        'AWS.SimpleQueueService.NonExistentQueue',
+      ),
     );
     await expect(isQueueNameTaken(endpoint, 'orders', signal())).resolves.toBe(false);
 
@@ -644,7 +651,12 @@ describe('delete a queue (issue 490)', () => {
     expect(engine.of('DeleteQueue').map((sent) => sent.body)).toEqual([{ QueueUrl: `${AWS_HOST}/orders` }]);
 
     engine.on('DeleteQueue', () =>
-      refused(400, 'QueueDoesNotExist', 'The specified queue does not exist.', 'AWS.SimpleQueueService.NonExistentQueue'),
+      refused(
+        400,
+        'QueueDoesNotExist',
+        'The specified queue does not exist.',
+        'AWS.SimpleQueueService.NonExistentQueue',
+      ),
     );
     expect(await failure(deleteQueue(endpoint, `${AWS_HOST}/orders`, signal()))).toEqual({
       kind: 'other',
@@ -661,7 +673,9 @@ describe('the dead-letter choices (issue 489)', () => {
   it('ListQueues with the typed prefix and the page token; only names of the type kept; the next token returned', async () => {
     engine.on('ListQueues', () => ok({ QueueUrls: urls, NextToken: 'next-2' }));
 
-    await expect(listDeadLetterChoices(endpoint, { kind: 'fifo', prefix: 'd', token: 'next-1' }, signal())).resolves.toEqual({
+    await expect(
+      listDeadLetterChoices(endpoint, { kind: 'fifo', prefix: 'd', token: 'next-1' }, signal()),
+    ).resolves.toEqual({
       choices: [
         { name: 'dead.fifo', url: `${AWS_HOST}/dead.fifo` },
         { name: 'jobs.fifo', url: `${AWS_HOST}/jobs.fifo` },

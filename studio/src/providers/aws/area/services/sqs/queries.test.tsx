@@ -472,9 +472,11 @@ describe('create and delete a queue (issues 489 and 490)', () => {
 
     let rejected: unknown;
     await act(async () => {
-      await result.current.remove('orders', `${AWS_HOST}/orders`, new AbortController().signal).catch((error: unknown) => {
-        rejected = error;
-      });
+      await result.current
+        .remove('orders', `${AWS_HOST}/orders`, new AbortController().signal)
+        .catch((error: unknown) => {
+          rejected = error;
+        });
     });
 
     expect(rejected).toBeInstanceOf(RequestError);
@@ -517,9 +519,7 @@ describe('create and delete a queue (issues 489 and 490)', () => {
 
   it('the dead-letter choices read the next page on the last page’s token', async () => {
     engine.handlers.set('ListQueues', (body) =>
-      body['NextToken'] === undefined
-        ? { QueueUrls: urls('a'), NextToken: 'tok-2' }
-        : { QueueUrls: urls('b') },
+      body['NextToken'] === undefined ? { QueueUrls: urls('a'), NextToken: 'tok-2' } : { QueueUrls: urls('b') },
     );
     const { result } = renderHook(() => useDeadLetterChoices(endpoint, 'standard', '', true), { wrapper });
     await waitFor(() => {
