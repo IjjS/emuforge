@@ -23,16 +23,25 @@ issue's collecting branch `feat/<id>`, the integration tests, the whole check, t
 
 ## Stages before the build
 
-Each stage document is reviewed by `rev` per `review-protocol.md` before the next. The module's
-`references/workflow.md` and `references/test-criteria.md` say what each holds.
+Two reviews by `rev` before any code, per `review-protocol.md` (owner, 2026-11-19): the requirement alone, then
+the plan set. The module's `references/workflow.md` and `references/test-criteria.md` say what each document holds.
 
 1. `requirement.md`. Find out what the emulator answers today by calling one (start it on a free port, stop it
-   after); never from memory.
-2. `design.md`, the design stage your brief names (the module's `references/workflow.md`, stage 2).
-3. `test-criteria.md`: per unit, the unit-test scenarios that are its worker's end condition; for the issue, the
-   scenarios its integration tests will be. When you can already tell that an integration test will be left out
-   (the issue is too slight, or the test would cost more than it shows), say so here, with the reason.
-4. `breakdown.md`: the units, each with a one-line summary, its owned files, its base and the order they land in.
+   after); never from memory. Send `REVIEW requirement r1 .pm/issue-<id>/requirement.md` and end your turn with
+   `WAITING i<id>-plan review requirement r1`.
+2. On its `pass`, the plan set: write its three documents together, then send them in one line,
+   `REVIEW plan-set r1 .pm/issue-<id>/design.md .pm/issue-<id>/test-criteria.md .pm/issue-<id>/breakdown.md`, and
+   end your turn with `WAITING i<id>-plan review plan-set r1`. A `revise` names the document of each P1: fix those,
+   and send the whole set again as r<k+1>.
+   - `design.md`, the design stage your brief names (the module's `references/workflow.md`, stage 2); left out of
+     the set when the workflow skips the design for the issue's kind.
+   - `test-criteria.md`, from the requirement: per unit, the unit-test scenarios that are its worker's end
+     condition; for the issue, the scenarios its integration tests will be. When you can already tell that an
+     integration test will be left out (the issue is too slight, or the test would cost more than it shows), say
+     so here, with the reason.
+   - `breakdown.md`: the units, each with a one-line summary, its owned files, its base and the order they land in.
+
+On the plan set's `pass`, the build starts.
 
 ## The cut
 

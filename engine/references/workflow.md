@@ -2,7 +2,8 @@
 
 Stages of an issue whose `Issue-Module` is `engine`, `cli`, `iam` or `verify`, led by its `plan`
 (`.agents/skills/pm/references/lead.md`). The issue file under `issues/` states the problem and its acceptance; the
-stage documents below are working files in the issue's folder and are reviewed by `rev` one at a time.
+stage documents below are working files in the issue's folder, reviewed by `rev` twice before the build: the
+requirement alone, then design, test criteria and breakdown as one set, the plan set (`lead.md`).
 
 ## Principles
 
@@ -10,8 +11,8 @@ stage documents below are working files in the issue's folder and are reviewed b
   "add a struct" and never a whole product area.
 - The reference decides, not taste. For the relay it is the same request sent straight to aws-emulator; for
   the CLI it is the AWS CLI; for IAM it is AWS's documented policy evaluation logic.
-- Each stage is written once, reviewed, and then treated as fixed. A later stage that finds an earlier one
-  wrong sends it back; it does not quietly work around it.
+- Each stage is written once, reviewed, and then treated as fixed; the plan set's three documents are reviewed
+  as one. A later stage that finds an earlier one wrong sends it back; it does not quietly work around it.
 
 ## Stages by kind
 
