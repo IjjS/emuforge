@@ -563,6 +563,24 @@ describe('the object page, when the object or the bucket is gone', () => {
 });
 
 describe('the object page, its frame', () => {
+  it('the sections in order: Object overview, Preview, then the metadata and Tags', async () => {
+    engine.objects = [APP_JSON];
+    open('cfg/app.json');
+    await shown();
+    // The page's own sections: the side navigation's header ("Amazon S3") left out.
+    const headings = screen
+      .getAllByRole('heading', { level: 2 })
+      .filter((heading) => heading.closest('nav') === null && heading.textContent !== 'Amazon S3')
+      .map((heading) => (heading.textContent ?? '').replace(/\s*\(\d+\)$/, '').trim());
+    expect(headings).toEqual([
+      'Object overview',
+      'Preview',
+      'System-defined metadata',
+      'User-defined metadata',
+      'Tags',
+    ]);
+  });
+
   it('the notice reads "These objects are in your local emulator"', async () => {
     engine.objects = [APP_JSON];
     open('cfg/app.json');
