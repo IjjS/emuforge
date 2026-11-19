@@ -255,6 +255,10 @@ describe('AreaModal, the area’s dialog', () => {
     const root = areaRoot();
     expect(root).toContainElement(dialog);
     expect([...document.body.children].every((child) => !child.contains(dialog) || child.contains(root))).toBe(true);
+    // No element of it, or of Cloudscape's, is outside the area's root.
+    const outside = [...document.body.querySelectorAll('*')].filter((element) => !root.contains(element));
+    expect(outside.filter((element) => dialog.contains(element) || element.closest('[role="dialog"]'))).toEqual([]);
+    expect(outside.filter((element) => [...element.classList].some((name) => name.startsWith('awsui')))).toEqual([]);
   });
 
   it('rendered with no area around it: no dialog is in the document', async () => {
@@ -360,6 +364,71 @@ describe('AreaModal, the area’s dialog', () => {
     await waitFor(() => {
       expect(document.activeElement).toBe(opener);
     });
+  });
+});
+
+/** What a dialog may leave behind: the area's root and every element outside the area, with their attributes. */
+function traces(): string[] {
+  const root = areaRoot();
+  const outside = [document.documentElement, ...document.documentElement.querySelectorAll('*')].filter(
+    (element) => !root.contains(element),
+  );
+  // `data-awsui-focus-visible` on `body` follows the last input (a key, a pointer) for as long as a Cloudscape
+  // component is mounted, dialog or not; it is Cloudscape's own and allowed (own-layer.md, "No leak either way").
+  const describe = (element: Element) =>
+    `${element.tagName}[${[...element.attributes]
+      .filter(({ name }) => name !== 'data-awsui-focus-visible')
+      .map(({ name, value }) => `${name}=${value}`)
+      .join(' ')}]`;
+  return [describe(root), `root children ${String(root.children.length)}`, ...outside.map(describe)];
+}
+
+describe('AreaModal, a press on its backdrop and what it leaves behind (issue 531)', () => {
+  it('an open dialog, a press on its backdrop outside its box: its dismissal is reported once, as an overlay press', async () => {
+    const onDismiss = vi.fn();
+    render(
+      <Area connection={connectedAnswer()}>
+        <AreaModal visible header="Delete bucket" closeAriaLabel="Close modal" onDismiss={onDismiss}>
+          Nothing is deleted.
+        </AreaModal>
+      </Area>,
+    );
+    // The dialog's root is the backdrop around its box: a press on it, not on the box, is a press on the backdrop.
+    const backdrop = await screen.findByRole('dialog');
+    const box = within(backdrop).getByText('Nothing is deleted.');
+    expect(box).not.toBe(backdrop);
+
+    fireEvent.mouseDown(backdrop);
+    fireEvent.click(backdrop);
+
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+    expect(onDismiss.mock.calls[0]?.[0]).toMatchObject({ detail: { reason: 'overlay' } });
+  });
+
+  it("opened from a button and closed, twice: nothing the opening added to the area's root or outside the area is left once it is closed", async () => {
+    render(
+      <Area connection={connectedAnswer()}>
+        <OpenedFromButton />
+      </Area>,
+    );
+    const opener = screen.getByRole('button', { name: 'Delete' });
+    await settle();
+    const before = traces();
+
+    for (let pass = 0; pass < 2; pass += 1) {
+      fireEvent.click(opener);
+      const dialog = await screen.findByRole('dialog');
+      await waitFor(() => {
+        expect(dialog.contains(document.activeElement)).toBe(true);
+      });
+      fireEvent.keyDown(document.activeElement as Element, { key: 'Escape', code: 'Escape', keyCode: 27 });
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog')).toBeNull();
+      });
+      await settle();
+
+      expect(traces()).toEqual(before);
+    }
   });
 });
 

@@ -104,7 +104,9 @@ check passed, else 1.
 Intermittent failures. A test step that fails (engine-test, studio-unit, integration, harness-test) is run once
 more. When the second run passes, the step is recorded as "flaky": the run still passes, the first run's log is
 kept as check-<step>.attempt1.log, and a line goes to <root>/.pm/run/flakes.jsonl, which the PM turns into an issue
-file. So one intermittent failure costs a rerun of one step, not the unit's merge, and it is never lost. A step
+file. The line's first_log is a copy of that log, <root>/.pm/run/flakes/<stamp>-<checkout>-<step>.log (UTC stamp,
+the checkout's folder name), so it can be read after the worktree is removed (issue 542); a copy that fails never
+fails the run: the line then names the worktree's log and says why in copy_error. So one intermittent failure costs a rerun of one step, not the unit's merge, and it is never lost. A step
 that fails twice is failed. Format, lint, type and build steps are never retried. --no-retry turns this off.
 
 Load (issue 478). A run that calls for a module that builds or tests the product (engine, studio, integration) and
@@ -156,6 +158,7 @@ import json
 import os
 import pathlib
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -654,12 +657,47 @@ def run_all(a, co, mods, calls, env, logs, record, commit, held=(), target="main
                     results[-1]["full_tier"] = ft
             if status == "flaky":
                 flaky.append(name)
+                line = dict(at=now(), checkout=str(co), commit=commit, step=name, first_log=str(first))
+                kept, error = keep_first_log(co, name, first)
+                if kept:
+                    line["first_log"] = str(kept)
+                else:
+                    line["copy_error"] = error
                 with open(RUN / "flakes.jsonl", "a") as f:
-                    f.write(json.dumps(dict(at=now(), checkout=str(co), commit=commit, step=name, first_log=str(first))) + "\n")
+                    f.write(json.dumps(line) + "\n")
             print(f"  {name:18} {status:7} {results[-1]['seconds']:>7}s  {log}", flush=True)
+            if status == "flaky":
+                print(f"  {name:18} first log kept as {kept}" if kept else
+                      f"  {name:18} first log not copied ({error}); it lies only in {first}", flush=True)
             if full_tier_line(results[-1]):
                 print(full_tier_line(results[-1]), flush=True)
     return results, flaky
+
+
+def keep_first_log(co, step, first):
+    """Copy a flaky step's first log to <root>/.pm/run/flakes/<stamp>-<checkout>-<step>.log, so it outlives the
+    worktree (issue 542). Never overwrites: a taken name gets -2, -3. Returns (path, None), or (None, reason) when
+    the copy failed, which never fails the run."""
+    try:
+        d = RUN / "flakes"
+        d.mkdir(parents=True, exist_ok=True)
+        stem = f"{dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{co.name}-{step}"
+        for n in range(1, 100):
+            dest = d / (f"{stem}.log" if n == 1 else f"{stem}-{n}.log")
+            try:
+                out = open(dest, "xb")
+            except FileExistsError:
+                continue
+            try:
+                with out, open(first, "rb") as src:
+                    shutil.copyfileobj(src, out)
+            except OSError:
+                dest.unlink(missing_ok=True)  # the partial copy this call created, never another file
+                raise
+            return dest, None
+        return None, f"no free name for {stem} under {d}"
+    except OSError as e:
+        return None, f"{type(e).__name__}: {e}"
 
 
 def named_lines(results):
