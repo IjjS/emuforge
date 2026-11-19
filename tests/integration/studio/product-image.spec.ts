@@ -84,11 +84,14 @@ test('engine.product-studio-answers-as-studios-server', async ({ ctx }) => {
   const missing = answered('GET /assets/does-not-exist.js', await request(port, 'GET', '/assets/does-not-exist.js'));
   expect(missing.status, 'GET /assets/does-not-exist.js status').toBe(404);
 
-  // /config.json → the form's engine port, never cached.
+  // /config.json → the form's engine port and the channel's path (issue 503), never cached.
   const config = answered('GET /config.json', await request(port, 'GET', '/config.json'));
   expect(config.status, 'GET /config.json status').toBe(200);
   expect(config.headers['cache-control'], 'GET /config.json Cache-Control').toBe('no-store');
-  expect(JSON.parse(config.body.toString('utf8')), 'GET /config.json body').toEqual({ enginePort: form.enginePort });
+  expect(JSON.parse(config.body.toString('utf8')), 'GET /config.json body').toEqual({
+    enginePort: form.enginePort,
+    enginePath: '/__engine',
+  });
 
   // POST / → 405 with the methods it takes.
   const post = answered('POST /', await request(port, 'POST', '/', {}, Buffer.from('x')));
