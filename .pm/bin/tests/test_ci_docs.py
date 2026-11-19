@@ -6,7 +6,10 @@ the issue: the skill still runs `pm-check .` on `main` at a merge and before the
 
 What a failed run becomes follows `decisions.md` (owner decision of 2026-11-16 and the PM decision after it): an
 issue file that waits for the owner's signal, not one taken ahead of other work, so the case asserts the signal
-where test-criteria.md's line says "ahead of".
+where test-criteria.md's line says "ahead of". The owner's decision of 2026-11-19 (issue 520, decisions.md, Q2 a)
+amends that for one case: the failed run of a push that carried a merge made behind `main` is started at once,
+ahead of the queue, and holds every other merge into `main`; the case asserts the signal for every other failed run
+and that exception, once.
 """
 import pathlib
 import re
@@ -108,9 +111,11 @@ class Skill(unittest.TestCase):
         self.assertTrue(filed, found)
         self.assertTrue(any("Issue-Check-Ids" in b and re.search(r"\bopen issue\b", b) for b in filed), filed)
         self.assertTrue(any(re.search(r"\bowner'?s?\b[^.]*\bsignal\b", b) for b in filed), filed)
-        for b in found:
-            if re.search(r"\b(fail(ed|s|ing)?)\b[^.]*\brun\b", b):
-                self.assertNotIn("ahead of", b)
+        ahead = [b for b in found if re.search(r"\b(fail(ed|s|ing)?)\b[^.]*\brun\b", b) and "ahead of" in b]
+        self.assertEqual(len(ahead), 1, ahead)  # issue 520: the one exception, and only it
+        self.assertRegex(ahead[0], r"\bmerge made behind `main`")
+        self.assertRegex(ahead[0], r"\bat once\b[^.]*\bahead of\b[^.]*\bwithout waiting for the owner'?s?\b[^.]*\bsignal\b")
+        self.assertRegex(ahead[0], r"\bmerge nothing into `main` but its fix\b")
         none = [b for b in found if re.search(r"\bno run\b", b) and re.search(r"\bno answer\b", b)]
         self.assertTrue(any(re.search(r"\bowner\b", b)
                             and re.search(r"files nothing|nothing is filed|no issue is filed|without filing", b)
@@ -148,6 +153,21 @@ class Root_and_readme(unittest.TestCase):
         self.assertIn("GitHub Actions", flat(branches))
         self.assertTrue(any(re.search(r"\bfail(ed|s|ing)?\b[^.]*\brun\b|\brun\b[^.]*\bfails\b", s)
                             and "issue file" in s for s in sentences(branches)), branches)
+
+    def test_root_agents_names_the_one_failed_run_that_does_not_wait(self):
+        """Issue 520 (owner, 2026-11-19): every failed run waits for the signal but a push's that carried a merge
+        made behind `main`, which the pm starts at once and which holds every other merge into `main`."""
+        text = ROOT.read_text()
+        said = sentences(part(text, "## Branches and main"))
+        waits = [s for s in said if re.search(r"\bfailed run\b", s) and re.search(r"\bwaits for the owner'?s?\b[^.]*\bsignal\b", s)]
+        self.assertTrue(waits, said)
+        exc = [s for s in said if re.search(r"\bmerge made behind `main`", s)]
+        self.assertEqual(len(exc), 1, said)
+        self.assertRegex(exc[0], r"\bstarts it at once\b[^.]*\bwithout waiting\b")
+        self.assertRegex(exc[0], r"\bnothing else into `main` but its fix\b")
+        signal = part(text, "## Go signal")
+        self.assertTrue(any(re.search(r"\bGitHub Actions\b", s) and re.search(r"\bsignal\b", s)
+                            and re.search(r"\bmerge made behind `main`", s) for s in sentences(signal)), signal)
 
     def test_readme_develop(self):
         develop = part(README.read_text(), "## Develop")
