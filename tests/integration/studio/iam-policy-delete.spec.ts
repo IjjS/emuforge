@@ -159,7 +159,11 @@ test('studio.iam-policy-delete-detaches-and-removes', async ({ ctx, page }) => {
       await confirmByTyping(page, `Delete ${p}-race?`);
       await expect(main.getByText('Policy not found', { exact: true }), 'the page after the answer').toBeVisible();
       ctx.log(`Flashbar: ${JSON.stringify(await flashTexts(page))}; address ${addressOf(page)}`);
-      await expectFlash(page, ['failed', 'NoSuchEntity'], 'the failed step with NoSuchEntity');
+      await expectFlash(
+        page,
+        ['Reading what the policy is attached to', 'failed', 'NoSuchEntity'],
+        'the failed step, named, with NoSuchEntity',
+      );
       await expect(main.getByText('Policy not found', { exact: true }), '"Policy not found"').toBeVisible();
     },
   );
