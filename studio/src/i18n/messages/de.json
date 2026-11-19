@@ -92,6 +92,10 @@
     "one": "{count}\u00a0Dienst · noch keine Studio-Ansicht",
     "other": "{count}\u00a0Dienste · noch keine Studio-Ansicht"
   },
+  "providers.servicesWithScreens": {
+    "one": "{count}\u00a0Dienst · {screens} mit Studio-Ansicht",
+    "other": "{count}\u00a0Dienste · {screens} mit Studio-Ansicht"
+  },
   "notFound.title": "Seite nicht gefunden",
   "notFound.statement": "Studio hat keine Seite unter {path}.",
   "notFound.path": "Pfad",

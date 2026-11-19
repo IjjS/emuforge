@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
@@ -28,6 +28,7 @@ import {
   textNotFrom,
 } from '../test/home-test-kit';
 import { NO_SCREEN_SERVICE } from '../test/no-screen';
+import { serviceLinks, SERVICES_DIR } from '../test/service-files';
 import { Frame, ProviderPage } from './frame';
 import { PROVIDERS, type ProviderAreaProps } from './provider-list';
 import { Providers } from './providers';
@@ -35,6 +36,18 @@ import { routes } from './routes';
 
 /** The AWS area's first import is real work (Cloudscape's modules), not a timer; a cold run takes a while. */
 const AREA_LOAD_MS = 10_000;
+
+/**
+ * The first link of "Services" on /aws: the first, in label order, of the services whose folder holds a `screens.ts`,
+ * which the index lists first (issue 61, R5); computed from the folders, never written as a name.
+ */
+const FIRST_INDEX_LINK = (() => {
+  const first = serviceLinks().find(([, href]) =>
+    existsSync(path.join(SERVICES_DIR, href.replace(/^\/aws\//, ''), 'screens.ts')),
+  );
+  if (first === undefined) throw new Error('No service folder holds a screens.ts.');
+  return first[0];
+})();
 
 beforeEach(() => {
   // No network in these tests: Home's check fails at once, and nothing reaches an engine.
@@ -417,7 +430,7 @@ describe('"Skip to content" and a route change', () => {
 
     await activateSkip();
 
-    expect(contentTargetProblems(document.activeElement, 'Amazon Web Services', 'Amazon API Gateway')).toEqual([]);
+    expect(contentTargetProblems(document.activeElement, 'Amazon Web Services', FIRST_INDEX_LINK)).toEqual([]);
     expect(document.activeElement).not.toBe(screen.getByRole('main'));
     expect(router.state.location).toMatchObject({ pathname: '/aws', hash: '' });
     expect(window.location.hash).toBe('');
@@ -486,7 +499,7 @@ describe('"Skip to content" and a route change', () => {
     release();
 
     await screen.findByRole('heading', { level: 1, name: 'Amazon Web Services' }, { timeout: AREA_LOAD_MS });
-    await expectFocusOnTarget('Amazon Web Services', 'Amazon API Gateway');
+    await expectFocusOnTarget('Amazon Web Services', FIRST_INDEX_LINK);
   });
 
   it('from /aws, once the area has loaded, to /: focus on the content target named Home', async () => {
@@ -512,7 +525,7 @@ describe('"Skip to content" and a route change', () => {
 
   it.each([
     ['/', 'Home', 'button', 'Refresh'],
-    ['/aws', 'Amazon Web Services', 'link', 'Amazon API Gateway'],
+    ['/aws', 'Amazon Web Services', 'link', FIRST_INDEX_LINK],
     [NO_SCREEN_SERVICE.path, NO_SCREEN_SERVICE.label, 'link', 'Go to Home'],
   ])('on a first load of %s: focus stays on the body once the page shows its h1', async (path, name, role, first) => {
     openStudio(path);

@@ -43,6 +43,7 @@ import {
   SIDE_NAVIGATION,
   titleOf,
 } from './support/frame';
+import { INDEX_FIRST_LINK } from './support/home';
 import { Lines } from './support/lines';
 
 const AWS = 'Amazon Web Services';
@@ -61,7 +62,9 @@ interface PageOf {
 }
 
 const HOME: PageOf = { path: '/', h1: 'Home', firstStop: 'Refresh', home: true };
-const INDEX: PageOf = { path: '/aws', h1: AWS, firstStop: 'Amazon API Gateway' };
+// The first link of "Services" is computed from the checkout (issue 494, `decisions.md`, PM decisions): the index lists
+// the services that have a Studio screen first.
+const INDEX: PageOf = { path: '/aws', h1: AWS, firstStop: INDEX_FIRST_LINK };
 const SERVICE_PAGE: PageOf = { path: NO_SCREEN_SERVICE.path, h1: SERVICE, firstStop: GO_HOME };
 const SERVICE_BELOW: PageOf = { path: NO_SCREEN_SERVICE.below, h1: SERVICE, firstStop: GO_HOME };
 const DYNAMODB: PageOf = { path: '/aws/dynamodb', h1: 'Amazon DynamoDB', firstStop: GO_HOME };
@@ -161,7 +164,7 @@ test('studio.skip-link-reaches-page-content', async ({ ctx, page }) => {
   }
 
   await lines.line(
-    'Fresh load of `/aws`, Tab, Enter → focus is on the content target named "Amazon Web Services", it draws no focus ring, and the address is still `/aws`; the next Tab reaches "Amazon API Gateway" in "Services" (regression)',
+    'Fresh load of `/aws`, Tab, Enter → focus is on the content target named "Amazon Web Services", it draws no focus ring, and the address is still `/aws`; the next Tab reaches the first link of "Services" (regression)',
     async () => {
       await skipOn(page, INDEX);
       await expectSkipped(INDEX);
@@ -189,7 +192,7 @@ test('studio.skip-link-reaches-page-content', async ({ ctx, page }) => {
   }
 
   await lines.line(
-    'Fresh load of `/aws`, Tab, Enter → focus is on the content target named "Amazon Web Services"; the next Tab reaches "Amazon API Gateway", not "Open navigation", a link of the side navigation or a breadcrumb — 390 wide',
+    'Fresh load of `/aws`, Tab, Enter → focus is on the content target named "Amazon Web Services"; the next Tab reaches the first link of "Services", not "Open navigation", a link of the side navigation or a breadcrumb — 390 wide',
     async () => {
       await page.setViewportSize({ width: 390, height: 844 });
       try {
@@ -198,7 +201,7 @@ test('studio.skip-link-reaches-page-content', async ({ ctx, page }) => {
         const stop: Stop | null = await pressTab(page);
         const problems = contentStopProblems(stop, INDEX.firstStop);
         if (stop?.name === 'Open navigation') problems.push('the Tab reached "Open navigation"');
-        expect(problems, 'the next Tab reaches "Amazon API Gateway" in "Services"').toEqual([]);
+        expect(problems, `the next Tab reaches "${INDEX.firstStop}", the first link of "Services"`).toEqual([]);
       } finally {
         await page.setViewportSize({ width: 1280, height: 800 });
       }
@@ -371,7 +374,7 @@ test('studio.route-change-focuses-new-page-content', async ({ ctx, page }) => {
   );
 
   await lines.line(
-    'Fresh load of `/` (the area\'s code not yet loaded), focus the frame\'s "AWS", Enter → the address is `/aws`, focus is on the content target named "Amazon Web Services", and the next Tab reaches "Amazon API Gateway"',
+    'Fresh load of `/` (the area\'s code not yet loaded), focus the frame\'s "AWS", Enter → the address is `/aws`, focus is on the content target named "Amazon Web Services", and the next Tab reaches the first link of "Services"',
     async () => {
       await openFresh(page, HOME);
       await follow(page, f.aws);

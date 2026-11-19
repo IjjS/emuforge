@@ -88,6 +88,12 @@
     "many": "{count}\u00a0сервисов · экрана в Studio пока нет",
     "other": "{count}\u00a0сервиса · экрана в Studio пока нет"
   },
+  "providers.servicesWithScreens": {
+    "one": "{count}\u00a0сервис · {screens} с экраном в Studio",
+    "few": "{count}\u00a0сервиса · {screens} с экраном в Studio",
+    "many": "{count}\u00a0сервисов · {screens} с экраном в Studio",
+    "other": "{count}\u00a0сервиса · {screens} с экраном в Studio"
+  },
   "notFound.title": "Страница не найдена",
   "notFound.statement": "В Studio нет страницы {path}.",
   "notFound.path": "Путь",

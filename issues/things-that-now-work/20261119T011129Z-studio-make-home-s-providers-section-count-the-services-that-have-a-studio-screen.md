@@ -1,10 +1,10 @@
 Issue-Id: 494
-Issue-Severity: LOW
+Issue-Severity: MEDIUM
 Issue-Module: studio
 Issue-Kind: bug
 Issue-Source: plan
 Issue-Key: studio|home-providers-section|stale-count-text
-Issue-Check-Ids:
+Issue-Check-Ids: studio.home-providers-line-counts-services-with-a-screen
 Issue-Commit: 7cb0b1cddc40e1c3903deb81e6513f9e6bc57dc8
 
 # Make Home's providers section count the services that have a Studio screen

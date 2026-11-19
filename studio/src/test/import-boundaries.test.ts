@@ -240,6 +240,30 @@ describe('file patterns (issue 386, R8.1)', () => {
     expect(await boundaryErrors('providers/aws/services.ts', globbing('./area/services/*/*.ts'))).toHaveLength(1);
   });
 
+  it('providers/aws/services.ts with the pattern ./area/services/*/screens.ts, read for its keys → no error (issue 494)', async () => {
+    const code = "export const folders = Object.keys(import.meta.glob('./area/services/*/screens.ts'));\n";
+    expect(await boundaryErrors('providers/aws/services.ts', code)).toEqual([]);
+    expect(await boundaryErrors('providers/aws/services.ts', globbing('./area/services/*/screens.ts'))).toEqual([]);
+  });
+
+  it.each([
+    ['app/x.ts', './../providers/aws/area/services/*/screens.ts'],
+    ['providers/aws/provider.ts', './area/services/*/screens.ts'],
+    ['providers/aws/x.ts', './area/services/*/screens.ts'],
+    ['features/home/x.tsx', '../../providers/aws/area/services/*/screens.ts'],
+    ['providers/aws/services.ts', './area/services/*/api.ts'],
+    ['providers/aws/services.ts', './area/screens.ts'],
+    ['providers/aws/services.ts', './area/services/*/pages/*.tsx'],
+  ])(
+    '%s with %s → an error naming the two patterns allowed in providers/aws/services.ts (issue 494)',
+    async (file, pattern) => {
+      const errors = await boundaryErrors(file, globbing(pattern));
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toContain('./area/services/*/service.json');
+      expect(errors[0]).toContain('./area/services/*/screens.ts');
+    },
+  );
+
   it("i18n/bundled.ts with the catalogues' ./messages/*.json → no error; another file of i18n/ with it → an error", async () => {
     expect(await boundaryErrors('i18n/bundled.ts', globbing('./messages/*.json'))).toEqual([]);
     expect(await boundaryErrors('i18n/x.ts', globbing('./messages/*.json'))).toHaveLength(1);
