@@ -136,6 +136,26 @@ describe('"Upload" refused before sending', () => {
     expect(fieldError()).toBe('notes.zip is not a .zip archive.');
     expect(changes()).toEqual([]);
   });
+
+  it('a file that can no longer be read (moved or deleted after it was chosen): "{file} is not a .zip archive."; nothing sent', async () => {
+    renderUpload();
+    const gone = zipFile('gone.zip');
+    const unreadable = (): Promise<ArrayBuffer> =>
+      Promise.reject(new DOMException('A requested file could not be read.', 'NotReadableError'));
+    gone.arrayBuffer = unreadable;
+    gone.slice = () => {
+      const part = new Blob([]);
+      part.arrayBuffer = unreadable;
+      return part;
+    };
+    choose(gone);
+
+    await pressUpload();
+
+    expect(fieldError()).toBe('gone.zip is not a .zip archive.');
+    expect(changes()).toEqual([]);
+    expect(uploadButton().textContent).toBe('Upload');
+  });
 });
 
 describe('an archive', () => {
