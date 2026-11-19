@@ -1,3 +1,4 @@
+import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { useRef, type ReactNode } from 'react';
@@ -94,6 +95,16 @@ describe('"Trust relationships"', () => {
     expect(entities()).toBe('AWS Service: lambda');
     expect(trustPolicy()).toBe(JSON.stringify(JSON.parse(LAMBDA), null, 2));
     expect(trustPolicy()?.split('\n').length).toBeGreaterThan(5);
+  });
+
+  it('the section "Trusted entities" shows the description "Who may assume this role." (fix s6)', () => {
+    show(role(LAMBDA));
+
+    const header = createWrapper(document.body)
+      .findAllHeaders()
+      .find((found) => (found.findHeadingText().getElement().textContent ?? '').trim() === 'Trusted entities');
+    expect(header).toBeDefined();
+    expect((header?.findDescription()?.getElement().textContent ?? '').trim()).toBe('Who may assume this role.');
   });
 
   it('a service-linked role: the entities as the list shows them, with " (Service-linked role)"', () => {

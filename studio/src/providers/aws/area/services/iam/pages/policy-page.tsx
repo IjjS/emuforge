@@ -114,7 +114,19 @@ export function PolicyPage({ connection }: ScreenPageProps) {
 
   const query = usePolicy({ endpoint: engineOrigin, arn: arn ?? '', enabled: arn !== undefined });
   const { refresh } = query;
-  const state = pageState(query, arn, connection);
+  // "Edit" is open: the page keeps the policy it last showed through a read that fails or is in flight behind the
+  // dialog, so the dialog, what was typed in it and its own result stay (issue 535, fix-s6). A read that finds the
+  // policy gone still shows "Policy not found". Once it is closed the newest read decides again.
+  const [editing, setEditing] = useState(false);
+  const [lastFound, setLastFound] = useState<FoundRead>();
+  const queried = pageState(query, arn, connection);
+  if (queried.kind === 'found' && queried.read !== lastFound) {
+    setLastFound(queried.read);
+  }
+  const state: PageState =
+    editing && (queried.kind === 'failure' || queried.kind === 'loading') && lastFound !== undefined
+      ? { kind: 'found', read: lastFound }
+      : queried;
   const found = state.kind === 'found' ? state.read : undefined;
   const policy = found?.policy;
   const awsManaged = policy?.type === 'AWS managed';
@@ -137,7 +149,6 @@ export function PolicyPage({ connection }: ScreenPageProps) {
   });
 
   const [selectedVersion, setSelectedVersion] = useState<string>();
-  const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deletingVersion, setDeletingVersion] = useState<PolicyVersion>();
   const setDefault = useSetDefaultPolicyVersion(engineOrigin);

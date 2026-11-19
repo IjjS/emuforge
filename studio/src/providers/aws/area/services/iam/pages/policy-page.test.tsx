@@ -568,3 +568,92 @@ describe("a policy's page", () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 });
+
+// Fix s6 (issue 535, `.pm/issue-535/fix-s6.md`): "Edit" and its typed text outlive a failed read of the policy behind
+// it; with no dialog open the page's read states are as before.
+describe('"Edit" open while the policy’s read fails', () => {
+  const TYPED = '{"Version": "2012-10-17", "Statement": [{"Effect": "Deny", "Action": "*", "Resource": "*"}]}';
+  const STOPPED: IamFailure = {
+    kind: 'emulator-did-not-answer',
+    operation: 'GetPolicy',
+    message: 'The emulator at https://127.0.0.1:9313 could not be reached',
+  };
+
+  /** The emulator stops answering: every call from now on fails so. */
+  function emulatorStops() {
+    const reject = () => Promise.reject(new api.IamError(STOPPED));
+    getPolicy.mockImplementation(reject);
+    getPolicyDocument.mockImplementation(reject);
+    createPolicyVersion.mockImplementation(() =>
+      Promise.reject(new api.IamError({ ...STOPPED, operation: 'CreatePolicyVersion' })),
+    );
+  }
+
+  function editDialog(): HTMLElement {
+    return screen.getByRole('dialog', { name: 'Edit p-doc' });
+  }
+
+  async function typedAndFailed() {
+    open();
+    await loaded();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Edit p-doc' });
+    fireEvent.change(await within(dialog).findByRole('textbox', { name: /Policy document/ }), {
+      target: { value: TYPED },
+    });
+    const reads = getPolicy.mock.calls.length;
+    emulatorStops();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => {
+      expect(editDialog()).toHaveTextContent('The emulator did not answer');
+    });
+    // The read the save starts has run and failed too.
+    await waitFor(() => {
+      expect(getPolicy.mock.calls.length).toBeGreaterThan(reads);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+  }
+
+  it('the save fails as the emulator not answering, and the read after it too → the dialog stays with the text and the failure; the page is not its failure state', async () => {
+    await typedAndFailed();
+
+    expect((within(editDialog()).getByRole('textbox', { name: /Policy document/ }) as HTMLTextAreaElement).value).toBe(
+      TYPED,
+    );
+    expect(editDialog()).toHaveTextContent(STOPPED.message);
+    // The page's sections stay (a section's own read may show its failure, as on a refresh that fails in part).
+    for (const heading of ['Policy details', 'Policy document', 'Versions']) {
+      expect(screen.getByRole('heading', { level: 2, name: heading })).toBeInTheDocument();
+    }
+  });
+
+  it('then closed ("Discard") → the page’s failure state for the read, with "Retry"', async () => {
+    await typedAndFailed();
+
+    fireEvent.click(within(editDialog()).getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(
+      within(await screen.findByRole('dialog', { name: 'Discard what you entered?' })).getByRole('button', {
+        name: 'Discard',
+      }),
+    );
+
+    expect(await screen.findByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'Edit p-doc' })).toBeNull();
+    expect(document.body.textContent).toContain('The emulator did not answer');
+    expect(screen.queryByRole('heading', { level: 2, name: 'Policy details' })).toBeNull();
+  });
+
+  it('no dialog open: "Refresh policy" whose read fails → the failure state at once', async () => {
+    open();
+    await loaded();
+    emulatorStops();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh policy' }));
+
+    expect(await screen.findByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(document.body.textContent).toContain('The emulator did not answer');
+    expect(screen.queryByRole('heading', { level: 2, name: 'Policy details' })).toBeNull();
+  });
+});

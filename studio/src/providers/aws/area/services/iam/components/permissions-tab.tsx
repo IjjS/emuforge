@@ -4,7 +4,7 @@ import Header from '@cloudscape-design/components/header';
 import Link from '@cloudscape-design/components/link';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Table, { type TableProps } from '@cloudscape-design/components/table';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { AreaConnection } from '../../../components/emulator-line';
 import { useFollow } from '../../../components/use-follow';
@@ -124,13 +124,18 @@ export interface PermissionsTabProps {
   connection: AreaConnection;
   /** "Retry" of a failed list: reads the role again. */
   onRetry: () => void;
+  /**
+   * Told whether a dialog of the tab is open, so the page keeps the tab, and what was typed in the dialog, through a
+   * failed read of the role behind it (issue 535, fix-s6).
+   */
+  onDialogOpen?: (open: boolean) => void;
 }
 
 /**
  * "Permissions policies": the attached policies, then the inline ones, with their documents on demand; a failed list
  * shows its state in the table's place, the table's heading and columns kept (R10.1). Then "Permissions boundary".
  */
-export function PermissionsTab({ role, policies, connection, onRetry }: PermissionsTabProps) {
+export function PermissionsTab({ role, policies, connection, onRetry, onDialogOpen }: PermissionsTabProps) {
   // The keys of the rows whose document is shown, in no order.
   const [shown, setShown] = useState<ReadonlySet<string>>(() => new Set());
   const handleToggle = useCallback((policy: PolicyRef) => {
@@ -150,6 +155,14 @@ export function PermissionsTab({ role, policies, connection, onRetry }: Permissi
   // The chosen row, while the role's read still lists it.
   const chosen = items.find((policy) => policyKey(policy) === chosenKey);
   const [dialog, setDialog] = useState<Dialog>();
+  const dialogOpen = dialog !== undefined;
+  useEffect(() => {
+    onDialogOpen?.(dialogOpen);
+    // Unmounted with the dialog open (the tab left), the page no longer keeps it.
+    return () => {
+      onDialogOpen?.(false);
+    };
+  }, [dialogOpen, onDialogOpen]);
   // The control that opened the dialog, which has focus again once it closes.
   const openerRef = useRef<HTMLElement | null>(null);
   const open = (next: Dialog) => {
