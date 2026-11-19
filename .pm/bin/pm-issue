@@ -4,14 +4,16 @@
   pm-issue new --module M --kind K --severity S --source SRC --key KEY --title "Imperative title" [--in CHECKOUT]
   pm-issue list [--all]
   pm-issue show <id>
-  pm-issue close <id> --checks "<check id> ..." [--in CHECKOUT]
+  pm-issue close <id> [--checks "<check id> ..."] [--in CHECKOUT]
   pm-issue commit [--in CHECKOUT] [--dry-run]
 
 new    writes issues/things-that-do-not-work/<UTC timestamp>-<slug>.md with the header filled in and the body
        sections empty, assigns the next Issue-Id, and refuses a duplicate Issue-Key. Prints the id and the path.
        The PM and a plan pane file in the main checkout; a worker files with --in <its worktree> and commits the
        file on its branch, so it reaches main when the unit merges.
-close  moves the file to issues/things-that-now-work/ with `git mv` and sets Issue-Check-Ids. It changes nothing
+close  moves the file to issues/things-that-now-work/ with `git mv` and sets Issue-Check-Ids. --checks is needed
+       but for an issue whose Issue-Module is harness (issue 523): without it the header reads `Issue-Check-Ids: none
+       (harness issue, no kept guard shows it)`. It changes nothing
        else in the file and does not commit: the move belongs in the commit that fixes the issue, so run it with
        --in <worktree> inside the unit that closes the issue.
 commit commits every issue file under issues/things-that-do-not-work/ that is new in the checkout (untracked or
@@ -28,6 +30,7 @@ import re
 import subprocess
 import sys
 
+NO_GUARD = "none (harness issue, no kept guard shows it)"  # Issue-Check-Ids of a harness issue closed without ids
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _pmlib import ROOT, RUN, guard
 
@@ -115,10 +118,13 @@ def cmd_close(a):
     d, f, h = find(base, a.id)
     if d == DONE:
         sys.exit(f"#{a.id} is already in {DONE}")
-    checks = " ".join(a.checks.split())
-    if not checks:
-        sys.exit("--checks must name at least one check id: an issue is closed by its checks, not by a statement")
+    checks = " ".join((a.checks or "").split())
     text = f.read_text()
+    if not checks:
+        if not re.search(r"(?m)^Issue-Module:[ \t]*harness[ \t]*$", text):
+            sys.exit("--checks must name at least one check id: an issue is closed by its checks, not by a statement "
+                     "(only a harness issue closes without one)")
+        checks = NO_GUARD
     text, n = re.subn(r"(?m)^Issue-Check-Ids:.*$", f"Issue-Check-Ids: {checks}", text, count=1)
     if n != 1:
         sys.exit(f"{f} has no Issue-Check-Ids header line")
@@ -182,7 +188,7 @@ x.add_argument("--severity", required=True, choices=SEVERITIES); x.add_argument(
 x.add_argument("--key", required=True); x.add_argument("--title", required=True); x.add_argument("--in", dest="checkout"); x.set_defaults(f=cmd_new)
 x = sp.add_parser("list"); x.add_argument("--all", action="store_true"); x.set_defaults(f=cmd_list)
 x = sp.add_parser("show"); x.add_argument("id"); x.set_defaults(f=cmd_show)
-x = sp.add_parser("close"); x.add_argument("id"); x.add_argument("--checks", required=True); x.add_argument("--in", dest="checkout"); x.set_defaults(f=cmd_close)
+x = sp.add_parser("close"); x.add_argument("id"); x.add_argument("--checks"); x.add_argument("--in", dest="checkout"); x.set_defaults(f=cmd_close)
 x = sp.add_parser("commit"); x.add_argument("--in", dest="checkout"); x.add_argument("--dry-run", action="store_true"); x.set_defaults(f=cmd_commit)
 a = p.parse_args()
 a.f(a)
