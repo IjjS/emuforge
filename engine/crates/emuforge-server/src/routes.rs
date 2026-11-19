@@ -1,5 +1,6 @@
 use std::future::Future;
 use std::num::NonZeroU16;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Instant;
@@ -15,14 +16,18 @@ use axum::routing::get;
 use axum::{Json, Router};
 use emuforge_core::chunked::CHUNK_DATA_CAP;
 use emuforge_core::sigv4::{Auth, classify};
-use emuforge_core::{Emulator, Health, Limits, Reason, RelayBody, RelayError};
+use emuforge_core::{
+    Emulator, Health, Limits, Reason, RelayBody, RelayError, SettingsError, Store, TargetName,
+};
 use serde::Serialize;
 use tower::ServiceBuilder;
 
 use crate::aws_error::{ErrorType, Protocol, render};
 use crate::browser::{self, StudioOrigin, engine_refusal, is_engine_path};
+use crate::config::Form;
 use crate::limit::{InFlight, limit};
 use crate::session::SessionToken;
+use crate::targets::{self, TestFn};
 
 /// The engine's health route.
 pub const HEALTH_PATH: &str = "/__emuforge/health";
@@ -30,20 +35,27 @@ pub const HEALTH_PATH: &str = "/__emuforge/health";
 pub const SESSION_PATH: &str = "/__emuforge/session";
 
 pub type ProbeFuture = Pin<Box<dyn Future<Output = Health> + Send>>;
-/// Asks the emulator whether it is up. Called once per health request; nothing is cached.
-pub type ProbeFn = Arc<dyn Fn() -> ProbeFuture + Send + Sync>;
+/// Asks the active target's emulator whether it is up. Called once per health request; nothing is cached.
+pub type ProbeFn = Arc<dyn Fn(Emulator) -> ProbeFuture + Send + Sync>;
 
 pub type RelayFuture =
     Pin<Box<dyn Future<Output = Result<Response<RelayBody>, RelayError>> + Send>>;
-/// Relays one request to the emulator. Called once per request on a relayed path; production holds
-/// `emuforge_core::relay` with the emulator's files read per call.
-pub type RelayFn = Arc<dyn Fn(Request<Body>) -> RelayFuture + Send + Sync>;
+/// Relays one request to the active target's emulator. Called once per request on a relayed path; production
+/// holds `emuforge_core::relay` with the emulator's files read per call.
+pub type RelayFn = Arc<dyn Fn(Emulator, Request<Body>) -> RelayFuture + Send + Sync>;
 
 pub struct AppState {
     pub engine_port: NonZeroU16,
-    pub emulator: Emulator,
+    pub studio_port: NonZeroU16,
+    pub form: Form,
+    /// The emulators' files are under `<home>/.aws/emulator/<port>/`.
+    pub home: PathBuf,
+    /// The targets; the active one is read at every health and every relayed request.
+    pub settings: Arc<Store>,
     pub probe: ProbeFn,
     pub relay: RelayFn,
+    /// Runs a target's test; called once per test request.
+    pub test: TestFn,
     pub max_in_flight: usize,
     pub studio_origin: StudioOrigin,
     pub session: Arc<SessionToken>,
@@ -66,6 +78,7 @@ pub fn app(state: AppState) -> Router {
             SESSION_PATH,
             get(session).fallback(|| method_not_allowed(SESSION_PATH)),
         )
+        .merge(targets::routes())
         .fallback(fallback)
         .layer(middleware::from_fn_with_state(
             state.clone(),
@@ -117,6 +130,7 @@ fn has_only_host(headers: &HeaderMap, expected: &str) -> bool {
 
 #[derive(Serialize)]
 struct HealthBody {
+    target: TargetName,
     emulator: EmulatorHealth,
 }
 
@@ -133,8 +147,12 @@ struct EmulatorHealth {
 
 /// `GET` and `HEAD`; axum answers `HEAD` with the same status and headers and no body.
 async fn health(State(state): State<Arc<AppState>>) -> Response {
-    let health = (state.probe)().await;
-    let emulator = &state.emulator;
+    let (target, emulator) = match active(&state).await {
+        Ok(active) => active,
+        Err(error) => return settings_unusable(&error),
+    };
+    let health = (state.probe)(emulator.clone()).await;
+    let emulator = &emulator;
     let (status, reason, message) = match health {
         Health::Reachable => (StatusCode::OK, None, None),
         Health::Unreachable(reason) => {
@@ -147,6 +165,7 @@ async fn health(State(state): State<Arc<AppState>>) -> Response {
         }
     };
     let body = HealthBody {
+        target,
         emulator: EmulatorHealth {
             port: emulator.port().get(),
             endpoint: emulator.endpoint(),
@@ -156,6 +175,26 @@ async fn health(State(state): State<Arc<AppState>>) -> Response {
         },
     };
     (status, Json(body)).into_response()
+}
+
+/// The active target's name and its emulator, read from the settings file now.
+pub(crate) async fn active(state: &AppState) -> Result<(TargetName, Emulator), SettingsError> {
+    let settings = state.settings.load().await?;
+    let target = settings.active();
+    Ok((
+        target.name().clone(),
+        Emulator::for_endpoint(&state.home, target.endpoint()),
+    ))
+}
+
+/// `503 SettingsUnusable`: the settings file cannot be used; the message names it and says to fix or remove it.
+pub(crate) fn settings_unusable(error: &SettingsError) -> Response {
+    tracing::debug!("{error}");
+    refusal(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "SettingsUnusable",
+        error.to_string(),
+    )
 }
 
 #[derive(Serialize)]
@@ -277,17 +316,23 @@ async fn fallback(State(state): State<Arc<AppState>>, request: Request) -> Respo
     relay(&state, request).await
 }
 
-/// One relayed request: the emulator's answer as it came, or the engine's own error in the caller's protocol.
+/// One relayed request to the target active at its start: the emulator's answer as it came, or the engine's own
+/// error in the caller's protocol.
 async fn relay(state: &AppState, request: Request) -> Response {
     let started = Instant::now();
     let (parts, body) = request.into_parts();
+    let emulator = match active(state).await {
+        Ok((_, emulator)) => emulator,
+        Err(error) => return Shape::of(&parts).apply(settings_unusable(&error)),
+    };
     let protocol = Protocol::detect(&parts);
     let head_only = parts.method == Method::HEAD;
     let method = parts.method.clone();
     let service = logged_service(&parts);
-    let (response, outcome) = match (state.relay)(Request::from_parts(parts, body)).await {
+    let relayed = (state.relay)(emulator.clone(), Request::from_parts(parts, body)).await;
+    let (response, outcome) = match relayed {
         Ok(response) => (response.map(Body::new), "relayed"),
-        Err(error) => relay_error(&state.emulator, protocol, head_only, &error),
+        Err(error) => relay_error(&emulator, protocol, head_only, &error),
     };
     tracing::debug!(
         method = method.as_str(),

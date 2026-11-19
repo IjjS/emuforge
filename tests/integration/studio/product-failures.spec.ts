@@ -1,4 +1,4 @@
-// The product checks of starts that must fail (issues 34 and 437, test-criteria.md): ports that collide, on the host
+// The product checks of starts that must fail (issues 34, 437 and 484, test-criteria.md): ports that collide, on the host
 // or in the form's namespace, and an image that does not build. One list of cases, the same on every platform. Each
 // case starts its own form with the start line; after a failing one the stop line and the line that removes the
 // volume too leave nothing of the form.
@@ -10,12 +10,13 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 
-import { expect, freePortExcept, OwnEmulator, test, waitFor, type Ctx } from './support';
+import { expect, freePortExcept, OwnEmulator, test, type Ctx } from './support';
 import { docker, runAt } from './support/product-inspect';
 import {
   expectExit,
   Form,
   LINES,
+  NEVER_STARTED,
   productTimeout,
   START_BOUND_MS,
   STOP_BOUND_MS,
@@ -40,8 +41,6 @@ async function freeOwnPort(ctx: Ctx, taken: number[]): Promise<number> {
     9297,
     8296,
     8297,
-    18296,
-    18297,
     ...taken,
   ]);
   taken.push(port);
@@ -57,26 +56,6 @@ async function holdPort(ctx: Ctx, port: number): Promise<void> {
   });
   ctx.own({ dispose: () => new Promise<void>((resolve) => server.close(() => resolve())) });
   ctx.log(`the check listens on 127.0.0.1:${String(port)}`);
-}
-
-/** The services `docker compose ps -a --format json` shows for the form, with their state. */
-async function composeServices(
-  form: Form,
-): Promise<{ services: { service: string; state: string }[]; result: CommandResult }> {
-  const result = await form.run(form.compose('ps', '-a', '--format', 'json'), STOP_BOUND_MS);
-  const text = result.stdout.trim();
-  let rows: { Service?: string; State?: string }[] = [];
-  try {
-    rows = text.startsWith('[')
-      ? (JSON.parse(text) as typeof rows)
-      : text
-          .split('\n')
-          .filter((line) => line.trim() !== '')
-          .map((line) => JSON.parse(line) as { Service?: string; State?: string });
-  } catch {
-    rows = [];
-  }
-  return { services: rows.map((r) => ({ service: r.Service ?? '', state: r.State ?? '' })), result };
 }
 
 /** The output of a command, both streams. */
@@ -103,49 +82,25 @@ async function refusedNamingPort(_ctx: Ctx, _form: Form, started: CommandResult,
   ).toBe(true);
 }
 
-/** The start line exits non-zero, and `docker compose logs gateway` holds a line with both variables and the number. */
-function refusedByTheGateway(other: string) {
+/**
+ * The start line exits non-zero, `docker compose logs emuforge` holds a line with both variables and the number, and
+ * the form's emulator was never started: it waits for `emuforge` to be healthy (#484 R8).
+ */
+function refusedByEmuforge(other: string) {
   return async (_ctx: Ctx, form: Form, started: CommandResult, port: number, what: string) => {
     expectExit(started, 'non-zero');
-    const logs = await form.run(form.compose('logs', '--no-color', 'gateway'), STOP_BOUND_MS);
+    const logs = await form.run(form.compose('logs', '--no-color', 'emuforge'), STOP_BOUND_MS);
     expect(
       outputOf(logs)
         .split('\n')
         .filter((line) => line.includes('EMULATOR_PORT') && line.includes(other) && namesPort(line, port)),
       `${what}: lines of ${logs.line} with EMULATOR_PORT, ${other} and ${String(port)}; output:\n${tail(logs)}`,
     ).not.toEqual([]);
-  };
-}
-
-/** `docker compose ps -a` shows `service` not running and `docker compose logs` a line with the number, within the bound. */
-function serviceDown(service: string) {
-  return async (ctx: Ctx, form: Form, _started: CommandResult, port: number, what: string) => {
-    let seen = { state: '', lines: [] as string[], ps: '', logs: '' };
-    await waitFor(UP_BOUND_MS, async () => {
-      const ps = await composeServices(form);
-      const logs = await form.run(form.compose('logs', '--no-color'), STOP_BOUND_MS);
-      seen = {
-        state:
-          ps.services
-            .filter((s) => s.service === service)
-            .map((s) => s.state)
-            .join(',') || '(no container)',
-        lines: outputOf(logs)
-          .split('\n')
-          .filter((line) => namesPort(line, port)),
-        ps: `${JSON.stringify(ps.services)}; output:\n${tail(ps.result)}`,
-        logs: tail(logs),
-      };
-      return seen.state !== 'running' && seen.state !== '(no container)' && seen.lines.length > 0 ? true : undefined;
-    });
-    ctx.log(`${what}: ${service} ${seen.state}`);
-    expect(seen.state, `${what}: the state of ${service} by docker compose ps -a (${seen.ps})`).not.toMatch(
-      /^(running|\(no container\))$/,
-    );
+    const emulators = (await form.containers()).filter((c) => c.service === 'aws-emulator');
     expect(
-      seen.lines,
-      `${what}: lines of docker compose logs with ${String(port)} (output:\n${seen.logs})`,
-    ).not.toEqual([]);
+      emulators.filter((c) => c.running || c.startedAt !== NEVER_STARTED).map((c) => `${c.name} ${c.startedAt}`),
+      `${what}: containers of aws-emulator that were started`,
+    ).toEqual([]);
   };
 }
 
@@ -182,7 +137,7 @@ const CASES: Case[] = [
       const port = await take();
       return { options: { emulatorPort: port, enginePort: port }, port };
     },
-    then: refusedByTheGateway('EMUFORGE_ENGINE_PORT'),
+    then: refusedByEmuforge('EMUFORGE_ENGINE_PORT'),
   },
   {
     what: "EMULATOR_PORT equal to Studio's port",
@@ -190,40 +145,15 @@ const CASES: Case[] = [
       const port = await take();
       return { options: { emulatorPort: port, studioPort: port }, port };
     },
-    then: refusedByTheGateway('EMUFORGE_STUDIO_PORT'),
-  },
-  {
-    what: 'EMULATOR_PORT 18296',
-    async options() {
-      return { options: { emulatorPort: 18296 }, port: 18296 };
-    },
-    async then(_ctx, form, started, _port, what) {
-      expectExit(started, 'non-zero');
-      expect(outputOf(started), `${what}: the output of ${started.line}`).toContain(form.emulatorContainerName);
-    },
-  },
-  {
-    what: 'EMUFORGE_ENGINE_PORT 18297',
-    async options() {
-      return { options: { enginePort: 18297 }, port: 18297 };
-    },
-    then: serviceDown('engine'),
-  },
-  {
-    what: 'EMUFORGE_STUDIO_PORT 18296',
-    async options() {
-      return { options: { studioPort: 18296 }, port: 18296 };
-    },
-    then: serviceDown('studio'),
+    then: refusedByEmuforge('EMUFORGE_STUDIO_PORT'),
   },
 ];
 
 test('engine.product-does-not-come-up-on-a-port-collision', async ({ ctx }) => {
-  // Each failing case: its start, its stop line, the line that removes the volume and the cleanup's; the two cases of
-  // a service that does not run wait out at most one bound each; the last case: a start, the cleanup's stop and an
-  // emulator of the check's own.
+  // Each failing case: its start, its stop line, the line that removes the volume and the cleanup's; the last case: a
+  // start, the cleanup's stop and an emulator of the check's own.
   const starts = CASES.length + 1;
-  test.setTimeout(productTimeout(starts, 3 * starts) + 4 * UP_BOUND_MS);
+  test.setTimeout(productTimeout(starts, 3 * starts) + UP_BOUND_MS);
   const taken: number[] = [];
 
   for (const c of CASES) {

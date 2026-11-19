@@ -149,7 +149,9 @@ test file gets its entry in `_pmscope.py`; adding a source needs no decision, bu
 away changes what a run checks and is made only on the `pm`'s decision, recorded in the issue's `decisions.md`.
 What a left-out file leaves unseen until a run calls for it: a case that depends on a file the map does not name
 as its source, and a break from outside the repository (a new emulator image, a new Chromium, the machine). Name
-this in the report of an issue whose units left files out, and run `pm-check --full` when in doubt.
+this in the report of an issue whose units left files out, and run `pm-check --only harness` when in doubt:
+`pm-check --full` also runs the integration checks of the tier `full`, which the `pm` runs only on the owner's word
+(`tests/integration/AGENTS.md`, Full tier).
 
 **Intermittent failures.** `pm-check` runs a failed test step once more; when the second run passes, the step is
 `flaky`, the run passes and the unit is not held up. Every flake is a line in `.pm/run/flakes.jsonl` (step,
@@ -288,8 +290,8 @@ flow step 1:
 | `EVENT cpu ok …` | prompt every pane that reported `BLOCKED cpu` to retry; resume queued `pm-pane new` calls |
 | `EVENT stale <pane>` | `herdr agent read`; if looping, `pm-pane reset <pane>` |
 | `EVENT check still <worktree> <step> <n>m` | read the end of `<worktree>/output/logs/check-<step>.log` (for `integration` also `output/logs/integration-*.log`); a step that still writes is left alone; a hung one: `pm-check <worktree> --stop`, tell its pane in one line, and file what held it |
-| `EVENT orphans <worktree> … pids=<pid>,… pane=<pane>` | processes of that pane's worktree have no parent left (a run killed in part): prompt that pane in one line with the PIDs, to stop each by its PID (nothing that started them is left, so only their PIDs can stop them); nothing else |
-| `EVENT orphans again <worktree> …`, and `EVENT orphans <worktree> …` without `pane=` | `pm-worktree orphans <worktree> --stop` at once; nothing else |
+| `EVENT orphans <worktree> … pids=<pid>,… pane=<pane>` | processes of that pane's worktree have no parent left (a run killed in part). First look: `pm-worktree orphans <worktree>` lists what is an orphan now, and leaves out what a sweep leaves running (a running check's own processes, a live crit's live-server, named on its `left running` line). Then prompt that pane in one line with the PIDs it still lists, to stop each by its PID (nothing that started them is left, so only their PIDs can stop them); a PID it no longer lists is left alone; nothing else |
+| `EVENT orphans again <worktree> …`, and `EVENT orphans <worktree> …` without `pane=` | `pm-worktree orphans <worktree> --stop`, which stops only what is an orphan now and leaves what a running check of the worktree or a live crit uses (its `left running` part names them); nothing else |
 | `EVENT gone <pane>` | reopen with the same brief; the worktree and its `output/state.md` are still there |
 
 The events of a plan's worker, rev and crit panes go to the plan (`lead.md`, Events), all but a dialog

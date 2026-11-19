@@ -4,7 +4,7 @@
 
 use std::io;
 use std::num::NonZeroU16;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -20,8 +20,10 @@ use axum::http::header::{
     ORIGIN, VARY, WWW_AUTHENTICATE,
 };
 use axum::http::{HeaderMap, HeaderValue, Method, Request, StatusCode};
-use emuforge_core::{Emulator, Health, Limits, Prepared, Reason, forward};
-use emuforge_server::{AppState, ProbeFn, RelayFn, SessionToken, StudioOrigin, app};
+use emuforge_core::{Emulator, Health, Limits, Prepared, Reason, Store, forward};
+use emuforge_server::{
+    AppState, Form, ProbeFn, RelayFn, SessionToken, StudioOrigin, app, seed_settings,
+};
 use hyper::body::{Bytes, Frame};
 use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -45,6 +47,14 @@ fn emulator() -> Emulator {
     Emulator::new(Path::new("/h"), port(9391))
 }
 
+/// A store whose folder does not exist: every load is the seed, `local` at `https://127.0.0.1:9391`.
+fn absent_settings() -> Arc<Store> {
+    Arc::new(Store::new(
+        PathBuf::from("/h/.config/emuforge"),
+        seed_settings(Form::Native, NonZeroU16::new(9391).unwrap()),
+    ))
+}
+
 fn app_with(probe: ProbeFn) -> Router {
     app_relaying(probe, test_relay().0)
 }
@@ -52,9 +62,13 @@ fn app_with(probe: ProbeFn) -> Router {
 fn app_relaying(probe: ProbeFn, relay: RelayFn) -> Router {
     app(AppState {
         engine_port: port(8297),
-        emulator: emulator(),
+        studio_port: NonZeroU16::new(8296).unwrap(),
+        form: Form::Native,
+        home: PathBuf::from("/h"),
+        settings: absent_settings(),
         probe,
         relay,
+        test: Arc::new(|_| Box::pin(async { emuforge_core::TestReport { checks: Vec::new() } })),
         max_in_flight: 2,
         studio_origin: StudioOrigin::new(port(8296)),
         session: Arc::new(SessionToken::generate().unwrap()),
@@ -65,7 +79,7 @@ fn app_relaying(probe: ProbeFn, relay: RelayFn) -> Router {
 fn answering(healths: Vec<Health>) -> (ProbeFn, Arc<AtomicUsize>) {
     let calls = Arc::new(AtomicUsize::new(0));
     let counter = calls.clone();
-    let probe: ProbeFn = Arc::new(move || {
+    let probe: ProbeFn = Arc::new(move |_emulator| {
         let call = counter.fetch_add(1, Ordering::SeqCst);
         let health = healths[call.min(healths.len() - 1)].clone();
         Box::pin(async move { health })
@@ -78,7 +92,7 @@ fn answering(healths: Vec<Health>) -> (ProbeFn, Arc<AtomicUsize>) {
 fn test_relay() -> (RelayFn, Arc<AtomicUsize>) {
     let calls = Arc::new(AtomicUsize::new(0));
     let counter = calls.clone();
-    let relay: RelayFn = Arc::new(move |request: Request<Body>| {
+    let relay: RelayFn = Arc::new(move |_emulator, request: Request<Body>| {
         counter.fetch_add(1, Ordering::SeqCst);
         Box::pin(async move {
             let (engine, mut emulator) = tokio::io::duplex(64 * 1024);
@@ -286,12 +300,12 @@ async fn foreign_token() -> String {
 
 fn health_body(health: &Health) -> Value {
     match health {
-        Health::Reachable => json!({"emulator": {
+        Health::Reachable => json!({"target": "local", "emulator": {
             "port": 9391,
             "endpoint": "https://127.0.0.1:9391",
             "reachable": true,
         }}),
-        Health::Unreachable(reason) => json!({"emulator": {
+        Health::Unreachable(reason) => json!({"target": "local", "emulator": {
             "port": 9391,
             "endpoint": "https://127.0.0.1:9391",
             "reachable": false,
@@ -414,12 +428,12 @@ fn assert_preflight(answer: &Answer, case: &str) {
     answer.assert_cors(case);
     assert_eq!(
         answer.values(ACCESS_CONTROL_ALLOW_METHODS),
-        ["GET, HEAD"],
+        ["GET, HEAD, POST, DELETE"],
         "case {case}"
     );
     assert_eq!(
         answer.values(ACCESS_CONTROL_ALLOW_HEADERS),
-        ["X-EmuForge-Session"],
+        ["Content-Type, X-EmuForge-Session"],
         "case {case}"
     );
     assert_eq!(
@@ -1022,7 +1036,7 @@ async fn full_app() -> (Router, Vec<tokio::task::JoinHandle<()>>, Arc<Notify>) {
     let release = Arc::new(Notify::new());
     let (entered_tx, mut entered) = mpsc::unbounded_channel();
     let held = release.clone();
-    let probe: ProbeFn = Arc::new(move || {
+    let probe: ProbeFn = Arc::new(move |_emulator| {
         let (held, entered) = (held.clone(), entered_tx.clone());
         Box::pin(async move {
             let released = held.notified();

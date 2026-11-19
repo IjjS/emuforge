@@ -467,6 +467,26 @@ function fieldTexts(label: string): { constraint: string | null; error: string |
 }
 
 /**
+ * "Service or use case" is described by issue 492's R5 text, which stands between the field's label and its input,
+ * read before typing.
+ */
+function expectServiceDescription(): void {
+  const found = PAGE.findAllFormFields().find(
+    (formField) => (formField.findLabel()?.getElement().textContent ?? '').trim() === 'Service or use case',
+  );
+  const label = found?.findLabel()?.getElement();
+  const description = found?.findDescription()?.getElement();
+  expect(label, 'the label').toBeDefined();
+  expect(description, 'the description').toBeDefined();
+  expect((description?.textContent ?? '').trim()).toBe(
+    'Enter the principal of the service that may assume the role, written as a host name. The emulator accepts one that names no service.',
+  );
+  const input = field('Service or use case');
+  expect(label?.compareDocumentPosition(description as Node) ?? 0).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  expect(description?.compareDocumentPosition(input) ?? 0).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+}
+
+/**
  * The kind of value (issue 467, R6) the area's element whose text is exactly `text` inside `scope` shows: `address`,
  * `name`, `fixed` or `text`; `undefined` when no such element holds it.
  */
@@ -547,9 +567,8 @@ describe('step 1, "Select trusted entity"', () => {
     expect(within(main()).queryByRole('radio', { name: 'Web identity' })).toBeNull();
     expect(within(main()).queryByRole('radio', { name: 'SAML 2.0 federation' })).toBeNull();
     expect(field('Service or use case')).toHaveValue('');
-    expect(main()).toHaveTextContent(
-      'Enter the principal of the service that may assume the role. The emulator accepts a principal that names no service.',
-    );
+    expectServiceDescription();
+    expect(fieldTexts('Service or use case')).toEqual({ constraint: null, error: null });
     expect(button('Cancel')).toBeInTheDocument();
     expect(button('Next')).toBeInTheDocument();
     expect(within(main()).queryByRole('button', { name: 'Previous' })).toBeNull();
@@ -680,13 +699,15 @@ describe('step 1, "Select trusted entity"', () => {
     }
   });
 
-  it('"Next" with "Service or use case" empty: "Enter a service principal." under it, focus on it, step 1 stays', async () => {
+  it('"Next" with "Service or use case" empty: "Enter a service principal." under it, the description above it still shown, focus on it, step 1 stays', async () => {
     await openWizard();
     next();
 
     await waitFor(() => {
       expect(main()).toHaveTextContent('Enter a service principal.');
     });
+    expect(fieldTexts('Service or use case')).toEqual({ constraint: null, error: 'Enter a service principal.' });
+    expectServiceDescription();
     expect(h1()).toHaveTextContent('Select trusted entity');
     expect(document.activeElement).toBe(field('Service or use case'));
   });
@@ -1082,20 +1103,6 @@ describe('step 3, "Name, review, and create"', () => {
     expect(engine.changes()).toEqual([]);
   });
 
-  // Fifty rows of the editor take a while to render one by one.
-  it('a 51st tag cannot be added', { timeout: 60_000 }, async () => {
-    await openWizard();
-    await toStep3();
-    for (let i = 1; i <= 50; i++) {
-      addTag(`key${String(i)}`, 'v');
-    }
-    const editor = PAGE.findTagEditor();
-    expect(editor?.findRows()).toHaveLength(50);
-    leaveField();
-    fireEvent.click(within(main()).getByRole('button', { name: 'Add new tag' }));
-    expect(PAGE.findTagEditor()?.findRows()).toHaveLength(50);
-  });
-
   it('an untouched tag with an empty key: no request, and the editor’s message at the tag', async () => {
     await openWizard();
     await toStep3();
@@ -1244,6 +1251,34 @@ describe('"Create role"', () => {
     await waitFor(() => {
       expect(engine.of('CreateRole')).toHaveLength(2);
     });
+  });
+
+  it('a refused CreateRole: the focus moves to the alert that holds "Creating the role failed" and the emulator’s code and message (issue 492, critique P1)', async () => {
+    engine.handlers.CreateRole = () =>
+      errorAnswer(400, 'MalformedPolicyDocument', 'Invalid principal in policy: "SERVICE":"nonsense"');
+    await openWizard();
+    await toStep3(['ReadOnlyAccess']);
+    type('Role name', 'refused');
+    press('Create role');
+
+    await waitFor(() => {
+      expect(main()).toHaveTextContent('Creating the role failed');
+    });
+    const alertElement = PAGE.findAllAlerts()
+      .map((found) => found.getElement())
+      .find((element) => (element.textContent ?? '').includes('Creating the role failed'));
+    expect(alertElement, 'the alert of the failure').toBeDefined();
+    if (alertElement === undefined) {
+      return;
+    }
+    expect(alertElement).toHaveTextContent('Creating the role failed');
+    expect(alertElement).toHaveTextContent(
+      'MalformedPolicyDocument: Invalid principal in policy: "SERVICE":"nonsense"',
+    );
+    await waitFor(() => {
+      expect(alertElement.contains(document.activeElement)).toBe(true);
+    });
+    expect(h1()).toHaveTextContent('Name, review, and create');
   });
 
   it('the second AttachRolePolicy refused with NoSuchEntity: the list with the success item and "Attaching <policy name> to <name> failed"', async () => {

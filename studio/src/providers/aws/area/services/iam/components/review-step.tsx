@@ -6,18 +6,18 @@ import Header from '@cloudscape-design/components/header';
 import Input, { type InputProps } from '@cloudscape-design/components/input';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Table from '@cloudscape-design/components/table';
-import TagEditor from '@cloudscape-design/components/tag-editor';
 import Textarea, { type TextareaProps } from '@cloudscape-design/components/textarea';
 import type { ReactNode, RefObject } from 'react';
 
 import './create-role.css';
 import { ValueText } from '../../../components/value-text';
 import type { Policy } from '../api';
-import { TAGS_MAX, type EditorTag, type Messages } from './create-role-rules';
+import type { EditorTag, Messages } from './create-role-rules';
 import { NAME_COLUMN_MIN_WIDTH } from './page-parts';
+import { RoleTags } from './role-tags';
 
 // Step 3 of "Create role", "Name, review, and create" (issue 82, requirement R6.5): "Role details", the review of
-// the two earlier steps with "Edit", and "Add tags" with Cloudscape's tag editor. The trust policy is the text that
+// the two earlier steps with "Edit", and "Add tags" (`role-tags.tsx`). The trust policy is the text that
 // will be sent; every value is rendered as text. The two fields of "Role details" state their rule from the start
 // (issue 467, requirement R4).
 
@@ -147,17 +147,13 @@ export function ReviewStep({
           </Header>
         }
       />
-      <Container header={<Header variant="h2">Add tags</Header>}>
-        <div ref={tagsRef}>
-          <TagEditor
-            tags={tags}
-            tagLimit={TAGS_MAX}
-            onChange={({ detail }) => {
-              onChange({ tags: detail.tags.map(({ key, value, existing }) => ({ key, value, existing })) });
-            }}
-          />
-        </div>
-      </Container>
+      <RoleTags
+        tags={tags}
+        onChange={(changed) => {
+          onChange({ tags: changed });
+        }}
+        tagsRef={tagsRef}
+      />
       {failure}
     </SpaceBetween>
   );

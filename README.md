@@ -4,6 +4,11 @@ A local workbench on top of the official [aws-emulator](https://github.com/aws/a
 (Studio), a CLI, IAM policy evaluation and IaC verification. EmuForge does not reimplement the emulator; it
 calls one it does not write: the one it starts beside itself, or, in the developer's start, one you run.
 
+Where EmuForge is going is the owner's product plan, [PRODUCT.md](PRODUCT.md): a native emuforge CLI and a
+Docker Compose form. Issues 484 to 486 bring the Compose form described below to that plan: one emuforge image
+beside the emulator in its own container (issue 484), and emulator connections you register and choose in Studio
+(issues 485 and 486). Until they are merged, this README describes the form as it is.
+
 ## Independence and trademarks
 
 EmuForge is an independent project. It is not affiliated with, endorsed by or sponsored by Amazon Web Services
@@ -22,7 +27,7 @@ Apache License 2.0, and is not a copy of the AWS console.
 | `engine/` | Engine server, CLI, IAM and Verify modules (Rust, Cargo workspace). Has its own unit tests |
 | `tests/integration/` | Integration tests that run against a real emulator |
 | `infra/aws-emulator/` | Emulator Docker image, Compose file and shell environment script |
-| `infra/emuforge/` | EmuForge's own image and its gateway configuration, run by the root `docker-compose.yml` |
+| `infra/emuforge/` | EmuForge's own image, the one binary `emuforge` with Studio built in, run by the root `docker-compose.yml` |
 | `issues/` | Work items as files; see [issues/README.md](issues/README.md) |
 
 ## Start
@@ -36,19 +41,23 @@ docker compose down
 
 Then open http://127.0.0.1:8296/ in a browser.
 
-The start line brings up the engine, Studio and an emulator of EmuForge's own, which it starts beside them. It
-returns once that emulator accepts connections, so Studio opened right after shows it connected. When the
-emulator exits or does not accept a connection within a minute, the start line exits non-zero and names the
-emulator's container; `docker compose logs aws-emulator` shows why.
+The start line brings up two containers: `emuforge`, one process that serves Studio and the engine, and an
+emulator of EmuForge's own, which it starts beside it. It returns once both containers are started; the emulator
+may still be starting then, and Studio shows whether it is connected. When the emulator exits or does not come
+up, the start line does not say so: Studio shows the emulator not connected, `docker compose ps -a` shows the
+emulator's container not running or not healthy, and `docker compose logs aws-emulator` shows why.
 
 What it needs: Docker with Compose, nothing else on the host: no bash, and no Rust or bun toolchain, because the
-engine and Studio are built inside an image build. It was run on Docker Desktop for macOS (Docker Engine 29.4.3,
+binary `emuforge`, with Studio in it, is built inside an image build. It was run on Docker Desktop for macOS (Docker Engine 29.4.3,
 Compose 5.1.4) and on Docker Engine on Linux (Ubuntu, the runner of the checks of `main`). On Windows it was not
 run yet.
 
 Nothing of EmuForge is on the host. The emulator's files, its keys among them, are in a Docker volume of the form,
-which only the emulator and the engine mount (the engine read-only), and the emulator's port is not published.
-The stop line leaves the volume, which then holds no key; `docker compose down -v` removes it too.
+`emulator`, which only the emulator and `emuforge` mount (`emuforge` read-only), and the emulator's port is not
+published. `emuforge`'s target settings, `targets.json`, are in a second volume, `settings`, which only `emuforge`
+mounts and which holds no key. The Compose form holds one target, `compose`, its own emulator at
+`https://127.0.0.1:<EMULATOR_PORT>`; `emuforge` writes it at every start and refuses to add another. The stop line
+leaves both volumes, the first then holding no key; `docker compose down -v` removes both.
 
 An AWS client on the host uses the engine: endpoint http://127.0.0.1:8297 and any access key and secret. The
 engine signs each request again with the emulator's own key, which a client does not need and which is not
@@ -71,8 +80,8 @@ running is not part of this form for now. A form started from a clone before thi
 an emulator or start one under its own name, leaves that emulator running as an orphan after you update the
 clone; the stop line with `--remove-orphans` added removes it.
 
-The other ways to get EmuForge are not available yet: a released version, installed with a shell command; and
-the emuforge CLI, downloaded on its own.
+The other ways to get EmuForge in the plan are not available yet: the native emuforge CLI from GitHub Releases,
+which runs Studio and the engine beside an emulator you run, and a released image of a tagged version.
 
 ### Ports
 
@@ -101,41 +110,45 @@ $env:BUILDX_NO_DEFAULT_ATTESTATIONS=1; docker compose up -d --build
 ```
 
 Each Studio port is its own Compose project, with its own emulator and its own volume, so two EmuForge instances
-with different Studio and engine ports run side by side. The three ports must differ from each other. 18296 and
-18297 are reserved on every platform: EmuForge uses them inside its own containers. When a port is wrong the
-engine's own message names its flag: `--port` for `EMUFORGE_ENGINE_PORT`, `--emulator-port` for `EMULATOR_PORT`
-and `--studio-port` for `EMUFORGE_STUDIO_PORT`.
+with different Studio and engine ports run side by side. The three ports must differ from each other; no other
+port is reserved. When a port is wrong the message of `emuforge` names its flag and its variable: `--port` for
+`EMUFORGE_ENGINE_PORT`, `--emulator-port` for `EMULATOR_PORT` and `--studio-port` for `EMUFORGE_STUDIO_PORT`.
 
 A start whose Studio or engine port is taken on the host, or whose two ports are equal, exits non-zero and names
-the port. With `EMULATOR_PORT` equal to the engine's or Studio's port the start exits non-zero, Docker's message
-names the gateway's container, and `docker compose logs gateway` shows the line that names both variables. With
-`EMULATOR_PORT` 18296 or 18297 the emulator cannot listen, and the start exits non-zero naming the emulator's
-container. With the engine's or Studio's port 18296 or 18297 the start can exit 0 and EmuForge still does not
-come up: `docker compose ps -a` shows the service that is not running, and `docker compose logs` shows the line
-with the port's number.
+the port. With `EMULATOR_PORT` equal to the engine's or Studio's port `emuforge` refuses to start and the
+emulator is not started: the start exits non-zero, Docker's message names the `emuforge` container, and
+`docker compose logs emuforge` shows the line that names both variables and the number.
 
 ## Develop
 
 The developer's start builds and runs each part by hand, each in its own terminal, with an emulator already up
-(see [Run the emulator](#run-the-emulator)). It needs the Rust toolchain and bun on the host.
+(see [Run the emulator](#run-the-emulator)). It needs the Rust toolchain and bun on the host. The binary
+`emuforge` serves the engine only, and Studio's dev server serves Studio beside it:
 
 ```bash
-cd engine && cargo run --bin emuforge-server
+cd engine && cargo run -p emuforge -- serve
 cd studio && bun install && bun run build && bun run serve
 ```
 
-Then open http://127.0.0.1:8296/. The same three variables set the ports; the engine also takes them as flags,
-and a flag wins over its variable:
+Then open http://127.0.0.1:8296/. The same three variables set the ports; `emuforge serve` also takes them as
+flags, and a flag wins over its variable:
 
-| Variable | Default | Engine flag | Read by |
+| Variable | Default | `emuforge serve` flag | Read by |
 | --- | --- | --- | --- |
 | `EMULATOR_PORT` | 9297 | `--emulator-port` | the engine |
 | `EMUFORGE_ENGINE_PORT` | 8297 | `--port` | the engine and Studio's server |
 | `EMUFORGE_STUDIO_PORT` | 8296 | `--studio-port` | the engine and Studio's server |
+| none | 127.0.0.1 | `--listen-address` | the engine and Studio's server in the binary; anything but 127.0.0.1 logs a warning, and only the form uses it, inside its container |
 
 ```bash
-cd engine && cargo run --bin emuforge-server -- --port 8397 --emulator-port 9298 --studio-port 8396
+cd engine && cargo run -p emuforge -- serve --port 8397 --emulator-port 9298 --studio-port 8396
 cd studio && EMUFORGE_STUDIO_PORT=8396 EMUFORGE_ENGINE_PORT=8397 bun run serve
+```
+
+The binary with Studio built in, as the form runs it, serves both from one process; Studio's build comes first:
+
+```bash
+cd studio && bun install && bun run build && cd ../engine && cargo run -p emuforge --features embed-studio -- serve
 ```
 
 Each part has its own guide and unit tests: [engine/README.md](engine/README.md) and

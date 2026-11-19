@@ -1,8 +1,8 @@
 // The product form (issues 34 and 437): EmuForge built into an image and started by Docker Compose from the
 // checkout's root, with an emulator of its own, the same on every platform and in every shell. This file is the one
 // place the product checks take their command lines from (`LINES`): the start line, the stop line, the line that
-// shows the emulator's log, the line that removes the volume too, and the start line that keeps the running
-// containers. `engine.product-readme-gives-the-commands-the-checks-run` compares the README with them (#437 R16).
+// shows the emulator's log, the line that removes the volume too, the line that shows the containers' states (#484),
+// and the start line that keeps the running containers. `engine.product-readme-gives-the-commands-the-checks-run` compares the README with them (#437 R16).
 //
 // A check's form (`Form`) runs on free loopback ports of its own, under the run's own image names
 // (`EMUFORGE_IMAGE`, `EMUFORGE_EMULATOR_IMAGE`, set by `run`), with an environment of exactly: `HOME` (the run's,
@@ -38,12 +38,16 @@ import { register } from './secrets';
 import { HEALTH_PATH } from './traffic';
 import { waitFor } from './wait';
 
-/** The command lines of the one form, as argument arrays, run at the checkout's root (#437 R9, R10, R5, T10). */
+/**
+ * The command lines of the one form, as argument arrays, run at the checkout's root (#437 R9, R10, R5, T10; #484 R10:
+ * the line that shows the emulator's container not running or not healthy).
+ */
 export const LINES = {
   start: ['docker', 'compose', 'up', '-d', '--build'],
   stop: ['docker', 'compose', 'down'],
   emulatorLogs: ['docker', 'compose', 'logs', 'aws-emulator'],
   removeVolume: ['docker', 'compose', 'down', '-v'],
+  status: ['docker', 'compose', 'ps', '-a'],
 };
 
 /** The variable that keeps the running containers on a second start line (#437 requirement T10). */
@@ -62,8 +66,8 @@ export function startLines(): string[] {
   return [...Object.values(LINES).map(commandLine), KEEP_START_LINE];
 }
 
-/** The services of the one form (#437 R1). */
-export const SERVICES = ['gateway', 'aws-emulator', 'engine', 'studio'];
+/** The services of the one form (#484 R8): EmuForge's one process and the form's emulator. */
+export const SERVICES = ['emuforge', 'aws-emulator'];
 
 /** The checks' own Compose files, beside this file, as the checkout's relative paths. */
 export const CHECK_FILES = {
@@ -76,8 +80,14 @@ export type CheckFile = keyof typeof CHECK_FILES;
 /** Where the form's emulator keeps its files inside its container (#437 R3). */
 export const EMULATOR_FILES_DIR = '/home/emulator/.aws/emulator';
 
-/** Where the engine's container mounts the volume, read-only (#437 R3). */
+/** Where `emuforge`'s container mounts the volume, read-only (#437 R3, #484 R8). */
 export const ENGINE_FILES_DIR = '/home/emuforge/.aws/emulator';
+
+/** Where `emuforge`'s container mounts the volume `settings`, read-write: the Compose form's settings folder (#485). */
+export const ENGINE_SETTINGS_DIR = '/home/emuforge/.config/emuforge-compose';
+
+/** The settings file the engine keeps its targets in (#485). */
+export const SETTINGS_FILE = 'targets.json';
 
 /** The files an emulator writes into `<files dir>/<port>/`. */
 export const EMULATOR_FILES = ['ca.pem', 'config', 'emulator_credentials', 'truststore.p12'];
@@ -634,9 +644,8 @@ export class Form {
         'EMUFORGE_IT_PRODUCT_IMAGE and EMUFORGE_IT_EMULATOR_IMAGE are not set; run the suite with tests/integration/run',
       );
     }
-    // The run's ports, the defaults (the owner's form and emulator), the gateway's own, and every port a form of
-    // this process took.
-    const taken = [ctx.emulatorPort, ctx.enginePort, ctx.studioPort, 9297, 8296, 8297, 18296, 18297, ...picked];
+    // The run's ports, the defaults (the owner's form and emulator), and every port a form of this process took.
+    const taken = [ctx.emulatorPort, ctx.enginePort, ctx.studioPort, 9297, 8296, 8297, ...picked];
     for (const given of [options.emulatorPort, options.enginePort, options.studioPort]) {
       if (given !== undefined) taken.push(given);
     }
@@ -773,6 +782,26 @@ export class Form {
     return (await dockerRead(['volume', 'ls', '--format', '{{.Name}}', '--filter', this.label()]))
       .split('\n')
       .filter((name) => name !== '');
+  }
+
+  /** The name of the form's volume `key` (`emulator`, `settings`): the one that carries both labels; `''` when none. */
+  async volume(key: string): Promise<string> {
+    const names = (
+      await dockerRead([
+        'volume',
+        'ls',
+        '--format',
+        '{{.Name}}',
+        '--filter',
+        this.label(),
+        '--filter',
+        `label=com.docker.compose.volume=${key}`,
+      ])
+    )
+      .split('\n')
+      .filter((name) => name !== '');
+    expect(names.length, `the volumes ${key} of ${this.project}: ${names.join(' ')}`).toBeLessThanOrEqual(1);
+    return names[0] ?? '';
   }
 
   /** The form's container of `service`; fails the check when there is none, or more than one. */

@@ -129,3 +129,8 @@ events go to the `pm`.
 
 `REVIEWED` lines come straight from `rev` as your next prompt. Talk to your panes with
 `herdr agent prompt <pane> "<one line>"`.
+
+`EVENT orphans` is the machine's and goes to the `pm`, which prompts the pane or sweeps. Your `pm-pane reset` and
+`close` sweep the pane's worktree and print one line: what they stopped, and after `left running:` what they left
+because a running check of that worktree started it or a live crit of your issue serves the critique with it.
+Before you act on that line, look at it: a process left running is not yours to stop.

@@ -68,8 +68,10 @@ IDS = [r["check_id"] for r in ROWS]
 ENGINE_IDS = [r["check_id"] for r in ROWS if r["path"].endswith(".rs")]
 SPEC_IDS = [r["check_id"] for r in ROWS if r["path"].endswith(".spec.ts")]
 PRODUCT_IDS = [i for i in IDS if i.startswith("engine.product-")]
-# the ids of the rows labelled `on-request` (issue 315): a run without --on-request leaves them out
-ON = [r["check_id"] for r in ROWS if isinstance(r.get("labels"), list) and "on-request" in r["labels"]]
+# the ids of the rows a default run leaves out: those labelled `on-request` (issue 315), left out without
+# --on-request, and those labelled `full` (issue 482), left out without --full
+ON = [r["check_id"] for r in ROWS if isinstance(r.get("labels"), list)
+      and ("on-request" in r["labels"] or "full" in r["labels"])]
 # one id of an engine test file and one of a .spec.ts file
 ENGINE_ID = "engine.health-reports-emulator-reachable"
 SPEC_ID = "studio.home-shows-connected"
@@ -291,7 +293,7 @@ class Passed_on(unittest.TestCase):
         playwright = CHECKOUT / "studio" / "node_modules" / ".bin" / "playwright"
         self.assertTrue(os.access(playwright, os.X_OK),
                         f"{playwright} is missing: install Studio's dependencies (bun install --frozen-lockfile)")
-        self.assertEqual(len(PRODUCT_IDS), 19)
+        self.assertEqual(len(PRODUCT_IDS), 23)
         fx = Fixture("passed-real-playwright")
         products = {i: "the product form does not run on Docker Engine on Linux" for i in PRODUCT_IDS}
         fx.verdicts(passed_except=products)

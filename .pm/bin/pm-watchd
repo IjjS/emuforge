@@ -38,7 +38,7 @@ _pmroute.py): a line about a worker, rev or crit pane of an issue, or about a wo
   EVENT tokens ok <rate>                                        back under the target (once)
   EVENT check still <worktree> <step> <minutes>m                a pm-check step has run for an hour (again every hour)
   EVENT orphans <worktree> <n> <cpu>% <name>×<k>,… pids=<pid>,… [pane=<pane>]
-                                                                a worktree holds orphaned processes (parent a reaper) on two looks 60 s apart; told once per set, again when a PID joins it
+                                                                a worktree holds orphaned processes (parent a reaper) on two looks 60 s apart; told once per set, again when a PID joins it; never what the sweep leaves out (_pmorphans)
   EVENT orphans again <worktree> …                              5 min after a line with pane=, one of its PIDs is still an orphan there (once)
 Panes report with `pm-report "<line>"` (file channel .pm/run/reports.jsonl, exact and agent-independent); the
 terminal is scraped only as a fallback, where a reporting line counts only when it is the pane's last reply (no

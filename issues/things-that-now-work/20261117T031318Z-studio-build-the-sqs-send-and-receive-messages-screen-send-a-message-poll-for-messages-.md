@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: plan
 Issue-Key: studio|sqs|send-and-receive-messages
-Issue-Check-Ids:
+Issue-Check-Ids: studio.sqs-queues-made-outside-are-listed-with-counts studio.sqs-routes-lead-to-the-queue-screens studio.sqs-queue-search-and-pages studio.sqs-read-messages-leaves-them-in-the-queue studio.sqs-read-on-a-redrive-queue-warns-and-moves studio.sqs-read-fifo-queue-shows-groups studio.sqs-send-message-reaches-the-emulator studio.sqs-send-fifo-message studio.sqs-delete-read-messages studio.sqs-purge-queue studio.sqs-redrive-dead-letters-back-to-their-source studio.sqs-redrive-to-another-queue-and-cancel studio.sqs-queue-gone-while-open studio.sqs-emulator-restart-shows-the-empty-emulator studio.sqs-read-on-a-redrive-queue-after-a-consumer-took-them studio.sqs-read-on-a-redrive-queue-of-more-than-ten
 Issue-Commit: 6ecc85128a673b379660e2119ab6b783412cd250
 
 # Build the SQS "Send and receive messages" screen: send a message, poll for messages, read and delete them

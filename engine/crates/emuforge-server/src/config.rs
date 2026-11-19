@@ -1,5 +1,9 @@
-use std::net::{Ipv4Addr, SocketAddr};
+use std::fmt;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::num::NonZeroU16;
+use std::path::{Component, Path, PathBuf};
+
+use emuforge_core::{Endpoint, Settings, TargetName};
 
 use crate::Error;
 
@@ -20,23 +24,89 @@ pub const DEFAULT_EMULATOR_PORT: NonZeroU16 = NonZeroU16::new(9297).expect("9297
 pub const DEFAULT_STUDIO_PORT: NonZeroU16 = NonZeroU16::new(8296).expect("8296 is not zero");
 /// Requests in flight across every route; one more is answered `503 Busy` at once.
 pub const MAX_IN_FLIGHT: usize = 32;
-/// The only address the engine listens on. No setting changes it.
+/// The address both listeners bind unless `--listen-address` names another.
 pub const LISTEN_IP: Ipv4Addr = Ipv4Addr::LOCALHOST;
 
-/// The engine's settings. A flag wins over its environment variable.
-#[derive(Debug, Clone, PartialEq, Eq, clap::Parser)]
-#[command(name = "emuforge-server", about = "The EmuForge engine, on 127.0.0.1")]
+/// The engine port's flag and variable.
+pub(crate) const ENGINE_PORT: (&str, &str) = ("--port", "EMUFORGE_ENGINE_PORT");
+/// The emulator port's flag and variable.
+pub(crate) const EMULATOR_PORT: (&str, &str) = ("--emulator-port", "EMULATOR_PORT");
+/// The Studio port's flag and variable.
+pub(crate) const STUDIO_PORT: (&str, &str) = ("--studio-port", "EMUFORGE_STUDIO_PORT");
+
+/// The settings folder's flag and variable.
+pub(crate) const SETTINGS_DIR: (&str, &str) = ("--settings-dir", "EMUFORGE_SETTINGS_DIR");
+
+/// How EmuForge is run: on the host (`native`, any number of targets) or as the Compose form (`compose`, one
+/// target, its own emulator).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
+pub enum Form {
+    #[default]
+    Native,
+    Compose,
+}
+
+impl Form {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Form::Native => "native",
+            Form::Compose => "compose",
+        }
+    }
+
+    /// The name of the one target the form starts with: `local` (native), `compose` (compose).
+    pub fn seed_name(self) -> &'static str {
+        match self {
+            Form::Native => "local",
+            Form::Compose => "compose",
+        }
+    }
+
+    /// The settings folder under `HOME` when `--settings-dir` is not given.
+    fn default_dir(self, home: &Path) -> PathBuf {
+        let folder = match self {
+            Form::Native => "emuforge",
+            Form::Compose => "emuforge-compose",
+        };
+        home.join(".config").join(folder)
+    }
+}
+
+impl fmt::Display for Form {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// The settings of `serve`. A flag wins over its environment variable; `--listen-address` has no variable.
+#[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
 pub struct Config {
-    /// Port the engine listens on, always on 127.0.0.1
+    /// Port the engine listens on, at --listen-address
     #[arg(long, env = "EMUFORGE_ENGINE_PORT", default_value_t = DEFAULT_ENGINE_PORT)]
     pub port: NonZeroU16,
-    /// Port of the local aws-emulator, reached at https://127.0.0.1:<port>
+    /// Port of the target local, https://127.0.0.1:<port>, while the settings file is absent; in the Compose
+    /// form, the port of its one target compose
     #[arg(long = "emulator-port", env = "EMULATOR_PORT", default_value_t = DEFAULT_EMULATOR_PORT)]
     pub emulator_port: NonZeroU16,
-    /// Port Studio is served on; the engine serves browsers only from http://127.0.0.1:<port> and never listens
-    /// on it
+    /// Port Studio is served on, at --listen-address, when this build embeds Studio; the engine serves browsers
+    /// only from http://127.0.0.1:<port>
     #[arg(long = "studio-port", env = "EMUFORGE_STUDIO_PORT", default_value_t = DEFAULT_STUDIO_PORT)]
     pub studio_port: NonZeroU16,
+    /// IP address both listeners bind; any other than 127.0.0.1 lets anything that can reach it use the emulator
+    /// through the engine
+    #[arg(long = "listen-address", value_name = "IP", default_value_t = IpAddr::V4(LISTEN_IP))]
+    pub listen_address: IpAddr,
+    /// Folder of the settings file targets.json [default: $HOME/.config/emuforge, or
+    /// $HOME/.config/emuforge-compose in the Compose form]; never ~/.aws or a folder under it
+    #[arg(
+        long = "settings-dir",
+        env = "EMUFORGE_SETTINGS_DIR",
+        value_name = "DIR"
+    )]
+    pub settings_dir: Option<PathBuf>,
+    /// How EmuForge is run: native on the host, or compose, which holds one target, its own emulator
+    #[arg(long, env = "EMUFORGE_FORM", value_enum, default_value_t = Form::Native)]
+    pub form: Form,
 }
 
 impl Config {
@@ -48,8 +118,8 @@ impl Config {
             });
         }
         for (other, port) in [
-            ("--port", self.port),
-            ("--emulator-port", self.emulator_port),
+            (ENGINE_PORT.0, self.port),
+            (EMULATOR_PORT.0, self.emulator_port),
         ] {
             if self.studio_port == port {
                 return Err(Error::StudioPortCollides {
@@ -62,29 +132,105 @@ impl Config {
     }
 }
 
-/// `127.0.0.1:<port>`: the one address `serve` binds.
-pub fn listen_addr(config: &Config) -> SocketAddr {
-    SocketAddr::new(LISTEN_IP.into(), config.port.get())
+/// The settings folder `serve` uses: `--settings-dir` made absolute against `cwd`, or the form's folder under
+/// `home`. A folder that is `<home>/.aws` or under it is refused; the comparison is of path components after
+/// `.` and `..` are resolved lexically. Its limits: components are compared byte for byte, so it is
+/// case-sensitive (`~/.AWS` on a case-insensitive file system is not refused), and no symlink is followed (a
+/// link to `~/.aws` elsewhere is not refused).
+pub fn settings_dir(config: &Config, home: &Path, cwd: &Path) -> Result<PathBuf, Error> {
+    let dir = match &config.settings_dir {
+        Some(dir) => lexical(&cwd.join(dir)),
+        None => config.form.default_dir(home),
+    };
+    if dir.starts_with(lexical(&home.join(".aws"))) {
+        return Err(Error::SettingsDirUnderAws { dir });
+    }
+    Ok(dir)
+}
+
+/// `path` with `.` dropped and each `..` taking off the component before it; `..` at the root stays at the root.
+fn lexical(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// The settings used while the file is absent: the form's one target at `https://127.0.0.1:<emulator port>`,
+/// active.
+pub fn seed_settings(form: Form, emulator_port: NonZeroU16) -> Settings {
+    #[allow(
+        clippy::expect_used,
+        reason = "the seed name is one of two string literals, checked by the tests"
+    )]
+    let name = TargetName::parse(form.seed_name()).expect("the seed name follows the name rule");
+    Settings::seed(name, Endpoint::loopback_v4(emulator_port))
+}
+
+/// The variable of a port flag, for the texts of the refusals that name the flag.
+pub(crate) fn variable_of(flag: &str) -> &'static str {
+    [ENGINE_PORT, EMULATOR_PORT, STUDIO_PORT, SETTINGS_DIR]
+        .into_iter()
+        .find(|(name, _)| *name == flag)
+        .map_or("", |(_, variable)| variable)
+}
+
+/// `<listen address>:<port>`: the address `serve` binds for the engine.
+pub fn engine_addr(config: &Config) -> SocketAddr {
+    SocketAddr::new(config.listen_address, config.port.get())
+}
+
+/// `<listen address>:<studio port>`: the address `serve` binds for Studio, when the build embeds it.
+pub fn studio_addr(config: &Config) -> SocketAddr {
+    SocketAddr::new(config.listen_address, config.studio_port.get())
+}
+
+/// The warning `serve` logs before it binds an address other than `127.0.0.1`; `None` for `127.0.0.1`. Every other
+/// address warns, `::1` and the rest of `127.0.0.0/8` included: the rule names `127.0.0.1`.
+pub fn listen_warning(ip: IpAddr) -> Option<String> {
+    (ip != IpAddr::V4(LISTEN_IP)).then(|| {
+        format!(
+            "listening on {ip}, not on loopback: anything that can reach {ip} can open Studio and use the emulator \
+             through the engine; use --listen-address only inside a container whose ports are published on 127.0.0.1"
+        )
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use clap::error::ErrorKind;
-    use clap::{CommandFactory, FromArgMatches};
+    use clap::{Args, FromArgMatches};
 
     use super::*;
 
     /// `Config::try_parse_from` with every environment binding removed, so the process environment (a check
     /// run sets the engine's variables) plays no part.
     fn parse(args: &[&str]) -> Result<Config, clap::Error> {
-        let command = ["port", "emulator_port", "studio_port"]
-            .into_iter()
-            .fold(Config::command(), |command, id| {
-                command.mut_arg(id, |arg| arg.env(None))
-            });
+        let command = [
+            "port",
+            "emulator_port",
+            "studio_port",
+            "settings_dir",
+            "form",
+        ]
+        .into_iter()
+        .fold(command(), |command, id| {
+            command.mut_arg(id, |arg| arg.env(None))
+        });
         let matches = command
             .try_get_matches_from(std::iter::once("emuforge-server").chain(args.iter().copied()))?;
         Config::from_arg_matches(&matches)
+    }
+
+    fn command() -> clap::Command {
+        Config::augment_args(clap::Command::new("emuforge-server"))
     }
 
     fn port(value: u16) -> NonZeroU16 {
@@ -96,6 +242,9 @@ mod tests {
             port: port(engine),
             emulator_port: port(emulator),
             studio_port: port(studio),
+            listen_address: IpAddr::V4(LISTEN_IP),
+            settings_dir: None,
+            form: Form::Native,
         }
     }
 
@@ -134,7 +283,7 @@ mod tests {
 
     #[test]
     fn studio_port_help_shows_default_and_variable() {
-        let help = Config::command().render_help().to_string();
+        let help = command().render_help().to_string();
         let line = help
             .lines()
             .find(|line| line.trim_start().starts_with("--studio-port "))

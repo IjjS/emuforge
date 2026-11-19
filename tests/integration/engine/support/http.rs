@@ -17,6 +17,8 @@ pub struct Request {
     /// `None` sends no `Host` header at all.
     host: Option<String>,
     headers: Vec<(String, String)>,
+    /// Sent after the head with its `Content-Length` (also `0` for an empty `POST` or `PUT`).
+    body: Vec<u8>,
 }
 
 impl Request {
@@ -27,6 +29,7 @@ impl Request {
             path: path.to_owned(),
             host: Some(String::new()),
             headers: Vec::new(),
+            body: Vec::new(),
         }
     }
 
@@ -49,6 +52,14 @@ impl Request {
         self
     }
 
+    /// A JSON body with `Content-Type: application/json` (issue 485's targets API).
+    pub fn json(mut self, body: &serde_json::Value) -> Request {
+        self.headers
+            .push(("Content-Type".to_owned(), "application/json".to_owned()));
+        self.body = body.to_string().into_bytes();
+        self
+    }
+
     /// Sends the request to `127.0.0.1:<port>` and reads the whole answer.
     pub fn send(&self, ctx: &Ctx, port: u16) -> io::Result<Response> {
         self.send_to(ctx, SocketAddr::from((Ipv4Addr::LOCALHOST, port)))
@@ -66,8 +77,12 @@ impl Request {
         for (name, value) in &self.headers {
             head.push_str(&format!("{name}: {value}\r\n"));
         }
+        if !self.body.is_empty() || matches!(self.method.as_str(), "POST" | "PUT") {
+            head.push_str(&format!("Content-Length: {}\r\n", self.body.len()));
+        }
         head.push_str("Connection: close\r\n\r\n");
         stream.write_all(head.as_bytes())?;
+        stream.write_all(&self.body)?;
 
         let mut raw = Vec::new();
         let mut buf = [0u8; 8192];

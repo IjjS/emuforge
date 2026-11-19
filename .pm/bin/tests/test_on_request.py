@@ -32,7 +32,7 @@ from test_issue_branch import PRODUCT_PATH
 
 GROUP = "on-request"
 FIXED = "on request: not part of a default run; run it with --on-request"
-USAGE = "usage: tests/integration/run [--not-run <file>] [--on-request] [--services <file>]"
+USAGE = "usage: tests/integration/run [--not-run <file>] [--on-request] [--full] [--services <file>]"
 NO_LABELS = object()  # a row without the key `labels`
 
 RS = "tests/integration/engine/tests/fixture.rs"

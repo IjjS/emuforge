@@ -1,16 +1,11 @@
 [package]
 name = "emuforge-server"
-description = "The EmuForge engine server: serves the engine's own routes on loopback"
+description = "The EmuForge engine server as a library: the engine's routes, Studio's server and serve()"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
-[[bin]]
-name = "emuforge-server"
-path = "src/main.rs"
-
 [dependencies]
-anyhow.workspace = true
 axum.workspace = true
 clap.workspace = true
 emuforge-core.workspace = true
@@ -19,17 +14,19 @@ http-body.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["net", "rt-multi-thread", "sync", "time"] }
+tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
 tower.workspace = true
 tracing.workspace = true
-tracing-subscriber.workspace = true
 
 [dev-dependencies]
 http-body-util.workspace = true
 hyper.workspace = true
 serde_json.workspace = true
-tokio = { workspace = true, features = ["macros", "rt", "sync", "test-util"] }
+tempfile.workspace = true
+tokio = { workspace = true, features = ["fs", "macros", "rt", "sync", "test-util"] }
 tower = { workspace = true, features = ["util"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
 
 [lints]
 workspace = true

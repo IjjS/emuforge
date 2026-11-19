@@ -20,12 +20,14 @@ const SERVICES = serviceLinks();
 
 /**
  * The services whose route has a screen of its own: Amazon S3 (issue 56), AWS Identity and Access Management
- * (issue 82) and AWS Lambda, whose route is the function list (issue 84).
+ * (issue 82), AWS Lambda, whose route is the function list (issue 84), and Amazon SQS, whose route is the queue list
+ * (issue 481).
  */
 const WITH_SCREEN: readonly string[] = [
   'Amazon Simple Storage Service',
   'AWS Identity and Access Management',
   'AWS Lambda',
+  'Amazon Simple Queue Service',
 ];
 
 /** Every other service. */
@@ -240,6 +242,7 @@ describe('routes', () => {
 
   // Issue 57 (test-criteria.md, "Unit — app/routes.test.tsx", rewritten): a path below a service that has screens,
   // which no screen matches, shows the "no screen yet" page for that part of the service.
+  // Bound: waits up to AREA_LOAD_MS (10 s) for the h1, so the find reports what is missing before the case ends (issue 57 t1, 9249783).
   it.each(['/aws/iam/policies', '/aws/iam/roles/details/abc/tags'])(
     'opens %s as the "no screen yet" page for that part of AWS Identity and Access Management',
     async (path) => {
@@ -500,6 +503,7 @@ describe('routes', () => {
   });
 
   // Issue 57 (test-criteria.md, "Unit — app/routes.test.tsx", rewritten).
+  // Bound: waits up to AREA_LOAD_MS (10 s) for the h1, so the find reports what is missing before the case ends (issue 57 t1, 9249783).
   it.each(['/aws/lambda/functions/function/orders/test', '/aws/lambda/layers'])(
     'opens %s as the "no screen yet" page for that part of AWS Lambda',
     async (path) => {
@@ -513,6 +517,7 @@ describe('routes', () => {
   // Issue 256 gives /aws/s3/buckets/my-bucket and /aws/s3/bucket/create their screens; these three paths have none
   // before or after (issue 480: `/metrics` in place of `/objects`, which is now the tab "Objects"). Issue 57 (test-criteria.md, "Unit — app/routes.test.tsx", rewritten): the page for that part of
   // the service, and no request for an AWS operation.
+  // Bound: waits up to AREA_LOAD_MS (10 s) for the h1, so the find reports what is missing before the case ends (issue 57 t1, 9249783).
   it.each([
     '/aws/s3/buckets/my-bucket/metrics',
     '/aws/s3/bucket/my-bucket/property/versioning/edit',
@@ -548,6 +553,7 @@ describe('routes', () => {
 
   // Issue 57 (test-criteria.md, "Unit — app/routes.test.tsx", New): the crumbs of the screen above the path, and the
   // first action.
+  // Bound: waits up to AREA_LOAD_MS (10 s) for the h1, so the find reports what is missing before the case ends (issue 57 s1, bda293f, as 9249783).
   it.each<[string, [string, string | null][]]>([
     [
       '/aws/s3/buckets/my-bucket/metrics',
@@ -586,6 +592,7 @@ describe('routes', () => {
     NO_SCREEN_PART_TEST_MS,
   );
 
+  // Bound: waits up to AREA_LOAD_MS (10 s) for the h1, so the find reports what is missing before the case ends (issue 57 s1, bda293f, as 9249783).
   it(
     'opens /aws/s3/directory-buckets, then "Go to Buckets": the address /aws/s3 and the h1 "Buckets", without a document load',
     async () => {

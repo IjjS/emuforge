@@ -19,12 +19,13 @@ engine/
     emuforge-core/      emulator connection, key and certificate loading, SigV4, relay
     emuforge-iam/       policy model and evaluation (pure, no I/O)
     emuforge-verify/    IaC tool adapters
-    emuforge-server/    axum server (binary)
-    emuforge-cli/       the `emuforge` binary (clap)
+    emuforge-server/    axum server (library): the engine's routes, Studio's server and serve()
+    emuforge/           the `emuforge` binary (clap): `serve`, and Studio embedded with the feature `embed-studio`
 ```
 
 - Dependency direction: `core` depends on no other workspace crate. `iam` depends on nothing in the workspace.
-  `verify` depends on `core`. `server` and `cli` depend on the libraries, never on each other.
+  `verify` depends on `core`. `server` depends on the libraries. `emuforge` depends on `server` and the libraries,
+  and no crate depends on `emuforge`, the workspace's only binary.
 - `iam` is pure: no network, no filesystem, no clock except one passed in. It is tested without a runtime.
 - Create a crate only when an issue needs it. An empty crate is not scaffolding, it is noise.
 

@@ -1,0 +1,123 @@
+// @vitest-environment node
+// The bounds of Studio's unit cases (issue 469, requirement point 4; test-criteria.md, "Unit s1 —
+// studio/src/test/case-bounds.test.ts"): the scan of `case-bounds.ts`, first on test-file text given by the modules
+// under `case-bounds/`, then on every test file under `studio/src/` as it is on the branch.
+
+import { describe, expect, it } from 'vitest';
+
+import { raisedBounds, readStudioFile, scanCaseBounds, scanRepository } from './case-bounds';
+import * as notRaised from './case-bounds/not-raised';
+import * as raised from './case-bounds/raised';
+import * as refused from './case-bounds/refused';
+
+const FILE = 'src/given.test.ts';
+
+/** The lines the scan names in a given source. */
+function namedLines(source: string): number[] {
+  return scanCaseBounds(source, FILE).map((finding) => finding.line);
+}
+
+/** The 1-based line of the first line of `source` that starts, after its indent, with `start`. */
+function lineStarting(source: string, start: string): number {
+  const at = source.split('\n').findIndex((line) => line.trimStart().startsWith(start));
+  expect(at, `a line starting ${start}`).toBeGreaterThanOrEqual(0);
+  return at + 1;
+}
+
+describe('a raised case bound', () => {
+  it('closed by `}, 20_000);` with no comment above its `it(` → one finding naming the line of its `it(`', () => {
+    const findings = scanCaseBounds(raised.CLOSING_LINE, FILE);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ file: FILE, line: lineStarting(raised.CLOSING_LINE, 'it(') });
+  });
+
+  it('the same with `// Bound: <reason>` directly above its `it(` → no finding', () => {
+    expect(scanCaseBounds(raised.CLOSING_LINE_COMMENTED, FILE)).toEqual([]);
+  });
+
+  it('`10000,` on a line of its own before `);`, no comment → one finding', () => {
+    expect(namedLines(raised.OWN_LINE)).toEqual([lineStarting(raised.OWN_LINE, 'it(')]);
+  });
+
+  it('the same with `// Bound: <reason>` directly above → no finding', () => {
+    expect(scanCaseBounds(raised.OWN_LINE_COMMENTED, FILE)).toEqual([]);
+  });
+
+  it('`{ timeout: 60_000 }` as the second argument, no comment → one finding', () => {
+    expect(namedLines(raised.OPTIONS)).toEqual([lineStarting(raised.OPTIONS, 'it(')]);
+  });
+
+  it('the same with `// Bound: <reason>` directly above → no finding', () => {
+    expect(scanCaseBounds(raised.OPTIONS_COMMENTED, FILE)).toEqual([]);
+  });
+
+  it('`{ timeout: SLOW }`, a name, no comment → one finding', () => {
+    expect(namedLines(raised.OPTIONS_NAMED)).toEqual([lineStarting(raised.OPTIONS_NAMED, 'it(')]);
+  });
+
+  it('closed by `}, SLOW);`, a name as the third argument, no comment → one finding', () => {
+    expect(namedLines(raised.CLOSING_LINE_NAMED)).toEqual([lineStarting(raised.CLOSING_LINE_NAMED, 'it(')]);
+  });
+
+  it('under a comment that does not start `// Bound:` → one finding', () => {
+    expect(namedLines(raised.OTHER_COMMENT)).toEqual([lineStarting(raised.OTHER_COMMENT, 'it(')]);
+  });
+
+  it('`// Bound: <reason>` with a blank line before the `it(` → one finding', () => {
+    expect(namedLines(raised.COMMENT_APART)).toEqual([lineStarting(raised.COMMENT_APART, 'it(')]);
+  });
+});
+
+describe('not a raised case bound', () => {
+  it('a `setTimeout(() => { … }, 20_000);` of several lines inside a case with no bound → no finding', () => {
+    expect(scanCaseBounds(notRaised.INNER_TIMER, FILE)).toEqual([]);
+  });
+
+  it('a `vi.waitFor(async () => { … }, AREA_LOAD);` of several lines inside a case with no bound → no finding', () => {
+    expect(scanCaseBounds(notRaised.INNER_WAIT_FOR, FILE)).toEqual([]);
+  });
+
+  it('`}, 5000);` and `{ timeout: 5_000 }` → no finding', () => {
+    expect(scanCaseBounds(notRaised.AT_DEFAULT, FILE)).toEqual([]);
+  });
+
+  it('`findByRole(…, {}, { timeout: 10_000 })` and `waitFor(…, { timeout: 10_000 })` inside a case → no finding', () => {
+    expect(scanCaseBounds(notRaised.INNER_FIND_AND_WAIT, FILE)).toEqual([]);
+  });
+});
+
+describe('what raises many bounds at once, with a `// Bound:` comment or not', () => {
+  it('`describe(…, { timeout: 9000 }, …)` → one finding', () => {
+    expect(namedLines(refused.SUITE_TIMEOUT)).toEqual([lineStarting(refused.SUITE_TIMEOUT, 'describe(')]);
+    expect(namedLines(refused.SUITE_TIMEOUT_COMMENTED)).toEqual([
+      lineStarting(refused.SUITE_TIMEOUT_COMMENTED, 'describe('),
+    ]);
+  });
+
+  it('`vi.setConfig(…)` with the Vitest setting of the default bound → one finding', () => {
+    expect(namedLines(refused.SET_CONFIG)).toEqual([lineStarting(refused.SET_CONFIG, 'vi.setConfig(')]);
+    expect(namedLines(refused.SET_CONFIG_COMMENTED)).toEqual([
+      lineStarting(refused.SET_CONFIG_COMMENTED, 'vi.setConfig('),
+    ]);
+  });
+
+  it('the Vitest setting of the default bound named anywhere else in a file → one finding', () => {
+    expect(namedLines(refused.SETTING_NAMED)).toEqual([lineStarting(refused.SETTING_NAMED, 'const options')]);
+  });
+});
+
+describe('the repository', () => {
+  it('every test file under studio/src/ as it is on the branch → no finding', () => {
+    expect(scanRepository()).toEqual([]);
+  });
+
+  it('the fifty-tag cases and the create-role page → no case bound above 5000 ms, commented or not', () => {
+    for (const file of [
+      'src/providers/aws/area/services/s3/components/bucket-tags.test.tsx',
+      'src/providers/aws/area/services/iam/components/role-tags.test.tsx',
+      'src/providers/aws/area/services/iam/pages/create-role-page.test.tsx',
+    ]) {
+      expect(raisedBounds(readStudioFile(file)), file).toEqual([]);
+    }
+  });
+});
