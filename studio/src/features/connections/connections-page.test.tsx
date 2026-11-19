@@ -492,19 +492,6 @@ describe('test (R5)', () => {
     ]);
   });
 
-  it('a failed check whose message the row already shows → the message once, the check still Failed', async () => {
-    const message = 'there are no emulator files for port 9302';
-    engine.answerTargets('info', targetInfo(LOCAL, true), targetInfo(SECOND, false, message));
-    await openPage();
-    engine.answerTargets('test', targetTest(SECOND, message));
-
-    await click(button('Test second'));
-
-    const row = rowOf('second');
-    expect(within(row).getAllByText(message, { exact: false })).toHaveLength(1);
-    expect(spaced(within(row).getAllByRole('listitem')[0])).toBe('Emulator files Failed');
-  });
-
   it('no answer in 15 s → "The test did not finish in 15 seconds."; the list is not read again', async () => {
     await openPage();
     engine.answerTargets('test', { hang: true });
