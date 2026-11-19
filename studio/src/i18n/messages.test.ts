@@ -175,6 +175,24 @@ describe('a counted message with U+00A0 after the count (issue 32, R4.1)', () =>
   );
 });
 
+describe("Home's providers line in Studio's English catalogue (issue 494, R2)", () => {
+  const { plural } = messagesFor(BUNDLED_CATALOGUES, 'en');
+
+  it('providers.servicesWithScreens, counts 1 and 19 with 4 screens → the services, then how many have a Studio screen, a no-break space after the first number', () => {
+    expect(plural('providers.servicesWithScreens', 1, { screens: '4' })).toBe(
+      '1\u00a0service · 4 with a Studio screen',
+    );
+    expect(plural('providers.servicesWithScreens', 19, { screens: '4' })).toBe(
+      '19\u00a0services · 4 with a Studio screen',
+    );
+  });
+
+  it('providers.services → reads as before', () => {
+    expect(plural('providers.services', 1)).toBe('1\u00a0service · no Studio screen yet');
+    expect(plural('providers.services', 19)).toBe('19\u00a0services · no Studio screen yet');
+  });
+});
+
 describe('a catalogue that lacks a text', () => {
   it('a message missing from the current catalogue → the English text; never the key, never an empty text', () => {
     expect(messagesFor<string>(CATALOGUES, 'ko').t('only.english')).toBe('Only in English');

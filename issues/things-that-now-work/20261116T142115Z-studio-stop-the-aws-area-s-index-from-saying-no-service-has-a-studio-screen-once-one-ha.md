@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: bug
 Issue-Source: plan
 Issue-Key: studio|aws-area.index|no-service-has-a-screen-sentence
-Issue-Check-Ids:
+Issue-Check-Ids: studio.aws-index-groups-services-by-screen
 Issue-Commit: e3e2027757e708c29b88927fb2c504a3fa4b1eda
 
 # Stop the AWS area's index from saying no service has a Studio screen once one has

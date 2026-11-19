@@ -655,7 +655,7 @@ describe('the AWS area from EmuForge (issue 45)', () => {
     },
   );
 
-  it('on /aws, connected: the description under the h1; "Services", the number of services, its line and the links as on main', () => {
+  it('on /aws, connected, with no screen registered: the description under the h1; "Services", the number of services, "No service has a Studio screen yet." and the links in one list, as on main', () => {
     const { wrapper } = open('/aws');
 
     const header = wrapper.findContentLayout()?.findHeader()?.findHeader();
@@ -672,6 +672,36 @@ describe('the AWS area from EmuForge (issue 45)', () => {
       .getAllByRole('link')
       .map((link) => [link.textContent, link.getAttribute('href')]);
     expect(links).toEqual(SERVICES);
+  });
+
+  it('on /aws with the real build\'s registry: the description of "Services" is the registry\'s sentence, not "No service has a Studio screen yet."; the emulator line, and neither the notice nor "About the local emulator" (issue 61, R4, R6)', async () => {
+    const actual = await vi.importActual<typeof import('./screens')>('./screens');
+    registry.screens.push(...actual.SCREENS);
+    try {
+      const registered = new Set(actual.SCREENS.map(({ service }) => service));
+      const routes = SERVICES.map(([, path]) => path.replace(/^\/aws/, ''));
+      const screens = routes.filter((route) => registered.has(route)).length;
+      expect(screens).toBeGreaterThan(0);
+      const count = String(SERVICES.length);
+      const expected =
+        screens === SERVICES.length
+          ? 'Every service has a Studio screen.'
+          : screens === 1
+            ? `1 of ${count} services has a Studio screen.`
+            : `${String(screens)} of ${count} services have a Studio screen.`;
+
+      const { wrapper } = open('/aws');
+      const container = wrapper.findContentLayout()?.findContent()?.findContainer();
+      const description = container?.findHeader()?.findHeader()?.findDescription()?.getElement();
+      expect(description).toHaveTextContent(expected);
+      expect(description).not.toHaveTextContent('No service has a Studio screen yet.');
+      expect(screen.queryByText('No service has a Studio screen yet.')).toBeNull();
+      expect(emulatorLine()).toBeInTheDocument();
+      expect(screen.queryByText(/^These .+ are in your local emulator$/)).toBeNull();
+      expect(screen.queryByRole('button', { name: 'About the local emulator' })).toBeNull();
+    } finally {
+      registry.screens.length = 0;
+    }
   });
 
   it.each([
