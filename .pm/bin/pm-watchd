@@ -211,11 +211,26 @@ def ours(cwd, root=ROOT):
     return real == root or real.startswith(root + "-") or real.startswith(root + os.sep)
 
 
+def look():
+    """(the names pm-pane opens or closes now, herdr's agent list or None, the registry), read back to back (issue 510):
+    the marks, herdr's list, the registry, the marks again; a name marked at either read counts as marked. pm-pane
+    sets a mark before it changes the registry and keeps it until the registry holds the new entry (new) or herdr
+    lists no agent in the closed pane (close), so an agent listed by the first reads and missing from the registry is
+    marked at one of the two reads unless the whole open or close fell between them."""
+    ops = pane_ops()
+    ags = agents()
+    if ags is None:
+        return ops, None, []
+    reg = load(PANES, [])
+    return ops | pane_ops(), ags, reg
+
+
 def unregistered(ags, reg, ops, told, root=ROOT):
     """EVENT unregistered <name> <pane id> for each agent herdr holds under a pane's name (i<n>-<role>[-<unit>]) in this
     checkout or a worktree of it that no live registry entry holds in that pane, and that no pm-pane opens or closes
-    now (`ops`, _pmlib.pane_ops) (issue 504). `told` ({name: pane id}, the daemon's state) keeps each told once per
-    pane; a name registered or gone since is forgotten, so a later loss is told again."""
+    now (`ops`, _pmlib.pane_ops, read before `ags` and after `reg` by look()) (issues 504, 510). `told` ({name: pane
+    id}, the daemon's state) keeps each told once per pane; a name registered or gone since is forgotten, so a later
+    loss is told again."""
     held = {(r.get("name"), r.get("pane_id")) for r in reg if not r.get("gone")}
     out, now_missing = [], {}
     for x in ags:
@@ -419,7 +434,7 @@ def run(a):
     socket_state, watch_ids = None, set()
     while True:
         try:
-            ags_list = agents()
+            ops, ags_list, reg_now = look()
             if ags_list is None:  # herdr did not answer: no judgement this tick
                 log("herdr agent list failed; tick skipped")
                 waker.close()
@@ -428,7 +443,7 @@ def run(a):
             ags = {x.get("pane_id"): x for x in ags_list}
             pm_a = find_pm(ags_list, pm)
             events = list(st.get("queue") or [])
-            reg = [r for r in load(PANES, []) if not r.get("gone")]
+            reg = [r for r in reg_now if not r.get("gone")]
             watch_ids = {r["pane_id"] for r in reg} | ({pm_a["pane_id"]} if pm_a else set())
             from _pmquota import tick as quota_tick
             events.extend(quota_tick(ags_list))
@@ -530,7 +545,7 @@ def run(a):
             events.extend(orphan_tick(st))
             # a pane herdr holds that the registry does not (issue 504): judged on every look, which herdr's pane events
             # (pane.created, pane.agent_detected) and the end of a pm-pane new or close (its wake) bring
-            events.extend(unregistered(ags_list, load(PANES, []), pane_ops(), st.setdefault("unregistered", {})))
+            events.extend(unregistered(ags_list, reg_now, ops, st.setdefault("unregistered", {})))
             events.extend(room_tick(st, reg, freed=", ".join(freed), given=given))
             if events:
                 for e in events:

@@ -257,7 +257,8 @@ flow step 1:
   tab:
   - The oldest issue of the batch is its host. Its `.pm/issue-<host>/` holds the batch's stage documents, and
     `decisions.md` names the other issue files. One `plan` pane leads all five, with one requirement, one set of
-    test criteria and one breakdown, and its one `rev` pane reviews each stage once for the whole batch.
+    test criteria and one breakdown, and its one `rev` pane reviews the requirement, the plan set and the
+    implementation once each for the whole batch.
   - The batch is one issue branch of its host: `pm-worktree new <host>` makes it, and the units belong to the host
     (`pm-worktree new <host> <unit>`) and are cut as for one issue: a unit may fix
     several of the five and names the ones it fixes; `rev` reviews the whole once. The unit that fixes an issue runs

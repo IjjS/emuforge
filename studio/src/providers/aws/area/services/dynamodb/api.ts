@@ -21,6 +21,7 @@ import {
 
 import { createAwsClient } from '../../../../../lib/aws/client-factory';
 import { RequestError, sendRequest, type RequestFailure } from '../../../../../lib/aws/request';
+import { filterMembers, type Condition } from './filter';
 import { base64ToBytes } from './item-json';
 import { filterStart, isTableName, matchesFilter } from './start-name';
 
@@ -408,12 +409,19 @@ export interface ItemsRequest {
   /** `Limit`, always sent. */
   pageSize: number;
   read: { kind: 'scan' } | ({ kind: 'query' } & QueryKey);
+  /** The filter's conditions, joined with `AND`; absent or empty for none. */
+  filter?: readonly Condition[];
 }
 
-/** A page of items, in the emulator's order, and the `LastEvaluatedKey` to ask the next one with. */
+/**
+ * A page of items, in the emulator's order, the `LastEvaluatedKey` to ask the next one with, and the number of items
+ * the emulator read for it (`ScannedCount`), which a filter may leave above the items shown.
+ */
 export interface ItemPage {
   items: Item[];
   next?: Item;
+  /** `ScannedCount` as it came; absent when the answer gave none. */
+  read?: number;
 }
 
 /** The members of `Query` that a `QueryKey` makes. */
@@ -443,9 +451,32 @@ function queryMembers({ partition, sort, descending }: QueryKey) {
 }
 
 /**
- * One page of `request`: a `Scan` or a `Query`, with `IndexName` only for an index and `ExclusiveStartKey` only after
- * page 1 (`startKey`, the previous page's `LastEvaluatedKey`). Rejects with `NotBase64Error`, before sending, for a
- * Binary key value that is not base64.
+ * The members of `request`'s read and filter: the query's key condition, the filter's `FilterExpression`, and their
+ * names and values in one map each. A scan with no condition holding a value sends no `ExpressionAttributeValues`;
+ * with no condition at all, nothing of the filter.
+ */
+function readMembers(request: ItemsRequest) {
+  const { read } = request;
+  const query = read.kind === 'query' ? queryMembers(read) : undefined;
+  const filter = filterMembers(request.filter ?? []);
+  if (filter === undefined) {
+    return query ?? {};
+  }
+  const names = { ...query?.ExpressionAttributeNames, ...filter.names };
+  const values = { ...query?.ExpressionAttributeValues, ...filter.values };
+  return {
+    ...query,
+    FilterExpression: filter.expression,
+    ExpressionAttributeNames: names,
+    ...(Object.keys(values).length === 0 ? {} : { ExpressionAttributeValues: values }),
+  };
+}
+
+/**
+ * One page of `request`: a `Scan` or a `Query`, with `IndexName` only for an index, `ExclusiveStartKey` only after
+ * page 1 (`startKey`, the previous page's `LastEvaluatedKey`) and the filter's members only with a condition. Rejects
+ * with `NotBase64Error`, before sending, for a Binary key value that is not base64, and with the filter's
+ * `FilterValueError` for a Binary condition value that is not.
  */
 export async function readItems(
   endpoint: string,
@@ -460,16 +491,19 @@ export async function readItems(
     ...(request.index === undefined ? {} : { IndexName: request.index }),
     ...(startKey === undefined ? {} : { ExclusiveStartKey: startKey }),
   };
-  const { read } = request;
+  const members = readMembers(request);
   const output =
-    read.kind === 'scan'
-      ? await sendRequest(
-          OPERATIONS.scan,
-          (abortSignal) => dynamodbClient(endpoint).send(new ScanCommand(common), { abortSignal }),
-          signal,
-        )
+    request.read.kind === 'scan'
+      ? await (() => {
+          const command = new ScanCommand({ ...common, ...members });
+          return sendRequest(
+            OPERATIONS.scan,
+            (abortSignal) => dynamodbClient(endpoint).send(command, { abortSignal }),
+            signal,
+          );
+        })()
       : await (() => {
-          const command = new QueryCommand({ ...common, ...queryMembers(read) });
+          const command = new QueryCommand({ ...common, ...members });
           return sendRequest(
             OPERATIONS.query,
             (abortSignal) => dynamodbClient(endpoint).send(command, { abortSignal }),
@@ -478,7 +512,12 @@ export async function readItems(
         })();
   const items = output.Items ?? [];
   const next = output.LastEvaluatedKey;
-  return next === undefined || Object.keys(next).length === 0 ? { items } : { items, next };
+  const read = number(output.ScannedCount);
+  return {
+    items,
+    ...(next === undefined || Object.keys(next).length === 0 ? {} : { next }),
+    ...optional('read', read),
+  };
 }
 
 // ---------------------------------------------------------------------------------------------------------------
