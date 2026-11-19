@@ -439,7 +439,7 @@ export function CreateQueuePage({ connection }: ScreenPageProps) {
                   Set a dead-letter queue
                 </Toggle>
                 {form.deadLetterOn && (
-                  <>
+                  <SpaceBetween size="l">
                     <FormField label="Dead-letter queue" errorText={deadLetterError}>
                       <Select
                         ref={deadLetterRef}
@@ -494,7 +494,7 @@ export function CreateQueuePage({ connection }: ScreenPageProps) {
                         }}
                       />
                     </FormField>
-                  </>
+                  </SpaceBetween>
                 )}
               </SpaceBetween>
             </Container>
