@@ -364,10 +364,14 @@ elif args[:2] == ["agent", "prompt"]:
         state["sessions"][args[2]] = "s2-" + args[2]
         state_p.write_text(json.dumps(state))
     print("{{}}")
-elif args[:2] == ["pane", "wait-output"]:
-    if cfg.get("no_marker"):
-        sys.exit(1)
-    print("{{}}")
+elif args[:2] == ["pane", "read"]:
+    # the pane's snapshot: the reset prompt's echo, and unless no_marker a reply that prints its marker
+    calls = [json.loads(x)["args"] for x in open(cfg["calls"]).read().splitlines()]
+    asked = [c[3] for c in calls if c[:2] == ["agent", "prompt"] and len(c) >= 4 and c[3].startswith("Context reset")]
+    screen = "❯ " + asked[-1] + "\\n\\n" if asked else ""
+    if asked and not cfg.get("no_marker"):
+        screen += "⏺ Note written.\\n\\n  " + asked[-1].rsplit("stop: ", 1)[1] + "\\n"
+    sys.stdout.write(screen)
 elif args[:2] == ["pane", "close"]:
     if cfg.get("on_close"):
         subprocess.Popen(cfg["on_close"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
@@ -1405,7 +1409,7 @@ class Pane(Command):
         """guard"""
         pid = self.ours(self.wt["wt-a"])
         self.herdr_cfg = dict(no_marker=True)
-        r = self.cmd("reset", "i1-worker-h1")
+        r = self.cmd("reset", "i1-worker-h1", "--wait", "2")
         self.assertNotEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertEqual(self.prompt(lambda t: t == "/clear"), [], self.logged())
         self.assertAlive(pid)
