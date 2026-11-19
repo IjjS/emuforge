@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import type { CheckResult } from '../../../../lib/engine/engine-client';
 import { EmulatorLine, type AboutControl, type AreaConnection } from './emulator-line';
+import { TargetChangeFlashContext } from './target-change-flash';
 
 const LABEL = 'Local emulator, not AWS';
 const ENGINE_ORIGIN = 'http://127.0.0.1:8297';
@@ -423,6 +424,30 @@ describe("the emulator line's target (issue 486, R2)", () => {
     expect(text(targetPart())).toBe('Target second');
     expect(changes).toEqual([]);
     expect(text(liveRegion())).toBe('');
+  });
+
+  it('on a page whose flash does not announce it, connected local then connected second: the live region holds the label and the whole line', async () => {
+    connection.value = { result: naming(connected(9301), 'local'), engineOrigin: ENGINE_ORIGIN };
+    const router = createMemoryRouter(
+      [
+        {
+          path: '/aws/*',
+          element: (
+            <TargetChangeFlashContext value={false}>
+              <Line />
+            </TargetChangeFlashContext>
+          ),
+        },
+      ],
+      { initialEntries: ['/aws'] },
+    );
+    render(<RouterProvider router={router} />);
+    expect(text(liveRegion())).toBe('');
+
+    connection.answer(naming(connected(9302), 'second'));
+    await settle();
+
+    expect(text(liveRegion())).toBe(`${LABEL} Connected at ${endpoint(9302)}. Target second`);
   });
 
   it('connected local, then not started with local: the live region holds the label and the whole line, as before', async () => {
