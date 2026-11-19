@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: bug
 Issue-Source: finder
 Issue-Key: harness|pm-pane|reset-marker-after-several-lines-not-matched
-Issue-Check-Ids:
+Issue-Check-Ids: harness.pane-reset harness.orphans
 Issue-Commit: 773183246b8e66e307b80655ac968cb730f2efdd
 
 # Let pm-pane reset see the marker when the pane writes more than one line before it

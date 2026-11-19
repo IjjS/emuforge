@@ -10,6 +10,7 @@ import createWrapper from '@cloudscape-design/components/test-utils/selectors';
 import type { Locator, Page } from '@playwright/test';
 
 import { expect, NO_SCREEN_SERVICE, startStack, test } from './support';
+import { connectedAt, expectLine } from './support/aws-area';
 import {
   awaitTarget,
   contentStopProblems,
@@ -59,6 +60,13 @@ interface PageOf {
   firstStop: string;
   /** Home: its title is Studio's name alone, and it waits for "Connected". */
   home?: boolean;
+  /**
+   * A list whose `h1` is its title followed by its counter once the list is read ("Tables (3)", Cloudscape's header
+   * counter inside the `h1`; issue 496, design.md task 1): it is shown once the counter is there, its content target
+   * is named by the `h1`'s text then, and the Tab after it is read once the emulator line reads "Connected at
+   * <endpoint>" (issue 496, decisions.md, Review decisions of 2026-11-19).
+   */
+  counted?: boolean;
 }
 
 const HOME: PageOf = { path: '/', h1: 'Home', firstStop: 'Refresh', home: true };
@@ -67,7 +75,9 @@ const HOME: PageOf = { path: '/', h1: 'Home', firstStop: 'Refresh', home: true }
 const INDEX: PageOf = { path: '/aws', h1: AWS, firstStop: INDEX_FIRST_LINK };
 const SERVICE_PAGE: PageOf = { path: NO_SCREEN_SERVICE.path, h1: SERVICE, firstStop: GO_HOME };
 const SERVICE_BELOW: PageOf = { path: NO_SCREEN_SERVICE.below, h1: SERVICE, firstStop: GO_HOME };
-const DYNAMODB: PageOf = { path: '/aws/dynamodb', h1: 'Amazon DynamoDB', firstStop: GO_HOME };
+// Issue 496: `/aws/dynamodb` is DynamoDB's table list, whose `h1` is "Tables" and whose first content stop is the
+// local-emulator notice's (i) control.
+const DYNAMODB: PageOf = { path: '/aws/dynamodb', h1: 'Tables', firstStop: 'About the local emulator', counted: true };
 const API_GATEWAY: PageOf = { path: '/aws/apigateway', h1: 'Amazon API Gateway', firstStop: GO_HOME };
 const AREA_NOT_FOUND: PageOf = { path: '/aws/does-not-exist', h1: NOT_FOUND, firstStop: GO_HOME };
 const STUDIO_NOT_FOUND: PageOf = { path: '/does-not-exist', h1: NOT_FOUND, firstStop: GO_HOME };
@@ -86,10 +96,22 @@ async function connected(page: Page): Promise<void> {
   await expect(page.getByText('Connected', { exact: true }), 'both rows "Connected"').toHaveCount(2);
 }
 
+/** The `h1` of `p`: named `p.h1`, or for a counted list `p.h1` followed by its counter ("Tables (3)", "Tables (25+)"). */
+function h1Of(page: Page, p: PageOf): Locator {
+  if (!p.counted) return heading(page, p.h1);
+  return page.getByRole('heading', { level: 1, name: new RegExp(`^${p.h1} \\(\\d+\\+?\\)$`) });
+}
+
+/** The name the content target of `p` has: the `h1`'s text as shown now. */
+async function targetName(page: Page, p: PageOf): Promise<string> {
+  if (!p.counted) return p.h1;
+  return (await h1Of(page, p).innerText(ACTION)).replace(/\s+/g, ' ').trim();
+}
+
 /** The page `p` is shown at its address: its `h1` visible, and on Home both rows "Connected". */
 async function shown(page: Page, p: PageOf): Promise<void> {
   await expect(page).toHaveURL(addressOf(p.path));
-  await expect(heading(page, p.h1)).toBeVisible();
+  await expect(h1Of(page, p)).toBeVisible();
   if (p.home) await connected(page);
 }
 
@@ -312,7 +334,7 @@ interface Arrival {
 
 test('studio.route-change-focuses-new-page-content', async ({ ctx, page }) => {
   test.setTimeout(480_000);
-  await startStack(ctx);
+  const stack = await startStack(ctx);
   const lines = new Lines(ctx);
   const f = frame(page);
   const arrivals: Arrival[] = [];
@@ -323,7 +345,7 @@ test('studio.route-change-focuses-new-page-content', async ({ ctx, page }) => {
    */
   async function arrive(change: string, to: PageOf): Promise<Arrival> {
     await shown(page, to);
-    const target = await awaitTarget(page, to.h1, to.firstStop);
+    const target = await awaitTarget(page, await targetName(page, to), to.firstStop);
     const title = await expect
       .poll(() => page.title(), { timeout: 5_000 })
       .toBe(titleFor(to))
@@ -340,6 +362,7 @@ test('studio.route-change-focuses-new-page-content', async ({ ctx, page }) => {
       live: await liveRegions(page),
       next: null,
     };
+    if (to.counted) await expectLine(page, connectedAt(stack.emulatorPort));
     arrival.next = await pressTab(page);
     arrivals.push(arrival);
     ctx.log(
@@ -356,10 +379,10 @@ test('studio.route-change-focuses-new-page-content', async ({ ctx, page }) => {
   }
 
   await lines.line(
-    'Fresh load of `/`, focus "Amazon DynamoDB" in Home\'s "Providers", Enter → the address is `/aws/dynamodb`, focus is on the content target named "Amazon DynamoDB", and the next Tab reaches "Go to Home" (regression)',
+    '(changed, issue 496) Fresh load of `/`, focus "Amazon DynamoDB" in Home\'s "Providers", Enter → the address is `/aws/dynamodb`, focus is on the content target named "Tables", and the next Tab, read once the emulator line shows "Connected at <endpoint>", reaches "About the local emulator" (regression)',
     async () => {
       await openFresh(page, HOME);
-      await follow(page, providersLink(page, DYNAMODB.h1));
+      await follow(page, providersLink(page, 'Amazon DynamoDB'));
       expectArrived(await arrive('/ → "Amazon DynamoDB" in "Providers"', DYNAMODB), true);
     },
   );

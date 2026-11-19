@@ -21,8 +21,9 @@ import {
 } from './support/frame';
 import { Lines } from './support/lines';
 
+// Issue 496 (decisions.md, Review decisions of 2026-11-19, as issue 72 had decided): the lines that opened DynamoDB's paths open the path below the example
+// service, which has no screen, since `/aws/dynamodb` and `/aws/dynamodb/tables` show DynamoDB's table list.
 const SERVICE = NO_SCREEN_SERVICE.label;
-const DYNAMODB = 'Amazon DynamoDB';
 
 test('studio.service-routes-say-no-screen-yet', async ({ ctx, page }) => {
   await startStack(ctx);
@@ -39,32 +40,32 @@ test('studio.service-routes-say-no-screen-yet', async ({ ctx, page }) => {
   );
 
   await lines.line(
-    '(changed) In the AWS area\'s side navigation, choose "Amazon Kinesis" → its "no screen yet" page, the address is `/aws/kinesis` (open `/aws/dynamodb` first)',
+    '(changed, issue 496) In the AWS area\'s side navigation, choose "Amazon Kinesis" → its "no screen yet" page, the address is `/aws/kinesis` (open `/aws/kinesis/streams` first)',
     async () => {
-      await page.goto('/aws/dynamodb');
-      await expectNoScreenYet(page, DYNAMODB, '/aws/dynamodb');
+      await page.goto(NO_SCREEN_SERVICE.below);
+      await expectNoScreenYet(page, SERVICE, NO_SCREEN_SERVICE.below);
       await page.locator(SIDE_NAVIGATION).getByRole('link', { name: SERVICE, exact: true }).click(ACTION);
       await expectNoScreenYet(page, SERVICE, NO_SCREEN_SERVICE.path);
     },
   );
 
   await lines.line(
-    'Open `/aws/dynamodb/tables` directly, then refresh the page → the "no screen yet" page for Amazon DynamoDB both times',
+    '(changed, issue 496) Open `/aws/kinesis/streams` directly, then refresh the page → the "no screen yet" page for Amazon Kinesis both times',
     async () => {
-      await page.goto('/aws/dynamodb/tables');
-      await expectNoScreenYet(page, DYNAMODB, '/aws/dynamodb/tables');
+      await page.goto(NO_SCREEN_SERVICE.below);
+      await expectNoScreenYet(page, SERVICE, NO_SCREEN_SERVICE.below);
       await page.reload();
-      await expectNoScreenYet(page, DYNAMODB, '/aws/dynamodb/tables');
+      await expectNoScreenYet(page, SERVICE, NO_SCREEN_SERVICE.below);
     },
   );
 
   await lines.line(
-    'Go back → the previous page is shown again; go forward → the later page again; choose "Go to Home" → Home',
+    '(changed, issue 496) Go back → the previous page is shown again; go forward → the later page again; choose "Go to Home" → Home',
     async () => {
       await page.goBack();
       await expectNoScreenYet(page, SERVICE, NO_SCREEN_SERVICE.path);
       await page.goForward();
-      await expectNoScreenYet(page, DYNAMODB, '/aws/dynamodb/tables');
+      await expectNoScreenYet(page, SERVICE, NO_SCREEN_SERVICE.below);
       await page.getByRole('link', { name: 'Go to Home', exact: true }).click(ACTION);
       await expectHome(page);
     },

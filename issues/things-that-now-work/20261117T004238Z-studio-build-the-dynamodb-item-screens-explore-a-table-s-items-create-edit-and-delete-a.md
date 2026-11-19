@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: plan
 Issue-Key: studio|dynamodb|items
-Issue-Check-Ids:
+Issue-Check-Ids: studio.dynamodb-tables-made-outside-are-listed studio.dynamodb-routes-lead-to-the-table-screens studio.dynamodb-table-search-and-pages studio.dynamodb-table-details-show-what-the-emulator-holds studio.dynamodb-scan-shows-items-of-every-type studio.dynamodb-scan-pages-follow-the-emulator studio.dynamodb-query-by-key-and-condition studio.dynamodb-create-a-table-and-its-first-item studio.dynamodb-create-table-provisioned-and-refused studio.dynamodb-edit-an-item studio.dynamodb-delete-items studio.dynamodb-delete-a-table studio.dynamodb-table-gone-while-open studio.dynamodb-emulator-restart-shows-the-empty-emulator
 Issue-Commit: (no commit yet)
 
 # Build the DynamoDB item screens: explore a table's items, create, edit and delete an item

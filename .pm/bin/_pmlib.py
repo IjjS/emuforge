@@ -13,6 +13,7 @@ import time
 ROOT = pathlib.Path(__file__).resolve().parents[2]  # the main checkout; worktrees are its siblings
 PM = ROOT / ".pm"
 RUN = PM / "run"
+REPORTS = RUN / "reports.jsonl"  # pm-report's file channel (pm-report, pm-watchd)
 BIN = PM / "bin"
 RUN.mkdir(parents=True, exist_ok=True)
 
@@ -102,6 +103,15 @@ def herdr(*args, check=True):
         return d.get("result", d)
     except json.JSONDecodeError:
         return {"raw": out}
+
+
+def herdr_text(*args):
+    """Run a herdr command whose output is text (`pane read`); its stdout as is, or None on failure."""
+    try:
+        p = subprocess.run(["herdr", *args], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return p.stdout if p.returncode == 0 else None
 
 
 def find_key(obj, key):
@@ -412,22 +422,55 @@ def guard(what, issue=None, plan_may=False):
              + f"; {who} may not")
 
 
-# --- pm-pane reset (issues 495, 497) --------------------------------------------------------------------------------
+# --- pm-pane reset (issues 495, 497, 509) ---------------------------------------------------------------------------
 # A pane lays its reply out at its own width, so in a narrow pane the reset marker reaches the terminal over two rows
 # (`⏺ RESET READY` / `  i486-worker-s2 102730`); unwrapping soft wraps does not join them. The prompt echo (`❯ …`,
-# Codex `› …`) holds the marker too and wraps the same way.
+# Codex `› …`) holds the marker too and wraps the same way. A pane often writes a sentence or two before the marker.
+# herdr's `pane wait-output --regex` matches a snapshot row by row and never across a line break (herdr 0.9.5, issue
+# 509), so pm-pane reads the snapshot (`pane read`) and matches the pattern in Python on the whole of it.
 REPLY_BULLET = "⏺•"           # a reply row of Claude Code, Codex
 NOT_REPLY = "❯›⎿└"            # a prompt echo, a tool's result (Claude Code, Codex)
 RESETTING_FOR = 900           # seconds a reset in progress is believed (a reset ends in under 10 minutes)
 
 
 def reset_marker_pattern(marker):
-    """The Rust (and Python) regex `pm-pane reset` waits for: the marker's words with any whitespace, line breaks
+    """The Python regex `pm-pane reset` waits for on the pane's snapshot: the marker's words with any whitespace, line breaks
     included, between them, at the start of a row (after non-letters), and inside a reply: after a reply bullet with no
     prompt echo or tool result between the bullet and the marker. So the echo of the reset prompt, however it wraps,
     and a tool's row or result that holds the marker never match."""
     words = r"\s+".join(re.escape(w) for w in marker.split())
     return (rf"[{REPLY_BULLET}](?:[^{NOT_REPLY}]*\n)?[^A-Za-z{NOT_REPLY}\n]*{words}[ \t]*(?:\n|$)")
+
+
+def reset_marker_seen(screen, marker):
+    """True when the snapshot text of a pane holds the marker in a reply (reset_marker_pattern)."""
+    return re.search(reset_marker_pattern(marker), screen or "") is not None
+
+
+def reports_size():
+    """The byte length of reports.jsonl now: where pm-report's next record starts."""
+    try:
+        return REPORTS.stat().st_size
+    except OSError:
+        return 0
+
+
+def reported_after(pos, pane, line):
+    """True when pm-report recorded `line` (its words) for `pane` past byte offset `pos` of reports.jsonl."""
+    try:
+        with REPORTS.open("rb") as f:
+            f.seek(pos)
+            chunk = f.read()
+    except OSError:
+        return False
+    for row in chunk.decode(errors="replace").splitlines():
+        try:
+            o = json.loads(row)
+        except ValueError:
+            continue
+        if isinstance(o, dict) and o.get("pane") == pane and str(o.get("line", "")).split() == line.split():
+            return True
+    return False
 
 
 def state_note(entry):
