@@ -1,8 +1,14 @@
+import { SNSClient } from '@aws-sdk/client-sns';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { openPageAt } from '../test/home-test-kit';
 
 // `loadConfig` reads `/config.json` once per page; each case loads a fresh module, so each is a fresh page.
 async function load(answer: () => Promise<Response>) {
-  const fetch = vi.fn((_input: RequestInfo | URL, _init?: RequestInit) => answer());
+  const fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    void input;
+    void init;
+    return answer();
+  });
   vi.stubGlobal('fetch', fetch);
   const config = await import('./config');
   return { config: await config.loadConfig(), fetch, module: config };
@@ -76,6 +82,38 @@ describe('engineBase', () => {
 
     expect(engineBase({ enginePort: 8400, enginePath: undefined }, 'https://name.test:8296')).toBe(
       'http://127.0.0.1:8400',
+    );
+  });
+});
+
+describe('loadConfig and the AWS client factory', () => {
+  let restore: () => void;
+
+  beforeEach(() => {
+    restore = openPageAt('https://name.test:8296/aws');
+  });
+
+  afterEach(() => {
+    restore();
+  });
+
+  it('with enginePath /__engine, the factory takes <page origin>/__engine as the endpoint', async () => {
+    const { config, module } = await load(() =>
+      Promise.resolve(Response.json({ enginePort: 8400, enginePath: '/__engine' })),
+    );
+    const factory = await import('../lib/aws/client-factory');
+    const endpoint = module.engineBase(config, window.location.origin);
+
+    expect(endpoint).toBe('https://name.test:8296/__engine');
+    expect(factory.createAwsClient(SNSClient, { endpoint })).toBeInstanceOf(SNSClient);
+  });
+
+  it('without enginePath, the factory refuses <page origin>/__engine', async () => {
+    await load(() => Promise.resolve(Response.json({ enginePort: 8400 })));
+    const factory = await import('../lib/aws/client-factory');
+
+    expect(() => factory.createAwsClient(SNSClient, { endpoint: 'https://name.test:8296/__engine' })).toThrow(
+      factory.EndpointRefusedError,
     );
   });
 });

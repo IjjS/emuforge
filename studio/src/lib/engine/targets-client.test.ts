@@ -376,19 +376,22 @@ describe('targets client: a base through Studio’s port (issue 503)', () => {
     restore();
   });
 
-  it.each(ROUTES)('%s: its request goes to <base>/__emuforge/targets… with the token, none to 127.0.0.1', async (route) => {
-    engine.targets = route === 'add' ? [LOCAL] : [LOCAL, SECOND];
-    const { error } = await settle(CALLS[route]());
+  it.each(ROUTES)(
+    '%s: its request goes to <base>/__emuforge/targets… with the token, none to 127.0.0.1',
+    async (route) => {
+      engine.targets = route === 'add' ? [LOCAL] : [LOCAL, SECOND];
+      const { error } = await settle(CALLS[route]());
 
-    expect(error).toBeUndefined();
-    expect(client.origin).toBe(BASE);
-    expect(engine.requests.map((r) => `${r.method} ${r.url}`)).toEqual([
-      'GET https://name.test/__engine/__emuforge/session',
-      PATHS[route],
-    ]);
-    expect(present(engine.targetRequests(route)[0], route).headers['x-emuforge-session']).toBe(TOKEN_1);
-    expect(engine.requests.filter((r) => r.url.includes('127.0.0.1'))).toEqual([]);
-  });
+      expect(error).toBeUndefined();
+      expect(client.origin).toBe(BASE);
+      expect(engine.requests.map((r) => `${r.method} ${r.url}`)).toEqual([
+        'GET https://name.test/__engine/__emuforge/session',
+        PATHS[route],
+      ]);
+      expect(present(engine.targetRequests(route)[0], route).headers['x-emuforge-session']).toBe(TOKEN_1);
+      expect(engine.requests.filter((r) => r.url.includes('127.0.0.1'))).toEqual([]);
+    },
+  );
 });
 
 describe('targets client: a base on loopback (issue 503)', () => {
