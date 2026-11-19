@@ -33,9 +33,11 @@ import {
   openFunction,
   OVERVIEW,
   pairFirstLine,
+  PAGE_TABS,
   pairValue,
   RUNTIME,
   RUNTIME_SETTINGS,
+  tabNames,
 } from './services/lambda/lambda-page';
 import { Lines } from './support/lines';
 import { checkPrefix, creationDateText, SEOUL } from './support/service-screens';
@@ -60,7 +62,8 @@ test('studio.lambda-function-page-shows-the-function', async ({ ctx, page }) => 
   await seeded.function(withoutUrl);
 
   await lines.line(
-    'With a function made directly (`nodejs22.x`, `arm64`, a description, a function URL) → its page shows the description, last modified time, ARN, URL (as text, not a link), runtime name, handler and architecture that direct `GetFunction` and `GetFunctionUrlConfig` return',
+    // Issue 516 (test-criteria.md, "Rewritten lines of checks on `main`"; the pm's decision of 2026-11-19).
+    'With a function made directly (`nodejs22.x`, `arm64`, a description, a function URL) → its page shows the description, last modified time, ARN and URL (as text, not a link) that the emulator reports, and exactly the tabs "Test", "Code", "Configuration"; on "Code" the runtime\'s name, the handler and the architecture the emulator reports',
     async () => {
       const read = await getFunctionDirect(ctx, port, withUrl);
       expect(read.found, `a direct GetFunction ${withUrl}`).toBe(true);
@@ -72,6 +75,9 @@ test('studio.lambda-function-page-shows-the-function', async ({ ctx, page }) => 
         `direct: ${JSON.stringify({ description: c.Description, lastModified: c.LastModified, arn: c.FunctionArn, url, runtime: c.Runtime, handler: c.Handler, architectures: c.Architectures })}`,
       );
       await openFunction(page, withUrl);
+      expect(await tabNames(page), 'the tabs of the page').toEqual(PAGE_TABS);
+      await functionPage(page, withUrl).tab('Code').click(ACTION);
+      await expect(functionPage(page, withUrl).section(RUNTIME_SETTINGS), `"${RUNTIME_SETTINGS}"`).toBeVisible();
       const expected = {
         description: c.Description ?? '-',
         lastModified: creationDateText(c.LastModified, SEOUL),
