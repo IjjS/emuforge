@@ -79,7 +79,7 @@ export function EditRuntimeDialog({ fn, name, engineOrigin, ready, onClose }: Ed
     <AreaModal
       visible
       header="Edit runtime settings"
-      closeAriaLabel="Close modal"
+      closeAriaLabel="Close"
       onDismiss={handleDismiss}
       footer={
         <Box float="right">

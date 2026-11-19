@@ -70,7 +70,7 @@ export function EditVariablesDialog({ fn, name, engineOrigin, ready, onClose }: 
       visible
       size="large"
       header="Edit environment variables"
-      closeAriaLabel="Close modal"
+      closeAriaLabel="Close"
       onDismiss={handleDismiss}
       footer={
         <Box float="right">
@@ -97,6 +97,8 @@ export function EditVariablesDialog({ fn, name, engineOrigin, ready, onClose }: 
           items={rows}
           addButtonText="Add variable"
           removeButtonText="Remove"
+          // Each row's "Remove" names the key it removes; a row without a key is "Remove".
+          removeButtonAriaLabel={(row) => (row.key === '' ? 'Remove' : `Remove ${row.key}`)}
           empty="No environment variables"
           onAddButtonClick={() => {
             setRows((current) => [...current, { key: '', value: '' }]);
