@@ -7,25 +7,29 @@ import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Tabs, { type TabsProps } from '@cloudscape-design/components/tabs';
 import { useCallback, useRef, useState, type ReactNode } from 'react';
-import { useNavigate } from 'react-router';
+import { useNavigate, useSearchParams } from 'react-router';
 
+import { usePageFlash } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
 import { ValueText } from '../../../components/value-text';
 import type { ScreenPageProps } from '../../../screens';
 import type { Role, RoleRead } from '../api';
-import { ROLES_PATH, roleTabPath, type RoleTab } from '../format';
+import { ROLE_PAGE_TABS, ROLE_TAB_PARAMETER, ROLES_PATH, roleTabHref, roleTabOf } from '../format';
 import { useRole } from '../queries';
+import { DeleteRolesDialog, type DeleteRolesOutcome } from '../components/delete-roles-dialog';
 import { EditSummaryDialog } from '../components/edit-summary-dialog';
 import { readFailureState, type ReadFailureState } from '../components/failures';
 import { useAnnouncer } from '../components/page-parts';
 import { Quoted } from '../components/quoted';
-import { BoundarySection, PoliciesSection, SummarySection } from '../components/role-sections';
+import { PermissionsTab } from '../components/permissions-tab';
+import { SummarySection } from '../components/role-sections';
 import { ReadFailure } from '../components/states';
+import { TrustTab } from '../components/trust-tab';
 
-// A role's own page (issue 82, requirement R5, R6.1, R8, R10): the tab "Permissions" with "Summary", "Permissions
-// policies" and "Permissions boundary", in the console's words; its states and Studio's own "Refresh role" in
-// EmuForge's. Every value from the engine or the emulator is rendered as text, each as the kind of value it is (issue
+// A role's own page (issue 82, requirement R5, R6.1, R8, R10; issue 535, tasks 1 and 5): "Summary", then the tabs
+// "Permissions" and "Trust relationships", the active one read from `?tab=`, in the console's words; "Delete" in the
+// header; its states and Studio's own "Refresh role" in EmuForge's. Every value from the engine or the emulator is rendered as text, each as the kind of value it is (issue
 // 467, requirement R6). The `h1` has no description: the area's frame says where the role is (issue 467, R3).
 
 /** The path parameter that holds the role's name, decoded once by the area (R0). */
@@ -34,15 +38,6 @@ export const ROLE_NAME_PARAM = 'name';
 const REFRESHED = 'Role refreshed';
 /** What a failed read names (R10.1). */
 const THING = 'role';
-const PERMISSIONS = 'permissions';
-
-/** The four other tabs, in order, and the routes they lead to (R5.2, R8). */
-const OTHER_TABS: readonly { id: RoleTab; label: string }[] = [
-  { id: 'trust-relationships', label: 'Trust relationships' },
-  { id: 'tags', label: 'Tags' },
-  { id: 'last-accessed', label: 'Last Accessed' },
-  { id: 'revoke-sessions', label: 'Revoke sessions' },
-];
 
 /** What the page shows below its header (R5, R10). */
 type PageState =
@@ -102,8 +97,12 @@ function NotFound({ name }: { name: string }) {
 export function RolePage({ connection, params }: ScreenPageProps) {
   useShowsResources('roles');
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const activeTab = roleTabOf(searchParams.get(ROLE_TAB_PARAMETER));
+  const flash = usePageFlash();
   const [announcement, announce] = useAnnouncer();
   const editRef = useRef<ButtonProps.Ref>(null);
+  const deleteRef = useRef<ButtonProps.Ref>(null);
   const name = params[ROLE_NAME_PARAM] ?? '';
 
   const query = useRole({ endpoint: connection.engineOrigin, name });
@@ -113,6 +112,8 @@ export function RolePage({ connection, params }: ScreenPageProps) {
 
   // The role "Edit summary" is open for; `undefined` while it is closed.
   const [editing, setEditing] = useState<Role>();
+  // The role "Delete" is open for; `undefined` while it is closed.
+  const [deleting, setDeleting] = useState<Role>();
 
   // Kept from the previous render, as React's own pattern for it (as the role list does): what was last seen of the
   // read and the connection, so each change is acted on once, in the render that first shows it.
@@ -162,9 +163,35 @@ export function RolePage({ connection, params }: ScreenPageProps) {
     editRef.current?.focus();
   }, []);
 
+  const handleCloseDelete = useCallback(() => {
+    setDeleting(undefined);
+    deleteRef.current?.focus();
+  }, [setDeleting]);
+
+  // Deleted: the role list opens with the dialog's result. A failed delete stays here with its result, and the role
+  // is read again, so one already gone shows "Role not found" (issue 535, task 5).
+  const handleDeleteOutcome = useCallback(
+    ({ result, allDeleted }: DeleteRolesOutcome) => {
+      if (allDeleted) {
+        if (result === undefined) {
+          void navigate(ROLES_PATH);
+        } else {
+          flash.handOver(ROLES_PATH, result);
+        }
+        return;
+      }
+      if (result !== undefined) {
+        flash.show(result);
+      }
+      refresh();
+    },
+    [flash, navigate, refresh],
+  );
+
+  // A tab changes the query alone, as a new entry of the history: the page stays mounted and reads nothing again.
   const handleTab = useCallback(
     ({ detail }: { detail: TabsProps.ChangeDetail }) => {
-      if (detail.activeTabHref !== undefined && detail.activeTabId !== PERMISSIONS) {
+      if (detail.activeTabHref !== undefined) {
         void navigate(detail.activeTabHref);
       }
     },
@@ -184,43 +211,48 @@ export function RolePage({ connection, params }: ScreenPageProps) {
       );
       break;
     case 'loading':
-    case 'found': {
-      // The tabs lead to the routes of the name as the emulator holds it, once it is read (R8).
-      const tabName = role?.name ?? name;
-      const permissions =
-        state.kind === 'found' ? (
-          <SpaceBetween size="l">
-            <SummarySection
-              role={state.read.role}
-              editRef={editRef}
-              onEdit={() => {
-                setEditing(state.read.role);
-              }}
-            />
-            <PoliciesSection policies={state.read.policies} connection={connection} onRetry={refresh} />
-            <BoundarySection role={state.read.role} />
-          </SpaceBetween>
-        ) : (
-          <Container>
-            <StatusIndicator type="loading">Loading role</StatusIndicator>
-          </Container>
-        );
       content = (
-        <Tabs
-          activeTabId={PERMISSIONS}
-          keyboardActivationMode="manual"
-          ariaLabel="Role"
-          onChange={handleTab}
-          tabs={[
-            { id: PERMISSIONS, label: 'Permissions', content: permissions },
-            ...OTHER_TABS.map(({ id, label }) => ({
+        <Container>
+          <StatusIndicator type="loading">Loading role</StatusIndicator>
+        </Container>
+      );
+      break;
+    case 'found': {
+      const found = state.read;
+      // The tabs lead to the addresses of the name as the emulator holds it (R8).
+      content = (
+        <SpaceBetween size="l">
+          <SummarySection
+            role={found.role}
+            editRef={editRef}
+            onEdit={() => {
+              setEditing(found.role);
+            }}
+          />
+          <Tabs
+            activeTabId={activeTab}
+            // An arrow key moves between the tabs; Enter or a click chooses one, so the history holds only tabs chosen.
+            keyboardActivationMode="manual"
+            ariaLabel="Role"
+            onChange={handleTab}
+            tabs={ROLE_PAGE_TABS.map(({ id, label }) => ({
               id,
               label,
-              href: roleTabPath(tabName, id),
-              disabled: role === undefined,
-            })),
-          ]}
-        />
+              href: roleTabHref(found.role.name, id),
+              content:
+                id === 'trust' ? (
+                  <TrustTab role={found.role} connection={connection} />
+                ) : (
+                  <PermissionsTab
+                    role={found.role}
+                    policies={found.policies}
+                    connection={connection}
+                    onRetry={refresh}
+                  />
+                ),
+            }))}
+          />
+        </SpaceBetween>
       );
       break;
     }
@@ -229,7 +261,23 @@ export function RolePage({ connection, params }: ScreenPageProps) {
   return (
     <>
       <SpaceBetween size="m">
-        <Header variant="h1" actions={<Button iconName="refresh" ariaLabel="Refresh role" onClick={handleRefresh} />}>
+        <Header
+          variant="h1"
+          actions={
+            <SpaceBetween direction="horizontal" size="xs">
+              <Button iconName="refresh" ariaLabel="Refresh role" onClick={handleRefresh} />
+              <Button
+                ref={deleteRef}
+                disabled={role === undefined}
+                onClick={() => {
+                  setDeleting(role);
+                }}
+              >
+                Delete
+              </Button>
+            </SpaceBetween>
+          }
+        >
           <ValueText kind="name" value={role?.name ?? name} />
         </Header>
         {content}
@@ -237,6 +285,14 @@ export function RolePage({ connection, params }: ScreenPageProps) {
       {announcement}
       {editing !== undefined && (
         <EditSummaryDialog role={editing} engineOrigin={connection.engineOrigin} onClose={handleCloseEdit} />
+      )}
+      {deleting !== undefined && (
+        <DeleteRolesDialog
+          roles={[deleting]}
+          connection={connection}
+          onClose={handleCloseDelete}
+          onOutcome={handleDeleteOutcome}
+        />
       )}
     </>
   );
