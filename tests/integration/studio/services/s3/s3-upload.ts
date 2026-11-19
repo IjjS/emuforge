@@ -6,7 +6,7 @@ import { randomBytes } from 'node:crypto';
 
 import { expect } from '../../support/check';
 import { ACTION } from '../../support/frame';
-import { type DirectEnv, s3Direct, shownDirect } from './s3';
+import { type DirectEnv, objectPath, refusalMessage, s3Direct, shownDirect } from './s3';
 
 /** The page's address for bucket `name` at `prefix`: `/aws/s3/bucket/<name>/upload?prefix=<prefix>`. */
 export function uploadAddress(name: string, prefix = ''): string {
@@ -111,4 +111,77 @@ export async function multipartUploadsDirect(env: DirectEnv, port: number, bucke
   ).toBe(200);
   const body = 'error' in answer ? '' : answer.body;
   return [...body.matchAll(/<Upload>[\s\S]*?<Key>([^<]*)<\/Key>[\s\S]*?<\/Upload>/g)].map((m) => m[1]);
+}
+
+/**
+ * The emulator's message when `body` is put as `key` in one direct `PutObject` of `bucket`, which it refuses. A refusal
+ * leaves the bucket as it was.
+ */
+export async function putRefusalDirect(
+  env: DirectEnv,
+  port: number,
+  bucket: string,
+  key: string,
+  body: Buffer,
+  contentType: string,
+): Promise<string> {
+  const answer = await s3Direct(env, port, {
+    method: 'PUT',
+    pathname: objectPath(bucket, key),
+    body,
+    headers: { 'content-type': contentType },
+  });
+  return refusalMessage(answer, `direct PutObject ${bucket}/${key}`);
+}
+
+/**
+ * The emulator's message when a direct multipart upload of `key` in `bucket` sends `part` as its part 1, which it
+ * refuses; the upload is aborted again, and `ListMultipartUploads` must list none of `key` afterwards.
+ */
+export async function partRefusalDirect(
+  env: DirectEnv,
+  port: number,
+  bucket: string,
+  key: string,
+  part: Buffer,
+  contentType: string,
+): Promise<string> {
+  const path = objectPath(bucket, key);
+  const created = await s3Direct(env, port, {
+    method: 'POST',
+    pathname: path,
+    query: [['uploads', '']],
+    headers: { 'content-type': contentType },
+  });
+  expect('error' in created ? created.error : created.status, `direct CreateMultipartUpload ${bucket}/${key}`).toBe(
+    200,
+  );
+  const uploadId = /<UploadId>([^<]*)<\/UploadId>/.exec('error' in created ? '' : created.body)?.[1] ?? '';
+  expect(uploadId, `direct CreateMultipartUpload ${bucket}/${key}: its upload id`).not.toBe('');
+  try {
+    const answer = await s3Direct(env, port, {
+      method: 'PUT',
+      pathname: path,
+      query: [
+        ['partNumber', '1'],
+        ['uploadId', uploadId],
+      ],
+      body: part,
+    });
+    return refusalMessage(answer, `direct UploadPart 1 of ${bucket}/${key}`);
+  } finally {
+    const aborted = await s3Direct(env, port, { method: 'DELETE', pathname: path, query: [['uploadId', uploadId]] });
+    expect('error' in aborted ? aborted.error : aborted.status, `direct AbortMultipartUpload ${bucket}/${key}`).toBe(
+      204,
+    );
+  }
+}
+
+/**
+ * `message` as a pattern that a row's status must match: the emulator's words exactly, with only the count of bytes
+ * the bucket would hold left open, since it counts each request's own overhead.
+ */
+export function refusalPattern(message: string): RegExp {
+  const escaped = message.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`^Failed: ${escaped.replace(/holding \d+ bytes/, 'holding \\d+ bytes')}$`);
 }

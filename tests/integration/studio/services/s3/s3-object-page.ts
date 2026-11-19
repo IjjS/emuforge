@@ -9,7 +9,14 @@ import { expect } from '../../support/check';
 import { ACTION } from '../../support/frame';
 import { creationDateText } from '../../support/service-screens';
 import { bucketPath } from './s3-bucket-page';
-import { type Direct, type DirectEnv, objectPath as directObjectPath, s3Direct, shownDirect } from './s3';
+import {
+  type Direct,
+  type DirectEnv,
+  objectPath as directObjectPath,
+  refusalMessage,
+  s3Direct,
+  shownDirect,
+} from './s3';
 import { sizeText } from './s3-objects';
 
 /** The page's address for `key` of bucket `name`: `/aws/s3/buckets/<name>/object?key=<key>`. */
@@ -221,4 +228,18 @@ export function expectedOverview(
     ETag: head.etag ?? '-',
     'Storage class': head['x-amz-storage-class'] ?? 'STANDARD',
   };
+}
+
+/** The emulator's message when a direct `DeleteObjects` of `key` in `bucket` is refused (a bucket that is gone). */
+export async function deleteObjectsRefusalDirect(
+  env: DirectEnv,
+  port: number,
+  bucket: string,
+  key: string,
+): Promise<string> {
+  const body =
+    '<Delete xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Quiet>true</Quiet>' +
+    `<Object><Key>${key.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</Key></Object></Delete>`;
+  const answer = await s3Direct(env, port, { method: 'POST', pathname: `/${bucket}`, query: [['delete', '']], body });
+  return refusalMessage(answer, `direct DeleteObjects ${bucket}`);
 }

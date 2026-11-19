@@ -23,8 +23,8 @@ import {
   SECTION_LOADING,
   SECTIONS,
   shownSectionTitles,
+  shownTabs,
   TABS,
-  tab,
   VERSIONING,
 } from './services/s3/s3-bucket-page';
 
@@ -50,13 +50,13 @@ test('studio.s3-bucket-page-shows-loading-until-the-answer', async ({ ctx, page,
         await page.goto(propertiesPath(name));
         await expect(page.getByText(LOADING_BUCKET, { exact: true }), `"${LOADING_BUCKET}"`).toBeVisible();
         await expect.poll(() => hold.count(), { message: 'a ListBuckets request is held' }).toBeGreaterThan(0);
-        for (const t of TABS) await expect(tab(page, t), `the tab "${t}" while loading`).toHaveCount(0);
+        expect(await shownTabs(page), 'tabs while loading').toEqual([]);
         expect(await shownSectionTitles(page), 'sections while loading').toEqual([]);
         await hold.release();
         await expectBucketPage(page, name);
-        for (const t of TABS) await expect(tab(page, t), `the tab "${t}"`).toBeVisible();
+        await expect.poll(() => shownTabs(page), { message: 'the tabs, and no other' }).toEqual(TABS);
         await expect
-          .poll(async () => [...(await shownSectionTitles(page))].sort(), { message: 'the sections shown' })
+          .poll(async () => [...(await shownSectionTitles(page))].sort(), { message: 'the sections, and no other' })
           .toEqual([...SECTIONS].sort());
         await expect(page.getByText(LOADING_BUCKET, { exact: true }), `"${LOADING_BUCKET}" once answered`).toHaveCount(
           0,

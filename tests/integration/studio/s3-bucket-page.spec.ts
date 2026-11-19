@@ -52,8 +52,10 @@ import {
   sectionButton,
   SECTIONS,
   shownSectionTitles,
+  shownTabs,
   SSE_S3,
   tab,
+  TABS,
   TAGS,
   VERSIONING,
   WEBSITE,
@@ -121,6 +123,11 @@ test.describe(() => {
         await tab(page, PROPERTIES).click(ACTION);
         await expect(page).toHaveURL(addressOf(propertiesPath(name)));
         await expectBucketPage(page, name);
+        // Issue 480: two tabs and six sections, though the bucket holds the properties of the sections that went.
+        await expect.poll(() => shownTabs(page), { message: 'the tabs, and no other' }).toEqual(TABS);
+        await expect
+          .poll(async () => [...(await shownSectionTitles(page))].sort(), { message: 'the sections, and no other' })
+          .toEqual([...SECTIONS].sort());
         const props = await bucketPropertiesDirect(ctx, port, name);
         ctx.log(`direct properties of ${name}: ${JSON.stringify(props)}`);
         const expected = expectedSections(await directBucket(ctx, port, name), props, SEOUL);
@@ -213,7 +220,7 @@ test.describe(() => {
           })
           .toBe(regionText('ap-northeast-2'));
         await expect
-          .poll(async () => [...(await shownSectionTitles(page))].sort(), { message: 'the sections shown' })
+          .poll(async () => [...(await shownSectionTitles(page))].sort(), { message: 'the sections, and no other' })
           .toEqual([...SECTIONS].sort());
         // Shown, not failed or still reading: each section holds what the direct reads of the bucket return.
         const props = await bucketPropertiesDirect(ctx, port, seoul);
