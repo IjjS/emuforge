@@ -10,8 +10,11 @@
         breakdown.md lists for `<unit>`"; --scenarios, the unit-test scenarios that are the unit's end condition,
         defaults to "the unit-test scenarios test-criteria.md lists for `<unit>`"; --close names the check ids for
         the unit that closes the issue (auto: "the ids breakdown.md and test-criteria.md give")
-  pm-brief harness-engineer <issue> <unit> --part "<what this pane plans and builds>" [--precedent <id>]...
-        writes brief-harness-engineer.md for the unit's worktree and marks the issue `lead: harness-engineer`
+  pm-brief harness-engineer <issue> <unit> --part "<what this pane plans and builds>" [--not-last] [--precedent <id>]...
+        writes brief-harness-engineer.md for the unit's worktree and marks the issue `lead: harness-engineer`. The
+        part closes the issue (its close step runs pm-issue close on the unit's branch before pm-check) unless
+        --not-last says another part follows; brief.json records `parts: {<unit>: "last"|"not-last"}`, which
+        pm-merge reads: it refuses a `last` part while the issue's file is open on its branch (issue 504)
   pm-brief crit <issue> --targets "<routes or mock files>" --capture-wt <worktree>
         writes brief-crit.md
   pm-brief show <issue>
@@ -149,10 +152,21 @@ def cmd_harness(a):
     wt = next((w for w in load(WORKTREES, []) if w["issue"] == str(a.issue) and w["unit"] == a.unit), None)
     if not wt:
         sys.exit(f"no registered worktree for issue {a.issue} unit {a.unit}; run pm-worktree new {a.issue} {a.unit} first")
+    if a.not_last:
+        close = ("(This part does not close the issue: another part follows. Leave its file under "
+                 "issues/things-that-do-not-work/.)")
+    else:
+        close = ('Close the issue on your branch: {{root}}/.pm/bin/pm-issue close {{issue}} --checks "<the harness check '
+                 'ids of the tests that show the fix, harness.<test file name without test_ and .py, - for _>>" '
+                 "--in {{worktree}}, and commit the move with your last commit, before pm-check. pm-merge refuses "
+                 "this part while the issue's file is still under issues/things-that-do-not-work/ on your branch.")
     values = dict(v, root=str(ROOT), unit=a.unit, part=a.part.strip(), worktree=wt["path"], branch=wt["branch"],
-                  base=wt.get("base") or "main", precedents=precedents(a.precedent))
+                  base=wt.get("base") or "main", precedents=precedents(a.precedent), close_step=close)
     write(a.issue, "harness-engineer", fill((BRIEFS / "harness-engineer.md").read_text(), values))
     mark_lead(a.issue, "harness-engineer")
+    memo = load(issue_dir(a.issue) / "brief.json", {})
+    parts = {**(memo.get("parts") or {}), a.unit: "not-last" if a.not_last else "last"}
+    save(issue_dir(a.issue) / "brief.json", {**memo, "parts": parts})
 
 
 def cmd_crit(a):
@@ -183,6 +197,7 @@ x.add_argument("--summary", required=True); x.add_argument("--owned"); x.add_arg
 x.add_argument("--precedent", action="append", default=[]); x.add_argument("--inputs"); x.add_argument("--conventions")
 x.set_defaults(f=cmd_worker)
 x = sp.add_parser("harness-engineer"); x.add_argument("issue"); x.add_argument("unit"); x.add_argument("--part", required=True)
+x.add_argument("--not-last", action="store_true", help="another part of the issue follows; this one does not close it")
 x.add_argument("--precedent", action="append", default=[]); x.set_defaults(f=cmd_harness)
 x = sp.add_parser("crit"); x.add_argument("issue"); x.add_argument("--targets", required=True)
 x.add_argument("--capture-wt", required=True); x.set_defaults(f=cmd_crit)

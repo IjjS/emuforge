@@ -12,12 +12,13 @@ The stand-in keeps its images in `docker.json` beside it (it finds the file besi
 docker only an allowlist of variables): `images` (id -> version, commit, labels; labels null is an image whose
 inspect answer has no `Labels` key at all, as Docker Desktop's containerd store answers), `names` (name:tag -> id),
 `package` (the version and commit a build installs), and the case's behavior: `hang` (commands that do not return:
-`info`, `inspect`, `build`, `run`, `tag`, `rm`, or `all`), `fail` (command -> exit code) and `build_print` (lines a
-build prints). It answers `info`; `image inspect` with `-f '{{.Id}}'` (one id per line) and without `-f` (Docker's
+`info`, `inspect`, `build`, `run`, `tag`, `rm`, `builder prune`, or `all`), `fail` (command -> exit code),
+`build_print` (lines a build prints) and `prune_print` (lines `builder prune` prints, `Total:\t0B` by default). It answers `info`; `image inspect` with `-f '{{.Id}}'` (one id per line) and without `-f` (Docker's
 JSON array); `build`, which makes a new id with the package's version and commit and the labels of its `--label`
 arguments, names it by its `--tag` and adds the id to `built`; `run … <image> --version` (`Version:`, `Release
 date:`, `Commit:`; no `Version:` line for an image whose version is null); `tag`; and `image rm`, which removes a
-name and, with its last name, the image. A name without a tag is `<name>:latest`. Every call is appended to
+name and, with its last name, the image; and `builder prune` (also as `buildx prune`), which prints `prune_print`
+and changes nothing (issue 507). A name without a tag is `<name>:latest`. Every call is appended to
 `calls.jsonl` with its arguments, its pid and the names of its environment variables; a build appends its pid and
 the pid of the child it starts (when it does not return) to `builds.jsonl`. A build that does not return waits for
 the file `release` beside the stand-in, which only the case about `status` during a refresh writes. The stand-in's
@@ -58,8 +59,11 @@ PREFIX = "pm-emulator-image: "
 GROUP = "emulator-image"
 NAME = "aws-emulator:latest"
 REFRESH_NAME = re.compile(r"aws-emulator:refresh-\d+")
-BOUNDS = {"READ_BOUND": 10, "IMAGE_BOUND": 30, "BUILD_BOUND": 600}  # docker info, image inspect, git; run, tag,
-# image rm; the build (requirement R1.3, design 1.1)
+BOUNDS = {"READ_BOUND": 10, "IMAGE_BOUND": 30, "BUILD_BOUND": 600, "PRUNE_BOUND": 300}  # docker info, image
+# inspect, git; run, tag, image rm; the build (requirement R1.3, design 1.1); builder prune (issue 507, Q3)
+PRUNED = "; build cache pruned to 20GB (reclaimed 0B)"  # the clause of a refresh with the stand-in's default prune
+OTHER_PRUNES = {"system prune", "image prune", "container prune", "volume prune", "network prune", "builder rm",
+                "container rm", "rmi", "rm"}  # Docker calls no refresh makes (issue 507: nothing else is pruned)
 LOWERED = 2       # seconds, a bound lowered in a fixture's copy
 SLACK = 20        # seconds after a bound within which the command has ended
 RETURNS_WITHIN = 5  # seconds, R1.1
@@ -141,6 +145,8 @@ if args[:1] == ["image"]:
     cmd = "inspect" if args[1:2] == ["inspect"] else "rm" if args[1:2] == ["rm"] else "image " + " ".join(args[1:2])
 elif cmd == "rmi":
     cmd = "rm"
+elif cmd in ("builder", "buildx"):
+    cmd = "builder " + " ".join(args[1:2])
 if "all" in s.get("hang", []) or (cmd in s.get("hang", []) and cmd != "build"):
     hang()
 if cmd in s.get("fail", {}):
@@ -214,6 +220,9 @@ elif cmd == "run":
     print("Release date: 2026.11.17")
     if img["commit"] is not None:
         print(f"Commit: {img['commit']}")
+elif cmd == "builder prune":
+    for line in s.get("prune_print", ["Total:\t0B"]):
+        print(line, flush=True)
 elif cmd == "tag":
     src, dst = positional(args[1:], set())[:2]
     with State() as st:
@@ -413,10 +422,12 @@ class Case(unittest.TestCase):
 
     # ---- the stand-in
 
-    def docker(self, package=("1.0.2", "bbb"), hang=(), fail=None, build_print=("#1 [internal] load build definition",)):
+    def docker(self, package=("1.0.2", "bbb"), hang=(), fail=None, build_print=("#1 [internal] load build definition",),
+               prune_print=("Total:\t0B",)):
         """A stand-in with no image yet; `package` is what a build installs (version null: no `Version:` line)."""
         self.state_write(dict(images={}, names={}, built=[], package=dict(version=package[0], commit=package[1]),
-                              hang=list(hang), fail=dict(fail or {}), build_print=list(build_print)))
+                              hang=list(hang), fail=dict(fail or {}), build_print=list(build_print),
+                              prune_print=list(prune_print)))
         for f in ("calls.jsonl", "builds.jsonl", "release"):
             (self.stub / f).unlink(missing_ok=True)
 
@@ -458,6 +469,10 @@ class Case(unittest.TestCase):
     def kind(args):
         if args[:1] == ["image"]:
             return "image " + " ".join(args[1:2])
+        if args[:1] in (["builder"], ["buildx"]):
+            return "builder " + " ".join(args[1:2])
+        if args[:1] in (["system"], ["container"], ["volume"], ["network"]):
+            return " ".join(args[:2])
         return args[0] if args else ""
 
     def builds(self):
@@ -665,13 +680,13 @@ class Outcome(Case):
     def test_a_new_version_is_refreshed(self):
         self.image("1.0.1", "aaa")
         r = self.foreground()
-        self.assertOneLine(r, f"{PREFIX}refreshed 1.0.1 -> 1.0.2", 0)
+        self.assertOneLine(r, f"{PREFIX}refreshed 1.0.1 -> 1.0.2{PRUNED}", 0)
         self.assertEqual(self.name_id(), self.built())
 
     def test_the_same_version_with_another_commit_is_refreshed(self):
         self.image("1.0.1", "aaa")
         self.behave(package=("1.0.1", "bbb"))
-        self.assertOneLine(self.foreground(), f"{PREFIX}refreshed 1.0.1 -> 1.0.1", 0)
+        self.assertOneLine(self.foreground(), f"{PREFIX}refreshed 1.0.1 -> 1.0.1{PRUNED}", 0)
 
     def test_the_same_version_and_commit_is_unchanged(self):
         self.image("1.0.1", "aaa")
@@ -680,11 +695,11 @@ class Outcome(Case):
         self.assertEqual(self.name_id(), self.built())
 
     def test_no_image_before_is_none(self):
-        self.assertOneLine(self.foreground(), f"{PREFIX}refreshed none -> 1.0.2", 0)
+        self.assertOneLine(self.foreground(), f"{PREFIX}refreshed none -> 1.0.2{PRUNED}", 0)
 
     def test_an_unreadable_version_before_is_unknown(self):
         self.image(None, "aaa")
-        self.assertOneLine(self.foreground(), f"{PREFIX}refreshed unknown -> 1.0.2", 0)
+        self.assertOneLine(self.foreground(), f"{PREFIX}refreshed unknown -> 1.0.2{PRUNED}", 0)
 
     def test_the_build_call(self):
         self.image("1.0.1", "aaa")
@@ -716,7 +731,7 @@ class Outcome(Case):
         rec = self.record()
         self.assertIsNotNone(rec, "no record")
         self.assertEqual(rec["outcome"], "refreshed")
-        self.assertEqual(rec["line"], f"{PREFIX}refreshed 1.0.1 -> 1.0.2")
+        self.assertEqual(rec["line"], f"{PREFIX}refreshed 1.0.1 -> 1.0.2{PRUNED}")
         at = dt.datetime.fromisoformat(rec["at"])
         self.assertTrue(t0 <= at <= t1, (t0, rec["at"], t1))
         self.assertEqual(rec["before"], dict(version="1.0.1", commit="aaa", id=old))
@@ -730,7 +745,7 @@ class Outcome(Case):
         before = self.text(self.events_path).splitlines()
         self.assertEqual(self.foreground().code, 0)
         gained = self.text(self.events_path).splitlines()[len(before):]
-        self.assertTrue(any(ln.endswith(f" {PREFIX}refreshed 1.0.1 -> 1.0.2") for ln in gained), gained)
+        self.assertTrue(any(ln.endswith(f" {PREFIX}refreshed 1.0.1 -> 1.0.2{PRUNED}") for ln in gained), gained)
 
     def test_the_refresh_log_is_this_refreshs_build_output(self):
         self.image("1.0.1", "aaa")
@@ -906,8 +921,9 @@ class Told(Case):
 # ---------------------------------------------------------------------------------------------------- R1.7
 
 class Containers(Case):
-    ALLOWED = {"info", "image inspect", "build", "run", "tag", "image rm"}
-    FORBIDDEN = {"start", "stop", "restart", "kill", "rm", "compose", "exec", "pull", "push", "image prune"}
+    ALLOWED = {"info", "image inspect", "build", "run", "tag", "image rm", "builder prune"}
+    FORBIDDEN = {"start", "stop", "restart", "kill", "rm", "compose", "exec", "pull", "push", "image prune",
+                 "system prune"}
     OUTCOMES = {"refreshed": dict(package=("1.0.2", "bbb")), "unchanged": dict(package=("1.0.1", "aaa")),
                 "failed": dict(fail={"build": 1})}
 
@@ -963,7 +979,7 @@ class Containers(Case):
         env = self.env(AWS_PROFILE="decoy", AWS_ACCESS_KEY_ID="AKIADECOY", AWS_SECRET_ACCESS_KEY="decoy",
                        AWS_SESSION_TOKEN="decoy")
         r = self.call("refresh", "--foreground", env=env)
-        self.assertOneLine(r, f"{PREFIX}refreshed 1.0.1 -> 1.0.2", 0)
+        self.assertOneLine(r, f"{PREFIX}refreshed 1.0.1 -> 1.0.2{PRUNED}", 0)
         calls = self.calls()
         self.assertTrue(calls)
         for c in calls:
@@ -1075,6 +1091,119 @@ class Usage(Case):
         for name, value in BOUNDS.items():
             with self.subTest(name):
                 self.assertEqual(re.findall(rf"(?m)^{name}\s*=\s*(\S+)", text), [str(value)])
+
+
+# ---------------------------------------------------------------------------------------------------- issue 507
+
+class BuildCache(Case):
+    """A refresh to a new version prunes Docker's build cache down to 20 GB once, and nothing else (issue 507)."""
+
+    def refresh(self):
+        self.image("1.0.1", "aaa")
+        return self.call("refresh", "--foreground")
+
+    def prunes(self):
+        return [c["args"] for c in self.calls() if self.kind(c["args"]) == "builder prune"]
+
+    def test_a_refresh_to_a_new_version_prunes_once_after_the_name_moved(self):
+        r = self.refresh()
+        self.assertEqual(r.code, 0, r)
+        self.assertEqual(self.prunes(), [["builder", "prune", "--max-used-space", "20GB", "--force"]])
+        kinds = [self.kind(c["args"]) for c in self.calls()]
+        self.assertEqual(kinds[-3:], ["tag", "image rm", "builder prune"], kinds)
+        self.assertEqual(self.name_id(), self.state()["built"][0])
+
+    def test_the_reclaimed_space_is_in_the_line_the_record_the_events_and_the_log(self):
+        self.behave(prune_print=["ID\tRECLAIMABLE\tSIZE\tLAST ACCESSED", "abc123*\ttrue\t1.53GB\t2 hours ago",
+                                 "Total:\t1.53GB"])
+        r = self.refresh()
+        line = f"{PREFIX}refreshed 1.0.1 -> 1.0.2; build cache pruned to 20GB (reclaimed 1.53GB)"
+        self.assertOneLine(r, line, 0)
+        rec = self.record()
+        self.assertEqual(rec["line"], line)
+        self.assertEqual(rec["outcome"], "refreshed")
+        self.assertEqual(rec["build_cache"], dict(outcome="pruned", reclaimed="1.53GB", keep="20GB"))
+        self.assertTrue(any(ln.endswith(" " + line) for ln in self.text(self.events_path).splitlines()))
+        log = self.text(self.log_path)
+        self.assertIn("abc123*", log)
+        self.assertIn("Total:\t1.53GB", log)
+
+    def test_the_classic_total_line_is_read(self):
+        self.behave(prune_print=["Deleted build cache objects:", "x1y2z3", "", "Total reclaimed space: 2.1GB"])
+        self.assertOneLine(self.refresh(), f"{PREFIX}refreshed 1.0.1 -> 1.0.2; build cache pruned to 20GB "
+                                           f"(reclaimed 2.1GB)", 0)
+
+    def test_a_total_out_of_shape_is_unknown_and_not_repeated(self):
+        self.behave(prune_print=["Total:\t$(touch-me)"])
+        r = self.refresh()
+        self.assertOneLine(r, f"{PREFIX}refreshed 1.0.1 -> 1.0.2; build cache pruned to 20GB (reclaimed unknown)", 0)
+        self.assertEqual(self.record()["build_cache"]["reclaimed"], None)
+        self.assertNotIn("touch-me", self.text(self.events_path))
+
+    def test_unchanged_failed_and_status_do_not_prune(self):
+        for what, behavior in (("unchanged", dict(package=("1.0.1", "aaa"))), ("failed", dict(fail={"build": 1}))):
+            with self.subTest(what):
+                self.docker()
+                self.behave(**behavior)
+                r = self.refresh()
+                self.assertEqual(r.code, 1 if what == "failed" else 0, r)
+                self.assertEqual(self.prunes(), [])
+                self.assertIsNone(self.record()["build_cache"])
+                self.assertNotIn("build cache", r.out)
+        with self.subTest("status"):
+            self.docker()
+            self.image("1.0.1", "aaa")
+            self.assertEqual(self.call("status").code, 0)
+            self.assertEqual(self.prunes(), [])
+
+    def test_a_failed_prune_changes_nothing_of_the_outcome(self):
+        self.behave(fail={"builder prune": 1})
+        r = self.refresh()
+        self.assertOneLine(r, f"{PREFIX}refreshed 1.0.1 -> 1.0.2; build cache prune failed (exit 1)", 0)
+        rec = self.record()
+        self.assertEqual(rec["outcome"], "refreshed")
+        self.assertEqual(rec["build_cache"], dict(outcome="failed", reclaimed=None, keep="20GB"))
+        self.assertEqual(self.name_id(), self.state()["built"][0])
+        self.assertEqual([o.get("line") for o in self.inbox()], ["EVENT emulator-image refreshed 1.0.1 -> 1.0.2"])
+        self.assertIn("standin: builder prune fails", self.text(self.log_path))
+
+    def test_a_prune_that_does_not_end_within_its_bound(self):
+        self.behave(hang=["builder prune"])
+        self.lower(PRUNE_BOUND=LOWERED)
+        r = self.refresh()
+        self.assertOneLine(r, f"{PREFIX}refreshed 1.0.1 -> 1.0.2; build cache prune did not end within {LOWERED} s",
+                           0)
+        self.assertLessEqual(r.seconds, LOWERED + SLACK, r)
+        self.assertEqual(self.record()["build_cache"], dict(outcome="timed out", reclaimed=None, keep="20GB"))
+        self.assertEqual(self.name_id(), self.state()["built"][0])
+        pids = [c["pid"] for c in self.calls("builder prune")]
+        self.assertEqual(len(pids), 1)
+        self.assertTrue(until(lambda: not alive(pids[0]), GONE_GRACE), f"the prune {pids[0]} is still running")
+
+    def test_nothing_else_of_docker_is_pruned(self):
+        for outcome, behavior in Containers.OUTCOMES.items():
+            with self.subTest(outcome):
+                self.docker()
+                self.behave(**behavior)
+                self.refresh()
+                kinds = [self.kind(c["args"]) for c in self.calls()]
+                self.assertEqual([k for k in kinds if k in OTHER_PRUNES], [], kinds)
+                for args in self.prunes():
+                    for o in ("--all", "-a", "--filter", "--keep-storage", "--reserved-space", "--min-free-space"):
+                        self.assertFalse(any(x == o or x.startswith(o + "=") for x in args), f"{o} in {args}")
+
+    def test_the_prune_gets_only_the_allowlisted_environment(self):
+        env = self.env(AWS_PROFILE="decoy", AWS_ACCESS_KEY_ID="AKIADECOY", DOCKER_BUILDKIT="1")
+        self.image("1.0.1", "aaa")
+        r = self.call("refresh", "--foreground", env=env)
+        self.assertEqual(r.code, 0, r)
+        prunes = self.calls("builder prune")
+        self.assertEqual(len(prunes), 1)
+        self.assertEqual(sorted(set(prunes[0]["env"]) - ALLOWED_ENV - INTERPRETER_ENV), [])
+
+    def test_the_named_constant(self):
+        text = (BIN / SCRIPT).read_text()
+        self.assertEqual(re.findall(r'(?m)^BUILD_CACHE_KEEP\s*=\s*(\S+)', text), ['"20GB"'])
 
 
 if __name__ == "__main__":

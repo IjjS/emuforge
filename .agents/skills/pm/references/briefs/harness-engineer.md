@@ -15,10 +15,11 @@ Steps:
    plan output/plan.md"`, print the same line and stop. The `pm` answers once; build on that answer.
 2. Build, committing in small steps. A new behaviour of a script gets a harness test; changed guide text gets the
    doc tests that read it.
-3. `{{root}}/.pm/bin/pm-check {{worktree}}` until it prints `PASSED`. On a harness change it runs the harness
+3. {{close_step}}
+4. `{{root}}/.pm/bin/pm-check {{worktree}}` until it prints `PASSED`. On a harness change it runs the harness
    tests of what the change touches and the doc tests, and nothing else; run nothing else. A `WAIT` answer: end
    your turn until `EVENT room`.
-4. Write `output/report.md`: the commit, the files changed, what ran (with the record's path), and what the `pm`
+5. Write `output/report.md`: the commit, the files changed, what ran (with the record's path), and what the `pm`
    should look at first. Then `{{root}}/.pm/bin/pm-report "UNIT READY i{{issue}}-harness-engineer {{branch}}
    report=output/report.md"`, print the same line and stop. Stay open for the `pm`'s orders; one ends with
    `pm-report "DONE i{{issue}}-harness-engineer <what changed, committed>"`. Never report progress.

@@ -82,6 +82,10 @@ The lead of the issue, the mark `lead` that pm-brief writes into .pm/issue-<n>/b
 `plan`: a unit goes into feat/<issue> on its fast check alone (rev reviews the whole at the end), and feat/<issue>
 goes into main only when the newest review-impl-r<k>.md (the whole, stage `impl`) says verdict: pass.
 `harness-engineer`: no review file is asked; the pm that runs the merge has judged the change, and the output says so.
+A harness-engineer's part closes its issue (issue 504): a unit into main of such an issue is refused while a file under
+issues/things-that-do-not-work/ holds `Issue-Id: <issue>` at the branch's head, unless brief.json records the unit's
+part `not-last` (pm-brief harness-engineer --not-last); a unit with no record is a last part. The refusal says to
+run pm-issue close on the branch, pm-check, then rerun.
 Without the mark (an issue begun before issue 478) the per-unit rule above holds, word for word.
 `pm-merge <issue> issue` is refused: the issue branch is not a unit. --dry-run checks every condition of its form,
 lists every problem, and merges nothing. The new forms time their merges out after 120 s (the merge is then
@@ -291,6 +295,27 @@ def lead(issue):
     return load(PM / f"issue-{issue}" / "brief.json", {}).get("lead")
 
 
+def open_issue_files(issue, ref):
+    """The files under issues/things-that-do-not-work/ that hold `Issue-Id: <issue>` at ref."""
+    r = git("grep", "-l", "-E", f"^Issue-Id: {int(issue)}$", ref, "--", "issues/things-that-do-not-work/")
+    return [ln.split(":", 1)[1] for ln in r.stdout.splitlines() if ":" in ln]
+
+
+def close_problems(issue, unit, branch, head):
+    """A harness-engineer's last part must close its issue on its branch (issue 504); [] for any other merge."""
+    if lead(issue) != "harness-engineer":
+        return []
+    parts = load(PM / f"issue-{issue}" / "brief.json", {}).get("parts") or {}
+    if parts.get(unit) == "not-last":
+        return []
+    found = open_issue_files(issue, head)
+    if not found:
+        return []
+    return [f"the issue's file is still open on {branch}: {found[0]}; this part closes the issue: on the branch run "
+            f"pm-issue close {issue} --checks \"<ids>\" --in <its worktree>, commit, pm-check, then rerun (a part that "
+            f"does not close it: pm-brief harness-engineer {issue} {unit} --not-last)"]
+
+
 def unit_review(issue, unit):
     """(problems, what the merge was judged on) for one unit, by the issue's lead."""
     led = lead(issue)
@@ -461,6 +486,8 @@ def into_main(a, wts, wt):
         problems += found
     found, reviewed = unit_review(a.issue, a.unit)
     problems += found
+    if head:
+        problems += close_problems(a.issue, a.unit, branch, head)
     if problems:
         sys.exit("cannot merge:\n- " + "\n- ".join(problems))
     if note:

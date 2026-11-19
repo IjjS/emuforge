@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: plan
 Issue-Key: studio|sqs|create-queue
-Issue-Check-Ids:
+Issue-Check-Ids: studio.sqs-create-standard-queue studio.sqs-create-fifo-queue-with-a-dead-letter-queue studio.sqs-create-queue-name-already-taken studio.sqs-create-queue-dead-letter-queue-gone
 Issue-Commit: c1dc8cf4b31e234b1269b2d368271ef6041fa293
 
 # Create an SQS queue from Studio: standard or FIFO, with a dead-letter queue

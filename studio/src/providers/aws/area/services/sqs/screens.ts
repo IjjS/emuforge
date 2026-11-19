@@ -1,5 +1,6 @@
 import type { ScreenNavigation, ServiceScreen } from '../../screens';
-import { QUEUES_PATH, SQS_PATH } from './format';
+import { CREATE_QUEUE_PATH, QUEUES_PATH, SQS_PATH } from './format';
+import { CREATE_QUEUE_TITLE, CreateQueuePage } from './pages/create-queue-page';
 import { QUEUES_TITLE, QueueListPage } from './pages/queue-list-page';
 import { QueuePage } from './pages/queue-page';
 
@@ -19,6 +20,14 @@ export const SCREENS: readonly ServiceScreen[] = [
     crumbs: [{ text: QUEUES_TITLE }],
     navigation: NAVIGATION,
     Page: QueueListPage,
+  },
+  // S3, "Create queue" (issue 489): below "Queues".
+  {
+    paths: [CREATE_QUEUE_PATH],
+    title: CREATE_QUEUE_TITLE,
+    crumbs: [{ text: QUEUES_TITLE, href: QUEUES_PATH }, { text: CREATE_QUEUE_TITLE }],
+    navigation: NAVIGATION,
+    Page: CreateQueuePage,
   },
   // S2, a queue's page (issue 481, tasks 2 to 5): its name one segment below `queue/`, decoded once by the area.
   {
