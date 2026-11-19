@@ -1253,6 +1253,24 @@ describe('"Create role"', () => {
     });
   });
 
+  it('a refused CreateRole: "Creating the role failed" and the emulator’s code and message said in the page’s polite live region (issue 492, critique P1)', async () => {
+    engine.handlers.CreateRole = () =>
+      errorAnswer(400, 'MalformedPolicyDocument', 'Invalid principal in policy: "SERVICE":"nonsense"');
+    await openWizard();
+    await toStep3(['ReadOnlyAccess']);
+    type('Role name', 'refused');
+    press('Create role');
+
+    const said = () =>
+      [...document.querySelectorAll('.aws-area-announcer[aria-live="polite"]')].map((region) => region.textContent ?? '');
+    await waitFor(() => {
+      expect(said()).toContain(
+        'Creating the role failed. MalformedPolicyDocument: Invalid principal in policy: "SERVICE":"nonsense"',
+      );
+    });
+    expect(h1()).toHaveTextContent('Name, review, and create');
+  });
+
   it('the second AttachRolePolicy refused with NoSuchEntity: the list with the success item and "Attaching <policy name> to <name> failed"', async () => {
     let attaches = 0;
     engine.handlers.AttachRolePolicy = () => {
