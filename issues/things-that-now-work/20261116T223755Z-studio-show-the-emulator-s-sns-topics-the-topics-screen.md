@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: studio|sns|topics-list
-Issue-Check-Ids:
+Issue-Check-Ids: studio.sns-topics-made-elsewhere-are-shown studio.sns-create-topic-reaches-the-emulator studio.sns-delete-a-subscription-and-a-topic studio.sns-screens-follow-an-emulator-restart
 Issue-Commit: fe28fb4faecc4a824bf214f5b547ac759ca7f7aa
 
 # Show the emulator's SNS topics: the Topics screen

@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: studio|sns|tasks-by-the-emulator-api
-Issue-Check-Ids:
+Issue-Check-Ids: studio.sns-topics-made-elsewhere-are-shown studio.sns-create-topic-reaches-the-emulator studio.sns-subscribe-a-queue-and-a-published-message-arrives studio.sns-delivery-says-what-the-policy-allows studio.sns-subscribe-a-function-and-it-runs studio.sns-publish-to-a-fifo-topic-and-refusals studio.sns-delete-a-subscription-and-a-topic studio.sns-screens-follow-an-emulator-restart
 Issue-Commit: a133f4428c647a63622bd88a819adbb2ec7b92c5
 
 # Build SNS's screens from the tasks a developer does with it locally, as far as the emulator's API supports them

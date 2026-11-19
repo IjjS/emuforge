@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { FakeEngine } from '../test/home-test-kit';
 import { NO_SCREEN_SERVICE } from '../test/no-screen';
+import { SERVICES as AWS_SERVICES } from '../providers/aws/services';
 import { serviceLinks, SERVICES_DIR } from '../test/service-files';
 import { Providers } from './providers';
 import { routes } from './routes';
@@ -27,17 +28,12 @@ function hasScreensFile(servicePath: string): boolean {
 }
 
 /**
- * The services whose route has a screen of its own: Amazon S3 (issue 56), AWS Identity and Access Management
- * (issue 82), AWS Lambda, whose route is the function list (issue 84), and Amazon SQS, whose route is the queue list
- * (issue 481), and Amazon DynamoDB, whose route is the table list (issue 496).
+ * The services whose route has a screen of its own, from Studio's own record of it (`hasScreen`, issue 494: the
+ * service's folder holds a `screens.ts`), so a service's first screen changes nothing here.
  */
-const WITH_SCREEN: readonly string[] = [
-  'Amazon Simple Storage Service',
-  'AWS Identity and Access Management',
-  'AWS Lambda',
-  'Amazon Simple Queue Service',
-  'Amazon DynamoDB',
-];
+const WITH_SCREEN: readonly string[] = AWS_SERVICES.filter((service) => service.hasScreen).map(
+  (service) => service.label,
+);
 
 /** Every other service. */
 const WITHOUT_SCREEN = SERVICES.filter(([label]) => !WITH_SCREEN.includes(label));

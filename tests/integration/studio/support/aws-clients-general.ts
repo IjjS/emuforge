@@ -394,6 +394,52 @@ export function directSqs(ctx: Ctx, port: number, action: string, input: object)
   });
 }
 
+/**
+ * A Lambda request (REST JSON): `method pathname?query` with an optional JSON body, straight to the emulator. Each
+ * segment of `pathname` is already encoded by the caller. For the checks of a service other than Lambda that need a
+ * function beside their own resources (SNS's, issue 536); Lambda's own checks sign theirs in `services/lambda/`.
+ */
+export function directLambda(
+  ctx: Ctx,
+  port: number,
+  method: string,
+  pathname: string,
+  query: Record<string, string> = {},
+  input: object | null = null,
+): Promise<DirectAnswer> {
+  return direct(
+    ctx,
+    port,
+    'lambda',
+    method,
+    pathname,
+    query,
+    input === null ? '' : JSON.stringify(input),
+    input === null ? {} : { 'content-type': 'application/json' },
+  );
+}
+
+/** An IAM action (AWS Query) with its parameters, straight to the emulator (issue 536: the role of a check's function). */
+export function directIam(
+  ctx: Ctx,
+  port: number,
+  action: string,
+  params: Record<string, string>,
+): Promise<DirectAnswer> {
+  const body = new URLSearchParams({ Action: action, Version: '2010-05-08', ...params }).toString();
+  return direct(ctx, port, 'iam', 'POST', '/', {}, body, {
+    'content-type': 'application/x-www-form-urlencoded; charset=utf-8',
+  });
+}
+
+/** A CloudWatch Logs action (AWS JSON 1.1) with its JSON input, straight to the emulator (issue 536: a function's log). */
+export function directLogs(ctx: Ctx, port: number, action: string, input: object): Promise<DirectAnswer> {
+  return direct(ctx, port, 'logs', 'POST', '/', {}, JSON.stringify(input), {
+    'content-type': 'application/x-amz-json-1.1',
+    'x-amz-target': `Logs_20140328.${action}`,
+  });
+}
+
 /** `status` of a direct answer, or its error, for the log. */
 export function shown(answer: DirectAnswer): string {
   return 'error' in answer ? `error ${answer.error}` : `status ${String(answer.status)}`;
