@@ -28,7 +28,10 @@ import {
   folderExists,
   MIB,
   multipartUploadsDirect,
+  partRefusalDirect,
+  putRefusalDirect,
   randomFile,
+  refusalPattern,
   uploadAddress,
   uploadedText,
   uploadLink,
@@ -124,9 +127,13 @@ test('studio.s3-upload-shows-the-emulator-refusal', async ({ ctx, page }) => {
         .toMatch(/^Failed:/);
       const status = (await fileRows(page))[0]?.status ?? '';
       ctx.log(`the row: ${status}`);
-      expect(status, "the emulator's message names the limit").toContain(String(BUCKET_LIMIT));
       await expect.poll(() => flashTexts(page), { message: 'the flash', ...ACTION }).toContain(uploadedText(0, 1));
       expect(await objectKeysDirect(ctx, port, name), `a direct ListObjectsV2 of ${name}`).not.toContain(file.name);
+      // The emulator's own words for the same file in one PutObject, read now: "storing … would leave the bucket".
+      const message = await putRefusalDirect(ctx, port, name, file.name, file.buffer, file.mimeType);
+      ctx.log(`direct PutObject refused: ${message}`);
+      expect(message, 'the direct refusal names the limit').toContain(String(BUCKET_LIMIT));
+      expect(status, "the row: the emulator's message of a single PutObject").toMatch(refusalPattern(message));
     },
   );
 
@@ -156,7 +163,6 @@ test('studio.s3-upload-in-parts-aborts-on-refusal', async ({ ctx, page }) => {
         .toMatch(/^Failed:/);
       const status = (await fileRows(page))[0]?.status ?? '';
       ctx.log(`the row: ${status}`);
-      expect(status, "the emulator's message names the limit").toContain(String(BUCKET_LIMIT));
       expect(await objectKeysDirect(ctx, port, name), `a direct ListObjectsV2 of ${name}`).not.toContain(file.name);
       await expect
         .poll(() => multipartUploadsDirect(ctx, port, name), {
@@ -164,6 +170,21 @@ test('studio.s3-upload-in-parts-aborts-on-refusal', async ({ ctx, page }) => {
           ...ACTION,
         })
         .not.toContain(file.name);
+      // The emulator's own words for the file's first 8 MiB part, read now: "recording part 1 would leave the bucket".
+      const message = await partRefusalDirect(
+        ctx,
+        port,
+        name,
+        file.name,
+        file.buffer.subarray(0, 8 * MIB),
+        file.mimeType,
+      );
+      ctx.log(`direct UploadPart refused: ${message}`);
+      expect(message, 'the direct refusal names the limit').toContain(String(BUCKET_LIMIT));
+      expect(status, "the row: the emulator's message of a part").toMatch(refusalPattern(message));
+      expect(await multipartUploadsDirect(ctx, port, name), 'no upload left after the direct one').not.toContain(
+        file.name,
+      );
     },
   );
 

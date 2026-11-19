@@ -17,6 +17,7 @@ import { flashTexts, openObjectsTab } from './services/s3/s3-bucket-page';
 import {
   CONFIRM_WORD,
   deleteDialog,
+  deleteObjectsRefusalDirect,
   deletedText,
   deleteObjectDirect,
   dialogText,
@@ -140,10 +141,10 @@ test('studio.s3-delete-says-when-the-bucket-is-gone', async ({ ctx, page }) => {
       await dialog.confirm.fill(CONFIRM_WORD);
       await deleteObjectDirect(ctx, port, name, 'a.txt');
       await seeded.remove(name);
+      const message = await deleteObjectsRefusalDirect(ctx, port, name, 'a.txt');
+      ctx.log(`direct DeleteObjects refused: ${message}`);
       await dialog.delete.click(ACTION);
-      await expect
-        .poll(() => dialogText(page), { message: 'the dialog', ...ACTION })
-        .toContain('The specified bucket does not exist');
+      await expect.poll(() => dialogText(page), { message: 'the dialog', ...ACTION }).toContain(message);
       expect(await dialogText(page), 'the count deleted').toContain('Deleted 0 objects before the failure.');
     },
   );

@@ -168,11 +168,11 @@ export function expectedSections(
 const xq = (text: string) => `'${text}'`;
 
 /** A level-2 heading outside the side navigation and the help panel whose text is `title`, or `title (<counter>)`. */
+/** Every level-2 heading of the page's content: none of the navigation, the help panel or a hidden part. */
+const ANY_HEADING = `//h2[not(ancestor::nav) and not(ancestor::aside) and not(ancestor::*[@aria-hidden='true'])]`;
+
 function headingXPath(title: string): string {
-  return (
-    `//h2[not(ancestor::nav) and not(ancestor::aside) and not(ancestor::*[@aria-hidden='true'])]` +
-    `[normalize-space(.)=${xq(title)} or starts-with(normalize-space(.), ${xq(`${title} (`)})]`
-  );
+  return ANY_HEADING + `[normalize-space(.)=${xq(title)} or starts-with(normalize-space(.), ${xq(`${title} (`)})]`;
 }
 
 /** The section `title`: the largest element around its heading that holds no other level-2 heading. */
@@ -286,18 +286,24 @@ export async function expectSections(
   await expect.poll(() => pageProblems(page, expected), { timeout, message }).toEqual([]);
 }
 
-/** The titles of the built sections the page shows now, in the page's order. */
+/**
+ * The titles of every section heading the page's content shows now, in the page's order: a known section by its
+ * title (without its count), any other level-2 heading by its text, so a section that should be gone is seen.
+ */
 export async function shownSectionTitles(page: Page): Promise<string[]> {
-  const shown: string[] = [];
-  const at = new Map<string, number>();
-  for (const title of SECTIONS) {
-    const h = sectionHeading(page, title);
-    if ((await h.count()) === 0) continue;
-    const y = (await h.first().boundingBox())?.y ?? 0;
-    at.set(title, y);
-    shown.push(title);
+  const headings = page.locator(`xpath=${ANY_HEADING}`);
+  const shown: { title: string; y: number }[] = [];
+  for (const h of await headings.all()) {
+    const text = (await h.innerText()).replace(/\s+/g, ' ').trim();
+    const title = SECTIONS.find((t) => text === t || text.startsWith(`${t} (`)) ?? text;
+    shown.push({ title, y: (await h.boundingBox())?.y ?? 0 });
   }
-  return shown.sort((a, b) => (at.get(a) ?? 0) - (at.get(b) ?? 0));
+  return shown.sort((a, b) => a.y - b.y).map((s) => s.title);
+}
+
+/** The names of the page's tabs, in order. */
+export async function shownTabs(page: Page): Promise<string[]> {
+  return (await page.getByRole('tab').allInnerTexts()).map((t) => t.replace(/\s+/g, ' ').trim());
 }
 
 /** The page's tabs. */

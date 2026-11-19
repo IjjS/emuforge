@@ -64,7 +64,6 @@ export const NAV_DIRECTORY = 'Directory buckets';
 
 /** The tabs (R3 rows 4 and 6) and the table's title (R5.4). */
 export const TAB_GENERAL = 'General purpose buckets';
-export const TAB_DIRECTORY = 'Directory buckets';
 export const TABLE_TITLE = 'General purpose buckets';
 
 /** The actions, in order (R3 row 8, R6). */
@@ -334,6 +333,35 @@ const xmlText = (s: string) =>
 function element(xml: string, name: string): string | null {
   const m = new RegExp(`<${name}>([^<]*)</${name}>`).exec(xml);
   return m ? xmlText(m[1]) : null;
+}
+
+/**
+ * The emulator's `<Message>` of a refusal: fails the check unless `answer` arrived with a status of 400 or more and a
+ * message.
+ */
+export function refusalMessage(answer: Direct, what: string): string {
+  const status = 'error' in answer ? 0 : answer.status;
+  expect(status, `${what} is refused: ${shownDirect(answer)}`).toBeGreaterThanOrEqual(400);
+  const message = element('error' in answer ? '' : answer.body, 'Message');
+  expect(message, `${what}: the emulator's message`).not.toBeNull();
+  return message ?? '';
+}
+
+/** Aborts every unfinished multipart upload of `bucket` directly; each line to `log`. */
+async function abortUploadsDirect(
+  env: DirectEnv,
+  port: number,
+  bucket: string,
+  log: (line: string) => void,
+): Promise<void> {
+  const listed = await signedS3(env, port, 'GET', `/${bucket}`, [['uploads', '']]);
+  if ('error' in listed || listed.status !== 200) return;
+  for (const upload of blocks(listed.body, 'Upload')) {
+    const key = element(upload, 'Key') ?? '';
+    const id = element(upload, 'UploadId') ?? '';
+    const answer = await signedS3(env, port, 'DELETE', objectPath(bucket, key), [['uploadId', id]]);
+    log(`AbortMultipartUpload ${bucket}/${key} directly: ${shownDirect(answer)}`);
+  }
 }
 
 /** Fails the check (an assertion, not the environment) unless `answer` has `status`; returns its body. */
@@ -1188,6 +1216,7 @@ export class Seeded {
     const log = (line: string) => this.ctx.log(`cleanup ${line}`);
     for (const name of this.made.reverse()) {
       try {
+        await abortUploadsDirect(this.ctx, this.port, name, log);
         const left = await emptyBucketDirect(this.ctx, this.port, name, log);
         if (left !== null && left.length > 0) log(`${name} still holds ${String(left.length)} items`);
       } catch (e) {
