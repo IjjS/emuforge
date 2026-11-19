@@ -1,24 +1,40 @@
 import {
   AttachRolePolicyCommand,
+  CreatePolicyCommand,
+  CreatePolicyVersionCommand,
   CreateRoleCommand,
+  DeletePolicyCommand,
+  DeletePolicyVersionCommand,
   DeleteRoleCommand,
   DeleteRolePolicyCommand,
   DeleteServiceLinkedRoleCommand,
+  DetachGroupPolicyCommand,
   DetachRolePolicyCommand,
+  DetachUserPolicyCommand,
+  GetPolicyCommand,
+  GetPolicyVersionCommand,
   GetRoleCommand,
+  GetRolePolicyCommand,
   GetUserCommand,
   IAMClient,
   ListAttachedRolePoliciesCommand,
+  ListEntitiesForPolicyCommand,
   ListInstanceProfilesForRoleCommand,
   ListPoliciesCommand,
+  ListPolicyVersionsCommand,
   ListRolePoliciesCommand,
   ListRolesCommand,
+  PutRolePolicyCommand,
   RemoveRoleFromInstanceProfileCommand,
+  SetDefaultPolicyVersionCommand,
+  UpdateAssumeRolePolicyCommand,
   UpdateRoleCommand,
   type Role as SdkRole,
 } from '@aws-sdk/client-iam';
 
 import { createAwsClient, EngineSessionError } from '../../../../../lib/aws/client-factory';
+import { RequestError, sendRequest } from '../../../../../lib/aws/request';
+import { decodeDocument } from './document-text';
 import { isServiceLinked, managedPolicyType, type PolicyRef, type PolicyType } from './format';
 import { accountOfArn } from './trust-policy';
 
@@ -82,7 +98,14 @@ export interface Policy {
   name: string;
   arn: string;
   type: PolicyType;
+  /** `AttachmentCount`, when the answer gave it. */
+  attachmentCount?: number;
+  /** `UpdateDate`, the policy's last change, when the answer gave it. */
+  updateDate?: Date;
 }
+
+/** `Scope` of `ListPolicies`: the account's own policies, the AWS managed ones, or both. */
+export type PolicyScope = 'Local' | 'AWS' | 'All';
 
 /** One page of the policy list. */
 export interface PolicyPage {
@@ -527,8 +550,16 @@ export async function getCallerAccount(endpoint: string, signal: AbortSignal): P
   return accountOfArn(output.User?.Arn);
 }
 
-/** One page of the emulator's managed policies (R6.4): `ListPolicies` with `Scope` `All`, read on as the role list. */
-export async function listPolicies(endpoint: string, page: PageRequest, signal: AbortSignal): Promise<PolicyPage> {
+/**
+ * One page of the emulator's managed policies (R6.4; issue 535, S4): `ListPolicies` with `scope` (`All` unless given),
+ * read on as the role list.
+ */
+export async function listPolicies(
+  endpoint: string,
+  page: PageRequest,
+  signal: AbortSignal,
+  scope: PolicyScope = 'All',
+): Promise<PolicyPage> {
   const read = await readPage(
     async (marker) => {
       const output = await request(
@@ -537,7 +568,7 @@ export async function listPolicies(endpoint: string, page: PageRequest, signal: 
         (client, options) =>
           client.send(
             new ListPoliciesCommand({
-              Scope: 'All',
+              Scope: scope,
               MaxItems: page.pageSize,
               ...(marker === undefined ? {} : { Marker: marker }),
             }),
@@ -546,9 +577,13 @@ export async function listPolicies(endpoint: string, page: PageRequest, signal: 
         signal,
       );
       const answer: ListAnswer<Policy> = {
-        items: (output.Policies ?? []).map(({ PolicyName, Arn }) => {
+        items: (output.Policies ?? []).map(({ PolicyName, Arn, AttachmentCount, UpdateDate }) => {
           const arn = Arn ?? '';
-          return { name: PolicyName ?? '', arn, type: managedPolicyType(arn) };
+          const policy: Policy = { name: PolicyName ?? '', arn, type: managedPolicyType(arn) };
+          if (typeof AttachmentCount === 'number') policy.attachmentCount = AttachmentCount;
+          const updated = validDate(UpdateDate);
+          if (updated !== undefined) policy.updateDate = updated;
+          return policy;
         }),
       };
       const next = nextMarker(output);
@@ -756,4 +791,496 @@ export async function deleteRoles(
     }
   }
   return result;
+}
+
+// The calls of issue 535 (design, "The calls"): a role's documents and permission changes, its trust policy, and the
+// customer managed policies with their versions. Each request goes through the area's `sendRequest` with its
+// operation's name, on IAM's one client: a failure rejects with its `RequestError`, whose failure has the kinds of
+// `IamFailure`, and an aborted signal ends the call at once with its reason. Every value comes from the emulator's
+// answer, unchanged but for a document's one percent-decoding; each is untrusted text.
+
+/** One request of `operation` on IAM's client for `endpoint`, through the area's `sendRequest`. */
+function send<T>(
+  endpoint: string,
+  operation: string,
+  call: (client: IAMClient, abortSignal: AbortSignal) => Promise<T>,
+  signal: AbortSignal,
+): Promise<T> {
+  return sendRequest(operation, (abortSignal) => call(iamClient(endpoint), abortSignal), signal);
+}
+
+/** The failure of a request that failed; anything else (the signal's reason) is not a failure and is thrown on. */
+function requestFailureOf(error: unknown): IamFailure {
+  if (error instanceof RequestError) {
+    return error.failure;
+  }
+  throw error;
+}
+
+/** A document that was read: its text, percent-decoded once; or the emulator holds no such policy. */
+export type InlineDocumentRead = { kind: 'found'; text: string } | { kind: 'not-found' };
+
+/** A managed policy's document: its text, the version's id and whether it is the default; or no such policy. */
+export type ManagedDocumentRead =
+  | { kind: 'found'; text: string; versionId: string; isDefault: boolean }
+  | { kind: 'not-found' };
+
+/** `NoSuchEntity` as "not found"; any other failure rejects as it came. */
+async function orNotFound<T>(read: Promise<T>): Promise<T | { kind: 'not-found' }> {
+  try {
+    return await read;
+  } catch (error) {
+    if (error instanceof RequestError && isNoSuchEntity(error.failure)) {
+      return { kind: 'not-found' };
+    }
+    throw error;
+  }
+}
+
+/** An inline policy's document: `GetRolePolicy`; `NoSuchEntity` is "not found". */
+export function getRolePolicyDocument(
+  endpoint: string,
+  role: string,
+  policy: string,
+  signal: AbortSignal,
+): Promise<InlineDocumentRead> {
+  return orNotFound(
+    (async (): Promise<InlineDocumentRead> => {
+      const output = await send(
+        endpoint,
+        'GetRolePolicy',
+        (client, abortSignal) =>
+          client.send(new GetRolePolicyCommand({ RoleName: role, PolicyName: policy }), { abortSignal }),
+        signal,
+      );
+      return { kind: 'found', text: decodeDocument(output.PolicyDocument) };
+    })(),
+  );
+}
+
+/**
+ * A managed policy's document: `GetPolicy` first when no version is named, for its `DefaultVersionId`, then
+ * `GetPolicyVersion`; `NoSuchEntity` of either call is "not found".
+ */
+export function getPolicyDocument(
+  endpoint: string,
+  arn: string,
+  versionId: string | undefined,
+  signal: AbortSignal,
+): Promise<ManagedDocumentRead> {
+  return orNotFound(
+    (async (): Promise<ManagedDocumentRead> => {
+      let version = versionId;
+      if (version === undefined) {
+        const policy = await send(
+          endpoint,
+          'GetPolicy',
+          (client, abortSignal) => client.send(new GetPolicyCommand({ PolicyArn: arn }), { abortSignal }),
+          signal,
+        );
+        version = policy.Policy?.DefaultVersionId ?? '';
+      }
+      const asked = version;
+      const output = await send(
+        endpoint,
+        'GetPolicyVersion',
+        (client, abortSignal) =>
+          client.send(new GetPolicyVersionCommand({ PolicyArn: arn, VersionId: asked }), { abortSignal }),
+        signal,
+      );
+      return {
+        kind: 'found',
+        text: decodeDocument(output.PolicyVersion?.Document),
+        versionId: text(output.PolicyVersion?.VersionId) ?? asked,
+        isDefault: output.PolicyVersion?.IsDefaultVersion === true,
+      };
+    })(),
+  );
+}
+
+/** A managed policy to attach: its name, for the result's words, and its ARN. */
+export interface PolicyToAttach {
+  name: string;
+  arn: string;
+}
+
+/** What "Attach policies" did: the policies attached, in order, and the one refused, when one was. */
+export interface AttachResult {
+  attached: PolicyToAttach[];
+  failed?: { policy: PolicyToAttach; failure: IamFailure };
+}
+
+/**
+ * "Attach policies": one `AttachRolePolicy` per policy in the order given, each after the previous answer; the first
+ * refusal ends it, and the policies after it are not sent.
+ */
+export async function attachRolePolicies(
+  endpoint: string,
+  role: string,
+  policies: readonly PolicyToAttach[],
+  signal: AbortSignal,
+): Promise<AttachResult> {
+  const attached: PolicyToAttach[] = [];
+  for (const policy of policies) {
+    try {
+      await send(
+        endpoint,
+        'AttachRolePolicy',
+        (client, abortSignal) =>
+          client.send(new AttachRolePolicyCommand({ RoleName: role, PolicyArn: policy.arn }), { abortSignal }),
+        signal,
+      );
+    } catch (error) {
+      return { attached, failed: { policy, failure: requestFailureOf(error) } };
+    }
+    attached.push(policy);
+  }
+  return { attached };
+}
+
+/** "Detach": `DetachRolePolicy`. */
+export async function detachRolePolicy(endpoint: string, role: string, arn: string, signal: AbortSignal): Promise<void> {
+  await send(
+    endpoint,
+    'DetachRolePolicy',
+    (client, abortSignal) =>
+      client.send(new DetachRolePolicyCommand({ RoleName: role, PolicyArn: arn }), { abortSignal }),
+    signal,
+  );
+}
+
+/** "Add inline policy" and an inline policy's "Edit": `PutRolePolicy` with the text as given. */
+export async function putRolePolicy(
+  endpoint: string,
+  role: string,
+  policy: string,
+  document: string,
+  signal: AbortSignal,
+): Promise<void> {
+  await send(
+    endpoint,
+    'PutRolePolicy',
+    (client, abortSignal) =>
+      client.send(new PutRolePolicyCommand({ RoleName: role, PolicyName: policy, PolicyDocument: document }), {
+        abortSignal,
+      }),
+    signal,
+  );
+}
+
+/** An inline policy's "Delete": `DeleteRolePolicy`. */
+export async function deleteRolePolicy(
+  endpoint: string,
+  role: string,
+  policy: string,
+  signal: AbortSignal,
+): Promise<void> {
+  await send(
+    endpoint,
+    'DeleteRolePolicy',
+    (client, abortSignal) =>
+      client.send(new DeleteRolePolicyCommand({ RoleName: role, PolicyName: policy }), { abortSignal }),
+    signal,
+  );
+}
+
+/** "Edit trust policy": `UpdateAssumeRolePolicy` with the text as given. */
+export async function updateTrustPolicy(
+  endpoint: string,
+  role: string,
+  document: string,
+  signal: AbortSignal,
+): Promise<void> {
+  await send(
+    endpoint,
+    'UpdateAssumeRolePolicy',
+    (client, abortSignal) =>
+      client.send(new UpdateAssumeRolePolicyCommand({ RoleName: role, PolicyDocument: document }), { abortSignal }),
+    signal,
+  );
+}
+
+/** A managed policy as `GetPolicy` gives it. A value the answer did not give is absent. */
+export interface PolicyDetail {
+  name: string;
+  arn: string;
+  type: PolicyType;
+  id?: string;
+  path?: string;
+  description?: string;
+  createDate?: Date;
+  updateDate?: Date;
+  defaultVersionId?: string;
+  attachmentCount?: number;
+}
+
+/** One version of a managed policy, in the emulator's order (newest first). */
+export interface PolicyVersion {
+  id: string;
+  isDefault: boolean;
+  createDate?: Date;
+}
+
+/** What a managed policy is attached to. */
+export interface PolicyEntity {
+  kind: 'role' | 'user' | 'group';
+  name: string;
+}
+
+/** A part of a policy's page read with its own list: read, or that list's failure. */
+export type PolicyPart<T> = { kind: 'read'; items: T[] } | { kind: 'failed'; failure: IamFailure };
+
+/** A policy's page (S5). */
+export type PolicyRead =
+  | { kind: 'found'; policy: PolicyDetail; versions: PolicyPart<PolicyVersion>; entities: PolicyPart<PolicyEntity> }
+  | { kind: 'not-found' };
+
+/** Every version of `arn`: `ListPolicyVersions`, read to its end by `Marker`. */
+function readVersions(endpoint: string, arn: string, signal: AbortSignal): Promise<PolicyVersion[]> {
+  return readAll(async (marker) => {
+    const output = await send(
+      endpoint,
+      'ListPolicyVersions',
+      (client, abortSignal) =>
+        client.send(new ListPolicyVersionsCommand({ PolicyArn: arn, ...withMarker(marker) }), { abortSignal }),
+      signal,
+    );
+    const next = nextMarker(output);
+    return {
+      items: (output.Versions ?? []).map((version) => {
+        const item: PolicyVersion = { id: version.VersionId ?? '', isDefault: version.IsDefaultVersion === true };
+        const created = validDate(version.CreateDate);
+        if (created !== undefined) item.createDate = created;
+        return item;
+      }),
+      ...(next === undefined ? {} : { marker: next }),
+    };
+  });
+}
+
+/** Every role, user and group `arn` is attached to: `ListEntitiesForPolicy`, read to its end by `Marker`. */
+function readEntities(endpoint: string, arn: string, signal: AbortSignal): Promise<PolicyEntity[]> {
+  return readAll(async (marker) => {
+    const output = await send(
+      endpoint,
+      'ListEntitiesForPolicy',
+      (client, abortSignal) =>
+        client.send(new ListEntitiesForPolicyCommand({ PolicyArn: arn, ...withMarker(marker) }), { abortSignal }),
+      signal,
+    );
+    const next = nextMarker(output);
+    const entities: PolicyEntity[] = [
+      ...(output.PolicyRoles ?? []).map((role) => ({ kind: 'role' as const, name: role.RoleName ?? '' })),
+      ...(output.PolicyUsers ?? []).map((user) => ({ kind: 'user' as const, name: user.UserName ?? '' })),
+      ...(output.PolicyGroups ?? []).map((group) => ({ kind: 'group' as const, name: group.GroupName ?? '' })),
+    ];
+    return { items: entities, ...(next === undefined ? {} : { marker: next }) };
+  });
+}
+
+/** A list read as one part of a page: its items, or its failure; an abort is thrown on. */
+async function part<T>(read: Promise<T[]>): Promise<PolicyPart<T>> {
+  try {
+    return { kind: 'read', items: await read };
+  } catch (error) {
+    return { kind: 'failed', failure: requestFailureOf(error) };
+  }
+}
+
+/**
+ * A policy's page (S5): `GetPolicy`; then `ListPolicyVersions` and `ListEntitiesForPolicy`, one after the other, each
+ * read to its end. `NoSuchEntity` of `GetPolicy` is "not found"; a failed list is that part's failure.
+ */
+export function getPolicy(endpoint: string, arn: string, signal: AbortSignal): Promise<PolicyRead> {
+  return orNotFound(
+    (async (): Promise<PolicyRead> => {
+      const output = await send(
+        endpoint,
+        'GetPolicy',
+        (client, abortSignal) => client.send(new GetPolicyCommand({ PolicyArn: arn }), { abortSignal }),
+        signal,
+      );
+      const entry = output.Policy ?? {};
+      const policyArn = text(entry.Arn) ?? arn;
+      const policy: PolicyDetail = {
+        name: entry.PolicyName ?? '',
+        arn: policyArn,
+        type: managedPolicyType(policyArn),
+      };
+      const id = text(entry.PolicyId);
+      if (id !== undefined) policy.id = id;
+      const path = text(entry.Path);
+      if (path !== undefined) policy.path = path;
+      if (typeof entry.Description === 'string') policy.description = entry.Description;
+      const created = validDate(entry.CreateDate);
+      if (created !== undefined) policy.createDate = created;
+      const updated = validDate(entry.UpdateDate);
+      if (updated !== undefined) policy.updateDate = updated;
+      const defaultVersion = text(entry.DefaultVersionId);
+      if (defaultVersion !== undefined) policy.defaultVersionId = defaultVersion;
+      if (typeof entry.AttachmentCount === 'number') policy.attachmentCount = entry.AttachmentCount;
+      const versions = await part(readVersions(endpoint, arn, signal));
+      const entities = await part(readEntities(endpoint, arn, signal));
+      return { kind: 'found', policy, versions, entities };
+    })(),
+  );
+}
+
+/** What "Create policy" sends. */
+export interface NewPolicy {
+  name: string;
+  /** Sent when not empty. */
+  description?: string;
+  /** The document's text, sent as given. */
+  document: string;
+}
+
+/** "Create policy": `CreatePolicy`; resolves with the new policy's ARN. */
+export async function createPolicy(endpoint: string, policy: NewPolicy, signal: AbortSignal): Promise<string> {
+  const output = await send(
+    endpoint,
+    'CreatePolicy',
+    (client, abortSignal) =>
+      client.send(
+        new CreatePolicyCommand({
+          PolicyName: policy.name,
+          PolicyDocument: policy.document,
+          ...(policy.description === undefined || policy.description === ''
+            ? {}
+            : { Description: policy.description }),
+        }),
+        { abortSignal },
+      ),
+    signal,
+  );
+  return output.Policy?.Arn ?? '';
+}
+
+/** A policy's "Edit": `CreatePolicyVersion` with `SetAsDefault`; resolves with the new version's id. */
+export async function createPolicyVersion(
+  endpoint: string,
+  arn: string,
+  document: string,
+  signal: AbortSignal,
+): Promise<string> {
+  const output = await send(
+    endpoint,
+    'CreatePolicyVersion',
+    (client, abortSignal) =>
+      client.send(new CreatePolicyVersionCommand({ PolicyArn: arn, PolicyDocument: document, SetAsDefault: true }), {
+        abortSignal,
+      }),
+    signal,
+  );
+  return output.PolicyVersion?.VersionId ?? '';
+}
+
+/** "Set as default": `SetDefaultPolicyVersion`. */
+export async function setDefaultPolicyVersion(
+  endpoint: string,
+  arn: string,
+  versionId: string,
+  signal: AbortSignal,
+): Promise<void> {
+  await send(
+    endpoint,
+    'SetDefaultPolicyVersion',
+    (client, abortSignal) =>
+      client.send(new SetDefaultPolicyVersionCommand({ PolicyArn: arn, VersionId: versionId }), { abortSignal }),
+    signal,
+  );
+}
+
+/** A version's "Delete": `DeletePolicyVersion`. */
+export async function deletePolicyVersion(
+  endpoint: string,
+  arn: string,
+  versionId: string,
+  signal: AbortSignal,
+): Promise<void> {
+  await send(
+    endpoint,
+    'DeletePolicyVersion',
+    (client, abortSignal) =>
+      client.send(new DeletePolicyVersionCommand({ PolicyArn: arn, VersionId: versionId }), { abortSignal }),
+    signal,
+  );
+}
+
+/** The step of deleting a policy that was refused. */
+export type DeletePolicyStep =
+  | { kind: 'read-entities' }
+  | { kind: 'read-versions' }
+  | { kind: 'detach'; entity: PolicyEntity }
+  | { kind: 'delete-version'; versionId: string }
+  | { kind: 'delete-policy' };
+
+/** What deleting a policy did; `detachedRoles` names the roles it was detached from before it ended. */
+export type DeletePolicyResult =
+  | { kind: 'deleted'; detachedRoles: string[] }
+  | { kind: 'failed'; step: DeletePolicyStep; failure: IamFailure; detachedRoles: string[] };
+
+/**
+ * A policy's "Delete": `ListEntitiesForPolicy` to its end, then a detach per role, user and group; `ListPolicyVersions`,
+ * then `DeletePolicyVersion` per version that is not the default; then `DeletePolicy`. Each request after the previous
+ * answer; the first refusal ends it, named with its step, and nothing after it is sent.
+ */
+export async function deletePolicy(endpoint: string, arn: string, signal: AbortSignal): Promise<DeletePolicyResult> {
+  const detachedRoles: string[] = [];
+  let step: DeletePolicyStep = { kind: 'read-entities' };
+  try {
+    const entities = await readEntities(endpoint, arn, signal);
+    for (const entity of entities) {
+      step = { kind: 'detach', entity };
+      switch (entity.kind) {
+        case 'role':
+          await send(
+            endpoint,
+            'DetachRolePolicy',
+            (client, abortSignal) =>
+              client.send(new DetachRolePolicyCommand({ RoleName: entity.name, PolicyArn: arn }), { abortSignal }),
+            signal,
+          );
+          detachedRoles.push(entity.name);
+          break;
+        case 'user':
+          await send(
+            endpoint,
+            'DetachUserPolicy',
+            (client, abortSignal) =>
+              client.send(new DetachUserPolicyCommand({ UserName: entity.name, PolicyArn: arn }), { abortSignal }),
+            signal,
+          );
+          break;
+        case 'group':
+          await send(
+            endpoint,
+            'DetachGroupPolicy',
+            (client, abortSignal) =>
+              client.send(new DetachGroupPolicyCommand({ GroupName: entity.name, PolicyArn: arn }), { abortSignal }),
+            signal,
+          );
+          break;
+      }
+    }
+    step = { kind: 'read-versions' };
+    const versions = await readVersions(endpoint, arn, signal);
+    for (const version of versions) {
+      if (version.isDefault) {
+        continue;
+      }
+      step = { kind: 'delete-version', versionId: version.id };
+      await deletePolicyVersion(endpoint, arn, version.id, signal);
+    }
+    step = { kind: 'delete-policy' };
+    await send(
+      endpoint,
+      'DeletePolicy',
+      (client, abortSignal) => client.send(new DeletePolicyCommand({ PolicyArn: arn }), { abortSignal }),
+      signal,
+    );
+  } catch (error) {
+    return { kind: 'failed', step, failure: requestFailureOf(error), detachedRoles };
+  }
+  return { kind: 'deleted', detachedRoles };
 }

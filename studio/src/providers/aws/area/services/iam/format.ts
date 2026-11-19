@@ -28,6 +28,62 @@ export function roleTabPath(name: string, tab: RoleTab): string {
   return `${rolePath(name)}/${tab}`;
 }
 
+/** The two tabs of a role's page (issue 535), each addressed by the query of the role's one address, as Lambda's. */
+export type RolePageTab = 'permissions' | 'trust';
+
+/** The query parameter that names a role's tab. */
+export const ROLE_TAB_PARAMETER = 'tab';
+
+/** Each tab's label, in the page's order. */
+export const ROLE_PAGE_TABS: readonly { id: RolePageTab; label: string }[] = [
+  { id: 'permissions', label: 'Permissions' },
+  { id: 'trust', label: 'Trust relationships' },
+];
+
+/** The tab a value of `?tab=` names: `trust` names "Trust relationships"; no value or any other, "Permissions". */
+export function roleTabOf(value: string | null | undefined): RolePageTab {
+  return value === 'trust' ? 'trust' : 'permissions';
+}
+
+/** A tab's label. */
+export function roleTabLabel(tab: RolePageTab): string {
+  return tab === 'trust' ? 'Trust relationships' : 'Permissions';
+}
+
+/** The address of a role's tab: "Permissions" is the role's path itself, the other adds `?tab=trust`. */
+export function roleTabHref(name: string, tab: RolePageTab): string {
+  return tab === 'permissions' ? rolePath(name) : `${rolePath(name)}?${ROLE_TAB_PARAMETER}=${tab}`;
+}
+
+/** The policy list, S4. */
+export const POLICIES_PATH = `${IAM_PATH}/policies`;
+
+/** "Create policy", S6. */
+export const CREATE_POLICY_PATH = `${POLICIES_PATH}/create`;
+
+/** A policy's own page, S5, without its query. */
+export const POLICY_DETAILS_PATH = `${POLICIES_PATH}/details`;
+
+/** The query parameter that holds a policy's ARN: an ARN may hold `/`, so it is no path segment. */
+export const POLICY_ARN_PARAMETER = 'arn';
+
+/** A policy's own page: its ARN percent-encoded once in `?arn=`. */
+export function policyPath(arn: string): string {
+  return `${POLICY_DETAILS_PATH}?${POLICY_ARN_PARAMETER}=${encodeURIComponent(arn)}`;
+}
+
+/** The ARN a policy page's query names, decoded once; `undefined` when it names none. */
+export function policyArnOf(search: URLSearchParams | string): string | undefined {
+  const params = typeof search === 'string' ? new URLSearchParams(search) : search;
+  const arn = params.get(POLICY_ARN_PARAMETER);
+  return arn === null || arn === '' ? undefined : arn;
+}
+
+/** A managed policy's name: its ARN's text after the last `/`. */
+export function policyNameOfArn(arn: string): string {
+  return arn.slice(arn.lastIndexOf('/') + 1);
+}
+
 /** A service-linked role's path starts so; the emulator goes by the path (requirement R2, R7). */
 export const SERVICE_LINKED_PATH_PREFIX = '/aws-service-role/';
 
