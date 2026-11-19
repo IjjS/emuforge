@@ -34,4 +34,10 @@ bun run serve
 
 `bun run serve` runs Studio's own server (`scripts/serve.ts`). It serves `studio/dist/` on `127.0.0.1` only, on
 `EMUFORGE_STUDIO_PORT` (default 8296), and tells the page the engine's port from `EMUFORGE_ENGINE_PORT` (default
-8297). Open `http://127.0.0.1:8296/` with the engine running.
+8297). Open `http://127.0.0.1:8296/` with the engine running. The page then sends every engine and AWS request to
+`http://127.0.0.1:<engine port>`.
+
+Studio served by the `emuforge` binary also names a channel path in `/config.json` (`"enginePath": "/__engine"`).
+The page then sends every engine and AWS request to its own origin under that path, so a browser that opened Studio
+under a host name allowed with `emuforge serve --allow-host` reaches the engine through Studio's one port. The
+engine's port stays what Home shows in the commands to run on the host.

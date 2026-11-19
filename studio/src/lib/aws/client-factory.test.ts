@@ -15,6 +15,7 @@ import { ListTopicsCommand, SNSClient } from '@aws-sdk/client-sns';
 import { GetQueueAttributesCommand, SQSClient } from '@aws-sdk/client-sqs';
 import { FetchHttpHandler } from '@smithy/fetch-http-handler';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { openPageAt } from '../../test/home-test-kit';
 import {
   createAwsClient,
   createS3Client,
@@ -1033,4 +1034,263 @@ describe('requests that are not for the engine', () => {
       }
     });
   }
+});
+
+// Issue 503: the page opened under an allowed host name, whose configuration names the channel `/__engine` on
+// Studio's port. Each case loads the factory afresh, so it holds no session of an earlier case and has the channel
+// path recorded as the page's configuration records it.
+
+const PAGE = 'https://name.test:8296';
+const CHANNEL = `${PAGE}/__engine`;
+const CHANNEL_SESSION = '/__engine/__emuforge/session';
+
+async function channelFactory() {
+  vi.resetModules();
+  const base = await import('../engine/engine-base');
+  const factory = await import('./client-factory');
+  base.acceptEnginePath('/__engine');
+  return factory;
+}
+
+/** The engine played behind the channel: the session at `<channel>/__emuforge/session`, AWS answers as `answer`. */
+function playChannel(answer: AwsAnswer = answerGeneral) {
+  const played = { sessionUrls: [] as string[], awsRequests: [] as Request[] };
+  vi.stubGlobal(
+    'fetch',
+    vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init);
+      if (new URL(request.url).pathname === CHANNEL_SESSION) {
+        played.sessionUrls.push(request.url);
+        return Promise.resolve(
+          new Response(JSON.stringify({ token: SESSION_TOKEN }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          }),
+        );
+      }
+      played.awsRequests.push(request);
+      return Promise.resolve(answer(request));
+    }),
+  );
+  return played;
+}
+
+describe('the channel through Studio’s port (issue 503)', () => {
+  let restore: () => void;
+
+  beforeEach(() => {
+    restore = openPageAt(`${PAGE}/aws`);
+  });
+
+  afterEach(() => {
+    restore();
+  });
+
+  it('S3 ListBuckets, PutObject of key a/b c and GetObject go under <channel>/ by path, with the token', async () => {
+    playChannel();
+    const { createS3Client: create } = await channelFactory();
+    const client = create({ endpoint: CHANNEL });
+
+    const list = await buildRequest(client, () => client.send(new ListBucketsCommand({})));
+    const put = await buildRequest(client, () =>
+      client.send(new PutObjectCommand({ Bucket: 'b', Key: 'a/b c', Body: 'x' })),
+    );
+    const get = await buildRequest(client, () => client.send(new GetObjectCommand({ Bucket: 'b', Key: 'a/b c' })));
+
+    expect([list, put, get].map((request) => `${request.method} ${urlOf(request)}`)).toEqual([
+      `GET ${PAGE}/__engine/`,
+      `PUT ${PAGE}/__engine/b/a/b%20c`,
+      `GET ${PAGE}/__engine/b/a/b%20c`,
+    ]);
+    for (const request of [list, put, get]) {
+      expect(oneHeader(request, 'host')).toBe('name.test:8296');
+      expect(oneHeader(request, 'x-emuforge-session')).toBe(SESSION_TOKEN);
+    }
+  });
+
+  it('S3 ListBuckets is sent at the page fetch to <channel>/ and resolves', async () => {
+    const played = playChannel(
+      () =>
+        new Response('<ListAllMyBucketsResult><Buckets></Buckets></ListAllMyBucketsResult>', {
+          status: 200,
+          headers: XML,
+        }),
+    );
+    const { createS3Client: create } = await channelFactory();
+    const client = create({ endpoint: CHANNEL });
+
+    const sent = client.send(new ListBucketsCommand({}));
+
+    await expect(sent).resolves.toMatchObject({ $metadata: { httpStatusCode: 200 } });
+    expect(played.awsRequests.map((request) => `${request.method} ${request.url}`)).toEqual([
+      `GET ${PAGE}/__engine/?x-id=ListBuckets`,
+    ]);
+    expect(played.awsRequests[0]?.headers.get('x-emuforge-session')).toBe(SESSION_TOKEN);
+  });
+
+  it('Step Functions, a JSON-protocol (DynamoDB) and a Query-protocol (SNS) client each POST <channel>/', async () => {
+    const played = playChannel();
+    const { createSfnClient: createSfn, createAwsClient: create } = await channelFactory();
+
+    await createSfn({ endpoint: CHANNEL }).send(new ListStateMachinesCommand({}));
+    await create(DynamoDBClient, { endpoint: CHANNEL }).send(new ListTablesCommand({}));
+    await create(SNSClient, { endpoint: CHANNEL }).send(new ListTopicsCommand({}));
+
+    expect(played.awsRequests.map((request) => `${request.method} ${request.url}`)).toEqual([
+      `POST ${PAGE}/__engine/`,
+      `POST ${PAGE}/__engine/`,
+      `POST ${PAGE}/__engine/`,
+    ]);
+    for (const request of played.awsRequests) {
+      expect(request.headers.get('x-emuforge-session')).toBe(SESSION_TOKEN);
+    }
+  });
+
+  it('asks the session at <channel>/__emuforge/session, once for every client of the channel', async () => {
+    const played = playChannel();
+    const { createSfnClient: createSfn, createAwsClient: create, createS3Client: createS3 } = await channelFactory();
+
+    await createSfn({ endpoint: CHANNEL }).send(new ListStateMachinesCommand({}));
+    await create(DynamoDBClient, { endpoint: CHANNEL }).send(new ListTablesCommand({}));
+    await create(SNSClient, { endpoint: CHANNEL }).send(new ListTopicsCommand({}));
+    const s3 = createS3({ endpoint: CHANNEL });
+    await buildRequest(s3, () => s3.send(new ListBucketsCommand({})));
+
+    expect(played.sessionUrls).toEqual([`${CHANNEL}/__emuforge/session`]);
+  });
+
+  it('sends a command with a host prefix (StartSyncExecution) to name.test:8296, without the prefix', async () => {
+    playChannel();
+    const { createSfnClient: createSfn } = await channelFactory();
+    const client = createSfn({ endpoint: CHANNEL });
+
+    const request = await buildRequest(client, () =>
+      client.send(new StartSyncExecutionCommand({ stateMachineArn: 'arn:aws:states:us-east-1:000000000000:sm' })),
+    );
+
+    expect(request.hostname).toBe('name.test');
+    expect(oneHeader(request, 'host')).toBe('name.test:8296');
+    expect(urlOf(request)).toBe(`${PAGE}/__engine/`);
+  });
+
+  type PathMove = (request: { protocol: string; hostname: string; port?: number; path: string }) => void;
+  const moves: [string, PathMove][] = [
+    [
+      'another host',
+      (request) => {
+        request.hostname = 'other.test';
+      },
+    ],
+    [
+      'another scheme',
+      (request) => {
+        request.protocol = 'http:';
+      },
+    ],
+    [
+      'another port',
+      (request) => {
+        request.port = 8297;
+      },
+    ],
+    [
+      'a path beside the channel',
+      (request) => {
+        request.path = '/config.json';
+      },
+    ],
+    [
+      'a path that starts with the channel’s name only',
+      (request) => {
+        request.path = '/__enginex/';
+      },
+    ],
+    [
+      'a path that leaves the channel by a dot segment',
+      (request) => {
+        request.path = '/__engine/../config.json';
+      },
+    ],
+    [
+      'a path that leaves the channel by an encoded dot segment',
+      (request) => {
+        request.path = '/__engine/%2e%2e/config.json';
+      },
+    ],
+    [
+      'a network path',
+      (request) => {
+        request.path = '//other.test/__engine/';
+      },
+    ],
+  ];
+
+  it.each(moves)('a request moved to %s is refused with RequestRefusedError, nothing sent', async (_what, move) => {
+    const played = playChannel();
+    const factory = await channelFactory();
+    const clients = [
+      factory.createS3Client({ endpoint: CHANNEL }),
+      factory.createSfnClient({ endpoint: CHANNEL }),
+      factory.createAwsClient(SNSClient, { endpoint: CHANNEL }),
+    ];
+    const commands = [new ListBucketsCommand({}), new ListStateMachinesCommand({}), new ListTopicsCommand({})];
+
+    for (const [at, client] of clients.entries()) {
+      (client as unknown as SFNClient).middlewareStack.add(
+        (next) => (args) => {
+          move(args.request as { protocol: string; hostname: string; port?: number; path: string });
+          return next(args);
+        },
+        { step: 'deserialize', priority: 'low', name: 'moveRequest', override: true },
+      );
+      const error: unknown = await (client as unknown as SFNClient)
+        .send(commands[at] as unknown as ListStateMachinesCommand)
+        .then(
+          () => undefined,
+          (rejected: unknown) => rejected,
+        );
+      expect(error).toBeInstanceOf(factory.RequestRefusedError);
+    }
+    expect(played.awsRequests).toEqual([]);
+  });
+
+  it.each([
+    'https://other.test/__engine',
+    PAGE,
+    `${PAGE}/other`,
+    `${PAGE}/__engine/x`,
+    'http://127.0.0.1:8400/__engine',
+    'https://amazonaws.com',
+  ])('createAwsClient refuses the endpoint %s with EndpointRefusedError, and makes no client', async (refused) => {
+    const factory = await channelFactory();
+    let client: unknown;
+    let thrown: unknown;
+    try {
+      client = factory.createAwsClient(SNSClient, { endpoint: refused });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(client).toBeUndefined();
+    expect(thrown).toBeInstanceOf(factory.EndpointRefusedError);
+    expect((thrown as EndpointRefusedError).endpoint).toBe(refused);
+  });
+
+  it('createAwsClient takes http://127.0.0.1:8400, and its requests go there, as today', async () => {
+    const played = playEngine(SESSION_TOKEN, answerGeneral);
+    const factory = await channelFactory();
+
+    await factory.createAwsClient(SNSClient, { endpoint: 'http://127.0.0.1:8400' }).send(new ListTopicsCommand({}));
+
+    expect(played.awsRequests.map((request) => `${request.method} ${request.url}`)).toEqual([
+      'POST http://127.0.0.1:8400/',
+    ]);
+  });
+
+  it('refuses the channel while the page’s configuration has named none', async () => {
+    vi.resetModules();
+    const factory = await import('./client-factory');
+
+    expect(() => factory.createAwsClient(SNSClient, { endpoint: CHANNEL })).toThrow(factory.EndpointRefusedError);
+  });
 });
