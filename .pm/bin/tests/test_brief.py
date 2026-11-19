@@ -52,6 +52,19 @@ class Brief(unittest.TestCase):
         self.assertIn("design.md", plan)
         self.assertIn(str(co), plan)
 
+    def test_plan_sends_the_plan_set_in_one_review_issue_519(self):
+        """Owner, 2026-11-19 (issue 519): design, test criteria and breakdown go to rev as one set, so a plan's brief,
+        engine or studio, names `REVIEW plan-set r1` and no review of the design alone."""
+        co = checkout("plan-set")
+        for issue in (7, 8):
+            with self.subTest(issue=issue):
+                p = run(co, "pm-brief", "plan", issue)
+                self.assertEqual(p.returncode, 0, p.stderr)
+                plan = brief(co, issue, "plan")
+                self.assertIn("Written with `test-criteria.md` and `breakdown.md` and sent with them as one set: "
+                              "REVIEW plan-set r1.", plan)
+                self.assertNotIn("REVIEW design", plan)
+
     def test_studio_plan_has_a_design_stage_and_no_grade(self):
         """Issue 478 (part 3) removed the screen grade with the structure score: a studio plan's design stage is
         design.md, and --grade is no option."""

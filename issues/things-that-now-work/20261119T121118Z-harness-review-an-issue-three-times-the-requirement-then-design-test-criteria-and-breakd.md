@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: harness|lead|three-reviews-requirement-then-plan-set-then-impl
-Issue-Check-Ids:
+Issue-Check-Ids: harness.plan-set-docs,harness.brief
 Issue-Commit: 8a5dadc0f85d12875e501116e6c94d757bc39ffc
 
 # Review an issue three times: the requirement, then design, test criteria and breakdown as one set, then the implementation
