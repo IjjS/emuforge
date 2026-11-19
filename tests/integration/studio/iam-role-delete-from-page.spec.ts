@@ -66,9 +66,12 @@ test('studio.iam-role-delete-from-its-page', async ({ ctx, page }) => {
       await expectFlash(page, [DELETED], "the dialog's result on S1");
       await applyFilter(main, role);
       await expect
-        .poll(async () => (await rowsOf(main.getByRole('table', { name: 'Roles', exact: true }), ['Role name'])).flat(), {
-          message: 'the rows under the role\'s name',
-        })
+        .poll(
+          async () => (await rowsOf(main.getByRole('table', { name: 'Roles', exact: true }), ['Role name'])).flat(),
+          {
+            message: "the rows under the role's name",
+          },
+        )
         .toEqual([]);
       const gone = await roleIsGone(ctx, port, role);
       if (gone) seeded.forget(role);

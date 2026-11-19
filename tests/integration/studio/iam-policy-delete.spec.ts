@@ -80,7 +80,9 @@ test('studio.iam-policy-delete-detaches-and-removes', async ({ ctx, page }) => {
     async () => {
       await openPolicy(page, used, `${p}-used`);
       await expect
-        .poll(async () => (await rowsOf(table(page, 'Attached to'), ['Name'])).length, { message: '"Attached to" is read' })
+        .poll(async () => (await rowsOf(table(page, 'Attached to'), ['Name'])).length, {
+          message: '"Attached to" is read',
+        })
         .toBe(3);
       await headerButton(page, 'Delete').click(ACTION);
       const opened = dialog(page, `Delete ${p}-used?`);
@@ -108,7 +110,9 @@ test('studio.iam-policy-delete-detaches-and-removes', async ({ ctx, page }) => {
     async () => {
       await openPolicy(page, used, `${p}-used`);
       await expect
-        .poll(async () => (await rowsOf(table(page, 'Attached to'), ['Name'])).length, { message: '"Attached to" is read' })
+        .poll(async () => (await rowsOf(table(page, 'Attached to'), ['Name'])).length, {
+          message: '"Attached to" is read',
+        })
         .toBe(3);
       await headerButton(page, 'Delete').click(ACTION);
       await confirmByTyping(page, `Delete ${p}-used?`);
@@ -131,9 +135,9 @@ test('studio.iam-policy-delete-detaches-and-removes', async ({ ctx, page }) => {
       await page.goto(POLICIES_PATH);
       await applyFilter(main, `${p}-plain`);
       const list = table(page, POLICIES);
-      await expect.poll(async () => (await rowsOf(list, ['Policy name'])).flat(), { message: 'the row' }).toEqual([
-        `${p}-plain`,
-      ]);
+      await expect
+        .poll(async () => (await rowsOf(list, ['Policy name'])).flat(), { message: 'the row' })
+        .toEqual([`${p}-plain`]);
       await list.getByRole('radio', { name: `${p}-plain`, exact: true }).check(ACTION);
       await button(main, 'Delete').click(ACTION);
       await confirmByTyping(page, `Delete ${p}-plain?`);

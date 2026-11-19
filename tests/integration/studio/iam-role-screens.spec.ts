@@ -19,11 +19,10 @@ import type { BrowserContext, Page } from '@playwright/test';
 
 import { emulatorDir, EnvError, expect, readEmulatorFiles, startStack, test, type Ctx } from './support';
 import { crumbLink } from './support/aws-area';
-import { ACTION, addressOf, heading, SIDE_NAVIGATION } from './support/frame';
+import { ACTION, addressOf, heading, SIDE_NAVIGATION, SIDE_NAVIGATION_ACTIVE } from './support/frame';
 import { markPage, stillSamePage } from './support/home';
 import { getRoleDirect, IamSeeded, roleIsGone, trustPolicy } from './services/iam/iam';
 import { Lines } from './support/lines';
-import { expectNoScreenPart } from './support/no-screen-part';
 import { Traffic } from './support/traffic';
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -52,13 +51,16 @@ const SAVE = 'Save changes';
 const CONFIRM_FIELD = 'To confirm, type delete';
 const SUMMARY = 'Summary';
 
-/** The four tabs that lead to their own routes (R8), with the end of each route. */
-const TAB_ROUTES: [string, string][] = [
-  ['Trust relationships', 'trust-relationships'],
-  ['Tags', 'tags'],
-  ['Last Accessed', 'last-accessed'],
-  ['Revoke sessions', 'revoke-sessions'],
-];
+// Issue 535 (its test-criteria.md, "Rewritten lines of checks on `main`"; requirement, "Checks on `main` that
+// change") rebuilt the role page's tab bar: two tabs, each a screen of its own, "Trust relationships" addressed by
+// the query. "Tags", "Last Accessed" and "Revoke sessions" and their "no screen yet" routes are gone.
+const TAB_PERMISSIONS = 'Permissions';
+const TAB_TRUST = 'Trust relationships';
+const TRUST_QUERY = '?tab=trust';
+const TRUST_POLICY = 'Trust policy';
+const POLICIES_PATH = '/aws/iam/policies';
+const POLICIES_H1 = 'Policies';
+const NO_SCREEN = `Studio has no screen for ${SERVICE_LABEL} yet.`;
 
 function rolePath(name: string): string {
   return `/aws/iam/roles/details/${encodeURIComponent(name)}`;
@@ -239,26 +241,76 @@ test('studio.iam-role-screens-actions-lead-to-their-routes', async ({ ctx, page 
   });
 
   await lines.line(
-    'On a role\'s page, each of "Trust relationships", "Tags", "Last Accessed", "Revoke sessions" → its path of R8 and the "no screen yet" page; back → the role\'s page',
+    'On S2 the tab "Trust relationships" → the same path with `?tab=trust`, the tab\'s own content; "Permissions" → the path without a query; no tab leads to a "no screen yet" page',
     async () => {
-      const failures: string[] = [];
-      for (const [tab, end] of TAB_ROUTES) {
-        try {
-          await page.goto(rolePath(one));
-          await expect(heading(page, one), `the role's page with the h1 "${one}"`).toBeVisible();
-          await markPage(page);
-          await s.tab(tab).click(ACTION);
-          // Issue 57 (test-criteria.md, "Existing checks rewritten"): the page for that part of the service.
-          await expectNoScreenPart(page, SERVICE_LABEL, `${rolePath(one)}/${end}`);
-          expect(await stillSamePage(page), `"${tab}": no document was loaded`).toBe(true);
-          await page.goBack();
-          await expect(page).toHaveURL(addressOf(rolePath(one)));
-          await expect(heading(page, one), `back from "${tab}": the role's page`).toBeVisible();
-        } catch (e) {
-          failures.push(`"${tab}": ${(e as Error).message.split('\n')[0]}`);
-        }
-      }
-      expect(failures, 'the tabs that did not lead to their route and back').toEqual([]);
+      await page.goto(rolePath(one));
+      await expect(heading(page, one), `the role's page with the h1 "${one}"`).toBeVisible();
+      await expect(s.tab(TAB_TRUST), 'the tabs once the role is read').toBeVisible();
+      expect(
+        (await s.main.getByRole('tab').allInnerTexts()).map((t) => t.replace(/\s+/g, ' ').trim()),
+        'the tabs of the page',
+      ).toEqual([TAB_PERMISSIONS, TAB_TRUST]);
+      await markPage(page);
+
+      await s.tab(TAB_TRUST).click(ACTION);
+      await expect(page).toHaveURL(addressOf(`${rolePath(one)}${TRUST_QUERY}`));
+      await expect(s.tab(TAB_TRUST), `"${TAB_TRUST}" is the selected tab`).toHaveAttribute('aria-selected', 'true');
+      await expect(
+        s.main.getByRole('heading', { level: 2, name: TRUST_POLICY, exact: true }),
+        `the tab's own content: "${TRUST_POLICY}"`,
+      ).toBeVisible();
+      await expect(
+        s.main.getByRole('table', { name: POLICIES, exact: true }),
+        `"${POLICIES}" is not on "${TAB_TRUST}"`,
+      ).toHaveCount(0);
+      await expect(heading(page, one), `"${TAB_TRUST}": still the role's page`).toBeVisible();
+      await expect(s.main, `"${TAB_TRUST}": no "no screen yet" page`).not.toContainText(NO_SCREEN);
+      expect(await stillSamePage(page), `"${TAB_TRUST}": no document was loaded`).toBe(true);
+
+      await s.tab(TAB_PERMISSIONS).click(ACTION);
+      await expect(page).toHaveURL(addressOf(rolePath(one)));
+      await expect(s.tab(TAB_PERMISSIONS), `"${TAB_PERMISSIONS}" is the selected tab`).toHaveAttribute(
+        'aria-selected',
+        'true',
+      );
+      await expect(
+        s.main.getByRole('table', { name: POLICIES, exact: true }),
+        `the tab's own content: "${POLICIES}"`,
+      ).toBeVisible();
+      await expect(
+        s.main.getByRole('heading', { level: 2, name: TRUST_POLICY, exact: true }),
+        `"${TRUST_POLICY}" is not on "${TAB_PERMISSIONS}"`,
+      ).toHaveCount(0);
+      await expect(s.main, `"${TAB_PERMISSIONS}": no "no screen yet" page`).not.toContainText(NO_SCREEN);
+      expect(await stillSamePage(page), `"${TAB_PERMISSIONS}": no document was loaded`).toBe(true);
+    },
+  );
+
+  await lines.line(
+    'The side navigation holds "Roles" and "Policies"; "Policies" → S4, where it is the current entry',
+    async () => {
+      await page.goto(rolePath(one));
+      await expect(heading(page, one), `the role's page with the h1 "${one}"`).toBeVisible();
+      const nav = page.locator(SIDE_NAVIGATION);
+      // The navigation's first link is its header, the service; the entries are the links after it.
+      await expect
+        .poll(async () => (await nav.getByRole('link').allInnerTexts()).map((t) => t.replace(/\s+/g, ' ').trim()), {
+          message: 'the entries of the side navigation',
+        })
+        .toEqual(expect.arrayContaining([LIST_H1, POLICIES_H1]));
+      expect(
+        (await nav.locator('li').getByRole('link').allInnerTexts()).map((t) => t.replace(/\s+/g, ' ').trim()),
+        'the entries of the side navigation',
+      ).toEqual([LIST_H1, POLICIES_H1]);
+      await markPage(page);
+      await nav.getByRole('link', { name: POLICIES_H1, exact: true }).click(ACTION);
+      await expect(page).toHaveURL(addressOf(POLICIES_PATH));
+      await expect(
+        s.main.getByRole('heading', { level: 1, name: new RegExp(`^${POLICIES_H1}(\\s|$)`) }),
+        `S4 with the h1 "${POLICIES_H1}…"`,
+      ).toBeVisible();
+      await expect(page.locator(SIDE_NAVIGATION_ACTIVE), 'the current entry').toHaveText(POLICIES_H1);
+      expect(await stillSamePage(page), 'no document was loaded').toBe(true);
     },
   );
 
