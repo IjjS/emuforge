@@ -208,6 +208,20 @@ export function AreaLayout({
       focusTarget();
     }
   }, [routeChanges, focusTarget]);
+  // A change of the query alone (a folder's `?prefix=` of S3's objects) is a move too: the element followed is gone,
+  // so focus goes to the content target as on a change of path. A page that placed focus itself keeps it.
+  const shownQuery = useRef({ pathname, search });
+  useEffect(() => {
+    const before = shownQuery.current;
+    shownQuery.current = { pathname, search };
+    if (before.pathname !== pathname || before.search === search) {
+      return;
+    }
+    const active = document.activeElement;
+    if (active === null || active === document.body || !active.isConnected) {
+      focusTarget();
+    }
+  }, [pathname, search, focusTarget]);
 
   // What the page shows of the emulator, as it names it; the notice's open state outlives the page (R5.3).
   const [resources, setResources] = useState<PageResources | null>(null);

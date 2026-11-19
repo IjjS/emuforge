@@ -6,7 +6,7 @@ import SpaceBetween from '@cloudscape-design/components/space-between';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { useState, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { createMemoryRouter, RouterProvider, useLocation, useNavigate } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -1009,6 +1009,76 @@ describe('a console screen in the AWS area (issue 56, R5)', () => {
       ['Shelves', '/aws/dynamodb/shelves'],
       ['a/b', null],
     ]);
+  });
+
+  /** A shelf's page: its `h1`, then a button, new for each shelf, that opens the other shelf by the query alone. */
+  function ShelfPage() {
+    const { search } = useLocation();
+    const navigate = useNavigate();
+    const part = new URLSearchParams(search).get('part') ?? '';
+    const other = part === 'a' ? 'b' : 'a';
+    return (
+      <SpaceBetween size="m">
+        <Header variant="h1">{`Shelf ${part}`}</Header>
+        <Button key={part} onClick={() => void navigate(`/aws/dynamodb/shelves?part=${other}`)}>
+          {`Open ${other}`}
+        </Button>
+      </SpaceBetween>
+    );
+  }
+
+  // Issue 480, critique P1: walking S3's folders changes `?prefix=` alone, and the link followed is gone.
+  it('on /aws/dynamodb/shelves?part=a, a control that changes the query alone chosen: focus on the content target', async () => {
+    registry.screens.push({ ...WIDGETS, paths: ['/aws/dynamodb/shelves'], Page: ShelfPage });
+    const { router } = open('/aws/dynamodb/shelves?part=a');
+    const button = screen.getByRole('button', { name: 'Open b' });
+
+    act(() => {
+      button.focus();
+      fireEvent.click(button);
+    });
+
+    expect(router.state.location.search).toBe('?part=b');
+    await expectFocusOnTarget('Shelf b', 'Open a');
+  });
+
+  it('on /aws/dynamodb/shelves?part=a, a page that moves focus itself on a change of the query: focus stays there', async () => {
+    function FocusingShelfPage() {
+      const { search } = useLocation();
+      const navigate = useNavigate();
+      const part = new URLSearchParams(search).get('part') ?? '';
+      const field = useRef<HTMLInputElement>(null);
+      useEffect(() => {
+        if (part === 'b') {
+          field.current?.focus();
+        }
+      }, [part]);
+      return (
+        <SpaceBetween size="m">
+          <Header variant="h1">{`Shelf ${part}`}</Header>
+          <Button key={part} onClick={() => void navigate('/aws/dynamodb/shelves?part=b')}>
+            Open b
+          </Button>
+          <input ref={field} aria-label="Shelf name" />
+        </SpaceBetween>
+      );
+    }
+    registry.screens.push({ ...WIDGETS, paths: ['/aws/dynamodb/shelves'], Page: FocusingShelfPage });
+    open('/aws/dynamodb/shelves?part=a');
+    const button = screen.getByRole('button', { name: 'Open b' });
+
+    act(() => {
+      button.focus();
+      fireEvent.click(button);
+    });
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Shelf name' }));
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Shelf name' }));
   });
 
   it.each(THINGS.paths)(
