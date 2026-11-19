@@ -231,7 +231,7 @@ test('studio.lambda-invoke-shows-function-errors-and-refusals', async ({ ctx, pa
   );
 
   await lines.line(
-    'S2 of echo open, the function deleted directly, "Invoke" → "The invocation was refused" with `ResourceNotFoundException`, and the page then shows "Function not found"',
+    'S2 of echo open, the function deleted directly, "Invoke" → the answer to the invoke is `ResourceNotFoundException`, and the page shows "Function not found"',
     async () => {
       await openOnTest(page, echo);
       const deleted = await deleteFunctionDirect(ctx, port, echo);

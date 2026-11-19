@@ -223,7 +223,15 @@ test('studio.lambda-upload-refusals-leave-the-code', async ({ ctx, page, context
       // The status as it came, beside the sentence: the number the engine's answer carried.
       const field = await message.first().evaluate((el) => (el.parentElement ?? el).innerText.replace(/\s+/g, ' '));
       expect(field, 'the status beside the sentence').toContain(String(status));
-      await expect(main.getByText(file.name).first(), 'the file, still chosen').toBeVisible();
+      // The file field's own entry: an element whose whole text is the file's name, which the sentence above (it
+      // holds the name too) is not.
+      const chosen = main.getByText(file.name, { exact: true });
+      await expect(chosen, 'the file, still chosen in the field').toHaveCount(1);
+      await expect(chosen, 'the file, still chosen in the field').toBeVisible();
+      expect(
+        await chosen.evaluate((el, sentence) => !(el.textContent ?? '').includes(sentence), tooLargeText(file.name)),
+        'the field\'s entry is not the sentence',
+      ).toBe(true);
       expect(sent.codeUpdates(name), `UpdateFunctionCode requests for ${name}`).toBe(1);
     },
   );
