@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: bug
 Issue-Source: finder
 Issue-Key: harness|flakes|first-log-lost-with-the-worktree
-Issue-Check-Ids:
+Issue-Check-Ids: none (harness issue, no kept guard shows it)
 Issue-Commit: 30cadce92c94e015e8fb6093855a97eeddfd8103
 
 # Keep the first log of a flaky step when its worktree is removed

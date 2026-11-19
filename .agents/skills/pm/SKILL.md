@@ -156,9 +156,10 @@ by reading it and, where you can, by running it once.
 
 **Intermittent failures.** `pm-check` runs a failed test step once more; when the second run passes, the step is
 `flaky`, the run passes and the unit is not held up. Every flake is a line in `.pm/run/flakes.jsonl` (step,
-commit, the first run's log). After a merge, read the new lines: file each as
-`pm-issue new --source finder --kind bug` with the first log as evidence, unless an open issue already names that
-failure (then add the log path to it). The workflow on GitHub Actions retries the same three steps: a step named
+commit, and a copy of the first run's log under `.pm/run/flakes/` that outlives the worktree). After a merge,
+read the new lines: file each as `pm-issue new --source finder --kind bug` with the first log as evidence,
+unless an open issue already names that failure (then add the log path to it). The workflow on GitHub Actions
+retries the same three steps: a step named
 `<step> (second run)` that ran in a successful run of `main` is a flake, filed the same way with the run's url in
 place of the first log, and like everything a run shows it waits for the owner's signal (flow step 3). A step that
 fails twice is a failure; the plan finds out whether a unit caused it before sending it back. Never rerun `pm-check` until

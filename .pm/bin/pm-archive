@@ -7,7 +7,9 @@ Run after every unit of the issue is merged into local main (pm-merge). Refuses 
 registered worktrees is an ancestor of main (--force overrides). Moves requirement.md, decisions.md,
 test-criteria.md, report.md, critique-scores.json, structure-scores.json (an issue scored before issue 478 removed
 the structure score), cost.json and state.md to .pm/archive/<n>/ and deletes the rest of .pm/issue-<n>/ (drafts,
-review rounds, briefs) after their gist is written into .pm/archive/<n>.md. Worktrees and their output/ are removed with their local branches. pm-worktree rm also removes each worktree's emulator port
+review rounds, briefs) after their gist is written into .pm/archive/<n>.md. Before the worktrees go, each one's
+output/report.md (a harness-engineer's report) is copied to .pm/archive/<n>/report-<unit>.md (issue 542); a copy
+that fails is printed and the archive goes on. Worktrees and their output/ are removed with their local branches. pm-worktree rm also removes each worktree's emulator port
 folder under ~/.aws/emulator (pm-emulator-dir); its "pm-emulator-dir: " lines are printed.
 """
 import argparse
@@ -66,6 +68,20 @@ def main():
     cost_out = subprocess.run(cmd, capture_output=True, text=True).stdout.strip().splitlines()
     # panes
     subprocess.run([str(BIN / "pm-pane"), "close", "--issue", a.issue], capture_output=True, text=True)
+    # a harness-engineer's output/report.md lies in its worktree: keep a copy before the worktree goes (issue 542)
+    arch = PM / "archive"; arch.mkdir(exist_ok=True)
+    keep_dir = arch / str(a.issue)
+    keep_dir.mkdir(exist_ok=True)
+    for w in wts:
+        report = os.path.join(w["path"], "output", "report.md") if isinstance(w.get("path"), str) else None
+        if not report or not os.path.isfile(report):
+            continue
+        dest = keep_dir / f"report-{w.get('unit') or w['name']}.md"
+        try:
+            shutil.copyfile(report, dest)
+            print(f"kept {report} -> {dest}")
+        except OSError as e:
+            print(f"not kept {report}: {type(e).__name__}: {e}")
     # worktrees; a merged branch is deleted with its worktree, an unmerged one (--force) is kept
     for w in wts:
         r = subprocess.run([str(BIN / "pm-worktree"), "rm", w["name"]], capture_output=True, text=True)
@@ -77,15 +93,12 @@ def main():
     decisions = (d / "decisions.md").read_text(errors="replace") if (d / "decisions.md").exists() else ""
     scores = subprocess.run([str(BIN / "pm-critique"), "table", a.issue], capture_output=True, text=True).stdout.strip()
     reviews = review_summary(d)
-    arch = PM / "archive"; arch.mkdir(exist_ok=True)
     lines = [f"# #{a.issue} archive ({now()[:10]})", "", "## Branches"]
     lines += [f"- {br} ({st})" for br, st in states.items()] or ["- (none registered)"]
     lines += ["", "## State", state.strip() or "(no state.md)", "", "## Decisions", decisions.strip() or "(none)", "", "## Critique scores", scores or "(none)",
               "", "## Review rounds", *(reviews or ["(none)"]), "", "## Cost", *(cost_out or ["(no transcripts)"]), ""]
     (arch / f"{a.issue}.md").write_text("\n".join(lines))
     # move the keep list to .pm/archive/<n>/ and drop the issue folder, so no archived issue looks like open work
-    keep_dir = arch / str(a.issue)
-    keep_dir.mkdir(exist_ok=True)
     kept, removed = [], []
     for f in d.iterdir():
         if f.name in KEEP:
