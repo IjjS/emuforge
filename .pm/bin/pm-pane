@@ -47,7 +47,9 @@ The registry (.pm/run/panes.json) and pm.json are changed only under their lock 
 to the file as it is at that moment, so pm-pane calls at the same moment, from any process, lose no pane (issue 504).
 While new starts an agent and until its entry is in, and while close takes entries out and closes their panes, the
 pane's name is marked as being opened or closed (.pm/run/pane-ops/<name>), so pm-watchd does not tell it as
-unregistered; the mark goes, and pm-watchd is woken, when the command ends however it ends.
+unregistered; the mark goes, and pm-watchd is woken, when the command ends however it ends. herdr lists a closed
+pane's agent for a moment after the close, so close keeps its marks until herdr lists no agent in the panes it closed,
+at most 5 s, and logs each agent herdr still lists then (issue 510).
 """
 import argparse
 import contextlib
@@ -61,6 +63,9 @@ from _pmlib import (LIMITS, MODEL_IDS, PANE_ROLES, PANES, PANES_HISTORY, PLAN_OP
                     find_key, guard, herdr, herdr_text, load, log, mark_resetting, mem_gb, now, pane_op, panes, reported_after,
                     reports_size, reset_marker_seen, room, side_of, state_note, tabs, update, wait_for_room)
 from _pmorphans import line, sweep, worktree_paths
+
+
+CLOSE_SETTLE = 5  # seconds a close waits for herdr to stop listing the closed panes' agents (issue 510)
 
 
 def registry():
@@ -411,6 +416,8 @@ def cmd_close(a):
                 herdr("pane", "close", r["pane_id"], check=False)
             log(f"pane close {r['name']} {r['pane_id']}")
             print(f"closed {r['name']} {r['pane_id']}", flush=True)
+        # herdr lists a closed pane's agent for a moment after the close: the marks stay until it lists none (issue 510)
+        settle_close([r for r in targets if not r.get("gone")])
     # a closed pane's processes become orphans over a moment, so the sweep keeps looking for at least 2 s
     wts = []
     for r in targets:
@@ -418,6 +425,27 @@ def cmd_close(a):
         if wt and wt not in wts:
             wts.append(wt)
     sweep_worktrees(wts, settle_min=2)
+
+
+def settle_close(closed, bound=None):
+    """Wait until `herdr agent list` lists no agent in a pane of `closed` (registry entries this call closed), at most
+    CLOSE_SETTLE seconds; a failed list ends the wait. Past the bound one log line names each agent herdr still lists."""
+    ids = {r["pane_id"]: r["name"] for r in closed}
+    if not ids:
+        return
+    end = time.monotonic() + (CLOSE_SETTLE if bound is None else bound)
+    while True:
+        r = herdr("agent", "list", check=False)
+        if r is None:
+            return
+        held = {x.get("pane_id") for x in r.get("agents", []) or []} & set(ids)
+        if not held:
+            return
+        if time.monotonic() >= end:
+            for pid in sorted(held):
+                log(f"pane close {ids[pid]}: herdr still lists its agent after {CLOSE_SETTLE:g} s")
+            return
+        time.sleep(0.25)
 
 
 def cmd_list(a):

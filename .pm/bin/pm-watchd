@@ -211,10 +211,19 @@ def ours(cwd, root=ROOT):
     return real == root or real.startswith(root + "-") or real.startswith(root + os.sep)
 
 
+def look():
+    """(the names pm-pane opens or closes now, herdr's agent list or None), the marks read first (issue 510): a close
+    keeps its mark until herdr lists no agent in the closed pane, and a new until its entry is in the registry, so a
+    mark gone at this read means the list read after it no longer holds that agent, or the registry read after it
+    holds its entry."""
+    ops = pane_ops()
+    return ops, agents()
+
+
 def unregistered(ags, reg, ops, told, root=ROOT):
     """EVENT unregistered <name> <pane id> for each agent herdr holds under a pane's name (i<n>-<role>[-<unit>]) in this
     checkout or a worktree of it that no live registry entry holds in that pane, and that no pm-pane opens or closes
-    now (`ops`, _pmlib.pane_ops) (issue 504). `told` ({name: pane id}, the daemon's state) keeps each told once per
+    now (`ops`, _pmlib.pane_ops, read before `ags` by look()) (issues 504, 510). `told` ({name: pane id}, the daemon's state) keeps each told once per
     pane; a name registered or gone since is forgotten, so a later loss is told again."""
     held = {(r.get("name"), r.get("pane_id")) for r in reg if not r.get("gone")}
     out, now_missing = [], {}
@@ -419,7 +428,7 @@ def run(a):
     socket_state, watch_ids = None, set()
     while True:
         try:
-            ags_list = agents()
+            ops, ags_list = look()
             if ags_list is None:  # herdr did not answer: no judgement this tick
                 log("herdr agent list failed; tick skipped")
                 waker.close()
@@ -530,7 +539,7 @@ def run(a):
             events.extend(orphan_tick(st))
             # a pane herdr holds that the registry does not (issue 504): judged on every look, which herdr's pane events
             # (pane.created, pane.agent_detected) and the end of a pm-pane new or close (its wake) bring
-            events.extend(unregistered(ags_list, load(PANES, []), pane_ops(), st.setdefault("unregistered", {})))
+            events.extend(unregistered(ags_list, load(PANES, []), ops, st.setdefault("unregistered", {})))
             events.extend(room_tick(st, reg, freed=", ".join(freed), given=given))
             if events:
                 for e in events:
