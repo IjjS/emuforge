@@ -25,6 +25,7 @@ import { quoting } from '../components/quoting';
 import { RoleSelect } from '../components/role-select';
 import { FUNCTIONS_PATH, functionPath } from '../format';
 import { useCreateFunction } from '../queries';
+import { checkHandler, HANDLER_RULE } from '../configuration-form';
 import { offeredRuntime, RUNTIMES } from '../runtimes';
 import { isZipArchive } from '../zip';
 
@@ -56,8 +57,6 @@ const UPLOAD_ZIP_DESCRIPTION = 'Your own code and its handler.';
 const FILE = 'File';
 const FILE_RULE = 'One .zip file.';
 const HANDLER = 'Handler';
-/** The constraint text under "Handler": what `handlerMessage` lets through (the emulator's bound, probe 4). */
-export const HANDLER_RULE = '1 to 128 characters, no spaces.';
 
 const ARCHITECTURES = ['x86_64', 'arm64'] as const;
 type Architecture = (typeof ARCHITECTURES)[number];
@@ -69,12 +68,8 @@ export const ENTER_NAME = 'Enter a function name.';
 export const NAME_TOO_LONG = 'The name can have up to 64 characters.';
 export const NAME_ALPHABET = 'Use only letters, digits, hyphens (-) and underscores (_).';
 export const CHOOSE_ROLE = 'Choose a role.';
-/** The messages under "File" and "Handler" (issue 516, the texts of "Code"). */
+/** The message under "File" with no file (issue 516, the texts of "Code"); "Handler" checks as `configuration-form.ts` does. */
 export const CHOOSE_ZIP = 'Choose a .zip file.';
-export const ENTER_HANDLER = 'Enter a handler.';
-export const HANDLER_TOO_LONG = 'The handler can have up to 128 characters.';
-export const HANDLER_SPACES = 'The handler cannot contain spaces.';
-const HANDLER_MAX = 128;
 
 const NAME_MAX = 64;
 const NAME_ALPHABET_PATTERN = /^[A-Za-z0-9_-]+$/;
@@ -94,17 +89,6 @@ function nameMessage(name: string): string | undefined {
 function handlerDescription(runtime: string | undefined): string {
   const example = offeredRuntime(runtime)?.language === 'python' ? 'lambda_function.lambda_handler' : 'index.handler';
   return `The function the emulator calls, as file.function: for example ${example}.`;
-}
-
-/** The message under "Handler" for `handler`, or `undefined` when the form lets it through. */
-function handlerMessage(handler: string): string | undefined {
-  if (handler === '') {
-    return ENTER_HANDLER;
-  }
-  if (handler.length > HANDLER_MAX) {
-    return HANDLER_TOO_LONG;
-  }
-  return /\s/.test(handler) ? HANDLER_SPACES : undefined;
 }
 
 /** The message under "File" for a file that is no .zip archive. */
@@ -279,7 +263,7 @@ export function CreateFunctionPage({ connection }: ScreenPageProps) {
       fileError = refusedAsTooLarge(file, tooLarge.status);
     }
   }
-  const handlerError = checked && choosesZip ? handlerMessage(handler) : undefined;
+  const handlerError = checked && choosesZip ? checkHandler(handler).error : undefined;
 
   /** The code to send, or `undefined` when a field of "Code" stops the form; the file is read only to be sent. */
   const codeToSend = async (): Promise<{ code: FunctionCode; file: File | null } | undefined> => {
@@ -296,7 +280,7 @@ export function CreateFunctionPage({ connection }: ScreenPageProps) {
       fileRef.current?.focus();
       return undefined;
     }
-    if (handlerMessage(handler) !== undefined) {
+    if (checkHandler(handler).error !== undefined) {
       handlerRef.current?.focus();
       return undefined;
     }
