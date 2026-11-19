@@ -126,7 +126,8 @@ To open Studio from another device, put something on the host in front of Studio
 `EMUFORGE_ALLOW_HOSTS`, several separated by `,`. Give it to the start line as the port variables are given in
 [Ports](#ports): `EMUFORGE_ALLOW_HOSTS=my-machine.example.ts.net` before the start line in bash, or
 `$env:EMUFORGE_ALLOW_HOSTS="my-machine.example.ts.net";` before it in PowerShell. Without it, or with it empty,
-Studio answers only `127.0.0.1:8296`.
+Studio answers only `127.0.0.1:8296`. The binary's flag `--allow-host` does the same: it is repeatable, and each
+value may also hold several names separated by `,`.
 
 A name without a port matches any port in `Host`; `name:port` matches only that port. Studio then answers that name
 as it answers `127.0.0.1:8296`, and the page sends its engine and AWS requests through Studio's own port, under
@@ -155,7 +156,7 @@ flags, and a flag wins over its variable:
 | `EMUFORGE_ENGINE_PORT` | 8297 | `--port` | the engine and Studio's server |
 | `EMUFORGE_STUDIO_PORT` | 8296 | `--studio-port` | the engine and Studio's server |
 | none | 127.0.0.1 | `--listen-address` | the engine and Studio's server in the binary; anything but 127.0.0.1 logs a warning, and only the form uses it, inside its container |
-| `EMUFORGE_ALLOW_HOSTS` | none | `--allow-host`, repeatable | Studio's server in the binary: host names it answers besides 127.0.0.1, for a forwarder ([Another device](#another-device)); logs a warning |
+| `EMUFORGE_ALLOW_HOSTS` | none | `--allow-host`, repeatable; the flag and the variable take names separated by `,` | Studio's server in the binary: host names it answers besides 127.0.0.1, for a forwarder ([Another device](#another-device)); logs a warning |
 
 ```bash
 cd engine && cargo run -p emuforge -- serve --port 8397 --emulator-port 9298 --studio-port 8396

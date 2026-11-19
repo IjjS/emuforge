@@ -145,7 +145,7 @@ impl Config {
 }
 
 /// The host names Studio's port answers besides `127.0.0.1:<studio port>`: `--allow-host`, repeatable, or the
-/// variable `EMUFORGE_ALLOW_HOSTS`, values separated by `,`; a flag wins over the variable. The variable unset or
+/// variable `EMUFORGE_ALLOW_HOSTS`; both take names separated by `,`, and a flag wins over the variable. The variable unset or
 /// empty is no name; an empty item in a list that is not empty is a usage error, as is any value `AllowedHost`
 /// refuses. Fixed for the life of the process.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -177,7 +177,7 @@ impl clap::Args for AllowHosts {
                 .help(
                     "Host name Studio's port also answers, besides 127.0.0.1:<studio port>, for a browser that \
                      reaches it through a forwarder (a tailscale serve, a reverse proxy) that keeps the browser's \
-                     Host; repeatable, the variable separates names with ','. Binds nothing; anything that can \
+                     Host; repeatable, and each value may hold several names separated by ',', as the variable does. Binds nothing; anything that can \
                      reach Studio's port under the name can open Studio and use the emulator",
                 ),
         )
@@ -472,6 +472,35 @@ mod tests {
             config.allow_hosts.as_slice(),
             hosts(&["a.test", "b.test:9000"])
         );
+    }
+
+    #[test]
+    fn allow_host_comma_separated_flag_is_every_name_in_order() {
+        let cases: [(&str, &[&str], &[&str]); 2] = [
+            (
+                "one flag",
+                &["--allow-host", "a.test,b.test"],
+                &["a.test", "b.test"],
+            ),
+            (
+                "a list and a name",
+                &[
+                    "--allow-host",
+                    "a.test,b.test:9000",
+                    "--allow-host",
+                    "c.test",
+                ],
+                &["a.test", "b.test:9000", "c.test"],
+            ),
+        ];
+        for (name, args, expected) in cases {
+            let config = parse(args).unwrap_or_else(|error| panic!("case {name}: {error}"));
+            assert_eq!(
+                config.allow_hosts.as_slice(),
+                hosts(expected),
+                "case {name}"
+            );
+        }
     }
 
     #[test]
