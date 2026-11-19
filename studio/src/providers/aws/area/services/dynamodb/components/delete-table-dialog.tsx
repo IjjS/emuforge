@@ -1,5 +1,5 @@
+import Alert from '@cloudscape-design/components/alert';
 import Box from '@cloudscape-design/components/box';
-import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import { useState } from 'react';
 
 import { ConfirmDialog } from '../../../components/confirm-dialog';
@@ -72,10 +72,10 @@ export function DeleteTableDialog({ table, engineOrigin, onDeleted, onClose }: D
       body={
         <>
           {table?.deletionProtection === true && (
-            <Box variant="span" display="block" margin={{ bottom: 's' }}>
-              <StatusIndicator type="warning">
+            <Box margin={{ bottom: 's' }}>
+              <Alert type="warning">
                 Deletion protection is on for {name}. The emulator refuses to delete it while it is on.
-              </StatusIndicator>
+              </Alert>
             </Box>
           )}
           {name} and every item in it are deleted from your local emulator. This cannot be undone.

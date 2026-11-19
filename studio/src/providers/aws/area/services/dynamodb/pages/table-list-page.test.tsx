@@ -728,11 +728,13 @@ describe('"Delete"', () => {
     expect(engine.of('DeleteTable')).toHaveLength(0);
   });
 
-  it('a table with deletion protection: the warning above the body', async () => {
+  it('a table with deletion protection: the warning, an Alert, above the body', async () => {
     await openLoaded();
     await openDialog('users');
 
-    expect(text(dialog())).toContain(
+    const warning = modal().findContent().findAlert();
+    expect(warning?.getElement().querySelector('[class*="type-warning"]')).not.toBeNull();
+    expect(text(warning?.findContent().getElement() as HTMLElement)).toBe(
       'Deletion protection is on for users. The emulator refuses to delete it while it is on.',
     );
   });
