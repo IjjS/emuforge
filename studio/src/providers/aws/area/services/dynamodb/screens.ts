@@ -2,6 +2,7 @@ import type { ScreenNavigation, ServiceScreen } from '../../screens';
 import { CREATE_TABLE_PATH, DYNAMODB_PATH, TABLES_PATH } from './format';
 import { CREATE_TABLE_TITLE, CreateTablePage } from './pages/create-table-page';
 import { TableListPage, TABLES_TITLE } from './pages/table-list-page';
+import { TablePage } from './pages/table-page';
 
 /** DynamoDB's side navigation on its screens (issue 496, requirement "Screens, routes, layer"): "DynamoDB" and "Tables". */
 const NAVIGATION: ScreenNavigation = {
@@ -27,5 +28,13 @@ export const SCREENS: readonly ServiceScreen[] = [
     crumbs: [{ text: TABLES_TITLE, href: TABLES_PATH }, { text: CREATE_TABLE_TITLE }],
     navigation: NAVIGATION,
     Page: CreateTablePage,
+  },
+  // S2, a table's page (issue 496, tasks 1, 2 and 5): its name one segment below `table/`, decoded once by the area.
+  {
+    paths: [`${TABLES_PATH}/table/{name}`],
+    title: ({ name }) => name ?? '',
+    crumbs: ({ name }) => [{ text: TABLES_TITLE, href: TABLES_PATH }, { text: name ?? '' }],
+    navigation: NAVIGATION,
+    Page: TablePage,
   },
 ];
