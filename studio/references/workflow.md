@@ -1,8 +1,9 @@
 # Studio workflow
 
 Stages of an issue whose `Issue-Module` is `studio`, led by its `plan` (`.agents/skills/pm/references/lead.md`).
-The issue file states the problem; the stage documents are working files in the issue's folder, each reviewed by
-`rev` before the next. The owner is not asked to pick or approve a design at any stage.
+The issue file states the problem; the stage documents are working files in the issue's folder, reviewed by `rev`
+twice before the build: the requirement alone, then design, test criteria and breakdown as one set, the plan set
+(`lead.md`). The owner is not asked to pick or approve a design at any stage.
 
 ## What a service is
 
@@ -37,7 +38,7 @@ that order. Its screens serve those tasks and need not match the AWS console (`a
 
 ## 2. Design
 
-`design.md`, reviewed by `rev` (stage `design`):
+`design.md`, reviewed by `rev` with `test-criteria.md` and `breakdown.md` as one set (stage `plan-set`):
 
 - Per task, its flow through the screens: which screen, what a developer finds and does there, and the API call
   behind each action.

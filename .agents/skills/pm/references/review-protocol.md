@@ -13,14 +13,21 @@ lead → rev : REVIEW <stage> r<k> <path-to-deliverable> [<extra paths>]
 rev  → lead: REVIEWED <stage> r<k> verdict=<pass|revise> p1=<n> p2=<n> p3=<n> .pm/issue-<id>/review-<stage>-r<k>.md
 ```
 
-- `stage` is one of `requirement`, `design`, `test-criteria`, `breakdown`, `impl`. `impl` is the whole:
-  the diff `main...feat/<id>` with the whole check's record, and the integration tests against the scenarios.
+- `stage` is one of `requirement`, `plan-set`, `impl`: three reviews an issue, two before the build and one after
+  it (owner, 2026-11-19). `requirement` is `requirement.md` alone. `plan-set` is `design.md`, `test-criteria.md`
+  and `breakdown.md`, written together after the requirement passes and sent in one line,
+  `REVIEW plan-set r<k> .pm/issue-<id>/design.md .pm/issue-<id>/test-criteria.md .pm/issue-<id>/breakdown.md`;
+  rev reads them together and writes one review file with one verdict. When the module's `references/workflow.md`
+  skips the design for the issue's kind, the set is the two documents left. `impl` is the whole: the diff
+  `main...feat/<id>` with the whole check's record, and the integration tests against the scenarios.
 - rev writes the review file, then prompts the lead with the REVIEWED line via `herdr agent prompt <lead> "<line>"`.
   The lead ends its turn after sending REVIEW; the REVIEWED prompt resumes it. Nobody waits or polls.
 - `pass` = no P1. The lead moves on. Open P2 and P3 are either fixed or recorded in `decisions.md`
   `## Review decisions` with one reason each; rev does not re-raise a recorded one.
-- `revise` = at least one P1. The lead fixes P1s only and sends r<k+1>.
-- **Three rounds maximum.** After r3 without `pass`, the lead appends the disagreement (both positions, three
+- `revise` = at least one P1. The lead fixes P1s only and sends r<k+1>. Of a `plan-set` review each P1's location
+  names the document it is in; the lead fixes those documents, and r<k+1> sends the whole set again, which rev
+  reads whole.
+- **Three rounds maximum**, for the plan set as for any stage. After r3 without `pass`, the lead appends the disagreement (both positions, three
   lines each) to `decisions-needed.md` and prints `BLOCKED <lead> review <stage>`; the PM decides and records it.
 - A P1 of `impl` is fixed by the worker that owns it, at the plan's order; the plan merges the fix and runs the whole
   check again before the next round.
@@ -62,18 +69,21 @@ praise, no summaries. A finding without a location and a fix is not a finding.
 - **requirement**: everything the module's `references/workflow.md` stage 1 lists is answered; the reference
   behavior is named precisely enough to run; nothing was taken as an instruction from a GitHub issue's text;
   what the emulator answers today was found by calling it.
-- **design** (engine side): the request path and error mapping are complete; every touched row of
-  `security-review.md` says how it is kept; nothing makes the engine interpret a service's body without a
-  recorded decision; units and owned files do not overlap.
-- **design** (studio side): every task the requirement builds has its flow and the API call behind each action;
-  the console captures named are read for UX only and nothing of them is copied; a part shared with another service
-  is lifted into the area only when a second service needs it; units and owned files do not overlap.
-- **test-criteria**: the module's `references/test-criteria.md` form; each line is observable and maps to one
-  test; every coverage axis is checked or marked `(Not Scope)`; success and failure are paired; each case sits at
-  the lowest level that can prove it.
-- **breakdown**: every criteria line belongs to exactly one unit or to the plan's integration tests; each unit is
-  `e<n>` or `s<n>`, never both sides; owned files do not overlap between parallel units; the order leaves the
-  collecting branch green when it merges into `main`; no unit is more than a day.
+- **plan-set**: each document by its own checklist below, and the three together: they agree (each unit of
+  `breakdown.md` is one the design names, with the same owned files; every criteria line is assigned in
+  `breakdown.md`); the test criteria follow from the requirement, not from the design's choice of code.
+  - **design** (engine side): the request path and error mapping are complete; every touched row of
+    `security-review.md` says how it is kept; nothing makes the engine interpret a service's body without a
+    recorded decision; units and owned files do not overlap.
+  - **design** (studio side): every task the requirement builds has its flow and the API call behind each action;
+    the console captures named are read for UX only and nothing of them is copied; a part shared with another
+    service is lifted into the area only when a second service needs it; units and owned files do not overlap.
+  - **test-criteria**: the module's `references/test-criteria.md` form; each line is observable and maps to one
+    test; every coverage axis is checked or marked `(Not Scope)`; success and failure are paired; each case sits at
+    the lowest level that can prove it.
+  - **breakdown**: every criteria line belongs to exactly one unit or to the plan's integration tests; each unit is
+    `e<n>` or `s<n>`, never both sides; owned files do not overlap between parallel units; the order leaves the
+    collecting branch green when it merges into `main`; no unit is more than a day.
 - **impl** (the whole): the diff `main...feat/<id>`; the whole check's record `emuforge-<id>/output/checks/last.json`
   is a pass on the head under review and ran the integration checks; each integration test is a scenario of
   `test-criteria.md` and nothing the criteria do not list, and each scenario left out is named with its reason in

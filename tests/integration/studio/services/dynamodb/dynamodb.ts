@@ -407,6 +407,32 @@ export const RUN = 'Run';
 export const KEY_CHANGED = 'The key cannot change.';
 export const CONDITION_FAILED = 'ConditionalCheckFailedException';
 
+// The filter of "Items" (issue 512: requirement.md, "EmuForge's own text"; design.md).
+export const FILTER = 'Filter';
+export const ADD_CONDITION = 'Add condition';
+export const NO_CONDITIONS = 'No conditions. Every item read is shown.';
+export const ENTER_ATTRIBUTE_NAME = 'Enter an attribute name.';
+export const NO_MATCHING_ITEMS = 'No matching items';
+export const NO_MATCHING_ON_PAGE = 'No matching items on this page';
+export const NO_MORE_MATCHING = 'No more matching items';
+
+/** The heading of a filtered result: "Scan of T, filtered by 2 conditions". */
+export function filteredHeading(read: 'Scan' | 'Query', target: string, n: number): string {
+  return `${read} of ${target}, filtered by ${String(n)} ${n === 1 ? 'condition' : 'conditions'}`;
+}
+/** The count line of a filtered page that shows items. */
+export function readAndMatched(read: number, matched: number): string {
+  return `${read === 1 ? '1 item read' : `${String(read)} items read`}, ${matched === 1 ? '1 matches' : `${String(matched)} match`} the filter.`;
+}
+/** The sentence of a filtered page that matched none of the `read` items it read (`read` above 1). */
+export function noneOfRead(read: number, moreRemain: boolean): string {
+  const none = `None of the ${String(read)} items this page read matches the filter.`;
+  return moreRemain ? `${none} More items remain: go to the next page.` : none;
+}
+export function noItemMatchesFilter(target: string): string {
+  return `No item of ${target} matches the filter.`;
+}
+
 export function beingCreated(name: string): string {
   return `Table ${name} is being created.`;
 }
@@ -609,7 +635,8 @@ export function tableScreen(page: Page) {
     deleteTable: page.getByRole('button', { name: DELETE_TABLE, exact: true }),
     del: panel.getByRole('button', { name: DELETE, exact: true }),
     createItem: panel.getByRole('button', { name: CREATE_ITEM, exact: true }),
-    run: panel.getByRole('button', { name: RUN, exact: true }),
+    /** "Run" of the request's form; a refused filtered read shows a second "Run" in place of the items. */
+    run: panel.getByRole('form', { name: 'Read items', exact: true }).getByRole('button', { name: RUN, exact: true }),
     /** A choice of a segmented control: "Scan", "Query", "Ascending", "Descending". */
     choice: (name: string) => panel.getByRole('button', { name, exact: true }),
     /** A select by its field's label; Cloudscape names its trigger by the label and the option shown. */
@@ -624,6 +651,79 @@ export function tableScreen(page: Page) {
     save: dialog.getByRole('button', { name: SAVE, exact: true }),
     cancel: dialog.getByRole('button', { name: CANCEL, exact: true }),
   };
+}
+
+/** A condition of the filter as a check writes it; `type` and the values only where the comparison takes them. */
+export interface FilterCondition {
+  name: string;
+  comparison: string;
+  type?: 'String' | 'Number' | 'Binary' | 'Boolean' | 'Null';
+  /** The value's text; for a Boolean "true" or "false". */
+  value?: string;
+  upper?: string;
+}
+
+/** The parts of the filter of "Items" a check acts on; a condition's fields are named with its position from 1. */
+export function filterScreen(page: Page) {
+  const panel = page.getByRole('tabpanel');
+  const group = panel.getByRole('group', { name: FILTER, exact: true });
+  const escaped = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return {
+    group,
+    add: panel.getByRole('button', { name: ADD_CONDITION, exact: true }),
+    name: (n: number) => group.getByRole('textbox', { name: `Attribute name, condition ${String(n)}`, exact: true }),
+    value: (n: number) => group.getByRole('textbox', { name: `Value, condition ${String(n)}`, exact: true }),
+    upper: (n: number) => group.getByRole('textbox', { name: `Upper bound, condition ${String(n)}`, exact: true }),
+    /** A select of condition `n` by its field's label ("Comparison", "Type", a Boolean's "Value"). */
+    select: (label: string, n: number) =>
+      group.getByRole('button', { name: new RegExp(`^${escaped(label)} condition ${String(n)}( |$)`) }),
+    remove: (n: number) => group.getByRole('button', { name: `Remove condition ${String(n)}`, exact: true }),
+    removes: group.getByRole('button', { name: /^Remove condition \d+$/ }),
+  };
+}
+
+/** Sets condition `n` (from 1) of the filter to `condition`, adding it when the filter has `n - 1` conditions. */
+export async function setCondition(page: Page, n: number, condition: FilterCondition): Promise<void> {
+  const f = filterScreen(page);
+  const option = (name: string) => page.getByRole('option', { name, exact: true });
+  const pick = async (label: string, name: string) => {
+    // A select's name ends with the option it shows; an option already shown is left as it is.
+    const showing = f.group.getByRole('button', { name: `${label} condition ${String(n)} ${name}`, exact: true });
+    if ((await showing.count()) > 0) return;
+    await f.select(label, n).click(ACTION);
+    await option(name).click(ACTION);
+    await expect(f.select(label, n), `"${label}" of condition ${String(n)} shows ${name}`).toContainText(name);
+  };
+  if ((await f.name(n).count()) === 0) {
+    await expect(f.removes, `the filter has ${String(n - 1)} conditions before one is added`).toHaveCount(n - 1);
+    await f.add.click(ACTION);
+  }
+  await f.name(n).fill(condition.name, ACTION);
+  await pick('Comparison', condition.comparison);
+  if (condition.type !== undefined) await pick('Type', condition.type);
+  if (condition.type === 'Boolean' && condition.value !== undefined) await pick('Value', condition.value);
+  else if (condition.value !== undefined) await f.value(n).fill(condition.value, ACTION);
+  if (condition.upper !== undefined) await f.upper(n).fill(condition.upper, ACTION);
+}
+
+/** Removes every condition of the filter, the first one each time. */
+export async function removeConditions(page: Page): Promise<void> {
+  const f = filterScreen(page);
+  for (let left = await f.removes.count(); left > 0; left -= 1) {
+    await f.remove(1).click(ACTION);
+    await expect(f.removes, 'one condition fewer').toHaveCount(left - 1);
+  }
+  await expect(f.group, 'the filter says it has no conditions').toContainText('No conditions.');
+}
+
+/** Runs `act` and waits for the engine's answer to the page's `operation` that is not a refusal. */
+export async function answered(page: Page, operation: string, act: () => Promise<void>): Promise<void> {
+  const answer = page.waitForResponse(
+    (r: Response) => isOperation(r.request().headers(), operation) && r.status() === 200,
+    { timeout: 30_000 },
+  );
+  await act();
+  await answer;
 }
 
 /** Chooses `option` in the select labelled `label` of the "Items" tab. */

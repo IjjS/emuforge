@@ -47,9 +47,11 @@ ISSUE_DIRS = ("issues/things-that-do-not-work", "issues/things-that-now-work")
 MODULE_DIR = {"studio": "studio", "engine": "engine", "cli": "engine", "iam": "engine", "verify": "engine", "harness": "engine"}
 DESIGN_STEP = {
     "engine": "`design.md` per engine/references/workflow.md stage 2, with the security review rows for everything the "
-              "change touches. REVIEW design r1.",
+              "change touches. Written with `test-criteria.md` and `breakdown.md` and sent with them as one set: "
+              "REVIEW plan-set r1.",
     "studio": "`design.md` per studio/references/workflow.md stage 2: per task, its flow through the screens and the API "
-              "call behind each action, the console captures read for its UX, and what is shared. REVIEW design r1.",
+              "call behind each action, the console captures read for its UX, and what is shared. Written with "
+              "`test-criteria.md` and `breakdown.md` and sent with them as one set: REVIEW plan-set r1.",
 }
 CONVENTIONS = {
     "e": "`engine/AGENTS.md`, `engine/references/security-review.md`, `engine/references/relay-fidelity.md`",
