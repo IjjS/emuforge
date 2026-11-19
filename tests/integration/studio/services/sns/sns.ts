@@ -850,7 +850,11 @@ export function topicScreen(page: Page) {
     allow: panel.getByRole('button', { name: ALLOW_DELIVERY, exact: true }),
     deleteSubscription: panel.getByRole('button', { name: DELETE, exact: true }),
     createSubscription: panel.getByRole('link', { name: CREATE_SUBSCRIPTION, exact: true }).first(),
-    endpointLink: (endpoint: string) => table.getByRole('link', { name: endpoint, exact: true }),
+    /**
+     * The link of the endpoint `endpoint` in the table. By its text: the screen writes an address in parts that may
+     * break apart, which a link's accessible name separates with spaces.
+     */
+    endpointLink: (endpoint: string) => table.getByRole('link').filter({ hasText: endpoint }),
   };
 }
 
