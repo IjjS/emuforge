@@ -1,0 +1,13 @@
+/* An unavailable action (DESIGN.md, Buttons): still a control, with a dashed edge and its text in `text-2`, and no
+   hover change, so it reads as there but not to be taken. */
+
+@layer studio {
+  .st-btn.unavailable,
+  .st-btn.unavailable:hover {
+    color: var(--st-text-2);
+    background: transparent;
+    border-style: dashed;
+    border-color: var(--st-control-line);
+    cursor: not-allowed;
+  }
+}

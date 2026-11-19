@@ -17,12 +17,14 @@ import {
   cloudscapeElements,
   commandsIn,
   connected,
+  connectedTo,
   connectionDescription,
   connectionNotice,
   connectionNotices,
   connectionSection,
   copyButtonsIn,
   emulatorDown,
+  emulatorDownOn,
   engineRefusal,
   FakeEngine,
   languageStore,
@@ -826,5 +828,123 @@ describe('Connection: a count and its unit (issue 32, R4.1)', () => {
     for (const text of said) {
       expect(text).not.toMatch(/\d|\u00a0|second/);
     }
+  });
+});
+
+/** The line that names the target in the "Connection" section, or `null` when the section shows none. */
+function targetLine(): HTMLElement | null {
+  return paragraphStarting(connectionSection(), 'Target ');
+}
+
+/** The paragraph of `scope` whose whole text starts with `start`, its parts in elements of their own included. */
+function paragraphStarting(scope: HTMLElement, start: string): HTMLElement | null {
+  return [...scope.querySelectorAll('p')].find((p) => norm(p.textContent).startsWith(start)) ?? null;
+}
+
+/** The target's name as the line draws it: in the code face, an element of its own. */
+function nameInCode(line: HTMLElement): string | undefined {
+  return line.querySelector('code')?.textContent ?? undefined;
+}
+
+/** The section's "Manage connections" link. */
+function manageLink(): HTMLElement {
+  return within(connectionSection()).getByRole('link', { name: 'Manage connections' });
+}
+
+/** The section's rows, the `dl` that holds the Engine and Emulator rows. */
+function rowList(): HTMLElement {
+  return present(connectionSection().querySelector('dl'), 'the rows');
+}
+
+describe('Connection: the target and the way to the connections page (issue 486, R2)', () => {
+  it('connected with target local: the rows exactly as before, then "Target local" and "Manage connections" outside them', async () => {
+    const first = await openHomeAnswered(connected(9297));
+    const before = { engine: row('Engine'), emulator: row('Emulator'), rows: rowList().outerHTML };
+    expect(targetLine()).toBeNull();
+    first.unmount();
+
+    await openHomeAnswered(connectedTo('local', 9297));
+    expect(row('Engine')).toEqual(before.engine);
+    expect(row('Emulator')).toEqual(before.emulator);
+    expect(rowList().outerHTML).toBe(before.rows);
+
+    const line = present(targetLine(), 'the target line');
+    expect(norm(line.textContent)).toBe('Target local');
+    expect(nameInCode(line)).toBe('local');
+    expect(rowList().contains(line)).toBe(false);
+    const link = manageLink();
+    expect(link).toHaveAttribute('href', '/connections');
+    expect(rowList().contains(link)).toBe(false);
+    // Below the rows: both follow the rows in document order.
+    expect(rowList().compareDocumentPosition(line) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(line.compareDocumentPosition(link) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('emulator not started with target second: "Target second" and the link', async () => {
+    await openHomeAnswered(emulatorDownOn('second', 9297));
+    expect(row('Emulator').status).toBe('Not started');
+    const line = present(targetLine(), 'the target line');
+    expect(norm(line.textContent)).toBe('Target second');
+    expect(nameInCode(line)).toBe('second');
+    expect(manageLink()).toHaveAttribute('href', '/connections');
+  });
+
+  it.each<[string, FakeAnswer]>([
+    ['engine not answering', { network: true }],
+    ['engine error with a code', engineRefusal(503, 'Busy')],
+    ['engine error with a status only', { status: 500 }],
+    ['connected, no target in the answer', connected(9297)],
+    ['emulator not started, no target in the answer', emulatorDown('not_started', 9297)],
+  ])('%s: no target line; the link still shown', async (_name, answer) => {
+    await openHomeAnswered(answer);
+    expect(targetLine()).toBeNull();
+    expect(norm(connectionSection().textContent)).not.toContain('Target');
+    expect(manageLink()).toHaveAttribute('href', '/connections');
+  });
+
+  it('a change of target only: the line follows, the live regions say what they said before', async () => {
+    engine.healthAnswers = [connectedTo('local'), connectedTo('second')];
+    renderApp('/');
+    await advance();
+    expect(norm(present(targetLine(), 'the target line').textContent)).toBe('Target local');
+    const said = politeRegions().map((region) => region.textContent);
+    expect(said).toContain('Engine connected. Emulator connected.');
+
+    await advance(5_000);
+    expect(engine.healths).toHaveLength(2);
+    expect(norm(present(targetLine(), 'the target line').textContent)).toBe('Target second');
+    expect(politeRegions().map((region) => region.textContent)).toEqual(said);
+    for (const region of politeRegions()) {
+      expect(region.textContent).not.toMatch(/local|second|Target/);
+    }
+  });
+
+  it('"Manage connections": a route change to /connections, no document load', async () => {
+    engine.healthAnswers = [connectedTo('local')];
+    const { router } = renderApp('/');
+    await advance();
+    // The router handles the click itself: the browser's own navigation (a document load) is prevented.
+    const followedByBrowser = fireEvent.click(manageLink());
+    await advance();
+    expect(followedByBrowser).toBe(false);
+    expect(router.state.location.pathname).toBe('/connections');
+    expect(screen.getByRole('heading', { level: 1, name: 'Connections' })).toBeInTheDocument();
+  });
+
+  it('in German: the line and the link in German from the catalogue', async () => {
+    engine.healthAnswers = [connectedTo('local')];
+    renderApp('/', languageStore('de'));
+    await advance();
+    const section = screen.getByRole('region', { name: german['connection.title'] });
+    const [before] = german['connection.target'].split('{target}');
+    const line = present(paragraphStarting(section, norm(before)), 'the German target line');
+    expect(norm(line.textContent)).toBe(norm(german['connection.target'].replace('{target}', 'local')));
+    expect(nameInCode(line)).toBe('local');
+    expect(within(section).getByRole('link', { name: german['connection.manage'] })).toHaveAttribute(
+      'href',
+      '/connections',
+    );
+    expect(norm(section.textContent)).not.toContain('Manage connections');
+    expect(norm(section.textContent)).not.toContain('Target local');
   });
 });

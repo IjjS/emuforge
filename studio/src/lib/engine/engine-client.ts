@@ -12,12 +12,12 @@ export const SESSION_HEADER = 'X-EmuForge-Session';
 export const CHECK_TIME_LIMIT_MS = 5_000;
 
 // The engine's refusals of a missing or stale token; answered by opening a new session and retrying once.
-const SESSION_REFUSALS: ReadonlySet<string> = new Set(['SessionInvalid', 'SessionRequired']);
+export const SESSION_REFUSALS: ReadonlySet<string> = new Set(['SessionInvalid', 'SessionRequired']);
 
 const MAX_PORT = 65535;
 
 // A token is sent as a header value; anything else in its place is not a session answer.
-const TOKEN = /^[\x21-\x7e]+$/;
+export const TOKEN = /^[\x21-\x7e]+$/;
 
 /** The engine's address on loopback for an engine port. */
 export function engineOrigin(enginePort: number): string {
@@ -30,25 +30,38 @@ export interface EmulatorReport {
   endpoint: string;
 }
 
-/** What one check found. `checkedAt` is when it completed, in milliseconds since the epoch. */
+/**
+ * When a check started, in milliseconds since the epoch. Optional so a result built without it stays valid; one
+ * without it counts as started at its `checkedAt` (`startedAtOf`).
+ */
+interface Started {
+  startedAt?: number;
+}
+
+/**
+ * What one check found. `checkedAt` is when it completed, in milliseconds since the epoch. `target` is the name of the
+ * connection the engine relays to, as its health answer named it; `undefined` when the answer named none.
+ */
 export type CheckResult =
-  | { kind: 'connected'; checkedAt: number; emulator: EmulatorReport }
-  | {
+  | ({ kind: 'connected'; checkedAt: number; emulator: EmulatorReport; target?: string | undefined } & Started)
+  | ({
       kind: 'emulator-unreachable';
       checkedAt: number;
       emulator: EmulatorReport;
+      /** The engine's target name. Untrusted text. */
+      target?: string | undefined;
       /** The engine's `reason`, `''` when it gave none. */
       reason: string;
       /** The engine's `message`, `''` when it gave none. Untrusted text. */
       message: string;
-    }
-  | {
+    } & Started)
+  | ({
       kind: 'engine-unreachable';
       checkedAt: number;
       /** The emulator port the engine reported in an earlier answer to this client, if any did. */
       lastEmulatorPort: number | undefined;
-    }
-  | {
+    } & Started)
+  | ({
       kind: 'engine-error';
       checkedAt: number;
       /** The HTTP status of the answer that was not a health or session answer. */
@@ -57,7 +70,28 @@ export type CheckResult =
       code: string | undefined;
       /** The `error.message` of the answer's body, when it has one. Untrusted text. */
       message: string | undefined;
-    };
+    } & Started);
+
+/** When the check of `result` started: its `startedAt`, or its `checkedAt` when it carries none. */
+export function startedAtOf(result: CheckResult): number {
+  return result.startedAt ?? result.checkedAt;
+}
+
+/** The target the answer of `result` named; `undefined` for a result that names none. */
+export function targetOf(result: CheckResult): string | undefined {
+  return result.kind === 'connected' || result.kind === 'emulator-unreachable' ? result.target : undefined;
+}
+
+/** The target a health answer names: a non-empty string, else `undefined`. */
+function readTarget(body: unknown): string | undefined {
+  const target = isRecord(body) ? body.target : undefined;
+  return typeof target === 'string' && target !== '' ? target : undefined;
+}
+
+/** `result` with the target, when there is one; without the key otherwise, as before the engine named one. */
+function withTarget<T extends CheckResult>(result: T, target: string | undefined): T {
+  return target === undefined ? result : { ...result, target };
+}
 
 export interface EngineClient {
   /** `http://127.0.0.1:<engine port>`. */
@@ -80,11 +114,11 @@ class CheckEnded {
   constructor(readonly result: CheckResult) {}
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function parseJson(text: string): unknown {
+export function parseJson(text: string): unknown {
   try {
     return JSON.parse(text) as unknown;
   } catch {
@@ -97,7 +131,7 @@ function isPort(value: unknown): value is number {
 }
 
 /** The `{"error": {"code", "message"}}` of an engine refusal; `undefined` when the body is not one. */
-function readError(body: unknown): { code: string | undefined; message: string | undefined } | undefined {
+export function readError(body: unknown): { code: string | undefined; message: string | undefined } | undefined {
   if (!isRecord(body) || !isRecord(body.error)) {
     return undefined;
   }
@@ -162,19 +196,23 @@ export function createEngineClient(enginePort: number): EngineClient {
       return engineError(answer);
     }
     const report: EmulatorReport = { port: emulator.port, endpoint: emulator.endpoint };
+    const target = readTarget(answer.body);
     if (answer.status === 200 && emulator.reachable === true) {
       lastEmulatorPort = report.port;
-      return { kind: 'connected', checkedAt: Date.now(), emulator: report };
+      return withTarget({ kind: 'connected', checkedAt: Date.now(), emulator: report }, target);
     }
     if (answer.status === 503 && emulator.reachable === false) {
       lastEmulatorPort = report.port;
-      return {
-        kind: 'emulator-unreachable',
-        checkedAt: Date.now(),
-        emulator: report,
-        reason: typeof emulator.reason === 'string' ? emulator.reason : '',
-        message: typeof emulator.message === 'string' ? emulator.message : '',
-      };
+      return withTarget(
+        {
+          kind: 'emulator-unreachable',
+          checkedAt: Date.now(),
+          emulator: report,
+          reason: typeof emulator.reason === 'string' ? emulator.reason : '',
+          message: typeof emulator.message === 'string' ? emulator.message : '',
+        },
+        target,
+      );
     }
     return engineError(answer);
   }
@@ -195,32 +233,38 @@ export function createEngineClient(enginePort: number): EngineClient {
     return fromHealth(answer);
   }
 
+  async function checkOnce(signal: AbortSignal | undefined): Promise<CheckResult> {
+    const limit = new AbortController();
+    const cancel = () => limit.abort(signal?.reason);
+    signal?.addEventListener('abort', cancel);
+    const timer = setTimeout(
+      () => limit.abort(new DOMException('The check took too long.', 'TimeoutError')),
+      CHECK_TIME_LIMIT_MS,
+    );
+    try {
+      signal?.throwIfAborted();
+      return await run(limit.signal);
+    } catch (error) {
+      if (signal?.aborted === true) {
+        throw signal.reason;
+      }
+      if (error instanceof CheckEnded) {
+        return error.result;
+      }
+      // A request failed at the network level, the browser withheld the answer, or the time limit passed.
+      return { kind: 'engine-unreachable', checkedAt: Date.now(), lastEmulatorPort };
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', cancel);
+    }
+  }
+
   return {
     origin,
     async check(signal?: AbortSignal): Promise<CheckResult> {
-      const limit = new AbortController();
-      const cancel = () => limit.abort(signal?.reason);
-      signal?.addEventListener('abort', cancel);
-      const timer = setTimeout(
-        () => limit.abort(new DOMException('The check took too long.', 'TimeoutError')),
-        CHECK_TIME_LIMIT_MS,
-      );
-      try {
-        signal?.throwIfAborted();
-        return await run(limit.signal);
-      } catch (error) {
-        if (signal?.aborted === true) {
-          throw signal.reason;
-        }
-        if (error instanceof CheckEnded) {
-          return error.result;
-        }
-        // A request failed at the network level, the browser withheld the answer, or the time limit passed.
-        return { kind: 'engine-unreachable', checkedAt: Date.now(), lastEmulatorPort };
-      } finally {
-        clearTimeout(timer);
-        signal?.removeEventListener('abort', cancel);
-      }
+      const startedAt = Date.now();
+      const result = await checkOnce(signal);
+      return { ...result, startedAt };
     },
   };
 }

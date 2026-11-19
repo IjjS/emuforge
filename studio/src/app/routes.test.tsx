@@ -174,6 +174,24 @@ describe('routes', () => {
     expect(within(main()).getByRole('heading', { level: 1, name: 'Home' })).toBeInTheDocument();
   });
 
+  it('opens /connections as Studio’s own page "Connections" in the frame: its h1 names the main, the document title is made from it (issue 486, R1)', async () => {
+    document.title = 'not set by Studio';
+    open('/connections');
+
+    const h1 = within(main()).getByRole('heading', { level: 1, name: 'Connections' });
+    expect(main()).toHaveAttribute('aria-labelledby', h1.id);
+    expect(main()).toHaveClass('st-main');
+    expect(inCloudscape(h1)).toBe(false);
+    expect(cloudscapeElements()).toEqual([]);
+    expect(within(screen.getByRole('banner')).getByRole('link', { name: 'Connections' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+    await waitFor(() => {
+      expect(document.title).toBe('Connections | EmuForge Studio');
+    });
+  });
+
   it('opens /aws as the AWS area index: "Services" (the number of services), its line, and the services in label order', async () => {
     open('/aws');
 
@@ -659,6 +677,7 @@ describe('routes', () => {
 
   it.each([
     ['/', 'Home'],
+    ['/connections', 'Connections'],
     ['/aws', AWS],
     [NO_SCREEN_SERVICE.path, NO_SCREEN],
     [BELOW, NO_SCREEN],

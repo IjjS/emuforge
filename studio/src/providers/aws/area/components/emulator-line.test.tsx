@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import type { CheckResult } from '../../../../lib/engine/engine-client';
 import { EmulatorLine, type AboutControl, type AreaConnection } from './emulator-line';
+import { TargetChangeFlashContext } from './target-change-flash';
 
 const LABEL = 'Local emulator, not AWS';
 const ENGINE_ORIGIN = 'http://127.0.0.1:8297';
@@ -335,6 +336,147 @@ describe('the emulator line', () => {
     expect(followed).toBe(false);
     expect(router.state.location.pathname).toBe('/');
     expect(screen.getByText("Studio's Home")).toBeInTheDocument();
+  });
+});
+
+/** `result` as an answer that names the target `target`. */
+function naming(result: CheckResult, target: string): CheckResult {
+  return { ...result, target } as CheckResult;
+}
+
+/** The line's part that names the target: "Target" and the name; `null` when the line names none. */
+function targetPart(): HTMLElement | null {
+  return line().querySelector('.aws-area-emulator-target');
+}
+
+describe("the emulator line's target (issue 486, R2)", () => {
+  it('connected with target local: "Connected at <endpoint>" unchanged, then a part "Target local", the name in code style', () => {
+    connection.value = { result: naming(connected(9297), 'local'), engineOrigin: ENGINE_ORIGIN };
+    open();
+
+    expect(statusText()).toBe(`Connected at ${endpoint(9297)}`);
+    expect(statusType()).toBe('success');
+    const part = targetPart() as HTMLElement;
+    expect(text(part)).toBe('Target local');
+    // A Cloudscape Box, so the word takes Cloudscape's font and not the document's default.
+    expect(part.className).toMatch(/awsui_box/);
+    expect(createWrapper(part).findBox()?.getElement()).toHaveTextContent('local');
+    expect(part.querySelector('code, [class*="awsui_box"]')).not.toBeNull();
+    expect(createWrapper(line()).findStatusIndicator()?.getElement().contains(part)).toBe(false);
+    expect(follows(createWrapper(line()).findStatusIndicator()?.getElement() as HTMLElement, part)).toBe(true);
+  });
+
+  it.each([
+    ['not started', 'not_started', 'Not started on port 9297', 'stopped'],
+    ['not answering', 'timeout', `Not answering at ${endpoint(9297)}`, 'error'],
+  ])(
+    '%s with target local: the status unchanged, then "Target local", then "Connection status"',
+    (_name, reason, status, type) => {
+      connection.value = { result: naming(emulatorDown(reason, 9297), 'local'), engineOrigin: ENGINE_ORIGIN };
+      open();
+
+      expect(statusText()).toBe(status);
+      expect(statusType()).toBe(type);
+      const part = targetPart() as HTMLElement;
+      expect(text(part)).toBe('Target local');
+      const link = connectionStatusLink() as HTMLElement;
+      expect(follows(part, link)).toBe(true);
+    },
+  );
+
+  it.each([
+    ['engine not answering', engineUnreachable, `The EmuForge engine at ${ENGINE_ORIGIN} is not answering`],
+    [
+      'engine error',
+      () => engineError(403, 'OriginNotAllowed'),
+      'The EmuForge engine answered with an error: OriginNotAllowed',
+    ],
+  ])('%s: as before, no target part', (_name, result, status) => {
+    connection.value = { result: result(), engineOrigin: ENGINE_ORIGIN };
+    open();
+
+    expect(statusText()).toBe(status);
+    expect(targetPart()).toBeNull();
+    expect(line()).not.toHaveTextContent('Target');
+  });
+
+  it.each([
+    ['connected', () => connected(9297), `Connected at ${endpoint(9297)}`],
+    ['not started', () => emulatorDown('not_started', 9297), 'Not started on port 9297'],
+  ])('%s with no target: as before, no target part', (_name, result, status) => {
+    connection.value = { result: result(), engineOrigin: ENGINE_ORIGIN };
+    open();
+
+    expect(statusText()).toBe(status);
+    expect(targetPart()).toBeNull();
+    expect(line()).not.toHaveTextContent('Target');
+  });
+
+  it('connected local, then connected second at another endpoint: the line names second, its live region says nothing', async () => {
+    connection.value = { result: naming(connected(9301), 'local'), engineOrigin: ENGINE_ORIGIN };
+    open();
+    const changes = recordChanges(liveRegion());
+
+    connection.answer(naming(connected(9302), 'second'));
+    await settle();
+
+    expect(statusText()).toBe(`Connected at ${endpoint(9302)}`);
+    expect(text(targetPart())).toBe('Target second');
+    expect(changes).toEqual([]);
+    expect(text(liveRegion())).toBe('');
+  });
+
+  it('on a page whose flash does not announce it, connected local then connected second: the live region holds the label and the whole line', async () => {
+    connection.value = { result: naming(connected(9301), 'local'), engineOrigin: ENGINE_ORIGIN };
+    const router = createMemoryRouter(
+      [
+        {
+          path: '/aws/*',
+          element: (
+            <TargetChangeFlashContext value={false}>
+              <Line />
+            </TargetChangeFlashContext>
+          ),
+        },
+      ],
+      { initialEntries: ['/aws'] },
+    );
+    render(<RouterProvider router={router} />);
+    expect(text(liveRegion())).toBe('');
+
+    connection.answer(naming(connected(9302), 'second'));
+    await settle();
+
+    expect(text(liveRegion())).toBe(`${LABEL} Connected at ${endpoint(9302)}. Target second`);
+  });
+
+  it('connected local, then not started with local: the live region holds the label and the whole line, as before', async () => {
+    connection.value = { result: naming(connected(9301), 'local'), engineOrigin: ENGINE_ORIGIN };
+    open();
+
+    connection.answer(naming(emulatorDown('not_started', 9301), 'local'));
+    await settle();
+
+    expect(text(liveRegion())).toBe(`${LABEL} Not started on port 9301. Target local`);
+    expect(liveRegion()).not.toHaveTextContent('Connection status');
+  });
+
+  it('connected local, then not started with second: a change of status, announced as before', async () => {
+    connection.value = { result: naming(connected(9301), 'local'), engineOrigin: ENGINE_ORIGIN };
+    open();
+
+    connection.answer(naming(emulatorDown('not_started', 9302), 'second'));
+    await settle();
+
+    expect(text(liveRegion())).toBe(`${LABEL} Not started on port 9302. Target second`);
+  });
+
+  it('a target that holds markup: shown as that text, no element made from it', () => {
+    connection.value = { result: naming(connected(9297), '<img src=x>'), engineOrigin: ENGINE_ORIGIN };
+    open();
+
+    expect(text(targetPart())).toBe('Target <img src=x>');
+    expect(line().querySelector('img')).toBeNull();
   });
 });
 
