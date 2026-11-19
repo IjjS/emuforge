@@ -2,7 +2,8 @@ import { creationDateText, NO_DATE } from '../../components/format-date';
 import { AWS_PATH } from '../../../identity';
 
 // How the Lambda screens write a function's values (issue 84, requirement R4.2, R5.3, R5.5), and the routes their
-// controls lead to (R0, R8). Times are written by the area's shared `components/format-date.ts` (issue 386, R7).
+// controls lead to (R0, R8; issue 516, design "The function's page"). Times are written by the area's shared
+// `components/format-date.ts` (issue 386, R7).
 
 /** Shown for a value the answer lacks. */
 export const NONE = '-';
@@ -21,11 +22,20 @@ export function functionPath(name: string): string {
   return `${FUNCTIONS_PATH}/function/${encodeURIComponent(name)}`;
 }
 
-/** The tabs of a function's page other than "Code", each a route of its own (R8). */
-export type FunctionTab = 'test' | 'monitor' | 'configuration' | 'aliases' | 'versions';
+/** The tabs of a function's page, each addressed by the query of the function's one address (issue 516, design). */
+export type FunctionTab = 'test' | 'code' | 'configuration';
 
-export function functionTabPath(name: string, tab: FunctionTab): string {
-  return `${functionPath(name)}/${tab}`;
+/** The query parameter that names a function's tab. */
+export const TAB_PARAMETER = 'tab';
+
+/** The tab a value of `?tab=` names: "code" and "configuration" name theirs; no value or any other is "Test". */
+export function tabOf(value: string | null | undefined): FunctionTab {
+  return value === 'code' || value === 'configuration' ? value : 'test';
+}
+
+/** The address of a function's tab: "Test" is the function's path itself, the others add `?tab=`. */
+export function functionTabHref(name: string, tab: FunctionTab): string {
+  return tab === 'test' ? functionPath(name) : `${functionPath(name)}?${TAB_PARAMETER}=${tab}`;
 }
 
 // The console's name of each runtime identifier of the user guide's table (`lambda-runtimes`), ".x" kept where the
@@ -95,4 +105,22 @@ export function lastModifiedText(lastModified: Date | string | undefined, timeZo
     return NO_DATE;
   }
   return typeof lastModified === 'string' ? lastModified : creationDateText(lastModified, timeZone);
+}
+
+/** "Code size": the bytes as a whole number, "{n} bytes"; "-" for none. */
+export function codeSizeText(bytes: number | undefined): string {
+  return bytes === undefined ? NONE : `${String(bytes)} bytes`;
+}
+
+/** "Memory": "{n} MB"; "-" for none. */
+export function memoryText(megabytes: number | undefined): string {
+  return megabytes === undefined ? NONE : `${String(megabytes)} MB`;
+}
+
+/** "Timeout": "1 second", "{n} seconds"; "-" for none. */
+export function timeoutText(seconds: number | undefined): string {
+  if (seconds === undefined) {
+    return NONE;
+  }
+  return seconds === 1 ? '1 second' : `${String(seconds)} seconds`;
 }

@@ -3,17 +3,24 @@ import { ListFunctionsCommand } from '@aws-sdk/client-lambda';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { EndpointRefusedError, engineEndpoint } from '../../../../../lib/aws/client-factory';
+import { RequestError, type RequestFailure } from '../../../../../lib/aws/request';
 import {
   BASIC_EXECUTION_POLICY,
   createFunction,
   CreateFunctionError,
   deleteFunctions,
   iamClient,
+  invoke,
+  isFunctionNotFound,
+  isTooLarge,
   lambdaClient,
   LambdaRequestError,
   listFunctions,
   listRoles,
   readFunction,
+  updateFunctionCode,
+  updateFunctionConfiguration,
+  type ConfigurationChange,
   type CreatedRole,
   type LambdaFailure,
 } from './api';
@@ -46,6 +53,15 @@ function lambdaOperation(method: string, path: string): string {
   }
   if (/^\/2015-03-31\/functions\/[^/]+$/.test(path)) {
     return method === 'DELETE' ? 'DeleteFunction' : 'GetFunction';
+  }
+  if (/^\/2015-03-31\/functions\/[^/]+\/invocations$/.test(path)) {
+    return 'Invoke';
+  }
+  if (/^\/2015-03-31\/functions\/[^/]+\/code$/.test(path)) {
+    return 'UpdateFunctionCode';
+  }
+  if (/^\/2015-03-31\/functions\/[^/]+\/configuration$/.test(path)) {
+    return 'UpdateFunctionConfiguration';
   }
   return `${method} ${path}`;
 }
@@ -473,6 +489,11 @@ describe('a function’s page', () => {
         stateReason: 'It broke',
         lastUpdateStatus: 'Failed',
         lastUpdateStatusReason: 'It broke again',
+        memorySize: 128,
+        timeout: 3,
+        role: 'arn:aws:iam::000000000000:role/r',
+        codeSize: 300,
+        environment: [{ key: 'SECRET', value: 'not-shown' }],
         url: { kind: 'url', url: 'https://abc.lambda-url.us-east-1.on.aws/' },
       },
     });
@@ -516,21 +537,60 @@ describe('a function’s page', () => {
     },
   );
 
-  it('holds neither Code.Location nor the environment variables of the answer', async () => {
+  it('gives memory, timeout, role, code size, SHA-256, package type, variables in the answer’s order and the last update with its reason', async () => {
     engine.answer = (request) =>
       request.operation === 'GetFunction'
         ? json(200, {
-            Configuration: functionItem('f', { Environment: { Variables: { TOKEN: 'variable-value-84' } } }),
+            Configuration: functionItem('f', {
+              MemorySize: 512,
+              Timeout: 30,
+              Role: 'arn:aws:iam::000000000000:role/service-role/f-role',
+              CodeSize: 1234,
+              CodeSha256: 'q1w2e3r4t5y6u7i8o9p0+/=',
+              PackageType: 'Zip',
+              Environment: { Variables: { ZETA: 'last', ALPHA: '', '1-dash': 'x' } },
+              LastUpdateStatus: 'InProgress',
+              LastUpdateStatusReason: 'The function is being updated.',
+            }),
+            Code: { RepositoryType: 'S3', Location: 'https://127.0.0.1:9310/code-location-516' },
+          })
+        : defaultAnswer(request);
+
+    const read = await readFunction(endpoint, 'f', signal());
+
+    expect(read.found).toBe(true);
+    const fn = read.found ? read.function : undefined;
+    expect(fn).toMatchObject({
+      memorySize: 512,
+      timeout: 30,
+      role: 'arn:aws:iam::000000000000:role/service-role/f-role',
+      codeSize: 1234,
+      codeSha256: 'q1w2e3r4t5y6u7i8o9p0+/=',
+      packageType: 'Zip',
+      lastUpdateStatus: 'InProgress',
+      lastUpdateStatusReason: 'The function is being updated.',
+    });
+    // The order the answer wrote them in (an integer-like key would be reordered by any object; none is one here).
+    expect(fn?.environment).toEqual([
+      { key: 'ZETA', value: 'last' },
+      { key: 'ALPHA', value: '' },
+      { key: '1-dash', value: 'x' },
+    ]);
+  });
+
+  it('gives no variables for an answer without Environment, and holds Code.Location nowhere', async () => {
+    engine.answer = (request) =>
+      request.operation === 'GetFunction'
+        ? json(200, {
+            Configuration: functionItem('f'),
             Code: { RepositoryType: 'S3', Location: 'https://127.0.0.1:9310/code-location-84' },
           })
         : defaultAnswer(request);
 
     const read = await readFunction(endpoint, 'f', signal());
-    const held = JSON.stringify(read);
 
-    expect(held).not.toContain('code-location-84');
-    expect(held).not.toContain('variable-value-84');
-    expect(held).not.toContain('TOKEN');
+    expect(read.found && read.function.environment).toEqual([]);
+    expect(JSON.stringify(read)).not.toContain('code-location-84');
   });
 });
 
@@ -582,7 +642,7 @@ describe('creating a function', () => {
 
     const created = await createFunction(
       endpoint,
-      { name: 'orders', runtime: 'nodejs24.x', architecture: 'x86_64', role: { kind: 'default' } },
+      { name: 'orders', runtime: 'nodejs24.x', architecture: 'x86_64', role: { kind: 'default' }, code: { kind: 'starter' } },
       signal(),
     );
 
@@ -611,7 +671,7 @@ describe('creating a function', () => {
 
     await createFunction(
       endpoint,
-      { name, runtime: 'nodejs24.x', architecture: 'x86_64', role: { kind: 'default' } },
+      { name, runtime: 'nodejs24.x', architecture: 'x86_64', role: { kind: 'default' }, code: { kind: 'starter' } },
       signal(),
     );
 
@@ -625,7 +685,7 @@ describe('creating a function', () => {
 
     const created = await createFunction(
       endpoint,
-      { name: 'reports', runtime: 'python3.13', architecture: 'arm64', role: { kind: 'existing', arn } },
+      { name: 'reports', runtime: 'python3.13', architecture: 'arm64', role: { kind: 'existing', arn }, code: { kind: 'starter' } },
       signal(),
     );
 
@@ -651,7 +711,7 @@ describe('creating a function', () => {
     const error = await rejection(
       createFunction(
         endpoint,
-        { name: 'orders', runtime: 'nodejs24.x', architecture: 'x86_64', role: { kind: 'default' } },
+        { name: 'orders', runtime: 'nodejs24.x', architecture: 'x86_64', role: { kind: 'default' }, code: { kind: 'starter' } },
         signal(),
       ),
     );
@@ -675,7 +735,7 @@ describe('creating a function', () => {
       request.operation === 'AttachRolePolicy' && attachFails
         ? iamError(404, 'NoSuchEntity', 'Policy missing')
         : defaultAnswer(request);
-    const request = { name: 'orders', runtime: 'nodejs24.x', architecture: 'x86_64' };
+    const request = { name: 'orders', runtime: 'nodejs24.x', architecture: 'x86_64', code: { kind: 'starter' as const } };
 
     const first = (await rejection(
       createFunction(endpoint, { ...request, role: { kind: 'default' } }, signal()),
@@ -703,7 +763,7 @@ describe('creating a function', () => {
       request.operation === 'CreateFunction' && createFails
         ? lambdaError(409, 'ResourceConflictException', 'Function already exist: orders')
         : defaultAnswer(request);
-    const request = { name: 'orders', runtime: 'nodejs24.x', architecture: 'x86_64' };
+    const request = { name: 'orders', runtime: 'nodejs24.x', architecture: 'x86_64', code: { kind: 'starter' as const } };
 
     const first = (await rejection(
       createFunction(endpoint, { ...request, role: { kind: 'default' } }, signal()),
@@ -736,7 +796,7 @@ describe('creating a function', () => {
 
     await createFunction(
       endpoint,
-      { name: 'invoices', runtime: 'nodejs22.x', architecture: 'x86_64', role: { kind: 'default', created: role } },
+      { name: 'invoices', runtime: 'nodejs22.x', architecture: 'x86_64', role: { kind: 'default', created: role }, code: { kind: 'starter' } },
       signal(),
     );
 
@@ -865,7 +925,7 @@ describe('a failure', () => {
     const error = (await rejection(
       createFunction(
         endpoint,
-        { name: 'f', runtime: 'nodejs24.x', architecture: 'x86_64', role: { kind: 'default' } },
+        { name: 'f', runtime: 'nodejs24.x', architecture: 'x86_64', role: { kind: 'default' }, code: { kind: 'starter' } },
         signal(),
       ),
     )) as CreateFunctionError;
@@ -885,7 +945,7 @@ describe('an aborted request', () => {
       (s) =>
         createFunction(
           endpoint,
-          { name: 'f', runtime: 'nodejs24.x', architecture: 'x86_64', role: { kind: 'default' } },
+          { name: 'f', runtime: 'nodejs24.x', architecture: 'x86_64', role: { kind: 'default' }, code: { kind: 'starter' } },
           s,
         ),
       (s) => deleteFunctions(endpoint, ['a', 'b'], s),
@@ -922,5 +982,269 @@ describe('an aborted request', () => {
     await expect(listFunctions(endpoint, { pageSize: 25 }, controller.signal)).rejects.toBe(reason);
     await expect(deleteFunctions(endpoint, ['a'], controller.signal)).rejects.toBe(reason);
     expect(engine.sent).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// Invoke, change the code, change the configuration (issue 516, test criteria "Unit s1 — api.test.ts").
+
+/** An `Invoke` answer as the emulator gives it: the payload as the body, the error and the log in headers. */
+function invokeAnswer(payload: string, headers: Record<string, string> = {}): Response {
+  return new Response(payload, {
+    status: 200,
+    headers: { 'content-type': 'application/json', 'x-amz-executed-version': '$LATEST', ...headers },
+  });
+}
+
+/** Base64 of `text`'s UTF-8 bytes, as `LogResult` carries the log. */
+function base64(text: string): string {
+  return btoa(String.fromCharCode(...new TextEncoder().encode(text)));
+}
+
+describe('invoking a function', () => {
+  it('sends one Invoke to the function with RequestResponse, LogType Tail and the event text’s bytes unchanged', async () => {
+    engine.answer = () => invokeAnswer('{}');
+    const event = '{ "z": 1,\n\t"a" : [ 2 , "é" ] }  ';
+
+    await invoke(endpoint, 'orders', event, signal());
+
+    expect(engine.operations()).toEqual(['Invoke']);
+    const [sent] = engine.sent;
+    expect(sent?.method).toBe('POST');
+    expect(sent?.url.pathname).toBe('/2015-03-31/functions/orders/invocations');
+    expect(sent?.headers.get('x-amz-invocation-type')).toBe('RequestResponse');
+    expect(sent?.headers.get('x-amz-log-type')).toBe('Tail');
+    expect(sent?.url.searchParams.has('Qualifier')).toBe(false);
+    expect(sent?.body).toBe(event);
+  });
+
+  it('gives the payload as text and the log decoded from base64 as UTF-8, a multi-byte character kept', async () => {
+    const log = 'START RequestId: 1\necho-line ünïcødé ✓ 🐍\nEND RequestId: 1\nREPORT RequestId: 1\n';
+    engine.answer = () => invokeAnswer('{"got":  {"k": "v"}, "version":"v1"}', { 'x-amz-log-result': base64(log) });
+
+    expect(await invoke(endpoint, 'orders', '{}', signal())).toEqual({
+      payload: '{"got":  {"k": "v"}, "version":"v1"}',
+      log,
+    });
+  });
+
+  it('gives FunctionError’s value beside the payload and the log', async () => {
+    engine.answer = () =>
+      invokeAnswer('{"errorMessage":"boom","errorType":"Exception"}', {
+        'x-amz-function-error': 'Unhandled',
+        'x-amz-log-result': base64('Traceback: boom\n'),
+      });
+
+    expect(await invoke(endpoint, 'orders', '{}', signal())).toEqual({
+      payload: '{"errorMessage":"boom","errorType":"Exception"}',
+      log: 'Traceback: boom\n',
+      functionError: 'Unhandled',
+    });
+  });
+
+  it('gives both empty for an answer with neither payload nor log', async () => {
+    engine.answer = () => invokeAnswer('');
+
+    expect(await invoke(endpoint, 'orders', '{}', signal())).toEqual({ payload: '', log: '' });
+  });
+});
+
+describe('changing a function’s code', () => {
+  it('sends one UpdateFunctionCode with the name and the bytes as ZipFile', async () => {
+    engine.answer = () => json(200, functionItem('orders', { LastUpdateStatus: 'InProgress' }));
+    const bytes = storedZip('lambda_function.py', 'def lambda_handler(event, context):\n    return 2\n');
+
+    await updateFunctionCode(endpoint, 'orders', bytes, signal());
+
+    expect(engine.operations()).toEqual(['UpdateFunctionCode']);
+    expect(engine.sent[0]?.method).toBe('PUT');
+    expect(engine.sent[0]?.url.pathname).toBe('/2015-03-31/functions/orders/code');
+    expect(JSON.parse(engine.sent[0]?.body ?? '{}')).toEqual({ ZipFile: btoa(String.fromCharCode(...bytes)) });
+  });
+});
+
+describe('changing a function’s configuration', () => {
+  it.each<[string, ConfigurationChange, Record<string, unknown>]>([
+    [
+      'runtime and handler',
+      { runtime: 'python3.12', handler: 'pkg/mod.handler' },
+      { Runtime: 'python3.12', Handler: 'pkg/mod.handler' },
+    ],
+    [
+      'description, memory and timeout',
+      { description: 'second', memorySize: 256, timeout: 1 },
+      { Description: 'second', MemorySize: 256, Timeout: 1 },
+    ],
+    [
+      'variables',
+      {
+        variables: [
+          { key: 'GREETING', value: 'hello-2' },
+          { key: 'EXTRA', value: '' },
+        ],
+      },
+      { Environment: { Variables: { GREETING: 'hello-2', EXTRA: '' } } },
+    ],
+    ['an empty list of variables', { variables: [] }, { Environment: { Variables: {} } }],
+    ['an empty description', { description: '' }, { Description: '' }],
+  ])('sends one request holding exactly the fields of %s', async (_, change, body) => {
+    engine.answer = () => json(200, functionItem('orders', { LastUpdateStatus: 'InProgress' }));
+
+    await updateFunctionConfiguration(endpoint, 'orders', change, signal());
+
+    expect(engine.operations()).toEqual(['UpdateFunctionConfiguration']);
+    expect(engine.sent[0]?.method).toBe('PUT');
+    expect(engine.sent[0]?.url.pathname).toBe('/2015-03-31/functions/orders/configuration');
+    expect(JSON.parse(engine.sent[0]?.body ?? '{}')).toEqual(body);
+  });
+
+  it('keeps the variables in the order of the list', async () => {
+    engine.answer = () => json(200, functionItem('orders'));
+
+    await updateFunctionConfiguration(
+      endpoint,
+      'orders',
+      {
+        variables: [
+          { key: 'Z', value: '1' },
+          { key: 'A', value: '2' },
+          { key: 'M', value: '3' },
+        ],
+      },
+      signal(),
+    );
+
+    const sent = JSON.parse(engine.sent[0]?.body ?? '{}') as { Environment: { Variables: Record<string, string> } };
+    expect(Object.keys(sent.Environment.Variables)).toEqual(['Z', 'A', 'M']);
+  });
+});
+
+describe('creating a function from a .zip file', () => {
+  it('sends CreateFunction with the file’s bytes and the handler typed, and no starter archive', async () => {
+    const arn = 'arn:aws:iam::000000000000:role/shared';
+    const bytes = storedZip('pkg/mod.py', 'def other(event, context):\n    return "other"\n');
+
+    await createFunction(
+      endpoint,
+      {
+        name: 'zipped',
+        runtime: 'python3.13',
+        architecture: 'x86_64',
+        role: { kind: 'existing', arn },
+        code: { kind: 'zip', bytes, handler: 'pkg/mod.other' },
+      },
+      signal(),
+    );
+
+    expect(engine.operations()).toEqual(['CreateFunction']);
+    const starter = starterCode('python3.13');
+    const sent = JSON.parse(engine.sent[0]?.body ?? '{}') as { Handler: string; Code: { ZipFile: string } };
+    expect(sent.Handler).toBe('pkg/mod.other');
+    expect(sent.Code.ZipFile).toBe(btoa(String.fromCharCode(...bytes)));
+    expect(sent.Code.ZipFile).not.toBe(
+      btoa(String.fromCharCode(...storedZip(starter?.fileName ?? '', starter?.text ?? ''))),
+    );
+  });
+
+  it('creates from a .zip file with a runtime Studio has no starter code for', async () => {
+    const bytes = storedZip('a.txt', 'x');
+
+    await createFunction(
+      endpoint,
+      {
+        name: 'java',
+        runtime: 'java21',
+        architecture: 'x86_64',
+        role: { kind: 'existing', arn: 'arn:aws:iam::000000000000:role/r' },
+        code: { kind: 'zip', bytes, handler: 'example.Handler' },
+      },
+      signal(),
+    );
+
+    expect(engine.operations()).toEqual(['CreateFunction']);
+  });
+});
+
+describe('a failure of the three new operations', () => {
+  const calls: [string, (s: AbortSignal) => Promise<unknown>][] = [
+    ['Invoke', (s) => invoke(endpoint, 'orders', '{}', s)],
+    ['UpdateFunctionCode', (s) => updateFunctionCode(endpoint, 'orders', storedZip('a', 'b'), s)],
+    ['UpdateFunctionConfiguration', (s) => updateFunctionConfiguration(endpoint, 'orders', { timeout: 3 }, s)],
+  ];
+
+  async function requestFailureOf(promise: Promise<unknown>): Promise<RequestFailure> {
+    const error = await rejection(promise);
+    expect(error).toBeInstanceOf(RequestError);
+    return (error as RequestError).failure;
+  }
+
+  const cases: [string, () => Answer, (operation: string) => RequestFailure][] = [
+    [
+      'a code and message',
+      () => lambdaError(409, 'ResourceConflictException', 'An update is in progress for resource: f'),
+      (operation) => ({
+        kind: 'other',
+        operation,
+        code: 'ResourceConflictException',
+        message: 'An update is in progress for resource: f',
+      }),
+    ],
+    ['501', () => lambdaError(501, 'NotImplemented', 'no'), (operation) => ({ kind: 'not-implemented', operation })],
+    [
+      '403',
+      () => lambdaError(403, 'AccessDeniedException', 'may not'),
+      (operation) => ({ kind: 'access-denied', operation, message: 'may not' }),
+    ],
+    ['the engine not answering', () => 'network-error', (operation) => ({ kind: 'engine-did-not-answer', operation })],
+    [
+      'the emulator not answering',
+      () => lambdaError(504, 'EmulatorTimeout', 'no answer within 60 seconds'),
+      (operation) => ({ kind: 'emulator-did-not-answer', operation, message: 'no answer within 60 seconds' }),
+    ],
+  ];
+
+  for (const [operation, call] of calls) {
+    it.each(cases)(`of ${operation} with %s is the area’s failure of that kind`, async (_, answer, expected) => {
+      engine.answer = answer;
+
+      expect(await requestFailureOf(call(signal()))).toEqual(expected(operation));
+    });
+
+    it(`of ${operation} answered 413 without a body carries the status 413`, async () => {
+      engine.answer = () => new Response(null, { status: 413, statusText: 'Payload Too Large' });
+
+      const failed = await requestFailureOf(call(signal()));
+
+      expect(failed.operation).toBe(operation);
+      expect(isTooLarge(failed)).toBe(true);
+    });
+
+    it(`of ${operation} aborted rejects with the signal’s reason alone`, async () => {
+      engine.answer = () => 'hold';
+      const controller = new AbortController();
+      const reason = new Error('left the page');
+      const settled = call(controller.signal).then(
+        () => 'resolved',
+        (error: unknown) => error,
+      );
+      await vi.waitFor(() => {
+        expect(engine.sent).toHaveLength(1);
+      });
+      controller.abort(reason);
+
+      expect(await settled).toBe(reason);
+    });
+  }
+
+  it('is "not found" for ResourceNotFoundException, and "too large" for no other code', async () => {
+    engine.answer = () => lambdaError(404, 'ResourceNotFoundException', 'Function not found: f');
+
+    const failed = await requestFailureOf(invoke(endpoint, 'f', '{}', signal()));
+
+    expect(isFunctionNotFound(failed)).toBe(true);
+    expect(isTooLarge(failed)).toBe(false);
+    expect(
+      isTooLarge({ kind: 'other', operation: 'Invoke', code: 'RequestEntityTooLargeException', message: 'big' }),
+    ).toBe(false);
   });
 });

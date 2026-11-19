@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { storedZip } from './zip';
+import { holdsEndRecord, isZipArchive, storedZip, ZIP_TAIL_SIZE } from './zip';
 
 // The archive "Create Event Function" sends (issue 84, requirement R6.5), read back field by field.
 
@@ -79,5 +79,82 @@ describe('the archive of one file', () => {
     expect(entry.centralSize).toBe(utf8);
     expect(entry.centralCompressedSize).toBe(utf8);
     expect(new TextDecoder().decode(entry.data)).toBe(text);
+  });
+});
+
+// The zip check of an upload and of "Upload a .zip file" (issue 516, test criteria "Unit s1 — zip.test.ts").
+
+/** `archive` with an archive comment of `length` bytes: the end record names it, and it ends the file. */
+function withComment(archive: Uint8Array, length: number): Uint8Array {
+  const bytes = new Uint8Array(archive.length + length);
+  bytes.set(archive);
+  bytes.fill(0x41, archive.length);
+  view(bytes).setUint16(archive.length - 2, length, true);
+  return bytes;
+}
+
+const STARTER = storedZip('index.mjs', 'export const handler = async () => 1;\n');
+
+function file(bytes: Uint8Array, name = 'code.zip'): File {
+  return new File([bytes], name);
+}
+
+describe('the zip check', () => {
+  it.each([
+    ['the starter archive Studio writes', STARTER],
+    ['an archive ending with a comment', withComment(STARTER, 12)],
+    ['an archive whose comment is 65,535 bytes', withComment(STARTER, 65_535)],
+  ])('takes %s as a .zip archive', async (_, bytes) => {
+    expect(holdsEndRecord(bytes)).toBe(true);
+    expect(await isZipArchive(file(bytes))).toBe(true);
+  });
+
+  it.each([
+    ['empty bytes', new Uint8Array(0)],
+    ['plain text', new TextEncoder().encode('These are my notes, not an archive.\n'.repeat(20))],
+    [
+      'bytes holding PK\\x05\\x06 at a place whose comment length runs past the end',
+      (() => {
+        const bytes = new Uint8Array(40);
+        const v = view(bytes);
+        v.setUint32(10, END_OF_CENTRAL_DIRECTORY, true);
+        v.setUint16(30, 9, true);
+        return bytes;
+      })(),
+    ],
+    ['an archive cut before its end record', STARTER.slice(0, STARTER.length - 22)],
+    ['an archive cut inside its end record', STARTER.slice(0, STARTER.length - 4)],
+    ['an archive whose comment was cut short', withComment(STARTER, 100).slice(0, STARTER.length + 50)],
+  ])('takes %s as no archive', async (_, bytes) => {
+    expect(holdsEndRecord(bytes)).toBe(false);
+    expect(await isZipArchive(file(bytes))).toBe(false);
+  });
+
+  it('reads only the last 65,557 bytes of a file of 1 MB whose end record is in its last bytes', async () => {
+    const size = 1024 * 1024;
+    const bytes = new Uint8Array(size);
+    bytes.set(STARTER, size - STARTER.length);
+    const chosen = file(bytes);
+    const sliced: [number | undefined, number | undefined][] = [];
+    const read: number[] = [];
+    const slice = chosen.slice.bind(chosen);
+    chosen.slice = (start?: number, end?: number, contentType?: string) => {
+      sliced.push([start, end]);
+      const part = slice(start, end, contentType);
+      const arrayBuffer = part.arrayBuffer.bind(part);
+      part.arrayBuffer = () => {
+        read.push(part.size);
+        return arrayBuffer();
+      };
+      return part;
+    };
+    chosen.arrayBuffer = () => {
+      throw new Error('the whole file was read');
+    };
+
+    expect(ZIP_TAIL_SIZE).toBe(65_557);
+    expect(await isZipArchive(chosen)).toBe(true);
+    expect(sliced).toEqual([[size - 65_557, size]]);
+    expect(read).toEqual([65_557]);
   });
 });

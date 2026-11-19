@@ -1,6 +1,17 @@
 import { describe, expect, it } from 'vitest';
 
-import { architecturesText, lastModifiedText, runtimeText, typeText, valueText } from './format';
+import {
+  architecturesText,
+  codeSizeText,
+  functionTabHref,
+  lastModifiedText,
+  memoryText,
+  runtimeText,
+  tabOf,
+  timeoutText,
+  typeText,
+  valueText,
+} from './format';
 
 // How the Lambda screens write a function's values (issue 84, requirement R4.2).
 
@@ -61,5 +72,47 @@ describe('the last modified time', () => {
   it('writes a text that is not a time as it came, and none as "-"', () => {
     expect(lastModifiedText('yesterday-ish')).toBe('yesterday-ish');
     expect(lastModifiedText(undefined)).toBe('-');
+  });
+});
+
+// The values of the tabs "Code" and "Configuration", and the tabs' addresses (issue 516, test criteria "Unit s1 —
+// format.test.ts").
+
+describe('the values of a function’s tabs', () => {
+  it('writes code size 1234 as "1234 bytes", memory 256 as "256 MB", timeout 1 as "1 second" and 3 as "3 seconds"', () => {
+    expect(codeSizeText(1234)).toBe('1234 bytes');
+    expect(memoryText(256)).toBe('256 MB');
+    expect(timeoutText(1)).toBe('1 second');
+    expect(timeoutText(3)).toBe('3 seconds');
+  });
+
+  it('writes "-" for a value the answer lacks', () => {
+    expect(codeSizeText(undefined)).toBe('-');
+    expect(memoryText(undefined)).toBe('-');
+    expect(timeoutText(undefined)).toBe('-');
+  });
+});
+
+describe('the address of a function’s tab', () => {
+  it('is the function’s path without a query for "Test", with ?tab=code for "Code", ?tab=configuration for "Configuration"', () => {
+    expect(functionTabHref('orders', 'test')).toBe('/aws/lambda/functions/function/orders');
+    expect(functionTabHref('orders', 'code')).toBe('/aws/lambda/functions/function/orders?tab=code');
+    expect(functionTabHref('orders', 'configuration')).toBe(
+      '/aws/lambda/functions/function/orders?tab=configuration',
+    );
+  });
+
+  it('encodes a name with characters that need encoding once', () => {
+    expect(functionTabHref('a b%c', 'code')).toBe('/aws/lambda/functions/function/a%20b%25c?tab=code');
+    expect(functionTabHref('a b%c', 'test')).toBe('/aws/lambda/functions/function/a%20b%25c');
+  });
+
+  it('is named by ?tab=: code and configuration their tabs, none or any other value "Test"', () => {
+    expect(tabOf('code')).toBe('code');
+    expect(tabOf('configuration')).toBe('configuration');
+    expect(tabOf(null)).toBe('test');
+    expect(tabOf('')).toBe('test');
+    expect(tabOf('nonsense')).toBe('test');
+    expect(tabOf('Code')).toBe('test');
   });
 });
