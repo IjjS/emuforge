@@ -24,7 +24,10 @@ product context `PRODUCT.md`, its languages `languages.md`.
 - The language control sits in the frame's top bar on every page (`ui/language-control.tsx`), in Studio's own
   design, never inside a provider area. Its menu is drawn above everything of an area: the area's holder
   (`.st-area`) is its own stacking context (`isolation: isolate`, not inherited), so the area's own sticky and
-  overlay layers stay under Studio's bar.
+  overlay layers stay under Studio's bar. An open dialog of the area is the one exception: while the area tells the
+  frame one is open (`ProviderAreaProps.onModal`), the holder makes no stacking context (`.st-area-modal`), so the
+  dialog and its backdrop are drawn above the bar, which covers nothing of the dialog and is inert; a press on the bar
+  meets the dialog's backdrop. Once no dialog is open the holder isolates again (issue 531).
 - `bun run brand` (`scripts/brand.ts`) writes every file of `brand/` and `public/` from `src/ui/brand-paths.ts` and
   the `--st-*` tokens, and draws the rasters with the headless Chromium of `@playwright/test`. Rerun it after a
   change of the geometry, the tokens or Instrument Sans, and commit what it writes; a build needs no browser. Its

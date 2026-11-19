@@ -47,9 +47,15 @@ interface PageFocus {
   routeChanges: number;
   /** Names the page's content target, for "Skip to content"; returns the function that withdraws it. */
   nameContentTarget: (focus: FocusContent) => () => void;
+  /** Tells the frame whether a dialog of the page's area is open: the bar is inert while one is. */
+  onAreaModal: (open: boolean) => void;
 }
 
-const PageFocusContext = createContext<PageFocus>({ routeChanges: 0, nameContentTarget: () => () => undefined });
+const PageFocusContext = createContext<PageFocus>({
+  routeChanges: 0,
+  nameContentTarget: () => () => undefined,
+  onAreaModal: () => undefined,
+});
 
 /**
  * Counts the route changes of the open document: one more each time the path changes, none on a first load and
@@ -107,7 +113,13 @@ export function Frame() {
       }
     };
   }, []);
-  const pageFocus = useMemo(() => ({ routeChanges, nameContentTarget }), [routeChanges, nameContentTarget]);
+  // Whether a dialog of the area below is open (ProviderPage): the bar is then inert, out of the Tab order and of the
+  // accessibility tree, while the dialog's backdrop, drawn above it, takes every press on it.
+  const [areaModal, setAreaModal] = useState(false);
+  const pageFocus = useMemo(
+    () => ({ routeChanges, nameContentTarget, onAreaModal: setAreaModal }),
+    [routeChanges, nameContentTarget],
+  );
 
   /**
    * A tab that takes focus is scrolled into the tab list's view, should the list be wider than the bar (issue 486):
@@ -125,7 +137,7 @@ export function Frame() {
 
   return (
     <div className="st-root">
-      <header id={BAR_ID} className="st-bar">
+      <header id={BAR_ID} className="st-bar" inert={areaModal}>
         <a className="st-skip" href={`#${MAIN_ID}`} onClick={handleSkip}>
           {t('frame.skip')}
         </a>
@@ -230,7 +242,8 @@ interface ProviderPageProps {
 }
 
 /**
- * Everything under a provider's segment: its area, below the bar, in a holder that is layout only. The area brings
+ * Everything under a provider's segment: its area, below the bar, in a holder that is layout only; while a dialog of
+ * the area is open, the holder lets the dialog be drawn above the bar. The area brings
  * its own `main` landmark, tells the page's title, from which the document title is made, and names its content
  * target; it moves focus to that target itself on a route change.
  *
@@ -246,8 +259,18 @@ export function ProviderPage({ area: Area }: ProviderPageProps) {
   // Unknown until the area, once loaded, tells its page's title.
   const [title, setTitle] = useState<string>();
   useDocumentTitle(title);
-  const { routeChanges, nameContentTarget } = useContext(PageFocusContext);
+  const { routeChanges, nameContentTarget, onAreaModal } = useContext(PageFocusContext);
   const { generation } = useTargetSeen();
+  // Whether a dialog of the area is open, as the area tells it: the holder then makes no stacking context of its own,
+  // so the dialog is drawn above Studio's bar (base.css, `.st-area`), and the frame makes the bar inert. Told to the
+  // frame again once the holder goes, so the bar is never left inert.
+  const [modal, setModal] = useState(false);
+  useEffect(() => {
+    onAreaModal(modal);
+    return () => {
+      onAreaModal(false);
+    };
+  }, [onAreaModal, modal]);
   // The area's content target, as the area named it; none until its code has loaded.
   const areaFocus = useRef<FocusContent | null>(null);
   const handleContentTarget = useCallback((focus: FocusContent | null) => {
@@ -261,7 +284,7 @@ export function ProviderPage({ area: Area }: ProviderPageProps) {
     [nameContentTarget],
   );
   return (
-    <div className="st-area">
+    <div className={modal ? 'st-area st-area-modal' : 'st-area'}>
       <QueryClientProvider client={checks}>
         <ConnectionCheck onConnection={setConnection} />
       </QueryClientProvider>
@@ -273,6 +296,7 @@ export function ProviderPage({ area: Area }: ProviderPageProps) {
           routeChanges={routeChanges}
           connection={connection}
           targetGeneration={generation}
+          onModal={setModal}
         />
       </Suspense>
     </div>

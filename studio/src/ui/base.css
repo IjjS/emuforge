@@ -124,9 +124,16 @@
 
   /* The holder of a provider area: layout only, no inherited property (R8.3). Its own stacking context keeps the
      area's sticky and overlay layers (Cloudscape's run to z-index 7000) under Studio's bar and the language menu
-     (requirement R3.1); `isolation` is not inherited. */
+     (requirement R3.1); `isolation` is not inherited. While a dialog of the area is open (`.st-area-modal`, set from
+     what the area tells the frame) the holder makes none: the dialog's root, fixed over the whole viewport at
+     Cloudscape's z-index 5000, is drawn above the bar with its backdrop, so the bar covers nothing of the dialog and a
+     press on the bar meets the backdrop (issue 531). The bar is inert meanwhile (`frame.tsx`). */
   .st-area {
     display: block;
     isolation: isolate;
+  }
+
+  .st-area-modal {
+    isolation: auto;
   }
 }
