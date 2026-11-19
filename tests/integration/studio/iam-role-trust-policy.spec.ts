@@ -32,6 +32,11 @@ const EDIT = 'Edit trust policy';
 const FIELD = 'Trust policy';
 const NOT_JSON = 'Enter the trust policy as one JSON value.';
 const SERVICES = ['lambda.amazonaws.com', 'states.amazonaws.com'];
+/**
+ * How "Trusted entities" names a service principal, on the list and on the tab alike (requirement, "Trust
+ * relationships"; `main`'s list checks): `lambda.amazonaws.com` reads "AWS Service: lambda".
+ */
+const namedAs = (service: string) => `AWS Service: ${service.replace(/\.amazonaws\.com$/, '')}`;
 
 const TWO_SERVICES = JSON.stringify(
   {
@@ -85,7 +90,9 @@ test('studio.iam-role-trust-policy-edit-reaches-the-emulator', async ({ ctx, pag
       await expect(editor, 'the dialog closes').toHaveCount(0, { timeout: 30_000 });
       await expectFlash(page, [`Trust policy of ${role} saved.`], 'the result of the save');
       for (const service of SERVICES) {
-        await expect(section(page, 'Trusted entities'), `"Trusted entities" names ${service}`).toContainText(service);
+        await expect(section(page, 'Trusted entities'), `"Trusted entities" names ${service}`).toContainText(
+          namedAs(service),
+        );
         await expect(section(page, FIELD), `"Trust policy" shows ${service}`).toContainText(service);
       }
       expect((await getRoleDirect(ctx, port, role)).trustPolicy, 'the trust policy the emulator reports').toEqual(
@@ -128,11 +135,9 @@ test('studio.iam-role-trust-policy-edit-reaches-the-emulator', async ({ ctx, pag
     await expect(main.getByRole('heading', { level: 1, name: /^Roles(\s|$)/ }), 'the role list').toBeVisible();
     await applyFilter(main, role);
     const list = main.getByRole('table', { name: 'Roles', exact: true });
-    await expect
-      .poll(async () => (await rowsOf(list, ['Role name'])).flat(), { message: 'the row' })
-      .toEqual([role]);
+    await expect.poll(async () => (await rowsOf(list, ['Role name'])).flat(), { message: 'the row' }).toEqual([role]);
     const entities = (await rowsOf(list, ['Trusted entities']))[0][0];
-    for (const service of SERVICES) expect(entities, `the row names ${service}`).toContain(service);
+    for (const service of SERVICES) expect(entities, `the row names ${service}`).toContain(namedAs(service));
   });
 
   lines.end();
