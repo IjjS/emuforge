@@ -68,7 +68,7 @@ function resultFlash({ deleted, refused }: DeletionResult): [FlashItem, ...Flash
 }
 
 /** The sentences after what is removed, by what GetBucketVersioning answered. */
-export const FINALITY = {
+const FINALITY = {
   pending: ' Checking whether the bucket keeps versions…',
   unread: " Bucket Versioning could not be read, so it isn't known whether the versions are kept.",
   kept: ' A delete marker is added to each; the versions are kept.',

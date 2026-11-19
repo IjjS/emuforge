@@ -7,7 +7,7 @@ import { engineEndpoint } from '../../../../../../lib/aws/client-factory';
 import { PageFlashContext, type FlashResult, type PageFlash } from '../../../components/page-flash';
 import { AreaRootContext } from '../../../area-root';
 import type { DeletionSelection } from './object-deletion';
-import { DeleteObjectsDialog, FINALITY } from './delete-objects-dialog';
+import { DeleteObjectsDialog } from './delete-objects-dialog';
 
 // The delete dialog of the tab "Objects" and the object page (test-criteria.md, issue 480, "Unit s2 —
 // services/s3/components/delete-objects-dialog.test.tsx"), inside the area's root, against a fake engine.
@@ -223,7 +223,7 @@ async function openDialog(props: HarnessProps) {
   });
   if (props.settle !== false) {
     await waitFor(() => {
-      expect(dialog.textContent).not.toContain(FINALITY.pending.trim());
+      expect(dialog.textContent).not.toContain(PENDING);
     });
   }
   return { dialog, opener };
@@ -259,6 +259,8 @@ async function confirm(dialog: HTMLElement) {
 }
 
 const MARKER = 'A delete marker is added to each; the versions are kept.';
+const PENDING = 'Checking whether the bucket keeps versions…';
+const UNREAD = "Bucket Versioning could not be read, so it isn't known whether the versions are kept.";
 
 describe('the delete dialog, what it says', () => {
   it.each([
@@ -346,9 +348,7 @@ describe('the delete dialog, what it says', () => {
       });
     const { dialog } = await openDialog({ selection: { keys: ['a.txt'], folders: [] }, settle: false });
     expect(
-      within(dialog).getByText(
-        byWholeText('These are removed from alpha in your local emulator. ' + FINALITY.pending.trim()),
-      ),
+      within(dialog).getByText(byWholeText('These are removed from alpha in your local emulator. ' + PENDING)),
     ).toBeInTheDocument();
     expect(dialog.textContent).not.toContain("can't be undone");
     expect(dialog.textContent).not.toContain(MARKER);
@@ -374,9 +374,7 @@ describe('the delete dialog, what it says', () => {
     const { dialog } = await openDialog({ selection: { keys: ['a.txt'], folders: [] } });
     await waitFor(() => {
       expect(
-        within(dialog).getByText(
-          byWholeText('These are removed from alpha in your local emulator. ' + FINALITY.unread.trim()),
-        ),
+        within(dialog).getByText(byWholeText('These are removed from alpha in your local emulator. ' + UNREAD)),
       ).toBeInTheDocument();
     });
     expect(dialog.textContent).not.toContain("can't be undone");
