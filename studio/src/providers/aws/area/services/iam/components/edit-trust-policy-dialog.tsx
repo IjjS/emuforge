@@ -5,6 +5,7 @@ import SpaceBetween from '@cloudscape-design/components/space-between';
 import { useState } from 'react';
 
 import { AreaModal } from '../../../components/area-modal';
+import { DiscardDialog, type DiscardAnswer } from '../../../components/discard-dialog';
 import type { FlashItem } from '../../../components/page-flash';
 import { usePageFlash } from '../../../components/page-flash';
 import { isOneJsonValue } from '../document-text';
@@ -16,7 +17,8 @@ import { Quoted } from './quoted';
 // "Edit trust policy" of a role's tab "Trust relationships" (issue 535, task 4): the document as the tab shows it,
 // edited as JSON text. Studio checks only that the text is one JSON value; "Save changes" sends one
 // `UpdateAssumeRolePolicy` with the text as typed. A refusal stays in the dialog with what was typed; a success closes
-// it, reports in the page's Flashbar, and the role is read again (`useUpdateTrustPolicy`).
+// it, reports in the page's Flashbar, and the role is read again (`useUpdateTrustPolicy`). Closing it ("Cancel", Esc,
+// "Close" or a click outside) once the text differs from what it opened with asks "Discard what you entered?" first.
 
 /** The error text of a trust policy that is not one JSON value (requirement, "EmuForge's own text"). */
 export const TRUST_NOT_JSON_TEXT = 'Enter the trust policy as one JSON value.';
@@ -37,12 +39,25 @@ export function EditTrustPolicyDialog({ role, document, engineOrigin, onClose }:
   const [text, setText] = useState(document);
   const [errorText, setErrorText] = useState<string>();
   const [failure, setFailure] = useState<FlashItem>();
+  const [asking, setAsking] = useState(false);
   const flash = usePageFlash();
   const update = useUpdateTrustPolicy(engineOrigin);
   const pending = update.isPending;
 
   const handleDismiss = () => {
-    if (!pending) {
+    if (pending) {
+      return;
+    }
+    if (text === document) {
+      onClose();
+    } else {
+      setAsking(true);
+    }
+  };
+
+  const handleDiscardAnswer = (answer: DiscardAnswer) => {
+    setAsking(false);
+    if (answer === 'discard') {
       onClose();
     }
   };
@@ -72,40 +87,44 @@ export function EditTrustPolicyDialog({ role, document, engineOrigin, onClose }:
   };
 
   return (
-    <AreaModal
-      visible
-      size="large"
-      header="Edit trust policy"
-      closeAriaLabel="Close modal"
-      onDismiss={handleDismiss}
-      footer={
-        <Box float="right">
-          <SpaceBetween direction="horizontal" size="xs">
-            <Button variant="link" onClick={handleDismiss}>
-              Cancel
-            </Button>
-            <Button variant="primary" loading={pending} loadingText="Saving changes" onClick={handleSave}>
-              Save changes
-            </Button>
-          </SpaceBetween>
-        </Box>
-      }
-    >
-      <SpaceBetween size="m">
-        <DocumentEditor
-          label="Trust policy"
-          description="Who may assume this role, as one JSON value. It is sent as typed."
-          errorText={errorText}
-          value={text}
-          onChange={setText}
-          disabled={pending}
-        />
-        {failure !== undefined && (
-          <Alert type={failure.type} header={failure.header}>
-            {failure.content}
-          </Alert>
-        )}
-      </SpaceBetween>
-    </AreaModal>
+    <>
+      <AreaModal
+        // Hidden while "Discard what you entered?" asks, so one dialog holds the focus; what was typed is kept here.
+        visible={!asking}
+        size="large"
+        header="Edit trust policy"
+        closeAriaLabel="Close modal"
+        onDismiss={handleDismiss}
+        footer={
+          <Box float="right">
+            <SpaceBetween direction="horizontal" size="xs">
+              <Button variant="link" onClick={handleDismiss}>
+                Cancel
+              </Button>
+              <Button variant="primary" loading={pending} loadingText="Saving changes" onClick={handleSave}>
+                Save changes
+              </Button>
+            </SpaceBetween>
+          </Box>
+        }
+      >
+        <SpaceBetween size="m">
+          <DocumentEditor
+            label="Trust policy"
+            description="Who may assume this role, as one JSON value. It is sent as typed."
+            errorText={errorText}
+            value={text}
+            onChange={setText}
+            disabled={pending}
+          />
+          {failure !== undefined && (
+            <Alert type={failure.type} header={failure.header}>
+              {failure.content}
+            </Alert>
+          )}
+        </SpaceBetween>
+      </AreaModal>
+      {asking && <DiscardDialog visible onAnswer={handleDiscardAnswer} />}
+    </>
   );
 }
