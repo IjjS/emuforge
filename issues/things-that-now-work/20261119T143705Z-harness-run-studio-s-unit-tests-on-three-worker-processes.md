@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: harness|studio-unit|three-worker-processes
-Issue-Check-Ids:
+Issue-Check-Ids: none (harness issue, no kept guard shows it)
 Issue-Commit: c0ec6867a6d40fffe3ae5a236afa08592116c092
 
 # Run Studio's unit tests on three worker processes
