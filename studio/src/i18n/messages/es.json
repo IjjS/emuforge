@@ -85,6 +85,11 @@
     "many": "{count}\u00a0de\u00a0servicios · aún sin pantalla en Studio",
     "other": "{count}\u00a0servicios · aún sin pantalla en Studio"
   },
+  "providers.servicesWithScreens": {
+    "one": "{count}\u00a0servicio · {screens} con pantalla en Studio",
+    "many": "{count}\u00a0de\u00a0servicios · {screens} con pantalla en Studio",
+    "other": "{count}\u00a0servicios · {screens} con pantalla en Studio"
+  },
   "notFound.title": "Página no encontrada",
   "notFound.statement": "Studio no tiene ninguna página en {path}.",
   "notFound.path": "Ruta",

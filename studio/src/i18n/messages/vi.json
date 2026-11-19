@@ -79,6 +79,9 @@
   "providers.services": {
     "other": "{count}\u00a0dịch vụ · chưa có màn hình Studio"
   },
+  "providers.servicesWithScreens": {
+    "other": "{count}\u00a0dịch vụ · {screens} có màn hình Studio"
+  },
   "notFound.title": "Không tìm thấy trang",
   "notFound.statement": "Studio không có trang nào tại {path}.",
   "notFound.path": "Đường dẫn",

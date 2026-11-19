@@ -1,5 +1,6 @@
-import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { createMemoryRouter, RouterProvider } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   advance,
@@ -18,12 +19,51 @@ import {
   type FakeAnswer,
 } from '../../test/home-test-kit';
 import { serviceLinks } from '../../test/service-files';
+import { PROVIDERS, type Provider, type ProviderService } from '../../app/provider-list';
+import { Providers } from '../../app/providers';
+import { BUNDLED_CATALOGUES } from '../../i18n/bundled';
+import { languageStore } from '../../test/home-test-kit';
+import { ProvidersSection } from './providers-section';
 
 // The services as their folders give them (providers/aws/area/services/*/service.json), in the order of issue 386's
 // requirement R13.2, each under /aws.
 const SERVICES = serviceLinks();
 
 let engine: FakeEngine;
+
+/** The line under a provider's name in `region`: the paragraph that counts its services. */
+function providerLine(region: HTMLElement): HTMLElement {
+  return within(region).getByText(
+    (_content, element) => element?.tagName === 'P' && /\d/.test(element.textContent ?? ''),
+  );
+}
+
+/** `total` services of a test provider, the first `withScreen` of them with a Studio screen. */
+function testServices(total: number, withScreen: number): ProviderService[] {
+  return Array.from({ length: total }, (_, index) => ({
+    label: `Service ${String(index + 1).padStart(4, '0')}`,
+    path: `/test/s${String(index + 1)}`,
+    hasScreen: index < withScreen,
+  }));
+}
+
+/** Home's providers section alone for one test provider of `services`, in `tag`. */
+function renderProvider(services: readonly ProviderService[], tag = 'en') {
+  const provider: Provider = {
+    name: 'Test Cloud',
+    shortName: 'Test',
+    segment: 'test',
+    services,
+    loadArea: () => new Promise(() => undefined),
+  };
+  const router = createMemoryRouter([{ path: '*', element: <ProvidersSection providers={[provider]} /> }]);
+  render(
+    <Providers language={languageStore(tag, BUNDLED_CATALOGUES)}>
+      <RouterProvider router={router} />
+    </Providers>,
+  );
+  return screen.getByRole('region', { name: /\(1\)$/ });
+}
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
@@ -291,17 +331,20 @@ describe('Home: content', () => {
     }
   });
 
-  it('lists one provider: "Amazon Web Services" to /aws, "<number> services · no Studio screen yet", every service link', async () => {
+  it('lists one provider: "Amazon Web Services" to /aws, "<number> services · <number> with a Studio screen", both numbers from the providers list, every service link (regression, issue 494)', async () => {
+    const aws = present(PROVIDERS[0], 'the AWS entry');
+    const count = aws.services.length;
+    const screens = aws.services.filter(({ hasScreen }) => hasScreen).length;
+    expect(screens).toBeGreaterThan(0);
     await openHome(connected());
     const providers = screen.getByRole('region', { name: 'Providers (1)' });
     const entry = within(providers).getByRole('link', { name: 'Amazon Web Services' });
     expect(entry).toHaveAttribute('href', '/aws');
-    expect(providers).toHaveTextContent(`${String(SERVICES.length)} services · no Studio screen yet`);
     // As written in the page: U+00A0 between the count and its unit (issue 32, R4.1).
-    const line = within(providers).getByText(
-      (_content, element) => element?.tagName === 'P' && /services/.test(element.textContent ?? ''),
+    expect(providerLine(providers).textContent).toBe(
+      `${String(count)}\u00a0services · ${String(screens)} with a Studio screen`,
     );
-    expect(line.textContent).toBe(`${String(SERVICES.length)}\u00a0services · no Studio screen yet`);
+    expect(providers).not.toHaveTextContent('no Studio screen yet');
     const links = within(providers)
       .getAllByRole('link')
       .filter((link) => link !== entry)
@@ -321,5 +364,31 @@ describe('Home: content', () => {
     await openHome(answer);
     expect(cloudscapeElements(screen.getByRole('main'))).toEqual([]);
     expect(cloudscapeElements()).toEqual([]);
+  });
+});
+
+describe("Home's providers line counts the services that have a Studio screen (issue 494, R2)", () => {
+  it.each<[string, number, number, string]>([
+    ['three services of which one has a screen', 3, 1, '3\u00a0services · 1 with a Studio screen'],
+    ['one service that has a screen', 1, 1, '1\u00a0service · 1 with a Studio screen'],
+    ['two services of which none has a screen', 2, 0, '2\u00a0services · no Studio screen yet'],
+  ])('a provider of %s → "%s"', (_what, total, withScreen, line) => {
+    const region = renderProvider(testServices(total, withScreen));
+    expect(providerLine(region).textContent).toBe(line);
+  });
+
+  it('a provider of 1,234 services of which 1,000 have a screen, in German → both numbers as German writes them', () => {
+    const region = renderProvider(testServices(1234, 1000), 'de');
+    expect(providerLine(region).textContent).toBe('1.234\u00a0Dienste · 1.000 mit Studio-Ansicht');
+  });
+
+  it('every service link is still listed, each to its path, whether or not it has a screen', () => {
+    const services = testServices(5, 2);
+    const region = renderProvider(services);
+    const links = within(region)
+      .getAllByRole('link')
+      .filter((link) => link.textContent !== 'Test Cloud')
+      .map((link) => [link.textContent, link.getAttribute('href')]);
+    expect(links).toEqual(services.map(({ label, path }) => [label, path]));
   });
 });
