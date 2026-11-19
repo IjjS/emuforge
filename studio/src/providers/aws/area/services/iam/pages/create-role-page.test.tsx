@@ -1262,7 +1262,9 @@ describe('"Create role"', () => {
     press('Create role');
 
     const said = () =>
-      [...document.querySelectorAll('.aws-area-announcer[aria-live="polite"]')].map((region) => region.textContent ?? '');
+      [...document.querySelectorAll('.aws-area-announcer[aria-live="polite"]')].map(
+        (region) => region.textContent ?? '',
+      );
     await waitFor(() => {
       expect(said()).toContain(
         'Creating the role failed. MalformedPolicyDocument: Invalid principal in policy: "SERVICE":"nonsense"',
