@@ -15,6 +15,15 @@
     border-bottom: 1px solid var(--st-line);
   }
 
+  /* The bar is always in view, yet it lies under `html`'s scroll-padding-top (base.css), which is deeper than the bar:
+     a scroll into view of the bar or anything in it (focus on the language menu's option, a scroll-if-needed) would
+     move the page. A negative margin of the same depth cancels that padding for the bar alone (DESIGN.md, The frame;
+     issue 486). */
+  .st-bar,
+  .st-bar * {
+    scroll-margin-top: calc(-1 * (var(--st-bar-h) + 16px));
+  }
+
   /* "Skip to content": the bar's first Tab stop, hidden until it has focus, then shown at the bar's start. */
   .st-skip {
     position: absolute;
@@ -160,14 +169,29 @@
     }
   }
 
-  /* At 480 and below the bar keeps the wordmark, every tab and the control's globe (R3.5): tighter gaps and tabs. */
+  /* At 480 and below the bar keeps the wordmark, every tab and the control's globe (R3.5): tighter gaps, and the tabs
+     a type step down (12px) with 4px padding and no gap between them, so Home, Connections and AWS fit at 390 in
+     every language (Polish "Strona główna" with "Połączenia" is the longest; issue 486). Each tab is at
+     least 24px wide, its label centred, so a short one (Korean "홈") is still a 24px target. The ring moves 2px in, so
+     it stays inside the tab's padding. */
   @media (max-width: 480px) {
     .st-bar {
-      gap: 8px;
+      gap: 6px;
+    }
+
+    .st-nav {
+      gap: 0;
     }
 
     .st-nav a {
-      padding: 0 7px;
+      justify-content: center;
+      min-width: 24px;
+      padding: 0 4px;
+      font-size: 12px;
+    }
+
+    .st-nav a:focus-visible {
+      outline-offset: -2px;
     }
   }
 }

@@ -13,18 +13,18 @@ import { Lines } from './support/lines';
 import { checkPrefix, SEOUL } from './support/service-screens';
 import { bucketPropertiesDirect, listBucketsDirect, Seeded } from './services/s3/s3';
 import {
-  bucketPath,
   EngineHold,
   expectBucketPage,
   expectedSections,
   expectSections,
   LOADING_BUCKET,
+  propertiesPath,
   readSection,
   SECTION_LOADING,
   SECTIONS,
   shownSectionTitles,
+  shownTabs,
   TABS,
-  tab,
   VERSIONING,
 } from './services/s3/s3-bucket-page';
 
@@ -43,20 +43,20 @@ test('studio.s3-bucket-page-shows-loading-until-the-answer', async ({ ctx, page,
   const expected = expectedSections(direct!, await bucketPropertiesDirect(ctx, port, name), SEOUL);
 
   await lines.line(
-    'Open a bucket\'s page with the `ListBuckets` request held back → "Loading bucket", no tabs and no section; let it go → the tabs and sections',
+    'Open a bucket\'s "Properties" (`/properties`; issue 480: the bare route is "Objects") with the `ListBuckets` request held back → "Loading bucket", no tabs and no section; let it go → the two tabs and the six sections',
     async () => {
       const hold = await EngineHold.attach(ctx, context, page, stack.engine.url, (op) => op === 'ListBuckets');
       try {
-        await page.goto(bucketPath(name));
+        await page.goto(propertiesPath(name));
         await expect(page.getByText(LOADING_BUCKET, { exact: true }), `"${LOADING_BUCKET}"`).toBeVisible();
         await expect.poll(() => hold.count(), { message: 'a ListBuckets request is held' }).toBeGreaterThan(0);
-        for (const t of TABS) await expect(tab(page, t), `the tab "${t}" while loading`).toHaveCount(0);
+        expect(await shownTabs(page), 'tabs while loading').toEqual([]);
         expect(await shownSectionTitles(page), 'sections while loading').toEqual([]);
         await hold.release();
         await expectBucketPage(page, name);
-        for (const t of TABS) await expect(tab(page, t), `the tab "${t}"`).toBeVisible();
+        await expect.poll(() => shownTabs(page), { message: 'the tabs, and no other' }).toEqual(TABS);
         await expect
-          .poll(async () => [...(await shownSectionTitles(page))].sort(), { message: 'the sections shown' })
+          .poll(async () => [...(await shownSectionTitles(page))].sort(), { message: 'the sections, and no other' })
           .toEqual([...SECTIONS].sort());
         await expect(page.getByText(LOADING_BUCKET, { exact: true }), `"${LOADING_BUCKET}" once answered`).toHaveCount(
           0,
@@ -68,11 +68,11 @@ test('studio.s3-bucket-page-shows-loading-until-the-answer', async ({ ctx, page,
   );
 
   await lines.line(
-    'Open it with the `GetBucketVersioning` request held back → "Loading" in "Bucket Versioning" while the other sections show their values; let it go → its value',
+    'Open its "Properties" with the `GetBucketVersioning` request held back → "Loading" in "Bucket Versioning" while the other sections show their values; let it go → its value',
     async () => {
       const hold = await EngineHold.attach(ctx, context, page, stack.engine.url, (op) => op === 'GetBucketVersioning');
       try {
-        await page.goto(bucketPath(name));
+        await page.goto(propertiesPath(name));
         await expectBucketPage(page, name);
         await expect.poll(() => hold.count(), { message: 'a GetBucketVersioning request is held' }).toBeGreaterThan(0);
         await expect

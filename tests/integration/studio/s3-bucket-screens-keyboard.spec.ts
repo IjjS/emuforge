@@ -33,7 +33,6 @@ import {
   bucketPropertiesDirect,
   H1,
   LONGEST_NAME,
-  NAV_DIRECTORY,
   NAV_GENERAL,
   NAV_HEADER,
   NOTICE_CLOSE,
@@ -42,7 +41,7 @@ import {
 } from './services/s3/s3';
 import {
   BLOCK_SETTINGS,
-  bucketPath,
+  propertiesPath,
   ENCRYPTION,
   CREATE_BUTTON,
   CREATE_H1,
@@ -170,7 +169,6 @@ function frameStops(crumbs: string[]): Expected[] {
       optional: true,
     },
     { what: `"${NAV_GENERAL}"`, match: named(NAV_GENERAL, 'link') },
-    { what: `"${NAV_DIRECTORY}"`, match: named(NAV_DIRECTORY, 'link') },
     ...crumbs.map((c, i) => ({
       what: i === crumbs.length - 1 ? `the current crumb "${c}"` : `the crumb "${c}"`,
       match: i === crumbs.length - 1 ? named(c) : named(c, 'link'),
@@ -548,7 +546,7 @@ test('studio.s3-bucket-screens-keyboard-and-layout', async ({ ctx, page, context
         {
           name: '"Bucket not found"',
           open: async () => {
-            await page.goto(bucketPath(`${p}-missing`));
+            await page.goto(propertiesPath(`${p}-missing`));
             await expectPageShows(page, NOT_FOUND, `"${NOT_FOUND}"`);
           },
         },
@@ -608,7 +606,7 @@ test('studio.s3-bucket-screens-keyboard-and-layout', async ({ ctx, page, context
             stopped = true;
           },
           open: async () => {
-            await page.goto(bucketPath(plain));
+            await page.goto(propertiesPath(plain));
             await expectLine(page, notStartedOn(port));
             await expectPageShows(page, NOT_READ, `"${NOT_READ}"`);
           },

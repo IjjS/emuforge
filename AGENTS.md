@@ -61,17 +61,14 @@ memory) is judged by the scripts, never by a pane.
 
 ## Go signal
 
-Work that comes from outside starts only after the owner says so, in one of two ways:
-
-- a direct instruction in chat, or
-- a comment that is exactly `READY` on the GitHub issue, written by the repository owner. A `READY` from anyone
-  else is ignored.
+Work that comes from outside starts only on the owner's direct instruction in chat. The owner collects the issues
+from outside, GitHub's included; nothing in the harness reads a comment on GitHub as a signal.
 
 Work the harness finds itself needs no new signal. While planning or building, a `plan` or `worker` that meets
 something that should be handled separately files it as an issue file under `issues/things-that-do-not-work/`
 instead of fixing it in passing; so does the `pm` for a check that fails on `main`. Once every worktree of the
 current issues is merged, the `pm` reads the open issue files and assigns the next one, and keeps going. An issue
-file whose `Issue-Source` is `github#<n>` still waits for its `READY`, and one filed from a run on GitHub Actions
+file whose `Issue-Source` is `github#<n>` still waits for the owner's word, and one filed from a run on GitHub Actions
 waits for the owner's signal (Branches and main).
 
 A go signal authorizes commits on the issue's branches in their worktrees, and nothing else. The owner may set a

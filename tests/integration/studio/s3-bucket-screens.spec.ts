@@ -24,6 +24,7 @@ import {
   expectSections,
   form,
   openBucketPage,
+  propertiesPath,
   openForm,
   REFRESH,
   SECTIONS,
@@ -56,7 +57,7 @@ async function expectList(page: Page): Promise<void> {
 
 /** The three screens that read one bucket, by the route of `name`, with the `h1` each keeps (R4.3, R5.5). */
 const SCREENS: { screen: string; path: (name: string) => string; h1: (name: string) => string }[] = [
-  { screen: "the bucket's page", path: bucketPath, h1: (name) => name },
+  { screen: "the bucket's Properties", path: propertiesPath, h1: (name) => name },
   { screen: 'the empty page', path: emptyPath, h1: () => 'Empty bucket' },
   { screen: 'the delete page', path: deletePath, h1: () => 'Delete bucket' },
 ];
@@ -81,7 +82,7 @@ test('studio.s3-bucket-screens-of-a-missing-bucket-say-not-found', async ({ ctx,
   const seeded = new Seeded(ctx, port);
 
   await lines.line(
-    'Open the page, the empty page and the delete page of a name the emulator does not hold → each shows "Bucket not found" with the name and the link "General purpose buckets", which opens the list',
+    'Open the Properties (`/properties`), the empty page and the delete page of a name the emulator does not hold → each shows "Bucket not found" with the name and the link "General purpose buckets", which opens the list; its bare route (issue 480: the tab "Objects") shows "No bucket <name>" with "Go to Buckets", which opens the list',
     async () => {
       const missing = `${p}-never`;
       expect(await bucketNamesDirect(ctx, port, missing), `a direct ListBuckets under ${missing}`).not.toContain(
@@ -94,6 +95,11 @@ test('studio.s3-bucket-screens-of-a-missing-bucket-say-not-found', async ({ ctx,
         await pageControl(page, GENERAL_PURPOSE_BUCKETS).click(ACTION);
         await expectList(page);
       }
+      await page.goto(bucketPath(missing));
+      await expect(heading(page, missing), 'the bare route: its h1').toBeVisible();
+      await expectPageShows(page, `No bucket ${missing}`, 'the bare route: "No bucket"');
+      await pageControl(page, 'Go to Buckets').click(ACTION);
+      await expectList(page);
     },
   );
 

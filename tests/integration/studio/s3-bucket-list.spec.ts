@@ -45,7 +45,6 @@ import {
   ListBucketsRecord,
   listBucketsDirect,
   LOADING,
-  NAV_DIRECTORY,
   NAV_GENERAL,
   NAV_HEADER,
   NO_MATCHES,
@@ -62,10 +61,10 @@ import {
   SERVICE_LABEL,
   shownNames,
   shownRows,
-  TAB_DIRECTORY,
   TABLE_TITLE,
   TOOLS,
 } from './services/s3/s3';
+import { expectBucketPage, OBJECTS } from './services/s3/s3-bucket-page';
 import {
   HEADER,
   headerDescriptions,
@@ -174,20 +173,20 @@ test.describe(() => {
     // Issue 467 (requirement R9, rule 1) replaced "the notice reads …, and the description names the same endpoint"
     // with the notice's body of R3, nothing between the `h1` and the table's controls, and the endpoint drawn once.
     await lines.line(
-      'On the screen → the side navigation has the header "Amazon S3" and the links "General purpose buckets" (current) and "Directory buckets"; the emulator line reads "Connected at `<endpoint>`"; the notice reads "These buckets are in your local emulator" with the body "They are not in an AWS account. EmuForge Studio is a stand-alone local tool, not an AWS feature."; nothing stands between the `h1` and the table\'s controls; the endpoint the emulator line shows is on the page once',
+      'On the screen → the side navigation has the header "Amazon S3" and the link "General purpose buckets" (current), and no other (issue 480: "Directory buckets" went); the emulator line reads "Connected at `<endpoint>`"; the notice reads "These buckets are in your local emulator" with the body "They are not in an AWS account. EmuForge Studio is a stand-alone local tool, not an AWS feature."; nothing stands between the `h1` and the table\'s controls; the endpoint the emulator line shows is on the page once',
       async () => {
         await expectListAt(page, BUCKETS_PATH);
         await expect
           .poll(() => navigation(page), { message: 'the side navigation' })
-          .toEqual({ links: [NAV_HEADER, NAV_GENERAL, NAV_DIRECTORY], current: [NAV_GENERAL] });
+          .toEqual({ links: [NAV_HEADER, NAV_GENERAL], current: [NAV_GENERAL] });
         await expectLine(page, connectedAt(port));
         await expect(screen(page).notice, `the notice "${NOTICE}"`).toBeVisible();
         const s = screen(page);
         await expect(s.filter, `the table's filter "${FILTER}"`).toBeVisible();
         const header = await pageHeader(page);
         const descriptions = await headerDescriptions(page);
-        // From the bottom of the h1's header row to the top of the filter and the preferences: the tabs and the
-        // table's own header (its title, counter, Info and actions) are the page's controls, anything else stands
+        // From the bottom of the h1's header row to the top of the filter and the preferences: the table's own
+        // header (its title, counter, Info and actions) are the page's controls, anything else stands
         // between.
         const h1Header = page.locator(HEADER).filter({ has: page.getByRole('heading', { level: 1 }) });
         const between = await textsBetween(page, h1Header, [s.filter, s.preferences]);
@@ -397,7 +396,7 @@ test('studio.s3-bucket-list-actions-lead-to-their-routes', async ({ ctx, page })
   );
 
   await lines.line(
-    '"Delete" (after selecting again) → `/aws/s3/bucket/<p>-one/delete`; Back; the name\'s link → `/aws/s3/buckets/<p>-one`; Back; "Create bucket" → `/aws/s3/bucket/create`; Back; the tab "Directory buckets" → `/aws/s3/directory-buckets`',
+    '"Delete" (after selecting again) → `/aws/s3/bucket/<p>-one/delete`; Back; the name\'s link → `/aws/s3/buckets/<p>-one`, its tab "Objects" selected; Back; "Create bucket" → `/aws/s3/bucket/create` (issue 480: the tab "Directory buckets" went)',
     async () => {
       await listed();
       await s.radio(one).check(ACTION);
@@ -407,12 +406,10 @@ test('studio.s3-bucket-list-actions-lead-to-their-routes', async ({ ctx, page })
       await listed();
       await s.nameLink(one).click(ACTION);
       await expect(page).toHaveURL(addressOf(`/aws/s3/buckets/${one}`));
+      await expectBucketPage(page, one, OBJECTS);
       await back();
       await s.action(CREATE).click(ACTION);
       await expect(page).toHaveURL(addressOf('/aws/s3/bucket/create'));
-      await back();
-      await s.tab(TAB_DIRECTORY).click(ACTION);
-      await expect(page).toHaveURL(addressOf('/aws/s3/directory-buckets'));
       expect(await stillSamePage(page), 'no document was loaded').toBe(true);
     },
   );

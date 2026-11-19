@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: harness|roles|plan-leads-an-issue-and-harness-engineer
-Issue-Check-Ids:
+Issue-Check-Ids: harness.lead harness.check-room harness.pane-effort harness.issue-branch-docs
 Issue-Commit: f0cbdfa6e6199e140c0168907d540da69ac6f202
 
 # Let the plan lead its issue to the end, add the harness engineer, and cut the guides to what every agent needs

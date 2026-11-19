@@ -357,14 +357,21 @@ async function openLoaded(buckets: FakeBucket[] = THREE, path?: string) {
 // ---------------------------------------------------------------------------------------------------------------
 
 describe('the bucket list, loaded', () => {
-  it('three buckets: the h1, the tabs, the counted heading, the columns in order, one row per bucket in the answer’s order', async () => {
+  // Issue 480 (test-criteria.md, "Unit s1"): no tab and no navigation link "Directory buckets".
+  it('three buckets: the h1, no tabs, the counted heading, the columns in order, one row per bucket in the answer’s order', async () => {
     await openLoaded();
 
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Buckets');
-    const tabs = screen.getAllByRole('tab');
-    expect(tabs.map((tab) => tab.textContent)).toEqual(['General purpose buckets', 'Directory buckets']);
-    expect(tabs[0]).toHaveAttribute('aria-selected', 'true');
-    expect(tabs[1]).toHaveAttribute('aria-selected', 'false');
+    expect(screen.queryAllByRole('tab')).toEqual([]);
+    expect(screen.queryByText('Directory buckets')).toBeNull();
+    const navigation = createWrapper(document.body).findSideNavigation();
+    const header = navigation?.findHeaderLink()?.getElement();
+    const links = within(navigation?.getElement() as HTMLElement)
+      .getAllByRole('link')
+      .filter((link) => link !== header)
+      .map((link) => link.textContent);
+    expect(links).toEqual(['General purpose buckets']);
+    expect(navigation?.findActiveLink()?.getElement()).toHaveTextContent('General purpose buckets');
     expect(titleText()).toBe('General purpose buckets (3)');
     const headings = (table().findColumnHeaders() ?? []).map((header) => header.getElement().textContent);
     // The first heading is the selection column's, named by its group.
@@ -515,22 +522,10 @@ describe('selection and the actions', () => {
     },
   );
 
-  // The tab first: a bucket's page reads on opening (issue 256, R5), and a read of it still on its way could be
-  // counted after the return to the list, so the name's link comes last and asserts the address only.
-  it('a name leads to the bucket’s route and the tab "Directory buckets" to /aws/s3/directory-buckets, without a request', async () => {
+  // Issue 480: the name leads to the bucket's bare route, its tab "Objects".
+  it('a name leads to the bucket’s route', async () => {
     const { router } = await openLoaded([bucket('my bucket%/x')]);
-    const sent = engine.aws.length;
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Directory buckets' }));
-    await waitFor(() => {
-      expect(router.state.location.pathname).toBe('/aws/s3/directory-buckets');
-    });
-    expect(engine.aws.length).toBe(sent);
-    expect(sent).toBe(1);
-    act(() => {
-      void router.navigate('/aws/s3/buckets');
-    });
-    await expectNames(['my bucket%/x']);
     fireEvent.click(within(tableElement()).getByRole('link', { name: 'my bucket%/x' }));
     await waitFor(() => {
       expect(router.state.location.pathname).toBe('/aws/s3/buckets/my%20bucket%25%2Fx');

@@ -10,9 +10,6 @@ export const S3_PATH = `${AWS_PATH}/s3`;
 /** The general purpose bucket list. */
 export const BUCKETS_PATH = `${S3_PATH}/buckets`;
 
-/** The directory bucket list, the tab "Directory buckets". */
-export const DIRECTORY_BUCKETS_PATH = `${S3_PATH}/directory-buckets`;
-
 /** "Create bucket". */
 export const CREATE_BUCKET_PATH = `${S3_PATH}/bucket/create`;
 
@@ -26,40 +23,40 @@ export function bucketPath(name: string): string {
   return `${BUCKETS_PATH}/${segment(name)}`;
 }
 
-/** The tabs of a bucket's page but "Properties", each a route of its own (R10). */
-export type BucketTab = 'objects' | 'metadata' | 'permissions' | 'metrics' | 'management';
+/** `?<name>=<value>` for a value that is not empty, encoded by `URLSearchParams` so any key round-trips; else none. */
+function query(name: string, value: string): string {
+  return value === '' ? '' : `?${new URLSearchParams({ [name]: value }).toString()}`;
+}
+
+/**
+ * A bucket's tab "Objects" at `prefix` (issue 480): the bucket's own route, the prefix in the query, never in a path
+ * segment, since a key holds `/`, `?`, `#` and `%`.
+ */
+export function objectsPath(name: string, prefix = ''): string {
+  return `${bucketPath(name)}${query('prefix', prefix)}`;
+}
+
+/** An object's own page (issue 480, task 2), its key in the query. */
+export function objectPath(name: string, key: string): string {
+  return `${bucketPath(name)}/object?${new URLSearchParams({ key }).toString()}`;
+}
+
+/** "Upload" into `prefix` of a bucket (issue 480, task 3). */
+export function uploadPath(name: string, prefix = ''): string {
+  return `${S3_PATH}/bucket/${segment(name)}/upload${query('prefix', prefix)}`;
+}
 
 /** The tab "Properties" of a bucket's page. */
 export function bucketPropertiesPath(name: string): string {
   return `${bucketPath(name)}/properties`;
 }
 
-/** Another tab of a bucket's page. */
-export function bucketTabPath(name: string, tab: BucketTab): string {
-  return `${bucketPath(name)}/${tab}`;
-}
-
 /** The sections of a bucket's "Properties" whose button is "Edit" (R10). */
-export type EditableProperty =
-  | 'versioning'
-  | 'abac'
-  | 'tags'
-  | 'encryption'
-  | 'logging'
-  | 'eventbridge'
-  | 'transfer-acceleration'
-  | 'object-lock'
-  | 'requester-pays'
-  | 'website';
+export type EditableProperty = 'versioning' | 'tags' | 'encryption' | 'website';
 
 /** The route of a section's "Edit". */
 export function editPropertyPath(name: string, property: EditableProperty): string {
   return `${S3_PATH}/bucket/${segment(name)}/property/${property}/edit`;
-}
-
-/** "Create configuration" of "S3 Intelligent-Tiering Archive configurations". */
-export function createIntelligentTieringPath(name: string): string {
-  return `${S3_PATH}/bucket/${segment(name)}/property/intelligent-tiering/create`;
 }
 
 /** "Create event notification" of "Event notifications". */
@@ -89,20 +86,80 @@ export function encryptionTypeLabel(algorithm: string): string {
   return Object.hasOwn(ENCRYPTION_TYPES, algorithm) ? (ENCRYPTION_TYPES[algorithm] as string) : algorithm;
 }
 
-/** A number of days: "1 day", "90 days". */
-export function formatDays(days: number): string {
-  return days === 1 ? '1 day' : `${String(days)} days`;
+/** The Type of a folder row of the tab "Objects". */
+export const FOLDER_TYPE = 'Folder';
+
+/** A value a row lacks: a folder's size and storage class, a key without an extension. */
+export const NO_VALUE = '-';
+
+/** The Type of an object row: the last extension of the key's last part ("json"), or "-" for a key without one. */
+export function keyType(key: string): string {
+  const last = key.slice(key.lastIndexOf('/') + 1);
+  const dot = last.lastIndexOf('.');
+  // A name that starts with its only dot (".env") or ends in one has no extension.
+  return dot <= 0 || dot === last.length - 1 ? NO_VALUE : last.slice(dot + 1);
 }
 
-/** A number of years: "1 year", "2 years". */
-export function formatYears(years: number): string {
-  return years === 1 ? '1 year' : `${String(years)} years`;
+const SIZE_UNITS = ['KiB', 'MiB', 'GiB', 'TiB', 'PiB'] as const;
+
+/** A size in bytes, base 1024: "512 B" under 1024 bytes, then one decimal ("1.5 KiB", "20.0 MiB", "1.2 GiB"). */
+export function formatSize(bytes: number): string {
+  if (bytes < 1024) {
+    return `${String(bytes)} B`;
+  }
+  let value = bytes / 1024;
+  let unit = 0;
+  // Moved up while the value would show as 1024.0 or more of its unit.
+  while (Number(value.toFixed(1)) >= 1024 && unit < SIZE_UNITS.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value.toFixed(1)} ${SIZE_UNITS[unit] as string}`;
 }
 
-/** A period of Object Lock's default retention, in the unit it was set in. */
-export type RetentionPeriod = { unit: 'days'; count: number } | { unit: 'years'; count: number };
+/** One part of a prefix's trail: its text and the prefix it opens. */
+export interface PrefixPart {
+  text: string;
+  prefix: string;
+}
 
-/** "Default retention period". */
-export function formatRetentionPeriod(period: RetentionPeriod): string {
-  return period.unit === 'days' ? formatDays(period.count) : formatYears(period.count);
+/**
+ * The parts of `prefix`, from the root down (`logs/2026/` → `logs` at `logs/`, `2026` at `logs/2026/`): each ends at a
+ * `/`; a last part without one is the prefix as it was given. An empty part (of `d//`) is shown as "/".
+ */
+export function prefixParts(prefix: string): PrefixPart[] {
+  const parts: PrefixPart[] = [];
+  let start = 0;
+  while (start < prefix.length) {
+    const slash = prefix.indexOf('/', start);
+    const end = slash === -1 ? prefix.length : slash + 1;
+    const text = prefix.slice(start, slash === -1 ? prefix.length : slash);
+    parts.push({ text: text === '' ? '/' : text, prefix: prefix.slice(0, end) });
+    start = end;
+  }
+  return parts;
+}
+
+/** An object's or a folder's S3 URI, `s3://{name}/{key}`, the key exactly as the emulator gave it. */
+export function s3Uri(name: string, key: string): string {
+  return `s3://${name}/${key}`;
+}
+
+/**
+ * The folder an object's key is in (issue 480, task 2): its part up to its last `/` (`logs/2026/x.json` → `logs/2026/`);
+ * for a key that ends in `/` (a folder's marker), the folder that holds it (`a/b/` → `a/`).
+ */
+export function keyPrefix(key: string): string {
+  const own = key.endsWith('/') ? key.slice(0, -1) : key;
+  return own.slice(0, own.lastIndexOf('/') + 1);
+}
+
+/** An object's name on its page: the key's last part, or the whole key for a key that ends in `/`. */
+export function keyName(key: string): string {
+  return key.endsWith('/') ? key : key.slice(key.lastIndexOf('/') + 1);
+}
+
+/** An object's ARN, `arn:aws:s3:::{name}/{key}`. */
+export function objectArn(name: string, key: string): string {
+  return `arn:aws:s3:::${name}/${key}`;
 }

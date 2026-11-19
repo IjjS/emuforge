@@ -1,0 +1,26 @@
+/* A status on its own (DESIGN.md, Status lines): the status rows' icon and word, and a message under it that may
+   break anywhere, since it is the engine's text. */
+
+@layer studio {
+  .st-status-line {
+    min-width: 0;
+  }
+
+  .st-status-line.small .st-status {
+    font-size: 14px;
+    font-weight: 560;
+    gap: 6px;
+  }
+
+  .st-status-line.small .st-status svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  .st-status-message {
+    margin-top: 4px;
+    font-size: 14px;
+    color: var(--st-text-2);
+    overflow-wrap: anywhere;
+  }
+}
