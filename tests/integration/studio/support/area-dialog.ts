@@ -13,6 +13,8 @@ import { languageControl } from "./languages";
 
 /** The close control in a dialog's header, as Cloudscape's own test utilities find it. */
 const DISMISS = createWrapper().findModal().findDismissButton().toSelector();
+/** The same from inside the dialog: Cloudscape's selector starts at `body` and names the dialog's root first. */
+const DISMISS_IN_DIALOG = DISMISS.split(' ').at(-1) ?? DISMISS;
 
 export interface Point {
   x: number;
@@ -183,7 +185,7 @@ export async function readDialog(
 
 /** The open `dialog`'s close control. */
 export function closeControl(dialog: Locator): Locator {
-  return dialog.locator(DISMISS);
+  return dialog.locator(DISMISS_IN_DIALOG);
 }
 
 /** Brings the open `dialog`'s own scrolling to its start (`0`) or its end. */
