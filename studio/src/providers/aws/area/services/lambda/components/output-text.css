@@ -1,0 +1,7 @@
+/* The response and the log tail of an invoke (issue 516, design "Task 2"): exactly as returned, their line breaks and
+   tabs kept. Inside it the text is free text of the area's one way of breaking (`value-text.css`), so a long line
+   breaks rather than widening the page, as an SQS message's body does. The area's own element inside Cloudscape's
+   `Box` of variant `code`; it sets no colour, spacing or font. */
+.aws-lambda-output-text {
+  white-space: pre-wrap;
+}
