@@ -7,7 +7,8 @@
 - Waiting, Slots: waiting.json rows (pm-pane's QUEUE, pm-check's WAIT) and pm-worktree's port slots taken from
   several processes at once: every row kept, no slot given twice.
 - Unregistered: pm-watchd's judgement `unregistered` (run on the fixture's copy, its `main()` left out) and
-  `_pmlib.pane_ops`; the daemon calls them on every look, the marks read before herdr's list; the daemon's lifetime lock.
+  `_pmlib.pane_ops`; the daemon calls them on every look, the marks read before herdr's list and after the registry;
+  the daemon's lifetime lock.
 - CloseSettles: `pm-pane close` with a stand-in herdr that lists the closed pane's agent for a moment (issue 510): a
   stand-in daemon looking as pm-watchd does meanwhile tells no `EVENT unregistered`; the wait is bounded at 5 s.
 - Texts: the daemon's docstring and the pm's Events table name `EVENT unregistered`.
@@ -294,16 +295,19 @@ class Unregistered(Case):
 
         def calls(fn):
             return [n.func.id for n in ast.walk(fns[fn]) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)]
+        # and again after the registry: a close that sets its mark after the first read and takes the entry out
+        # before the registry's read is marked at the second
         self.assertFalse({"agents", "pane_ops"} & set(calls("run")), "run() reads herdr's list and the marks apart")
-        order = [c for c in calls("look") if c in ("agents", "pane_ops")]
-        self.assertEqual(order, ["pane_ops", "agents"])
-        line = lambda c: next(n.lineno for n in ast.walk(fns["look"]) if isinstance(n, ast.Call)
-                              and isinstance(n.func, ast.Name) and n.func.id == c)
-        self.assertLess(line("pane_ops"), line("agents"))
+        reads = sorted((n.lineno, n.col_offset, n.func.id) for n in ast.walk(fns["look"]) if isinstance(n, ast.Call)
+                       and isinstance(n.func, ast.Name) and n.func.id in ("agents", "pane_ops", "load"))
+        self.assertEqual([c for _, _, c in reads], ["pane_ops", "agents", "load", "pane_ops"])
+        unreg = next(n for n in ast.walk(fns["run"]) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                     and n.func.id == "unregistered")
+        self.assertIsInstance(unreg.args[1], ast.Name, "unregistered() is judged on the registry look() read")
 
 
-# a stand-in daemon: the fixture's pm-watchd without its main(); it looks as run() does (look(), then the registry,
-# then unregistered()) every 50 ms until the file argv[2] exists, then once more; prints the events, the looks and the
+# a stand-in daemon: the fixture's pm-watchd without its main(); it looks as run() does (look(), then unregistered()
+# on what look() read) every 50 ms until the file argv[2] exists, then once more; prints the events, the looks and the
 # looks whose herdr list still held the pane argv[3]
 DAEMON = """
 import json, os, sys, time
@@ -315,11 +319,11 @@ told, events, looks, held = {}, [], 0, 0
 open(sys.argv[2] + ".ready", "w").close()
 while True:
     last = os.path.exists(sys.argv[2])
-    ops, ags = ns["look"]()
+    ops, ags, reg = ns["look"]()
     if ags is not None:
         looks += 1
         held += any(a.get("pane_id") == sys.argv[3] for a in ags)
-        events += ns["unregistered"](ags, ns["load"](ns["PANES"], []), ops, told)
+        events += ns["unregistered"](ags, reg, ops, told)
     if last:
         break
     time.sleep(0.05)
