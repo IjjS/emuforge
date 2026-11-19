@@ -1,19 +1,25 @@
 import Box from '@cloudscape-design/components/box';
+import Button, { type ButtonProps } from '@cloudscape-design/components/button';
 import Container from '@cloudscape-design/components/container';
 import Header from '@cloudscape-design/components/header';
 import KeyValuePairs from '@cloudscape-design/components/key-value-pairs';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Table from '@cloudscape-design/components/table';
+import { useRef, useState, type ReactNode } from 'react';
 
 import { CopyValue } from '../../../components/copy-value';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { ValueText } from '../../../components/value-text';
 import type { EnvironmentVariable, LambdaFunction } from '../api';
+import { NOT_READY } from '../configuration-form';
 import { memoryText, NONE, timeoutText } from '../format';
+import { EditGeneralDialog } from './edit-general-dialog';
+import type { EditDialogProps } from './edit-runtime-dialog';
+import { EditVariablesDialog } from './edit-variables-dialog';
 
 // The tab "Configuration" of a function's page (issue 516, design "Task 1", "Task 5"): "General configuration" and
-// "Environment variables", each value as the emulator reports it, rendered as text. "Edit" of each section is added in
-// its place by task 5.
+// "Environment variables", each value as the emulator reports it, rendered as text, each with its "Edit" (task 5).
+// Every value shown is the last read's, never a form's.
 
 export interface ConfigurationTabProps {
   /** The function as the page's last read gave it. */
@@ -27,10 +33,65 @@ export interface ConfigurationTabProps {
 
 const EXECUTION_ROLE = 'Execution role';
 
+interface SectionProps {
+  fn: LambdaFunction;
+  name: string;
+  connection: AreaConnection;
+  ready: boolean;
+}
+
+/**
+ * A section's "Edit" and its dialog: unavailable while the function is not ready; the dialog is mounted while open,
+ * and focus goes back to "Edit" when it closes.
+ */
+function useEdit(
+  { fn, name, connection, ready }: SectionProps,
+  section: string,
+  Dialog: (props: EditDialogProps) => ReactNode,
+): { button: ReactNode; dialog: ReactNode } {
+  const [editing, setEditing] = useState(false);
+  const edit = useRef<ButtonProps.Ref>(null);
+  return {
+    button: (
+      <Button
+        ref={edit}
+        ariaLabel={`Edit ${section}`}
+        disabled={!ready}
+        disabledReason={NOT_READY}
+        onClick={() => {
+          setEditing(true);
+        }}
+      >
+        Edit
+      </Button>
+    ),
+    dialog: editing && (
+      <Dialog
+        fn={fn}
+        name={name}
+        engineOrigin={connection.engineOrigin}
+        ready={ready}
+        onClose={() => {
+          setEditing(false);
+          edit.current?.focus();
+        }}
+      />
+    ),
+  };
+}
+
 /** "General configuration": "Description", "Memory", "Timeout", "Execution role" with its copy control. */
-function GeneralConfiguration({ fn }: { fn: LambdaFunction }) {
+function GeneralConfiguration(props: SectionProps) {
+  const { fn } = props;
+  const { button, dialog } = useEdit(props, 'general configuration', EditGeneralDialog);
   return (
-    <Container header={<Header variant="h2">General configuration</Header>}>
+    <Container
+      header={
+        <Header variant="h2" actions={button}>
+          General configuration
+        </Header>
+      }
+    >
       <KeyValuePairs
         columns={2}
         items={[
@@ -43,48 +104,58 @@ function GeneralConfiguration({ fn }: { fn: LambdaFunction }) {
           },
         ]}
       />
+      {dialog}
     </Container>
   );
 }
 
 /** "Environment variables": each key and value as text, in the order the emulator reported them. */
-function EnvironmentVariables({ fn, name }: { fn: LambdaFunction; name: string }) {
+function EnvironmentVariables(props: SectionProps) {
+  const { fn, name } = props;
+  const { button, dialog } = useEdit(props, 'environment variables', EditVariablesDialog);
   return (
-    <Table<EnvironmentVariable>
-      header={<Header variant="h2">Environment variables</Header>}
-      variant="container"
-      items={fn.environment}
-      trackBy="key"
-      columnDefinitions={[
-        { id: 'key', header: 'Key', cell: (variable) => <ValueText kind="name" value={variable.key} /> },
-        {
-          id: 'value',
-          header: 'Value',
-          cell: (variable) => <ValueText kind="text" value={variable.value} none={NONE} />,
-        },
-      ]}
-      empty={
-        <Box textAlign="center" color="inherit">
-          <SpaceBetween size="xxs">
-            <Box variant="strong" color="inherit">
-              No environment variables
-            </Box>
-            <Box variant="p" color="inherit">
-              <ValueText kind="name" value={name} /> has no environment variables.
-            </Box>
-          </SpaceBetween>
-        </Box>
-      }
-    />
+    <>
+      <Table<EnvironmentVariable>
+        header={
+          <Header variant="h2" actions={button}>
+            Environment variables
+          </Header>
+        }
+        variant="container"
+        items={fn.environment}
+        trackBy="key"
+        columnDefinitions={[
+          { id: 'key', header: 'Key', cell: (variable) => <ValueText kind="name" value={variable.key} /> },
+          {
+            id: 'value',
+            header: 'Value',
+            cell: (variable) => <ValueText kind="text" value={variable.value} none={NONE} />,
+          },
+        ]}
+        empty={
+          <Box textAlign="center" color="inherit">
+            <SpaceBetween size="xxs">
+              <Box variant="strong" color="inherit">
+                No environment variables
+              </Box>
+              <Box variant="p" color="inherit">
+                <ValueText kind="name" value={name} /> has no environment variables.
+              </Box>
+            </SpaceBetween>
+          </Box>
+        }
+      />
+      {dialog}
+    </>
   );
 }
 
 /** "Configuration": "General configuration", then "Environment variables". */
-export function ConfigurationTab({ fn, name }: ConfigurationTabProps) {
+export function ConfigurationTab(props: ConfigurationTabProps) {
   return (
     <SpaceBetween size="l">
-      <GeneralConfiguration fn={fn} />
-      <EnvironmentVariables fn={fn} name={name} />
+      <GeneralConfiguration {...props} />
+      <EnvironmentVariables {...props} />
     </SpaceBetween>
   );
 }

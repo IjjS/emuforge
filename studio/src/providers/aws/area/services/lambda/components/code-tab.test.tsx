@@ -1,15 +1,85 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
-import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { useState, type ReactNode } from 'react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import type { RequestFailure } from '../../../../../../lib/aws/request';
+import { AreaRootContext } from '../../../area-root';
+import { PageFlashContext, type PageFlash } from '../../../components/page-flash';
 
 import type { AreaConnection } from '../../../components/emulator-line';
 import type { LambdaFunction } from '../api';
+import type { FunctionChange } from '../queries';
 import { CodeTab } from './code-tab';
 
-// The tab "Code" as `s1` leaves it: its read-only content (issue 516, test criteria "Unit s1, then s3 —
-// components/code-tab.test.tsx").
+// The tab "Code" with its read-only content and its actions (issue 516, test criteria "Unit s1, then s3 —
+// components/code-tab.test.tsx", and "Unit s3 — components/code-tab.test.tsx").
 
 const CONNECTION: AreaConnection = { result: undefined, engineOrigin: undefined };
+
+// The changes' hooks are stand-ins of this file that hold each change until the case answers it.
+interface HeldChange {
+  input: unknown;
+  answer: (failure?: RequestFailure) => void;
+}
+
+const held = vi.hoisted(() => ({ changes: [] as unknown[] }));
+
+function useStandInChange<Input>(): FunctionChange<Input> {
+  const [isPending, setPending] = useState(false);
+  return {
+    isPending,
+    error: undefined,
+    reset: () => undefined,
+    mutate: (input, callbacks) => {
+      if (isPending) {
+        return;
+      }
+      setPending(true);
+      held.changes.push({
+        input,
+        answer: (failure?: RequestFailure) => {
+          setPending(false);
+          if (failure === undefined) {
+            callbacks?.onSuccess?.();
+          } else {
+            callbacks?.onError?.(failure);
+          }
+        },
+      });
+    },
+  };
+}
+
+vi.mock('../queries', () => ({
+  useUpdateFunctionCode: () => useStandInChange(),
+  useUpdateFunctionConfiguration: () => useStandInChange(),
+}));
+
+const changes = () => held.changes as HeldChange[];
+
+beforeEach(() => {
+  held.changes = [];
+});
+
+/** `content` inside an area root, as the page renders a tab, its flash dropped. */
+function inArea(content: ReactNode): ReactNode {
+  const root = { current: null as HTMLDivElement | null };
+  const flash: PageFlash = { show: () => undefined, handOver: () => undefined };
+  return (
+    <AreaRootContext.Provider value={root}>
+      <PageFlashContext.Provider value={flash}>
+        <div
+          ref={(element) => {
+            root.current = element;
+          }}
+        >
+          {content}
+        </div>
+      </PageFlashContext.Provider>
+    </AreaRootContext.Provider>
+  );
+}
 
 const ORDERS: LambdaFunction = {
   name: 'orders',
@@ -53,8 +123,14 @@ function kinds(title: string, label: string): string[] {
   );
 }
 
-function renderTab(fn: LambdaFunction = ORDERS) {
-  return render(<CodeTab fn={fn} name={fn.name} connection={CONNECTION} ready />);
+function renderTab(fn: LambdaFunction = ORDERS, ready = true) {
+  const result = render(inArea(<CodeTab fn={fn} name={fn.name} connection={CONNECTION} ready={ready} />));
+  return {
+    ...result,
+    reread: (next: LambdaFunction) => {
+      result.rerender(inArea(<CodeTab fn={next} name={next.name} connection={CONNECTION} ready />));
+    },
+  };
 }
 
 describe('the tab "Code"', () => {
@@ -114,5 +190,49 @@ describe('the tab "Code"', () => {
     expect(document.body.textContent).not.toContain('orders-secret-value');
     expect(document.body.textContent).not.toContain('SECRET');
     expect(screen.queryByRole('heading', { name: 'Code source' })).toBeNull();
+  });
+});
+
+describe('the actions of "Code"', () => {
+  it('not ready: "Upload" and "Edit" are unavailable with "Wait until the function is ready."; ready: available', () => {
+    const { reread } = renderTab(ORDERS, false);
+
+    const edit = screen.getByRole('button', { name: 'Edit runtime settings' });
+    const upload = screen.getByRole('button', { name: 'Upload' });
+    expect(edit.getAttribute('aria-disabled')).toBe('true');
+    expect(upload.getAttribute('aria-disabled')).toBe('true');
+    fireEvent.focus(edit);
+    expect(document.body.textContent).toContain('Wait until the function is ready.');
+    fireEvent.click(edit);
+    expect(screen.queryByRole('dialog')).toBeNull();
+
+    reread(ORDERS);
+    expect(screen.getByRole('button', { name: 'Edit runtime settings' }).getAttribute('aria-disabled')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Upload' }).getAttribute('aria-disabled')).toBeNull();
+  });
+
+  it('"Edit" opens its dialog; after a save the section shows what the read holds, never the form’s values', async () => {
+    const { reread } = renderTab();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit runtime settings' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Edit runtime settings' });
+    const handler = createWrapper(dialog).findInput()?.findNativeInput().getElement() as HTMLInputElement;
+    fireEvent.change(handler, { target: { value: 'typed.in_the_form' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    act(() => {
+      changes()[0]?.answer();
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
+
+    expect(pairs('Runtime settings')[1]).toEqual(['Handler', 'lambda_function.lambda_handler']);
+    expect(document.body.textContent).not.toContain('typed.in_the_form');
+
+    reread({ ...ORDERS, handler: 'lambda_function.other', runtime: 'python3.12' });
+    expect(pairs('Runtime settings').slice(0, 2)).toEqual([
+      ['Runtime', 'Python 3.12'],
+      ['Handler', 'lambda_function.other'],
+    ]);
   });
 });
