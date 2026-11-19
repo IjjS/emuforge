@@ -20,6 +20,12 @@
 //   scratch `HOME` of the run and that emulator's own files (`tests/integration/AGENTS.md`, Safety): no profile, no
 //   credentials or config file of the machine, no proxy.
 //
+// - Policies (issue 535): a customer managed policy with its versions, the users and groups a check attaches one to,
+//   and the readers of a policy, its versions, a version's document, an inline policy's document and what a policy is
+//   attached to. A document a check sends as text is sent character for character (`DOC_A`, `DOC_B`), so a check can
+//   tell the text it sent from a rewritten one. At the end the users and groups are detached and deleted, and each
+//   policy is detached from everything, loses its versions that are not the default and is deleted.
+//
 // Every value a check compares with comes from the run: names from the check's own prefix, ids, ARNs and dates from
 // a direct answer, the account from a direct `GetUser`, the endpoint from the emulator's port.
 
@@ -83,6 +89,33 @@ export const LIST_BUCKETS_POLICY = {
   Version: '2012-10-17',
   Statement: [{ Effect: 'Allow', Action: 's3:ListAllMyBuckets', Resource: '*' }],
 };
+
+/**
+ * doc-a of issue 535's criteria: allows `s3:GetObject` on `*`, written over several lines with two spaces between two
+ * of its tokens, so its text is told from a rewritten one.
+ */
+export const DOC_A = [
+  '{',
+  '  "Version": "2012-10-17",',
+  '  "Statement": [',
+  '    { "Effect":  "Allow", "Action": "s3:GetObject", "Resource": "*" }',
+  '  ]',
+  '}',
+].join('\n');
+
+/** doc-b: the same shape as `DOC_A`, allowing `s3:PutObject`. */
+export const DOC_B = DOC_A.replace('s3:GetObject', 's3:PutObject');
+
+/** basic: the AWS managed policy the criteria attach and read; the emulator's catalog holds it. */
+export const LAMBDA_BASIC = 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole';
+
+/** The name of `LAMBDA_BASIC`. */
+export const LAMBDA_BASIC_NAME = 'AWSLambdaBasicExecutionRole';
+
+/** A document as it is sent: a text as it is, an object as compact JSON. */
+function documentText(document: object | string): string {
+  return typeof document === 'string' ? document : JSON.stringify(document);
+}
 
 // ---------------------------------------------------------------------------------------------------------------
 // Signed requests.
@@ -671,6 +704,157 @@ export async function deleteRoleDirect(caller: Caller, port: number, role: strin
     : iamAnswer(caller, port, 'DeleteRole', { RoleName: role }, role);
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Policies, their versions and what they are attached to (issue 535).
+// ---------------------------------------------------------------------------------------------------------------
+
+/** A policy of a direct `GetPolicy`. */
+export interface DirectPolicy {
+  name: string;
+  arn: string;
+  /** `null` when the answer holds no `Description`. */
+  description: string | null;
+  defaultVersionId: string;
+  attachmentCount: number;
+}
+
+/** A direct `GetPolicy` of `arn`; fails the check unless it is answered 200. */
+export async function policyDirect(caller: Caller, port: number, arn: string): Promise<DirectPolicy> {
+  const result = await iamResult(caller, port, 'GetPolicy', { PolicyArn: arn }, arn);
+  const policy = child(result, 'Policy');
+  return {
+    name: textAt(policy, 'PolicyName') ?? '',
+    arn: textAt(policy, 'Arn') ?? '',
+    description: textAt(policy, 'Description'),
+    defaultVersionId: textAt(policy, 'DefaultVersionId') ?? '',
+    attachmentCount: Number(textAt(policy, 'AttachmentCount') ?? '0'),
+  };
+}
+
+/** Whether a direct `GetPolicy` of `arn` answers that there is no such policy (404 `NoSuchEntity`). */
+export async function policyIsGone(caller: Caller, port: number, arn: string): Promise<boolean> {
+  const answer = await getPolicyAnswer(caller, port, arn);
+  return !answer.ok && answer.status === 404 && answer.code === 'NoSuchEntity';
+}
+
+/** A version of a policy. */
+export interface DirectVersion {
+  id: string;
+  isDefault: boolean;
+}
+
+/** The versions of a direct `ListPolicyVersions` of `arn`, in its order. */
+export async function policyVersionsDirect(caller: Caller, port: number, arn: string): Promise<DirectVersion[]> {
+  const results = await pages(caller, port, 'ListPolicyVersions', { PolicyArn: arn }, arn);
+  return results.flatMap((r) =>
+    members(r, 'Versions').map((m) => ({
+      id: textAt(m, 'VersionId') ?? '',
+      isDefault: textAt(m, 'IsDefaultVersion') === 'true',
+    })),
+  );
+}
+
+/** The document of version `versionId` of `arn` (a direct `GetPolicyVersion`), percent-decoded once. */
+export async function policyVersionTextDirect(
+  caller: Caller,
+  port: number,
+  arn: string,
+  versionId: string,
+): Promise<string> {
+  const result = await iamResult(
+    caller,
+    port,
+    'GetPolicyVersion',
+    { PolicyArn: arn, VersionId: versionId },
+    `${arn} ${versionId}`,
+  );
+  return decodedOnce(textAt(result, 'PolicyVersion', 'Document') ?? '');
+}
+
+/** The document of the default version of `arn`, percent-decoded once. */
+export async function policyDefaultTextDirect(caller: Caller, port: number, arn: string): Promise<string> {
+  const policy = await policyDirect(caller, port, arn);
+  return policyVersionTextDirect(caller, port, arn, policy.defaultVersionId);
+}
+
+/** The document of the inline policy `name` of `role` (a direct `GetRolePolicy`), percent-decoded once. */
+export async function inlinePolicyTextDirect(caller: Caller, port: number, role: string, name: string): Promise<string> {
+  const result = await iamResult(
+    caller,
+    port,
+    'GetRolePolicy',
+    { RoleName: role, PolicyName: name },
+    `${name} of ${role}`,
+  );
+  return decodedOnce(textAt(result, 'PolicyDocument') ?? '');
+}
+
+/** What a policy is attached to: the names of a direct `ListEntitiesForPolicy`, by kind, each in its order. */
+export interface PolicyEntities {
+  roles: string[];
+  users: string[];
+  groups: string[];
+}
+
+/** A direct `ListEntitiesForPolicy` of `arn`, page after page. */
+export async function policyEntitiesDirect(caller: Caller, port: number, arn: string): Promise<PolicyEntities> {
+  const results = await pages(caller, port, 'ListEntitiesForPolicy', { PolicyArn: arn }, arn);
+  return {
+    roles: results.flatMap((r) => members(r, 'PolicyRoles').map((m) => textAt(m, 'RoleName') ?? '')),
+    users: results.flatMap((r) => members(r, 'PolicyUsers').map((m) => textAt(m, 'UserName') ?? '')),
+    groups: results.flatMap((r) => members(r, 'PolicyGroups').map((m) => textAt(m, 'GroupName') ?? '')),
+  };
+}
+
+/** One page of a direct `ListPolicies`: the policies' names in its order, and the `Marker` of the next page. */
+export async function policiesPageDirect(
+  caller: Caller,
+  port: number,
+  scope: 'Local' | 'AWS' | 'All',
+  maxItems: number,
+  marker?: string,
+): Promise<{ names: string[]; marker: string | null }> {
+  const params: Record<string, string> = { Scope: scope, MaxItems: String(maxItems) };
+  if (marker !== undefined) params.Marker = marker;
+  const result = await iamResult(caller, port, 'ListPolicies', params, `${scope} ${marker ?? 'from the start'}`);
+  return {
+    names: members(result, 'Policies').map((m) => textAt(m, 'PolicyName') ?? ''),
+    marker: textAt(result, 'IsTruncated') === 'true' ? textAt(result, 'Marker') : null,
+  };
+}
+
+/**
+ * Detaches the policy `arn` from every role, user and group, deletes its versions that are not the default, then
+ * deletes it, straight through the emulator. Returns the last step's read; a policy the emulator does not hold is
+ * answered 404 `NoSuchEntity` by the first step and nothing else is sent.
+ */
+export async function deletePolicyDirect(caller: Caller, port: number, arn: string): Promise<Read> {
+  const entities = await iamAnswer(caller, port, 'ListEntitiesForPolicy', { PolicyArn: arn, MaxItems: DIRECT_PAGE }, arn);
+  if (!entities.ok) return entities;
+  const result = at(entities.xml, 'ListEntitiesForPolicyResponse', 'ListEntitiesForPolicyResult');
+  for (const m of members(result, 'PolicyRoles')) {
+    const role = textAt(m, 'RoleName') ?? '';
+    await iamAnswer(caller, port, 'DetachRolePolicy', { RoleName: role, PolicyArn: arn }, `${arn} from ${role}`);
+  }
+  for (const m of members(result, 'PolicyUsers')) {
+    const user = textAt(m, 'UserName') ?? '';
+    await iamAnswer(caller, port, 'DetachUserPolicy', { UserName: user, PolicyArn: arn }, `${arn} from ${user}`);
+  }
+  for (const m of members(result, 'PolicyGroups')) {
+    const group = textAt(m, 'GroupName') ?? '';
+    await iamAnswer(caller, port, 'DetachGroupPolicy', { GroupName: group, PolicyArn: arn }, `${arn} from ${group}`);
+  }
+  const versions = await iamAnswer(caller, port, 'ListPolicyVersions', { PolicyArn: arn }, arn);
+  if (versions.ok) {
+    for (const m of members(at(versions.xml, 'ListPolicyVersionsResponse', 'ListPolicyVersionsResult'), 'Versions')) {
+      if (textAt(m, 'IsDefaultVersion') === 'true') continue;
+      const id = textAt(m, 'VersionId') ?? '';
+      await iamAnswer(caller, port, 'DeletePolicyVersion', { PolicyArn: arn, VersionId: id }, `${arn} ${id}`);
+    }
+  }
+  return iamAnswer(caller, port, 'DeletePolicy', { PolicyArn: arn }, arn);
+}
+
 /** Who owns what a seed makes: a check's `Ctx`, or nothing for a seed that stays (`iam-seed-structure.ts`). */
 type Owner = Caller & Partial<Pick<Ctx, 'own'>>;
 
@@ -683,6 +867,8 @@ export class IamSeeded {
   private readonly roles: string[] = [];
   private readonly policies: string[] = [];
   private readonly profiles: string[] = [];
+  private readonly users: string[] = [];
+  private readonly groups: string[] = [];
 
   constructor(
     private readonly owner: Owner,
@@ -700,15 +886,14 @@ export class IamSeeded {
     return roleOf(role);
   }
 
-  /** `CreatePolicy name` with `document` (a customer managed policy); returns its ARN. */
-  async policy(name: string, document: object = LIST_BUCKETS_POLICY): Promise<string> {
-    const result = await iamMade(
-      this.owner,
-      this.port,
-      'CreatePolicy',
-      { PolicyName: name, PolicyDocument: JSON.stringify(document) },
-      name,
-    );
+  /**
+   * `CreatePolicy name` with `document` (a customer managed policy; a text is sent as it is) and, when given, the
+   * description; returns its ARN.
+   */
+  async policy(name: string, document: object | string = LIST_BUCKETS_POLICY, description?: string): Promise<string> {
+    const params: Record<string, string> = { PolicyName: name, PolicyDocument: documentText(document) };
+    if (description !== undefined) params.Description = description;
+    const result = await iamMade(this.owner, this.port, 'CreatePolicy', params, name);
     const arn = textAt(result, 'Policy', 'Arn');
     if (arn === null || arn === '') throw new EnvError(`direct CreatePolicy ${name}: no Arn in the answer`);
     this.policies.push(arn);
@@ -720,8 +905,63 @@ export class IamSeeded {
     await iamMade(this.owner, this.port, 'AttachRolePolicy', { RoleName: role, PolicyArn: arn }, `${arn} to ${role}`);
   }
 
-  /** `PutRolePolicy`: the inline policy `name` of `role` with `document`. */
-  async inline(role: string, name: string, document: object = LIST_BUCKETS_POLICY): Promise<void> {
+  /** `CreatePolicyVersion` of `arn` with `document`, as the default when `setAsDefault`; returns the version's id. */
+  async version(arn: string, document: object | string, setAsDefault: boolean): Promise<string> {
+    const result = await iamMade(
+      this.owner,
+      this.port,
+      'CreatePolicyVersion',
+      { PolicyArn: arn, PolicyDocument: documentText(document), SetAsDefault: String(setAsDefault) },
+      arn,
+    );
+    const id = textAt(result, 'PolicyVersion', 'VersionId');
+    if (id === null || id === '') throw new EnvError(`direct CreatePolicyVersion ${arn}: no VersionId in the answer`);
+    return id;
+  }
+
+  /** `CreateUser name`. */
+  async user(name: string): Promise<void> {
+    await iamMade(this.owner, this.port, 'CreateUser', { UserName: name }, name);
+    this.users.push(name);
+  }
+
+  /** `CreateGroup name`. */
+  async group(name: string): Promise<void> {
+    await iamMade(this.owner, this.port, 'CreateGroup', { GroupName: name }, name);
+    this.groups.push(name);
+  }
+
+  /** `AttachUserPolicy` of the managed policy `arn` to `user`. */
+  async attachUser(user: string, arn: string): Promise<void> {
+    await iamMade(this.owner, this.port, 'AttachUserPolicy', { UserName: user, PolicyArn: arn }, `${arn} to ${user}`);
+  }
+
+  /** `AttachGroupPolicy` of the managed policy `arn` to `group`. */
+  async attachGroup(group: string, arn: string): Promise<void> {
+    await iamMade(
+      this.owner,
+      this.port,
+      'AttachGroupPolicy',
+      { GroupName: group, PolicyArn: arn },
+      `${arn} to ${group}`,
+    );
+  }
+
+  /** A policy Studio made for the check: it is taken apart and deleted when the check ends, if it is still there. */
+  adoptPolicy(arn: string): void {
+    if (!this.policies.includes(arn)) this.policies.push(arn);
+  }
+
+  /** Detaches the policy `arn` from everything and deletes it now (a check's step). */
+  async removePolicy(arn: string): Promise<void> {
+    const read = await deletePolicyDirect(this.owner, this.port, arn);
+    if (!read.ok) throw new EnvError(`direct deletion of ${arn} answered ${shownRead(read)}`);
+    const index = this.policies.indexOf(arn);
+    if (index >= 0) this.policies.splice(index, 1);
+  }
+
+  /** `PutRolePolicy`: the inline policy `name` of `role` with `document` (a text is sent as it is). */
+  async inline(role: string, name: string, document: object | string = LIST_BUCKETS_POLICY): Promise<void> {
     await iamMade(
       this.owner,
       this.port,
@@ -729,7 +969,7 @@ export class IamSeeded {
       {
         RoleName: role,
         PolicyName: name,
-        PolicyDocument: JSON.stringify(document),
+        PolicyDocument: documentText(document),
       },
       `${name} of ${role}`,
     );
@@ -846,8 +1086,12 @@ export class IamSeeded {
       }
       await iamAnswer(caller, this.port, 'DeleteInstanceProfile', { InstanceProfileName: profile }, profile);
     }
-    for (const arn of [...this.policies].reverse()) {
-      await iamAnswer(caller, this.port, 'DeletePolicy', { PolicyArn: arn }, arn);
+    for (const arn of [...this.policies].reverse()) await deletePolicyDirect(caller, this.port, arn);
+    for (const user of [...this.users].reverse()) {
+      await iamAnswer(caller, this.port, 'DeleteUser', { UserName: user }, user);
+    }
+    for (const group of [...this.groups].reverse()) {
+      await iamAnswer(caller, this.port, 'DeleteGroup', { GroupName: group }, group);
     }
   }
 }
