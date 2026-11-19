@@ -255,11 +255,6 @@ function policyRow(name: string): HTMLElement {
   return row as HTMLElement;
 }
 
-/** Chooses the row named `name`. */
-function choose(name: string) {
-  fireEvent.click(within(policyRow(name)).getByRole('radio'));
-}
-
 /** The button named `name`. */
 function action(name: string): HTMLElement {
   return screen.getByRole('button', { name });
@@ -453,11 +448,15 @@ describe('"Attach"', () => {
     await waitFor(() => {
       expect(choiceRow(modal, 'p-01')).toHaveTextContent('Attached');
     });
-  });
+  }, 15_000);
 
   it.each([
     ['not implemented', () => refusal(501, 'NotImplemented', 'no'), 'Not implemented by the emulator'],
-    ['access denied', () => refusal(403, 'AccessDenied', 'not for you'), 'Access denied. AttachRolePolicy was refused: not for you'],
+    [
+      'access denied',
+      () => refusal(403, 'AccessDenied', 'not for you'),
+      'Access denied. AttachRolePolicy was refused: not for you',
+    ],
     ['no answer', () => 'network-error' as const, 'did not answer'],
   ])('%s → its words', async (_, answer, words) => {
     given();

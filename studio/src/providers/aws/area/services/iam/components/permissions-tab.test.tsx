@@ -1,12 +1,16 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { useMemo, useRef } from 'react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { engineEndpoint } from '../../../../../../lib/aws/client-factory';
+import { AreaRootContext } from '../../../area-root';
 import type { AreaConnection } from '../../../components/emulator-line';
+import { PageFlashContext, type FlashResult } from '../../../components/page-flash';
 import type { Role, RolePolicies } from '../api';
+import { RolePage } from '../pages/role-page';
 import { PermissionsTab } from './permissions-tab';
 
 // Test criteria, "Unit s2 — providers/aws/area/services/iam/components/permissions-tab.test.tsx" (issue 535, task 1):
@@ -306,5 +310,222 @@ describe('"Permissions boundary" and the failed lists', () => {
 
     show({ kind: 'read', items: [INLINE], truncated: true });
     expect(screen.getByText('More policies exist than are shown.')).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// Test criteria, "Unit s3 — providers/aws/area/services/iam/components/permissions-tab.test.tsx" (issue 535, task 3):
+// the changes' controls, and the role read again after every refused change.
+// ---------------------------------------------------------------------------------------------------------------
+
+const SERVICE_LINKED_REASON = "The emulator does not let a service-linked role's policies or trust policy be changed.";
+
+/** The button named `name` is unavailable: disabled, or disabled with a reason and still focusable. */
+function expectUnavailable(name: string, reason?: string) {
+  const button = screen.getByRole('button', { name });
+  expect(button.hasAttribute('disabled') || button.getAttribute('aria-disabled') === 'true', name).toBe(true);
+  if (reason !== undefined) {
+    expect(button).toHaveAccessibleDescription(reason);
+  }
+}
+
+function expectAvailable(name: string) {
+  const button = screen.getByRole('button', { name });
+  expect(button, name).not.toHaveAttribute('disabled');
+  expect(button, name).not.toHaveAttribute('aria-disabled', 'true');
+}
+
+function chooseRow(name: string) {
+  fireEvent.click(within(row(name)).getByRole('radio'));
+}
+
+describe('the changes of the chosen row', () => {
+  it('"Detach" for a managed row, unavailable for an inline one; "Edit" and "Delete" the other way round', () => {
+    show(ALL);
+
+    expectAvailable('Attach policies');
+    expectAvailable('Add inline policy');
+    for (const name of ['Detach', 'Edit inline policy', 'Delete inline policy']) {
+      expectUnavailable(name);
+    }
+
+    chooseRow('team-read');
+    expectAvailable('Detach');
+    expectUnavailable('Edit inline policy', 'A managed policy is changed on its own page.');
+    expectUnavailable('Delete inline policy', 'A managed policy is changed on its own page.');
+
+    chooseRow('inline-one');
+    expectUnavailable('Detach', 'An inline policy is deleted, not detached.');
+    expectAvailable('Edit inline policy');
+    expectAvailable('Delete inline policy');
+  });
+
+  it('a service-linked role: the five are unavailable with the reason, and the documents can still be shown', async () => {
+    show(ALL, { name: 'AWSServiceRoleForX', path: '/aws-service-role/x.amazonaws.com/', tags: [] });
+
+    for (const choice of [undefined, 'team-read', 'inline-one']) {
+      if (choice !== undefined) {
+        chooseRow(choice);
+      }
+      for (const name of [
+        'Attach policies',
+        'Add inline policy',
+        'Detach',
+        'Edit inline policy',
+        'Delete inline policy',
+      ]) {
+        expectUnavailable(name, SERVICE_LINKED_REASON);
+      }
+    }
+
+    toggle(INLINE.name, 'Show document');
+    await waitFor(() => {
+      expect(documentOf(INLINE.name)).toBe(INLINE_TEXT);
+    });
+  });
+});
+
+// The role's page, against an engine whose role is deleted by the change it refuses: each refused change reads the
+// role again, which then shows "Role not found".
+describe('after every refused change', () => {
+  const MANAGED = { name: 'team-read', arn: 'arn:aws:iam::000000000000:policy/team-read' };
+  let gone: boolean;
+  let roleReads: number;
+  let flashes: FlashResult[];
+
+  function pageAnswer(action: string, params: URLSearchParams): Response {
+    if (action === 'ListPolicies') {
+      return ok(
+        action,
+        `<Policies><member><PolicyName>other</PolicyName><Arn>arn:aws:iam::000000000000:policy/other</Arn></member></Policies><IsTruncated>false</IsTruncated>`,
+      );
+    }
+    const missing = refusal(404, 'NoSuchEntity', `The role with name ${params.get('RoleName') ?? ''} cannot be found.`);
+    if (gone) {
+      return missing;
+    }
+    switch (action) {
+      case 'GetRole':
+        roleReads += 1;
+        return ok(
+          action,
+          '<Role><Path>/</Path><RoleName>app</RoleName><RoleId>AROA1</RoleId><Arn>arn:aws:iam::000000000000:role/app</Arn><CreateDate>2026-11-17T09:05:03Z</CreateDate><MaxSessionDuration>3600</MaxSessionDuration><RoleLastUsed/></Role>',
+        );
+      case 'ListAttachedRolePolicies':
+        return ok(
+          action,
+          `<AttachedPolicies><member><PolicyName>${MANAGED.name}</PolicyName><PolicyArn>${MANAGED.arn}</PolicyArn></member></AttachedPolicies><IsTruncated>false</IsTruncated>`,
+        );
+      case 'ListRolePolicies':
+        return ok(action, '<PolicyNames><member>held</member></PolicyNames><IsTruncated>false</IsTruncated>');
+      case 'GetRolePolicy':
+        return ok(
+          action,
+          `<RoleName>app</RoleName><PolicyName>held</PolicyName><PolicyDocument>${esc(encodeURIComponent('{"Version": "2012-10-17", "Statement": []}'))}</PolicyDocument>`,
+        );
+      default:
+        // The change: the role was deleted elsewhere just before it arrived.
+        gone = true;
+        return missing;
+    }
+  }
+
+  beforeEach(() => {
+    gone = false;
+    roleReads = 0;
+    flashes = [];
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(String(input), init);
+      if (new URL(request.url).pathname === '/__emuforge/session') {
+        return new Response(JSON.stringify({ token: 't' }), { status: 200 });
+      }
+      const params = new URLSearchParams(await request.text());
+      const action = params.get('Action') ?? '';
+      sent.push({ action, params });
+      return pageAnswer(action, params);
+    });
+  });
+
+  function Page() {
+    const root = useRef<HTMLDivElement>(null);
+    const flash = useMemo(
+      () => ({
+        show: (result: FlashResult) => {
+          flashes.push(result);
+        },
+        handOver: () => undefined,
+      }),
+      [],
+    );
+    return (
+      <AreaRootContext.Provider value={root}>
+        <PageFlashContext.Provider value={flash}>
+          <div ref={root}>
+            <RolePage connection={connection} params={{ name: 'app' }} />
+          </div>
+        </PageFlashContext.Provider>
+      </AreaRootContext.Provider>
+    );
+  }
+
+  async function openPage() {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <MemoryRouter>
+        <QueryClientProvider client={client}>
+          <Page />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+    await screen.findByRole('heading', { level: 2, name: 'Permissions policies' });
+  }
+
+  const steps: Record<string, (modal: () => Promise<HTMLElement>) => Promise<void>> = {
+    attach: async (modal) => {
+      fireEvent.click(screen.getByRole('button', { name: 'Attach policies' }));
+      const open = await modal();
+      fireEvent.click(await within(open).findByRole('checkbox', { name: 'other' }));
+      fireEvent.click(within(open).getByRole('button', { name: 'Attach' }));
+    },
+    detach: async (modal) => {
+      chooseRow(MANAGED.name);
+      fireEvent.click(screen.getByRole('button', { name: 'Detach' }));
+      fireEvent.click(within(await modal()).getByRole('button', { name: 'Detach' }));
+    },
+    'add an inline policy': async (modal) => {
+      fireEvent.click(screen.getByRole('button', { name: 'Add inline policy' }));
+      const open = await modal();
+      fireEvent.change(within(open).getByRole('textbox', { name: 'Policy name' }), { target: { value: 'fresh' } });
+      fireEvent.click(within(open).getByRole('button', { name: 'Add policy' }));
+    },
+    'edit an inline policy': async (modal) => {
+      chooseRow('held');
+      fireEvent.click(screen.getByRole('button', { name: 'Edit inline policy' }));
+      const open = await modal();
+      await within(open).findByRole('textbox', { name: 'Policy document' });
+      fireEvent.click(within(open).getByRole('button', { name: 'Save changes' }));
+    },
+    'delete an inline policy': async (modal) => {
+      chooseRow('held');
+      fireEvent.click(screen.getByRole('button', { name: 'Delete inline policy' }));
+      const open = await modal();
+      fireEvent.change(within(open).getByRole('textbox'), { target: { value: 'delete' } });
+      fireEvent.click(within(open).getByRole('button', { name: 'Delete' }));
+    },
+  };
+
+  it.each(Object.keys(steps))('%s refused → the role is read again, and "Role not found"', async (step) => {
+    await openPage();
+    const reads = roleReads;
+    const run = steps[step];
+    expect(run).toBeDefined();
+    await (run as NonNullable<typeof run>)(() => screen.findByRole('dialog'));
+
+    await waitFor(() => {
+      expect(gone).toBe(true);
+    });
+    expect(await screen.findByText('Role not found')).toBeInTheDocument();
+    expect(roleReads).toBe(reads);
+    expect(sent.filter(({ action }) => action === 'GetRole').length).toBeGreaterThan(reads);
   });
 });
