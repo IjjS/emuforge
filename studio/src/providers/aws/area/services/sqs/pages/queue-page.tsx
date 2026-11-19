@@ -9,6 +9,7 @@ import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Tabs, { type TabsProps } from '@cloudscape-design/components/tabs';
 import { useCallback, useState } from 'react';
 
+import { ConfirmDialog } from '../../../components/confirm-dialog';
 import { actionFailureItem, readFailureState, ReadFailure, useAnnouncer } from '../../../components/failure-states';
 import { usePageFlash, type FlashItem } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
@@ -17,7 +18,6 @@ import { ValueText } from '../../../components/value-text';
 import type { AreaConnection } from '../../../components/emulator-line';
 import type { ScreenPageProps } from '../../../screens';
 import { NO_SUCH_QUEUE, OPERATIONS, type OutgoingMessage, type QueueDetails, type ReadMessage } from '../api';
-import { ConfirmDialog } from '../components/confirm-dialog';
 import { messages } from '../components/counts';
 import { availableAt, deadLetterUrl } from '../components/dead-letter-count';
 import { MessagesTab, type ReadResult } from '../components/messages-tab';

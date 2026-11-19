@@ -5,11 +5,11 @@ import Input from '@cloudscape-design/components/input';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import { useState, type ReactNode } from 'react';
 
-import { AreaModal } from '../../../components/area-modal';
+import { AreaModal } from './area-modal';
 
-// S2's dialogs of a removal that cannot be undone (issue 481, design task 4): "Delete" of the selected messages and
-// "Purge" of the queue, each on the area's `AreaModal`, each confirmed by typing its word (`aws-area.md`, "Inside the
-// area: Cloudscape").
+// The area's dialog of a removal that cannot be undone, on the area's `AreaModal`, confirmed by typing a word
+// (`aws-area.md`, "Inside the area: Cloudscape"). Lifted from SQS (issue 481: "Delete" of messages, "Purge" of a
+// queue) when DynamoDB became the second service to need it (issue 496: delete items, delete a table).
 
 export interface ConfirmDialogProps {
   visible: boolean;
