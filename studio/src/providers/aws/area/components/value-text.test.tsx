@@ -133,7 +133,7 @@ describe("ValueText, the area's one way of breaking a value", () => {
     const element = holder.firstElementChild as HTMLElement;
 
     expect(element).toHaveClass('aws-area-value', VALUE_CLASS[kind]);
-    expect(new Set(Object.values(VALUE_CLASS)).size).toBe(4);
+    expect(new Set(Object.values(VALUE_CLASS)).size).toBe(Object.keys(VALUE_CLASS).length);
   });
 
   it("the stylesheet: a fixed word never breaks inside a word; an address's part, a name and free text break inside a word longer than its line", () => {
