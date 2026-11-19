@@ -388,13 +388,13 @@ function policiesTable() {
   return found as NonNullable<typeof found>;
 }
 
-/** Each row's name and type; its third cell holds the document's control (issue 535). */
+/** Each row's name and type, after the cell that chooses it; the next cell holds the document's control (issue 535). */
 function policyRows(): string[][] {
   return policiesTable()
     .findRows()
     .map((row) =>
       [...row.getElement().querySelectorAll('td, th')]
-        .slice(0, 2)
+        .slice(1, 3)
         .map((cell) => (cell.textContent ?? '').replace(/\s+/g, ' ').trim()),
     );
 }
@@ -617,7 +617,8 @@ describe('a loaded role', () => {
     const headings = policiesTable()
       .findColumnHeaders()
       .map((header) => (header.getElement().textContent ?? '').trim());
-    expect(headings).toEqual(['Policy name', 'Type', 'Document']);
+    // The first column chooses the row the tab's changes act on (issue 535, task 3).
+    expect(headings).toEqual(['Policy selection', 'Policy name', 'Type', 'Document']);
     expect(policyRows()).toEqual([
       ['ReadOnlyAccess', 'AWS managed'],
       ['team-policy', 'Customer managed'],
@@ -633,7 +634,7 @@ describe('a loaded role', () => {
       ['team-policy', `/aws/iam/policies/details?arn=${encodeURIComponent(OWN.arn)}`],
     ]);
     expect(within(table).queryAllByRole('checkbox')).toEqual([]);
-    expect(within(table).queryAllByRole('radio')).toEqual([]);
+    expect(within(table).queryAllByRole('radio')).toHaveLength(3);
   });
 
   it('a role without a policy: "No policies" and "This role has no permissions policy in the emulator."', async () => {
@@ -705,7 +706,8 @@ describe('a loaded role', () => {
   it('no "Add permissions", "Remove" or "Change boundary" control', async () => {
     await openLoaded({ name: 'team-role', attached: [READ_ONLY], boundary: OWN.arn });
 
-    for (const name of ['Add permissions', 'Remove', 'Change boundary', 'Attach policies', 'Create inline policy']) {
+    // "Attach policies" is the tab's own since issue 535 (task 3).
+    for (const name of ['Add permissions', 'Remove', 'Change boundary', 'Create inline policy']) {
       expect(within(main()).queryByRole('button', { name })).toBeNull();
       expect(within(main()).queryByRole('link', { name })).toBeNull();
     }
