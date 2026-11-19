@@ -117,7 +117,7 @@ function row(name: string): HTMLElement {
   const found = table()
     .findRows()
     .map((wrapper) => wrapper.getElement())
-    .find((element) => (element.querySelector('th, td')?.textContent ?? '').trim() === name);
+    .find((element) => (element.querySelectorAll('th, td')[1]?.textContent ?? '').trim() === name);
   expect(found, name).toBeDefined();
   return found as HTMLElement;
 }
@@ -139,7 +139,7 @@ describe('the policies', () => {
         .findRows()
         .map((wrapper) =>
           [...wrapper.getElement().querySelectorAll('th, td')]
-            .slice(0, 2)
+            .slice(1, 3)
             .map((cell) => (cell.textContent ?? '').trim()),
         ),
     ).toEqual([
@@ -281,7 +281,7 @@ describe('"Permissions boundary" and the failed lists', () => {
       table()
         .findColumnHeaders()
         .map((header) => (header.getElement().textContent ?? '').trim()),
-    ).toEqual(['Policy name', 'Type', 'Document']);
+    ).toEqual(['Policy selection', 'Policy name', 'Type', 'Document']);
     expect(screen.getByRole('heading', { level: 2, name: 'Permissions policies' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 2, name: 'Permissions boundary' })).toBeInTheDocument();
 
