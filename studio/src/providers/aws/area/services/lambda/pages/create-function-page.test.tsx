@@ -490,7 +490,18 @@ describe('the form as it opens', () => {
     expect(nameField().value).toBe('');
     expect(norm(selectOf('Runtime').findTrigger().getElement().textContent)).toBe('Node.js 24.x');
     selectOf('Runtime').openDropdown();
-    expect(optionTexts('Runtime')).toEqual(['Node.js 24.x', 'Node.js 22.x', 'Python 3.14', 'Python 3.13']);
+    expect(optionTexts('Runtime')).toEqual([
+      'Node.js 24.x',
+      'Node.js 22.x',
+      'Node.js 20.x',
+      'Node.js 18.x',
+      'Python 3.14',
+      'Python 3.13',
+      'Python 3.12',
+      'Python 3.11',
+      'Python 3.10',
+      'Python 3.9',
+    ]);
     selectOf('Runtime').closeDropdown();
     expect(radio('x86_64').checked).toBe(true);
     expect(radio('arm64').checked).toBe(false);

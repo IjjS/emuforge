@@ -49,13 +49,19 @@ export interface DeleteFunctionsDialogProps {
   connection: AreaConnection;
   /** Called when the dialog closes: by "Cancel" or Esc, or once every request is answered. */
   onClose: () => void;
+  /**
+   * Called once, before `onClose`, when every function was deleted, with the result the Flashbar would show; the
+   * dialog then shows nothing itself, so the caller can hand the result to the page it leads to (issue 516, task 6).
+   * Without it, or when a delete failed, the dialog shows the result in the Flashbar.
+   */
+  onDeleted?: (result: FlashResult) => void;
 }
 
 /**
  * The dialog that deletes `names` from the emulator, one `DeleteFunction` after another, once the field holds
  * exactly "confirm". It stays mounted with the list, so leaving the screen is what aborts its requests.
  */
-export function DeleteFunctionsDialog({ names, connection, onClose }: DeleteFunctionsDialogProps) {
+export function DeleteFunctionsDialog({ names, connection, onClose, onDeleted }: DeleteFunctionsDialogProps) {
   const flash = usePageFlash();
   const { remove, pending } = useDeleteFunctions(connection.engineOrigin);
   const [typed, setTyped] = useState('');
@@ -77,7 +83,9 @@ export function DeleteFunctionsDialog({ names, connection, onClose }: DeleteFunc
     remove(names).then(
       (result) => {
         const items = resultItems(result, engineOrigin);
-        if (items !== undefined) {
+        if (items !== undefined && onDeleted !== undefined && result.failed.length === 0) {
+          onDeleted(items);
+        } else if (items !== undefined) {
           flash.show(items);
         }
         onClose();
@@ -85,7 +93,7 @@ export function DeleteFunctionsDialog({ names, connection, onClose }: DeleteFunc
       // The screen was left first: nothing is shown.
       () => undefined,
     );
-  }, [confirmed, pending, connection.engineOrigin, remove, names, flash, onClose]);
+  }, [confirmed, pending, connection.engineOrigin, remove, names, flash, onClose, onDeleted]);
 
   const handleDismiss = useCallback(() => {
     if (!pending) {

@@ -12,12 +12,17 @@ import {
   type GetFunctionCommandOutput,
   GetFunctionUrlConfigCommand,
   type GetFunctionUrlConfigCommandOutput,
+  InvokeCommand,
   LambdaClient,
   ListFunctionsCommand,
   type ListFunctionsCommandOutput,
+  UpdateFunctionCodeCommand,
+  UpdateFunctionConfigurationCommand,
+  type UpdateFunctionConfigurationCommandInput,
 } from '@aws-sdk/client-lambda';
 
 import { createAwsClient, EngineSessionError } from '../../../../../lib/aws/client-factory';
+import { sendRequest, type RequestFailure } from '../../../../../lib/aws/request';
 import { cutAtText, firstPageMarker } from './marker';
 import { starterCode } from './starter-code';
 import { storedZip } from './zip';
@@ -75,11 +80,32 @@ export type FunctionUrl =
   /** `GetFunctionUrlConfig` failed in any other way. */
   | { kind: 'not-read' };
 
-/** A function as its page shows it. Holds neither `Code.Location` nor the environment variables (R11). */
+/** One environment variable of a function: its key and its value, as the emulator returned them. */
+export interface EnvironmentVariable {
+  key: string;
+  value: string;
+}
+
+/**
+ * A function as its page shows it (issue 516, design "The function's page"). It never holds `Code.Location`, the
+ * signed address of the code.
+ */
 export interface LambdaFunction extends FunctionSummary {
   arn?: string;
   handler?: string;
   architectures?: string[];
+  /** `MemorySize`, in MB. */
+  memorySize?: number;
+  /** `Timeout`, in seconds. */
+  timeout?: number;
+  /** `Role`, the execution role's ARN. */
+  role?: string;
+  /** `CodeSize`, in bytes. */
+  codeSize?: number;
+  /** `CodeSha256`, as it came. */
+  codeSha256?: string;
+  /** `Environment.Variables`, in the answer's order; empty when the function has none. */
+  environment: EnvironmentVariable[];
   /** `State`: `Pending`, `Active`, `Inactive`, `Failed`. */
   state?: string;
   stateReason?: string;
@@ -140,6 +166,9 @@ export const DELETE_FUNCTION = 'DeleteFunction';
 export const LIST_ROLES = 'ListRoles';
 export const CREATE_ROLE = 'CreateRole';
 export const ATTACH_ROLE_POLICY = 'AttachRolePolicy';
+export const INVOKE = 'Invoke';
+export const UPDATE_FUNCTION_CODE = 'UpdateFunctionCode';
+export const UPDATE_FUNCTION_CONFIGURATION = 'UpdateFunctionConfiguration';
 
 // ---------------------------------------------------------------------------------------------------------------
 // Clients
@@ -375,7 +404,11 @@ export async function listFunctions(
 
 function toFunction(output: GetFunctionCommandOutput, url: FunctionUrl): LambdaFunction {
   const configuration = output.Configuration ?? {};
-  const fn: LambdaFunction = { ...toSummary(configuration as ListedFunction), url };
+  const fn: LambdaFunction = {
+    ...toSummary(configuration as ListedFunction),
+    url,
+    environment: toVariables(configuration.Environment?.Variables),
+  };
   const optional: [keyof LambdaFunction, unknown][] = [
     ['arn', configuration.FunctionArn],
     ['handler', configuration.Handler],
@@ -397,7 +430,33 @@ function toFunction(output: GetFunctionCommandOutput, url: FunctionUrl): LambdaF
   if (architectures.length > 0) {
     fn.architectures = architectures;
   }
+  const numbers: [keyof LambdaFunction, unknown][] = [
+    ['memorySize', configuration.MemorySize],
+    ['timeout', configuration.Timeout],
+    ['codeSize', configuration.CodeSize],
+  ];
+  for (const [key, value] of numbers) {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      Object.assign(fn, { [key]: value });
+    }
+  }
+  const role = text(configuration.Role);
+  if (role !== undefined) {
+    fn.role = role;
+  }
+  const sha = text(configuration.CodeSha256);
+  if (sha !== undefined) {
+    fn.codeSha256 = sha;
+  }
   return fn;
+}
+
+/** The variables of `Environment.Variables`, in the answer's order; each value as it came, an empty one kept. */
+function toVariables(variables: Record<string, unknown> | undefined): EnvironmentVariable[] {
+  return Object.entries(variables ?? {}).map(([key, value]) => ({
+    key,
+    value: typeof value === 'string' ? value : String(value),
+  }));
 }
 
 function toUrl(output: GetFunctionUrlConfigCommandOutput): FunctionUrl {
@@ -539,13 +598,21 @@ export type ExecutionRole =
   /** "Use another role": the chosen role's ARN. */
   | { kind: 'existing'; arn: string };
 
+/** The code a function is created with (issue 516, design "Task 4"). */
+export type FunctionCode =
+  /** The starter code of its runtime, under the starter's handler. */
+  | { kind: 'starter' }
+  /** A .zip file's bytes, as chosen, under the handler typed. */
+  | { kind: 'zip'; bytes: Uint8Array; handler: string };
+
 export interface CreateFunctionRequest {
   name: string;
-  /** One of the runtimes the form offers (`starter-code.ts`). */
+  /** One of the runtimes Studio offers (`runtimes.ts`). */
   runtime: string;
   /** `x86_64` or `arm64`. */
   architecture: string;
   role: ExecutionRole;
+  code: FunctionCode;
 }
 
 export interface CreatedFunction {
@@ -591,7 +658,8 @@ async function step<T>(
 }
 
 /**
- * Creates a function with the starter code of its runtime through the engine at `endpoint` (R6.5). With "Create
+ * Creates a function with the starter code of its runtime, or with a .zip file's bytes and a handler (issue 516),
+ * through the engine at `endpoint` (R6.5). With "Create
  * default role": `CreateRole`, then `AttachRolePolicy`, then `CreateFunction`, each after the previous one's answer;
  * a role an earlier attempt created for the same function name is reused, and its policy attached again unless that
  * already succeeded. Rejects with `CreateFunctionError` naming the step that failed and any role left, and with
@@ -599,13 +667,22 @@ async function step<T>(
  */
 export async function createFunction(
   endpoint: string,
-  { name, runtime, architecture, role }: CreateFunctionRequest,
+  { name, runtime, architecture, role, code }: CreateFunctionRequest,
   signal: AbortSignal,
 ): Promise<CreatedFunction> {
   signal.throwIfAborted();
-  const code = starterCode(runtime);
-  if (code === undefined) {
-    throw new Error(`Studio has no starter code for the runtime "${runtime}".`);
+  let handler: string;
+  let zipFile: Uint8Array;
+  if (code.kind === 'zip') {
+    handler = code.handler;
+    zipFile = code.bytes;
+  } else {
+    const starter = starterCode(runtime);
+    if (starter === undefined) {
+      throw new Error(`Studio has no starter code for the runtime "${runtime}".`);
+    }
+    handler = starter.handler;
+    zipFile = storedZip(starter.fileName, starter.text);
   }
   const lambda = lambdaClient(endpoint);
 
@@ -670,8 +747,8 @@ export async function createFunction(
     Runtime: runtime as NonNullable<CreateFunctionCommand['input']['Runtime']>,
     Architectures: [architecture as NonNullable<CreateFunctionCommand['input']['Architectures']>[number]],
     Role: roleArn,
-    Handler: code.handler,
-    Code: { ZipFile: storedZip(code.fileName, code.text) },
+    Handler: handler,
+    Code: { ZipFile: zipFile },
   });
   await step(
     'Creating the function',
@@ -722,4 +799,139 @@ export async function deleteFunctions(
     }
   }
   return result;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Invoke, change the code, change the configuration (issue 516, design "Task 2", "Task 3", "Task 5")
+//
+// Each goes through the area's `sendRequest` with its operation's name: a failure rejects with its `RequestError`,
+// an abort with the signal's reason alone.
+
+/** What an `Invoke` answered (`RequestResponse`, `LogType` `Tail`). */
+export interface InvokeAnswer {
+  /** The payload's bytes as UTF-8 text, exactly as they came; `''` for none. */
+  payload: string;
+  /** `LogResult` decoded from base64 as UTF-8 text; `''` for none. */
+  log: string;
+  /** `FunctionError` (`Unhandled`, `Handled`) when the function returned an error. */
+  functionError?: string;
+}
+
+const UTF8 = new TextDecoder('utf-8');
+
+/** The payload's bytes as UTF-8 text; `''` for none (the client gives no bytes for an empty body). */
+function payloadText(payload: unknown): string {
+  if (ArrayBuffer.isView(payload)) {
+    return UTF8.decode(payload);
+  }
+  return typeof payload === 'string' ? payload : '';
+}
+
+/** `LogResult`, base64 of the log's UTF-8 bytes, as text; `''` for none. */
+function decodeLog(logResult: string | undefined): string {
+  if (logResult === undefined || logResult === '') {
+    return '';
+  }
+  const binary = atob(logResult);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return UTF8.decode(bytes);
+}
+
+/**
+ * Invokes the function `name` with `eventText`, its bytes as typed, through the engine at `endpoint`: one `Invoke`
+ * to `$LATEST` with `InvocationType` `RequestResponse` and `LogType` `Tail`.
+ */
+export async function invoke(
+  endpoint: string,
+  name: string,
+  eventText: string,
+  signal: AbortSignal,
+): Promise<InvokeAnswer> {
+  const client = lambdaClient(endpoint);
+  const command = new InvokeCommand({
+    FunctionName: name,
+    InvocationType: 'RequestResponse',
+    LogType: 'Tail',
+    Payload: new TextEncoder().encode(eventText),
+  });
+  const output = await sendRequest(INVOKE, (abortSignal) => client.send(command, { abortSignal }), signal);
+  const answer: InvokeAnswer = {
+    payload: payloadText(output.Payload),
+    log: decodeLog(output.LogResult),
+  };
+  const functionError = text(output.FunctionError);
+  if (functionError !== undefined) {
+    answer.functionError = functionError;
+  }
+  return answer;
+}
+
+/** Replaces the code of the function `name` with `zipFile`, a .zip file's bytes: one `UpdateFunctionCode`. */
+export async function updateFunctionCode(
+  endpoint: string,
+  name: string,
+  zipFile: Uint8Array,
+  signal: AbortSignal,
+): Promise<void> {
+  const client = lambdaClient(endpoint);
+  const command = new UpdateFunctionCodeCommand({ FunctionName: name, ZipFile: zipFile });
+  await sendRequest(UPDATE_FUNCTION_CODE, (abortSignal) => client.send(command, { abortSignal }), signal);
+}
+
+/** The fields one "Save" changes; a field left out is not sent. */
+export interface ConfigurationChange {
+  runtime?: string;
+  handler?: string;
+  description?: string;
+  memorySize?: number;
+  timeout?: number;
+  /** The whole map of variables, in this order; an empty list removes them all. */
+  variables?: readonly EnvironmentVariable[];
+}
+
+/**
+ * Changes the configuration of the function `name`: one `UpdateFunctionConfiguration` holding exactly the fields of
+ * `change`.
+ */
+export async function updateFunctionConfiguration(
+  endpoint: string,
+  name: string,
+  change: ConfigurationChange,
+  signal: AbortSignal,
+): Promise<void> {
+  const input: UpdateFunctionConfigurationCommandInput = { FunctionName: name };
+  if (change.runtime !== undefined) {
+    input.Runtime = change.runtime as NonNullable<UpdateFunctionConfigurationCommandInput['Runtime']>;
+  }
+  if (change.handler !== undefined) {
+    input.Handler = change.handler;
+  }
+  if (change.description !== undefined) {
+    input.Description = change.description;
+  }
+  if (change.memorySize !== undefined) {
+    input.MemorySize = change.memorySize;
+  }
+  if (change.timeout !== undefined) {
+    input.Timeout = change.timeout;
+  }
+  if (change.variables !== undefined) {
+    input.Environment = { Variables: Object.fromEntries(change.variables.map(({ key, value }) => [key, value])) };
+  }
+  const client = lambdaClient(endpoint);
+  const command = new UpdateFunctionConfigurationCommand(input);
+  await sendRequest(UPDATE_FUNCTION_CONFIGURATION, (abortSignal) => client.send(command, { abortSignal }), signal);
+}
+
+/** The emulator refused the request as too large: HTTP 413, which it answers with no code and no body. */
+export function isTooLarge(failure: RequestFailure): boolean {
+  return failure.kind === 'other' && /^(HTTP )?413(\s|$)/.test(failure.code);
+}
+
+/** The emulator holds no such function: `ResourceNotFoundException`. */
+export function isFunctionNotFound(failure: RequestFailure): boolean {
+  return failure.kind === 'other' && failure.code === NOT_FOUND;
 }

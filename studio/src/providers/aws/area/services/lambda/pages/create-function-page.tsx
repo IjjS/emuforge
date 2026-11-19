@@ -24,7 +24,7 @@ import { quoting } from '../components/quoting';
 import { RoleSelect } from '../components/role-select';
 import { FUNCTIONS_PATH, functionPath } from '../format';
 import { useCreateFunction } from '../queries';
-import { RUNTIMES } from '../starter-code';
+import { RUNTIMES } from '../runtimes';
 
 // "Create Event Function" (issue 84, requirement R6, R9.4, R10.3): the console's form "Author from scratch" in the
 // console's words (`studio/references/console/lambda/create-function.yaml`), its description, help, field messages
@@ -215,6 +215,7 @@ export function CreateFunctionPage({ connection }: ScreenPageProps) {
         roleChoice === 'existing' && existingRole !== null
           ? { kind: 'existing', arn: existingRole.value ?? '' }
           : { kind: 'default' },
+      code: { kind: 'starter' },
     };
     busy.current = true;
     create(request);
