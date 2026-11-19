@@ -175,7 +175,7 @@ describe('the topics list', () => {
     ]);
     expect(screen.getByRole('heading', { level: 1, name: /Topics/ })).toBeInTheDocument();
     expect(
-      screen.getByText('A topic’s page shows who is subscribed and whether a notification can reach them.'),
+      screen.getByText("A topic's page shows who is subscribed and whether a notification can reach them."),
     ).toBeInTheDocument();
     expect(screen.getByText('These topics are in your local emulator')).toBeInTheDocument();
     const link = screen.getByRole('link', { name: 'orders' });

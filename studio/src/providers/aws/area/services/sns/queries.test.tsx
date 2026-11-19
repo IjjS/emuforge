@@ -120,22 +120,25 @@ describe('the topics listing', () => {
     expect(result.current.pagesCount).toBe(2);
 
     act(() => {
-      result.current.goToPage(1);
-    });
-    const back = await nth(calls, 2);
-    expect(back.args[1]).toBeUndefined();
-    act(() => {
-      back.resolve({ arns: ['a', 'b'], nextToken: '100' });
-    });
-    await waitFor(() => {
-      expect(result.current.items).toEqual(['a', 'b']);
-    });
-
-    act(() => {
       result.current.refresh();
     });
-    const again = await nth(calls, 3);
-    expect(again.args[1]).toBeUndefined();
+    const again = await nth(calls, 2);
+    expect(again.args[1]).toBe('100');
+    expect(result.current.currentPage).toBe(2);
+    act(() => {
+      again.resolve({ arns: ['c2'] });
+    });
+    await waitFor(() => {
+      expect(result.current.items).toEqual(['c2']);
+    });
+    expect(result.current.currentPage).toBe(2);
+    expect(result.current.pagesCount).toBe(2);
+
+    act(() => {
+      result.current.goToPage(1);
+    });
+    const back = await nth(calls, 3);
+    expect(back.args[1]).toBeUndefined();
   });
 
   it('a late answer of an earlier page does not replace a newer one', async () => {
@@ -172,7 +175,7 @@ describe('the topics listing', () => {
 });
 
 describe("a topic's subscriptions", () => {
-  it('a page by token, the same way', async () => {
+  it('a page by token, the same way; a refresh asks the shown page again', async () => {
     const calls = held(api.listSubscriptions);
     const { result } = renderHook(() => useSubscriptionListing(ENDPOINT, TOPIC), { wrapper });
     const first = await nth(calls, 0);
@@ -196,9 +199,15 @@ describe("a topic's subscriptions", () => {
       expect(result.current.items).toEqual([]);
     });
     act(() => {
+      result.current.refresh();
+    });
+    const again = await nth(calls, 2);
+    expect(again.args.slice(0, 3)).toEqual([ENDPOINT, TOPIC, 't2']);
+    expect(result.current.currentPage).toBe(2);
+    act(() => {
       result.current.goToPage(1);
     });
-    expect((await nth(calls, 2)).args[2]).toBeUndefined();
+    expect((await nth(calls, 3)).args[2]).toBeUndefined();
   });
 });
 

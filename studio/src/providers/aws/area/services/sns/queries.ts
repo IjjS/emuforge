@@ -111,7 +111,7 @@ export interface Listing<T> {
   openEnd: boolean;
   /** Shows page `page` (from 1), read again; a page this listing has no token for is ignored. */
   goToPage: (page: number) => void;
-  /** Reads the listing again from page 1, dropping every token ("Refresh"). */
+  /** Reads the shown page again with the token it was reached by, keeping the page and the tokens ("Refresh"). */
   refresh: () => void;
 }
 
@@ -145,14 +145,13 @@ interface PagedOptions<T> {
 
 function usePagedListing<T>({ key, endpoint, enabled, operation, read }: PagedOptions<T>): Listing<T> {
   const [mount] = useState(() => (mounts += 1));
-  const [generation, setGeneration] = useState(0);
-  const listing = JSON.stringify([...key, endpoint ?? null, generation]);
+  const listing = JSON.stringify([...key, endpoint ?? null]);
   const [stored, setPosition] = useState<Position>(fresh(listing));
   const position = stored.listing === listing ? stored : fresh(listing);
   const token = position.page === 0 ? undefined : position.tokens[position.page - 1];
 
   const query = useQuery({
-    queryKey: [...SNS_KEY, ...key, endpoint, mount, generation, position.page, token, position.visit],
+    queryKey: [...SNS_KEY, ...key, endpoint, mount, position.page, token, position.visit],
     queryFn: async ({ signal }) => {
       if (endpoint === undefined) {
         noEndpoint();
@@ -188,8 +187,11 @@ function usePagedListing<T>({ key, endpoint, enabled, operation, read }: PagedOp
     [listing, setPosition],
   );
   const refresh = useCallback(() => {
-    setGeneration((current) => current + 1);
-  }, []);
+    setPosition((current) => {
+      const at = current.listing === listing ? current : fresh(listing);
+      return { ...at, visit: at.visit + 1 };
+    });
+  }, [listing, setPosition]);
 
   return {
     items: answer?.items,
