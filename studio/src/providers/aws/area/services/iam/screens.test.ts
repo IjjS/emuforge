@@ -66,7 +66,7 @@ describe("IAM's screens", () => {
     expect(IAM_POLICIES_NAVIGATION.activeHref).toBe('/aws/iam/policies');
   });
 
-  it("titles S5 and its last crumb with the name of the address's ARN, and \"Policy\" without one", () => {
+  it('titles S5 and its last crumb with the name of the address\'s ARN, and "Policy" without one', () => {
     const s5 = screenAt('/aws/iam/policies/details');
     const arn = 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole';
     const query = `arn=${encodeURIComponent(arn)}`;
