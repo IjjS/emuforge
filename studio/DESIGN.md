@@ -464,6 +464,9 @@ One column inside a sticky bar.
   (on `html`'s `scroll-padding-top`, or on the stops' `scroll-margin-top`, never both, so the offset does not count
   twice), and `html` has `scroll-padding-bottom: 16px` so a stop at the bottom of the viewport shows its whole ring.
   These are not inherited, so nothing reaches a provider area.
+- **The bar is never scrolled to:** it is always in view, so the bar and everything in it carry a negative
+  `scroll-margin-top` as deep as `html`'s `scroll-padding-top`; focus in the bar or its language menu never moves the
+  page (issue 486).
 - **Breakpoints:**
   - 900px: Home's services go from three columns to two, filled by row in label order.
   - 640px: the bar shows the tile at 24px with a 5px gap and "EmuForge" without "Studio", which stays in the link's
