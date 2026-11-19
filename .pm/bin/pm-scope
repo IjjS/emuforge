@@ -13,20 +13,12 @@ answer is the union. The first line is `scope: <kind>, <reason>: <modules or "no
 called-for module with the rule's sentence, the number of paths and one of them. Kinds:
   diff   the branch has commits of its own against main: what its paths call for
   main   the head is main's commit or an ancestor of it: the product modules (engine, studio, integration);
-         the harness tests are left out
+         the harness guards are left out
   unit   a unit of an issue branch: what its own paths against feat/<id> call for (a unit without a change of
          its own calls for nothing), except integration, which is left to the issue branch: the first line ends
          `; integration left to feat/<id>` and the module is `deferred` in the object, not called
   full   the changes cannot be read (not the top of a git work tree, no branch main or no issue branch, no commit
          shared with the target, git failed or took over 30 s): every module, with what failed, nothing deferred
-When harness is called for (kinds diff, unit and full) and the checkout holds at least one on-touch test file
-(_pmscope.ON_TOUCH), the module lines are followed by `  harness tests left out: <names or "none">`, the on-touch
-files that no changed path is a source of, and one line per called-for on-touch file with its entry's sentence,
-the number of its changed sources and one of them; or by `  harness tests every file: <why>` (--full, changes
-that cannot be read, a change of _pmscope.py or .pm/bin/tests/run, a path no rule knows). A checkout that holds no
-on-touch file prints no such line. The object holds the same under `harness_tests`: {all, why, left_out: [names],
-called: {name: [why]}, on_touch}, where on_touch is the number of on-touch files the checkout holds; the key is
-absent when harness is not called for.
 Services (issue 327). When integration is called for or deferred, a last line says which services' browser checks
 the integration step holds, as _pmscope.select decides it from the changed paths and the manifests:
 `  services     every service: <why>` or `  services     <names, or "none"> (<n> paths touch a service)`. A service
