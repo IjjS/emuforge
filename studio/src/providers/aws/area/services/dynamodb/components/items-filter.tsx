@@ -163,6 +163,8 @@ interface RowProps {
 function Row({ condition, position, errors, nameRef, onChange, onComparison, onRemove }: RowProps) {
   const n = String(position + 1);
   const named = (label: string) => `${label}, condition ${n}`;
+  // A select is named by its field's label and then its own name, so it adds only the row's position.
+  const rowName = `condition ${n}`;
   const noValue = takesNoValue(condition.comparison);
   const type = typeFor(condition.comparison, condition.type);
   const typeOptions = typesOf(condition.comparison).map((each) => ({ value: each, label: TYPE_LABELS[each] }));
@@ -184,7 +186,7 @@ function Row({ condition, position, errors, nameRef, onChange, onComparison, onR
         <Select
           selectedOption={comparison}
           options={[...COMPARISON_OPTIONS]}
-          ariaLabel={named('Comparison')}
+          ariaLabel={rowName}
           onChange={({ detail }) => {
             onComparison((detail.selectedOption.value ?? '=') as Comparison);
           }}
@@ -195,7 +197,7 @@ function Row({ condition, position, errors, nameRef, onChange, onComparison, onR
           <Select
             selectedOption={typeOptions.find((option) => option.value === type) ?? null}
             options={typeOptions}
-            ariaLabel={named('Type')}
+            ariaLabel={rowName}
             onChange={({ detail }) => {
               onChange({ type: (detail.selectedOption.value ?? 'S') as ValueType });
             }}
@@ -207,7 +209,7 @@ function Row({ condition, position, errors, nameRef, onChange, onComparison, onR
           <Select
             selectedOption={BOOLEAN_OPTIONS[condition.bool ? 0 : 1] ?? null}
             options={[...BOOLEAN_OPTIONS]}
-            ariaLabel={named('Value')}
+            ariaLabel={rowName}
             onChange={({ detail }) => {
               onChange({ bool: detail.selectedOption.value === 'true' });
             }}
