@@ -65,12 +65,23 @@ const COLUMNS: TableProps.ColumnDefinition<Role>[] = [
   },
 ];
 
+/** What a finished delete comes to (issue 535, task 5): the result the dialog would show, and whether every role went. */
+export interface DeleteRolesOutcome {
+  result: FlashResult | undefined;
+  allDeleted: boolean;
+}
+
 export interface DeleteRolesDialogProps {
   /** The selected roles, in the order of their rows. */
   roles: readonly Role[];
   connection: AreaConnection;
   /** Called when the dialog closes: "Cancel", Esc, or every role finished. */
   onClose: () => void;
+  /**
+   * Called once every role is finished, before `onClose`; a caller that gives it shows the result itself, and the
+   * dialog shows nothing. Without it the dialog shows the result in the area's Flashbar.
+   */
+  onOutcome?: (outcome: DeleteRolesOutcome) => void;
 }
 
 /**
@@ -78,7 +89,7 @@ export interface DeleteRolesDialogProps {
  * requests are in flight it is disabled and shows progress, and the dialog stays open until every role is finished.
  * "Cancel" and Esc close it without a request.
  */
-export function DeleteRolesDialog({ roles, connection, onClose }: DeleteRolesDialogProps) {
+export function DeleteRolesDialog({ roles, connection, onClose, onOutcome }: DeleteRolesDialogProps) {
   const [typed, setTyped] = useState('');
   const flash = usePageFlash();
   const engineOrigin = connection.engineOrigin;
@@ -91,6 +102,15 @@ export function DeleteRolesDialog({ roles, connection, onClose }: DeleteRolesDia
     }
   };
 
+  const finish = (outcome: DeleteRolesOutcome) => {
+    if (onOutcome !== undefined) {
+      onOutcome(outcome);
+    } else if (outcome.result !== undefined) {
+      flash.show(outcome.result);
+    }
+    onClose();
+  };
+
   const handleDelete = () => {
     if (pending || typed !== CONFIRM_WORD) {
       return;
@@ -99,15 +119,13 @@ export function DeleteRolesDialog({ roles, connection, onClose }: DeleteRolesDia
       roles.map((role) => (role.path === undefined ? { name: role.name } : { name: role.name, path: role.path })),
       {
         onSuccess: (result) => {
-          const shown = deleteResult(result, engineOrigin);
-          if (shown !== undefined) {
-            flash.show(shown);
-          }
-          onClose();
+          finish({ result: deleteResult(result, engineOrigin), allDeleted: result.failed.length === 0 });
         },
         onError: (error) => {
-          flash.show([actionFailureItem(failureOf(error), 'Deleting the roles', engineOrigin)]);
-          onClose();
+          finish({
+            result: [actionFailureItem(failureOf(error), 'Deleting the roles', engineOrigin)],
+            allDeleted: false,
+          });
         },
       },
     );

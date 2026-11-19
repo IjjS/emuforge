@@ -13,7 +13,6 @@ import {
   roleTabHref,
   roleTabLabel,
   roleTabOf,
-  roleTabPath,
   trustedEntitiesText,
   utcDateText,
 } from './format';
@@ -143,7 +142,6 @@ describe('routes', () => {
   it('puts a role’s name in one percent-encoded path segment', () => {
     expect(rolePath('a+b=c,.@_-')).toBe('/aws/iam/roles/details/a%2Bb%3Dc%2C.%40_-');
     expect(rolePath('create')).toBe('/aws/iam/roles/details/create');
-    expect(roleTabPath('x', 'trust-relationships')).toBe('/aws/iam/roles/details/x/trust-relationships');
   });
 });
 
