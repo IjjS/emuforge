@@ -1,24 +1,12 @@
-import { AWS_PATH } from '../../../identity';
+import { CREATE_QUEUE_PATH, QUEUES_PATH, SQS_PATH, queuePath } from '../../components/resource-paths';
+
+export { CREATE_QUEUE_PATH, QUEUES_PATH, SQS_PATH, queuePath };
 
 // How the SQS screens read a queue's values (issue 481, design tasks 1 to 5), and the routes their controls lead to.
 // Every value is the emulator's, as it came: a name is cut from the URL or ARN the emulator returned, never built.
 
 /** Shown for a value the answer lacks. */
 export const NONE = '-';
-
-/** SQS's route in the area, `/aws/sqs`. */
-export const SQS_PATH = `${AWS_PATH}/sqs`;
-
-/** S1, the queue list. */
-export const QUEUES_PATH = `${SQS_PATH}/queues`;
-
-/** S3, "Create queue" (issue 489). */
-export const CREATE_QUEUE_PATH = `${QUEUES_PATH}/create`;
-
-/** S2, a queue's page; its name is one segment below `queue/`. */
-export function queuePath(name: string): string {
-  return `${QUEUES_PATH}/queue/${encodeURIComponent(name)}`;
-}
 
 /** A queue's name: the text after a queue URL's last `/`. */
 export function queueNameFromUrl(url: string): string {
