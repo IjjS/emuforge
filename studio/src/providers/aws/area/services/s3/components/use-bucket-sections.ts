@@ -2,8 +2,8 @@ import { NO_SUCH_BUCKET } from '../api';
 import { useBucketProperty, type BucketProperty, type BucketPropertyValue, type BucketRead } from '../queries';
 
 // The reads of a bucket's sections (issue 256, requirement R5.1, R5.3): each its own operation, all sent at once in
-// parallel once the page has found the bucket, and again with every "Refresh". "Amazon EventBridge" is shown from the
-// answer of "Event notifications".
+// parallel once the page has found the bucket, and again with every "Refresh". Issue 480 keeps six sections, five of
+// them read.
 
 /** Every section's read, by the part of the bucket's configuration it reads. */
 export type BucketSectionReads = { [P in BucketProperty]: BucketRead<BucketPropertyValue<P>> };
@@ -17,15 +17,9 @@ export function useBucketSections(
   const options = { generation, enabled };
   return {
     versioning: useBucketProperty(endpoint, name, 'versioning', options),
-    abac: useBucketProperty(endpoint, name, 'abac', options),
     tags: useBucketProperty(endpoint, name, 'tags', options),
     encryption: useBucketProperty(endpoint, name, 'encryption', options),
-    'intelligent-tiering': useBucketProperty(endpoint, name, 'intelligent-tiering', options),
-    logging: useBucketProperty(endpoint, name, 'logging', options),
     notifications: useBucketProperty(endpoint, name, 'notifications', options),
-    acceleration: useBucketProperty(endpoint, name, 'acceleration', options),
-    'object-lock': useBucketProperty(endpoint, name, 'object-lock', options),
-    'request-payment': useBucketProperty(endpoint, name, 'request-payment', options),
     website: useBucketProperty(endpoint, name, 'website', options),
   };
 }

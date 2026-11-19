@@ -2,8 +2,8 @@ import Button from '@cloudscape-design/components/button';
 import Header from '@cloudscape-design/components/header';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Tabs, { type TabsProps } from '@cloudscape-design/components/tabs';
-import { useCallback, useState, type MouseEvent } from 'react';
-import { useLocation, useNavigate } from 'react-router';
+import { useCallback, useState } from 'react';
+import { useLocation, useNavigate, useSearchParams } from 'react-router';
 
 import { useShowsResources } from '../../../components/page-resources';
 import { ValueText } from '../../../components/value-text';
@@ -11,48 +11,42 @@ import type { ScreenPageProps } from '../../../screens';
 import { lineText, pageState, type PageState } from '../components/bucket-read';
 import { BucketLoading, BucketNotFound, BucketReadFailure } from '../components/bucket-read-state';
 import { BucketSections } from '../components/bucket-sections';
+import { ObjectsBucketGone } from '../components/objects-states';
+import { ObjectsTab } from '../components/objects-tab';
 import { useAnnouncer } from '../components/use-announcer';
 import { anySectionMissing, useBucketSections } from '../components/use-bucket-sections';
-import { bucketPropertiesPath, bucketTabPath, type BucketTab } from '../format';
+import { bucketPropertiesPath, objectsPath } from '../format';
 import type { Bucket } from '../api';
 import { useBucketLookup } from '../queries';
 
-// S1, a general purpose bucket's own page with its tab "Properties" (issue 256, requirement R4, R5, R9.1, R10, R11):
-// the console's tabs, in the console's words; its states in EmuForge's own. Every value from the engine or the
-// emulator is rendered as text, each as the kind of value it is (issue 467, requirement R6). The `h1` has no
-// description: the area's frame says where the bucket is (issue 467, R3).
+// S1, a general purpose bucket's own page (issue 256, requirement R4, R5, R9.1, R10, R11; issue 480): two tabs,
+// "Objects" (task 1) at the bucket's route and at `/objects`, and "Properties" at `/properties`, each a route of its
+// own. Every value from the engine or the emulator is rendered as text, each as the kind of value it is (issue 467,
+// requirement R6). The `h1` has no description: the area's frame says where the bucket is (issue 467, R3).
 
 const REFRESHED = 'Bucket refreshed';
 
-/** The tabs in the spec's order (R5.2); every one but "Properties" leads to its own route (R10). */
-const OTHER_TABS: readonly { id: BucketTab; label: string }[] = [
-  { id: 'objects', label: 'Objects' },
-  { id: 'metadata', label: 'Metadata' },
-  { id: 'permissions', label: 'Permissions' },
-  { id: 'metrics', label: 'Metrics' },
-  { id: 'management', label: 'Management' },
-];
+const OBJECTS_TAB = 'objects';
 const PROPERTIES_TAB = 'properties';
 
-/** A click of the main button with no modifier key: one the router follows (a modified click opens a new tab). */
-function isPlainClick(event: MouseEvent): boolean {
-  return event.button === 0 && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey;
-}
-
 /**
- * `/aws/s3/buckets/{name}` and `/aws/s3/buckets/{name}/properties`: the bucket of that name as the emulator holds it,
- * found with `ListBuckets` on every opening and "Refresh" (R5.1). Until it is found the page shows the read's state in
- * place of its tabs (R11.1). Once found, each section reads its own operation at once, all in parallel, and again with
- * every "Refresh" (R5.1, R5.6). A bucket the emulator does not hold, by the page's read or by a section's, is "Bucket
- * not found" (R5.5). A failed read while the
- * connection is not connected repeats the emulator line's status; once the connection is connected again the page is
- * read again by itself (R11.2).
+ * `/aws/s3/buckets/{name}`, `…/objects` and `…/properties`: the bucket of that name as the emulator holds it, found
+ * with `ListBuckets` on every opening (R5.1). Until it is found the page shows the read's state in place of its tabs
+ * (R11.1). Once found, the tab shown reads what it shows: "Objects" the folder of the address's `?prefix=`,
+ * "Properties" each section's own operation, all in parallel, again with every "Refresh" (R5.1, R5.6). A bucket the
+ * emulator does not hold, by the page's read or by a tab's, is said in the tab's own words (R5.5). A failed read
+ * while the connection is not connected repeats the emulator line's status; once the connection is connected again
+ * the page is read again by itself (R11.2).
  */
 export function BucketPage({ connection, params }: ScreenPageProps) {
   const name = params.name ?? '';
-  useShowsResources('buckets');
   const navigate = useNavigate();
   const { pathname } = useLocation();
+  const [search] = useSearchParams();
+  const propertiesPath = bucketPropertiesPath(name);
+  const tab = pathname.endsWith('/properties') ? PROPERTIES_TAB : OBJECTS_TAB;
+  const prefix = tab === OBJECTS_TAB ? (search.get('prefix') ?? '') : '';
+  useShowsResources(tab === OBJECTS_TAB ? 'objects' : 'buckets');
   const [announcement, announce] = useAnnouncer();
 
   const lookup = useBucketLookup(connection.engineOrigin, name);
@@ -60,10 +54,10 @@ export function BucketPage({ connection, params }: ScreenPageProps) {
   const found = pageState(lookup, connection);
   const sections = useBucketSections(connection.engineOrigin, name, {
     generation: lookup.generation,
-    enabled: found.kind === 'loaded',
+    enabled: found.kind === 'loaded' && tab === PROPERTIES_TAB,
   });
   const state: PageState<Bucket> =
-    found.kind === 'loaded' && anySectionMissing(sections) ? { kind: 'not-found' } : found;
+    found.kind === 'loaded' && tab === PROPERTIES_TAB && anySectionMissing(sections) ? { kind: 'not-found' } : found;
 
   // Kept from the previous render, as React's own pattern for it: what was last seen of the read and the connection,
   // so each change is acted on once, in the render that first shows it.
@@ -95,7 +89,7 @@ export function BucketPage({ connection, params }: ScreenPageProps) {
     }
   }
   // Once the connection becomes connected again, a failed read, or a page shown while the connection was not
-  // connected, is read again by itself (R11.2): after an emulator restart the page says "Bucket not found".
+  // connected, is read again by itself (R11.2): after an emulator restart the page says the bucket is gone.
   if (connected !== seenConnected) {
     setSeenConnected(connected);
     if (connected && (lookup.failure !== undefined || wasDown)) {
@@ -115,8 +109,6 @@ export function BucketPage({ connection, params }: ScreenPageProps) {
     refresh();
   }, [refresh]);
 
-  const propertiesPath = bucketPropertiesPath(name);
-
   const handleTabChange = useCallback(
     ({ detail }: { detail: TabsProps.ChangeDetail }) => {
       if (detail.activeTabHref !== undefined) {
@@ -126,55 +118,52 @@ export function BucketPage({ connection, params }: ScreenPageProps) {
     [navigate],
   );
 
-  // On the bare route "Properties" is the tab shown, so Cloudscape reports no change for it; the router still follows
-  // it to the tab's own route (R10). Enter on a tab is a click of its link.
-  const handleTabsClick = useCallback(
-    (event: MouseEvent) => {
-      const target = event.target instanceof Element ? event.target.closest('[role="tab"]') : null;
-      if (target?.getAttribute('href') === propertiesPath && pathname !== propertiesPath && isPlainClick(event)) {
-        void navigate(propertiesPath);
-      }
-    },
-    [navigate, pathname, propertiesPath],
-  );
-
   const tabs = (bucket: Bucket): TabsProps.Tab[] => [
-    ...OTHER_TABS.slice(0, 2).map(({ id, label }) => ({ id, label, href: bucketTabPath(name, id) })),
+    {
+      id: OBJECTS_TAB,
+      label: 'Objects',
+      href: objectsPath(name),
+      // A new tab for each folder, the lookup's generation included: its filter, pages and selection start afresh.
+      content: (
+        <ObjectsTab
+          key={`${String(lookup.generation)}:${prefix}`}
+          name={name}
+          prefix={prefix}
+          connection={connection}
+          announce={announce}
+        />
+      ),
+    },
     {
       id: PROPERTIES_TAB,
       label: 'Properties',
       href: propertiesPath,
       content: <BucketSections bucket={bucket} reads={sections} connection={connection} />,
     },
-    ...OTHER_TABS.slice(2).map(({ id, label }) => ({ id, label, href: bucketTabPath(name, id) })),
   ];
 
   return (
     <SpaceBetween size="l">
       <Header
         variant="h1"
-        actions={
-          <Button iconName="refresh" onClick={handleRefresh}>
-            Refresh
-          </Button>
-        }
+        // The tab "Objects" has its own "Refresh", for its listing.
+        {...(tab === PROPERTIES_TAB && {
+          actions: (
+            <Button iconName="refresh" onClick={handleRefresh}>
+              Refresh
+            </Button>
+          ),
+        })}
       >
         <ValueText kind="name" value={name} />
       </Header>
       <div>
         {state.kind === 'loading' && <BucketLoading />}
         {state.kind === 'failure' && <BucketReadFailure view={state.view} onRetry={handleRetry} />}
-        {state.kind === 'not-found' && <BucketNotFound name={name} />}
+        {state.kind === 'not-found' &&
+          (tab === OBJECTS_TAB ? <ObjectsBucketGone name={name} /> : <BucketNotFound name={name} />)}
         {state.kind === 'loaded' && (
-          // A click of a tab reaches its link first; this only adds what Cloudscape leaves out.
-          <div onClick={handleTabsClick}>
-            <Tabs
-              tabs={tabs(state.value)}
-              activeTabId={PROPERTIES_TAB}
-              keyboardActivationMode="manual"
-              onChange={handleTabChange}
-            />
-          </div>
+          <Tabs tabs={tabs(state.value)} activeTabId={tab} keyboardActivationMode="manual" onChange={handleTabChange} />
         )}
         {announcement}
       </div>

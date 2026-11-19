@@ -7,14 +7,23 @@ Issue-Key: studio|s3|bucket-properties-edit
 Issue-Check-Ids:
 Issue-Commit: 9743b197231a04ff6bb058cf26ddd38b9f7bc4fc
 
-# Build the edit pages of a bucket's properties: versioning, ABAC, tags, default encryption, Intelligent-Tiering, logging, event notifications, EventBridge, acceleration, Object Lock, Requester pays, website hosting
+# Build S3 task 10: change a bucket's tags, default encryption, static website hosting and lifecycle rules
 
 > Identified against commit `9743b197231a04ff6bb058cf26ddd38b9f7bc4fc`. The code may have drifted since; trace the issue to the current code before fixing.
 
-## Description
-A bucket's page (issue 256) shows each property read-only; each section's "Edit" or "Create" button leads to a route below `/aws/s3/bucket/<name>/property/` that shows the area's "no screen yet" page. The emulator stores every one of these properties and reads it back.
+> Narrowed by issue 480 (`.pm/issue-480/decisions.md`, PM, 2026-11-18): this is task 10 of S3's task list
+> (`.pm/archive/480/requirement.md` once archived): read and change a bucket's tags, default encryption, website and
+> lifecycle rules. Versioning's edit is task 8's and event notifications are task 6's (later issues); ABAC,
+> Intelligent-Tiering, server access logging, EventBridge, transfer acceleration, Object Lock and Requester pays are
+> no longer a task, and their sections left the bucket's Properties in issue 480. The lifecycle rules of issue 449
+> are folded in here.
 
-Reference: the AWS console's S3 screens for structure and vocabulary (the Amazon S3 User Guide, and the owner's captures under `docs/aws-console/s3/` in the main checkout, outside git, where one shows the screen). Built to the AWS screen policy (`studio/AGENTS.md`) the way the screens of issue 256 are: `console` screens of the area, a reference spec each under `studio/references/console/s3/`, calls through the engine, the states the policy names. Before anything is designed, the requirement calls the emulator again for every operation it uses.
+## Description
+A bucket's Properties tab (issues 256, 480) shows tags, default encryption and static website hosting read-only;
+each section's "Edit" leads to a route below `/aws/s3/bucket/<name>/property/` that shows the area's "no screen yet"
+page, and lifecycle rules are not shown at all. A developer sets these locally to match what an app or an IaC
+template expects. Built by the method of `studio/references/workflow.md`: the tasks as far as the emulator's API
+supports them, the calls through the engine, the states `studio/AGENTS.md` names.
 
 ## Evidence
 Called on aws-emulator 1.0.481 (release 2026.11.16), started with `infra/aws-emulator/docker-compose.yml`, signed with the emulator's own files, while planning issue 256 (the full output was kept in that plan's probe logs, `probe-1.log` to `probe-5.log`; `ok` is the AWS CLI's exit 0 with the output named, an error is named by its code; a line marked issue 56 was called while planning issue 56, on an earlier emulator):
@@ -38,12 +47,15 @@ Not called: redirection rules of a website, a notification to SNS or Lambda, a t
 4. The page says there is no screen yet.
 
 ## Expected
-- Each section's button opens a page that shows the property as the emulator holds it and sends its change; the bucket's page then shows what the emulator holds; the emulator's refusal is shown as it came.
-- The messages for input the emulator would refuse (the tag rules above, Object Lock without versioning) are told before the request where the rule is known, and the emulator's refusal is shown where it is not.
-- A KMS key that does not exist is accepted by the emulator: the page says in EmuForge's own words that objects cannot then be put.
-- Resources made outside Studio appear; every read goes to the emulator through the engine, never a browser cache.
-- Loading, empty, the emulator not reachable and an operation answered 501 each have their own state in EmuForge's own words.
-- Each screen's structure score against its reference spec and its critique pass (`studio/references/critique.md`).
+- Tags, default encryption and the website configuration can each be changed from the bucket's Properties and are
+  read back as the emulator holds them; the emulator's refusal is shown as it came.
+- Lifecycle rules are listed, created, edited and deleted; the requirement finds out by calling whether the emulator
+  acts on a rule (expires an object) and the screen says only what it was seen to do.
+- A rule the emulator was seen to enforce (the tag rules above) is told before the request; a KMS key that does not
+  exist is accepted by the emulator, and the screen says in EmuForge's own words that objects cannot then be put.
+- Each task is proven by a business scenario against the real emulator; the screens are critiqued once on the
+  built app (`studio/references/critique.md`).
 
 ## Out of scope
-The "Permissions", "Management", "Metrics" and "Metadata" tabs. The section "AWS CloudTrail data events". Choosing a KMS key from a list (the "Create bucket" issue filed beside this). Any engine change. Anything sent to real AWS.
+Versioning (task 8), event notifications (task 6), the sections no longer a task (above), choosing a KMS key from a
+list. Any engine change. Anything sent to real AWS.

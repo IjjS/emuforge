@@ -130,7 +130,8 @@ describe('the registry of the AWS area', () => {
   it('the rules: crumbs given by a function, which gives at least one for sample values → accepted', () => {
     const crumbs = vi.fn((params: Readonly<Record<string, string>>) => [{ text: params.name ?? '' }] as const);
     expect(faultsOf('x', screenAt(['/aws/x/things/{name}'], crumbs))).toEqual([]);
-    expect(crumbs).toHaveBeenCalledWith({ name: expect.any(String) as unknown });
+    // Issue 480: a function is given the address's query too, none for the rules' sample values.
+    expect(crumbs).toHaveBeenCalledWith({ name: expect.any(String) as unknown }, new URLSearchParams());
   });
 
   it('the rules: a screens.ts in a folder without service.json → refused, naming the folder', () => {
@@ -177,10 +178,17 @@ describe('the registry of the AWS area', () => {
     expect(faults[0]).toContain(pattern);
   });
 
+  // Issue 480: the bucket page's paths are the Objects tab (its bare route and /objects) and /properties; it still leads
+  // to /aws/s3/bucket/{name}/property alone.
   it("the real registry: S3's bucket page leads to /aws/s3/bucket/{name}/property; no other screen of S3, Lambda or IAM leads anywhere; the registry has no fault", () => {
     const leading = SCREENS.filter((screen) => screen.leadsTo !== undefined && screen.leadsTo.length > 0);
     expect(leading.map(({ service, paths, leadsTo }) => ({ service, first: paths[0], leadsTo }))).toEqual([
       { service: '/s3', first: '/aws/s3/buckets/{name}', leadsTo: ['/aws/s3/bucket/{name}/property'] },
+    ]);
+    expect(SCREENS.find((screen) => screen.paths[0] === '/aws/s3/buckets/{name}')?.paths).toEqual([
+      '/aws/s3/buckets/{name}',
+      '/aws/s3/buckets/{name}/objects',
+      '/aws/s3/buckets/{name}/properties',
     ]);
     for (const service of ['/s3', '/lambda', '/iam']) {
       expect(SCREENS.some((screen) => screen.service === service)).toBe(true);
