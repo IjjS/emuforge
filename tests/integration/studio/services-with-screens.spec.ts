@@ -139,10 +139,12 @@ test('studio.aws-index-groups-services-by-screen', async ({ ctx, page }) => {
       await expectInAwsArea(page, 'Amazon Web Services');
       expect(await groupLinks(page, withName), `the links of "${withName}"`).toEqual(WITH);
       expect(await groupLinks(page, withoutName), `the links of "${withoutName}"`).toEqual(WITHOUT);
-      const container = page.getByRole('main');
-      for (const { label } of SERVICES_ON_DISK) {
-        await expect(container.getByRole('link', { name: label, exact: true }), `links to "${label}"`).toHaveCount(1);
-      }
+      // Every service is linked once in "Services": the two groups together hold each label exactly once. (The
+      // area's side navigation, which lists the services too, is outside both groups.)
+      const linked = [...(await groupLinks(page, withName)), ...(await groupLinks(page, withoutName))];
+      expect([...linked].sort(), 'the links of both groups together').toEqual(
+        SERVICES_ON_DISK.map((service) => service.label).sort(),
+      );
     },
   );
 
