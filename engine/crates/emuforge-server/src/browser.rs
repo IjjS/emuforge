@@ -27,12 +27,12 @@ const ENGINE_PREFIX: &str = "/__emuforge";
 const RELAYED_PREFLIGHT_METHODS: &str = "GET, HEAD, PUT, POST, DELETE, PATCH";
 /// Name prefix of the browser's Fetch Metadata headers: order 3c, and removed before a Studio request is relayed
 /// (D4).
-const FETCH_METADATA_PREFIX: &str = "sec-fetch-";
+pub(crate) const FETCH_METADATA_PREFIX: &str = "sec-fetch-";
 /// Name prefix of every CORS response header; on a relayed Studio answer each one is the engine's (D5).
-const CORS_PREFIX: &str = "access-control-";
+pub(crate) const CORS_PREFIX: &str = "access-control-";
 /// The `Vary` line every answer to the Studio origin gains after `Origin`, so a browser reuses a stored answer only
 /// for a request with the same session token, absence included (RFC 9111 4.1). The name, never the token.
-const VARY_SESSION: &str = "X-EmuForge-Session";
+pub(crate) const VARY_SESSION: &str = "X-EmuForge-Session";
 
 /// The one origin whose browser requests the engine serves: `http://127.0.0.1:<studio port>`, always.
 #[derive(Debug, Clone)]
@@ -139,17 +139,11 @@ pub(crate) async fn guard(
         let mut tokens = headers.get_all(&SESSION_HEADER).iter();
         match (tokens.next(), tokens.next()) {
             (None, _) => {
-                return unauthorized(
-                    "SessionRequired",
-                    "send the session token in the X-EmuForge-Session header; obtain it from /__emuforge/session",
-                );
+                return session_required();
             }
             (Some(token), None) if state.session.matches(token.as_bytes()) => {}
             _ => {
-                return unauthorized(
-                    "SessionInvalid",
-                    "the session token is not this engine's; obtain a new one from /__emuforge/session",
-                );
+                return session_invalid();
             }
         }
     }
@@ -183,6 +177,22 @@ fn browser_not_served(studio: &StudioOrigin) -> Response {
             "requests from browsers are served only from the Studio origin {}",
             studio.as_str()
         ),
+    )
+}
+
+/// `401 SessionRequired`: no session token.
+pub(crate) fn session_required() -> Response {
+    unauthorized(
+        "SessionRequired",
+        "send the session token in the X-EmuForge-Session header; obtain it from /__emuforge/session",
+    )
+}
+
+/// `401 SessionInvalid`: several session tokens, or one that is not this engine's.
+pub(crate) fn session_invalid() -> Response {
+    unauthorized(
+        "SessionInvalid",
+        "the session token is not this engine's; obtain a new one from /__emuforge/session",
     )
 }
 

@@ -22,7 +22,7 @@ use axum::http::header::{
 use axum::http::{HeaderMap, HeaderValue, Method, Request, StatusCode};
 use emuforge_core::{Emulator, Health, Limits, Prepared, Reason, Store, forward};
 use emuforge_server::{
-    AppState, Form, ProbeFn, RelayFn, SessionToken, StudioOrigin, app, seed_settings,
+    AcceptedHosts, AppState, Form, ProbeFn, RelayFn, SessionToken, StudioOrigin, app, seed_settings,
 };
 use hyper::body::{Bytes, Frame};
 use serde_json::{Value, json};
@@ -71,6 +71,7 @@ fn app_relaying(probe: ProbeFn, relay: RelayFn) -> Router {
         test: Arc::new(|_| Box::pin(async { emuforge_core::TestReport { checks: Vec::new() } })),
         max_in_flight: 2,
         studio_origin: StudioOrigin::new(port(8296)),
+        accepted_hosts: AcceptedHosts::new(port(8296), Vec::new()),
         session: Arc::new(SessionToken::generate().unwrap()),
     })
 }

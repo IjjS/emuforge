@@ -3,7 +3,9 @@
 // maps whatever comes back, or does not, to one of the states of requirement 3.2. The token lives in this client's
 // memory only: never in a URL, browser storage or a log.
 
-export const ENGINE_HOST = '127.0.0.1';
+import { loopbackBase } from './engine-base';
+
+export { ENGINE_HOST } from './engine-base';
 export const SESSION_PATH = '/__emuforge/session';
 export const HEALTH_PATH = '/__emuforge/health';
 export const SESSION_HEADER = 'X-EmuForge-Session';
@@ -21,7 +23,7 @@ export const TOKEN = /^[\x21-\x7e]+$/;
 
 /** The engine's address on loopback for an engine port. */
 export function engineOrigin(enginePort: number): string {
-  return `http://${ENGINE_HOST}:${String(enginePort)}`;
+  return loopbackBase(enginePort);
 }
 
 /** The emulator as the engine reports it. */
@@ -94,7 +96,7 @@ function withTarget<T extends CheckResult>(result: T, target: string | undefined
 }
 
 export interface EngineClient {
-  /** `http://127.0.0.1:<engine port>`. */
+  /** The base it calls: `http://127.0.0.1:<engine port>`, or `<page origin><engine path>` through Studio's port. */
   readonly origin: string;
   /**
    * Runs one check: every request it needs, within `CHECK_TIME_LIMIT_MS`. Resolves with what it found, whatever the
@@ -153,9 +155,12 @@ function engineError(answer: Answer): CheckResult {
   };
 }
 
-/** A client for the engine on `127.0.0.1:<enginePort>`, holding its own session token. */
-export function createEngineClient(enginePort: number): EngineClient {
-  const origin = engineOrigin(enginePort);
+/**
+ * A client for the engine at `base` (`engineBase` of the page's configuration), holding its own session token. Each
+ * request goes to `<base><route>`.
+ */
+export function createEngineClient(base: string): EngineClient {
+  const origin = base;
   let token: string | undefined;
   let lastEmulatorPort: number | undefined;
 

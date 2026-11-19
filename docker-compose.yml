@@ -35,6 +35,9 @@ services:
       EMULATOR_PORT: ${EMULATOR_PORT:-9297}
       EMUFORGE_ENGINE_PORT: ${EMUFORGE_ENGINE_PORT:-8297}
       EMUFORGE_STUDIO_PORT: ${EMUFORGE_STUDIO_PORT:-8296}
+      # Host names Studio's port answers besides 127.0.0.1, for a forwarder on the host that keeps the browser's
+      # Host; empty is none. The ports below stay on 127.0.0.1.
+      EMUFORGE_ALLOW_HOSTS: ${EMUFORGE_ALLOW_HOSTS:-}
       HOME: /home/emuforge
     ports:
       # Published on 127.0.0.1 only, never on the whole network. The same number on both sides: the engine and

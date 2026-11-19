@@ -23,7 +23,8 @@ use emuforge_core::{
     CREDENTIALS_FILE, Emulator, Health, Outcome, Reason, SETTINGS_FILE, Step, Store, TestReport,
 };
 use emuforge_server::{
-    AppState, Form, ProbeFn, RelayFn, SessionToken, StudioOrigin, TestFn, app, seed_settings,
+    AcceptedHosts, AppState, Form, ProbeFn, RelayFn, SessionToken, StudioOrigin, TestFn, app,
+    seed_settings,
 };
 use hyper::body::{Bytes, Frame};
 use serde_json::{Value, json};
@@ -125,6 +126,7 @@ fn fixture_with(options: Options) -> Fixture {
         test,
         max_in_flight: options.max_in_flight,
         studio_origin: StudioOrigin::new(port(8296)),
+        accepted_hosts: AcceptedHosts::new(port(8296), Vec::new()),
         session,
     });
     Fixture {

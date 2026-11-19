@@ -157,4 +157,28 @@ mod tests {
         assert_eq!(config.studio_port, port(8396));
         assert_eq!(config.listen_address, IpAddr::V4(Ipv4Addr::UNSPECIFIED));
     }
+
+    #[test]
+    fn cli_serve_help_lists_allow_host_with_its_variable() {
+        let error = parse(&["serve", "--help"]).unwrap_err();
+        let text = error.render().to_string();
+        let start = text
+            .find("      --allow-host ")
+            .unwrap_or_else(|| panic!("no line for --allow-host in {text}"));
+        let entry = text[start..].split("\n      --").next().unwrap_or_default();
+        assert!(entry.contains("[env: EMUFORGE_ALLOW_HOSTS="), "{entry}");
+    }
+
+    #[test]
+    fn cli_serve_with_two_allowed_hosts_is_serve_with_both() {
+        let cli = parse(&["serve", "--allow-host", "a.test", "--allow-host", "b.test"]).unwrap();
+        let Command::Serve(config) = cli.command;
+        let hosts: Vec<String> = config
+            .allow_hosts
+            .as_slice()
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert_eq!(hosts, ["a.test", "b.test"]);
+    }
 }

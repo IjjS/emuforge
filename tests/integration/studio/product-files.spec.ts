@@ -231,11 +231,12 @@ test('engine.product-configuration-names-loopback-and-the-emulator-only', async 
 
   // EMULATOR_PORT, EMUFORGE_ENGINE_PORT and EMUFORGE_STUDIO_PORT set (the form's own free ports) → the project's name,
   // the published ports (above) and emuforge's environment follow them, as the check asserts it (issue 34): the
-  // environment of emuforge is the three ports and the container's HOME, and its mount is under that HOME.
+  // environment of emuforge is the three ports, the container's HOME and the allowed host names (issue 503), and its
+  // mount is under that HOME.
   expect(plain.name ?? null, 'the project name').toBe(form.project);
   const environment = services.emuforge?.environment ?? {};
   expect(Object.keys(environment).sort(), "the environment of emuforge").toEqual(
-    ['EMULATOR_PORT', 'EMUFORGE_ENGINE_PORT', 'EMUFORGE_STUDIO_PORT', 'HOME'].sort(),
+    ['EMUFORGE_ALLOW_HOSTS', 'EMULATOR_PORT', 'EMUFORGE_ENGINE_PORT', 'EMUFORGE_STUDIO_PORT', 'HOME'].sort(),
   );
   expect(
     [environment.EMULATOR_PORT, environment.EMUFORGE_ENGINE_PORT, environment.EMUFORGE_STUDIO_PORT],

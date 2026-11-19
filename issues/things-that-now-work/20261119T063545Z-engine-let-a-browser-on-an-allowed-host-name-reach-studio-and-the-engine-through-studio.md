@@ -4,7 +4,7 @@ Issue-Module: engine
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: engine|studio|reach-studio-from-an-allowed-host-through-one-port
-Issue-Check-Ids:
+Issue-Check-Ids: engine.product-allowed-host-opens-studio-through-one-port engine.product-without-allowed-host-serves-loopback-only engine.product-channel-relay-s3-object-matches-direct engine.product-allow-host-start-warns-and-keeps-secrets engine.product-page-calls-the-engine-through-studios-port
 Issue-Commit: 3430466d1aa1b043865b4bfcc5c5d8900df86cca
 
 # Let a browser on an allowed host name reach Studio and the engine through Studio's one port

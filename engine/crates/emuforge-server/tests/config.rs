@@ -9,8 +9,8 @@ use clap::error::ErrorKind;
 use clap::{Args, FromArgMatches};
 use emuforge_core::{SETTINGS_FILE, Store};
 use emuforge_server::{
-    Config, Error, Form, LISTEN_IP, engine_addr, listen_warning, seed_settings, settings_dir,
-    settings_step, studio_addr,
+    AllowHosts, Config, Error, Form, LISTEN_IP, StudioFiles, allow_host_warning, engine_addr,
+    listen_warning, seed_settings, serve, settings_dir, settings_step, studio_addr,
 };
 
 /// `Config` augmented onto a command, as a binary flattens it.
@@ -157,6 +157,7 @@ fn listen_addr_is_loopback_with_the_engine_port() {
             listen_address: IpAddr::V4(LISTEN_IP),
             settings_dir: None,
             form: Form::Native,
+            allow_hosts: AllowHosts::default(),
         };
         assert_eq!(
             engine_addr(&config),
@@ -178,6 +179,7 @@ fn config_at(listen_address: IpAddr) -> Config {
         listen_address,
         settings_dir: None,
         form: Form::Native,
+        allow_hosts: AllowHosts::default(),
     }
 }
 
@@ -382,6 +384,7 @@ fn parse_without_environment(args: &[&str]) -> Result<Config, clap::Error> {
         "studio_port",
         "settings_dir",
         "form",
+        "allow_hosts",
     ]
     .into_iter()
     .fold(command(), |command, id| {
@@ -744,4 +747,202 @@ async fn compose_start_with_the_file_already_so_does_not_rewrite_it_and_says_not
         "{log}"
     );
     assert_no_key(&log);
+}
+
+// ---- Issue 503: --allow-host and EMUFORGE_ALLOW_HOSTS ----
+
+/// Set in the child process of the variable tests below.
+const ALLOW_CHILD_MARKER: &str = "EMUFORGE_TEST_ALLOW_HOSTS_CHILD";
+const ALLOW_CHILD_TEST: &str = "allow_hosts_parsed_in_the_child_process_are_printed";
+
+/// Runs only as the child process of the tests below, whose environment it has; elsewhere it does nothing.
+#[test]
+fn allow_hosts_parsed_in_the_child_process_are_printed() {
+    let Some(args) = std::env::var_os(ALLOW_CHILD_MARKER) else {
+        return;
+    };
+    let args = args.into_string().unwrap();
+    let args: Vec<&str> = args.split_whitespace().collect();
+    match parse(&args) {
+        Ok(config) => {
+            let hosts: Vec<String> = config
+                .allow_hosts
+                .as_slice()
+                .iter()
+                .map(ToString::to_string)
+                .collect();
+            println!("allow_hosts=[{}]", hosts.join(" "));
+        }
+        Err(error) => println!("error kind={:?} text={error}", error.kind()),
+    }
+}
+
+/// Runs this test binary again for the one test above, with `EMUFORGE_ALLOW_HOSTS` set to `variable` and `args`
+/// given to it.
+fn allow_hosts_in_a_child(variable: &str, args: &str) -> String {
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            ALLOW_CHILD_TEST,
+            "--exact",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env(ALLOW_CHILD_MARKER, args)
+        .env("EMUFORGE_ALLOW_HOSTS", variable)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    assert!(output.status.success(), "{stdout}");
+    stdout
+}
+
+#[test]
+fn allow_hosts_variable_is_every_value() {
+    let stdout = allow_hosts_in_a_child("a.test,b.test:9000", " ");
+    assert!(
+        stdout.contains("allow_hosts=[a.test b.test:9000]"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn allow_hosts_variable_empty_is_no_name_and_no_error() {
+    let stdout = allow_hosts_in_a_child("", " ");
+    assert!(stdout.contains("allow_hosts=[]"), "{stdout}");
+}
+
+#[test]
+fn allow_hosts_variable_with_an_empty_item_is_a_usage_error_naming_the_flag() {
+    for value in ["a.test,,b.test", "a.test,"] {
+        let stdout = allow_hosts_in_a_child(value, " ");
+        assert!(
+            stdout.contains("error kind=ValueValidation"),
+            "case {value}: {stdout}"
+        );
+        assert!(stdout.contains("--allow-host"), "case {value}: {stdout}");
+    }
+}
+
+#[test]
+fn allow_hosts_flag_wins_over_the_variable() {
+    let stdout = allow_hosts_in_a_child("a.test", "--allow-host b.test");
+    assert!(stdout.contains("allow_hosts=[b.test]"), "{stdout}");
+}
+
+/// A loopback port nothing listens on now.
+fn free_port() -> u16 {
+    std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
+}
+
+/// The machine's first non-loopback IPv4 address, as the route to a documentation address picks it; `None` on a
+/// machine with none. Connecting a UDP socket sends nothing.
+fn non_loopback_ipv4() -> Option<Ipv4Addr> {
+    let socket = std::net::UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).ok()?;
+    socket.connect((Ipv4Addr::new(192, 0, 2, 1), 9)).ok()?;
+    match socket.local_addr().ok()?.ip() {
+        IpAddr::V4(ip) if !ip.is_loopback() && !ip.is_unspecified() => Some(ip),
+        _ => None,
+    }
+}
+
+/// Whether a connection to `ip:port` is accepted, trying a bounded number of times while `serve` starts.
+async fn accepts(ip: IpAddr, port: u16) -> bool {
+    for _ in 0..1000 {
+        if tokio::net::TcpStream::connect((ip, port)).await.is_ok() {
+            return true;
+        }
+        tokio::task::yield_now().await;
+    }
+    false
+}
+
+/// `GET path` on `127.0.0.1:port` with that `Host`; the whole answer.
+async fn get_raw(port: u16, path: &str) -> String {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut stream = tokio::net::TcpStream::connect((Ipv4Addr::LOCALHOST, port))
+        .await
+        .unwrap();
+    let request =
+        format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
+    stream.write_all(request.as_bytes()).await.unwrap();
+    let mut answer = Vec::new();
+    stream.read_to_end(&mut answer).await.unwrap();
+    String::from_utf8_lossy(&answer).into_owned()
+}
+
+/// A `Config` on free loopback ports with the settings folder under `dir` and the allowed name `name.test`.
+fn allowing_name_test(dir: &Path) -> Config {
+    Config {
+        port: port(free_port()),
+        emulator_port: port(free_port()),
+        studio_port: port(free_port()),
+        listen_address: IpAddr::V4(LISTEN_IP),
+        settings_dir: Some(dir.join("settings")),
+        form: Form::Native,
+        allow_hosts: AllowHosts::from(vec!["name.test".parse().unwrap()]),
+    }
+}
+
+const NO_EFFECT: &str = "--allow-host (EMUFORGE_ALLOW_HOSTS) has no effect";
+
+#[tokio::test(flavor = "current_thread")]
+async fn serve_without_studio_and_an_allowed_name_warns_it_has_no_effect_and_serves_the_engine() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = allowing_name_test(dir.path());
+    let (engine, studio) = (config.port.get(), config.studio_port.get());
+    let log = captured(async {
+        tokio::select! {
+            ended = serve(config, dir.path().to_owned(), None) => panic!("serve ended: {ended:?}"),
+            () = async {
+                assert!(accepts(IpAddr::V4(LISTEN_IP), engine).await, "engine port");
+                let answer = get_raw(engine, "/__emuforge/health").await;
+                assert!(answer.starts_with("HTTP/1.1 "), "{answer}");
+                assert!(!answer.starts_with("HTTP/1.1 421"), "{answer}");
+                assert!(
+                    tokio::net::TcpStream::connect((Ipv4Addr::LOCALHOST, studio)).await.is_err(),
+                    "something listens on the Studio port"
+                );
+            } => {}
+        }
+    })
+    .await;
+    assert_eq!(log.matches(NO_EFFECT).count(), 1, "{log}");
+    assert!(log.contains(" WARN "), "{log}");
+    assert!(!log.contains("also answers the host names"), "{log}");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn serve_with_studio_and_an_allowed_name_warns_and_binds_loopback_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = allowing_name_test(dir.path());
+    let (engine, studio) = (config.port.get(), config.studio_port.get());
+    let warning = allow_host_warning(config.allow_hosts.as_slice(), config.studio_port).unwrap();
+    let files = StudioFiles::new([("index.html", &b"<p>studio</p>"[..])]).unwrap();
+    let elsewhere = non_loopback_ipv4();
+    let log = captured(async {
+        tokio::select! {
+            ended = serve(config, dir.path().to_owned(), Some(files)) => panic!("serve ended: {ended:?}"),
+            () = async {
+                for (name, port) in [("engine", engine), ("studio", studio)] {
+                    assert!(accepts(IpAddr::V4(LISTEN_IP), port).await, "{name} on 127.0.0.1");
+                    if let Some(ip) = elsewhere {
+                        assert!(
+                            tokio::net::TcpStream::connect((ip, port)).await.is_err(),
+                            "{name} accepts on {ip}"
+                        );
+                    }
+                }
+            } => {}
+        }
+    })
+    .await;
+    assert_eq!(log.matches(&warning).count(), 1, "{log}");
+    assert!(!log.contains(NO_EFFECT), "{log}");
+    for port in [engine, studio] {
+        assert!(log.contains(&format!("listen=127.0.0.1:{port}")), "{log}");
+    }
 }

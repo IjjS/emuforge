@@ -5,7 +5,9 @@
 
 mod aws_error;
 mod browser;
+mod channel;
 mod config;
+mod hosts;
 mod limit;
 mod listener;
 mod routes;
@@ -25,13 +27,17 @@ use tokio::net::TcpListener;
 
 pub use aws_error::{ErrorType, Protocol, render};
 pub use browser::{PREFLIGHT_MAX_AGE_SECS, SESSION_HEADER, StudioOrigin, is_engine_path};
+pub use channel::CHANNEL_PATH;
 pub use config::{
-    Config, DEFAULT_EMULATOR_PORT, DEFAULT_ENGINE_PORT, DEFAULT_STUDIO_PORT, Form, LISTEN_IP,
-    MAX_IN_FLIGHT, engine_addr, listen_warning, seed_settings, settings_dir, studio_addr,
+    AllowHosts, Config, DEFAULT_EMULATOR_PORT, DEFAULT_ENGINE_PORT, DEFAULT_STUDIO_PORT, Form,
+    LISTEN_IP, MAX_IN_FLIGHT, allow_host_warning, engine_addr, listen_warning, seed_settings,
+    settings_dir, studio_addr,
 };
+pub use hosts::{AcceptedHost, AcceptedHosts, AllowedHost, AllowedHostError};
 pub use listener::{CLIENT_WRITE_IDLE, DRAIN_BOUND, Drain, IdleListener, MAX_DRAINING};
 pub use routes::{
-    AppState, HEALTH_PATH, ProbeFn, ProbeFuture, RelayFn, RelayFuture, SESSION_PATH, app,
+    AppState, Apps, HEALTH_PATH, ProbeFn, ProbeFuture, RelayFn, RelayFuture, SESSION_PATH, app,
+    apps,
 };
 pub use session::SessionToken;
 pub use studio::{STUDIO_CONTENT_TYPES, StudioFiles, StudioState, studio_app};
@@ -154,6 +160,8 @@ pub async fn serve(
     if let Some(warning) = listen_warning(config.listen_address) {
         tracing::warn!(listen_address = %config.listen_address, "{warning}");
     }
+    let allowed = config.allow_hosts.as_slice();
+    let accepted_hosts = AcceptedHosts::new(config.studio_port, allowed.to_vec());
     let engine_at = engine_addr(&config);
     let engine_listener = TcpListener::bind(engine_at)
         .await
@@ -169,6 +177,16 @@ pub async fn serve(
         }
         None => None,
     };
+    if studio.is_some() {
+        if let Some(warning) = allow_host_warning(allowed, config.studio_port) {
+            tracing::warn!("{warning}");
+        }
+    } else if !allowed.is_empty() {
+        tracing::warn!(
+            "--allow-host (EMUFORGE_ALLOW_HOSTS) has no effect: this build embeds no Studio, so there is no Studio \
+             port to answer under those names; the engine is served as without them"
+        );
+    }
     tracing::info!(
         listen = %engine_at,
         emulator_port = config.emulator_port.get(),
@@ -198,10 +216,12 @@ pub async fn serve(
         max_in_flight: MAX_IN_FLIGHT,
         studio_origin,
         session,
+        accepted_hosts: accepted_hosts.clone(),
     };
+    let Apps { engine, channel } = apps(state);
     let engine = axum::serve(
         IdleListener::new(engine_listener, CLIENT_WRITE_IDLE),
-        app(state),
+        engine,
     )
     .into_future();
     let Some((listener, studio_at, files)) = studio else {
@@ -218,6 +238,8 @@ pub async fn serve(
             engine_port: config.port,
             files: Arc::new(files),
             max_in_flight: MAX_IN_FLIGHT,
+            accepted_hosts,
+            channel,
         }),
     )
     .into_future();

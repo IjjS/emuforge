@@ -119,6 +119,23 @@ the port. With `EMULATOR_PORT` equal to the engine's or Studio's port `emuforge`
 emulator is not started: the start exits non-zero, Docker's message names the `emuforge` container, and
 `docker compose logs emuforge` shows the line that names both variables and the number.
 
+### Another device
+
+To open Studio from another device, put something on the host in front of Studio's port that keeps the browser's
+`Host` header (a `tailscale serve`, a reverse proxy, an SSH forward), and name the host name the browser uses in
+`EMUFORGE_ALLOW_HOSTS`, several separated by `,`. Give it to the start line as the port variables are given in
+[Ports](#ports): `EMUFORGE_ALLOW_HOSTS=my-machine.example.ts.net` before the start line in bash, or
+`$env:EMUFORGE_ALLOW_HOSTS="my-machine.example.ts.net";` before it in PowerShell. Without it, or with it empty,
+Studio answers only `127.0.0.1:8296`. The binary's flag `--allow-host` does the same: it is repeatable, and each
+value may also hold several names separated by `,`.
+
+A name without a port matches any port in `Host`; `name:port` matches only that port. Studio then answers that name
+as it answers `127.0.0.1:8296`, and the page sends its engine and AWS requests through Studio's own port, under
+`/__engine`, with the engine's session token. Both ports stay published on `127.0.0.1` only, and the engine's port
+keeps answering only `127.0.0.1`. `emuforge` logs a warning at start naming the names: anything that can reach
+Studio's port under one of them can open Studio and use the emulator. A forwarder that rewrites `Host` to
+`127.0.0.1:8296` gets Studio's files, but every write is refused with `403 OriginNotAllowed`.
+
 ## Develop
 
 The developer's start builds and runs each part by hand, each in its own terminal, with an emulator already up
@@ -139,6 +156,7 @@ flags, and a flag wins over its variable:
 | `EMUFORGE_ENGINE_PORT` | 8297 | `--port` | the engine and Studio's server |
 | `EMUFORGE_STUDIO_PORT` | 8296 | `--studio-port` | the engine and Studio's server |
 | none | 127.0.0.1 | `--listen-address` | the engine and Studio's server in the binary; anything but 127.0.0.1 logs a warning, and only the form uses it, inside its container |
+| `EMUFORGE_ALLOW_HOSTS` | none | `--allow-host`, repeatable; the flag and the variable take names separated by `,` | Studio's server in the binary: host names it answers besides 127.0.0.1, for a forwarder ([Another device](#another-device)); logs a warning |
 
 ```bash
 cd engine && cargo run -p emuforge -- serve --port 8397 --emulator-port 9298 --studio-port 8396

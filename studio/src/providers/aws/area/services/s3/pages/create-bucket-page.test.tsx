@@ -6,7 +6,9 @@ import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { engineEndpoint } from '../../../../../../lib/aws/client-factory';
+import { acceptEnginePath } from '../../../../../../lib/engine/engine-base';
 import type { CheckResult } from '../../../../../../lib/engine/engine-client';
+import { openPageAt } from '../../../../../../test/home-test-kit';
 import AwsArea from '../../../index';
 
 // "Create bucket" rendered inside the area's layout, as Studio's frame renders the area, against a fake engine behind
@@ -88,9 +90,22 @@ class FakeEngine {
   /** The answer of each operation; by default the emulator's. */
   answers: Partial<Record<Operation, () => EngineAnswer>> = {};
 
+  /** The channel path the engine sits behind on the page's origin (issue 503); `undefined` on loopback. */
+  channelPath: string | undefined = undefined;
+  /** The URL of every request it was sent, as sent. */
+  readonly urls: string[] = [];
+
   readonly fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const request = input instanceof Request ? input : new Request(String(input), init);
+    this.urls.push(request.url);
     const url = new URL(request.url);
+    if (this.channelPath !== undefined) {
+      // Behind the channel the engine answers the inner path; anything else is not the engine's.
+      if (url.origin !== window.location.origin || !url.pathname.startsWith(`${this.channelPath}/`)) {
+        throw new TypeError('Failed to fetch');
+      }
+      url.pathname = url.pathname.slice(this.channelPath.length);
+    }
     if (url.pathname === '/__emuforge/session') {
       return new Response(JSON.stringify({ token: 'token-1' }), { status: 200 });
     }
@@ -839,5 +854,40 @@ describe('the create form, issue 467', () => {
       expect(keys()).toHaveLength(1);
     });
     await cancelAsks();
+  });
+});
+
+describe('the create form, through Studio’s port (issue 503)', () => {
+  const PAGE = 'https://name.test:8296';
+  let restore: () => void;
+
+  beforeEach(() => {
+    restore = openPageAt(`${PAGE}/aws/s3/bucket/create`);
+    acceptEnginePath('/__engine');
+    engine.channelPath = '/__engine';
+    engineOrigin = `${PAGE}/__engine`;
+  });
+
+  afterEach(() => {
+    acceptEnginePath(undefined);
+    restore();
+  });
+
+  it('CreateBucket answered 403 OriginNotAllowed with a message → the failure shown holds that message; every request at the channel', async () => {
+    const message =
+      'browser requests are served only from the page’s own origin; this request came with Host 127.0.0.1:8296; a forwarder must keep the browser’s Host';
+    engine.answers.CreateBucket = () => errorAnswer(403, 'OriginNotAllowed', message);
+    await openWithName();
+    create();
+    const alert = await findFailure();
+
+    expect(alert).toHaveTextContent('Creating the bucket failed');
+    expect(alert).toHaveTextContent(`OriginNotAllowed: ${message}`);
+    expect(engine.operations).toEqual(['ListBuckets', 'CreateBucket']);
+    expect(engine.urls.length).toBeGreaterThan(0);
+    for (const url of engine.urls) {
+      expect(url.startsWith(`${PAGE}/__engine/`)).toBe(true);
+    }
+    expect(engine.urls.filter((url) => url.includes('127.0.0.1'))).toEqual([]);
   });
 });
