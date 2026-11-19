@@ -163,10 +163,7 @@ export function ConnectionRow({ target, info, test, work, onUse, onTest, onRemov
           </p>
         )}
       </div>
-      <TestResult
-        state={test}
-        shownMessage={info.kind === 'read' && !info.info.health.reachable ? info.info.health.message : undefined}
-      />
+      <TestResult state={test} />
     </Record>
   );
 }
