@@ -20,14 +20,6 @@ export function rolePath(name: string): string {
   return `${ROLES_PATH}/details/${encodeURIComponent(name)}`;
 }
 
-/** The tabs of a role's page that lead to their own routes (R8). */
-export type RoleTab = 'trust-relationships' | 'tags' | 'last-accessed' | 'revoke-sessions';
-
-/** A tab of a role's page. */
-export function roleTabPath(name: string, tab: RoleTab): string {
-  return `${rolePath(name)}/${tab}`;
-}
-
 /** The two tabs of a role's page (issue 535), each addressed by the query of the role's one address, as Lambda's. */
 export type RolePageTab = 'permissions' | 'trust';
 

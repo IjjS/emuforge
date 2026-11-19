@@ -8,7 +8,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { engineEndpoint } from '../../../../../../lib/aws/client-factory';
 import type { CheckResult } from '../../../../../../lib/engine/engine-client';
 import type { AreaConnection } from '../../../components/emulator-line';
+import { AreaRootContext } from '../../../area-root';
+import { PageFlashContext, type PageFlash } from '../../../components/page-flash';
 import AwsArea from '../../../index';
+import { DeleteRolesDialog, type DeleteRolesOutcome } from './delete-roles-dialog';
 
 // The dialog "Delete … roles?" of the role list, opened from the list inside the area's layout, as Studio's frame
 // renders the area, against a fake engine behind the page's `fetch` (test-criteria.md, issue 82, "Unit —
@@ -694,5 +697,84 @@ describe('deleting', () => {
     await waitFor(() => {
       expect(flashItems()).toEqual([{ type: 'success', text: '2 roles were deleted from the local emulator.' }]);
     });
+  });
+});
+
+// Test criteria, "Unit s2 — providers/aws/area/services/iam/pages/role-page.test.tsx", the line of this file (issue
+// 535, task 5): the dialog rendered on its own, with the area's flash as a spy.
+describe('a caller that asks for the outcome', () => {
+  async function openAlone(roles: readonly FakeRole[], onOutcome?: (outcome: DeleteRolesOutcome) => void) {
+    engine.roles = [...roles];
+    const show = vi.fn<PageFlash['show']>();
+    const handOver = vi.fn<PageFlash['handOver']>();
+    const onClose = vi.fn<() => void>();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const root: { current: HTMLDivElement | null } = { current: null };
+    render(
+      <QueryClientProvider client={client}>
+        <AreaRootContext.Provider value={root}>
+          <PageFlashContext.Provider value={{ show, handOver }}>
+            <div
+              ref={(element) => {
+                root.current = element;
+              }}
+            >
+              <DeleteRolesDialog
+                roles={roles.map((role) => ({ name: role.name, path: role.path ?? '/', tags: [] }))}
+                connection={connection.value}
+                onClose={onClose}
+                {...(onOutcome === undefined ? {} : { onOutcome })}
+              />
+            </div>
+          </PageFlashContext.Provider>
+        </AreaRootContext.Provider>
+      </QueryClientProvider>,
+    );
+    const dialog = await screen.findByRole('dialog');
+    confirmDelete(dialog);
+    return { show, handOver, onClose };
+  }
+
+  it('every role deleted: given the result and that every role was deleted; the dialog shows nothing itself and closes', async () => {
+    const onOutcome = vi.fn<(outcome: DeleteRolesOutcome) => void>();
+    const { show, handOver, onClose } = await openAlone([{ name: 'solo' }], onOutcome);
+
+    await waitFor(() => {
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+    expect(onOutcome).toHaveBeenCalledTimes(1);
+    const outcome = onOutcome.mock.calls[0]?.[0];
+    expect(outcome?.allDeleted).toBe(true);
+    expect(outcome?.result?.map((item) => [item.type, item.content])).toEqual([
+      ['success', '1 role was deleted from the local emulator.'],
+    ]);
+    expect(show).not.toHaveBeenCalled();
+    expect(handOver).not.toHaveBeenCalled();
+  });
+
+  it('a role refused: given its error item and that not every role was deleted; the dialog shows nothing itself', async () => {
+    engine.handlers.DeleteRole = () => errorAnswer(409, 'DeleteConflict', 'no');
+    const onOutcome = vi.fn<(outcome: DeleteRolesOutcome) => void>();
+    const { show, onClose } = await openAlone([{ name: 'solo' }], onOutcome);
+
+    await waitFor(() => {
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+    const outcome = onOutcome.mock.calls[0]?.[0];
+    expect(outcome?.allDeleted).toBe(false);
+    expect(outcome?.result?.map((item) => item.type)).toEqual(['error']);
+    expect(show).not.toHaveBeenCalled();
+  });
+
+  it('without it: the dialog shows the result itself, as on main', async () => {
+    const { show, onClose } = await openAlone([{ name: 'solo' }]);
+
+    await waitFor(() => {
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+    expect(show).toHaveBeenCalledTimes(1);
+    expect(show.mock.calls[0]?.[0].map((item) => [item.type, item.content])).toEqual([
+      ['success', '1 role was deleted from the local emulator.'],
+    ]);
   });
 });
