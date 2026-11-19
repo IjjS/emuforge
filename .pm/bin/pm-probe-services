@@ -1,0 +1,439 @@
+#!/usr/bin/env -S python3 -I
+"""Probe an emulator of its own once for every service of the board: which answer, which answer 501 (issue 517).
+
+  pm-probe-services run [--port <n>]                    the probe; the pm runs it by hand
+  pm-probe-services table [--models <dir>] [--board <services.md>]   regenerate the table's operations
+
+run starts an emulator of its own from the machine's image `aws-emulator` (pinned by its id, `--pull never`,
+telemetry off, published on 127.0.0.1 only, 2 GB), as an integration run starts the run's emulator, on --port or
+a free loopback port. It refuses 9297 (the owner's), a port a registered worktree owns, a port something accepts
+on, a port whose folder ~/.aws/emulator/<port> already exists, and a second run while one runs. It runs
+`pm-mem --wait` first, reads the image's `aws-emulator --version` in a container with no network, waits up to 30 s
+for /__admin/health over TLS verified against the emulator's own ca.pem, and reads the emulator's own key from its
+emulator_credentials into memory. It never prints, logs or writes the key, and reads nothing else under ~/.aws.
+Then it sends every read operation of the table (.pm/bin/probe-services.json, _pmprobe.py), one at a time, to
+https://127.0.0.1:<port>/ only, with no proxy and 10 s per call, and checks the health once more. Whatever
+happened, it removes the container and then the port folder through `pm-emulator-dir rm --port <port>`, on
+SIGINT and SIGTERM too.
+
+The result is one file .pm/run/probe-services-<UTC stamp>.json: the emulator's version, commit and image id, the
+table's sha256, the counts, and per board key its `result` (answered, not implemented, failed, no read call,
+no API), a `summary` for the board's Emulator column, and per model every operation's outcome (status, error
+code, message cut to 200 characters). The pm copies it into the board .pm/product/services.md. The last line is
+`pm-probe-services: <n> services: ...; result <path>`.
+
+table regenerates the table's `models` from the AWS CLI's service model files (botocore/data under the
+installation the `aws` on PATH links to, or --models <dir>), reading files only: the CLI is not run and nothing is
+sent. The hand-written `services` are kept. With --board it refuses, writing nothing, when the board's keys are not
+the table's.
+
+Exit 0: done. Exit 1: refused, or the run failed (the line says why). Exit 2: usage.
+"""
+import argparse
+import configparser
+import datetime
+import hashlib
+import http.client
+import json
+import os
+import pathlib
+import shutil
+import signal
+import socket
+import ssl
+import subprocess
+import sys
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _pmprobe as probe
+from _pmlib import RUN, WORKTREES, log
+
+BIN = pathlib.Path(__file__).resolve().parent
+PREFIX = "pm-probe-services: "
+OWNER = 9297
+IMAGE = "aws-emulator"
+LABEL = "emuforge-probe"
+DOCKER_ENV = ("PATH", "HOME", "DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG", "XDG_RUNTIME_DIR", "TMPDIR")
+DOCKER_TIMEOUT = 60
+HEALTH_WAIT = 30
+CALL_TIMEOUT = 10
+LOCK = RUN / "probe-services.lock"
+
+
+class Refused(Exception):
+    pass
+
+
+def say(text):
+    print(PREFIX + text, flush=True)
+
+
+def emu_root():
+    return pathlib.Path.home() / ".aws" / "emulator"
+
+
+def docker(*args, timeout=DOCKER_TIMEOUT):
+    env = {k: os.environ[k] for k in DOCKER_ENV if k in os.environ}
+    try:
+        return subprocess.run(["docker", *args], capture_output=True, text=True, env=env, timeout=timeout,
+                              stdin=subprocess.DEVNULL)
+    except FileNotFoundError:
+        raise Refused("docker is not on PATH")
+    except subprocess.TimeoutExpired:
+        raise Refused(f"`docker {args[0]}` did not end within {timeout} s")
+
+
+# ------------------------------------------------------------------------------------------------- the port
+
+def in_use(port):
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=1):
+            return True
+    except OSError:
+        return False
+
+
+def registered_ports():
+    try:
+        data = json.loads(WORKTREES.read_text())
+    except (OSError, ValueError):
+        return set()
+    out = set()
+    for w in data if isinstance(data, list) else []:
+        p = (w.get("ports") or {}).get("emulator") if isinstance(w, dict) else None
+        if isinstance(p, (int, str)) and str(p).isdigit():
+            out.add(int(p))
+    return out
+
+
+def refusal(port):
+    """Why `port` cannot be the probe's, or None."""
+    if port == OWNER:
+        return "9297 is the owner's emulator port"
+    if not 1024 <= port <= 65535:
+        return "a port from 1024 to 65535 is needed"
+    if port in registered_ports():
+        return f"port {port} belongs to a registered worktree"
+    if os.path.lexists(emu_root() / str(port)):
+        return f"~/.aws/emulator/{port} already exists; a leftover would be mistaken for this run's files"
+    if in_use(port):
+        return f"something accepts on 127.0.0.1:{port}"
+    return None
+
+
+def free_port():
+    for _ in range(50):
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+        if refusal(port) is None:
+            return port
+    raise Refused("no free loopback port found")
+
+
+# ------------------------------------------------------------------------------------------------- the lock
+
+def take_lock():
+    RUN.mkdir(parents=True, exist_ok=True)
+    for _ in range(2):
+        try:
+            fd = os.open(LOCK, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        except FileExistsError:
+            try:
+                pid = int(LOCK.read_text().strip() or 0)
+            except (OSError, ValueError):
+                pid = 0
+            if pid and alive(pid):
+                raise Refused(f"another run is going on (pid {pid})")
+            LOCK.unlink(missing_ok=True)
+            continue
+        with os.fdopen(fd, "w") as f:
+            f.write(str(os.getpid()))
+        return
+    raise Refused("the lock could not be taken")
+
+
+def alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+# ------------------------------------------------------------------------------------------------- the emulator
+
+def image_id():
+    r = docker("image", "inspect", "-f", "{{.Id}}", IMAGE)
+    if r.returncode != 0 or not r.stdout.strip():
+        raise Refused(f"the machine's image {IMAGE} cannot be read (docker exit {r.returncode})")
+    return r.stdout.strip().splitlines()[0]
+
+
+def version_of(pin):
+    r = docker("run", "--rm", "--pull", "never", "--network", "none", "--entrypoint", "aws-emulator", pin, "--version")
+    found = {}
+    for line in (r.stdout + r.stderr).splitlines():
+        k, _, v = line.partition(":")
+        if k.strip() in ("Version", "Commit") and v.strip():
+            found.setdefault(k.strip().lower(), v.strip()[:64])
+    if r.returncode != 0:
+        raise Refused(f"`aws-emulator --version` failed (docker exit {r.returncode})")
+    return found.get("version", "unknown"), found.get("commit", "unknown")
+
+
+def start(pin, port, name, stamp):
+    home = str(pathlib.Path.home())
+    emu_root().mkdir(parents=True, exist_ok=True)
+    r = docker("run", "-d", "--pull", "never", "--name", name, "--label", f"{LABEL}={stamp}", "--memory", "2g",
+               "-p", f"127.0.0.1:{port}:{port}", "-e", f"HOME={home}",
+               "-v", f"{home}/.aws/emulator:{home}/.aws/emulator", pin, "-p", str(port), "-t", "off")
+    if r.returncode != 0:
+        raise Refused(f"the emulator would not start (docker exit {r.returncode})")
+
+
+def context(port):
+    return ssl.create_default_context(cafile=str(emu_root() / str(port) / "ca.pem"))
+
+
+def health(port, ctx):
+    try:
+        conn = http.client.HTTPSConnection("127.0.0.1", port, context=ctx, timeout=5)
+        conn.request("GET", "/__admin/health")
+        r = conn.getresponse()
+        body = r.read(64)
+        conn.close()
+        return r.status == 200 and body.strip() == b"ok"
+    except (OSError, http.client.HTTPException):
+        return False
+
+
+def wait_healthy(port):
+    end = time.monotonic() + HEALTH_WAIT
+    while time.monotonic() < end:
+        if (emu_root() / str(port) / "ca.pem").is_file():
+            try:
+                ctx = context(port)
+            except (OSError, ssl.SSLError):
+                ctx = None
+            if ctx is not None and health(port, ctx):
+                return ctx
+        time.sleep(0.5)
+    raise Refused(f"the emulator did not answer 200 ok within {HEALTH_WAIT} s")
+
+
+def keys(port):
+    """The emulator's own key pair, read from its emulator_credentials; never printed or written."""
+    c = configparser.ConfigParser()
+    c.read(emu_root() / str(port) / "emulator_credentials")
+    for section in c.sections():
+        s = c[section]
+        if s.get("aws_access_key_id") and s.get("aws_secret_access_key"):
+            return s["aws_access_key_id"], s["aws_secret_access_key"]
+    raise Refused("the emulator's emulator_credentials holds no key pair")
+
+
+def stop(name, port):
+    """Remove the container, then its port folder through pm-emulator-dir; the outcome lines."""
+    out = []
+    try:
+        r = docker("rm", "-f", name)
+        out.append(f"container {name} removed" if r.returncode == 0 else f"container {name} not removed "
+                   f"(docker exit {r.returncode})")
+    except Refused as e:
+        out.append(f"container {name} not removed: {e}")
+    try:
+        r = subprocess.run([str(BIN / "pm-emulator-dir"), "rm", "--port", str(port)], capture_output=True,
+                           text=True, timeout=120, stdin=subprocess.DEVNULL)
+        out.append((r.stdout.strip().splitlines() or [f"pm-emulator-dir exit {r.returncode}"])[-1])
+    except (OSError, subprocess.TimeoutExpired) as e:
+        out.append(f"pm-emulator-dir did not end: {type(e).__name__}")
+    return out
+
+
+# ------------------------------------------------------------------------------------------------- the probe
+
+class Caller:
+    """One TLS connection to the emulator, opened again after any failure."""
+
+    def __init__(self, port, ctx, access, secret):
+        self.port, self.ctx, self.access, self.secret = port, ctx, access, secret
+        self.host = f"127.0.0.1:{port}"
+        self.conn = None
+
+    def call(self, model, op):
+        method, path, query, headers, body = probe.request_of(model, op)
+        signed = probe.sign(method, self.host, path, query, headers, body, self.access, self.secret,
+                            model["signing_name"], double_encode=model["signing_name"] != "s3")
+        target = path + ("?" + "&".join(f"{k}={v}" for k, v in sorted(query)) if query else "")
+        for attempt in (1, 2):
+            try:
+                if self.conn is None:
+                    self.conn = http.client.HTTPSConnection("127.0.0.1", self.port, context=self.ctx,
+                                                            timeout=CALL_TIMEOUT)
+                self.conn.request(method, target, body=body or None, headers=signed)
+                r = self.conn.getresponse()
+                data = r.read()
+                return probe.outcome_of(r.status, dict(r.getheaders()), data)
+            except socket.timeout:
+                self.close()
+                return dict(outcome="no answer", status=None, code="timeout", message=f"no answer within {CALL_TIMEOUT} s")
+            except (OSError, http.client.HTTPException) as e:
+                self.close()
+                if attempt == 2:
+                    return dict(outcome="no answer", status=None, code=type(e).__name__, message="")
+
+    def close(self):
+        if self.conn is not None:
+            try:
+                self.conn.close()
+            except OSError:
+                pass
+        self.conn = None
+
+
+def probe_all(table, caller):
+    services, counts = [], {}
+    for entry in table["services"]:
+        model_results = []
+        for name in entry.get("models", []):
+            model = table["models"].get(name) or {}
+            res = dict(model=name, signing_name=model.get("signing_name"), protocol=model.get("protocol"), ops=[])
+            if not model.get("ops"):
+                res["result"] = "no read call"
+            else:
+                for op in model["ops"]:
+                    res["ops"].append(dict(op=op["name"], **caller.call(model, op)))
+            model_results.append(res)
+        result, summary = probe.service_result(entry, model_results)
+        counts[result] = counts.get(result, 0) + 1
+        services.append(dict(key=entry["key"], name=entry["name"], result=result, summary=summary,
+                             models=model_results))
+    return services, counts
+
+
+ORDER = ("answered", "not implemented", "failed", "no read call", "no API")
+
+
+def count_line(counts):
+    return ", ".join(f"{k} {counts.get(k, 0)}" for k in ORDER)
+
+
+def run(args):
+    table = probe.load_table()
+    table_sha = hashlib.sha256(probe.TABLE.read_bytes()).hexdigest()
+    if args.port is not None:
+        why = refusal(args.port)
+        if why:
+            raise Refused(why)
+    take_lock()
+    name = None
+    port = args.port
+    try:
+        r = subprocess.run([str(BIN / "pm-mem"), "--wait"], capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        if r.returncode != 0:
+            raise Refused("pm-mem --wait: " + ((r.stdout + r.stderr).strip().splitlines() or ["no room"])[-1])
+        port = port if port is not None else free_port()
+        if args.port is not None and refusal(port):
+            raise Refused(refusal(port))
+        pin = image_id()
+        version, commit = version_of(pin)
+        stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        name = f"emuforge-probe-{port}-{stamp.lower()}"
+        say(f"emulator {version} ({commit}) on 127.0.0.1:{port}, container {name}")
+        log(f"pm-probe-services: start emulator {version} port {port} container {name}")
+        started = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+        start(pin, port, name, stamp)
+        ctx = wait_healthy(port)
+        access, secret = keys(port)
+        caller = Caller(port, ctx, access, secret)
+        try:
+            services, counts = probe_all(table, caller)
+        finally:
+            caller.close()
+        healthy_after = health(port, ctx)
+        ended = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+        result = dict(emulator=dict(version=version, commit=commit, image_id=pin, healthy_after=healthy_after),
+                      started=started, ended=ended, table=dict(sha256=table_sha, models_from=table.get("models_from")),
+                      counts={k: counts.get(k, 0) for k in ORDER}, services=services)
+        path = RUN / f"probe-services-{stamp}.json"
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(result, indent=1) + "\n")
+        tmp.replace(path)
+    finally:
+        if name is not None:
+            for line in stop(name, port):
+                say(line)
+        LOCK.unlink(missing_ok=True)
+    if not healthy_after:
+        say("the emulator did not answer its health check after the probe; failed answers may be its own")
+    line = f"{len(services)} services: {count_line(counts)}; result {path}"
+    log("pm-probe-services: " + line)
+    say(line)
+    return 0
+
+
+# ------------------------------------------------------------------------------------------------- table
+
+def cli_models():
+    aws = shutil.which("aws")
+    if not aws:
+        raise Refused("no `aws` on PATH; pass --models <botocore data folder>")
+    root = pathlib.Path(aws).resolve().parent
+    for d in (root / "awscli" / "botocore" / "data", root.parent / "awscli" / "botocore" / "data"):
+        if d.is_dir():
+            return d
+    raise Refused(f"no botocore data folder beside {root}; pass --models <dir>")
+
+
+def table_cmd(args):
+    models_dir = pathlib.Path(args.models) if args.models else cli_models()
+    if not models_dir.is_dir():
+        raise Refused(f"{models_dir} is not a folder")
+    table = probe.load_table()
+    if args.board:
+        keys = probe.board_keys(pathlib.Path(args.board).read_text())
+        mine = [s["key"] for s in table["services"]]
+        missing, extra = sorted(set(keys) - set(mine)), sorted(set(mine) - set(keys))
+        if missing or extra:
+            raise Refused(f"the board and the table differ: not in the table {missing or 'none'}; "
+                          f"not on the board {extra or 'none'}")
+    out = probe.build(table, models_dir, str(models_dir))
+    probe.write_table(out)
+    n = sum(len(m.get("ops", [])) for m in out["models"].values())
+    missing = sorted(k for k, m in out["models"].items() if m.get("missing"))
+    say(f"{len(out['services'])} services, {len(out['models'])} models, {n} read operations; "
+        f"models missing: {', '.join(missing) or 'none'}; written {probe.TABLE}")
+    return 1 if missing else 0
+
+
+def main():
+    p = argparse.ArgumentParser(prog="pm-probe-services")
+    sub = p.add_subparsers(dest="cmd", required=True)
+    r = sub.add_parser("run")
+    r.add_argument("--port", type=int)
+    t = sub.add_parser("table")
+    t.add_argument("--models")
+    t.add_argument("--board")
+    args = p.parse_args()
+
+    def on_term(signum, frame):
+        raise SystemExit(f"{PREFIX}stopped by signal {signum}")
+
+    signal.signal(signal.SIGTERM, on_term)
+    try:
+        return run(args) if args.cmd == "run" else table_cmd(args)
+    except Refused as e:
+        say(f"refused: {e}")
+        log(f"pm-probe-services: refused: {e}")
+        return 1
+    except KeyboardInterrupt:
+        say("stopped")
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
