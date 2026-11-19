@@ -10,7 +10,7 @@ import { AreaModal } from '../../../components/area-modal';
 import { usePageFlash, type FlashItem } from '../../../components/page-flash';
 import { ValueText } from '../../../components/value-text';
 import { NO_SUCH_BUCKET } from '../api';
-import { useDeleteVersioning, useDeletionOperations } from '../queries';
+import { useDeleteVersioning, useDeletionOperations, type BucketPropertyValue } from '../queries';
 import { actionFailure } from './action-failure';
 import {
   deletedBeforeText,
@@ -67,6 +67,33 @@ function resultFlash({ deleted, refused }: DeletionResult): [FlashItem, ...Flash
   return deleted === 0 ? [failed] : [done, failed];
 }
 
+/** The sentences after what is removed, by what GetBucketVersioning answered. */
+const FINALITY = {
+  pending: ' Checking whether the bucket keeps versions…',
+  unread: " Bucket Versioning could not be read, so it isn't known whether the versions are kept.",
+  kept: ' A delete marker is added to each; the versions are kept.',
+  final: " This can't be undone.",
+} as const;
+
+type Finality = keyof typeof FINALITY;
+
+/**
+ * What the dialog may say of the delete: final only once versioning answered Disabled (never enabled); a delete
+ * marker for Enabled and Suspended; nothing final while the read is in flight, failed, found no bucket or answered another status.
+ */
+function finalityOf(value: BucketPropertyValue<'versioning'> | undefined, failed: boolean): Finality {
+  if (failed || value === NO_SUCH_BUCKET) {
+    return 'unread';
+  }
+  if (value === undefined) {
+    return 'pending';
+  }
+  if (value.status === 'Disabled') {
+    return 'final';
+  }
+  return value.status === 'Enabled' || value.status === 'Suspended' ? 'kept' : 'unread';
+}
+
 /** Every key and folder selected, as selected. */
 function SelectionList({ selection }: { selection: DeletionSelection }) {
   const names = [...selection.keys, ...selection.folders];
@@ -93,8 +120,7 @@ export function DeleteObjectsDialog({
   const flash = usePageFlash();
   const operations = useDeletionOperations(endpoint, bucket);
   const versioning = useDeleteVersioning(endpoint, bucket, visible);
-  const versioned =
-    versioning.value !== undefined && versioning.value !== NO_SUCH_BUCKET && versioning.value.status === 'Enabled';
+  const finality = finalityOf(versioning.value, versioning.failure !== undefined);
 
   const [typed, setTyped] = useState('');
   const [running, setRunning] = useState(false);
@@ -129,7 +155,7 @@ export function DeleteObjectsDialog({
   };
 
   const handleDelete = () => {
-    if (!confirmed || running || operations === undefined) {
+    if (!confirmed || running || operations === undefined || finality === 'pending') {
       return;
     }
     const abort = new AbortController();
@@ -180,7 +206,7 @@ export function DeleteObjectsDialog({
             <Button
               variant="primary"
               loading={running}
-              disabled={!confirmed || operations === undefined}
+              disabled={!confirmed || operations === undefined || finality === 'pending'}
               onClick={handleDelete}
             >
               Delete
@@ -192,14 +218,14 @@ export function DeleteObjectsDialog({
       <SpaceBetween size="m">
         {single === undefined && <SelectionList selection={selection} />}
         <Box variant="p">
-          {/* The folder clause only for a selection that holds a folder; in a versioned bucket the versions stay, so
-              the delete is not said to be final. */}
+          {/* The folder clause only for a selection that holds a folder; the delete is said to be final only once
+              versioning answered Disabled. */}
           <Quoted
             before="These are removed from "
             name={bucket}
             after={` in your local emulator${selection.folders.length > 0 ? ', with every object under each folder' : ''}.`}
           />
-          {versioned ? ' A delete marker is added to each; the versions are kept.' : " This can't be undone."}
+          {FINALITY[finality]}
         </Box>
         {failed !== undefined && (
           <Alert type="error" header={failed.header}>

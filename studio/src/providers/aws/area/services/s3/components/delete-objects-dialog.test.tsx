@@ -36,6 +36,8 @@ interface Seen {
 class FakeEngine {
   keys: string[] = [];
   versioning: string | undefined;
+  /** The answer of GetBucketVersioning, instead of the one `versioning` makes. */
+  versioningAnswer: (() => Answer | Promise<Answer>) | undefined;
   /** Keys `DeleteObjects` refuses, with their message. */
   refuse = new Map<string, string>();
   /** The answer of the n-th `DeleteObjects` (from 0), instead of the emulator's. */
@@ -56,6 +58,7 @@ class FakeEngine {
 
   private async answer(method: string, url: URL, body: string): Promise<Answer> {
     if (url.searchParams.has('versioning')) {
+      if (this.versioningAnswer !== undefined) return this.versioningAnswer();
       return ok(
         this.versioning === undefined
           ? '<VersioningConfiguration/>'
@@ -139,6 +142,8 @@ afterEach(() => {
 
 interface HarnessProps {
   selection: DeletionSelection;
+  /** Wait for GetBucketVersioning's answer before returning (the default). */
+  settle?: boolean;
   single?: string;
   after?: string;
 }
@@ -216,6 +221,11 @@ async function openDialog(props: HarnessProps) {
   await waitFor(() => {
     expect(dialog.contains(document.activeElement)).toBe(true);
   });
+  if (props.settle !== false) {
+    await waitFor(() => {
+      expect(dialog.textContent).not.toContain(PENDING);
+    });
+  }
   return { dialog, opener };
 }
 
@@ -249,6 +259,8 @@ async function confirm(dialog: HTMLElement) {
 }
 
 const MARKER = 'A delete marker is added to each; the versions are kept.';
+const PENDING = 'Checking whether the bucket keeps versions…';
+const UNREAD = "Bucket Versioning could not be read, so it isn't known whether the versions are kept.";
 
 describe('the delete dialog, what it says', () => {
   it.each([
@@ -309,18 +321,66 @@ describe('the delete dialog, what it says', () => {
     expect(dialog.textContent).not.toContain("can't be undone");
   });
 
-  it.each([['Suspended'], ['Disabled'], [undefined]])('with versioning %s, no such sentence', async (status) => {
-    engine.versioning = status;
+  it('with versioning "Suspended" the delete-marker sentence is shown, and the delete is not said to be final', async () => {
+    engine.versioning = 'Suspended';
     const { dialog } = await openDialog({ selection: { keys: ['a.txt'], folders: [] } });
-    await waitFor(() => {
-      expect(engine.seen.some((seen) => seen.url.searchParams.has('versioning'))).toBe(true);
-    });
-    // The answer has been read once the request is seen and the dialog rendered again.
+    expect(
+      within(dialog).getByText(byWholeText('These are removed from alpha in your local emulator. ' + MARKER)),
+    ).toBeInTheDocument();
+    expect(dialog.textContent).not.toContain("can't be undone");
+  });
+
+  it.each([['Disabled'], [undefined]])(
+    'with versioning %s (never enabled), the delete is said to be final',
+    async (status) => {
+      engine.versioning = status;
+      const { dialog } = await openDialog({ selection: { keys: ['a.txt'], folders: [] } });
+      expect(dialog.textContent).not.toContain(MARKER);
+      expect(dialog.textContent).toContain("This can't be undone.");
+    },
+  );
+
+  it('while GetBucketVersioning has not answered, a neutral line, nothing final, and "Delete" is unavailable', async () => {
+    let answer: (value: Answer) => void = () => undefined;
+    engine.versioningAnswer = () =>
+      new Promise<Answer>((resolve) => {
+        answer = resolve;
+      });
+    const { dialog } = await openDialog({ selection: { keys: ['a.txt'], folders: [] }, settle: false });
+    expect(
+      within(dialog).getByText(byWholeText('These are removed from alpha in your local emulator. ' + PENDING)),
+    ).toBeInTheDocument();
+    expect(dialog.textContent).not.toContain("can't be undone");
+    expect(dialog.textContent).not.toContain(MARKER);
+    type(dialog, 'delete');
+    expect(isDisabled(deleteButton(dialog))).toBe(true);
+    fireEvent.click(deleteButton(dialog));
+    expect(engine.deletes).toHaveLength(0);
     await act(async () => {
+      answer(ok('<VersioningConfiguration/>'));
       await Promise.resolve();
     });
+    await waitFor(() => {
+      expect(dialog.textContent).toContain("This can't be undone.");
+    });
+    expect(isDisabled(deleteButton(dialog))).toBe(false);
+  });
+
+  it.each([
+    ['a failed read', () => errorAnswer(500, 'InternalError', 'boom')],
+    ['no such bucket', () => errorAnswer(404, 'NoSuchBucket', 'The specified bucket does not exist')],
+  ])('after %s, versioning is said to be unread, and nothing final', async (_name, answer) => {
+    engine.versioningAnswer = answer;
+    const { dialog } = await openDialog({ selection: { keys: ['a.txt'], folders: [] } });
+    await waitFor(() => {
+      expect(
+        within(dialog).getByText(byWholeText('These are removed from alpha in your local emulator. ' + UNREAD)),
+      ).toBeInTheDocument();
+    });
+    expect(dialog.textContent).not.toContain("can't be undone");
     expect(dialog.textContent).not.toContain(MARKER);
-    expect(dialog.textContent).toContain("This can't be undone.");
+    type(dialog, 'delete');
+    expect(isDisabled(deleteButton(dialog))).toBe(false);
   });
 });
 
