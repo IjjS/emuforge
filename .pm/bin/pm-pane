@@ -6,9 +6,10 @@
   pm-pane reset <name> [--wait S] state file -> /clear -> brief again (run on EVENT ctx <name>)
 
 reset asks the pane to write its resume note (a worker's and a harness-engineer's output/state.md, every other role's
-.pm/issue-<id>/state-<role>.md) and print `RESET READY <name> <nonce>`, and waits up to --wait seconds (420) for that
-marker: in the pane's reply, however many rows stand before it and however the pane's width wraps it, never in the echo
-of its own prompt; or as the pane's pm-report record of that line, whichever comes first. It reads the pane's snapshot
+.pm/issue-<id>/state-<role>.md) and end its turn with the typed line `RESET READY <name> <nonce>`: reported with
+pm-report, then printed. It waits up to --wait seconds (420) for that marker: as the pane's pm-report record of the
+line, or, for a pane that only prints it, in the pane's reply, however many rows stand before it and however the pane's width wraps it, never in the echo
+of its own prompt; whichever comes first. It reads the pane's snapshot
 every 2 s and matches it itself, since herdr's `pane wait-output` matches row by row (issue 509). While it runs, the
 pane's registry entry holds `resetting`, so pm-watchd takes the reset's own turn ends for no silent turn.
   pm-pane close <name> | --issue <issue>
@@ -348,7 +349,8 @@ def cmd_reset(a):
     reports_at = reports_size()  # only a record written after the prompt counts
     herdr("agent", "prompt", a.name,
           f"Context reset requested. Write your resume note now to {state_note(entry)}: what is done, what is next, open P1s, "
-          f"paths. Then print exactly this line and stop: {marker}")
+          f"paths. Then end your turn with this typed line: report it with {ROOT}/.pm/bin/pm-report \"{marker}\", "
+          f"print the same line and stop: {marker}")
     # Whole command stays under the Bash tool's 10-minute cap: 7 min for the note, 1 min to settle, ~30 s to re-brief.
     seen = wait_for_marker(a.name, entry["pane_id"], marker, reports_at, a.wait)
     if not seen:

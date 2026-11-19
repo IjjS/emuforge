@@ -18,6 +18,7 @@ it failed in a real pane. A case may also have the pane report the marker throug
 509): the stand-in then writes the pm-report record when the reset prompt is sent.
 """
 import json
+import pathlib
 import re
 import unittest
 
@@ -25,7 +26,9 @@ import _pmlib
 from test_lead import LeadCase
 
 MARKER = "RESET READY i486-worker-s2 102730"
-ECHO = "❯ Context reset requested. Write your resume note now to output/state.md: what is done, what is next, open P1s, paths. Then print exactly this line and stop: "
+ECHO = ("❯ Context reset requested. Write your resume note now to output/state.md: what is done, what is next, open P1s, "
+        "paths. Then end your turn with this typed line: report it with /r/.pm/bin/pm-report \"" + MARKER + "\", print "
+        "the same line and stop: ")
 
 
 def found(screen, marker=MARKER):
@@ -59,7 +62,11 @@ class Pattern(unittest.TestCase):
                 "⏺ earlier reply\n\n" + ECHO + MARKER + "\n",
                 "⏺ earlier reply\n\n❯ Context reset requested.\n  Then print exactly this\n  line and stop:\n  RESET READY\n  i486-worker-s2 102730\n",
                 "⏺ earlier reply\n\n❯ Context reset requested.\n  Then print exactly this\n  line and stop: RESET\n  READY i486-worker-s2\n  102730\n",
-                "• earlier reply\n\n› Context reset requested.\n  line and stop:\n  RESET READY\n  i486-worker-s2 102730\n"):
+                "• earlier reply\n\n› Context reset requested.\n  line and stop:\n  RESET READY\n  i486-worker-s2 102730\n",
+                "⏺ earlier reply\n\n❯ Context reset requested.\n  typed line: report it with\n  /r/.pm/bin/pm-report\n"
+                "  \"RESET READY i486-worker-s2 102730\",\n  print the same line and stop:\n  RESET READY\n"
+                "  i486-worker-s2 102730\n",
+                "⏺ earlier reply\n\n❯ Context reset requested.\n  /r/.pm/bin/pm-report \"RESET READY\n  i486-worker-s2 102730\"\n"):
             with self.subTest(screen=screen):
                 self.assertFalse(found(screen))
 
@@ -226,6 +233,17 @@ class Reset(LeadCase):
             ts="t", seq=1, pane="i9-harness-engineer", line="RESET READY i9-harness-engineer 000000")) + "\n")
         self.assertNotReset(self.reset("--wait", "2"))
 
+    def test_the_prompt_asks_for_the_marker_as_a_typed_line_through_pm_report(self):
+        """the PM decision of issue 509 (Review decisions): the record path is the one panes use"""
+        self.given("⏺ RESET READY i9-harness-engineer NONCE\n")
+        self.ok(self.reset())
+        first = next(c[3] for c in self.calls() if c[:2] == ["agent", "prompt"])
+        m = re.search(r'Then end your turn with this typed line: report it with (\S+)/\.pm/bin/pm-report '
+                      r'"(RESET READY i9-harness-engineer \d{6})", print the same line and stop: (.+)$', first)
+        self.assertIsNotNone(m, first)
+        self.assertEqual(pathlib.Path(m.group(1)).resolve(), self.co.resolve())
+        self.assertEqual(m.group(2), m.group(3))
+
     def test_a_harness_engineer_is_told_to_write_output_state_md(self):
         self.given("⏺ RESET READY i9-harness-engineer NONCE\n")
         self.ok(self.reset())
@@ -245,6 +263,25 @@ class Reset(LeadCase):
         self.given("⏺ Note written.\n\n  RESET READY i9-harness-engineer NONCE\n")
         self.ok(self.reset())
         self.assertNotIn(["pane", "wait-output"], [c[:2] for c in self.calls()])
+
+
+class Guide(unittest.TestCase):
+    """pane-mode.md's Context budget and its reporting row ask for the marker through pm-report (issue 509)."""
+    PANE_MODE = pathlib.Path(__file__).resolve().parents[3] / ".agents" / "skills" / "pm" / "references" / "pane-mode.md"
+
+    def test_the_context_budget_asks_to_report_the_marker_with_pm_report(self):
+        text = self.PANE_MODE.read_text()
+        budget = text[text.index("## Context budget"):text.index("## Output hygiene")]
+        flat = " ".join(budget.split())
+        self.assertIn('Then end the turn with the marker as your typed line (Reporting lines): '
+                      '`<Root>/.pm/bin/pm-report "RESET READY <name> <token>"`, then the same line, exactly as given, '
+                      'as the last line of your reply, and stop.', flat)
+        self.assertNotIn("Print the marker line exactly as given and stop", flat)
+
+    def test_the_reporting_row_says_the_line_is_reported_and_read_from_its_record(self):
+        row = next(ln for ln in self.PANE_MODE.read_text().splitlines() if ln.startswith("| `RESET READY"))
+        self.assertIn("reported and printed exactly as given", row)
+        self.assertIn("`pm-pane reset` reads its record, or the screen when it is only printed", row)
 
 
 def pathlib_text(path):

@@ -56,10 +56,12 @@ own unit is not this: that is `BLOCKED`.
 
 - You cannot clear your own context; whoever opened you does it, with `pm-pane reset`: your plan, or the PM for a
   plan or a harness-engineer. The daemon measures your context and tells them at about **300K tokens**; you are
-  then prompted `Context reset requested … print exactly this line: RESET READY <name> <token>`. On that prompt
-  write your resume note (worker and harness-engineer: `output/state.md` in your worktree; plan, rev and crit:
-  `.pm/issue-<id>/state-<role>.md`): what is done, what is next, open P1s, file paths. Print the marker line
-  exactly as given and stop. You are cleared and sent your brief again; do not redo finished work. Keep the
+  then prompted `Context reset requested … end your turn with this typed line: report it with …pm-report
+  "RESET READY <name> <token>", print the same line and stop: RESET READY <name> <token>`. On that prompt write
+  your resume note (worker and harness-engineer: `output/state.md` in your worktree; plan, rev and crit:
+  `.pm/issue-<id>/state-<role>.md`): what is done, what is next, open P1s, file paths. Then end the turn with the
+  marker as your typed line (Reporting lines): `<Root>/.pm/bin/pm-report "RESET READY <name> <token>"`, then the
+  same line, exactly as given, as the last line of your reply, and stop. You are cleared and sent your brief again; do not redo finished work. Keep the
   state file current enough that a reset at any moment loses nothing.
 - Never re-read a file you already have in context unless it changed.
 - Images: you produce captures with `pm-capture`; you do not open them. Only `crit` and `rev` read a contact
@@ -176,7 +178,7 @@ line. So when you stop to wait on purpose, say so with `WAITING`.
 | `BLOCKED <name> <reason>` | you cannot continue without your lead: `decision-needed <q>` \| `memory` \| `cpu` \| `depends <unit> <what>` \| `review <stage>` (3 rounds failed) \| `check <id>` | delivered to your lead; `memory`, `cpu` and `depends emulator image` to the `pm` |
 | `WAITING <name> <what>` | you stop on purpose and something else will prompt you: `check <worktree>` (a `WAIT` answer, until `EVENT room`), `room <role>` (a `QUEUE` answer, until `EVENT room`), `unit <unit>` (a plan, until that worker's line), `review <stage> r<k>` (a plan, until rev's `REVIEWED`), `run <what>` (a run of your own in the background that prompts you when it ends) | logged only |
 | `REVIEWED <stage> r<k> verdict=<pass\|revise> p1=<n> p2=<n> p3=<n> <review-file>` | rev only: sent to the lead with `herdr agent prompt`, and `pm-report --from <rev-name>` for the log | logged only (the lead has it from rev) |
-| `RESET READY <name> <nonce>` | the line a reset asks for, printed exactly as given (Context budget) | logged only (`pm-pane reset` reads it) |
+| `RESET READY <name> <nonce>` | the line a reset asks for, reported and printed exactly as given (Context budget) | logged only (`pm-pane reset` reads its record, or the screen when it is only printed) |
 | no typed line | never on purpose | `EVENT silent <name>` to your lead |
 
 A delivered line goes to whoever opened your pane: a worker's, rev's and crit's to their plan, a plan's and a
