@@ -699,3 +699,180 @@ describe('the columns at a narrow width and dead letters', () => {
     expect(rows()[2]?.[1]).toBe('0');
   });
 });
+
+describe('"Create queue" and "Delete" (issues 489 and 490)', () => {
+  function flashItems(): [string, string][] {
+    return (PAGE.findFlashbar()?.findItems() ?? []).map((item) => [
+      text(item.findHeader()?.getElement() ?? document.createElement('i')),
+      text(item.findContent()?.getElement() ?? document.createElement('i')),
+    ]);
+  }
+
+  async function expectFlash(expected: [string, string][]) {
+    await waitFor(() => {
+      expect(flashItems()).toEqual(expected);
+    });
+  }
+
+  function header(): HTMLElement {
+    return table().findHeaderSlot()?.getElement() as HTMLElement;
+  }
+
+  function deleteButton(): HTMLElement {
+    return within(header()).getByRole('button', { name: 'Delete' });
+  }
+
+  function select(name: string) {
+    fireEvent.click(within(table().getElement()).getByRole('radio', { name }));
+  }
+
+  function selectedNames(): string[] {
+    return within(table().getElement())
+      .queryAllByRole('radio')
+      .filter((radio) => (radio as HTMLInputElement).checked)
+      .map((radio) => radio.getAttribute('aria-label') ?? '');
+  }
+
+  function modal() {
+    const found = PAGE.findModal();
+    expect(found).not.toBeNull();
+    return found as NonNullable<typeof found>;
+  }
+
+  async function confirmDelete() {
+    fireEvent.click(deleteButton());
+    await waitFor(() => {
+      expect(PAGE.findModal()).not.toBeNull();
+    });
+    act(() => {
+      modal().findContent().findInput()?.setInputValue('delete');
+    });
+    fireEvent.click(within(modal().getElement()).getByRole('button', { name: 'Delete' }));
+  }
+
+  it('the header holds Refresh, "Delete" (disabled, "Select a queue") and "Create queue", which leads to the create page', async () => {
+    const { router } = await openLoaded();
+
+    const refresh = within(header()).getByRole('button', { name: 'Refresh' });
+    const remove = deleteButton();
+    const create = within(header()).getByRole('link', { name: 'Create queue' });
+    // In this order: Refresh, "Delete", "Create queue".
+    expect(refresh.compareDocumentPosition(remove) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(remove.compareDocumentPosition(create) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(isDisabled(remove)).toBe(true);
+    const reason = (remove.getAttribute('aria-describedby') ?? '')
+      .split(' ')
+      .map((id) => document.getElementById(id)?.textContent ?? '')
+      .join(' ');
+    expect(reason).toContain('Select a queue');
+
+    expect(create).toHaveAttribute('href', '/aws/sqs/queues/create');
+    fireEvent.click(create);
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe('/aws/sqs/queues/create');
+    });
+    expect(await screen.findByRole('heading', { level: 1, name: 'Create queue' })).toBeInTheDocument();
+  });
+
+  it('a row selected, "Delete" confirmed → "Deleted queue {name}", the list read again, the selection cleared', async () => {
+    engine.on('DeleteQueue', (body) => {
+      engine.queues = engine.queues.filter((queue) => urlOf(queue.name) !== body['QueueUrl']);
+      return ok({});
+    });
+    await openLoaded();
+    const listsBefore = engine.of('ListQueues').length;
+
+    select('jobs.fifo');
+    expect(isDisabled(deleteButton())).toBe(false);
+    await confirmDelete();
+
+    await expectFlash([['', 'Deleted queue jobs.fifo']]);
+    expect(engine.of('DeleteQueue').map((sent) => sent.body)).toEqual([{ QueueUrl: urlOf('jobs.fifo') }]);
+    await expectNames(['orders', 'orders-dlq']);
+    expect(engine.of('ListQueues').length).toBeGreaterThan(listsBefore);
+    expect(selectedNames()).toEqual([]);
+    expect(isDisabled(deleteButton())).toBe(true);
+    await waitFor(() => {
+      expect(document.activeElement).toBe(deleteButton());
+    });
+  });
+
+  it('a refused delete → "Delete queue {name} failed" with code and message, the list read again', async () => {
+    engine.on('DeleteQueue', () => refused(400, 'InvalidAddress', 'The address is not valid.'));
+    await openLoaded();
+    const listsBefore = engine.of('ListQueues').length;
+
+    select('orders');
+    await confirmDelete();
+
+    await expectFlash([['Delete queue orders failed', 'InvalidAddress: The address is not valid.']]);
+    await waitFor(() => {
+      expect(engine.of('ListQueues').length).toBeGreaterThan(listsBefore);
+    });
+    expect(PAGE.findModal()).toBeNull();
+  });
+
+  it('a dead-letter queue’s row names its sources; a row whose read failed → the dialog without a sources sentence', async () => {
+    engine.on('ListDeadLetterSourceQueues', (body) =>
+      body['QueueUrl'] === urlOf('jobs.fifo') ? refused(500, 'InternalError', 'boom') : undefined,
+    );
+    await openLoaded([ORDERS, DLQ, { ...FIFO, sources: ['x.fifo'] }]);
+
+    select('orders-dlq');
+    fireEvent.click(deleteButton());
+    await waitFor(() => {
+      expect(PAGE.findModal()).not.toBeNull();
+    });
+    expect(text(modal().getElement())).toContain('It is the dead-letter queue of orders.');
+    fireEvent.click(within(modal().getElement()).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => {
+      expect(PAGE.findModal()).toBeNull();
+    });
+
+    select('jobs.fifo');
+    fireEvent.click(deleteButton());
+    await waitFor(() => {
+      expect(PAGE.findModal()).not.toBeNull();
+    });
+    expect(text(modal().getElement())).toContain('Delete jobs.fifo?');
+    expect(text(modal().getElement())).not.toContain('dead-letter queue of');
+  });
+
+  it('a page change or a filter → the selection dropped', async () => {
+    engine.queues = Array.from({ length: 12 }, (_, index) => {
+      const name = `q-${String(index + 1).padStart(2, '0')}`;
+      return { name, attributes: standard(name) };
+    });
+    open();
+    await expectNames(engine.queues.slice(0, 10).map((queue) => queue.name));
+
+    select('q-01');
+    expect(selectedNames()).toEqual(['q-01']);
+    await waitFor(() => {
+      expect(isDisabled(nextPage())).toBe(false);
+    });
+    fireEvent.click(nextPage());
+    await expectNames(['q-11', 'q-12']);
+    expect(selectedNames()).toEqual([]);
+    expect(isDisabled(deleteButton())).toBe(true);
+
+    select('q-11');
+    expect(selectedNames()).toEqual(['q-11']);
+    fireEvent.change(filterInput(), { target: { value: 'q-1' } });
+    await expectNames(['q-10', 'q-11', 'q-12']);
+    expect(selectedNames()).toEqual([]);
+    expect(isDisabled(deleteButton())).toBe(true);
+  });
+
+  it('DeleteQueue answers 501 → "Not implemented by the emulator" naming DeleteQueue', async () => {
+    engine.on('DeleteQueue', () => refused(501, 'NotImplemented', 'not here'));
+    await openLoaded();
+
+    select('orders');
+    await confirmDelete();
+
+    await expectFlash([
+      ['Not implemented by the emulator', 'The emulator answered 501 Not Implemented for DeleteQueue.'],
+    ]);
+  });
+});
