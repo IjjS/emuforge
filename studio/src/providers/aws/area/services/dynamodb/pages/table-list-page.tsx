@@ -43,8 +43,11 @@ const REFRESHED = 'Tables refreshed';
 const READING = 'Reading the tables';
 const SELECT_FIRST = 'Select a table first';
 
-/** A table's name keeps room for 24 characters (`aws-area.md`, entry 4). */
+/** A table's name, and a key's name with its type, keeps room for 24 characters (`aws-area.md`, entry 4). */
 const NAME_MIN_WIDTH = '28ch';
+
+/** A status is a fixed word after its icon: its column is as wide as the longest ("Creating", "Updating", "Deleting"). */
+const STATUS_MIN_WIDTH = '14ch';
 
 /** The page size at the start of every visit; stored nowhere. */
 const START_PREFERENCES = { pageSize: 25, wrapLines: true };
@@ -282,6 +285,7 @@ export function TableListPage({ connection }: ScreenPageProps) {
     {
       id: 'status',
       header: 'Status',
+      minWidth: STATUS_MIN_WIDTH,
       cell: (table) => {
         const status = statusText(table.status);
         return (
@@ -294,11 +298,13 @@ export function TableListPage({ connection }: ScreenPageProps) {
     {
       id: 'partitionKey',
       header: 'Partition key',
+      minWidth: NAME_MIN_WIDTH,
       cell: (table) => <ValueText kind="name" value={keyText(table.partitionKey)} none={NO_VALUE} />,
     },
     {
       id: 'sortKey',
       header: 'Sort key',
+      minWidth: NAME_MIN_WIDTH,
       cell: (table) => <ValueText kind="name" value={keyText(table.sortKey)} none={NO_VALUE} />,
     },
     {
