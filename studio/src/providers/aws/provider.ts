@@ -10,6 +10,10 @@ export const AWS_PROVIDER: Provider = {
   name: AWS_NAME,
   shortName: AWS_SHORT_NAME,
   segment: AWS_SEGMENT,
-  services: SERVICES.map((service) => ({ label: service.label, path: servicePath(service) })),
+  services: SERVICES.map((service) => ({
+    label: service.label,
+    path: servicePath(service),
+    hasScreen: service.hasScreen,
+  })),
   loadArea: () => import('./area'),
 };

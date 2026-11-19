@@ -79,6 +79,9 @@
   "providers.services": {
     "other": "{count}\u00a0サービス · Studio の画面はまだありません"
   },
+  "providers.servicesWithScreens": {
+    "other": "{count}\u00a0サービス · うち {screens}\u00a0件に Studio の画面があります"
+  },
   "notFound.title": "ページが見つかりません",
   "notFound.statement": "Studio には {path} のページはありません。",
   "notFound.path": "パス",

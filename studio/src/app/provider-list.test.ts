@@ -4,6 +4,7 @@ import ts from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
 
 import { serviceLinks } from '../test/service-files';
+import { SERVICES as AWS_SERVICES } from '../providers/aws/services';
 import { PROVIDERS } from './provider-list';
 
 // The area module, watched: the factory runs when, and only when, something imports the area.
@@ -77,6 +78,17 @@ describe('the providers list', () => {
   it("gives the AWS entry's services in label order, each at /aws/<route>", () => {
     const aws = PROVIDERS[0];
     expect(aws?.services.map(({ label, path }) => [label, path])).toEqual(SERVICES);
+  });
+
+  it("gives each of the AWS entry's services its label, its path and whether it has a screen, the same as the provider's own services say (issue 494)", () => {
+    const aws = PROVIDERS[0];
+    expect(aws?.services).toEqual(
+      AWS_SERVICES.map((service) => ({
+        label: service.label,
+        path: `/aws${service.route}`,
+        hasScreen: service.hasScreen,
+      })),
+    );
   });
 
   it('loads no Cloudscape module, and loads the AWS area only when its component is asked for', async () => {

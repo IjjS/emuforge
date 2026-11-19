@@ -9,7 +9,7 @@ import { NoScreenPage, type NoScreenPart } from './no-screen-page';
 // The area's "no screen yet" page, in both forms (issue 57, requirements R4.5 to R4.7 and R5), rendered alone inside a
 // router with Studio's Home at `/` and the first screen's address as another route.
 
-const DYNAMODB: Service = { label: 'Amazon DynamoDB', crumb: 'DynamoDB', route: '/dynamodb' };
+const DYNAMODB: Service = { label: 'Amazon DynamoDB', crumb: 'DynamoDB', route: '/dynamodb', hasScreen: false };
 const STATEMENT = 'Studio has no screen for this part of Amazon DynamoDB yet.';
 const OLD_SENTENCE = 'Studio has no screen for Amazon DynamoDB yet.';
 const SENTENCE = 'Opening this page changed nothing in your local emulator.';
