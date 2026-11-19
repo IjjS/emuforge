@@ -1,4 +1,4 @@
-import Alert from '@cloudscape-design/components/alert';
+import Alert, { type AlertProps } from '@cloudscape-design/components/alert';
 import type { AutosuggestProps } from '@cloudscape-design/components/autosuggest';
 import type { InputProps } from '@cloudscape-design/components/input';
 import type { TextareaProps } from '@cloudscape-design/components/textarea';
@@ -33,7 +33,6 @@ import {
   type WizardValues,
 } from '../components/create-role-rules';
 import { actionFailureItem } from '../components/failures';
-import { useAnnouncer } from '../components/page-parts';
 import { PermissionsStep } from '../components/permissions-step';
 import { ReviewStep } from '../components/review-step';
 import { TrustedEntityStep } from '../components/trusted-entity-step';
@@ -145,20 +144,14 @@ export function CreateRolePage({ connection }: ScreenPageProps) {
   // The steps whose rules were checked: their messages are shown, and follow what is typed from then on.
   const [checked, setChecked] = useState<ReadonlySet<WizardStep>>(new Set());
   const [failure, setFailure] = useState<FlashItem>();
-  // The failure at "Create role" is also said in the page's polite live region (issue 492, critique P1): its header
-  // and its content, read from the alert as shown, so the words said are the words seen.
-  const [announcement, announce] = useAnnouncer();
-  const failureContentRef = useRef<HTMLSpanElement>(null);
+  // The failure at "Create role" takes the focus when it is shown (issue 492, critique P1), so a screen reader reads
+  // it at once; each new failure is a new item, so a second refusal takes it again.
+  const failureRef = useRef<AlertProps.Ref>(null);
   useEffect(() => {
-    if (failure === undefined) {
-      return;
+    if (failure !== undefined) {
+      failureRef.current?.focus();
     }
-    const content = (failureContentRef.current?.textContent ?? '').trim();
-    const text = [failure.header, content].filter((part) => part !== undefined && part !== '').join('. ');
-    if (text !== '') {
-      announce(text);
-    }
-  }, [failure, announce]);
+  }, [failure]);
   const create = useCreateRole(engineOrigin);
   const pending = create.isPending;
   // Set at the press, before `isPending` re-renders (TanStack notifies on a later task): a second press in between
@@ -340,8 +333,8 @@ export function CreateRolePage({ connection }: ScreenPageProps) {
           tagsRef={tagsRef}
           failure={
             failure !== undefined && (
-              <Alert type={failure.type} header={failure.header}>
-                <span ref={failureContentRef}>{failure.content}</span>
+              <Alert ref={failureRef} type={failure.type} header={failure.header}>
+                {failure.content}
               </Alert>
             )
           }
@@ -384,7 +377,6 @@ export function CreateRolePage({ connection }: ScreenPageProps) {
       />
       {/* Mounted only while it asks, so nothing of it is in the page before "Cancel" is pressed. */}
       {asking && <DiscardDialog visible onAnswer={handleDiscardAnswer} />}
-      {announcement}
     </>
   );
 }
