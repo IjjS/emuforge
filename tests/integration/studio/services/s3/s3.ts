@@ -144,7 +144,9 @@ export function regionText(code: string | null): string {
 // ---------------------------------------------------------------------------------------------------------------
 
 /** An answer of a direct call (its header names in lower case), or the error that kept it from arriving. */
-export type Direct = { status: number; body: string; headers: Record<string, string> } | { error: string };
+/** A direct answer: its body as UTF-8 text, and `bytes`, the body exactly as received. */
+export type Direct =
+  { status: number; body: string; bytes: Buffer; headers: Record<string, string> } | { error: string };
 
 /** Any direct answer: this file's, or another support file's without headers. */
 type Answer = { status: number; body: string } | { error: string };
@@ -157,7 +159,7 @@ export function shownDirect(answer: Answer): string {
 /** What a direct call needs of the run: the `$HOME` the emulator writes its files under. A check's `Ctx` is one. */
 export type DirectEnv = Pick<Ctx, 'home'>;
 
-const sha256Hex = (data: string) => createHash('sha256').update(data).digest('hex');
+const sha256Hex = (data: string | Buffer) => createHash('sha256').update(data).digest('hex');
 const hmac = (key: string | Buffer, data: string) => createHmac('sha256', key).update(data).digest();
 
 /** RFC 3986 percent-encoding, as SigV4 wants it: everything but the unreserved characters. */
@@ -173,7 +175,8 @@ interface Unsigned {
   /** The path as sent, already percent-encoded (`objectPath`). */
   pathname: string;
   query: [string, string][];
-  body: string;
+  /** Text is sent as UTF-8; a `Buffer` as its bytes. */
+  body: string | Buffer;
   region: string;
   /** Headers sent and signed besides `host`, `x-amz-content-sha256` and `x-amz-date`. */
   headers: Record<string, string>;
@@ -201,7 +204,7 @@ async function signed(env: DirectEnv, port: number, request: Unsigned): Promise<
     'x-amz-content-sha256': payloadHash,
     'x-amz-date': amzDate,
   };
-  if (body !== '') headers['content-md5'] = createHash('md5').update(body).digest('base64');
+  if (body.length > 0) headers['content-md5'] = createHash('md5').update(body).digest('base64');
   for (const [name, value] of Object.entries(request.headers)) headers[name.toLowerCase()] = value.trim();
   const names = Object.keys(headers).sort();
   const canonicalQuery = query
@@ -227,28 +230,28 @@ async function signed(env: DirectEnv, port: number, request: Unsigned): Promise<
   sent.authorization =
     `AWS4-HMAC-SHA256 Credential=${key.accessKeyId}/${scope}, SignedHeaders=${names.join(';')}, ` +
     `Signature=${signature}`;
-  if (body !== '') sent['content-length'] = String(Buffer.byteLength(body));
+  if (body.length > 0) sent['content-length'] = String(Buffer.byteLength(body));
   const target = canonicalQuery === '' ? pathname : `${pathname}?${canonicalQuery}`;
   return new Promise((resolve) => {
     const call = https.request(
       { host: '127.0.0.1', port, method, path: target, ca, agent: false, timeout: 5_000, headers: sent },
       (response) => {
-        let text = '';
-        response.setEncoding('utf8');
-        response.on('data', (chunk: string) => (text += chunk));
+        const chunks: Buffer[] = [];
+        response.on('data', (chunk: Buffer) => chunks.push(chunk));
         response.on('end', () => {
+          const bytes = Buffer.concat(chunks);
           const received: Record<string, string> = {};
           for (const [name, value] of Object.entries(response.headers)) {
             if (value !== undefined) received[name] = Array.isArray(value) ? value.join(', ') : value;
           }
-          resolve({ status: response.statusCode ?? 0, body: text, headers: received });
+          resolve({ status: response.statusCode ?? 0, body: bytes.toString('utf8'), bytes, headers: received });
         });
         response.on('error', (e) => resolve({ error: e.message }));
       },
     );
     call.on('timeout', () => call.destroy(new Error('no answer within 5 s')));
     call.on('error', (e) => resolve({ error: e.message }));
-    call.end(body === '' ? undefined : body);
+    call.end(body.length === 0 ? undefined : body);
   });
 }
 
@@ -259,7 +262,7 @@ function signedS3(
   method: string,
   pathname: string,
   query: [string, string][] = [],
-  body = '',
+  body: string | Buffer = '',
   region = 'us-east-1',
   headers: Record<string, string> = {},
 ): Promise<Direct> {
@@ -277,7 +280,7 @@ export function s3Direct(
     method: string;
     pathname: string;
     query?: [string, string][];
-    body?: string;
+    body?: string | Buffer;
     region?: string;
     headers?: Record<string, string>;
   },
