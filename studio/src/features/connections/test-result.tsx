@@ -44,11 +44,18 @@ function Summary({ test }: { test: TargetTest }) {
   return <>{t('connections.test.failed', { check: <CheckName check={failed?.check ?? ''} /> })}</>;
 }
 
+interface TestResultProps {
+  state: TestState | undefined;
+  /** The engine's message the row already shows under its status; a failed check with the same one does not repeat it. */
+  shownMessage?: string | undefined;
+}
+
 /**
  * A connection's test, under its row. Its summary sits in a polite live region that is always there, so it is
- * announced once when it appears; the five checks follow in the engine's order, a failed one with its message.
+ * announced once when it appears; the five checks follow in the engine's order, a failed one with its message unless
+ * the row already shows that same message.
  */
-export function TestResult({ state }: { state: TestState | undefined }) {
+export function TestResult({ state, shownMessage }: TestResultProps) {
   const { t } = useLanguage();
   const test = state?.kind === 'done' ? state.test : undefined;
   return (
@@ -72,7 +79,7 @@ export function TestResult({ state }: { state: TestState | undefined }) {
                   <CheckName check={check.check} />
                 </span>
                 <StatusLine small kind={status.kind} status={t(status.key)}>
-                  {check.status === 'failed' && check.message !== '' ? (
+                  {check.status === 'failed' && check.message !== '' && check.message !== shownMessage ? (
                     <span lang="en">{check.message}</span>
                   ) : undefined}
                 </StatusLine>

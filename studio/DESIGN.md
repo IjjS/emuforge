@@ -478,7 +478,7 @@ One column inside a sticky bar.
     region carry it.
   - 480px: the bar's gap and the tabs' padding tighten (8px, 0 7px), and the language control is its globe alone,
     40px square, so the wordmark, every tab and the control fit at 390 in every language (Polish "Strona główna"
-    with "Polski" would not).
+    with "Polski" would not). A tab that takes focus is scrolled into the tab list's view should the list overflow.
 - **No sideways scroll** at 1280 and 390 wide, in every language. A command never wraps: its block scrolls within
   itself. The path on "Page not found" breaks only after a `/`; a segment wider than the box scrolls within the box.
 

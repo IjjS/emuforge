@@ -77,8 +77,11 @@
     color: var(--st-text-2);
   }
 
+  /* The keys' folder is a path: never hyphenated, it breaks only after a `/` (its `<wbr>`), and inside a segment only
+     when even that does not fit. */
   .st-keys .st-code {
     white-space: normal;
+    hyphens: manual;
     overflow-wrap: anywhere;
   }
 

@@ -165,14 +165,18 @@ describe('the list (R1, R7, R8)', () => {
 
     await advance(500);
     expect(field(rowOf('local'), 'Emulator')).toBe('Connected');
-    expect(field(rowOf('local'), 'Keys')).toBe('Keys are read by the engine from ~/.aws/emulator/9301/');
+    expect(norm(within(rowOf('local')).getByText('Keys', { selector: 'dt' }).nextElementSibling?.textContent)).toBe(
+      'Keys are read by the engine from ~/.aws/emulator/9301/',
+    );
     expect(field(rowOf('second'), 'Emulator')).toBe('Checking');
 
     await advance(1000);
     expect(field(rowOf('second'), 'Emulator')).toBe('Not started there are no emulator files for port 9302');
     const message = within(rowOf('second')).getByText('there are no emulator files for port 9302');
     expect(message).toHaveAttribute('lang', 'en');
-    expect(field(rowOf('second'), 'Keys')).toBe('Keys are read by the engine from ~/.aws/emulator/9302/');
+    expect(norm(within(rowOf('second')).getByText('Keys', { selector: 'dt' }).nextElementSibling?.textContent)).toBe(
+      'Keys are read by the engine from ~/.aws/emulator/9302/',
+    );
   });
 
   it('six connections → at most 4 info requests in flight at once, started in list order', async () => {
