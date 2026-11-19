@@ -16,7 +16,7 @@ import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
 import { ValueText } from '../../../components/value-text';
 import type { ScreenPageProps } from '../../../screens';
-import type { Table, TimeToLiveRead } from '../api';
+import type { Table, TableRead, TimeToLiveRead } from '../api';
 import { DeleteTableDialog, type TableToDelete } from '../components/delete-table-dialog';
 import { useItemsExplorer } from '../components/items-explorer';
 import { ItemsTab } from '../components/items-tab';
@@ -58,6 +58,14 @@ function NotFound({ name }: { name: string }) {
       </Box>
     </Container>
   );
+}
+
+/** Two answers of the reading are the same: each re-read makes a new answer object of the same parts. */
+function sameRead(a: TableRead, b: TableRead | undefined): boolean {
+  if (a.kind === 'not-found' || b?.kind !== 'found') {
+    return a.kind === b?.kind;
+  }
+  return a.table === b.table && a.timeToLive === b.timeToLive;
 }
 
 interface TableViewProps {
@@ -115,7 +123,7 @@ export function TablePage({ connection, params }: ScreenPageProps) {
   // While the table is read again ("Refresh", the connection's return) the last answer stays shown, so the tabs keep
   // their state and the page of items is read again with its start key.
   const [last, setLast] = useState(reading.read);
-  if (reading.read !== undefined && reading.read !== last) {
+  if (reading.read !== undefined && !sameRead(reading.read, last)) {
     setLast(reading.read);
   }
   const read = reading.read ?? (failure === undefined ? last : undefined);

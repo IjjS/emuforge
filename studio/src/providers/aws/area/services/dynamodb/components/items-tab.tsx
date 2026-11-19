@@ -13,7 +13,7 @@ import Select, { type SelectProps } from '@cloudscape-design/components/select';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Table, { type TableProps } from '@cloudscape-design/components/table';
-import type { FormEvent, ReactNode } from 'react';
+import { useId, type FormEvent, type ReactNode } from 'react';
 
 import { useAreaModalRoot } from '../../../components/area-modal';
 import type { AreaConnection } from '../../../components/emulator-line';
@@ -146,6 +146,9 @@ interface RequestProps {
 /** The request: scan or query, the table or an index, the query's key fields, and "Run". */
 function Request({ table, explorer }: RequestProps) {
   const { fields, errors, change } = explorer;
+  // The segmented controls are named by their fields' labels, so a narrow screen's select names no label again.
+  const readId = useId();
+  const orderId = useId();
   const options = targetOptions(table);
   const keys = keysOf(table, fields.target);
   const sortKey = keys.sort;
@@ -168,9 +171,9 @@ function Request({ table, explorer }: RequestProps) {
     <form onSubmit={handleSubmit} aria-label="Read items">
       <SpaceBetween size="m">
         <SpaceBetween direction="horizontal" size="m" alignItems="end">
-          <FormField label="Read">
+          <FormField label={<span id={readId}>Read</span>}>
             <SegmentedControl
-              label="Read"
+              ariaLabelledby={readId}
               selectedId={fields.kind}
               options={[
                 { id: 'scan', text: 'Scan' },
@@ -235,9 +238,9 @@ function Request({ table, explorer }: RequestProps) {
                 />
               </FormField>
             )}
-            <FormField label="Order">
+            <FormField label={<span id={orderId}>Order</span>}>
               <SegmentedControl
-                label="Order"
+                ariaLabelledby={orderId}
                 selectedId={fields.descending ? 'descending' : 'ascending'}
                 options={[
                   { id: 'ascending', text: 'Ascending' },
