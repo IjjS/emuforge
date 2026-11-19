@@ -247,7 +247,7 @@ describe('the dialog "Edit general configuration"', () => {
     } else if (how === 'Escape') {
       fireEvent.keyDown(control(dialog, 'Description'), { key: 'Escape', keyCode: 27 });
     } else {
-      fireEvent.click(button(dialog, 'Close modal'));
+      fireEvent.click(button(dialog, 'Close'));
     }
 
     await waitFor(() => {

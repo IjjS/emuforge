@@ -93,7 +93,7 @@ export function EditGeneralDialog({ fn, name, engineOrigin, ready, onClose }: Ed
     <AreaModal
       visible
       header="Edit general configuration"
-      closeAriaLabel="Close modal"
+      closeAriaLabel="Close"
       onDismiss={handleDismiss}
       footer={
         <Box float="right">

@@ -54,7 +54,13 @@ export function UploadCode({ name, engineOrigin, ready }: UploadCodeProps) {
     if (isTooLarge(failed)) {
       setFieldError(
         <>
-          The emulator refused {file.name} as too large. <Code>{failed.kind === 'other' ? failed.code : ''}</Code>
+          The emulator refused {file.name} as too large.
+          {failed.kind === 'other' && failed.code !== '' && (
+            <>
+              {' '}
+              <Code>{failed.code}</Code>
+            </>
+          )}
         </>,
       );
       return;
