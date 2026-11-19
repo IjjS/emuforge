@@ -14,8 +14,12 @@ issue's collecting branch `feat/<id>`, the integration tests, the whole check, t
   documents under `.pm/issue-<id>/`.
 - You never merge into `main`, push, talk to the owner or start an issue. Only the `pm` does.
 - The machine's limits are the scripts' to judge. `pm-pane` answers `QUEUE` and `pm-check` answers `WAIT` with an
-  expected wait when there is no room; end your turn, and `EVENT room <you> pane <role> <side>` or
+  expected wait when there is no room; end your turn with `WAITING i<id>-plan room <role>` or
+  `WAITING i<id>-plan check <worktree>`, and `EVENT room <you> pane <role> <side>` or
   `EVENT room <you> check <worktree>` arrives when there is.
+- Every turn of yours ends with a typed line (`pane-mode.md`, Reporting lines): while your panes work, that is
+  `WAITING i<id>-plan unit <unit>` or `WAITING i<id>-plan review <stage> r<k>`. A turn without one is
+  `EVENT silent i<id>-plan` to the `pm`.
 
 ## Stages before the build
 
@@ -121,13 +125,15 @@ events go to the `pm`.
 | `EVENT ready <pane> BLOCKED check <id>` | a worker believes a confirmed check is wrong: a wrong criteria line is changed only on the `pm`'s decision, so stop with `BLOCKED i<id>-plan check <id>`; an integration test of yours that does not do what its criteria line says you fix yourself, and record why under `## Plan decisions` |
 | `EVENT ready <pane> BLOCKED review <stage>` | three rounds failed: stop with `BLOCKED i<id>-plan review <stage>` |
 | `EVENT ctx <pane> <n>K` | read the pane's state file first (a worker's `output/state.md` in its worktree, `state-rev.md` or `state-crit.md`); when it is behind what the pane last reported, tell the pane in one line to write it, and reset on its next turn; then `pm-pane reset <pane>` with the command timeout set to 10 minutes |
+| `EVENT silent <pane>` | its turn ended with no typed line: `herdr agent read <pane> --lines 80` and its state file; stopped mid-work, prompt it in one line to go on; finished or waiting, prompt it to end its turn with its typed line (`pane-mode.md`, Reporting lines); silent twice in a row with no progress, `pm-pane reset <pane>` |
 | `EVENT stale <pane>` | `herdr agent read <pane> --lines 80`; if it loops, `pm-pane reset <pane>` |
 | `EVENT gone <pane>` | reopen it with the same brief; its worktree and state file are still there |
 | `EVENT check still <worktree> <step> <n>m` | read the end of `<worktree>/output/logs/check-<step>.log`; a step that still writes is left alone; a hung one: `pm-check <worktree> --stop` and tell its pane in one line |
 | `EVENT room <you> pane <role> <side>` | run the `pm-pane new` that was answered `QUEUE` again |
 | `EVENT room <you> check <worktree>` | run the `pm-check` that was answered `WAIT` again |
 
-`REVIEWED` lines come straight from `rev` as your next prompt. Talk to your panes with
+`REVIEWED` lines come straight from `rev` as your next prompt; `WAITING`, `REVIEWED` and `RESET READY` lines are
+logged and never delivered. Talk to your panes with
 `herdr agent prompt <pane> "<one line>"`.
 
 `EVENT orphans` is the machine's and goes to the `pm`, which prompts the pane or sweeps. Your `pm-pane reset` and
