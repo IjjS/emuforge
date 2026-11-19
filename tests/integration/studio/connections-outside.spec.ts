@@ -49,7 +49,7 @@ test('studio.connections-target-changed-outside-studio', async ({ page, ctx }) =
   // The flash list; Cloudscape also copies the text into a live region outside it.
   await expect(
     page.getByRole('list', { name: 'Notifications', exact: true }).getByText(
-      new RegExp(`The target is now\\s*${second}\\.\\s*This page was read again from its emulator\\.`),
+      new RegExp(`The target is now\\s*${second}\\.\\s*This page now reads from it\\.`),
     ),
     'the flash says the target changed',
   ).toBeVisible(ACTION);
