@@ -469,3 +469,85 @@ describe('the answer', () => {
     });
   });
 });
+
+describe('closing with what was entered', () => {
+  /** The question "Discard what you entered?", once it is open. */
+  async function question(): Promise<HTMLElement> {
+    const heading = await screen.findByRole('heading', { name: 'Discard what you entered?' });
+    return heading.closest('[role="dialog"]') as HTMLElement;
+  }
+
+  function noQuestion() {
+    expect(screen.queryByRole('heading', { name: 'Discard what you entered?' })).toBeNull();
+  }
+
+  async function closed() {
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
+  }
+
+  it('Add, nothing changed: "Cancel" closes at once', async () => {
+    given();
+    const modal = await openAdd();
+    fireEvent.click(within(modal).getByRole('button', { name: 'Cancel' }));
+    await closed();
+    noQuestion();
+  });
+
+  it('Add, a name typed: "Cancel", Esc and "Close" ask first; "Keep editing" keeps what was typed; "Discard" closes and sends nothing', async () => {
+    given();
+    const modal = await openAdd();
+    type(nameField(modal), 'fresh');
+
+    fireEvent.click(within(modal).getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(within(await question()).getByRole('button', { name: 'Keep editing' }));
+    await waitFor(() => {
+      noQuestion();
+    });
+    expect(screen.getByRole('heading', { name: 'Add inline policy' })).toBeInTheDocument();
+    expect(nameField(modal)).toHaveValue('fresh');
+
+    fireEvent.keyDown(nameField(modal), { key: 'Escape', keyCode: 27 });
+    fireEvent.click(within(await question()).getByRole('button', { name: 'Keep editing' }));
+    await waitFor(() => {
+      noQuestion();
+    });
+
+    fireEvent.click(within(modal).getByRole('button', { name: 'Close dialog' }));
+    fireEvent.click(within(await question()).getByRole('button', { name: 'Discard' }));
+    await closed();
+    expect(engine.of('PutRolePolicy')).toEqual([]);
+    expect(flashes).toEqual([]);
+  });
+
+  it('Add, only the document changed: asks first', async () => {
+    given();
+    const modal = await openAdd();
+    type(documentField(modal), DOC_B);
+    fireEvent.click(within(modal).getByRole('button', { name: 'Cancel' }));
+    expect(await question()).toBeInTheDocument();
+  });
+
+  it('Edit, the document as read: Esc closes at once; changed: asks, and "Discard" closes and sends nothing', async () => {
+    given();
+    let modal = await openEdit();
+    await waitFor(() => {
+      expect(documentField(modal).value).toBe(DOC_A);
+    });
+    fireEvent.keyDown(documentField(modal), { key: 'Escape', keyCode: 27 });
+    await closed();
+    noQuestion();
+
+    fireEvent.click(action('Edit inline policy'));
+    modal = await dialog();
+    await waitFor(() => {
+      expect(documentField(modal).value).toBe(DOC_A);
+    });
+    type(documentField(modal), DOC_B);
+    fireEvent.keyDown(documentField(modal), { key: 'Escape', keyCode: 27 });
+    fireEvent.click(within(await question()).getByRole('button', { name: 'Discard' }));
+    await closed();
+    expect(engine.of('PutRolePolicy')).toEqual([]);
+  });
+});

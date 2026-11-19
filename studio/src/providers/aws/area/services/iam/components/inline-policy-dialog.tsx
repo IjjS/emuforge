@@ -8,6 +8,7 @@ import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import { useState } from 'react';
 
 import { AreaModal } from '../../../components/area-modal';
+import { DiscardDialog, type DiscardAnswer } from '../../../components/discard-dialog';
 import type { AreaConnection } from '../../../components/emulator-line';
 import type { FlashItem } from '../../../components/page-flash';
 import { usePageFlash } from '../../../components/page-flash';
@@ -22,7 +23,8 @@ import { ReadFailure } from './states';
 // and the document, starting from the skeleton; Studio checks the name's rule, that the role has no inline policy of
 // that name among those read (the emulator would replace it without a word) and that the text is one JSON value,
 // and sends nothing otherwise. Edit: the name fixed, the document as `GetRolePolicy` returns it, read as the dialog
-// opens. Both send `PutRolePolicy` with the text as typed; a refusal stays in the dialog with what was typed.
+// opens. Both send `PutRolePolicy` with the text as typed; a refusal stays in the dialog with what was typed. Closing
+// it while the name or the document differ from what it opened with asks first, as "Create policy" does.
 
 const NAME_RULE = '1 to 128 characters: letters (A-Z, a-z), digits and the characters + = , . @ _ -.';
 const NAME_MAX = 128;
@@ -93,14 +95,34 @@ export function InlinePolicyDialog({ role, mode, connection, onClose }: InlinePo
   });
   // The editor takes the document once, when it first arrives; what is typed afterwards is the developer's.
   const [taken, setTaken] = useState(false);
+  // The document the editor opened with: the skeleton, or the one read; what is typed is told from it.
+  const [startText, setStartText] = useState(editing === undefined ? POLICY_SKELETON : '');
   if (editing !== undefined && !taken && document.read?.kind === 'found' && !document.loading) {
     setTaken(true);
     setText(document.read.text);
+    setStartText(document.read.text);
   }
   const ready = editing === undefined || taken;
 
+  // "Discard what you entered?" is open: Esc, "Close", a click beside the dialog or "Cancel" asked to close while the
+  // name or the document differ from what the dialog opened with.
+  const [asking, setAsking] = useState(false);
+  const changed = name !== '' || (ready && text !== startText);
+
   const handleDismiss = () => {
-    if (!pending) {
+    if (pending || asking) {
+      return;
+    }
+    if (changed) {
+      setAsking(true);
+      return;
+    }
+    onClose();
+  };
+
+  const handleDiscardAnswer = (answer: DiscardAnswer) => {
+    setAsking(false);
+    if (answer === 'discard') {
       onClose();
     }
   };
@@ -191,51 +213,54 @@ export function InlinePolicyDialog({ role, mode, connection, onClose }: InlinePo
   const actionInFlight = editing === undefined ? 'Adding' : 'Saving changes';
 
   return (
-    <AreaModal
-      visible
-      size="large"
-      header={editing === undefined ? 'Add inline policy' : `Edit ${editing}`}
-      closeAriaLabel="Close dialog"
-      onDismiss={handleDismiss}
-      footer={
-        <Box float="right">
-          <SpaceBetween direction="horizontal" size="xs">
-            <Button variant="link" disabled={pending} onClick={handleDismiss}>
-              Cancel
-            </Button>
-            <Button
-              variant="primary"
-              disabled={!ready}
-              loading={pending}
-              loadingText={actionInFlight}
-              onClick={handleSave}
-            >
-              {action}
-            </Button>
-          </SpaceBetween>
-        </Box>
-      }
-    >
-      <SpaceBetween size="m">
-        {editing === undefined ? (
-          <FormField label="Policy name" constraintText={NAME_RULE} errorText={errors.name}>
-            <Input
-              value={name}
-              disabled={pending}
-              invalid={errors.name !== undefined}
-              onChange={({ detail }) => {
-                setName(detail.value);
-              }}
-            />
-          </FormField>
-        ) : (
-          <FormField label="Policy name">
-            <ValueText kind="name" value={editing} />
-          </FormField>
-        )}
-        {body}
-        {failure !== undefined && <FailureAlert item={failure} />}
-      </SpaceBetween>
-    </AreaModal>
+    <>
+      <AreaModal
+        visible
+        size="large"
+        header={editing === undefined ? 'Add inline policy' : `Edit ${editing}`}
+        closeAriaLabel="Close dialog"
+        onDismiss={handleDismiss}
+        footer={
+          <Box float="right">
+            <SpaceBetween direction="horizontal" size="xs">
+              <Button variant="link" disabled={pending} onClick={handleDismiss}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                disabled={!ready}
+                loading={pending}
+                loadingText={actionInFlight}
+                onClick={handleSave}
+              >
+                {action}
+              </Button>
+            </SpaceBetween>
+          </Box>
+        }
+      >
+        <SpaceBetween size="m">
+          {editing === undefined ? (
+            <FormField label="Policy name" constraintText={NAME_RULE} errorText={errors.name}>
+              <Input
+                value={name}
+                disabled={pending}
+                invalid={errors.name !== undefined}
+                onChange={({ detail }) => {
+                  setName(detail.value);
+                }}
+              />
+            </FormField>
+          ) : (
+            <FormField label="Policy name">
+              <ValueText kind="name" value={editing} />
+            </FormField>
+          )}
+          {body}
+          {failure !== undefined && <FailureAlert item={failure} />}
+        </SpaceBetween>
+      </AreaModal>
+      {asking && <DiscardDialog visible onAnswer={handleDiscardAnswer} />}
+    </>
   );
 }
