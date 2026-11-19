@@ -138,11 +138,19 @@ function UploadView({ bucket, prefix, connection }: UploadViewProps) {
   }, []);
 
   const handleAdd = ({ detail }: { detail: FileUploadProps.ChangeDetail }) => {
-    const added = detail.value.map((file): FileRow => {
+    // One row per name, since a name is one key: a file whose name is listed already takes that row's place, and of
+    // two files of one name in one pick the last is kept.
+    const byName = new Map<string, FileRow>();
+    for (const file of detail.value) {
       lastRowId += 1;
-      return { id: `file-${String(lastRowId)}`, file, replaces: false, status: { kind: 'ready' } };
+      byName.set(file.name, { id: `file-${String(lastRowId)}`, file, replaces: false, status: { kind: 'ready' } });
+    }
+    const added = [...byName.values()];
+    setRows((current) => {
+      const replaced = current.map((row) => byName.get(row.file.name) ?? row);
+      const listed = new Set(current.map((row) => row.file.name));
+      return [...replaced, ...added.filter((row) => !listed.has(row.file.name))];
     });
-    setRows((current) => [...current, ...added]);
     if (exists === undefined) {
       return;
     }

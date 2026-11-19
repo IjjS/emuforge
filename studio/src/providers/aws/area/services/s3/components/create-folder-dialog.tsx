@@ -2,7 +2,7 @@ import Alert from '@cloudscape-design/components/alert';
 import Box from '@cloudscape-design/components/box';
 import Button from '@cloudscape-design/components/button';
 import FormField from '@cloudscape-design/components/form-field';
-import Input from '@cloudscape-design/components/input';
+import Input, { type InputProps } from '@cloudscape-design/components/input';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 
@@ -48,6 +48,7 @@ export function CreateFolderDialog({ visible, endpoint, bucket, prefix, onClose 
   const [failed, setFailed] = useState<{ type: 'error' | 'info'; header: ReactNode; detail?: ReactNode }>();
   const [running, setRunning] = useState(false);
   const controller = useRef<AbortController | null>(null);
+  const nameField = useRef<InputProps.Ref>(null);
 
   useEffect(
     () => () => {
@@ -55,6 +56,27 @@ export function CreateFolderDialog({ visible, endpoint, bucket, prefix, onClose 
     },
     [],
   );
+
+  // The name field takes focus once the dialog is shown, not as it mounts: Cloudscape records what had focus (the
+  // tab's "Create folder") when the dialog opens, and gives focus back to it when the dialog closes. The dialog's root
+  // is made after the opening render, so the field is asked for until it is there.
+  useEffect(() => {
+    if (!visible) {
+      return;
+    }
+    let frame = 0;
+    const focusField = () => {
+      if (nameField.current === null) {
+        frame = requestAnimationFrame(focusField);
+      } else {
+        nameField.current.focus();
+      }
+    };
+    frame = requestAnimationFrame(focusField);
+    return () => {
+      cancelAnimationFrame(frame);
+    };
+  }, [visible]);
 
   // Each opening starts afresh.
   const [seenVisible, setSeenVisible] = useState(visible);
@@ -143,7 +165,7 @@ export function CreateFolderDialog({ visible, endpoint, bucket, prefix, onClose 
           <Input
             value={name}
             disabled={running}
-            autoFocus
+            ref={nameField}
             autoComplete={false}
             spellcheck={false}
             onChange={({ detail }) => {
