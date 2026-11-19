@@ -34,6 +34,17 @@ export function AddConnectionForm({ onAdd }: AddConnectionFormProps) {
   const nameInput = useRef<HTMLInputElement>(null);
   const endpointInput = useRef<HTMLInputElement>(null);
 
+  /** A field's error is about the value it was given: a new value clears it until the next "Add connection". */
+  const handleNameChange = (value: string) => {
+    setName(value);
+    setNameError(undefined);
+  };
+
+  const handleEndpointChange = (value: string) => {
+    setEndpoint(value);
+    setEndpointError(undefined);
+  };
+
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (adding) {
@@ -83,7 +94,7 @@ export function AddConnectionForm({ onAdd }: AddConnectionFormProps) {
               hint={t('connections.add.nameHint')}
               error={nameError}
               value={name}
-              onChange={setName}
+              onChange={handleNameChange}
             />
             <TextField
               ref={endpointInput}
@@ -93,7 +104,7 @@ export function AddConnectionForm({ onAdd }: AddConnectionFormProps) {
               placeholder={ENDPOINT_EXAMPLE}
               error={endpointError}
               value={endpoint}
-              onChange={setEndpoint}
+              onChange={handleEndpointChange}
             />
           </div>
           <div className="st-add-end">
