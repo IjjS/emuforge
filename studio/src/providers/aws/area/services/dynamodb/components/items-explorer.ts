@@ -2,7 +2,7 @@ import { useCallback, useState } from 'react';
 
 import type { AreaConnection } from '../../../components/emulator-line';
 import type { ItemsRequest, Keys, SortCondition, Table as TableDescription, TableKey } from '../api';
-import { checkConditions, NEW_CONDITION, type Condition, type ConditionErrors } from '../filter';
+import { checkConditions, NEW_CONDITION, takesNoValue, typeFor, type Condition, type ConditionErrors } from '../filter';
 import { base64ToBytes } from '../item-json';
 import { useItemExploration, type ItemExploration } from '../queries';
 
@@ -178,6 +178,34 @@ function keyReadOf(table: TableDescription, fields: Fields): { applied: Applied 
   };
 }
 
+/**
+ * What of `fields` a "Run" would apply, as text: the read, the target, the query's fields it uses and each condition's
+ * name, comparison and the type and values it uses. A field the request does not use changes nothing of it.
+ */
+function requestText(table: TableDescription, fields: Fields): string {
+  const conditions = fields.conditions.map((condition) => {
+    if (takesNoValue(condition.comparison)) {
+      return [condition.name, condition.comparison];
+    }
+    const type = typeFor(condition.comparison, condition.type);
+    const value = type === 'BOOL' ? condition.bool : type === 'NULL' ? null : condition.value;
+    return [
+      condition.name,
+      condition.comparison,
+      type,
+      value,
+      ...(condition.comparison === 'between' && type !== 'BOOL' && type !== 'NULL' ? [condition.upper] : []),
+    ];
+  });
+  if (fields.kind === 'scan') {
+    return JSON.stringify(['scan', fields.target, conditions]);
+  }
+  const sortKey = keysOf(table, fields.target).sort;
+  const condition = sortKey === undefined ? 'any' : fields.condition;
+  const sort = condition === 'any' ? [] : condition === 'between' ? [...fields.sort] : [fields.sort[0]];
+  return JSON.stringify(['query', fields.target, fields.partition, condition, sort, fields.descending, conditions]);
+}
+
 /** The table is being created or deleted: its items are not read. */
 function notReadable(status: string | undefined): string | undefined {
   if (status === 'CREATING') {
@@ -198,6 +226,8 @@ export interface ItemsExplorer {
   /** The sentence shown in place of the tab while the table is being created or deleted. */
   unreadable: string | undefined;
   exploration: ItemExploration;
+  /** A field of the request differs from what "Run" applied last. */
+  changed: boolean;
   change: (fields: Partial<Fields>) => void;
   /** Adds a filter row at the end, as `NEW_CONDITION`. */
   addCondition: () => void;
@@ -216,6 +246,7 @@ export function useItemsExplorer(table: TableDescription, connection: AreaConnec
   const [applied, setApplied] = useState<Applied>({ read: { kind: 'scan' } });
   const [pageSize, setPageSize] = useState(START_PAGE_SIZE);
   const [runs, setRuns] = useState(0);
+  const [appliedText, setAppliedText] = useState(() => requestText(table, START_FIELDS));
   const unreadable = notReadable(table.status);
   const request: ItemsRequest | undefined =
     unreadable === undefined ? { table: table.name, ...applied, pageSize } : undefined;
@@ -258,6 +289,7 @@ export function useItemsExplorer(table: TableDescription, connection: AreaConnec
     }
     setErrors({});
     setApplied(read.applied);
+    setAppliedText(requestText(table, fields));
     setRuns((current) => current + 1);
   };
 
@@ -268,6 +300,7 @@ export function useItemsExplorer(table: TableDescription, connection: AreaConnec
     pageSize,
     unreadable,
     exploration,
+    changed: requestText(table, fields) !== appliedText,
     change,
     addCondition,
     changeCondition,

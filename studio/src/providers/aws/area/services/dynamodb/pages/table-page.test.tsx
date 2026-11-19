@@ -457,8 +457,9 @@ function segment(name: string) {
   fireEvent.click(within(tabContent()).getByRole('button', { name }));
 }
 
+/** The request's "Run" (a refused filtered read has a "Run" of its own in the result). */
 function run() {
-  fireEvent.click(within(tabContent()).getByRole('button', { name: 'Run' }));
+  fireEvent.click(within(screen.getByRole('form', { name: 'Read items' })).getByRole('button', { name: 'Run' }));
 }
 
 function errorOf(label: string): string {
@@ -1565,5 +1566,104 @@ describe('the filter', () => {
     fireEvent.change(within(dialog.getElement()).getByRole('textbox'), { target: { value: 'delete' } });
     fireEvent.click(within(dialog.getElement()).getByRole('button', { name: 'Delete' }));
     await readAgain(50);
+  });
+});
+
+describe('the fields and the last run (issue 512, critique final r1)', () => {
+  const CHANGED = 'Changed since the last run. Run to apply.';
+
+  function requestForm(): HTMLElement {
+    return screen.getByRole('form', { name: 'Read items' });
+  }
+
+  it('a field that differs from what "Run" applied: "Changed since the last run. Run to apply." beside "Run", gone once run or set back', async () => {
+    await openTable(ORDERS, [C1, C2]);
+    onFiltered('Scan', () => filteredPage([C1], 2));
+    expect(text(requestForm())).not.toContain(CHANGED);
+
+    addCondition();
+    expect(text(requestForm())).toContain(CHANGED);
+    typeCondition('Attribute name, condition 1', 'status');
+    run();
+    await waitFor(() => {
+      expect(heading()).toBe('Scan of orders, filtered by 1 condition (1)');
+    });
+    expect(text(requestForm())).not.toContain(CHANGED);
+
+    typeCondition('Value, condition 1', 'x');
+    expect(text(requestForm())).toContain(CHANGED);
+    typeCondition('Value, condition 1', '');
+    expect(text(requestForm())).not.toContain(CHANGED);
+
+    choose('Table or index', 'by-status');
+    expect(text(requestForm())).toContain(CHANGED);
+    choose('Table or index', '');
+    expect(text(requestForm())).not.toContain(CHANGED);
+
+    segment('Query');
+    expect(text(requestForm())).toContain(CHANGED);
+    type('customer (String)', 'c1');
+    run();
+    await waitFor(() => {
+      expect(heading()).toContain('Query of orders');
+    });
+    expect(text(requestForm())).not.toContain(CHANGED);
+    type('customer (String)', 'c2');
+    expect(text(requestForm())).toContain(CHANGED);
+  });
+
+  it('every condition removed while a filter is applied: "No conditions. Run to show every item read." and the changed status', async () => {
+    await openTable(ORDERS, [C1, C2]);
+    expect(text(requestForm())).toContain('No conditions. Every item read is shown.');
+    onFiltered('Scan', () => filteredPage([C1], 2));
+    addCondition();
+    typeCondition('Attribute name, condition 1', 'status');
+    run();
+    await waitFor(() => {
+      expect(heading()).toBe('Scan of orders, filtered by 1 condition (1)');
+    });
+
+    fireEvent.click(within(tabContent()).getByRole('button', { name: 'Remove condition 1' }));
+
+    expect(text(requestForm())).toContain('No conditions. Run to show every item read.');
+    expect(text(requestForm())).not.toContain('Every item read is shown.');
+    expect(text(requestForm())).toContain(CHANGED);
+    expect(heading()).toBe('Scan of orders, filtered by 1 condition (1)');
+  });
+
+  it('a refused filtered read: its action is "Run", which runs the request as the fields now hold it', async () => {
+    await openTable(ORDERS, [C1]);
+    onFiltered('Scan', (body) =>
+      JSON.stringify(body['ExpressionAttributeValues']).includes('abc')
+        ? refused(400, 'ValidationException', 'The parameter cannot be converted to a numeric value: abc')
+        : filteredPage([C1], 1),
+    );
+    addCondition();
+    typeCondition('Attribute name, condition 1', 'total');
+    chooseCondition('Type, condition 1', 'N');
+    typeCondition('Value, condition 1', 'abc');
+    run();
+    await waitFor(() => {
+      expect(text(slot())).toContain('ValidationException: The parameter cannot be converted to a numeric value: abc');
+    });
+    expect(within(slot()).queryByRole('button', { name: 'Retry' })).toBeNull();
+
+    typeCondition('Value, condition 1', '10');
+    fireEvent.click(within(slot()).getByRole('button', { name: 'Run' }));
+
+    await expectFirstCells(['S c1']);
+    expect(engine.of('Scan').at(-1)?.body).toMatchObject({ ExpressionAttributeValues: { ':f0': { N: '10' } } });
+    expect(text(requestForm())).not.toContain(CHANGED);
+  });
+
+  it('a refused read without a filter keeps its "Retry"', async () => {
+    engine.on('Scan', () => refused(400, 'ValidationException', 'boom'));
+    engine.hold(ORDERS);
+    open();
+    await waitFor(() => {
+      expect(text(slot())).toContain('ValidationException: boom');
+    });
+    expect(within(slot()).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(within(slot()).queryByRole('button', { name: 'Run' })).toBeNull();
   });
 });
