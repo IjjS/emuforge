@@ -1,5 +1,5 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
-import { render } from '@testing-library/react';
+import { render, waitFor } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
 import type { RequestFailure } from '../../../../../../lib/aws/request';
@@ -71,5 +71,27 @@ describe('the view of a delivery read', () => {
     expect(deliveryView({ value: { kind: 'allowed' }, failure: undefined, loading: false, refresh })).toEqual(
       read({ kind: 'allowed' }),
     );
+  });
+});
+
+describe('"Cannot tell"', () => {
+  for (const reason of ['Studio cannot read it', 'it has a Deny statement, which Studio does not evaluate']) {
+    it(`keeps its text and reaches the reason "${reason}" in a popover`, async () => {
+      const { container } = render(<DeliveryStatus view={read({ kind: 'unknown', reason })} connection={CONNECTED} />);
+      expect((container.textContent ?? '').trim()).toBe('Cannot tell');
+      const popover = createWrapper(container).findPopover();
+      expect(popover).not.toBeNull();
+      popover?.findTrigger().click();
+      await waitFor(() => {
+        expect((popover?.findContent()?.getElement().textContent ?? '').trim()).toBe(
+          `Studio cannot tell whether this topic may deliver: ${reason}.`,
+        );
+      });
+    });
+  }
+
+  it('another delivery has no popover', () => {
+    const { container } = render(<DeliveryStatus view={read({ kind: 'none' })} connection={CONNECTED} />);
+    expect(createWrapper(container).findPopover()).toBeNull();
   });
 });
