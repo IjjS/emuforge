@@ -1315,12 +1315,10 @@ describe('a dialog open while the role’s read fails', () => {
     expectStillOpen(await typedAndFailed(editTrustPolicy));
   });
 
-  it.each<[string, string | undefined, () => Promise<{ dialog: string; field: string; text: string; save: string }>]>(
-    [
-      ['"Add inline policy"', undefined, addInlinePolicy],
-      ['"Edit trust policy"', 'trust', editTrustPolicy],
-    ],
-  )(
+  it.each<[string, string | undefined, () => Promise<{ dialog: string; field: string; text: string; save: string }>]>([
+    ['"Add inline policy"', undefined, addInlinePolicy],
+    ['"Edit trust policy"', 'trust', editTrustPolicy],
+  ])(
     '%s then closed ("Discard") → "The role could not be read." with the status and "Retry"; nothing of the last answer as current',
     async (_, tabId, step) => {
       connection.value = { result: connectedResult(), engineOrigin };
