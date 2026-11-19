@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: plan
 Issue-Key: studio|dynamodb.items|filter-by-attribute
-Issue-Check-Ids:
+Issue-Check-Ids: studio.dynamodb-filter-a-scan-by-attribute-values studio.dynamodb-filter-a-query-and-a-refused-filter studio.dynamodb-filtered-pages-say-what-they-read
 Issue-Commit: 041c721196b7be93e005837f6a10ba3b9ba9a8bc
 
 # Filter a DynamoDB table's explored items by attribute values

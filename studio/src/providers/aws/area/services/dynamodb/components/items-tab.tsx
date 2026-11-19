@@ -25,6 +25,7 @@ import { cellText } from '../format';
 import { compareCodePoints } from '../item-json';
 import { DeleteItemsDialog, keyText } from './delete-items';
 import { useItemEditor } from './item-editor';
+import { ItemsFilter } from './items-filter';
 import {
   ANY,
   conditionsFor,
@@ -85,12 +86,16 @@ type BodyState =
   | { kind: 'rows' }
   | { kind: 'loading' }
   | { kind: 'failure'; failure: ReadFailureState }
+  /** The emulator refused a filtered read: its action runs the request as the fields now hold it. */
+  | { kind: 'refused'; failure: ReadFailureState }
   | { kind: 'none'; title: string; text?: ReactNode };
 
 function bodyState(explorer: ItemsExplorer, target: string, connection: AreaConnection): BodyState {
   const { exploration, applied } = explorer;
   if (exploration.failure !== undefined) {
-    return { kind: 'failure', failure: readFailureState(exploration.failure, connection, 'items') };
+    const failure = readFailureState(exploration.failure, connection, 'items');
+    const refused = exploration.failure.kind === 'other' && !failure.recovery && (applied.filter?.length ?? 0) > 0;
+    return { kind: refused ? 'refused' : 'failure', failure };
   }
   if (exploration.items === undefined) {
     return { kind: 'loading' };
@@ -98,10 +103,13 @@ function bodyState(explorer: ItemsExplorer, target: string, connection: AreaConn
   if (exploration.items.length > 0) {
     return { kind: 'rows' };
   }
+  const name = <ValueText kind="name" value={target} />;
+  if (applied.filter !== undefined && applied.filter.length > 0) {
+    return filteredNone(exploration, applied.read.kind, name);
+  }
   if (exploration.currentPage > 1) {
     return { kind: 'none', title: 'No more items' };
   }
-  const name = <ValueText kind="name" value={target} />;
   return applied.read.kind === 'scan'
     ? {
         kind: 'none',
@@ -111,13 +119,71 @@ function bodyState(explorer: ItemsExplorer, target: string, connection: AreaConn
     : { kind: 'none', title: 'No matching items', text: <>No item of {name} matches this query.</> };
 }
 
-function Body({ state, onRetry }: { state: BodyState; onRetry: () => void }) {
+/** "None of the {read} items this page read matches the filter." (and its singular). */
+function noneOfRead(read: number): string {
+  return read === 1
+    ? 'The 1 item this page read does not match the filter.'
+    : `None of the ${String(read)} items this page read matches the filter.`;
+}
+
+/** A filtered page that matched none, by whether more remain, its position and the read's kind (design.md). */
+function filteredNone(exploration: ItemsExplorer['exploration'], kind: 'scan' | 'query', name: ReactNode): BodyState {
+  const read = exploration.read ?? 0;
+  if (exploration.more) {
+    return {
+      kind: 'none',
+      title: 'No matching items on this page',
+      text: `${noneOfRead(read)} More items remain: go to the next page.`,
+    };
+  }
+  if (exploration.currentPage === 1) {
+    return {
+      kind: 'none',
+      title: 'No matching items',
+      text:
+        kind === 'scan' ? (
+          <>No item of {name} matches the filter.</>
+        ) : (
+          <>No item of {name} matches this query and its filter.</>
+        ),
+    };
+  }
+  return read > 0
+    ? { kind: 'none', title: 'No more matching items', text: noneOfRead(read) }
+    : { kind: 'none', title: 'No more items' };
+}
+
+/** "{read} items read, {matched} match the filter." (and its singulars). */
+function countLine(read: number, matched: number): string {
+  const reads = read === 1 ? '1 item read' : `${String(read)} items read`;
+  const matches = matched === 1 ? '1 matches' : `${String(matched)} match`;
+  return `${reads}, ${matches} the filter.`;
+}
+
+function Body({ state, onRetry, onRun }: { state: BodyState; onRetry: () => void; onRun: () => void }) {
   switch (state.kind) {
     case 'rows':
     case 'loading':
       return null;
     case 'failure':
       return <ReadFailure state={state.failure} onRetry={onRetry} />;
+    case 'refused':
+      // The area's failure state, its action "Run": sending the refused filter again would be refused again.
+      return (
+        <Box textAlign="center" color="inherit">
+          <SpaceBetween size="xxs">
+            <StatusIndicator type={state.failure.type}>{state.failure.first}</StatusIndicator>
+            {state.failure.detail !== undefined && (
+              <Box variant="p" color="inherit">
+                {state.failure.detail}
+              </Box>
+            )}
+          </SpaceBetween>
+          <Box margin={{ top: 's' }}>
+            <Button onClick={onRun}>Run</Button>
+          </Box>
+        </Box>
+      );
     case 'none':
       return (
         <Box textAlign="center" color="inherit">
@@ -155,6 +221,11 @@ interface RequestProps {
 /** The request: scan or query, the table or an index, the query's key fields, and "Run". */
 function Request({ table, explorer }: RequestProps) {
   const { fields, errors, change } = explorer;
+  const run = (
+    <Button formAction="submit" variant="primary">
+      Run
+    </Button>
+  );
   // The segmented controls are named by their fields' labels, so a narrow screen's select names no label again.
   const readId = useId();
   const orderId = useId();
@@ -200,11 +271,6 @@ function Request({ table, explorer }: RequestProps) {
               onChange={handleTarget}
             />
           </FormField>
-          {fields.kind === 'scan' && (
-            <Button formAction="submit" variant="primary">
-              Run
-            </Button>
-          )}
         </SpaceBetween>
         {fields.kind === 'query' && (
           <SpaceBetween direction="horizontal" size="m" alignItems="start">
@@ -260,13 +326,20 @@ function Request({ table, explorer }: RequestProps) {
                 }}
               />
             </FormField>
-            <FormField label={<span aria-hidden="true">&nbsp;</span>}>
-              <Button formAction="submit" variant="primary">
-                Run
-              </Button>
-            </FormField>
           </SpaceBetween>
         )}
+        <ItemsFilter
+          conditions={fields.conditions}
+          errors={errors.conditions}
+          applied={(explorer.applied.filter?.length ?? 0) > 0}
+          onAdd={explorer.addCondition}
+          onChange={explorer.changeCondition}
+          onRemove={explorer.removeCondition}
+        />
+        <SpaceBetween direction="horizontal" size="s" alignItems="center">
+          {run}
+          {explorer.changed && <StatusIndicator type="info">Changed since the last run. Run to apply.</StatusIndicator>}
+        </SpaceBetween>
       </SpaceBetween>
     </form>
   );
@@ -301,6 +374,11 @@ export function ItemsTab({ table, explorer, connection, selection, onSelectionCh
   const target = applied.index ?? table.name;
   const items = exploration.items ?? [];
   const state = bodyState(explorer, target, connection);
+  const filtered = applied.filter?.length ?? 0;
+  const count =
+    filtered > 0 && state.kind === 'rows' && exploration.items !== undefined
+      ? countLine(exploration.read ?? exploration.items.length, exploration.items.length)
+      : undefined;
   const { keys, others } = columnNames(table, items);
   const tableKeys = keysOf(table, '');
   const trackBy = (item: Item) => keyText(item, tableKeys);
@@ -360,10 +438,11 @@ export function ItemsTab({ table, explorer, connection, selection, onSelectionCh
         wrapLines
         loading={state.kind === 'loading'}
         loadingText="Reading items"
-        empty={<Body state={state} onRetry={exploration.refresh} />}
+        empty={<Body state={state} onRetry={exploration.refresh} onRun={explorer.run} />}
         header={
           <Header
             variant="h2"
+            {...(count === undefined ? {} : { description: count })}
             counter={exploration.items === undefined ? undefined : `(${String(exploration.items.length)})`}
             actions={
               <SpaceBetween direction="horizontal" size="xs">
@@ -382,6 +461,7 @@ export function ItemsTab({ table, explorer, connection, selection, onSelectionCh
           >
             {applied.read.kind === 'scan' ? 'Scan of ' : 'Query of '}
             <ValueText kind="name" value={target} />
+            {filtered > 0 && `, filtered by ${String(filtered)} ${filtered === 1 ? 'condition' : 'conditions'}`}
           </Header>
         }
         filter={<Request table={table} explorer={explorer} />}
