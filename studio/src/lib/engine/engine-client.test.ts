@@ -7,6 +7,7 @@ import {
   emulatorDownOn,
   engineRefusal,
   FakeEngine,
+  openPageAt,
   present,
   renderApp,
   row,
@@ -275,5 +276,77 @@ describe('engine client: the target and when a check started (issue 486, s1)', (
 
   it('a result built without startedAt counts as started at its checkedAt', () => {
     expect(startedAtOf({ kind: 'engine-unreachable', checkedAt: 77, lastEmulatorPort: undefined })).toBe(77);
+  });
+});
+
+describe('engine client: a base through Studio’s port (issue 503)', () => {
+  const BASE = 'https://name.test/__engine';
+  let restore: () => void;
+
+  beforeEach(() => {
+    restore = openPageAt('https://name.test/');
+    engine.configPath = '/__engine';
+  });
+
+  afterEach(() => {
+    restore();
+  });
+
+  it('asks the session at <base>/__emuforge/session and the health at <base>/__emuforge/health with the token; origin is the base', async () => {
+    const client = createEngineClient(BASE);
+    const pending = client.check();
+    await vi.advanceTimersByTimeAsync(0);
+    const result = await pending;
+
+    expect(result.kind).toBe('connected');
+    expect(client.origin).toBe(BASE);
+    expect(engine.requests.map((r) => `${r.method} ${r.url}`)).toEqual([
+      'GET https://name.test/__engine/__emuforge/session',
+      'GET https://name.test/__engine/__emuforge/health',
+    ]);
+    const session = present(engine.sessions[0], 'the session request');
+    expect(session.headers['x-emuforge-session']).toBeUndefined();
+    expect(session.init.credentials).toBe('omit');
+    const health = present(engine.healths[0], 'the health request');
+    expect(health.headers['x-emuforge-session']).toBe(TOKEN_1);
+    expect(health.init.credentials).toBe('omit');
+    expect(health.init.cache).toBe('no-store');
+  });
+
+  it('answers a 401 SessionInvalid with one new session and one retry, both at the base', async () => {
+    engine.sessionAnswers = [
+      { status: 200, json: { token: TOKEN_1 } },
+      { status: 200, json: { token: TOKEN_2 } },
+    ];
+    engine.healthAnswers = [engineRefusal(401, 'SessionInvalid'), connected()];
+    const pending = createEngineClient(BASE).check();
+    await vi.advanceTimersByTimeAsync(0);
+    const result = await pending;
+
+    expect(result.kind).toBe('connected');
+    expect(engine.requests.map((r) => r.url)).toEqual([
+      'https://name.test/__engine/__emuforge/session',
+      'https://name.test/__engine/__emuforge/health',
+      'https://name.test/__engine/__emuforge/session',
+      'https://name.test/__engine/__emuforge/health',
+    ]);
+    expect(engine.healths.map((h) => h.headers['x-emuforge-session'])).toEqual([TOKEN_1, TOKEN_2]);
+  });
+});
+
+describe('engine client: a base on loopback (issue 503)', () => {
+  it('http://127.0.0.1:8400: the requests of today', async () => {
+    const client = createEngineClient('http://127.0.0.1:8400');
+    const pending = client.check();
+    await vi.advanceTimersByTimeAsync(0);
+    const result = await pending;
+
+    expect(result.kind).toBe('connected');
+    expect(client.origin).toBe('http://127.0.0.1:8400');
+    expect(engine.requests.map((r) => `${r.method} ${r.url}`)).toEqual([
+      'GET http://127.0.0.1:8400/__emuforge/session',
+      'GET http://127.0.0.1:8400/__emuforge/health',
+    ]);
+    expect(present(engine.healths[0], 'the health request').headers['x-emuforge-session']).toBe(TOKEN_1);
   });
 });

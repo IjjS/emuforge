@@ -903,3 +903,23 @@ export function cloudscapeElements(scope: Element = document.documentElement): E
     [...el.classList].some((name) => name.startsWith('awsui')),
   );
 }
+
+interface Jsdom {
+  reconfigure(options: { url: string }): void;
+}
+
+/**
+ * Opens the page at `url` (issue 503: a page under an allowed host name), as jsdom's own URL, so
+ * `window.location.origin` is that URL's origin; returns what puts the page back where it was.
+ */
+export function openPageAt(url: string): () => void {
+  const jsdom = (globalThis as unknown as { jsdom?: Jsdom }).jsdom;
+  if (jsdom === undefined) {
+    throw new Error('the page can be moved only in the jsdom environment');
+  }
+  const before = window.location.href;
+  jsdom.reconfigure({ url });
+  return () => {
+    jsdom.reconfigure({ url: before });
+  };
+}

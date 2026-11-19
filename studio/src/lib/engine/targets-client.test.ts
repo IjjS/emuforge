@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   engineRefusal,
   FakeEngine,
+  openPageAt,
   present,
   TARGETS_REFUSALS,
   targetInfo,
@@ -350,5 +351,56 @@ describe('targets client: time limits and signals', () => {
     const { error } = await settle(client.list(controller.signal));
     expect(error).toBe(controller.signal.reason);
     expect(engine.requests).toEqual([]);
+  });
+});
+
+describe('targets client: a base through Studio’s port (issue 503)', () => {
+  const BASE = 'https://name.test/__engine';
+  const PATHS: Record<TargetsRoute, string> = {
+    list: 'GET https://name.test/__engine/__emuforge/targets',
+    info: 'GET https://name.test/__engine/__emuforge/targets/second',
+    add: 'POST https://name.test/__engine/__emuforge/targets',
+    use: 'POST https://name.test/__engine/__emuforge/targets/second/use',
+    test: 'POST https://name.test/__engine/__emuforge/targets/second/test',
+    remove: 'DELETE https://name.test/__engine/__emuforge/targets/second',
+  };
+  let restore: () => void;
+
+  beforeEach(() => {
+    restore = openPageAt('https://name.test/');
+    engine.configPath = '/__engine';
+    client = createTargetsClient(BASE);
+  });
+
+  afterEach(() => {
+    restore();
+  });
+
+  it.each(ROUTES)('%s: its request goes to <base>/__emuforge/targets… with the token, none to 127.0.0.1', async (route) => {
+    engine.targets = route === 'add' ? [LOCAL] : [LOCAL, SECOND];
+    const { error } = await settle(CALLS[route]());
+
+    expect(error).toBeUndefined();
+    expect(client.origin).toBe(BASE);
+    expect(engine.requests.map((r) => `${r.method} ${r.url}`)).toEqual([
+      'GET https://name.test/__engine/__emuforge/session',
+      PATHS[route],
+    ]);
+    expect(present(engine.targetRequests(route)[0], route).headers['x-emuforge-session']).toBe(TOKEN_1);
+    expect(engine.requests.filter((r) => r.url.includes('127.0.0.1'))).toEqual([]);
+  });
+});
+
+describe('targets client: a base on loopback (issue 503)', () => {
+  it.each(ROUTES)('http://127.0.0.1:8400, %s: the request of today', async (route) => {
+    engine.targets = route === 'add' ? [LOCAL] : [LOCAL, SECOND];
+    client = createTargetsClient('http://127.0.0.1:8400');
+    const { error } = await settle(CALLS[route]());
+
+    expect(error).toBeUndefined();
+    const request = present(engine.targetRequests(route)[0], route);
+    expect(request.origin).toBe('http://127.0.0.1:8400');
+    expect(request.headers['x-emuforge-session']).toBe(TOKEN_1);
+    expect(present(engine.sessions[0], 'the session').url).toBe('http://127.0.0.1:8400/__emuforge/session');
   });
 });
