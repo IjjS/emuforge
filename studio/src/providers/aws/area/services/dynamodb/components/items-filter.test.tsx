@@ -11,12 +11,13 @@ import { ItemsFilter } from './items-filter';
 
 const text = (element: Element) => (element.textContent ?? '').replace(/\s+/g, ' ').trim();
 
-function Host({ start = [] }: { start?: Condition[] }) {
+function Host({ start = [], applied = false }: { start?: Condition[]; applied?: boolean }) {
   const [conditions, setConditions] = useState<readonly Condition[]>(start);
   return (
     <ItemsFilter
       conditions={conditions}
       errors={undefined}
+      applied={applied}
       onAdd={() => {
         setConditions((current) => [...current, NEW_CONDITION]);
       }}
@@ -104,6 +105,26 @@ describe('the filter', () => {
     expect(screen.getByRole('group', { name: 'Filter' })).toBeInTheDocument();
   });
 
+  it('no condition while a filter is applied: "No conditions. Run to show every item read."', () => {
+    render(<Host applied />);
+
+    expect(text(document.body)).toContain('No conditions. Run to show every item read.');
+    expect(text(document.body)).not.toContain('Every item read is shown.');
+  });
+
+  it('"Exists" or "Does not exist": the type, value and upper bound cells say "Not used"; each row keeps its own "Remove"', () => {
+    render(<Host />);
+    add();
+    add();
+    choose('Comparison, condition 2', 'exists');
+
+    const row = screen.getByRole('button', { name: 'Remove condition 2' }).closest('[role="group"]');
+    expect(row).not.toBeNull();
+    expect(text(row as Element)).toContain('Not used');
+    expect(row?.contains(input('Attribute name, condition 2'))).toBe(true);
+    expect(row?.contains(input('Attribute name, condition 1'))).toBe(false);
+  });
+
   it('"Add condition": a row with its fields at start, named with the row\'s position, focus on its name', () => {
     render(<Host />);
 
@@ -161,7 +182,15 @@ describe('the filter', () => {
     expect(input('Value, condition 1')).toBeInTheDocument();
     expect(input('Upper bound, condition 1')).toBeInTheDocument();
     const labels = PAGE.findAllFormFields().map((each) => text(each.findLabel()?.getElement() ?? document.body));
-    expect(labels).toEqual(['Attribute name', 'Comparison', 'Type', 'Value', 'Upper bound', '']);
+    expect(labels).toEqual(['Attribute name', 'Comparison', 'Type', 'Value', 'Upper bound']);
+
+    choose('Comparison, condition 1', '=');
+    const row = screen.getByRole('button', { name: 'Remove condition 1' }).closest('[role="group"]');
+    // "Between" set the type to String; "Equal to" keeps it, with a value and no upper bound.
+    expect(text(row as Element).match(/Not used/g)).toHaveLength(1);
+    expect(selected('Type, condition 1')).toBe('String');
+    expect(input('Value, condition 1')).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: 'Upper bound, condition 1' })).toBeNull();
   });
 
   it('a comparison whose types lack the row\'s type sets "String"; "Type" lists only its types; a value stays through String, Number and Binary', () => {

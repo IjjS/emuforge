@@ -86,12 +86,16 @@ type BodyState =
   | { kind: 'rows' }
   | { kind: 'loading' }
   | { kind: 'failure'; failure: ReadFailureState }
+  /** The emulator refused a filtered read: its action runs the request as the fields now hold it. */
+  | { kind: 'refused'; failure: ReadFailureState }
   | { kind: 'none'; title: string; text?: ReactNode };
 
 function bodyState(explorer: ItemsExplorer, target: string, connection: AreaConnection): BodyState {
   const { exploration, applied } = explorer;
   if (exploration.failure !== undefined) {
-    return { kind: 'failure', failure: readFailureState(exploration.failure, connection, 'items') };
+    const failure = readFailureState(exploration.failure, connection, 'items');
+    const refused = exploration.failure.kind === 'other' && !failure.recovery && (applied.filter?.length ?? 0) > 0;
+    return { kind: refused ? 'refused' : 'failure', failure };
   }
   if (exploration.items === undefined) {
     return { kind: 'loading' };
@@ -156,13 +160,30 @@ function countLine(read: number, matched: number): string {
   return `${reads}, ${matches} the filter.`;
 }
 
-function Body({ state, onRetry }: { state: BodyState; onRetry: () => void }) {
+function Body({ state, onRetry, onRun }: { state: BodyState; onRetry: () => void; onRun: () => void }) {
   switch (state.kind) {
     case 'rows':
     case 'loading':
       return null;
     case 'failure':
       return <ReadFailure state={state.failure} onRetry={onRetry} />;
+    case 'refused':
+      // The area's failure state, its action "Run": sending the refused filter again would be refused again.
+      return (
+        <Box textAlign="center" color="inherit">
+          <SpaceBetween size="xxs">
+            <StatusIndicator type={state.failure.type}>{state.failure.first}</StatusIndicator>
+            {state.failure.detail !== undefined && (
+              <Box variant="p" color="inherit">
+                {state.failure.detail}
+              </Box>
+            )}
+          </SpaceBetween>
+          <Box margin={{ top: 's' }}>
+            <Button onClick={onRun}>Run</Button>
+          </Box>
+        </Box>
+      );
     case 'none':
       return (
         <Box textAlign="center" color="inherit">
@@ -310,11 +331,15 @@ function Request({ table, explorer }: RequestProps) {
         <ItemsFilter
           conditions={fields.conditions}
           errors={errors.conditions}
+          applied={(explorer.applied.filter?.length ?? 0) > 0}
           onAdd={explorer.addCondition}
           onChange={explorer.changeCondition}
           onRemove={explorer.removeCondition}
         />
-        <Box>{run}</Box>
+        <SpaceBetween direction="horizontal" size="s" alignItems="center">
+          {run}
+          {explorer.changed && <StatusIndicator type="info">Changed since the last run. Run to apply.</StatusIndicator>}
+        </SpaceBetween>
       </SpaceBetween>
     </form>
   );
@@ -413,7 +438,7 @@ export function ItemsTab({ table, explorer, connection, selection, onSelectionCh
         wrapLines
         loading={state.kind === 'loading'}
         loadingText="Reading items"
-        empty={<Body state={state} onRetry={exploration.refresh} />}
+        empty={<Body state={state} onRetry={exploration.refresh} onRun={explorer.run} />}
         header={
           <Header
             variant="h2"
