@@ -18,6 +18,7 @@ import { ValueText } from '../../../components/value-text';
 import type { AreaConnection } from '../../../components/emulator-line';
 import type { ScreenPageProps } from '../../../screens';
 import { NO_SUCH_QUEUE, OPERATIONS, type OutgoingMessage, type QueueDetails, type ReadMessage } from '../api';
+import { DeleteQueueDialog } from '../components/delete-queue-dialog';
 import { messages } from '../components/counts';
 import { availableAt, deadLetterUrl } from '../components/dead-letter-count';
 import { MessagesTab, type ReadResult } from '../components/messages-tab';
@@ -27,13 +28,21 @@ import { RedriveTab } from '../components/redrive-tab';
 import { EMPTY_SEND_FORM, type SendForm } from '../components/send-form';
 import { SendMessageForm } from '../components/send-message-form';
 import { QUEUES_PATH, queueSettings, type QueueSettings } from '../format';
-import { useDeleteMessages, usePurgeQueue, useQueue, useReceiveMessages, useSendMessage } from '../queries';
+import {
+  useDeleteMessages,
+  useDeleteQueue,
+  usePurgeQueue,
+  useQueue,
+  useReceiveMessages,
+  useSendMessage,
+} from '../queries';
 import { QUEUES_TITLE } from './queue-list-page';
 
 // A queue's page, S2 (issue 481, design tasks 2 to 4): its details, then the tabs "Messages" (the read warning, a read
 // that leaves the messages in the queue, a message in full, deleting the selected ones), "Send message" and, on a
 // dead-letter queue, "Redrive". "Purge" is the header's. The selected tab is the page's own state, not the address's.
-// Every value from the emulator is rendered as text; every action's result is the area's Flashbar's.
+// Every value from the emulator is rendered as text; every action's result is the area's Flashbar's. Issue 490: "Delete
+// queue", beside "Purge", deletes the queue and leads to the queue list.
 
 const REFRESHED = 'Queue refreshed';
 
@@ -401,6 +410,11 @@ export function QueuePage({ connection, params }: ScreenPageProps) {
   const [read, setRead] = useState<ReadState>(START_READ);
   const [form, setForm] = useState<SendForm>(EMPTY_SEND_FORM);
   const [purgeOpen, setPurgeOpen] = useState(false);
+  const flash = usePageFlash();
+  const pageSignal = usePageSignal();
+  const removeQueue = useDeleteQueue(connection.engineOrigin);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   // Kept from the previous render, as React's own pattern for it, so each change is acted on once.
   const [refreshing, setRefreshing] = useState(false);
@@ -441,6 +455,37 @@ export function QueuePage({ connection, params }: ScreenPageProps) {
     setRefreshing(true);
     refresh();
   }, [refresh]);
+
+  const handleDeleteQueue = () => {
+    if (details === undefined) {
+      return;
+    }
+    const signal = pageSignal();
+    setDeleting(true);
+    removeQueue(details.name, details.url, signal).then(
+      () => {
+        if (!signal.aborted) {
+          flash.handOver(QUEUES_PATH, [{ type: 'success', content: `Deleted queue ${details.name}` }]);
+        }
+      },
+      (error: unknown) => {
+        if (signal.aborted) {
+          return;
+        }
+        setDeleting(false);
+        setDeleteOpen(false);
+        flash.show([
+          actionFailureItem(
+            actionFailureOf(error, OPERATIONS.deleteQueue),
+            `Delete queue ${details.name}`,
+            connection.engineOrigin,
+          ),
+        ]);
+        // A queue already gone then shows "No queue named …".
+        refresh();
+      },
+    );
+  };
 
   let content;
   if (failureState !== undefined) {
@@ -504,6 +549,17 @@ export function QueuePage({ connection, params }: ScreenPageProps) {
                     Purge
                   </Button>
                 )}
+                {value !== NO_SUCH_QUEUE && (
+                  <Button
+                    disabled={details === undefined}
+                    disabledReason={queue.loading ? 'Reading the queue' : 'There is no queue to delete'}
+                    onClick={() => {
+                      setDeleteOpen(true);
+                    }}
+                  >
+                    Delete queue
+                  </Button>
+                )}
               </SpaceBetween>
             }
           >
@@ -513,6 +569,18 @@ export function QueuePage({ connection, params }: ScreenPageProps) {
       >
         {content}
       </ContentLayout>
+      {details !== undefined && (
+        <DeleteQueueDialog
+          visible={deleteOpen}
+          name={details.name}
+          sources={details.sources}
+          pending={deleting}
+          onConfirm={handleDeleteQueue}
+          onDismiss={() => {
+            setDeleteOpen(false);
+          }}
+        />
+      )}
       {announcement}
     </>
   );

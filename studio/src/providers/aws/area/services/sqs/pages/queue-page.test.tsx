@@ -1597,3 +1597,91 @@ describe('501 and AccessDenied for a read, a send, a delete and a purge', () => 
     },
   );
 });
+
+describe('"Delete queue" (issue 490)', () => {
+  function modal() {
+    const found = PAGE.findModal();
+    expect(found).not.toBeNull();
+    return found as NonNullable<typeof found>;
+  }
+
+  async function deleteWithWord() {
+    fireEvent.click(button('Delete queue'));
+    await waitFor(() => {
+      expect(PAGE.findModal()).not.toBeNull();
+    });
+    act(() => {
+      modal().findContent().findInput()?.setInputValue('delete');
+    });
+    fireEvent.click(within(modal().getElement()).getByRole('button', { name: 'Delete' }));
+  }
+
+  /** The queue list's page, as the route the area shows. */
+  function shownPath(router: { state: { location: { pathname: string } } }) {
+    return router.state.location.pathname;
+  }
+
+  it('the header holds "Purge" and "Delete queue"; on "no such queue" neither', async () => {
+    await openQueue(PLAIN);
+    const header = screen.getByRole('heading', { level: 1 }).closest('header') ?? document.body;
+    expect(within(header as HTMLElement).getByRole('button', { name: 'Purge' })).toBeInTheDocument();
+    expect(within(header as HTMLElement).getByRole('button', { name: 'Delete queue' })).toBeInTheDocument();
+  });
+
+  it('on "no such queue": neither "Purge" nor "Delete queue"', async () => {
+    engine.queues = [];
+    open('/aws/sqs/queues/queue/nope');
+    expect(await screen.findByText('No queue named')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Purge' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Delete queue' })).toBeNull();
+  });
+
+  it('confirmed → the queue list with "Deleted queue {name}"', async () => {
+    engine.on('DeleteQueue', (body) => {
+      engine.queues = engine.queues.filter((queue) => urlOf(queue.name) !== body['QueueUrl']);
+      return ok({});
+    });
+    const { router } = await openQueue(PLAIN, [ORDERS]);
+
+    await deleteWithWord();
+
+    await waitFor(() => {
+      expect(shownPath(router)).toBe('/aws/sqs/queues');
+    });
+    await expectFlash([['', 'Deleted queue plain']]);
+    expect(engine.of('DeleteQueue').map((sent) => sent.body)).toEqual([{ QueueUrl: urlOf('plain') }]);
+  });
+
+  it('a refused delete (NonExistentQueue) → "Delete queue {name} failed" with code and message, and the page read again shows the queue is not in the emulator', async () => {
+    engine.on('DeleteQueue', () => {
+      engine.queues = [];
+      return noSuchQueue();
+    });
+    const { router } = await openQueue(PLAIN);
+    const readsBefore = engine.of('GetQueueUrl').length;
+
+    await deleteWithWord();
+
+    await expectFlash([
+      ['Delete queue plain failed', 'AWS.SimpleQueueService.NonExistentQueue: The specified queue does not exist.'],
+    ]);
+    expect(await screen.findByText('No queue named')).toBeInTheDocument();
+    expect(engine.of('GetQueueUrl').length).toBeGreaterThan(readsBefore);
+    expect(shownPath(router)).toBe('/aws/sqs/queues/queue/plain');
+    expect(PAGE.findModal()).toBeNull();
+  });
+
+  it('a dead-letter queue → the dialog names its sources', async () => {
+    await openQueue(DLQ, [ORDERS]);
+
+    fireEvent.click(button('Delete queue'));
+
+    await waitFor(() => {
+      expect(PAGE.findModal()).not.toBeNull();
+    });
+    expect(text(modal().getElement())).toContain('Delete orders-dlq?');
+    expect(text(modal().getElement())).toContain(
+      'It is the dead-letter queue of orders. Their redrive policies keep naming it.',
+    );
+  });
+});

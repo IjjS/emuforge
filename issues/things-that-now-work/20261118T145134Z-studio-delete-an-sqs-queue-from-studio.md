@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: plan
 Issue-Key: studio|sqs|delete-queue
-Issue-Check-Ids:
+Issue-Check-Ids: studio.sqs-delete-queue-from-the-list studio.sqs-delete-dead-letter-queue-from-its-page studio.sqs-delete-queue-already-gone
 Issue-Commit: c1dc8cf4b31e234b1269b2d368271ef6041fa293
 
 # Delete an SQS queue from Studio

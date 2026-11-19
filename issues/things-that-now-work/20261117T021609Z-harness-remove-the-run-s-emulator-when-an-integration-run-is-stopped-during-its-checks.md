@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: bug
 Issue-Source: worker
 Issue-Key: harness|integration-run-stopped-during-checks|emulator-container-left
-Issue-Check-Ids:
+Issue-Check-Ids: harness.check-stop
 Issue-Commit: fdb6d8d23f8dfece65d178b77e85fd862df74a89
 
 # Remove the run's emulator when an integration run is stopped during its checks
