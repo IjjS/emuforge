@@ -17,18 +17,18 @@ import {
   UnsubscribeCommand,
   type MessageAttributeValue,
 } from '@aws-sdk/client-sns';
-import { GetQueueAttributesCommand, GetQueueUrlCommand, ListQueuesCommand, SQSClient, SetQueueAttributesCommand } from '@aws-sdk/client-sqs';
+import {
+  GetQueueAttributesCommand,
+  GetQueueUrlCommand,
+  ListQueuesCommand,
+  SQSClient,
+  SetQueueAttributesCommand,
+} from '@aws-sdk/client-sqs';
 
 import { createAwsClient } from '../../../../../lib/aws/client-factory';
 import { RequestError, sendRequest } from '../../../../../lib/aws/request';
 import { endpointName, topicName } from './format';
-import {
-  permissionStatementId,
-  policySids,
-  queuePolicyWithStatement,
-  readPolicy,
-  type PolicyReading,
-} from './policy';
+import { permissionStatementId, policySids, queuePolicyWithStatement, readPolicy, type PolicyReading } from './policy';
 
 // The calls of SNS's screens (issue 536, design tasks 1 to 6), through the engine, mapped to plain typed results: the
 // SNS client, and an SQS and a Lambda client made by the same factory for the policies of the queues and functions a
@@ -119,7 +119,11 @@ function isCode(error: unknown, codes: ReadonlySet<string> | string): boolean {
 }
 
 /** `pending`, with an answer of one of `codes` as `fallback`; every other failure rejects as it came. */
-async function orWhen<T, const F>(pending: Promise<T>, codes: ReadonlySet<string> | string, fallback: F): Promise<T | F> {
+async function orWhen<T, const F>(
+  pending: Promise<T>,
+  codes: ReadonlySet<string> | string,
+  fallback: F,
+): Promise<T | F> {
   try {
     return await pending;
   } catch (error) {
@@ -284,7 +288,10 @@ export async function listSubscriptions(
     OPERATIONS.listSubscriptionsByTopic,
     (abortSignal) =>
       snsClient(endpoint).send(
-        new ListSubscriptionsByTopicCommand({ TopicArn: topicArn, ...(token === undefined ? {} : { NextToken: token }) }),
+        new ListSubscriptionsByTopicCommand({
+          TopicArn: topicArn,
+          ...(token === undefined ? {} : { NextToken: token }),
+        }),
         { abortSignal },
       ),
     signal,
@@ -539,7 +546,8 @@ async function functionPolicy(endpoint: string, functionArn: string, signal: Abo
   const output = await orWhen(
     sendRequest(
       OPERATIONS.getPolicy,
-      (abortSignal) => lambdaClient(endpoint).send(new GetPolicyCommand({ FunctionName: functionArn }), { abortSignal }),
+      (abortSignal) =>
+        lambdaClient(endpoint).send(new GetPolicyCommand({ FunctionName: functionArn }), { abortSignal }),
       signal,
     ),
     LAMBDA_NOT_FOUND,
@@ -564,10 +572,7 @@ async function functionExists(endpoint: string, functionArn: string, signal: Abo
 }
 
 /** Whether a notification of a topic can reach one subscriber, as the subscriptions table's "Delivery" says. */
-export type Delivery =
-  | PolicyReading
-  | { kind: 'queue-not-found' }
-  | { kind: 'function-not-found' };
+export type Delivery = PolicyReading | { kind: 'queue-not-found' } | { kind: 'function-not-found' };
 
 /** Whose delivery is read: the topic, the protocol and the endpoint's ARN. */
 export interface DeliveryTarget {
@@ -593,7 +598,9 @@ export async function readDelivery(endpoint: string, target: DeliveryTarget, sig
   }
   const policy = await functionPolicy(endpoint, target.endpoint, signal);
   if (policy === undefined) {
-    return (await functionExists(endpoint, target.endpoint, signal)) ? { kind: 'none' } : { kind: 'function-not-found' };
+    return (await functionExists(endpoint, target.endpoint, signal))
+      ? { kind: 'none' }
+      : { kind: 'function-not-found' };
   }
   return readPolicy(policy, { kind: 'function', resource: target.endpoint, topicArn: target.topicArn });
 }

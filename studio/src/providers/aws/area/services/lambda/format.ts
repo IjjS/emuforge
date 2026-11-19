@@ -1,10 +1,5 @@
 import { creationDateText, NO_DATE } from '../../components/format-date';
-import {
-  CREATE_FUNCTION_PATH,
-  FUNCTIONS_PATH,
-  LAMBDA_PATH,
-  functionPath,
-} from '../../components/resource-paths';
+import { CREATE_FUNCTION_PATH, FUNCTIONS_PATH, LAMBDA_PATH, functionPath } from '../../components/resource-paths';
 
 export { CREATE_FUNCTION_PATH, FUNCTIONS_PATH, LAMBDA_PATH, functionPath };
 
