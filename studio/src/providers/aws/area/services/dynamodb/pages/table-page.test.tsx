@@ -386,12 +386,19 @@ function itemsTable() {
   return found as NonNullable<typeof found>;
 }
 
+/** The data rows' cells as text, in the columns' order, a selection cell left out. */
 function cellsOf(found: ReturnType<typeof itemsTable>): string[][] {
-  return (found.findRows() ?? []).map((row) => [...row.getElement().querySelectorAll('td, th')].map(text));
+  return (found.findRows() ?? []).map((row) =>
+    [...row.getElement().querySelectorAll('td, th')].filter((cell) => cell.querySelector('input') === null).map(text),
+  );
 }
 
+/** The column headers as text, a selection column's left out. */
 function headersOf(found: ReturnType<typeof itemsTable>): string[] {
-  return (found.findColumnHeaders() ?? []).map((each) => text(each.getElement()));
+  return (found.findColumnHeaders() ?? [])
+    .map((each) => each.getElement())
+    .filter((header) => header.querySelector('input') === null)
+    .map(text);
 }
 
 /** The first cell of each row of the items. */
