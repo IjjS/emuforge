@@ -439,9 +439,7 @@ describe('the table list, loaded', () => {
       expect(text(navigation?.findHeaderLink()?.getElement() as HTMLElement)).toBe('DynamoDB');
       expect(text(navigation?.findActiveLink()?.getElement() as HTMLElement)).toBe('Tables');
       expect(navigation?.findActiveLink()?.getElement()).toHaveAttribute('href', '/aws/dynamodb/tables');
-      const crumbs = (PAGE.findBreadcrumbGroup()?.findBreadcrumbLinks() ?? []).map((crumb) =>
-        text(crumb.getElement()),
-      );
+      const crumbs = (PAGE.findBreadcrumbGroup()?.findBreadcrumbLinks() ?? []).map((crumb) => text(crumb.getElement()));
       expect(crumbs).toEqual(['EmuForge', 'AWS', 'DynamoDB', 'Tables']);
     },
   );
