@@ -25,7 +25,7 @@ import {
   useUnsubscribe,
 } from '../queries';
 import { DeleteSubscriptionDialog } from './delete-subscription-dialog';
-import { DeliveryStatus, deliveryView, type DeliveryView } from './delivery-status';
+import { DELIVERY_LABELS, DeliveryStatus, deliveryView, type DeliveryView } from './delivery-status';
 
 // S3's "Subscriptions" tab (issue 536, design task 1 steps 3 to 5 and task 5 step 1): the topic's subscriptions, a
 // page of `ListSubscriptionsByTopic` at a time on its own tokens, each with whether the policy of its queue or
@@ -41,10 +41,25 @@ export interface SubscriptionsTabProps {
 }
 
 const DESCRIPTION =
-  'Delivery says what the policy of the subscribed queue or function allows. The emulator delivers a notification only where that policy lets this topic.';
+  'Delivery says what the policy of the subscribed queue or function allows. The emulator delivers a notification only where that policy lets this topic deliver.';
 const ALLOW_REASON = 'Select a subscription whose delivery says No permission.';
 const PENDING_REASON = 'A subscription that is pending confirmation has no ARN to delete it by.';
 const SELECT_FIRST = 'Select a subscription';
+
+const STATUS_LABELS = ['Confirmed', 'Pending confirmation'] as const;
+
+/**
+ * A status column keeps room for its longest label with the indicator's icon before it, so no label breaks inside a
+ * word (`aws-area.md`, entry 4: a fixed word's column is as wide as its longest word).
+ */
+function labelColumnWidth(labels: readonly string[]): string {
+  return `${String(Math.max(...labels.map((label) => label.length)) + 4)}ch`;
+}
+
+/** The disabled reason of "Allow delivery" on a row that reads "Cannot tell". */
+function cannotTellReason(endpoint: string, reason: string): string {
+  return `The policy of ${endpoint} is not one Studio evaluates: ${reason}.`;
+}
 
 /** An endpoint keeps room for a queue's or a function's name (`aws-area.md`, entry 4). */
 const ENDPOINT_MIN_WIDTH = '28ch';
@@ -141,6 +156,10 @@ export function SubscriptionsTab({ topicArn, topicName, connection }: Subscripti
   const selected = loaded ? rows.find((row) => row.key === selectedKey) : undefined;
   const selectedView = selected === undefined ? undefined : views[selected.deliveryKey];
   const canAllow = selectedView?.kind === 'read' && selectedView.delivery.kind === 'none';
+  const allowReason =
+    selected !== undefined && selectedView?.kind === 'read' && selectedView.delivery.kind === 'unknown'
+      ? cannotTellReason(endpointName(selected.subscription.endpoint), selectedView.delivery.reason)
+      : ALLOW_REASON;
 
   const handleView = useCallback((deliveryKey: string, view: DeliveryView) => {
     setViews((current) =>
@@ -262,6 +281,7 @@ export function SubscriptionsTab({ topicArn, topicName, connection }: Subscripti
     {
       id: 'status',
       header: 'Status',
+      minWidth: labelColumnWidth(STATUS_LABELS),
       cell: (row) =>
         row.subscription.pending ? (
           <StatusIndicator type="pending">Pending confirmation</StatusIndicator>
@@ -272,6 +292,7 @@ export function SubscriptionsTab({ topicArn, topicName, connection }: Subscripti
     {
       id: 'delivery',
       header: 'Delivery',
+      minWidth: labelColumnWidth(DELIVERY_LABELS),
       cell: (row) => <RowDelivery row={row} topicArn={topicArn} connection={connection} onView={handleView} />,
     },
   ];
@@ -334,7 +355,7 @@ export function SubscriptionsTab({ topicArn, topicName, connection }: Subscripti
             description={DESCRIPTION}
             actions={
               <SpaceBetween direction="horizontal" size="xs">
-                <Button disabled={!canAllow} disabledReason={ALLOW_REASON} loading={allowing} onClick={handleAllow}>
+                <Button disabled={!canAllow} disabledReason={allowReason} loading={allowing} onClick={handleAllow}>
                   Allow delivery
                 </Button>
                 <Button

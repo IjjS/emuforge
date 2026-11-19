@@ -235,7 +235,7 @@ describe('the "Subscriptions" tab', () => {
     expect(screen.getByRole('heading', { level: 2, name: /Subscriptions/ })).toBeInTheDocument();
     expect(
       screen.getByText(
-        'Delivery says what the policy of the subscribed queue or function allows. The emulator delivers a notification only where that policy lets this topic.',
+        'Delivery says what the policy of the subscribed queue or function allows. The emulator delivers a notification only where that policy lets this topic deliver.',
       ),
     ).toBeInTheDocument();
     expect(screen.getByRole('link', { name: queueArn('jobs') })).toHaveAttribute('href', '/aws/sqs/queues/queue/jobs');
@@ -505,6 +505,55 @@ describe('the "Subscriptions" tab', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
     await expectText('Delete the subscription of jobs failed');
     expect(rows()).toEqual([['sqs', queueArn('jobs'), 'Confirmed', 'No permission']]);
+  });
+
+  it('the Status and Delivery columns keep room for their longest label with its icon', async () => {
+    holdSubscriptions({ '': { subscriptions: [sqs('jobs'), email('dev@example.com')] } });
+    holdDeliveries({ [queueArn('jobs')]: { kind: 'function-not-found' } });
+    open();
+    await expectRows([
+      ['sqs', queueArn('jobs'), 'Confirmed', 'Function not found'],
+      ['email', 'dev@example.com', 'Pending confirmation', '-'],
+    ]);
+    const headers = [...table().getElement().querySelectorAll('th')];
+    const minWidthOf = (label: string) => {
+      const header = headers.find((cell) => text(cell) === label);
+      return Number.parseFloat(/^([\d.]+)ch$/.exec(header?.style.minWidth ?? '')?.[1] ?? '0');
+    };
+    // The label's characters and the indicator's icon with its gap (two characters at the least).
+    expect(minWidthOf('Status')).toBeGreaterThanOrEqual('Pending confirmation'.length + 2);
+    for (const label of [
+      'Allowed',
+      'No permission',
+      'Cannot tell',
+      'Queue not found',
+      'Function not found',
+      'Checking',
+    ]) {
+      expect(minWidthOf('Delivery')).toBeGreaterThanOrEqual(label.length + 2);
+    }
+  });
+
+  it('"Cannot tell" lets its reason be reached; "Allow delivery" on it is disabled with a reason of its own', async () => {
+    holdSubscriptions({ '': { subscriptions: [sqs('denied')] } });
+    holdDeliveries({
+      [queueArn('denied')]: { kind: 'unknown', reason: 'it has a Deny statement, which Studio does not evaluate' },
+    });
+    open();
+    await expectRows([['sqs', queueArn('denied'), 'Confirmed', 'Cannot tell']]);
+    select(`sqs ${queueArn('denied')}`);
+    expect(isDisabled(action('Allow delivery'))).toBe(true);
+    expect(disabledReason(action('Allow delivery'))).toContain(
+      'The policy of denied is not one Studio evaluates: it has a Deny statement, which Studio does not evaluate.',
+    );
+    const popover = table().findBodyCell(1, 5)?.findPopover();
+    expect(popover).not.toBeUndefined();
+    popover?.findTrigger().click();
+    await waitFor(() => {
+      expect(text(popover?.findContent()?.getElement() as HTMLElement)).toBe(
+        'Studio cannot tell whether this topic may deliver: it has a Deny statement, which Studio does not evaluate.',
+      );
+    });
   });
 
   it('the next page asks with the token', async () => {
