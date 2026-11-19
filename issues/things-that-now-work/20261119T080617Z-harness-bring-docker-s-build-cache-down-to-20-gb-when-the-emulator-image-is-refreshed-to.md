@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: harness|docker|build-cache-kept-under-20gb-at-image-refresh
-Issue-Check-Ids:
+Issue-Check-Ids: harness.emulator-image harness.emulator-image-docs
 Issue-Commit: 0d6a8c21280a35c1f7972ca0cb64e802463c568d
 
 # Bring Docker's build cache down to 20 GB when the emulator image is refreshed to a new version

@@ -325,7 +325,7 @@ logged in `.pm/run/events.log` and never delivered; a turn with none wakes you a
 | `pm-watchd` | the event daemon |
 | `pm-issue` | issue files: `new`, `list`, `show`, `close`, `commit` (commits the new issue files as `issue: file #<id> …`) |
 | `pm-worktree` | worktrees and their ports: `new <id>` an issue's issue branch `feat/<id>` and its worktree, `new <id> <unit>` a unit (based on the issue branch when the issue has one), `rm`, `list`; a plan runs `new` and `rm` of a unit for its own issue |
-| `pm-emulator-image` | the machine's emulator image `aws-emulator` on the latest package: `refresh` at session start (returns at once; the outcome comes as `EVENT emulator-image …`), `refresh --foreground` by hand, `status` |
+| `pm-emulator-image` | the machine's emulator image `aws-emulator` on the latest package: `refresh` at session start (returns at once; the outcome comes as `EVENT emulator-image …`), `refresh --foreground` by hand, `status`; a refresh to a new version then prunes Docker's build cache down to 20 GB (`docker builder prune --max-used-space`, its reclaimed space in the outcome line), and nothing else of Docker |
 | `pm-emulator-dir` | a port folder under `~/.aws/emulator` once nothing uses it: `rm --worktree` (run by `pm-merge` and `pm-worktree rm`), `rm --port`, `orphans [--remove]` on the owner's request |
 | `pm-brief` | a pane's brief from its template: `plan` (also writes rev's), `harness-engineer`, `worker`, `crit`, `show`; a plan runs `worker` and `crit` for its own issue |
 | `pm-pane` | panes: `new` (`--kind`, `--model`, `--effort`), `reset`, `close`, `list`; a plan runs `new` of a worker, rev or crit and `reset` and `close` of those panes for its own issue; a `QUEUE` answer to a plan becomes `EVENT room` to it later |
