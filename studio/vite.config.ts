@@ -19,5 +19,7 @@ export default defineConfig({
     setupFiles: ['./src/test/setup.ts'],
     restoreMocks: true,
     passWithNoTests: true,
+    // Each test file runs in its own jsdom process; unbounded, one run takes every core and two checks saturate the machine.
+    maxWorkers: 3,
   },
 });
