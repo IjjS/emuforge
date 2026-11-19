@@ -822,8 +822,7 @@ export type InlineDocumentRead = { kind: 'found'; text: string } | { kind: 'not-
 
 /** A managed policy's document: its text, the version's id and whether it is the default; or no such policy. */
 export type ManagedDocumentRead =
-  | { kind: 'found'; text: string; versionId: string; isDefault: boolean }
-  | { kind: 'not-found' };
+  { kind: 'found'; text: string; versionId: string; isDefault: boolean } | { kind: 'not-found' };
 
 /** `NoSuchEntity` as "not found"; any other failure rejects as it came. */
 async function orNotFound<T>(read: Promise<T>): Promise<T | { kind: 'not-found' }> {
@@ -939,7 +938,12 @@ export async function attachRolePolicies(
 }
 
 /** "Detach": `DetachRolePolicy`. */
-export async function detachRolePolicy(endpoint: string, role: string, arn: string, signal: AbortSignal): Promise<void> {
+export async function detachRolePolicy(
+  endpoint: string,
+  role: string,
+  arn: string,
+  signal: AbortSignal,
+): Promise<void> {
   await send(
     endpoint,
     'DetachRolePolicy',
@@ -1145,9 +1149,7 @@ export async function createPolicy(endpoint: string, policy: NewPolicy, signal: 
         new CreatePolicyCommand({
           PolicyName: policy.name,
           PolicyDocument: policy.document,
-          ...(policy.description === undefined || policy.description === ''
-            ? {}
-            : { Description: policy.description }),
+          ...(policy.description === undefined || policy.description === '' ? {} : { Description: policy.description }),
         }),
         { abortSignal },
       ),

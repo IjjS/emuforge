@@ -31,7 +31,8 @@ describe('isOneJsonValue', () => {
 
 describe('indentJson', () => {
   it('indents a compact JSON text by two spaces, equal as JSON', () => {
-    const compact = '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"lambda.amazonaws.com"}}]}';
+    const compact =
+      '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"lambda.amazonaws.com"}}]}';
     const indented = indentJson(compact);
     expect(indented).toBe(
       [

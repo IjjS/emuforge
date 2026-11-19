@@ -665,7 +665,10 @@ describe('the reads and actions of issue 535', () => {
       (result) => result.current.attach.mutateAsync({ role: 'role-a', policies: [{ name: 'x', arn: 'arn:x' }] }),
     ],
     ['detach', (result) => result.current.detach.mutateAsync({ role: 'role-a', arn: 'arn:x' })],
-    ['add or edit an inline policy', (result) => result.current.put.mutateAsync({ role: 'role-a', name: 'p', document: DOC })],
+    [
+      'add or edit an inline policy',
+      (result) => result.current.put.mutateAsync({ role: 'role-a', name: 'p', document: DOC }),
+    ],
     ['delete an inline policy', (result) => result.current.deleteInline.mutateAsync({ role: 'role-a', name: 'p' })],
     ['edit the trust policy', (result) => result.current.trust.mutateAsync({ role: 'role-a', document: DOC })],
   ];
@@ -686,7 +689,13 @@ describe('the reads and actions of issue 535', () => {
     const { result } = renderReads();
     await settled(result);
     const before = counts();
-    for (const operation of ['AttachRolePolicy', 'DetachRolePolicy', 'PutRolePolicy', 'DeleteRolePolicy', 'UpdateAssumeRolePolicy']) {
+    for (const operation of [
+      'AttachRolePolicy',
+      'DetachRolePolicy',
+      'PutRolePolicy',
+      'DeleteRolePolicy',
+      'UpdateAssumeRolePolicy',
+    ]) {
       policies.refusals[operation] = 'UnmodifiableEntity';
     }
 

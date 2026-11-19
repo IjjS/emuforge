@@ -24,8 +24,7 @@ export const NOT_FOUND_TEXT = 'Policy not found';
 
 /** What `PolicyDocument` shows: a document's read, or a text already in hand (a trust policy). */
 export type PolicyDocumentSource =
-  | { kind: 'query'; query: DocumentQuery<InlineDocumentRead | ManagedDocumentRead> }
-  | { kind: 'text'; text: string };
+  { kind: 'query'; query: DocumentQuery<InlineDocumentRead | ManagedDocumentRead> } | { kind: 'text'; text: string };
 
 interface PolicyDocumentProps {
   source: PolicyDocumentSource;

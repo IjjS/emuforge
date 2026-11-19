@@ -148,7 +148,7 @@ describe('routes', () => {
 });
 
 // Test criteria, "Unit s1 — providers/aws/area/services/iam/format.test.ts" (issue 535).
-describe('the tabs of a role\'s page', () => {
+describe("the tabs of a role's page", () => {
   it('reads the tab of a query value: trust is "Trust relationships", none, empty or any other "Permissions"', () => {
     expect(roleTabLabel(roleTabOf('trust'))).toBe('Trust relationships');
     for (const value of [null, undefined, '', 'permissions', 'tags', 'Trust', 'trust-relationships']) {
@@ -164,7 +164,7 @@ describe('the tabs of a role\'s page', () => {
   });
 });
 
-describe('a policy\'s address', () => {
+describe("a policy's address", () => {
   it('holds the ARN encoded once in ?arn=, read back the same, for an ARN with a path', () => {
     const arn = 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole';
     const address = policyPath(arn);
@@ -184,7 +184,7 @@ describe('a policy\'s address', () => {
     expect(policyArnOf('?arn=')).toBeUndefined();
   });
 
-  it('names a policy by the ARN\'s text after its last /', () => {
+  it("names a policy by the ARN's text after its last /", () => {
     expect(policyNameOfArn('arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole')).toBe(
       'AWSLambdaBasicExecutionRole',
     );
