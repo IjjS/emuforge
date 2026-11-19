@@ -635,7 +635,8 @@ export function tableScreen(page: Page) {
     deleteTable: page.getByRole('button', { name: DELETE_TABLE, exact: true }),
     del: panel.getByRole('button', { name: DELETE, exact: true }),
     createItem: panel.getByRole('button', { name: CREATE_ITEM, exact: true }),
-    run: panel.getByRole('button', { name: RUN, exact: true }),
+    /** "Run" of the request's form; a refused filtered read shows a second "Run" in place of the items. */
+    run: panel.getByRole('form', { name: 'Read items', exact: true }).getByRole('button', { name: RUN, exact: true }),
     /** A choice of a segmented control: "Scan", "Query", "Ascending", "Descending". */
     choice: (name: string) => panel.getByRole('button', { name, exact: true }),
     /** A select by its field's label; Cloudscape names its trigger by the label and the option shown. */
