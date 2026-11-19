@@ -49,11 +49,15 @@ const SELECT_FIRST = 'Select a subscription';
 const STATUS_LABELS = ['Confirmed', 'Pending confirmation'] as const;
 
 /**
- * A status column keeps room for its longest label with the indicator's icon before it, so no label breaks inside a
- * word (`aws-area.md`, entry 4: a fixed word's column is as wide as its longest word).
+ * A status column keeps room for its longest label with the indicator's icon and gap before it and the cell's padding
+ * on both sides, so no label breaks inside a word (`aws-area.md`, entry 4: a fixed word's column is as wide as its
+ * longest word). The icon and its gap take about two characters, the padding about six.
  */
+/** The characters a label's column adds to the label: the icon, its gap and the cell's padding. */
+const LABEL_ROOM = 8;
+
 function labelColumnWidth(labels: readonly string[]): string {
-  return `${String(Math.max(...labels.map((label) => label.length)) + 4)}ch`;
+  return `${String(Math.max(...labels.map((label) => label.length)) + LABEL_ROOM)}ch`;
 }
 
 /** The disabled reason of "Allow delivery" on a row that reads "Cannot tell". */
