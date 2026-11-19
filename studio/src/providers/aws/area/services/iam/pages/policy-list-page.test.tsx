@@ -49,7 +49,7 @@ function answerFromHeld() {
     );
     const from = Number(page.from?.marker ?? '0');
     const items = all.slice(from, from + page.pageSize);
-    const next = from + page.pageSize < all.length ? { marker: String(from + page.pageSize) } : undefined;
+    const next = from + page.pageSize < all.length ? { marker: String(from + page.pageSize), skip: 0 } : undefined;
     return Promise.resolve(next === undefined ? { policies: items } : { policies: items, next });
   });
 }
@@ -247,7 +247,7 @@ describe('the policy list', () => {
       PAGE.findPagination()?.findNextPageButton().click();
     });
     await expectNames(['Aws20', 'Aws21', 'Aws22', 'Aws23', 'Aws24']);
-    expect(listPolicies.mock.calls.at(-1)?.[1].from).toEqual({ marker: '20' });
+    expect(listPolicies.mock.calls.at(-1)?.[1].from?.marker).toBe('20');
 
     chooseScope('All types');
     await waitFor(() => {
