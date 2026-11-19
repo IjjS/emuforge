@@ -179,6 +179,8 @@ describe('a failed upload', () => {
     });
 
     expect(fieldError()).toBe('The emulator refused big.zip as too large. HTTP 413');
+    const codes = createWrapper(document.body).findFormField()?.findError()?.getElement().querySelectorAll('code');
+    expect([...(codes ?? [])].map((code) => code.textContent)).toEqual(['HTTP 413']);
     expect(chosenNames()).toEqual(['big.zip']);
     expect(shown).toEqual([]);
   });

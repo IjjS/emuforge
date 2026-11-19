@@ -239,7 +239,7 @@ describe('the dialog "Edit runtime settings"', () => {
     } else if (how === 'Escape') {
       fireEvent.keyDown(handlerInput(dialog), { key: 'Escape', keyCode: 27 });
     } else {
-      fireEvent.click(button(dialog, 'Close modal'));
+      fireEvent.click(button(dialog, 'Close'));
     }
 
     await waitFor(() => {

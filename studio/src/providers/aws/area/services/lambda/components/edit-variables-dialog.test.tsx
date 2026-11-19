@@ -237,6 +237,23 @@ describe('the dialog "Edit environment variables"', () => {
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Edit' }));
   });
 
+  it('each row’s "Remove" is named by its key: "Remove {key}", "Remove" for a row without a key; it reads "Remove"', async () => {
+    renderDialog();
+    const dialog = await openDialog();
+    addRow(dialog);
+
+    const removes = editor(dialog)
+      .findRows()
+      .map((row) => row.findRemoveButton()?.getElement());
+    expect(removes.map((remove) => remove?.getAttribute('aria-label'))).toEqual([
+      'Remove GREETING',
+      'Remove EXTRA',
+      'Remove',
+    ]);
+    expect(removes.map((remove) => norm(remove?.textContent))).toEqual(['Remove', 'Remove', 'Remove']);
+    expect(within(dialog).getByRole('button', { name: 'Remove GREETING' })).toBe(removes[0]);
+  });
+
   it('"Add variable" adds a row; "Remove" removes its row; every row removed and "Save": an empty map is sent', async () => {
     renderDialog();
     const dialog = await openDialog();
@@ -301,7 +318,7 @@ describe('the dialog "Edit environment variables"', () => {
     } else if (how === 'Escape') {
       fireEvent.keyDown(input(dialog, 1, 1), { key: 'Escape', keyCode: 27 });
     } else {
-      fireEvent.click(button(dialog, 'Close modal'));
+      fireEvent.click(button(dialog, 'Close'));
     }
 
     await waitFor(() => {
