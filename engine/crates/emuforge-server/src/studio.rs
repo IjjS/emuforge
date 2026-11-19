@@ -1,6 +1,8 @@
 //! Studio's server (issue 484): Studio's production build, held in memory, answered on Studio's own listener as
-//! Studio's dev server (`studio/scripts/serve.ts`) answers it. It knows nothing of the engine but its port: no
-//! session, no relay, no CORS header, and no request reaches the filesystem (P4).
+//! Studio's dev server (`studio/scripts/serve.ts`) answers it, under `127.0.0.1:<studio port>` and the host names
+//! allowed at start (issue 503). It knows nothing of the engine but its port and the channel: a request on
+//! `/__engine` is handed whole to the engine's channel service; every other request is answered from the build,
+//! with no session, no relay, no CORS header, and no request reaching the filesystem (P4).
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -11,13 +13,16 @@ use axum::Router;
 use axum::body::{Body, Bytes};
 use axum::extract::{Request, State};
 use axum::http::header::{
-    ALLOW, CACHE_CONTROL, CONTENT_LENGTH, CONTENT_TYPE, HOST, HeaderName, REFERRER_POLICY,
+    ALLOW, CACHE_CONTROL, CONTENT_LENGTH, CONTENT_TYPE, HeaderName, REFERRER_POLICY,
     X_CONTENT_TYPE_OPTIONS,
 };
-use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
+use axum::http::{HeaderValue, Method, StatusCode};
 use axum::response::Response;
+use tower::ServiceExt;
 
 use crate::Error;
+use crate::channel::{CHANNEL_PATH, is_channel_path};
+use crate::hosts::AcceptedHosts;
 use crate::limit::{InFlight, hold};
 
 /// The content type of a built file by its extension: the table of `serve.ts`, verbatim. Any other extension, or
@@ -98,17 +103,20 @@ fn is_build_path(path: &str) -> bool {
         .all(|component| !component.is_empty() && component != "." && component != "..")
 }
 
-/// What Studio's server needs: its own port (the `Host` it answers), the engine's port (`/config.json`), the
-/// build, and its in-flight bound.
+/// What Studio's server needs: its own port, the engine's port (`/config.json`), the build, its in-flight bound,
+/// the `Host` headers it accepts, and the engine's channel service (`apps(state).channel`).
 pub struct StudioState {
     pub studio_port: NonZeroU16,
     pub engine_port: NonZeroU16,
     pub files: Arc<StudioFiles>,
     pub max_in_flight: usize,
+    pub accepted_hosts: AcceptedHosts,
+    pub channel: Router,
 }
 
 struct Studio {
-    host: String,
+    hosts: AcceptedHosts,
+    channel: Router,
     misdirected: String,
     config: Bytes,
     files: Arc<StudioFiles>,
@@ -117,19 +125,32 @@ struct Studio {
 
 /// Studio's service: one handler for every method and path, in the order of design section 3.
 pub fn studio_app(state: StudioState) -> Router {
-    let host = format!("127.0.0.1:{}", state.studio_port);
     let studio = Studio {
-        misdirected: format!("Open Studio at http://{host}/."),
-        host,
-        config: Bytes::from(format!("{{\"enginePort\":{}}}", state.engine_port)),
+        misdirected: format!(
+            "Open Studio at http://{}/.",
+            state.accepted_hosts.loopback()
+        ),
+        hosts: state.accepted_hosts,
+        channel: state.channel,
+        config: Bytes::from(format!(
+            "{{\"enginePort\":{},\"enginePath\":\"{CHANNEL_PATH}\"}}",
+            state.engine_port
+        )),
         files: state.files,
         in_flight: InFlight::new(state.max_in_flight),
     };
     Router::new().fallback(handle).with_state(Arc::new(studio))
 }
 
-/// The request's body is never read: every answer is made from the method, the `Host` and the path.
+/// A channel request is handed to the channel as it came, outside Studio's bound. Of every other request the body
+/// is never read: every answer is made from the method, the `Host` and the path.
 async fn handle(State(studio): State<Arc<Studio>>, request: Request) -> Response {
+    if is_channel_path(request.uri().path()) {
+        return match studio.channel.clone().oneshot(request).await {
+            Ok(response) => response,
+            Err(never) => match never {},
+        };
+    }
     let method = request.method();
     let head = method == Method::HEAD;
     let Some(permit) = studio.in_flight.try_acquire() else {
@@ -147,7 +168,7 @@ async fn handle(State(studio): State<Arc<Studio>>, request: Request) -> Response
             false,
             &[(ALLOW, "GET, HEAD")],
         )
-    } else if !has_only_host(request.headers(), &studio.host) {
+    } else if studio.hosts.accept(request.headers()).is_none() {
         text(
             StatusCode::MISDIRECTED_REQUEST,
             &studio.misdirected,
@@ -204,15 +225,6 @@ fn file(studio: &Studio, raw: &str, head: bool) -> Response {
         Bytes::from_static(studio.files.index()),
         head,
     )
-}
-
-/// Exactly one `Host` header, equal to `expected`.
-fn has_only_host(headers: &HeaderMap, expected: &str) -> bool {
-    let mut hosts = headers.get_all(HOST).iter();
-    match (hosts.next(), hosts.next()) {
-        (Some(host), None) => host.as_bytes() == expected.as_bytes(),
-        _ => false,
-    }
 }
 
 /// `%XX` to a byte, then UTF-8; `None` for a malformed escape or a result that is not UTF-8.

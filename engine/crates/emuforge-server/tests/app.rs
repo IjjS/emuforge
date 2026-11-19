@@ -19,8 +19,8 @@ use emuforge_core::{
     Emulator, Health, Limits, Prepared, Reason, RelayError, SETTINGS_FILE, Store, forward,
 };
 use emuforge_server::{
-    AppState, CLIENT_WRITE_IDLE, DRAIN_BOUND, Form, IdleListener, ProbeFn, RelayFn, SessionToken,
-    StudioOrigin, app, seed_settings,
+    AcceptedHosts, AppState, CLIENT_WRITE_IDLE, DRAIN_BOUND, Form, IdleListener, ProbeFn, RelayFn,
+    SessionToken, StudioOrigin, app, seed_settings,
 };
 use hyper::body::{Bytes, Frame};
 use serde_json::{Value, json};
@@ -59,6 +59,7 @@ fn app_relaying(probe: ProbeFn, relay: RelayFn) -> Router {
         test: Arc::new(|_| Box::pin(async { emuforge_core::TestReport { checks: Vec::new() } })),
         max_in_flight: 2,
         studio_origin: StudioOrigin::new(NonZeroU16::new(8296).unwrap()),
+        accepted_hosts: AcceptedHosts::new(NonZeroU16::new(8296).unwrap(), Vec::new()),
         session: Arc::new(SessionToken::generate().unwrap()),
     })
 }
@@ -1724,6 +1725,7 @@ fn app_limited(relay: RelayFn, max_in_flight: usize) -> Router {
         test: Arc::new(|_| Box::pin(async { emuforge_core::TestReport { checks: Vec::new() } })),
         max_in_flight,
         studio_origin: StudioOrigin::new(NonZeroU16::new(8296).unwrap()),
+        accepted_hosts: AcceptedHosts::new(NonZeroU16::new(8296).unwrap(), Vec::new()),
         session: Arc::new(SessionToken::generate().unwrap()),
     })
 }
@@ -1971,6 +1973,7 @@ impl Following {
             }),
             max_in_flight: 2,
             studio_origin: StudioOrigin::new(NonZeroU16::new(8296).unwrap()),
+            accepted_hosts: AcceptedHosts::new(NonZeroU16::new(8296).unwrap(), Vec::new()),
             session: Arc::new(SessionToken::generate().unwrap()),
         });
         Following {

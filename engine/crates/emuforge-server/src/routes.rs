@@ -24,7 +24,9 @@ use tower::ServiceBuilder;
 
 use crate::aws_error::{ErrorType, Protocol, render};
 use crate::browser::{self, StudioOrigin, engine_refusal, is_engine_path};
+use crate::channel::{self, ChannelRequest};
 use crate::config::Form;
+use crate::hosts::AcceptedHosts;
 use crate::limit::{InFlight, limit};
 use crate::session::SessionToken;
 use crate::targets::{self, TestFn};
@@ -59,17 +61,30 @@ pub struct AppState {
     pub max_in_flight: usize,
     pub studio_origin: StudioOrigin,
     pub session: Arc<SessionToken>,
+    /// The `Host` headers Studio's port accepts, read by the channel's guard.
+    pub accepted_hosts: AcceptedHosts,
 }
 
-/// The engine's service. Outermost is the CORS layer, then one in-flight bound shared by every route, fallback
-/// and refusal, then the `Host` guard, then the browser guard around the routes and the relay.
+/// The engine's two ways in over one state and one in-flight bound: the engine port's service, and the channel
+/// Studio's server hands `/__engine` requests to.
+pub struct Apps {
+    pub engine: Router,
+    pub channel: Router,
+}
+
+/// The engine port's service: `apps(state).engine`.
 pub fn app(state: AppState) -> Router {
+    apps(state).engine
+}
+
+/// Both services over the one route table. The engine port's: outermost the CORS layer, then the in-flight
+/// bound, then the `Host` guard, then the browser guard around the routes and the relay. The channel's: the inner
+/// path, the answer headers, the same in-flight bound, then the channel's guard around the same routes.
+pub fn apps(state: AppState) -> Apps {
     let in_flight = InFlight::new(state.max_in_flight);
     let studio_origin = state.studio_origin.clone();
     let state = Arc::new(state);
-    // The browser guard wraps every route and the fallback, method fallbacks included, so the token is checked
-    // before a method is refused.
-    let routes = Router::new()
+    let table = Router::new()
         .route(
             HEALTH_PATH,
             get(health).fallback(|| method_not_allowed(HEALTH_PATH)),
@@ -79,22 +94,41 @@ pub fn app(state: AppState) -> Router {
             get(session).fallback(|| method_not_allowed(SESSION_PATH)),
         )
         .merge(targets::routes())
-        .fallback(fallback)
+        .fallback(fallback);
+    // Each guard wraps every route and the fallback, method fallbacks included, so the token is checked before a
+    // method is refused.
+    let engine_routes = table
+        .clone()
         .layer(middleware::from_fn_with_state(
             state.clone(),
             browser::guard,
         ))
         .layer(middleware::from_fn(shape_refusals))
         .with_state(state.clone());
-    // The other layers wrap the router as one service, not through `Router::layer`, which wraps each route on
-    // its own: the bound is global (every clone shares the one semaphore), the `Host` guard runs before routing,
-    // and the CORS layer sees every answer, `Busy` included.
-    let service = ServiceBuilder::new()
+    let channel_routes = table
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            channel::guard,
+        ))
+        .layer(middleware::from_fn(shape_refusals))
+        .with_state(state.clone());
+    // The other layers wrap each router as one service, not through `Router::layer`, which wraps each route on
+    // its own: the bound is global (every clone shares the one semaphore), the `Host` guard and the inner path
+    // run before routing, and the outermost layer sees every answer, `Busy` included.
+    let engine = ServiceBuilder::new()
         .layer(middleware::from_fn_with_state(studio_origin, browser::cors))
-        .layer(middleware::from_fn_with_state(in_flight, limit))
+        .layer(middleware::from_fn_with_state(in_flight.clone(), limit))
         .layer(middleware::from_fn_with_state(state, host_guard))
-        .service(routes);
-    Router::new().fallback_service(service)
+        .service(engine_routes);
+    let channel = ServiceBuilder::new()
+        .layer(middleware::from_fn(channel::inner_path))
+        .layer(middleware::from_fn(channel::answer_headers))
+        .layer(middleware::from_fn_with_state(in_flight, limit))
+        .service(channel_routes);
+    Apps {
+        engine: Router::new().fallback_service(engine),
+        channel: Router::new().fallback_service(channel),
+    }
 }
 
 /// Order 2: exactly one `Host` equal to the engine's address, a request target in origin form, and not
@@ -202,10 +236,12 @@ struct SessionBody<'a> {
     token: &'a str,
 }
 
-/// `GET` and `HEAD`. The browser guard has let through only the Studio origin or a request without `Origin`
-/// and without `Sec-Fetch-*`; the latter is order 5.
-async fn session(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
-    if !headers.contains_key(ORIGIN) {
+/// `GET` and `HEAD`. On the engine port the browser guard has let through only the Studio origin or a request
+/// without `Origin` and without `Sec-Fetch-*`; the latter is order 5. On the channel its guard has let the request
+/// through and marked it.
+async fn session(State(state): State<Arc<AppState>>, request: Request) -> Response {
+    let channel = request.extensions().get::<ChannelRequest>().is_some();
+    if !channel && !request.headers().contains_key(ORIGIN) {
         return refusal(
             StatusCode::FORBIDDEN,
             "OriginNotAllowed",

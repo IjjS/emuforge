@@ -15,7 +15,7 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
-tower.workspace = true
+tower = { workspace = true, features = ["util"] }
 tracing.workspace = true
 
 [dev-dependencies]

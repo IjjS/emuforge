@@ -3,9 +3,14 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::num::NonZeroU16;
 use std::path::{Component, Path, PathBuf};
 
+use clap::builder::{StringValueParser, TypedValueParser};
+use clap::error::ErrorKind;
+use clap::parser::ValueSource;
+use clap::{Arg, ArgAction, ArgMatches};
 use emuforge_core::{Endpoint, Settings, TargetName};
 
 use crate::Error;
+use crate::hosts::AllowedHost;
 
 #[allow(
     clippy::expect_used,
@@ -33,6 +38,11 @@ pub(crate) const ENGINE_PORT: (&str, &str) = ("--port", "EMUFORGE_ENGINE_PORT");
 pub(crate) const EMULATOR_PORT: (&str, &str) = ("--emulator-port", "EMULATOR_PORT");
 /// The Studio port's flag and variable.
 pub(crate) const STUDIO_PORT: (&str, &str) = ("--studio-port", "EMUFORGE_STUDIO_PORT");
+
+/// The allowed host names' flag and variable.
+pub(crate) const ALLOW_HOST: (&str, &str) = ("--allow-host", "EMUFORGE_ALLOW_HOSTS");
+/// The id of `--allow-host` in the command's matches.
+const ALLOW_HOST_ID: &str = "allow_hosts";
 
 /// The settings folder's flag and variable.
 pub(crate) const SETTINGS_DIR: (&str, &str) = ("--settings-dir", "EMUFORGE_SETTINGS_DIR");
@@ -107,6 +117,8 @@ pub struct Config {
     /// How EmuForge is run: native on the host, or compose, which holds one target, its own emulator
     #[arg(long, env = "EMUFORGE_FORM", value_enum, default_value_t = Form::Native)]
     pub form: Form,
+    #[command(flatten)]
+    pub allow_hosts: AllowHosts,
 }
 
 impl Config {
@@ -130,6 +142,131 @@ impl Config {
         }
         Ok(())
     }
+}
+
+/// The host names Studio's port answers besides `127.0.0.1:<studio port>`: `--allow-host`, repeatable, or the
+/// variable `EMUFORGE_ALLOW_HOSTS`, values separated by `,`; a flag wins over the variable. The variable unset or
+/// empty is no name; an empty item in a list that is not empty is a usage error, as is any value `AllowedHost`
+/// refuses. Fixed for the life of the process.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AllowHosts(Vec<AllowedHost>);
+
+impl AllowHosts {
+    pub fn as_slice(&self) -> &[AllowedHost] {
+        &self.0
+    }
+}
+
+impl From<Vec<AllowedHost>> for AllowHosts {
+    fn from(hosts: Vec<AllowedHost>) -> AllowHosts {
+        AllowHosts(hosts)
+    }
+}
+
+impl clap::Args for AllowHosts {
+    fn augment_args(command: clap::Command) -> clap::Command {
+        let (flag, variable) = ALLOW_HOST;
+        command.arg(
+            Arg::new(ALLOW_HOST_ID)
+                .long(&flag[2..])
+                .env(variable)
+                .value_name("NAME[:PORT]")
+                .action(ArgAction::Append)
+                .value_delimiter(',')
+                .value_parser(AllowHostParser)
+                .help(
+                    "Host name Studio's port also answers, besides 127.0.0.1:<studio port>, for a browser that \
+                     reaches it through a forwarder (a tailscale serve, a reverse proxy) that keeps the browser's \
+                     Host; repeatable, the variable separates names with ','. Binds nothing; anything that can \
+                     reach Studio's port under the name can open Studio and use the emulator",
+                ),
+        )
+    }
+
+    fn augment_args_for_update(command: clap::Command) -> clap::Command {
+        AllowHosts::augment_args(command)
+    }
+}
+
+impl clap::FromArgMatches for AllowHosts {
+    fn from_arg_matches(matches: &ArgMatches) -> Result<AllowHosts, clap::Error> {
+        let items: Vec<Option<AllowedHost>> = matches
+            .get_many::<Option<AllowedHost>>(ALLOW_HOST_ID)
+            .map(|values| values.cloned().collect())
+            .unwrap_or_default();
+        // `AllowHostParser` gives `None` only for an empty item of the variable; alone it is the empty variable.
+        if items.len() > 1 && items.iter().any(Option::is_none) {
+            let (flag, variable) = ALLOW_HOST;
+            return Err(clap::Error::raw(
+                ErrorKind::ValueValidation,
+                format!(
+                    "invalid value for '{flag} <NAME[:PORT]>': {variable} holds an empty item; separate names with \
+                     one ',' and end the list without one\n"
+                ),
+            ));
+        }
+        Ok(AllowHosts(items.into_iter().flatten().collect()))
+    }
+
+    fn update_from_arg_matches(&mut self, matches: &ArgMatches) -> Result<(), clap::Error> {
+        if matches.contains_id(ALLOW_HOST_ID) {
+            *self = AllowHosts::from_arg_matches(matches)?;
+        }
+        Ok(())
+    }
+}
+
+/// One item of `--allow-host` or of the variable: an empty item of the variable is `None` (clap hands an empty
+/// variable to the parser as one empty value), every other value an `AllowedHost` or a usage error naming the
+/// flag and the value.
+#[derive(Debug, Clone, Copy)]
+struct AllowHostParser;
+
+impl TypedValueParser for AllowHostParser {
+    type Value = Option<AllowedHost>;
+
+    fn parse_ref(
+        &self,
+        command: &clap::Command,
+        arg: Option<&Arg>,
+        value: &std::ffi::OsStr,
+    ) -> Result<Option<AllowedHost>, clap::Error> {
+        self.parse_ref_(command, arg, value, ValueSource::CommandLine)
+    }
+
+    fn parse_ref_(
+        &self,
+        command: &clap::Command,
+        arg: Option<&Arg>,
+        value: &std::ffi::OsStr,
+        source: ValueSource,
+    ) -> Result<Option<AllowedHost>, clap::Error> {
+        if source == ValueSource::EnvVariable && value.is_empty() {
+            return Ok(None);
+        }
+        StringValueParser::new()
+            .try_map(|text| text.parse::<AllowedHost>())
+            .parse_ref(command, arg, value)
+            .map(Some)
+    }
+}
+
+/// The warning `serve` logs before it serves when names are allowed, naming every one and the Studio port;
+/// `None` for none.
+pub fn allow_host_warning(allowed: &[AllowedHost], studio_port: NonZeroU16) -> Option<String> {
+    if allowed.is_empty() {
+        return None;
+    }
+    let names = allowed
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!(
+        "--allow-host: Studio's port {studio_port} also answers the host names {names}: anything that can reach \
+         port {studio_port} under one of these names can open Studio and use the emulator through the engine; \
+         whatever forwards to port {studio_port} must pass the browser's Host header on unchanged"
+    ))
 }
 
 /// The settings folder `serve` uses: `--settings-dir` made absolute against `cwd`, or the form's folder under
@@ -219,6 +356,7 @@ mod tests {
             "studio_port",
             "settings_dir",
             "form",
+            ALLOW_HOST_ID,
         ]
         .into_iter()
         .fold(command(), |command, id| {
@@ -245,6 +383,7 @@ mod tests {
             listen_address: IpAddr::V4(LISTEN_IP),
             settings_dir: None,
             form: Form::Native,
+            allow_hosts: AllowHosts::default(),
         }
     }
 
@@ -315,5 +454,57 @@ mod tests {
     #[test]
     fn validate_three_different_ports_is_ok() {
         assert!(ports(8400, 9400, 8296).validate().is_ok());
+    }
+
+    fn hosts(values: &[&str]) -> Vec<AllowedHost> {
+        values.iter().map(|value| value.parse().unwrap()).collect()
+    }
+
+    #[test]
+    fn allow_host_absent_is_empty() {
+        assert_eq!(parse(&[]).unwrap().allow_hosts.as_slice(), []);
+    }
+
+    #[test]
+    fn allow_host_repeated_is_every_value_in_order() {
+        let config = parse(&["--allow-host", "a.test", "--allow-host", "b.test:9000"]).unwrap();
+        assert_eq!(
+            config.allow_hosts.as_slice(),
+            hosts(&["a.test", "b.test:9000"])
+        );
+    }
+
+    #[test]
+    fn allow_host_invalid_or_empty_is_a_usage_error_naming_the_flag_and_the_value() {
+        for (name, value) in [("scheme", "http://a.test"), ("empty", "")] {
+            let error = parse(&["--allow-host", value]).unwrap_err();
+            let text = error.to_string();
+            assert_eq!(
+                error.kind(),
+                ErrorKind::ValueValidation,
+                "case {name}: {text}"
+            );
+            assert!(text.contains("--allow-host"), "case {name}: {text}");
+            assert!(text.contains(&format!("'{value}'")), "case {name}: {text}");
+        }
+    }
+
+    #[test]
+    fn allow_host_warning_empty_list_is_none() {
+        assert_eq!(allow_host_warning(&[], port(8296)), None);
+    }
+
+    #[test]
+    fn allow_host_warning_names_every_value_the_studio_port_and_the_forwarder_rule() {
+        let text = allow_host_warning(&hosts(&["a.test", "b.test:9000"]), port(8296)).unwrap();
+        for part in [
+            "a.test",
+            "b.test:9000",
+            "8296",
+            "can open Studio and use the emulator",
+            "must pass the browser's Host header on unchanged",
+        ] {
+            assert!(text.contains(part), "{part}: {text}");
+        }
     }
 }
