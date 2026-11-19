@@ -171,8 +171,9 @@
 
   /* At 480 and below the bar keeps the wordmark, every tab and the control's globe (R3.5): tighter gaps, and the tabs
      a type step down (12px) with 4px padding and no gap between them, so Home, Connections and AWS fit at 390 in
-     every language (Polish "Strona główna" with "Połączenia" is the longest; issue 486). The ring moves 2px in, so it
-     stays inside the tab's padding. */
+     every language (Polish "Strona główna" with "Połączenia" is the longest; issue 486). Each tab is at
+     least 24px wide, its label centred, so a short one (Korean "홈") is still a 24px target. The ring moves 2px in, so
+     it stays inside the tab's padding. */
   @media (max-width: 480px) {
     .st-bar {
       gap: 6px;
@@ -183,6 +184,8 @@
     }
 
     .st-nav a {
+      justify-content: center;
+      min-width: 24px;
       padding: 0 4px;
       font-size: 12px;
     }

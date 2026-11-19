@@ -477,7 +477,7 @@ One column inside a sticky bar.
     state of a command shows no text beside the step label: the check icon and green edge on the button and the polite
     region carry it.
   - 480px: the bar's gap tightens to 6px, the tabs go a type step down to 12px with 0 4px padding and no gap
-    between them (the focus ring 2px in), and the language control is its globe alone, 40px square, so the wordmark,
+    between them, each at least 24px wide with its label centred (Korean "홈" is a 24px target; the focus ring 2px in), and the language control is its globe alone, 40px square, so the wordmark,
     Home, Connections, AWS and the control fit at 390 in every language (Polish "Strona główna" and "Połączenia" are
     the longest, about 6px to spare; "Polski" beside them would not fit). A tab that takes focus is scrolled into the tab list's view should the list overflow.
 - **No sideways scroll** at 1280 and 390 wide, in every language. A command never wraps: its block scrolls within

@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { act, fireEvent, getRoles, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -288,6 +291,36 @@ describe('Studio’s frame', () => {
         HTMLElement.prototype.scrollIntoView = original;
       }
     }
+  });
+
+  it('at 480 and below each tab is at least 24px wide with its label centred, a target of its own (issue 486, critique)', () => {
+    const css = readFileSync(path.join(import.meta.dirname, '..', 'ui', 'bar.css'), 'utf8').replace(
+      /\/\*[\s\S]*?\*\//g,
+      '',
+    );
+    const start = css.indexOf('@media (max-width: 480px)');
+    expect(start).toBeGreaterThan(-1);
+    let depth = 0;
+    let end = css.indexOf('{', start);
+    for (let i = end; i < css.length; i++) {
+      depth += css[i] === '{' ? 1 : css[i] === '}' ? -1 : 0;
+      if (depth === 0) {
+        end = i;
+        break;
+      }
+    }
+    const narrow = css.slice(css.indexOf('{', start) + 1, end);
+    const rule = /(?:^|\})\s*\.st-nav a\s*\{([^{}]*)\}/.exec(narrow)?.[1] ?? '';
+    const declarations = new Map(
+      rule
+        .split(';')
+        .map((d) => d.split(':').map((part) => part.trim()))
+        .filter(([property]) => property !== undefined && property !== '')
+        .map(([property = '', value = '']) => [property, value]),
+    );
+
+    expect(declarations.get('min-width')).toBe('24px');
+    expect(declarations.get('justify-content')).toBe('center');
   });
 
   it('on /aws: AWS is the current page, Home is not marked', () => {
