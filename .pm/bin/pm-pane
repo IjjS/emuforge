@@ -4,6 +4,11 @@
   pm-pane new <issue> <role> [--unit U] [--kind claude|codex] [--model opus|fable|sonnet|<id>]
                               [--effort low|medium|high|xhigh|max] [--cwd PATH] [--brief FILE] [--text TEXT] [--no-limit]
   pm-pane reset <name>            state file -> /clear -> brief again (run on EVENT ctx <name>)
+
+reset asks the pane to write its resume note (a worker's and a harness-engineer's output/state.md, every other role's
+.pm/issue-<id>/state-<role>.md) and print `RESET READY <name> <nonce>`, and waits for that marker in the pane's reply,
+however the pane's width wraps it, never in the echo of its own prompt. While it runs, the pane's registry entry holds
+`resetting`, so pm-watchd takes the reset's own turn ends for no silent turn.
   pm-pane close <name> | --issue <issue>
   pm-pane list
 
@@ -36,13 +41,13 @@ To talk to a pane use herdr directly: herdr agent prompt <name> "<text>" (it ref
 import argparse
 import json
 import os
-import re
 import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _pmlib import (LIMITS, MODEL_IDS, PANE_ROLES, PANES, PANES_HISTORY, PLAN_OPENS, PMINFO, ROOT, agent_by_name, cpu_pct,
-                    find_key, guard, herdr, load, log, mem_gb, now, panes, room, save, side_of, tabs, wait_for_room)
+                    find_key, guard, herdr, load, log, mark_resetting, mem_gb, now, panes, reset_marker_pattern, room, save,
+                    side_of, state_note, tabs, wait_for_room)
 from _pmorphans import line, sweep, worktree_paths
 
 
@@ -298,15 +303,16 @@ def cmd_reset(a):
         sys.exit(f"{a.name} is blocked at a dialog; inspect with herdr agent read {a.name}")
     nonce = now()[11:19].replace(":", "")
     marker = f"RESET READY {a.name} {nonce}"
-    state_hint = "output/state.md" if entry["role"] == "worker" else f"{ROOT}/.pm/issue-{entry['issue']}/state-{entry['role']}.md"
+    mark_resetting(a.name, True)  # pm-watchd takes the turn ends of the reset (the marker's, /clear's) for no silent turn
     herdr("agent", "prompt", a.name,
-          f"Context reset requested. Write your resume note now to {state_hint}: what is done, what is next, open P1s, "
+          f"Context reset requested. Write your resume note now to {state_note(entry)}: what is done, what is next, open P1s, "
           f"paths. Then print exactly this line and stop: {marker}")
     # Whole command stays under the Bash tool's 10-minute cap: 7 min for the note, 1 min to settle, ~30 s to re-brief.
-    # The prompt echo (❯ …) also contains the marker, so match only a row that starts with it (after Claude's ⏺ bullet).
-    r = herdr("pane", "wait-output", entry["pane_id"], "--regex", rf"(?m)^[^A-Za-z❯\n]*{re.escape(marker)}\s*$",
+    # The marker is matched however the pane's width wraps it, and never in the prompt's echo (_pmlib.reset_marker_pattern).
+    r = herdr("pane", "wait-output", entry["pane_id"], "--regex", reset_marker_pattern(marker),
               "--source", "recent-unwrapped", "--timeout", "420000", check=False)
     if r is None:
+        mark_resetting(a.name, False)
         sys.exit(f"{a.name} did not print the reset marker within 7 min; inspect with herdr agent read {a.name}, then rerun reset")
     herdr("agent", "wait", a.name, "--until", "idle", "--until", "done", "--timeout", "60000", check=False)
     old = entry.get("session")
@@ -330,6 +336,7 @@ def cmd_reset(a):
     entry["session"] = new or entry.get("session")
     entry["resets"] = entry.get("resets", 0) + 1
     entry["reset_at"] = now()
+    entry.pop("resetting", None)
     if entry not in reg:
         reg.append(entry)
     save(PANES, reg)
