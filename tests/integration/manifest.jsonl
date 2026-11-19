@@ -131,6 +131,7 @@
 {"check_id": "studio.aws-area-emulator-line-shows-engine-unreachable", "path": "tests/integration/studio/aws-area-frame.spec.ts", "module": "studio", "operations": [], "labels": ["lifecycle", "full"], "issue": 45}
 {"check_id": "studio.aws-area-emulator-line-keyboard-and-layout", "path": "tests/integration/studio/aws-area-frame.spec.ts", "module": "studio", "operations": [], "labels": ["own-emulator", "full"], "issue": 45}
 {"check_id": "studio.aws-area-shows-no-image", "path": "tests/integration/studio/aws-area-frame.spec.ts", "module": "studio", "operations": [], "labels": [], "issue": 45}
+{"check_id": "studio.aws-area-dialog-is-above-studio-bar", "path": "tests/integration/studio/aws-area-dialog.spec.ts", "module": "studio", "operations": [], "labels": ["regression"], "issue": 531}
 {"check_id": "studio.addresses-stay-whole-with-five-digit-ports", "path": "tests/integration/studio/addresses.spec.ts", "module": "studio", "operations": [], "labels": ["own-emulator", "regression", "full"], "issue": 60}
 {"check_id": "engine.emulator-image-gives-its-files-to-the-folders-owner", "path": "tests/integration/engine/tests/emulator_image.rs", "module": "engine", "operations": [], "labels": ["own-emulator", "regression", "safety"], "issue": 55}
 {"check_id": "engine.emulator-image-stops-and-restarts-as-the-folders-owner", "path": "tests/integration/engine/tests/emulator_image.rs", "module": "engine", "operations": [], "labels": ["own-emulator", "lifecycle"], "issue": 55}
