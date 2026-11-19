@@ -24,6 +24,7 @@ import {
   type Keys,
   type NewTable,
 } from './api';
+import { NEW_CONDITION, type Condition } from './filter';
 
 // The test plays the engine behind the page's `fetch`: its session route, and every AWS request as it leaves the
 // browser. DynamoDB speaks JSON 1.0: `POST /`, the operation in `X-Amz-Target`, a JSON body (issue 496, test-criteria.md "Unit s1 — .../dynamodb/api.test.ts").
@@ -457,7 +458,7 @@ describe('a scan and a query', () => {
       IndexName: 'by-g',
       ExclusiveStartKey: { pk: { S: 'c1' } },
     });
-    expect(page).toEqual({ items: [] });
+    expect(page).toEqual({ items: [], read: 0 });
   });
 
   it('a query with no sort condition: #pk = :pk, the key name in ExpressionAttributeNames', async () => {
@@ -738,6 +739,162 @@ describe('create and delete a table', () => {
       operation: 'DeleteTable',
       code: 'ValidationException',
       message,
+    });
+  });
+});
+
+describe('a filtered scan and query (issue 512)', () => {
+  const condition = (name: string, extra: Partial<Condition> = {}): Condition => ({ ...NEW_CONDITION, name, ...extra });
+  const filter: Condition[] = [
+    condition('status', { value: 'open' }),
+    condition('total', { comparison: '>', type: 'N', value: '10' }),
+  ];
+
+  it('a scan with conditions: FilterExpression, names and values, with Limit; IndexName and the start key only when asked', async () => {
+    await readItems(endpoint, { table: 'orders', pageSize: 25, read: { kind: 'scan' }, filter }, undefined, signal());
+    await readItems(
+      endpoint,
+      { table: 'orders', index: 'by-g', pageSize: 50, read: { kind: 'scan' }, filter },
+      { pk: { S: 'c1' } },
+      signal(),
+    );
+
+    const members = {
+      FilterExpression: '#f0 = :f0 AND #f1 > :f1',
+      ExpressionAttributeNames: { '#f0': 'status', '#f1': 'total' },
+      ExpressionAttributeValues: { ':f0': { S: 'open' }, ':f1': { N: '10' } },
+    };
+    expect(engine.of('Scan')[0]?.body).toEqual({ TableName: 'orders', Limit: 25, ...members });
+    expect(engine.of('Scan')[1]?.body).toEqual({
+      TableName: 'orders',
+      Limit: 50,
+      IndexName: 'by-g',
+      ExclusiveStartKey: { pk: { S: 'c1' } },
+      ...members,
+    });
+  });
+
+  it('a scan whose only conditions are "Exists": no ExpressionAttributeValues', async () => {
+    await readItems(
+      endpoint,
+      {
+        table: 'orders',
+        pageSize: 25,
+        read: { kind: 'scan' },
+        filter: [condition('paid', { comparison: 'exists' }), condition('note', { comparison: 'not_exists' })],
+      },
+      undefined,
+      signal(),
+    );
+    expect(engine.of('Scan')[0]?.body).toEqual({
+      TableName: 'orders',
+      Limit: 25,
+      FilterExpression: 'attribute_exists(#f0) AND attribute_not_exists(#f1)',
+      ExpressionAttributeNames: { '#f0': 'paid', '#f1': 'note' },
+    });
+  });
+
+  it("a query with a sort key condition and conditions: the key condition as before, the query's and the filter's names and values in one map each", async () => {
+    await readItems(
+      endpoint,
+      {
+        table: 'orders',
+        pageSize: 25,
+        read: {
+          kind: 'query',
+          partition: { key: { name: 'pk', type: 'S' }, value: 'c1' },
+          sort: { key: { name: 'sk', type: 'N' }, condition: 'between', values: ['1', '5'] },
+          descending: true,
+        },
+        filter: [condition('paid', { type: 'BOOL', bool: true }), condition('total', { comparison: 'exists' })],
+      },
+      undefined,
+      signal(),
+    );
+    expect(engine.of('Query')[0]?.body).toEqual({
+      TableName: 'orders',
+      Limit: 25,
+      KeyConditionExpression: '#pk = :pk AND #sk BETWEEN :sk1 AND :sk2',
+      FilterExpression: '#f0 = :f0 AND attribute_exists(#f1)',
+      ExpressionAttributeNames: { '#pk': 'pk', '#sk': 'sk', '#f0': 'paid', '#f1': 'total' },
+      ExpressionAttributeValues: { ':pk': { S: 'c1' }, ':sk1': { N: '1' }, ':sk2': { N: '5' }, ':f0': { BOOL: true } },
+      ScanIndexForward: false,
+    });
+  });
+
+  it('a scan and a query without conditions: exactly the members issue 496 sends', async () => {
+    await readItems(
+      endpoint,
+      { table: 'orders', pageSize: 25, read: { kind: 'scan' }, filter: [] },
+      undefined,
+      signal(),
+    );
+    await readItems(
+      endpoint,
+      {
+        table: 'orders',
+        pageSize: 25,
+        read: { kind: 'query', partition: { key: { name: 'pk', type: 'S' }, value: 'c1' }, descending: false },
+        filter: [],
+      },
+      undefined,
+      signal(),
+    );
+    expect(engine.of('Scan')[0]?.body).toEqual({ TableName: 'orders', Limit: 25 });
+    expect(engine.of('Query')[0]?.body).toEqual({
+      TableName: 'orders',
+      Limit: 25,
+      KeyConditionExpression: '#pk = :pk',
+      ExpressionAttributeNames: { '#pk': 'pk' },
+      ExpressionAttributeValues: { ':pk': { S: 'c1' } },
+    });
+  });
+
+  it('an answer: its items, its LastEvaluatedKey and the number of items read', async () => {
+    engine.handle = () =>
+      ok({ Items: [{ pk: { S: 'c1' } }], Count: 1, ScannedCount: 25, LastEvaluatedKey: { pk: { S: 'c9' } } });
+    const page = await readItems(
+      endpoint,
+      { table: 'orders', pageSize: 25, read: { kind: 'scan' }, filter },
+      undefined,
+      signal(),
+    );
+    expect(page).toEqual({ items: [{ pk: { S: 'c1' } }], next: { pk: { S: 'c9' } }, read: 25 });
+  });
+
+  it("the emulator's refusal of a filter: a failure with its code and message, under the operation's name", async () => {
+    const message = 'Filter Expression can only contain non-primary key attributes: Primary key attribute: sk';
+    engine.handle = () => refusal('ValidationException', message);
+    const query = readItems(
+      endpoint,
+      {
+        table: 'orders',
+        pageSize: 25,
+        read: { kind: 'query', partition: { key: { name: 'pk', type: 'S' }, value: 'c1' }, descending: false },
+        filter: [condition('sk', { comparison: '>', type: 'N', value: '2' })],
+      },
+      undefined,
+      signal(),
+    );
+    expect(await failure(query)).toEqual({ kind: 'other', operation: 'Query', code: 'ValidationException', message });
+
+    engine.handle = () => refusal('ValidationException', 'The parameter cannot be converted to a numeric value: abc');
+    const scan = readItems(
+      endpoint,
+      {
+        table: 'orders',
+        pageSize: 25,
+        read: { kind: 'scan' },
+        filter: [condition('total', { comparison: '>', type: 'N', value: 'abc' })],
+      },
+      undefined,
+      signal(),
+    );
+    expect(await failure(scan)).toEqual({
+      kind: 'other',
+      operation: 'Scan',
+      code: 'ValidationException',
+      message: 'The parameter cannot be converted to a numeric value: abc',
     });
   });
 });
