@@ -79,7 +79,7 @@ beforeEach(() => {
 const ARCHIVE = storedZip('lambda_function.py', 'def lambda_handler(event, context):\n    return "v2"\n');
 
 function zipFile(name = 'echo-v2.zip', bytes: Uint8Array = ARCHIVE): File {
-  return new File([bytes], name, { type: 'application/zip' });
+  return new File([new Uint8Array(bytes)], name, { type: 'application/zip' });
 }
 
 function choose(file: File) {
