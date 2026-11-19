@@ -39,7 +39,7 @@ from _fixture import BIN, CHECKOUT, HERE, clean_env, git, make, run
 
 import _pmscope
 
-ON_TOUCH_FILES = ["test_check_issue.py", "test_emulator_dir.py", "test_emulator_telemetry.py", "test_issue_branch.py",
+ON_TOUCH_FILES = ["test_check_issue.py", "test_check_stop.py", "test_emulator_dir.py", "test_emulator_telemetry.py", "test_issue_branch.py",
                   "test_orphans.py"]
 HELD = ["test_emulator_telemetry.py", "test_orphans.py"]  # the two of the on-touch files a fixture checkout holds
 EVERY_FILE = [".pm/bin/_pmscope.py", ".pm/bin/tests/run"]
@@ -289,11 +289,13 @@ class Decide(unittest.TestCase):
         self.assertEqual(a["left_out"], ON_TOUCH_FILES)
 
     def test_pm_check(self):
-        self.assertEqual(set(self.ht(B + "pm-check")["called"]), {"test_check_issue.py", "test_issue_branch.py"})
+        self.assertEqual(set(self.ht(B + "pm-check")["called"]),
+                         {"test_check_issue.py", "test_check_stop.py", "test_issue_branch.py"})
 
     def test_pmlib_is_asked_of_every_entry(self):
         self.assertEqual(set(self.ht(B + "_pmlib.py")["called"]),
-                         {"test_check_issue.py", "test_emulator_dir.py", "test_issue_branch.py", "test_orphans.py"})
+                         {"test_check_issue.py", "test_check_stop.py", "test_emulator_dir.py", "test_issue_branch.py",
+                          "test_orphans.py"})
 
     def test_folders_and_the_union_over_paths(self):
         a = self.ht(T + "fixtures/emulator-telemetry/a/compose.yml", B + "_pmwake.py")
