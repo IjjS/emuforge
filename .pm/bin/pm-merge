@@ -41,15 +41,22 @@ step's list. The refusal names what the record ran and what the branch touches a
 without `services` in a record whose `scope` has no `services` was written before this question and ran every
 check: accepted. A step without it in a record whose `scope` has it is refused (the record does not say). A unit
 into its issue branch (a deferred step), an integration module that is absent, or paths that do not call for
-integration ask nothing. What main gained since the branch left it is still judged by module, below.
-The main it merges into. Either main's commit is an ancestor of the branch's head, or what main gained since the
-branch left it calls for no module that the branch's own paths call for (main gaining only issue files is always
-this case); then the output says the branch is behind main and by how many paths. Otherwise it refuses, names the
-modules both sides call for and one gained path for each: merge main into the branch, run pm-check, then rerun.
+integration ask nothing. What main gained since the branch left it is judged below.
+The main it merges into (issue 520, as a pull request is merged). Into main, what main gained since the branch
+left it refuses nothing, whatever modules it calls for: a branch whose record passes on its head and covers its own
+paths is merged when git merges it with no conflict, a fast-forward or a clean merge commit, with no second check.
+When main has moved, the output says the branch is behind main, by how many paths and what they call for (and
+which of them the branch's own paths call for too), and the merge's line in .pm/run/events.log ends with
+`behind main by <n> paths`; the run of .github/workflows/main.yml on the push is the check of the merged result.
+When git stops on a conflict, nothing is merged and the output names the conflicting paths and the lead's step:
+the lead merges main into its branch, the conflict is resolved by the unit that owns the files, the check runs
+again on the new head, then rerun. A branch that took main has a new head, so the record of its old head is
+refused as any record of another commit is.
 A record without `scope` and without `module` on its steps was written by the pm-check before issue 52, which
 passed only after running every module: it is judged as before, and none of these questions is asked of it.
 Merges with --no-ff so every unit is one merge commit on main. On a conflict the merge is aborted and main is left
-as it was: send the unit back to its worker to merge main into its branch, check again, then rerun.
+as it was: the unit's lead (the harness-engineer of a harness issue, else its worker) merges main into its branch,
+resolves the conflict, checks again, then rerun.
 After the merge commit it runs `pm-emulator-dir rm --worktree` for the unit's worktree and for each registered
 worktree of the issue it is stacked on (the chain of base branches down to main), and prints their lines: the
 emulator port folders those units leave under ~/.aws/emulator. A refusal or a failure there does not change the
@@ -72,8 +79,10 @@ The issue branch into main. Merged with --no-ff in the main checkout. Refuses un
 and clean; the issue's worktree is on feat/<issue> and clean; the branch of every registered unit of the issue is
 an ancestor of feat/<issue>; the review rule holds for each of them; the issue's worktree's last pm-check run
 (the whole check) passed on the head of feat/<issue> and covers every module the branch's paths against main call
-for, a "deferred" step covering nothing; and the branch holds main as a unit must above (otherwise:
-pm-merge <issue> --take-main, the whole check, rerun). After the merge it removes the emulator port folders of the
+for, a "deferred" step covering nothing. What main gained is judged as for a unit into main: a clean merge goes in,
+behind or not; a conflict is refused, main left as it was, and the output says: pm-merge <issue> --take-main, the
+unit that owns each conflicting path merges main into its branch and resolves it, is merged into feat/<issue>
+again, the whole check, rerun. After the merge it removes the emulator port folders of the
 issue's worktree and of every unit's, and names the units and the record it merged on.
 Who may run it (issue 478). The pm runs every form. A plan runs `pm-merge <its issue> <unit>` for a unit whose target
 is feat/<its issue>, and `pm-merge <its issue> --take-main`; a unit into main and the issue branch into main are the
@@ -88,7 +97,9 @@ part `not-last` (pm-brief harness-engineer --not-last); a unit with no record is
 run pm-issue close on the branch, pm-check, then rerun.
 Without the mark (an issue begun before issue 478) the per-unit rule above holds, word for word.
 `pm-merge <issue> issue` is refused: the issue branch is not a unit. --dry-run checks every condition of its form,
-lists every problem, and merges nothing. The new forms time their merges out after 120 s (the merge is then
+lists every problem, and merges nothing; into main it also asks git merge-tree --write-tree, which touches no
+worktree, whether git merges the branch clean: a conflict is a problem naming its paths and the lead's step, and a
+merge-tree that cannot answer is said and is no problem. The new forms time their merges out after 120 s (the merge is then
 aborted) and every read of git after 30 s.
 Never pushes; the PM pushes main when an issue is finished (pm skill, flow step 3).
 """
@@ -205,8 +216,10 @@ def judge(branch, head, last, target="main", defer=False, remedy=None):
     """Coverage (R7) and the target the branch merges into (R8), decided from git with this checkout's rules.
     `target` is main or an issue branch; `defer` (a unit into its issue branch only) lets a deferred integration
     step cover integration and leaves integration out of the modules both sides call for. `remedy` is what the
-    behind problem tells the PM to do. With the defaults it answers as before the issue branch, word for word.
-    Returns (problems, note)."""
+    behind problem tells the PM to do. Into main (issue 520) what main gained since the branch left it refuses
+    nothing: git decides at the merge, a conflict refuses it, and the note says the branch is behind. Into an issue
+    branch it refuses as before when both sides call for a module. Returns (problems, note, the number of paths
+    the target gained, or None when it gained none or they cannot be read)."""
     tip = base = None
     try:
         tip = read_git(ROOT, "rev-parse", "--verify", "--quiet", f"refs/heads/{target}^{{commit}}").strip()
@@ -235,7 +248,7 @@ def judge(branch, head, last, target="main", defer=False, remedy=None):
     if need is not None:
         problems += services_problems(last, need)
     if base is not None and base == tip:
-        return problems, None
+        return problems, None, None
     gained = None
     try:
         if base is None:
@@ -245,6 +258,17 @@ def judge(branch, head, last, target="main", defer=False, remedy=None):
     except Unreadable as e:
         theirs = {m: [str(e)] for m in MODULES}
     both = [m for m in MODULES if m in own and m in theirs and not (defer and m == "integration")]
+    if target == "main":
+        if gained is None:
+            return problems, (f"behind main; what main gained since this branch left it cannot be read; git decides "
+                              f"at the merge, and the run on GitHub Actions checks the merged result"), None
+        mods = ", ".join(theirs) or "nothing"
+        if both:
+            return problems, (f"behind main by {plural(len(gained))} that call for {mods}; this branch's changes call "
+                              f"for {', '.join(both)} too; merged on its own record when git merges it clean, not "
+                              f"checked with them: the run on GitHub Actions checks the merged result"), len(gained)
+        return problems, (f"behind main by {plural(len(gained))} that call for {mods}; "
+                          f"this branch's changes call for none of them"), len(gained)
     if both:
         if gained is None:
             what = (f"what {target} gained since this branch left it cannot be read ({theirs[both[0]][0]}), so both "
@@ -253,10 +277,10 @@ def judge(branch, head, last, target="main", defer=False, remedy=None):
             eg = ", ".join(f"{m}: {next(p for p in gained if m in decide([p]))}" for m in both)
             what = f"{target} gained {plural(len(gained))} since this branch left it; both call for {', '.join(both)} (e.g. {eg})"
         problems.append(f"{what}; {remedy or f'merge {target} into {branch} and run pm-check again'}")
-        return problems, None
+        return problems, None, None
     note = (f"behind {target} by {plural(len(gained))} that call for {', '.join(theirs) or 'nothing'}; "
             f"this branch's changes call for none of them")
-    return problems, note
+    return problems, note, len(gained)
 
 
 def stack(wts, wt):
@@ -397,9 +421,9 @@ def issue_checkout(entry, branch):
     return problems + clean(path)
 
 
-def merge(cwd, ref, message, dest):
+def merge(cwd, ref, message, dest, remedy=None):
     """`git merge --no-ff` in `cwd`, bounded; on a conflict or a timeout the merge is aborted and the process exits
-    non-zero, naming `dest` and the conflicting paths. Returns the new head."""
+    non-zero, naming `dest`, the conflicting paths and, on a conflict, `remedy`. Returns the new head."""
     try:
         r = subprocess.run(["git", "-C", str(cwd), "merge", "--no-ff", "-m", message, ref], capture_output=True,
                            text=True, stdin=subprocess.DEVNULL, timeout=MERGE_TIMEOUT)
@@ -412,7 +436,8 @@ def merge(cwd, ref, message, dest):
             conflicts = []
         what = f"merge conflict in {plural(len(conflicts))}" if conflicts else f"merge failed (exit {r.returncode})"
         named = f": {', '.join(conflicts)}" if conflicts else ""
-        sys.exit(f"{what}; {left(cwd, dest)}{named}\n{(r.stdout + r.stderr).strip()[-600:]}")
+        then = f"\n{remedy}" if remedy and conflicts else ""
+        sys.exit(f"{what}; {left(cwd, dest)}{named}{then}\n{(r.stdout + r.stderr).strip()[-600:]}")
     return read_git(cwd, "rev-parse", "HEAD").strip()
 
 
@@ -428,6 +453,42 @@ def left(cwd, dest):
 
 def flaky_note(last):
     return f"; flaky in its check run: {', '.join(last['flaky'])} (file the flake, see .pm/run/flakes.jsonl)" if last.get("flaky") else ""
+
+
+def predict(branch, remedy):
+    """--dry-run of a merge into main (issue 520): whether git merges `branch` into main clean, asked of
+    `git merge-tree --write-tree`, which touches no worktree. Returns (problems, line): a conflict is a problem
+    naming its paths and `remedy`; a merge-tree that cannot answer is a line, not a problem."""
+    try:
+        r = subprocess.run(["git", "-C", str(ROOT), "merge-tree", "--write-tree", "--name-only", "--no-messages",
+                            "refs/heads/main", f"refs/heads/{branch}"], capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL, timeout=MERGE_TIMEOUT)
+    except (subprocess.TimeoutExpired, OSError) as e:
+        return [], f"whether git merges it clean cannot be told: git merge-tree did not run ({type(e).__name__})"
+    if r.returncode == 0:
+        return [], "git merges it into main clean"
+    if r.returncode == 1:
+        paths = [x for x in r.stdout.splitlines()[1:] if x]
+        return [f"git would stop on a merge conflict in {plural(len(paths))}: {', '.join(paths)}; {remedy}"], None
+    return [], f"whether git merges it clean cannot be told: git merge-tree exited {r.returncode}"
+
+
+def behind_log(count):
+    """The words the merge's line in events.log adds when the branch was behind main (issue 520)."""
+    return f" behind main by {plural(count)}" if count else ""
+
+
+def unit_remedy(issue, branch):
+    """What a conflict of a unit into main asks: its lead merges main into the branch (issue 520)."""
+    who = "the harness-engineer" if lead(issue) == "harness-engineer" else "its worker"
+    return (f"{who} merges main into {branch} and resolves the conflict, runs pm-check, then rerun "
+            f"pm-merge {issue} <unit>")
+
+
+def whole_remedy(issue):
+    """What a conflict of the issue branch into main asks of its plan (issue 520)."""
+    return (f"the plan runs pm-merge {issue} --take-main, the unit that owns each path merges main into its branch "
+            f"and resolves it, is merged into feat/{issue} again, then the whole check, then rerun pm-merge {issue}")
 
 
 def main():
@@ -480,27 +541,36 @@ def into_main(a, wts, wt):
         problems.append(f"pm-check ran on {str(last.get('commit'))[:9]}, the branch is at {head[:9]}; run pm-check again")
     elif not last.get("passed"):
         problems.append(f"pm-check failed: {', '.join(last.get('failed', []))}")
-    note = None
+    note = count = None
     if last and last.get("commit") == head and last.get("passed") and not earlier(last):
-        found, note = judge(branch, head, last)
+        found, note, count = judge(branch, head, last)
         problems += found
     found, reviewed = unit_review(a.issue, a.unit)
     problems += found
     if head:
         problems += close_problems(a.issue, a.unit, branch, head)
+    told = None
+    if a.dry_run and head:
+        more, told = predict(branch, unit_remedy(a.issue, branch))
+        problems += more
     if problems:
         sys.exit("cannot merge:\n- " + "\n- ".join(problems))
     if note:
         print(note)
     if a.dry_run:
+        if told:
+            print(told)
         print(f"ok to merge {branch} ({head[:9]}) into main")
         return
     r = git("merge", "--no-ff", "-m", f"merge: #{a.issue} {a.unit} ({branch})", branch)
     if r.returncode != 0:
+        conflicts = [x for x in git("diff", "--name-only", "--diff-filter=U", "-z").stdout.split("\0") if x]
         git("merge", "--abort")
-        sys.exit(f"merge conflict; main left unchanged. Have the worker merge main into {branch}, rerun pm-check, then retry.\n{r.stdout.strip()[-600:]}")
+        named = f" in {plural(len(conflicts))}: {', '.join(conflicts)}" if conflicts else ""
+        sys.exit(f"merge conflict{named}; main left unchanged. {unit_remedy(a.issue, branch)}."
+                 f"\n{r.stdout.strip()[-600:]}")
     new = git("rev-parse", "HEAD").stdout.strip()
-    log(f"merge {a.issue} {a.unit} {branch} -> main {new[:9]}")
+    log(f"merge {a.issue} {a.unit} {branch} -> main {new[:9]}{behind_log(count)}")
     flaky = f"; flaky in its check run: {', '.join(last['flaky'])} (file the flake, see .pm/run/flakes.jsonl)" if last.get("flaky") else ""
     print(f"merged {branch} into main at {new[:9]} (reviewed: {reviewed}){flaky}; units stacked on it must merge main into their branch")
     for w in stack(wts, wt):
@@ -521,7 +591,7 @@ def into_issue_branch(a, wts, wt, target):
     problems += found
     note = None
     if not found:
-        more, note = judge(branch, head, last, target, defer=True)
+        more, note, _ = judge(branch, head, last, target, defer=True)
         problems += more
     more, reviewed = unit_review(a.issue, a.unit)
     problems += more
@@ -597,10 +667,9 @@ def into_main_whole(a, wts):
     last = load(record, {})
     found = record_problems(last, head)
     problems += found
-    note = None
+    note = count = None
     if not found:
-        more, note = judge(branch, head, last, "main", defer=False,
-                           remedy=f"run pm-merge {a.issue} --take-main, then pm-check again")
+        more, note, count = judge(branch, head, last, "main")
         problems += more
     judged = None
     if lead(a.issue) == "plan":
@@ -610,15 +679,21 @@ def into_main_whole(a, wts):
         for w in mine:
             more, judged = unit_review(a.issue, w["unit"])
             problems += more
+    told = None
+    if a.dry_run:
+        more, told = predict(branch, whole_remedy(a.issue))
+        problems += more
     if problems:
         sys.exit("cannot merge:\n- " + "\n- ".join(problems))
     if note:
         print(note)
     if a.dry_run:
+        if told:
+            print(told)
         print(f"ok to merge {branch} ({head[:9]}) into main")
         return
-    new = merge(ROOT, branch, f"merge: #{a.issue} ({branch})", "main")
-    log(f"merge {a.issue} {branch} -> main {new[:9]}")
+    new = merge(ROOT, branch, f"merge: #{a.issue} ({branch})", "main", whole_remedy(a.issue))
+    log(f"merge {a.issue} {branch} -> main {new[:9]}{behind_log(count)}")
     names = ", ".join(w["unit"] for w in mine) or "none"
     reviewed = f"; reviewed: {judged}" if lead(a.issue) else ""
     print(f"merged {branch} into main at {new[:9]} (units: {names}; whole check: {record}{reviewed}){flaky_note(last)}")

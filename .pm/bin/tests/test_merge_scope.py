@@ -231,7 +231,12 @@ class MergeScope(unittest.TestCase):
         p = merge(co, 7, "h1", "--dry-run")
         self.assertEqual(line(p.stderr, "does not cover"), "", p.stdout + p.stderr)
 
-    # Given the main it merges into (R8): main gains one commit of paths G after W left it
+    # Given the main it merges into (R8, as issue 520 restated it): main gains one commit of paths G after W left it.
+    # A clean merge goes in on W's own record whatever G calls for; a conflict is refused and main is left as it was.
+
+    def events(self, co):
+        f = co / ".pm" / "run" / "events.log"
+        return f.read_text() if f.exists() else ""
 
     def test_main_gained_an_issue_file(self):
         co = checkout("behind-issue")
@@ -249,57 +254,80 @@ class MergeScope(unittest.TestCase):
         self.assertMerged(co, p)
         self.assertNames(line(p.stdout, "behind main by"), *PRODUCT)
 
-    def test_main_gained_harness_paths_is_refused(self):
+    def test_main_gained_harness_paths_merges_clean_without_a_second_check(self):
         co = checkout("behind-harness")
-        record(unit(co, [".pm/bin/a"]), covers=["harness"])
+        w = unit(co, [".pm/bin/a"])
+        record(w, covers=["harness"])
         main_gains(co, [".pm/bin/b"])
-        before = git(co, "rev-parse", "main")
         p = merge(co, 7, "h1")
-        self.assertRefused(co, p, before)
-        self.assertNames(line(p.stderr, ".pm/bin/b"), "harness", BRANCH, "merge main", "pm-check again")
+        self.assertMerged(co, p)
+        self.assertNames(line(p.stdout, "behind main by 1 path"), "harness", "GitHub Actions")
+        self.assertEqual(git(co, "rev-parse", "main^2"), git(w, "rev-parse", "HEAD"))
+        merged = [ln for ln in self.events(co).splitlines() if f"merge 7 h1 {BRANCH} -> main" in ln]
+        self.assertEqual(len(merged), 1, self.events(co))
+        self.assertTrue(merged[0].endswith(" behind main by 1 path"), merged[0])
 
-    def test_main_gained_harness_paths_dry_run_says_the_same(self):
+    def test_a_merge_that_was_not_behind_logs_no_behind(self):
+        co = checkout("not-behind-log")
+        record(unit(co, [".pm/bin/a"]), covers=["harness"])
+        p = merge(co, 7, "h1")
+        self.assertMerged(co, p)
+        self.assertNotIn("behind", p.stdout)
+        merged = [ln for ln in self.events(co).splitlines() if f"merge 7 h1 {BRANCH} -> main" in ln]
+        self.assertEqual(len(merged), 1, self.events(co))
+        self.assertNotIn("behind", merged[0])
+
+    def test_main_gained_harness_paths_dry_run_says_it_merges_clean(self):
         co = checkout("behind-harness-dry")
         record(unit(co, [".pm/bin/a"]), covers=["harness"])
         main_gains(co, [".pm/bin/b"])
         before = git(co, "rev-parse", "main")
         dry = merge(co, 7, "h1", "--dry-run")
-        real = merge(co, 7, "h1")
-        self.assertRefused(co, dry, before)
-        self.assertTrue(line(dry.stderr, ".pm/bin/b"), dry.stderr)
-        self.assertEqual(line(dry.stderr, ".pm/bin/b"), line(real.stderr, ".pm/bin/b"))
+        self.assertEqual(dry.returncode, 0, dry.stdout + dry.stderr)
+        self.assertIn("merges it into main clean", dry.stdout)
+        self.assertEqual(git(co, "rev-parse", "main"), before)
+        self.assertEqual(line(dry.stdout, "behind main by"), line(merge(co, 7, "h1").stdout, "behind main by"))
 
-    def test_branch_that_merged_main_and_checked_again_merges(self):
-        co = checkout("behind-harness-fixed")
-        w = unit(co, [".pm/bin/a"])
-        record(w, covers=["harness"])
-        main_gains(co, [".pm/bin/b"])
-        self.assertEqual(merge(co, 7, "h1", "--dry-run").returncode, 1)
-        git(w, "merge", "-q", "--no-edit", "main")
-        record(w, covers=["harness"])
-        self.assertMerged(co, merge(co, 7, "h1"))
-
-    def test_main_gained_studio_package_is_refused(self):
+    def test_main_gained_studio_package_merges(self):
         co = checkout("behind-package")
         record(unit(co, [".pm/bin/a"]), covers=["harness"])
         main_gains(co, ["studio/package.json"])
-        before = git(co, "rev-parse", "main")
         p = merge(co, 7, "h1")
-        self.assertRefused(co, p, before)
-        self.assertNames(line(p.stderr, "pm-check again"), "harness")
+        self.assertMerged(co, p)
+        self.assertNames(line(p.stdout, "behind main by"), "harness")
 
-    def test_main_gained_an_unknown_path_is_refused(self):
+    def test_main_gained_an_unknown_path_merges(self):
         co = checkout("behind-unknown")
         record(unit(co, [".pm/bin/a"]), covers=["harness"])
         main_gains(co, ["LICENSE"])
-        before = git(co, "rev-parse", "main")
-        self.assertRefused(co, merge(co, 7, "h1"), before)
+        self.assertMerged(co, merge(co, 7, "h1"))
 
     def test_main_gained_an_unknown_path_and_the_branch_only_an_issue_file(self):
         co = checkout("behind-unknown-issue")
         record(unit(co, [ISSUE]))
         main_gains(co, ["LICENSE"])
         self.assertMerged(co, merge(co, 7, "h1"))
+
+    def test_behind_main_still_asks_the_record_of_the_head(self):
+        co = checkout("behind-stale")
+        w = unit(co, [".pm/bin/a"])
+        record(w, covers=["harness"])
+        write(w, {".pm/bin/a": "changed after the check\n"})
+        git(w, "commit", "-q", "-am", "after the check")
+        main_gains(co, [".pm/bin/b"])
+        before = git(co, "rev-parse", "main")
+        p = merge(co, 7, "h1")
+        self.assertRefused(co, p, before)
+        self.assertIn("run pm-check again", p.stderr)
+
+    def test_behind_main_still_asks_coverage_of_the_branchs_own_paths(self):
+        co = checkout("behind-uncovered")
+        record(unit(co, [".pm/bin/a", "studio/src/a.tsx"]), covers=["harness"])
+        main_gains(co, [".pm/bin/b"])
+        before = git(co, "rev-parse", "main")
+        p = merge(co, 7, "h1")
+        self.assertRefused(co, p, before)
+        self.assertIn("studio", line(p.stderr, "does not cover"))
 
     def test_conflict_let_through_is_still_aborted(self):
         co = checkout("conflict")
@@ -311,6 +339,59 @@ class MergeScope(unittest.TestCase):
         self.assertIn("merge conflict", p.stderr)
         self.assertEqual(git(co, "rev-parse", "main"), before)
         self.assertEqual(git(co, "status", "--porcelain"), "")
+
+    def test_conflict_names_its_paths_and_the_leads_step(self):
+        co = checkout("conflict-step")
+        record(unit(co, {".pm/bin/a": "branch\n"}), covers=["harness"])
+        main_gains(co, {".pm/bin/a": "main\n"})
+        before = git(co, "rev-parse", "main")
+        p = merge(co, 7, "h1")
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertNames(line(p.stderr, "merge conflict"), "1 path", ".pm/bin/a", "main left unchanged",
+                         f"merges main into {BRANCH}", "pm-check")
+        self.assertEqual(git(co, "rev-parse", "main"), before)
+        self.assertEqual(git(co, "status", "--porcelain"), "")
+        self.assertNotIn(f"merge 7 h1 {BRANCH} -> main", self.events(co))
+
+    def test_conflict_of_a_harness_issue_names_the_harness_engineer(self):
+        co = checkout("conflict-engineer")
+        record(unit(co, {".pm/bin/a": "branch\n"}), covers=["harness"])
+        (co / ".pm" / "issue-7" / "brief.json").write_text(json.dumps(dict(lead="harness-engineer")))
+        main_gains(co, {".pm/bin/a": "main\n"})
+        p = merge(co, 7, "h1")
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn(f"the harness-engineer merges main into {BRANCH}", p.stderr)
+
+    def test_dry_run_predicts_the_conflict_and_touches_nothing(self):
+        co = checkout("conflict-dry")
+        w = unit(co, {".pm/bin/a": "branch\n"})
+        record(w, covers=["harness"])
+        main_gains(co, {".pm/bin/a": "main\n"})
+        before = git(co, "rev-parse", "main")
+        p = merge(co, 7, "h1", "--dry-run")
+        self.assertRefused(co, p, before)
+        self.assertNames(line(p.stderr, "merge conflict"), "1 path", ".pm/bin/a", f"merges main into {BRANCH}")
+        self.assertEqual(git(co, "status", "--porcelain"), "")
+        self.assertEqual(git(w, "status", "--porcelain"), "")
+
+    def test_conflict_resolved_by_taking_main_is_checked_again_then_merged(self):
+        co = checkout("conflict-resolved")
+        w = unit(co, {".pm/bin/a": "branch\n"})
+        record(w, covers=["harness"])
+        main_gains(co, {".pm/bin/a": "main\n"})
+        self.assertEqual(merge(co, 7, "h1").returncode, 1)
+        subprocess.run(["git", "-C", str(w), "merge", "-q", "--no-edit", "main"], capture_output=True)
+        write(w, {".pm/bin/a": "branch and main\n"})
+        git(w, "commit", "-q", "-am", "merge main, conflict resolved")
+        before = git(co, "rev-parse", "main")
+        with self.subTest("the record of the head before the merge of main is refused"):
+            p = merge(co, 7, "h1")
+            self.assertRefused(co, p, before)
+            self.assertIn("run pm-check again", p.stderr)
+        record(w, covers=["harness"])
+        p = merge(co, 7, "h1")
+        self.assertMerged(co, p)
+        self.assertEqual((co / ".pm/bin/a").read_text(), "branch and main\n")
 
 
 def earlier_record(w):
