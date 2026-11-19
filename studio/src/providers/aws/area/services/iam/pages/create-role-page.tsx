@@ -1,4 +1,4 @@
-import Alert from '@cloudscape-design/components/alert';
+import Alert, { type AlertProps } from '@cloudscape-design/components/alert';
 import type { AutosuggestProps } from '@cloudscape-design/components/autosuggest';
 import type { InputProps } from '@cloudscape-design/components/input';
 import type { TextareaProps } from '@cloudscape-design/components/textarea';
@@ -144,6 +144,14 @@ export function CreateRolePage({ connection }: ScreenPageProps) {
   // The steps whose rules were checked: their messages are shown, and follow what is typed from then on.
   const [checked, setChecked] = useState<ReadonlySet<WizardStep>>(new Set());
   const [failure, setFailure] = useState<FlashItem>();
+  // The failure at "Create role" takes the focus when it is shown (issue 492, critique P1), so a screen reader reads
+  // it at once; each new failure is a new item, so a second refusal takes it again.
+  const failureRef = useRef<AlertProps.Ref>(null);
+  useEffect(() => {
+    if (failure !== undefined) {
+      failureRef.current?.focus();
+    }
+  }, [failure]);
   const create = useCreateRole(engineOrigin);
   const pending = create.isPending;
   // Set at the press, before `isPending` re-renders (TanStack notifies on a later task): a second press in between
@@ -325,7 +333,7 @@ export function CreateRolePage({ connection }: ScreenPageProps) {
           tagsRef={tagsRef}
           failure={
             failure !== undefined && (
-              <Alert type={failure.type} header={failure.header}>
+              <Alert ref={failureRef} type={failure.type} header={failure.header}>
                 {failure.content}
               </Alert>
             )
