@@ -139,9 +139,11 @@ test('studio.iam-role-page-shows-each-policy-document-and-the-trust-policy', asy
     await expectDocument(rowOf(policies(), `${p}-read`), DOC_A, 'doc-a is still shown');
   });
 
-  await lines.line('The name `<p>-read` → S5 of that policy\'s ARN opens', async () => {
+  await lines.line("The name `<p>-read` → S5 of that policy's ARN opens", async () => {
     await openRole(page, role);
-    await policies().getByRole('link', { name: `${p}-read`, exact: true }).click(ACTION);
+    await policies()
+      .getByRole('link', { name: `${p}-read`, exact: true })
+      .click(ACTION);
     await expect.poll(() => addressOf(page), { message: 'the address of S5' }).toBe(policyPath(read));
     await expect(h1(page, `${p}-read`), "the policy's h1").toBeVisible();
   });
@@ -152,11 +154,16 @@ test('studio.iam-role-page-shows-each-policy-document-and-the-trust-policy', asy
       await openRole(page, role);
       await tab(page, TAB_TRUST).click(ACTION);
       await expect.poll(() => addressOf(page), { message: 'the address' }).toBe(`${rolePath(role)}?tab=trust`);
-      await expect(section(page, 'Trusted entities'), '"Trusted entities"').toContainText('lambda.amazonaws.com');
+      // The section names an entity as the list's column does (requirement, "Trust relationships"): the service
+      // `lambda.amazonaws.com` reads "AWS Service: lambda".
+      await expect(section(page, 'Trusted entities'), '"Trusted entities"').toContainText('AWS Service: lambda');
       const shown = await shownDocument(section(page, 'Trust policy'));
       const shownLines = shown.split('\n');
       expect(shownLines.length, 'the lines of the trust policy shown').toBeGreaterThan(1);
-      expect(shownLines.some((l) => /^ {2}\S/.test(l)), 'a line indented by two spaces').toBe(true);
+      expect(
+        shownLines.some((l) => /^ {2}\S/.test(l)),
+        'a line indented by two spaces',
+      ).toBe(true);
       expect(JSON.parse(shown), 'the trust policy shown, as JSON').toEqual(
         (await getRoleDirect(ctx, port, role)).trustPolicy,
       );

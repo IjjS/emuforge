@@ -94,7 +94,9 @@ export async function rowsOf(tableLocator: Locator, headings: string[]): Promise
 
 /** The row of `tableLocator` whose row header is `name`. */
 export function rowOf(tableLocator: Locator, name: string): Locator {
-  return tableLocator.locator('tbody tr').filter({ has: tableLocator.page().getByRole('rowheader', { name, exact: true }) });
+  return tableLocator
+    .locator('tbody tr')
+    .filter({ has: tableLocator.page().getByRole('rowheader', { name, exact: true }) });
 }
 
 /**
@@ -119,9 +121,7 @@ export async function unavailableReason(button: Locator): Promise<string | null>
 /** Whether `button` can be pressed. */
 export async function isAvailable(button: Locator): Promise<boolean> {
   await expect(button, 'the button is on the page').toHaveCount(1);
-  return button.evaluate(
-    (el) => !(el.getAttribute('aria-disabled') === 'true' || (el as HTMLButtonElement).disabled),
-  );
+  return button.evaluate((el) => !(el.getAttribute('aria-disabled') === 'true' || (el as HTMLButtonElement).disabled));
 }
 
 /** The dialog titled `title`. */

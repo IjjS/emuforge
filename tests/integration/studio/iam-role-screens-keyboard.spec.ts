@@ -49,6 +49,7 @@ const LIST_H1 = 'Roles';
 const NAV_HEADER = 'Identity and Access Management (IAM)';
 const NAV_GROUP = 'Access Management';
 const NAV_ROLES = 'Roles';
+const NAV_POLICIES = 'Policies';
 const NOTICE_CLOSE = 'Close the local emulator notice';
 const HELP_OPEN = 'Open help panel';
 const REFRESH = 'Refresh roles';
@@ -64,7 +65,12 @@ const NO_MATCHES = 'No matches';
 const LIST_NOT_READ = 'The role list could not be read.';
 const NOT_FOUND = 'Role not found';
 const REFRESH_ROLE = 'Refresh role';
-const TABS = ['Permissions', 'Trust relationships', 'Tags', 'Last Accessed', 'Revoke sessions'];
+// Issue 535 (its test-criteria.md, "Rewritten lines of checks on `main`"): the page's tab bar is two tabs, below
+// "Summary"; "Delete" stands in the header, and the tab "Permissions" holds the actions of "Permissions policies".
+const TABS = ['Permissions', 'Trust relationships'];
+/** The actions of "Permissions policies" that are available with no row chosen, in their order. */
+const ADD_INLINE = 'Add inline policy';
+const ATTACH = 'Attach policies';
 const EDIT = 'Edit';
 const EDIT_DIALOG = 'Edit summary';
 const STEP_TITLES = ['Select trusted entity', 'Add permissions', 'Name, review, and create'] as const;
@@ -220,6 +226,8 @@ function listOrder(names: string[]): Expected[] {
       optional: true,
     },
     { what: `the side navigation's link "${NAV_ROLES}"`, match: named(NAV_ROLES, 'link') },
+    // Issue 535: the side navigation's second entry.
+    { what: `the side navigation's link "${NAV_POLICIES}"`, match: named(NAV_POLICIES, 'link') },
     { what: 'the crumb "EmuForge"', match: named('EmuForge', 'link') },
     { what: 'the crumb "AWS"', match: named('AWS', 'link') },
     { what: 'the crumb "IAM"', match: named('IAM', 'link') },
@@ -405,11 +413,12 @@ test('studio.iam-role-screens-keyboard-and-layout', async ({ ctx, page, context 
 
   // Issue 467 (requirement R9, rule 3) replaced 'on a role\'s page → "Refresh role", the five tabs and "Edit" are
   // reached in that order' with the walk below: "Copy ARN" follows "Edit", directly before the ARN's text, and each of
-  // them draws a focus indicator.
+  // them draws a focus indicator. Issue 535 rewrote the walk's stops on a role's page: the header's "Refresh role" and
+  // "Delete", "Edit" of "Summary" (with its "Copy ARN"), the two tabs, then the controls of "Permissions policies".
   const copyArn = copyControl(F_ARN);
 
   await lines.line(
-    'With the keyboard only on a role\'s page → "Refresh role", the five tabs, "Edit" and "Copy ARN" are reached in that order, "Copy ARN" directly before the ARN\'s text, focus visible on each; on the wizard\'s step 1 → the entity types, "Service or use case", then "Cancel", "Next"; on step 3 → "Role name", "Description", the two "Edit" buttons, "Add new tag", then "Cancel", "Previous", "Create role"',
+    'With the keyboard only on a role\'s page → the header\'s "Refresh role" and "Delete", "Edit" of "Summary" and "Copy ARN", the two tabs, then the controls of "Permissions policies" are reached in that order, "Copy ARN" directly before the ARN\'s text, focus visible on each; on the wizard\'s step 1 → the entity types, "Service or use case", then "Cancel", "Next"; on step 3 → "Role name", "Description", the two "Edit" buttons, "Add new tag", then "Cancel", "Previous", "Create role"',
     async () => {
       const problems: string[] = [];
 
@@ -417,13 +426,17 @@ test('studio.iam-role-screens-keyboard-and-layout', async ({ ctx, page, context 
       const arn = (await getRoleDirect(ctx, port, two[0])).arn;
       await openRole(page, two[0]);
       await expect(pairValueOf(page, F_ARN), `"${F_ARN}" of ${two[0]}`).toContainText(arn);
-      const onPage = await keyboardWalk(page, named(copyArn, 'button'));
+      const onPage = await keyboardWalk(page, named(ATTACH, 'button'));
       ctx.log(`a role's page, reached: ${onPage.map(shown).join(', ')}`);
-      const pageWanted = [REFRESH_ROLE, ...TABS, EDIT, copyArn];
+      // With no row chosen, the table's actions on a chosen policy are unavailable and are no Tab stops.
+      const pageWanted = [REFRESH_ROLE, DELETE, EDIT, copyArn, ...TABS, ADD_INLINE, ATTACH];
       const wantedOnPage = (stop: Stop) =>
         named(REFRESH_ROLE, 'button')(stop) ||
+        named(DELETE, 'button')(stop) ||
         named(EDIT, 'button')(stop) ||
         named(copyArn, 'button')(stop) ||
+        named(ADD_INLINE, 'button')(stop) ||
+        named(ATTACH, 'button')(stop) ||
         (stop.role === 'tab' && TABS.includes(stop.name));
       const pageSeen = among(onPage, wantedOnPage);
       if (JSON.stringify(pageSeen) !== JSON.stringify(pageWanted)) {

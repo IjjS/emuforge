@@ -778,7 +778,12 @@ export async function policyDefaultTextDirect(caller: Caller, port: number, arn:
 }
 
 /** The document of the inline policy `name` of `role` (a direct `GetRolePolicy`), percent-decoded once. */
-export async function inlinePolicyTextDirect(caller: Caller, port: number, role: string, name: string): Promise<string> {
+export async function inlinePolicyTextDirect(
+  caller: Caller,
+  port: number,
+  role: string,
+  name: string,
+): Promise<string> {
   const result = await iamResult(
     caller,
     port,
@@ -829,7 +834,13 @@ export async function policiesPageDirect(
  * answered 404 `NoSuchEntity` by the first step and nothing else is sent.
  */
 export async function deletePolicyDirect(caller: Caller, port: number, arn: string): Promise<Read> {
-  const entities = await iamAnswer(caller, port, 'ListEntitiesForPolicy', { PolicyArn: arn, MaxItems: DIRECT_PAGE }, arn);
+  const entities = await iamAnswer(
+    caller,
+    port,
+    'ListEntitiesForPolicy',
+    { PolicyArn: arn, MaxItems: DIRECT_PAGE },
+    arn,
+  );
   if (!entities.ok) return entities;
   const result = at(entities.xml, 'ListEntitiesForPolicyResponse', 'ListEntitiesForPolicyResult');
   for (const m of members(result, 'PolicyRoles')) {
