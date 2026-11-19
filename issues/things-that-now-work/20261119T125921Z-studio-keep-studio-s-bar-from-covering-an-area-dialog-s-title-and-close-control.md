@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: bug
 Issue-Source: plan
 Issue-Key: studio|area.dialog-under-studio-bar|layering
-Issue-Check-Ids:
+Issue-Check-Ids: studio.aws-area-dialog-is-above-studio-bar
 Issue-Commit: a6f561bdbfba15b2c8293eccac62ed66e8e0684a
 
 # Keep Studio's bar from covering an area dialog's title and close control

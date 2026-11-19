@@ -4,13 +4,13 @@ import { I18nProvider } from '@cloudscape-design/components/i18n';
 import englishMessages from '@cloudscape-design/components/i18n/messages/all.en';
 import SideNavigation, { type SideNavigationProps } from '@cloudscape-design/components/side-navigation';
 import SpaceBetween from '@cloudscape-design/components/space-between';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { useLocation } from 'react-router';
 
 import { AWS_NAME, AWS_PATH, AWS_SHORT_NAME, servicePath } from '../identity';
 import { SERVICES } from '../services';
 import { areaPage, areaPageTitle, type AreaPage } from './area-page';
-import { AreaRootContext } from './area-root';
+import { AreaRootContext, holdsModal } from './area-root';
 import { AREA_ROOT_CLASS } from './styles/root-class';
 import { useColourMode } from './colour-mode';
 import { AreaFlash, FlashAnnouncer } from './components/area-flash';
@@ -47,6 +47,11 @@ export interface AreaLayoutProps {
    * On a change the routed page alone is mounted again and the flash says which target it was read from.
    */
   targetGeneration?: number | undefined;
+  /**
+   * Called with `true` once a dialog of the area opens and with `false` once none is open, so Studio draws an open
+   * dialog above its bar; absent, the area tells no one.
+   */
+  onModal?: ((open: boolean) => void) | undefined;
 }
 
 /** The area's own navigation, on every page that is not a screen with its own (requirement R5.1). */
@@ -164,6 +169,37 @@ function PageContent({ page, pathname, connection }: { page: AreaPage; pathname:
 }
 
 /**
+ * Tells `onModal` whether a dialog of the area is open: whether the area's root holds a container its modal root made
+ * (`area-modal.tsx`), read again on each change of the root's children. Told only when it changes; `false` once the
+ * area is gone, so Studio's frame is never left as it is under a dialog.
+ */
+function useModalReport(root: RefObject<HTMLDivElement | null>, onModal: ((open: boolean) => void) | undefined): void {
+  useEffect(() => {
+    const element = root.current;
+    if (onModal === undefined || element === null) {
+      return;
+    }
+    let open = false;
+    const read = () => {
+      const now = holdsModal(element);
+      if (now !== open) {
+        open = now;
+        onModal(now);
+      }
+    };
+    read();
+    const observer = new MutationObserver(read);
+    observer.observe(element, { childList: true });
+    return () => {
+      observer.disconnect();
+      if (open) {
+        onModal(false);
+      }
+    };
+  }, [root, onModal]);
+}
+
+/**
  * The AWS area, at `/aws` and below, as the AWS console: an `AppLayout` with the side navigation of the services
  * and breadcrumbs from EmuForge. A `console` screen (`screens.ts`) brings its own title, crumbs and side navigation,
  * and its help, which the layout's tools region shows as the help panel; a page that gives no help has no panel and
@@ -186,6 +222,7 @@ export function AreaLayout({
   routeChanges,
   connection,
   targetGeneration = 0,
+  onModal,
 }: AreaLayoutProps) {
   const { pathname, search } = useLocation();
   // The address's query, which a screen's crumbs and title may read (a folder's `?prefix=` of S3's objects).
@@ -193,6 +230,7 @@ export function AreaLayout({
   const handleFollow = useFollow();
   const root = useRef<HTMLDivElement>(null);
   useColourMode(root);
+  useModalReport(root, onModal);
 
   const page = areaPage(pathname);
   const title = areaPageTitle(page, query);

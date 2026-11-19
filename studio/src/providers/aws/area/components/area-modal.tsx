@@ -1,7 +1,7 @@
 import Modal, { type ModalProps } from '@cloudscape-design/components/modal';
 import { useContext, useMemo } from 'react';
 
-import { AreaRootContext } from '../area-root';
+import { AreaRootContext, createModalContainer } from '../area-root';
 
 export type AreaModalProps = Omit<ModalProps, 'modalRoot' | 'getModalRoot' | 'removeModalRoot'>;
 
@@ -49,7 +49,7 @@ export function useAreaModalRoot(): AreaModalRoot {
           if (area === null) {
             throw new Error('A modal of the AWS area opened outside the area.');
           }
-          const container = document.createElement('div');
+          const container = createModalContainer();
           area.appendChild(container);
           return container;
         }),
