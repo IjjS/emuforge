@@ -137,6 +137,41 @@ export const SERVICE_LABELS: string[] = fs
   })
   .sort(compareLabels);
 
+/** A service as the checkout under test holds it: its label, and whether its folder holds a `screens.ts`. */
+export interface ServiceOnDisk {
+  label: string;
+  /** The service's folder holds a `screens.ts`: it has a Studio screen (issue 494, requirement R1). */
+  hasScreen: boolean;
+}
+
+/**
+ * Every service of `SERVICES_DIR` in label order, each with whether its folder holds a `screens.ts`, read at run time
+ * when this file loads (issues 494 and 61, test-criteria.md: "the folders with a screen" is computed, never
+ * written). No check holds the names or the number of the services that have a screen.
+ */
+export const SERVICES_ON_DISK: ServiceOnDisk[] = fs
+  .readdirSync(SERVICES_DIR, { withFileTypes: true })
+  .filter((entry) => entry.isDirectory() && fs.existsSync(path.join(SERVICES_DIR, entry.name, 'service.json')))
+  .map((entry) => {
+    const file = JSON.parse(fs.readFileSync(path.join(SERVICES_DIR, entry.name, 'service.json'), 'utf8')) as {
+      label?: unknown;
+    };
+    return {
+      label: typeof file.label === 'string' ? file.label : '',
+      hasScreen: fs.existsSync(path.join(SERVICES_DIR, entry.name, 'screens.ts')),
+    };
+  })
+  .sort((a, b) => compareLabels(a.label, b.label));
+
+/**
+ * The first link of "Services" on the AWS area's index (`/aws`), the first Tab stop of the page's content: the area
+ * lists the services that have a Studio screen first, in label order, then the others (issue 61, R5), and one list in
+ * label order when none or every one has a screen. Computed from `SERVICES_ON_DISK` (issue 494, `decisions.md`, PM
+ * decisions: the checks that name this link take it from the page's own source, never a written name).
+ */
+export const INDEX_FIRST_LINK: string =
+  (SERVICES_ON_DISK.find((service) => service.hasScreen) ?? SERVICES_ON_DISK[0])?.label ?? '';
+
 /** The lines of the start command for `port` (requirement 3.3), trimmed. */
 export function startCommandLines(port: number): string[] {
   return [
