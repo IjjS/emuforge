@@ -214,7 +214,9 @@ def wake_watchd():
 # --- a pane that pm-pane opens or closes now (issue 504) ----------------------------------------------------------
 # While `pm-pane new` starts an agent and until its entry is in the registry, and while `pm-pane close` takes an entry
 # out and closes the pane, herdr and the registry differ on purpose. pm-pane marks the pane's name for that time with
-# a file .pm/run/pane-ops/<name> holding its pid; pm-watchd tells no `EVENT unregistered` of a marked name.
+# a file .pm/run/pane-ops/<name> holding its pid; pm-watchd tells no `EVENT unregistered` of a marked name. A close
+# keeps its mark until herdr lists no agent in the closed pane (at most 5 s), and pm-watchd reads the marks before
+# herdr's agent list and again after the registry, so a pane mid-open or mid-close is marked at one of them (issue 510).
 PANE_OPS = RUN / "pane-ops"
 _OP_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 

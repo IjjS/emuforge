@@ -7,15 +7,20 @@
 - Waiting, Slots: waiting.json rows (pm-pane's QUEUE, pm-check's WAIT) and pm-worktree's port slots taken from
   several processes at once: every row kept, no slot given twice.
 - Unregistered: pm-watchd's judgement `unregistered` (run on the fixture's copy, its `main()` left out) and
-  `_pmlib.pane_ops`; the daemon calls them on every look; the daemon's lifetime lock.
+  `_pmlib.pane_ops`; the daemon calls them on every look, the marks read before herdr's list and after the registry;
+  the daemon's lifetime lock.
+- CloseSettles: `pm-pane close` with a stand-in herdr that lists the closed pane's agent for a moment (issue 510): a
+  stand-in daemon looking as pm-watchd does meanwhile tells no `EVENT unregistered`; the wait is bounded at 5 s.
 - Texts: the daemon's docstring and the pm's Events table name `EVENT unregistered`.
 """
 import ast
 import fcntl
 import json
 import os
+import pathlib
 import subprocess
 import sys
+import time
 import unittest
 
 from _fixture import CHECKOUT, clean_env, make
@@ -25,7 +30,9 @@ PY = sys.executable
 
 # A stand-in herdr: tabs #1..#99 (T<n>), one shell pane A<n> in each, the panes a split made (one per calling pm-pane,
 # remembered as files under $HERDR_STATE/panes/), the pane C7 of a registered pane; `agent start` takes 0.5 s; the
-# agents are $HERDR_AGENTS (JSON). Every call is appended to $HERDR_STATE/calls.jsonl.
+# agents are $HERDR_AGENTS (JSON). `pane close` records the time under $HERDR_STATE/closed/; `agent list` leaves out an
+# agent whose pane was closed $HERDR_CLOSE_LAG seconds ago or more (default 0; `never` keeps it listed). Every call is
+# appended to $HERDR_STATE/calls.jsonl.
 HERDR = r'''#!/usr/bin/env -S python3 -I
 import json, os, sys, time
 args = sys.argv[1:]
@@ -34,6 +41,9 @@ with open(os.path.join(state, "calls.jsonl"), "a") as f:
     f.write(json.dumps(args) + "\n")
 made = os.path.join(state, "panes")
 agents = json.loads(os.environ.get("HERDR_AGENTS", "[]"))
+closed = os.path.join(state, "closed")
+os.makedirs(closed, exist_ok=True)
+lag = os.environ.get("HERDR_CLOSE_LAG", "0")
 if args[:2] == ["tab", "list"]:
     out = {"tabs": [{"tab_id": f"T{n}", "label": f"#{n}"} for n in range(1, 100)]}
 elif args[:2] == ["pane", "list"]:
@@ -48,8 +58,18 @@ elif args[:2] == ["pane", "split"]:
 elif args[:2] == ["agent", "start"]:
     time.sleep(0.5)
     out = {"agent": {"name": args[2]}}
+elif args[:2] == ["pane", "close"]:
+    with open(os.path.join(closed, args[2]), "w") as f:
+        f.write(str(time.time()))
+    out = {}
 elif args[:2] == ["agent", "list"]:
-    out = {"agents": agents}
+    def dropped(a):
+        try:
+            at = float(open(os.path.join(closed, a["pane_id"])).read())
+        except (OSError, ValueError):
+            return False
+        return lag != "never" and time.time() - at >= float(lag)
+    out = {"agents": [a for a in agents if not dropped(a)]}
 else:
     out = {}
 print(json.dumps({"result": out}))
@@ -72,7 +92,7 @@ class Case(unittest.TestCase):
         (stub / "herdr").chmod(0o755)
         self.stub = stub
 
-    def env(self, agents=()):
+    def env(self, agents=(), lag=None):
         env = clean_env()
         for k in ("HERDR_PANE_ID", "HERDR_WORKSPACE_ID", "HERDR_SOCKET_PATH"):
             env.pop(k, None)
@@ -80,6 +100,8 @@ class Case(unittest.TestCase):
         env["HOME"] = str(self.co / "home")
         env["HERDR_STATE"] = str(self.state)
         env["HERDR_AGENTS"] = json.dumps(list(agents))
+        if lag is not None:
+            env["HERDR_CLOSE_LAG"] = str(lag)
         return env
 
     def at_once(self, cmds, env=None, timeout=120):
@@ -264,7 +286,115 @@ class Unregistered(Case):
         tree = ast.parse((CHECKOUT / ".pm" / "bin" / "pm-watchd").read_text())
         run = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "run")
         called = {n.func.id for n in ast.walk(run) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
-        self.assertTrue({"unregistered", "pane_ops"} <= called, called)
+        self.assertTrue({"unregistered", "look"} <= called, called)
+
+    def test_the_daemon_reads_the_marks_before_herdrs_list(self):
+        # issue 510: a mark that goes between herdr's list and the read of the marks would be missed
+        tree = ast.parse((CHECKOUT / ".pm" / "bin" / "pm-watchd").read_text())
+        fns = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+
+        def calls(fn):
+            return [n.func.id for n in ast.walk(fns[fn]) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)]
+        # and again after the registry: a close that sets its mark after the first read and takes the entry out
+        # before the registry's read is marked at the second
+        self.assertFalse({"agents", "pane_ops"} & set(calls("run")), "run() reads herdr's list and the marks apart")
+        reads = sorted((n.lineno, n.col_offset, n.func.id) for n in ast.walk(fns["look"]) if isinstance(n, ast.Call)
+                       and isinstance(n.func, ast.Name) and n.func.id in ("agents", "pane_ops", "load"))
+        self.assertEqual([c for _, _, c in reads], ["pane_ops", "agents", "load", "pane_ops"])
+        unreg = next(n for n in ast.walk(fns["run"]) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                     and n.func.id == "unregistered")
+        self.assertIsInstance(unreg.args[1], ast.Name, "unregistered() is judged on the registry look() read")
+
+
+# a stand-in daemon: the fixture's pm-watchd without its main(); it looks as run() does (look(), then unregistered()
+# on what look() read) every 50 ms until the file argv[2] exists, then once more; prints the events, the looks and the
+# looks whose herdr list still held the pane argv[3]
+DAEMON = """
+import json, os, sys, time
+p = sys.argv[1]
+src = open(p).read().rsplit("\\nmain()", 1)[0]
+ns = {"__file__": p, "__name__": "watchd"}
+exec(compile(src, p, "exec"), ns)
+told, events, looks, held = {}, [], 0, 0
+open(sys.argv[2] + ".ready", "w").close()
+while True:
+    last = os.path.exists(sys.argv[2])
+    ops, ags, reg = ns["look"]()
+    if ags is not None:
+        looks += 1
+        held += any(a.get("pane_id") == sys.argv[3] for a in ags)
+        events += ns["unregistered"](ags, reg, ops, told)
+    if last:
+        break
+    time.sleep(0.05)
+print(json.dumps([events, looks, held]))
+"""
+
+
+class CloseSettles(Case):
+    """issue 510: herdr lists a closed pane's agent for a moment after `pm-pane close`; the close keeps its mark until
+    herdr lists it no more, at most CLOSE_SETTLE s."""
+    scripts = ("pm-pane", "pm-watchd")
+
+    def setup_pane(self, case):
+        self.fixture(case)
+        cwd = f"{self.co}-7-s1"
+        entry = dict(name="i7-worker-s1", issue="7", role="worker", unit="s1", kind="claude", side="studio",
+                     pane_id="P1", tab_id="T7", cwd=cwd, gone=False)
+        (self.run_dir / "panes.json").write_text(json.dumps([entry]))
+        (self.run_dir / "pm.json").write_text(json.dumps(dict(pm_pane="PM0", pm_session="S0")))
+        return [dict(name="i7-worker-s1", pane_id="P1", tab_id="T7", cwd=cwd, agent="claude", agent_status="idle")]
+
+    def test_a_close_whose_agent_stays_listed_a_moment_is_not_told(self):
+        agents = self.setup_pane("close-lag")
+        env = self.env(agents, lag=1)
+        stop = self.co / "output" / "daemon-stop"
+        daemon = subprocess.Popen([PY, "-I", "-c", DAEMON, str(self.bin / "pm-watchd"), str(stop), "P1"],
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=str(self.co), env=env)
+        try:
+            ready = pathlib.Path(str(stop) + ".ready")
+            t0 = time.monotonic()
+            while not ready.exists() and time.monotonic() - t0 < 30:
+                time.sleep(0.05)
+            self.assertTrue(ready.exists(), "the stand-in daemon did not start")
+            rc, out, err = self.at_once([[str(self.bin / "pm-pane"), "close", "i7-worker-s1"]], env=env)[0]
+            self.assertEqual(rc, 0, f"{out}\n{err}")
+            stop.touch()
+            o, e = daemon.communicate(timeout=60)
+        finally:
+            if daemon.poll() is None:
+                daemon.kill()
+                daemon.wait()
+        self.assertEqual(daemon.returncode, 0, e)
+        events, looks, held = json.loads(o.strip().splitlines()[-1])
+        self.assertGreater(held, 0, "herdr never listed the agent while the daemon looked")
+        self.assertEqual(events, [])
+        self.assertEqual(self.read("panes.json"), [])
+        ops = self.run_dir / "pane-ops"
+        self.assertEqual(list(ops.iterdir()) if ops.exists() else [], [])
+
+    def test_a_close_waits_at_most_its_bound(self):
+        agents = self.setup_pane("close-never")
+        t0 = time.monotonic()
+        rc, out, err = self.at_once([[str(self.bin / "pm-pane"), "close", "i7-worker-s1"]],
+                                    env=self.env(agents, lag="never"))[0]
+        took = time.monotonic() - t0
+        self.assertEqual(rc, 0, f"{out}\n{err}")
+        self.assertGreaterEqual(took, 4.5)
+        self.assertLess(took, 10)
+        log = (self.run_dir / "events.log").read_text()
+        self.assertIn("pane close i7-worker-s1: herdr still lists its agent after 5 s", log)
+        ops = self.run_dir / "pane-ops"
+        self.assertEqual(list(ops.iterdir()) if ops.exists() else [], [])
+
+    def test_a_close_whose_agent_is_gone_at_once_does_not_wait(self):
+        agents = self.setup_pane("close-at-once")
+        t0 = time.monotonic()
+        rc, out, err = self.at_once([[str(self.bin / "pm-pane"), "close", "i7-worker-s1"]], env=self.env(agents))[0]
+        self.assertEqual(rc, 0, f"{out}\n{err}")
+        # the orphan sweep after the close looks for 2 s; the wait adds nothing to it
+        self.assertLess(time.monotonic() - t0, 4.5)
+        self.assertNotIn("herdr still lists", (self.run_dir / "events.log").read_text())
 
 
 class PaneOps(Case):
