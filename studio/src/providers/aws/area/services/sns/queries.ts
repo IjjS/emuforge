@@ -158,10 +158,17 @@ function usePagedListing<T>({ key, endpoint, enabled, operation, read }: PagedOp
       }
       const page = position.page;
       const answer = await read(endpoint, token, signal);
-      // Kept as this page's token only while the user is still on it in the same listing.
+      // Kept as this page's token only while the user is still on it in the same listing. A page after the first
+      // read empty (its last row deleted, here or elsewhere) is never shown: the listing goes to its first page.
       setPosition((current) => {
         const at = current.listing === listing ? current : fresh(listing);
-        return at.page === page ? { ...at, tokens: withToken(at.tokens, page, answer.next) } : current;
+        if (at.page !== page) {
+          return current;
+        }
+        if (page > 0 && answer.items.length === 0) {
+          return { ...at, page: 0, visit: at.visit + 1 };
+        }
+        return { ...at, tokens: withToken(at.tokens, page, answer.next) };
       });
       return answer;
     },
@@ -171,7 +178,9 @@ function usePagedListing<T>({ key, endpoint, enabled, operation, read }: PagedOp
     retry: false,
     structuralSharing: false,
   });
-  const answer = query.data;
+  // An empty page after the first is not shown while the listing moves to its first page.
+  const answer =
+    query.data !== undefined && position.page > 0 && query.data.items.length === 0 ? undefined : query.data;
   const tokens = answer === undefined ? position.tokens : withToken(position.tokens, position.page, answer.next);
   const openEnd = tokens.length > 0 && tokens[tokens.length - 1] !== undefined;
 

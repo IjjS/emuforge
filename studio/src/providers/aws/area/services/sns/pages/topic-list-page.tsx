@@ -196,9 +196,9 @@ export function TopicListPage({ connection }: { connection: AreaConnection }) {
         setDeleting(false);
         setDeleteOpen(false);
         setSelectedArn(undefined);
-        // The page shown is then empty: the list is read again from its first page.
+        // The page shown is then empty: the list goes to its first page and reads it.
         if (lastOnPage) {
-          refresh();
+          goToPage(1);
         }
         flash.show([{ type: 'success', content: `Deleted topic ${name}` }]);
         deleteRef.current?.focus();

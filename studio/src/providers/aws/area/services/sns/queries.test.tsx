@@ -141,6 +141,46 @@ describe('the topics listing', () => {
     expect(back.args[1]).toBeUndefined();
   });
 
+  it('a page after the first read empty → the first page is read, never shown empty', async () => {
+    const calls = held(api.listTopics);
+    const { result } = renderHook(() => useTopicListing(ENDPOINT), { wrapper });
+    const first = await nth(calls, 0);
+    act(() => {
+      first.resolve({ arns: ['a'], nextToken: '100' });
+    });
+    await waitFor(() => {
+      expect(result.current.items).toEqual(['a']);
+    });
+    act(() => {
+      result.current.goToPage(2);
+    });
+    const second = await nth(calls, 1);
+    act(() => {
+      second.resolve({ arns: ['b'] });
+    });
+    await waitFor(() => {
+      expect(result.current.items).toEqual(['b']);
+    });
+    act(() => {
+      result.current.refresh();
+    });
+    const again = await nth(calls, 2);
+    expect(again.args[1]).toBe('100');
+    act(() => {
+      again.resolve({ arns: [] });
+    });
+    const back = await nth(calls, 3);
+    expect(back.args[1]).toBeUndefined();
+    expect(result.current.items).toBeUndefined();
+    expect(result.current.currentPage).toBe(1);
+    act(() => {
+      back.resolve({ arns: ['a'], nextToken: '100' });
+    });
+    await waitFor(() => {
+      expect(result.current.items).toEqual(['a']);
+    });
+  });
+
   it('a late answer of an earlier page does not replace a newer one', async () => {
     const calls = held(api.listTopics);
     const { result } = renderHook(() => useTopicListing(ENDPOINT), { wrapper });
@@ -193,10 +233,10 @@ describe("a topic's subscriptions", () => {
     const second = await nth(calls, 1);
     expect(second.args.slice(0, 3)).toEqual([ENDPOINT, TOPIC, 't2']);
     act(() => {
-      second.resolve({ subscriptions: [] });
+      second.resolve({ subscriptions: [{ ...row, arn: `${TOPIC}:2` }] });
     });
     await waitFor(() => {
-      expect(result.current.items).toEqual([]);
+      expect(result.current.items).toEqual([{ ...row, arn: `${TOPIC}:2` }]);
     });
     act(() => {
       result.current.refresh();
@@ -208,6 +248,31 @@ describe("a topic's subscriptions", () => {
       result.current.goToPage(1);
     });
     expect((await nth(calls, 3)).args[2]).toBeUndefined();
+  });
+
+  it('a page after the first read empty → the first page is read, never shown empty', async () => {
+    const calls = held(api.listSubscriptions);
+    const { result } = renderHook(() => useSubscriptionListing(ENDPOINT, TOPIC), { wrapper });
+    const row = { arn: `${TOPIC}:1`, protocol: 'sqs', endpoint: QUEUE, pending: false };
+    const first = await nth(calls, 0);
+    act(() => {
+      first.resolve({ subscriptions: [row], nextToken: 't2' });
+    });
+    await waitFor(() => {
+      expect(result.current.items).toEqual([row]);
+    });
+    act(() => {
+      result.current.goToPage(2);
+    });
+    const second = await nth(calls, 1);
+    expect(second.args[2]).toBe('t2');
+    act(() => {
+      second.resolve({ subscriptions: [] });
+    });
+    const back = await nth(calls, 2);
+    expect(back.args[2]).toBeUndefined();
+    expect(result.current.items).toBeUndefined();
+    expect(result.current.currentPage).toBe(1);
   });
 });
 
