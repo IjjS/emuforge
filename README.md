@@ -123,11 +123,10 @@ emulator is not started: the start exits non-zero, Docker's message names the `e
 
 To open Studio from another device, put something on the host in front of Studio's port that keeps the browser's
 `Host` header (a `tailscale serve`, a reverse proxy, an SSH forward), and name the host name the browser uses in
-`EMUFORGE_ALLOW_HOSTS`, several separated by `,`:
-
-```bash
-EMUFORGE_ALLOW_HOSTS=my-machine.example.ts.net docker compose up -d --build
-```
+`EMUFORGE_ALLOW_HOSTS`, several separated by `,`. Give it to the start line as the port variables are given in
+[Ports](#ports): `EMUFORGE_ALLOW_HOSTS=my-machine.example.ts.net` before the start line in bash, or
+`$env:EMUFORGE_ALLOW_HOSTS="my-machine.example.ts.net";` before it in PowerShell. Without it, or with it empty,
+Studio answers only `127.0.0.1:8296`.
 
 A name without a port matches any port in `Host`; `name:port` matches only that port. Studio then answers that name
 as it answers `127.0.0.1:8296`, and the page sends its engine and AWS requests through Studio's own port, under
