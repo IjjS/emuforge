@@ -1,4 +1,5 @@
 import createWrapper, { type SelectWrapper } from '@cloudscape-design/components/test-utils/dom';
+import SpaceBetweenWrapper from '@cloudscape-design/components/test-utils/dom/space-between';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState, useSyncExternalStore } from 'react';
@@ -1130,6 +1131,25 @@ describe('issue 516: the code of a new function', () => {
     expect(formField('File')).toBeDefined();
     expect(constraintOf('File')).toBe('One .zip file.');
     expect(handlerField().value).toBe('');
+    expect(constraintOf('Handler')).toBe('1 to 128 characters, no spaces.');
+    expect(norm(formField('Handler')?.findDescription()?.getElement().textContent)).toBe(
+      'The function the emulator calls, as file.function: for example index.handler.',
+    );
+    // The two fields do not touch: they are two items of one SpaceBetween.
+    const fileElement = formField('File')?.getElement() ?? null;
+    const handlerElement = formField('Handler')?.getElement() ?? null;
+    let common = fileElement?.parentElement ?? null;
+    while (common !== null && handlerElement !== null && !common.contains(handlerElement)) {
+      common = common.parentElement;
+    }
+    expect(common?.matches(`.${SpaceBetweenWrapper.rootSelector}`)).toBe(true);
+    const itemOf = (element: Element | null) =>
+      [...(common?.children ?? [])].find((child) => element !== null && child.contains(element));
+    expect(itemOf(fileElement)).not.toBe(itemOf(handlerElement));
+    chooseRuntime('Python 3.12');
+    expect(norm(formField('Handler')?.findDescription()?.getElement().textContent)).toBe(
+      'The function the emulator calls, as file.function: for example lambda_function.lambda_handler.',
+    );
     expect(constraintOf('Handler')).toBe('1 to 128 characters, no spaces.');
     expect(messageOf('File')).toBeUndefined();
     expect(messageOf('Handler')).toBeUndefined();
