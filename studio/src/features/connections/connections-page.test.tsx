@@ -401,6 +401,30 @@ describe('add (R4)', () => {
     expect(engine.targetRequests('add')).toEqual([]);
   });
 
+  it("a field's error clears when its value changes; the other field's error stays until the next add", async () => {
+    await openPage();
+
+    await add('Bad Name', 'http://example.com');
+    expect(nameInput()).toHaveAttribute('aria-invalid', 'true');
+    expect(endpointInput()).toHaveAttribute('aria-invalid', 'true');
+    const endpointError = endpointInput().getAttribute('aria-describedby');
+
+    fireEvent.change(nameInput(), { target: { value: 'Bad Name2' } });
+    await advance();
+
+    expect(nameInput()).not.toHaveAttribute('aria-invalid');
+    expect(document.querySelectorAll('.st-field-error')).toHaveLength(1);
+    expect(endpointInput()).toHaveAttribute('aria-invalid', 'true');
+    expect(endpointInput().getAttribute('aria-describedby')).toBe(endpointError);
+
+    fireEvent.change(endpointInput(), { target: { value: 'http://example.com/' } });
+    await advance();
+
+    expect(endpointInput()).not.toHaveAttribute('aria-invalid');
+    expect(document.querySelector('.st-field-error')).toBeNull();
+    expect(engine.targetRequests('add')).toEqual([]);
+  });
+
   it('refused TargetExists → beside Name, focus on Name, the values kept', async () => {
     await openPage();
 

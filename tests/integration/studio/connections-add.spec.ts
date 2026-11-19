@@ -42,6 +42,8 @@ test('studio.connections-add-connection', async ({ page, ctx }) => {
     await addThroughForm(page, `${p}h`, endpoint);
     await expect(page.getByRole('main').getByText(NOT_LOOPBACK, { exact: true })).toBeVisible(ACTION);
     const form = addForm(page);
+    // Beside Endpoint: the refusal is the field's own description.
+    await expect(form.endpoint).toHaveAccessibleDescription(new RegExp(escapeRe(NOT_LOOPBACK)), ACTION);
     await expect(form.name).toHaveValue(`${p}h`, ACTION);
     await expect(form.endpoint).toHaveValue(endpoint, ACTION);
     expect(await names()).not.toContain(`${p}h`);
@@ -54,6 +56,11 @@ test('studio.connections-add-connection', async ({ page, ctx }) => {
         exact: true,
       }),
     ).toBeVisible(ACTION);
+    // Beside Name: the refusal is the field's own description.
+    await expect(addForm(page).name).toHaveAccessibleDescription(
+      new RegExp(escapeRe(`A connection named ${second} already exists. Choose another name.`)),
+      ACTION,
+    );
     const list = await listTargets(engine, 'after the refused second add');
     expect(list.targets.filter((t) => t.name === second).map((t) => t.endpoint)).toEqual([endpointOf(b.port)]);
   });
@@ -68,3 +75,8 @@ test('studio.connections-add-connection', async ({ page, ctx }) => {
     expect(await names()).not.toContain(`${p}e`);
   });
 });
+
+/** `text` as a regular expression that matches it literally. */
+function escapeRe(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
