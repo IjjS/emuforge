@@ -1605,3 +1605,124 @@ describe("the area's target generation (issue 486, s1)", () => {
     expect(mounts).toBe(1);
   });
 });
+
+describe('a dialog of the area and Studio’s bar (issue 531, s1)', () => {
+  /**
+   * A stub area with a button that opens a dialog in the area's own root, as the AWS area's modal root does, and tells
+   * the frame through `onModal` while it is open. The dialog traps focus: Tab and Shift+Tab cycle among its buttons.
+   */
+  function DialogArea({ onPageTitle, onModal }: ProviderAreaProps) {
+    const [open, setOpen] = useState(false);
+    const close = useRef<HTMLButtonElement>(null);
+    const opener = useRef<HTMLButtonElement>(null);
+    useEffect(() => {
+      onPageTitle('Stub page');
+    }, [onPageTitle]);
+    useEffect(() => {
+      if (!open) {
+        return;
+      }
+      const back = opener.current;
+      onModal(true);
+      close.current?.focus();
+      return () => {
+        onModal(false);
+        back?.focus();
+      };
+    }, [open, onModal]);
+    const trap = (event: React.KeyboardEvent<HTMLDivElement>) => {
+      if (event.key !== 'Tab') {
+        return;
+      }
+      const buttons = [...event.currentTarget.querySelectorAll('button')];
+      const at = buttons.indexOf(document.activeElement as HTMLButtonElement);
+      const next = (at + (event.shiftKey ? -1 : 1) + buttons.length) % buttons.length;
+      event.preventDefault();
+      buttons[next]?.focus();
+    };
+    return (
+      <div data-testid="stub-root">
+        <main>
+          <button
+            ref={opener}
+            type="button"
+            onClick={() => {
+              setOpen(true);
+            }}
+          >
+            Open dialog
+          </button>
+        </main>
+        {open && (
+          <div role="dialog" aria-modal="true" aria-label="Stub dialog" onKeyDown={trap}>
+            <button
+              ref={close}
+              type="button"
+              onClick={() => {
+                setOpen(false);
+              }}
+            >
+              Close
+            </button>
+            <button type="button">Keep</button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  function openDialogArea() {
+    return openStudio('/stub', [
+      { element: <Frame />, children: [{ path: 'stub/*', element: <ProviderPage area={DialogArea} /> }] },
+    ]);
+  }
+
+  /** The bar's controls: the wordmark, Home, Connections, AWS and the language control. */
+  function barControls(): HTMLElement[] {
+    const { banner, home, connections, aws } = frameLinks();
+    return [within(banner).getByRole('link', { name: 'EmuForge Studio' }), home, connections, aws, languageControl()];
+  }
+
+  it('the stub area’s dialog open, trapping focus: 20 presses of Tab then 20 of Shift+Tab reach none of the bar’s controls, and the bar is inert while it is open', async () => {
+    const user = userEvent.setup();
+    openDialogArea();
+    await user.click(await screen.findByRole('button', { name: 'Open dialog' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Stub dialog' });
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    const banner = screen.getByRole('banner');
+    expect(banner).toHaveAttribute('inert');
+    expect(present(document.querySelector('.st-area'), 'the holder')).toHaveClass('st-area-modal');
+
+    const controls = barControls();
+    for (const key of ['{Tab}', '{Shift>}{Tab}{/Shift}']) {
+      for (let press = 0; press < 20; press += 1) {
+        await user.keyboard(key);
+        expect(controls).not.toContain(document.activeElement);
+        expect(banner.contains(document.activeElement)).toBe(false);
+        expect(dialog.contains(document.activeElement)).toBe(true);
+      }
+    }
+  });
+
+  it('the stub area’s dialog opened, then removed: each of the bar’s controls is found by its role and name, none disabled or hidden from assistive technology, and the language control opens its menu', async () => {
+    const user = userEvent.setup();
+    openDialogArea();
+    await user.click(await screen.findByRole('button', { name: 'Open dialog' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Stub dialog' });
+    await user.click(within(dialog).getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+
+    const banner = screen.getByRole('banner');
+    expect(banner).not.toHaveAttribute('inert');
+    expect(present(document.querySelector('.st-area'), 'the holder')).not.toHaveClass('st-area-modal');
+    for (const control of barControls()) {
+      expect(control).toBeEnabled();
+      expect(control).not.toHaveAttribute('aria-disabled', 'true');
+      expect(control.closest('[inert], [aria-hidden="true"]')).toBeNull();
+    }
+
+    await user.click(languageControl());
+    expect(screen.getByRole('menu')).toHaveAccessibleName('Language');
+    expect(languageControl()).toHaveAttribute('aria-expanded', 'true');
+  });
+});

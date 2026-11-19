@@ -49,6 +49,12 @@ export interface ProviderAreaProps {
    * answer the area cached has already been dropped.
    */
   targetGeneration?: number | undefined;
+  /**
+   * Called with `true` once a modal dialog of the area opens and with `false` once none is open, and with `false` when
+   * the area goes while one is open. While one is open Studio draws the area's layers above its bar, which covers
+   * nothing of the dialog and cannot be used; without one the area stays under the bar.
+   */
+  onModal: (open: boolean) => void;
 }
 
 /** A service of a provider, as Home lists it. */

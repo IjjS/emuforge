@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { CheckResult } from '../../../lib/engine/engine-client';
 import type { AreaConnection } from './components/emulator-line';
+import { AreaModal } from './components/area-modal';
 import { usePageFlash, type FlashResult } from './components/page-flash';
 import { usePageHelp } from './components/page-help';
 import { useShowsResources } from './components/page-resources';
@@ -139,6 +140,8 @@ let scheme: ColourScheme;
 let titles: string[];
 /** The function the area named last to focus its content target; `null` while it names none. */
 let focusContent: (() => void) | null;
+/** What the area told Studio through `onModal`, in order. */
+let modals: boolean[];
 
 beforeEach(() => {
   connection = new Connection();
@@ -147,7 +150,12 @@ beforeEach(() => {
   vi.stubGlobal('matchMedia', scheme.matchMedia);
   titles = [];
   focusContent = null;
+  modals = [];
 });
+
+function handleModal(open: boolean) {
+  modals.push(open);
+}
 
 function handlePageTitle(title: string) {
   titles.push(title);
@@ -175,6 +183,7 @@ function AreaWithStudioProps() {
       headerSelector="#top-bar"
       onPageTitle={handlePageTitle}
       onContentTarget={handleContentTarget}
+      onModal={handleModal}
       routeChanges={changes}
       connection={current}
       {...(connection.generation !== undefined && { targetGeneration: connection.generation })}
@@ -2681,5 +2690,76 @@ describe('a change of target (issue 486, R3)', () => {
 
     expect(count()).toHaveTextContent('Count 1');
     expect(flashTexts(wrapper)).toEqual([]);
+  });
+});
+
+describe('a dialog of the area, told to Studio (issue 531)', () => {
+  /** A page with a button that opens an `AreaModal`, closed by its own dismissal. */
+  function DialogPage() {
+    const [open, setOpen] = useState(false);
+    return (
+      <>
+        <Header variant="h1">Dialogs</Header>
+        <Button
+          onClick={() => {
+            setOpen(true);
+          }}
+        >
+          Open dialog
+        </Button>
+        <AreaModal
+          visible={open}
+          header="A dialog"
+          closeAriaLabel="Close modal"
+          onDismiss={() => {
+            setOpen(false);
+          }}
+        >
+          Nothing happens.
+        </AreaModal>
+      </>
+    );
+  }
+
+  const DIALOGS: AreaScreen = {
+    service: '/kinesis',
+    paths: ['/aws/kinesis/dialogs'],
+    title: 'Dialogs',
+    crumbs: [{ text: 'Dialogs' }],
+    navigation: KINESIS_NAVIGATION,
+    Page: DialogPage,
+  };
+
+  beforeEach(() => {
+    registry.screens.push(DIALOGS);
+  });
+
+  afterEach(() => {
+    registry.screens.length = 0;
+  });
+
+  it('a dialog opened, closed with Esc, then opened again and the area left: onModal is told true, false, true, then false', async () => {
+    const { router } = open('/aws/kinesis/dialogs');
+    expect(modals).toEqual([]);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Open dialog' }));
+    await screen.findByRole('dialog', { name: 'A dialog' });
+    await waitFor(() => {
+      expect(modals).toEqual([true]);
+    });
+
+    fireEvent.keyDown(document.activeElement as Element, { key: 'Escape', code: 'Escape', keyCode: 27 });
+    await waitFor(() => {
+      expect(modals).toEqual([true, false]);
+    });
+    expect(screen.queryByRole('dialog')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open dialog' }));
+    await waitFor(() => {
+      expect(modals).toEqual([true, false, true]);
+    });
+
+    await act(() => router.navigate('/'));
+    expect(modals).toEqual([true, false, true, false]);
   });
 });

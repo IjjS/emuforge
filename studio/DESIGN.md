@@ -254,12 +254,17 @@ Studio's rules apart from a provider's by that layer. No declaration in the `stu
 (font, size, weight, line height, colour) and the universal, selection and focus rules start on those two and
 never on a common ancestor of a provider area. `html` and `body` get only `color-scheme`, the `--st-*` tokens and
 non-inherited properties (background, margin, scroll padding). The element that holds a provider area (`.st-area`)
-is layout only, with no inherited property: `display: block` and `isolation: isolate`.
+is layout only, with no inherited property: `display: block` and `isolation: isolate`, and `isolation: auto` while a
+dialog of the area is open (The Isolated Area Rule).
 
 **The Isolated Area Rule.** The holder of a provider area makes its own stacking context (`isolation: isolate`,
 not inherited). However high the area's own layers go (Cloudscape's sticky and overlay layers reach `z-index`
 7000), they stay inside it, under Studio's sticky bar and the language menu, and the area keeps its state behind
-the open menu. Studio never raises its own layers to outbid a provider's.
+the open menu. Studio never raises its own layers to outbid a provider's. An open dialog of the area is the one
+layer that is not under the bar: while the area says one is open, the holder makes no stacking context
+(`.st-area-modal`, `isolation: auto`), so the dialog and its backdrop are drawn above the bar, which is inert
+meanwhile and covers nothing of the dialog; a press on the bar meets the backdrop. The area's other layers do not
+reach the bar's band, and once no dialog is open the holder isolates again (issue 531).
 
 **The Prefix Rule.** Every Studio custom property is named `--st-*`. They are declared on `:root` and inherit
 into a provider area, where nothing reads them: no provider rule names an `--st-*` property.
@@ -860,5 +865,6 @@ tabs, with a control edge so it reads as something that opens.
 - **Don't** use shadows for depth, or the accent as a status.
 - **Don't** give Thai, Korean or Japanese text a negative letter spacing, or hyphenate text in another language
   than the page.
-- **Don't** raise a Studio layer's `z-index` to cover a provider area: the area's holder isolates its stacking.
+- **Don't** raise a Studio layer's `z-index` to cover a provider area: the area's holder isolates its stacking,
+  and lets go of it only while a dialog of the area is open, so the dialog is above the bar.
 - **Don't** clip a focusable element with a mask or `overflow`, so its ring is never cut.
