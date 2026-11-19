@@ -419,6 +419,7 @@ describe('"Attach"', () => {
     ]);
   });
 
+  // Bound: the SDK client retries the emulator's LimitExceeded with back-off before the refusal is shown (#541).
   it('the second of three refused → the dialog stays with "{policy} was not attached.", the code and message, "1 attached before it."; the role is read again', async () => {
     given();
     const modal = await openAttach();
