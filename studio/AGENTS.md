@@ -52,8 +52,9 @@ studio/
   nothing of the area outside `services/` names a service's folder.
 - `@cloudscape-design/*` is imported only under `providers/aws/area/`. `providers/<id>/area/` imports nothing from
   `app/`, `ui/`, `features/`, `i18n/` or another provider; outside it only its `provider.ts` loads it, with
-  `import()` (the one exception is data: `services.ts` collects each `service.json`). `ui/` and `features/` import
-  nothing from an area. `lib/` imports no UI folder and nothing from `i18n/`; `i18n/` imports no UI folder.
+  `import()` (the one exception is data: `services.ts` collects each `service.json`, and reads which service folders
+  hold a `screens.ts` from the paths of that file pattern alone, loading none). `ui/` and `features/` import nothing
+  from an area. `lib/` imports no UI folder and nothing from `i18n/`; `i18n/` imports no UI folder.
 - `bun run lint` enforces these boundaries and fails on a file that breaks one.
 
 ## Talking to AWS

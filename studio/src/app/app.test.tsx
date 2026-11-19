@@ -64,7 +64,7 @@ const TEST_PROVIDER: Provider = {
   name: 'Test Cloud',
   shortName: 'Test',
   segment: 'test',
-  services: [{ label: 'Test Service', path: '/test/svc' }],
+  services: [{ label: 'Test Service', path: '/test/svc', hasScreen: false }],
   loadArea: () => Promise.resolve({ default: TestArea }),
 };
 

@@ -85,6 +85,11 @@
     "many": "{count}\u00a0di\u00a0servizi · ancora nessuna schermata Studio",
     "other": "{count}\u00a0servizi · ancora nessuna schermata Studio"
   },
+  "providers.servicesWithScreens": {
+    "one": "{count}\u00a0servizio · {screens} con una schermata Studio",
+    "many": "{count}\u00a0di\u00a0servizi · {screens} con una schermata Studio",
+    "other": "{count}\u00a0servizi · {screens} con una schermata Studio"
+  },
   "notFound.title": "Pagina non trovata",
   "notFound.statement": "Studio non ha alcuna pagina in {path}.",
   "notFound.path": "Percorso",

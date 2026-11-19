@@ -67,7 +67,12 @@ describe('the AWS services', () => {
   });
 
   it('the floor: a list with a twentieth passes; one that lacks or renames one of the nineteen fails', () => {
-    const twentieth: Service = { label: 'Amazon Twentieth', crumb: 'Twentieth', route: '/twentieth' };
+    const twentieth: Service = {
+      label: 'Amazon Twentieth',
+      crumb: 'Twentieth',
+      route: '/twentieth',
+      hasScreen: false,
+    };
     expect(missingFromFloor([...SERVICES, twentieth])).toEqual([]);
     expect(missingFromFloor(SERVICES.filter(({ route }) => route !== '/sqs'))).toEqual([
       '/sqs Amazon Simple Queue Service SQS',
@@ -80,6 +85,12 @@ describe('the AWS services', () => {
     expect(
       missingFromFloor(SERVICES.map((service) => (service.route === '/ec2' ? { ...service, crumb: 'EC' } : service))),
     ).toEqual(['/ec2 Amazon Elastic Compute Cloud EC2']);
+  });
+
+  it('the real list: at least one service has a Studio screen and at least one has none, and every one says which (issue 494)', () => {
+    expect(SERVICES.every(({ hasScreen }) => typeof hasScreen === 'boolean')).toBe(true);
+    expect(SERVICES.some(({ hasScreen }) => hasScreen)).toBe(true);
+    expect(SERVICES.some(({ hasScreen }) => !hasScreen)).toBe(true);
   });
 
   it('the rules: folders that keep every rule → accepted', () => {

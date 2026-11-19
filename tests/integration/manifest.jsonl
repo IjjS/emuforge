@@ -157,3 +157,5 @@
 {"check_id": "studio.connections-test-connection", "path": "tests/integration/studio/connections-test.spec.ts", "module": "studio", "operations": ["sts:GetCallerIdentity"], "labels": ["own-emulator", "lifecycle"], "issue": 486}
 {"check_id": "studio.connections-remove-connection", "path": "tests/integration/studio/connections-remove.spec.ts", "module": "studio", "operations": ["s3:CreateBucket", "s3:ListBuckets", "s3:DeleteBucket"], "labels": ["own-emulator"], "issue": 486}
 {"check_id": "studio.connections-compose-form-holds-one", "path": "tests/integration/studio/connections-compose.spec.ts", "module": "studio", "operations": ["sts:GetCallerIdentity"], "labels": [], "issue": 486}
+{"check_id": "studio.home-providers-line-counts-services-with-a-screen", "path": "tests/integration/studio/services-with-screens.spec.ts", "module": "studio", "operations": [], "labels": ["regression"], "issue": 494}
+{"check_id": "studio.aws-index-groups-services-by-screen", "path": "tests/integration/studio/services-with-screens.spec.ts", "module": "studio", "operations": [], "labels": ["regression"], "issue": 494}

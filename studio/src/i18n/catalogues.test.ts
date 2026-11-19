@@ -271,8 +271,13 @@ describe("Studio's catalogues (R1.1, R4.6, R4.7)", () => {
   });
 });
 
-/** The three counted messages Home shows (issue 32, requirement R4). */
-const COUNTED_KEYS = ['connection.lastCheckedEvery', 'notice.recheck', 'providers.services'];
+/** The counted messages Home shows (issue 32, requirement R4; issue 494, R2). */
+const COUNTED_KEYS = [
+  'connection.lastCheckedEvery',
+  'notice.recheck',
+  'providers.services',
+  'providers.servicesWithScreens',
+];
 
 /** Each catalogue file of `messages/` as it is written, by its path. */
 const CATALOGUE_FILES = import.meta.glob<string>('./messages/*.json', {
@@ -333,8 +338,30 @@ describe("Studio's catalogues, the count and its unit and three wordings (issue 
       const escapes = raw.split(/\\u00a0/i).length - 1;
       expect(escapes, path).toBe(characters);
     }
-    expect(CATALOGUE_FILES['./messages/en.json']?.split('\\u00a0').length).toBe(7);
+    expect(CATALOGUE_FILES['./messages/en.json']?.split('\\u00a0').length).toBe(9);
   });
+
+  it.each(TAGS)(
+    'the catalogue %s → providers.servicesWithScreens with every plural form its language needs, {count} and {screens} in each, a no-break space after {count} where the language has a space there, and the stem of "Studio" (issue 494)',
+    (tag) => {
+      const forms = formsOf(tag, 'providers.servicesWithScreens');
+      const categories = new Intl.PluralRules(tag).resolvedOptions().pluralCategories;
+      expect(Object.keys(forms).sort(), tag).toEqual([...categories].sort());
+      for (const text of Object.values(forms)) {
+        expect(text, tag).toContain('{count}');
+        expect(text, tag).toContain('{screens}');
+        expect(text, tag).toMatch(/\{count\}(?:\u00a0|[^\s])/u);
+        expect(text, tag).toContain('Studio');
+      }
+      const catalogue = BUNDLED_CATALOGUES.byTag.get(tag) as Catalogue;
+      expect(
+        catalogueProblems(BUNDLED_CATALOGUES.source, catalogue).filter((problem) =>
+          problem.includes('providers.servicesWithScreens'),
+        ),
+        tag,
+      ).toEqual([]);
+    },
+  );
 
   it("every form of the French catalogue's re-check message → the unit ends its sentence with a full stop, no narrow no-break space after it", () => {
     const forms = Object.entries(formsOf('fr', 'notice.recheck'));

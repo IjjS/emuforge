@@ -1,11 +1,14 @@
+/// <reference types="node" />
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { createMemoryRouter, RouterProvider } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { FakeEngine } from '../test/home-test-kit';
 import { NO_SCREEN_SERVICE } from '../test/no-screen';
-import { serviceLinks } from '../test/service-files';
+import { serviceLinks, SERVICES_DIR } from '../test/service-files';
 import { Providers } from './providers';
 import { routes } from './routes';
 
@@ -17,6 +20,11 @@ const BELOW = `${NO_SCREEN_SERVICE.below}/my-stream`;
 // The services as their folders give them (providers/aws/area/services/*/service.json), in the order of issue 386's
 // requirement R13.2, each under /aws.
 const SERVICES = serviceLinks();
+
+/** Whether the folder of the service at `servicePath` (`/aws/<folder>`) holds a `screens.ts`. */
+function hasScreensFile(servicePath: string): boolean {
+  return existsSync(join(SERVICES_DIR, servicePath.replace(/^\/aws\//, ''), 'screens.ts'));
+}
 
 /**
  * The services whose route has a screen of its own: Amazon S3 (issue 56), AWS Identity and Access Management
@@ -193,7 +201,7 @@ describe('routes', () => {
     });
   });
 
-  it('opens /aws as the AWS area index: "Services" (the number of services), its line, and the services in label order', async () => {
+  it('opens /aws as the AWS area index: "Services" (the number of services), the sentence for the registry as it is, and the services grouped by whether their folder holds a screens.ts, each group in label order (regression, issue 61)', async () => {
     open('/aws');
 
     expect(inCloudscape(await heading(AWS))).toBe(true);
@@ -202,11 +210,26 @@ describe('routes', () => {
     const header = container?.findHeader()?.getElement();
     expect(header).toHaveTextContent('Services');
     expect(header).toHaveTextContent(`(${String(SERVICES.length)})`);
-    expect(header).toHaveTextContent('No service has a Studio screen yet.');
-    const links = within(container?.findContent().getElement() as HTMLElement)
-      .getAllByRole('link')
-      .map((link) => [link.textContent, link.getAttribute('href')]);
-    expect(links).toEqual(SERVICES);
+    // The folders that hold a screens.ts are the registry's (screens.test.ts holds the two readings equal).
+    const withScreen = SERVICES.filter(([, href]) => hasScreensFile(href));
+    const without = SERVICES.filter(([, href]) => !hasScreensFile(href));
+    expect(withScreen.length).toBeGreaterThan(0);
+    expect(without.length).toBeGreaterThan(0);
+    const count = String(SERVICES.length);
+    expect(header).toHaveTextContent(
+      withScreen.length === 1
+        ? `1 of ${count} services has a Studio screen.`
+        : `${String(withScreen.length)} of ${count} services have a Studio screen.`,
+    );
+    expect(header).not.toHaveTextContent('No service has a Studio screen yet.');
+    const content = container?.findContent().getElement() as HTMLElement;
+    const linksIn = (name: string) =>
+      within(within(content).getByRole('region', { name }))
+        .getAllByRole('link')
+        .map((link) => [link.textContent, link.getAttribute('href')]);
+    expect(linksIn(`With a Studio screen (${String(withScreen.length)})`)).toEqual(withScreen);
+    expect(linksIn(`No Studio screen yet (${String(without.length)})`)).toEqual(without);
+    expect(within(content).getAllByRole('link')).toHaveLength(SERVICES.length);
   });
 
   it(`opens ${NO_SCREEN_SERVICE.path} as the "no screen yet" page of ${NO_SCREEN}, asking the engine only for its connection status`, async () => {

@@ -47,7 +47,7 @@ import {
   pressTab,
 } from './support/focus';
 import { ACTION, addressOf, expectHome, frame, heading, SIDE_NAVIGATION } from './support/frame';
-import { connectionView, markPage, stillSamePage } from './support/home';
+import { connectionView, INDEX_FIRST_LINK, markPage, stillSamePage } from './support/home';
 import { Lines } from './support/lines';
 
 const AWS = 'Amazon Web Services';
@@ -469,7 +469,7 @@ test('studio.aws-area-emulator-line-keyboard-and-layout', async ({ ctx, page }) 
   }
 
   await lines.line(
-    'Fresh load of `/aws`, connected, Tab on from the current-page crumb "AWS" → the next stop is "Amazon API Gateway" in the page\'s "Services"; nothing in the emulator line is a Tab stop (changed, issue 45 PM decision)',
+    'Fresh load of `/aws`, connected, Tab on from the current-page crumb "AWS" → the next stop is the first link of the page\'s "Services"; nothing in the emulator line is a Tab stop (changed, issue 45 PM decision)',
     async () => {
       await emulatorIs('running');
       await open(page, '/aws', AWS);
@@ -477,7 +477,8 @@ test('studio.aws-area-emulator-line-keyboard-and-layout', async ({ ctx, page }) 
       await expect(currentCrumb(page), 'the current-page crumb').toHaveText('AWS');
       await currentCrumb(page).focus(ACTION);
       const stop = await pressTab(page);
-      expect(contentStopProblems(stop, 'Amazon API Gateway'), 'the next Tab reaches "Amazon API Gateway"').toEqual([]);
+      // The first link of "Services", computed from the checkout (issue 494, `decisions.md`, PM decisions).
+      expect(contentStopProblems(stop, INDEX_FIRST_LINK), `the next Tab reaches "${INDEX_FIRST_LINK}"`).toEqual([]);
       expect((await lineControls(page)).tabStops, 'Tab stops in the emulator line').toEqual([]);
     },
   );

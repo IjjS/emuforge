@@ -88,6 +88,12 @@
     "many": "{count}\u00a0usług · jeszcze bez ekranu w Studio",
     "other": "{count}\u00a0usługi · jeszcze bez ekranu w Studio"
   },
+  "providers.servicesWithScreens": {
+    "one": "{count}\u00a0usługa · {screens} z ekranem w Studio",
+    "few": "{count}\u00a0usługi · {screens} z ekranem w Studio",
+    "many": "{count}\u00a0usług · {screens} z ekranem w Studio",
+    "other": "{count}\u00a0usługi · {screens} z ekranem w Studio"
+  },
   "notFound.title": "Nie znaleziono strony",
   "notFound.statement": "Studio nie ma strony pod adresem {path}.",
   "notFound.path": "Ścieżka",
