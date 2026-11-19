@@ -32,7 +32,7 @@ import { failureOf, useDeleteTopic, usePageSignal, useTopicListing, type Listing
 /** The page's title, its `h1` and its crumb. */
 export const TOPICS_TITLE = 'Topics';
 
-const DESCRIPTION = 'A topic’s page shows who is subscribed and whether a notification can reach them.';
+const DESCRIPTION = "A topic's page shows who is subscribed and whether a notification can reach them.";
 const SELECT_FIRST = 'Select a topic';
 const READING = 'Reading the topics';
 const REFRESHED = 'Topic list refreshed';
