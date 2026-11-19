@@ -4,9 +4,15 @@ import {
   descriptionText,
   lastActivityText,
   maxSessionDurationText,
+  policyArnOf,
+  policyNameOfArn,
+  policyPath,
   policyTypeText,
   readPolicyDocument,
   rolePath,
+  roleTabHref,
+  roleTabLabel,
+  roleTabOf,
   roleTabPath,
   trustedEntitiesText,
   utcDateText,
@@ -138,5 +144,50 @@ describe('routes', () => {
     expect(rolePath('a+b=c,.@_-')).toBe('/aws/iam/roles/details/a%2Bb%3Dc%2C.%40_-');
     expect(rolePath('create')).toBe('/aws/iam/roles/details/create');
     expect(roleTabPath('x', 'trust-relationships')).toBe('/aws/iam/roles/details/x/trust-relationships');
+  });
+});
+
+// Test criteria, "Unit s1 — providers/aws/area/services/iam/format.test.ts" (issue 535).
+describe("the tabs of a role's page", () => {
+  it('reads the tab of a query value: trust is "Trust relationships", none, empty or any other "Permissions"', () => {
+    expect(roleTabLabel(roleTabOf('trust'))).toBe('Trust relationships');
+    for (const value of [null, undefined, '', 'permissions', 'tags', 'Trust', 'trust-relationships']) {
+      expect(roleTabLabel(roleTabOf(value)), String(value)).toBe('Permissions');
+    }
+  });
+
+  it('addresses "Permissions" by the role\'s path and the other with ?tab=trust, the name encoded once', () => {
+    expect(roleTabHref('my-role', 'permissions')).toBe('/aws/iam/roles/details/my-role');
+    expect(roleTabHref('my-role', 'trust')).toBe('/aws/iam/roles/details/my-role?tab=trust');
+    expect(roleTabHref('a+b=c,.@_-', 'trust')).toBe('/aws/iam/roles/details/a%2Bb%3Dc%2C.%40_-?tab=trust');
+    expect(roleTabHref('a%b', 'permissions')).toBe('/aws/iam/roles/details/a%25b');
+  });
+});
+
+describe("a policy's address", () => {
+  it('holds the ARN encoded once in ?arn=, read back the same, for an ARN with a path', () => {
+    const arn = 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole';
+    const address = policyPath(arn);
+    expect(address).toBe(
+      '/aws/iam/policies/details?arn=arn%3Aaws%3Aiam%3A%3Aaws%3Apolicy%2Fservice-role%2FAWSLambdaBasicExecutionRole',
+    );
+    const url = new URL(address, 'http://127.0.0.1');
+    expect(url.pathname).toBe('/aws/iam/policies/details');
+    expect(policyArnOf(url.searchParams)).toBe(arn);
+    expect(policyArnOf(url.search)).toBe(arn);
+    const plus = 'arn:aws:iam::000000000000:policy/a+b=c,.@_-';
+    expect(policyArnOf(new URL(policyPath(plus), 'http://127.0.0.1').searchParams)).toBe(plus);
+  });
+
+  it('reads no ARN from an address without one', () => {
+    expect(policyArnOf('')).toBeUndefined();
+    expect(policyArnOf('?arn=')).toBeUndefined();
+  });
+
+  it("names a policy by the ARN's text after its last /", () => {
+    expect(policyNameOfArn('arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole')).toBe(
+      'AWSLambdaBasicExecutionRole',
+    );
+    expect(policyNameOfArn('arn:aws:iam::000000000000:policy/mine')).toBe('mine');
   });
 });

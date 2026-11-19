@@ -1,16 +1,38 @@
-import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryClient, type UseQueryResult } from '@tanstack/react-query';
 import { useCallback, useEffect, useState } from 'react';
 
+import { RequestError } from '../../../../../lib/aws/request';
 import {
+  attachRolePolicies,
+  createPolicy,
+  createPolicyVersion,
   createRole,
+  deletePolicy,
+  deletePolicyVersion,
+  deleteRolePolicy,
   deleteRoles,
+  detachRolePolicy,
   getCallerAccount,
+  getPolicy,
+  getPolicyDocument,
   getRole,
+  getRolePolicyDocument,
   IamError,
   listPolicies,
   listRoles,
+  putRolePolicy,
+  setDefaultPolicyVersion,
   updateRole,
+  updateTrustPolicy,
+  type AttachResult,
   type CreatedRole,
+  type DeletePolicyResult,
+  type InlineDocumentRead,
+  type ManagedDocumentRead,
+  type NewPolicy,
+  type PolicyRead,
+  type PolicyScope,
+  type PolicyToAttach,
   type DeleteResult,
   type IamFailure,
   type NewRole,
@@ -138,7 +160,10 @@ function withRead(reads: readonly PageRead[], page: number, read: PageRead): rea
 
 /** The failure a read rejected with. */
 export function failureOf(error: unknown): IamFailure {
-  return error instanceof IamError ? error.failure : { kind: 'other', operation: '', code: String(error) };
+  if (error instanceof IamError || error instanceof RequestError) {
+    return error.failure;
+  }
+  return { kind: 'other', operation: '', code: String(error) };
 }
 
 /** The query keys of the IAM screens; every key of an endpoint starts with `iamKey(endpoint)`. */
@@ -183,7 +208,7 @@ function usePagedListing<T>(
   name: string,
   read: ReadPage<T>,
   { endpoint, pageSize, filter, enabled = true }: ListingOptions,
-  outer: number,
+  outer: number | string,
 ): Listing<T> {
   const mount = useMount();
   const [generation, setGeneration] = useState(0);
@@ -279,9 +304,18 @@ const readRoles: ReadPage<Role> = async (endpoint, page, signal) => {
   return next === undefined ? { items: roles } : { items: roles, next };
 };
 
-const readPolicies: ReadPage<Policy> = async (endpoint, page, signal) => {
-  const { policies, next } = await listPolicies(endpoint, page, signal);
-  return next === undefined ? { items: policies } : { items: policies, next };
+/** The pages of `ListPolicies` of one scope. */
+function policyReader(scope: PolicyScope): ReadPage<Policy> {
+  return async (endpoint, page, signal) => {
+    const { policies, next } = await listPolicies(endpoint, page, signal, scope);
+    return next === undefined ? { items: policies } : { items: policies, next };
+  };
+}
+
+const POLICY_READERS: Readonly<Record<PolicyScope, ReadPage<Policy>>> = {
+  Local: policyReader('Local'),
+  AWS: policyReader('AWS'),
+  All: policyReader('All'),
 };
 
 /** The role list (R4): pages of `ListRoles`, each role with its last use; a new listing after a finished delete. */
@@ -290,9 +324,17 @@ export function useRoleListing(options: ListingOptions): Listing<Role> {
   return usePagedListing('roles', readRoles, options, generation);
 }
 
-/** The policy table of "Create role" (R6.4): pages of `ListPolicies` with `Scope` `All`. */
-export function usePolicyListing(options: ListingOptions): Listing<Policy> {
-  return usePagedListing('policies', readPolicies, options, 0);
+/** What a policy listing is asked for: a listing's options and the scope, `All` when not given. */
+export interface PolicyListingOptions extends ListingOptions {
+  scope?: PolicyScope;
+}
+
+/**
+ * The policy table of "Create role" (R6.4) and the policy list (issue 535, S4): pages of `ListPolicies` with the scope
+ * given (`All` when none). A change of scope starts a new listing at page 1.
+ */
+export function usePolicyListing({ scope = 'All', ...options }: PolicyListingOptions): Listing<Policy> {
+  return usePagedListing('policies', POLICY_READERS[scope], options, scope);
 }
 
 export interface RoleQuery {
@@ -431,5 +473,328 @@ export function useDeleteRoles(endpoint: string | undefined) {
         startNewRoleListing(client, endpoint);
       }
     },
+  });
+}
+
+// The reads and actions of issue 535 (design, "The calls"): a role's documents and permission changes, its trust
+// policy, a policy's page, and the customer managed policies' changes. A document is read under a key of its own
+// once a control asks for it; every action, refused or not, reads again what it may have changed.
+
+/** A document's read. */
+export interface DocumentQuery<T> {
+  /** The last answer; `undefined` until it arrives or when the read failed. */
+  read: T | undefined;
+  failure: IamFailure | undefined;
+  /** A read is in flight, or one is wanted while the endpoint is not known. */
+  loading: boolean;
+  /** Reads it again. */
+  refresh: () => void;
+}
+
+function documentKey(endpoint: string | undefined) {
+  return [...iamKey(endpoint), 'document'] as const;
+}
+
+function inlineDocumentKey(endpoint: string | undefined, role: string, policy: string) {
+  return [...documentKey(endpoint), 'inline', role, policy] as const;
+}
+
+function managedDocumentKey(endpoint: string | undefined, arn: string) {
+  return [...documentKey(endpoint), 'managed', arn] as const;
+}
+
+function policyKey(endpoint: string | undefined, arn: string) {
+  return [...iamKey(endpoint), 'policy', arn] as const;
+}
+
+/** The query's state as a screen reads it. */
+function queryState<T>(
+  query: UseQueryResult<T>,
+  wanted: boolean,
+  endpoint: string | undefined,
+): Omit<DocumentQuery<T>, 'refresh'> {
+  return {
+    read: query.data,
+    failure: query.isError ? failureOf(query.error) : undefined,
+    loading: query.isFetching || (wanted && endpoint === undefined && query.data === undefined),
+  };
+}
+
+/** An inline policy's document (`GetRolePolicy`); nothing is asked while `enabled` is `false`. */
+export function useInlinePolicyDocument({
+  endpoint,
+  role,
+  policy,
+  enabled,
+}: {
+  endpoint: string | undefined;
+  role: string;
+  policy: string;
+  enabled: boolean;
+}): DocumentQuery<InlineDocumentRead> {
+  const mount = useMount();
+  const query = useQuery({
+    queryKey: [...inlineDocumentKey(endpoint, role, policy), mount],
+    queryFn: ({ signal }) => getRolePolicyDocument(knownEndpoint(endpoint), role, policy, signal),
+    enabled: enabled && endpoint !== undefined,
+    staleTime: 0,
+    gcTime: 0,
+    retry: false,
+    structuralSharing: false,
+  });
+  const { refetch } = query;
+  const refresh = useCallback(() => {
+    void refetch({ cancelRefetch: true });
+  }, [refetch]);
+  return { ...queryState(query, enabled, endpoint), refresh };
+}
+
+/**
+ * A managed policy's document (`GetPolicy` for the default version when none is named, `GetPolicyVersion`); nothing
+ * is asked while `enabled` is `false`.
+ */
+export function useManagedPolicyDocument({
+  endpoint,
+  arn,
+  versionId,
+  enabled,
+}: {
+  endpoint: string | undefined;
+  arn: string;
+  versionId?: string;
+  enabled: boolean;
+}): DocumentQuery<ManagedDocumentRead> {
+  const mount = useMount();
+  const query = useQuery({
+    queryKey: [...managedDocumentKey(endpoint, arn), versionId ?? null, mount],
+    queryFn: ({ signal }) => getPolicyDocument(knownEndpoint(endpoint), arn, versionId, signal),
+    enabled: enabled && endpoint !== undefined,
+    staleTime: 0,
+    gcTime: 0,
+    retry: false,
+    structuralSharing: false,
+  });
+  const { refetch } = query;
+  const refresh = useCallback(() => {
+    void refetch({ cancelRefetch: true });
+  }, [refetch]);
+  return { ...queryState(query, enabled, endpoint), refresh };
+}
+
+/** A policy's page (S5): read on opening, on `refresh`, and again after a change of the policy. */
+export function usePolicy({
+  endpoint,
+  arn,
+  enabled = true,
+}: {
+  endpoint: string | undefined;
+  arn: string;
+  enabled?: boolean;
+}): DocumentQuery<PolicyRead> {
+  const mount = useMount();
+  const query = useQuery({
+    queryKey: [...policyKey(endpoint, arn), mount],
+    queryFn: ({ signal }) => getPolicy(knownEndpoint(endpoint), arn, signal),
+    enabled: enabled && endpoint !== undefined,
+    staleTime: 0,
+    gcTime: 0,
+    retry: false,
+    structuralSharing: false,
+  });
+  const { refetch } = query;
+  const refresh = useCallback(() => {
+    void refetch({ cancelRefetch: true });
+  }, [refetch]);
+  return { ...queryState(query, enabled, endpoint), refresh };
+}
+
+/** Reads again every open policy listing (their `AttachmentCount`). */
+function invalidatePolicyLists(client: QueryClient, endpoint: string | undefined): Promise<void> {
+  return client.invalidateQueries({ queryKey: [...iamKey(endpoint), 'policies'] });
+}
+
+/** Reads again an open policy's page and its documents. */
+function invalidatePolicy(client: QueryClient, endpoint: string | undefined, arn: string): Promise<void> {
+  return Promise.all([
+    client.invalidateQueries({ queryKey: policyKey(endpoint, arn) }),
+    client.invalidateQueries({ queryKey: managedDocumentKey(endpoint, arn) }),
+  ]).then(() => undefined);
+}
+
+/** Reads again an open inline policy's document of the role `role`, whatever the case of the role's name. */
+function invalidateInlineDocument(
+  client: QueryClient,
+  endpoint: string | undefined,
+  role: string,
+  policy: string,
+): Promise<void> {
+  const wanted = role.toLowerCase();
+  return client.invalidateQueries({
+    queryKey: [...documentKey(endpoint), 'inline'],
+    predicate: ({ queryKey }) =>
+      typeof queryKey[5] === 'string' && queryKey[5].toLowerCase() === wanted && queryKey[6] === policy,
+  });
+}
+
+/** A change of a role's policies or trust policy: that role and the policy lists are read again. */
+function invalidateRoleChange(client: QueryClient, endpoint: string | undefined, role: string): Promise<void> {
+  return Promise.all([invalidateRole(client, endpoint, role), invalidatePolicyLists(client, endpoint)]).then(
+    () => undefined,
+  );
+}
+
+/** What "Attach policies" sends. */
+export interface AttachRequest {
+  role: string;
+  policies: readonly PolicyToAttach[];
+}
+
+/**
+ * "Attach policies": resolves with the policies attached and the one refused. Once it is finished the role, the
+ * policy lists and each policy's open page are read again.
+ */
+export function useAttachRolePolicies(endpoint: string | undefined) {
+  const client = useQueryClient();
+  return useMutation<AttachResult, unknown, AttachRequest>({
+    mutationFn: ({ role, policies }) =>
+      attachRolePolicies(knownEndpoint(endpoint), role, policies, new AbortController().signal),
+    onSettled: (_data, _error, { role, policies }) =>
+      Promise.all([
+        invalidateRoleChange(client, endpoint, role),
+        ...policies.map((policy) => client.invalidateQueries({ queryKey: policyKey(endpoint, policy.arn) })),
+      ]),
+  });
+}
+
+/** "Detach": rejects with `RequestError`; the role, the policy lists and the policy's open page are read again. */
+export function useDetachRolePolicy(endpoint: string | undefined) {
+  const client = useQueryClient();
+  return useMutation<undefined, unknown, { role: string; arn: string }>({
+    mutationFn: async ({ role, arn }) => {
+      await detachRolePolicy(knownEndpoint(endpoint), role, arn, new AbortController().signal);
+      return undefined;
+    },
+    onSettled: (_data, _error, { role, arn }) =>
+      Promise.all([
+        invalidateRoleChange(client, endpoint, role),
+        client.invalidateQueries({ queryKey: policyKey(endpoint, arn) }),
+      ]),
+  });
+}
+
+/** What "Add inline policy" and an inline policy's "Edit" send. */
+export interface InlinePolicyRequest {
+  role: string;
+  name: string;
+  document: string;
+}
+
+/** "Add inline policy" and "Edit": rejects with `RequestError`; the role, the lists and the document are read again. */
+export function usePutRolePolicy(endpoint: string | undefined) {
+  const client = useQueryClient();
+  return useMutation<undefined, unknown, InlinePolicyRequest>({
+    mutationFn: async ({ role, name, document }) => {
+      await putRolePolicy(knownEndpoint(endpoint), role, name, document, new AbortController().signal);
+      return undefined;
+    },
+    onSettled: (_data, _error, { role, name }) =>
+      Promise.all([
+        invalidateRoleChange(client, endpoint, role),
+        invalidateInlineDocument(client, endpoint, role, name),
+      ]),
+  });
+}
+
+/** An inline policy's "Delete": rejects with `RequestError`; the role, the lists and the document are read again. */
+export function useDeleteRolePolicy(endpoint: string | undefined) {
+  const client = useQueryClient();
+  return useMutation<undefined, unknown, { role: string; name: string }>({
+    mutationFn: async ({ role, name }) => {
+      await deleteRolePolicy(knownEndpoint(endpoint), role, name, new AbortController().signal);
+      return undefined;
+    },
+    onSettled: (_data, _error, { role, name }) =>
+      Promise.all([
+        invalidateRoleChange(client, endpoint, role),
+        invalidateInlineDocument(client, endpoint, role, name),
+      ]),
+  });
+}
+
+/** "Edit trust policy": rejects with `RequestError`; the role and the policy lists are read again. */
+export function useUpdateTrustPolicy(endpoint: string | undefined) {
+  const client = useQueryClient();
+  return useMutation<undefined, unknown, { role: string; document: string }>({
+    mutationFn: async ({ role, document }) => {
+      await updateTrustPolicy(knownEndpoint(endpoint), role, document, new AbortController().signal);
+      return undefined;
+    },
+    onSettled: (_data, _error, { role }) => invalidateRoleChange(client, endpoint, role),
+  });
+}
+
+/** "Create policy": resolves with the new policy's ARN, rejects with `RequestError`; the policy lists are read again. */
+export function useCreatePolicy(endpoint: string | undefined) {
+  const client = useQueryClient();
+  return useMutation<string, unknown, NewPolicy>({
+    mutationFn: (policy) => createPolicy(knownEndpoint(endpoint), policy, new AbortController().signal),
+    onSettled: () => invalidatePolicyLists(client, endpoint),
+  });
+}
+
+/** A change of a policy: its page, its documents and the policy lists are read again. */
+function invalidatePolicyChange(client: QueryClient, endpoint: string | undefined, arn: string): Promise<void> {
+  return Promise.all([invalidatePolicy(client, endpoint, arn), invalidatePolicyLists(client, endpoint)]).then(
+    () => undefined,
+  );
+}
+
+/** A policy's "Edit": resolves with the new version's id, rejects with `RequestError`. */
+export function useCreatePolicyVersion(endpoint: string | undefined) {
+  const client = useQueryClient();
+  return useMutation<string, unknown, { arn: string; document: string }>({
+    mutationFn: ({ arn, document }) =>
+      createPolicyVersion(knownEndpoint(endpoint), arn, document, new AbortController().signal),
+    onSettled: (_data, _error, { arn }) => invalidatePolicyChange(client, endpoint, arn),
+  });
+}
+
+/** "Set as default": rejects with `RequestError`. */
+export function useSetDefaultPolicyVersion(endpoint: string | undefined) {
+  const client = useQueryClient();
+  return useMutation<undefined, unknown, { arn: string; versionId: string }>({
+    mutationFn: async ({ arn, versionId }) => {
+      await setDefaultPolicyVersion(knownEndpoint(endpoint), arn, versionId, new AbortController().signal);
+      return undefined;
+    },
+    onSettled: (_data, _error, { arn }) => invalidatePolicyChange(client, endpoint, arn),
+  });
+}
+
+/** A version's "Delete": rejects with `RequestError`. */
+export function useDeletePolicyVersion(endpoint: string | undefined) {
+  const client = useQueryClient();
+  return useMutation<undefined, unknown, { arn: string; versionId: string }>({
+    mutationFn: async ({ arn, versionId }) => {
+      await deletePolicyVersion(knownEndpoint(endpoint), arn, versionId, new AbortController().signal);
+      return undefined;
+    },
+    onSettled: (_data, _error, { arn }) => invalidatePolicyChange(client, endpoint, arn),
+  });
+}
+
+/**
+ * A policy's "Delete": resolves with what was done and the step refused. Once it is finished the policy lists, the
+ * policy's page and documents, and every role it was detached from are read again.
+ */
+export function useDeletePolicy(endpoint: string | undefined) {
+  const client = useQueryClient();
+  return useMutation<DeletePolicyResult, unknown, string>({
+    mutationFn: (arn) => deletePolicy(knownEndpoint(endpoint), arn, new AbortController().signal),
+    onSettled: (data, _error, arn) =>
+      Promise.all([
+        invalidatePolicyChange(client, endpoint, arn),
+        ...(data?.detachedRoles ?? []).map((role) => invalidateRole(client, endpoint, role)),
+      ]),
   });
 }
