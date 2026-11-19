@@ -697,6 +697,11 @@ tabs, with a control edge so it reads as something that opens.
   failing that, at any character inside its box. The break point adds no text: what is read and copied is the address
   as it is. An unknown address is "-" (hidden from screen readers) with "Not known" for a screen reader, in the
   interface font at 14px, on the same 20px line.
+- **Target strip:** below the two rows, across the panel, with a 1px `line` hairline above it and the rows' side
+  padding (14px above and below): "Target" and the target's name in the code face (13px on `sunk`, `text`, breaking
+  inside a long name rather than leaving the panel), 14px `text-2`, then the secondary "Manage connections" link to
+  `/connections`; they wrap onto two lines when they do not fit. Without a target in the answer, the link alone
+  (issue 486, `features/home/connection-status.css`).
 
 ### Notices
 
