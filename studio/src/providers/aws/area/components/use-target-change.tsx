@@ -14,7 +14,7 @@ export function targetChangedResult(target: string): FlashResult {
           <Box variant="code" display="inline">
             {target}
           </Box>
-          . This page was read again from its emulator.
+          . This page now reads from it.
         </>
       ),
     },
