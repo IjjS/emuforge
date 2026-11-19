@@ -139,6 +139,16 @@ class Skill(unittest.TestCase):
         found = [ln for ln in self.part("## Scripts").splitlines() if ln.startswith("| `pm-emulator-image` ")]
         self.assertEqual(len(found), 1, found)
 
+    def test_scripts_row_names_the_build_cache_prune_and_nothing_else(self):
+        """Issue 507: a refresh to a new version prunes the build cache down to 20 GB, and nothing else of Docker."""
+        found = [ln for ln in self.part("## Scripts").splitlines() if ln.startswith("| `pm-emulator-image` ")]
+        self.assertEqual(len(found), 1, found)
+        row = found[0]
+        self.assertIn("docker builder prune --max-used-space", row)
+        self.assertRegex(row, r"\b20 ?GB\b")
+        self.assertRegex(row, r"new version")
+        self.assertRegex(row, rf"{NEG}[^|]*\belse\b[^|]*Docker", row)
+
 
 class Panes(unittest.TestCase):
     """R4.3: pane-mode.md, and no rule in the files that are links."""
