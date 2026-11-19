@@ -326,7 +326,7 @@ export function TableListPage({ connection }: ScreenPageProps) {
         }}
         ariaLabels={{
           selectionGroupLabel: 'Tables',
-          itemSelectionLabel: (_, table) => table.name,
+          itemSelectionLabel: (_, table) => `Select ${table.name}`,
           allItemsSelectionLabel: () => 'All tables',
         }}
         stickyColumns={{ first: 1 }}
