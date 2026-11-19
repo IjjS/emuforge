@@ -34,11 +34,11 @@ const connection: AreaConnection = {
   engineOrigin: 'http://127.0.0.1:8309',
 };
 
-let where = '';
+let router: ReturnType<typeof createMemoryRouter>;
+const where = () => router.state.location.pathname;
 
 function AreaWithStudioProps() {
   const location = useLocation();
-  where = location.pathname;
   const [seen, setSeen] = useState({ pathname: location.pathname, changes: 0 });
   let changes = seen.changes;
   if (seen.pathname !== location.pathname) {
@@ -77,7 +77,7 @@ afterEach(() => {
 });
 
 function open() {
-  const router = createMemoryRouter(
+  router = createMemoryRouter(
     [
       { path: '/', element: <p>Studio&apos;s Home</p> },
       { path: '/aws/*', element: <AreaWithStudioProps /> },
@@ -194,7 +194,7 @@ describe('Create topic', () => {
       fifo: false,
       contentBasedDeduplication: false,
     });
-    expect(where).toBe(`/aws/sns/topics/topic/${encodeURIComponent(ARN)}`);
+    expect(where()).toBe(`/aws/sns/topics/topic/${encodeURIComponent(ARN)}`);
   });
 
   it('a FIFO topic with content-based deduplication → created so', async () => {
@@ -239,7 +239,7 @@ describe('Create topic', () => {
     expect(
       screen.getByText(/Invalid parameter: Attributes Reason: Topic already exists with different attributes/),
     ).toBeInTheDocument();
-    expect(where).toBe(CREATE_PATH);
+    expect(where()).toBe(CREATE_PATH);
     expect(inputOf('Name').value).toBe('orders');
     expect(inputOf('Display name - optional').value).toBe('Other');
   });
@@ -277,7 +277,7 @@ describe('Create topic', () => {
     await opened();
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     await waitFor(() => {
-      expect(where).toBe('/aws/sns/topics');
+      expect(where()).toBe('/aws/sns/topics');
     });
     expect(screen.queryByText('Discard what you entered?')).not.toBeInTheDocument();
   });
@@ -292,12 +292,12 @@ describe('Create topic', () => {
     await waitFor(() => {
       expect(screen.queryByText('Discard what you entered?')).not.toBeInTheDocument();
     });
-    expect(where).toBe(CREATE_PATH);
+    expect(where()).toBe(CREATE_PATH);
     expect(inputOf('Name').value).toBe('orders');
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Discard' }));
     await waitFor(() => {
-      expect(where).toBe('/aws/sns/topics');
+      expect(where()).toBe('/aws/sns/topics');
     });
   });
 
