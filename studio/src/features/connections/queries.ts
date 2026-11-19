@@ -5,7 +5,7 @@
 import { useQueries, useQuery, type UseQueryResult } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 
-import { loadConfig } from '../../app/config';
+import { engineBase, loadConfig } from '../../app/config';
 import {
   createTargetsClient,
   type TargetInfo,
@@ -73,11 +73,12 @@ export interface TargetsAccess {
   enginePort: number | undefined;
 }
 
-/** The targets client of the engine Studio's configuration names: one per mount and engine port, so one session. */
+/** The targets client of the engine Studio's configuration names: one per mount and engine address, so one session. */
 export function useTargetsClient(): TargetsAccess {
   const config = useQuery({ queryKey: ['studio', 'config'], queryFn: loadConfig, staleTime: Infinity });
   const enginePort = config.data?.enginePort;
-  const client = useMemo(() => (enginePort === undefined ? undefined : createTargetsClient(enginePort)), [enginePort]);
+  const base = config.data === undefined ? undefined : engineBase(config.data, window.location.origin);
+  const client = useMemo(() => (base === undefined ? undefined : createTargetsClient(base)), [base]);
   return { client, enginePort };
 }
 

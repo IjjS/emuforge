@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
-import { loadConfig } from '../../app/config';
+import { engineBase, loadConfig } from '../../app/config';
 import { useTargetSeen } from '../../app/target-seen';
 import { createEngineClient, startedAtOf, targetOf, type CheckResult } from '../../lib/engine/engine-client';
 
@@ -10,7 +10,10 @@ export const RECHECK_MS = 5_000;
 export interface ConnectionCheck {
   /** The engine port from Studio's server; `undefined` until the page's configuration is read. */
   enginePort: number | undefined;
-  /** `http://127.0.0.1:<engine port>`; `undefined` likewise. */
+  /**
+   * The engine's address the page calls: `http://127.0.0.1:<engine port>`, or `<page origin><engine path>` when
+   * Studio's server names a channel; `undefined` likewise.
+   */
   engineOrigin: string | undefined;
   /** The answer to the latest completed check; `undefined` while the first is in flight. */
   result: CheckResult | undefined;
@@ -31,11 +34,12 @@ export interface ConnectionCheck {
 export function useConnectionCheck(): ConnectionCheck {
   const config = useQuery({ queryKey: ['studio', 'config'], queryFn: loadConfig, staleTime: Infinity });
   const enginePort = config.data?.enginePort;
-  // One client, so one session token, per mount of Home and engine port.
-  const client = useMemo(() => (enginePort === undefined ? undefined : createEngineClient(enginePort)), [enginePort]);
+  const base = config.data === undefined ? undefined : engineBase(config.data, window.location.origin);
+  // One client, so one session token, per mount of Home and engine address.
+  const client = useMemo(() => (base === undefined ? undefined : createEngineClient(base)), [base]);
 
   const check = useQuery({
-    queryKey: ['engine', 'connection-check', enginePort],
+    queryKey: ['engine', 'connection-check', base],
     queryFn: ({ signal }) => {
       if (client === undefined) {
         throw new Error('The engine port is not known yet.');

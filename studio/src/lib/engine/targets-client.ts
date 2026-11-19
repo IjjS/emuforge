@@ -6,7 +6,6 @@
 
 import {
   CHECK_TIME_LIMIT_MS,
-  engineOrigin,
   isRecord,
   parseJson,
   readError,
@@ -114,7 +113,7 @@ export interface NewTarget {
 }
 
 export interface TargetsClient {
-  /** `http://127.0.0.1:<engine port>`. */
+  /** The base it calls: `http://127.0.0.1:<engine port>`, or `<page origin><engine path>` through Studio's port. */
   readonly origin: string;
   list(signal?: AbortSignal): Promise<TargetList>;
   info(name: string, signal?: AbortSignal): Promise<TargetInfo>;
@@ -230,9 +229,12 @@ function targetPath(name: string, action = ''): string {
   return `${TARGETS_PATH}/${encodeURIComponent(name)}${action}`;
 }
 
-/** A client of the targets API of the engine on `127.0.0.1:<enginePort>`, holding its own session token. */
-export function createTargetsClient(enginePort: number): TargetsClient {
-  const origin = engineOrigin(enginePort);
+/**
+ * A client of the targets API of the engine at `base` (`engineBase` of the page's configuration), holding its own
+ * session token. Each request goes to `<base><route>`.
+ */
+export function createTargetsClient(base: string): TargetsClient {
+  const origin = base;
   let token: string | undefined;
 
   async function send(
