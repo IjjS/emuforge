@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: studio|lambda|tasks-by-the-emulator-api
-Issue-Check-Ids:
+Issue-Check-Ids: studio.lambda-invoke-shows-result-and-log-tail studio.lambda-invoke-shows-function-errors-and-refusals studio.lambda-upload-zip-changes-the-code studio.lambda-upload-refusals-leave-the-code studio.lambda-function-create-from-a-zip-file studio.lambda-configuration-edits-reach-the-emulator studio.lambda-function-delete-from-its-page
 Issue-Commit: 6ea093492ca3f4ffe383389c807ad6ed9adb06d0
 
 # Build Lambda's screens from the tasks a developer does with it locally, as far as the emulator's API supports them

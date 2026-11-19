@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: plan
 Issue-Key: studio|lambda|function-test
-Issue-Check-Ids:
+Issue-Check-Ids: studio.lambda-invoke-shows-result-and-log-tail studio.lambda-invoke-shows-function-errors-and-refusals
 Issue-Commit: 4ca29569e47c1758061cad1aefa03f1e144e79c8
 
 # Build a Lambda function's "Test" tab: invoke with an event, show the result and the log tail
