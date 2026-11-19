@@ -85,10 +85,7 @@ test('studio.iam-policy-list-shows-what-the-emulator-holds', async ({ ctx, page 
     'From S1, "Policies" in the side navigation → S4 opens, "Policies" is the current entry and "Policy type" is "Customer managed"; with the filter `<p>-` the table holds `<p>-alpha` ("Customer managed", 1 under "Attached entities") and `<p>-beta` (0), each with a date under "Last changed", and no AWS managed policy',
     async () => {
       await page.goto(ROLES_PATH);
-      await expect(
-        main.getByRole('heading', { level: 1, name: /^Roles(\s|$)/ }),
-        'the role list',
-      ).toBeVisible();
+      await expect(main.getByRole('heading', { level: 1, name: /^Roles(\s|$)/ }), 'the role list').toBeVisible();
       await page.locator(SIDE_NAVIGATION).getByRole('link', { name: POLICIES, exact: true }).click(ACTION);
       await expect.poll(() => addressOf(page), { message: 'the address of S4' }).toBe(POLICIES_PATH);
       await expect(page.locator(SIDE_NAVIGATION_ACTIVE), 'the current entry').toHaveText(POLICIES);

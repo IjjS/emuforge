@@ -58,7 +58,8 @@ test('studio.iam-policy-create-and-versions-reach-the-emulator', async ({ ctx, p
   const arn = `arn:aws:iam::${account}:policy/${name}`;
   seeded.adoptPolicy(arn);
   const versions = () => rowsOf(table(page, VERSIONS), ['Version', 'Default']);
-  const chooseVersion = (id: string) => table(page, VERSIONS).getByRole('radio', { name: id, exact: true }).check(ACTION);
+  const chooseVersion = (id: string) =>
+    table(page, VERSIONS).getByRole('radio', { name: id, exact: true }).check(ACTION);
 
   await lines.line(
     'S4, "Create policy" → S6, whose document starts with the skeleton (a statement with an empty list of actions); the name `<p>-new`, the description `made in studio`, the text replaced by doc-a, "Create policy" → S5 of the new policy with "Policy <p>-new created."; the emulator reports the policy with that description and, as its default version `v1`, the text of doc-a as typed',
@@ -70,7 +71,10 @@ test('studio.iam-policy-create-and-versions-reach-the-emulator', async ({ ctx, p
       const skeleton = JSON.parse(await documentField(main).inputValue()) as {
         Statement: { Action: unknown }[];
       };
-      expect(skeleton.Statement.map((s) => s.Action), 'the skeleton: one statement with no action').toEqual([[]]);
+      expect(
+        skeleton.Statement.map((s) => s.Action),
+        'the skeleton: one statement with no action',
+      ).toEqual([[]]);
       await main.getByRole('textbox', { name: 'Policy name', exact: true }).fill(name, ACTION);
       await main.getByRole('textbox', { name: /^Description/ }).fill(DESCRIPTION, ACTION);
       await documentField(main).fill(DOC_A, ACTION);
@@ -80,7 +84,9 @@ test('studio.iam-policy-create-and-versions-reach-the-emulator', async ({ ctx, p
       const made = await policyDirect(ctx, port, arn);
       expect(made.description, 'the description the emulator reports').toBe(DESCRIPTION);
       expect(made.defaultVersionId, 'the default version the emulator reports').toBe('v1');
-      expect(await policyVersionTextDirect(ctx, port, arn, 'v1'), 'the document of v1 the emulator reports').toBe(DOC_A);
+      expect(await policyVersionTextDirect(ctx, port, arn, 'v1'), 'the document of v1 the emulator reports').toBe(
+        DOC_A,
+      );
     },
   );
 
@@ -100,7 +106,9 @@ test('studio.iam-policy-create-and-versions-reach-the-emulator', async ({ ctx, p
         ['v1', '-'],
       ]);
       expect((await policyDirect(ctx, port, arn)).defaultVersionId, 'the default the emulator reports').toBe('v2');
-      expect(await policyVersionTextDirect(ctx, port, arn, 'v2'), 'the document of v2 the emulator reports').toBe(DOC_B);
+      expect(await policyVersionTextDirect(ctx, port, arn, 'v2'), 'the document of v2 the emulator reports').toBe(
+        DOC_B,
+      );
     },
   );
 

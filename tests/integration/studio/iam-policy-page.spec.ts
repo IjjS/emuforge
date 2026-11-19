@@ -143,7 +143,9 @@ test('studio.iam-policy-page-shows-the-policy', async ({ ctx, page }) => {
         ['"Set as default"', button(tablePart(page, VERSIONS), 'Set as default')],
         ['"Delete" of the version', button(tablePart(page, VERSIONS), 'Delete')],
       ] as const) {
-        await expect.poll(() => unavailableReason(control), { message: `the reason on ${what}` }).toBe(AWS_MANAGED_REASON);
+        await expect
+          .poll(() => unavailableReason(control), { message: `the reason on ${what}` })
+          .toBe(AWS_MANAGED_REASON);
       }
     },
   );
