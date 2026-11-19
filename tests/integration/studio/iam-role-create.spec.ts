@@ -10,6 +10,11 @@
 // changed"; requirement R9, rule 5): what "Cancel" does once the wizard holds something. The dialog's words:
 // `support/screen-rules.ts`.
 //
+// Issue 492 (its test-criteria.md; requirement R3.2, R4): aws-emulator 1.0.514 and later refuse a `Service` principal
+// that is not a host name. `studio.iam-role-create-appears-in-the-emulator` makes its role of a principal that names no
+// service with a host name, and `studio.iam-role-create-refusals-create-nothing` gained the line of a one-word
+// principal the emulator refuses.
+//
 // Other checks make roles on the run's emulator at the same time, so each check names its roles with its own prefix
 // `<p>` (lower-case letters and digits). Roles and policies are made and read directly with `support/iam.ts`; every
 // role Studio may have made is adopted, so it is taken apart when the check ends. An emulator's refusal the wizard
@@ -35,6 +40,7 @@ import {
   READ_ONLY_ACCESS,
   roleIsGone,
   roleNamesDirect,
+  serviceTrust,
   type DirectRole,
 } from './services/iam/iam';
 import { markPage, stillSamePage } from './support/home';
@@ -361,12 +367,13 @@ test('studio.iam-role-create-appears-in-the-emulator', async ({ ctx, page }) => 
   );
 
   await lines.line(
-    '"Service or use case" `<p>-nonsense` (a principal that names no service), name `<p>-odd`, "Create role" → created; a direct `GetRole` reports that principal',
+    '"Service or use case" `<p>-nonsense.example.com` (a host name that names no service), name `<p>-odd`, "Create role" → the list with its "created" Flashbar; a direct `GetRole` reports that principal',
     async () => {
-      await completeWizard(page, { type: 'service', principal: `${p}-nonsense` }, names.odd);
+      const principal = `${p}-nonsense.example.com`;
+      await completeWizard(page, { type: 'service', principal }, names.odd);
       await createAndExpectList(page, names.odd);
       expect(onlyStatement(await getRoleDirect(ctx, port, names.odd)).principal, 'the principal').toEqual({
-        Service: `${p}-nonsense`,
+        Service: principal,
       });
     },
   );
@@ -485,6 +492,8 @@ test('studio.iam-role-create-refusals-create-nothing', async ({ ctx, page }) => 
   const empty = `${p}-empty`;
   seeded.adopt(empty);
   seeded.adopt(`${p}-skip`);
+  const oneWord = `${p}-oneword`;
+  seeded.adopt(oneWord);
 
   await lines.line('"Next" on an empty step 1 → "Enter a service principal." and step 1 stays', async () => {
     await openWizard(page);
@@ -582,6 +591,32 @@ test('studio.iam-role-create-refusals-create-nothing', async ({ ctx, page }) => 
       await expect(s.roleName, 'the name kept').toHaveValue(empty);
       await createAndExpectList(page, empty);
       expect((await getRoleDirect(ctx, port, empty)).trustPolicy, `a direct GetRole of ${empty}`).toEqual(document);
+    },
+  );
+
+  await lines.line(
+    '"Service or use case" `<p>-nonsense` (one word, not a host name), a valid name, "Create role" → the wizard stays on step 3 with the name typed, the review shows `<p>-nonsense`, and "Creating the role failed" shows the emulator\'s code and message, read from the same `CreateRole` sent directly, which names `<p>-nonsense`; a direct `GetRole` of the name answers that the role cannot be found (regression)',
+    async () => {
+      const principal = `${p}-nonsense`;
+      await completeWizard(page, { type: 'service', principal }, oneWord);
+      await s.button(CREATE).click(ACTION);
+      const refusal = await iamAnswer(
+        ctx,
+        port,
+        'CreateRole',
+        createRoleParams(oneWord, { trust: serviceTrust(principal) }),
+        oneWord,
+      );
+      expect(refusal.ok, `a direct CreateRole of ${oneWord} with the principal ${principal} is refused`).toBe(false);
+      if (refusal.ok) return;
+      expect(refusal.message, "the emulator's message names the principal").toContain(principal);
+      await expect(s.main.getByText(CREATE_FAILED), `"${CREATE_FAILED}"`).toBeVisible();
+      await expect(s.main, "the emulator's code").toContainText(refusal.code);
+      await expect(s.main, "the emulator's message").toContainText(refusal.message);
+      await expect(s.step(3), 'the wizard stays on step 3').toBeVisible();
+      await expect(s.roleName, 'the name typed').toHaveValue(oneWord);
+      await expect(s.main, "step 1's principal in the review").toContainText(principal);
+      expect(await roleIsGone(ctx, port, oneWord), `a direct GetRole of ${oneWord}`).toBe(true);
     },
   );
 
