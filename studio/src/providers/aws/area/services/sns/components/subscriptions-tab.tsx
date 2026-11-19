@@ -1,8 +1,36 @@
+import Box from '@cloudscape-design/components/box';
+import Button from '@cloudscape-design/components/button';
 import Header from '@cloudscape-design/components/header';
+import Link from '@cloudscape-design/components/link';
+import Pagination from '@cloudscape-design/components/pagination';
+import SpaceBetween from '@cloudscape-design/components/space-between';
+import StatusIndicator from '@cloudscape-design/components/status-indicator';
+import Table, { type TableProps } from '@cloudscape-design/components/table';
+import { useCallback, useEffect, useState } from 'react';
 
 import type { AreaConnection } from '../../../components/emulator-line';
+import { actionFailureItem, readFailureState, ReadFailure } from '../../../components/failure-states';
+import { usePageFlash, type FlashItem } from '../../../components/page-flash';
+import { functionPath, queuePath } from '../../../components/resource-paths';
+import { useFollow } from '../../../components/use-follow';
+import { ValueText } from '../../../components/value-text';
+import { OPERATIONS, type AllowOutcome, type DeliveryProtocol, type Subscription } from '../api';
+import { endpointName, subscribeHref } from '../format';
+import {
+  failureOf,
+  useAllowDelivery,
+  useDelivery,
+  usePageSignal,
+  useSubscriptionListing,
+  useUnsubscribe,
+} from '../queries';
+import { DeleteSubscriptionDialog } from './delete-subscription-dialog';
+import { DeliveryStatus, deliveryView, type DeliveryView } from './delivery-status';
 
-// S3's "Subscriptions" tab (issue 536, design task 1 steps 3 to 5). A stand-in: unit s2 builds it.
+// S3's "Subscriptions" tab (issue 536, design task 1 steps 3 to 5 and task 5 step 1): the topic's subscriptions, a
+// page of `ListSubscriptionsByTopic` at a time on its own tokens, each with whether the policy of its queue or
+// function lets the topic deliver. An action that succeeds reads again, through `queries.ts`, every SNS read shown:
+// the topic, its subscriptions and the deliveries, so the tab asks nothing of the page itself.
 
 export interface SubscriptionsTabProps {
   topicArn: string;
@@ -12,7 +40,346 @@ export interface SubscriptionsTabProps {
   onTopicChanged: () => void;
 }
 
-export function SubscriptionsTab(props: SubscriptionsTabProps) {
-  void props;
-  return <Header variant="h2">Subscriptions</Header>;
+const DESCRIPTION =
+  'Delivery says what the policy of the subscribed queue or function allows. The emulator delivers a notification only where that policy lets this topic.';
+const ALLOW_REASON = 'Select a subscription whose delivery says No permission.';
+const PENDING_REASON = 'A subscription that is pending confirmation has no ARN to delete it by.';
+const SELECT_FIRST = 'Select a subscription';
+
+/** An endpoint keeps room for a queue's or a function's name (`aws-area.md`, entry 4). */
+const ENDPOINT_MIN_WIDTH = '28ch';
+
+interface Row {
+  /** Unique on the page: the subscription's ARN, or for a pending one its protocol, endpoint and occurrence. */
+  key: string;
+  subscription: Subscription;
+  /** The protocol whose delivery is read, or `undefined` for any other. */
+  deliveryProtocol: DeliveryProtocol | undefined;
+  /** The key of its delivery: two rows of one protocol and endpoint share it. */
+  deliveryKey: string;
+}
+
+function deliveryProtocolOf(protocol: string): DeliveryProtocol | undefined {
+  return protocol === 'sqs' || protocol === 'lambda' ? protocol : undefined;
+}
+
+function rowsOf(subscriptions: readonly Subscription[]): Row[] {
+  const seen = new Map<string, number>();
+  return subscriptions.map((subscription) => {
+    const base = subscription.pending
+      ? `pending\n${subscription.protocol}\n${subscription.endpoint}`
+      : subscription.arn;
+    const count = (seen.get(base) ?? 0) + 1;
+    seen.set(base, count);
+    return {
+      key: count === 1 ? base : `${base}\n${String(count)}`,
+      subscription,
+      deliveryProtocol: deliveryProtocolOf(subscription.protocol),
+      deliveryKey: `${subscription.protocol}\n${subscription.endpoint}`,
+    };
+  });
+}
+
+/** The header's counter: the page's rows, with a plus while a next page follows. */
+function counterText(rows: number, openEnd: boolean): string {
+  return `(${String(rows)}${openEnd ? '+' : ''})`;
+}
+
+/** The result of "Allow delivery" in the Flashbar (design task 1 step 5). */
+function allowItem(outcome: AllowOutcome, endpoint: string, topic: string): FlashItem {
+  switch (outcome.outcome) {
+    case 'added':
+      return { type: 'success', content: `${endpoint} may now receive from ${topic}.` };
+    case 'already-allowed':
+      return { type: 'info', content: `${endpoint} already receives from ${topic}. Nothing was changed.` };
+    case 'not-changed':
+      return { type: 'warning', content: `The policy of ${endpoint} was not changed: ${outcome.reason}.` };
+  }
+}
+
+interface RowDeliveryProps {
+  row: Row;
+  topicArn: string;
+  connection: AreaConnection;
+  onView: (deliveryKey: string, view: DeliveryView) => void;
+}
+
+/** A row's "Delivery": read when the row is shown, and told to the tab, which decides "Allow delivery" by it. */
+function RowDelivery({ row, topicArn, connection, onView }: RowDeliveryProps) {
+  const protocol = row.deliveryProtocol;
+  const read = useDelivery(
+    connection.engineOrigin,
+    topicArn,
+    protocol ?? 'sqs',
+    row.subscription.endpoint,
+    protocol !== undefined,
+  );
+  const view: DeliveryView = protocol === undefined ? { kind: 'other-protocol' } : deliveryView(read);
+  const signature = JSON.stringify(view);
+  useEffect(() => {
+    onView(row.deliveryKey, JSON.parse(signature) as DeliveryView);
+  }, [onView, row.deliveryKey, signature]);
+  return <DeliveryStatus view={view} connection={connection} />;
+}
+
+export function SubscriptionsTab({ topicArn, topicName, connection }: SubscriptionsTabProps) {
+  const handleFollow = useFollow();
+  const flash = usePageFlash();
+  const pageSignal = usePageSignal();
+  const allow = useAllowDelivery(connection.engineOrigin);
+  const unsubscribe = useUnsubscribe(connection.engineOrigin);
+  const [selectedKey, setSelectedKey] = useState<string>();
+  const [views, setViews] = useState<Readonly<Record<string, DeliveryView>>>({});
+  const [allowing, setAllowing] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const listing = useSubscriptionListing(connection.engineOrigin, topicArn);
+  const { items, currentPage, goToPage } = listing;
+  const loaded = items !== undefined && !listing.loading;
+  const rows = rowsOf(items ?? []);
+  const selected = loaded ? rows.find((row) => row.key === selectedKey) : undefined;
+  const selectedView = selected === undefined ? undefined : views[selected.deliveryKey];
+  const canAllow = selectedView?.kind === 'read' && selectedView.delivery.kind === 'none';
+
+  const handleView = useCallback((deliveryKey: string, view: DeliveryView) => {
+    setViews((current) =>
+      JSON.stringify(current[deliveryKey]) === JSON.stringify(view) ? current : { ...current, [deliveryKey]: view },
+    );
+  }, []);
+
+  const handleRetry = useCallback(() => {
+    setSelectedKey(undefined);
+    goToPage(currentPage);
+  }, [goToPage, currentPage]);
+
+  // A failed read is read again once the connection is connected again; kept from the previous render, as React's
+  // own pattern for it, so the change is acted on once.
+  const connected = connection.result?.kind === 'connected';
+  const [seenConnected, setSeenConnected] = useState(connected);
+  if (connected !== seenConnected) {
+    setSeenConnected(connected);
+    if (connected && listing.failure !== undefined) {
+      handleRetry();
+    }
+  }
+
+  const handleAllow = () => {
+    if (selected === undefined || selected.deliveryProtocol === undefined || !canAllow) {
+      return;
+    }
+    const protocol = selected.deliveryProtocol;
+    const endpoint = selected.subscription.endpoint;
+    const name = endpointName(endpoint);
+    const signal = pageSignal();
+    setAllowing(true);
+    allow({ topicArn, protocol, endpoint }, signal).then(
+      (outcome) => {
+        if (signal.aborted) {
+          return;
+        }
+        setAllowing(false);
+        flash.show([allowItem(outcome, name, topicName)]);
+      },
+      (error: unknown) => {
+        if (signal.aborted) {
+          return;
+        }
+        setAllowing(false);
+        const operation = protocol === 'sqs' ? OPERATIONS.setQueueAttributes : OPERATIONS.addPermission;
+        flash.show([
+          actionFailureItem(failureOf(error, operation), `Allow delivery to ${name}`, connection.engineOrigin),
+        ]);
+      },
+    );
+  };
+
+  const handleDelete = () => {
+    if (selected === undefined || selected.subscription.pending) {
+      return;
+    }
+    const name = endpointName(selected.subscription.endpoint);
+    const signal = pageSignal();
+    setDeleting(true);
+    unsubscribe(selected.subscription.arn, signal).then(
+      () => {
+        if (signal.aborted) {
+          return;
+        }
+        setDeleting(false);
+        setDeleteOpen(false);
+        setSelectedKey(undefined);
+        flash.show([{ type: 'success', content: `Deleted the subscription of ${name}` }]);
+      },
+      (error: unknown) => {
+        if (signal.aborted) {
+          return;
+        }
+        setDeleting(false);
+        setDeleteOpen(false);
+        flash.show([
+          actionFailureItem(
+            failureOf(error, OPERATIONS.unsubscribe),
+            `Delete the subscription of ${name}`,
+            connection.engineOrigin,
+          ),
+        ]);
+      },
+    );
+  };
+
+  const handlePageChange = ({ detail }: { detail: { currentPageIndex: number } }) => {
+    setSelectedKey(undefined);
+    goToPage(detail.currentPageIndex);
+  };
+
+  const columns: TableProps.ColumnDefinition<Row>[] = [
+    {
+      id: 'protocol',
+      header: 'Protocol',
+      cell: (row) => <ValueText kind="fixed" value={row.subscription.protocol} />,
+    },
+    {
+      id: 'endpoint',
+      header: 'Endpoint',
+      isRowHeader: true,
+      minWidth: ENDPOINT_MIN_WIDTH,
+      cell: (row) => {
+        const { endpoint } = row.subscription;
+        const value = <ValueText kind="address" value={endpoint} />;
+        if (row.deliveryProtocol === undefined) {
+          return value;
+        }
+        const name = endpointName(endpoint);
+        const href = row.deliveryProtocol === 'sqs' ? queuePath(name) : functionPath(name);
+        return (
+          <Link href={href} onFollow={handleFollow}>
+            {value}
+          </Link>
+        );
+      },
+    },
+    {
+      id: 'status',
+      header: 'Status',
+      cell: (row) =>
+        row.subscription.pending ? (
+          <StatusIndicator type="pending">Pending confirmation</StatusIndicator>
+        ) : (
+          <StatusIndicator type="success">Confirmed</StatusIndicator>
+        ),
+    },
+    {
+      id: 'delivery',
+      header: 'Delivery',
+      cell: (row) => <RowDelivery row={row} topicArn={topicArn} connection={connection} onView={handleView} />,
+    },
+  ];
+
+  const createButton = (primary: boolean) => (
+    <Button variant={primary ? 'primary' : 'normal'} href={subscribeHref(topicArn)} onFollow={handleFollow}>
+      Create subscription
+    </Button>
+  );
+
+  let empty = null;
+  if (listing.failure !== undefined) {
+    empty = (
+      <ReadFailure state={readFailureState(listing.failure, connection, 'subscription list')} onRetry={handleRetry} />
+    );
+  } else if (items !== undefined && items.length === 0) {
+    empty = (
+      <Box textAlign="center" color="inherit">
+        <SpaceBetween size="xxs">
+          <Box variant="strong" color="inherit">
+            No subscriptions
+          </Box>
+          <Box variant="p" color="inherit">
+            Nothing published to this topic is delivered anywhere yet.
+          </Box>
+        </SpaceBetween>
+        <Box margin={{ top: 's' }}>{createButton(false)}</Box>
+      </Box>
+    );
+  }
+
+  let deleteReason = SELECT_FIRST;
+  if (selected?.subscription.pending === true) {
+    deleteReason = PENDING_REASON;
+  }
+
+  return (
+    <>
+      <Table<Row>
+        items={rows}
+        trackBy="key"
+        selectionType="single"
+        selectedItems={selected === undefined ? [] : [selected]}
+        onSelectionChange={({ detail }) => {
+          setSelectedKey(detail.selectedItems[0]?.key);
+        }}
+        ariaLabels={{
+          selectionGroupLabel: 'Subscription selection',
+          itemSelectionLabel: (_, row) => `${row.subscription.protocol} ${row.subscription.endpoint}`,
+        }}
+        columnDefinitions={columns}
+        wrapLines
+        loading={listing.failure === undefined && items === undefined}
+        loadingText="Loading subscriptions"
+        empty={empty}
+        header={
+          <Header
+            variant="h2"
+            counter={items === undefined ? undefined : counterText(items.length, listing.openEnd)}
+            description={DESCRIPTION}
+            actions={
+              <SpaceBetween direction="horizontal" size="xs">
+                <Button disabled={!canAllow} disabledReason={ALLOW_REASON} loading={allowing} onClick={handleAllow}>
+                  Allow delivery
+                </Button>
+                <Button
+                  disabled={selected === undefined || selected.subscription.pending}
+                  disabledReason={deleteReason}
+                  onClick={() => {
+                    setDeleteOpen(true);
+                  }}
+                >
+                  Delete
+                </Button>
+                {createButton(true)}
+              </SpaceBetween>
+            }
+          >
+            Subscriptions
+          </Header>
+        }
+        pagination={
+          <Pagination
+            currentPageIndex={currentPage}
+            pagesCount={listing.pagesCount}
+            openEnd={listing.openEnd}
+            disabled={!loaded}
+            ariaLabels={{
+              nextPageLabel: 'Next page',
+              previousPageLabel: 'Previous page',
+              pageLabel: (page) => `Page ${String(page)}`,
+            }}
+            onChange={handlePageChange}
+          />
+        }
+      />
+      {selected !== undefined && (
+        <DeleteSubscriptionDialog
+          visible={deleteOpen}
+          endpointName={endpointName(selected.subscription.endpoint)}
+          topicName={topicName}
+          pending={deleting}
+          onConfirm={handleDelete}
+          onDismiss={() => {
+            setDeleteOpen(false);
+          }}
+        />
+      )}
+    </>
+  );
 }
