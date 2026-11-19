@@ -150,6 +150,12 @@ The `pm` reviews those severities and may change them. Close your workers, `rev`
 `pm-report "ISSUE READY i<id>-plan feat/<id> report=.pm/issue-<id>/report.md [filed #<n> …]"`, print the same
 line and stop. The `pm` merges `feat/<id>` into `main` and then closes you.
 
+`pm-merge` takes `feat/<id>` into `main` on the whole check's record when git merges it with no conflict, however
+far `main` moved since: no second whole check. When git stops on a conflict, nothing is merged and the `pm` tells
+you so: `pm-merge <id> --take-main`, which names the conflicting paths; the unit that owns each path merges `main`
+into its branch, resolves the conflict, passes its fast check and is merged into `feat/<id>` again; then
+`--take-main` again, the whole check again, and your `ISSUE READY` again.
+
 ## Events that reach you
 
 The events of your issue's panes come to you as prompts starting with `EVENT`. Your own lines, a dialog in one of

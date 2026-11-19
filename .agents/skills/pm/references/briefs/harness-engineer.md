@@ -25,5 +25,7 @@ Steps:
    report=output/report.md"`, print the same line and stop. Stay open for the `pm`'s orders; one ends with
    `pm-report "DONE i{{issue}}-harness-engineer <what changed, committed>"`. Never report progress.
 
-Merge a branch into yours only when the `pm` names it and tells you it moved. Keep `output/state.md` current after
+Merge a branch into yours only when the `pm` names it: `main` when `pm-merge` stopped on a conflict with it (a
+clean merge needs nothing from you, however far `main` moved). Then resolve the conflict, run `pm-check` again and
+answer `UNIT READY` again. Keep `output/state.md` current after
 each step; the `pm` resets your context from it past 300K.

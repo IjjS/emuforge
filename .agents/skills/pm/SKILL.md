@@ -43,7 +43,8 @@ issue files, merge or archive; they refuse a plan anything outside its own issue
 - **Go signal.** Work from outside starts only on the owner's direct instruction in chat; the owner collects the
   issues from outside, GitHub's included, and nothing polls GitHub for a signal. Issue files the harness filed itself (`Issue-Source` `finder`,
   `plan`, `worker`) need no new signal: see `Next issue`. The exception is an issue filed from a run of the
-  workflow on GitHub Actions (flow step 3): it waits for the owner's signal. A go signal authorizes commits on
+  workflow on GitHub Actions (flow step 3): it waits for the owner's signal, unless the run is of a push that
+  carried a merge made behind `main`, which you start at once (flow step 3). A go signal authorizes commits on
   that issue's branches. `main` is pushed when an issue is finished (flow step 3); any other push, releases,
   anything written to GitHub and deleting remote branches need the owner's explicit word.
 - **Touchpoints.** The owner is asked at most twice per issue: ① requirement decisions, one bundled list, and
@@ -110,7 +111,9 @@ A harness issue goes to one harness-engineer, in a unit worktree of its own:
 It has no plan, rev or crit. On its `STAGE READY` read its `output/plan.md` and answer once, in one prompt,
 recording the answer under `## Review decisions`. On its `UNIT READY` read its `output/report.md` and the change
 (`git diff main...<branch>`) and judge it yourself: send what must change in one prompt, or merge it with
-`pm-merge <id> h1`, which asks for its `pm-check` record and no review file. An issue given in parts takes the
+`pm-merge <id> h1`, which asks for its `pm-check` record and no review file. It merges when git merges the branch
+clean, however far `main` moved; when it stops on a conflict with `main`, tell the engineer in one prompt to merge
+`main` into its branch, resolve the conflict and run `pm-check` again; it answers `UNIT READY` again. An issue given in parts takes the
 next part as `h2`, from `main` after the merge. The engineer closes the issue's file on its branch with
 `pm-issue close` (with `--checks harness.guards` only when a kept guard shows the fix), and `pm-merge` refuses its part while the file is still open there, unless you wrote its brief with
 `--not-last` because another part follows.
@@ -128,17 +131,20 @@ On `EVENT ready i<id>-plan ISSUE READY feat/<id> report=…`:
 2. Look the change over (`git diff main...feat/<id> --stat`, and what you choose to read). At your own discretion
    look for a further critical fault; file only that, with `pm-issue new --source finder` and its evidence.
 3. `pm-merge <id>`: it asks for the whole check's record on the head of `feat/<id>` and the newest
-   `review-impl-r<k>.md` saying `verdict: pass`. When it refuses because `main` moved since, in a way the issue
-   branch's paths care about, tell the plan in one line to run `pm-merge <id> --take-main` and the whole check
-   again; it answers `ISSUE READY` again.
+   `review-impl-r<k>.md` saying `verdict: pass`. It merges when git merges `feat/<id>` into `main` with no
+   conflict, however far `main` moved since the whole check: the output then says `behind main`, and the run on
+   GitHub Actions checks the merged result. When git stops on a conflict, nothing is merged: tell the plan in one
+   line to run `pm-merge <id> --take-main`, have the unit that owns each conflicting path resolve it, and run the
+   whole check again; it answers `ISSUE READY` again.
 4. `pm-pane close i<id>-plan`, then flow step 3.
 
 Every merge is made on the merged branch's own passing record: `pm-merge` takes a unit's branch into the issue
 branch only when its last `pm-check` record is a pass on the commit being merged and covers what its own paths
 against the issue branch call for; it takes the issue branch, or a unit of an issue without one, into `main` only
-when the record is a pass on that commit and covers what the branch changes against `main` as it is, `integration`
-included, so a `deferred` step never reaches `main`. Nothing else is run at a merge; `main` is checked on GitHub
-Actions after its push (flow step 3).
+when the record is a pass on that commit and covers what the branch changes against its merge base with `main`,
+`integration` included, so a `deferred` step never reaches `main`, and git merges it with no conflict: what `main`
+gained since is not checked again at the merge (issue 520, as a pull request is merged). Nothing else is run at a
+merge; `main`, and so the merged result, is checked on GitHub Actions after its push (flow step 3).
 
 **Harness guards.** The harness keeps no tests but three guards, in `.pm/bin/tests/test_guards.py` (issue 523):
 what the orphan sweep may stop, what a check's clean-up may remove of containers, volumes and images, and what
@@ -195,7 +201,12 @@ with `gh`: never re-run, cancel or delete one, and write nothing to GitHub. With
   `Issue-Check-Ids` or names the failing step; then add the run's url to that issue instead. Tell the owner in
   one line (the run's url and the issue's id). The issue file of a failed run names the services the run
   selected, as its step `services` printed them, so a failure is read against what ran. The issue waits for the owner's signal like an issue from outside:
-  you do not start it yourself, and other work goes on.
+  you do not start it yourself, and other work goes on, but for the exception that follows.
+- The exception (owner, 2026-11-19): a failed run of a push that carried a merge made behind `main` (its
+  `pm-merge` printed `behind main`, and its line in `.pm/run/events.log` ends `behind main by <n> paths`). File it
+  and tell the owner as above, say in that line that the push carried such a merge, and start the issue at once,
+  ahead of the queue, without waiting for the owner's signal. A red `main` holds every other merge: while that run
+  is red, merge nothing into `main` but its fix (merges into an issue branch go on).
 - A successful run with a step named `<step> (second run)` holds a flake: file it as flow step 2 says for flakes,
   with the run's url in place of the first log; it waits for the owner's signal too.
 - With no run after the second look, or no answer from `gh`, the run is neither a pass nor a failure: tell the
@@ -222,7 +233,7 @@ runs of it no longer fit in a hosted job's six hours, and the issue you file is 
 Work does not stop at the report. Open issue files come from four places: a `plan` or `worker` that met
 something outside its own issue and filed it instead of fixing it in passing; a failed or flaky run of the
 workflow on GitHub Actions after a push of `main`, filed with `--source finder` (flow step 3), which waits for the
-owner's signal; a check that fails when you run the full checks on `main` by hand; and the owner. Run
+owner's signal but for a failed run after a merge made behind `main`; a check that fails when you run the full checks on `main` by hand; and the owner. Run
 `pm-check .` on `main` by hand only when the owner asks for it or the emulator version changes
 (`EVENT emulator-image refreshed`), never as a condition of a merge or a push; a check it fails that no open issue
 lists in `Issue-Check-Ids` you file with `--source finder` and the failing log as evidence.

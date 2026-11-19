@@ -69,7 +69,7 @@ something that should be handled separately files it as an issue file under `iss
 instead of fixing it in passing; so does the `pm` for a check that fails on `main`. Once every worktree of the
 current issues is merged, the `pm` reads the open issue files and assigns the next one, and keeps going. An issue
 file whose `Issue-Source` is `github#<n>` still waits for the owner's word, and one filed from a run on GitHub Actions
-waits for the owner's signal (Branches and main).
+waits for the owner's signal, but for the run of a push that carried a merge made behind `main` (Branches and main).
 
 A go signal authorizes commits on the issue's branches in their worktrees, and nothing else. The owner may set a
 token rate for the day; over it, no new pane is opened.
@@ -84,6 +84,11 @@ token rate for the day; over it, no new pane is opened.
   merges it into local `main`. With several issues finished, the `pm` decides the order.
 - A harness issue has no issue branch: the `pm` merges its unit's branch into local `main` when its check passes
   and the `pm` has judged it.
+- A branch goes into `main` as a pull request is merged: on its own passing record on its head, when git merges it
+  with no conflict (a fast-forward or a clean merge commit), whatever `main` gained since its check, with no second
+  check. On a conflict nothing is merged: its lead merges `main` into the branch (`pm-merge <id> --take-main` for
+  an issue branch), the unit that owns the files resolves the conflict, and the check runs again on the new head.
+  The run on GitHub Actions of the push is the check of the merged result.
 - On `main` the `pm` commits only issue files it created and merges made by `.pm/bin/pm-merge`.
 - Only the `pm` merges into `main` and pushes. It pushes `main` to `origin` each time an issue is finished:
   merged into `main` on its own passing check (its issue branch's whole check, or its unit's check). Only `main`,
@@ -91,7 +96,10 @@ token rate for the day; over it, no new pane is opened.
 - Every push of `main` is checked on GitHub Actions, on Ubuntu, by `.github/workflows/main.yml`, with every
   check of no service and the browser checks of the services the push touched (every service's when a shared
   path changed); the `pm` reads the run of the pushed commit with `gh` and writes nothing to GitHub. A failed run
-  becomes an issue file that waits for the owner's signal; other work goes on.
+  becomes an issue file that waits for the owner's signal; other work goes on. The one exception is the failed
+  run of a push that carried a merge made behind `main` (`pm-merge` said `behind main`): the `pm` files it and
+  starts it at once, without waiting for the signal, and merges nothing else into `main` but its fix while that run
+  is red.
 - The whole set of checks runs in `.github/workflows/full.yml`, which only the owner starts, by hand; the `pm`
   never starts it and reads a run of it on the owner's word. The push run takes the checks of the services the
   push touched, so between two runs of `full` a service no change touched is not checked. The checks of the tier
