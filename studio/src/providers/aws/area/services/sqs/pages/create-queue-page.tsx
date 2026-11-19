@@ -339,13 +339,10 @@ export function CreateQueuePage({ connection }: ScreenPageProps) {
     taken !== undefined && taken === form.name ? (
       <SpaceBetween size="xxxs">
         <span>
-          <ValueText kind="text" value="A queue named " />
-          <ValueText kind="name" value={taken} />
-          <ValueText kind="text" value=" already exists." />
+          A queue named <ValueText kind="name" value={taken} /> already exists.
         </span>
         <Link href={queuePath(taken)} onFollow={handleFollow}>
-          <ValueText kind="text" value="Open " />
-          <ValueText kind="name" value={taken} />
+          Open <ValueText kind="name" value={taken} />
         </Link>
       </SpaceBetween>
     ) : (
