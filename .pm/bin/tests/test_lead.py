@@ -82,12 +82,11 @@ class Refusals(LeadCase):
         "plan-briefs-another-issue": ("P9", ("pm-brief", "worker", 5, "s1", "--summary", "x"), ("refused", "#5")),
         "plan-archives": ("P9", ("pm-archive", 9, "--yes"), ("refused", "the pm's")),
         "plan-commits-on-main": ("P9", ("pm-issue", "commit"), ("refused", "the pm's")),
-        "plan-takes-a-go-signal": ("P9", ("pm-ready", "take", 7), ("refused", "the pm's")),
         "plan-sets-the-token-target": ("P9", ("pm-tokens", "target", "1M"), ("refused", "the pm's")),
         "plan-stops-the-daemon": ("P9", ("pm-watchd", "stop"), ("refused", "the pm's")),
     }
     SCRIPTS = ("pm-worktree", "pm-scope", "pm-check", "pm-merge", "pm-emulator-dir", "pm-brief", "pm-archive",
-               "pm-cost", "pm-pane", "pm-critique", "pm-issue", "pm-ready", "pm-tokens", "pm-watchd")
+               "pm-cost", "pm-pane", "pm-critique", "pm-issue", "pm-tokens", "pm-watchd")
 
     def test_refused(self):
         self.fixture(scripts=self.SCRIPTS)
@@ -236,7 +235,11 @@ class Route(unittest.TestCase):
             ("EVENT check still emuforge-7-e1 engine-test 61m", None),
             ("EVENT mem 23.0GB swap 0/0GB top=i9-worker-e1 3GB", None),
             ("EVENT cpu 95% top=i9-worker-e1 3GB", None),
-            ("EVENT go github#7", None),
+            ("EVENT silent i9-worker-e1", "i9-plan"),  # a turn with no typed line (issue 497)
+            ("EVENT silent i9-crit", "i9-plan"),
+            ("EVENT silent i9-plan", None),
+            ("EVENT silent i4-harness-engineer", None),
+            ("EVENT silent i7-worker-e1", None),
             ("EVENT tokens over 1M target 1M", None),
         ]
         for line, want in rows:
