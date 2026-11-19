@@ -71,13 +71,14 @@ on the built app (`critique.md`).
   no emulator endpoint.
 - In the states that come from the emulator's answer (connected, not started, not answering), when that answer names
   the engine's target, the status is followed by a part of its own, "Target `{target}`", the name as the answer gave
-  it, rendered as text in code style (issue 486, R2). The status texts above are unchanged, word for word and in the
+  it, rendered as text in code style, the whole part a Cloudscape `Box` so it takes Cloudscape's font (issue 486, R2). The status texts above are unchanged, word for word and in the
   same element. The engine states and "Checking" name no target, and an answer that names none shows no part.
 - In every state but "Checking" and connected the line ends with the link "Connection status" to Home, a route
   change like a crumb's.
 - The line stays current while a page of the area is open (the 5-second rhythm of "The area in Studio's frame");
   while a later check is in flight it keeps showing the last answer's state. A change of state is announced once, label and new
-  status together, with the target part when there is one, in a polite live region that does not hold the link; a
+  status together, with the target part as a sentence of its own when there is one ("… on port `{port}`. Target
+  `{target}`"), in a polite live region that does not hold the link; a
   check that finds the same state announces nothing, and the first answer is announced only when it is not
   connected. A change of target that keeps the kind of status (connected to connected, say, even with another
   endpoint) is announced by the area's flash ("The area in Studio's frame"), so the line's live region says nothing

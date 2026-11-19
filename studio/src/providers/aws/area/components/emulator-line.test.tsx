@@ -357,6 +357,8 @@ describe("the emulator line's target (issue 486, R2)", () => {
     expect(statusType()).toBe('success');
     const part = targetPart() as HTMLElement;
     expect(text(part)).toBe('Target local');
+    // A Cloudscape Box, so the word takes Cloudscape's font and not the document's default.
+    expect(part.className).toMatch(/awsui_box/);
     expect(createWrapper(part).findBox()?.getElement()).toHaveTextContent('local');
     expect(part.querySelector('code, [class*="awsui_box"]')).not.toBeNull();
     expect(createWrapper(line()).findStatusIndicator()?.getElement().contains(part)).toBe(false);
@@ -430,7 +432,7 @@ describe("the emulator line's target (issue 486, R2)", () => {
     connection.answer(naming(emulatorDown('not_started', 9301), 'local'));
     await settle();
 
-    expect(text(liveRegion())).toBe(`${LABEL} Not started on port 9301 Target local`);
+    expect(text(liveRegion())).toBe(`${LABEL} Not started on port 9301. Target local`);
     expect(liveRegion()).not.toHaveTextContent('Connection status');
   });
 
@@ -441,7 +443,7 @@ describe("the emulator line's target (issue 486, R2)", () => {
     connection.answer(naming(emulatorDown('not_started', 9302), 'second'));
     await settle();
 
-    expect(text(liveRegion())).toBe(`${LABEL} Not started on port 9302 Target second`);
+    expect(text(liveRegion())).toBe(`${LABEL} Not started on port 9302. Target second`);
   });
 
   it('a target that holds markup: shown as that text, no element made from it', () => {
