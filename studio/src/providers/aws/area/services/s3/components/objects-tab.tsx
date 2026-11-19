@@ -16,9 +16,10 @@ import type { AreaConnection } from '../../../components/emulator-line';
 import { useFollow } from '../../../components/use-follow';
 import { ValueText } from '../../../components/value-text';
 import { NO_SUCH_BUCKET } from '../api';
-import { NO_VALUE, objectPath, objectsPath, s3Uri } from '../format';
+import { NO_VALUE, objectPath, objectsPath, s3Uri, uploadPath } from '../format';
 import { useObjectListing, type BucketCount } from '../queries';
 import { lineText } from './bucket-read';
+import { CreateFolderDialog } from './create-folder-dialog';
 import { DeleteObjectsDialog } from './delete-objects-dialog';
 import { NAME_COLUMN_MIN_WIDTH } from './name-column';
 import { listingFailure, objectRows, rowType, type Row } from './objects-rows';
@@ -185,6 +186,19 @@ export function ObjectsTab({ name, prefix, connection, announce }: ObjectsTabPro
     [refresh],
   );
 
+  // "Create folder" (task 3): the dialog; once a folder was put, the listing is asked again.
+  const [creatingFolder, setCreatingFolder] = useState(false);
+  const handleCreateFolderClose = useCallback(
+    (created: boolean) => {
+      setCreatingFolder(false);
+      if (created) {
+        setStarter(null);
+        refresh();
+      }
+    },
+    [refresh],
+  );
+
   const handleRefresh = useCallback(() => {
     setStarter('refresh');
     setRefreshing(true);
@@ -281,6 +295,13 @@ export function ObjectsTab({ name, prefix, connection, announce }: ObjectsTabPro
         selection={deleting ?? { keys: [], folders: [] }}
         onClose={handleDeleteClose}
       />
+      <CreateFolderDialog
+        visible={creatingFolder}
+        endpoint={connection.engineOrigin}
+        bucket={name}
+        prefix={prefix}
+        onClose={handleCreateFolderClose}
+      />
       <Table<Row>
         items={rows ?? []}
         trackBy="id"
@@ -325,6 +346,16 @@ export function ObjectsTab({ name, prefix, connection, announce }: ObjectsTabPro
                   onClick={handleDelete}
                 >
                   Delete
+                </Button>
+                <Button
+                  onClick={() => {
+                    setCreatingFolder(true);
+                  }}
+                >
+                  Create folder
+                </Button>
+                <Button variant="primary" iconName="upload" href={uploadPath(name, prefix)} onFollow={handleFollow}>
+                  Upload
                 </Button>
               </SpaceBetween>
             }
