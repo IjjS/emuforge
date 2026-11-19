@@ -143,4 +143,69 @@ describe('"Edit" of a policy', () => {
     expect(shown).toEqual([]);
     expect((await field()).value).toBe(DOC_B);
   });
+
+  describe('leaving with a changed text', () => {
+    function editDialog(): HTMLElement {
+      const dialog = screen.getAllByRole('dialog').find((d) => d.textContent?.includes('Edit p-five'));
+      if (dialog === undefined) {
+        throw new Error('the edit dialog is not open');
+      }
+      return dialog;
+    }
+    function pressEsc() {
+      fireEvent.keyDown(within(editDialog()).getByRole('textbox'), { key: 'Escape', code: 'Escape', keyCode: 27 });
+    }
+    const ways: [string, () => void][] = [
+      ['Esc', pressEsc],
+      ['X', () => fireEvent.click(within(editDialog()).getByRole('button', { name: 'Close dialog' }))],
+      ['Cancel', () => fireEvent.click(within(editDialog()).getByRole('button', { name: 'Cancel' }))],
+    ];
+
+    it.each(ways)('%s with the text unchanged closes at once', async (_, leave) => {
+      open();
+      await field();
+      leave();
+
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(screen.queryByText('Discard what you entered?')).toBeNull();
+    });
+
+    it.each(ways)('%s with a changed text asks first; "Keep editing" keeps what was typed', async (_, leave) => {
+      open();
+      fireEvent.change(await field(), { target: { value: DOC_B } });
+      leave();
+
+      expect(await screen.findByText('Discard what you entered?')).toBeTruthy();
+      expect(onClose).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole('button', { name: 'Keep editing' }));
+
+      await waitFor(() => {
+        expect(screen.queryByText('Discard what you entered?')).toBeNull();
+      });
+      expect(onClose).not.toHaveBeenCalled();
+      expect((within(editDialog()).getByRole('textbox') as HTMLTextAreaElement).value).toBe(DOC_B);
+    });
+
+    it.each(ways)('%s with a changed text closes only on "Discard"', async (_, leave) => {
+      open();
+      fireEvent.change(await field(), { target: { value: DOC_B } });
+      leave();
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Discard' }));
+
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(createPolicyVersion).not.toHaveBeenCalled();
+    });
+
+    it('a text typed back to what it opened with closes at once', async () => {
+      open();
+      const text = await field();
+      fireEvent.change(text, { target: { value: DOC_B } });
+      fireEvent.change(text, { target: { value: DOC_A } });
+      fireEvent.click(within(editDialog()).getByRole('button', { name: 'Cancel' }));
+
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(screen.queryByText('Discard what you entered?')).toBeNull();
+    });
+  });
 });
