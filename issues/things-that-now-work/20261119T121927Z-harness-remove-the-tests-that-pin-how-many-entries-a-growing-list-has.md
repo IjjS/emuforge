@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: bug
 Issue-Source: owner
 Issue-Key: harness|tests|no-test-pins-the-size-of-a-list-that-grows
-Issue-Check-Ids:
+Issue-Check-Ids: harness.integration-not-run harness.on-touch harness.probe-services harness.on-request
 Issue-Commit: 39901f4340fa12d8bce100199cfa44235350260c
 
 # Remove the tests that pin how many entries a growing list has

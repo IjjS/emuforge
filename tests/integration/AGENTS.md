@@ -36,6 +36,9 @@ tests/integration/
 - Leaves nothing behind: it registers cleanup for everything it creates.
 - Never depends on another check having run, or on run order.
 - Has no sleep. It waits on a condition with a bound.
+- A test does not assert how many entries a list has when the list grows with the product (services, manifest rows);
+  it asserts the property the number stood in for (each entry well formed, two lists equal, no entry twice by its
+  key, the list not empty). A number that is the behaviour under test stays (a page of `MaxItems` 10).
 
 ## Studio checks and language
 

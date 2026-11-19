@@ -101,3 +101,7 @@ it cannot tell, it asks the `pm` (`lead.md`).
 - Do not list a case whose failure would be the emulator's own gap. An operation the emulator answers with
   501 is asserted as 501 passed through, not as the operation working.
 - No performance number unless the requirement set one.
+- A test does not assert how many entries a list has when the list grows with the product (services, routes,
+  catalogue entries); it asserts the property the number stood in for (each entry well formed, two lists equal, no
+  entry twice by its key, the list not empty). A number that is the behaviour under test stays (a limit such as the
+  32 targets).

@@ -66,3 +66,7 @@ it cannot tell, it asks the `pm` (`lead.md`).
   question for the `pm`, not a rule to invent.
 - An operation the emulator answers with 501 is asserted as the "not implemented" state, never as working.
 - No performance number unless the requirement set one.
+- A test does not assert how many entries a list has when the list grows with the product (services, screens,
+  catalogue messages); it asserts the property the number stood in for (each entry well formed, two lists equal, no
+  entry twice by its key, the list not empty). A number that is the behaviour under test stays (a page of 25 items,
+  the 50-tag limit).
