@@ -22,8 +22,8 @@ product may claim that passing here says anything about security on real AWS.
 
 | Id | Rule | Checked by |
 |---|---|---|
-| B1 | A request with an `Origin` header is served only when the origin is the Studio origin. CORS headers are never `*` | unit test per origin |
-| B2 | The `Host` header must be a loopback address with the engine's port (defence against DNS rebinding) | unit test with a foreign host |
+| B1 | A request with an `Origin` header is served only when the origin is the Studio origin: on the engine port `http://127.0.0.1:<studio port>`; on the Studio port the request's own origin, whose host is a host that port accepts. CORS headers are never `*` | unit test per origin |
+| B2 | The `Host` header must be a loopback address with the listener's own port; the Studio port also accepts a host name the user allowed at start (`--allow-host`), never one learned while running (defence against DNS rebinding) | unit test with a foreign host |
 | B3 | A browser request carries the session token issued at engine start. The token is not accepted from a query string and is never written to a log | unit test; log capture |
 | B4 | State-changing requests from the browser are refused without the token even when the origin matches | unit test |
 

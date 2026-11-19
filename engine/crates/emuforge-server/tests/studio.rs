@@ -15,7 +15,9 @@ use axum::http::header::{
     X_CONTENT_TYPE_OPTIONS,
 };
 use axum::http::{HeaderMap, Method, Request, StatusCode};
-use emuforge_server::{Error, STUDIO_CONTENT_TYPES, StudioFiles, StudioState, studio_app};
+use emuforge_server::{
+    AcceptedHosts, AllowedHost, Error, STUDIO_CONTENT_TYPES, StudioFiles, StudioState, studio_app,
+};
 use hyper::body::{Bytes, Frame};
 use tower::ServiceExt;
 
@@ -49,11 +51,29 @@ fn files(paths: &[&'static str]) -> Result<StudioFiles, Error> {
 }
 
 fn studio(max_in_flight: usize) -> Router {
+    studio_allowing(
+        max_in_flight,
+        &["name.test"],
+        Arc::new(AtomicBool::new(false)),
+    )
+}
+
+/// Studio's server with the allowed values `allowed`, whose channel is a stand-in that records in `called` that it
+/// was called.
+fn studio_allowing(max_in_flight: usize, allowed: &[&str], called: Arc<AtomicBool>) -> Router {
+    let port = NonZeroU16::new(STUDIO_PORT).unwrap();
+    let allowed: Vec<AllowedHost> = allowed.iter().map(|value| value.parse().unwrap()).collect();
+    let channel = Router::new().fallback(move || {
+        called.store(true, Ordering::SeqCst);
+        async { StatusCode::IM_A_TEAPOT }
+    });
     studio_app(StudioState {
-        studio_port: NonZeroU16::new(STUDIO_PORT).unwrap(),
+        studio_port: port,
         engine_port: NonZeroU16::new(ENGINE_PORT).unwrap(),
         files: Arc::new(files(BUILD).unwrap()),
         max_in_flight,
+        accepted_hosts: AcceptedHosts::new(port, allowed),
+        channel,
     })
 }
 
@@ -243,7 +263,7 @@ async fn studio_get_missing_asset_is_404_not_found() {
 }
 
 #[tokio::test]
-async fn studio_get_config_json_is_the_engine_port_uncached() {
+async fn studio_get_config_json_is_the_engine_port_and_the_channels_path_uncached() {
     let app = studio(32);
     for path in ["/config.json", "/config.json?x=1"] {
         let answer = get(&app, path).await;
@@ -254,7 +274,73 @@ async fn studio_get_config_json_is_the_engine_port_uncached() {
             "case {path}"
         );
         assert_eq!(answer.header(CACHE_CONTROL), "no-store", "case {path}");
-        assert_eq!(&answer.body[..], b"{\"enginePort\":8297}", "case {path}");
+        assert_eq!(
+            &answer.body[..],
+            b"{\"enginePort\":8297,\"enginePath\":\"/__engine\"}",
+            "case {path}"
+        );
+    }
+}
+
+/// `GET path` with exactly the one `Host` header `host`.
+async fn get_as(app: &Router, host: &str, path: &str) -> Answer {
+    let request = Request::builder()
+        .method(Method::GET)
+        .uri(path)
+        .header(HOST, host)
+        .body(Body::empty())
+        .unwrap();
+    send(app, request).await
+}
+
+#[tokio::test]
+async fn studio_get_with_an_allowed_name_is_what_loopback_gets() {
+    let app = studio(32);
+    for host in ["name.test", "name.test:8443"] {
+        for path in ["/", "/config.json", "/assets/app-1.js"] {
+            let loopback = get(&app, path).await;
+            let named = get_as(&app, host, path).await;
+            assert_eq!(named.status, StatusCode::OK, "case {host} {path}");
+            assert_eq!(named.status, loopback.status, "case {host} {path}");
+            assert_eq!(named.headers, loopback.headers, "case {host} {path}");
+            assert_eq!(named.body, loopback.body, "case {host} {path}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn studio_get_with_a_name_not_allowed_is_421_naming_studios_address() {
+    let cases: [(&str, &[&str], &str); 2] = [
+        ("other name", &["name.test"], "other.test"),
+        ("no allowed name", &[], "name.test"),
+    ];
+    for (name, allowed, host) in cases {
+        let app = studio_allowing(32, allowed, Arc::new(AtomicBool::new(false)));
+        let answer = get_as(&app, host, "/").await;
+        assert_eq!(
+            answer.status,
+            StatusCode::MISDIRECTED_REQUEST,
+            "case {name}"
+        );
+        assert_eq!(
+            &answer.body[..],
+            b"Open Studio at http://127.0.0.1:8296/.\n",
+            "case {name}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn studio_get_near_the_channels_path_is_the_page_and_not_the_channel() {
+    for host in [STUDIO_HOST, "name.test"] {
+        for path in ["/__enginex", "/__engine%2Fx"] {
+            let called = Arc::new(AtomicBool::new(false));
+            let app = studio_allowing(32, &["name.test"], called.clone());
+            let answer = get_as(&app, host, path).await;
+            assert_eq!(answer.status, StatusCode::OK, "case {host} {path}");
+            assert_eq!(&answer.body[..], b"index.html", "case {host} {path}");
+            assert!(!called.load(Ordering::SeqCst), "case {host} {path}");
+        }
     }
 }
 
