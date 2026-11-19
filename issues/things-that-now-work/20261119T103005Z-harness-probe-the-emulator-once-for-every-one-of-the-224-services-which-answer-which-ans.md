@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: harness|emulator|probe-every-service-for-support
-Issue-Check-Ids:
+Issue-Check-Ids: harness.probe-services
 Issue-Commit: 6ea093492ca3f4ffe383389c807ad6ed9adb06d0
 
 # Probe the emulator once for every one of the 224 services: which answer, which answer 501
