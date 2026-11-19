@@ -72,6 +72,8 @@ const FINALITY = {
   pending: ' Checking whether the bucket keeps versions…',
   unread: " Bucket Versioning could not be read, so it isn't known whether the versions are kept.",
   kept: ' A delete marker is added to each; the versions are kept.',
+  suspended:
+    ' Versioning is suspended: the version of each object without a version ID is removed; versions kept while versioning was enabled stay.',
   final: " This can't be undone.",
 } as const;
 
@@ -79,7 +81,7 @@ type Finality = keyof typeof FINALITY;
 
 /**
  * What the dialog may say of the delete: final only once versioning answered Disabled (never enabled); a delete
- * marker for Enabled and Suspended; nothing final while the read is in flight, failed, found no bucket or answered another status.
+ * marker for Enabled; for Suspended, what is removed and what stays; nothing final while the read is in flight, failed, found no bucket or answered another status.
  */
 function finalityOf(value: BucketPropertyValue<'versioning'> | undefined, failed: boolean): Finality {
   if (failed || value === NO_SUCH_BUCKET) {
@@ -91,7 +93,10 @@ function finalityOf(value: BucketPropertyValue<'versioning'> | undefined, failed
   if (value.status === 'Disabled') {
     return 'final';
   }
-  return value.status === 'Enabled' || value.status === 'Suspended' ? 'kept' : 'unread';
+  if (value.status === 'Enabled') {
+    return 'kept';
+  }
+  return value.status === 'Suspended' ? 'suspended' : 'unread';
 }
 
 /** Every key and folder selected, as selected. */

@@ -259,6 +259,8 @@ async function confirm(dialog: HTMLElement) {
 }
 
 const MARKER = 'A delete marker is added to each; the versions are kept.';
+const SUSPENDED =
+  'Versioning is suspended: the version of each object without a version ID is removed; versions kept while versioning was enabled stay.';
 const PENDING = 'Checking whether the bucket keeps versions…';
 const UNREAD = "Bucket Versioning could not be read, so it isn't known whether the versions are kept.";
 
@@ -321,12 +323,13 @@ describe('the delete dialog, what it says', () => {
     expect(dialog.textContent).not.toContain("can't be undone");
   });
 
-  it('with versioning "Suspended" the delete-marker sentence is shown, and the delete is not said to be final', async () => {
+  it('with versioning "Suspended" no delete-marker sentence; what is removed and what stays, and nothing final', async () => {
     engine.versioning = 'Suspended';
     const { dialog } = await openDialog({ selection: { keys: ['a.txt'], folders: [] } });
     expect(
-      within(dialog).getByText(byWholeText('These are removed from alpha in your local emulator. ' + MARKER)),
+      within(dialog).getByText(byWholeText('These are removed from alpha in your local emulator. ' + SUSPENDED)),
     ).toBeInTheDocument();
+    expect(dialog.textContent).not.toContain(MARKER);
     expect(dialog.textContent).not.toContain("can't be undone");
   });
 
