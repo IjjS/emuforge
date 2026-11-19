@@ -85,9 +85,14 @@ const COULD_NOT_READ = 'The bucket could not be read';
 
 /**
  * The state of a failed read of a page (R11.1), the rows tried top to bottom (R11.2): the answer's own meaning
- * first, then the connection, then the kinds of failure while the line says connected or "Checking".
+ * first, then the connection, then the kinds of failure while the line says connected or "Checking". `couldNotRead`
+ * names what was not read ("The bucket could not be read").
  */
-export function pageFailure(failure: RequestFailure, connection: AreaConnection): FailureView {
+export function pageFailure(
+  failure: RequestFailure,
+  connection: AreaConnection,
+  couldNotRead: string = COULD_NOT_READ,
+): FailureView {
   if (failure.kind === 'not-implemented') {
     return {
       type: 'info',
@@ -109,7 +114,7 @@ export function pageFailure(failure: RequestFailure, connection: AreaConnection)
   const status = connectionStatus(connection);
   if (status !== undefined) {
     const { type, ...first } = status;
-    return { type, first, detail: { before: `${COULD_NOT_READ}.` }, recovery: true };
+    return { type, first, detail: { before: `${couldNotRead}.` }, recovery: true };
   }
   switch (failure.kind) {
     case 'emulator-did-not-answer':
@@ -133,7 +138,7 @@ export function pageFailure(failure: RequestFailure, connection: AreaConnection)
     case 'other':
       return {
         type: 'error',
-        first: { before: COULD_NOT_READ },
+        first: { before: couldNotRead },
         detail: codeLine(failure.code, failure.message),
         recovery: false,
       };

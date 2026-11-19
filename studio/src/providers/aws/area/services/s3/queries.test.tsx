@@ -15,7 +15,9 @@ import {
   useCreateBucket,
   useDeleteBucket,
   useEmptyingOperations,
+  useObjectListing,
   type BucketListingOptions,
+  type ObjectListingOptions,
 } from './queries';
 
 // The test plays the engine behind the page's `fetch`. Each AWS request waits until the case answers it, so a case
@@ -390,6 +392,109 @@ function errorBody(code: string, message: string): string {
 function s3Queries() {
   return client.getQueryCache().findAll({ queryKey: ['aws', 's3'] });
 }
+
+/** A `ListObjectsV2` answer of `keys` under `prefix`, truncated with `token` when one is given. */
+function objectsAnswer(prefix: string, keys: string[], token?: string): string {
+  const contents = keys.map((key) => `<Contents><Key>${key}</Key><Size>1</Size></Contents>`).join('');
+  return (
+    `<ListBucketResult><Name>alpha</Name><Prefix>${prefix}</Prefix><IsTruncated>${String(token !== undefined)}</IsTruncated>` +
+    `${token === undefined ? '' : `<NextContinuationToken>${token}</NextContinuationToken>`}${contents}</ListBucketResult>`
+  );
+}
+
+/** The keys of the objects the listing shows. */
+function keysOf(page: ReturnType<typeof useObjectListing>['page']): string[] {
+  return page === undefined || page === NO_SUCH_BUCKET ? [] : page.objects.map((object) => object.key);
+}
+
+function renderObjectListing(options: Partial<ObjectListingOptions> = {}) {
+  return renderHook((props: ObjectListingOptions) => useObjectListing(props), {
+    initialProps: { endpoint, bucket: 'alpha', prefix: '', filter: '', pageSize: 100, ...options },
+    wrapper,
+  });
+}
+
+describe('the objects listing', () => {
+  it('has a key that holds the bucket, the prefix, the filter text, the page size and the token', async () => {
+    const listing = renderObjectListing({ prefix: 'logs/', pageSize: 2 });
+    (await engine.request(0)).respond(200, objectsAnswer('logs/', ['logs/a', 'logs/b'], 'next-1'));
+    await waitFor(() => {
+      expect(listing.result.current.openEnd).toBe(true);
+    });
+    act(() => {
+      listing.result.current.goToPage(2);
+    });
+    const second = await engine.request(1);
+    expect(second.query.get('continuation-token')).toBe('next-1');
+
+    const key = s3Queries()
+      .map((query) => query.queryKey)
+      .find((queryKey) => queryKey.includes('next-1'));
+    expect(key).toBeDefined();
+    expect(key).toEqual(expect.arrayContaining(['alpha', 'logs/', '', 2, 'next-1']));
+
+    listing.rerender({ endpoint, bucket: 'alpha', prefix: 'logs/', filter: 'b', pageSize: 2 });
+    const filtered = await engine.request(2);
+    expect(filtered.query.get('prefix')).toBe('logs/b');
+    const filteredKey = s3Queries()
+      .map((query) => query.queryKey)
+      .find((queryKey) => queryKey.includes('b'));
+    expect(filteredKey).toEqual(expect.arrayContaining(['alpha', 'logs/', 'b', 2]));
+  });
+
+  it('asks page 1 for a new prefix and for a new text', async () => {
+    const listing = renderObjectListing({ pageSize: 2 });
+    (await engine.request(0)).respond(200, objectsAnswer('', ['a', 'b'], 'next-1'));
+    await waitFor(() => {
+      expect(listing.result.current.openEnd).toBe(true);
+    });
+    act(() => {
+      listing.result.current.goToPage(2);
+    });
+    expect((await engine.request(1)).query.get('continuation-token')).toBe('next-1');
+
+    listing.rerender({ endpoint, bucket: 'alpha', prefix: 'logs/', filter: '', pageSize: 2 });
+    const byPrefix = await engine.request(2);
+    expect(byPrefix.query.get('prefix')).toBe('logs/');
+    expect(byPrefix.query.has('continuation-token')).toBe(false);
+    expect(listing.result.current.currentPage).toBe(1);
+    byPrefix.respond(200, objectsAnswer('logs/', ['logs/a', 'logs/b'], 'next-2'));
+    await waitFor(() => {
+      expect(listing.result.current.openEnd).toBe(true);
+    });
+    act(() => {
+      listing.result.current.goToPage(2);
+    });
+    expect((await engine.request(3)).query.get('continuation-token')).toBe('next-2');
+
+    listing.rerender({ endpoint, bucket: 'alpha', prefix: 'logs/', filter: 'x', pageSize: 2 });
+    const byText = await engine.request(4);
+    expect(byText.query.get('prefix')).toBe('logs/x');
+    expect(byText.query.has('continuation-token')).toBe(false);
+    expect(listing.result.current.currentPage).toBe(1);
+  });
+
+  it('keeps the newer prefix’s answer when the older prefix answers after it', async () => {
+    const listing = renderObjectListing({ prefix: 'old/' });
+    const older = await engine.request(0);
+    listing.rerender({ endpoint, bucket: 'alpha', prefix: 'new/', filter: '', pageSize: 100 });
+    const newer = await engine.request(1);
+    expect(newer.query.get('prefix')).toBe('new/');
+
+    act(() => {
+      newer.respond(200, objectsAnswer('new/', ['new/kept']));
+    });
+    await waitFor(() => {
+      expect(keysOf(listing.result.current.page)).toEqual(['new/kept']);
+    });
+    await act(async () => {
+      older.respond(200, objectsAnswer('old/', ['old/late']));
+      await Promise.resolve();
+    });
+
+    expect(keysOf(listing.result.current.page)).toEqual(['new/kept']);
+  });
+});
 
 describe('the reads of a bucket', () => {
   it('have keys that hold the bucket’s name, and two buckets never share a read', async () => {

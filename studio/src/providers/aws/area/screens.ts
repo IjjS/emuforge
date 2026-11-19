@@ -65,10 +65,13 @@ export interface ServiceScreen {
    * crumbs, the last leading to the first path for the same values.
    */
   leadsTo?: readonly string[];
-  /** The title reported to Studio's frame, or a function from the parameters' values to it. */
-  title: string | ((params: ScreenParams) => string);
-  /** The crumbs below the service's, or a function from the parameters' values to them. */
-  crumbs: ScreenCrumbs | ((params: ScreenParams) => ScreenCrumbs);
+  /**
+   * The title reported to Studio's frame, or a function from the parameters' values and the address's query (its
+   * `?…`, decoded by `URLSearchParams`) to it.
+   */
+  title: string | ((params: ScreenParams, query: URLSearchParams) => string);
+  /** The crumbs below the service's, or a function from the parameters' values and the address's query to them. */
+  crumbs: ScreenCrumbs | ((params: ScreenParams, query: URLSearchParams) => ScreenCrumbs);
   navigation: ScreenNavigation;
   /** The help panel's content (a Cloudscape `HelpPanel`); a screen without it shows no help toggle. */
   help?: ComponentType;

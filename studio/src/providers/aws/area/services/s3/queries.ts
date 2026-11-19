@@ -3,23 +3,31 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { RequestError, type RequestFailure } from '../../../../../lib/aws/request';
 import {
+  abortMultipartUpload,
+  completeMultipartUpload,
+  createMultipartUpload,
+  holdsAnyUnder,
+  putObject,
+  uploadPart,
   deleteBucket,
+  deleteKeys,
   deleteObjects,
   findBucket,
-  getBucketAbac,
-  getBucketAccelerateConfiguration,
+  getObject,
+  getObjectTagging,
+  headObject,
+  listKeys,
+  NO_SUCH_KEY,
+  NOT_FOUND,
   getBucketEncryption,
-  getBucketLogging,
   getBucketNotificationConfiguration,
-  getBucketRequestPayment,
   getBucketTagging,
   getBucketVersioning,
   getBucketWebsite,
-  getObjectLockConfiguration,
   isBucketEmpty,
   LIST_BUCKETS,
-  listBucketIntelligentTieringConfigurations,
   listBuckets,
+  listObjects,
   listObjectVersions,
   NO_SUCH_BUCKET,
   OPERATIONS,
@@ -27,9 +35,17 @@ import {
   type BucketPage,
   type DeleteBucketResult,
   type NoSuchBucket,
+  type NoSuchKey,
+  type ObjectBody,
+  type ObjectHead,
+  type ObjectPage,
+  type Tag,
 } from './api';
 import { createOperations, submitBucketForm, type BucketForm, type CreateOutcome } from './bucket-form';
 import type { EmptyingOperations } from './empty-bucket';
+import { loadPreview, type Preview } from './preview';
+import type { DeletionOperations } from './components/object-deletion';
+import type { UploadOperations } from './upload';
 
 // The bucket list's listing (issue 56, requirement R4.1, R4.4, R4.5, R4.7, R4.9): pages that follow the API's
 // tokens, a filter sent as `prefix`, and a new listing at page 1 on every refresh, filter and page size. Nothing is
@@ -77,7 +93,7 @@ export interface BucketListing {
   refresh: () => void;
 }
 
-/** What the listing learnt from one page's last answer. */
+/** What a listing learnt from one page's last answer. */
 interface PageRead {
   count: number;
   next: string | undefined;
@@ -117,8 +133,7 @@ function useSettled(value: string, delay: number): string {
 }
 
 /** `reads` with page `page`'s answer as its last read; the later pages stay only while its token is the same. */
-function withRead(reads: readonly PageRead[], page: number, answer: BucketPage): readonly PageRead[] {
-  const read: PageRead = { count: answer.buckets.length, next: answer.nextToken };
+function withRead(reads: readonly PageRead[], page: number, read: PageRead): readonly PageRead[] {
   const before = reads[page];
   const later =
     before !== undefined && before.next === read.next && read.next !== undefined ? reads.slice(page + 1) : [];
@@ -129,15 +144,52 @@ function failureOf(error: unknown, operation: string = LIST_BUCKETS): RequestFai
   return error instanceof RequestError ? error.failure : { kind: 'other', operation, code: String(error) };
 }
 
+/** A listing that follows the API's tokens one page at a time, as a screen shows it. */
+interface TokenListing<Answer> {
+  /** The shown page's answer; `undefined` until it arrives or when it failed. */
+  answer: Answer | undefined;
+  failure: RequestFailure | undefined;
+  loading: boolean;
+  /** `undefined` while no page of this listing has been read. */
+  count: BucketCount | undefined;
+  /** The shown page, from 1. */
+  currentPage: number;
+  pagesCount: number;
+  openEnd: boolean;
+  /** One text per listing and page shown: it changes on every new listing and every move to a page. */
+  view: string;
+  goToPage: (page: number) => void;
+}
+
+/** What a token listing reads, given by the hook that uses it. */
+interface TokenListingOptions<Answer> {
+  /** The start of every query key; the listing's own parts and the page's token follow it. */
+  key: readonly unknown[];
+  /** Every value the listing is asked with: a change starts a new listing at page 1 with no token. */
+  parts: readonly unknown[];
+  endpoint: string | undefined;
+  operation: string;
+  read: (endpoint: string, token: string | undefined, signal: AbortSignal) => Promise<Answer>;
+  /** What one answer learnt: its count and its token; `undefined` for an answer that is no page (no such bucket). */
+  pageRead: (answer: Answer) => PageRead | undefined;
+  enabled?: boolean;
+}
+
 /**
- * The bucket list of the emulator behind the engine at `endpoint`, one page at a time. A request no longer wanted
- * (another page, a new listing, an unmount) is aborted, and its late answer never replaces a newer one.
+ * The pages of a listing, one at a time, read by `read` with the token of the page before. A request no longer
+ * wanted (another page, a new listing, an unmount) is aborted, and its late answer never replaces a newer one.
  */
-export function useBucketListing({ endpoint, pageSize, filter }: BucketListingOptions): BucketListing {
+function useTokenListing<Answer>({
+  key,
+  parts,
+  endpoint,
+  operation,
+  read,
+  pageRead,
+  enabled = true,
+}: TokenListingOptions<Answer>): TokenListing<Answer> {
   const [mount] = useState(() => (mounts += 1));
-  const [generation, setGeneration] = useState(0);
-  const prefix = useSettled(filter, FILTER_DELAY_MS);
-  const listing = JSON.stringify([endpoint ?? null, generation, pageSize, prefix]);
+  const listing = JSON.stringify([endpoint ?? null, mount, ...parts]);
 
   const [stored, setPosition] = useState<Position>(fresh(listing));
   // A change of listing starts at page 1 with no token.
@@ -145,45 +197,33 @@ export function useBucketListing({ endpoint, pageSize, filter }: BucketListingOp
   const token = position.page === 0 ? undefined : position.reads[position.page - 1]?.next;
 
   const query = useQuery({
-    queryKey: [
-      'aws',
-      's3',
-      'list-buckets',
-      endpoint,
-      mount,
-      generation,
-      pageSize,
-      prefix,
-      position.page,
-      token,
-      position.visit,
-    ],
+    queryKey: [...key, endpoint, mount, ...parts, position.page, token, position.visit],
     queryFn: async ({ signal }) => {
       if (endpoint === undefined) {
         throw new Error('The engine endpoint is not known yet.');
       }
       const page = position.page;
-      const answer = await listBuckets(
-        endpoint,
-        { pageSize, ...(prefix === '' ? {} : { prefix }), ...(token === undefined ? {} : { token }) },
-        signal,
-      );
+      const answer = await read(endpoint, token, signal);
+      const learnt = pageRead(answer);
       // Kept as this page's last read only while the user is still on it in the same listing.
-      setPosition((current) => {
-        const at = current.listing === listing ? current : fresh(listing);
-        return at.page === page ? { ...at, reads: withRead(at.reads, page, answer) } : current;
-      });
+      if (learnt !== undefined) {
+        setPosition((current) => {
+          const at = current.listing === listing ? current : fresh(listing);
+          return at.page === page ? { ...at, reads: withRead(at.reads, page, learnt) } : current;
+        });
+      }
       return answer;
     },
-    enabled: endpoint !== undefined,
+    enabled: enabled && endpoint !== undefined,
     staleTime: 0,
     gcTime: 0,
     retry: false,
     structuralSharing: false,
   });
   const answer = query.data;
+  const learnt = answer === undefined ? undefined : pageRead(answer);
 
-  const reads = answer === undefined ? position.reads : withRead(position.reads, position.page, answer);
+  const reads = learnt === undefined ? position.reads : withRead(position.reads, position.page, learnt);
   const last = reads[reads.length - 1];
   const openEnd = last?.next !== undefined;
 
@@ -199,20 +239,146 @@ export function useBucketListing({ endpoint, pageSize, filter }: BucketListingOp
     [listing, setPosition],
   );
 
+  return {
+    answer,
+    failure: query.isError ? failureOf(query.error, operation) : undefined,
+    loading: query.isFetching || (enabled && endpoint === undefined && answer === undefined),
+    count: last === undefined ? undefined : { total: reads.reduce((sum, page) => sum + page.count, 0), more: openEnd },
+    currentPage: position.page + 1,
+    pagesCount: Math.max(reads.length, position.page + 1),
+    openEnd,
+    view: `${listing}#${String(position.page)}#${String(position.visit)}`,
+    goToPage,
+  };
+}
+
+/**
+ * The bucket list of the emulator behind the engine at `endpoint`, one page at a time. A request no longer wanted
+ * (another page, a new listing, an unmount) is aborted, and its late answer never replaces a newer one.
+ */
+export function useBucketListing({ endpoint, pageSize, filter }: BucketListingOptions): BucketListing {
+  const [generation, setGeneration] = useState(0);
+  const prefix = useSettled(filter, FILTER_DELAY_MS);
+  const listing = useTokenListing<BucketPage>({
+    key: ['aws', 's3', 'list-buckets'],
+    parts: [generation, pageSize, prefix],
+    endpoint,
+    operation: LIST_BUCKETS,
+    read: (at, token, signal) =>
+      listBuckets(
+        at,
+        { pageSize, ...(prefix === '' ? {} : { prefix }), ...(token === undefined ? {} : { token }) },
+        signal,
+      ),
+    pageRead: (answer) => ({ count: answer.buckets.length, next: answer.nextToken }),
+  });
+
   const refresh = useCallback(() => {
     setGeneration((current) => current + 1);
   }, []);
 
   return {
     prefix,
-    buckets: answer?.buckets,
-    failure: query.isError ? failureOf(query.error) : undefined,
-    loading: query.isFetching || (endpoint === undefined && answer === undefined),
-    count: last === undefined ? undefined : { total: reads.reduce((sum, read) => sum + read.count, 0), more: openEnd },
-    currentPage: position.page + 1,
-    pagesCount: Math.max(reads.length, position.page + 1),
-    openEnd,
-    goToPage,
+    buckets: listing.answer?.buckets,
+    failure: listing.failure,
+    loading: listing.loading,
+    count: listing.count,
+    currentPage: listing.currentPage,
+    pagesCount: listing.pagesCount,
+    openEnd: listing.openEnd,
+    goToPage: listing.goToPage,
+    refresh,
+  };
+}
+
+/** What the tab "Objects" lists (issue 480, task 1). */
+export interface ObjectListingOptions {
+  endpoint: string | undefined;
+  bucket: string;
+  /** The folder shown, the address's `?prefix=`; `''` at the root. */
+  prefix: string;
+  /** "Find objects by prefix" as typed; sent after the folder's prefix `FILTER_DELAY_MS` after its last change. */
+  filter: string;
+  /** `MaxKeys` of every page. */
+  pageSize: number;
+  enabled?: boolean;
+}
+
+/** The tab "Objects"' listing, as the tab shows it. */
+export interface ObjectListing {
+  /** The filter's text as last sent; `''` for none. */
+  text: string;
+  /** The shown page; `NO_SUCH_BUCKET` when the emulator holds no such bucket; `undefined` while read or failed. */
+  page: ObjectPage | NoSuchBucket | undefined;
+  failure: RequestFailure | undefined;
+  loading: boolean;
+  /** The rows of the shown page (folders and objects), with "+" while more remain. */
+  count: BucketCount | undefined;
+  currentPage: number;
+  pagesCount: number;
+  openEnd: boolean;
+  /** Changes with every new listing and every page shown: what the selection is kept for. */
+  view: string;
+  goToPage: (page: number) => void;
+  /** Starts a new listing at page 1, dropping every token ("Refresh"). */
+  refresh: () => void;
+}
+
+/**
+ * The folders and objects of bucket `bucket` under `prefix` plus the filter's text, one page at a time, following
+ * `ListObjectsV2`'s tokens; never every key. A new prefix, text, page size or "Refresh" asks page 1 again; a late
+ * answer for an older listing never replaces a newer one.
+ */
+export function useObjectListing({
+  endpoint,
+  bucket,
+  prefix,
+  filter,
+  pageSize,
+  enabled = true,
+}: ObjectListingOptions): ObjectListing {
+  const [generation, setGeneration] = useState(0);
+  // The tab is mounted anew for each folder, so a text typed in one folder is never sent in another.
+  const text = useSettled(filter, FILTER_DELAY_MS);
+  const listing = useTokenListing<ObjectPage | NoSuchBucket>({
+    key: [...S3_KEY, 'objects', bucket],
+    parts: [bucket, generation, pageSize, prefix, text],
+    endpoint,
+    operation: OPERATIONS.listObjectsV2,
+    read: (at, token, signal) =>
+      listObjects(
+        at,
+        bucket,
+        { prefix: `${prefix}${text}`, pageSize, ...(token === undefined ? {} : { token }) },
+        signal,
+      ),
+    pageRead: (answer) =>
+      answer === NO_SUCH_BUCKET
+        ? undefined
+        : { count: answer.folders.length + answer.objects.length, next: answer.nextToken },
+    enabled,
+  });
+
+  const refresh = useCallback(() => {
+    setGeneration((current) => current + 1);
+  }, []);
+
+  const shown = listing.answer;
+  return {
+    text,
+    page: shown,
+    failure: listing.failure,
+    loading: listing.loading,
+    // The counter of the page shown (the design: "the page's count with + while truncated").
+    count:
+      shown === undefined || shown === NO_SUCH_BUCKET
+        ? undefined
+        : { total: shown.folders.length + shown.objects.length, more: shown.nextToken !== undefined },
+    currentPage: listing.currentPage,
+    pagesCount: listing.pagesCount,
+    openEnd: listing.openEnd,
+    view: listing.view,
+    goToPage: listing.goToPage,
     refresh,
   };
 }
@@ -300,30 +466,18 @@ export function useBucketLookup(endpoint: string | undefined, name: string): Buc
 /** Each section's read of a bucket's page (R5.3), by the part it reads. */
 const PROPERTY_READS = {
   versioning: getBucketVersioning,
-  abac: getBucketAbac,
   tags: getBucketTagging,
   encryption: getBucketEncryption,
-  'intelligent-tiering': listBucketIntelligentTieringConfigurations,
-  logging: getBucketLogging,
   notifications: getBucketNotificationConfiguration,
-  acceleration: getBucketAccelerateConfiguration,
-  'object-lock': getObjectLockConfiguration,
-  'request-payment': getBucketRequestPayment,
   website: getBucketWebsite,
 } as const;
 
 /** The operation each section's read sends. */
 export const PROPERTY_OPERATIONS: Readonly<Record<BucketProperty, string>> = {
   versioning: OPERATIONS.getBucketVersioning,
-  abac: OPERATIONS.getBucketAbac,
   tags: OPERATIONS.getBucketTagging,
   encryption: OPERATIONS.getBucketEncryption,
-  'intelligent-tiering': OPERATIONS.listBucketIntelligentTieringConfigurations,
-  logging: OPERATIONS.getBucketLogging,
   notifications: OPERATIONS.getBucketNotificationConfiguration,
-  acceleration: OPERATIONS.getBucketAccelerateConfiguration,
-  'object-lock': OPERATIONS.getObjectLockConfiguration,
-  'request-payment': OPERATIONS.getBucketRequestPayment,
   website: OPERATIONS.getBucketWebsite,
 };
 
@@ -460,4 +614,218 @@ export function useEmptyingOperations(endpoint: string | undefined, name: string
       },
     };
   }, [endpoint, name, drop]);
+}
+
+// Issue 480, task 2: the reads of an object's page, each a request of its own on every mount, "Refresh" and "Retry",
+// under a key that holds the bucket and the key; and task 4: the operations of the delete dialog.
+
+/** What the object page's read found: the object, no such key, or no such bucket. */
+export type ObjectLookup = ScreenRead<ObjectHead | NoSuchKey | NoSuchBucket>;
+
+/**
+ * The read of the object page on opening: `HeadObject`. Its 404 says neither which is gone, so `ListBuckets` (main's
+ * `findBucket`) is asked then: the bucket not listed is `NO_SUCH_BUCKET`, else `NO_SUCH_KEY`.
+ */
+export function useObjectHead(endpoint: string | undefined, bucket: string, key: string): ObjectLookup {
+  const [generation, setGeneration] = useState(0);
+  const read = useFreshRead<ObjectHead | NoSuchKey | NoSuchBucket>(
+    endpoint,
+    bucket,
+    `object:${key}:head`,
+    OPERATIONS.headObject,
+    generation,
+    async (at, signal) => {
+      const head = key === '' ? NOT_FOUND : await headObject(at, bucket, key, signal);
+      if (head !== NOT_FOUND) {
+        return head;
+      }
+      const found = await findBucket(at, bucket, signal);
+      return found === NO_SUCH_BUCKET ? found : NO_SUCH_KEY;
+    },
+  );
+  const refresh = useCallback(() => {
+    setGeneration((current) => current + 1);
+  }, []);
+  return { ...read, generation, refresh };
+}
+
+/** The object's tags (`GetObjectTagging`), read once the page found the object, again with each `generation`. */
+export function useObjectTags(
+  endpoint: string | undefined,
+  bucket: string,
+  key: string,
+  { generation, enabled }: { generation: number; enabled: boolean },
+): BucketRead<Tag[] | NoSuchKey | NoSuchBucket> {
+  return useFreshRead(
+    endpoint,
+    bucket,
+    `object:${key}:tags`,
+    OPERATIONS.getObjectTagging,
+    generation,
+    (at, signal) => getObjectTagging(at, bucket, key, signal),
+    enabled,
+  );
+}
+
+/**
+ * The preview of the object `head` describes: `GetObject` of its first 64 KiB, asked only for a type shown as text
+ * and a size above 0 (`preview.ts`), once the page found the object and again with each `generation`.
+ */
+export function useObjectPreview(
+  endpoint: string | undefined,
+  bucket: string,
+  head: ObjectHead | undefined,
+  { generation }: { generation: number },
+): BucketRead<Preview> {
+  const key = head?.key ?? '';
+  return useFreshRead(
+    endpoint,
+    bucket,
+    `object:${key}:preview:${head?.contentType ?? ''}:${String(head?.size ?? '')}`,
+    OPERATIONS.getObject,
+    generation,
+    (at, signal) =>
+      loadPreview(
+        {
+          ...(head?.contentType === undefined ? {} : { contentType: head.contentType }),
+          ...(head?.size === undefined ? {} : { size: head.size }),
+        },
+        async (range) => (await getObject(at, bucket, key, signal, range)).bytes,
+      ),
+    head !== undefined,
+  );
+}
+
+/** "Download" of the object page: `GetObject` of the whole body. */
+export function useDownloadObject(
+  endpoint: string | undefined,
+  bucket: string,
+): (key: string, signal: AbortSignal) => Promise<ObjectBody> {
+  return useCallback(
+    (key, signal) => {
+      if (endpoint === undefined) {
+        return Promise.reject(new Error('The engine endpoint is not known yet.'));
+      }
+      return getObject(endpoint, bucket, key, signal);
+    },
+    [endpoint, bucket],
+  );
+}
+
+/** The bucket's versioning status for the delete dialog, read while `enabled` (the dialog is open). */
+export function useDeleteVersioning(
+  endpoint: string | undefined,
+  bucket: string,
+  enabled: boolean,
+): BucketRead<BucketPropertyValue<'versioning'>> {
+  return useBucketProperty(endpoint, bucket, 'versioning', { generation: 0, enabled });
+}
+
+/**
+ * The operations of the delete dialog on bucket `bucket` (task 4): a folder's keys page by page, and `DeleteObjects`
+ * of keys; S3's reads are dropped once each `DeleteObjects` has ended, whatever it answered. `undefined` while the
+ * engine's address is not known.
+ */
+export function useDeletionOperations(endpoint: string | undefined, bucket: string): DeletionOperations | undefined {
+  const drop = useDropS3Reads();
+  return useMemo(() => {
+    if (endpoint === undefined) {
+      return undefined;
+    }
+    return {
+      listKeys: (prefix, token, signal) => listKeys(endpoint, bucket, prefix, token, signal),
+      deleteKeys: async (keys, signal) => {
+        try {
+          return await deleteKeys(endpoint, bucket, keys, signal);
+        } finally {
+          drop();
+        }
+      },
+    };
+  }, [endpoint, bucket, drop]);
+}
+
+// Issue 480, task 3: the calls of the Upload page and of "Create folder". S3's reads are dropped once each put has
+// ended, whatever it answered, so the Objects tab lists what the emulator now holds.
+
+/** The Upload page's calls on bucket `bucket`; `undefined` while the engine's address is not known. */
+export function useUploadOperations(endpoint: string | undefined, bucket: string): UploadOperations | undefined {
+  const drop = useDropS3Reads();
+  return useMemo(() => {
+    if (endpoint === undefined) {
+      return undefined;
+    }
+    const dropping =
+      <A extends unknown[], R>(call: (...args: A) => Promise<R>) =>
+      async (...args: A): Promise<R> => {
+        try {
+          return await call(...args);
+        } finally {
+          drop();
+        }
+      };
+    return {
+      putObject: dropping((key: string, body: Uint8Array, contentType: string, signal: AbortSignal) =>
+        putObject(endpoint, bucket, key, body, contentType, signal),
+      ),
+      createMultipartUpload: (key, contentType, signal) =>
+        createMultipartUpload(endpoint, bucket, key, contentType, signal),
+      uploadPart: (key, uploadId, partNumber, body, signal) =>
+        uploadPart(endpoint, bucket, key, uploadId, partNumber, body, signal),
+      completeMultipartUpload: dropping(
+        (key: string, uploadId: string, parts: Parameters<UploadOperations['completeMultipartUpload']>[2], signal) =>
+          completeMultipartUpload(endpoint, bucket, key, uploadId, parts, signal),
+      ),
+      abortMultipartUpload: (key, uploadId, signal) => abortMultipartUpload(endpoint, bucket, key, uploadId, signal),
+    };
+  }, [endpoint, bucket, drop]);
+}
+
+/**
+ * Whether bucket `bucket` holds an object of `key` (`HeadObject`), so the Upload page can say a file replaces it;
+ * `undefined` while the engine's address is not known. A failure rejects as it came.
+ */
+export function useObjectExists(
+  endpoint: string | undefined,
+  bucket: string,
+): ((key: string, signal: AbortSignal) => Promise<boolean>) | undefined {
+  return useMemo(
+    () =>
+      endpoint === undefined
+        ? undefined
+        : async (key: string, signal: AbortSignal) => (await headObject(endpoint, bucket, key, signal)) !== NOT_FOUND,
+    [endpoint, bucket],
+  );
+}
+
+/** What "Create folder" did: put the folder's empty object, or found the folder there already and put nothing. */
+export type CreateFolderOutcome = 'created' | 'exists';
+
+/**
+ * "Create folder" `name` under `prefix` of bucket `bucket`: `ListObjectsV2` of `prefix+name+/` with max-keys 1, then,
+ * unless it found a key or a common prefix, `PutObject` of the empty object `prefix+name+/`. A failure rejects as it
+ * came; S3's reads are dropped once a put has ended.
+ */
+export function useCreateFolder(
+  endpoint: string | undefined,
+  bucket: string,
+): ((prefix: string, name: string, signal: AbortSignal) => Promise<CreateFolderOutcome>) | undefined {
+  const drop = useDropS3Reads();
+  return useMemo(() => {
+    if (endpoint === undefined) {
+      return undefined;
+    }
+    return async (prefix, name, signal) => {
+      const key = `${prefix}${name}/`;
+      if (await holdsAnyUnder(endpoint, bucket, key, signal)) {
+        return 'exists';
+      }
+      try {
+        await putObject(endpoint, bucket, key, new Uint8Array(), undefined, signal);
+      } finally {
+        drop();
+      }
+      return 'created';
+    };
+  }, [endpoint, bucket, drop]);
 }

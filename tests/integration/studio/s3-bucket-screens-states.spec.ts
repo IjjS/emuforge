@@ -21,7 +21,7 @@ import { Lines } from './support/lines';
 import { checkPrefix } from './support/service-screens';
 import { BUCKETS_PATH, bucketNamesDirect, H1, Seeded } from './services/s3/s3';
 import {
-  bucketPath,
+  propertiesPath,
   createdItem,
   expectBucketPage,
   form,
@@ -296,7 +296,7 @@ test('studio.s3-bucket-screens-say-when-the-engine-stops-answering', async ({ ct
         message: 'the sections shown',
       })
       .toEqual([...SECTIONS].sort());
-    await expect(page).toHaveURL(addressOf(bucketPath(name)));
+    await expect(page).toHaveURL(addressOf(propertiesPath(name)));
     expect(await stillSamePage(page), 'the document was not reloaded').toBe(true);
   });
 

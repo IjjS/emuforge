@@ -8,25 +8,19 @@ import {
   deleteObjects,
   enableBucketVersioning,
   findBucket,
-  getBucketAbac,
-  getBucketAccelerateConfiguration,
   getBucketEncryption,
-  getBucketLogging,
   getBucketNotificationConfiguration,
-  getBucketRequestPayment,
   getBucketTagging,
   getBucketVersioning,
   getBucketWebsite,
-  getObjectLockConfiguration,
   isBucketEmpty,
-  listBucketIntelligentTieringConfigurations,
   listBuckets,
+  listObjects,
   listObjectVersions,
   NO_SUCH_BUCKET,
   putBucketEncryption,
   putPublicAccessBlock,
 } from './api';
-import { formatRetentionPeriod } from './format';
 // @ts-expect-error -- the S3 folder keeps no failure of its own (issue 445, R8): the shared module's is the one.
 import type { ReadFailure as GoneReadFailure, S3ReadError as GoneS3ReadError } from './api';
 
@@ -436,12 +430,6 @@ describe('the reads of a bucket’s page', () => {
     expect(rawQuery(engine.awsRequests[0] ?? '').has('versioning')).toBe(true);
   });
 
-  it.each(['Enabled', 'Disabled'])('gives the ABAC status %s as the same word', async (status) => {
-    engine.aws = () => xml(`<AbacStatus><Status>${status}</Status></AbacStatus>`);
-
-    expect(await getBucketAbac(endpoint, 'b', signal())).toEqual({ status });
-  });
-
   it('gives a set of two tags in the answer’s order, an empty value kept', async () => {
     engine.aws = () =>
       xml(
@@ -485,58 +473,7 @@ describe('the reads of a bucket’s page', () => {
     expect(plain).not.toHaveProperty('kmsKey');
   });
 
-  it('gives an Intelligent-Tiering configuration with its name, status, prefix and both tiers, and one of a filter with tags by its prefix', async () => {
-    engine.aws = () =>
-      xml(
-        '<ListBucketIntelligentTieringConfigurationsOutput><IsTruncated>false</IsTruncated>' +
-          '<IntelligentTieringConfiguration><Id>archive-logs</Id><Filter><Prefix>logs/</Prefix></Filter><Status>Enabled</Status>' +
-          '<Tiering><Days>90</Days><AccessTier>ARCHIVE_ACCESS</AccessTier></Tiering>' +
-          '<Tiering><Days>180</Days><AccessTier>DEEP_ARCHIVE_ACCESS</AccessTier></Tiering></IntelligentTieringConfiguration>' +
-          '<IntelligentTieringConfiguration><Id>tagged</Id><Filter><And><Prefix>data/</Prefix><Tag><Key>k</Key><Value>v</Value></Tag>' +
-          '</And></Filter><Status>Disabled</Status><Tiering><Days>120</Days><AccessTier>ARCHIVE_ACCESS</AccessTier></Tiering>' +
-          '</IntelligentTieringConfiguration></ListBucketIntelligentTieringConfigurationsOutput>',
-      );
-
-    expect(await listBucketIntelligentTieringConfigurations(endpoint, 'b', signal())).toEqual({
-      configurations: [
-        { name: 'archive-logs', status: 'Enabled', prefix: 'logs/', archiveDays: 90, deepArchiveDays: 180 },
-        { name: 'tagged', status: 'Disabled', prefix: 'data/', archiveDays: 120 },
-      ],
-      more: false,
-    });
-  });
-
-  it('marks a truncated Intelligent-Tiering answer as having more', async () => {
-    engine.aws = () =>
-      xml(
-        '<ListBucketIntelligentTieringConfigurationsOutput><IsTruncated>true</IsTruncated><NextContinuationToken>t</NextContinuationToken>' +
-          '<IntelligentTieringConfiguration><Id>one</Id><Status>Enabled</Status></IntelligentTieringConfiguration>' +
-          '</ListBucketIntelligentTieringConfigurationsOutput>',
-      );
-
-    expect(await listBucketIntelligentTieringConfigurations(endpoint, 'b', signal())).toEqual({
-      configurations: [{ name: 'one', status: 'Enabled' }],
-      more: true,
-    });
-  });
-
-  it('gives logging with a target bucket and prefix as "Enabled" with both, and an empty answer as "Disabled"', async () => {
-    engine.aws = () =>
-      xml(
-        '<BucketLoggingStatus><LoggingEnabled><TargetBucket>logs-bucket</TargetBucket><TargetPrefix>access/</TargetPrefix>' +
-          '</LoggingEnabled></BucketLoggingStatus>',
-      );
-    expect(await getBucketLogging(endpoint, 'b', signal())).toEqual({
-      status: 'Enabled',
-      targetBucket: 'logs-bucket',
-      targetPrefix: 'access/',
-    });
-
-    engine.aws = () => xml('<BucketLoggingStatus/>');
-    expect(await getBucketLogging(endpoint, 'b', signal())).toEqual({ status: 'Disabled' });
-  });
-
-  it('gives a topic, a queue and a function configuration as three rows, topic first, and EventBridge as "On"', async () => {
+  it('gives a topic, a queue and a function configuration as three rows, topic first', async () => {
     const filter = (prefix: string, suffix: string) =>
       `<Filter><S3Key><FilterRule><Name>prefix</Name><Value>${prefix}</Value></FilterRule>` +
       `<FilterRule><Name>suffix</Name><Value>${suffix}</Value></FilterRule></S3Key></Filter>`;
@@ -579,64 +516,15 @@ describe('the reads of a bucket’s page', () => {
           destination: 'arn:aws:lambda:us-east-1:000000000000:function:f',
         },
       ],
-      eventBridge: 'On',
     });
   });
 
-  it('gives no notification configuration as "Off" and no rows', async () => {
+  it('gives no notification configuration as no rows', async () => {
     engine.aws = () => xml('<NotificationConfiguration/>');
 
     expect(await getBucketNotificationConfiguration(endpoint, 'b', signal())).toEqual({
       notifications: [],
-      eventBridge: 'Off',
     });
-  });
-
-  it('gives acceleration with no status as "Disabled"', async () => {
-    engine.aws = () => xml('<AccelerateConfiguration/>');
-
-    expect(await getBucketAccelerateConfiguration(endpoint, 'b', signal())).toEqual({ status: 'Disabled' });
-  });
-
-  it('gives Object Lock "configuration not found" as "Disabled" with no retention, not a failure', async () => {
-    engine.aws = () =>
-      errorAnswer(
-        404,
-        'ObjectLockConfigurationNotFoundError',
-        'Object Lock configuration does not exist for this bucket',
-      );
-
-    const setting = await getObjectLockConfiguration(endpoint, 'b', signal());
-    expect(setting).toEqual({ status: 'Disabled', defaultRetention: 'Disabled' });
-    expect(setting).not.toHaveProperty('mode');
-    expect(setting).not.toHaveProperty('period');
-  });
-
-  it('gives a default retention of 1 day in governance mode as "Enabled", "Governance", "1 day"', async () => {
-    engine.aws = () =>
-      xml(
-        '<ObjectLockConfiguration><ObjectLockEnabled>Enabled</ObjectLockEnabled><Rule><DefaultRetention>' +
-          '<Mode>GOVERNANCE</Mode><Days>1</Days></DefaultRetention></Rule></ObjectLockConfiguration>',
-      );
-
-    const setting = await getObjectLockConfiguration(endpoint, 'b', signal());
-    expect(setting).toEqual({
-      status: 'Enabled',
-      defaultRetention: 'Enabled',
-      mode: 'Governance',
-      period: { unit: 'days', count: 1 },
-    });
-    expect(setting !== NO_SUCH_BUCKET && setting.period !== undefined && formatRetentionPeriod(setting.period)).toBe(
-      '1 day',
-    );
-  });
-
-  it('gives a payer Requester as "Enabled" and BucketOwner as "Disabled"', async () => {
-    engine.aws = () => xml('<RequestPaymentConfiguration><Payer>Requester</Payer></RequestPaymentConfiguration>');
-    expect(await getBucketRequestPayment(endpoint, 'b', signal())).toEqual({ status: 'Enabled' });
-
-    engine.aws = () => xml('<RequestPaymentConfiguration><Payer>BucketOwner</Payer></RequestPaymentConfiguration>');
-    expect(await getBucketRequestPayment(endpoint, 'b', signal())).toEqual({ status: 'Disabled' });
   });
 
   it('gives "no website configuration" as "Disabled", not a failure, and one with documents as "Enabled" with both', async () => {
@@ -654,6 +542,116 @@ describe('the reads of a bucket’s page', () => {
       indexDocument: 'index.html',
       errorDocument: 'error.html',
     });
+  });
+});
+
+// Issue 480 (test-criteria.md, "Unit s1 — services/s3/api.test.ts").
+describe('the folders and objects of a prefix', () => {
+  const listing = (contents: string, prefixes: string[], truncated?: string) =>
+    xml(
+      `<ListBucketResult><Name>b</Name><Prefix>logs/</Prefix><Delimiter>/</Delimiter><MaxKeys>2</MaxKeys>` +
+        `<IsTruncated>${truncated === undefined ? 'false' : 'true'}</IsTruncated>` +
+        (truncated === undefined ? '' : `<NextContinuationToken>${truncated}</NextContinuationToken>`) +
+        contents +
+        prefixes.map((prefix) => `<CommonPrefixes><Prefix>${prefix}</Prefix></CommonPrefixes>`).join('') +
+        '</ListBucketResult>',
+    );
+
+  it('asks ListObjectsV2 with the delimiter /, the prefix, the page size and the token', async () => {
+    engine.aws = () => listing('', []);
+
+    await listObjects(endpoint, 'b', { prefix: 'logs/2026/', pageSize: 50, token: 't/1+' }, signal());
+
+    const url = new URL(engine.awsRequests[0] ?? '');
+    expect(url.pathname).toMatch(/^\/b\/?$/);
+    expect(url.searchParams.get('list-type')).toBe('2');
+    expect(url.searchParams.get('delimiter')).toBe('/');
+    expect(url.searchParams.get('prefix')).toBe('logs/2026/');
+    expect(url.searchParams.get('max-keys')).toBe('50');
+    expect(url.searchParams.get('continuation-token')).toBe('t/1+');
+  });
+
+  it('sends no prefix and no token at the root of the first page', async () => {
+    engine.aws = () => listing('', []);
+
+    await listObjects(endpoint, 'b', { prefix: '', pageSize: 100 }, signal());
+
+    const url = new URL(engine.awsRequests[0] ?? '');
+    expect(url.searchParams.has('prefix')).toBe(false);
+    expect(url.searchParams.has('continuation-token')).toBe(false);
+  });
+
+  it('gives the common prefixes as folders and the contents as objects, each by the part after the prefix, and the token while truncated', async () => {
+    engine.aws = () =>
+      listing(
+        '<Contents><Key>logs/a.txt</Key><LastModified>2026-11-18T10:00:00.000Z</LastModified><ETag>"e"</ETag>' +
+          '<Size>12</Size><StorageClass>STANDARD</StorageClass></Contents>' +
+          '<Contents><Key>logs/q?#%.txt</Key><Size>0</Size></Contents>',
+        ['logs/2026/', 'logs/한글/'],
+        'next-1',
+      );
+
+    expect(await listObjects(endpoint, 'b', { prefix: 'logs/', pageSize: 2 }, signal())).toEqual({
+      folders: [
+        { prefix: 'logs/2026/', name: '2026/' },
+        { prefix: 'logs/한글/', name: '한글/' },
+      ],
+      objects: [
+        {
+          key: 'logs/a.txt',
+          name: 'a.txt',
+          size: 12,
+          lastModified: new Date('2026-11-18T10:00:00.000Z'),
+          storageClass: 'STANDARD',
+        },
+        { key: 'logs/q?#%.txt', name: 'q?#%.txt', size: 0 },
+      ],
+      nextToken: 'next-1',
+    });
+  });
+
+  it('gives no token for an answer that is not truncated', async () => {
+    engine.aws = () => listing('<Contents><Key>logs/a.txt</Key><Size>1</Size></Contents>', []);
+
+    const page = await listObjects(endpoint, 'b', { prefix: 'logs/', pageSize: 2 }, signal());
+    expect(page).not.toBe(NO_SUCH_BUCKET);
+    expect(page).not.toHaveProperty('nextToken');
+  });
+
+  it('is "no such bucket" on NoSuchBucket, and "not implemented" naming ListObjectsV2 on a 501', async () => {
+    engine.aws = () => errorAnswer(404, 'NoSuchBucket', 'The specified bucket does not exist');
+    expect(await listObjects(endpoint, 'b', { prefix: '', pageSize: 100 }, signal())).toBe(NO_SUCH_BUCKET);
+
+    engine.aws = () => errorAnswer(501, 'NotImplemented', 'scaffolded');
+    expect(await failure(listObjects(endpoint, 'b', { prefix: '', pageSize: 100 }, signal()))).toEqual({
+      kind: 'not-implemented',
+      operation: 'ListObjectsV2',
+    });
+  });
+});
+
+describe('the dropped sections of issue 480', () => {
+  it('have no reader left in the API; the five kept sections read as before', async () => {
+    const api = await import('./api');
+    for (const gone of [
+      'getBucketAbac',
+      'listBucketIntelligentTieringConfigurations',
+      'getBucketLogging',
+      'getBucketAccelerateConfiguration',
+      'getObjectLockConfiguration',
+      'getBucketRequestPayment',
+    ]) {
+      expect(api).not.toHaveProperty(gone);
+    }
+    for (const kept of [
+      'getBucketVersioning',
+      'getBucketTagging',
+      'getBucketEncryption',
+      'getBucketNotificationConfiguration',
+      'getBucketWebsite',
+    ]) {
+      expect(api).toHaveProperty(kept);
+    }
   });
 });
 
@@ -823,16 +821,11 @@ describe('the create form’s requests', () => {
 /** Every call of a bucket's screens on bucket `b`, by its operation's name. */
 const CALLS: [string, (abort: AbortSignal) => Promise<unknown>][] = [
   ['GetBucketVersioning', (s) => getBucketVersioning(endpoint, 'b', s)],
-  ['GetBucketAbac', (s) => getBucketAbac(endpoint, 'b', s)],
   ['GetBucketTagging', (s) => getBucketTagging(endpoint, 'b', s)],
   ['GetBucketEncryption', (s) => getBucketEncryption(endpoint, 'b', s)],
-  ['ListBucketIntelligentTieringConfigurations', (s) => listBucketIntelligentTieringConfigurations(endpoint, 'b', s)],
-  ['GetBucketLogging', (s) => getBucketLogging(endpoint, 'b', s)],
   ['GetBucketNotificationConfiguration', (s) => getBucketNotificationConfiguration(endpoint, 'b', s)],
-  ['GetBucketAccelerateConfiguration', (s) => getBucketAccelerateConfiguration(endpoint, 'b', s)],
-  ['GetObjectLockConfiguration', (s) => getObjectLockConfiguration(endpoint, 'b', s)],
-  ['GetBucketRequestPayment', (s) => getBucketRequestPayment(endpoint, 'b', s)],
   ['GetBucketWebsite', (s) => getBucketWebsite(endpoint, 'b', s)],
+  ['ListObjectsV2', (s) => listObjects(endpoint, 'b', { prefix: '', pageSize: 100 }, s)],
   ['ListObjectVersions', (s) => listObjectVersions(endpoint, 'b', { maxKeys: 1000 }, s)],
   ['ListObjectVersions', (s) => isBucketEmpty(endpoint, 'b', s)],
   ['DeleteObjects', (s) => deleteObjects(endpoint, 'b', [{ key: 'k', versionId: 'null' }], s)],
