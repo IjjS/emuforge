@@ -72,7 +72,7 @@ test('studio.dynamodb-create-a-table-and-its-first-item', async ({ ctx, page }) 
   };
 
   await lines.line(
-    '"Create table": name, partition `pk` String, sort `n` Number, On-demand → the table\'s page, "Creating" then "Active" without a reload, "Table {name} is being created." in the Flashbar; the emulator reports the keys and `PAY_PER_REQUEST`',
+    '"Create table": name, partition `pk` String, sort `n` Number, On-demand → the table\'s page, "Active" without a reload, "Table {name} is being created." in the Flashbar; the emulator reports the keys and `PAY_PER_REQUEST`',
     async () => {
       expect(await tableDirect(ctx, port, name), 'the emulator holds no such table before').toBeNull();
       await open(page, CREATE_TABLE_PATH, CREATE_TABLE);
@@ -100,8 +100,12 @@ test('studio.dynamodb-create-a-table-and-its-first-item', async ({ ctx, page }) 
         )
         .toBe('Active');
       ctx.log(`the statuses shown: ${JSON.stringify(statuses)}`);
-      // The page was not loaded again since "Create table": the emulator keeps a new table `CREATING` for about 3 s.
-      expect(statuses, '"Creating" was shown before "Active"').toEqual(['Creating', 'Active']);
+      // The page was not loaded again since "Create table". The emulator holds `DescribeTable` of a table being created
+      // until it is `ACTIVE` (about 3 s), so "Creating" is not asked for; no other status may be shown on the way.
+      expect(
+        statuses.filter((status) => status !== 'Creating'),
+        'no status but "Creating" before "Active"',
+      ).toEqual(['Active']);
       const table = await tableDirect(ctx, port, name);
       expect(table?.KeySchema, 'the keys, directly').toEqual([
         { AttributeName: 'pk', KeyType: 'HASH' },
