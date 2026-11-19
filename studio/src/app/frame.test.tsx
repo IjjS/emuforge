@@ -267,6 +267,29 @@ describe('Studio’s frame', () => {
     },
   );
 
+  it("a tab that takes focus is scrolled into the tab list's view, the nearest way (issue 486, critique)", () => {
+    const scrolled: { element: Element; options: unknown }[] = [];
+    const original = HTMLElement.prototype.scrollIntoView as HTMLElement['scrollIntoView'] | undefined;
+    HTMLElement.prototype.scrollIntoView = function scrollIntoView(this: HTMLElement, options?: unknown) {
+      scrolled.push({ element: this, options });
+    } as HTMLElement['scrollIntoView'];
+    try {
+      openFrame('/');
+      const { aws } = frameLinks();
+
+      aws.focus();
+
+      expect(document.activeElement).toBe(aws);
+      expect(scrolled).toEqual([{ element: aws, options: { block: 'nearest', inline: 'nearest' } }]);
+    } finally {
+      if (original === undefined) {
+        delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
+      } else {
+        HTMLElement.prototype.scrollIntoView = original;
+      }
+    }
+  });
+
   it('on /aws: AWS is the current page, Home is not marked', () => {
     openFrame('/aws');
     const { home, aws } = frameLinks();
