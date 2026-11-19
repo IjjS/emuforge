@@ -28,6 +28,14 @@ export function isOneJsonValue(text: string): boolean {
   }
 }
 
+/** The error text of a document that is not one JSON value (requirement, "EmuForge's own text"). */
+export const NOT_JSON_TEXT = 'Enter the policy as one JSON value.';
+
+/** The one check Studio makes of a document before it is sent: `undefined` when it is one JSON value. */
+export function documentErrorText(text: string): string | undefined {
+  return isOneJsonValue(text) ? undefined : NOT_JSON_TEXT;
+}
+
 /** A JSON text indented by two spaces; a text that is not JSON as it came. */
 export function indentJson(text: string): string {
   if (!isOneJsonValue(text)) {

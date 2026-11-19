@@ -730,7 +730,7 @@ describe('the reads and actions of issue 535', () => {
     });
   });
 
-  function renderPolicyListing(scope: PolicyListingOptions['scope']) {
+  function renderPolicyListing(scope: 'Local' | 'AWS' | 'All') {
     return renderHook((props: PolicyListingOptions) => usePolicyListing(props), {
       initialProps: { endpoint, pageSize: 2, filter: '', scope },
       wrapper,
