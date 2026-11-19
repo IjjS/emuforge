@@ -624,7 +624,11 @@ describe('a loaded role', () => {
       ['inline-one', 'Customer inline'],
     ]);
     const table = policiesTable().getElement();
-    expect(within(table).getAllByRole('link').map((link) => [link.textContent, link.getAttribute('href')])).toEqual([
+    expect(
+      within(table)
+        .getAllByRole('link')
+        .map((link) => [link.textContent, link.getAttribute('href')]),
+    ).toEqual([
       ['ReadOnlyAccess', `/aws/iam/policies/details?arn=${encodeURIComponent(READ_ONLY.arn)}`],
       ['team-policy', `/aws/iam/policies/details?arn=${encodeURIComponent(OWN.arn)}`],
     ]);
