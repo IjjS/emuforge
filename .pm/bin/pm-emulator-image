@@ -18,10 +18,21 @@ the name `aws-emulator` moved to it (`docker tag`) and the refresh's own name re
 leaves the name as it was and removes the refresh's own name; that is the one image this script ever removes. No
 container is started, stopped or removed but the one-shot version reads.
 
-The outcome is one line, `pm-emulator-image: refreshed <before> -> <after>` | `unchanged <version>` | `failed:
-<reason>; image left as it was (<version|none>)`, appended to .pm/run/events.log and kept with the versions, ids,
-source tree and time in .pm/run/emulator-image.json. `refreshed` and `failed` also go to the PM through pm-watchd's
-inbox as `EVENT emulator-image refreshed <before> -> <after>` and `EVENT emulator-image failed <reason>`. A reason is
+A refresh whose outcome is `refreshed` (the moment `EVENT emulator-image refreshed` is told; never `unchanged` or
+`failed`, never a timer, never `status`) then runs once `docker builder prune --max-used-space BUILD_CACHE_KEEP
+--force`, which removes the least recently used build cache until BUILD_CACHE_KEEP is left, so the layers just built
+stay. That is the one other thing this script prunes: no image, container or volume, never `docker system prune`.
+Its output goes to the refresh log; the space it reclaimed (its `Total:` or `Total reclaimed space:` line, in the
+shape of a size, else `unknown`) goes into the outcome line. A prune that fails or does not end within PRUNE_BOUND
+changes nothing of the outcome and is said in that line.
+
+The outcome is one line, `pm-emulator-image: refreshed <before> -> <after>; <prune>` | `unchanged <version>` |
+`failed: <reason>; image left as it was (<version|none>)`, where <prune> is `build cache pruned to 20GB (reclaimed
+<size|unknown>)` | `build cache prune failed (exit <n>)` | `build cache prune did not end within <PRUNE_BOUND> s`. It is
+appended to .pm/run/events.log and kept with the versions, ids, source tree, the prune (`build_cache`, null but
+after a refresh) and time in .pm/run/emulator-image.json. `refreshed` and `failed` also go to the PM through
+pm-watchd's inbox as `EVENT emulator-image refreshed <before> -> <after>` (without the prune's clause) and `EVENT
+emulator-image failed <reason>`. A reason is
 always one of the fixed texts of this script: what Docker or git printed is only in the refresh log,
 .pm/run/emulator-image-refresh.log, replaced by each refresh. A version or commit is accepted only in the shape
 [0-9A-Za-z._+-]{1,64}.
@@ -48,6 +59,7 @@ from _pmlib import ROOT, RUN, log, now, save, wake_watchd
 READ_BOUND = 10     # seconds: docker info, docker image inspect, git
 IMAGE_BOUND = 30    # seconds: docker run --version, docker tag, docker image rm
 BUILD_BOUND = 600   # seconds: docker build
+PRUNE_BOUND = 300   # seconds: docker builder prune
 KILL_GRACE = 10     # seconds between SIGTERM and SIGKILL of a child's process group
 
 PREFIX = "pm-emulator-image: "
@@ -59,8 +71,11 @@ RECORD = RUN / "emulator-image.json"
 LOCK = RUN / "emulator-image.lock"
 REFRESH_LOG = RUN / "emulator-image-refresh.log"
 INBOX = RUN / "inbox.jsonl"
+BUILD_CACHE_KEEP = "20GB"  # the build cache left after a refresh to a new version (owner decision, issue 507)
 ENV_ALLOWED = ("PATH", "HOME", "DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG", "XDG_RUNTIME_DIR", "TMPDIR")
 SHAPE = re.compile(r"[0-9A-Za-z._+-]{1,64}")
+SIZE = re.compile(r"[0-9]{1,12}(\.[0-9]{1,6})?[kKMGTP]?i?B")
+TOTAL = re.compile(r"^\s*Total(?: reclaimed space)?:\s*(\S+)\s*$")
 IMAGE_ID = re.compile(r"[0-9a-z]{1,16}:[0-9a-f]{12,128}")
 TREE_ID = re.compile(r"[0-9a-f]{40,64}")
 SCRIPT_ARG = re.compile(r"(^|[\s/])pm-emulator-image(\s|$)")
@@ -78,13 +93,15 @@ def child_env():
     return {k: os.environ[k] for k in ENV_ALLOWED if k in os.environ}
 
 
-def call(args, bound, out=None):
+def call(args, bound, out=None, err=None):
     """Run `args` in a session of its own with the allowlisted environment, bounded at `bound` seconds.
-    (exit code or None at the bound, stdout text or '' when `out` takes it)."""
+    (exit code or None at the bound, stdout text or '' when `out` takes it). stderr goes to `out`, else to `err`,
+    else nowhere."""
     try:
         p = subprocess.Popen(args, stdin=subprocess.DEVNULL, env=child_env(), start_new_session=True,
                              stdout=out if out is not None else subprocess.PIPE,
-                             stderr=out if out is not None else subprocess.DEVNULL, text=True)
+                             stderr=out if out is not None else err if err is not None else subprocess.DEVNULL,
+                             text=True)
     except OSError:
         return 127, ""
     try:
@@ -119,8 +136,8 @@ def group_alive(pgid):
         return False
 
 
-def docker(*args, bound=READ_BOUND, out=None):
-    return call(["docker", *args], bound, out)
+def docker(*args, bound=READ_BOUND, out=None, err=None):
+    return call(["docker", *args], bound, out, err)
 
 
 def git(*args):
@@ -276,6 +293,9 @@ def cmd_work(lock_arg):
         w.run()
         outcome, line = w.outcome()
         reason = None
+        if outcome == "refreshed":
+            event_text = line[len(PREFIX):]
+            line += "; " + w.prune()
     except Failed as e:
         reason = str(e)
         w.cleanup()
@@ -286,8 +306,9 @@ def cmd_work(lock_arg):
         build_out.flush()
     log(line)
     save(RECORD, {"at": now(), "outcome": outcome, "line": line, "before": w.before, "after": w.after,
-                  "reason": reason, "source_tree": w.tree, "seconds": round(time.time() - started, 1)})
-    event = {"refreshed": f"EVENT emulator-image {line[len(PREFIX):]}",
+                  "reason": reason, "source_tree": w.tree, "build_cache": w.build_cache,
+                  "seconds": round(time.time() - started, 1)})
+    event = {"refreshed": f"EVENT emulator-image {event_text}" if outcome == "refreshed" else None,
              "failed": f"EVENT emulator-image failed {reason}"}.get(outcome)
     if event:
         with INBOX.open("a") as f:
@@ -308,6 +329,7 @@ class Work:
         self.after = None
         self.tree = None
         self.built = False
+        self.build_cache = None
 
     def note(self, text):
         print(f"{PREFIX}{text}", file=self.out, flush=True)
@@ -361,6 +383,24 @@ class Work:
         if same and "unknown" not in (b["version"], b["commit"]):  # unknown differs from every version
             return "unchanged", f"{PREFIX}unchanged {a['version']}"
         return "refreshed", f"{PREFIX}refreshed {(b or {}).get('version') or 'none'} -> {a['version']}"
+
+    def prune(self):
+        """The one prune of the build cache after a refresh to a new version; the outcome line's clause."""
+        self.note(f"build cache prune down to {BUILD_CACHE_KEEP}")
+        code, out = docker("builder", "prune", "--max-used-space", BUILD_CACHE_KEEP, "--force", bound=PRUNE_BOUND,
+                           err=self.out)
+        if out:
+            print(out, end="" if out.endswith("\n") else "\n", file=self.out, flush=True)
+        if code is None:
+            self.build_cache = {"outcome": "timed out", "reclaimed": None, "keep": BUILD_CACHE_KEEP}
+            return f"build cache prune did not end within {PRUNE_BOUND} s"
+        if code != 0:
+            self.build_cache = {"outcome": "failed", "reclaimed": None, "keep": BUILD_CACHE_KEEP}
+            return f"build cache prune failed (exit {code})"
+        sizes = [m.group(1) for m in map(TOTAL.match, out.splitlines()) if m]
+        size = sizes[-1] if sizes and SIZE.fullmatch(sizes[-1]) else None
+        self.build_cache = {"outcome": "pruned", "reclaimed": size, "keep": BUILD_CACHE_KEEP}
+        return f"build cache pruned to {BUILD_CACHE_KEEP} (reclaimed {size or 'unknown'})"
 
     def cleanup(self):
         """After a failure: remove the refresh's own name when it exists."""
