@@ -1,7 +1,10 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { act, fireEvent, getRoles, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { Root } from 'react-dom/client';
 import { createMemoryRouter, RouterProvider, type RouteObject } from 'react-router';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -13,6 +16,7 @@ import {
   advance,
   buildOnceToggle,
   connected,
+  connectedTo,
   connectionNotice,
   connectionSection,
   emulatorDown,
@@ -224,14 +228,15 @@ function frameLinks() {
     banner,
     nav,
     home: within(nav).getByRole('link', { name: 'Home' }),
+    connections: within(nav).getByRole('link', { name: 'Connections' }),
     aws: within(nav).getByRole('link', { name: 'AWS' }),
   };
 }
 
 describe('Studio’s frame', () => {
-  it('on /: a banner with "EmuForge Studio" to / and the navigation "Studio" with Home then AWS; Home current', () => {
+  it('on /: a banner with "EmuForge Studio" to / and the navigation "Studio" with Home, Connections, then AWS; Home current', () => {
     openFrame('/');
-    const { banner, nav, home, aws } = frameLinks();
+    const { banner, nav, home, connections, aws } = frameLinks();
 
     expect(within(banner).getByRole('link', { name: 'EmuForge Studio' })).toHaveAttribute('href', '/');
     const links = within(nav)
@@ -239,10 +244,83 @@ describe('Studio’s frame', () => {
       .map((link) => [link.textContent, link.getAttribute('href')]);
     expect(links).toEqual([
       ['Home', '/'],
+      ['Connections', '/connections'],
       ['AWS', '/aws'],
     ]);
     expect(home).toHaveAttribute('aria-current', 'page');
+    expect(connections).not.toHaveAttribute('aria-current');
     expect(aws).not.toHaveAttribute('aria-current');
+  });
+
+  it('on /connections: Connections is the current page, Home and AWS are not marked (issue 486, R1)', () => {
+    openFrame('/connections');
+    const { home, connections, aws } = frameLinks();
+
+    expect(connections).toHaveAttribute('aria-current', 'page');
+    expect(home).not.toHaveAttribute('aria-current');
+    expect(aws).not.toHaveAttribute('aria-current');
+  });
+
+  it.each(['/', '/aws', '/aws/s3', '/connections/x', '/connectionsx', '/does-not-exist'])(
+    'on %s: Connections is not marked (issue 486, R1)',
+    (path) => {
+      openFrame(path);
+
+      expect(frameLinks().connections).not.toHaveAttribute('aria-current');
+    },
+  );
+
+  it("a tab that takes focus is scrolled into the tab list's view, the nearest way (issue 486, critique)", () => {
+    const scrolled: { element: Element; options: unknown }[] = [];
+    const original = HTMLElement.prototype.scrollIntoView as HTMLElement['scrollIntoView'] | undefined;
+    HTMLElement.prototype.scrollIntoView = function scrollIntoView(this: HTMLElement, options?: unknown) {
+      scrolled.push({ element: this, options });
+    } as HTMLElement['scrollIntoView'];
+    try {
+      openFrame('/');
+      const { aws } = frameLinks();
+
+      aws.focus();
+
+      expect(document.activeElement).toBe(aws);
+      expect(scrolled).toEqual([{ element: aws, options: { block: 'nearest', inline: 'nearest' } }]);
+    } finally {
+      if (original === undefined) {
+        delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
+      } else {
+        HTMLElement.prototype.scrollIntoView = original;
+      }
+    }
+  });
+
+  it('at 480 and below each tab is at least 24px wide with its label centred, a target of its own (issue 486, critique)', () => {
+    const css = readFileSync(path.join(import.meta.dirname, '..', 'ui', 'bar.css'), 'utf8').replace(
+      /\/\*[\s\S]*?\*\//g,
+      '',
+    );
+    const start = css.indexOf('@media (max-width: 480px)');
+    expect(start).toBeGreaterThan(-1);
+    let depth = 0;
+    let end = css.indexOf('{', start);
+    for (let i = end; i < css.length; i++) {
+      depth += css[i] === '{' ? 1 : css[i] === '}' ? -1 : 0;
+      if (depth === 0) {
+        end = i;
+        break;
+      }
+    }
+    const narrow = css.slice(css.indexOf('{', start) + 1, end);
+    const rule = /(?:^|\})\s*\.st-nav a\s*\{([^{}]*)\}/.exec(narrow)?.[1] ?? '';
+    const declarations = new Map(
+      rule
+        .split(';')
+        .map((d) => d.split(':').map((part) => part.trim()))
+        .filter(([property]) => property !== undefined && property !== '')
+        .map(([property = '', value = '']) => [property, value]),
+    );
+
+    expect(declarations.get('min-width')).toBe('24px');
+    expect(declarations.get('justify-content')).toBe('center');
   });
 
   it('on /aws: AWS is the current page, Home is not marked', () => {
@@ -292,6 +370,7 @@ describe('Studio’s frame', () => {
   it.each([
     ['/', 'EmuForge Studio'],
     ['/does-not-exist', 'Page not found | EmuForge Studio'],
+    ['/connections', 'Connections | EmuForge Studio'],
     ['/aws', 'Amazon Web Services | EmuForge Studio'],
     [NO_SCREEN_SERVICE.below, `${NO_SCREEN_SERVICE.label} | EmuForge Studio`],
   ])('on %s: the document title is "%s"', async (path, title) => {
@@ -1465,5 +1544,51 @@ describe("the AWS area's connection, as the frame checks it (issue 45, R4.4)", (
     // Only Home's rhythm from here: a check 5 seconds after each of its answers, each answered a second later.
     await advance(19_000);
     expect(engine.healths).toHaveLength(areaChecks + 4);
+  });
+});
+
+describe("the area's target generation (issue 486, s1)", () => {
+  let engine: FakeEngine;
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
+    engine = new FakeEngine();
+    vi.stubGlobal('fetch', engine.fetch);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('the area is rendered with targetGeneration 0 on load, then the target seen’s generation, and is not mounted again', async () => {
+    const seen: (number | undefined)[] = [];
+    let mounts = 0;
+    function ProbeArea({ targetGeneration }: ProviderAreaProps) {
+      // A probe of the area's own state: set once per mount.
+      const [mount] = useState(() => ++mounts);
+      seen.push(targetGeneration);
+      return (
+        <main>
+          <p>
+            Mount {mount}, generation {String(targetGeneration)}
+          </p>
+        </main>
+      );
+    }
+    engine.healthAnswers = [connectedTo('local'), connectedTo('second')];
+    openStudio('/stub', [
+      { element: <Frame />, children: [{ path: 'stub/*', element: <ProviderPage area={ProbeArea} /> }] },
+    ]);
+    await advance();
+    expect(engine.healths).toHaveLength(1);
+    expect(screen.getByText('Mount 1, generation 0')).toBeInTheDocument();
+    expect(new Set(seen)).toEqual(new Set([0]));
+
+    await advance(5_000);
+
+    expect(engine.healths).toHaveLength(2);
+    expect(screen.getByText('Mount 1, generation 1')).toBeInTheDocument();
+    expect(seen.at(-1)).toBe(1);
+    expect(mounts).toBe(1);
   });
 });

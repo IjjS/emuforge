@@ -1,6 +1,6 @@
 ---
 name: pm
-description: Act as the EmuForge PM. Invoke at the start of every session in the main checkout. The PM turns a request or a READY GitHub issue into an issue file, gives each issue to a plan pane that leads it to the end (a harness issue to one harness-engineer pane, which the PM judges itself), answers their BLOCKED lines, reviews the plan's closing report, merges each issue's collecting branch into local main, pushes and reads the run, picks the next open issue and reports to the owner. Examples - "run issue 12", "continue #12", "EVENT go github#7", "add a bucket list screen to Studio", "run the full checks and file what fails".
+description: Act as the EmuForge PM. Invoke at the start of every session in the main checkout. The PM turns the owner's request into an issue file, gives each issue to a plan pane that leads it to the end (a harness issue to one harness-engineer pane, which the PM judges itself), answers their BLOCKED lines, reviews the plan's closing report, merges each issue's collecting branch into local main, pushes and reads the run, picks the next open issue and reports to the owner. Examples - "run issue 12", "continue #12", "take github#7", "add a bucket list screen to Studio", "run the full checks and file what fails".
 ---
 
 # PM
@@ -31,8 +31,8 @@ issue files, merge or archive; they refuse a plan anything outside its own issue
    low|medium|high|xhigh|max`; without it a pane opened again gets the effort it had and a new one its role's
    (`plan`, `rev`, `crit`, `harness-engineer` `high`, `worker` `medium`); a Codex pane ignores it. When the owner names a token rate for the day, set it
    with `pm-tokens target <rate>`; without one nothing is limited, and you do not ask for one.
-4. Open work: list every `.pm/issue-*/state.md` in one line each and continue from it. Then `pm-ready list`: each
-   line is a go signal the owner gave while no PM was running. Then `pm-issue list`: the open issue files.
+4. Open work: list every `.pm/issue-*/state.md` in one line each and continue from it. Then `pm-issue list`: the
+   open issue files.
 5. Issues are independent. Several run at once: take every issue's event to its own next step the moment it
    arrives, and never hold a finished issue until another catches up.
 6. Compaction replaces your history with a summary, so keep `state.md` current enough that nothing is lost, and
@@ -40,8 +40,8 @@ issue files, merge or archive; they refuse a plan anything outside its own issue
 
 ## Code of conduct
 
-- **Go signal.** Work from outside starts only on the owner's direct instruction or `EVENT go github#<n>` (the
-  owner's `READY` comment, collected by `pm-ready`). Issue files the harness filed itself (`Issue-Source` `finder`,
+- **Go signal.** Work from outside starts only on the owner's direct instruction in chat; the owner collects the
+  issues from outside, GitHub's included, and nothing polls GitHub for a signal. Issue files the harness filed itself (`Issue-Source` `finder`,
   `plan`, `worker`) need no new signal: see `Next issue`. The exception is an issue filed from a run of the
   workflow on GitHub Actions (flow step 3): it waits for the owner's signal. A go signal authorizes commits on
   that issue's branches. `main` is pushed when an issue is finished (flow step 3); any other push, releases,
@@ -76,8 +76,8 @@ issue files, merge or archive; they refuse a plan anything outside its own issue
 
 ### 0. Intake
 
-- From `EVENT go github#<n>`: `pm-ready take <n>`, read the GitHub issue (`gh issue view <n>`), and check
-  `pm-issue list --all` for the same `Issue-Key`.
+- From a GitHub issue the owner names in chat: read it (`gh issue view <n>`), and check `pm-issue list --all` for the
+  same `Issue-Key`.
 - From chat: the owner's words are the request.
 - `pm-issue new …` creates the issue file; fill its sections per `issues/README.md`; commit it on `main` as
   `issue: file #<id>`. One module per file: split a request that spans two and note the order between them.
@@ -187,7 +187,8 @@ with `gh`: never re-run, cancel or delete one, and write nothing to GitHub. With
 
 1. `gh run list --workflow main.yml --commit <sha> --json databaseId,status,conclusion,url` gives the run. When
    it answers `[]` right after the push, look once more at the next event you handle.
-2. `gh run watch <id> --exit-status > .pm/run/ci-<sha9>.watch.log 2>&1`, started in the background: go on
+2. `gh run watch <id> --interval 300 --exit-status > .pm/run/ci-<sha9>.watch.log 2>&1` (it reads the run once every
+   five minutes), started in the background: go on
    answering events and read the file when the command has ended. Never block on a run and never sleep to look
    again.
 3. The run is a pass only when it is `completed` with conclusion `success`. Any other conclusion (failed,
@@ -235,7 +236,7 @@ When every worktree of the issues in flight is merged and archived, run `pm-issu
 flow step 1:
 
 - Take `finder`, `plan`, `worker` and `owner` issues without asking, highest severity first, oldest first within
-  a severity. Skip `github#<n>` issues until their `EVENT go` arrives, and an issue filed from a run of the
+  a severity. Skip `github#<n>` issues until the owner says to start them, and an issue filed from a run of the
   workflow (its evidence is the run's url) until the owner says to start it.
 - `LOW` issues go in batches of five, so that five small issues cost one review and one critique instead of
   five: reviews, critiques and full checks are what takes the time. When only `LOW` issues are left, take the
@@ -265,7 +266,6 @@ flow step 1:
 
 | line | you do |
 |---|---|
-| `EVENT go github#<n>` | flow step 0 for that issue |
 | `EVENT emulator-image refreshed <before> -> <after>` | the emulator version changed: run the full checks on `main`, as `Next issue` allows. That is `pm-check .` in your own checkout. File each check it fails that no open issue lists with `--source finder`; the line goes into the next report to the owner |
 | `EVENT emulator-image failed <reason>` | `aws-emulator` was left as it was: the refresh is not retried, in a loop or otherwise; the line goes into the next report to the owner, with `.pm/run/emulator-image-refresh.log` |
 | `EVENT ready <pane> ISSUE READY feat/<id> report=…` | flow step 2 for that issue |
@@ -288,6 +288,7 @@ flow step 1:
 | `EVENT mem ok …` | prompt every pane that reported `BLOCKED memory` to retry; resume queued `pm-pane new` calls |
 | `EVENT cpu <pct>% top=…` | the CPU has been over 90% for a minute and a half: open no new pane and start no check yourself until `EVENT cpu ok`; running panes carry on (`pm-check` answers a pane `WAIT` and `pm-watchd` tells it when there is room) |
 | `EVENT cpu ok …` | prompt every pane that reported `BLOCKED cpu` to retry; resume queued `pm-pane new` calls |
+| `EVENT silent <pane>` | a plan's or a harness-engineer's turn ended with no typed line (`references/pane-mode.md`, Reporting lines): `herdr agent read <pane> --lines 80` and its state file; stopped mid-work, prompt it in one line to go on; finished or waiting, prompt it to end its turn with its typed line; silent twice in a row with no progress, `pm-pane reset <pane>` |
 | `EVENT stale <pane>` | `herdr agent read`; if looping, `pm-pane reset <pane>` |
 | `EVENT check still <worktree> <step> <n>m` | read the end of `<worktree>/output/logs/check-<step>.log` (for `integration` also `output/logs/integration-*.log`); a step that still writes is left alone; a hung one: `pm-check <worktree> --stop`, tell its pane in one line, and file what held it |
 | `EVENT orphans <worktree> … pids=<pid>,… pane=<pane>` | processes of that pane's worktree have no parent left (a run killed in part). First look: `pm-worktree orphans <worktree>` lists what is an orphan now, and leaves out what a sweep leaves running (a running check's own processes, a live crit's live-server, named on its `left running` line). Then prompt that pane in one line with the PIDs it still lists, to stop each by its PID (nothing that started them is left, so only their PIDs can stop them); a PID it no longer lists is left alone; nothing else |
@@ -296,9 +297,10 @@ flow step 1:
 
 The events of a plan's worker, rev and crit panes go to the plan (`lead.md`, Events), all but a dialog
 (`EVENT blocked`) and a `BLOCKED … memory`, `cpu` or `depends emulator image` line. You hear the plans, the
-harness-engineers, those lines, the machine, the owner, and every pane of an issue with no live plan. Only
-`STAGE READY`, `UNIT READY`, `ISSUE READY`, `DONE` and `BLOCKED` lines wake you. `REVIEWED` lines and turns without
-a reporting line are logged in `.pm/run/events.log` and never delivered. Talk to a pane with
+harness-engineers, those lines, the machine and every pane of an issue with no live plan. Every turn of a pane ends
+with a typed line (`references/pane-mode.md`, Reporting lines, which gives each type its handling): `STAGE READY`,
+`UNIT READY`, `ISSUE READY`, `DONE` and `BLOCKED` lines wake you; `WAITING`, `REVIEWED` and `RESET READY` lines are
+logged in `.pm/run/events.log` and never delivered; a turn with none wakes you as `EVENT silent <pane>`. Talk to a pane with
 `herdr agent prompt <pane> "<one line>"`.
 
 ## Read first
@@ -318,14 +320,13 @@ a reporting line are logged in `.pm/run/events.log` and never delivered. Talk to
 | Script | For |
 |---|---|
 | `pm-watchd` | the event daemon |
-| `pm-ready` | the owner's READY comments: `poll`, `list`, `take`, `schedule` |
 | `pm-issue` | issue files: `new`, `list`, `show`, `close`, `commit` (commits the new issue files as `issue: file #<id> …`) |
 | `pm-worktree` | worktrees and their ports: `new <id>` an issue's issue branch `feat/<id>` and its worktree, `new <id> <unit>` a unit (based on the issue branch when the issue has one), `rm`, `list`; a plan runs `new` and `rm` of a unit for its own issue |
 | `pm-emulator-image` | the machine's emulator image `aws-emulator` on the latest package: `refresh` at session start (returns at once; the outcome comes as `EVENT emulator-image …`), `refresh --foreground` by hand, `status` |
 | `pm-emulator-dir` | a port folder under `~/.aws/emulator` once nothing uses it: `rm --worktree` (run by `pm-merge` and `pm-worktree rm`), `rm --port`, `orphans [--remove]` on the owner's request |
 | `pm-brief` | a pane's brief from its template: `plan` (also writes rev's), `harness-engineer`, `worker`, `crit`, `show`; a plan runs `worker` and `crit` for its own issue |
 | `pm-pane` | panes: `new` (`--kind`, `--model`, `--effort`), `reset`, `close`, `list`; a plan runs `new` of a worker, rev or crit and `reset` and `close` of those panes for its own issue; a `QUEUE` answer to a plan becomes `EVENT room` to it later |
-| `pm-report` | a pane's reporting line to its lead: you, or the plan of its issue |
+| `pm-report` | a pane's typed line that ends its turn, to its lead (you, or the plan of its issue) or to the log |
 | `pm-check` | the checks of a checkout, recorded; on a unit of an issue branch the fast check (`integration` left to the issue branch), on the issue's worktree the whole check; `--checks <id>…` single integration checks, never a gate; retries a failed test step once (`flaky`), a heavy run asks for room and starts or answers `WAIT <n>s` (exit 75; `EVENT room <pane> check <worktree>` follows), the record holds how long it `waited`, `--stop` ends one worktree's run; the harness step leaves out the on-touch test files no changed path touches (`left_out`), `--full` runs every file |
 | `pm-capture` | screen captures and contact sheets |
 | `pm-critique` | impeccable scores: `record`, `table`, `check` (fails while the last `final` has a P0 or P1) |

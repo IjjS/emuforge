@@ -263,7 +263,7 @@ describe("Studio's catalogues (R1.1, R4.6, R4.7)", () => {
   it('the glossary → a stem for every term in each of the eleven languages other than English', () => {
     const others = TAGS.filter((tag) => tag !== 'en');
     expect(STUDIO_GLOSSARY.map((term) => term.term).sort()).toEqual(
-      ['Home', 'Refresh', 'Studio', 'command', 'emulator', 'engine', 'port'].sort(),
+      ['Home', 'Refresh', 'Studio', 'command', 'connection', 'emulator', 'engine', 'port', 'target'].sort(),
     );
     for (const term of STUDIO_GLOSSARY) {
       expect([term.term, [...term.stems.keys()].sort()]).toEqual([term.term, [...others].sort()]);

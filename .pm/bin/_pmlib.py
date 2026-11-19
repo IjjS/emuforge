@@ -3,6 +3,7 @@ import datetime as dt
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
 import time
@@ -318,31 +319,79 @@ def guard(what, issue=None, plan_may=False):
              + f"; {who} may not")
 
 
-def machine_room(readings=None):
+# --- pm-pane reset (issues 495, 497) --------------------------------------------------------------------------------
+# A pane lays its reply out at its own width, so in a narrow pane the reset marker reaches the terminal over two rows
+# (`⏺ RESET READY` / `  i486-worker-s2 102730`); unwrapping soft wraps does not join them. The prompt echo (`❯ …`,
+# Codex `› …`) holds the marker too and wraps the same way.
+REPLY_BULLET = "⏺•"           # a reply row of Claude Code, Codex
+NOT_REPLY = "❯›⎿└"            # a prompt echo, a tool's result (Claude Code, Codex)
+RESETTING_FOR = 900           # seconds a reset in progress is believed (a reset ends in under 10 minutes)
+
+
+def reset_marker_pattern(marker):
+    """The Rust (and Python) regex `pm-pane reset` waits for: the marker's words with any whitespace, line breaks
+    included, between them, at the start of a row (after non-letters), and inside a reply: after a reply bullet with no
+    prompt echo or tool result between the bullet and the marker. So the echo of the reset prompt, however it wraps,
+    and a tool's row or result that holds the marker never match."""
+    words = r"\s+".join(re.escape(w) for w in marker.split())
+    return (rf"[{REPLY_BULLET}](?:[^{NOT_REPLY}]*\n)?[^A-Za-z{NOT_REPLY}\n]*{words}[ \t]*(?:\n|$)")
+
+
+def state_note(entry):
+    """Where a pane writes its resume note: a worker's and a harness-engineer's `output/state.md` in its worktree,
+    every other role's `.pm/issue-<id>/state-<role>.md` (pane-mode.md, Context budget)."""
+    if entry.get("role") in ("worker", "harness-engineer"):
+        return "output/state.md"
+    return f"{ROOT}/.pm/issue-{entry.get('issue')}/state-{entry.get('role')}.md"
+
+
+def mark_resetting(name, on, at=None):
+    """Set (on) or clear the registry entry's `resetting` (epoch s): a reset of the pane is in progress, so pm-watchd
+    takes a turn end of it for the reset's own, not a silent turn."""
+    reg = load(PANES, [])
+    for r in reg:
+        if r.get("name") == name and not r.get("gone"):
+            if on:
+                r["resetting"] = time.time() if at is None else at
+            else:
+                r.pop("resetting", None)
+    save(PANES, reg)
+
+
+def resetting(entry, at=None):
+    """True while the entry says a reset of the pane began under RESETTING_FOR seconds ago."""
+    t = entry.get("resetting") if isinstance(entry, dict) else None
+    at = time.time() if at is None else at
+    return isinstance(t, (int, float)) and not isinstance(t, bool) and 0 <= at - t < RESETTING_FOR
+
+
+def machine_room(readings=None, given=None):
     """Why the machine has no room now (memory, swap, CPU as measured, against LIMITS), or None. An unknown reading
     is room. The one measurement a new pane (room) and a heavy check (check_room) share. `readings`, a dict, gets
-    what was read: mem_gb, and cpu when memory left room to read it."""
+    what was read: mem_gb, and cpu when memory left room to read it. `given` ({"mem": mem_gb(), "cpu": cpu_pct()}),
+    readings already taken (pm-watchd's timer), is used instead of measuring again."""
     readings = {} if readings is None else readings
-    used, su, st = mem_gb()
+    given = given or {}
+    used, su, st = given["mem"] if "mem" in given else mem_gb()
     readings["mem_gb"] = round(used, 1)
     if used > LIMITS["mem_gb"]:
         return f"memory {used:.1f}GB > {LIMITS['mem_gb']}GB"
     if st and st - su < 0.25:
         return f"swap free {(st - su) * 1024:.0f}MB < 256MB"
-    cpu = readings["cpu"] = cpu_pct()
+    cpu = readings["cpu"] = given["cpu"] if "cpu" in given else cpu_pct()
     if cpu is not None and cpu > LIMITS["cpu_pct"]:
         return f"cpu {cpu:.0f}% > {LIMITS['cpu_pct']}%"
     return None
 
 
-def room(role, side, issue, alive=None, tokens=True):
+def room(role, side, issue, alive=None, tokens=True, given=None):
     """Why a new pane of this role and side may not start now, or None when there is room. The one judgement of the
     machine's limits that pm-pane (its QUEUE answer) and pm-watchd (EVENT room) share."""
     from _pmquota import start_allowed
     why = start_allowed(issue)
     if why:
         return why
-    why = machine_room()
+    why = machine_room(given=given)
     if why:
         return why
     if tokens:
@@ -410,7 +459,9 @@ def note_check(entry):
 
 
 def end_check(pid):
+    """This run has ended: its entry goes, and pm-watchd is woken, since a check that ends frees room (issue 497)."""
     (CHECKS / f"{pid}.json").unlink(missing_ok=True)
+    wake_watchd()
 
 
 def record_duration(step, seconds, status):
@@ -454,12 +505,12 @@ def remaining(entry, est, at):
     return left + sum(est.get(s, UNKNOWN_STEP) for s in later)
 
 
-def check_room(running=None, at=None, readings=None):
+def check_room(running=None, at=None, readings=None, given=None):
     """(why, wait seconds, [(checkout, step, seconds left)]) for a heavy check that asks now; why is None when there
     is room. The machine's limits (machine_room) first, then a heavy run started under SETTLE seconds ago. The wait
     is the least any running check still needs (remaining), or the rest of SETTLE, or IDLE_WAIT when none runs."""
     running = running_checks() if running is None else running
-    why = machine_room(readings)
+    why = machine_room(readings, given)
     at = time.time() if at is None else at
     est = step_estimates()
     left = [(r.get("checkout"), r.get("step"), round(remaining(r, est, at))) for r in running]

@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: harness|events|every-turn-ends-with-a-typed-line-no-ready
-Issue-Check-Ids:
+Issue-Check-Ids: harness.turn-end harness.pane-reset harness.orphan-event harness.check-room harness.lead
 Issue-Commit: a294e7867fb0adfd02ae94d1078ebbc6410e9403
 
 # End every pane's turn with a typed line and act on a turn that ends without one; drop READY; make the room and orphan checks event-driven

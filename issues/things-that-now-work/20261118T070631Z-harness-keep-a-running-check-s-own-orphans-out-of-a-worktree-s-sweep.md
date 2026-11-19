@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: bug
 Issue-Source: worker
 Issue-Key: harness|orphan-sweep-during-a-check|bug
-Issue-Check-Ids:
+Issue-Check-Ids: harness.orphans harness.orphan-event harness.emulator-image
 Issue-Commit: 21aead0a015e087724eb79ece5e43b5169b8c39f
 
 # Keep a running check's own orphans out of a worktree's sweep

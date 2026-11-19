@@ -33,38 +33,30 @@ import {
   Seeded,
 } from './services/s3/s3';
 import {
-  ABAC,
-  ACCELERATION,
   bucketPath,
   ENCRYPTION,
-  EVENTBRIDGE,
-  EVENTBRIDGE_FIELD,
   expectBucketPage,
   expectedSections,
   expectSections,
-  LOGGING,
-  NO_CONFIGURATIONS,
   NO_NOTIFICATIONS,
   NO_TAGS,
   NOTIFICATIONS,
-  OBJECT_LOCK,
+  OBJECTS,
   openBucketPage,
-  OTHER_TABS,
   OVERVIEW,
   PROPERTIES,
   propertiesPath,
   readSection,
   REFRESH,
-  REQUESTER_PAYS,
   SECTION_BUTTONS,
   sectionButton,
   SECTIONS,
   shownSectionTitles,
+  shownTabs,
   SSE_S3,
   tab,
-  tabPath,
+  TABS,
   TAGS,
-  TIERING,
   VERSIONING,
   WEBSITE,
 } from './services/s3/s3-bucket-page';
@@ -120,14 +112,22 @@ test.describe(() => {
     });
 
     await lines.line(
-      'With a bucket made directly with Object Lock, two tags, ABAC on, default encryption SSE-KMS with a key made directly and the bucket key on, an Intelligent-Tiering configuration, logging to a second bucket, an event notification to a queue, EventBridge on, acceleration on, a default retention of 1 day in governance mode, requester pays and a website configuration, open its name in the list → `h1` the name, "Properties" selected, and every section shows what direct reads of the same properties return, in the words of R5.3',
+      'With a bucket made directly with Object Lock, two tags, ABAC on, default encryption SSE-KMS with a key made directly and the bucket key on, an Intelligent-Tiering configuration, logging to a second bucket, an event notification to a queue, EventBridge on, acceleration on, a default retention of 1 day in governance mode, requester pays and a website configuration, open its name in the list → `h1` the name, "Objects" selected (issue 480: the bare route is the tab "Objects"); choose "Properties" → the address is `/properties` and each of the six sections kept shows what direct reads of the same properties return, in the words of R5.3',
       async () => {
         await openList(page);
         await filterFor(page, name);
         await expectNames(page, [name], `the rows under the filter ${name}`);
         await screen(page).nameLink(name).click(ACTION);
         await expect(page).toHaveURL(addressOf(bucketPath(name)));
+        await expectBucketPage(page, name, OBJECTS);
+        await tab(page, PROPERTIES).click(ACTION);
+        await expect(page).toHaveURL(addressOf(propertiesPath(name)));
         await expectBucketPage(page, name);
+        // Issue 480: two tabs and six sections, though the bucket holds the properties of the sections that went.
+        await expect.poll(() => shownTabs(page), { message: 'the tabs, and no other' }).toEqual(TABS);
+        await expect
+          .poll(async () => [...(await shownSectionTitles(page))].sort(), { message: 'the sections, and no other' })
+          .toEqual([...SECTIONS].sort());
         const props = await bucketPropertiesDirect(ctx, port, name);
         ctx.log(`direct properties of ${name}: ${JSON.stringify(props)}`);
         const expected = expectedSections(await directBucket(ctx, port, name), props, SEOUL);
@@ -163,7 +163,7 @@ test.describe(() => {
     );
 
     await lines.line(
-      'Open `/aws/s3/buckets/<name>/properties` → the same page, and the address stays as opened',
+      'Open `/aws/s3/buckets/<name>/properties` → the same page, and the address stays as opened (issue 480: six sections)',
       async () => {
         await openBucketPage(page, name, propertiesPath(name));
         const expected = expectedSections(
@@ -191,23 +191,16 @@ test.describe(() => {
     await seeded.bucket(seoul, 'ap-northeast-2');
 
     await lines.line(
-      'With a bucket made directly and nothing set → "Disabled" for versioning, ABAC, logging, acceleration, Object Lock, requester pays and website hosting, "Off" for EventBridge, SSE-S3 with "Bucket Key" "Disabled", and "No tags", "No configurations", "No event notifications"',
+      'With a bucket made directly and nothing set → "Disabled" for versioning and website hosting, SSE-S3 with "Bucket Key" "Disabled", and "No tags", "No event notifications" (issue 480: ABAC, logging, acceleration, Object Lock, requester pays, EventBridge and Intelligent-Tiering went)',
       async () => {
         await openBucketPage(page, plain);
         await expectSections(
           page,
           {
             [VERSIONING]: { fields: { [VERSIONING]: 'Disabled' } },
-            [ABAC]: { fields: { [ABAC]: 'Disabled' } },
-            [LOGGING]: { fields: { [LOGGING]: 'Disabled' } },
-            [ACCELERATION]: { fields: { [ACCELERATION]: 'Disabled' } },
-            [OBJECT_LOCK]: { fields: { [OBJECT_LOCK]: 'Disabled' } },
-            [REQUESTER_PAYS]: { fields: { [REQUESTER_PAYS]: 'Disabled' } },
             [WEBSITE]: { fields: { [WEBSITE]: 'Disabled' } },
-            [EVENTBRIDGE]: { fields: { [EVENTBRIDGE_FIELD]: 'Off' } },
             [ENCRYPTION]: { fields: { 'Encryption type': SSE_S3, 'Bucket Key': 'Disabled' } },
             [TAGS]: { rows: [], empty: NO_TAGS },
-            [TIERING]: { rows: [], empty: NO_CONFIGURATIONS },
             [NOTIFICATIONS]: { rows: [], empty: NO_NOTIFICATIONS },
           },
           'the sections of a bucket with nothing set',
@@ -227,7 +220,7 @@ test.describe(() => {
           })
           .toBe(regionText('ap-northeast-2'));
         await expect
-          .poll(async () => [...(await shownSectionTitles(page))].sort(), { message: 'the sections shown' })
+          .poll(async () => [...(await shownSectionTitles(page))].sort(), { message: 'the sections, and no other' })
           .toEqual([...SECTIONS].sort());
         // Shown, not failed or still reading: each section holds what the direct reads of the bucket return.
         const props = await bucketPropertiesDirect(ctx, port, seoul);
@@ -272,29 +265,34 @@ test('studio.s3-bucket-page-rereads-on-open-and-refresh', async ({ ctx, page }) 
     },
   );
 
-  await lines.line('Put two tags directly, leave for the list and open the bucket again → the two tags', async () => {
-    await openBucketPage(page, name);
-    await expectSections(page, { [TAGS]: { rows: [], empty: NO_TAGS } }, '"Tags" before');
-    await seeded.configure(name, {
-      tags: [
-        ['first', 'one'],
-        ['second', 'two'],
-      ],
-    });
-    const tags = (await bucketPropertiesDirect(ctx, port, name)).tags ?? [];
-    expect(tags.length, 'a direct GetBucketTagging returns two tags').toBe(2);
-    await crumbLink(page, 'Buckets').click(ACTION);
-    await expect(heading(page, H1), `the bucket list's h1 "${H1}"`).toBeVisible();
-    await filterFor(page, name);
-    await expectNames(page, [name], `the rows under the filter ${name}`);
-    await screen(page).nameLink(name).click(ACTION);
-    await expectBucketPage(page, name);
-    await expectSections(
-      page,
-      { [TAGS]: { rows: tags.map(([Key, Value]) => ({ Key, Value })) } },
-      '"Tags" after opening the bucket again',
-    );
-  });
+  await lines.line(
+    'Put two tags directly, leave for the list and open the bucket again, then its "Properties" (issue 480: the name opens "Objects") → the two tags',
+    async () => {
+      await openBucketPage(page, name);
+      await expectSections(page, { [TAGS]: { rows: [], empty: NO_TAGS } }, '"Tags" before');
+      await seeded.configure(name, {
+        tags: [
+          ['first', 'one'],
+          ['second', 'two'],
+        ],
+      });
+      const tags = (await bucketPropertiesDirect(ctx, port, name)).tags ?? [];
+      expect(tags.length, 'a direct GetBucketTagging returns two tags').toBe(2);
+      await crumbLink(page, 'Buckets').click(ACTION);
+      await expect(heading(page, H1), `the bucket list's h1 "${H1}"`).toBeVisible();
+      await filterFor(page, name);
+      await expectNames(page, [name], `the rows under the filter ${name}`);
+      await screen(page).nameLink(name).click(ACTION);
+      await expectBucketPage(page, name, OBJECTS);
+      await tab(page, PROPERTIES).click(ACTION);
+      await expectBucketPage(page, name);
+      await expectSections(
+        page,
+        { [TAGS]: { rows: tags.map(([Key, Value]) => ({ Key, Value })) } },
+        '"Tags" after opening the bucket again',
+      );
+    },
+  );
 
   lines.end();
 });
@@ -317,8 +315,8 @@ test('studio.s3-bucket-page-controls-lead-to-their-routes', async ({ ctx, page }
     await expectBucketPage(page, name);
   }
 
-  /** Every control of the first line: the five tabs, the twelve section buttons, then "Properties". */
-  const controls = OTHER_TABS.length + SECTION_BUTTONS.length + 1;
+  /** Every control of the first line: the tab "Objects", the five section buttons, then "Properties" (issue 480). */
+  const controls = 1 + SECTION_BUTTONS.length + 1;
   /** The controls pressed by the last `pressEach`, so the second line knows its Given held. */
   let pressed = 0;
 
@@ -327,12 +325,10 @@ test('studio.s3-bucket-page-controls-lead-to-their-routes', async ({ ctx, page }
     pressed = 0;
     await openBucketPage(page, name);
     await markPage(page);
-    for (const { tab: label, slug } of OTHER_TABS) {
-      await tab(page, label).click(ACTION);
-      pressed++;
-      await check(`the tab "${label}"`, tabPath(name, slug));
-      await back();
-    }
+    await tab(page, OBJECTS).click(ACTION);
+    pressed++;
+    await check(`the tab "${OBJECTS}"`, bucketPath(name));
+    await back();
     for (const { section, button, path } of SECTION_BUTTONS) {
       await sectionButton(page, section, button).click(ACTION);
       pressed++;
@@ -346,7 +342,7 @@ test('studio.s3-bucket-page-controls-lead-to-their-routes', async ({ ctx, page }
   }
 
   await lines.line(
-    'On a bucket\'s page, each of the tabs "Objects", "Metadata", "Permissions", "Metrics", "Management", each "Edit", "Create configuration" and "Create event notification" → the address of R10 for that bucket, without a document reload; "Properties" → `/aws/s3/buckets/<name>/properties` and the page',
+    'On a bucket\'s "Properties", the tab "Objects" → `/aws/s3/buckets/<name>`; each "Edit" (Bucket Versioning, Tags, Default encryption, Static website hosting) and "Create event notification" → the address of R10 for that bucket, without a document reload; "Properties" → `/aws/s3/buckets/<name>/properties` and the page (issue 480: the tabs Metadata, Permissions, Metrics, Management and the dropped sections\' buttons went)',
     async () => {
       await pressEach(async (what, path) => {
         await expect(page, what).toHaveURL(addressOf(path));

@@ -1,0 +1,208 @@
+/* The connections page (DESIGN.md, Connections): its result line, each connection's row (name, endpoint, status,
+   keys, actions, test), the add form and the page's states. */
+
+@layer studio {
+  .st-result {
+    margin: -12px 0 28px;
+    padding: 12px 16px;
+    border-radius: var(--st-radius-m);
+    border: 1px solid var(--st-info-line);
+    background: var(--st-info-wash);
+    max-width: 80ch;
+  }
+
+  .st-result:empty {
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .st-result.err {
+    border-color: var(--st-err-line);
+    background: var(--st-err-wash);
+  }
+
+  .st-engine-message {
+    display: block;
+    margin-top: 4px;
+    font-size: 14px;
+    color: var(--st-text-2);
+    overflow-wrap: anywhere;
+  }
+
+  .st-section-head h2[tabindex='-1']:focus {
+    outline: none;
+  }
+
+  .st-section-head h2[tabindex='-1']:focus-visible {
+    outline: 2px solid var(--st-focus);
+    outline-offset: 2px;
+    border-radius: var(--st-radius-s);
+  }
+
+  .st-conn-name {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 10px;
+  }
+
+  .st-conn-code {
+    font-family: var(--st-font-code);
+    font-size: 15px;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+    hyphens: manual;
+  }
+
+  .st-conn-code.small {
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--st-text);
+  }
+
+  .st-mark {
+    display: inline-block;
+    padding: 1px 8px;
+    font-size: 12px;
+    font-weight: 650;
+    letter-spacing: 0.02em;
+    color: var(--st-accent);
+    background: var(--st-accent-wash);
+    border-radius: 999px;
+  }
+
+  .st-keys {
+    font-size: 14px;
+    color: var(--st-text-2);
+  }
+
+  /* The keys' folder is a path: never hyphenated, it breaks only after a `/` (its `<wbr>`), and inside a segment only
+     when even that does not fit. */
+  .st-keys .st-code {
+    white-space: normal;
+    hyphens: manual;
+    overflow-wrap: anywhere;
+  }
+
+  .st-none {
+    color: var(--st-text-2);
+  }
+
+  .st-conn-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 16px;
+  }
+
+  .st-conn-reason {
+    flex: 1 1 18ch;
+    margin: 0;
+    font-size: 13px;
+    color: var(--st-text-2);
+  }
+
+  .st-test-summary {
+    margin: 0;
+    font-weight: 650;
+  }
+
+  .st-test-summary:not(:empty) {
+    margin-top: 14px;
+  }
+
+  .st-test-summary.ok {
+    color: var(--st-ok);
+  }
+
+  .st-test-summary.err {
+    color: var(--st-err);
+  }
+
+  .st-test-checks {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 170px), 1fr));
+    gap: 10px 20px;
+    margin: 10px 0 0;
+    padding: 12px 14px;
+    list-style: none;
+    background: var(--st-sunk);
+    border-radius: var(--st-radius-m);
+  }
+
+  .st-test-check {
+    display: block;
+    margin-bottom: 2px;
+    font-size: 13px;
+    color: var(--st-text-2);
+  }
+
+  .st-conn-loading,
+  .st-conn-problem {
+    padding: 18px var(--st-pad) 20px;
+  }
+
+  .st-conn-problem {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px 16px;
+  }
+
+  .st-conn-problem p {
+    margin: 0;
+    max-width: 70ch;
+  }
+
+  .st-add-form {
+    padding: 18px var(--st-pad) 22px;
+  }
+
+  .st-add-fields {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+    gap: 16px 20px;
+    align-items: start;
+  }
+
+  .st-add-end {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 18px;
+  }
+
+  .st-add-error {
+    margin: 14px 0 0;
+    padding: 10px 14px;
+    color: var(--st-text);
+    background: var(--st-err-wash);
+    border: 1px solid var(--st-err-line);
+    border-radius: var(--st-radius-m);
+  }
+
+  .st-add-error [lang] {
+    overflow-wrap: anywhere;
+  }
+
+  @media (max-width: 640px) {
+    .st-add-fields {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .st-add-form {
+      padding: 14px 16px 18px;
+    }
+
+    .st-add-end {
+      justify-content: stretch;
+    }
+
+    .st-add-end .st-btn {
+      flex: 1;
+      justify-content: center;
+    }
+  }
+}

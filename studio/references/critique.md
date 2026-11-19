@@ -8,11 +8,11 @@ shape, and the impeccable critique alone judges them, once, on the built app (ow
 
 | Point | Target | When |
 |---|---|---|
-| `final` | each screen the issue changed, in the built app | after the whole check passes, beside `rev`'s review of the whole |
+| `final` | each screen the issue changed, in the built app of the issue branch | once every unit is merged, each on its fast check, and before the whole check, which runs only when the last `final` has no P0 or P1 (owner, 2026-11-19) |
 | `mock` | an HTML mock, only when the plan asks for one (`workflow.md`, Design) | before the build |
 
 - Every P0 and P1 finding of `final` is fixed by the worker that owns the screen; then `crit` critiques it once
-  more. A P2 or P3 is fixed or recorded in `decisions.md` under `## Review decisions`, one reason each.
+  more. A fix the whole check calls for that changes a screen has that screen alone critiqued once more. A P2 or P3 is fixed or recorded in `decisions.md` under `## Review decisions`, one reason each.
 - The score (`/40`) is recorded and told in the issue's report. It decides nothing: no pass line, no comparison with
   an earlier point.
 - A `mock` is critiqued the same way; what the plan takes from it is the plan's, and it holds nothing back.

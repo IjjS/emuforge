@@ -1,33 +1,36 @@
 import {
+  AbortMultipartUploadCommand,
+  CompleteMultipartUploadCommand,
   CreateBucketCommand,
+  CreateMultipartUploadCommand,
   DeleteBucketCommand,
   DeleteObjectsCommand,
-  GetBucketAbacCommand,
-  GetBucketAccelerateConfigurationCommand,
   GetBucketEncryptionCommand,
-  GetBucketLoggingCommand,
   GetBucketNotificationConfigurationCommand,
-  GetBucketRequestPaymentCommand,
   GetBucketTaggingCommand,
   GetBucketVersioningCommand,
   GetBucketWebsiteCommand,
-  GetObjectLockConfigurationCommand,
-  ListBucketIntelligentTieringConfigurationsCommand,
+  GetObjectCommand,
+  GetObjectTaggingCommand,
+  HeadObjectCommand,
   ListBucketsCommand,
+  ListObjectsV2Command,
   ListObjectVersionsCommand,
   PutBucketEncryptionCommand,
   PutBucketVersioningCommand,
+  PutObjectCommand,
   PutPublicAccessBlockCommand,
+  UploadPartCommand,
   type FilterRule,
   type GetBucketNotificationConfigurationCommandOutput,
-  type IntelligentTieringConfiguration,
+  type HeadObjectCommandOutput,
   type ListBucketsCommandOutput,
+  type ListObjectsV2CommandOutput,
   type S3Client,
 } from '@aws-sdk/client-s3';
 
 import { createS3Client } from '../../../../../lib/aws/client-factory';
 import { RequestError, sendRequest } from '../../../../../lib/aws/request';
-import type { RetentionPeriod } from './format';
 
 // The S3 calls of the AWS area (issue 56, requirement R2, R4, R7; issue 256, requirement R2, R5 to R8), through the
 // engine, mapped to plain typed results. Every value in a result comes from the emulator's answer, unchanged; each
@@ -150,16 +153,11 @@ const NO_SUCH_BUCKET_CODE = 'NoSuchBucket';
 /** The operations of a bucket's screens, as a failure names them. */
 export const OPERATIONS = {
   getBucketVersioning: 'GetBucketVersioning',
-  getBucketAbac: 'GetBucketAbac',
   getBucketTagging: 'GetBucketTagging',
   getBucketEncryption: 'GetBucketEncryption',
-  listBucketIntelligentTieringConfigurations: 'ListBucketIntelligentTieringConfigurations',
-  getBucketLogging: 'GetBucketLogging',
   getBucketNotificationConfiguration: 'GetBucketNotificationConfiguration',
-  getBucketAccelerateConfiguration: 'GetBucketAccelerateConfiguration',
-  getObjectLockConfiguration: 'GetObjectLockConfiguration',
-  getBucketRequestPayment: 'GetBucketRequestPayment',
   getBucketWebsite: 'GetBucketWebsite',
+  listObjectsV2: 'ListObjectsV2',
   listObjectVersions: 'ListObjectVersions',
   deleteObjects: 'DeleteObjects',
   deleteBucket: 'DeleteBucket',
@@ -167,6 +165,14 @@ export const OPERATIONS = {
   putPublicAccessBlock: 'PutPublicAccessBlock',
   putBucketVersioning: 'PutBucketVersioning',
   putBucketEncryption: 'PutBucketEncryption',
+  headObject: 'HeadObject',
+  getObjectTagging: 'GetObjectTagging',
+  getObject: 'GetObject',
+  putObject: 'PutObject',
+  createMultipartUpload: 'CreateMultipartUpload',
+  uploadPart: 'UploadPart',
+  completeMultipartUpload: 'CompleteMultipartUpload',
+  abortMultipartUpload: 'AbortMultipartUpload',
 } as const;
 
 /** The code of an answer that is neither a success nor a failure kind of its own, else `undefined`. */
@@ -212,7 +218,7 @@ export async function findBucket(endpoint: string, name: string, signal: AbortSi
   return first !== undefined && first.name === name ? first : NO_SUCH_BUCKET;
 }
 
-/** "Enabled", "Suspended" or "Disabled": the status of Bucket Versioning or of Transfer acceleration. */
+/** "Enabled", "Suspended" or "Disabled": the status of Bucket Versioning. */
 export interface StatusSetting {
   status: string;
 }
@@ -228,28 +234,6 @@ export function getBucketVersioning(
     OPERATIONS.getBucketVersioning,
     (client, abortSignal) => client.send(new GetBucketVersioningCommand({ Bucket: bucket }), { abortSignal }),
     (output) => ({ status: text(output.Status) ?? 'Disabled' }),
-    signal,
-  );
-}
-
-/** "Bucket ABAC" (R5.3), "Enabled" or "Disabled" as the answer says; absent when it says nothing. */
-export interface AbacSetting {
-  status?: string;
-}
-
-export function getBucketAbac(
-  endpoint: string,
-  bucket: string,
-  signal: AbortSignal,
-): Promise<AbacSetting | NoSuchBucket> {
-  return onBucket(
-    endpoint,
-    OPERATIONS.getBucketAbac,
-    (client, abortSignal) => client.send(new GetBucketAbacCommand({ Bucket: bucket }), { abortSignal }),
-    (output) => {
-      const status = text(output.AbacStatus?.Status);
-      return status === undefined ? {} : { status };
-    },
     signal,
   );
 }
@@ -305,91 +289,6 @@ export function getBucketEncryption(
   );
 }
 
-/** One row of "S3 Intelligent-Tiering Archive configurations" (R5.3). */
-export interface TieringConfiguration {
-  /** "Name", `Id`. */
-  name?: string;
-  status?: string;
-  /** `Filter.Prefix`, or `Filter.And.Prefix`. */
-  prefix?: string;
-  /** "Archive Access tier": the `Days` of the tiering `ARCHIVE_ACCESS`. */
-  archiveDays?: number;
-  /** "Deep Archive Access tier": the `Days` of the tiering `DEEP_ARCHIVE_ACCESS`. */
-  deepArchiveDays?: number;
-}
-
-/** The first answer of the configurations; `more` when it is truncated. */
-export interface TieringConfigurations {
-  configurations: TieringConfiguration[];
-  more: boolean;
-}
-
-function toTiering({ Id, Status, Filter, Tierings }: IntelligentTieringConfiguration): TieringConfiguration {
-  const days = (tier: string) => number(Tierings?.find(({ AccessTier }) => AccessTier === tier)?.Days);
-  const configuration: TieringConfiguration = {};
-  const name = text(Id);
-  const status = text(Status);
-  const prefix = text(Filter?.Prefix) ?? text(Filter?.And?.Prefix);
-  const archiveDays = days('ARCHIVE_ACCESS');
-  const deepArchiveDays = days('DEEP_ARCHIVE_ACCESS');
-  if (name !== undefined) configuration.name = name;
-  if (status !== undefined) configuration.status = status;
-  if (prefix !== undefined) configuration.prefix = prefix;
-  if (archiveDays !== undefined) configuration.archiveDays = archiveDays;
-  if (deepArchiveDays !== undefined) configuration.deepArchiveDays = deepArchiveDays;
-  return configuration;
-}
-
-export function listBucketIntelligentTieringConfigurations(
-  endpoint: string,
-  bucket: string,
-  signal: AbortSignal,
-): Promise<TieringConfigurations | NoSuchBucket> {
-  return onBucket(
-    endpoint,
-    OPERATIONS.listBucketIntelligentTieringConfigurations,
-    (client, abortSignal) =>
-      client.send(new ListBucketIntelligentTieringConfigurationsCommand({ Bucket: bucket }), { abortSignal }),
-    (output) => ({
-      configurations: (output.IntelligentTieringConfigurationList ?? []).map(toTiering),
-      more: output.IsTruncated === true,
-    }),
-    signal,
-  );
-}
-
-/** "Server access logging" (R5.3). */
-export interface LoggingSetting {
-  status: 'Enabled' | 'Disabled';
-  targetBucket?: string;
-  targetPrefix?: string;
-}
-
-export function getBucketLogging(
-  endpoint: string,
-  bucket: string,
-  signal: AbortSignal,
-): Promise<LoggingSetting | NoSuchBucket> {
-  return onBucket(
-    endpoint,
-    OPERATIONS.getBucketLogging,
-    (client, abortSignal) => client.send(new GetBucketLoggingCommand({ Bucket: bucket }), { abortSignal }),
-    ({ LoggingEnabled }): LoggingSetting => {
-      if (LoggingEnabled === undefined) {
-        return { status: 'Disabled' };
-      }
-      const targetBucket = text(LoggingEnabled.TargetBucket);
-      const targetPrefix = text(LoggingEnabled.TargetPrefix);
-      return {
-        status: 'Enabled',
-        ...(targetBucket === undefined ? {} : { targetBucket }),
-        ...(targetPrefix === undefined ? {} : { targetPrefix }),
-      };
-    },
-    signal,
-  );
-}
-
 /** One row of "Event notifications" (R5.3). */
 export interface EventNotification {
   /** "Event name", `Id`. */
@@ -403,11 +302,9 @@ export interface EventNotification {
   destination?: string;
 }
 
-/** "Event notifications" and "Amazon EventBridge", from one answer. */
+/** "Event notifications". */
 export interface NotificationSettings {
   notifications: EventNotification[];
-  /** "Send notifications to Amazon EventBridge for all events in this bucket". */
-  eventBridge: 'On' | 'Off';
 }
 
 interface NotificationConfiguration {
@@ -444,7 +341,6 @@ function toNotifications(output: GetBucketNotificationConfigurationCommandOutput
         toNotification(c, 'Lambda function', c.LambdaFunctionArn),
       ),
     ],
-    eventBridge: output.EventBridgeConfiguration === undefined ? 'Off' : 'On',
   };
 }
 
@@ -459,97 +355,6 @@ export function getBucketNotificationConfiguration(
     (client, abortSignal) =>
       client.send(new GetBucketNotificationConfigurationCommand({ Bucket: bucket }), { abortSignal }),
     toNotifications,
-    signal,
-  );
-}
-
-/** "Transfer acceleration" (R5.3): "Disabled" when the answer has no `Status`. */
-export function getBucketAccelerateConfiguration(
-  endpoint: string,
-  bucket: string,
-  signal: AbortSignal,
-): Promise<StatusSetting | NoSuchBucket> {
-  return onBucket(
-    endpoint,
-    OPERATIONS.getBucketAccelerateConfiguration,
-    (client, abortSignal) =>
-      client.send(new GetBucketAccelerateConfigurationCommand({ Bucket: bucket }), { abortSignal }),
-    (output) => ({ status: text(output.Status) ?? 'Disabled' }),
-    signal,
-  );
-}
-
-/** "Object Lock" (R5.3). */
-export interface ObjectLockSetting {
-  /** "Enabled" as the answer says, "Disabled" when the bucket has no configuration; absent when it says nothing. */
-  status?: string;
-  /** "Default retention": "Enabled" when the answer has a default retention. */
-  defaultRetention: 'Enabled' | 'Disabled';
-  /** "Retention mode": "Governance", "Compliance", or another mode as it came. */
-  mode?: string;
-  /** "Default retention period". */
-  period?: RetentionPeriod;
-}
-
-const RETENTION_MODES: Readonly<Record<string, string>> = { GOVERNANCE: 'Governance', COMPLIANCE: 'Compliance' };
-
-export function getObjectLockConfiguration(
-  endpoint: string,
-  bucket: string,
-  signal: AbortSignal,
-): Promise<ObjectLockSetting | NoSuchBucket> {
-  return onBucket(
-    endpoint,
-    OPERATIONS.getObjectLockConfiguration,
-    (client, abortSignal) => client.send(new GetObjectLockConfigurationCommand({ Bucket: bucket }), { abortSignal }),
-    ({ ObjectLockConfiguration }): ObjectLockSetting => {
-      const status = text(ObjectLockConfiguration?.ObjectLockEnabled);
-      const retention = ObjectLockConfiguration?.Rule?.DefaultRetention;
-      const setting: ObjectLockSetting = {
-        ...(status === undefined ? {} : { status }),
-        defaultRetention: retention === undefined ? 'Disabled' : 'Enabled',
-      };
-      const mode = text(retention?.Mode);
-      if (mode !== undefined) {
-        setting.mode = Object.hasOwn(RETENTION_MODES, mode) ? (RETENTION_MODES[mode] as string) : mode;
-      }
-      const days = number(retention?.Days);
-      const years = number(retention?.Years);
-      if (days !== undefined) {
-        setting.period = { unit: 'days', count: days };
-      } else if (years !== undefined) {
-        setting.period = { unit: 'years', count: years };
-      }
-      return setting;
-    },
-    signal,
-    { code: 'ObjectLockConfigurationNotFoundError', result: { status: 'Disabled', defaultRetention: 'Disabled' } },
-  );
-}
-
-/** "Requester pays" (R5.3): "Enabled" for `Requester`, "Disabled" for `BucketOwner`, another payer as it came. */
-export interface RequestPaymentSetting {
-  status?: string;
-}
-
-const PAYERS: Readonly<Record<string, string>> = { Requester: 'Enabled', BucketOwner: 'Disabled' };
-
-export function getBucketRequestPayment(
-  endpoint: string,
-  bucket: string,
-  signal: AbortSignal,
-): Promise<RequestPaymentSetting | NoSuchBucket> {
-  return onBucket(
-    endpoint,
-    OPERATIONS.getBucketRequestPayment,
-    (client, abortSignal) => client.send(new GetBucketRequestPaymentCommand({ Bucket: bucket }), { abortSignal }),
-    (output) => {
-      const payer = text(output.Payer);
-      if (payer === undefined) {
-        return {};
-      }
-      return { status: Object.hasOwn(PAYERS, payer) ? (PAYERS[payer] as string) : payer };
-    },
     signal,
   );
 }
@@ -583,6 +388,100 @@ export function getBucketWebsite(
     },
     signal,
     { code: 'NoSuchWebsiteConfiguration', result: { status: 'Disabled' } },
+  );
+}
+
+/** A folder of a listing: a common prefix of its answer (issue 480, task 1). */
+export interface ObjectFolder {
+  /** The whole prefix, as the emulator gave it (`logs/2026/`). */
+  prefix: string;
+  /** The part after the listing's prefix (`2026/`). */
+  name: string;
+}
+
+/** An object of a listing. A value the answer did not give is absent. */
+export interface ObjectEntry {
+  /** The whole key, as the emulator gave it. */
+  key: string;
+  /** The part after the listing's prefix. */
+  name: string;
+  size?: number;
+  lastModified?: Date;
+  storageClass?: string;
+}
+
+/** One page of a bucket's objects under a prefix: its folders, then its objects, each in the answer's order. */
+export interface ObjectPage {
+  folders: ObjectFolder[];
+  objects: ObjectEntry[];
+  /** `NextContinuationToken`, while the answer is truncated: more remain after this page. */
+  nextToken?: string;
+}
+
+/** What one page of objects is asked with. */
+export interface ObjectPageRequest {
+  /** `Prefix`; an empty text is not sent. */
+  prefix: string;
+  /** `MaxKeys`. */
+  pageSize: number;
+  /** `ContinuationToken`, the token of the page before. */
+  token?: string;
+}
+
+/** The part of `whole` after `prefix`, or `whole` when it does not start with it. */
+function after(prefix: string, whole: string): string {
+  return whole.startsWith(prefix) ? whole.slice(prefix.length) : whole;
+}
+
+function toObjectPage(prefix: string, output: ListObjectsV2CommandOutput): ObjectPage {
+  const page: ObjectPage = {
+    folders: (output.CommonPrefixes ?? []).flatMap(({ Prefix }) =>
+      Prefix === undefined || Prefix === '' ? [] : [{ prefix: Prefix, name: after(prefix, Prefix) }],
+    ),
+    objects: (output.Contents ?? []).map(({ Key, Size, LastModified, StorageClass }) => {
+      const key = Key ?? '';
+      const entry: ObjectEntry = { key, name: after(prefix, key) };
+      const size = number(Size);
+      const storageClass = text(StorageClass);
+      if (size !== undefined) entry.size = size;
+      if (LastModified instanceof Date && !Number.isNaN(LastModified.getTime())) entry.lastModified = LastModified;
+      if (storageClass !== undefined) entry.storageClass = storageClass;
+      return entry;
+    }),
+  };
+  const token = text(output.NextContinuationToken);
+  if (output.IsTruncated === true && token !== undefined) {
+    page.nextToken = token;
+  }
+  return page;
+}
+
+/**
+ * One page of the folders and objects of bucket `bucket` under `prefix` (issue 480, task 1): `ListObjectsV2` with the
+ * delimiter `/`, so a deeper key is a folder of this page. "No such bucket" is `NO_SUCH_BUCKET`.
+ */
+export function listObjects(
+  endpoint: string,
+  bucket: string,
+  { prefix, pageSize, token }: ObjectPageRequest,
+  signal: AbortSignal,
+): Promise<ObjectPage | NoSuchBucket> {
+  return onBucket(
+    endpoint,
+    OPERATIONS.listObjectsV2,
+    (client, abortSignal) =>
+      client.send(
+        new ListObjectsV2Command({
+          Bucket: bucket,
+          Delimiter: '/',
+          MaxKeys: pageSize,
+          ...(prefix === '' ? {} : { Prefix: prefix }),
+          ...(token === undefined ? {} : { ContinuationToken: token }),
+        }),
+        { abortSignal },
+      ),
+    (output) => toObjectPage(prefix, output),
+    signal,
   );
 }
 
@@ -821,4 +720,401 @@ export async function putBucketEncryption(
     (abortSignal) => s3Client(endpoint).send(command, { abortSignal }),
     signal,
   );
+}
+
+// Issue 480, tasks 2 and 4: one object's head, tags and body, and the deletion of keys.
+
+/** The emulator holds no object of the key asked: `HeadObject` answered 404, or a call answered `NoSuchKey`. */
+export const NO_SUCH_KEY = 'no-such-key';
+export type NoSuchKey = typeof NO_SUCH_KEY;
+
+/** `HeadObject` answered 404: a HEAD answer has no body, so a gone bucket and a gone key both arrive as this. */
+export const NOT_FOUND = 'not-found';
+export type NotFound = typeof NOT_FOUND;
+
+/** One entry of an object's metadata, as the answer gave it. */
+export interface MetadataEntry {
+  key: string;
+  value: string;
+}
+
+/** What `HeadObject` reports of an object. A value the answer did not give is absent. */
+export interface ObjectHead {
+  key: string;
+  /** `Content-Length`, the object's size in bytes. */
+  size?: number;
+  contentType?: string;
+  lastModified?: Date;
+  etag?: string;
+  /** `x-amz-storage-class`, as it came; absent when the answer has none. */
+  storageClass?: string;
+  versionId?: string;
+  /** The system metadata the answer gave, in the order the page shows it: Content-Type, Cache-Control, … */
+  system: MetadataEntry[];
+  /** The user metadata (`x-amz-meta-*`), its key without the prefix, in the answer's order. */
+  user: MetadataEntry[];
+}
+
+/** The code with which a call on a key says the emulator holds no object of that key. */
+const NO_SUCH_KEY_CODE = 'NoSuchKey';
+
+/** Whether a failure is the 404 of a HEAD answer: no code, or the SDK's `NotFound`, under the status 404. */
+function isNotFound(error: unknown): boolean {
+  const code = answeredCode(error);
+  return code !== undefined && (code === 'NotFound' || code === NO_SUCH_KEY_CODE || /^HTTP 404( |$)/.test(code));
+}
+
+function toHead(key: string, output: HeadObjectCommandOutput): ObjectHead {
+  const head: ObjectHead = { key, system: [], user: [] };
+  const size = number(output.ContentLength);
+  const contentType = text(output.ContentType);
+  const etag = text(output.ETag);
+  const storageClass = text(output.StorageClass);
+  const versionId = text(output.VersionId);
+  if (size !== undefined) head.size = size;
+  if (contentType !== undefined) head.contentType = contentType;
+  if (output.LastModified instanceof Date && !Number.isNaN(output.LastModified.getTime())) {
+    head.lastModified = output.LastModified;
+  }
+  if (etag !== undefined) head.etag = etag;
+  if (storageClass !== undefined) head.storageClass = storageClass;
+  if (versionId !== undefined) head.versionId = versionId;
+  const expires =
+    text(output.ExpiresString) ??
+    (output.Expires instanceof Date && !Number.isNaN(output.Expires.getTime())
+      ? output.Expires.toUTCString()
+      : undefined);
+  const system: [string, string | undefined][] = [
+    ['Content-Type', contentType],
+    ['Cache-Control', text(output.CacheControl)],
+    ['Content-Encoding', text(output.ContentEncoding)],
+    ['Content-Disposition', text(output.ContentDisposition)],
+    ['Expires', expires],
+  ];
+  head.system = system.flatMap(([entry, value]) => (value === undefined ? [] : [{ key: entry, value }]));
+  head.user = Object.entries(output.Metadata ?? {}).map(([entry, value]) => ({ key: entry, value }));
+  return head;
+}
+
+/**
+ * `HeadObject` of `key` in bucket `bucket`: its properties and metadata. A 404 is `NOT_FOUND`, whether the bucket or
+ * the key is gone; every other failure rejects as it came.
+ */
+export async function headObject(
+  endpoint: string,
+  bucket: string,
+  key: string,
+  signal: AbortSignal,
+): Promise<ObjectHead | NotFound> {
+  try {
+    const output = await sendRequest(
+      OPERATIONS.headObject,
+      (abortSignal) => s3Client(endpoint).send(new HeadObjectCommand({ Bucket: bucket, Key: key }), { abortSignal }),
+      signal,
+    );
+    return toHead(key, output);
+  } catch (error) {
+    if (isNotFound(error)) {
+      return NOT_FOUND;
+    }
+    throw error;
+  }
+}
+
+/** The object's tags in the answer's order (`GetObjectTagging`). */
+export async function getObjectTagging(
+  endpoint: string,
+  bucket: string,
+  key: string,
+  signal: AbortSignal,
+): Promise<Tag[] | NoSuchBucket | NoSuchKey> {
+  try {
+    const output = await sendRequest(
+      OPERATIONS.getObjectTagging,
+      (abortSignal) =>
+        s3Client(endpoint).send(new GetObjectTaggingCommand({ Bucket: bucket, Key: key }), { abortSignal }),
+      signal,
+    );
+    return (output.TagSet ?? []).map(({ Key, Value }) => ({ key: Key ?? '', value: Value ?? '' }));
+  } catch (error) {
+    const code = answeredCode(error);
+    if (code === NO_SUCH_BUCKET_CODE) return NO_SUCH_BUCKET;
+    if (code === NO_SUCH_KEY_CODE) return NO_SUCH_KEY;
+    throw error;
+  }
+}
+
+/** An object's body, or the part of it a range asked, as bytes, with the type the answer gave. */
+export interface ObjectBody {
+  bytes: Uint8Array;
+  contentType?: string;
+}
+
+/**
+ * `GetObject` of `key`: the whole body, or with `range` (`bytes=0-65535`) the part it names. Every failure, "no such
+ * key" included, rejects as it came: the page asks this only of an object `HeadObject` found.
+ */
+export async function getObject(
+  endpoint: string,
+  bucket: string,
+  key: string,
+  signal: AbortSignal,
+  range?: string,
+): Promise<ObjectBody> {
+  return sendRequest(
+    OPERATIONS.getObject,
+    async (abortSignal) => {
+      const output = await s3Client(endpoint).send(
+        new GetObjectCommand({ Bucket: bucket, Key: key, ...(range === undefined ? {} : { Range: range }) }),
+        { abortSignal },
+      );
+      const bytes = output.Body === undefined ? new Uint8Array() : await output.Body.transformToByteArray();
+      const contentType = text(output.ContentType);
+      return contentType === undefined ? { bytes } : { bytes, contentType };
+    },
+    signal,
+  );
+}
+
+/** One page of every key under a prefix, with no delimiter (a folder's keys, issue 480 task 4). */
+export interface KeyPage {
+  keys: string[];
+  /** `NextContinuationToken`, while the answer is truncated. */
+  nextToken?: string;
+}
+
+/** The most keys one `DeleteObjects` takes, and one page of a folder's keys asks. */
+export const KEYS_PER_CALL = 1000;
+
+/**
+ * One page of every key under `prefix` (`ListObjectsV2` without a delimiter). Every failure, "no such bucket"
+ * included, rejects as it came, so the dialog shows the emulator's own message.
+ */
+export async function listKeys(
+  endpoint: string,
+  bucket: string,
+  prefix: string,
+  token: string | undefined,
+  signal: AbortSignal,
+): Promise<KeyPage> {
+  const output = await sendRequest(
+    OPERATIONS.listObjectsV2,
+    (abortSignal) =>
+      s3Client(endpoint).send(
+        new ListObjectsV2Command({
+          Bucket: bucket,
+          Prefix: prefix,
+          MaxKeys: KEYS_PER_CALL,
+          ...(token === undefined ? {} : { ContinuationToken: token }),
+        }),
+        { abortSignal },
+      ),
+    signal,
+  );
+  const page: KeyPage = { keys: (output.Contents ?? []).flatMap(({ Key }) => (Key === undefined ? [] : [Key])) };
+  const next = text(output.NextContinuationToken);
+  if (output.IsTruncated === true && next !== undefined) {
+    page.nextToken = next;
+  }
+  return page;
+}
+
+/** A key `DeleteObjects` refused, with the emulator's code and message as they came. */
+export interface KeyRefusal {
+  key: string;
+  code: string;
+  message: string;
+}
+
+/** What one `DeleteObjects` of keys answered: how many it deleted, and the keys it refused. */
+export interface KeysDeleted {
+  deleted: number;
+  refused: KeyRefusal[];
+}
+
+/**
+ * Deletes `keys` (at most `KEYS_PER_CALL`) in one `DeleteObjects` that is not quiet, so the answer names every key
+ * deleted. Every failure of the call, "no such bucket" included, rejects as it came.
+ */
+export async function deleteKeys(
+  endpoint: string,
+  bucket: string,
+  keys: readonly string[],
+  signal: AbortSignal,
+): Promise<KeysDeleted> {
+  const output = await sendRequest(
+    OPERATIONS.deleteObjects,
+    (abortSignal) =>
+      s3Client(endpoint).send(
+        new DeleteObjectsCommand({
+          Bucket: bucket,
+          Delete: { Objects: keys.map((key) => ({ Key: key })), Quiet: false },
+        }),
+        { abortSignal },
+      ),
+    signal,
+  );
+  return {
+    deleted: (output.Deleted ?? []).length,
+    refused: (output.Errors ?? []).map(({ Key, Code, Message }) => ({
+      key: Key ?? '',
+      code: Code ?? '',
+      message: Message ?? '',
+    })),
+  };
+}
+
+// Issue 480, task 3: putting files, whole or in parts, and a folder's marker.
+
+/**
+ * `PutObject` of `body` under `key`, with `contentType` when given. The body is bytes: the SDK then computes its
+ * checksum from them, where a browser `Blob` would need a stream it cannot read. Every failure rejects as it came.
+ */
+export async function putObject(
+  endpoint: string,
+  bucket: string,
+  key: string,
+  body: Uint8Array,
+  contentType: string | undefined,
+  signal: AbortSignal,
+): Promise<void> {
+  await sendRequest(
+    OPERATIONS.putObject,
+    (abortSignal) =>
+      s3Client(endpoint).send(
+        new PutObjectCommand({
+          Bucket: bucket,
+          Key: key,
+          Body: body,
+          ...(contentType === undefined ? {} : { ContentType: contentType }),
+        }),
+        { abortSignal },
+      ),
+    signal,
+  );
+}
+
+/** `CreateMultipartUpload` of `key`: the upload's id. An answer without one rejects. */
+export async function createMultipartUpload(
+  endpoint: string,
+  bucket: string,
+  key: string,
+  contentType: string | undefined,
+  signal: AbortSignal,
+): Promise<string> {
+  const output = await sendRequest(
+    OPERATIONS.createMultipartUpload,
+    (abortSignal) =>
+      s3Client(endpoint).send(
+        new CreateMultipartUploadCommand({
+          Bucket: bucket,
+          Key: key,
+          ...(contentType === undefined ? {} : { ContentType: contentType }),
+        }),
+        { abortSignal },
+      ),
+    signal,
+  );
+  const uploadId = text(output.UploadId);
+  if (uploadId === undefined) {
+    throw new RequestError({
+      kind: 'other',
+      operation: OPERATIONS.createMultipartUpload,
+      code: 'NoUploadId',
+      message: 'The answer named no upload id.',
+    });
+  }
+  return uploadId;
+}
+
+/** One part put, as `CompleteMultipartUpload` names it. */
+export interface UploadedPart {
+  partNumber: number;
+  etag: string;
+}
+
+/** `UploadPart` number `partNumber` of upload `uploadId`: the part's ETag. */
+export async function uploadPart(
+  endpoint: string,
+  bucket: string,
+  key: string,
+  uploadId: string,
+  partNumber: number,
+  body: Uint8Array,
+  signal: AbortSignal,
+): Promise<UploadedPart> {
+  const output = await sendRequest(
+    OPERATIONS.uploadPart,
+    (abortSignal) =>
+      s3Client(endpoint).send(
+        new UploadPartCommand({ Bucket: bucket, Key: key, UploadId: uploadId, PartNumber: partNumber, Body: body }),
+        { abortSignal },
+      ),
+    signal,
+  );
+  return { partNumber, etag: text(output.ETag) ?? '' };
+}
+
+/** `CompleteMultipartUpload` of upload `uploadId` with its parts, in order. */
+export async function completeMultipartUpload(
+  endpoint: string,
+  bucket: string,
+  key: string,
+  uploadId: string,
+  parts: readonly UploadedPart[],
+  signal: AbortSignal,
+): Promise<void> {
+  await sendRequest(
+    OPERATIONS.completeMultipartUpload,
+    (abortSignal) =>
+      s3Client(endpoint).send(
+        new CompleteMultipartUploadCommand({
+          Bucket: bucket,
+          Key: key,
+          UploadId: uploadId,
+          MultipartUpload: { Parts: parts.map(({ partNumber, etag }) => ({ PartNumber: partNumber, ETag: etag })) },
+        }),
+        { abortSignal },
+      ),
+    signal,
+  );
+}
+
+/** `AbortMultipartUpload` of upload `uploadId`: the emulator drops its parts. */
+export async function abortMultipartUpload(
+  endpoint: string,
+  bucket: string,
+  key: string,
+  uploadId: string,
+  signal: AbortSignal,
+): Promise<void> {
+  await sendRequest(
+    OPERATIONS.abortMultipartUpload,
+    (abortSignal) =>
+      s3Client(endpoint).send(new AbortMultipartUploadCommand({ Bucket: bucket, Key: key, UploadId: uploadId }), {
+        abortSignal,
+      }),
+    signal,
+  );
+}
+
+/**
+ * Whether anything is stored under `prefix` (`ListObjectsV2` with `MaxKeys` 1): a key or a common prefix. Every
+ * failure, "no such bucket" included, rejects as it came.
+ */
+export async function holdsAnyUnder(
+  endpoint: string,
+  bucket: string,
+  prefix: string,
+  signal: AbortSignal,
+): Promise<boolean> {
+  const output = await sendRequest(
+    OPERATIONS.listObjectsV2,
+    (abortSignal) =>
+      s3Client(endpoint).send(new ListObjectsV2Command({ Bucket: bucket, Prefix: prefix, MaxKeys: 1 }), {
+        abortSignal,
+      }),
+    signal,
+  );
+  return (output.Contents ?? []).length > 0 || (output.CommonPrefixes ?? []).length > 0;
 }
