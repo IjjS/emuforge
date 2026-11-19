@@ -455,7 +455,7 @@ Noto Sans), each other script's runs in its own face, no fallback glyph.
 One column inside a sticky bar.
 
 - **The bar** is 56px tall, sticky at the top, full width, with a gutter of 32px (16px below 640px). The wordmark
-  sits left; the tabs follow with a 24px gap (8px at 480px and below); the language control sits at the bar's end.
+  sits left; the tabs follow with a 24px gap (6px at 480px and below); the language control sits at the bar's end.
 - **The page** (`main`) is at most 1120px wide, with the gutter at each side, 40px above (28px below 640px) and
   72px below.
 - **Rhythm:** the page head is 36px above the first section; sections are 40px apart; a section's header is 12px
@@ -464,6 +464,9 @@ One column inside a sticky bar.
   (on `html`'s `scroll-padding-top`, or on the stops' `scroll-margin-top`, never both, so the offset does not count
   twice), and `html` has `scroll-padding-bottom: 16px` so a stop at the bottom of the viewport shows its whole ring.
   These are not inherited, so nothing reaches a provider area.
+- **The bar is never scrolled to:** it is always in view, so the bar and everything in it carry a negative
+  `scroll-margin-top` as deep as `html`'s `scroll-padding-top`; focus in the bar or its language menu never moves the
+  page (issue 486).
 - **Breakpoints:**
   - 900px: Home's services go from three columns to two, filled by row in label order.
   - 640px: the bar shows the tile at 24px with a 5px gap and "EmuForge" without "Studio", which stays in the link's
@@ -473,9 +476,11 @@ One column inside a sticky bar.
     screen. A notice's icon moves into its heading so the text gets the full width. Services are one list. The copied
     state of a command shows no text beside the step label: the check icon and green edge on the button and the polite
     region carry it.
-  - 480px: the bar's gap and the tabs' padding tighten (8px, 0 7px), and the language control is its globe alone,
-    40px square, so the wordmark, every tab and the control fit at 390 in every language (Polish "Strona główna"
-    with "Polski" would not).
+  - 480px: the bar's gap tightens to 6px, the tabs go a type step down to 12px with 0 4px padding and no gap between
+    them, each at least 24px wide with its label centred (Korean "홈" is a 24px target; the focus ring 2px in), and the
+    language control is its globe alone, 40px square, so the wordmark, Home, Connections, AWS and the control fit at 390
+    in every language (Polish "Strona główna" and "Połączenia" are the longest, about 6px to spare; "Polski" beside them
+    would not fit). A tab that takes focus is scrolled into the tab list's view should the list overflow.
 - **No sideways scroll** at 1280 and 390 wide, in every language. A command never wraps: its block scrolls within
   itself. The path on "Page not found" breaks only after a `/`; a segment wider than the box scrolls within the box.
 
@@ -594,10 +599,10 @@ properties, so it costs no request and is in the first paint (The frame, below).
 ### The frame (Studio's bar)
 
 - **Content:** the wordmark (the tile, then "EmuForge Studio") linking to `/`, then a navigation landmark labelled
-  "Studio" with "Home" and one tab per provider from the providers list ("AWS"), then the language control at the bar's
-  end. The bar is the same on every page, a provider area's pages too, and in the current language.
+  "Studio" with "Home", "Connections" and one tab per provider from the providers list ("AWS"), then the language
+  control at the bar's end. The bar is the same on every page, a provider area's pages too, and in the current language.
 - **Tabs:** 14px, 560, `text-2`, full bar height, 0 12px padding. Hover: `text`. Current: `text` with a 2px
-  verdigris underline drawn inside the tab's bottom edge. "Home" is current on `/` (`aria-current="page"`); a
+  verdigris underline drawn inside the tab's bottom edge. "Home" is current on `/` and "Connections" on `/connections` (`aria-current="page"`); a
   provider's tab is current on its index (`page`) and marked current (`true`) anywhere deeper in its area.
 - **Wordmark:** the tile is 28px square with a 6px gap to the text; at 640px and below it is 24px with a 5px gap, and
   "Studio" is clipped out of sight (`position: absolute`, 1px square, `overflow: hidden`, `clip-path: inset(50%)`) and
@@ -694,6 +699,11 @@ tabs, with a control edge so it reads as something that opens.
   failing that, at any character inside its box. The break point adds no text: what is read and copied is the address
   as it is. An unknown address is "-" (hidden from screen readers) with "Not known" for a screen reader, in the
   interface font at 14px, on the same 20px line.
+- **Target strip:** below the two rows, across the panel, with a 1px `line` hairline above it and the rows' side
+  padding (14px above and below): "Target" and the target's name in the code face (13px on `sunk`, `text`, breaking
+  inside a long name rather than leaving the panel), 14px `text-2`, then the secondary "Manage connections" link to
+  `/connections`; they wrap onto two lines when they do not fit. Without a target in the answer, the link alone
+  (issue 486, `features/home/connection-status.css`).
 
 ### Notices
 
@@ -739,6 +749,58 @@ tabs, with a control edge so it reads as something that opens.
   status").
 - **Busy:** the header "Refresh" while a check runs: `aria-disabled="true"`, `aria-busy="true"`, text `text-2`,
   progress cursor, the spinning arc icon.
+
+- **Unavailable** (`ui/action-button.tsx`): an action that cannot be taken on this row (the target's "Remove"):
+  `aria-disabled="true"`, still focusable and in the Tab order, described by its reason (a 13px `text-2` line beside
+  the row's actions); a dashed `control-line` edge, no fill, `text-2`, a not-allowed cursor, no hover change. A choice
+  of it does nothing. The same component draws a busy action ("Making target", "Testing", "Removing", "Adding") and a
+  form's submit button.
+
+### Text fields
+
+- **Structure** (`ui/text-field.tsx`): the label (14px, 560), a hint under it (13px, `text-2`), the input 8px below,
+  then an error when the value breaks a rule. The hint and the error describe the input.
+- **Input:** 40px tall, 0 12px padding, 15px, `surface` fill, a 1px `control-line` edge (3:1), 10px radius; hover
+  `text-2` edge. A field that holds code (a name, an endpoint) is in the code face at 14px, with no spelling check
+  and no automatic capital.
+- **Error:** the input's edge turns `err` and it is marked invalid; under it, 8px below, a 16px crossed circle and the
+  text, 14px, in `err`. Focus moves to the first field in error when a form is sent.
+
+### Dialogs
+
+- **Structure** (`ui/dialog.tsx`): a modal panel centred over a `veil` that covers the viewport; `surface`, a 1px
+  `line-strong` edge, 14px radius, at most 480px wide, 20px 22px padding, no shadow (The Hairline Rule). Its heading
+  (18px, 650) names it, its text (`text-2`) describes it, a 32px close control named "Close" sits at the heading's
+  end, and its buttons sit at the end, the confirming one primary.
+- **Focus:** on opening, focus goes to the safe choice ("Cancel"); Tab and Shift+Tab stay inside; Escape, "Cancel"
+  and "Close" close it, and the control that opened it gets focus back.
+
+### Record lists
+
+- **Structure** (`ui/record-list.tsx`): records in one panel, a `line` hairline between them, 18px 22px padding
+  each. A record's fields sit side by side, each a label (13px, 560, `text-2`, the column's name) over its value; four
+  columns above 900px, two to 900px, one at 640px and below. Under the fields: the record's actions (small buttons,
+  8px apart), then what they produced.
+- **Marked record:** a 3px `accent` bar at its start edge, with a mark beside its name: "Target" in 12px, 650,
+  `accent` on `accent-wash`, a pill. It marks which one is chosen, not a status.
+
+### Status lines
+
+- **Structure** (`ui/status-line.tsx`): a status as the status rows draw it (its icon and word in its hue: `ok`,
+  `err`, `idle`, `wait`), and under it, 4px below, a message in 14px `text-2` that may break anywhere (the engine's
+  text, in its own `lang`). A small one (14px, 560, 16px icon) lists a test's checks.
+
+### Connections (`/connections`)
+
+- **Result line:** under the page head, one polite live region; a sentence about the last change in an `info-wash`
+  band with an `info-line` edge, or `err-wash` and `err-line` for a refusal or a time limit; empty, it takes no room.
+- **Rows:** one record per connection: Name (in the code face, 15px, 600, with the "Target" mark), Endpoint (code,
+  13px), Emulator (a status line, the engine's message under it), Keys ("Keys are read by the engine from" and the
+  folder as inline code). Actions "Make target", "Test", "Remove". A test's result follows: its summary (650, `ok` or
+  `err`) in the row's own polite region, then the five checks on `sunk`, in a grid of 170px columns.
+- **Add connection:** a section of its own under the list: Name and Endpoint side by side (stacked at 640px and
+  below), "Add connection" at the end; a refusal that concerns neither field sits under them in an `err-wash` band.
+  In the Compose form an information notice takes its place.
 
 ### Links
 
