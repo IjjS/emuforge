@@ -673,7 +673,7 @@ describe('"Create queue", sent', () => {
       expect(engine.of('CreateQueue')).toHaveLength(1);
     });
     expect(isDisabled(submitButton())).toBe(true);
-    expect(new ButtonWrapper(submitButton()).findLoadingIndicator()).not.toBeNull();
+    expect(new ButtonWrapper(submitButton() as HTMLButtonElement).findLoadingIndicator()).not.toBeNull();
     expect(text(PAGE.findForm()?.getElement() as HTMLElement)).toContain('Creating the queue');
     submit();
     await act(async () => {
