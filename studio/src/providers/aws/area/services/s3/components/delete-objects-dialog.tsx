@@ -192,12 +192,14 @@ export function DeleteObjectsDialog({
       <SpaceBetween size="m">
         {single === undefined && <SelectionList selection={selection} />}
         <Box variant="p">
+          {/* The folder clause only for a selection that holds a folder; in a versioned bucket the versions stay, so
+              the delete is not said to be final. */}
           <Quoted
             before="These are removed from "
             name={bucket}
-            after=" in your local emulator, with every object under each folder. This can't be undone."
+            after={` in your local emulator${selection.folders.length > 0 ? ', with every object under each folder' : ''}.`}
           />
-          {versioned && ' A delete marker is added to each; the versions are kept.'}
+          {versioned ? ' A delete marker is added to each; the versions are kept.' : " This can't be undone."}
         </Box>
         {failed !== undefined && (
           <Alert type="error" header={failed.header}>
