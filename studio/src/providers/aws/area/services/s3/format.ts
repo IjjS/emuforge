@@ -144,3 +144,22 @@ export function prefixParts(prefix: string): PrefixPart[] {
 export function s3Uri(name: string, key: string): string {
   return `s3://${name}/${key}`;
 }
+
+/**
+ * The folder an object's key is in (issue 480, task 2): its part up to its last `/` (`logs/2026/x.json` → `logs/2026/`);
+ * for a key that ends in `/` (a folder's marker), the folder that holds it (`a/b/` → `a/`).
+ */
+export function keyPrefix(key: string): string {
+  const own = key.endsWith('/') ? key.slice(0, -1) : key;
+  return own.slice(0, own.lastIndexOf('/') + 1);
+}
+
+/** An object's name on its page: the key's last part, or the whole key for a key that ends in `/`. */
+export function keyName(key: string): string {
+  return key.endsWith('/') ? key : key.slice(key.lastIndexOf('/') + 1);
+}
+
+/** An object's ARN, `arn:aws:s3:::{name}/{key}`. */
+export function objectArn(name: string, key: string): string {
+  return `arn:aws:s3:::${name}/${key}`;
+}

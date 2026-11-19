@@ -4,8 +4,15 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { RequestError, type RequestFailure } from '../../../../../lib/aws/request';
 import {
   deleteBucket,
+  deleteKeys,
   deleteObjects,
   findBucket,
+  getObject,
+  getObjectTagging,
+  headObject,
+  listKeys,
+  NO_SUCH_KEY,
+  NOT_FOUND,
   getBucketEncryption,
   getBucketNotificationConfiguration,
   getBucketTagging,
@@ -22,10 +29,16 @@ import {
   type BucketPage,
   type DeleteBucketResult,
   type NoSuchBucket,
+  type NoSuchKey,
+  type ObjectBody,
+  type ObjectHead,
   type ObjectPage,
+  type Tag,
 } from './api';
 import { createOperations, submitBucketForm, type BucketForm, type CreateOutcome } from './bucket-form';
 import type { EmptyingOperations } from './empty-bucket';
+import { loadPreview, type Preview } from './preview';
+import type { DeletionOperations } from './components/object-deletion';
 
 // The bucket list's listing (issue 56, requirement R4.1, R4.4, R4.5, R4.7, R4.9): pages that follow the API's
 // tokens, a filter sent as `prefix`, and a new listing at page 1 on every refresh, filter and page size. Nothing is
@@ -594,4 +607,133 @@ export function useEmptyingOperations(endpoint: string | undefined, name: string
       },
     };
   }, [endpoint, name, drop]);
+}
+
+// Issue 480, task 2: the reads of an object's page, each a request of its own on every mount, "Refresh" and "Retry",
+// under a key that holds the bucket and the key; and task 4: the operations of the delete dialog.
+
+/** What the object page's read found: the object, no such key, or no such bucket. */
+export type ObjectLookup = ScreenRead<ObjectHead | NoSuchKey | NoSuchBucket>;
+
+/**
+ * The read of the object page on opening: `HeadObject`. Its 404 says neither which is gone, so `ListBuckets` (main's
+ * `findBucket`) is asked then: the bucket not listed is `NO_SUCH_BUCKET`, else `NO_SUCH_KEY`.
+ */
+export function useObjectHead(endpoint: string | undefined, bucket: string, key: string): ObjectLookup {
+  const [generation, setGeneration] = useState(0);
+  const read = useFreshRead<ObjectHead | NoSuchKey | NoSuchBucket>(
+    endpoint,
+    bucket,
+    `object:${key}:head`,
+    OPERATIONS.headObject,
+    generation,
+    async (at, signal) => {
+      const head = key === '' ? NOT_FOUND : await headObject(at, bucket, key, signal);
+      if (head !== NOT_FOUND) {
+        return head;
+      }
+      const found = await findBucket(at, bucket, signal);
+      return found === NO_SUCH_BUCKET ? found : NO_SUCH_KEY;
+    },
+  );
+  const refresh = useCallback(() => {
+    setGeneration((current) => current + 1);
+  }, []);
+  return { ...read, generation, refresh };
+}
+
+/** The object's tags (`GetObjectTagging`), read once the page found the object, again with each `generation`. */
+export function useObjectTags(
+  endpoint: string | undefined,
+  bucket: string,
+  key: string,
+  { generation, enabled }: { generation: number; enabled: boolean },
+): BucketRead<Tag[] | NoSuchKey | NoSuchBucket> {
+  return useFreshRead(
+    endpoint,
+    bucket,
+    `object:${key}:tags`,
+    OPERATIONS.getObjectTagging,
+    generation,
+    (at, signal) => getObjectTagging(at, bucket, key, signal),
+    enabled,
+  );
+}
+
+/**
+ * The preview of the object `head` describes: `GetObject` of its first 64 KiB, asked only for a type shown as text
+ * and a size above 0 (`preview.ts`), once the page found the object and again with each `generation`.
+ */
+export function useObjectPreview(
+  endpoint: string | undefined,
+  bucket: string,
+  head: ObjectHead | undefined,
+  { generation }: { generation: number },
+): BucketRead<Preview> {
+  const key = head?.key ?? '';
+  return useFreshRead(
+    endpoint,
+    bucket,
+    `object:${key}:preview:${head?.contentType ?? ''}:${String(head?.size ?? '')}`,
+    OPERATIONS.getObject,
+    generation,
+    (at, signal) =>
+      loadPreview(
+        {
+          ...(head?.contentType === undefined ? {} : { contentType: head.contentType }),
+          ...(head?.size === undefined ? {} : { size: head.size }),
+        },
+        async (range) => (await getObject(at, bucket, key, signal, range)).bytes,
+      ),
+    head !== undefined,
+  );
+}
+
+/** "Download" of the object page: `GetObject` of the whole body. */
+export function useDownloadObject(
+  endpoint: string | undefined,
+  bucket: string,
+): (key: string, signal: AbortSignal) => Promise<ObjectBody> {
+  return useCallback(
+    (key, signal) => {
+      if (endpoint === undefined) {
+        return Promise.reject(new Error('The engine endpoint is not known yet.'));
+      }
+      return getObject(endpoint, bucket, key, signal);
+    },
+    [endpoint, bucket],
+  );
+}
+
+/** The bucket's versioning status for the delete dialog, read while `enabled` (the dialog is open). */
+export function useDeleteVersioning(
+  endpoint: string | undefined,
+  bucket: string,
+  enabled: boolean,
+): BucketRead<BucketPropertyValue<'versioning'>> {
+  return useBucketProperty(endpoint, bucket, 'versioning', { generation: 0, enabled });
+}
+
+/**
+ * The operations of the delete dialog on bucket `bucket` (task 4): a folder's keys page by page, and `DeleteObjects`
+ * of keys; S3's reads are dropped once each `DeleteObjects` has ended, whatever it answered. `undefined` while the
+ * engine's address is not known.
+ */
+export function useDeletionOperations(endpoint: string | undefined, bucket: string): DeletionOperations | undefined {
+  const drop = useDropS3Reads();
+  return useMemo(() => {
+    if (endpoint === undefined) {
+      return undefined;
+    }
+    return {
+      listKeys: (prefix, token, signal) => listKeys(endpoint, bucket, prefix, token, signal),
+      deleteKeys: async (keys, signal) => {
+        try {
+          return await deleteKeys(endpoint, bucket, keys, signal);
+        } finally {
+          drop();
+        }
+      },
+    };
+  }, [endpoint, bucket, drop]);
 }

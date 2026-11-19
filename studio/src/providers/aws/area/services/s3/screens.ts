@@ -1,10 +1,20 @@
 import type { ScreenCrumbs, ScreenNavigation, ServiceScreen } from '../../screens';
-import { bucketPath, BUCKETS_PATH, CREATE_BUCKET_PATH, objectsPath, prefixParts, S3_PATH } from './format';
+import {
+  bucketPath,
+  BUCKETS_PATH,
+  CREATE_BUCKET_PATH,
+  keyName,
+  keyPrefix,
+  objectsPath,
+  prefixParts,
+  S3_PATH,
+} from './format';
 import { BucketListHelp, BucketListPage } from './pages/bucket-list-page';
 import { BucketPage } from './pages/bucket-page';
 import { CreateBucketPage } from './pages/create-bucket-page';
 import { DeleteBucketPage } from './pages/delete-bucket-page';
 import { EmptyBucketPage } from './pages/empty-bucket-page';
+import { ObjectPage } from './pages/object-page';
 
 /** S3's own side navigation, "General purpose buckets" current on every screen of a general purpose bucket. */
 const NAVIGATION: ScreenNavigation = {
@@ -40,6 +50,20 @@ function bucketCrumbs(name: string, query: URLSearchParams): ScreenCrumbs {
   ];
 }
 
+/**
+ * The crumbs of an object's page (issue 480, task 2): "Buckets", the bucket's name, each part of the folder the key is
+ * in, every one a link to the tab "Objects" at its prefix, then the key's name, not a link.
+ */
+function objectCrumbs(name: string, query: URLSearchParams): ScreenCrumbs {
+  const key = query.get('key') ?? '';
+  return [
+    BUCKETS_CRUMB,
+    { text: name, href: objectsPath(name) },
+    ...prefixParts(keyPrefix(key)).map((part) => ({ text: part.text, href: objectsPath(name, part.prefix) })),
+    { text: keyName(key) },
+  ];
+}
+
 /** S3's screens, which the area collects (issue 386, R3.1). */
 export const SCREENS: readonly ServiceScreen[] = [
   // The general purpose bucket list (issue 56): at the service's route and at its own, neither redirecting.
@@ -61,6 +85,14 @@ export const SCREENS: readonly ServiceScreen[] = [
     crumbs: ({ name }, query) => bucketCrumbs(name ?? '', query),
     navigation: NAVIGATION,
     Page: BucketPage,
+  },
+  // An object's page (issue 480, task 2): its key in the query, `?key=`; its title the key's name.
+  {
+    paths: [`${BUCKETS_PATH}/{name}/object`],
+    title: (_, query) => keyName(query.get('key') ?? ''),
+    crumbs: ({ name }, query) => objectCrumbs(name ?? '', query),
+    navigation: NAVIGATION,
+    Page: ObjectPage,
   },
   // S2, "Create bucket" (issue 256, R0, R4, R6): below "Buckets", without help.
   {

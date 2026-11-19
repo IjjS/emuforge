@@ -7,6 +7,9 @@ import {
   GetBucketTaggingCommand,
   GetBucketVersioningCommand,
   GetBucketWebsiteCommand,
+  GetObjectCommand,
+  GetObjectTaggingCommand,
+  HeadObjectCommand,
   ListBucketsCommand,
   ListObjectsV2Command,
   ListObjectVersionsCommand,
@@ -15,6 +18,7 @@ import {
   PutPublicAccessBlockCommand,
   type FilterRule,
   type GetBucketNotificationConfigurationCommandOutput,
+  type HeadObjectCommandOutput,
   type ListBucketsCommandOutput,
   type ListObjectsV2CommandOutput,
   type S3Client,
@@ -156,6 +160,9 @@ export const OPERATIONS = {
   putPublicAccessBlock: 'PutPublicAccessBlock',
   putBucketVersioning: 'PutBucketVersioning',
   putBucketEncryption: 'PutBucketEncryption',
+  headObject: 'HeadObject',
+  getObjectTagging: 'GetObjectTagging',
+  getObject: 'GetObject',
 } as const;
 
 /** The code of an answer that is neither a success nor a failure kind of its own, else `undefined`. */
@@ -703,4 +710,246 @@ export async function putBucketEncryption(
     (abortSignal) => s3Client(endpoint).send(command, { abortSignal }),
     signal,
   );
+}
+
+// Issue 480, tasks 2 and 4: one object's head, tags and body, and the deletion of keys.
+
+/** The emulator holds no object of the key asked: `HeadObject` answered 404, or a call answered `NoSuchKey`. */
+export const NO_SUCH_KEY = 'no-such-key';
+export type NoSuchKey = typeof NO_SUCH_KEY;
+
+/** `HeadObject` answered 404: a HEAD answer has no body, so a gone bucket and a gone key both arrive as this. */
+export const NOT_FOUND = 'not-found';
+export type NotFound = typeof NOT_FOUND;
+
+/** One entry of an object's metadata, as the answer gave it. */
+export interface MetadataEntry {
+  key: string;
+  value: string;
+}
+
+/** What `HeadObject` reports of an object. A value the answer did not give is absent. */
+export interface ObjectHead {
+  key: string;
+  /** `Content-Length`, the object's size in bytes. */
+  size?: number;
+  contentType?: string;
+  lastModified?: Date;
+  etag?: string;
+  /** `x-amz-storage-class`, as it came; absent when the answer has none. */
+  storageClass?: string;
+  versionId?: string;
+  /** The system metadata the answer gave, in the order the page shows it: Content-Type, Cache-Control, … */
+  system: MetadataEntry[];
+  /** The user metadata (`x-amz-meta-*`), its key without the prefix, in the answer's order. */
+  user: MetadataEntry[];
+}
+
+/** The code with which a call on a key says the emulator holds no object of that key. */
+const NO_SUCH_KEY_CODE = 'NoSuchKey';
+
+/** Whether a failure is the 404 of a HEAD answer: no code, or the SDK's `NotFound`, under the status 404. */
+function isNotFound(error: unknown): boolean {
+  const code = answeredCode(error);
+  return code !== undefined && (code === 'NotFound' || code === NO_SUCH_KEY_CODE || /^HTTP 404( |$)/.test(code));
+}
+
+function toHead(key: string, output: HeadObjectCommandOutput): ObjectHead {
+  const head: ObjectHead = { key, system: [], user: [] };
+  const size = number(output.ContentLength);
+  const contentType = text(output.ContentType);
+  const etag = text(output.ETag);
+  const storageClass = text(output.StorageClass);
+  const versionId = text(output.VersionId);
+  if (size !== undefined) head.size = size;
+  if (contentType !== undefined) head.contentType = contentType;
+  if (output.LastModified instanceof Date && !Number.isNaN(output.LastModified.getTime())) {
+    head.lastModified = output.LastModified;
+  }
+  if (etag !== undefined) head.etag = etag;
+  if (storageClass !== undefined) head.storageClass = storageClass;
+  if (versionId !== undefined) head.versionId = versionId;
+  const expires =
+    text(output.ExpiresString) ??
+    (output.Expires instanceof Date && !Number.isNaN(output.Expires.getTime())
+      ? output.Expires.toUTCString()
+      : undefined);
+  const system: [string, string | undefined][] = [
+    ['Content-Type', contentType],
+    ['Cache-Control', text(output.CacheControl)],
+    ['Content-Encoding', text(output.ContentEncoding)],
+    ['Content-Disposition', text(output.ContentDisposition)],
+    ['Expires', expires],
+  ];
+  head.system = system.flatMap(([entry, value]) => (value === undefined ? [] : [{ key: entry, value }]));
+  head.user = Object.entries(output.Metadata ?? {}).map(([entry, value]) => ({ key: entry, value }));
+  return head;
+}
+
+/**
+ * `HeadObject` of `key` in bucket `bucket`: its properties and metadata. A 404 is `NOT_FOUND`, whether the bucket or
+ * the key is gone; every other failure rejects as it came.
+ */
+export async function headObject(
+  endpoint: string,
+  bucket: string,
+  key: string,
+  signal: AbortSignal,
+): Promise<ObjectHead | NotFound> {
+  try {
+    const output = await sendRequest(
+      OPERATIONS.headObject,
+      (abortSignal) => s3Client(endpoint).send(new HeadObjectCommand({ Bucket: bucket, Key: key }), { abortSignal }),
+      signal,
+    );
+    return toHead(key, output);
+  } catch (error) {
+    if (isNotFound(error)) {
+      return NOT_FOUND;
+    }
+    throw error;
+  }
+}
+
+/** The object's tags in the answer's order (`GetObjectTagging`). */
+export async function getObjectTagging(
+  endpoint: string,
+  bucket: string,
+  key: string,
+  signal: AbortSignal,
+): Promise<Tag[] | NoSuchBucket | NoSuchKey> {
+  try {
+    const output = await sendRequest(
+      OPERATIONS.getObjectTagging,
+      (abortSignal) =>
+        s3Client(endpoint).send(new GetObjectTaggingCommand({ Bucket: bucket, Key: key }), { abortSignal }),
+      signal,
+    );
+    return (output.TagSet ?? []).map(({ Key, Value }) => ({ key: Key ?? '', value: Value ?? '' }));
+  } catch (error) {
+    const code = answeredCode(error);
+    if (code === NO_SUCH_BUCKET_CODE) return NO_SUCH_BUCKET;
+    if (code === NO_SUCH_KEY_CODE) return NO_SUCH_KEY;
+    throw error;
+  }
+}
+
+/** An object's body, or the part of it a range asked, as bytes, with the type the answer gave. */
+export interface ObjectBody {
+  bytes: Uint8Array;
+  contentType?: string;
+}
+
+/**
+ * `GetObject` of `key`: the whole body, or with `range` (`bytes=0-65535`) the part it names. Every failure, "no such
+ * key" included, rejects as it came: the page asks this only of an object `HeadObject` found.
+ */
+export async function getObject(
+  endpoint: string,
+  bucket: string,
+  key: string,
+  signal: AbortSignal,
+  range?: string,
+): Promise<ObjectBody> {
+  return sendRequest(
+    OPERATIONS.getObject,
+    async (abortSignal) => {
+      const output = await s3Client(endpoint).send(
+        new GetObjectCommand({ Bucket: bucket, Key: key, ...(range === undefined ? {} : { Range: range }) }),
+        { abortSignal },
+      );
+      const bytes = output.Body === undefined ? new Uint8Array() : await output.Body.transformToByteArray();
+      const contentType = text(output.ContentType);
+      return contentType === undefined ? { bytes } : { bytes, contentType };
+    },
+    signal,
+  );
+}
+
+/** One page of every key under a prefix, with no delimiter (a folder's keys, issue 480 task 4). */
+export interface KeyPage {
+  keys: string[];
+  /** `NextContinuationToken`, while the answer is truncated. */
+  nextToken?: string;
+}
+
+/** The most keys one `DeleteObjects` takes, and one page of a folder's keys asks. */
+export const KEYS_PER_CALL = 1000;
+
+/**
+ * One page of every key under `prefix` (`ListObjectsV2` without a delimiter). Every failure, "no such bucket"
+ * included, rejects as it came, so the dialog shows the emulator's own message.
+ */
+export async function listKeys(
+  endpoint: string,
+  bucket: string,
+  prefix: string,
+  token: string | undefined,
+  signal: AbortSignal,
+): Promise<KeyPage> {
+  const output = await sendRequest(
+    OPERATIONS.listObjectsV2,
+    (abortSignal) =>
+      s3Client(endpoint).send(
+        new ListObjectsV2Command({
+          Bucket: bucket,
+          Prefix: prefix,
+          MaxKeys: KEYS_PER_CALL,
+          ...(token === undefined ? {} : { ContinuationToken: token }),
+        }),
+        { abortSignal },
+      ),
+    signal,
+  );
+  const page: KeyPage = { keys: (output.Contents ?? []).flatMap(({ Key }) => (Key === undefined ? [] : [Key])) };
+  const next = text(output.NextContinuationToken);
+  if (output.IsTruncated === true && next !== undefined) {
+    page.nextToken = next;
+  }
+  return page;
+}
+
+/** A key `DeleteObjects` refused, with the emulator's code and message as they came. */
+export interface KeyRefusal {
+  key: string;
+  code: string;
+  message: string;
+}
+
+/** What one `DeleteObjects` of keys answered: how many it deleted, and the keys it refused. */
+export interface KeysDeleted {
+  deleted: number;
+  refused: KeyRefusal[];
+}
+
+/**
+ * Deletes `keys` (at most `KEYS_PER_CALL`) in one `DeleteObjects` that is not quiet, so the answer names every key
+ * deleted. Every failure of the call, "no such bucket" included, rejects as it came.
+ */
+export async function deleteKeys(
+  endpoint: string,
+  bucket: string,
+  keys: readonly string[],
+  signal: AbortSignal,
+): Promise<KeysDeleted> {
+  const output = await sendRequest(
+    OPERATIONS.deleteObjects,
+    (abortSignal) =>
+      s3Client(endpoint).send(
+        new DeleteObjectsCommand({
+          Bucket: bucket,
+          Delete: { Objects: keys.map((key) => ({ Key: key })), Quiet: false },
+        }),
+        { abortSignal },
+      ),
+    signal,
+  );
+  return {
+    deleted: (output.Deleted ?? []).length,
+    refused: (output.Errors ?? []).map(({ Key, Code, Message }) => ({
+      key: Key ?? '',
+      code: Code ?? '',
+      message: Message ?? '',
+    })),
+  };
 }
