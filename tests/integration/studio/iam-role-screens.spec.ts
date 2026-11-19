@@ -9,6 +9,10 @@
 // `<p>` (lower-case letters and digits) and shows them under a filter that holds `<p>`. Roles are made and read
 // directly with `support/iam.ts`; what Studio did not delete is taken apart when the check ends. The page's
 // requests are recorded from the outside (`support/traffic.ts`); nothing changes them.
+//
+// Issue 492 changed the data of one line of `studio.iam-role-screens-talk-only-to-the-engine` (its test-criteria.md;
+// requirement R3.1): aws-emulator 1.0.514 and later refuse a `Service` principal that is not a host name, so the
+// markup sits in an `AWS` principal ARN, whose resource part the emulator holds as sent.
 
 import createWrapper from '@cloudscape-design/components/test-utils/selectors';
 import type { BrowserContext, Page } from '@playwright/test';
@@ -17,7 +21,7 @@ import { emulatorDir, EnvError, expect, readEmulatorFiles, startStack, test, typ
 import { crumbLink } from './support/aws-area';
 import { ACTION, addressOf, heading, SIDE_NAVIGATION } from './support/frame';
 import { markPage, stillSamePage } from './support/home';
-import { getRoleDirect, IamSeeded, roleIsGone, serviceTrust } from './services/iam/iam';
+import { getRoleDirect, IamSeeded, roleIsGone, trustPolicy } from './services/iam/iam';
 import { Lines } from './support/lines';
 import { expectNoScreenPart } from './support/no-screen-part';
 import { Traffic } from './support/traffic';
@@ -414,11 +418,12 @@ test('studio.iam-role-screens-talk-only-to-the-engine', async ({ ctx, page, cont
   );
 
   await lines.line(
-    'A role made directly with the description `<img src=x onerror=alert(1)>` and a trust policy whose principal is that text, shown in the list and on its page → both are shown as text; the page holds no image made from them and no dialog opened',
+    'A role made directly with the description `<img src=x onerror=alert(1)>` and a trust policy whose principal is the `AWS` principal `arn:aws:iam::123456789012:user/<img src=x onerror=alert(1)>`, shown in the list under the filter `<p>` and on its page → "Trusted entities" reads `AWS: arn:aws:iam::123456789012:user/<img src=x onerror=alert(1)>` and "Description" in "Summary" reads `<img src=x onerror=alert(1)>`, both as text; the page holds no image made from them and no dialog opened',
     async () => {
       const markup = '<img src=x onerror=alert(1)>';
+      const principal = `arn:aws:iam::123456789012:user/${markup}`;
       const xss = `${p}-markup`;
-      await seeded.role(xss, { description: markup, trust: serviceTrust(markup) });
+      await seeded.role(xss, { description: markup, trust: trustPolicy({ AWS: principal }) });
       const dialogs: string[] = [];
       page.on('dialog', (d) => {
         dialogs.push(d.message());
@@ -429,7 +434,7 @@ test('studio.iam-role-screens-talk-only-to-the-engine', async ({ ctx, page, cont
       await listUnder(page, p, [xss]);
       await expect
         .poll(async () => (await listRows(page))[0]?.trusted ?? null, { message: `"${COL_TRUSTED}" of ${xss}` })
-        .toBe(`AWS Service: ${markup}`);
+        .toBe(`AWS: ${principal}`);
       expect(await injected(), 'elements made from the text on the list').toBe(0);
 
       await s.listTable.getByRole('link', { name: xss, exact: true }).click(ACTION);

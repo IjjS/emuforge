@@ -34,8 +34,9 @@ const ENTITY_TYPES: readonly { value: EntityType; label: string }[] = [
   { value: 'custom', label: 'Custom trust policy' },
 ];
 
+/** The description of "Service or use case" (issue 492, R5): help about the emulator, not a rule the form keeps. */
 const SERVICE_HELP =
-  'Enter the principal of the service that may assume the role. The emulator accepts a principal that names no service.';
+  'Enter the principal of the service that may assume the role, written as a host name. The emulator accepts one that names no service.';
 const CUSTOM_HELP = 'The emulator refuses a document that is not JSON or has no statement list.';
 /** The constraint text of "Account ID" (issue 467, requirement R4): the form's own rule, narrower than the emulator's. */
 export const ACCOUNT_ID_RULE = '12 digits.';
@@ -84,7 +85,7 @@ export function TrustedEntityStep({
             }}
           />
           {values.type === 'aws-service' && (
-            <FormField label="Service or use case" constraintText={SERVICE_HELP} errorText={messages.principal}>
+            <FormField label="Service or use case" description={SERVICE_HELP} errorText={messages.principal}>
               <Autosuggest
                 ref={principalRef}
                 value={values.principal}

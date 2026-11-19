@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: bug
 Issue-Source: finder
 Issue-Key: studio|iam|checks-fail-on-emulator-1.0.514-principal-validation
-Issue-Check-Ids:
+Issue-Check-Ids: studio.iam-role-screens-talk-only-to-the-engine,studio.iam-role-create-appears-in-the-emulator,studio.iam-role-create-refusals-create-nothing
 Issue-Commit: bee3d7998d738a24ff297afafb956d0ed876a6a2
 
 # Keep the IAM checks passing on aws-emulator 1.0.514, which now refuses a trust policy whose principal is not a valid service
