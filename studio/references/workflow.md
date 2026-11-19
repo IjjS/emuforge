@@ -14,7 +14,7 @@ that order. Its screens serve those tasks and need not match the AWS console (`a
 
 ## Stages by kind
 
-| Kind | 1 Requirement | 2 Design | 3 Test Criteria | 4 Build | 5 Integration tests, whole check, review, critique |
+| Kind | 1 Requirement | 2 Design | 3 Test Criteria | 4 Build | 5 Integration tests, critique, whole check, review |
 |---|---|---|---|---|---|
 | `feature` | yes | yes | yes | yes | yes |
 | `gap` | what is missing, and the task it serves | only when a flow or a screen changes | yes | yes | the critique only when a screen changes |
@@ -64,9 +64,10 @@ Conventions: `studio/AGENTS.md`, and the reference its brief names for the layer
 A unit that adds or changes a text of Studio's own layer adds its key to every catalogue of `i18n/messages/` in
 that unit (`languages.md`, "Adding a string"). Text inside a provider area is English only.
 
-## 5. Integration tests, whole check, review, critique
+## 5. Integration tests, critique, whole check, review
 
 Then: the commands in `studio/AGENTS.md` pass; the plan writes the integration tests from the scenarios of stage 3
-(`tests/integration/AGENTS.md`); the whole check on the issue branch passes, its integration checks included, with
-no check that passed on `main` now failing; `rev` reviews the whole; `crit` critiques each changed screen once, on
-the built app (`critique.md`), and every P0 or P1 finding is fixed; and the `pm` merges.
+(`tests/integration/AGENTS.md`); `crit` critiques each changed screen on the built app of the issue branch
+(`critique.md`), and every P0 or P1 finding is fixed; only then the whole check on the issue branch passes, its
+integration checks included, with no check that passed on `main` now failing; `rev` reviews the whole; and the
+`pm` merges.

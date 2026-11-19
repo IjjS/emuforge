@@ -67,28 +67,38 @@ out is said so in `test-criteria.md` before the build when you could tell then, 
 you cannot tell whether to leave one out, stop with `BLOCKED i<id>-plan decision-needed integration <scenario>`.
 Leaving tests out does not leave the whole check out: `pm-merge` into `main` asks for its record.
 
+## Critique
+
+An issue that changes a Studio screen is critiqued before its whole check (owner, 2026-11-19): when every unit is
+merged into `feat/<id>`, each on its fast check, run `pm-brief crit <id> --targets "<routes>" --capture-wt
+emuforge-<id>`, then `pm-pane new <id> crit --brief .pm/issue-<id>/brief-crit.md`, and prompt it
+`SCORE final <routes>`: the impeccable critique on the built app of `feat/<id>` (`studio/references/critique.md`).
+Every P0 and P1 finding goes to the worker that owns the screen; it is fixed, passes its fast check and is merged,
+and the screen is critiqued again. The score goes in `report.md` and decides nothing. A mock before the build is
+never required: ask `crit` for one (`SCORE mock <file>`) only when a screen is new and large and the build would
+otherwise be a guess. The integration tests may be written while the critique runs.
+
 ## Whole check
 
-`pm-merge <id> --take-main`, then `pm-check emuforge-<id>`, the whole check, `integration` included. In the whole
+The whole check runs once every unit is merged and, for an issue that changes a Studio screen, only when the last
+`final` has no P0 or P1 (`pm-critique check <id>` passes). `pm-merge <id> --take-main`, then
+`pm-check emuforge-<id>`, the whole check, `integration` included. In the whole
 check the integration step of the issue branch runs every check of no service and the browser checks of the
 services its paths touch, every service's when a shared path changed; the `services` line of `pm-scope` and
 `pm-check` names them, and `pm-merge` refuses a record that ran fewer. A failed check goes to the unit that owns
 what failed, by `breakdown.md`. It fixes it on its branch, merges `feat/<id>` into its own when `pm-merge` asks,
-passes its fast check, and is merged again. `feat/<id>` has then moved, so run the whole check again.
+passes its fast check, and is merged again. `feat/<id>` has then moved, so run the whole check again; when the fix
+changed a screen, that screen alone is critiqued once more (`SCORE final <its routes>`) first, and a P0 or P1 it
+finds is fixed as above.
 
-## End review and critique
+## End review
 
 - `REVIEW impl r1 <changed paths> emuforge-<id>/output/checks/last.json` to `rev`: the whole diff
   `main...feat/<id>`, and whether the integration tests are the scenarios.
-- For a Studio screen: `pm-brief crit <id> --targets "<routes>" --capture-wt emuforge-<id>`, then
-  `pm-pane new <id> crit --brief .pm/issue-<id>/brief-crit.md`, and prompt it `SCORE final <routes>`: the impeccable
-  critique, once, on the built app (`studio/references/critique.md`). Every P0 and P1 finding goes to the worker that
-  owns the screen, as a fault below, and is critiqued once more; the score goes in `report.md` and decides nothing.
-  A mock before the build is never required: ask `crit` for one (`SCORE mock <file>`) only when a screen is new and
-  large and the build would otherwise be a guess.
 - A fault found, by its size:
   - Small and inside the issue: give it to the owning worker at once. It is fixed, merged again, and checked
-    whole again, and then the next review round follows.
+    whole again (a fix that changes a screen has that screen critiqued once more first), and then the next review
+    round follows.
   - Large, or outside the issue: file it with `pm-issue new --source plan --severity <S> … --in emuforge-<id>` and
     `pm-issue commit --in emuforge-<id>`. It reaches `main` with the issue.
 

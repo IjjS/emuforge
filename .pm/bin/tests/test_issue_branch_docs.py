@@ -209,8 +209,26 @@ class Lead(unittest.TestCase):
             self.assertEqual(told, [])
 
     def test_critique_captures_the_issues_worktree(self):
-        crit = blocks(part(self.text, "## End review and critique"))
+        crit = blocks(part(self.text, "## Critique"))
         self.assertTrue(any(has(b, r"--capture-wt", r"emuforge-<id>") for b in crit), crit)
+
+    def test_critique_comes_before_the_whole_check_issue_497(self):
+        """Owner, 2026-11-19 (issue 497, point 8): the whole check runs once, after the last `final` has no P0 or P1;
+        a fix of the whole check that changes a screen has that screen critiqued once more."""
+        lines = self.text.splitlines()
+        self.assertLess(lines.index("## Critique"), lines.index("## Whole check"))
+        self.assertNotIn("## End review and critique", lines)
+        whole = " ".join(blocks(part(self.text, "## Whole check")))
+        for wanted in (r"only when the last `final` has no P0 or P1", r"`pm-critique check <id>`",
+                       r"that screen alone is critiqued once more"):
+            with self.subTest(wanted):
+                self.assertRegex(whole, wanted)
+        crit = " ".join(blocks((BRIEFS / "crit.md").read_text()))
+        self.assertIn("before its whole check", crit)
+        self.assertNotIn("once its whole check has passed", crit)
+        critique = " ".join((CHECKOUT / "studio" / "references" / "critique.md").read_text().split())
+        self.assertIn("before the whole check, which runs only when the last `final` has no P0 or P1", critique)
+        self.assertNotIn("after the whole check passes", critique)
 
     def test_no_t_unit(self):
         cut = blocks(part(self.text, "## The cut"))
