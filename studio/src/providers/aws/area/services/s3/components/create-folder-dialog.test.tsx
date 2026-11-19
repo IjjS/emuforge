@@ -166,7 +166,7 @@ afterEach(() => {
 });
 
 /** Opens bucket `alpha`'s tab "Objects" at `prefix` and then "Create folder". */
-async function openDialog(prefix = ''): Promise<HTMLElement> {
+async function openDialog(prefix = '', focusOpener = false): Promise<HTMLElement> {
   const address = `/aws/s3/buckets/alpha${prefix === '' ? '' : `?${new URLSearchParams({ prefix }).toString()}`}`;
   const router = createMemoryRouter(
     [
@@ -184,6 +184,9 @@ async function openDialog(prefix = ''): Promise<HTMLElement> {
   await waitFor(() => {
     expect(screen.getByRole('button', { name: 'Create folder' })).toBeInTheDocument();
   });
+  if (focusOpener) {
+    screen.getByRole('button', { name: 'Create folder' }).focus();
+  }
   fireEvent.click(screen.getByRole('button', { name: 'Create folder' }));
   return screen.findByRole('dialog');
 }
@@ -225,6 +228,44 @@ describe('"Create folder", the name', () => {
 
     expect(engine.checks()).toEqual([]);
     expect(engine.puts()).toEqual([]);
+  });
+});
+
+describe('"Create folder", the focus', () => {
+  it('the name field has focus once the dialog shows; Escape and Cancel give it back to the tab\'s "Create folder"', async () => {
+    const opener = async () => {
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Create folder' })).toBeInTheDocument();
+      });
+      return screen.getByRole('button', { name: 'Create folder' });
+    };
+    const dialog = await openDialog('logs/', true);
+    await waitFor(() => {
+      expect(document.activeElement).toBe(within(dialog).getByRole('textbox'));
+    });
+
+    fireEvent.keyDown(within(dialog).getByRole('textbox'), { key: 'Escape', code: 'Escape', keyCode: 27 });
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
+    await waitFor(async () => {
+      expect(document.activeElement).toBe(await opener());
+    });
+
+    const button = await opener();
+    button.focus();
+    fireEvent.click(button);
+    const again = await screen.findByRole('dialog');
+    await waitFor(() => {
+      expect(document.activeElement).toBe(within(again).getByRole('textbox'));
+    });
+    fireEvent.click(within(again).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
+    await waitFor(async () => {
+      expect(document.activeElement).toBe(await opener());
+    });
   });
 });
 
