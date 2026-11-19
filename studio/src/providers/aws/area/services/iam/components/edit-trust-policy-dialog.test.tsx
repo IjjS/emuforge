@@ -570,13 +570,91 @@ describe('"Edit trust policy"', () => {
     expect(field(dialog).value).toBe(EC2_TRUST);
   });
 
-  it('"Cancel" closes it without a request', async () => {
+  /** The ways the dialog is closed without saving. */
+  const CLOSES: [string, (dialog: HTMLElement) => void][] = [
+    [
+      '"Cancel"',
+      (dialog) => {
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+      },
+    ],
+    [
+      'Esc',
+      (dialog) => {
+        fireEvent.keyDown(field(dialog), { key: 'Escape', code: 'Escape', keyCode: 27 });
+      },
+    ],
+    [
+      '"Close"',
+      (dialog) => {
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Close modal' }));
+      },
+    ],
+    [
+      'a click outside',
+      () => {
+        // The modal's root is the overlay around the dialog; a press and release on it dismisses the modal.
+        const overlay = PAGE.findModal()?.getElement();
+        expect(overlay).toBeDefined();
+        fireEvent.mouseDown(overlay as HTMLElement);
+        fireEvent.click(overlay as HTMLElement);
+      },
+    ],
+  ];
+
+  it.each(CLOSES)('%s with nothing changed: the dialog closes at once, nothing asked or sent', async (_, close) => {
     const { dialog } = await openDialog(ROLE);
 
-    type(dialog, EC2_TRUST);
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    close(dialog);
 
     await expectClosed();
     expect(updates()).toEqual([]);
+  });
+
+  it.each(CLOSES)(
+    '%s with the text changed: "Discard what you entered?"; "Keep editing" → the editor with the text kept',
+    async (_, close) => {
+      const { dialog } = await openDialog(ROLE);
+      type(dialog, EC2_TRUST);
+
+      close(dialog);
+
+      const asked = await screen.findByRole('dialog', { name: 'Discard what you entered?' });
+      expect(screen.queryByRole('dialog', { name: 'Edit trust policy' })).toBeNull();
+      fireEvent.click(within(asked).getByRole('button', { name: 'Keep editing' }));
+
+      const again = await screen.findByRole('dialog', { name: 'Edit trust policy' });
+      expect(screen.queryByRole('dialog', { name: 'Discard what you entered?' })).toBeNull();
+      expect(field(again).value).toBe(EC2_TRUST);
+      expect(updates()).toEqual([]);
+    },
+  );
+
+  it('the text changed, then "Discard": both dialogs close, nothing sent, the tab as it was; opened again it holds the tab’s document', async () => {
+    const { dialog } = await openDialog(ROLE);
+    const shown = sectionText('Trust policy');
+    type(dialog, EC2_TRUST);
+
+    fireEvent.keyDown(field(dialog), { key: 'Escape', code: 'Escape', keyCode: 27 });
+    const asked = await screen.findByRole('dialog', { name: 'Discard what you entered?' });
+    fireEvent.click(within(asked).getByRole('button', { name: 'Discard' }));
+
+    await expectClosed();
+    expect(updates()).toEqual([]);
+    expect(sectionText('Trust policy')).toBe(shown);
+    fireEvent.click(editButton());
+    const again = await screen.findByRole('dialog', { name: 'Edit trust policy' });
+    expect(field(again).value).toBe(shown);
+  });
+
+  it('a text typed and typed back to what it opened with: closes without asking', async () => {
+    const { dialog } = await openDialog(ROLE);
+    const start = field(dialog).value;
+    type(dialog, EC2_TRUST);
+    type(dialog, start);
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+
+    await expectClosed();
   });
 });
