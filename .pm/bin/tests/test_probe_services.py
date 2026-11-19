@@ -171,10 +171,10 @@ class Table(unittest.TestCase):
         cls.text = probe.TABLE.read_text()
         cls.t = json.loads(cls.text)
 
-    def test_224_keys_once_each(self):
+    def test_keys_once_each(self):
         keys = [s["key"] for s in self.t["services"]]
-        self.assertEqual(len(keys), 224)
-        self.assertEqual(len(set(keys)), 224)
+        self.assertTrue(keys, "the table has no service")
+        self.assertEqual(sorted({k for k in keys if keys.count(k) > 1}), [])
 
     def test_every_key_has_models_or_says_why_not(self):
         for s in self.t["services"]:

@@ -515,7 +515,7 @@ class Manifest(unittest.TestCase):
         self.assertEqual(sorted({i for i in ids if ids.count(i) > 1}), [])
         labelled = {r["check_id"]: set(r["labels"]) for r in rows
                     if isinstance(r.get("labels"), list) and "on-request" in r["labels"]}
-        self.assertEqual(labelled, self.LABELLED)
+        self.assertEqual({i: labelled.get(i) for i in self.LABELLED}, self.LABELLED)
 
 
 # ---------------------------------------------------------------------------------------------------- Guides

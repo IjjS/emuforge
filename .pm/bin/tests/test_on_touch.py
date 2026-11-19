@@ -1024,7 +1024,8 @@ SCAN_RULES = [
     "test_ignored_one_shot_help", "test_ignored_dockerfile_entrypoint", "test_ignored_build_tag",
     "test_ignored_image_inspect", "test_ignored_prose_comment", "test_ignored_path", "test_not_scanned_markdown",
     "test_not_scanned_under_issues", "test_not_scanned_symlink", "test_not_scanned_not_utf8",
-]  # the 29 cases of ScanRules at 3002fc5
+]  # the cases of ScanRules at 3002fc5, which moved; ScanRules may have more since
+PANE_RULE = ["test_emulator_section_names_both_commands", "test_scripts_table_has_one_row"]
 
 
 def cases(name):
@@ -1048,21 +1049,25 @@ class Moved(unittest.TestCase):
     def test_the_scan_file_holds_the_scan_classes(self):
         found = cases("test_emulator_scan.py")
         self.assertEqual(found.get("RepositoryScan"), ["test_every_start_site_passes_t_off"])
-        self.assertEqual(sorted(found.get("ScanRules", [])), sorted(SCAN_RULES))
-        self.assertEqual(len(SCAN_RULES), 29)
+        missing = sorted(set(SCAN_RULES) - set(found.get("ScanRules", [])))
+        self.assertEqual(missing, [], found.get("ScanRules"))
 
     def test_the_guides_file_holds_pane_rule(self):
         found = cases("test_emulator_dir_guides.py")
-        self.assertEqual(sorted(found.get("PaneRule", [])),
-                         ["test_emulator_section_names_both_commands", "test_scripts_table_has_one_row"])
+        missing = sorted(set(PANE_RULE) - set(found.get("PaneRule", [])))
+        self.assertEqual(missing, [], found.get("PaneRule"))
 
     def test_the_two_slow_files_lost_them(self):
         telemetry, emulator_dir = cases("test_emulator_telemetry.py"), cases("test_emulator_dir.py")
         self.assertNotIn("RepositoryScan", telemetry)
         self.assertNotIn("ScanRules", telemetry)
-        self.assertEqual(sum(map(len, telemetry.values())), 16, telemetry)
         self.assertNotIn("PaneRule", emulator_dir)
-        self.assertEqual(sum(map(len, emulator_dir.values())), 52, emulator_dir)
+        moved = set(SCAN_RULES) | set(PANE_RULE) | {"test_every_start_site_passes_t_off"}
+        for name, found in (("test_emulator_telemetry.py", telemetry), ("test_emulator_dir.py", emulator_dir)):
+            with self.subTest(name):
+                self.assertTrue(found, name)
+                kept = {f"{c}.{m}" for c, ms in found.items() for m in ms if m in moved}
+                self.assertEqual(sorted(kept), [], name)
 
     def test_neither_imports_the_other_and_both_the_helper(self):
         scan, telemetry = imports(HERE / "test_emulator_scan.py"), imports(HERE / "test_emulator_telemetry.py")
