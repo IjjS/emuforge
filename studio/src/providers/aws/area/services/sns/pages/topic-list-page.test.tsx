@@ -314,6 +314,50 @@ describe('the topics list', () => {
     await expectRows([['keep', 'Standard', arnOf('keep')]]);
   });
 
+  it('the last row of page 2 deleted → the first page is read and shown, never "No topics"', async () => {
+    let second = [arnOf('b')];
+    vi.mocked(api.listTopics).mockImplementation((_, token) =>
+      Promise.resolve(token === '100' ? { arns: second } : { arns: [arnOf('a')], nextToken: '100' }),
+    );
+    vi.mocked(api.deleteTopic).mockImplementation(() => {
+      second = [];
+      return Promise.resolve();
+    });
+    open();
+    await expectRows([['a', 'Standard', arnOf('a')]]);
+    fireEvent.click(table().findPagination()?.findNextPageButton().getElement() as HTMLElement);
+    await expectRows([['b', 'Standard', arnOf('b')]]);
+    select('b');
+    fireEvent.click(action('Delete'));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByRole('textbox'), { target: { value: 'delete' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+    await waitFor(() => {
+      expect(screen.getByText('Deleted topic b')).toBeInTheDocument();
+    });
+    await expectRows([['a', 'Standard', arnOf('a')]]);
+    expect(vi.mocked(api.listTopics).mock.calls.at(-1)?.[1]).toBeUndefined();
+    expect(table().findPagination()?.findCurrentPage().getElement().textContent).toBe('1');
+    expect(screen.queryByText('No topics')).not.toBeInTheDocument();
+  });
+
+  it('"Refresh" of a page 2 now empty → the first page is read and shown, never "No topics"', async () => {
+    let second = [arnOf('b')];
+    vi.mocked(api.listTopics).mockImplementation((_, token) =>
+      Promise.resolve(token === '100' ? { arns: second } : { arns: [arnOf('a')], nextToken: '100' }),
+    );
+    open();
+    await expectRows([['a', 'Standard', arnOf('a')]]);
+    fireEvent.click(table().findPagination()?.findNextPageButton().getElement() as HTMLElement);
+    await expectRows([['b', 'Standard', arnOf('b')]]);
+    second = [];
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await expectRows([['a', 'Standard', arnOf('a')]]);
+    expect(vi.mocked(api.listTopics).mock.calls.at(-1)?.[1]).toBeUndefined();
+    expect(table().findPagination()?.findCurrentPage().getElement().textContent).toBe('1');
+    expect(screen.queryByText('No topics')).not.toBeInTheDocument();
+  });
+
   it('a failed delete → the failure in the Flashbar and the row stays', async () => {
     holdTopics({ '': { arns: [arnOf('orders')] } });
     vi.mocked(api.deleteTopic).mockRejectedValue(
