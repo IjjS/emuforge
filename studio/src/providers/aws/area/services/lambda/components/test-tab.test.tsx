@@ -54,6 +54,9 @@ function announced(): string[] {
   return [...(region?.querySelectorAll('span') ?? [])].map((span) => span.textContent ?? '');
 }
 
+// jsdom lays nothing out and has no `scrollIntoView`; the tab calls it when a new answer arrives.
+Element.prototype.scrollIntoView = () => undefined;
+
 const ANSWER: InvokeAnswer = { payload: '{"got": {}, "version": "v1"}', log: 'echo-line a\nREPORT RequestId: 1' };
 
 describe('the tab "Test"', () => {
@@ -213,6 +216,78 @@ describe('the tab "Test"', () => {
       expect(block.querySelector('script, a, img')).toBeNull();
     }
     expect(result().querySelector('script, a, img')).toBeNull();
+  });
+});
+
+describe('the tab "Test" after the critique (final r1)', () => {
+  it('says Ctrl+Enter and Cmd+Enter in the Event header, and invokes on either in the field, not on Enter alone', () => {
+    const invoke = invocation();
+    render(<Harness invoke={invoke} />);
+    expect(
+      norm(
+        screen.getByRole('heading', { level: 2, name: 'Event' }).closest('[class*="header"]')?.parentElement
+          ?.textContent,
+      ),
+    ).toContain('The JSON the function receives as its event. Ctrl+Enter or Cmd+Enter in the field invokes.');
+    const native = field().findNativeTextarea().getElement();
+    fireEvent.keyDown(native, { key: 'Enter' });
+    expect(invoke.mutate).not.toHaveBeenCalled();
+    fireEvent.keyDown(native, { key: 'Enter', ctrlKey: true });
+    fireEvent.keyDown(native, { key: 'Enter', metaKey: true });
+    expect(invoke.mutate).toHaveBeenCalledTimes(2);
+    expect(invoke.mutate).toHaveBeenCalledWith('{}');
+  });
+
+  it('checks the text on Ctrl+Enter as on "Invoke"', () => {
+    const invoke = invocation();
+    render(<Harness invoke={invoke} initial={'{"a":'} />);
+    fireEvent.keyDown(field().findNativeTextarea().getElement(), { key: 'Enter', ctrlKey: true });
+    expect(norm(createWrapper(document.body).findFormField()?.findError()?.getElement().textContent)).toBe(
+      'Enter the event as one JSON value.',
+    );
+    expect(invoke.mutate).not.toHaveBeenCalled();
+  });
+
+  it('puts "Event" and "Result" in two columns of one grid, 12 wide at the default breakpoint (jsdom has no width)', () => {
+    render(<Harness invoke={invocation()} />);
+    const event = screen.getByRole('heading', { level: 2, name: 'Event' }).closest('[class*="grid-column"]');
+    const resultColumn = result().closest('[class*="grid-column"]');
+    expect(event).not.toBeNull();
+    expect(resultColumn).not.toBeNull();
+    expect(event).not.toBe(resultColumn);
+    expect(event?.parentElement).toBe(resultColumn?.parentElement);
+    for (const column of [event, resultColumn]) {
+      const names = [...(column?.classList ?? [])].join(' ');
+      expect(names).toMatch(/colspan-12/);
+    }
+  });
+
+  it('brings "Result" into view, nearest, when a new answer arrives, and leaves focus where it was', () => {
+    const scroll = vi.fn();
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = scroll;
+    try {
+      const { rerender, unmount } = render(<Harness invoke={invocation()} />);
+      expect(scroll).not.toHaveBeenCalled();
+      const native = field().findNativeTextarea().getElement();
+      native.focus();
+      rerender(<Harness invoke={invocation({ data: ANSWER, answers: 1 })} />);
+      expect(scroll).toHaveBeenCalledTimes(1);
+      expect(scroll).toHaveBeenCalledWith({ block: 'nearest' });
+      expect((scroll.mock.contexts[0] as Element).contains(result())).toBe(true);
+      expect(document.activeElement).toBe(native);
+      rerender(<Harness invoke={invocation({ data: ANSWER, answers: 1, isPending: true })} />);
+      expect(scroll).toHaveBeenCalledTimes(1);
+      rerender(
+        <Harness invoke={invocation({ error: { kind: 'engine-did-not-answer', operation: 'Invoke' }, answers: 2 })} />,
+      );
+      expect(scroll).toHaveBeenCalledTimes(2);
+      unmount();
+      render(<Harness invoke={invocation({ data: ANSWER, answers: 2 })} />);
+      expect(scroll).toHaveBeenCalledTimes(2);
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
   });
 });
 

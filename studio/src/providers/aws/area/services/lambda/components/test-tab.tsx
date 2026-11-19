@@ -1,8 +1,8 @@
 import Button from '@cloudscape-design/components/button';
 import Container from '@cloudscape-design/components/container';
 import FormField from '@cloudscape-design/components/form-field';
+import Grid from '@cloudscape-design/components/grid';
 import Header from '@cloudscape-design/components/header';
-import SpaceBetween from '@cloudscape-design/components/space-between';
 import Textarea, { type TextareaProps } from '@cloudscape-design/components/textarea';
 import { useEffect, useRef, useState } from 'react';
 
@@ -43,7 +43,9 @@ export function TestTab({ eventText, onEventTextChange, invoke }: TestTabProps) 
   const [announcement, announce] = useAnnouncer();
   const outcome = invokeOutcome(invoke.data, invoke.error);
   // Each outcome is said once, when it arrives: not again when the tab is opened again on the same one.
+  // A new outcome is also brought into view, focus left where it is, so it is seen beside or below the event.
   const said = useRef(invoke.answers);
+  const resultPlace = useRef<HTMLDivElement>(null);
   const words = outcome?.words;
   useEffect(() => {
     if (invoke.answers !== said.current) {
@@ -51,6 +53,7 @@ export function TestTab({ eventText, onEventTextChange, invoke }: TestTabProps) 
       if (words !== undefined) {
         announce(words);
       }
+      resultPlace.current?.scrollIntoView({ block: 'nearest' });
     }
   }, [invoke.answers, words, announce]);
 
@@ -67,41 +70,53 @@ export function TestTab({ eventText, onEventTextChange, invoke }: TestTabProps) 
     invoke.mutate(eventText);
   };
 
+  const handleKeyDown = ({ detail }: { detail: { key: string; ctrlKey: boolean; metaKey: boolean } }) => {
+    if (detail.key === 'Enter' && (detail.ctrlKey || detail.metaKey)) {
+      handleInvoke();
+    }
+  };
+
+  // "Event" and "Result" side by side from Cloudscape's `l` breakpoint, stacked below it.
   return (
-    <SpaceBetween size="l">
+    <>
       {announcement}
-      <Container
-        header={
-          <Header
-            variant="h2"
-            description="The JSON the function receives as its event."
-            actions={
-              <Button variant="primary" loading={invoke.isPending} onClick={handleInvoke}>
-                {invoke.isPending ? 'Invoking' : 'Invoke'}
-              </Button>
-            }
-          >
-            Event
-          </Header>
-        }
-      >
-        <FormField label="Event JSON" stretch errorText={fieldError}>
-          <Textarea
-            ref={field}
-            value={eventText}
-            rows={8}
-            spellcheck={false}
-            invalid={fieldError !== undefined}
-            onChange={({ detail }) => {
-              setFieldError(undefined);
-              onEventTextChange(detail.value);
-            }}
-          />
-        </FormField>
-      </Container>
-      <Container header={<Header variant="h2">Result</Header>}>
-        <InvokeResult outcome={outcome} />
-      </Container>
-    </SpaceBetween>
+      <Grid gridDefinition={[{ colspan: { default: 12, l: 6 } }, { colspan: { default: 12, l: 6 } }]}>
+        <Container
+          header={
+            <Header
+              variant="h2"
+              description="The JSON the function receives as its event. Ctrl+Enter or Cmd+Enter in the field invokes."
+              actions={
+                <Button variant="primary" loading={invoke.isPending} onClick={handleInvoke}>
+                  {invoke.isPending ? 'Invoking' : 'Invoke'}
+                </Button>
+              }
+            >
+              Event
+            </Header>
+          }
+        >
+          <FormField label="Event JSON" stretch errorText={fieldError}>
+            <Textarea
+              ref={field}
+              value={eventText}
+              rows={8}
+              spellcheck={false}
+              invalid={fieldError !== undefined}
+              onKeyDown={handleKeyDown}
+              onChange={({ detail }) => {
+                setFieldError(undefined);
+                onEventTextChange(detail.value);
+              }}
+            />
+          </FormField>
+        </Container>
+        <div ref={resultPlace}>
+          <Container header={<Header variant="h2">Result</Header>}>
+            <InvokeResult outcome={outcome} />
+          </Container>
+        </div>
+      </Grid>
+    </>
   );
 }
