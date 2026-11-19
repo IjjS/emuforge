@@ -833,11 +833,17 @@ describe('Connection: a count and its unit (issue 32, R4.1)', () => {
 
 /** The line that names the target in the "Connection" section, or `null` when the section shows none. */
 function targetLine(): HTMLElement | null {
-  return (
-    within(connectionSection())
-      .queryAllByText(/^Target /)
-      .find((el) => el.tagName === 'P') ?? null
-  );
+  return paragraphStarting(connectionSection(), 'Target ');
+}
+
+/** The paragraph of `scope` whose whole text starts with `start`, its parts in elements of their own included. */
+function paragraphStarting(scope: HTMLElement, start: string): HTMLElement | null {
+  return [...scope.querySelectorAll('p')].find((p) => norm(p.textContent).startsWith(start)) ?? null;
+}
+
+/** The target's name as the line draws it: in the code face, an element of its own. */
+function nameInCode(line: HTMLElement): string | undefined {
+  return line.querySelector('code')?.textContent ?? undefined;
 }
 
 /** The section's "Manage connections" link. */
@@ -864,6 +870,7 @@ describe('Connection: the target and the way to the connections page (issue 486,
 
     const line = present(targetLine(), 'the target line');
     expect(norm(line.textContent)).toBe('Target local');
+    expect(nameInCode(line)).toBe('local');
     expect(rowList().contains(line)).toBe(false);
     const link = manageLink();
     expect(link).toHaveAttribute('href', '/connections');
@@ -876,7 +883,9 @@ describe('Connection: the target and the way to the connections page (issue 486,
   it('emulator not started with target second: "Target second" and the link', async () => {
     await openHomeAnswered(emulatorDownOn('second', 9297));
     expect(row('Emulator').status).toBe('Not started');
-    expect(norm(present(targetLine(), 'the target line').textContent)).toBe('Target second');
+    const line = present(targetLine(), 'the target line');
+    expect(norm(line.textContent)).toBe('Target second');
+    expect(nameInCode(line)).toBe('second');
     expect(manageLink()).toHaveAttribute('href', '/connections');
   });
 
@@ -927,10 +936,10 @@ describe('Connection: the target and the way to the connections page (issue 486,
     renderApp('/', languageStore('de'));
     await advance();
     const section = screen.getByRole('region', { name: german['connection.title'] });
-    const line = within(section)
-      .getAllByText(german['connection.target'].replace('{target}', 'local'))
-      .find((el) => el.tagName === 'P');
-    expect(line).toBeDefined();
+    const [before] = german['connection.target'].split('{target}');
+    const line = present(paragraphStarting(section, norm(before)), 'the German target line');
+    expect(norm(line.textContent)).toBe(norm(german['connection.target'].replace('{target}', 'local')));
+    expect(nameInCode(line)).toBe('local');
     expect(within(section).getByRole('link', { name: german['connection.manage'] })).toHaveAttribute(
       'href',
       '/connections',
