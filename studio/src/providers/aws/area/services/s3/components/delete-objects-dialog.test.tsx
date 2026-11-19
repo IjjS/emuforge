@@ -278,12 +278,35 @@ describe('the delete dialog, what it says', () => {
     ).toBeInTheDocument();
   });
 
-  it('with versioning "Enabled" the delete-marker sentence is shown', async () => {
-    engine.versioning = 'Enabled';
-    const { dialog } = await openDialog({ selection: { keys: ['a.txt'], folders: [] } });
+  it.each([
+    [{ keys: ['a.txt', 'b.txt'], folders: [] }, undefined],
+    [{ keys: ['cfg/app.json'], folders: [] }, 'cfg/app.json'],
+  ])('%j (single %s), no folder: no folder clause', async (selection, single) => {
+    const { dialog } = await openDialog({ selection, ...(single === undefined ? {} : { single }) });
     await waitFor(() => {
-      expect(dialog.textContent).toContain(MARKER);
+      expect(engine.seen.some((seen) => seen.url.searchParams.has('versioning'))).toBe(true);
     });
+    expect(
+      within(dialog).getByText(
+        byWholeText("These are removed from alpha in your local emulator. This can't be undone."),
+      ),
+    ).toBeInTheDocument();
+    expect(dialog.textContent).not.toContain('under each folder');
+  });
+
+  it('with versioning "Enabled" the delete-marker sentence is shown, and the delete is not said to be final', async () => {
+    engine.versioning = 'Enabled';
+    const { dialog } = await openDialog({ selection: { keys: ['a.txt'], folders: ['tmp/'] } });
+    await waitFor(() => {
+      expect(
+        within(dialog).getByText(
+          byWholeText(
+            'These are removed from alpha in your local emulator, with every object under each folder. ' + MARKER,
+          ),
+        ),
+      ).toBeInTheDocument();
+    });
+    expect(dialog.textContent).not.toContain("can't be undone");
   });
 
   it.each([['Suspended'], ['Disabled'], [undefined]])('with versioning %s, no such sentence', async (status) => {
@@ -297,6 +320,7 @@ describe('the delete dialog, what it says', () => {
       await Promise.resolve();
     });
     expect(dialog.textContent).not.toContain(MARKER);
+    expect(dialog.textContent).toContain("This can't be undone.");
   });
 });
 

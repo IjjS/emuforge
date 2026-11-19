@@ -249,9 +249,9 @@ function ObjectView({ bucket, objectKey, connection }: ObjectViewProps) {
       {failure === undefined && head !== undefined && (
         <SpaceBetween size="l">
           <ObjectOverview bucket={bucket} head={head} />
+          <ObjectPreview read={preview} connection={connection} />
           <ObjectMetadata head={head} />
           <ObjectTags read={tags} connection={connection} />
-          <ObjectPreview read={preview} connection={connection} />
         </SpaceBetween>
       )}
       <DeleteObjectsDialog
