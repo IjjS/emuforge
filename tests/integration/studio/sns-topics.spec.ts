@@ -9,7 +9,7 @@
 // the pages, or opens S3 by its address. Words, direct calls and readers: `services/sns/sns.ts`.
 
 import { expect, startStack, test } from './support';
-import { expectLine, notStartedOn } from './support/aws-area';
+import { connectedAt, expectLine, notStartedOn } from './support/aws-area';
 import { ACTION, addressOf, heading } from './support/frame';
 import { Lines } from './support/lines';
 import { checkPrefix } from './support/service-screens';
@@ -382,6 +382,7 @@ test('studio.sns-screens-follow-an-emulator-restart', async ({ ctx, page, contex
       await expectLine(second, notStartedOn(port));
       await emulator.startAgain();
       await page.bringToFront();
+      await expectLine(page, connectedAt(port), 60_000);
       const s = listScreen(page);
       await expect(s.table.getByText(NO_TOPICS, { exact: true }), `"${NO_TOPICS}"`).toBeVisible({ timeout: 60_000 });
       expect(await rowsOf(s.table), 'rows on S1').toEqual([]);
