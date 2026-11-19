@@ -1,11 +1,15 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { RequestError, type RequestFailure } from '../../../../../lib/aws/request';
 import {
   cancelMessageMoveTask,
+  createQueue,
   deleteMessages,
+  deleteQueue,
   getQueueArn,
+  isQueueNameTaken,
+  listDeadLetterChoices,
   listMessageMoveTasks,
   listQueuePage,
   listQueues,
@@ -15,20 +19,25 @@ import {
   receiveMessages,
   sendMessage,
   startMessageMoveTask,
+  type ChoicePage,
   type DeleteMessagesResult,
   type MessageToDelete,
   type MoveRequest,
   type MoveTask,
+  type NewQueue,
   type NoSuchQueue,
   type OutgoingMessage,
   type QueueDetails,
+  type QueueChoice,
   type QueuePage,
   type QueueRow,
   type ReadMessage,
   type SendTarget,
   type SentMessage,
 } from './api';
-import { queueNameFromUrl } from './format';
+import { queueNameFromUrl, type QueueKind } from './format';
+
+export type { QueueChoice } from './api';
 
 // The TanStack Query hooks of the SQS screens (issue 481, design tasks 1 to 5). Every read is a request of its own
 // on every mount, "Refresh" and "Retry", under a key that holds what it was asked with; a read no longer wanted is
@@ -295,12 +304,6 @@ export function useMoveTasks(
   };
 }
 
-/** A queue the redrive's destination select offers. */
-export interface QueueChoice {
-  name: string;
-  url: string;
-}
-
 /** The queues whose names start with `filter`, as typed: the first `QUEUE_CHOICES` of `ListQueues`. */
 export function useQueueChoices(
   endpoint: string | undefined,
@@ -337,6 +340,76 @@ export function useQueueChoices(
     value: query.data,
     failure: query.isError ? failureOf(query.error, OPERATIONS.listQueues) : undefined,
     loading: query.isFetching || (enabled && endpoint === undefined),
+    refresh,
+  };
+}
+
+/** The dead-letter field's choices as "Create queue" shows them (issue 489). */
+export interface DeadLetterChoices {
+  /** The prefix of this list, the field's filter as last sent; `''` for none. */
+  prefix: string;
+  /** The queues of the type, every page read so far in the emulator's order; `undefined` until the first arrives. */
+  choices: QueueChoice[] | undefined;
+  /** Why the last `ListQueues` failed. */
+  failure: RequestFailure | undefined;
+  /** A page is in flight, or waits for the engine's address. */
+  loading: boolean;
+  /** The last page read carried a `NextToken`. */
+  more: boolean;
+  /** Reads the next page, on the last page's token. */
+  loadMore: () => void;
+  /** Reads the list again from its first page ("Retry"). */
+  refresh: () => void;
+}
+
+/**
+ * The dead-letter choices of a queue of `kind`: `ListQueues` a page at a time on its own tokens, the filter as typed
+ * its `QueueNamePrefix` once it has settled, only the queues of `kind` kept. Its key holds the prefix and the type, so
+ * a change of either asks again from the first page.
+ */
+export function useDeadLetterChoices(
+  endpoint: string | undefined,
+  kind: QueueKind,
+  filter: string,
+  enabled: boolean,
+): DeadLetterChoices {
+  const prefix = useSettled(filter, FILTER_DELAY_MS);
+  const [mount] = useState(() => (mounts += 1));
+  const [generation, setGeneration] = useState(0);
+  const query = useInfiniteQuery({
+    queryKey: [...SQS_KEY, 'dead-letter-choices', endpoint, mount, generation, kind, prefix],
+    queryFn: ({ signal, pageParam }): Promise<ChoicePage> =>
+      endpoint === undefined
+        ? noEndpoint()
+        : listDeadLetterChoices(
+            endpoint,
+            { kind, prefix, ...(pageParam === undefined ? {} : { token: pageParam }) },
+            signal,
+          ),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.nextToken,
+    enabled: enabled && endpoint !== undefined,
+    staleTime: 0,
+    gcTime: 0,
+    retry: false,
+    structuralSharing: false,
+  });
+  const { hasNextPage, isFetching, fetchNextPage } = query;
+  const loadMore = useCallback(() => {
+    if (hasNextPage && !isFetching) {
+      void fetchNextPage();
+    }
+  }, [hasNextPage, isFetching, fetchNextPage]);
+  const refresh = useCallback(() => {
+    setGeneration((current) => current + 1);
+  }, []);
+  return {
+    prefix,
+    choices: query.data?.pages.flatMap((page) => page.choices),
+    failure: query.isError ? failureOf(query.error, OPERATIONS.listQueues) : undefined,
+    loading: isFetching || (enabled && endpoint === undefined),
+    more: hasNextPage,
+    loadMore,
     refresh,
   };
 }
@@ -418,5 +491,56 @@ export function useQueueArn(
   return useCallback(
     (url: string, signal: AbortSignal) => (endpoint === undefined ? noEndpoint() : getQueueArn(endpoint, url, signal)),
     [endpoint],
+  );
+}
+
+/** What "Create queue" ends with when no request failed. */
+export type CreateQueueOutcome = { outcome: 'taken' } | { outcome: 'created'; url: string };
+
+/**
+ * "Create queue" (issue 489): `GetQueueUrl` of the name first, and `CreateQueue` only when the emulator holds no queue
+ * of it. A failure of either rejects as it came, and nothing more is sent. Once created, the listing is read again.
+ */
+export function useCreateQueue(
+  endpoint: string | undefined,
+): (queue: NewQueue, signal: AbortSignal) => Promise<CreateQueueOutcome> {
+  const client = useQueryClient();
+  return useCallback(
+    async (queue: NewQueue, signal: AbortSignal): Promise<CreateQueueOutcome> => {
+      if (endpoint === undefined) {
+        noEndpoint();
+      }
+      if (await isQueueNameTaken(endpoint, queue.name, signal)) {
+        return { outcome: 'taken' };
+      }
+      const url = await createQueue(endpoint, queue, signal);
+      void client.invalidateQueries({ queryKey: [...SQS_KEY, 'list'] });
+      return { outcome: 'created', url };
+    },
+    [endpoint, client],
+  );
+}
+
+/**
+ * "Delete" of the queue `name` at `url` (issue 490). The listing is read again whether it succeeded or not, since a
+ * refusal may say the queue is already gone; once deleted, the queue's own reads are dropped, not read again.
+ */
+export function useDeleteQueue(
+  endpoint: string | undefined,
+): (name: string, url: string, signal: AbortSignal) => Promise<void> {
+  const client = useQueryClient();
+  return useCallback(
+    async (name: string, url: string, signal: AbortSignal) => {
+      if (endpoint === undefined) {
+        noEndpoint();
+      }
+      try {
+        await deleteQueue(endpoint, url, signal);
+        client.removeQueries({ queryKey: queueKey(name) });
+      } finally {
+        void client.invalidateQueries({ queryKey: [...SQS_KEY, 'list'] });
+      }
+    },
+    [endpoint, client],
   );
 }

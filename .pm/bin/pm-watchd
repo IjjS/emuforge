@@ -31,6 +31,11 @@ _pmroute.py): a line about a worker, rev or crit pane of an issue, or about a wo
   EVENT emulator-image failed <reason>                        a refresh failed; aws-emulator was left as it was (pm-emulator-image)
   EVENT blocked <pane>                                          a pane waits at a permission/question dialog
   EVENT gone <pane>                                             a registered pane disappeared
+  EVENT unregistered <pane> <pane id>                           herdr holds an agent named like a pane (i<n>-<role>[-<unit>]) in
+                                                                this checkout or a worktree of it that the registry does not hold
+                                                                in that pane, and no pm-pane opens or closes it now (issue 504);
+                                                                judged on every look, which herdr's pane events and the end of a
+                                                                pm-pane new or close bring; told once per pane
   EVENT stale <pane> <hours>                                    working with no state change for --stale-hours
   EVENT ctx <pane> <tokens>                                     a pane's context passed --ctx (again every +50K)
   EVENT ctx pm <tokens>                                         the PM's own context passed --pm-ctx
@@ -50,6 +55,10 @@ newer prompt echo below it). REVIEWED, RESET READY and WAITING lines are logged 
 (pm-pane reset) is logged; any other turn without a typed line is EVENT silent. Lines that cannot be delivered (PM blocked, PM pane missing, herdr down) are queued
 and retried every tick. If the PM stays idle 10 min after a delivery without a state change the line is sent again
 once, then a herdr notification is shown. Log: .pm/run/events.log (stderr crashes: .pm/run/watchd.log).
+One daemon runs at a time: `run` holds .pm/run/watchd.lock for its life, so only it writes its state
+(watchd-state.json); a second one waits up to 10 s for it (a restart's stopped daemon ending) and otherwise logs
+`another pm-watchd holds watchd.lock; exiting` and exits. waiting.json and pm.json are changed only under their lock
+(_pmlib.update), as pm-pane and pm-check change them (issue 504).
 """
 import argparse
 import json
@@ -61,12 +70,15 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _pmlib import (CHECKS, EVENTS, PANES, PMINFO, ROOT, RUN, WAITING, WORKTREES, agents, check_room, cpu_pct, find_key, herdr,
-                    load, log, machine_room, mem_gb, notify, now, pane_rss_gb, resetting, room, save, transcript_ctx)
+from _pmlib import (CHECKS, EVENTS, PANE_ROLES, PANES, PMINFO, ROOT, RUN, WAITING, WORKTREES, agents, check_room, cpu_pct,
+                    find_key, herdr, load, log, machine_room, mem_gb, notify, now, pane_ops, pane_rss_gb, resetting, room,
+                    save, transcript_ctx, update)
 from _pmroute import PM as TO_PM, route
 from _pmwake import Waker
 
 PID = RUN / "watchd.pid"
+LOCK = RUN / "watchd.lock"  # held by the running daemon for its whole life: one daemon writes STATE (issue 504)
+LOCK_WAIT = 10  # seconds a starting daemon waits for the one a restart stopped to end
 WAKE = RUN / "watchd.wake"  # this daemon's pid while it handles SIGUSR1 (_pmlib.wake_watchd reads it)
 LOG = RUN / "watchd.log"
 STATE = RUN / "watchd-state.json"
@@ -142,7 +154,8 @@ def room_tick(st, reg, checks=check_room, freed=None, given=None):
     if freed:
         log(f"room judged ({freed}): {len(out)} told")
     if done:
-        save(WAITING, [w for w in load(WAITING, []) if w not in done])  # re-read: pm-pane may have added one meanwhile
+        with update(WAITING, []) as rows:  # under the lock: pm-pane or pm-check may add one at this moment (issue 504)
+            rows[:] = [w for w in rows if w not in done]
     return out
 
 
@@ -185,6 +198,38 @@ def turn_end(name, entry, reported_at, last, at):
     if resetting(entry, at):
         return None, f"turn-end {name} (reset)"
     return f"EVENT silent {name}", None
+
+
+PANE_NAME = re.compile(r"i\d+-(?:" + "|".join(re.escape(r) for r in PANE_ROLES) + r")(?:-\S+)?")
+
+
+def ours(cwd, root=ROOT):
+    """True when an agent's cwd is the main checkout or a worktree beside it (<root>-<…>)."""
+    if not isinstance(cwd, str) or not cwd:
+        return False
+    real, root = os.path.realpath(cwd), os.path.realpath(str(root))
+    return real == root or real.startswith(root + "-") or real.startswith(root + os.sep)
+
+
+def unregistered(ags, reg, ops, told, root=ROOT):
+    """EVENT unregistered <name> <pane id> for each agent herdr holds under a pane's name (i<n>-<role>[-<unit>]) in this
+    checkout or a worktree of it that no live registry entry holds in that pane, and that no pm-pane opens or closes
+    now (`ops`, _pmlib.pane_ops) (issue 504). `told` ({name: pane id}, the daemon's state) keeps each told once per
+    pane; a name registered or gone since is forgotten, so a later loss is told again."""
+    held = {(r.get("name"), r.get("pane_id")) for r in reg if not r.get("gone")}
+    out, now_missing = [], {}
+    for x in ags:
+        name, pane = x.get("name"), x.get("pane_id")
+        if not isinstance(name, str) or not PANE_NAME.fullmatch(name) or not ours(x.get("cwd"), root):
+            continue
+        if (name, pane) in held or name in ops:
+            continue
+        now_missing[name] = pane
+        if told.get(name) != pane:
+            out.append(f"EVENT unregistered {name} {pane}")
+    told.clear()
+    told.update(now_missing)
+    return out
 
 
 def deliver(pm_a, lines, st):
@@ -348,6 +393,22 @@ def check_ctx(prev, session, limit, label):
     return None
 
 
+def hold_lock(wait=LOCK_WAIT):
+    """The open lock file, held for the daemon's life, or None when another daemon still holds it after `wait`."""
+    import fcntl
+    f = open(LOCK, "a")
+    end = time.time() + wait
+    while True:
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return f
+        except OSError:
+            if time.time() >= end:
+                f.close()
+                return None
+            time.sleep(0.2)
+
+
 def run(a):
     pm = a.pm
     st = load(STATE, {"seen": {}, "last_mem": 0, "pending": None, "queue": [], "pm": {}})
@@ -467,6 +528,9 @@ def run(a):
                     st["tokens_over"] = False
                     freed.append("the token rate is under its target")
             events.extend(orphan_tick(st))
+            # a pane herdr holds that the registry does not (issue 504): judged on every look, which herdr's pane events
+            # (pane.created, pane.agent_detected) and the end of a pm-pane new or close (its wake) bring
+            events.extend(unregistered(ags_list, load(PANES, []), pane_ops(), st.setdefault("unregistered", {})))
             events.extend(room_tick(st, reg, freed=", ".join(freed), given=given))
             if events:
                 for e in events:
@@ -596,6 +660,10 @@ def main():
         print(f"stopped {pid}" if pid else "not running")
         return
     if a.cmd == "run":
+        lock = hold_lock()
+        if lock is None:
+            log(f"another pm-watchd holds watchd.lock; exiting (pid {os.getpid()})")
+            sys.exit(1)
         PID.write_text(str(os.getpid()))
         log(f"watchd run pid={os.getpid()} pm={a.pm}")
         run(a)
@@ -618,21 +686,26 @@ def main():
     if not pm_a:
         print(f"note: no agent is detected in {pm_pane} yet; events will be delivered to the pane id once an agent runs there")
     pm_session = (pm_a.get("agent_session") or {}).get("value")
-    info = load(PMINFO, {})
-    sessions = [s for s in info.get("pm_sessions", []) if s] if info.get("pm_pane") == pm_pane else []
-    if pm_session and pm_session not in sessions:
-        sessions.append(pm_session)
+    old = load(PMINFO, {})
     pid = alive()
     if pid:
         stop()
-        print(f"restarting: pid {pid} watched {info.get('pm_pane')}/{info.get('pm_name')}, now {pm_pane}/{pm_a.get('name')}")
+        print(f"restarting: pid {pid} watched {old.get('pm_pane')}/{old.get('pm_name')}, now {pm_pane}/{pm_a.get('name')}")
         time.sleep(0.5)
-    # issues per PM session (pm-pane new appends): pm-cost shares a PM session's cost between the issues it ran
-    session_issues = info.get("session_issues", {}) if info.get("pm_pane") == pm_pane else {}
-    if pm_session:
-        session_issues.setdefault(pm_session, [])
-    save(PMINFO, dict(pm_pane=pm_pane, pm_name=pm_a.get("name"), pm_session=pm_session, pm_sessions=sessions, session_issues=session_issues,
-                      workspace=pm_a.get("workspace_id") or os.environ.get("HERDR_WORKSPACE_ID"), started=now()))
+    # under the lock, on pm.json as it is now: pm-pane new may add to session_issues at this moment (issue 504)
+    with update(PMINFO, {}) as info:
+        same = info.get("pm_pane") == pm_pane
+        sessions = [s for s in info.get("pm_sessions", []) if s] if same else []
+        if pm_session and pm_session not in sessions:
+            sessions.append(pm_session)
+        # issues per PM session (pm-pane new appends): pm-cost shares a PM session's cost between the issues it ran
+        session_issues = info.get("session_issues", {}) if same else {}
+        if pm_session:
+            session_issues.setdefault(pm_session, [])
+        info.clear()
+        info.update(pm_pane=pm_pane, pm_name=pm_a.get("name"), pm_session=pm_session, pm_sessions=sessions,
+                    session_issues=session_issues, workspace=pm_a.get("workspace_id") or os.environ.get("HERDR_WORKSPACE_ID"),
+                    started=now())
     args = [sys.executable, "-I", os.path.abspath(__file__), "run", "--pm", pm_pane, "--interval", str(a.interval),
             "--mem", str(a.mem), "--cpu", str(a.cpu), "--ctx", str(a.ctx), "--pm-ctx", str(a.pm_ctx), "--stale-hours", str(a.stale_hours)]
     with open(LOG, "a") as out:

@@ -5,8 +5,10 @@ import {
   bodyPreview,
   bytesToBase64,
   formattedJson,
+  maxReceivesMessage,
   nameFromArn,
   queueNameFromUrl,
+  queueNameMessage,
   queuePath,
   queueSettings,
   queueType,
@@ -100,5 +102,57 @@ describe('Base64', () => {
 
   it.each(['aGk', 'a*k=', 'aGk=x', '====', ''])('refuses %j, which is not Base64', (text) => {
     expect(base64ToBytes(text)).toBeUndefined();
+  });
+});
+
+describe('"Create queue": a name (issue 489)', () => {
+  const chars = (count: number) => 'a'.repeat(count);
+
+  it('orders, a-b_C9 and 80 characters as Standard: no message', () => {
+    expect(queueNameMessage('orders', 'standard')).toBeUndefined();
+    expect(queueNameMessage('a-b_C9', 'standard')).toBeUndefined();
+    expect(queueNameMessage(chars(80), 'standard')).toBeUndefined();
+  });
+
+  it('empty: "Enter a name."', () => {
+    expect(queueNameMessage('', 'standard')).toBe('Enter a name.');
+    expect(queueNameMessage('', 'fifo')).toBe('Enter a name.');
+  });
+
+  it('"p bad!": only letters, numbers, hyphens and underscores', () => {
+    expect(queueNameMessage('p bad!', 'standard')).toBe('Use only letters, numbers, hyphens (-) and underscores (_).');
+    expect(queueNameMessage('p bad!', 'fifo')).toBe('Use only letters, numbers, hyphens (-) and underscores (_).');
+  });
+
+  it('81 characters, and 76 characters + .fifo as FIFO: "Use at most 80 characters."', () => {
+    expect(queueNameMessage(chars(81), 'standard')).toBe('Use at most 80 characters.');
+    expect(queueNameMessage(`${chars(76)}.fifo`, 'fifo')).toBe('Use at most 80 characters.');
+  });
+
+  it('75 characters + .fifo as FIFO: no message', () => {
+    expect(queueNameMessage(`${chars(75)}.fifo`, 'fifo')).toBeUndefined();
+  });
+
+  it('orders as FIFO: it must end with .fifo', () => {
+    expect(queueNameMessage('orders', 'fifo')).toBe("A FIFO queue's name must end with .fifo.");
+  });
+
+  it('orders.fifo as Standard: only a FIFO queue’s name ends with .fifo', () => {
+    expect(queueNameMessage('orders.fifo', 'standard')).toBe(
+      "Only a FIFO queue's name ends with .fifo. Choose FIFO or change the name.",
+    );
+  });
+});
+
+describe('"Create queue": maximum receives (issue 489)', () => {
+  it('1 and 1000: no message', () => {
+    expect(maxReceivesMessage('1')).toBeUndefined();
+    expect(maxReceivesMessage('1000')).toBeUndefined();
+  });
+
+  it('0, 1001, 2.5, empty and abc: "Enter a whole number from 1 to 1000."', () => {
+    for (const text of ['0', '1001', '2.5', '', 'abc']) {
+      expect(maxReceivesMessage(text), text).toBe('Enter a whole number from 1 to 1000.');
+    }
   });
 });

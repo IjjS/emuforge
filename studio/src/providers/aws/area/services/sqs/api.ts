@@ -1,6 +1,8 @@
 import {
   CancelMessageMoveTaskCommand,
+  CreateQueueCommand,
   DeleteMessageBatchCommand,
+  DeleteQueueCommand,
   GetQueueAttributesCommand,
   GetQueueUrlCommand,
   ListDeadLetterSourceQueuesCommand,
@@ -17,7 +19,7 @@ import {
 
 import { createAwsClient } from '../../../../../lib/aws/client-factory';
 import { RequestError, sendRequest, type RequestFailure } from '../../../../../lib/aws/request';
-import { base64ToBytes, bytesToBase64, queueNameFromUrl, wholeNumber } from './format';
+import { base64ToBytes, bytesToBase64, isNameOfKind, queueNameFromUrl, wholeNumber, type QueueKind } from './format';
 
 // The SQS calls of the AWS area (issue 481, design tasks 1 to 5), through the engine, mapped to plain typed results.
 // Every command goes through the shared `sendRequest` with its operation's name, so a failed request rejects with
@@ -38,6 +40,8 @@ export const OPERATIONS = {
   startMessageMoveTask: 'StartMessageMoveTask',
   listMessageMoveTasks: 'ListMessageMoveTasks',
   cancelMessageMoveTask: 'CancelMessageMoveTask',
+  createQueue: 'CreateQueue',
+  deleteQueue: 'DeleteQueue',
 } as const;
 
 /** The emulator holds no queue of the name or URL asked. */
@@ -282,6 +286,118 @@ export async function listQueuePage(
   const { urls, nextToken } = await listQueues(endpoint, request, signal);
   const queues = await Promise.all(urls.map((url) => queueRow(endpoint, url, signal)));
   return nextToken === undefined ? { queues } : { queues, nextToken };
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Create and delete a queue (issues 489 and 490)
+
+/**
+ * Whether the emulator holds a queue named `name`: `GetQueueUrl` answers its URL (taken) or "no such queue" (free);
+ * any other failure rejects as it came. `CreateQueue` alone cannot tell: the emulator answers the name of a queue it
+ * holds, asked with the same attributes, as a success (decisions.md, Plan 2026-11-19).
+ */
+export async function isQueueNameTaken(endpoint: string, name: string, signal: AbortSignal): Promise<boolean> {
+  return (await getQueueUrl(endpoint, name, signal)) !== NO_SUCH_QUEUE;
+}
+
+/** A queue to create, as "Create queue" sets it; every other setting stays the emulator's default. */
+export interface NewQueue {
+  name: string;
+  kind: QueueKind;
+  /** `ContentBasedDeduplication`; sent for a FIFO queue only. */
+  contentBasedDeduplication: boolean;
+  /** The redrive policy, when a dead-letter queue is set. */
+  deadLetter?: { arn: string; maxReceiveCount: number };
+}
+
+/** The `Attributes` of `CreateQueue` for `queue`: only what the form set, nothing of FIFO for a standard queue. */
+export function newQueueAttributes({ kind, contentBasedDeduplication, deadLetter }: NewQueue): Record<string, string> {
+  const attributes: Record<string, string> = {};
+  if (kind === 'fifo') {
+    attributes['FifoQueue'] = 'true';
+    attributes['ContentBasedDeduplication'] = String(contentBasedDeduplication);
+  }
+  if (deadLetter !== undefined) {
+    attributes['RedrivePolicy'] = JSON.stringify({
+      deadLetterTargetArn: deadLetter.arn,
+      maxReceiveCount: String(deadLetter.maxReceiveCount),
+    });
+  }
+  return attributes;
+}
+
+/** `CreateQueue` of `queue`; the new queue's URL, as it came. */
+export async function createQueue(endpoint: string, queue: NewQueue, signal: AbortSignal): Promise<string> {
+  const attributes = newQueueAttributes(queue);
+  const output = await send(
+    endpoint,
+    OPERATIONS.createQueue,
+    (client, abortSignal) =>
+      client.send(
+        new CreateQueueCommand({
+          QueueName: queue.name,
+          ...(Object.keys(attributes).length === 0 ? {} : { Attributes: attributes }),
+        }),
+        { abortSignal },
+      ),
+    signal,
+  );
+  return output.QueueUrl ?? '';
+}
+
+/** `DeleteQueue` of the queue at `url`; a refusal ("no such queue" included) rejects as it came. */
+export async function deleteQueue(endpoint: string, url: string, signal: AbortSignal): Promise<void> {
+  await send(
+    endpoint,
+    OPERATIONS.deleteQueue,
+    (client, abortSignal) => client.send(new DeleteQueueCommand({ QueueUrl: url }), { abortSignal }),
+    signal,
+  );
+}
+
+/** A queue the dead-letter field offers. */
+export interface QueueChoice {
+  name: string;
+  url: string;
+}
+
+/** What one page of the dead-letter choices is asked with. */
+export interface ChoicePageRequest {
+  kind: QueueKind;
+  /** `QueueNamePrefix`; an empty text is not sent. */
+  prefix: string;
+  /** `NextToken`, the token of the page before. */
+  token?: string;
+}
+
+/** One page of the dead-letter choices: the queues of the kind asked, and the token when more follow. */
+export interface ChoicePage {
+  choices: QueueChoice[];
+  nextToken?: string;
+}
+
+/** How many queues one page of the dead-letter choices asks for. */
+export const CHOICE_PAGE_SIZE = 50;
+
+/**
+ * One page of `ListQueues` for the dead-letter field: the typed prefix and the page's token, keeping only the queues
+ * of `kind` (a FIFO queue's name ends with `.fifo`, a standard queue's does not), since the emulator refuses a
+ * dead-letter queue of the other type.
+ */
+export async function listDeadLetterChoices(
+  endpoint: string,
+  { kind, prefix, token }: ChoicePageRequest,
+  signal: AbortSignal,
+): Promise<ChoicePage> {
+  const { urls, nextToken } = await listQueues(
+    endpoint,
+    { pageSize: CHOICE_PAGE_SIZE, prefix, ...(token === undefined ? {} : { token }) },
+    signal,
+  );
+  const choices = urls
+    .map((url) => ({ name: queueNameFromUrl(url), url }))
+    .filter((choice) => isNameOfKind(choice.name, kind));
+  return nextToken === undefined ? { choices } : { choices, nextToken };
 }
 
 // ---------------------------------------------------------------------------------------------------------------

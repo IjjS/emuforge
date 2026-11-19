@@ -1,5 +1,7 @@
 """Shared helpers for the .pm/bin scripts. Not a command."""
+import contextlib
 import datetime as dt
+import fcntl
 import json
 import os
 import pathlib
@@ -41,10 +43,45 @@ def load(path, default):
 
 
 def save(path, obj):
+    """Write obj as JSON through a temp file of this writer's own in the same folder, then move it over the file, so a
+    reader sees the old file or the new one and two writers never share a temp file (issue 504). A file several
+    processes change is changed with `update`, never with a load and a save of its own."""
+    import tempfile
     path = pathlib.Path(path)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(obj, ensure_ascii=False, indent=1))
-    tmp.replace(path)
+    fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(json.dumps(obj, ensure_ascii=False, indent=1))
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+
+
+@contextlib.contextmanager
+def locked(path):
+    """Hold the lock of a shared file: flock on `<file>.lock` beside it (the file itself cannot carry the lock, since
+    save moves a new file over it). Blocks until the holder lets go."""
+    path = pathlib.Path(path)
+    with open(path.with_name(path.name + ".lock"), "a") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
+
+
+@contextlib.contextmanager
+def update(path, default):
+    """One read-change-write of a shared file under its lock (issue 504): yields the loaded value (`default` when the
+    file is missing or broken) to change in place, and saves it when the block ends without an exception. Whatever
+    changed the file before the lock was taken is in the value, so writers at the same moment lose nothing. The block
+    is short: no herdr call, no sleep, no subprocess."""
+    with locked(path):
+        obj = load(path, default)
+        yield obj
+        save(path, obj)
 
 
 def log(line):
@@ -162,6 +199,62 @@ def wake_watchd():
             os.kill(pid, signal.SIGUSR1)
     except (FileNotFoundError, ValueError, ProcessLookupError, PermissionError):
         pass
+
+
+# --- a pane that pm-pane opens or closes now (issue 504) ----------------------------------------------------------
+# While `pm-pane new` starts an agent and until its entry is in the registry, and while `pm-pane close` takes an entry
+# out and closes the pane, herdr and the registry differ on purpose. pm-pane marks the pane's name for that time with
+# a file .pm/run/pane-ops/<name> holding its pid; pm-watchd tells no `EVENT unregistered` of a marked name.
+PANE_OPS = RUN / "pane-ops"
+_OP_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+
+
+def _runs(pid, word):
+    """True when pid is a live process whose command line holds `word`."""
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    cmd = subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True).stdout
+    return word in cmd
+
+
+@contextlib.contextmanager
+def pane_op(name):
+    """Mark the pane `name` as being opened or closed by this process for the block; on the way out the mark goes and
+    pm-watchd is woken, so a pane this process left unregistered is judged at once."""
+    f = PANE_OPS / name if _OP_NAME.fullmatch(name or "") else None
+    if f is not None:
+        PANE_OPS.mkdir(parents=True, exist_ok=True)
+        f.write_text(str(os.getpid()))
+    try:
+        yield
+    finally:
+        if f is not None:
+            with contextlib.suppress(OSError):
+                if f.read_text().strip() == str(os.getpid()):
+                    f.unlink()
+        wake_watchd()
+
+
+def pane_ops():
+    """The names a live pm-pane is opening or closing now. A mark whose pid is dead or no longer a pm-pane is removed."""
+    out = set()
+    try:
+        files = list(PANE_OPS.iterdir())
+    except OSError:
+        return out
+    for f in files:
+        try:
+            pid = int(f.read_text().strip())
+        except (OSError, ValueError):
+            pid = None
+        if pid is not None and _runs(pid, "pm-pane"):
+            out.add(f.name)
+        else:
+            with contextlib.suppress(OSError):
+                f.unlink()
+    return out
 
 
 def pm_target():
@@ -348,14 +441,13 @@ def state_note(entry):
 def mark_resetting(name, on, at=None):
     """Set (on) or clear the registry entry's `resetting` (epoch s): a reset of the pane is in progress, so pm-watchd
     takes a turn end of it for the reset's own, not a silent turn."""
-    reg = load(PANES, [])
-    for r in reg:
-        if r.get("name") == name and not r.get("gone"):
-            if on:
-                r["resetting"] = time.time() if at is None else at
-            else:
-                r.pop("resetting", None)
-    save(PANES, reg)
+    with update(PANES, []) as reg:
+        for r in reg:
+            if r.get("name") == name and not r.get("gone"):
+                if on:
+                    r["resetting"] = time.time() if at is None else at
+                else:
+                    r.pop("resetting", None)
 
 
 def resetting(entry, at=None):
@@ -412,9 +504,9 @@ def room(role, side, issue, alive=None, tokens=True, given=None):
 
 def wait_for_room(asker, role, side, issue, reason):
     """Remember that a pane was told QUEUE; pm-watchd sends it `EVENT room <asker> pane <role> <side>` once there is room."""
-    rows = [w for w in load(WAITING, []) if not (w.get("asker") == asker and w.get("role") == role and w.get("side") == side)]
-    rows.append(dict(asker=asker, role=role, side=side, issue=str(issue), reason=reason, at=now()))
-    save(WAITING, rows)
+    with update(WAITING, []) as rows:
+        rows[:] = [w for w in rows if not (w.get("asker") == asker and w.get("role") == role and w.get("side") == side)]
+        rows.append(dict(asker=asker, role=role, side=side, issue=str(issue), reason=reason, at=now()))
 
 
 # --- asking for room to run a check (issue 478, part 2) ------------------------------------------------------------
@@ -430,12 +522,7 @@ RECENT = 20          # recorded durations a step's estimate is the median of
 
 
 def _is_pm_check(pid):
-    try:
-        os.kill(pid, 0)
-    except OSError:
-        return False
-    cmd = subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True).stdout
-    return "pm-check" in cmd
+    return _runs(pid, "pm-check")
 
 
 def running_checks():
@@ -529,10 +616,9 @@ def wait_for_check_room(asker, checkout, issue, reason, expected):
     """Remember that a pane was answered WAIT; pm-watchd sends it `EVENT room <asker> check <checkout>` once there is
     room. One row per asker and checkout; an asker answered WAIT again keeps its place and its first `at`, so the
     longest waiting is told first."""
-    rows = load(WAITING, [])
-    row = next((w for w in rows if w.get("asker") == asker and w.get("check") == checkout), None)
-    if row is None:
-        rows.append(dict(asker=asker, check=checkout, issue=str(issue), reason=reason, at=now(), expected=expected))
-    else:
-        row.update(reason=reason, expected=expected)
-    save(WAITING, rows)
+    with update(WAITING, []) as rows:
+        row = next((w for w in rows if w.get("asker") == asker and w.get("check") == checkout), None)
+        if row is None:
+            rows.append(dict(asker=asker, check=checkout, issue=str(issue), reason=reason, at=now(), expected=expected))
+        else:
+            row.update(reason=reason, expected=expected)
