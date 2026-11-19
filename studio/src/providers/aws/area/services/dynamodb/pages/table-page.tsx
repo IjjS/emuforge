@@ -79,6 +79,7 @@ interface TableViewProps {
 /** The tabs of a table that has been read; their state stays while the page shows the table. */
 function TableView({ table, timeToLive, connection, readings }: TableViewProps) {
   const [tab, setTab] = useState<TabId>('items');
+  const [selection, setSelection] = useState<readonly string[]>([]);
   const explorer = useItemsExplorer(table, connection);
   // Kept from the previous render, as React's own pattern for it, so each reading is acted on once.
   const [seenReadings, setSeenReadings] = useState(readings);
@@ -97,7 +98,15 @@ function TableView({ table, timeToLive, connection, readings }: TableViewProps) 
         {
           id: 'items',
           label: 'Items',
-          content: <ItemsTab table={table} explorer={explorer} connection={connection} />,
+          content: (
+            <ItemsTab
+              table={table}
+              explorer={explorer}
+              connection={connection}
+              selection={selection}
+              onSelectionChange={setSelection}
+            />
+          ),
         },
         { id: 'details', label: 'Details', content: <TableDetails table={table} timeToLive={timeToLive} /> },
       ]}

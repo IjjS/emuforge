@@ -7,21 +7,24 @@ import Container from '@cloudscape-design/components/container';
 import FormField from '@cloudscape-design/components/form-field';
 import Header from '@cloudscape-design/components/header';
 import Input from '@cloudscape-design/components/input';
+import Link from '@cloudscape-design/components/link';
 import Pagination from '@cloudscape-design/components/pagination';
 import SegmentedControl from '@cloudscape-design/components/segmented-control';
 import Select, { type SelectProps } from '@cloudscape-design/components/select';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Table, { type TableProps } from '@cloudscape-design/components/table';
-import { useId, type FormEvent, type ReactNode } from 'react';
+import { useId, useState, type FormEvent, type ReactNode } from 'react';
 
 import { useAreaModalRoot } from '../../../components/area-modal';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { readFailureState, ReadFailure, type ReadFailureState } from '../../../components/failure-states';
 import { ValueText } from '../../../components/value-text';
-import type { Item, Table as TableDescription } from '../api';
+import { keyOfItem, type Item, type Table as TableDescription } from '../api';
 import { cellText } from '../format';
 import { compareCodePoints } from '../item-json';
+import { DeleteItemsDialog, keyText } from './delete-items';
+import { useItemEditor } from './item-editor';
 import {
   ANY,
   conditionsFor,
@@ -267,12 +270,17 @@ export interface ItemsTabProps {
   table: TableDescription;
   explorer: ItemsExplorer;
   connection: AreaConnection;
+  /** The keys of the selected items, as `keyText` writes them; the page keeps them across its tabs. */
+  selection: readonly string[];
+  onSelectionChange: (selection: readonly string[]) => void;
 }
 
 /** "Items": the request, and the page of items it read. */
-export function ItemsTab({ table, explorer, connection }: ItemsTabProps) {
+export function ItemsTab({ table, explorer, connection, selection, onSelectionChange }: ItemsTabProps) {
   const modalRoot = useAreaModalRoot();
   const { exploration, applied, unreadable } = explorer;
+  const editor = useItemEditor(table, connection.engineOrigin);
+  const [deleting, setDeleting] = useState<Item[]>();
 
   if (unreadable !== undefined) {
     return (
@@ -288,12 +296,28 @@ export function ItemsTab({ table, explorer, connection }: ItemsTabProps) {
   const items = exploration.items ?? [];
   const state = bodyState(explorer, target, connection);
   const { keys, others } = columnNames(table, items);
+  const tableKeys = keysOf(table, '');
+  const trackBy = (item: Item) => keyText(item, tableKeys);
+  // The selected items of the page shown, in the page's order: a selection is of the page it was made on.
+  const selected = items.filter((item) => selection.includes(trackBy(item)));
   const columns: TableProps.ColumnDefinition<Item>[] = [
     ...keys.map((name, position) => ({
       id: `key-${String(position)}`,
       header: <ValueText kind="name" value={name} />,
       isRowHeader: position === 0,
-      cell: (item: Item) => <Cell item={item} name={name} kind="name" />,
+      cell: (item: Item) =>
+        position === 0 ? (
+          <Link
+            onFollow={(event) => {
+              event.preventDefault();
+              editor.open(item);
+            }}
+          >
+            <Cell item={item} name={name} kind="name" />
+          </Link>
+        ) : (
+          <Cell item={item} name={name} kind="name" />
+        ),
     })),
     ...others.map((name, position) => ({
       id: `attribute-${String(position)}`,
@@ -307,56 +331,96 @@ export function ItemsTab({ table, explorer, connection }: ItemsTabProps) {
   };
 
   return (
-    <Table<Item>
-      variant="container"
-      items={items}
-      columnDefinitions={columns}
-      wrapLines
-      loading={state.kind === 'loading'}
-      loadingText="Reading items"
-      ariaLabels={{ tableLabel: 'Items' }}
-      empty={<Body state={state} onRetry={exploration.refresh} />}
-      header={
-        <Header
-          variant="h2"
-          counter={exploration.items === undefined ? undefined : `(${String(exploration.items.length)})`}
-        >
-          {applied.read.kind === 'scan' ? 'Scan of ' : 'Query of '}
-          <ValueText kind="name" value={target} />
-        </Header>
-      }
-      filter={<Request table={table} explorer={explorer} />}
-      pagination={
-        <Pagination
-          currentPageIndex={exploration.currentPage}
-          pagesCount={exploration.pagesCount}
-          openEnd={exploration.openEnd}
-          disabled={exploration.loading}
-          ariaLabels={{
-            nextPageLabel: 'Next page',
-            previousPageLabel: 'Previous page',
-            pageLabel: (page) => `Page ${String(page)}`,
-          }}
-          onChange={({ detail }) => {
-            exploration.goToPage(detail.currentPageIndex);
-          }}
-        />
-      }
-      preferences={
-        <CollectionPreferences
-          {...modalRoot}
-          title="Preferences"
-          confirmLabel="Confirm"
-          cancelLabel="Cancel"
-          closeAriaLabel="Close modal"
-          preferences={{ pageSize: explorer.pageSize }}
-          pageSizePreference={{
-            title: 'Items per page',
-            options: PAGE_SIZES.map((size) => ({ value: size, label: `${String(size)} items` })),
-          }}
-          onConfirm={handlePreferences}
-        />
-      }
-    />
+    <>
+      <Table<Item>
+        variant="container"
+        items={items}
+        selectionType="multi"
+        trackBy={trackBy}
+        selectedItems={selected}
+        onSelectionChange={({ detail }) => {
+          onSelectionChange(detail.selectedItems.map(trackBy));
+        }}
+        ariaLabels={{
+          tableLabel: 'Items',
+          allItemsSelectionLabel: () => 'Select every item of the page',
+          itemSelectionLabel: (_, item) => `Select ${trackBy(item)}`,
+          selectionGroupLabel: 'Item selection',
+        }}
+        columnDefinitions={columns}
+        wrapLines
+        loading={state.kind === 'loading'}
+        loadingText="Reading items"
+        empty={<Body state={state} onRetry={exploration.refresh} />}
+        header={
+          <Header
+            variant="h2"
+            counter={exploration.items === undefined ? undefined : `(${String(exploration.items.length)})`}
+            actions={
+              <SpaceBetween direction="horizontal" size="xs">
+                <Button
+                  disabled={selected.length === 0}
+                  disabledReason="Select items first"
+                  onClick={() => {
+                    setDeleting(selected.map((item) => keyOfItem(item, tableKeys)));
+                  }}
+                >
+                  Delete
+                </Button>
+                <Button onClick={editor.create}>Create item</Button>
+              </SpaceBetween>
+            }
+          >
+            {applied.read.kind === 'scan' ? 'Scan of ' : 'Query of '}
+            <ValueText kind="name" value={target} />
+          </Header>
+        }
+        filter={<Request table={table} explorer={explorer} />}
+        pagination={
+          <Pagination
+            currentPageIndex={exploration.currentPage}
+            pagesCount={exploration.pagesCount}
+            openEnd={exploration.openEnd}
+            disabled={exploration.loading}
+            ariaLabels={{
+              nextPageLabel: 'Next page',
+              previousPageLabel: 'Previous page',
+              pageLabel: (page) => `Page ${String(page)}`,
+            }}
+            onChange={({ detail }) => {
+              exploration.goToPage(detail.currentPageIndex);
+            }}
+          />
+        }
+        preferences={
+          <CollectionPreferences
+            {...modalRoot}
+            title="Preferences"
+            confirmLabel="Confirm"
+            cancelLabel="Cancel"
+            closeAriaLabel="Close modal"
+            preferences={{ pageSize: explorer.pageSize }}
+            pageSizePreference={{
+              title: 'Items per page',
+              options: PAGE_SIZES.map((size) => ({ value: size, label: `${String(size)} items` })),
+            }}
+            onConfirm={handlePreferences}
+          />
+        }
+      />
+      {editor.dialog}
+      <DeleteItemsDialog
+        table={table.name}
+        keys={tableKeys}
+        items={deleting}
+        engineOrigin={connection.engineOrigin}
+        onDeleted={() => {
+          onSelectionChange([]);
+        }}
+        onClose={() => {
+          setDeleting(undefined);
+        }}
+      />
+    </>
   );
 }
