@@ -5,9 +5,10 @@ import Button, { type ButtonProps } from '@cloudscape-design/components/button';
 import Link from '@cloudscape-design/components/link';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator, { type StatusIndicatorProps } from '@cloudscape-design/components/status-indicator';
-import { useId, useState, type Ref } from 'react';
+import { use, useId, useState, type Ref } from 'react';
 
 import { targetOf, type CheckResult } from '../../../../lib/engine/engine-client';
+import { TargetChangeFlashContext } from './target-change-flash';
 import { useFollow } from './use-follow';
 
 /** The connection Studio hands the area (Studio's `ProviderConnection`; the area imports nothing of Studio's own). */
@@ -119,10 +120,10 @@ function isTargetChangeAlone(seen: LineState, next: LineState): boolean {
 /**
  * What the live region says (R4.5): the label and the whole line of a change of state, kept from the previous render
  * as React's own pattern for it. The state the line opened with says nothing; a later state that differs says itself,
- * except a first answer that is connected after "Checking" and a change of target alone (`isTargetChangeAlone`); the
- * same state again says nothing new.
+ * except a first answer that is connected after "Checking" and, on a page whose flash announces it, a change of target
+ * alone (`isTargetChangeAlone`); the same state again says nothing new.
  */
-function useAnnouncement(state: LineState): string {
+function useAnnouncement(state: LineState, flashCarriesTarget: boolean): string {
   const text = lineText(state);
   const [seen, setSeen] = useState({ state, text, announcement: '' });
   if (seen.text === text) {
@@ -130,7 +131,7 @@ function useAnnouncement(state: LineState): string {
   }
   const quiet =
     (statusText(seen.state.status) === statusText(CHECKING) && state.status.type === 'success') ||
-    isTargetChangeAlone(seen.state, state);
+    (flashCarriesTarget && isTargetChangeAlone(seen.state, state));
   const next = { state, text, announcement: quiet ? seen.announcement : text };
   setSeen(next);
   return next.announcement;
@@ -159,7 +160,7 @@ export function EmulatorLine({ connection, about, aboutRef }: EmulatorLineProps)
   const status = lineStatus(connection);
   // Only a state that comes from the emulator's answer names the target; an engine state names none.
   const target = connection.result === undefined || status === CHECKING ? undefined : targetOf(connection.result);
-  const announcement = useAnnouncement({ status, target });
+  const announcement = useAnnouncement({ status, target }, use(TargetChangeFlashContext));
   const state = (
     <SpaceBetween direction="horizontal" size="xs" alignItems="center">
       <span id={labelId}>

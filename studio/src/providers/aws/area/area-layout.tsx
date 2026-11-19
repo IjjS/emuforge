@@ -24,6 +24,7 @@ import { PageResourcesContext, type PageResources } from './components/page-reso
 import { screenCrumbs } from './screen-paths';
 import { useAreaFlash } from './components/use-area-flash';
 import { useFollow } from './components/use-follow';
+import { TargetChangeFlashContext } from './components/target-change-flash';
 import { useTargetChange } from './components/use-target-change';
 import { IndexPage } from './pages/index-page';
 import { NoScreenPage } from './pages/no-screen-page';
@@ -300,7 +301,10 @@ export function AreaLayout({
                 {/* One target per path, so a route change between two paths of the same page focuses a new element. */}
                 <ContentTarget key={pathname} targetRef={target}>
                   <SpaceBetween size="m">
-                    <EmulatorLineAndNotice connection={connection} resources={resources} />
+                    {/* The flash announces a change of target on a screen's page; elsewhere the line does. */}
+                    <TargetChangeFlashContext value={page.kind === 'screen'}>
+                      <EmulatorLineAndNotice connection={connection} resources={resources} />
+                    </TargetChangeFlashContext>
                     {flash.shown !== null && (
                       <AreaFlash result={flash.shown} onDismiss={flash.dismiss} onAnnounce={flash.announce} />
                     )}

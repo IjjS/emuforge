@@ -81,8 +81,10 @@ on the built app (`critique.md`).
   `{target}`"), in a polite live region that does not hold the link; a
   check that finds the same state announces nothing, and the first answer is announced only when it is not
   connected. A change of target that keeps the kind of status (connected to connected, say, even with another
-  endpoint) is announced by the area's flash ("The area in Studio's frame"), so the line's live region says nothing
-  of it; a change of the kind of status is announced as before, whatever the target.
+  endpoint) is announced by the area's flash on a screen's page ("The area in Studio's frame"), so there the line's
+  live region says nothing of it; on the area's own pages (its index, "no screen yet", "Page not found"), which show
+  no flash, the line's live region announces it, label and whole line, once. A change of the kind of status is
+  announced as before, whatever the target.
 - The line's height is not fixed: at 390 wide a long status may take a row more, so a check that compares
   positions on a page of the area measures after the line shows its first answer.
 
@@ -183,7 +185,8 @@ Applies to everything under `providers/aws/area/`, at `/aws` and below.
   and focus anywhere else (the line, the notice, the flash, the side navigation, Studio's bar) stays where it is. On a
   screen's page the flash shows the info result "The target is now `{target}`. This page now reads from it.",
   announced once as any flash, as soon as the connection Studio hands names a target other than the
-  one before the change. An area that mounts with the number already above `0` remounts nothing and shows no
+  one before the change; the area's own pages show no flash, and the emulator line announces the change there. An
+  area that mounts with the number already above `0` remounts nothing and shows no
   flash, and a route change with the same number is as any route change.
 - The frame, Home and the router read that list and name no provider themselves. Adding a provider is one new
   entry and that provider's own folder (`providers/<id>/provider.ts`, `providers/<id>/area/`); it changes no file

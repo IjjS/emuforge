@@ -2484,6 +2484,27 @@ describe('a change of target (issue 486, R3)', () => {
     expect(count()).toHaveTextContent('Count 1');
   });
 
+  it.each([
+    ["the area's index", '/aws'],
+    ['a service with no screen', '/aws/kinesis'],
+    ['the area\'s "Page not found"', '/aws/does-not-exist'],
+  ])(
+    "on %s, which shows no flash: the line's live region announces the change of target alone, once",
+    (_name, path) => {
+      const { wrapper } = open(path);
+      expect(liveRegionText()).toBe('');
+
+      changeToSecond();
+
+      expect(liveRegionText()).toBe(`${LINE_LABEL} Connected at https://127.0.0.1:9302. Target second`);
+      expect(flashTexts(wrapper)).toEqual([]);
+      expect(flashSaid()).toBe('');
+      // A later answer naming the same target says nothing more.
+      connection.set({ result: connectedTo('second', 9302), engineOrigin: ENGINE_ORIGIN });
+      expect(liveRegionText()).toBe(`${LINE_LABEL} Connected at https://127.0.0.1:9302. Target second`);
+    },
+  );
+
   it('the generation handed before the answer that names the new target: the flash names it once that answer comes', () => {
     const { wrapper } = openProbe();
 
