@@ -40,6 +40,11 @@ export interface SeenRequest {
   url: string;
   origin: string;
   path: string;
+  /**
+   * The engine's route the request asked for: its path on `127.0.0.1`, or, when `/config.json` names a channel path,
+   * its path under `<page origin><channel path>`. `undefined` for a request that did not reach the fake engine.
+   */
+  route: string | undefined;
   /** Header names lower-case. */
   headers: Record<string, string>;
   init: RequestInit;
@@ -209,10 +214,16 @@ function abortError(signal: AbortSignal): unknown {
   return signal.reason ?? new DOMException('The operation was aborted.', 'AbortError');
 }
 
-/** A fake engine on `127.0.0.1:<enginePort>`; install it with `vi.stubGlobal('fetch', engine.fetch)`. */
+/**
+ * A fake engine on `127.0.0.1:<enginePort>`, or at `<page origin><configPath>` when `configPath` is set (issue 503: the
+ * channel through Studio's port, which then answers nothing on loopback); install it with
+ * `vi.stubGlobal('fetch', engine.fetch)`.
+ */
 export class FakeEngine {
   /** What `/config.json` answers: an engine port, or `undefined` for a 404 (no Studio server). */
   configPort: number | undefined = 8297;
+  /** The channel path `/config.json` names beside the port; `undefined` names none. */
+  configPath: string | undefined = undefined;
   readonly requests: SeenRequest[] = [];
   /** Answers to session requests, in order; the last one repeats. */
   sessionAnswers: FakeAnswer[] = [{ status: 200, json: { token: TOKEN_1 } }];
@@ -232,7 +243,18 @@ export class FakeEngine {
 
   /** Requests to the engine's `path`. */
   to(path: string): SeenRequest[] {
-    return this.requests.filter((r) => r.origin.startsWith('http://127.0.0.1:') && r.path === path);
+    return this.requests.filter((r) => r.route === path);
+  }
+
+  /** The engine route of a request at `url`; `undefined` when the request does not reach this fake engine. */
+  private routeOf(url: URL): string | undefined {
+    if (this.configPath === undefined) {
+      return url.origin.startsWith('http://127.0.0.1:') ? url.pathname : undefined;
+    }
+    const channel = `${this.configPath}/`;
+    return url.origin === window.location.origin && url.pathname.startsWith(channel)
+      ? url.pathname.slice(this.configPath.length)
+      : undefined;
   }
 
   get sessions(): SeenRequest[] {
@@ -255,9 +277,7 @@ export class FakeEngine {
 
   /** Requests to the targets `route`, in order. */
   targetRequests(route: TargetsRoute): SeenRequest[] {
-    return this.requests.filter(
-      (r) => r.origin.startsWith('http://127.0.0.1:') && targetsRoute(r.method, r.path)?.route === route,
-    );
+    return this.requests.filter((r) => r.route !== undefined && targetsRoute(r.method, r.route)?.route === route);
   }
 
   /** What the targets `route` answers from the engine's state, changing it as the engine would. */
@@ -313,10 +333,12 @@ export class FakeEngine {
     const signal = init.signal ?? undefined;
     const method = (init.method ?? 'GET').toUpperCase();
     const body = parseBody(init.body);
+    const route = this.routeOf(url);
     this.requests.push({
       url: String(input),
       origin: url.origin,
       path: url.pathname,
+      route,
       headers,
       init,
       method,
@@ -327,16 +349,20 @@ export class FakeEngine {
       return Promise.resolve(
         this.configPort === undefined
           ? new Response('not found', { status: 404 })
-          : Response.json({ enginePort: this.configPort }),
+          : Response.json(
+              this.configPath === undefined
+                ? { enginePort: this.configPort }
+                : { enginePort: this.configPort, enginePath: this.configPath },
+            ),
       );
     }
     let answer: FakeAnswer;
-    const targets = targetsRoute(method, url.pathname);
+    const targets = route === undefined ? undefined : targetsRoute(method, route);
     if (targets !== undefined) {
       answer = this.targetsQueue.get(targets.route)?.shift() ?? this.targetsAnswer(targets.route, targets.name, body);
-    } else if (url.pathname === '/__emuforge/session') {
+    } else if (route === '/__emuforge/session') {
       answer = this.sessionAnswers[Math.min(this.sessionCount++, this.sessionAnswers.length - 1)] ?? { hang: true };
-    } else if (url.pathname === '/__emuforge/health') {
+    } else if (route === '/__emuforge/health') {
       answer = this.healthAnswers[Math.min(this.healthCount++, this.healthAnswers.length - 1)] ?? { hang: true };
     } else {
       answer = { network: true };

@@ -181,7 +181,7 @@ describe('engine client: the target and when a check started (issue 486, s1)', (
   /** One check of a client of the fake engine, started at `start` and answered `delayMs` later. */
   async function checkAt(start: number): Promise<CheckResult> {
     vi.setSystemTime(start);
-    const client = createEngineClient(8297);
+    const client = createEngineClient('http://127.0.0.1:8297');
     const pending = client.check();
     await vi.advanceTimersByTimeAsync(1_000);
     return pending;
@@ -266,7 +266,7 @@ describe('engine client: the target and when a check started (issue 486, s1)', (
   ])('a result %s carries the time its check started', async (_n, answer, kind) => {
     engine.healthAnswers = [answer];
     vi.setSystemTime(4_000_000);
-    const pending = createEngineClient(8297).check();
+    const pending = createEngineClient('http://127.0.0.1:8297').check();
     await vi.advanceTimersByTimeAsync(5_000);
     const result = await pending;
     expect(result.kind).toBe(kind);

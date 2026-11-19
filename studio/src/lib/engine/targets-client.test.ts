@@ -34,7 +34,7 @@ beforeEach(() => {
   engine = new FakeEngine();
   engine.targets = [LOCAL, SECOND];
   vi.stubGlobal('fetch', engine.fetch);
-  client = createTargetsClient(8297);
+  client = createTargetsClient('http://127.0.0.1:8297');
 });
 
 afterEach(() => {
