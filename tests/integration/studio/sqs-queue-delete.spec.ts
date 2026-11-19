@@ -35,6 +35,7 @@ import {
   queueRadio,
   QUEUES_PATH,
   queueUrlDirect,
+  searchQueues,
   sqsOk,
   SqsSeeded,
 } from './services/sqs/sqs';
@@ -54,12 +55,12 @@ test('studio.sqs-delete-queue-from-the-list', async ({ ctx, page }) => {
     async () => {
       expect((await countsDirect(ctx, port, orders.url)).available, 'the queue holds one message, directly').toBe(1);
       await open(page, QUEUES_PATH, LIST_H1);
-      await expectListed(page, p, [orders.name]);
+      await searchQueues(page, p, [orders.name]);
       await queueRadio(page, orders.name).check(ACTION);
       await main.getByRole('button', { name: DELETE, exact: true }).click(ACTION);
       await answered(page, 'DeleteQueue', () => confirmWith(page, 'delete', DELETE));
       await expectFlash(page, 'success', deletedQueue(orders.name));
-      await expectListed(page, p, []);
+      await expectListed(page, []);
       expect(
         await eventually(5_000, () => queueNamesDirect(ctx, port, p), (names) => names.length === 0),
         'the queues of the prefix, directly',
@@ -94,7 +95,7 @@ test('studio.sqs-delete-dead-letter-queue-from-its-page', async ({ ctx, page }) 
       await expect(page).toHaveURL(addressOf(QUEUES_PATH), { timeout: 15_000 });
       await expect(heading(page, LIST_H1)).toBeVisible();
       await expectFlash(page, 'success', deletedQueue(dlq.name));
-      await expectListed(page, p, [source.name]);
+      await searchQueues(page, p, [source.name]);
       expect(
         await eventually(5_000, () => queueUrlDirect(ctx, port, dlq.name), (v) => v === null),
         'GetQueueUrl of the dead-letter queue, directly',
