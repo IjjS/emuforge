@@ -6,7 +6,7 @@ import SpaceBetween from '@cloudscape-design/components/space-between';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { useState, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { createMemoryRouter, RouterProvider, useLocation, useNavigate } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -102,6 +102,15 @@ class Connection {
 
   readonly get = () => this.value;
 
+  /** Studio's count of changes of target (`targetGeneration`); `undefined` hands the area none, as before issue 486. */
+  generation: number | undefined = undefined;
+
+  /** A change of target seen by Studio: the new generation, with the answer that named it when one is given. */
+  changeTarget(generation: number, value: AreaConnection = { ...this.value }) {
+    this.generation = generation;
+    this.set(value);
+  }
+
   set(value: AreaConnection) {
     this.value = value;
     act(() => {
@@ -168,6 +177,7 @@ function AreaWithStudioProps() {
       onContentTarget={handleContentTarget}
       routeChanges={changes}
       connection={current}
+      {...(connection.generation !== undefined && { targetGeneration: connection.generation })}
     />
   );
 }
@@ -986,6 +996,100 @@ describe('a console screen in the AWS area (issue 56, R5)', () => {
       ]);
     },
   );
+
+  // Issue 480: a screen's crumbs and title may read the address's query, as S3's objects read `?prefix=`.
+  it('a screen whose crumbs and title read the query, on /aws/dynamodb/shelves?part=a%2Fb: both carry the decoded value', () => {
+    const shelves: AreaScreen = {
+      ...WIDGETS,
+      paths: ['/aws/dynamodb/shelves'],
+      title: (_params, query) => `Shelf ${query.get('part') ?? ''}`,
+      crumbs: (_params, query) => [
+        { text: 'Shelves', href: '/aws/dynamodb/shelves' },
+        { text: query.get('part') ?? '' },
+      ],
+    };
+    registry.screens.push(shelves);
+    const { wrapper } = open('/aws/dynamodb/shelves?part=a%2Fb');
+
+    expect(titles.at(-1)).toBe('Shelf a/b');
+    expect(breadcrumbs(wrapper)).toEqual([
+      ['EmuForge', '/'],
+      ['AWS', '/aws'],
+      ['DynamoDB', '/aws/dynamodb'],
+      ['Shelves', '/aws/dynamodb/shelves'],
+      ['a/b', null],
+    ]);
+  });
+
+  /** A shelf's page: its `h1`, then a button, new for each shelf, that opens the other shelf by the query alone. */
+  function ShelfPage() {
+    const { search } = useLocation();
+    const navigate = useNavigate();
+    const part = new URLSearchParams(search).get('part') ?? '';
+    const other = part === 'a' ? 'b' : 'a';
+    return (
+      <SpaceBetween size="m">
+        <Header variant="h1">{`Shelf ${part}`}</Header>
+        <Button key={part} onClick={() => void navigate(`/aws/dynamodb/shelves?part=${other}`)}>
+          {`Open ${other}`}
+        </Button>
+      </SpaceBetween>
+    );
+  }
+
+  // Issue 480, critique P1: walking S3's folders changes `?prefix=` alone, and the link followed is gone.
+  it('on /aws/dynamodb/shelves?part=a, a control that changes the query alone chosen: focus on the content target', async () => {
+    registry.screens.push({ ...WIDGETS, paths: ['/aws/dynamodb/shelves'], Page: ShelfPage });
+    const { router } = open('/aws/dynamodb/shelves?part=a');
+    const button = screen.getByRole('button', { name: 'Open b' });
+
+    act(() => {
+      button.focus();
+      fireEvent.click(button);
+    });
+
+    expect(router.state.location.search).toBe('?part=b');
+    await expectFocusOnTarget('Shelf b', 'Open a');
+  });
+
+  it('on /aws/dynamodb/shelves?part=a, a page that moves focus itself on a change of the query: focus stays there', async () => {
+    function FocusingShelfPage() {
+      const { search } = useLocation();
+      const navigate = useNavigate();
+      const part = new URLSearchParams(search).get('part') ?? '';
+      const field = useRef<HTMLInputElement>(null);
+      useEffect(() => {
+        if (part === 'b') {
+          field.current?.focus();
+        }
+      }, [part]);
+      return (
+        <SpaceBetween size="m">
+          <Header variant="h1">{`Shelf ${part}`}</Header>
+          <Button key={part} onClick={() => void navigate('/aws/dynamodb/shelves?part=b')}>
+            Open b
+          </Button>
+          <input ref={field} aria-label="Shelf name" />
+        </SpaceBetween>
+      );
+    }
+    registry.screens.push({ ...WIDGETS, paths: ['/aws/dynamodb/shelves'], Page: FocusingShelfPage });
+    open('/aws/dynamodb/shelves?part=a');
+    const button = screen.getByRole('button', { name: 'Open b' });
+
+    act(() => {
+      button.focus();
+      fireEvent.click(button);
+    });
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Shelf name' }));
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Shelf name' }));
+  });
 
   it.each(THINGS.paths)(
     "on %s: the side navigation is the screen's header and links, All things current, none of the services",
@@ -2284,4 +2388,268 @@ describe('the "no screen yet" page for a part of a service that has screens (iss
       expect(router.state.location.pathname).toBe('/');
     },
   );
+});
+
+/** A connected answer for the emulator on `port` that names the target `target`. */
+function connectedTo(target: string, port: number): CheckResult {
+  return { ...connectedAt(port), target } as CheckResult;
+}
+
+// Test screens of a change of target (issue 486, R3), under Amazon Kinesis: each with state of its own to see a remount.
+const PROBE_PATH = '/aws/kinesis/probe';
+const OTHER_PROBE_PATH = '/aws/kinesis/probe/other';
+const TARGET_CHANGED = 'The target is now second. This page now reads from it.';
+
+/** A screen's page that names its resources (so the notice is open) and keeps a count of its own, from 0. */
+function ProbePage({ title }: { title: string }) {
+  useShowsResources('things');
+  const [count, setCount] = useState(0);
+  return (
+    <>
+      <Header variant="h1">{title}</Header>
+      <Button
+        onClick={() => {
+          setCount((current) => current + 1);
+        }}
+      >
+        {`Count ${String(count)}`}
+      </Button>
+    </>
+  );
+}
+
+function probeScreen(path: string, title: string): AreaScreen {
+  return {
+    service: '/kinesis',
+    paths: [path],
+    title,
+    crumbs: [{ text: title }],
+    navigation: KINESIS_NAVIGATION,
+    Page: () => <ProbePage title={title} />,
+  };
+}
+
+describe('a change of target (issue 486, R3)', () => {
+  beforeEach(() => {
+    registry.screens.push(probeScreen(PROBE_PATH, 'Probe'), probeScreen(OTHER_PROBE_PATH, 'Other probe'));
+    connection.value = { result: connectedTo('local', 9301), engineOrigin: ENGINE_ORIGIN };
+    connection.generation = 0;
+    // Reduced motion, as the flash's own cases: Cloudscape then adds and removes a flash item at once.
+    vi.stubGlobal('matchMedia', (query: string) => {
+      const list = scheme.matchMedia(query);
+      return query === '(prefers-reduced-motion: reduce)' ? { ...list, matches: true } : list;
+    });
+  });
+
+  afterEach(() => {
+    registry.screens.length = 0;
+  });
+
+  function count(): HTMLElement {
+    return screen.getByRole('button', { name: /^Count / });
+  }
+
+  function countUp(times: number) {
+    for (let step = 0; step < times; step += 1) {
+      act(() => {
+        fireEvent.click(count());
+      });
+    }
+  }
+
+  function notice(): HTMLElement | null {
+    return screen.queryByRole('region', { name: 'Local emulator notice' });
+  }
+
+  function contentTarget(): HTMLElement {
+    return document.querySelector('.aws-area-content') as HTMLElement;
+  }
+
+  /** Opens the notice when a case before closed it: its open state outlives the page, as the layout keeps it. */
+  function openNotice() {
+    const about = screen.getByRole('button', { name: 'About the local emulator' });
+    if (about.getAttribute('aria-expanded') === 'false') {
+      act(() => {
+        fireEvent.click(about);
+      });
+    }
+    act(() => {
+      (document.activeElement as HTMLElement | null)?.blur();
+    });
+  }
+
+  function openProbe(path = PROBE_PATH) {
+    const opened = open(path);
+    openNotice();
+    return opened;
+  }
+
+  function flashTexts(wrapper: ReturnType<typeof createWrapper>): string[] {
+    return (wrapper.findFlashbar()?.findItems() ?? []).map((item) =>
+      (item.findContent()?.getElement().textContent ?? '').replace(/\s+/g, ' ').trim(),
+    );
+  }
+
+  function flashSaid(): string {
+    return screen.getByRole('status').textContent;
+  }
+
+  /** Studio sees the target change to `second` and hands the area its answer with the next generation. */
+  function changeToSecond(generation = 1) {
+    connection.changeTarget(generation, { result: connectedTo('second', 9302), engineOrigin: ENGINE_ORIGIN });
+  }
+
+  it('from 0 to 1 while a page is shown: the page below the line is mounted again; the line, the notice and the layout are not', () => {
+    openProbe();
+    countUp(2);
+    expect(count()).toHaveTextContent('Count 2');
+    const line = emulatorLine();
+    const target = contentTarget();
+    const heading = screen.getByRole('heading', { level: 1 });
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'Close the local emulator notice' }));
+    });
+    expect(notice()).toBeNull();
+
+    changeToSecond();
+
+    expect(count()).toHaveTextContent('Count 0');
+    expect(screen.getByRole('heading', { level: 1 })).not.toBe(heading);
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Probe');
+    expect(emulatorLine()).toBe(line);
+    expect(contentTarget()).toBe(target);
+    expect(lineStatus()).toBe('Connected at https://127.0.0.1:9302');
+    // The notice's state is the layout's: closed it stays closed, the (i) control collapsed.
+    expect(notice()).toBeNull();
+    expect(screen.getByRole('button', { name: 'About the local emulator' })).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it("on that change, with focus inside the page: focus moves to the page's content target", () => {
+    openProbe();
+    act(() => {
+      count().focus();
+    });
+    expect(document.activeElement).toBe(count());
+
+    changeToSecond();
+
+    expect(document.activeElement).toBe(contentTarget());
+    expect(contentTarget()).toHaveAccessibleName('Probe');
+  });
+
+  it.each([
+    ["the line's (i) control", () => screen.getByRole('button', { name: 'About the local emulator' })],
+    ["the notice's close control", () => screen.getByRole('button', { name: 'Close the local emulator notice' })],
+    [
+      'a link of the side navigation',
+      () => within(screen.getByRole('navigation', { name: 'Navigation' })).getAllByRole('link')[0] as HTMLElement,
+    ],
+  ])('on that change, with focus on %s: focus stays there', (_name, element) => {
+    openProbe();
+    const focused = element();
+    act(() => {
+      focused.focus();
+    });
+    expect(document.activeElement).toBe(focused);
+
+    changeToSecond();
+
+    expect(document.activeElement).toBe(focused);
+  });
+
+  it('on that change: the flash shows "The target is now second. …" and it is announced once, the line\'s live region quiet', () => {
+    const { wrapper } = openProbe();
+    expect(flashSaid()).toBe('');
+
+    changeToSecond();
+
+    expect(flashTexts(wrapper)).toEqual([TARGET_CHANGED]);
+    const flash = wrapper.findFlashbar()?.findItems()[0]?.findContent()?.getElement() as HTMLElement;
+    expect(flash.querySelector('code, [class*="awsui_box"]')).toHaveTextContent('second');
+    expect(flashSaid()).toBe(`Info ${TARGET_CHANGED}`);
+    expect(liveRegionText()).toBe('');
+    expect(screen.queryByRole('alert')).toBeNull();
+    // Later answers naming the same target: nothing more is said, nothing mounted again.
+    countUp(1);
+    connection.set({ result: connectedTo('second', 9302), engineOrigin: ENGINE_ORIGIN });
+    expect(flashTexts(wrapper)).toEqual([TARGET_CHANGED]);
+    expect(flashSaid()).toBe(`Info ${TARGET_CHANGED}`);
+    expect(liveRegionText()).toBe('');
+    expect(count()).toHaveTextContent('Count 1');
+  });
+
+  it.each([
+    ["the area's index", '/aws'],
+    ['a service with no screen', '/aws/kinesis'],
+    ['the area\'s "Page not found"', '/aws/does-not-exist'],
+  ])(
+    "on %s, which shows no flash: the line's live region announces the change of target alone, once",
+    (_name, path) => {
+      const { wrapper } = open(path);
+      expect(liveRegionText()).toBe('');
+
+      changeToSecond();
+
+      expect(liveRegionText()).toBe(`${LINE_LABEL} Connected at https://127.0.0.1:9302. Target second`);
+      expect(flashTexts(wrapper)).toEqual([]);
+      expect(flashSaid()).toBe('');
+      // A later answer naming the same target says nothing more.
+      connection.set({ result: connectedTo('second', 9302), engineOrigin: ENGINE_ORIGIN });
+      expect(liveRegionText()).toBe(`${LINE_LABEL} Connected at https://127.0.0.1:9302. Target second`);
+    },
+  );
+
+  it('the generation handed before the answer that names the new target: the flash names it once that answer comes', () => {
+    const { wrapper } = openProbe();
+
+    connection.changeTarget(1);
+    expect(flashTexts(wrapper)).toEqual([]);
+
+    connection.set({ result: connectedTo('second', 9302), engineOrigin: ENGINE_ORIGIN });
+    expect(flashTexts(wrapper)).toEqual([TARGET_CHANGED]);
+    expect(flashSaid()).toBe(`Info ${TARGET_CHANGED}`);
+  });
+
+  it('the area mounted with targetGeneration already 1: no flash, nothing mounted again, focus as on any load', () => {
+    connection.value = { result: connectedTo('second', 9302), engineOrigin: ENGINE_ORIGIN };
+    connection.generation = 1;
+    const { wrapper } = openProbe();
+
+    expect(document.activeElement).toBe(document.body);
+    countUp(2);
+    connection.set({ result: connectedTo('second', 9302), engineOrigin: ENGINE_ORIGIN });
+
+    expect(flashTexts(wrapper)).toEqual([]);
+    expect(flashSaid()).toBe('');
+    expect(count()).toHaveTextContent('Count 2');
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it('a route change with the same targetGeneration: no flash, the page as before this issue', async () => {
+    const { wrapper, router } = openProbe();
+    countUp(1);
+
+    act(() => {
+      void router.navigate(OTHER_PROBE_PATH);
+    });
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(contentTarget());
+    });
+    expect(contentTarget()).toHaveAccessibleName('Other probe');
+    expect(count()).toHaveTextContent('Count 0');
+    expect(flashTexts(wrapper)).toEqual([]);
+    expect(flashSaid()).toBe('');
+  });
+
+  it('no targetGeneration handed, as before issue 486: answers naming another target mount nothing again and show no flash', () => {
+    connection.generation = undefined;
+    const { wrapper } = openProbe();
+    countUp(1);
+
+    connection.set({ result: connectedTo('second', 9302), engineOrigin: ENGINE_ORIGIN });
+
+    expect(count()).toHaveTextContent('Count 1');
+    expect(flashTexts(wrapper)).toEqual([]);
+  });
 });

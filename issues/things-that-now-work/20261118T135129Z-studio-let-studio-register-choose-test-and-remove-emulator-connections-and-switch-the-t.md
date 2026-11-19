@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: studio|targets|emulator-connections-screens
-Issue-Check-Ids:
+Issue-Check-Ids: 486
 Issue-Commit: aa4c03efad86f9b110d88c61c26e552f651ddd90
 
 # Let Studio register, choose, test and remove emulator connections and switch the target its screens read

@@ -1,0 +1,9 @@
+/* The preview of an object's body (issue 480, task 2): its text kept as it came, wrapped at its spaces, and a long
+   body, or a word longer than the box, scrolling inside the box rather than widening the page. The area's own element
+   inside a Cloudscape code box; it sets no colour, spacing or font. */
+.aws-area-object-preview {
+  display: block;
+  white-space: pre-wrap;
+  max-block-size: 60vh;
+  overflow: auto;
+}

@@ -11,6 +11,7 @@ import {
   useRef,
   useState,
   type ComponentType,
+  type FocusEvent,
   type MouseEvent,
   type ReactNode,
   type RefObject,
@@ -27,6 +28,7 @@ import { LanguageControl } from '../ui/language-control';
 import { PAGE_TITLE_ID } from '../ui/page-head';
 import { PROVIDERS, type ProviderAreaProps, type ProviderConnection } from './provider-list';
 import { createQueryClient } from './query-client';
+import { useTargetSeen } from './target-seen';
 
 export const STUDIO_NAME = 'EmuForge Studio';
 
@@ -88,8 +90,8 @@ function currentOf(pathname: string, target: string, deeper: boolean): Current {
 
 /**
  * Studio's frame on every page (requirement R5.1): the top bar with the tile and "EmuForge Studio" (issue #36, R6), the
- * navigation "Studio" with Home and one link per provider of the providers list, and the language control (issue #17,
- * R3.1), then the page. Built from Studio's own design only.
+ * navigation "Studio" with Home, Connections (issue 486, R1) and one link per provider of the providers list, and the
+ * language control (issue #17, R3.1), then the page. Built from Studio's own design only.
  */
 export function Frame() {
   const { t } = useLanguage();
@@ -106,6 +108,14 @@ export function Frame() {
     };
   }, []);
   const pageFocus = useMemo(() => ({ routeChanges, nameContentTarget }), [routeChanges, nameContentTarget]);
+
+  /**
+   * A tab that takes focus is scrolled into the tab list's view, should the list be wider than the bar (issue 486):
+   * focus never lands on a tab out of sight.
+   */
+  const handleNavFocus = (event: FocusEvent<HTMLElement>) => {
+    event.target.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+  };
 
   /** "Skip to content": focuses the content target the page named, and never follows its address. */
   const handleSkip = (event: MouseEvent<HTMLAnchorElement>) => {
@@ -129,9 +139,12 @@ export function Frame() {
             <div className="st-wordmark-studio"> Studio</div>
           </div>
         </Link>
-        <nav className="st-nav" aria-label={t('frame.nav')}>
+        <nav className="st-nav" aria-label={t('frame.nav')} onFocus={handleNavFocus}>
           <Link to="/" aria-current={currentOf(pathname, '/', false)}>
             {t('frame.home')}
+          </Link>
+          <Link to="/connections" aria-current={currentOf(pathname, '/connections', false)}>
+            {t('frame.connections')}
           </Link>
           {PROVIDERS.map((provider) => {
             const target = `/${provider.segment}`;
@@ -234,6 +247,7 @@ export function ProviderPage({ area: Area }: ProviderPageProps) {
   const [title, setTitle] = useState<string>();
   useDocumentTitle(title);
   const { routeChanges, nameContentTarget } = useContext(PageFocusContext);
+  const { generation } = useTargetSeen();
   // The area's content target, as the area named it; none until its code has loaded.
   const areaFocus = useRef<FocusContent | null>(null);
   const handleContentTarget = useCallback((focus: FocusContent | null) => {
@@ -258,6 +272,7 @@ export function ProviderPage({ area: Area }: ProviderPageProps) {
           onContentTarget={handleContentTarget}
           routeChanges={routeChanges}
           connection={connection}
+          targetGeneration={generation}
         />
       </Suspense>
     </div>

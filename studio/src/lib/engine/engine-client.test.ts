@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   advance,
   connected,
+  connectedTo,
+  emulatorDown,
+  emulatorDownOn,
   engineRefusal,
   FakeEngine,
   present,
@@ -11,6 +14,7 @@ import {
   TOKEN_1,
   TOKEN_2,
 } from '../../test/home-test-kit';
+import { createEngineClient, startedAtOf, targetOf, type CheckResult } from './engine-client';
 
 const SESSION_URL = 'http://127.0.0.1:8297/__emuforge/session';
 const HEALTH_URL = 'http://127.0.0.1:8297/__emuforge/health';
@@ -170,5 +174,106 @@ describe('engine client: engine port', () => {
     expect(engineRequests.length).toBeGreaterThanOrEqual(2);
     expect(engineRequests.map((r) => r.origin)).toEqual(engineRequests.map(() => 'http://127.0.0.1:8297'));
     view.unmount();
+  });
+});
+
+describe('engine client: the target and when a check started (issue 486, s1)', () => {
+  /** One check of a client of the fake engine, started at `start` and answered `delayMs` later. */
+  async function checkAt(start: number): Promise<CheckResult> {
+    vi.setSystemTime(start);
+    const client = createEngineClient(8297);
+    const pending = client.check();
+    await vi.advanceTimersByTimeAsync(1_000);
+    return pending;
+  }
+
+  it('a health answer 200 naming the target local: connected, with target local and the time its check started', async () => {
+    engine.healthAnswers = [{ ...connectedTo('local', 9411), delayMs: 400 }];
+    const result = await checkAt(1_000_000);
+    expect(result).toMatchObject({
+      kind: 'connected',
+      target: 'local',
+      startedAt: 1_000_000,
+      checkedAt: 1_000_400,
+      emulator: { port: 9411, endpoint: 'https://127.0.0.1:9411' },
+    });
+    expect(targetOf(result)).toBe('local');
+    expect(startedAtOf(result)).toBe(1_000_000);
+  });
+
+  it('a health answer 503 not started naming the target second: not started, with target second', async () => {
+    engine.healthAnswers = [emulatorDownOn('second', 9302, 'there are no emulator files for port 9302')];
+    const result = await checkAt(2_000_000);
+    expect(result).toMatchObject({
+      kind: 'emulator-unreachable',
+      target: 'second',
+      reason: 'not_started',
+      message: 'there are no emulator files for port 9302',
+      emulator: { port: 9302 },
+      startedAt: 2_000_000,
+    });
+  });
+
+  it.each([
+    ['no target', connected(9411)],
+    [
+      'an empty target',
+      {
+        status: 200,
+        json: { target: '', emulator: { port: 9411, endpoint: 'https://127.0.0.1:9411', reachable: true } },
+      },
+    ],
+    [
+      'a numeric target',
+      {
+        status: 200,
+        json: { target: 7, emulator: { port: 9411, endpoint: 'https://127.0.0.1:9411', reachable: true } },
+      },
+    ],
+    [
+      'a target that is an object',
+      {
+        status: 200,
+        json: { target: { name: 'x' }, emulator: { port: 9411, endpoint: 'https://127.0.0.1:9411', reachable: true } },
+      },
+    ],
+  ])('a health answer 200 with %s: the result as before this issue, with no target', async (_n, answer) => {
+    engine.healthAnswers = [answer];
+    const result = await checkAt(3_000_000);
+    expect(result).toEqual({
+      kind: 'connected',
+      checkedAt: 3_000_000,
+      startedAt: 3_000_000,
+      emulator: { port: 9411, endpoint: 'https://127.0.0.1:9411' },
+    });
+    expect('target' in result).toBe(false);
+    expect(targetOf(result)).toBeUndefined();
+  });
+
+  it('a health answer 503 with no target: not started as before, with no target', async () => {
+    engine.healthAnswers = [emulatorDown('not_started', 9302)];
+    const result = await checkAt(3_500_000);
+    expect(result.kind).toBe('emulator-unreachable');
+    expect('target' in result).toBe(false);
+  });
+
+  it.each([
+    ['connected', connectedTo('local'), 'connected'],
+    ['emulator not answering', emulatorDownOn('local'), 'emulator-unreachable'],
+    ['engine not answering (network)', { network: true } as const, 'engine-unreachable'],
+    ['engine not answering (time limit)', { hang: true } as const, 'engine-unreachable'],
+    ['engine error', engineRefusal(500, 'Internal'), 'engine-error'],
+  ])('a result %s carries the time its check started', async (_n, answer, kind) => {
+    engine.healthAnswers = [answer];
+    vi.setSystemTime(4_000_000);
+    const pending = createEngineClient(8297).check();
+    await vi.advanceTimersByTimeAsync(5_000);
+    const result = await pending;
+    expect(result.kind).toBe(kind);
+    expect(result.startedAt).toBe(4_000_000);
+  });
+
+  it('a result built without startedAt counts as started at its checkedAt', () => {
+    expect(startedAtOf({ kind: 'engine-unreachable', checkedAt: 77, lastEmulatorPort: undefined })).toBe(77);
   });
 });

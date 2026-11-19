@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: harness|integration|auxiliary-checks-run-in-full-only
-Issue-Check-Ids:
+Issue-Check-Ids: harness.full-tier
 Issue-Commit: e57ae6154646de50006f26c9031b6332666bebe1
 
 # Run the slow auxiliary browser checks only in the full run, and in a run that touches their own service or paths

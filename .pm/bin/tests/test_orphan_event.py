@@ -4,9 +4,12 @@ sweep and the rule (issue 472, R6 and R7; test criteria `test_orphan_event`).
 Check id `harness.orphan-event`. One class per heading of the test criteria, one case per line. An always file:
 it runs in a few seconds, because the time of every look is given as `now` and no case waits for it.
 
-Interface used (design 5): `_pmorphanevent.tick(st, now=None, reapers=REAPERS)` returns the event lines of one
-call and keeps its state in `st`; it looks at most once per `LOOK` (30 s), tells a PID seen for `HOLD` (60 s), and
-tells `again` `AGAIN` (300 s) after a told line with `pane=`. Its look takes `_pmorphans`'s process table, so a
+Interface used (design 5; issue 497): `_pmorphanevent.due(st, names, at)` makes worktrees due (the daemon calls it
+when a pane of the worktree ends a turn or is closed); `_pmorphanevent.tick(st, now=None, reapers=REAPERS)` returns the
+event lines of one call and keeps its state in `st`; it looks only at the worktrees due by `now`, tells a PID seen for
+`HOLD` (60 s) on the second look it makes due itself, and tells `again` `AGAIN` (300 s) after a told line with
+`pane=`; `_pmorphanevent.next_look(st)` is the earliest due time. A case makes a worktree due with `d.due(at, …)`
+where the daemon would be told of a turn end. Its look takes `_pmorphans`'s process table, so a
 case that wants `ps` to fail sets `_pmorphans.PS` (and `_pmorphanevent.PS` when the module has one).
 
 Every case builds a fixture checkout `F` with `_fixture.make` (so `_pmlib.ROOT` is `F` and the real `.pm/run` is
@@ -132,6 +135,9 @@ for line in sys.stdin:
             while not os.path.exists(pidfile) and time.time() < end:
                 time.sleep(0.02)
             out = dict(pid=int(open(pidfile).read()), reapers=sorted(reapers))
+        elif cmd["op"] == "due" and missing is None:
+            _pmorphanevent.due(st, cmd["names"], cmd["at"])
+            out = dict(next=_pmorphanevent.next_look(st))
         elif cmd["op"] == "state":
             out = dict(state=json.loads(json.dumps(st)))
         elif missing is not None:
@@ -227,6 +233,12 @@ class Driver:
         self.case.assertNotIn("raised", out, f"tick raised {out.get('raised')}")
         self.case.assertIsInstance(out["lines"], list, out)
         return out["lines"]
+
+    def due(self, at, *names):
+        """Make worktrees due at `at` (all three when none is named), as the daemon does on a pane's turn end."""
+        out = self.call(op="due", at=at, names=list(names or WORKTREES))
+        self.case.assertNotIn("raised", out, f"due raised {out.get('raised')}")
+        return out["next"]
 
     def state(self):
         out = self.call(op="state")
@@ -365,7 +377,9 @@ class Tick(unittest.TestCase):
         f = Fixture(self, name)
         if pane is not None:
             f.pane(gone=pane == "gone")
-        return f, f.driver(), now0()
+        d, t = f.driver(), now0()
+        d.due(t)  # a turn end of a pane of each worktree
+        return f, d, t
 
     def assertLines(self, lines, patterns, why=""):
         self.assertEqual(len(lines), len(patterns), f"{why} lines {lines}")
@@ -406,8 +420,11 @@ class Tick(unittest.TestCase):
         self.assertEqual(d.tick(t), [])
         self.assertLines(d.tick(t + 60), [event("wt-a", [o1])])
         o2 = d.orphan("wt-a")
-        self.assertEqual(d.tick(t + 90), [])
-        self.assertLines(d.tick(t + 150), [event("wt-a", [o1, o2])])
+        self.assertEqual(d.tick(t + 90), [], "nothing is due: no look")
+        self.assertEqual(d.tick(t + 150), [], "nothing is due: no look")
+        d.due(t + 150, "wt-a")
+        self.assertEqual(d.tick(t + 150), [], "the first look that sees the second")
+        self.assertLines(d.tick(t + 210), [event("wt-a", [o1, o2])])
 
     def test_again_once_300_s_after_a_line_with_pane_regression(self):
         _, d, t = self.setup("again", pane="live")
@@ -435,6 +452,7 @@ class Tick(unittest.TestCase):
         self.assertEqual(d.tick(t), [])
         self.assertLines(d.tick(T), [event("wt-a", [o1], pane=PANE)])
         o2 = d.orphan("wt-a")
+        d.due(T + 140, "wt-a")
         self.assertEqual(d.tick(T + 140), [])
         self.assertLines(d.tick(T + 200), [event("wt-a", [o1, o2], pane=PANE)])
         self.assertEqual(d.tick(T + 270), [])
@@ -447,8 +465,10 @@ class Tick(unittest.TestCase):
         self.assertEqual(d.tick(t), [])
         self.assertLines(d.tick(t + 60), [event("wt-a", [o1])])
         wait_gone(self, o1)
+        d.due(t + 90, "wt-a")
         self.assertEqual(d.tick(t + 90), [], "the orphan is gone")
         o2 = d.orphan("wt-a")
+        d.due(t + 120, "wt-a")
         self.assertEqual(d.tick(t + 120), [], "the new orphan's first look")
         self.assertEqual(d.tick(t + 150), [], "30 s after it")
         self.assertLines(d.tick(t + 180), [event("wt-a", [o2])], "60 s after it")
@@ -466,14 +486,26 @@ class Tick(unittest.TestCase):
         self.assertLines(d2.tick(t + 360), [event("wt-a", [o], again=True, pane=PANE)],
                          "the restarted daemon did not keep what it had told (again 300 s after the line)")
 
-    def test_less_than_30_s_after_a_look_is_no_look(self):
+    def test_a_worktree_not_due_is_not_looked_at_issue_497(self):
         _, d, t = self.setup("look")
-        self.assertEqual(d.tick(t), [])
+        self.assertEqual(d.tick(t), [], "the look of the three: no orphan, none due again")
         o = d.orphan("wt-a")
-        self.assertEqual(d.tick(t + 29), [], "29 s after the look")
-        self.assertEqual(d.tick(t + 30), [], "the look that first sees it")
-        self.assertEqual(d.tick(t + 89), [], "59 s after the look that first saw it (60 s after t+29)")
-        self.assertLines(d.tick(t + 120), [event("wt-a", [o])])
+        for later in (60, 120, 600):
+            self.assertEqual(d.tick(t + later), [], f"{later} s later with nothing due")
+        d.due(t + 600, "wt-b")
+        self.assertEqual(d.tick(t + 600), [], "wt-b due")
+        self.assertEqual(d.tick(t + 660), [], "wt-a was never due")
+        d.due(t + 700, "wt-a")
+        self.assertEqual(d.tick(t + 700), [], "wt-a's first look")
+        self.assertLines(d.tick(t + 760), [event("wt-a", [o])], "its second look, 60 s later")
+
+    def test_the_next_look_is_the_earliest_due_time_issue_497(self):
+        _, d, t = self.setup("next-look")
+        o = d.orphan("wt-a")
+        self.assertEqual(d.tick(t), [])
+        self.assertEqual(d.due(t + 1000, "wt-b"), t + 60, "the second look of wt-a comes first")
+        self.assertLines(d.tick(t + 60), [event("wt-a", [o])])
+        self.assertEqual(d.due(t + 1000, "wt-b"), t + 1000, "wt-a is told without pane=: not due again")
 
     def test_a_ps_that_fails_is_no_line_and_no_change(self):
         f, d, t = self.setup("ps-fails")
@@ -515,6 +547,7 @@ class Tick(unittest.TestCase):
         self.assertLines(d.tick(t + 60), [event("wt-a", [other])])
         self.assertTrue(own.alive())
         (f.wt["wt-a"] / "output" / "checks" / "running.json").unlink()
+        d.due(t + 90, "wt-a")
         self.assertEqual(d.tick(t + 90), [], "the check ended: its stand-in's first look as an orphan")
         for o in (other, own, check):  # the name ps gives now: a Python stand-in may have re-executed since its start
             row = ps_row(o.pid)

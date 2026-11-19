@@ -236,7 +236,25 @@ ns = {"__file__": sys.argv[1], "__name__": "watchd"}
 exec(compile(src, sys.argv[1], "exec"), ns)
 reg = json.loads(sys.argv[2])
 room = sys.argv[3] == "room"
-out = ns["room_tick"]({}, reg, checks=lambda: (None if room else "cpu 99% > 90%", 0, []))
+freed = sys.argv[4]
+seen = []
+def checks(**kw):
+    seen.append(kw)
+    return (None if room else "cpu 99% > 90%", 0, [])
+given = json.loads(sys.argv[5]) if len(sys.argv) > 5 else None
+out = ns["room_tick"]({}, reg, checks=checks, freed=freed, given=given)
+print(json.dumps(dict(out=out, asked=seen)))
+"""
+
+FREED = """
+import json, sys
+src = open(sys.argv[1]).read().rsplit("\\nmain()", 1)[0]
+ns = {"__file__": sys.argv[1], "__name__": "watchd"}
+exec(compile(src, sys.argv[1], "exec"), ns)
+st = {}
+out = []
+for live, checks in json.loads(sys.argv[2]):
+    out.append(ns["what_freed"](st, live, checks))
 print(json.dumps(out))
 """
 
@@ -244,11 +262,53 @@ print(json.dumps(out))
 class Watchd(unittest.TestCase):
     """pm-watchd's room_tick on the fixture's waiting.json, with check_room replaced by a given answer."""
 
-    def tick(self, reg, room):
-        p = subprocess.run([sys.executable, "-I", "-c", TICK, str(self.co / ".pm" / "bin" / "pm-watchd"),
-                            json.dumps(reg), room], capture_output=True, text=True, env=clean_env(), timeout=60)
+    def tick(self, reg, room, freed="a check ended", given=None, asked=False):
+        args = [json.dumps(reg), room, freed] + ([json.dumps(given)] if given else [])
+        p = subprocess.run([sys.executable, "-I", "-c", TICK, str(self.co / ".pm" / "bin" / "pm-watchd"), *args],
+                           capture_output=True, text=True, env=clean_env(), timeout=60)
         self.assertEqual(p.returncode, 0, p.stderr)
-        return json.loads(p.stdout.strip().splitlines()[-1])
+        got = json.loads(p.stdout.strip().splitlines()[-1])
+        return (got["out"], got["asked"]) if asked else got["out"]
+
+    def waiting(self, rows):
+        self.co = make(GROUP, "watchd", ("pm-watchd",))
+        run_dir = self.co / ".pm" / "run"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "waiting.json").write_text(json.dumps(rows))
+        return run_dir
+
+    def test_nothing_freed_judges_nothing_issue_497(self):
+        run_dir = self.waiting([dict(asker="i9-gone", check="/x/g", issue="9", reason="r", at="t0", expected="e"),
+                                dict(asker="i9-worker-e1", check="/x/a", issue="9", reason="r", at="t1", expected="e")])
+        out, asked = self.tick([dict(name="i9-worker-e1")], "room", freed="", asked=True)
+        self.assertEqual(out, [], "a wake-up that freed nothing told a waiting pane")
+        self.assertEqual(asked, [], "a wake-up that freed nothing judged the room")
+        left = [r["asker"] for r in json.loads((run_dir / "waiting.json").read_text())]
+        self.assertEqual(left, ["i9-worker-e1"], "a gone asker's row is dropped all the same")
+
+    def test_the_timer_reading_is_given_to_the_judgement_issue_497(self):
+        self.waiting([dict(asker="i9-worker-e1", check="/x/a", issue="9", reason="r", at="t1", expected="e")])
+        reading = {"mem": [10.0, 0.0, 0.0], "cpu": 20.0}
+        out, asked = self.tick([dict(name="i9-worker-e1")], "room", freed="the machine is under its limits",
+                               given=reading, asked=True)
+        self.assertEqual(out, ["EVENT room i9-worker-e1 check /x/a"])
+        self.assertEqual(asked, [dict(given=reading)], "the judgement measured again instead of taking the reading")
+
+    def test_what_frees_room_is_a_check_that_ended_or_a_pane_that_closed_issue_497(self):
+        self.co = make(GROUP, "watchd-freed", ("pm-watchd",))
+        looks = [({"a": "/w/a", "b": "/w/b"}, ["1.json", "2.json"]),   # first look: nothing seen before
+                 ({"a": "/w/a", "b": "/w/b"}, ["1.json", "2.json"]),   # nothing changed
+                 ({"a": "/w/a", "b": "/w/b"}, ["1.json", "2.json", "3.json"]),  # a check started: frees nothing
+                 ({"a": "/w/a", "b": "/w/b"}, ["2.json", "3.json"]),   # a check ended
+                 ({"a": "/w/a", "b": "/w/b", "c": "/w/c"}, ["2.json", "3.json"]),  # a pane opened: frees nothing
+                 ({"a": "/w/a", "c": "/w/c"}, ["2.json", "3.json"]),   # b closed or gone
+                 ({}, [])]                                             # both at once
+        p = subprocess.run([sys.executable, "-I", "-c", FREED, str(self.co / ".pm" / "bin" / "pm-watchd"),
+                            json.dumps(looks)], capture_output=True, text=True, env=clean_env(), timeout=60)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        got = json.loads(p.stdout.strip().splitlines()[-1])
+        self.assertEqual(got, [[[], []], [[], []], [[], []], [["a check ended"], []], [[], []],
+                               [["a pane closed"], ["/w/b"]], [["a check ended", "a pane closed"], ["/w/a", "/w/c"]]])
 
     def test_the_longest_waiting_asker_is_told_once_there_is_room_and_one_per_look(self):
         self.co = make(GROUP, "watchd", ("pm-watchd",))

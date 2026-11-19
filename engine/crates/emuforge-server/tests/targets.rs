@@ -284,10 +284,62 @@ async fn list_with_the_file_absent_is_local_active() {
                 "credentials": "emulator-files",
                 "tls": "emulator-ca",
                 "active": true
-            }]
+            }],
+            "form": "native"
         })
     );
     assert!(fixture.file_bytes().is_none());
+}
+
+#[tokio::test]
+async fn list_and_use_answers_carry_the_form_the_engine_was_started_in() {
+    for (form, name) in [(Form::Native, "local"), (Form::Compose, "compose")] {
+        let fixture = fixture_with(Options {
+            form,
+            ..Options::default()
+        });
+        let list = fixture.list().await;
+        let mut fields: Vec<&str> = list
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        fields.sort_unstable();
+        assert_eq!(fields, ["active", "form", "targets"], "list, {form:?}");
+        assert_eq!(list["form"], form.as_str(), "list, {form:?}");
+        assert_eq!(names(&list), [name], "list, {form:?}");
+        let used = fixture
+            .call(Method::POST, &format!("{TARGETS}/{name}/use"))
+            .await;
+        assert_eq!(used.status, StatusCode::OK, "use, {form:?}: {used:?}");
+        assert_eq!(used.json()["form"], form.as_str(), "use, {form:?}");
+    }
+}
+
+#[tokio::test]
+async fn info_and_test_answers_carry_no_form() {
+    for (form, name) in [(Form::Native, "local"), (Form::Compose, "compose")] {
+        let fixture = fixture_with(Options {
+            form,
+            ..Options::default()
+        });
+        for (route, method, path) in [
+            ("info", Method::GET, format!("{TARGETS}/{name}")),
+            ("test", Method::POST, format!("{TARGETS}/{name}/test")),
+        ] {
+            let answer = fixture.call(method, &path).await;
+            assert_eq!(
+                answer.status,
+                StatusCode::OK,
+                "{route}, {form:?}: {answer:?}"
+            );
+            assert!(
+                answer.json().get("form").is_none(),
+                "{route}, {form:?}: {answer:?}"
+            );
+        }
+    }
 }
 
 #[tokio::test]

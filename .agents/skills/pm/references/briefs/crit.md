@@ -9,8 +9,9 @@ Issue #{{issue}}: {{title}}. Decisions: `.pm/issue-{{issue}}/decisions.md`. Earl
 Target: {{targets}}, in `{{capture_wt}}`.
 
 Your issue's plan `i{{issue}}-plan` prompts you with `SCORE <point> <paths or routes>`. The point is `final`, the
-built app once its whole check has passed, and again after the P0 and P1 findings are fixed; or `mock`, only when
-the plan asks for a mock of a new screen. Your `STAGE READY` line goes to it.
+built app of the issue branch once every unit is merged and before its whole check, again after the P0 and P1
+findings are fixed, and again for a screen a fix of the whole check changed; or `mock`, only when the plan asks for
+a mock of a new screen. Your `STAGE READY` line goes to it.
 
 1. Capture with `{{root}}/.pm/bin/pm-capture {{capture_wt}} <point> …`: 1280x800 and 390x844, light and dark,
    from the built app (or the mock file), against a seeded emulator and once against an empty one. A screen of

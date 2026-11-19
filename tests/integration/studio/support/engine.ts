@@ -32,12 +32,15 @@ export interface EngineOptions {
   emulatorPort?: number;
   /** Default: the run's Studio port. */
   studioPort?: number;
+  /** The product form the engine serves as (issue 486): `compose` sets EMUFORGE_FORM=compose; default: native. */
+  form?: 'compose';
 }
 
 export class Engine {
   readonly port: number;
   readonly emulatorPort: number;
   readonly studioPort: number;
+  private readonly form: 'compose' | undefined;
   private proc: Proc | null = null;
 
   private constructor(
@@ -47,6 +50,7 @@ export class Engine {
     this.port = options.port ?? ctx.enginePort;
     this.emulatorPort = options.emulatorPort ?? ctx.emulatorPort;
     this.studioPort = options.studioPort ?? ctx.studioPort;
+    this.form = options.form;
   }
 
   /** `http://127.0.0.1:<port>`, the engine address Studio shows and calls. */
@@ -90,11 +94,12 @@ export class Engine {
       String(this.studioPort),
     ];
     // Its own settings folder in the run's scratch space (issue 485): no check reads or writes $HOME/.config.
-    const env = {
+    const env: Record<string, string> = {
       HOME: this.ctx.home,
       PATH: process.env.PATH ?? '',
       EMUFORGE_SETTINGS_DIR: settingsDir(this.ctx),
     };
+    if (this.form) env.EMUFORGE_FORM = this.form;
     this.proc = Proc.spawn(this.ctx, 'engine', bin, args, this.ctx.checkout, env);
     const ready = await this.proc.waitListening(this.port, LISTEN_BOUND_MS);
     if (ready === 'listening') {

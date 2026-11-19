@@ -4,7 +4,7 @@ import { I18nProvider } from '@cloudscape-design/components/i18n';
 import englishMessages from '@cloudscape-design/components/i18n/messages/all.en';
 import SideNavigation, { type SideNavigationProps } from '@cloudscape-design/components/side-navigation';
 import SpaceBetween from '@cloudscape-design/components/space-between';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router';
 
 import { AWS_NAME, AWS_PATH, AWS_SHORT_NAME, servicePath } from '../identity';
@@ -15,6 +15,7 @@ import { AREA_ROOT_CLASS } from './styles/root-class';
 import { useColourMode } from './colour-mode';
 import { AreaFlash, FlashAnnouncer } from './components/area-flash';
 import { ContentTarget } from './components/content-target';
+import { targetOf } from '../../../lib/engine/engine-client';
 import type { AreaConnection } from './components/emulator-line';
 import { EmulatorLineAndNotice } from './components/local-notice';
 import { PageFlashContext } from './components/page-flash';
@@ -23,6 +24,8 @@ import { PageResourcesContext, type PageResources } from './components/page-reso
 import { screenCrumbs } from './screen-paths';
 import { useAreaFlash } from './components/use-area-flash';
 import { useFollow } from './components/use-follow';
+import { TargetChangeFlashContext } from './components/target-change-flash';
+import { useTargetChange } from './components/use-target-change';
 import { IndexPage } from './pages/index-page';
 import { NoScreenPage } from './pages/no-screen-page';
 import { NotFoundPage } from './pages/not-found-page';
@@ -39,6 +42,11 @@ export interface AreaLayoutProps {
   routeChanges: number;
   /** The engine's connection status, as Studio's frame last read it; the area never asks for it itself. */
   connection: AreaConnection;
+  /**
+   * Changes of target the document has seen (issue 486, R3): `0` until the first, one more on each; absent means `0`.
+   * On a change the routed page alone is mounted again and the flash says which target it was read from.
+   */
+  targetGeneration?: number | undefined;
 }
 
 /** The area's own navigation, on every page that is not a screen with its own (requirement R5.1). */
@@ -78,13 +86,13 @@ const AREA_CRUMBS: BreadcrumbGroupProps.Item[] = [
  * `EmuForge > AWS > <service's crumb> > …`; the last crumb is the current page, which Cloudscape shows as no link,
  * whatever address a screen gave it (issue 386, R4.6).
  */
-function breadcrumbs(page: AreaPage, pathname: string): BreadcrumbGroupProps.Item[] {
+function breadcrumbs(page: AreaPage, pathname: string, query: URLSearchParams): BreadcrumbGroupProps.Item[] {
   switch (page.kind) {
     case 'index':
       return AREA_CRUMBS;
     case 'screen': {
       // The screen's crumbs in order, each but the last to the address it gives; the last always the current page.
-      const crumbs = screenCrumbs(page.screen, page.params);
+      const crumbs = screenCrumbs(page.screen, page.params, query);
       return [
         ...AREA_CRUMBS,
         { text: page.service.crumb, href: servicePath(page.service) },
@@ -177,14 +185,17 @@ export function AreaLayout({
   onContentTarget,
   routeChanges,
   connection,
+  targetGeneration = 0,
 }: AreaLayoutProps) {
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
+  // The address's query, which a screen's crumbs and title may read (a folder's `?prefix=` of S3's objects).
+  const query = useMemo(() => new URLSearchParams(search), [search]);
   const handleFollow = useFollow();
   const root = useRef<HTMLDivElement>(null);
   useColourMode(root);
 
   const page = areaPage(pathname);
-  const title = areaPageTitle(page);
+  const title = areaPageTitle(page, query);
   useEffect(() => {
     onPageTitle(title);
   }, [onPageTitle, title]);
@@ -206,12 +217,38 @@ export function AreaLayout({
       focusTarget();
     }
   }, [routeChanges, focusTarget]);
+  // A change of the query alone (a folder's `?prefix=` of S3's objects) is a move too: the element followed is gone,
+  // so focus goes to the content target as on a change of path. A page that placed focus itself keeps it.
+  const shownQuery = useRef({ pathname, search });
+  useEffect(() => {
+    const before = shownQuery.current;
+    shownQuery.current = { pathname, search };
+    if (before.pathname !== pathname || before.search === search) {
+      return;
+    }
+    const active = document.activeElement;
+    if (active === null || active === document.body || !active.isConnected) {
+      focusTarget();
+    }
+  }, [pathname, search, focusTarget]);
 
   // What the page shows of the emulator, as it names it; the notice's open state outlives the page (R5.3).
   const [resources, setResources] = useState<PageResources | null>(null);
 
   // The result a screen's page shows of an action, or hands to the page it leads to (issue 386, R5).
   const flash = useAreaFlash(pathname, routeChanges, page.kind === 'screen');
+
+  // A change of target (issue 486, R3): the page below the line, the notice and the flash is mounted again under the
+  // new generation, so it reads its data afresh and keeps nothing of the earlier target; focus that went with it moves
+  // to the content target, and the flash says what happened. No route changed, so nothing else moves focus.
+  const pageBox = useRef<HTMLDivElement>(null);
+  useTargetChange({
+    generation: targetGeneration,
+    target: connection.result === undefined ? undefined : targetOf(connection.result),
+    page: pageBox,
+    focusTarget,
+    show: flash.pageFlash.show,
+  });
 
   // The help panel of a screen that gives help (issue 56, R5.6): open for the visit it was opened on, so a route
   // change closes it. Opened by the screen ("Info"), it takes focus and gives it back to the opener when closed;
@@ -270,7 +307,11 @@ export function AreaLayout({
             onToolsChange={handleToolsChange}
             ariaLabels={helpOpen ? APP_LAYOUT_LABELS_HELP_OPEN : APP_LAYOUT_LABELS}
             breadcrumbs={
-              <BreadcrumbGroup items={breadcrumbs(page, pathname)} ariaLabel="Breadcrumbs" onFollow={handleFollow} />
+              <BreadcrumbGroup
+                items={breadcrumbs(page, pathname, query)}
+                ariaLabel="Breadcrumbs"
+                onFollow={handleFollow}
+              />
             }
             navigation={<SideNavigation {...navigation(page)} onFollow={handleFollow} />}
             content={
@@ -280,17 +321,28 @@ export function AreaLayout({
                 {/* One target per path, so a route change between two paths of the same page focuses a new element. */}
                 <ContentTarget key={pathname} targetRef={target}>
                   <SpaceBetween size="m">
-                    <EmulatorLineAndNotice connection={connection} resources={resources} />
+                    {/* The flash announces a change of target on a screen's page; elsewhere the line does. */}
+                    <TargetChangeFlashContext value={page.kind === 'screen'}>
+                      <EmulatorLineAndNotice connection={connection} resources={resources} />
+                    </TargetChangeFlashContext>
                     {flash.shown !== null && (
                       <AreaFlash result={flash.shown} onDismiss={flash.dismiss} onAnnounce={flash.announce} />
                     )}
-                    <PageResourcesContext value={setResources}>
-                      <PageFlashContext value={flash.pageFlash}>
-                        <PageHelpContext value={openHelp}>
-                          <PageContent page={page} pathname={pathname} connection={connection} />
-                        </PageHelpContext>
-                      </PageFlashContext>
-                    </PageResourcesContext>
+                    <div ref={pageBox}>
+                      <PageResourcesContext value={setResources}>
+                        <PageFlashContext value={flash.pageFlash}>
+                          <PageHelpContext value={openHelp}>
+                            {/* One page per target: a change of target mounts it again (issue 486, R3). */}
+                            <PageContent
+                              key={targetGeneration}
+                              page={page}
+                              pathname={pathname}
+                              connection={connection}
+                            />
+                          </PageHelpContext>
+                        </PageFlashContext>
+                      </PageResourcesContext>
+                    </div>
                   </SpaceBetween>
                 </ContentTarget>
               </>

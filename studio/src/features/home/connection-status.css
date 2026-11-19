@@ -1,0 +1,27 @@
+/* Home's target strip (DESIGN.md, Home's Connection section): below the two status rows, across the panel, a top
+   hairline and the rows' padding; the target named in the code face, then "Manage connections". */
+
+@layer studio {
+  .st-target-strip {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px 16px;
+    padding: 14px var(--st-pad);
+    border-top: 1px solid var(--st-line);
+  }
+
+  .st-target-strip p {
+    min-width: 0;
+    margin: 0;
+    font-size: 14px;
+    color: var(--st-text-2);
+  }
+
+  /* A name is up to 64 characters: it breaks inside rather than leave the panel. */
+  .st-target-strip .st-code {
+    color: var(--st-text);
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}

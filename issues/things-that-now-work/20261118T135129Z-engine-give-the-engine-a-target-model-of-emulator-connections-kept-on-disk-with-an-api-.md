@@ -4,7 +4,7 @@ Issue-Module: engine
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: engine|targets|emulator-target-model-and-api
-Issue-Check-Ids:
+Issue-Check-Ids: engine.targets-relay-follows-the-active-target engine.targets-health-follows-the-active-target-and-never-falls-back engine.targets-kept-across-restart engine.targets-test-checks-a-running-emulator engine.targets-test-follows-an-emulator-restart engine.targets-hold-no-key engine.checks-engines-keep-their-settings-in-the-run engine.product-targets-compose-holds-one-target
 Issue-Commit: aa4c03efad86f9b110d88c61c26e552f651ddd90
 
 # Give the engine a target model of emulator connections, kept on disk, with an API to add, list, use, test and remove them

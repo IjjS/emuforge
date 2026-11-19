@@ -123,14 +123,22 @@ export function sampleParams(pattern: string): ScreenParams {
   );
 }
 
-/** A screen's crumbs for `params`. */
-export function screenCrumbs(screen: ServiceScreen, params: ScreenParams): readonly ScreenCrumb[] {
-  return typeof screen.crumbs === 'function' ? screen.crumbs(params) : screen.crumbs;
+/** A screen's crumbs for `params` and the address's query (none when not given). */
+export function screenCrumbs(
+  screen: ServiceScreen,
+  params: ScreenParams,
+  query: URLSearchParams = new URLSearchParams(),
+): readonly ScreenCrumb[] {
+  return typeof screen.crumbs === 'function' ? screen.crumbs(params, query) : screen.crumbs;
 }
 
-/** A screen's title for `params`. */
-export function screenTitle(screen: ServiceScreen, params: ScreenParams): string {
-  return typeof screen.title === 'function' ? screen.title(params) : screen.title;
+/** A screen's title for `params` and the address's query (none when not given). */
+export function screenTitle(
+  screen: ServiceScreen,
+  params: ScreenParams,
+  query: URLSearchParams = new URLSearchParams(),
+): string {
+  return typeof screen.title === 'function' ? screen.title(params, query) : screen.title;
 }
 
 /** The screens of a service whose patterns `pathname` matches, with the pattern each matched by. */
