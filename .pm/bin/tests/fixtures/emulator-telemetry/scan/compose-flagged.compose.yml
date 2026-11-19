@@ -1,6 +1,0 @@
-name: emuforge-test-fixture
-services:
-  emulator:
-    image: aws-emulator
-    command: ["-p", "9302", "-t", "off"]
-    network_mode: none
