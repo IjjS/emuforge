@@ -573,3 +573,15 @@ export async function searchQueues(page: Page, prefix: string, want: string[]): 
 export async function expectListed(page: Page, want: string[]): Promise<void> {
   await expectRows(page.locator(TABLE).first(), (r) => r.Name, want, `the queues listed: ${want.join(', ') || 'none'}`);
 }
+
+/**
+ * The name the emulator's JSON answer gives the refusal of a queue it does not hold (`__type`); the screen shows the
+ * same refusal by its code `NON_EXISTENT_QUEUE`.
+ */
+export const QUEUE_DOES_NOT_EXIST = 'QueueDoesNotExist';
+
+/** `GetQueueUrl` of `name`, directly: `null` when it answered a URL, else the name of its refusal. */
+export async function getQueueUrlRefusal(ctx: Ctx, port: number, name: string): Promise<string | null> {
+  const answer = await sqs(ctx, port, 'GetQueueUrl', { QueueName: name });
+  return answer.status === 200 ? null : (answer.type ?? `status ${String(answer.status)}`);
+}

@@ -26,15 +26,16 @@ import {
   expectListed,
   expectValue,
   flashItems,
+  getQueueUrlRefusal,
   LIST_H1,
   NON_EXISTENT_QUEUE,
   NOT_FOUND,
   open,
+  QUEUE_DOES_NOT_EXIST,
   queueNamesDirect,
   queuePath,
   queueRadio,
   QUEUES_PATH,
-  queueUrlDirect,
   searchQueues,
   sqsOk,
   SqsSeeded,
@@ -97,9 +98,9 @@ test('studio.sqs-delete-dead-letter-queue-from-its-page', async ({ ctx, page }) 
       await expectFlash(page, 'success', deletedQueue(dlq.name));
       await searchQueues(page, p, [source.name]);
       expect(
-        await eventually(5_000, () => queueUrlDirect(ctx, port, dlq.name), (v) => v === null),
+        await eventually(5_000, () => getQueueUrlRefusal(ctx, port, dlq.name), (v) => v === QUEUE_DOES_NOT_EXIST),
         'GetQueueUrl of the dead-letter queue, directly',
-      ).toBeNull();
+      ).toBe(QUEUE_DOES_NOT_EXIST);
       expect(
         (await attributesDirect(ctx, port, source.url)).RedrivePolicy,
         'the source\'s redrive policy, directly',

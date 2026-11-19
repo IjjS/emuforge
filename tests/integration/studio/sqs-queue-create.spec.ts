@@ -25,12 +25,14 @@ import {
   expectFlash,
   expectValue,
   flashItems,
+  getQueueUrlRefusal,
   INVALID_PARAMETER_VALUE,
   LIST_H1,
   nameOf,
   nameTaken,
   open,
   openQueue,
+  QUEUE_DOES_NOT_EXIST,
   queueNamesDirect,
   queuePath,
   QUEUES_PATH,
@@ -205,7 +207,7 @@ test('studio.sqs-create-queue-dead-letter-queue-gone', async ({ ctx, page }) => 
       await expect(s.failure, 'the emulator\'s message').toContainText(DEAD_LETTER_TARGET_GONE);
       await expect(s.name, 'the name is still in the field').toHaveValue(name);
       await expect(page, 'the form is still open').toHaveURL(addressOf(CREATE_QUEUE_PATH));
-      expect(await queueUrlDirect(ctx, port, name), 'GetQueueUrl of the name, directly').toBeNull();
+      expect(await getQueueUrlRefusal(ctx, port, name), 'GetQueueUrl of the name, directly').toBe(QUEUE_DOES_NOT_EXIST);
     },
   );
 
