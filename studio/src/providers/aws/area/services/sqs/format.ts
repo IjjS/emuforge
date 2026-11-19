@@ -12,6 +12,9 @@ export const SQS_PATH = `${AWS_PATH}/sqs`;
 /** S1, the queue list. */
 export const QUEUES_PATH = `${SQS_PATH}/queues`;
 
+/** S3, "Create queue" (issue 489). */
+export const CREATE_QUEUE_PATH = `${QUEUES_PATH}/create`;
+
 /** S2, a queue's page; its name is one segment below `queue/`. */
 export function queuePath(name: string): string {
   return `${QUEUES_PATH}/queue/${encodeURIComponent(name)}`;
@@ -175,4 +178,65 @@ export function base64ToBytes(text: string): Uint8Array | undefined {
     bytes[index] = binary.charCodeAt(index);
   }
   return bytes;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// "Create queue" (issue 489): the rules the emulator enforces on a queue's name and its maximum receives, checked
+// before anything is sent, in the requirement's words.
+
+/** A queue's type as "Create queue" asks it. */
+export type QueueKind = 'standard' | 'fifo';
+
+/** The suffix of a FIFO queue's name, counted in its 80 characters. */
+export const FIFO_SUFFIX = '.fifo';
+
+/** The longest name the emulator takes, a FIFO queue's suffix included. */
+export const MAX_NAME_LENGTH = 80;
+
+/** A name of the type `kind`: a FIFO queue's ends with `.fifo`, a standard queue's does not. */
+export function isNameOfKind(name: string, kind: QueueKind): boolean {
+  return name.endsWith(FIFO_SUFFIX) === (kind === 'fifo');
+}
+
+const NAME_CHARACTERS = /^[A-Za-z0-9_-]+$/;
+
+/**
+ * The message of a name that breaks the emulator's rule for a queue of `kind`, `undefined` for one it takes: 1 to 80
+ * characters of letters, digits, `-` and `_`, and for FIFO the suffix `.fifo` within the 80; a standard queue's name
+ * does not end with `.fifo`.
+ */
+export function queueNameMessage(name: string, kind: QueueKind): string | undefined {
+  if (name === '') {
+    return 'Enter a name.';
+  }
+  const suffixed = name.endsWith(FIFO_SUFFIX);
+  const stem = suffixed ? name.slice(0, -FIFO_SUFFIX.length) : name;
+  if (!NAME_CHARACTERS.test(stem)) {
+    return 'Use only letters, numbers, hyphens (-) and underscores (_).';
+  }
+  if (kind === 'standard' && suffixed) {
+    return "Only a FIFO queue's name ends with .fifo. Choose FIFO or change the name.";
+  }
+  if (name.length > MAX_NAME_LENGTH) {
+    return 'Use at most 80 characters.';
+  }
+  if (kind === 'fifo' && !suffixed) {
+    return "A FIFO queue's name must end with .fifo.";
+  }
+  return undefined;
+}
+
+/** The fewest and most receives a redrive policy takes. */
+export const MIN_RECEIVES = 1;
+export const MAX_RECEIVES = 1000;
+
+/** The maximum receives as a number when `text` is a whole number from 1 to 1000; else `undefined`. */
+export function maxReceives(text: string): number | undefined {
+  const value = wholeNumber(text);
+  return value !== undefined && value >= MIN_RECEIVES && value <= MAX_RECEIVES ? value : undefined;
+}
+
+/** The message of a maximum receives the emulator refuses; `undefined` for one it takes. */
+export function maxReceivesMessage(text: string): string | undefined {
+  return maxReceives(text) === undefined ? 'Enter a whole number from 1 to 1000.' : undefined;
 }
