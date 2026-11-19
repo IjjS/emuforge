@@ -91,7 +91,7 @@ function nameMessage(name: string): string | undefined {
 }
 
 /** What "Handler" says a handler is, with an example in the language of the runtime `runtime`. */
-export function handlerDescription(runtime: string | undefined): string {
+function handlerDescription(runtime: string | undefined): string {
   const example = offeredRuntime(runtime)?.language === 'python' ? 'lambda_function.lambda_handler' : 'index.handler';
   return `The function the emulator calls, as file.function: for example ${example}.`;
 }
