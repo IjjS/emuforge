@@ -450,6 +450,10 @@ export interface ItemExploration {
   pagesCount: number;
   /** The last page read carried a `LastEvaluatedKey`: more pages may follow. */
   openEnd: boolean;
+  /** The number of items the emulator read for the shown page (`ScannedCount`); `undefined` until its answer. */
+  read: number | undefined;
+  /** The shown page's own answer carried a `LastEvaluatedKey`. */
+  more: boolean;
   /** Shows page `page` (from 1), read again with its start key; a page with no known start key is ignored. */
   goToPage: (page: number) => void;
   /** Reads the shown page again with its start key (the header's "Refresh"). */
@@ -560,8 +564,11 @@ export function useItemExploration({ endpoint, request, run, connected }: ItemEx
 
   useReconnect(connected, failed, refresh);
 
+  const shown = failed ? undefined : answer;
   return {
-    items: failed ? undefined : answer?.items,
+    items: shown?.items,
+    read: shown === undefined ? undefined : (shown.read ?? shown.items.length),
+    more: shown?.next !== undefined,
     failure: failed
       ? failureOf(query.error, request?.read.kind === 'query' ? OPERATIONS.query : OPERATIONS.scan)
       : undefined,

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { engineEndpoint } from '../../../../../lib/aws/client-factory';
 import type { ItemsRequest, QueryKey } from './api';
+import { NEW_CONDITION } from './filter';
 import {
   REREAD_DELAY_MS,
   useDeleteItems,
@@ -344,6 +345,100 @@ describe('pages of items', () => {
       });
     });
     expect(exploration.result.current.items).toBeUndefined();
+  });
+});
+
+describe('a filtered exploration (issue 512)', () => {
+  const FILTERED: ItemsRequest = {
+    ...SCAN,
+    filter: [{ ...NEW_CONDITION, name: 'status', value: 'open' }],
+  };
+  const OTHER: ItemsRequest = {
+    ...SCAN,
+    filter: [{ ...NEW_CONDITION, name: 'status', value: 'closed' }],
+  };
+
+  function counted(keys: string[], scanned: number, next?: string): Answer {
+    const answer = itemsAnswer(keys, next);
+    return { ...answer, body: { ...(answer.body as object), Count: keys.length, ScannedCount: scanned } };
+  }
+
+  it('a run with other conditions starts at page 1 with earlier pages dropped; "next page" keeps the conditions', async () => {
+    const exploration = renderItems({ request: FILTERED });
+    const first = await engine.request('Scan');
+    expect(first.body).toMatchObject({
+      FilterExpression: '#f0 = :f0',
+      ExpressionAttributeValues: { ':f0': { S: 'open' } },
+    });
+    first.respond(counted(['a'], 25, 'k1'));
+    await shownItems(exploration.result, ['a']);
+
+    act(() => {
+      exploration.result.current.goToPage(2);
+    });
+    const second = await engine.request('Scan', 1);
+    expect(second.body).toEqual({
+      TableName: 't-1',
+      Limit: 25,
+      ExclusiveStartKey: { pk: { S: 'k1' } },
+      FilterExpression: '#f0 = :f0',
+      ExpressionAttributeNames: { '#f0': 'status' },
+      ExpressionAttributeValues: { ':f0': { S: 'open' } },
+    });
+    second.respond(counted(['b'], 25, 'k2'));
+    await shownItems(exploration.result, ['b']);
+    expect(exploration.result.current.pagesCount).toBe(2);
+
+    exploration.rerender({ endpoint, request: OTHER, run: 1, connected: true });
+    const run = await engine.request('Scan', 2);
+    expect(run.body).not.toHaveProperty('ExclusiveStartKey');
+    expect(run.body).toMatchObject({ ExpressionAttributeValues: { ':f0': { S: 'closed' } } });
+    expect(exploration.result.current.currentPage).toBe(1);
+    run.respond(counted(['c'], 25));
+    await shownItems(exploration.result, ['c']);
+    expect(exploration.result.current.pagesCount).toBe(1);
+  });
+
+  it('the shown page gives the number it read and whether its own answer carried a last key, after going back too', async () => {
+    const exploration = renderItems({ request: FILTERED });
+    (await engine.request('Scan')).respond(counted([], 25, 'k1'));
+    await shownItems(exploration.result, []);
+    expect(exploration.result.current.read).toBe(25);
+    expect(exploration.result.current.more).toBe(true);
+
+    act(() => {
+      exploration.result.current.goToPage(2);
+    });
+    (await engine.request('Scan', 1)).respond(counted(['b', 'c'], 10));
+    await shownItems(exploration.result, ['b', 'c']);
+    expect(exploration.result.current.read).toBe(10);
+    expect(exploration.result.current.more).toBe(false);
+
+    act(() => {
+      exploration.result.current.goToPage(1);
+    });
+    expect(exploration.result.current.read).toBeUndefined();
+    (await engine.request('Scan', 2)).respond(counted([], 25, 'k1'));
+    await shownItems(exploration.result, []);
+    expect(exploration.result.current.read).toBe(25);
+    expect(exploration.result.current.more).toBe(true);
+    expect(exploration.result.current.pagesCount).toBe(2);
+  });
+
+  it('an answer of the earlier conditions that arrives after a new run is not shown', async () => {
+    const exploration = renderItems({ request: FILTERED });
+    const first = await engine.request('Scan');
+
+    exploration.rerender({ endpoint, request: OTHER, run: 1, connected: true });
+    const second = await engine.request('Scan', 1);
+    second.respond(counted(['later'], 3));
+    await shownItems(exploration.result, ['later']);
+    first.respond(counted(['earlier'], 9));
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(first.signal.aborted).toBe(true);
+    expect(exploration.result.current.items?.map(({ pk }) => pk?.S)).toEqual(['later']);
+    expect(exploration.result.current.read).toBe(3);
   });
 });
 

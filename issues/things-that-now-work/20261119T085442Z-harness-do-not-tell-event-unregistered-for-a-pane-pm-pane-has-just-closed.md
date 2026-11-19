@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: bug
 Issue-Source: finder
 Issue-Key: harness|pm-watchd|unregistered-told-for-a-pane-just-closed
-Issue-Check-Ids:
+Issue-Check-Ids: harness.registry
 Issue-Commit: 807e51faa43f4c53aa05c3c2ee9788aefabb4faf
 
 # Do not tell EVENT unregistered for a pane pm-pane has just closed
