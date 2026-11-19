@@ -5,6 +5,7 @@ import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import { readServiceFolders, SERVICES_DIR } from '../../../test/service-files';
+import { SERVICES } from '../services';
 import {
   collectScreens,
   registryFaults,
@@ -138,6 +139,21 @@ describe('the registry of the AWS area', () => {
     const faults = registryFaults([{ folder: 'nofile', screens: [screenAt(['/aws/nofile'])] }], () => false);
     expect(faults).toHaveLength(1);
     expect(faults[0]).toContain('nofile');
+  });
+
+  it('the rules: a folder whose screens.ts registers no screen → refused, naming the folder (issue 494)', () => {
+    const faults = registryFaults([{ folder: 'empty', screens: [] }], () => true);
+    expect(faults).toHaveLength(1);
+    expect(faults[0]).toMatch(/^empty: /);
+  });
+
+  it('the real build: the services marked as having a screen are exactly the services the registry holds a screen of (issue 494)', () => {
+    const marked = SERVICES.filter(({ hasScreen }) => hasScreen).map(({ route }) => route);
+    const registered = SERVICES.filter(({ route }) => SCREENS.some(({ service }) => service === route)).map(
+      ({ route }) => route,
+    );
+    expect(marked.length).toBeGreaterThan(0);
+    expect(marked).toEqual(registered);
   });
 
   it('a service folder whose screens.ts gives an empty list → no screen; its route shows the "no screen yet" page', async () => {

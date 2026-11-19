@@ -115,7 +115,8 @@ function screenName(folder: string, screen: ServiceScreen): string {
 
 /**
  * What breaks the registry's rules (R3.4) among `folders`, one sentence per fault, naming the folder, the path or
- * the screen: a folder for which `hasServiceFile` is false; a path not `/aws/<folder>` or below it, or not well
+ * the screen: a folder for which `hasServiceFile` is false; a folder whose `screens.ts` registers no screen (issue
+ * 494: a service has a Studio screen exactly when its folder holds a `screens.ts`); a path not `/aws/<folder>` or below it, or not well
  * formed (R4.1); a screen without a path, or whose crumbs, written or returned by its function for sample values,
  * are none (R4.6); two paths, of one screen or of two, that match the same addresses (R4.3); a `leadsTo` pattern not
  * well formed, not below `/aws/<folder>`, or whose parameters are not exactly those of the screen's first path (issue
@@ -129,6 +130,7 @@ export function registryFaults(
   const paths: string[] = [];
   for (const { folder, screens } of folders) {
     if (!hasServiceFile(folder)) faults.push(`${folder}: a folder with a screens.ts holds no service.json`);
+    if (screens.length === 0) faults.push(`${folder}: a screens.ts registers at least one screen`);
     const route = `/aws/${folder}`;
     for (const screen of screens) {
       if (screen.paths.length === 0) faults.push(`${screenName(folder, screen)}: a screen has at least one path`);

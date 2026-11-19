@@ -167,9 +167,9 @@ Applies to everything under `providers/aws/area/`, at `/aws` and below.
   EmuForge-only states included (its index, "no screen yet", its "Page not found"). A service route is the
   provider's segment followed by the service's route: `/aws/s3`, `/aws/s3/buckets`.
 - Studio has one list of providers, `app/provider-list.ts`. An entry gives the provider's name ("Amazon Web
-  Services"), its short name for the frame ("AWS"), its first path segment (`aws`), its services for Home (label
-  and path) and its area: the component that renders everything under its segment, loaded with a dynamic
-  `import()`.
+  Services"), its short name for the frame ("AWS"), its first path segment (`aws`), its services for Home (label,
+  path and whether the service has a Studio screen) and its area: the component that renders everything under its
+  segment, loaded with a dynamic `import()`.
 - Studio hands an open area its connection as a plain value: the latest answer of the engine's connection status
   (none before the first answer) and the engine's origin. Studio's frame checks the connection as Home does, when
   a page of the area opens and again 5 seconds after each answer, for as long as a page of the area is open, so a
