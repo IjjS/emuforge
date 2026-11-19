@@ -266,7 +266,7 @@ function UploadView({ bucket, prefix, connection }: UploadViewProps) {
   const actions =
     phase === 'done' ? (
       <Button variant="primary" href={back} onFollow={handleFollow}>
-        <Quoted before="Go to " name={bucket} after="" />
+        {`Go to ${bucket}`}
       </Button>
     ) : (
       <SpaceBetween direction="horizontal" size="xs">

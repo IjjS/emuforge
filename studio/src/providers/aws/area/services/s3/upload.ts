@@ -129,7 +129,7 @@ export async function putFile(key: string, file: Blob, options: PutOptions): Pro
 
 /** "Uploaded 1 of 2 files." */
 export function uploadedText(uploaded: number, files: number): string {
-  return `Uploaded ${String(uploaded)} of ${String(files)} file${files === 1 ? '' : 's'}.`;
+  return `Uploaded ${String(uploaded)} of ${String(files)} files.`;
 }
 
 /** "Failed: {message}" of a failed put: the emulator's message, else its code or status line. */
