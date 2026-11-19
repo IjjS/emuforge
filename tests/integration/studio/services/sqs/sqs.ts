@@ -459,3 +459,97 @@ export async function eventually<T>(boundMs: number, read: () => Promise<T>, hol
   });
   return found ?? last;
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Creating and deleting a queue (test-criteria.md, issues 489 and 490): S3 `/aws/sqs/queues/create`, and "Delete" on
+// the queue list and "Delete queue" on a queue's page.
+// ---------------------------------------------------------------------------------------------------------------
+
+export const CREATE_QUEUE_PATH = `${QUEUES_PATH}/create`;
+export const CREATE_QUEUE = 'Create queue';
+export const DELETE_QUEUE = 'Delete queue';
+export const SET_DEAD_LETTER = 'Set a dead-letter queue';
+export const DEDUPLICATION = 'Content-based deduplication';
+export const MAX_RECEIVES = 'Maximum receives';
+/** The emulator's code for a `CreateQueue` whose attribute it refuses. */
+export const INVALID_PARAMETER_VALUE = 'InvalidParameterValue';
+/** The end of the emulator's message for a redrive policy whose dead-letter queue it does not hold. */
+export const DEAD_LETTER_TARGET_GONE = 'Dead letter target does not exist.';
+
+export function createdQueue(name: string): string {
+  return `Created queue ${name}`;
+}
+export function deletedQueue(name: string): string {
+  return `Deleted queue ${name}`;
+}
+export function nameTaken(name: string): string {
+  return `A queue named ${name} already exists.`;
+}
+export function openQueue(name: string): string {
+  return `Open ${name}`;
+}
+/** The header of a refused delete of `name`. */
+export function deleteQueueFailed(name: string): string {
+  return `Delete queue ${name} failed`;
+}
+/** The delete dialog's sentence on a dead-letter queue of `sources`. */
+export function deadLetterOf(sources: string[]): string {
+  return `It is the dead-letter queue of ${sources.join(', ')}. Their redrive policies keep naming it.`;
+}
+
+const SELECT_TRIGGER = wrapper.findSelect().findTrigger().toSelector().replace(/^body /, '');
+const ALERT = wrapper.findAlert().toSelector().replace(/^body /, '');
+
+/** The parts of S3, the "Create queue" form, a check acts on. */
+export function createScreen(page: Page) {
+  const main = page.getByRole('main');
+  return {
+    main,
+    name: main.getByRole('textbox', { name: 'Name', exact: true }),
+    /** The type's tile: "Standard" or "FIFO". */
+    type: (label: 'Standard' | 'FIFO') => main.getByRole('radio', { name: new RegExp(`^${label}( |$)`) }),
+    deduplication: main.getByLabel(DEDUPLICATION, { exact: true }),
+    deadLetterOn: main.getByLabel(SET_DEAD_LETTER, { exact: true }),
+    deadLetter: main.locator(SELECT_TRIGGER),
+    deadLetterSearch: page.getByRole('combobox', { name: SEARCH }),
+    options: page.getByRole('option'),
+    maxReceives: main.getByRole('textbox', { name: MAX_RECEIVES, exact: true }),
+    submit: main.getByRole('button', { name: CREATE_QUEUE, exact: true }),
+    /** The form's alert of a failed create. */
+    failure: main.locator(ALERT).filter({ hasText: `${CREATE_QUEUE} failed` }),
+  };
+}
+
+/**
+ * Opens the dead-letter field's list, types `prefix` into its search and waits until the queues it offers are exactly
+ * `want`, in the list's order.
+ */
+export async function expectDeadLetterChoices(page: Page, prefix: string, want: string[]): Promise<void> {
+  const s = createScreen(page);
+  await s.deadLetter.click(ACTION);
+  await s.deadLetterSearch.fill(prefix, ACTION);
+  await expect
+    .poll(async () => (await s.options.allInnerTexts()).map((t) => t.trim()), {
+      message: `the dead-letter field offers ${want.join(', ')} for "${prefix}"`,
+      timeout: 15_000,
+    })
+    .toEqual(want);
+}
+
+/** Chooses `name` in the open dead-letter list and waits for the page's read of its ARN to be answered. */
+export async function chooseDeadLetter(page: Page, name: string): Promise<void> {
+  const s = createScreen(page);
+  await answered(page, 'GetQueueAttributes', () => s.options.filter({ hasText: name }).click(ACTION));
+  await expect(s.deadLetter, `the dead-letter field shows ${name}`).toContainText(name);
+}
+
+/** The radio that selects the queue `name` on the queue list. */
+export function queueRadio(page: Page, name: string): Locator {
+  return page.getByRole('main').getByRole('radio', { name, exact: true });
+}
+
+/** Types `prefix` into the queue list's search and waits until the names it shows are `want`. */
+export async function expectListed(page: Page, prefix: string, want: string[]): Promise<void> {
+  await page.getByRole('searchbox', { name: SEARCH, exact: true }).fill(prefix, ACTION);
+  await expectRows(page.locator(TABLE).first(), (r) => r.Name, want, `the queues listed under ${prefix}`);
+}
