@@ -7,7 +7,7 @@
 run starts an emulator of its own from the machine's image `aws-emulator` (pinned by its id, `--pull never`,
 telemetry off, published on 127.0.0.1 only, 2 GB), as an integration run starts the run's emulator, on --port or
 a free loopback port. It refuses 9297 (the owner's), a port a registered worktree owns, a port something accepts
-on, a port whose folder ~/.aws/emulator/<port> already exists, and a second run while one runs. It runs
+on, a port whose neighbour above (the port beside the emulator's) is one of those, a port whose folder ~/.aws/emulator/<port> already exists, and a second run while one runs. It runs
 `pm-mem --wait` first, reads the image's `aws-emulator --version` in a container with no network, waits up to 30 s
 for /__admin/health over TLS verified against the emulator's own ca.pem, and reads the emulator's own key from its
 emulator_credentials into memory. It never prints, logs or writes the key, and reads nothing else under ~/.aws.
@@ -119,6 +119,8 @@ def refusal(port):
         return f"~/.aws/emulator/{port} already exists; a leftover would be mistaken for this run's files"
     if in_use(port):
         return f"something accepts on 127.0.0.1:{port}"
+    if port + 1 > 65535 or port + 1 == OWNER or port + 1 in registered_ports() or in_use(port + 1):
+        return f"the port beside it, {port + 1}, is taken"
     return None
 
 

@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: harness|tests|remove-the-harness-tests-but-the-guards-against-harm
-Issue-Check-Ids:
+Issue-Check-Ids: harness.guards
 Issue-Commit: 0d432947131b7900945c116b072b568c4e218b68
 
 # Remove the harness tests but the few that guard the machine's disk, memory and CPU, and write none from now on

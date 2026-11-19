@@ -158,9 +158,9 @@ def cmd_harness(a):
         close = ("(This part does not close the issue: another part follows. Leave its file under "
                  "issues/things-that-do-not-work/.)")
     else:
-        close = ('Close the issue on your branch: {{root}}/.pm/bin/pm-issue close {{issue}} --checks "<the harness check '
-                 'ids of the tests that show the fix, harness.<test file name without test_ and .py, - for _>>" '
-                 "--in {{worktree}}, and commit the move with your last commit, before pm-check. pm-merge refuses "
+        close = ("Close the issue on your branch: {{root}}/.pm/bin/pm-issue close {{issue}} --in {{worktree}}, with "
+                 '--checks "harness.guards" only when a kept guard shows the fix (issue 523), and commit the move with '
+                 "your last commit, before pm-check. pm-merge refuses "
                  "this part while the issue's file is still under issues/things-that-do-not-work/ on your branch.")
     values = dict(v, root=str(ROOT), unit=a.unit, part=a.part.strip(), worktree=wt["path"], branch=wt["branch"],
                   base=wt.get("base") or "main", precedents=precedents(a.precedent), close_step=close)

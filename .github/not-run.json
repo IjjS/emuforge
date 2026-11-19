@@ -9,7 +9,7 @@
   "steps": [
     {
       "step": "harness-test",
-      "reason": "the harness's own tests run on the owner's machine when the harness changes (owner decision 2026-11-16) and use macOS tools"
+      "reason": "the harness keeps only its guards (issue 523), which run on the owner's machine when the harness changes (owner decision 2026-11-16)"
     }
   ]
 }
