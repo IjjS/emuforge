@@ -520,8 +520,8 @@ describe('the "Subscriptions" tab', () => {
       const header = headers.find((cell) => text(cell) === label);
       return Number.parseFloat(/^([\d.]+)ch$/.exec(header?.style.minWidth ?? '')?.[1] ?? '0');
     };
-    // The label's characters and the indicator's icon with its gap (two characters at the least).
-    expect(minWidthOf('Status')).toBeGreaterThanOrEqual('Pending confirmation'.length + 2);
+    // The label's characters, the indicator's icon with its gap and the cell's padding (eight characters at the least).
+    expect(minWidthOf('Status')).toBeGreaterThanOrEqual('Pending confirmation'.length + 8);
     for (const label of [
       'Allowed',
       'No permission',
@@ -530,7 +530,7 @@ describe('the "Subscriptions" tab', () => {
       'Function not found',
       'Checking',
     ]) {
-      expect(minWidthOf('Delivery')).toBeGreaterThanOrEqual(label.length + 2);
+      expect(minWidthOf('Delivery')).toBeGreaterThanOrEqual(label.length + 8);
     }
   });
 
