@@ -1,6 +1,7 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { useState } from 'react';
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -33,6 +34,7 @@ const getPolicyDocument = vi.mocked(api.getPolicyDocument);
 const setDefaultPolicyVersion = vi.mocked(api.setDefaultPolicyVersion);
 const deletePolicyVersion = vi.mocked(api.deletePolicyVersion);
 const createPolicyVersion = vi.mocked(api.createPolicyVersion);
+const deletePolicy = vi.mocked(api.deletePolicy);
 const getRole = vi.mocked(api.getRole);
 
 const ARN = 'arn:aws:iam::000000000000:policy/p-doc';
@@ -153,12 +155,19 @@ let connection: AreaConnection;
 
 function Area() {
   const { pathname } = useLocation();
+  // Each change of path is one route change, as Studio's frame counts them, so a result handed over is shown.
+  const [seen, setSeen] = useState({ pathname, changes: 0 });
+  let changes = seen.changes;
+  if (seen.pathname !== pathname) {
+    changes += 1;
+    setSeen({ pathname, changes });
+  }
   return (
     <AwsArea
       headerSelector="#top-bar"
       onPageTitle={() => undefined}
       onContentTarget={() => undefined}
-      routeChanges={pathname.length}
+      routeChanges={changes}
       connection={connection}
     />
   );
@@ -186,6 +195,7 @@ beforeEach(() => {
     setDefaultPolicyVersion,
     deletePolicyVersion,
     createPolicyVersion,
+    deletePolicy,
   ]) {
     mock.mockReset();
   }
@@ -655,5 +665,242 @@ describe('"Edit" open while the policy’s read fails', () => {
     expect(await screen.findByRole('button', { name: 'Retry' })).toBeInTheDocument();
     expect(document.body.textContent).toContain('The emulator did not answer');
     expect(screen.queryByRole('heading', { level: 2, name: 'Policy details' })).toBeNull();
+  });
+});
+
+// Issue 551, "Unit s1": the result of "Delete" is shown once, whatever order the reads the deletion starts answer in.
+// The page unmounts the dialog once the policy's read finds it gone, which may be before the read of its document.
+describe('"Delete" of the policy, whatever order the reads after it answer in', () => {
+  const GONE: IamFailure = {
+    kind: 'other',
+    operation: 'ListEntitiesForPolicy',
+    code: 'NoSuchEntity',
+    message: `Policy ${ARN} does not exist or is not attachable.`,
+  };
+
+  /** A read held until `release` is called; then it answers as `answer` says at that moment. */
+  function holdReads<T>(answer: () => Promise<T>) {
+    const waiting: (() => void)[] = [];
+    let holding = true;
+    const held = () =>
+      holding
+        ? new Promise<T>((resolve, reject) => {
+            waiting.push(() => {
+              answer().then(resolve, reject);
+            });
+          })
+        : answer();
+    const release = () => {
+      holding = false;
+      act(() => {
+        for (const go of waiting.splice(0)) go();
+      });
+    };
+    return { held, release, waiting: () => waiting.length };
+  }
+
+  /** Each read of a document waits; once released they answer from what the emulator holds. */
+  function holdDocumentReads() {
+    const answer = getPolicyDocument.getMockImplementation();
+    expect(answer).toBeDefined();
+    const hold = holdReads(() =>
+      (answer as NonNullable<typeof answer>)(
+        connection.engineOrigin ?? '',
+        ARN,
+        undefined,
+        new AbortController().signal,
+      ),
+    );
+    getPolicyDocument.mockImplementation(hold.held);
+    return hold;
+  }
+
+  function flashItems(): string[] {
+    return (PAGE.findFlashbar()?.findItems() ?? []).map((item) => text(item.getElement()));
+  }
+
+  async function confirmDelete() {
+    fireEvent.click(headerButton('Delete'));
+    const dialog = await screen.findByRole('dialog', { name: 'Delete p-doc?' });
+    fireEvent.change(within(dialog).getByRole('textbox'), { target: { value: 'delete' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+    return dialog;
+  }
+
+  /** Lets every answer that is due arrive, so a result shown twice would be seen. */
+  async function settled() {
+    for (let i = 0; i < 5; i += 1) {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+  }
+
+  /**
+   * The page's own "Policy not found": its sections are gone and the words stand beside the link "Policies". The
+   * section "Policy document" says "Policy not found" too once the document's read finds nothing, while the page
+   * still holds the policy, so the words alone do not say the page has left it.
+   */
+  async function pageNotFound() {
+    await waitFor(() => {
+      expect(screen.queryByRole('heading', { level: 2, name: 'Policy details' })).toBeNull();
+      expect(screen.getAllByText('Policy not found')).toHaveLength(1);
+      expect(notFoundLink()).toBeInTheDocument();
+    });
+  }
+
+  async function openShown() {
+    const router = open();
+    await loaded();
+    await waitFor(() => {
+      expect(documentText()).toBe(DOC_B);
+    });
+    return router;
+  }
+
+  it('deleted elsewhere, the policy’s read answers "not found" before the document’s → the failed step once, and "Policy not found"', async () => {
+    await openShown();
+    held = undefined;
+    deletePolicy.mockResolvedValue({
+      kind: 'failed',
+      step: { kind: 'read-entities' },
+      failure: GONE,
+      detachedRoles: [],
+    });
+    const documents = holdDocumentReads();
+
+    await confirmDelete();
+    await pageNotFound();
+    await waitFor(() => {
+      expect(documents.waiting()).toBeGreaterThan(0);
+    });
+    expect(screen.queryByRole('dialog', { name: 'Delete p-doc?' })).toBeNull();
+
+    documents.release();
+    await waitFor(() => {
+      expect(flashItems()).toHaveLength(1);
+    });
+    await settled();
+    const items = flashItems();
+    expect(items).toHaveLength(1);
+    expect(items[0]).toContain('Reading what the policy is attached to failed');
+    expect(items[0]).toContain('NoSuchEntity');
+    await pageNotFound();
+    expect(deletePolicy).toHaveBeenCalledTimes(1);
+  });
+
+  it('deleted elsewhere, the document’s read answers before the policy’s → the same item once, and "Policy not found"', async () => {
+    await openShown();
+    held = undefined;
+    deletePolicy.mockResolvedValue({
+      kind: 'failed',
+      step: { kind: 'read-entities' },
+      failure: GONE,
+      detachedRoles: [],
+    });
+    const answer = getPolicy.getMockImplementation() as NonNullable<ReturnType<typeof getPolicy.getMockImplementation>>;
+    const policies = holdReads(() => answer(connection.engineOrigin ?? '', ARN, new AbortController().signal));
+    getPolicy.mockImplementation(policies.held);
+    const documentReads = getPolicyDocument.mock.calls.length;
+
+    await confirmDelete();
+    await waitFor(() => {
+      expect(policies.waiting()).toBeGreaterThan(0);
+    });
+    await waitFor(() => {
+      expect(getPolicyDocument.mock.calls.length).toBeGreaterThan(documentReads);
+    });
+    await settled();
+
+    policies.release();
+    await pageNotFound();
+    await waitFor(() => {
+      expect(flashItems()).toHaveLength(1);
+    });
+    await settled();
+    const items = flashItems();
+    expect(items).toHaveLength(1);
+    expect(items[0]).toContain('Reading what the policy is attached to failed');
+    expect(items[0]).toContain('NoSuchEntity');
+    await pageNotFound();
+  });
+
+  it('deleted by "Delete", the policy’s read answers "not found" before the document’s → the policy list with "Policy p-doc deleted." once', async () => {
+    const router = await openShown();
+    deletePolicy.mockImplementation(() => {
+      held = undefined;
+      return Promise.resolve({ kind: 'deleted', detachedRoles: ['p-r'] });
+    });
+    const documents = holdDocumentReads();
+
+    await confirmDelete();
+    await waitFor(() => {
+      expect(documents.waiting()).toBeGreaterThan(0);
+    });
+    await pageNotFound();
+
+    documents.release();
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe('/aws/iam/policies');
+    });
+    await waitFor(() => {
+      expect(flashItems()).toEqual(['Policy p-doc deleted.']);
+    });
+    await settled();
+    expect(flashItems()).toEqual(['Policy p-doc deleted.']);
+    expect(router.state.location.pathname).toBe('/aws/iam/policies');
+  });
+
+  it('the deletion’s request fails (the engine cannot be reached), the policy’s read ending first → "Deleting the policy" with the failure once', async () => {
+    await openShown();
+    deletePolicy.mockRejectedValue(new TypeError('Failed to fetch'));
+    const documents = holdDocumentReads();
+    // The policy's read fails as the deletion's did: the page leaves the policy, and the dialog goes with it.
+    getPolicy.mockRejectedValue(new TypeError('Failed to fetch'));
+    const policyReads = getPolicy.mock.calls.length;
+
+    await confirmDelete();
+    await waitFor(() => {
+      expect(getPolicy.mock.calls.length).toBeGreaterThan(policyReads);
+    });
+    await waitFor(() => {
+      expect(documents.waiting()).toBeGreaterThan(0);
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'Delete p-doc?' })).toBeNull();
+    });
+    await settled();
+    expect(screen.queryByRole('heading', { level: 2, name: 'Policy details' })).toBeNull();
+
+    documents.release();
+    await waitFor(() => {
+      expect(flashItems()).toHaveLength(1);
+    });
+    await settled();
+    const items = flashItems();
+    expect(items).toHaveLength(1);
+    expect(items[0]).toContain('Deleting the policy failed');
+    expect(items[0]).toContain('Failed to fetch');
+    expect(screen.queryByRole('dialog', { name: 'Delete p-doc?' })).toBeNull();
+  });
+
+  it('while the deletion is in flight → the dialog stays, its "Delete" in progress, and no result is shown', async () => {
+    await openShown();
+    deletePolicy.mockImplementation(() => new Promise(() => undefined));
+    const policyReads = getPolicy.mock.calls.length;
+
+    const dialog = await confirmDelete();
+    await settled();
+
+    expect(screen.getByRole('dialog', { name: 'Delete p-doc?' })).toBe(dialog);
+    const button = createWrapper(dialog)
+      .findAllButtons()
+      .find((found) => text(found.getElement()) === 'Delete');
+    expect(button).toBeDefined();
+    expect(button?.isDisabled()).toBe(true);
+    expect(button?.findLoadingIndicator()).not.toBeNull();
+    expect(flashItems()).toEqual([]);
+    expect(getPolicy.mock.calls.length).toBe(policyReads);
+    expect(deletePolicy).toHaveBeenCalledTimes(1);
   });
 });

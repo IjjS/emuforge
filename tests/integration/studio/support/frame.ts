@@ -93,9 +93,19 @@ export async function cloudscapeElements(page: Page): Promise<string[]> {
   );
 }
 
-/** The page's `h1` with exactly `name`. */
+/** The heading text of a Cloudscape `Header`, its counter apart (the header's own test selector). */
+const HEADING_TEXT = createWrapper().findHeader().findHeadingText().toSelector().replace(/^body /, '');
+
+/**
+ * The page's `h1` that reads exactly `name`: by its accessible name, or, for the `h1` of a Cloudscape `Header`, by
+ * the header's heading text. Cloudscape renders a header's counter inside its heading once a list is read
+ * ("Topics (2)"), so a list's `h1` has the name `name` only while it is being read; its heading text is `name` in
+ * either state.
+ */
 export function heading(page: Page, name: string): Locator {
-  return page.getByRole('heading', { level: 1, name, exact: true });
+  // From the heading text up to its `h1`: the header's selector starts above the `h1`, so it cannot be asked inside it.
+  const ofHeader = page.locator(HEADING_TEXT).and(page.getByText(name, { exact: true })).locator('xpath=ancestor::h1');
+  return page.getByRole('heading', { level: 1, name, exact: true }).or(ofHeader);
 }
 
 /** Home: the address is `/` and its header is "Home". */

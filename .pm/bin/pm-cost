@@ -2,7 +2,9 @@
 """Sum tokens and estimated cost for an issue from the Claude transcripts of its panes.
 
   pm-cost <issue> [--write] [--session UUID]...     sessions come from .pm/run/panes-history.jsonl (pm-pane records
-                                                    each pane's Claude session id); add the PM's own session with --session
+                                                    each pane's Claude session id); add the PM's own session with --session.
+                                                    A pane name with several sessions (a rev pane per review round, a
+                                                    reset) is shown once per session, numbered: i551-rev#1, i551-rev#2
   pm-cost --all-since YYYY-MM-DD                     every transcript of this project since that day (weekly trend)
 
 Prices ($/MTok): Opus 5.5 4/20, cache read 0.20, cache write 5; Fable 5.1 10/50/0.25/12.5; Sonnet 5.5 2/10/0.20/2.5.
@@ -77,6 +79,16 @@ def main():
                     continue
                 if str(e.get("issue")) == str(a.issue) and e.get("session"):
                     sessions[e["session"]] = e["name"]
+        # a name with more than one session (a rev opened for each review round, issue 557; a pane reset) is
+        # numbered in the order its sessions began: i551-rev#1, i551-rev#2
+        count = {}
+        for name in sessions.values():
+            count[name] = count.get(name, 0) + 1
+        seen = {}
+        for uuid, name in list(sessions.items()):
+            if count[name] > 1:
+                seen[name] = seen.get(name, 0) + 1
+                sessions[uuid] = f"{name}#{seen[name]}"
         for u in a.session:
             sessions[u] = "pm"
         # a PM session that ran several issues is shared equally between them (pm.json session_issues, kept by pm-pane new)
@@ -95,7 +107,7 @@ def main():
                cost=round(sum(r["cost"] for r in rows), 2), images=sum(r["images"] for r in rows), panes=len(rows))
     print(f"panes={tot['panes']} calls={tot['calls']:,} out={tot['out'] / 1e6:.2f}M cache_read={tot['cr'] / 1e9:.2f}B cache_write={tot['cw'] / 1e6:.0f}M images={tot['images']} est=${tot['cost']:,.0f}")
     for r in sorted(rows, key=lambda r: -r["cost"]):
-        print(f"  {r['name']:16} calls={r['calls']:5} ctx_max={r['ctx_max']:>8,} out={r['out'] / 1e6:5.2f}M img={r['images']:4} ${r['cost']:6,.1f}")
+        print(f"  {r['name']:18} calls={r['calls']:5} ctx_max={r['ctx_max']:>8,} out={r['out'] / 1e6:5.2f}M img={r['images']:4} ${r['cost']:6,.1f}")
     if a.write and a.issue:
         save(issue_dir(a.issue) / "cost.json", dict(at=now(), total=tot, panes=rows))
         print(f"written {issue_dir(a.issue) / 'cost.json'}")

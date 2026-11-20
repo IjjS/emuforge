@@ -66,7 +66,10 @@ Eight axes. Each is accounted for in the checklist below whether or not it produ
    empty and large bodies, streaming bodies, presigned URLs, malformed input.
 3. **Caller identity**: Studio session, a signed request, an unsigned request, a wrong key; with IAM on:
    allow, explicit deny, implicit deny, a policy element the evaluator does not support.
-4. **Upstream state**: emulator healthy, down, restarted with new keys, slow past the timeout, answering 501.
+4. **Upstream state**: emulator healthy, down, restarted with new keys, slow past the timeout, answering 501. An
+   integration check of an environment case (the emulator or the engine stopped, killed, restarted, not there, not
+   reachable, or coming up late) is written for the tier `full` and never for the push run or a whole check
+   (`tests/integration/AGENTS.md`, Full tier); a unit test proves what it can without them.
 5. **Boundaries**: zero, one and many; the exact size, time and concurrency limit and one past it.
 6. **Repetition**: the same request twice, a retry after a timeout, a cancelled request.
 7. **Transparency**: what the caller receives through the engine equals what the emulator sends directly

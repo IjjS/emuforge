@@ -13,21 +13,18 @@
 # `full.yml`, which the owner starts by hand. The checks of the tier full (issue 482, the manifest's label `full`)
 # run only there: this workflow never passes `--full`, so each is `not-run`, whatever the push touched.
 #
-# A failed step does not stop the later ones of the nine. engine-test, studio-unit and integration (pm-check's
-# RETRY) run once more, as `<step> (second run)`, only when their first run failed; a second run that passes is
-# printed and summarized as flaky. The run is a success only when each of the nine exited 0, in its first run or,
-# for those three, in its second.
+# A failed step does not stop the later ones of the nine. No step runs a second time (issue 569): a step that
+# fails has failed, and the run is a success only when each of the nine exited 0.
 #
 # Rights: the token reads the repository's contents and nothing else; no secret is named, nothing is uploaded,
 # cached or published, and every action is one of GitHub's own, named by commit sha. No text from outside the
 # repository is put into a `run:` line.
 #
 # Time, as the first trial run took it (run 43861083645, nothing cached): preparing 1.2 minutes, the engine
-# steps 0.6, the Studio steps 0.7, integration 8.7 and its second run 7.5; 18.8 for the job with that second
-# run. The bounds stay above every figure with room for a slower runner: 80 minutes for the job, 30 for each
-# integration step and 15 for each other step of the nine, so one hung step cannot use up the time a second
-# run needs. Every other step has a bound too (10 for checkout and node, as for the other preparing steps), so
-# that `full.yml` holds the same text for them.
+# steps 0.6, the Studio steps 0.7, integration 8.7. The bounds stay above every figure with room for a slower
+# runner: 80 minutes for the job, 30 for the integration step and 15 for each other step of the nine, so one
+# hung step cannot use up the job's time. Every other step has a bound too (10 for checkout and node, as for the
+# other preparing steps), so that `full.yml` holds the same text for them.
 name: main
 
 on:
@@ -131,18 +128,11 @@ jobs:
         run: ../.github/ci run -- cargo clippy --workspace --all-targets -- -D warnings
 
       - name: engine-test
-        id: engine_test
         if: ${{ !cancelled() }}
-        continue-on-error: true
         timeout-minutes: 15
         working-directory: engine
         run: ../.github/ci run -- cargo test --workspace
 
-      - name: engine-test (second run)
-        if: ${{ !cancelled() && steps.engine_test.outcome == 'failure' }}
-        timeout-minutes: 15
-        working-directory: engine
-        run: ../.github/ci run --second engine-test -- cargo test --workspace
 
       - name: studio-typecheck
         if: ${{ !cancelled() }}
@@ -163,18 +153,11 @@ jobs:
         run: ../.github/ci run -- bun run format:check
 
       - name: studio-unit
-        id: studio_unit
         if: ${{ !cancelled() }}
-        continue-on-error: true
         timeout-minutes: 15
         working-directory: studio
         run: ../.github/ci run -- bun run test:unit --fsModuleCache=false
 
-      - name: studio-unit (second run)
-        if: ${{ !cancelled() && steps.studio_unit.outcome == 'failure' }}
-        timeout-minutes: 15
-        working-directory: studio
-        run: ../.github/ci run --second studio-unit -- bun run test:unit --fsModuleCache=false
 
       - name: studio-build
         if: ${{ !cancelled() }}
@@ -183,15 +166,7 @@ jobs:
         run: ../.github/ci run -- bun run build
 
       - name: integration
-        id: integration
         if: ${{ !cancelled() }}
-        continue-on-error: true
         timeout-minutes: 30
         working-directory: tests/integration
         run: ../../.github/ci run --tails -- ./run --not-run ../../.github/not-run.json --services ../../output/ci/services.json
-
-      - name: integration (second run)
-        if: ${{ !cancelled() && steps.integration.outcome == 'failure' }}
-        timeout-minutes: 30
-        working-directory: tests/integration
-        run: ../../.github/ci run --second integration --tails -- ./run --not-run ../../.github/not-run.json --services ../../output/ci/services.json

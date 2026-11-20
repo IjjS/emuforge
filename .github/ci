@@ -5,7 +5,7 @@
   .github/ci not-run
   .github/ci versions
   .github/ci services
-  .github/ci run [--second <step>] [--tails] -- <command> [<argument>...]
+  .github/ci run [--tails] -- <command> [<argument>...]
 
 not-run   Reads .github/not-run.json, the manifest (below) and the step names `.pm/bin/pm-check
           <checkout> --list` prints, and refuses the list (exit 1, one line `not-run: <entry>: <what is wrong>`
@@ -45,9 +45,6 @@ run       Starts <command> as given (an argument array, no shell) without the na
           --tails         on a code other than 0, prints for every check of <checkout>/output/integration/
                           report.json whose verdict is failed or error and whose log exists the last 200 lines
                           of that log, keys replaced, under a header naming the check.
-          --second <step> this is the step's second run, made because its first failed: on code 0, prints
-                          `flaky  <step>  failed once, passed its second run`, appends it to the run summary
-                          and leaves a warning annotation, so the flake is never shown as a plain pass.
 Usage faults (an unknown subcommand, `run` without `--` or without a command) exit 2.
 
 The manifest (issue 402) is the rows of tests/integration/manifest.jsonl, then those of
@@ -91,7 +88,7 @@ VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 SERVICE = re.compile(r"[a-z][a-z0-9]*(-[a-z0-9]+)*")  # matched with fullmatch
 COMMIT = re.compile(r"[0-9a-f]{40}")  # matched with fullmatch
 SCOPE_TIMEOUT = 120  # seconds pm-scope has to answer
-USAGE = "usage: .github/ci not-run | versions | services | run [--second <step>] [--tails] -- <command> [<argument>...]"
+USAGE = "usage: .github/ci not-run | versions | services | run [--tails] -- <command> [<argument>...]"
 
 
 def usage(why):
@@ -491,17 +488,12 @@ def cmd_run(args):
     opts, argv = args[:at], args[at + 1:]
     if not argv:
         usage("run needs a command after `--`")
-    second, want_tails = None, False
-    i = 0
-    while i < len(opts):
-        if opts[i] == "--tails":
+    want_tails = False
+    for opt in opts:
+        if opt == "--tails":
             want_tails = True
-        elif opts[i] == "--second" and i + 1 < len(opts) and opts[i + 1] in RUN_HERE:
-            second = opts[i + 1]
-            i += 1
         else:
-            usage(f"run does not know `{opts[i]}`" if opts[i] != "--second" else "--second needs one of the nine steps")
-        i += 1
+            usage(f"run does not know `{opt}`")
     try:
         drop = scrub_names()
     except (OSError, ValueError, SyntaxError) as e:
@@ -532,14 +524,7 @@ def cmd_run(args):
         code = 128 - code  # ended by a signal
     if want_tails and code != 0:
         tails()
-    flaky = None
-    if second and code == 0:
-        flaky = f"{second} failed once, passed its second run"
-        print(f"flaky  {second}  failed once, passed its second run", flush=True)
-        summary(f"- **flaky**: `{second}` failed once, passed its second run\n")
     close(token)
-    if flaky:
-        print(f"::warning title=flaky::{flaky}", flush=True)
     return code
 
 

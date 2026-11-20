@@ -112,9 +112,15 @@ reason `full: runs only in the full run; run it with --full`; no service, check 
 neither a push run of `main.yml` nor the whole check of an issue holds it. No agent runs the tier on its own: a
 plan, a worker or the `pm` runs `--full` or `--checks` of a check of the tier only on the owner's word, and the
 report of an issue need not name it. `report.json` holds `full_tier` `{of, left_out}`, and `run` and `pm-check`
-print the count left out (`full tier <n> of <m> left out`). The label is given and removed only by the `pm`, with
-the owner's word and the reason in the issue's `decisions.md`; a plan or a worker never labels a check to shorten a
-run. A row is never labelled both `full` and `on-request`: `run` refuses such a manifest before anything starts.
+print the count left out (`full tier <n> of <m> left out`). Apart from an environment case (below), the label is
+given and removed only by the `pm`, with the owner's word and the reason in the issue's `decisions.md`; a plan or a
+worker never labels a check to shorten a run. A row is never labelled both `full` and `on-request`: `run` refuses such a manifest before anything starts.
+
+An environment case is of the tier full, always (owner, 2026-11-20, issue 569): a check whose scenario is the
+emulator or the engine stopped, killed, restarted, not there, not reachable, or coming up late. The plan writes its
+row labelled `full` from the start; such a case is never written for the push run of `main.yml` or the whole check
+of an issue, and a new service's plan does not bring one back. A check whose task is the developer's own (testing a
+connection, stopping the product) or whose property is safety stays out of the tier though it stops something.
 
 ## Verdicts
 
