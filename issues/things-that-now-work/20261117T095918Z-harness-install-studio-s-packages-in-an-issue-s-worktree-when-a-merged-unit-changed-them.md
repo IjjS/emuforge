@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: bug
 Issue-Source: finder
 Issue-Key: harness|issue-worktree|install-after-merge
-Issue-Check-Ids:
+Issue-Check-Ids: none (harness issue, no kept guard shows it)
 Issue-Commit: 1afb76e83de8bac79f3c6536d4af2b7bcf6d8d7b
 
 # Install Studio's packages in an issue's worktree when a merged unit changed them, before the whole check
