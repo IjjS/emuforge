@@ -282,6 +282,15 @@ describe("a family's page", () => {
     expect(newestCalls().every((call) => call[2] === 'ACTIVE')).toBe(true);
   });
 
+  it('the Status select keeps its own width, in a horizontal row, not stretched across the container', async () => {
+    answer({ 'ACTIVE|': { items: [row(1)] } });
+    open(PATH);
+    await expectRows(['web:1']);
+    const filterRow = table().findFilterSlot()?.findSpaceBetween();
+    expect(filterRow).not.toBeNull();
+    expect(createWrapper(filterRow?.getElement()).findSelect()).not.toBeNull();
+  });
+
   it('the page names "task definitions" to the frame', async () => {
     answer({ 'ACTIVE|': { items: [row(1)] } });
     open(PATH);
