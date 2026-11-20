@@ -13,7 +13,8 @@ import { TerminateDialog } from './terminate-dialog';
 // The instance's actions (issue 553, design task 3), one part on S1, for the one selected row, and in S3's header:
 // "Start", "Stop", "Reboot" send their operation at once; "Terminate" opens the dialog. Each is available by the state
 // last read and otherwise shown disabled with its reason, as items of one "Instance state" menu with "Terminate" last
-// in a group of its own. While a request is in flight the menu is unavailable.
+// in a group of its own. While a request is in flight the menu is unavailable. Given that termination protection is on
+// (S3 reads it; S1 does not), "Terminate" is unavailable with its reason; off or not given, by the state alone.
 // The result goes to the area's flash: what was asked, never that it is done.
 
 /** The instance the actions are for: its ID, its state last read, and its name when it has one. */
@@ -27,9 +28,12 @@ export interface InstanceActionsProps {
   /** The one instance; none on S1 while no row is selected. */
   instance: ActionTarget | undefined;
   connection: AreaConnection;
+  /** True only while the instance's termination protection reads on; not given while unread, read or failed. */
+  protectionOn?: boolean;
 }
 
 const SELECT_ONE = 'Select one instance.';
+const PROTECTED = 'Termination protection is on.';
 
 /** The menu's button (issue 553, critique final P2 4: one control for the four, "Terminate" last and set apart). */
 const MENU = 'Instance state';
@@ -48,7 +52,7 @@ const RESULTS: Readonly<Record<InstanceAction, string>> = {
   terminate: 'Terminating',
 };
 
-export function InstanceActions({ instance, connection }: InstanceActionsProps) {
+export function InstanceActions({ instance, connection, protectionOn = false }: InstanceActionsProps) {
   const flash = usePageFlash();
   const pageSignal = usePageSignal();
   const act = useInstanceAction(connection.engineOrigin);
@@ -98,8 +102,15 @@ export function InstanceActions({ instance, connection }: InstanceActionsProps) 
     }
   };
 
-  const allowed = (action: InstanceAction) =>
-    instance === undefined ? ({ available: false, reason: SELECT_ONE } as const) : availability(action, instance.state);
+  const allowed = (action: InstanceAction) => {
+    if (instance === undefined) {
+      return { available: false, reason: SELECT_ONE } as const;
+    }
+    const byState = availability(action, instance.state);
+    return byState.available && action === 'terminate' && protectionOn
+      ? ({ available: false, reason: PROTECTED } as const)
+      : byState;
+  };
   const item = (action: InstanceAction): ButtonDropdownProps.Item => {
     const state = allowed(action);
     return state.available

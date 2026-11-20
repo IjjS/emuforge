@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: gap
 Issue-Source: plan
 Issue-Key: studio|ec2.terminate-under-protection|critique-p2
-Issue-Check-Ids:
+Issue-Check-Ids: studio.ec2-stop-start-reboot-terminate-an-instance
 Issue-Commit: 9bb0a6c407d4ad2dac9aaa256bd8789cb6fa5ee5
 
 # Make Terminate unavailable while an EC2 instance's termination protection is on
