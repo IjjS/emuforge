@@ -193,14 +193,13 @@ function Rules({ group, listing, connection }: RulesProps) {
                 <Button
                   disabled={selected === undefined}
                   disabledReason={selected === undefined ? SELECT_ONE_RULE : undefined}
-                  ariaLabel="Delete rule"
                   onClick={() => {
                     if (selected !== undefined) {
                       setDeleting(selected);
                     }
                   }}
                 >
-                  Delete
+                  Delete rule
                 </Button>
                 <Button href={addRuleHref(group.id)} onFollow={handleFollow}>
                   {ADD_RULE_TITLE}
@@ -358,14 +357,13 @@ export function GroupPage({ connection, params }: ScreenPageProps) {
                   <Button
                     disabled={deleteReason !== undefined}
                     disabledReason={deleteReason}
-                    ariaLabel="Delete security group"
                     onClick={() => {
                       if (deleteReason === undefined) {
                         setDeleting({ id: group.id, name: name ?? group.id });
                       }
                     }}
                   >
-                    Delete
+                    Delete group
                   </Button>
                 )}
               </SpaceBetween>
