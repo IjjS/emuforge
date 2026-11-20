@@ -24,8 +24,8 @@ import type { InternetGateway } from '../api';
 import { CHOOSE_A_VPC, VpcField } from '../components/vpc-field';
 import {
   ATTACH_INTERNET_GATEWAY_TITLE,
-  INTERNET_GATEWAYS_PATH,
   INTERNET_GATEWAYS_WORD,
+  internetGatewaysHref,
   nameOrId,
   VPC_QUERY,
 } from '../format';
@@ -44,7 +44,7 @@ const ATTACHING = 'Attaching';
 const ATTACH = 'Attach';
 
 /** A box of the page in the place of the form, with Cloudscape's empty-state pattern. */
-function Notice({ title, body }: { title?: string; body: string }) {
+function Notice({ title, body, back }: { title?: string; body: string; back: string }) {
   const handleFollow = useFollow();
   return (
     <Container>
@@ -58,7 +58,7 @@ function Notice({ title, body }: { title?: string; body: string }) {
           <Box variant="p" color="inherit">
             <ValueText kind="text" value={body} />
           </Box>
-          <Link href={INTERNET_GATEWAYS_PATH} onFollow={handleFollow}>
+          <Link href={back} onFollow={handleFollow}>
             View internet gateways
           </Link>
         </SpaceBetween>
@@ -87,6 +87,8 @@ export function AttachGatewayPage({ connection, params }: ScreenPageProps) {
     const value = query.get(VPC_QUERY);
     return value === null || value === '' ? undefined : value;
   });
+  // Every way back to S12 keeps the VPC of `?vpc=`.
+  const back = internetGatewaysHref(preset);
 
   const [vpc, setVpc] = useState<VpcChoice>();
   const [openedWith, setOpenedWith] = useState<VpcChoice>();
@@ -178,7 +180,7 @@ export function AttachGatewayPage({ connection, params }: ScreenPageProps) {
         return;
       }
       settle();
-      flash.handOver(INTERNET_GATEWAYS_PATH, [{ type: 'success', content: `Attached ${gateway.id} to ${vpc.id}` }]);
+      flash.handOver(back, [{ type: 'success', content: `Attached ${gateway.id} to ${vpc.id}` }]);
     } catch (error) {
       if (controller.signal.aborted) {
         return;
@@ -204,18 +206,18 @@ export function AttachGatewayPage({ connection, params }: ScreenPageProps) {
       setAsking(true);
       return;
     }
-    void navigate(INTERNET_GATEWAYS_PATH);
+    void navigate(back);
   };
   const handleDiscardAnswer = useCallback(
     (answer: DiscardAnswer) => {
       setAsking(false);
       if (answer === 'discard') {
-        void navigate(INTERNET_GATEWAYS_PATH);
+        void navigate(back);
       } else {
         setKept((count) => count + 1);
       }
     },
-    [navigate],
+    [navigate, back],
   );
 
   const handleVpc = useCallback((chosen: VpcChoice | undefined) => {
@@ -242,9 +244,15 @@ export function AttachGatewayPage({ connection, params }: ScreenPageProps) {
       </Container>
     );
   } else if (gateway === undefined) {
-    content = <Notice title="Internet gateway not found" body="The emulator holds no internet gateway with this ID." />;
+    content = (
+      <Notice
+        title="Internet gateway not found"
+        body="The emulator holds no internet gateway with this ID."
+        back={back}
+      />
+    );
   } else if (gateway.vpcId !== undefined) {
-    content = <Notice body={`${gateway.id} is attached to ${gateway.vpcId}.`} />;
+    content = <Notice body={`${gateway.id} is attached to ${gateway.vpcId}.`} back={back} />;
   } else {
     description = `Attaches ${nameOrId(gateway.id, gateway.tags)} to a VPC.`;
     content = (

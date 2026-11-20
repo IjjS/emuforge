@@ -501,14 +501,21 @@ describe("a VPC's page", () => {
     });
   });
 
-  it('"Internet gateway" with none attached → the sentence and "Attach internet gateway" to the gateways with ?vpc= this VPC; one attached → no such link', async () => {
+  it('"Internet gateway" with none attached → "Attach internet gateway" is its header\'s action, the one link of that name, to the gateways with ?vpc= this VPC; one attached → the header holds "View internet gateways"', async () => {
+    const headerOf = () =>
+      PAGE.findAllContainers()
+        .find((each) => text(each.findHeader()?.getElement()).startsWith('Internet gateway'))
+        ?.findHeader()
+        ?.getElement() as HTMLElement;
     const router = open();
     await loaded();
     await waitFor(() => {
       expect(text(container('Internet gateway'))).toContain('No internet gateway is attached to this VPC.');
     });
-    const link = within(container('Internet gateway')).getByRole('link', { name: 'Attach internet gateway' });
+    expect(screen.getAllByRole('link', { name: 'Attach internet gateway' })).toHaveLength(1);
+    const link = within(headerOf()).getByRole('link', { name: 'Attach internet gateway' });
     expect(link).toHaveAttribute('href', '/aws/vpc/internet-gateways?vpc=vpc-a');
+    expect(within(headerOf()).queryByRole('link', { name: 'View internet gateways' })).toBeNull();
     fireEvent.click(link);
     await waitFor(() => {
       expect(`${router.state.location.pathname}${router.state.location.search}`).toBe(
@@ -525,7 +532,11 @@ describe("a VPC's page", () => {
     await waitFor(() => {
       expect(text(container('Internet gateway'))).toContain('igw-1');
     });
-    expect(within(container('Internet gateway')).queryByRole('link', { name: 'Attach internet gateway' })).toBeNull();
+    expect(within(headerOf()).getByRole('link', { name: 'View internet gateways' })).toHaveAttribute(
+      'href',
+      '/aws/vpc/internet-gateways',
+    );
+    expect(screen.queryByRole('link', { name: 'Attach internet gateway' })).toBeNull();
   });
 
   it('"Tags" as the tags table shows them', async () => {

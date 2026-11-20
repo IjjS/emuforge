@@ -182,6 +182,11 @@ function reasonOf(element: Element): string {
     .trim();
 }
 
+/** The notice of which VPC an attach is for, among the area's alerts. */
+function attachNotice() {
+  return PAGE.findAllAlerts().find((each) => text(each.getElement()).includes('Attach is for'));
+}
+
 function selectRow(name: string) {
   fireEvent.click(screen.getByRole('radio', { name }));
 }
@@ -407,7 +412,15 @@ describe('the internet gateway list', () => {
     await waitFor(() => {
       expect(rows()).toHaveLength(2);
     });
-    expect(text(table().findHeaderSlot()?.getElement() as HTMLElement)).toContain('Attach is for vpc-a.');
+    const notice = attachNotice();
+    expect(notice).toBeDefined();
+    expect(notice?.findContent().getElement().textContent).toBe('Attach is for vpc-a.');
+    expect(notice?.getElement().compareDocumentPosition(table().getElement())).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(within(notice?.getElement() as HTMLElement).getByRole('link', { name: 'vpc-a' })).toHaveAttribute(
+      'href',
+      '/aws/vpc/vpcs/vpc/vpc-a',
+    );
+    expect(text(table().findHeaderSlot()?.getElement() as HTMLElement)).not.toContain('Attach is for');
     selectRow('igw-s');
     fireEvent.click(action('Attach'));
     await waitFor(() => {
@@ -432,6 +445,7 @@ describe('the internet gateway list', () => {
       expect(rows()).toHaveLength(2);
     });
     expect(text(document.body)).not.toContain('Attach is for');
+    expect(attachNotice()).toBeUndefined();
     selectRow('igw-s');
     fireEvent.click(action('Attach'));
     await waitFor(() => {

@@ -24,10 +24,11 @@ import type { InternetGateway, RouteTable, Subnet, Vpc } from '../api';
 import { DeleteVpcDialog, type VpcTarget } from '../components/delete-vpc-dialog';
 import { TagsTable } from '../components/tags-table';
 import {
-  createRouteTableHref,
-  createSubnetHref,
   CREATE_ROUTE_TABLE_TITLE,
   CREATE_SUBNET_TITLE,
+  createRouteTableHref,
+  createSubnetHref,
+  ID_MIN_WIDTH,
   INTERNET_GATEWAYS_PATH,
   internetGatewaysHref,
   nameOrId,
@@ -55,8 +56,6 @@ import {
 
 /** A name keeps room for 24 characters (`aws-area.md`, entry 4): 28ch is those 24 and the cell's padding. */
 const NAME_MIN_WIDTH = '28ch';
-/** The least width of an ID column that is a row header, so a zero-padded ID keeps to one or two lines at 390. */
-const ID_MIN_WIDTH = '22ch';
 
 const yesNo = (value: boolean) => (value ? 'Yes' : 'No');
 
@@ -332,6 +331,7 @@ function Gateway({ vpcId, listing, connection }: SectionProps<InternetGateway>) 
   const handleFollow = useFollow();
   const { items, failure, refresh } = listing;
   const gateway = items?.[0];
+  const none = failure === undefined && items !== undefined && gateway === undefined;
 
   let content;
   if (failure !== undefined) {
@@ -343,15 +343,7 @@ function Gateway({ vpcId, listing, connection }: SectionProps<InternetGateway>) 
       </Box>
     );
   } else if (gateway === undefined) {
-    // The way to attach one for this VPC: S12, saying the attach is for it, and S14 with it chosen.
-    content = (
-      <SpaceBetween size="xs">
-        <Box variant="p">No internet gateway is attached to this VPC.</Box>
-        <Link href={internetGatewaysHref(vpcId)} onFollow={handleFollow}>
-          Attach internet gateway
-        </Link>
-      </SpaceBetween>
-    );
+    content = <Box variant="p">No internet gateway is attached to this VPC.</Box>;
   } else {
     content = (
       <KeyValuePairs
@@ -371,9 +363,16 @@ function Gateway({ vpcId, listing, connection }: SectionProps<InternetGateway>) 
       header={
         <Header
           actions={
-            <Button href={INTERNET_GATEWAYS_PATH} onFollow={handleFollow}>
-              View internet gateways
-            </Button>
+            // With none attached, the next step leads to S12 for this VPC, and on to S14 with it chosen.
+            none ? (
+              <Button href={internetGatewaysHref(vpcId)} onFollow={handleFollow}>
+                Attach internet gateway
+              </Button>
+            ) : (
+              <Button href={INTERNET_GATEWAYS_PATH} onFollow={handleFollow}>
+                View internet gateways
+              </Button>
+            )
           }
         >
           Internet gateway

@@ -1,3 +1,4 @@
+import Alert from '@cloudscape-design/components/alert';
 import Box from '@cloudscape-design/components/box';
 import Button from '@cloudscape-design/components/button';
 import Header from '@cloudscape-design/components/header';
@@ -27,8 +28,9 @@ import { DeleteGatewayDialog, type GatewayTarget } from '../components/delete-ga
 import { PartDialog } from '../components/part-dialog';
 import {
   attachInternetGatewayHref,
-  createInternetGatewayHref,
   CREATE_INTERNET_GATEWAY_TITLE,
+  createInternetGatewayHref,
+  ID_MIN_WIDTH,
   INTERNET_GATEWAYS_TITLE,
   INTERNET_GATEWAYS_WORD,
   NAME_FILTER_DESCRIPTION,
@@ -63,8 +65,6 @@ interface DetachTarget {
 
 /** A name keeps room for 24 characters (`aws-area.md`, entry 4): 28ch is those 24 and the cell's padding on each side. */
 const NAME_MIN_WIDTH = '28ch';
-/** The least width of an ID column that is a row header, so a zero-padded ID keeps to one or two lines at 390. */
-const ID_MIN_WIDTH = '22ch';
 
 type BodyState =
   | { kind: 'loading' }
@@ -230,6 +230,7 @@ export function GatewayListPage({ connection }: { connection: AreaConnection }) 
     {
       id: 'vpc',
       header: 'VPC ID',
+      minWidth: ID_MIN_WIDTH,
       cell: (row) =>
         row.vpcId === undefined ? (
           <ValueText kind="name" value={undefined} none={NONE} />
@@ -285,6 +286,18 @@ export function GatewayListPage({ connection }: { connection: AreaConnection }) 
 
   return (
     <>
+      {forVpc !== undefined && (
+        // Opened from a VPC's way to its gateway: which VPC an attach is for, the ID leading back to it.
+        <Box margin={{ bottom: 'l' }}>
+          <Alert type="info">
+            Attach is for{' '}
+            <Link href={vpcHref(forVpc)} onFollow={handleFollow}>
+              <ValueText kind="name" value={forVpc} />
+            </Link>
+            .
+          </Alert>
+        </Box>
+      )}
       <Table<InternetGateway>
         variant="full-page"
         items={rows}
@@ -323,20 +336,7 @@ export function GatewayListPage({ connection }: { connection: AreaConnection }) 
           <Header
             variant="awsui-h1-sticky"
             counter={items === undefined ? undefined : counterText(items.length, listing.openEnd)}
-            description={
-              forVpc === undefined ? (
-                NAME_FILTER_DESCRIPTION
-              ) : (
-                <SpaceBetween size="xxxs">
-                  <span>{NAME_FILTER_DESCRIPTION}</span>
-                  <span>
-                    <ValueText kind="text" value="Attach is for " />
-                    <ValueText kind="name" value={forVpc} />
-                    <ValueText kind="text" value="." />
-                  </span>
-                </SpaceBetween>
-              )
-            }
+            description={NAME_FILTER_DESCRIPTION}
             actions={
               <SpaceBetween direction="horizontal" size="xs">
                 <Button iconName="refresh" ariaLabel="Refresh" loading={listing.loading} onClick={refresh} />

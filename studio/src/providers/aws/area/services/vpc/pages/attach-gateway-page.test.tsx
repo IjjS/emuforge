@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { notifyManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState, useSyncExternalStore } from 'react';
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -456,6 +456,87 @@ describe('Attach internet gateway', () => {
       expect(router.state.location.pathname).toBe(LIST_PATH);
     });
     expect(changes.attachInternetGateway).not.toHaveBeenCalled();
+  });
+
+  const APP_READ: api.Read<api.Vpc> = {
+    found: true,
+    value: {
+      id: 'vpc-x',
+      state: 'available',
+      cidr: '10.0.0.0/16',
+      cidrs: ['10.0.0.0/16'],
+      isDefault: false,
+      tags: [{ key: 'Name', value: 'app' }],
+    },
+  };
+  const addressOf = (router: ReturnType<typeof open>) =>
+    `${router.state.location.pathname}${router.state.location.search}`;
+
+  it('opened with ?vpc= → "View internet gateways", "Cancel" and the discard dialog\'s leave each open the gateways list with that ?vpc=; without it, none', async () => {
+    vi.mocked(api.getVpc).mockResolvedValue(APP_READ);
+    vi.mocked(api.getInternetGateway).mockResolvedValue({ found: true, value: gateway('igw-1', 'edge', 'vpc-x') });
+    const viewed = open(`${ATTACH_PATH}?vpc=vpc-x`);
+    fireEvent.click(await screen.findByRole('link', { name: 'View internet gateways' }));
+    await waitFor(() => {
+      expect(addressOf(viewed)).toBe(`${LIST_PATH}?vpc=vpc-x`);
+    });
+    cleanup();
+
+    vi.mocked(api.getInternetGateway).mockResolvedValue(DETACHED);
+    const cancelled = open(`${ATTACH_PATH}?vpc=vpc-x`);
+    await formShown();
+    await waitFor(() => {
+      expect(text(vpcSelect().findTrigger().getElement())).toContain('vpc-x');
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => {
+      expect(addressOf(cancelled)).toBe(`${LIST_PATH}?vpc=vpc-x`);
+    });
+    cleanup();
+
+    const discarded = open(`${ATTACH_PATH}?vpc=vpc-x`);
+    await formShown();
+    await waitFor(() => {
+      expect(vpcSelect().isDisabled()).toBe(false);
+    });
+    await chooseVpc('vpc-d');
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Discard' }));
+    await waitFor(() => {
+      expect(addressOf(discarded)).toBe(`${LIST_PATH}?vpc=vpc-x`);
+    });
+    cleanup();
+
+    const plain = open();
+    await formShown();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => {
+      expect(addressOf(plain)).toBe(LIST_PATH);
+    });
+  });
+
+  it('opened with ?vpc=, "Attach" answered 200 → the gateways list with that ?vpc= and "Attached {id} to {vpc id}"; without it, none', async () => {
+    vi.mocked(api.getVpc).mockResolvedValue(APP_READ);
+    const scoped = open(`${ATTACH_PATH}?vpc=vpc-x`);
+    await formShown();
+    await waitFor(() => {
+      expect(text(vpcSelect().findTrigger().getElement())).toContain('vpc-x');
+    });
+    submit();
+    await waitFor(() => {
+      expect(screen.getByText('Attached igw-1 to vpc-x')).toBeInTheDocument();
+    });
+    expect(addressOf(scoped)).toBe(`${LIST_PATH}?vpc=vpc-x`);
+    cleanup();
+
+    const plain = open();
+    await formShown();
+    await chooseVpc('vpc-x');
+    submit();
+    await waitFor(() => {
+      expect(screen.getByText('Attached igw-1 to vpc-x')).toBeInTheDocument();
+    });
+    expect(addressOf(plain)).toBe(LIST_PATH);
   });
 
   it('the page names its resources "internet gateways" to the frame', async () => {
