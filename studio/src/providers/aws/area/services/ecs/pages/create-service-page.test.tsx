@@ -162,7 +162,7 @@ beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Unexpected request in the page test')));
   vi.spyOn(ECSClient.prototype, 'send').mockImplementation((command) => {
     const operation = command.constructor.name.replace(/Command$/, '');
-    return Promise.resolve(emulator(operation, command.input)) as ReturnType<ECSClient['send']>;
+    return Promise.resolve(emulator(operation, command.input));
   });
 });
 
@@ -433,6 +433,7 @@ it('hands over to the returned service, keeps the flash through out-of-order ref
   refreshService.resolve(reply({ services: [SERVICE] }));
   expect(await screen.findByText('subnet-a')).toBeInTheDocument();
   await act(async () => refreshGate.resolve(reply(ACTIVE)));
+  await waitFor(() => expect(client.isFetching({ queryKey: ECS_KEYS.cluster('dev') })).toBe(0));
   expect(screen.getByRole('heading', { name: 'returned', level: 1 })).toBeInTheDocument();
   expect(screen.getByText('Service returned created.')).toBeInTheDocument();
   const clusterLink = screen
