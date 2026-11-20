@@ -680,10 +680,28 @@ function attributeTypeTrigger(n: number): string {
   return select.findTrigger().toSelector().replace(/^body /, '');
 }
 
-/** Opens `path` and waits for its `h1` `name`. */
+/**
+ * S1's `h1`: "Topics", alone while the list is being read and followed by the list's counter once it is read
+ * ("Topics (2)": Cloudscape renders a header's counter inside its heading), as IAM's checks find their lists' `h1`.
+ */
+export function listHeading(page: Page): Locator {
+  return page.getByRole('heading', { level: 1, name: new RegExp(`^${LIST_H1}(\\s|$)`) });
+}
+
+/** Opens `path` and waits for its `h1` `name`: exactly `name`, and S1's (`LIST_H1`) with its counter allowed. */
 export async function open(page: Page, path: string, h1: string): Promise<void> {
   await page.goto(path);
-  await expect(heading(page, h1), `the h1 "${h1}" at ${path}`).toBeVisible({ timeout: 15_000 });
+  const found = h1 === LIST_H1 ? listHeading(page) : heading(page, h1);
+  await expect(found, `the h1 "${h1}" at ${path}`).toBeVisible({ timeout: 15_000 });
+}
+
+/**
+ * The option of S4's open list whose accessible name is exactly `name`. Not by its text: Cloudscape writes the label
+ * of a highlighted option a second time, for screen readers, and hides the first from them, so the text of an option
+ * is its name once or twice and its accessible name is always the name.
+ */
+function choice(page: Page, name: string): Locator {
+  return page.getByRole('option', { name, exact: true });
 }
 
 /** Opens S3 of the topic `arn` and waits for its details. */
@@ -987,7 +1005,7 @@ export async function chooseQueue(page: Page, name: string): Promise<void> {
   const s = subscribeScreen(page);
   await s.endpoint.click(ACTION);
   await s.filter.fill(name, ACTION);
-  const option = s.options.filter({ hasText: new RegExp(`^\\s*${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`) });
+  const option = choice(page, name);
   await expect(option, `the choice ${name}`).toHaveCount(1, { timeout: 20_000 });
   await option.click(ACTION);
   await expect(s.endpoint, `"Queue" shows ${name}`).toContainText(name);
@@ -1003,7 +1021,7 @@ const CHOICE_PAGES_BOUND = 20;
 export async function chooseFunction(page: Page, name: string): Promise<void> {
   const s = subscribeScreen(page);
   await s.endpoint.click(ACTION);
-  const option = s.options.filter({ hasText: new RegExp(`^\\s*${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`) });
+  const option = choice(page, name);
   for (let i = 0; i < CHOICE_PAGES_BOUND; i++) {
     const shown = await waitFor(10_000, async () =>
       (await option.count()) > 0 ? 'option' : (await s.loadMore.isVisible()) ? 'more' : undefined,
