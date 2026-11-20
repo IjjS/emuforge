@@ -33,7 +33,10 @@ impl Bound {
     /// Binds a port the system picks at `config.listen_address` for the engine and, when `studio` is given,
     /// another for Studio, and returns them held, with `config`'s `port` (and then `studio_port`) set to them.
     /// The ports it picks never equal `config.emulator_port`, nor `config.studio_port` when Studio is not served.
-    pub async fn bind_free(mut config: Config, studio: Option<StudioFiles>) -> Result<Bound, Error> {
+    pub async fn bind_free(
+        mut config: Config,
+        studio: Option<StudioFiles>,
+    ) -> Result<Bound, Error> {
         let mut avoid = vec![config.emulator_port];
         if studio.is_none() {
             avoid.push(config.studio_port);
