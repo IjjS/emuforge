@@ -686,6 +686,16 @@ export async function open(page: Page, path: string, h1: string): Promise<void> 
   await expect(heading(page, h1), `the h1 "${h1}" at ${path}`).toBeVisible({ timeout: 15_000 });
 }
 
+/**
+ * The option of S4's open list that holds `value` (a queue's URL, a function's ARN), by the select's own test
+ * selector. Not by its text: Cloudscape writes the label of a highlighted option a second time, for screen readers.
+ */
+function choice(page: Page, value: string): Locator {
+  return page.getByRole('main').locator(
+    wrapper.findSelect().findDropdown().findOptionByValue(value).toSelector().replace(/^body /, ''),
+  );
+}
+
 /** Opens S3 of the topic `arn` and waits for its details. */
 export async function openTopic(page: Page, arn: string): Promise<void> {
   await open(page, topicPath(arn), nameOf(arn));
@@ -982,28 +992,29 @@ export async function openSubscribe(page: Page, arn: string): Promise<void> {
   await expect(subscribeScreen(page).endpoint, 'the endpoint field').toBeVisible({ timeout: 15_000 });
 }
 
-/** On S4 with "Amazon SQS" chosen: types `name` in "Queue" as the prefix and chooses the queue of that name. */
-export async function chooseQueue(page: Page, name: string): Promise<void> {
+/** On S4 with "Amazon SQS" chosen: types the queue's name in "Queue" as the prefix and chooses that queue. */
+export async function chooseQueue(page: Page, queue: MadeQueue): Promise<void> {
   const s = subscribeScreen(page);
   await s.endpoint.click(ACTION);
-  await s.filter.fill(name, ACTION);
-  const option = s.options.filter({ hasText: new RegExp(`^\\s*${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`) });
-  await expect(option, `the choice ${name}`).toHaveCount(1, { timeout: 20_000 });
+  await s.filter.fill(queue.name, ACTION);
+  const option = choice(page, queue.url);
+  await expect(option, `the choice ${queue.name}`).toHaveCount(1, { timeout: 20_000 });
   await option.click(ACTION);
-  await expect(s.endpoint, `"Queue" shows ${name}`).toContainText(name);
+  await expect(s.endpoint, `"Queue" shows ${queue.name}`).toContainText(queue.name);
 }
 
 /** The most pages of functions (50 a page) a check loads to find its function. */
 const CHOICE_PAGES_BOUND = 20;
 
 /**
- * On S4 with "AWS Lambda" chosen: opens "Function" and chooses the function `name`, pressing "Load more" for as long
+ * On S4 with "AWS Lambda" chosen: opens "Function" and chooses the function `fn`, pressing "Load more" for as long
  * as the pages shown do not hold it (`ListFunctions` has no filter, and the emulator holds other checks' functions).
  */
-export async function chooseFunction(page: Page, name: string): Promise<void> {
+export async function chooseFunction(page: Page, fn: MadeFunction): Promise<void> {
+  const { name } = fn;
   const s = subscribeScreen(page);
   await s.endpoint.click(ACTION);
-  const option = s.options.filter({ hasText: new RegExp(`^\\s*${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`) });
+  const option = choice(page, fn.arn);
   for (let i = 0; i < CHOICE_PAGES_BOUND; i++) {
     const shown = await waitFor(10_000, async () =>
       (await option.count()) > 0 ? 'option' : (await s.loadMore.isVisible()) ? 'more' : undefined,

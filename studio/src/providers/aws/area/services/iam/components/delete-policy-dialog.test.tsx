@@ -12,7 +12,8 @@ import type { DeletePolicyResult, IamFailure, PolicyEntity } from '../api';
 import { usePolicy } from '../queries';
 import { DeletePolicyDialog } from './delete-policy-dialog';
 
-// Test criteria, "Unit s5 — providers/aws/area/services/iam/components/delete-policy-dialog.test.tsx" (issue 535).
+// Test criteria, "Unit s5 — providers/aws/area/services/iam/components/delete-policy-dialog.test.tsx" (issue 535), and
+// "Unit s1" of the same file (issue 551).
 
 vi.mock('../api', async (importOriginal) => {
   const real = await importOriginal<typeof import('../api')>();
@@ -170,6 +171,26 @@ describe('"Delete" of a policy', () => {
     await waitFor(() => {
       expect(shown).toEqual([[{ type: 'success', content: 'Policy p-used deleted.' }]]);
     });
+    expect(handedOver).toEqual([]);
+  });
+
+  it('opened from the policy list, a refused step is named with the code once, on the list itself', async () => {
+    deletePolicy.mockResolvedValue({
+      kind: 'failed',
+      step: { kind: 'delete-policy' },
+      failure: { kind: 'other', operation: 'DeletePolicy', code: 'DeleteConflict', message: 'still attached' },
+      detachedRoles: [],
+    });
+    open([], 'list');
+    await confirm();
+
+    await waitFor(() => {
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+    expect(shown).toHaveLength(1);
+    expect(shown[0]?.[0]?.header).toBe('Deleting the policy failed');
+    render(<>{shown[0]?.[0]?.content}</>);
+    expect(document.body.textContent).toContain('DeleteConflict: still attached');
     expect(handedOver).toEqual([]);
   });
 

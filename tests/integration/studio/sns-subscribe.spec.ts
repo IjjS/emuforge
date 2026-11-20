@@ -91,7 +91,7 @@ test('studio.sns-subscribe-a-queue-and-a-published-message-arrives', async ({ ct
       await expect(heading(page, CREATE_SUBSCRIPTION)).toBeVisible();
       const s = subscribeScreen(page);
       await expect(s.protocol(PROTOCOL_SQS), '"Amazon SQS" at start').toBeChecked();
-      await chooseQueue(page, queue.name);
+      await chooseQueue(page, queue);
       await expect(s.allow, 'the checkbox at start').toBeChecked();
       await s.submit.click(ACTION);
       await expect(page).toHaveURL(addressOf(topicPath(topic)), { timeout: 30_000 });
@@ -188,7 +188,7 @@ test('studio.sns-subscribe-a-queue-and-a-published-message-arrives', async ({ ct
     async () => {
       await openSubscribe(page, topic);
       const s = subscribeScreen(page);
-      await chooseQueue(page, fifoQueue.name);
+      await chooseQueue(page, fifoQueue);
       await expect(s.allow).toBeChecked();
       await s.submit.click(ACTION);
       await expect(s.alert.filter({ hasText: 'InvalidParameter' }), 'the refusal in the form').toBeVisible({
@@ -325,7 +325,7 @@ test('studio.sns-delivery-says-what-the-policy-allows', async ({ ctx, page }) =>
     async () => {
       await openSubscribe(page, other);
       const s = subscribeScreen(page);
-      await chooseQueue(page, c.name);
+      await chooseQueue(page, c);
       await expect(s.allow).toBeChecked();
       await s.submit.click(ACTION);
       await expect(page).toHaveURL(addressOf(topicPath(other)), { timeout: 30_000 });
@@ -360,7 +360,7 @@ test('studio.sns-subscribe-a-function-and-it-runs', async ({ ctx, page }) => {
       await openSubscribe(page, topic);
       const s = subscribeScreen(page);
       await s.protocol(PROTOCOL_LAMBDA).click(ACTION);
-      await chooseFunction(page, printer.name);
+      await chooseFunction(page, printer);
       await expect(s.allow).toBeChecked();
       await s.submit.click(ACTION);
       await expect(page).toHaveURL(addressOf(topicPath(topic)), { timeout: 30_000 });
