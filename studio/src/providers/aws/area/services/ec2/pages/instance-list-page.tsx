@@ -36,7 +36,8 @@ import { useInstanceListing, type ListingFilters } from '../queries';
 // as `instance-state-name`, the name as `tag:Name` with `*` around it, sent once the text has settled. For the one
 // selected row, the instance's actions.
 
-const DESCRIPTION = 'The name filter matches the Name tag and is case-sensitive.';
+// The last two words are held together so that at 390 no word stands alone on the last line (critique final P3 2).
+const DESCRIPTION = 'The name filter matches the Name tag and is\u00a0case-sensitive.';
 const ANY_STATE: SelectProps.Option = { value: '', label: 'Any state' };
 const STATE_OPTIONS: SelectProps.Option[] = [
   ANY_STATE,
@@ -46,6 +47,14 @@ const NO_FILTERS: ListingFilters = { state: '', name: '' };
 
 /** A name keeps room for 24 characters (`aws-area.md`, entry 4). */
 const NAME_MIN_WIDTH = '28ch';
+
+/**
+ * Room for an instance's ID (`i-` and 17 hex digits) on one line, an IPv4 address whole, and a launch time on two
+ * lines; past them the table scrolls inside itself (critique final P2 1).
+ */
+const ID_MIN_WIDTH = '23ch';
+const ADDRESS_MIN_WIDTH = '18ch';
+const LAUNCHED_MIN_WIDTH = '26ch';
 
 type BodyState =
   | { kind: 'loading' }
@@ -72,9 +81,9 @@ function counterText(rows: number, openEnd: boolean): string {
   return `(${String(rows)}${openEnd ? '+' : ''})`;
 }
 
-/** An address, or "-" without one. */
+/** An IPv4 address, a fixed value never broken inside, or "-" without one. */
 function Address({ value }: { value: string | undefined }) {
-  return <ValueText kind="name" value={value} none={NONE} />;
+  return <ValueText kind="fixed" value={value} none={NONE} />;
 }
 
 /**
@@ -152,6 +161,7 @@ export function InstanceListPage({ connection }: { connection: AreaConnection })
       id: 'id',
       header: 'Instance ID',
       isRowHeader: true,
+      minWidth: ID_MIN_WIDTH,
       cell: (row) => (
         <Link href={instanceHref(row.id)} onFollow={handleFollow}>
           <ValueText kind="name" value={row.id} />
@@ -161,11 +171,22 @@ export function InstanceListPage({ connection }: { connection: AreaConnection })
     { id: 'state', header: 'State', cell: (row) => <InstanceStateValue state={row.state} /> },
     { id: 'type', header: 'Type', cell: (row) => <ValueText kind="fixed" value={row.type} none={NONE} /> },
     { id: 'zone', header: 'Availability Zone', cell: (row) => <ValueText kind="fixed" value={row.zone} none={NONE} /> },
-    { id: 'public', header: 'Public IPv4', cell: (row) => <Address value={row.publicIp} /> },
-    { id: 'private', header: 'Private IPv4', cell: (row) => <Address value={row.privateIp} /> },
+    {
+      id: 'public',
+      header: 'Public IPv4',
+      minWidth: ADDRESS_MIN_WIDTH,
+      cell: (row) => <Address value={row.publicIp} />,
+    },
+    {
+      id: 'private',
+      header: 'Private IPv4',
+      minWidth: ADDRESS_MIN_WIDTH,
+      cell: (row) => <Address value={row.privateIp} />,
+    },
     {
       id: 'launched',
       header: 'Launched',
+      minWidth: LAUNCHED_MIN_WIDTH,
       cell: (row) => <ValueText kind="fixed" value={creationDateText(row.launchTime)} />,
     },
   ];

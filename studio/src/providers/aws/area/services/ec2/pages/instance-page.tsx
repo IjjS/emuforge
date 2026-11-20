@@ -21,7 +21,16 @@ import type { ScreenPageProps } from '../../../screens';
 import type { BlockDevice, Instance, InstanceGroup } from '../api';
 import { InstanceActions } from '../components/instance-actions';
 import { InstanceStateValue } from '../components/instance-state';
-import { instanceHeading, INSTANCES_PATH, INSTANCES_WORD, nameOf, NONE, securityGroupHref, type Tag } from '../format';
+import {
+  instanceHeading,
+  INSTANCES_PATH,
+  INSTANCES_WORD,
+  KEY_PAIRS_PATH,
+  nameOf,
+  NONE,
+  securityGroupHref,
+  type Tag,
+} from '../format';
 import { useInstance, useTerminationProtection, type Ec2Read } from '../queries';
 
 // An instance's page, S3 (issue 553, design task 1 and task 3): read by the filter `instance-id`, so an id the
@@ -54,6 +63,19 @@ function Protection({ read, connection }: { read: Ec2Read<boolean>; connection: 
   return <ValueText kind="fixed" value={read.value ? 'On' : 'Off'} />;
 }
 
+/** The key pair's name as a link to the key pairs, "-" without one (critique final P3 3). */
+function KeyPair({ name }: { name: string | undefined }) {
+  const handleFollow = useFollow();
+  if (name === undefined) {
+    return <>{NONE}</>;
+  }
+  return (
+    <Link href={KEY_PAIRS_PATH} onFollow={handleFollow}>
+      <ValueText kind="name" value={name} />
+    </Link>
+  );
+}
+
 function Details({ instance, protection }: { instance: Instance; protection: ReactNode }) {
   return (
     <Container header={<Header variant="h2">Instance details</Header>}>
@@ -73,7 +95,7 @@ function Details({ instance, protection }: { instance: Instance; protection: Rea
           { label: 'Type', value: <ValueText kind="fixed" value={instance.type} none={NONE} /> },
           { label: 'Image ID', value: <Copy label="Image ID" value={instance.imageId} /> },
           { label: 'Launched', value: <ValueText kind="fixed" value={creationDateText(instance.launchTime)} /> },
-          { label: 'Key pair', value: <ValueText kind="name" value={instance.keyName} none={NONE} /> },
+          { label: 'Key pair', value: <KeyPair name={instance.keyName} /> },
           { label: 'Architecture', value: <ValueText kind="fixed" value={instance.architecture} none={NONE} /> },
           { label: 'Platform', value: <ValueText kind="fixed" value={instance.platform} none={NONE} /> },
           { label: 'Termination protection', value: protection },

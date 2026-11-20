@@ -50,8 +50,28 @@ function text(node: ReactNode): string {
   return result;
 }
 
-function button(name: string): HTMLElement {
-  return screen.getByRole('button', { name });
+/** The "Instance state" menu's button. */
+function menu(): HTMLElement {
+  return screen.getByRole('button', { name: /^Instance state/ });
+}
+
+/** The menu's items, in order, opened from its button; closed again when `close`. */
+function openItems(): HTMLElement[] {
+  if (menu().getAttribute('aria-expanded') !== 'true') {
+    fireEvent.click(menu());
+  }
+  return screen.getAllByRole('menuitem');
+}
+
+function item(name: string): HTMLElement {
+  const found = openItems().find((element) => element.textContent?.trim() === name);
+  expect(found, name).toBeDefined();
+  return found as HTMLElement;
+}
+
+/** Chooses `name` from the menu. */
+function press(name: string) {
+  fireEvent.click(item(name));
 }
 
 function isDisabled(element: Element): boolean {
@@ -70,12 +90,14 @@ function reasonOf(element: Element): string {
 const ACTIONS = ['Start', 'Stop', 'Reboot', 'Terminate'];
 
 function availabilities() {
-  return Object.fromEntries(
+  const result = Object.fromEntries(
     ACTIONS.map((name) => {
-      const element = button(name);
+      const element = item(name);
       return [name, isDisabled(element) ? reasonOf(element) : 'available'];
     }),
   );
+  fireEvent.click(menu());
+  return result;
 }
 
 interface Held {
@@ -109,6 +131,16 @@ describe("an instance's actions", () => {
       Reboot: 'Select one instance.',
       Terminate: 'Select one instance.',
     });
+  });
+
+  it('one "Instance state" menu: Start, Stop, Reboot, then Terminate last in a group of its own', () => {
+    renderActions({ id: 'i-1', state: 'running' });
+    const items = openItems();
+    expect(items.map((element) => element.textContent?.trim())).toEqual(ACTIONS);
+    const groups = items.map((element) => element.closest('[role="group"]'));
+    expect(groups[0]).toBe(groups[1]);
+    expect(groups[1]).toBe(groups[2]);
+    expect(groups[3]).not.toBe(groups[2]);
   });
 
   it('an instance of each state → the available actions and the reasons of the others', () => {
@@ -165,7 +197,7 @@ describe("an instance's actions", () => {
     it(`"${name}" → sent at once and "${result}" shown as a success`, async () => {
       const calls = held();
       renderActions({ id: 'i-1', state });
-      fireEvent.click(button(name));
+      press(name);
       await waitFor(() => {
         expect(calls).toHaveLength(1);
       });
@@ -184,7 +216,7 @@ describe("an instance's actions", () => {
   it('"Terminate" → the dialog; confirmed → sent and "Terminating i-1" shown; the dialog closed', async () => {
     const calls = held();
     renderActions({ id: 'i-1', state: 'running', name: 'web' });
-    fireEvent.click(button('Terminate'));
+    press('Terminate');
     const dialog = await screen.findByRole('dialog');
     expect(dialog.textContent).toContain('web is terminated in the local emulator.');
     expect(calls).toHaveLength(0);
@@ -206,28 +238,27 @@ describe("an instance's actions", () => {
   it('while a request is in flight the four are unavailable and a second press sends nothing', async () => {
     const calls = held();
     renderActions({ id: 'i-1', state: 'running' });
-    fireEvent.click(button('Stop'));
+    press('Stop');
     await waitFor(() => {
       expect(calls).toHaveLength(1);
     });
-    for (const name of ACTIONS) {
-      expect(isDisabled(button(name)), name).toBe(true);
-    }
-    fireEvent.click(button('Reboot'));
-    fireEvent.click(button('Stop'));
+    expect(isDisabled(menu())).toBe(true);
+    fireEvent.click(menu());
+    expect(screen.queryAllByRole('menuitem')).toEqual([]);
     expect(calls).toHaveLength(1);
     act(() => {
       calls[0]?.resolve();
     });
     await waitFor(() => {
-      expect(isDisabled(button('Reboot'))).toBe(false);
+      expect(isDisabled(menu())).toBe(false);
     });
+    expect(isDisabled(item('Reboot'))).toBe(false);
   });
 
   it('a refusal → an error with the code and message; a 501 → "not implemented by the emulator"; the dialog closed', async () => {
     const calls = held();
     renderActions({ id: 'i-1', state: 'running' });
-    fireEvent.click(button('Terminate'));
+    press('Terminate');
     const dialog = await screen.findByRole('dialog');
     fireEvent.change(within(dialog).getByRole('textbox'), { target: { value: 'terminate' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Terminate' }));
@@ -252,7 +283,7 @@ describe("an instance's actions", () => {
     expect(text(item?.content)).toContain('OperationNotPermitted');
     expect(text(item?.content)).toContain("The instance 'i-1' may not be terminated.");
 
-    fireEvent.click(button('Reboot'));
+    press('Reboot');
     await waitFor(() => {
       expect(calls).toHaveLength(2);
     });
