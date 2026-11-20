@@ -137,11 +137,13 @@ function table() {
 
 const text = (element: Element) => (element.textContent ?? '').replace(/\s+/g, ' ').trim();
 
+/** The table's columns after its selection column, which is column 1. */
+const COLUMNS = [2, 3, 4, 5, 6];
+
 function rows(): string[][] {
-  return (table().findRows() ?? []).map((row) =>
-    [...row.getElement().querySelectorAll('td, th')]
-      .filter((cell) => !/selection-control/.test(cell.className) && cell.querySelector('input') === null)
-      .map(text),
+  const found = table();
+  return (found.findRows() ?? []).map((_row, index) =>
+    COLUMNS.map((column) => text(found.findBodyCell(index + 1, column)?.getElement() as Element)),
   );
 }
 
