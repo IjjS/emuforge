@@ -83,8 +83,10 @@ The lead of the issue, the mark `lead` that pm-brief writes into .pm/issue-<n>/b
 `plan`: a unit goes into feat/<issue> on its fast check alone (rev reviews the whole at the end), and feat/<issue>
 goes into main only when the newest review-impl-r<k>.md (the whole, stage `impl`) says verdict: pass.
 Rounds (issue 557): wherever a review file is asked (a plan-led issue branch into main, a unit under the per-unit
-rule), every stage of the issue's review files, review-<stage>-r<k>.md grouped by <stage>, must hold r1 to its
-highest round with no number missing; each stage that does not is one problem. A rev pane lives for one round, so a
+rule), every stage of rev's review files, review-<stage>-r<k>.md grouped by <stage>, must hold r1 to its highest
+round with no number missing; each stage that does not is one problem. rev's stages are those of review-protocol.md,
+`requirement`, `plan-set`, `impl`, and the per-unit `impl-<unit>` and `checks-<unit>`; a critique's review-final*.md
+is not a review round and is never counted (issue 572). A rev pane lives for one round, so a
 round is answered by the next round, never run again in place of being answered.
 `harness-engineer`: no review file is asked; the pm that runs the merge has judged the change, and the output says so.
 A harness-engineer's part closes its issue (issue 504): a unit into main of such an issue is refused while a file under
@@ -270,13 +272,15 @@ def stack(wts, wt):
     return chain
 
 
-ROUND = re.compile(r"^review-(.+)-r(\d+)\.md$")
+# rev's stages (review-protocol.md) and the per-unit ones of review(); anything else, as a critique's
+# review-final*.md, is not a review round (issue 572)
+ROUND = re.compile(r"^review-(requirement|plan-set|impl|(?:impl|checks)-[^.]+?)-r(\d+)\.md$")
 
 
 def round_gaps(issue):
-    """One problem per stage of the issue's review files (.pm/issue-<n>/review-<stage>-r<k>.md, any stage name) whose
+    """One problem per stage of rev's review files (.pm/issue-<n>/review-<stage>-r<k>.md, a stage of ROUND) whose
     rounds are not r1 to its highest, every number there (issue 557): a round is answered by the next one, never run
-    again in place of being answered."""
+    again in place of being answered. A critique's review-final*.md is no stage of rev's (issue 572)."""
     stages = {}
     for f in (PM / f"issue-{issue}").glob("review-*-r*.md"):
         m = ROUND.match(f.name)
