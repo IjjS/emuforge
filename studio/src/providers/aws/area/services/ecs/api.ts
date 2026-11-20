@@ -43,7 +43,40 @@ function clientsOf<C>(make: (endpoint: string) => C): (endpoint: string) => C {
   };
 }
 
-const ecsClient = clientsOf((endpoint) => createAwsClient(ECSClient, { endpoint }));
+// The emulator answers ECS's times as epoch seconds of up to 9 fractional digits (`1795161554.763557799`); the SDK's
+// JSON reader keeps a number a double cannot hold exactly as a lossless numeric that its epoch reader refuses, so the
+// whole answer fails. ECS's client cuts every such number of an answer to its milliseconds before the SDK reads it:
+// the time stays the emulator's, to the millisecond, and a number inside a JSON string is never touched.
+const JSON_STRING_OR_LONG_FRACTION = /"(?:[^"\\]|\\.)*"|(-?\d+\.\d{3})\d+(?![\d.eE])/g;
+
+/** `json` with every number of more than 3 fractional digits cut to 3; strings stay as they are. */
+export function cutFractions(json: string): string {
+  return json.replace(JSON_STRING_OR_LONG_FRACTION, (match, kept: string | undefined) => kept ?? match);
+}
+
+/** The response of a deserialize step, as far as the cut reads it. */
+interface ResponseBody {
+  body?: unknown;
+}
+
+function withCutFractions(client: ECSClient): ECSClient {
+  const collect = client.config.streamCollector;
+  client.middlewareStack.add(
+    (next) => async (args) => {
+      const result = await next(args);
+      const response = result.response as ResponseBody | undefined;
+      if (response?.body !== undefined && response.body !== null) {
+        const bytes = await collect(response.body);
+        response.body = new TextEncoder().encode(cutFractions(new TextDecoder().decode(bytes)));
+      }
+      return result;
+    },
+    { step: 'deserialize', priority: 'low', name: 'emuforgeEcsEpochFractions' },
+  );
+  return client;
+}
+
+const ecsClient = clientsOf((endpoint) => withCutFractions(createAwsClient(ECSClient, { endpoint })));
 const logsClient = clientsOf((endpoint) => createAwsClient(CloudWatchLogsClient, { endpoint }));
 const ec2Client = clientsOf((endpoint) => createAwsClient(EC2Client, { endpoint }));
 
