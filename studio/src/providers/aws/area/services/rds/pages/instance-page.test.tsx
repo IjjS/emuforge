@@ -11,6 +11,8 @@ import type { AreaConnection } from '../../../components/emulator-line';
 import { creationDateText } from '../../../components/format-date';
 import AwsArea from '../../../index';
 import * as api from '../api';
+import { MODIFY_INSTANCE, modifyInstance } from '../modify-api';
+import { useInstanceListing } from '../queries';
 
 // S3 rendered inside the area's layout, with the calls of `api.ts` answered by the case (`api.test.ts` proves the
 // calls against a fake engine).
@@ -25,6 +27,11 @@ vi.mock('../api', async (importOriginal) => {
     getClusterSignIn: vi.fn(),
   };
 });
+
+vi.mock('../modify-api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../modify-api')>()),
+  modifyInstance: vi.fn(),
+}));
 
 // ---------------------------------------------------------------------------------------------------------------
 // The area as Studio's frame renders it.
@@ -97,7 +104,12 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function open(path = '/aws/rds') {
+function ActiveInstanceListing() {
+  useInstanceListing(ENGINE);
+  return null;
+}
+
+function open(path = '/aws/rds', watchList = false) {
   const router = createMemoryRouter(
     [
       { path: '/', element: <p>Studio&apos;s Home</p> },
@@ -108,6 +120,7 @@ function open(path = '/aws/rds') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
+      {watchList && <ActiveInstanceListing />}
       <RouterProvider router={router} />
     </QueryClientProvider>,
   );
@@ -663,3 +676,314 @@ describe('a DB instance', () => {
 function answerList() {
   vi.mocked(api.listInstances).mockResolvedValue({ instances: [] });
 }
+
+async function openModify() {
+  await loaded();
+  fireEvent.click(control('Modify'));
+  return screen.findByRole('dialog', { name: 'Modify DB instance' });
+}
+
+function update(dialog: HTMLElement, label: string, value: string) {
+  fireEvent.change(within(dialog).getByLabelText(label), { target: { value } });
+}
+
+function saveChanges(dialog: HTMLElement) {
+  const button = within(dialog).getByRole('button', { name: 'Save changes' });
+  fireEvent.click(button);
+  return button;
+}
+
+function held<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+function refused(failure: Omit<Extract<RequestFailure, { kind: 'other' }>, 'operation' | 'kind'>) {
+  return new RequestError({ kind: 'other', operation: MODIFY_INSTANCE, ...failure });
+}
+
+const UPDATED_ID = 'returned-db';
+const UPDATED_PATH = '/aws/rds/instances/instance/returned-db';
+const ID_LABEL = 'DB instance identifier';
+const CLASS_LABEL = 'DB instance class';
+
+describe('modifying a DB instance', () => {
+  it('U10 is unavailable during transition', async () => {
+    vi.mocked(api.getInstance).mockResolvedValue(found({ status: 'modifying' }));
+    open(PATH);
+    await loaded();
+    expect(control('Modify')).toBeDisabled();
+  });
+
+  it('U10 enables Modify when available and prevents another save while pending', async () => {
+    const pending = held<string>();
+    vi.mocked(modifyInstance).mockReturnValue(pending.promise);
+    vi.mocked(api.getInstance).mockResolvedValue(found());
+    open(PATH);
+    await loaded();
+    expect(control('Modify')).toBeEnabled();
+    const dialog = await openModify();
+    update(dialog, CLASS_LABEL, 'db.t3.small');
+    const save = saveChanges(dialog);
+    expect(isDisabled(save)).toBe(true);
+    fireEvent.click(save);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(dialog).toBeInTheDocument();
+    expect(modifyInstance).toHaveBeenCalledExactlyOnceWith(
+      ENGINE,
+      'app-db',
+      { instanceClass: 'db.t3.small' },
+      expect.any(AbortSignal),
+    );
+    pending.resolve('app-db');
+    await screen.findByText('Modifying app-db.');
+  });
+
+  // Bound: The real three-second status poll needs time for the dialog, ordered reads, and final render.
+  it.each(['before', 'after'] as const)(
+    'U11 keeps the result with the list answering %s the detail and polls until available',
+    async (order) => {
+      const list = held<api.InstancePage>();
+      const read = held<api.InstanceRead>();
+      vi.mocked(api.listInstances)
+        .mockResolvedValue({ instances: [] })
+        .mockReturnValueOnce(Promise.resolve({ instances: [] }))
+        .mockReturnValueOnce(list.promise);
+      vi.mocked(api.getInstance)
+        .mockResolvedValue(found({ instanceClass: 'db.t3.small', allocatedStorage: 30, deletionProtection: false }))
+        .mockResolvedValueOnce(found({ deletionProtection: true }))
+        .mockReturnValueOnce(read.promise);
+      vi.mocked(modifyInstance).mockResolvedValue('app-db');
+      const router = open(PATH, true);
+      const dialog = await openModify();
+      update(dialog, CLASS_LABEL, 'db.t3.small');
+      update(dialog, 'Allocated storage (GiB)', '30');
+      fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Deletion protection' }));
+      saveChanges(dialog);
+      await screen.findByText('Modifying app-db.');
+      await waitFor(() => expect(api.listInstances).toHaveBeenCalledTimes(2));
+
+      if (order === 'before') await act(async () => list.resolve({ instances: [] }));
+      await act(async () => read.resolve(found({ status: 'modifying', deletionProtection: true })));
+      await waitFor(() => expect(pairsOf('DB instance details').Status).toBe('modifying'));
+      expect(pairsOf('DB instance details').Class).toBe('db.t3.micro');
+      if (order === 'after') await act(async () => list.resolve({ instances: [] }));
+      expect(flashes('success')).toEqual(['Modifying app-db.']);
+
+      await waitFor(() => expect(pairsOf('DB instance details').Class).toBe('db.t3.small'), { timeout: 4500 });
+      expect(pairsOf('DB instance details')).toMatchObject({
+        Status: 'available',
+        'Allocated storage': '30 GiB',
+        'Deletion protection': 'Off',
+      });
+      expect(isDisabled(control('Delete'))).toBe(false);
+      expect(flashes('success')).toEqual(['Modifying app-db.']);
+      expect(router.state.location.pathname).toBe(PATH);
+    },
+    9000,
+  );
+
+  it.each(['before', 'after'] as const)(
+    'U12 keeps the renamed member and result when the old detail answers %s the list and cluster answers last',
+    async (order) => {
+      const oldRead = held<api.InstanceRead>();
+      const destination = held<api.InstanceRead>();
+      const list = held<api.InstancePage>();
+      const cluster = held<api.ClusterSignIn>();
+      const pending = held<string>();
+      const member = { ...FULL, clusterId: 'aurora' };
+      delete member.masterUsername;
+      delete member.dbName;
+      vi.mocked(api.getInstance)
+        .mockImplementation((_endpoint, id) => (id === UPDATED_ID ? destination.promise : oldRead.promise))
+        .mockResolvedValueOnce({ found: true, instance: member });
+      vi.mocked(api.getClusterSignIn)
+        .mockReturnValue(cluster.promise)
+        .mockResolvedValueOnce({ masterUsername: 'old-admin' });
+      vi.mocked(api.listInstances).mockReturnValue(list.promise).mockResolvedValueOnce({ instances: [] });
+      vi.mocked(modifyInstance).mockReturnValue(pending.promise);
+      const router = open(PATH, true);
+      const dialog = await openModify();
+      await screen.findByText('old-admin');
+      update(dialog, ID_LABEL, 'requested-db');
+      saveChanges(dialog);
+      if (order === 'before') {
+        fireEvent.click(control('Refresh'));
+        await waitFor(() => expect(api.getInstance).toHaveBeenCalledTimes(2));
+        await act(async () => oldRead.resolve({ found: false }));
+        await screen.findByText('DB instance not found');
+      }
+      await act(async () => pending.resolve(UPDATED_ID));
+      await screen.findByText('Modifying returned-db.');
+      expect(router.state.location.pathname).toBe(UPDATED_PATH);
+      await waitFor(() => expect(api.listInstances).toHaveBeenCalledTimes(2));
+      expect(vi.mocked(api.getInstance).mock.calls.filter(([, id]) => id === 'app-db').length).toBeGreaterThan(1);
+      await act(async () => list.resolve({ instances: [] }));
+      if (order === 'after') await act(async () => oldRead.resolve({ found: false }));
+      await act(async () =>
+        destination.resolve({
+          found: true,
+          instance: { ...member, id: UPDATED_ID, instanceClass: 'db.r6g.xlarge' },
+        }),
+      );
+      await loaded();
+      expect(pairsOf('DB instance details')).toMatchObject({
+        'DB identifier': UPDATED_ID,
+        Class: 'db.r6g.xlarge',
+        'DB cluster': 'aurora',
+      });
+      expect(screen.queryByText('new-admin')).toBeNull();
+      await act(async () => cluster.resolve({ masterUsername: 'new-admin' }));
+      await screen.findByText('new-admin');
+      expect(pairsOf('DB instance details')['DB identifier']).toBe(UPDATED_ID);
+      expect(flashes('success')).toEqual(['Modifying returned-db.']);
+      expect(screen.queryByText('DB instance not found')).toBeNull();
+      expect(router.state.location.pathname).toBe(UPDATED_PATH);
+    },
+  );
+
+  it.each([
+    ['DBInstanceAlreadyExists', 'DB instance already exists', ID_LABEL, 'occupied-db', 'corrected-db'],
+    ['InvalidParameterCombination', 'The class is unavailable', CLASS_LABEL, 'db.bad', 'db.t3.small'],
+  ])(
+    'U13 shows %s on the original detail and lets the user correct or cancel',
+    async (code, message, label, bad, good) => {
+      vi.mocked(api.getInstance).mockResolvedValue(found());
+      vi.mocked(modifyInstance).mockRejectedValue(refused({ code, message }));
+      const router = open(PATH);
+      const dialog = await openModify();
+      update(dialog, label, bad);
+      saveChanges(dialog);
+      expect(await within(dialog).findByText(message, { exact: false })).toBeInTheDocument();
+      expect(router.state.location.pathname).toBe(PATH);
+      update(dialog, label, good);
+      saveChanges(dialog);
+      expect(modifyInstance).toHaveBeenNthCalledWith(
+        2,
+        ENGINE,
+        'app-db',
+        label === ID_LABEL ? { identifier: good } : { instanceClass: good },
+        expect.any(AbortSignal),
+      );
+      await within(dialog).findByText(message, { exact: false });
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(router.state.location.pathname).toBe(PATH);
+      expect(flashes('success')).toEqual([]);
+    },
+  );
+
+  it('U14 refreshes the detail when the target disappears before Save', async () => {
+    vi.mocked(api.getInstance).mockResolvedValueOnce(found()).mockResolvedValue({ found: false });
+    vi.mocked(modifyInstance).mockRejectedValue(refused({ code: 'DBInstanceNotFound' }));
+    open(PATH);
+    const dialog = await openModify();
+    update(dialog, CLASS_LABEL, 'db.t3.small');
+    saveChanges(dialog);
+    await screen.findByText('DB instance not found');
+    expect(screen.getByRole('link', { name: 'View DB instances' })).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(flashes('success')).toEqual([]);
+  });
+
+  it('U15 names an unsupported operation and disables its action', async () => {
+    vi.mocked(api.getInstance).mockResolvedValue(found());
+    vi.mocked(modifyInstance).mockRejectedValue(
+      new RequestError({ kind: 'not-implemented', operation: MODIFY_INSTANCE }),
+    );
+    open(PATH);
+    const dialog = await openModify();
+    update(dialog, CLASS_LABEL, 'db.t3.small');
+    saveChanges(dialog);
+    await screen.findByText('Not implemented by the emulator');
+    expect(flashes('info')[0]).toContain(MODIFY_INSTANCE);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(control('Modify')).toBeDisabled();
+  });
+
+  it.each([
+    [
+      { kind: 'access-denied', message: 'The policy refuses this modification' },
+      'The policy refuses this modification',
+    ],
+    [
+      { kind: 'emulator-did-not-answer', message: 'Reconnect the emulator and try again' },
+      'The emulator did not answer',
+    ],
+    [{ kind: 'engine-did-not-answer' }, 'did not answer'],
+  ] as const)('U16 shows the operation or connection failure (%o)', async (failure, message) => {
+    vi.mocked(api.getInstance).mockResolvedValue(found());
+    vi.mocked(modifyInstance).mockRejectedValue(new RequestError({ operation: MODIFY_INSTANCE, ...failure }));
+    open(PATH);
+    const dialog = await openModify();
+    update(dialog, CLASS_LABEL, 'db.t3.small');
+    saveChanges(dialog);
+    expect(await within(dialog).findByText(message, { exact: false })).toBeInTheDocument();
+    if ('message' in failure) expect(dialog).toHaveTextContent(failure.message);
+    expect(flashes('success')).toEqual([]);
+  });
+
+  it('U17 ignores a late save response on departure', async () => {
+    const pending = held<string>();
+    vi.mocked(api.getInstance).mockResolvedValue(found());
+    vi.mocked(modifyInstance).mockReturnValue(pending.promise);
+    answerList();
+    const router = open(PATH);
+    const dialog = await openModify();
+    update(dialog, ID_LABEL, 'requested-db');
+    saveChanges(dialog);
+    const signal = vi.mocked(modifyInstance).mock.calls[0]?.[3];
+    await act(async () => {
+      await router.navigate('/aws/rds/instances');
+    });
+    await waitFor(() => expect(signal?.aborted).toBe(true));
+    await act(async () => pending.resolve(UPDATED_ID));
+    expect(router.state.location.pathname).toBe('/aws/rds/instances');
+    expect(flashes()).toEqual([]);
+  });
+
+  it.each([true, false])('U18 keeps the submitted password private (accepted: %s)', async (accepted) => {
+    const password = 'Example-Only!580';
+    const sent: string[] = [];
+    const xml = accepted
+      ? '<ModifyDBInstanceResponse><ModifyDBInstanceResult><DBInstance><DBInstanceIdentifier>app-db</DBInstanceIdentifier></DBInstance></ModifyDBInstanceResult></ModifyDBInstanceResponse>'
+      : `<ErrorResponse><Error><Code>InvalidParameterValue</Code><Message>MasterUserPassword rejected: ${password}, value ${password}</Message></Error></ErrorResponse>`;
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(String(input), init);
+      if (new URL(request.url).pathname === '/__emuforge/session') {
+        return new Response(JSON.stringify({ token: 'emuforge-test-token-580' }));
+      }
+      const params = new URLSearchParams(await request.text());
+      expect(params.get('Action')).toBe(MODIFY_INSTANCE);
+      sent.push(params.get('MasterUserPassword') ?? '');
+      return new Response(xml, { status: accepted ? 200 : 400, headers: { 'content-type': 'text/xml' } });
+    });
+    const real = await vi.importActual<typeof import('../modify-api')>('../modify-api');
+    vi.mocked(modifyInstance).mockImplementation(real.modifyInstance);
+    vi.mocked(api.getInstance).mockResolvedValue(found());
+    const router = open(PATH);
+    const dialog = await openModify();
+    update(dialog, 'New master password', password);
+    saveChanges(dialog);
+    if (accepted) {
+      await screen.findByText('Modifying app-db.');
+      expect(screen.queryByRole('dialog')).toBeNull();
+    } else {
+      await within(dialog).findByText(/MasterUserPassword rejected/);
+      expect(flashes('success')).toEqual([]);
+    }
+    expect(sent).toEqual([password]);
+    expect(document.body).not.toHaveTextContent(password);
+    for (const region of document.querySelectorAll('[role="alert"], [aria-live]')) {
+      expect(region).not.toHaveTextContent(password);
+    }
+    const { pathname, search, hash } = router.state.location;
+    expect(`${pathname}${search}${hash}`).toBe(PATH);
+    for (const storage of [localStorage, sessionStorage]) {
+      expect(JSON.stringify(storage)).not.toContain(password);
+    }
+  });
+});
