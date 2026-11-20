@@ -71,13 +71,23 @@ export function associateSubnetHref(id: string): string {
   return `${routeTableHref(id)}/associate-subnet`;
 }
 
-/** S14 of the internet gateway `id`. */
-export function attachInternetGatewayHref(id: string): string {
-  return `${INTERNET_GATEWAYS_PATH}/gateway/${encodeURIComponent(id)}/attach`;
-}
-
 function withVpc(path: string, vpcId: string | undefined): string {
   return vpcId === undefined ? path : `${path}?${new URLSearchParams({ [VPC_QUERY]: vpcId }).toString()}`;
+}
+
+/** S14 of the internet gateway `id`, with the VPC `vpcId` chosen when it is given. */
+export function attachInternetGatewayHref(id: string, vpcId?: string): string {
+  return withVpc(`${INTERNET_GATEWAYS_PATH}/gateway/${encodeURIComponent(id)}/attach`, vpcId);
+}
+
+/** S12, saying that an attach is for the VPC `vpcId` when it is given. */
+export function internetGatewaysHref(vpcId?: string): string {
+  return withVpc(INTERNET_GATEWAYS_PATH, vpcId);
+}
+
+/** S13, keeping the VPC `vpcId` for the way back to S12 when it is given. */
+export function createInternetGatewayHref(vpcId?: string): string {
+  return withVpc(CREATE_INTERNET_GATEWAY_PATH, vpcId);
 }
 
 /** S5, with the VPC `vpcId` chosen when it is given. */

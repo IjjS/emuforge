@@ -7,6 +7,7 @@ import SpaceBetween from '@cloudscape-design/components/space-between';
 import Table, { type TableProps } from '@cloudscape-design/components/table';
 import TextFilter from '@cloudscape-design/components/text-filter';
 import { useCallback, useState } from 'react';
+import { useSearchParams } from 'react-router';
 
 import type { AreaConnection } from '../../../components/emulator-line';
 import {
@@ -26,7 +27,7 @@ import { DeleteGatewayDialog, type GatewayTarget } from '../components/delete-ga
 import { PartDialog } from '../components/part-dialog';
 import {
   attachInternetGatewayHref,
-  CREATE_INTERNET_GATEWAY_PATH,
+  createInternetGatewayHref,
   CREATE_INTERNET_GATEWAY_TITLE,
   INTERNET_GATEWAYS_TITLE,
   INTERNET_GATEWAYS_WORD,
@@ -34,6 +35,7 @@ import {
   nameOrId,
   NONE,
   resourceName,
+  VPC_QUERY,
   vpcHref,
 } from '../format';
 import { GATEWAY_CHANGE_OPERATIONS } from '../gateway-changes-api';
@@ -99,6 +101,10 @@ function counterText(rows: number, openEnd: boolean): string {
  */
 export function GatewayListPage({ connection }: { connection: AreaConnection }) {
   useShowsResources(INTERNET_GATEWAYS_WORD);
+  // Opened from a VPC's way to its gateway (`?vpc={id}`): an attach is for that VPC, and S13 and S14 keep it.
+  const [query] = useSearchParams();
+  const vpcValue = query.get(VPC_QUERY);
+  const forVpc = vpcValue === null || vpcValue === '' ? undefined : vpcValue;
   const handleFollow = useFollow();
   const flash = usePageFlash();
   const [announcement, announce] = useAnnouncer();
@@ -248,7 +254,7 @@ export function GatewayListPage({ connection }: { connection: AreaConnection }) 
           </Box>
         </SpaceBetween>
         <Box margin={{ top: 's' }}>
-          <Button href={CREATE_INTERNET_GATEWAY_PATH} onFollow={handleFollow}>
+          <Button href={createInternetGatewayHref(forVpc)} onFollow={handleFollow}>
             {CREATE_INTERNET_GATEWAY_TITLE}
           </Button>
         </Box>
@@ -317,14 +323,27 @@ export function GatewayListPage({ connection }: { connection: AreaConnection }) 
           <Header
             variant="awsui-h1-sticky"
             counter={items === undefined ? undefined : counterText(items.length, listing.openEnd)}
-            description={NAME_FILTER_DESCRIPTION}
+            description={
+              forVpc === undefined ? (
+                NAME_FILTER_DESCRIPTION
+              ) : (
+                <SpaceBetween size="xxxs">
+                  <span>{NAME_FILTER_DESCRIPTION}</span>
+                  <span>
+                    <ValueText kind="text" value="Attach is for " />
+                    <ValueText kind="name" value={forVpc} />
+                    <ValueText kind="text" value="." />
+                  </span>
+                </SpaceBetween>
+              )
+            }
             actions={
               <SpaceBetween direction="horizontal" size="xs">
                 <Button iconName="refresh" ariaLabel="Refresh" loading={listing.loading} onClick={refresh} />
                 <Button
                   disabled={attachReason !== undefined}
                   disabledReason={attachReason}
-                  {...(selected === undefined ? {} : { href: attachInternetGatewayHref(selected.id) })}
+                  {...(selected === undefined ? {} : { href: attachInternetGatewayHref(selected.id, forVpc) })}
                   onFollow={handleFollow}
                 >
                   Attach
@@ -355,7 +374,7 @@ export function GatewayListPage({ connection }: { connection: AreaConnection }) 
                 >
                   Delete
                 </Button>
-                <Button variant="primary" href={CREATE_INTERNET_GATEWAY_PATH} onFollow={handleFollow}>
+                <Button variant="primary" href={createInternetGatewayHref(forVpc)} onFollow={handleFollow}>
                   {CREATE_INTERNET_GATEWAY_TITLE}
                 </Button>
               </SpaceBetween>
