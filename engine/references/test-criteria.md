@@ -56,8 +56,6 @@ Example:
 
 Bad: `- [ ] relay works` — no target, no checkable result.
 Bad: `- [ ] \`resign\` When called → Then self.cache is updated` — an internal field, not an observable result.
-Bad: a test that reads the log once both ports accept and then asserts the second listener's line — it waits for
-a neighbouring sign, not for the line.
 
 ## Coverage
 
