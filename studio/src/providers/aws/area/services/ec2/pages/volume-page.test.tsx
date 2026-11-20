@@ -170,8 +170,41 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function button(name: string) {
-  return screen.getByRole('button', { name });
+function pageHeader() {
+  return page.findContentLayout()?.findHeader()?.findHeader();
+}
+
+function detailContainer() {
+  return page.findContentLayout()?.findContent().findContainer();
+}
+
+function detailHeading() {
+  return detailContainer()?.findHeader()?.findHeader()?.findHeadingText().getElement();
+}
+
+function detailStatus() {
+  return detailContainer()?.findContent().findStatusIndicator()?.getElement();
+}
+
+function detailMessage() {
+  const box = detailContainer()?.findContent().findBox()?.getElement();
+  return box === undefined ? undefined : createWrapper(box).findBox()?.getElement();
+}
+
+function expectAvailable() {
+  const state = detailContainer()?.findContent().findKeyValuePairs()?.findItems()[4];
+  const value = state?.findValue()?.getElement();
+  expect(state?.findLabel()?.getElement()).toHaveTextContent('State');
+  expect(value).toBeVisible();
+  expect(value?.textContent).toBe('available');
+}
+
+function button(name: 'Attach volume' | 'Delete volume') {
+  const index = name === 'Attach volume' ? 1 : 2;
+  const control = pageHeader()?.findActions()?.findAllButtons()[index]?.getElement();
+  if (control === undefined) throw new Error(`Missing ${name} action`);
+  expect(control).toHaveAccessibleName(name);
+  return control;
 }
 
 function attachmentCell(column: number) {
@@ -184,30 +217,53 @@ function attachmentLink() {
 }
 
 function detachButton() {
-  const cell = attachmentCell(1);
-  if (cell === undefined) throw new Error('Missing attachment row');
-  return within(cell).getByRole('button', { name: 'Detach volume' });
+  const control = page.findTable()?.findBodyCell(1, 1)?.findButton()?.getElement();
+  if (control === undefined) throw new Error('Missing attachment action');
+  expect(control).toHaveAccessibleName('Detach volume');
+  return control;
 }
 
-async function openDialog(name: string) {
-  const trigger = name === 'Detach volume' ? await waitFor(detachButton) : await screen.findByRole('button', { name });
+async function openDialog(name: 'Attach volume' | 'Detach volume' | 'Delete volume') {
+  const trigger = await waitFor(() => (name === 'Detach volume' ? detachButton() : button(name)));
   fireEvent.click(trigger);
   const modal = await waitFor(() => {
     const wrapper = page.findModal();
     if (wrapper === null || !wrapper.isVisible()) throw new Error('Missing open volume dialog');
     return wrapper;
   });
-  const footer = modal.findFooter()?.getElement();
-  if (footer === undefined) throw new Error('Missing volume dialog footer');
+  const content = modal.findContent();
   return {
-    content: within(modal.findContent().getElement()),
-    button: (label: string) => within(footer).getByRole('button', { name: label }),
+    content,
+    input: () => {
+      const input = content.findInput()?.findNativeInput().getElement();
+      if (input === undefined) throw new Error('Missing volume dialog input');
+      return input;
+    },
+    button: (label: typeof name | 'Cancel') => {
+      const control = modal.findFooter()?.findAllButtons()[label === 'Cancel' ? 0 : 1]?.getElement();
+      if (control === undefined) throw new Error('Missing volume dialog action');
+      expect(control).toHaveAccessibleName(label);
+      return control;
+    },
   };
 }
 
+async function expectDialogAlert(dialog: Awaited<ReturnType<typeof openDialog>>, message: string, header?: string) {
+  await waitFor(() => {
+    const alert = dialog.content.findAlert();
+    const body = alert?.findContent().getElement();
+    expect(body).toBeVisible();
+    expect(body).toHaveTextContent(message);
+    if (header !== undefined) {
+      const title = alert?.findHeader()?.getElement();
+      expect(title).toBeVisible();
+      expect(title).toHaveTextContent(header);
+    }
+  });
+}
+
 function instanceSelect() {
-  const content = page.findModal()?.findContent().getElement();
-  const select = content === undefined ? undefined : createWrapper(content).findSelect();
+  const select = page.findModal()?.findContent().findSelect();
   if (select == null) throw new Error('Missing instance selector in the attach dialog');
   return select;
 }
@@ -247,12 +303,14 @@ async function chooseInstance(id = TARGET.instanceId) {
 async function fillAttachDialog() {
   const dialog = await openDialog('Attach volume');
   await chooseInstance();
-  fireEvent.change(dialog.content.getByRole('textbox', { name: 'Device name' }), { target: { value: TARGET.device } });
+  const device = dialog.input();
+  expect(device).toHaveAccessibleName('Device name');
+  fireEvent.change(device, { target: { value: TARGET.device } });
   return dialog;
 }
 
 function confirmDelete(dialog: Awaited<ReturnType<typeof openDialog>>) {
-  fireEvent.change(dialog.content.getByRole('textbox'), { target: { value: ID } });
+  fireEvent.change(dialog.input(), { target: { value: ID } });
   fireEvent.click(dialog.button('Delete volume'));
 }
 
@@ -260,8 +318,14 @@ describe('volume detail', () => {
   it('shows the ID, returned volume values and linked attachment', async () => {
     vi.mocked(api.getVolume).mockResolvedValue(attached);
     open();
-    expect(screen.getByRole('heading', { level: 1, name: ID })).toBeVisible();
-    await screen.findByRole('heading', { name: 'Volume details' });
+    const heading = pageHeader()?.findHeadingText().getElement();
+    expect(heading).toBeVisible();
+    expect(heading?.textContent).toBe(ID);
+    expect(heading?.closest('h1')).toBeVisible();
+    await waitFor(() => {
+      expect(detailHeading()).toBeVisible();
+      expect(detailHeading()?.textContent).toBe('Volume details');
+    });
     const details = page
       .findKeyValuePairs()
       ?.findItems()
@@ -288,25 +352,42 @@ describe('volume detail', () => {
   it('links back to volumes for a missing ID', async () => {
     vi.mocked(api.getVolume).mockResolvedValue(missing);
     open();
-    expect(await screen.findByText('Volume not found')).toBeVisible();
-    expect(screen.getByRole('link', { name: 'View volumes' })).toHaveAttribute('href', PATH);
+    await waitFor(() => {
+      expect(detailMessage()).toBeVisible();
+      expect(detailMessage()?.textContent).toBe('Volume not found');
+    });
+    const link = detailContainer()?.findContent().findLink()?.getElement();
+    expect(link).toHaveAccessibleName('View volumes');
+    expect(link).toHaveAttribute('href', PATH);
   });
 
   it('replaces a failed read with details on Retry', async () => {
     vi.mocked(api.getVolume).mockRejectedValueOnce(refuse('DescribeVolumes', 'InvalidParameterValue', 'Cannot read.'));
     open();
-    const retry = await screen.findByRole('button', { name: 'Retry' });
-    expect(screen.getByText('InvalidParameterValue')).toBeVisible();
+    await waitFor(() => {
+      expect(detailMessage()).toBeVisible();
+      expect(detailMessage()).toHaveTextContent('InvalidParameterValue');
+    });
+    const retry = detailContainer()?.findContent().findButton()?.getElement();
+    if (retry === undefined) throw new Error('Missing detail retry action');
+    expect(retry).toHaveAccessibleName('Retry');
     fireEvent.click(retry);
-    expect(await screen.findByRole('heading', { name: 'Volume details' })).toBeVisible();
-    expect(screen.queryByText('InvalidParameterValue')).toBeNull();
+    await waitFor(() => {
+      expect(detailHeading()).toBeVisible();
+      expect(detailHeading()?.textContent).toBe('Volume details');
+    });
+    expect(detailContainer()?.findContent().getElement()).not.toHaveTextContent('InvalidParameterValue');
   });
 
   it('shows a detail 501 as unimplemented', async () => {
     vi.mocked(api.getVolume).mockRejectedValue(unimplemented('DescribeVolumes'));
     open();
-    expect(await screen.findAllByText('Not implemented by the emulator')).not.toHaveLength(0);
-    expect(screen.getByText(/501 Not Implemented for DescribeVolumes/)).toBeVisible();
+    await waitFor(() => {
+      expect(detailStatus()).toBeVisible();
+      expect(detailStatus()).toHaveTextContent('Not implemented by the emulator');
+      expect(detailMessage()).toBeVisible();
+      expect(detailMessage()).toHaveTextContent('501 Not Implemented for DescribeVolumes');
+    });
   });
 });
 
@@ -318,19 +399,23 @@ describe('attach volume', () => {
     open();
     const dialog = await openDialog('Attach volume');
     const submit = dialog.button('Attach volume');
-    const device = dialog.content.getByRole('textbox', { name: 'Device name' });
+    const device = dialog.input();
+    expect(device).toHaveAccessibleName('Device name');
     expect(submit).toBeDisabled();
     fireEvent.change(device, { target: { value: TARGET.device } });
     expect(submit).toBeDisabled();
 
     const dropdown = openChoices();
-    expect(dialog.content.getByText('Choose an instance in us-east-1a, the volume’s Availability Zone.')).toBeVisible();
+    const zone = dialog.content.findFormField()?.findDescription()?.getElement();
+    expect(zone).toBeVisible();
+    expect(zone).toHaveTextContent('Choose an instance in us-east-1a, the volume’s Availability Zone.');
     await waitFor(() => {
       expect(dropdown.findOptionByValue('i-first')?.getElement()).toHaveTextContent(/i-first.*us-east-1a.*running/);
     });
-    const footer = instanceSelect().findDropdownFooter()?.getElement();
-    if (footer === undefined) throw new Error('Missing instance chooser footer');
-    fireEvent.click(within(footer).getByRole('button', { name: 'Load more' }));
+    const more = instanceSelect().findDropdownFooter()?.findButton()?.getElement();
+    if (more === undefined) throw new Error('Missing instance chooser load-more action');
+    expect(more).toHaveAccessibleName('Load more');
+    fireEvent.click(more);
     await waitFor(() => {
       expect(dropdown.findOptionByValue('i-second')?.getElement()).toHaveTextContent(/i-second.*us-east-1b.*stopped/);
     });
@@ -354,9 +439,8 @@ describe('attach volume', () => {
     const dialog = await fillAttachDialog();
     const submit = dialog.button('Attach volume');
     fireEvent.click(submit);
-    expect(await dialog.content.findByText('IncorrectInstanceState')).toBeVisible();
-    expect(dialog.content.getByText(/The instance is terminated\./)).toBeVisible();
-    expect(dialog.content.getByRole('textbox', { name: 'Device name' })).toHaveValue(TARGET.device);
+    await expectDialogAlert(dialog, 'IncorrectInstanceState: The instance is terminated.');
+    expect(dialog.input()).toHaveValue(TARGET.device);
     expect(submit).toBeEnabled();
   });
 
@@ -377,7 +461,7 @@ describe('attach volume', () => {
     await waitFor(() => {
       expect(api.getVolume).toHaveBeenCalledTimes(2);
     });
-    expect(screen.getByText('available')).toBeVisible();
+    expectAvailable();
     expect(screen.getByText('Refreshing lists')).toBeVisible();
     await waitFor(
       () => {
@@ -420,8 +504,7 @@ describe('attach volume', () => {
     const dialog = await fillAttachDialog();
     const submit = dialog.button('Attach volume');
     fireEvent.click(submit);
-    expect(await dialog.content.findByText('Not implemented by the emulator')).toBeVisible();
-    expect(dialog.content.getByText(/501 Not Implemented for AttachVolume/)).toBeVisible();
+    await expectDialogAlert(dialog, '501 Not Implemented for AttachVolume', 'Not implemented by the emulator');
     expect(submit).toBeDisabled();
     fireEvent.click(dialog.button('Cancel'));
     await waitFor(() => {
@@ -439,7 +522,17 @@ describe('detach volume', () => {
     open(true);
     await screen.findByText('Lists current');
     const dialog = await openDialog('Detach volume');
-    for (const value of [ID, TARGET.instanceId, TARGET.device]) expect(dialog.content.getByText(value)).toBeVisible();
+    const pairs = dialog.content.findKeyValuePairs()?.findItems();
+    expect(pairs?.map((pair) => pair.findLabel()?.getElement().textContent)).toEqual([
+      'Volume ID',
+      'Instance ID',
+      'Device',
+    ]);
+    for (const [index, value] of [ID, TARGET.instanceId, TARGET.device].entries()) {
+      const shown = pairs?.[index]?.findValue()?.getElement();
+      expect(shown).toBeVisible();
+      expect(shown?.textContent).toBe(value);
+    }
     vi.mocked(api.getVolume).mockReturnValue(detail.promise);
     fireEvent.click(dialog.button('Detach volume'));
     const acknowledgment = `Detachment requested for ${ID}.`;
@@ -459,7 +552,7 @@ describe('detach volume', () => {
       expect(empty).toBeVisible();
       expect(empty).toHaveTextContent('No attachments');
     });
-    expect(screen.getByText('available')).toBeVisible();
+    expectAvailable();
     expectAcknowledgment(acknowledgment);
   });
 
@@ -472,8 +565,7 @@ describe('detach volume', () => {
     const dialog = await openDialog('Detach volume');
     const submit = dialog.button('Detach volume');
     fireEvent.click(submit);
-    expect(await dialog.content.findByText('IncorrectState')).toBeVisible();
-    expect(dialog.content.getByText(/The volume is already available\./)).toBeVisible();
+    await expectDialogAlert(dialog, 'IncorrectState: The volume is already available.');
     expect(submit).toBeEnabled();
     expect(flashItem('success')).toBeUndefined();
   });
@@ -497,8 +589,7 @@ describe('detach volume', () => {
     open();
     const dialog = await openDialog('Detach volume');
     fireEvent.click(dialog.button('Detach volume'));
-    expect(await dialog.content.findByText('Not implemented by the emulator')).toBeVisible();
-    expect(dialog.content.getByText(/501 Not Implemented for DetachVolume/)).toBeVisible();
+    await expectDialogAlert(dialog, '501 Not Implemented for DetachVolume', 'Not implemented by the emulator');
     fireEvent.click(dialog.button('Cancel'));
     await waitFor(() => {
       expect(page.findModal()).toBeNull();
@@ -511,9 +602,11 @@ describe('delete volume', () => {
   it('requires the exact volume ID and sends nothing on cancel', async () => {
     open();
     const dialog = await openDialog('Delete volume');
-    expect(dialog.content.getByText(/Type the volume ID to confirm/)).toBeVisible();
+    const warning = dialog.content.findBox()?.getElement();
+    expect(warning).toBeVisible();
+    expect(warning).toHaveTextContent('Type the volume ID to confirm.');
     const submit = dialog.button('Delete volume');
-    const input = dialog.content.getByRole('textbox');
+    const input = dialog.input();
     for (const value of ['', 'vol-4', 'vol-43']) {
       fireEvent.change(input, { target: { value } });
       expect(submit).toBeDisabled();
@@ -556,9 +649,15 @@ describe('delete volume', () => {
     open();
     const dialog = await openDialog('Delete volume');
     confirmDelete(dialog);
-    expect(await dialog.content.findByText('VolumeInUse')).toBeVisible();
-    expect(dialog.content.getByText(/The volume is attached\./)).toBeVisible();
-    expect(dialog.content.getByRole('textbox')).toHaveValue(ID);
+    await waitFor(() => {
+      const warning = dialog.content.findBox()?.getElement();
+      expect(dialog.content.findStatusIndicator()?.getElement()).toBeVisible();
+      if (warning === undefined) throw new Error('Missing delete confirmation warning');
+      const alert = within(warning).getByRole('alert');
+      expect(alert).toBeVisible();
+      expect(alert).toHaveTextContent('VolumeInUse: The volume is attached.');
+    });
+    expect(dialog.input()).toHaveValue(ID);
     expect(dialog.button('Delete volume')).toBeEnabled();
   });
 
@@ -592,9 +691,10 @@ describe('delete volume', () => {
     fireEvent.click(dismiss);
     expect(flashItem('info')).toBeUndefined();
     await act(async () => {
-      const crumbs = page.findBreadcrumbGroup();
-      if (crumbs === null) throw new Error('Missing breadcrumbs');
-      fireEvent.click(within(crumbs.getElement()).getByRole('link', { name: 'Volumes' }));
+      const volumes = page.findBreadcrumbGroup()?.findBreadcrumbLink(4)?.getElement();
+      if (volumes === undefined) throw new Error('Missing Volumes breadcrumb');
+      expect(volumes).toHaveAccessibleName('Volumes');
+      fireEvent.click(volumes);
     });
     expect(router.state.location.pathname).toBe(PATH);
   });
