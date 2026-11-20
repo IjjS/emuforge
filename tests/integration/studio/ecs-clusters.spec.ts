@@ -37,6 +37,7 @@ import {
   findClusterRow,
   NO_CLUSTERS,
   NOT_DELETED_CLUSTER,
+  notFoundLinks,
   open,
   REFRESH,
   selectRow,
@@ -181,7 +182,10 @@ test('studio.ecs-deleted-cluster-shows-not-found', async ({ ctx, page }) => {
 
   await page.goto(clusterPath(cluster));
   await expect(main.getByText(`No cluster named ${cluster}`, { exact: true })).toBeVisible({ timeout: 20_000 });
-  await expect(main.getByRole('link', { name: CLUSTERS_H1, exact: true })).toBeVisible();
+  await expect(
+    notFoundLinks(main, `No cluster named ${cluster}`).and(main.getByRole('link', { name: CLUSTERS_H1, exact: true })),
+    'the link "Clusters" of the not-found state',
+  ).toBeVisible();
   await expect(tableOf(main, 'Services'), 'a services table').toHaveCount(0);
   await expect(tableOf(main, 'Tasks'), 'a tasks table').toHaveCount(0);
 });

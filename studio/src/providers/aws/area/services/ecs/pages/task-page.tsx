@@ -1,3 +1,4 @@
+import Alert from '@cloudscape-design/components/alert';
 import Box from '@cloudscape-design/components/box';
 import Button from '@cloudscape-design/components/button';
 import Container from '@cloudscape-design/components/container';
@@ -37,9 +38,18 @@ import {
   SERVICES_AND_TASKS_WORD,
   statusText,
 } from '../format';
+import { useRevision } from '../definition-queries';
 import { useCluster } from '../queries';
 import type { Task, TaskContainer } from '../task-api';
-import { definitionText, exitCodeText, serviceOfGroup, taskTexts } from '../task-format';
+import {
+  definitionText,
+  essentialContainers,
+  exitCodeText,
+  lastStatusType,
+  needsRevision,
+  serviceOfGroup,
+  taskTexts,
+} from '../task-format';
 import { useTask } from '../task-queries';
 
 // A task, S5 (issue 575, R4 and design tasks 1 to 3): its cluster read first, and while that is not found nothing of
@@ -48,6 +58,34 @@ import { useTask } from '../task-queries';
 // result of "Stop task" is the area's flash.
 
 const ALREADY_STOPPED = 'The task is already stopped or stopping.';
+
+/** A min width that keeps a container's name, and its image, whole (`studio/AGENTS.md`, aws-area entry 4). */
+const NAME_MIN_WIDTH = '28ch';
+const IMAGE_MIN_WIDTH = '32ch';
+
+/**
+ * How a stopped task ended, above its summary (critique final r1): the emulator's stop code and stopped reason, and
+ * the exit code of each essential container. A task whose essential containers all exited 0 ended as a job does;
+ * any other is an error.
+ */
+function Outcome({ task, essential }: { task: Task; essential: TaskContainer[] | undefined }) {
+  const texts = taskTexts(task);
+  const clean =
+    essential !== undefined && essential.length > 0 && essential.every((container) => container.exitCode === 0);
+  return (
+    <Alert type={clean ? 'info' : 'error'} header={`Task stopped: ${texts.stopCode}`}>
+      <SpaceBetween size="xxs">
+        <ValueText kind="text" value={texts.stoppedReason} />
+        {essential?.map((container) => (
+          <span key={container.name}>
+            Exit code of essential container <ValueText kind="name" value={container.name} />:{' '}
+            <ValueText kind="fixed" value={exitCodeText(container.exitCode)} />
+          </span>
+        ))}
+      </SpaceBetween>
+    </Alert>
+  );
+}
 
 function Summary({ cluster, task }: { cluster: string; task: Task }) {
   const handleFollow = useFollow();
@@ -62,7 +100,12 @@ function Summary({ cluster, task }: { cluster: string; task: Task }) {
         ariaLabel="Task details"
         items={[
           { label: 'ARN', value: <CopyValue label="ARN" value={task.arn} kind="address" none={NONE} /> },
-          { label: 'Last status', value: fixed(statusText(task.lastStatus)) },
+          {
+            label: 'Last status',
+            value: (
+              <StatusIndicator type={lastStatusType(task.lastStatus)}>{statusText(task.lastStatus)}</StatusIndicator>
+            ),
+          },
           { label: 'Desired status', value: fixed(statusText(task.desiredStatus)) },
           {
             label: 'Task definition',
@@ -95,9 +138,15 @@ function Summary({ cluster, task }: { cluster: string; task: Task }) {
           { label: 'Stopped at', value: fixed(texts.stoppedAt) },
           { label: 'Stop code', value: fixed(texts.stopCode) },
           { label: 'Stopped reason', value: <ValueText kind="text" value={texts.stoppedReason} /> },
-          { label: 'Private IP', value: <ValueText kind="name" value={texts.privateIp} /> },
-          { label: 'Subnet', value: <ValueText kind="name" value={texts.subnet} /> },
-          { label: 'Network interface', value: <ValueText kind="name" value={texts.networkInterface} /> },
+          {
+            label: 'Private IP',
+            value: <CopyValue label="Private IP" value={task.privateIp} kind="name" none={NONE} />,
+          },
+          { label: 'Subnet', value: <CopyValue label="Subnet" value={task.subnet} kind="name" none={NONE} /> },
+          {
+            label: 'Network interface',
+            value: <CopyValue label="Network interface" value={task.networkInterface} kind="name" none={NONE} />,
+          },
         ]}
       />
     </Container>
@@ -110,11 +159,13 @@ function Containers({ containers }: { containers: TaskContainer[] }) {
       id: 'name',
       header: 'Name',
       isRowHeader: true,
+      minWidth: NAME_MIN_WIDTH,
       cell: (container) => <ValueText kind="name" value={container.name} />,
     },
     {
       id: 'image',
       header: 'Image',
+      minWidth: IMAGE_MIN_WIDTH,
       cell: (container) => <ValueText kind="address" value={container.image} none={NONE} />,
     },
     {
@@ -191,13 +242,25 @@ export function TaskPage({ connection, params }: ScreenPageProps) {
   }
   const taskRead = useTask(connection.engineOrigin, clusterName, id, clusterFound && !clusterMissing);
   const task = taskRead.value?.found === true ? taskRead.value.task : undefined;
+  // The revision is read only for what a stopped task of several containers needs: which of them are essential.
+  // Revision 0 is no revision's, and `useRevision` reads nothing for it.
+  const revisionNeeded = task !== undefined && needsRevision(task);
+  const revisionRead = useRevision(
+    connection.engineOrigin,
+    revisionNeeded ? (task.definition?.family ?? '') : '',
+    revisionNeeded ? (task.definition?.revision ?? 0) : 0,
+  );
+  const revisionContainers =
+    revisionNeeded && revisionRead.value?.found === true ? revisionRead.value.revision.containers : undefined;
 
   const refreshCluster = clusterRead.refresh;
   const refreshTask = taskRead.refresh;
+  const refreshRevision = revisionRead.refresh;
   const readAgain = useCallback(() => {
     refreshCluster();
     refreshTask();
-  }, [refreshCluster, refreshTask]);
+    refreshRevision();
+  }, [refreshCluster, refreshTask, refreshRevision]);
 
   const clusterFailure =
     clusterRead.failure === undefined ? undefined : readFailureState(clusterRead.failure, connection, 'cluster');
@@ -271,6 +334,9 @@ export function TaskPage({ connection, params }: ScreenPageProps) {
   } else {
     content = (
       <SpaceBetween size="l">
+        {task.lastStatus === 'STOPPED' && (
+          <Outcome task={task} essential={essentialContainers(task, revisionContainers)} />
+        )}
         <Summary cluster={clusterName} task={task} />
         <Containers containers={task.containers} />
         <TaskLogs connection={connection} cluster={clusterName} task={task} />

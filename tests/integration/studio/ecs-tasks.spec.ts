@@ -33,6 +33,7 @@ import {
   logOf,
   NO_LOG_YET,
   NOT_RUN,
+  notFoundLinks,
   open,
   REGISTER,
   REGISTER_H1,
@@ -231,7 +232,7 @@ test('studio.ecs-unknown-task-shows-not-found', async ({ ctx, page }) => {
   await page.goto(taskPath(cluster, task));
   await expect(main.getByText(`No task ${task}`, { exact: true })).toBeVisible({ timeout: 20_000 });
   await expect(
-    main.getByRole('link').and(main.locator(`[href="${clusterPath(cluster)}"]`)),
+    notFoundLinks(main, `No task ${task}`).and(main.locator(`[href="${clusterPath(cluster)}"]`)),
     "a link to the cluster's page",
   ).toBeVisible();
 });
