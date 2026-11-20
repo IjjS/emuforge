@@ -40,6 +40,7 @@ import argparse
 import os
 import pathlib
 import re
+import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -208,11 +209,17 @@ def cmd_harness(a):
 def cmd_crit(a):
     guard(f"pm-brief crit {a.issue}", issue=a.issue, plan_may=True)
     v = issue(a.issue)
-    if v["module"] != "studio":
-        sys.exit(f"#{a.issue} has no screen to score (module {v['module']})")
     wt = pathlib.Path(a.capture_wt).resolve()
     if not (wt / "studio").is_dir():
         sys.exit(f"{wt} has no studio/ folder")
+    if v["module"] != "studio":
+        # An issue of another module may still change a screen (issue 624): its worktree's own changes under
+        # studio/ against main say so.
+        changed = subprocess.run(["git", "-C", str(wt), "diff", "--name-only", "main...HEAD", "--", "studio/"],
+                                 capture_output=True, text=True)
+        if changed.returncode != 0 or not changed.stdout.strip():
+            sys.exit(f"#{a.issue} has no screen to score (module {v['module']}, and {wt} changes nothing under "
+                     f"studio/ against main)")
     values = dict(v, root=str(ROOT), targets=a.targets.strip(), capture_wt=str(wt))
     write(a.issue, "crit", fill((BRIEFS / "crit.md").read_text(), values))
 
