@@ -213,6 +213,22 @@ function headerButton(name: string): HTMLElement {
   return within(header).getByRole('button', { name });
 }
 
+/** An item of the "Instance state" menu, the menu opened from its button. */
+function stateItem(name: string): HTMLElement {
+  const menu = screen.getByRole('button', { name: /^Instance state/ });
+  if (menu.getAttribute('aria-expanded') !== 'true') {
+    fireEvent.click(menu);
+  }
+  const found = screen.getAllByRole('menuitem').find((element) => element.textContent?.trim() === name);
+  expect(found, name).toBeDefined();
+  return found as HTMLElement;
+}
+
+/** Chooses `name` from the "Instance state" menu. */
+function choose(name: string) {
+  fireEvent.click(stateItem(name));
+}
+
 function isDisabled(element: Element): boolean {
   return (element as HTMLButtonElement).disabled || element.getAttribute('aria-disabled') === 'true';
 }
@@ -273,6 +289,7 @@ describe("an instance's page", () => {
       ['Name', 'web-1'],
       ['env', 'dev'],
     ]);
+    expect(screen.getByRole('link', { name: 'dev-key' })).toHaveAttribute('href', '/aws/ec2/key-pairs');
     const link = within(groups.element).getByRole('link', { name: 'web-group' });
     expect(link).toHaveAttribute('href', '/aws/ec2/security-groups/group/sg-1');
     fireEvent.click(link);
@@ -457,10 +474,10 @@ describe("an instance's page", () => {
     vi.mocked(api.actOnInstance).mockResolvedValue(undefined);
     const router = open(pathOf('i-0full'));
     await loaded();
-    expect(isDisabled(headerButton('Start'))).toBe(false);
-    expect(isDisabled(headerButton('Stop'))).toBe(true);
-    expect(isDisabled(headerButton('Reboot'))).toBe(true);
-    fireEvent.click(headerButton('Terminate'));
+    expect(isDisabled(stateItem('Start'))).toBe(false);
+    expect(isDisabled(stateItem('Stop'))).toBe(true);
+    expect(isDisabled(stateItem('Reboot'))).toBe(true);
+    choose('Terminate');
     const dialog = await screen.findByRole('dialog');
     expect(dialog.textContent).toContain('web-1 is terminated in the local emulator.');
     fireEvent.change(within(dialog).getByRole('textbox'), { target: { value: 'terminate' } });
@@ -521,15 +538,15 @@ describe("an instance's page", () => {
       protections[0]?.(false);
     });
     await loaded();
-    fireEvent.click(headerButton('Reboot'));
+    choose('Reboot');
     await waitFor(() => {
       expect(reads).toHaveLength(2);
       expect(protections).toHaveLength(2);
     });
     await waitFor(() => {
-      expect(isDisabled(headerButton('Reboot'))).toBe(false);
+      expect(isDisabled(stateItem('Reboot'))).toBe(false);
     });
-    fireEvent.click(headerButton('Reboot'));
+    choose('Reboot');
     await waitFor(() => {
       expect(reads).toHaveLength(3);
       expect(protections).toHaveLength(3);

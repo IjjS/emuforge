@@ -181,6 +181,22 @@ function action(name: string): HTMLElement {
   return within(table().getElement()).getByRole('button', { name });
 }
 
+/** An item of the "Instance state" menu, the menu opened from its button. */
+function stateItem(name: string): HTMLElement {
+  const menu = screen.getByRole('button', { name: /^Instance state/ });
+  if (menu.getAttribute('aria-expanded') !== 'true') {
+    fireEvent.click(menu);
+  }
+  const found = screen.getAllByRole('menuitem').find((element) => element.textContent?.trim() === name);
+  expect(found, name).toBeDefined();
+  return found as HTMLElement;
+}
+
+/** Chooses `name` from the "Instance state" menu. */
+function choose(name: string) {
+  fireEvent.click(stateItem(name));
+}
+
 function isDisabled(element: Element): boolean {
   return (element as HTMLButtonElement).disabled || element.getAttribute('aria-disabled') === 'true';
 }
@@ -385,13 +401,13 @@ describe('the instances list', () => {
     await waitFor(() => {
       expect(rows()).toHaveLength(2);
     });
-    expect(reasonOf(action('Start'))).toBe('Select one instance.');
+    expect(reasonOf(stateItem('Start'))).toBe('Select one instance.');
     selectRow('web');
-    expect(isDisabled(action('Start'))).toBe(false);
-    expect(reasonOf(action('Stop'))).toBe('Only a running instance can be stopped.');
+    expect(isDisabled(stateItem('Start'))).toBe(false);
+    expect(reasonOf(stateItem('Stop'))).toBe('Only a running instance can be stopped.');
     selectRow('i-2');
-    expect(isDisabled(action('Stop'))).toBe(false);
-    expect(reasonOf(action('Start'))).toBe('Only a stopped instance can be started.');
+    expect(isDisabled(stateItem('Stop'))).toBe(false);
+    expect(reasonOf(stateItem('Start'))).toBe('Only a stopped instance can be started.');
 
     const calls = vi.mocked(api.listInstances).mock.calls.length;
     fireEvent.click(action('Refresh'));
@@ -402,7 +418,7 @@ describe('the instances list', () => {
       expect(rows()).toHaveLength(2);
     });
     expect(screen.getByRole('radio', { name: 'i-2' })).toBeChecked();
-    expect(isDisabled(action('Stop'))).toBe(false);
+    expect(isDisabled(stateItem('Stop'))).toBe(false);
   });
 
   it('an action on the selected row → sent with its id and its result in the flash', async () => {
@@ -413,7 +429,7 @@ describe('the instances list', () => {
       expect(rows()).toHaveLength(1);
     });
     selectRow('i-2');
-    fireEvent.click(action('Stop'));
+    choose('Stop');
     await waitFor(() => {
       expect(screen.getByText('Stopping i-2')).toBeInTheDocument();
     });
@@ -451,14 +467,14 @@ describe('the instances list', () => {
       expect(rows()).toHaveLength(1);
     });
     selectRow('i-1');
-    fireEvent.click(action('Reboot'));
+    choose('Reboot');
     await waitFor(() => {
       expect(reads).toHaveLength(2);
     });
     await waitFor(() => {
-      expect(isDisabled(action('Reboot'))).toBe(false);
+      expect(isDisabled(stateItem('Reboot'))).toBe(false);
     });
-    fireEvent.click(action('Reboot'));
+    choose('Reboot');
     await waitFor(() => {
       expect(reads).toHaveLength(3);
     });
