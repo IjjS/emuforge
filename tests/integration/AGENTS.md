@@ -51,6 +51,30 @@ tests/integration/
 - A check that reads another language's text reads it from Studio's catalogue files (`studio/src/i18n/messages/`)
   at run time and matches by value; it holds no copy of a translation and names no message key.
 
+## Studio checks: what they find and when they assert
+
+A check passes or fails by what the product does, on a fast and on a slow machine. What a Cloudscape component
+draws inside itself, and when, is Cloudscape's: a `Header` writes its counter into the `h1` once the list is read,
+a highlighted option holds its label twice (issue 551). A check that matches those strings fails by timing.
+
+- **Inside a Cloudscape component** (a select's, multiselect's or autosuggest's options, a table's rows, cells and
+  loading text, a header's heading text and counter, a flash, a modal, a form field's error) an element is found
+  with Cloudscape's test selectors, `@cloudscape-design/components/test-utils/selectors`
+  (`createWrapper().findTable().findRows()`, `findHeader().findHeadingText()`, `findFlashbar().findItemsByType()`,
+  `findFormField().findError()`, `findModal()`), made a locator with `toSelector()`. A check adds no string
+  condition of its own to find it.
+- **An option** is chosen by its value, `findDropdown().findOptionByValue(<value>)`, never by its text. When the
+  scenario's line asserts the label, the check asserts it on the option it found by value.
+- **Elsewhere** an element is found by role and accessible name, `getByRole(<role>, { name })`. `exact: true` and a
+  whole-text pattern (`^…$`) are used only when that string is what the scenario's line asserts.
+- **The settled screen.** An assertion is made on the screen once it has settled: the loading text gone, the list
+  or value the line is about shown. A state in between (loading, a transition, a spinner, a button disabled while a
+  request is out) is asserted only when the scenario's line is about it.
+- **Going on.** What lets the next action go ahead is something shown on the screen (a row, a value, the dialog
+  closed, the button enabled), never a time. A bound is how long the check waits for that, never a wait itself.
+- Selectors shared by a service's checks live in its support file, those of every check in `support/`
+  (`references/services-and-manifest.md`); a check does not build its own copy.
+
 ## Isolation
 
 The emulator has no reset and keeps everything in memory, so isolation is the check's job.
