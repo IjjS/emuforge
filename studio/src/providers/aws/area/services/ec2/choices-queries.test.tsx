@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RequestError } from '../../../../../lib/aws/request';
 import { usePagedChoices, type ChoiceSource } from '../../components/use-paged-choices';
+import * as network from '../../lib/ec2-network-choices';
 import * as api from './choices-api';
 import {
   groupChoices,
@@ -25,12 +26,15 @@ vi.mock('./choices-api', async (importOriginal) => {
     ...real,
     listImageChoices: vi.fn(),
     listInstanceTypeChoices: vi.fn(),
-    listSubnetChoices: vi.fn(),
-    listVpcChoices: vi.fn(),
     listGroupChoices: vi.fn(),
     listKeyPairChoices: vi.fn(),
     getDefaultVpc: vi.fn(),
   };
+});
+
+vi.mock('../../lib/ec2-network-choices', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../lib/ec2-network-choices')>();
+  return { ...real, listSubnetChoices: vi.fn(), listVpcChoices: vi.fn() };
 });
 
 const ENDPOINT = 'http://127.0.0.1:9997';
@@ -60,11 +64,11 @@ function read<T>(source: ChoiceSource<T>, text = '') {
 
 describe("EC2's choices", () => {
   it("each list is read by its own reader, 50 a page; the images', the types' and the groups' text is sent, the subnets' and the VPCs' is not", async () => {
-    expect(api.CHOICES_PAGE_SIZE).toBe(50);
+    expect(network.CHOICES_PAGE_SIZE).toBe(50);
     vi.mocked(api.listImageChoices).mockResolvedValue({ choices: [{ id: 'ami-1', name: 'al2023' }], nextToken: 'i-t' });
     vi.mocked(api.listInstanceTypeChoices).mockResolvedValue({ choices: [{ type: 't3.micro', architectures: [] }] });
-    vi.mocked(api.listSubnetChoices).mockResolvedValue({ choices: [{ id: 'subnet-1' }], nextToken: 's-t' });
-    vi.mocked(api.listVpcChoices).mockResolvedValue({ choices: [{ id: 'vpc-1', isDefault: true }] });
+    vi.mocked(network.listSubnetChoices).mockResolvedValue({ choices: [{ id: 'subnet-1' }], nextToken: 's-t' });
+    vi.mocked(network.listVpcChoices).mockResolvedValue({ choices: [{ id: 'vpc-1', isDefault: true }] });
     vi.mocked(api.listGroupChoices).mockResolvedValue({ choices: [{ id: 'sg-1', name: 'web' }] });
 
     const images = read(imageChoices(ENDPOINT));
@@ -112,19 +116,19 @@ describe("EC2's choices", () => {
     await waitFor(() => {
       expect(subnets.result.current.choices).toEqual([{ id: 'subnet-1' }]);
     });
-    expect(vi.mocked(api.listSubnetChoices).mock.calls[0]?.slice(0, 2)).toEqual([ENDPOINT, undefined]);
+    expect(vi.mocked(network.listSubnetChoices).mock.calls[0]?.slice(0, 2)).toEqual([ENDPOINT, undefined]);
     act(() => {
       subnets.result.current.loadMore();
     });
     await waitFor(() => {
-      expect(vi.mocked(api.listSubnetChoices).mock.calls[1]?.slice(0, 2)).toEqual([ENDPOINT, 's-t']);
+      expect(vi.mocked(network.listSubnetChoices).mock.calls[1]?.slice(0, 2)).toEqual([ENDPOINT, 's-t']);
     });
 
     const vpcs = read(vpcChoices(ENDPOINT), 'zz');
     await waitFor(() => {
       expect(vpcs.result.current.choices).toEqual([{ id: 'vpc-1', isDefault: true }]);
     });
-    expect(vi.mocked(api.listVpcChoices).mock.calls[0]?.slice(0, 2)).toEqual([ENDPOINT, undefined]);
+    expect(vi.mocked(network.listVpcChoices).mock.calls[0]?.slice(0, 2)).toEqual([ENDPOINT, undefined]);
     expect(subnetChoices(ENDPOINT).filtering).toBe('none');
     expect(vpcChoices(ENDPOINT).filtering).toBe('none');
   });

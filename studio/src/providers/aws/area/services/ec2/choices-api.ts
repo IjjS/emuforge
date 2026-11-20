@@ -3,15 +3,16 @@ import {
   DescribeInstanceTypesCommand,
   DescribeKeyPairsCommand,
   DescribeSecurityGroupsCommand,
-  DescribeSubnetsCommand,
   DescribeVpcsCommand,
   type Filter,
 } from '@aws-sdk/client-ec2';
 
-import { sendEc2, text } from './api';
+import { sendEc2, text, withValues } from '../../lib/ec2-client';
+import { paged, pageOf, type ChoicePage } from '../../lib/ec2-network-choices';
 
-// The reads EC2's forms choose from (issue 553, design task 2): images, instance types, subnets, VPCs, security
-// groups a page of 50 at a time by the API's own token, and key pairs in one answer. Each sent through `sendEc2`
+// The reads EC2's forms choose from (issue 553, design task 2): images, instance types and security groups a page
+// of 50 at a time by the API's own token, and key pairs in one answer; the VPCs and the subnets are the area's
+// (`lib/ec2-network-choices.ts`). Each sent through `sendEc2`
 // with its operation's name, so a failed request rejects with its `RequestError` and an aborted one with the
 // signal's reason. A typed text is sent as the API's filter with `*` before and after it; every value is the
 // emulator's, as it came.
@@ -20,20 +21,10 @@ import { sendEc2, text } from './api';
 export const CHOICE_OPERATIONS = {
   describeImages: 'DescribeImages',
   describeInstanceTypes: 'DescribeInstanceTypes',
-  describeSubnets: 'DescribeSubnets',
   describeVpcs: 'DescribeVpcs',
   describeSecurityGroups: 'DescribeSecurityGroups',
   describeKeyPairs: 'DescribeKeyPairs',
 } as const;
-
-/** How many choices one page asks for. */
-export const CHOICES_PAGE_SIZE = 50;
-
-/** One page of choices in the API's order, and its token when it gave one. */
-export interface ChoicePage<T> {
-  choices: T[];
-  nextToken?: string;
-}
 
 export interface ImageChoice {
   id: string;
@@ -49,19 +40,6 @@ export interface InstanceTypeChoice {
   architectures: string[];
 }
 
-export interface SubnetChoice {
-  id: string;
-  zone?: string;
-  cidr?: string;
-  vpcId?: string;
-}
-
-export interface VpcChoice {
-  id: string;
-  cidr?: string;
-  isDefault: boolean;
-}
-
 export interface GroupChoice {
   id: string;
   name?: string;
@@ -71,16 +49,6 @@ export interface KeyPairChoice {
   name: string;
 }
 
-/** Copies the values of `values` that are not `undefined` onto `target`. */
-function withValues<T extends object>(target: T, values: { [K in keyof T]?: T[K] | undefined }): T {
-  for (const [key, value] of Object.entries(values)) {
-    if (value !== undefined) {
-      (target as Record<string, unknown>)[key] = value;
-    }
-  }
-  return target;
-}
-
 function number(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
@@ -88,20 +56,6 @@ function number(value: unknown): number | undefined {
 /** The filter `name` with `*` around `typed`, or none for an empty text. */
 function contains(name: string, typed: string | undefined): Filter[] {
   return typed === undefined || typed === '' ? [] : [{ Name: name, Values: [`*${typed}*`] }];
-}
-
-/** `MaxResults`, the filters when there are any, and the token when there is one. */
-function paged(filters: Filter[], token: string | undefined) {
-  return {
-    MaxResults: CHOICES_PAGE_SIZE,
-    ...(filters.length === 0 ? {} : { Filters: filters }),
-    ...(token === undefined ? {} : { NextToken: token }),
-  };
-}
-
-function pageOf<T>(choices: T[], next: unknown): ChoicePage<T> {
-  const nextToken = text(next);
-  return nextToken === undefined ? { choices } : { choices, nextToken };
 }
 
 /** Images: `DescribeImages`, the filter `name` when a text is typed. */
@@ -166,53 +120,6 @@ export async function listInstanceTypeChoices(
             { vcpus: number(info.VCpuInfo?.DefaultVCpus), memoryMiB: number(info.MemoryInfo?.SizeInMiB) },
           ),
         ];
-  });
-  return pageOf(choices, output.NextToken);
-}
-
-/** Subnets: `DescribeSubnets`, with no filter. */
-export async function listSubnetChoices(
-  endpoint: string,
-  token: string | undefined,
-  signal: AbortSignal,
-): Promise<ChoicePage<SubnetChoice>> {
-  const output = await sendEc2(
-    endpoint,
-    CHOICE_OPERATIONS.describeSubnets,
-    (client, abortSignal) => client.send(new DescribeSubnetsCommand(paged([], token)), { abortSignal }),
-    signal,
-  );
-  const choices = (output.Subnets ?? []).flatMap((subnet) => {
-    const id = text(subnet.SubnetId);
-    return id === undefined
-      ? []
-      : [
-          withValues<SubnetChoice>(
-            { id },
-            { zone: text(subnet.AvailabilityZone), cidr: text(subnet.CidrBlock), vpcId: text(subnet.VpcId) },
-          ),
-        ];
-  });
-  return pageOf(choices, output.NextToken);
-}
-
-/** VPCs: `DescribeVpcs`, with no filter. */
-export async function listVpcChoices(
-  endpoint: string,
-  token: string | undefined,
-  signal: AbortSignal,
-): Promise<ChoicePage<VpcChoice>> {
-  const output = await sendEc2(
-    endpoint,
-    CHOICE_OPERATIONS.describeVpcs,
-    (client, abortSignal) => client.send(new DescribeVpcsCommand(paged([], token)), { abortSignal }),
-    signal,
-  );
-  const choices = (output.Vpcs ?? []).flatMap((vpc) => {
-    const id = text(vpc.VpcId);
-    return id === undefined
-      ? []
-      : [withValues<VpcChoice>({ id, isDefault: vpc.IsDefault === true }, { cidr: text(vpc.CidrBlock) })];
   });
   return pageOf(choices, output.NextToken);
 }

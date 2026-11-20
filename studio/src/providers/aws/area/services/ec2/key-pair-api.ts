@@ -6,7 +6,7 @@ import {
   type KeyPairInfo,
 } from '@aws-sdk/client-ec2';
 
-import { sendEc2, text } from './api';
+import { sendEc2, text } from '../../lib/ec2-client';
 
 // The calls of EC2's key pair screens, S8 and S9 (issue 553, design task 5), through the engine as every API file of
 // the folder sends them (`api.ts`, `sendEc2`), mapped to plain typed results. `DescribeKeyPairs` has no pages: one

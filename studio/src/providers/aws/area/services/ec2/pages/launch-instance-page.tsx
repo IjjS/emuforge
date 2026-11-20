@@ -19,7 +19,8 @@ import { usePageFlash, type FlashItem } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
 import { failureOf } from '../../../components/use-token-listing';
 import type { ScreenPageProps } from '../../../screens';
-import type { GroupChoice, ImageChoice, InstanceTypeChoice, KeyPairChoice, SubnetChoice } from '../choices-api';
+import type { SubnetChoice } from '../../../lib/ec2-network-choices';
+import type { GroupChoice, ImageChoice, InstanceTypeChoice, KeyPairChoice } from '../choices-api';
 import { imageChoices, instanceTypeChoices, keyPairChoices, subnetChoices, useLaunchGroups } from '../choices-queries';
 import {
   CREATE_KEY_PAIR_PATH,
