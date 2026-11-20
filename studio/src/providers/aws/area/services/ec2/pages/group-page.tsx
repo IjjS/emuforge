@@ -39,8 +39,7 @@ import { useDeleteRule, useRuleListing, useSecurityGroup } from '../group-querie
 // one table; a failed read of the rules fails the "Rules" section alone. "Delete" of the group leads to S4 with its
 // result; "Delete" of a rule reads the rules again.
 
-const RULES_DESCRIPTION =
-  'Inbound rules say what may reach an instance of this group, outbound rules what it may reach.';
+const RULES_DESCRIPTION = 'The inbound and outbound rules of this group.';
 const SELECT_ONE_RULE = 'Select one rule.';
 const DEFAULT_REASON = 'The default security group cannot be deleted.';
 
@@ -156,7 +155,7 @@ function Rules({ group, listing, connection }: RulesProps) {
             No rules
           </Box>
           <Box variant="p" color="inherit">
-            This group allows nothing in and nothing out.
+            This group has no rule.
           </Box>
         </SpaceBetween>
         <Box margin={{ top: 's' }}>

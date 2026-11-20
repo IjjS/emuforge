@@ -270,9 +270,7 @@ describe("a security group's page", () => {
       'Description',
       'Rule ID',
     ]);
-    expect(
-      screen.getByText('Inbound rules say what may reach an instance of this group, outbound rules what it may reach.'),
-    ).toBeInTheDocument();
+    expect(screen.getByText('The inbound and outbound rules of this group.')).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: '10.1.0.0/16' })).toBeNull();
     const link = screen.getByRole('link', { name: 'sg-b' });
     expect(link).toHaveAttribute('href', '/aws/ec2/security-groups/group/sg-b');
@@ -287,7 +285,7 @@ describe("a security group's page", () => {
     rulesAre({});
     const router = open(PATH);
     expect(await screen.findByText('No rules')).toBeInTheDocument();
-    expect(screen.getByText('This group allows nothing in and nothing out.')).toBeInTheDocument();
+    expect(screen.getByText('This group has no rule.')).toBeInTheDocument();
     const slot = table().findEmptySlot()?.getElement() as HTMLElement;
     fireEvent.click(within(slot).getByRole('link', { name: 'Add rule' }));
     await waitFor(() => {
