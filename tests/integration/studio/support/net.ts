@@ -5,6 +5,7 @@ import net from 'node:net';
 
 import { EnvError } from './check';
 import { emulatorDir } from './emulator';
+import { waitFor } from './wait';
 
 /** A loopback port nothing listens on now (bound to `127.0.0.1:0`, read, released). */
 export async function freePort(): Promise<number> {
@@ -43,15 +44,27 @@ export async function freePortExcept(home: string, taken: number[], options: Fre
 }
 
 /**
- * Throws `EnvError` when something already listens on `127.0.0.1:<port>`: a check must own the port its process is
- * about to take, or what it observes is not that process.
+ * Confirms that `127.0.0.1:<port>` can be bound, then closes the probe socket. With a bound, retry EADDRINUSE
+ * while the previous listener releases the port. Without a bound, or for any other bind error, try once.
  */
-export async function ensurePortFree(port: number): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    const server = net.createServer();
-    server.once('error', (e) => reject(new EnvError(`127.0.0.1:${port} is not free: ${e.message}`)));
-    server.listen(port, '127.0.0.1', () => server.close(() => resolve()));
+export async function ensurePortFree(port: number, boundMs = 0): Promise<void> {
+  const address = `127.0.0.1:${port}`;
+  const free = await waitFor(boundMs, async () => {
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const server = net.createServer((socket) => socket.destroy());
+        server.once('error', reject);
+        server.listen(port, '127.0.0.1', () => server.close(() => resolve()));
+      });
+      return true;
+    } catch (e) {
+      const error = e as NodeJS.ErrnoException;
+      if (boundMs === 0 || error.code !== 'EADDRINUSE') {
+        throw new EnvError(`${address} is not free: ${error.message}`);
+      }
+    }
   });
+  if (!free) throw new EnvError(`${address} is still in use after ${boundMs / 1000}s (EADDRINUSE)`);
 }
 
 /** How a TCP connection to `127.0.0.1:<port>` ends: `open` (accepted), `refused`, or another error code. */

@@ -7,7 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { type Ctx } from './check';
+import { EnvError, type Ctx } from './check';
 import { ensurePortFree } from './net';
 import { Proc } from './process';
 
@@ -24,6 +24,9 @@ function settingsDir(ctx: Ctx): string {
 
 /** How long a started engine may take to accept a connection on its port. */
 const LISTEN_BOUND_MS = 10_000;
+
+/** How long checks allow the previous listener to release the run's shared engine port. */
+const PORT_RELEASE_BOUND_MS = 10_000;
 
 export interface EngineOptions {
   /** Default: the run's engine port. */
@@ -83,7 +86,8 @@ export class Engine {
     const bin = this.ctx.engineBin;
     if (this.ctx.engineMissing) throw new Error(`engine binary missing at ${bin} (${this.ctx.engineMissing})`);
     if (!fs.existsSync(bin)) throw new Error(`engine binary missing at ${bin}`);
-    await ensurePortFree(this.port);
+    const boundMs = this.port === this.ctx.enginePort ? PORT_RELEASE_BOUND_MS : 0;
+    await ensurePortFree(this.port, boundMs);
     const args = [
       'serve',
       '--port',
@@ -106,7 +110,8 @@ export class Engine {
       this.ctx.log(`engine pid ${this.proc.pid} listens on 127.0.0.1:${this.port}`);
       return;
     }
-    const { stderr } = await this.proc.stop();
+    await this.stop();
+    const { stderr } = this.output();
     if (ready === 'timeout') throw new Error(`engine did not listen on 127.0.0.1:${this.port} within 10s`);
     throw new Error(
       `engine exited (${JSON.stringify(ready)}) before listening on 127.0.0.1:${this.port}; stderr: ${stderr.trim()}`,
@@ -115,14 +120,17 @@ export class Engine {
 
   /** Stops the engine (SIGTERM, then SIGKILL after a bound) and waits until it has exited. */
   async stop(): Promise<void> {
-    if (this.proc) await this.proc.stop();
+    const proc = this.proc;
+    if (!proc) return;
+    await proc.stop();
+    if (!proc.exitStatus()) throw new EnvError(`engine pid ${proc.pid} did not exit after SIGTERM and SIGKILL`);
   }
 
   /** SIGKILL: the engine ends without a chance to clean up. */
   async kill(): Promise<void> {
     if (!this.proc) return;
     this.proc.signal('SIGKILL');
-    await this.proc.stop();
+    await this.stop();
   }
 
   /** stdout and stderr so far. */
@@ -131,6 +139,8 @@ export class Engine {
   }
 
   async dispose(): Promise<void> {
+    if (!this.proc) return;
     await this.stop();
+    if (this.port === this.ctx.enginePort) await ensurePortFree(this.port, PORT_RELEASE_BOUND_MS);
   }
 }
