@@ -8,6 +8,9 @@ import { nameOf, type Tag } from '../../lib/ec2-client';
 /** Shown for a value the answer lacks. */
 export const NONE = '-';
 
+/** The least width of a column of IDs, so a zero-padded ID keeps to one or two lines at 390 (`aws-area.md`, entry 4). */
+export const ID_MIN_WIDTH = '22ch';
+
 /** VPC's route in the area, `/aws/vpc`. */
 export const VPC_PATH = `${AWS_PATH}/vpc`;
 

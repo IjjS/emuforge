@@ -5,7 +5,7 @@ import type { ReactNode } from 'react';
 
 import { ValueText } from '../../../components/value-text';
 import type { Route } from '../api';
-import { NONE } from '../format';
+import { ID_MIN_WIDTH, NONE } from '../format';
 
 // The routes of a route table (S6's "Route table", S9's "Routes"): one row per route in the given order, its
 // destination and its target as the API gave them, `local` as it is, and its state with a status of its kind
@@ -34,7 +34,12 @@ const COLUMNS: TableProps.ColumnDefinition<Route>[] = [
     isRowHeader: true,
     cell: (route) => <ValueText kind="name" value={route.destination?.value} none={NONE} />,
   },
-  { id: 'target', header: 'Target', cell: (route) => <ValueText kind="name" value={route.target} none={NONE} /> },
+  {
+    id: 'target',
+    header: 'Target',
+    minWidth: ID_MIN_WIDTH,
+    cell: (route) => <ValueText kind="name" value={route.target} none={NONE} />,
+  },
   { id: 'state', header: 'State', cell: (route) => <RouteState state={route.state} /> },
 ];
 
