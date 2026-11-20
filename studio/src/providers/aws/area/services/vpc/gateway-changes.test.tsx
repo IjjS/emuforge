@@ -53,21 +53,25 @@ function hooks() {
   ).result.current;
 }
 
-function asked(spy: ReturnType<typeof vi.spyOn>) {
-  return spy.mock.calls.map(([filters]) => key((filters as { queryKey?: readonly unknown[] } | undefined)?.queryKey)).sort();
+function spyOnReads() {
+  return vi.spyOn(client, 'invalidateQueries');
+}
+
+function asked(spy: ReturnType<typeof spyOnReads>) {
+  return spy.mock.calls.map(([filters]) => key(filters?.queryKey)).sort();
 }
 
 describe("an internet gateway's changes", () => {
   it('after a create succeeds → the gateway lists (every filter) and that gateway are asked again', async () => {
     vi.mocked(api.createInternetGateway).mockResolvedValue('igw-1');
-    const spy = vi.spyOn(client, 'invalidateQueries');
+    const spy = spyOnReads();
     expect(await hooks().create({ name: 'edge' }, signal())).toBe('igw-1');
     expect(asked(spy)).toEqual(GATEWAY_READS);
   });
 
   it('after an attach succeeds → the same reads are asked again', async () => {
     vi.mocked(api.attachInternetGateway).mockResolvedValue(undefined);
-    const spy = vi.spyOn(client, 'invalidateQueries');
+    const spy = spyOnReads();
     await hooks().attach('igw-1', 'vpc-1', signal());
     expect(vi.mocked(api.attachInternetGateway).mock.calls[0]?.slice(0, 3)).toEqual([ENDPOINT, 'igw-1', 'vpc-1']);
     expect(asked(spy)).toEqual(GATEWAY_READS);
@@ -75,7 +79,7 @@ describe("an internet gateway's changes", () => {
 
   it('after a detach succeeds → the same reads and the route tables too', async () => {
     vi.mocked(api.detachInternetGateway).mockResolvedValue(undefined);
-    const spy = vi.spyOn(client, 'invalidateQueries');
+    const spy = spyOnReads();
     await hooks().detach('igw-1', 'vpc-1', signal());
     expect(vi.mocked(api.detachInternetGateway).mock.calls[0]?.slice(0, 3)).toEqual([ENDPOINT, 'igw-1', 'vpc-1']);
     expect(asked(spy)).toEqual(AFTER_DETACH);
@@ -83,7 +87,7 @@ describe("an internet gateway's changes", () => {
 
   it('after a delete succeeds → the gateway reads are asked again', async () => {
     vi.mocked(api.deleteInternetGateway).mockResolvedValue(undefined);
-    const spy = vi.spyOn(client, 'invalidateQueries');
+    const spy = spyOnReads();
     await hooks().remove('igw-1', signal());
     expect(vi.mocked(api.deleteInternetGateway).mock.calls[0]?.slice(0, 2)).toEqual([ENDPOINT, 'igw-1']);
     expect(asked(spy)).toEqual(GATEWAY_READS);
@@ -94,7 +98,7 @@ describe("an internet gateway's changes", () => {
     vi.mocked(api.attachInternetGateway).mockRejectedValue(refusal);
     vi.mocked(api.detachInternetGateway).mockRejectedValue(refusal);
     vi.mocked(api.deleteInternetGateway).mockRejectedValue(refusal);
-    const spy = vi.spyOn(client, 'invalidateQueries');
+    const spy = spyOnReads();
     const current = hooks();
     await expect(current.create({}, signal())).rejects.toBe(refusal);
     await expect(current.attach('igw-1', 'vpc-1', signal())).rejects.toBe(refusal);
