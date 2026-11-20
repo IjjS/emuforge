@@ -10,6 +10,7 @@ export async function openModify(page: Page, id: string) {
   const wrapper = createWrapper();
   const modify = page.locator(wrapper.findButton('#rds-modify-instance').toSelector());
   await modify.click(ACTION);
+  const modal = createWrapper(wrapper.findModal().toSelector());
   const dialog = dialogOf(page);
   await expect(dialog).toBeVisible();
   const input = (field: string) =>
@@ -20,10 +21,10 @@ export async function openModify(page: Page, id: string) {
     instanceClass: input('class'),
     storage: input('storage'),
     password: input('password'),
-    protection: page.locator(wrapper.findModal().findCheckbox().findNativeInput().toSelector()),
+    protection: page.locator(modal.findCheckbox().findNativeInput().toSelector()),
     save: page.locator(wrapper.findButton('#rds-modify-save').toSelector()),
     cancel: page.locator(wrapper.findButton('#rds-modify-cancel').toSelector()),
-    failure: page.locator(wrapper.findModal().findAlert().findContent().toSelector()),
+    failure: page.locator(modal.findAlert().findContent().toSelector()),
     clusterGuidance: dialog.locator('#rds-modify-cluster-guidance'),
   };
 }
