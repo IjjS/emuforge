@@ -5,7 +5,7 @@ import { sendRequest } from '../../../../lib/aws/request';
 
 // The EC2 API as more than one service of the area calls it (EC2's screens, VPC's): the one client of the SDK's EC2
 // class per engine endpoint, the send every call goes through with its operation's name, and the readers of a text
-// and of the tags of an answer. Lifted from `services/ec2` when VPC came to need them (issue 574); no other file of
+// and of the tags of an answer. Lifted from EC2's screens (issue 574) when VPC came to need them; no other file of
 // the area constructs or caches an EC2 client.
 
 const clients = new Map<string, EC2Client>();
