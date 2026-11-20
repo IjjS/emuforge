@@ -1,39 +1,23 @@
-import {
-  CreateSubnetCommand,
-  DeleteSubnetCommand,
-  DescribeAvailabilityZonesCommand,
-  ModifySubnetAttributeCommand,
-} from '@aws-sdk/client-ec2';
+import { CreateSubnetCommand, DeleteSubnetCommand, ModifySubnetAttributeCommand } from '@aws-sdk/client-ec2';
 
+import { DESCRIBE_AVAILABILITY_ZONES } from '../../lib/ec2-availability-zones';
 import { sendEc2, text } from '../../lib/ec2-client';
 
-// The calls of a subnet's screens (issue 574, design task 2): `DescribeAvailabilityZones`, the create form's own read
-// of its zones; `CreateSubnet` from S5; `ModifySubnetAttribute` of the public addresses on launch from S6; and
+// The calls of a subnet's screens (issue 574, design task 2): `CreateSubnet` from S5;
+// `ModifySubnetAttribute` of the public addresses on launch from S6; and
 // `DeleteSubnet` from S4 and S6. Each goes through the area's `sendEc2` with its operation's name, so a refusal
 // (`InvalidSubnet.Range`, `InvalidSubnet.Conflict`, `DependencyViolation`) rejects with its `RequestError` as the
 // emulator gave it.
 
+export { listAvailabilityZones } from '../../lib/ec2-availability-zones';
+
 /** The operations of a subnet's calls, as a failure names them. */
 export const SUBNET_CHANGE_OPERATIONS = {
-  describeAvailabilityZones: 'DescribeAvailabilityZones',
+  describeAvailabilityZones: DESCRIBE_AVAILABILITY_ZONES,
   createSubnet: 'CreateSubnet',
   modifySubnetAttribute: 'ModifySubnetAttribute',
   deleteSubnet: 'DeleteSubnet',
 } as const;
-
-/** The Availability Zones' names, in the answer's order: one `DescribeAvailabilityZones`. */
-export async function listAvailabilityZones(endpoint: string, signal: AbortSignal): Promise<string[]> {
-  const output = await sendEc2(
-    endpoint,
-    SUBNET_CHANGE_OPERATIONS.describeAvailabilityZones,
-    (client, abortSignal) => client.send(new DescribeAvailabilityZonesCommand({}), { abortSignal }),
-    signal,
-  );
-  return (output.AvailabilityZones ?? []).flatMap((zone) => {
-    const name = text(zone.ZoneName);
-    return name === undefined ? [] : [name];
-  });
-}
 
 /** What S5 sends: the VPC and the block; a zone and a name when they are given. */
 export interface NewSubnet {

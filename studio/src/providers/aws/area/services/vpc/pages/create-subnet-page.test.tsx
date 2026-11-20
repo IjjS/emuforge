@@ -11,6 +11,7 @@ import type { AreaConnection } from '../../../components/emulator-line';
 import AwsArea from '../../../index';
 import * as network from '../../../lib/ec2-network-choices';
 import * as api from '../api';
+import * as availability from '../../../lib/ec2-availability-zones';
 import * as changes from '../subnet-changes-api';
 
 // S5 rendered inside the area's layout, with the calls of `lib/ec2-network-choices.ts`, `api.ts` and
@@ -26,9 +27,14 @@ vi.mock('../api', async (importOriginal) => {
   return { ...real, getVpc: vi.fn(), getSubnet: vi.fn(), listRouteTables: vi.fn(), listSubnets: vi.fn() };
 });
 
+vi.mock('../../../lib/ec2-availability-zones', async (original) => ({
+  ...(await original<typeof availability>()),
+  listAvailabilityZones: vi.fn(),
+}));
+
 vi.mock('../subnet-changes-api', async (importOriginal) => {
   const real = await importOriginal<typeof import('../subnet-changes-api')>();
-  return { ...real, createSubnet: vi.fn(), listAvailabilityZones: vi.fn() };
+  return { ...real, createSubnet: vi.fn() };
 });
 
 // TanStack Query hands its notifications to React on a 0 ms timer; here it notifies in a microtask, as
@@ -144,7 +150,7 @@ function created(id: string): api.Subnet {
 
 beforeEach(() => {
   vi.mocked(network.listVpcChoices).mockResolvedValue({ choices: [VPC_X, VPC_D] });
-  vi.mocked(changes.listAvailabilityZones).mockResolvedValue(ZONES);
+  vi.mocked(availability.listAvailabilityZones).mockResolvedValue(ZONES);
   vi.mocked(changes.createSubnet).mockResolvedValue('subnet-0new');
   vi.mocked(api.getVpc).mockResolvedValue({
     found: true,
@@ -269,7 +275,7 @@ describe('Create subnet', () => {
 
   it('the zones: "Loading Availability Zones", then "Chosen by the emulator" and the three zones', async () => {
     let answer: (zones: string[]) => void = () => undefined;
-    vi.mocked(changes.listAvailabilityZones).mockImplementation(
+    vi.mocked(availability.listAvailabilityZones).mockImplementation(
       () =>
         new Promise((resolve) => {
           answer = resolve;
@@ -290,11 +296,11 @@ describe('Create subnet', () => {
       'Chosen by the emulator',
       ...ZONES,
     ]);
-    expect(changes.listAvailabilityZones).toHaveBeenCalledTimes(1);
+    expect(availability.listAvailabilityZones).toHaveBeenCalledTimes(1);
   });
 
   it('their read failed → "The Availability Zones could not be loaded" with "Retry", and the form can still be sent', async () => {
-    vi.mocked(changes.listAvailabilityZones).mockRejectedValue(
+    vi.mocked(availability.listAvailabilityZones).mockRejectedValue(
       new RequestError({ kind: 'not-implemented', operation: 'DescribeAvailabilityZones' }),
     );
     open();
@@ -310,7 +316,7 @@ describe('Create subnet', () => {
   });
 
   it('"Retry" reads the zones again', async () => {
-    vi.mocked(changes.listAvailabilityZones).mockRejectedValueOnce(
+    vi.mocked(availability.listAvailabilityZones).mockRejectedValueOnce(
       new RequestError({ kind: 'other', operation: 'DescribeAvailabilityZones', code: 'InternalError' }),
     );
     open();
@@ -320,7 +326,7 @@ describe('Create subnet', () => {
     await waitFor(() => {
       expect(screen.queryByText('The Availability Zones could not be loaded')).toBeNull();
     });
-    expect(changes.listAvailabilityZones).toHaveBeenCalledTimes(2);
+    expect(availability.listAvailabilityZones).toHaveBeenCalledTimes(2);
   });
 
   it('a fault → its message at the field and nothing sent', async () => {

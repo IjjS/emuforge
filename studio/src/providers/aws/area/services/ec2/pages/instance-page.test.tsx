@@ -401,6 +401,17 @@ describe("an instance's page", () => {
     });
   });
 
+  it('links a reported block device to its volume from the instance view', async () => {
+    holding(full());
+    const router = open(pathOf('i-0full'));
+    const link = await screen.findByRole('link', { name: 'vol-1' });
+    expect(screen.getByRole('heading', { level: 1, name: 'web-1' })).toBeInTheDocument();
+    expect(await screen.findByText('These instances are in your local emulator')).toBeInTheDocument();
+    expect(link).toHaveAttribute('href', '/aws/ec2/volumes/volume/vol-1');
+    fireEvent.click(link);
+    await waitFor(() => expect(router.state.location.pathname).toBe('/aws/ec2/volumes/volume/vol-1'));
+  });
+
   it('no name → the heading is its ID; stopped → the state with its reason and "Public IPv4" "-" with no copy control', async () => {
     holding(
       without(
