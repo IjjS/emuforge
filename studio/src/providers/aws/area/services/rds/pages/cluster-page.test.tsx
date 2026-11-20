@@ -170,17 +170,19 @@ function member(id: string, changes: Partial<api.DbInstance> = {}): api.DbInstan
 const PAGE = createWrapper(document.body);
 const text = (element: Element) => (element.textContent ?? '').replace(/\s+/g, ' ').trim();
 
-/** The key-value pairs of the section `section` as label → value. */
+/** The key-value pairs of the section headed `section` (every group of its container) as label → value. */
 function pairsOf(section: string): Record<string, string> {
-  const group = PAGE.findAllKeyValuePairs().find((pairs) =>
-    [pairs.getElement(), ...pairs.getElement().querySelectorAll('[aria-label]')].some(
-      (element) => element.getAttribute('aria-label') === section,
-    ),
+  const container = PAGE.findAllContainers().find((item) =>
+    text(item.findHeader()?.getElement() as Element).startsWith(section),
   );
-  expect(group, section).toBeDefined();
+  expect(container, section).toBeDefined();
+  const groups = container === undefined ? [] : createWrapper(container.getElement()).findAllKeyValuePairs();
+  expect(groups.length, section).toBeGreaterThan(0);
   const result: Record<string, string> = {};
-  for (const item of group?.findItems() ?? []) {
-    result[text(item.findLabel()?.getElement() as Element)] = text(item.findValue()?.getElement() as Element);
+  for (const group of groups) {
+    for (const item of group.findItems()) {
+      result[text(item.findLabel()?.getElement() as Element)] = text(item.findValue()?.getElement() as Element);
+    }
   }
   return result;
 }
@@ -285,6 +287,16 @@ describe('a DB cluster', () => {
       'Cluster parameter group': 'default.aurora-postgresql16',
       'Deletion protection': 'Off',
     });
+    // The ARN and the resource ID in a group of their own, as wide as the section.
+    const identifiers = PAGE.findAllKeyValuePairs().find((pairs) =>
+      [pairs.getElement(), ...pairs.getElement().querySelectorAll('[aria-label]')].some(
+        (element) => element.getAttribute('aria-label') === 'DB cluster identifiers',
+      ),
+    );
+    expect((identifiers?.findItems() ?? []).map((item) => text(item.findLabel()?.getElement() as Element))).toEqual([
+      'ARN',
+      'Resource ID',
+    ]);
     const headings = screen.getAllByRole('heading', { level: 2 }).map(text);
     expect(headings.indexOf('Connection')).toBeLessThan(headings.indexOf('DB cluster details'));
     const tags = tableOf('Tags');
@@ -391,7 +403,7 @@ describe('a DB cluster', () => {
   });
 
   for (const [changes, reason] of [
-    [{ members: [{ id: 'm', writer: true }] }, "Delete the cluster's DB instances first."],
+    [{ members: [{ id: 'm', writer: true }] }, "Delete the cluster's DB instances first, each from its own page."],
     [{ status: 'deleting' }, 'This DB cluster is already being deleted.'],
   ] as const) {
     it(`"Delete" unavailable: ${reason}`, async () => {

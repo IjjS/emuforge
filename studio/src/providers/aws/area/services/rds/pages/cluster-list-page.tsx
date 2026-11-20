@@ -34,8 +34,8 @@ import { clusterHref, CLUSTERS_TITLE, CLUSTERS_WORD, CREATE_CLUSTER_PATH, engine
 
 /** A name keeps room for 24 characters (`aws-area.md`, entry 4). */
 const NAME_MIN_WIDTH = '28ch';
-/** A status's icon and its word on one line, up to "rebooting". */
-const STATUS_MIN_WIDTH = '14ch';
+/** A status's icon, its gap, its word up to "rebooting" or "modifying" and the cell's padding on one line. */
+const STATUS_MIN_WIDTH = '18ch';
 /** A creation time on two lines at most. */
 const CREATED_MIN_WIDTH = '26ch';
 
