@@ -76,10 +76,11 @@ export function ModifyInstanceDialog({ instance, pending, failure, onSave, onDis
       footer={
         <Box float="right">
           <SpaceBetween direction="horizontal" size="xs">
-            <Button variant="link" disabled={pending} onClick={onDismiss}>
+            <Button id="rds-modify-cancel" variant="link" disabled={pending} onClick={onDismiss}>
               Cancel
             </Button>
             <Button
+              id="rds-modify-save"
               variant="primary"
               loading={pending}
               loadingText="Saving changes"
@@ -121,7 +122,11 @@ export function ModifyInstanceDialog({ instance, pending, failure, onSave, onDis
           />
         </FormField>
         <ClassField value={instanceClass} error={errors.instanceClass} onChange={setInstanceClass} />
-        {member && <Box variant="p">The cluster manages storage and master credentials.</Box>}
+        {member && (
+          <Box id="rds-modify-cluster-guidance" variant="p">
+            The cluster manages storage and master credentials.
+          </Box>
+        )}
         {!member && <StorageField value={storage} error={errors.storage} onChange={setStorage} />}
         {!member && (
           <FormField

@@ -1,5 +1,5 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useRef, useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -22,7 +22,7 @@ const IDENTIFIER = 'DB instance identifier';
 const CLASS = 'DB instance class';
 const STORAGE = 'Allocated storage (GiB)';
 const PASSWORD = 'New master password';
-const PROTECTION = 'Deletion protection';
+const PAGE = createWrapper(document.body);
 const RENAME_GUIDANCE =
   'After saving, the old identifier will stop resolving. Studio will open the renamed DB instance.';
 type Field = typeof IDENTIFIER | typeof CLASS | typeof STORAGE | typeof PASSWORD;
@@ -53,8 +53,23 @@ function open(instance = INSTANCE) {
   return onSave;
 }
 
+async function opened() {
+  await waitFor(() => {
+    expect(PAGE.findModal()?.findHeader().getElement()).toHaveTextContent('Modify DB instance');
+  });
+}
+
+function formField(label: Field) {
+  return PAGE.findModal()
+    ?.findContent()
+    .findAllFormFields()
+    .find((field) => field.findLabel()?.getElement().textContent?.trim() === label);
+}
+
 function field(label: Field) {
-  return within(screen.getByRole('dialog')).getByLabelText(label) as HTMLInputElement;
+  const input = formField(label)?.findControl()?.findInput()?.findNativeInput().getElement();
+  if (input === undefined) throw new Error(`Missing input: ${label}`);
+  return input;
 }
 
 function change(label: Field, value: string) {
@@ -62,27 +77,33 @@ function change(label: Field, value: string) {
 }
 
 function protection() {
-  return within(screen.getByRole('dialog')).getByRole('checkbox', { name: PROTECTION });
+  const checkbox = PAGE.findModal()?.findContent().findCheckbox();
+  expect(checkbox?.findLabel().getElement()).toHaveTextContent('Deletion protection');
+  return checkbox?.findNativeInput().getElement() as HTMLInputElement;
 }
 
 function save() {
-  return createWrapper(document.body)
-    .findModal()
-    ?.findFooter()
-    ?.findButton('[class*="variant-primary"]')
-    ?.getElement() as HTMLButtonElement;
+  const button = PAGE.findModal()?.findFooter()?.findButton('#rds-modify-save')?.getElement();
+  expect(button).toHaveTextContent('Save changes');
+  return button as HTMLButtonElement;
+}
+
+function renameGuidance() {
+  return formField(IDENTIFIER)?.findDescription()?.getElement();
 }
 
 describe('Modify DB instance', () => {
   it('U1 opens a standalone instance with its settings and a fresh masked password', async () => {
     const onSave = open();
-    const dialog = await screen.findByRole('dialog', { name: 'Modify DB instance' });
+    await opened();
     expect(field(IDENTIFIER)).toHaveValue('app-db');
     expect(field(CLASS)).toHaveValue('db.t3.micro');
     expect(field(STORAGE)).toHaveValue('20');
     expect(field(PASSWORD)).toHaveAttribute('type', 'password');
     expect(field(PASSWORD)).toHaveValue('');
-    expect(within(dialog).getByText('Leave blank to keep the current password.')).toBeInTheDocument();
+    expect(formField(PASSWORD)?.findDescription()?.getElement()).toHaveTextContent(
+      'Leave blank to keep the current password.',
+    );
     expect(protection()).toBeChecked();
     expect(save()).toBeDisabled();
     fireEvent.click(save());
@@ -91,7 +112,7 @@ describe('Modify DB instance', () => {
 
   it('U2 sends only the field changed and disables saving when reverted', async () => {
     const onSave = open();
-    await screen.findByRole('dialog');
+    await opened();
     const edits = [
       [IDENTIFIER, 'new-db', 'app-db', { identifier: 'new-db' }],
       [CLASS, 'db.t3.small', 'db.t3.micro', { instanceClass: 'db.t3.small' }],
@@ -122,29 +143,32 @@ describe('Modify DB instance', () => {
     [PASSWORD, 'short', 'A master password has at least 8 characters.', 'DemoPass!234'],
   ] as const)('U3 blocks invalid %s (%s) and permits a correction', async (label, invalid, error, valid) => {
     const onSave = open();
-    await screen.findByRole('dialog');
+    await opened();
     change(label, invalid);
+    expect(formField(label)?.findError()?.getElement()).toHaveTextContent(error);
     expect(field(label)).toHaveAccessibleDescription(expect.stringContaining(error));
     expect(save()).toBeDisabled();
     fireEvent.click(save());
     expect(onSave).not.toHaveBeenCalled();
     change(label, valid);
-    expect(screen.queryByText(error)).toBeNull();
+    expect(formField(label)?.findError()).toBeNull();
     expect(save()).toBeEnabled();
   });
 
   it('U4 cancels the draft and opens with the original settings', async () => {
     const onSave = open();
-    const dialog = await screen.findByRole('dialog');
+    await opened();
     change(IDENTIFIER, 'draft-db');
     change(CLASS, 'db.t3.small');
     change(STORAGE, '30');
     change(PASSWORD, 'DemoPass!234');
     fireEvent.click(protection());
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
-    expect(screen.queryByRole('dialog')).toBeNull();
+    const cancel = PAGE.findModal()?.findFooter()?.findButton('#rds-modify-cancel')?.getElement();
+    expect(cancel).toHaveTextContent('Cancel');
+    fireEvent.click(cancel as HTMLElement);
+    expect(PAGE.findModal()).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Modify' }));
-    await screen.findByRole('dialog');
+    await opened();
     expect(field(IDENTIFIER)).toHaveValue('app-db');
     expect(field(CLASS)).toHaveValue('db.t3.micro');
     expect(field(STORAGE)).toHaveValue('20');
@@ -156,10 +180,12 @@ describe('Modify DB instance', () => {
 
   it('U5 offers only the settings owned by a cluster member', async () => {
     const onSave = open({ ...INSTANCE, clusterId: 'app-cluster' });
-    const dialog = await screen.findByRole('dialog');
-    expect(within(dialog).getByText('The cluster manages storage and master credentials.')).toBeInTheDocument();
-    expect(within(dialog).queryByLabelText(STORAGE)).toBeNull();
-    expect(within(dialog).queryByLabelText(PASSWORD)).toBeNull();
+    await opened();
+    expect(PAGE.findModal()?.findContent().find('#rds-modify-cluster-guidance')?.getElement()).toHaveTextContent(
+      'The cluster manages storage and master credentials.',
+    );
+    expect(formField(STORAGE)).toBeUndefined();
+    expect(formField(PASSWORD)).toBeUndefined();
     change(IDENTIFIER, 'new-member');
     change(CLASS, 'db.r6g.xlarge');
     fireEvent.click(protection());
@@ -173,7 +199,7 @@ describe('Modify DB instance', () => {
 
   it('U6 allows an independent edit with unchanged legacy settings', async () => {
     const onSave = open({ ...INSTANCE, id: 'legacy_db', allocatedStorage: 5 });
-    await screen.findByRole('dialog');
+    await opened();
     expect(field(IDENTIFIER)).toHaveValue('legacy_db');
     expect(field(STORAGE)).toHaveValue('5');
     fireEvent.click(protection());
@@ -183,22 +209,23 @@ describe('Modify DB instance', () => {
 
   it('describes what happens to the old identifier only for a valid rename', async () => {
     open();
-    await screen.findByRole('dialog');
-    expect(screen.queryByText(RENAME_GUIDANCE)).toBeNull();
+    await opened();
+    expect(renameGuidance()).toBeUndefined();
     change(IDENTIFIER, '9bad');
-    expect(screen.queryByText(RENAME_GUIDANCE)).toBeNull();
+    expect(renameGuidance()).toBeUndefined();
     change(IDENTIFIER, 'renamed-db');
+    expect(renameGuidance()).toHaveTextContent(RENAME_GUIDANCE);
     expect(field(IDENTIFIER)).toHaveAccessibleDescription(expect.stringContaining(RENAME_GUIDANCE));
     change(IDENTIFIER, 'app-db');
-    expect(screen.queryByText(RENAME_GUIDANCE)).toBeNull();
+    expect(renameGuidance()).toBeUndefined();
   });
 
   it('treats a case-only identifier edit as unchanged while allowing an independent edit', async () => {
     const onSave = open();
-    await screen.findByRole('dialog');
+    await opened();
     change(IDENTIFIER, 'APP-DB');
     expect(field(IDENTIFIER)).toHaveValue('APP-DB');
-    expect(screen.queryByText(RENAME_GUIDANCE)).toBeNull();
+    expect(renameGuidance()).toBeUndefined();
     expect(save()).toBeDisabled();
     fireEvent.click(save());
     expect(onSave).not.toHaveBeenCalled();
@@ -207,6 +234,6 @@ describe('Modify DB instance', () => {
     expect(save()).toBeEnabled();
     fireEvent.click(save());
     expect(onSave).toHaveBeenCalledExactlyOnceWith({ instanceClass: 'db.t3.small' });
-    expect(screen.queryByText(RENAME_GUIDANCE)).toBeNull();
+    expect(renameGuidance()).toBeUndefined();
   });
 });

@@ -435,8 +435,8 @@ describe('a DB instance', () => {
       await waitFor(() => {
         expect(text(PAGE.findContentLayout()?.getElement() as Element)).toMatch(shown);
       });
-      expect(isDisabled(control('Modify'))).toBe(true);
-      expect(reasonOf(control('Modify'))).toBe('Refresh the DB instance before modifying it.');
+      expect(isDisabled(modifyButton())).toBe(true);
+      expect(reasonOf(modifyButton())).toBe('Refresh the DB instance before modifying it.');
       vi.mocked(api.getInstance).mockResolvedValue(found());
       const calls = vi.mocked(api.getInstance).mock.calls.length;
       fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
@@ -679,20 +679,51 @@ function answerList() {
   vi.mocked(api.listInstances).mockResolvedValue({ instances: [] });
 }
 
+type ModifyDialog = NonNullable<ReturnType<typeof PAGE.findModal>>;
+
+function modifyButton() {
+  const button = PAGE.findButton('#rds-modify-instance')?.getElement();
+  expect(button).toHaveTextContent('Modify');
+  return button as HTMLButtonElement;
+}
+
 async function openModify() {
   await loaded();
-  fireEvent.click(control('Modify'));
-  return screen.findByRole('dialog', { name: 'Modify DB instance' });
+  fireEvent.click(modifyButton());
+  return waitFor(() => {
+    const modal = PAGE.findModal();
+    expect(modal?.findHeader().getElement()).toHaveTextContent('Modify DB instance');
+    return modal as ModifyDialog;
+  });
 }
 
-function update(dialog: HTMLElement, label: string, value: string) {
-  fireEvent.change(within(dialog).getByLabelText(label), { target: { value } });
+function update(dialog: ModifyDialog, label: string, value: string) {
+  const field = dialog
+    .findContent()
+    .findAllFormFields()
+    .find((field) => field.findLabel()?.getElement().textContent?.trim() === label);
+  const input = field?.findControl()?.findInput()?.findNativeInput().getElement();
+  if (input === undefined) throw new Error(`Missing input: ${label}`);
+  fireEvent.change(input, { target: { value } });
 }
 
-function saveChanges(dialog: HTMLElement) {
-  const button = within(dialog).getByRole('button', { name: 'Save changes' });
+function footerButton(dialog: ModifyDialog, action: 'save' | 'cancel') {
+  const button = dialog.findFooter()?.findButton(`#rds-modify-${action}`)?.getElement();
+  expect(button).toHaveTextContent(action === 'save' ? 'Save changes' : 'Cancel');
+  return button as HTMLButtonElement;
+}
+
+function saveChanges(dialog: ModifyDialog) {
+  const button = footerButton(dialog, 'save');
   fireEvent.click(button);
   return button;
+}
+
+async function waitForModificationFlash(expected: string) {
+  await waitFor(() => {
+    const content = PAGE.findFlashbar()?.findItemsByType('success')[0]?.findContent()?.getElement();
+    expect(content).toHaveTextContent(expected);
+  });
 }
 
 function held<T>() {
@@ -722,7 +753,7 @@ describe('modifying a DB instance', () => {
     open(PATH);
     await loaded();
     expect(control('Refresh')).toBeEnabled();
-    expect(control('Modify')).toBeEnabled();
+    expect(modifyButton()).toBeEnabled();
     expect(control('Actions')).toBeEnabled();
     expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
@@ -732,26 +763,27 @@ describe('modifying a DB instance', () => {
     vi.mocked(api.getInstance).mockResolvedValue(found({ status: 'modifying' }));
     open(PATH);
     await loaded();
-    expect(isDisabled(control('Modify'))).toBe(true);
-    expect(reasonOf(control('Modify'))).toBe('Only an available DB instance can be modified.');
+    expect(isDisabled(modifyButton())).toBe(true);
+    expect(reasonOf(modifyButton())).toBe('Only an available DB instance can be modified.');
   });
 
   it('U10 enables Modify when available and prevents another save while pending', async () => {
     const pending = held<string>();
+    const postSave = held<api.InstanceRead>();
     vi.mocked(modifyInstance).mockReturnValue(pending.promise);
-    vi.mocked(api.getInstance).mockResolvedValue(found());
+    vi.mocked(api.getInstance).mockResolvedValueOnce(found()).mockReturnValue(postSave.promise);
     open(PATH);
     await loaded();
-    expect(control('Modify')).toBeEnabled();
+    expect(modifyButton()).toBeEnabled();
     const dialog = await openModify();
     update(dialog, CLASS_LABEL, 'db.t3.small');
     const save = saveChanges(dialog);
     expect(isDisabled(save)).toBe(true);
-    expect(isDisabled(control('Modify'))).toBe(true);
-    expect(reasonOf(control('Modify'))).toBe('Wait for the current DB instance action to finish.');
+    expect(isDisabled(modifyButton())).toBe(true);
+    expect(reasonOf(modifyButton())).toBe('Wait for the current DB instance action to finish.');
     fireEvent.click(save);
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
-    expect(dialog).toBeInTheDocument();
+    fireEvent.click(footerButton(dialog, 'cancel'));
+    expect(dialog.getElement()).toBeInTheDocument();
     expect(modifyInstance).toHaveBeenCalledExactlyOnceWith(
       ENGINE,
       'app-db',
@@ -759,7 +791,15 @@ describe('modifying a DB instance', () => {
       expect.any(AbortSignal),
     );
     pending.resolve('app-db');
-    await screen.findByText('Modifying app-db.');
+    await waitForModificationFlash('Modifying app-db.');
+    await waitFor(() => expect(api.getInstance).toHaveBeenCalledTimes(2));
+    expect(isDisabled(modifyButton())).toBe(true);
+    expect(reasonOf(modifyButton())).toBe('Wait for the updated DB instance details.');
+    expect(PAGE.findModal()).toBeNull();
+    await act(async () => postSave.resolve(found({ instanceClass: 'db.t3.small' })));
+    await loaded();
+    expect(pairsOf('DB instance details').Class).toBe('db.t3.small');
+    expect(modifyButton()).toBeEnabled();
   });
 
   // Bound: The real three-second status poll needs time for the dialog, ordered reads, and final render.
@@ -767,7 +807,9 @@ describe('modifying a DB instance', () => {
     'U11 keeps the result with the list answering %s the detail and polls until available',
     async (order) => {
       const list = held<api.InstancePage>();
-      const read = held<api.InstanceRead>();
+      const preSave = held<api.InstanceRead>();
+      const postSave = held<api.InstanceRead>();
+      const save = held<string>();
       vi.mocked(api.listInstances)
         .mockResolvedValue({ instances: [] })
         .mockReturnValueOnce(Promise.resolve({ instances: [] }))
@@ -775,22 +817,42 @@ describe('modifying a DB instance', () => {
       vi.mocked(api.getInstance)
         .mockResolvedValue(found({ instanceClass: 'db.t3.small', allocatedStorage: 30, deletionProtection: false }))
         .mockResolvedValueOnce(found({ deletionProtection: true }))
-        .mockReturnValueOnce(read.promise);
-      vi.mocked(modifyInstance).mockResolvedValue('app-db');
+        .mockReturnValueOnce(preSave.promise)
+        .mockReturnValueOnce(postSave.promise);
+      vi.mocked(modifyInstance).mockReturnValue(save.promise);
       const router = open(PATH, true);
       const dialog = await openModify();
       update(dialog, CLASS_LABEL, 'db.t3.small');
       update(dialog, 'Allocated storage (GiB)', '30');
-      fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Deletion protection' }));
+      const protection = dialog.findContent().findCheckbox();
+      expect(protection?.findLabel().getElement()).toHaveTextContent('Deletion protection');
+      fireEvent.click(protection?.findNativeInput().getElement() as HTMLInputElement);
       saveChanges(dialog);
-      await screen.findByText('Modifying app-db.');
+      fireEvent.click(control('Refresh'));
+      await waitFor(() => expect(api.getInstance).toHaveBeenCalledTimes(2));
+      const preSaveSignal = vi.mocked(api.getInstance).mock.calls[1]?.[2];
+      await act(async () => save.resolve('app-db'));
+      await waitForModificationFlash('Modifying app-db.');
       await waitFor(() => expect(api.listInstances).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(api.getInstance).toHaveBeenCalledTimes(3));
+      expect(preSaveSignal?.aborted).toBe(true);
+      expect(isDisabled(modifyButton())).toBe(true);
 
-      if (order === 'before') await act(async () => list.resolve({ instances: [] }));
-      await act(async () => read.resolve(found({ status: 'modifying', deletionProtection: true })));
+      if (order === 'before') {
+        await act(async () => list.resolve({ instances: [] }));
+        await act(async () => preSave.resolve(found({ deletionProtection: true })));
+        expect(isDisabled(modifyButton())).toBe(true);
+        expect(reasonOf(modifyButton())).toBe('Wait for the updated DB instance details.');
+      }
+      await act(async () => postSave.resolve(found({ status: 'modifying', deletionProtection: true })));
       await waitFor(() => expect(pairsOf('DB instance details').Status).toBe('modifying'));
       expect(pairsOf('DB instance details').Class).toBe('db.t3.micro');
-      if (order === 'after') await act(async () => list.resolve({ instances: [] }));
+      if (order === 'after') {
+        await act(async () => list.resolve({ instances: [] }));
+        await act(async () => preSave.resolve(found({ deletionProtection: true })));
+        expect(pairsOf('DB instance details').Status).toBe('modifying');
+      }
+      expect(isDisabled(modifyButton())).toBe(true);
       expect(flashes('success')).toEqual(['Modifying app-db.']);
 
       await waitFor(() => expect(pairsOf('DB instance details').Class).toBe('db.t3.small'), { timeout: 4500 });
@@ -800,6 +862,7 @@ describe('modifying a DB instance', () => {
         'Deletion protection': 'Off',
       });
       expect(isDisabled(control('Delete'))).toBe(false);
+      expect(modifyButton()).toBeEnabled();
       expect(flashes('success')).toEqual(['Modifying app-db.']);
       expect(router.state.location.pathname).toBe(PATH);
     },
@@ -837,7 +900,7 @@ describe('modifying a DB instance', () => {
         await screen.findByText('DB instance not found');
       }
       await act(async () => pending.resolve(UPDATED_ID));
-      await screen.findByText('Modifying returned-db.');
+      await waitForModificationFlash('Modifying returned-db.');
       expect(router.state.location.pathname).toBe(UPDATED_PATH);
       await waitFor(() => expect(api.listInstances).toHaveBeenCalledTimes(2));
       expect(vi.mocked(api.getInstance).mock.calls.filter(([, id]) => id === 'app-db').length).toBeGreaterThan(1);
@@ -877,7 +940,9 @@ describe('modifying a DB instance', () => {
       const dialog = await openModify();
       update(dialog, label, bad);
       saveChanges(dialog);
-      expect(await within(dialog).findByText(message, { exact: false })).toBeInTheDocument();
+      await waitFor(() =>
+        expect(dialog.findContent().findAlert()?.findContent().getElement()).toHaveTextContent(message),
+      );
       expect(router.state.location.pathname).toBe(PATH);
       update(dialog, label, good);
       saveChanges(dialog);
@@ -888,9 +953,11 @@ describe('modifying a DB instance', () => {
         label === ID_LABEL ? { identifier: good } : { instanceClass: good },
         expect.any(AbortSignal),
       );
-      await within(dialog).findByText(message, { exact: false });
-      fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
-      expect(screen.queryByRole('dialog')).toBeNull();
+      await waitFor(() =>
+        expect(dialog.findContent().findAlert()?.findContent().getElement()).toHaveTextContent(message),
+      );
+      fireEvent.click(footerButton(dialog, 'cancel'));
+      expect(PAGE.findModal()).toBeNull();
       expect(router.state.location.pathname).toBe(PATH);
       expect(flashes('success')).toEqual([]);
     },
@@ -905,7 +972,7 @@ describe('modifying a DB instance', () => {
     saveChanges(dialog);
     await screen.findByText('DB instance not found');
     expect(screen.getByRole('link', { name: 'View DB instances' })).toBeInTheDocument();
-    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(PAGE.findModal()).toBeNull();
     expect(flashes('success')).toEqual([]);
   });
 
@@ -918,32 +985,35 @@ describe('modifying a DB instance', () => {
     const dialog = await openModify();
     update(dialog, CLASS_LABEL, 'db.t3.small');
     saveChanges(dialog);
-    await screen.findByText('Not implemented by the emulator');
-    expect(flashes('info')[0]).toContain(MODIFY_INSTANCE);
-    expect(screen.queryByRole('dialog')).toBeNull();
-    expect(isDisabled(control('Modify'))).toBe(true);
-    expect(reasonOf(control('Modify'))).toBe('The emulator does not implement ModifyDBInstance.');
+    await waitFor(() => {
+      const info = PAGE.findFlashbar()?.findItemsByType('info')[0];
+      expect(info?.findHeader()?.getElement()).toHaveTextContent('Not implemented by the emulator');
+      expect(info?.findContent()?.getElement()).toHaveTextContent(MODIFY_INSTANCE);
+    });
+    expect(PAGE.findModal()).toBeNull();
+    expect(isDisabled(modifyButton())).toBe(true);
+    expect(reasonOf(modifyButton())).toBe('The emulator does not implement ModifyDBInstance.');
   });
 
   it.each([
-    [
-      { kind: 'access-denied', message: 'The policy refuses this modification' },
-      'The policy refuses this modification',
-    ],
+    [{ kind: 'access-denied', message: 'The policy refuses this modification' }, 'Access denied'],
     [
       { kind: 'emulator-did-not-answer', message: 'Reconnect the emulator and try again' },
       'The emulator did not answer',
     ],
-    [{ kind: 'engine-did-not-answer' }, 'did not answer'],
-  ] as const)('U16 shows the operation or connection failure (%o)', async (failure, message) => {
+    [{ kind: 'engine-did-not-answer' }, `The EmuForge engine at ${ENGINE} did not answer`],
+  ] as const)('U16 shows the operation or connection failure (%o)', async (failure, heading) => {
     vi.mocked(api.getInstance).mockResolvedValue(found());
     vi.mocked(modifyInstance).mockRejectedValue(new RequestError({ operation: MODIFY_INSTANCE, ...failure }));
     open(PATH);
     const dialog = await openModify();
     update(dialog, CLASS_LABEL, 'db.t3.small');
     saveChanges(dialog);
-    expect(await within(dialog).findByText(message, { exact: false })).toBeInTheDocument();
-    if ('message' in failure) expect(dialog).toHaveTextContent(failure.message);
+    await waitFor(() => {
+      const alert = dialog.findContent().findAlert();
+      expect(text(alert?.findHeader()?.getElement() as Element)).toBe(heading);
+      if ('message' in failure) expect(alert?.findContent().getElement()).toHaveTextContent(failure.message);
+    });
     expect(flashes('success')).toEqual([]);
   });
 
@@ -990,10 +1060,14 @@ describe('modifying a DB instance', () => {
     update(dialog, 'New master password', password);
     saveChanges(dialog);
     if (accepted) {
-      await screen.findByText('Modifying app-db.');
-      expect(screen.queryByRole('dialog')).toBeNull();
+      await waitForModificationFlash('Modifying app-db.');
+      expect(PAGE.findModal()).toBeNull();
     } else {
-      await within(dialog).findByText(/MasterUserPassword rejected/);
+      await waitFor(() =>
+        expect(dialog.findContent().findAlert()?.findContent().getElement()).toHaveTextContent(
+          'MasterUserPassword rejected',
+        ),
+      );
       expect(flashes('success')).toEqual([]);
     }
     expect(sent).toEqual([password]);
