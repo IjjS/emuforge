@@ -894,6 +894,54 @@ export async function expectUnavailable(control: Locator, reason: string | null,
   if (reason !== null) await expect(control, `the reason of ${what}`).toHaveAccessibleDescription(reason);
 }
 
+export const INSTANCE_STATE = 'Instance state';
+const MENU_OPEN = rel(wrapper.findButtonDropdown().findOpenDropdown());
+function menuItem(id: string): string {
+  return rel(wrapper.findButtonDropdown().findItemById(id));
+}
+
+/** Opens the "Instance state" menu of the page when it is closed; the item of the action `id` (`start`, …). */
+export async function actionItem(page: Page, id: string): Promise<Locator> {
+  const main = page.getByRole('main');
+  if ((await page.locator(MENU_OPEN).count()) === 0) await button(main, INSTANCE_STATE).click(ACTION);
+  const item = page.locator(menuItem(id));
+  await expect(item, `the action ${id} in "${INSTANCE_STATE}"`).toBeVisible({ timeout: 15_000 });
+  return item;
+}
+
+/** Closes the "Instance state" menu when it is open. */
+export async function closeActions(page: Page): Promise<void> {
+  if ((await page.locator(MENU_OPEN).count()) > 0) {
+    await button(page.getByRole('main'), INSTANCE_STATE).click(ACTION);
+  }
+  await expect(page.locator(MENU_OPEN), `"${INSTANCE_STATE}" closed`).toHaveCount(0);
+}
+
+const DISABLED = '[aria-disabled="true"]';
+
+/** Asserts that the action `id` is unavailable in the menu and, with a `reason`, that the menu says it. */
+export async function expectActionUnavailable(page: Page, id: string, reason: string | null): Promise<void> {
+  const item = await actionItem(page, id);
+  await expect(item.locator(DISABLED).or(item.and(page.locator(DISABLED))).first(), `the action ${id} is unavailable`).toBeAttached({
+    timeout: 15_000,
+  });
+  if (reason !== null) {
+    await item.hover();
+    await expect(page.getByText(reason, { exact: true }).first(), `the reason of the action ${id}`).toBeAttached();
+  }
+}
+
+/** Asserts that the action `id` is available in the menu. */
+export async function expectActionAvailable(page: Page, id: string): Promise<void> {
+  const item = await actionItem(page, id);
+  await expect(item.locator(DISABLED).or(item.and(page.locator(DISABLED))), `the action ${id} is available`).toHaveCount(0);
+}
+
+/** Chooses the action `id` in the "Instance state" menu. */
+export async function chooseAction(page: Page, id: string): Promise<void> {
+  await (await actionItem(page, id)).click(ACTION);
+}
+
 /** The form field of `scope` whose label is exactly `label`. */
 export function field(scope: Locator, label: string): Locator {
   return scope

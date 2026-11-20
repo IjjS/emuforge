@@ -306,7 +306,7 @@ test('studio.ec2-security-group-from-create-to-delete', async ({ ctx, page }) =>
         .poll(async () => (await rowsOf(rules())).map((row) => row['Rule ID']), { message: 'the rule\'s row' })
         .toContain(ruleId);
       await selectRow(rules(), 'Rule ID', ruleId);
-      await button(rules(), DELETE).click(ACTION);
+      await button(rules(), 'Delete rule').click(ACTION);
       const dialog = dialogOf(page);
       await expect(dialog, 'the dialog').toContainText('Delete rule?');
       await expect(dialog, 'the dialog names the rule').toContainText('10.0.0.0/8');
@@ -360,7 +360,7 @@ test('studio.ec2-security-group-from-create-to-delete', async ({ ctx, page }) =>
     async () => {
       await open(page, groupPath(made()), name);
       await expectValueIs(page, 'Group ID', id);
-      await button(main, DELETE).first().click(ACTION);
+      await button(main, 'Delete security group').click(ACTION);
       await expect(dialogOf(page), 'the dialog').toContainText('Delete security group?');
       await confirmWith(page, 'delete', DELETE);
       await expect(page).toHaveURL(addressOf(GROUPS_PATH), { timeout: 30_000 });
@@ -471,7 +471,7 @@ test('studio.ec2-security-groups-made-elsewhere-and-in-use', async ({ ctx, page 
     async () => {
       await open(page, groupPath(a), aName);
       await expectValueIs(page, 'Group ID', a);
-      await button(main, DELETE).first().click(ACTION);
+      await button(main, 'Delete security group').click(ACTION);
       const dialog = dialogOf(page);
       await expect(dialog, 'the dialog').toContainText('Delete security group?');
       await confirmWith(page, 'delete', DELETE);

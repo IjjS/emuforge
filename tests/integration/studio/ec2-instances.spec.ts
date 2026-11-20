@@ -20,9 +20,11 @@ import {
   CANCEL,
   cancelDialog,
   CHOOSE_IMAGE,
+  chooseAction,
   chooseInMultiselect,
   chooseOption,
   CLEAR_FILTERS,
+  closeActions,
   confirmWith,
   countActions,
   dialogOf,
@@ -31,10 +33,11 @@ import {
   Ec2Seeded,
   emptyOf,
   errorOf,
+  expectActionAvailable,
+  expectActionUnavailable,
   expectCell,
   expectFlash,
   expectRows,
-  expectUnavailable,
   expectValue,
   expectValueIs,
   field,
@@ -64,14 +67,11 @@ import {
   ONLY_RUNNING_STOPS,
   ONLY_STOPPED_STARTS,
   open,
-  REBOOT,
   REFRESH,
   reportsState,
   rowsOf,
   selectOf,
   selectRow,
-  START,
-  STOP,
   TABLE,
   tableOf,
   TERMINATE,
@@ -436,14 +436,14 @@ test('studio.ec2-stop-start-reboot-terminate-an-instance', async ({ ctx, page })
       await open(page, INSTANCES_PATH, INSTANCES_H1);
       await findBy(table, `${p}-a`);
       await expectRows(table, 'Instance ID', [a], "A's row");
-      for (const action of [START, STOP, REBOOT, TERMINATE]) {
-        await expectUnavailable(button(main, action), null, `"${action}" with no row selected`);
+      for (const action of ['start', 'stop', 'reboot', 'terminate']) {
+        await expectActionUnavailable(page, action, null);
       }
+      await closeActions(page);
       await selectRow(table, 'Instance ID', a);
-      await expectUnavailable(button(main, START), ONLY_STOPPED_STARTS, '"Start" of a running instance');
-      for (const action of [STOP, REBOOT, TERMINATE]) {
-        await expect(button(main, action), `"${action}" of a running instance`).toBeEnabled();
-      }
+      await expectActionUnavailable(page, 'start', ONLY_STOPPED_STARTS);
+      for (const action of ['stop', 'reboot', 'terminate']) await expectActionAvailable(page, action);
+      await closeActions(page);
     },
   );
 
@@ -451,7 +451,7 @@ test('studio.ec2-stop-start-reboot-terminate-an-instance', async ({ ctx, page })
     '"Stop" → "Stopping {id}"; the row reads `stopped` without a refresh; the emulator reports `stopped`',
     async () => {
       await selectA();
-      await button(main, STOP).click(ACTION);
+      await chooseAction(page, 'stop');
       await expectFlash(page, 'success', `Stopping ${a}`);
       await expectCell(table, 'Instance ID', a, 'State', 'stopped');
       expect(await reportsState(ctx, port, a, 'stopped'), 'stopped, directly').toBe(true);
@@ -464,9 +464,9 @@ test('studio.ec2-stop-start-reboot-terminate-an-instance', async ({ ctx, page })
       expect(await reportsState(ctx, port, a, 'stopped'), 'A is stopped, directly').toBe(true);
       await selectA();
       await expectCell(table, 'Instance ID', a, 'State', 'stopped');
-      await expectUnavailable(button(main, STOP), ONLY_RUNNING_STOPS, '"Stop" of a stopped instance');
-      await expectUnavailable(button(main, REBOOT), ONLY_RUNNING_REBOOTS, '"Reboot" of a stopped instance');
-      await button(main, START).click(ACTION);
+      await expectActionUnavailable(page, 'stop', ONLY_RUNNING_STOPS);
+      await expectActionUnavailable(page, 'reboot', ONLY_RUNNING_REBOOTS);
+      await chooseAction(page, 'start');
       await expectFlash(page, 'success', `Starting ${a}`);
       await expectCell(table, 'Instance ID', a, 'State', 'running');
       expect(await reportsState(ctx, port, a, 'running'), 'running, directly').toBe(true);
@@ -477,7 +477,7 @@ test('studio.ec2-stop-start-reboot-terminate-an-instance', async ({ ctx, page })
     expect(await reportsState(ctx, port, a, 'running'), 'A is running, directly').toBe(true);
     await selectA();
     await expectCell(table, 'Instance ID', a, 'State', 'running');
-    await button(main, REBOOT).click(ACTION);
+    await chooseAction(page, 'reboot');
     await expectFlash(page, 'success', `Rebooting ${a}`);
     expect(await reportsState(ctx, port, a, 'running'), 'running, directly').toBe(true);
   });
@@ -487,7 +487,7 @@ test('studio.ec2-stop-start-reboot-terminate-an-instance', async ({ ctx, page })
     async () => {
       await open(page, instancePath(a), `${p}-a`);
       await expectValue(page, 'State', 'running');
-      await button(main, TERMINATE).click(ACTION);
+      await chooseAction(page, 'terminate');
       const dialog = dialogOf(page);
       await expect(dialog, 'the dialog').toContainText('Terminate instance?');
       await expect(dialog, 'the dialog names A').toContainText(`${p}-a`);
@@ -501,12 +501,13 @@ test('studio.ec2-stop-start-reboot-terminate-an-instance', async ({ ctx, page })
     async () => {
       await open(page, instancePath(a), `${p}-a`);
       await expectValue(page, 'State', 'running');
-      await button(main, TERMINATE).click(ACTION);
+      await chooseAction(page, 'terminate');
       await confirmWith(page, 'terminate', TERMINATE);
       await expectFlash(page, 'success', `Terminating ${a}`);
       await expectValue(page, 'State', 'terminated');
       await expect(page).toHaveURL(addressOf(instancePath(a)));
-      await expectUnavailable(button(main, TERMINATE), ALREADY_TERMINATED, '"Terminate" of a terminated instance');
+      await expectActionUnavailable(page, 'terminate', ALREADY_TERMINATED);
+      await closeActions(page);
       expect(await reportsState(ctx, port, a, 'terminated'), 'terminated, directly').toBe(true);
     },
   );
@@ -524,7 +525,7 @@ test('studio.ec2-stop-start-reboot-terminate-an-instance', async ({ ctx, page })
     async () => {
       await open(page, instancePath(prot), `${p}-p`);
       await expectValueIs(page, 'Termination protection', 'On');
-      await button(main, TERMINATE).click(ACTION);
+      await chooseAction(page, 'terminate');
       await confirmWith(page, 'terminate', TERMINATE);
       await expectFlash(page, 'error', 'OperationNotPermitted', 'may not be terminated');
       await expect(dialogOf(page), 'the dialog after the answer').toHaveCount(0);
