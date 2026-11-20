@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: harness|checks|no-second-run-environment-cases-in-full-only
-Issue-Check-Ids:
+Issue-Check-Ids: none (harness issue, no kept guard shows it)
 Issue-Commit: 70c1a2bb3c8c27f5eae46ae54d3398f02444d728
 
 # Take the second runs out, move every environment case to the tier full, and drop the dialog layout check

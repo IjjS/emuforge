@@ -38,7 +38,9 @@ the plan set. The module's `references/workflow.md` and `references/test-criteri
    - `test-criteria.md`, from the requirement: per unit, the unit-test scenarios that are its worker's end
      condition; for the issue, the scenarios its integration tests will be. When you can already tell that an
      integration test will be left out (the issue is too slight, or the test would cost more than it shows), say
-     so here, with the reason.
+     so here, with the reason. An environment case (the emulator or the engine stopped, killed, restarted, not
+     there, not reachable, or coming up late) is written for the tier `full` and never for the push run or the
+     whole check (`tests/integration/AGENTS.md`, Full tier).
    - `breakdown.md`: the units, each with a one-line summary, its owned files, its base and the order they land in.
 
 On the plan set's `pass`, the build starts.
@@ -105,9 +107,8 @@ When it fails, tell the cause apart first, and act by it (owner, 2026-11-19):
 2. A fault of your own integration test: fix it on `feat/<id>`, have `rev` read the change, and run the whole check
    again.
 3. A criteria line that is wrong: stop with `BLOCKED i<id>-plan check <id>`; the `pm` decides.
-4. A flaky step: `pm-check` runs a failed test step once more itself; a second run that passes records the step
-   `flaky`, writes the flake's line in `.pm/run/flakes.jsonl` and holds nothing up. A step that fails twice is a
-   failure: tell its cause apart as here.
+4. A failure that looks intermittent: there is no second run (issue 569), so a step that fails has failed; tell
+   its cause apart as here, and file one that is no unit's as its own issue (below).
 5. The environment, as the emulator's image: stop with `BLOCKED i<id>-plan depends <what>` (`depends emulator image`
    for the image) to the `pm`.
 6. A fault of `main` outside the issue: file it as its own issue first (below), then take `main`
