@@ -59,8 +59,8 @@ const ORDERS: LambdaFunction = {
   name: 'orders',
   durable: false,
   environment: [
-    { key: 'GREETING', value: 'hello-1' },
     { key: 'EXTRA', value: 'x' },
+    { key: 'GREETING', value: 'hello-1' },
   ],
   url: { kind: 'none' },
 };
@@ -183,13 +183,29 @@ function button(dialog: HTMLElement, name: string): HTMLElement {
 }
 
 describe('the dialog "Edit environment variables"', () => {
-  it('opened: a row per variable of the last read, in its order', async () => {
+  it('opened: a row per variable of the last read, in its order (by key, the read’s own)', async () => {
     renderDialog();
     const dialog = await openDialog();
 
     expect(rows(dialog)).toEqual([
-      ['GREETING', 'hello-1'],
       ['EXTRA', 'x'],
+      ['GREETING', 'hello-1'],
+    ]);
+  });
+
+  it('a changed key does not move its row and an added row is the last: each row stays where it was typed', async () => {
+    renderDialog();
+    const dialog = await openDialog();
+
+    type(dialog, 1, 1, 'ZZZ');
+    addRow(dialog);
+    type(dialog, 3, 1, 'AAA');
+    type(dialog, 3, 2, '0');
+
+    expect(rows(dialog)).toEqual([
+      ['ZZZ', 'x'],
+      ['GREETING', 'hello-1'],
+      ['AAA', '0'],
     ]);
   });
 
@@ -211,8 +227,8 @@ describe('the dialog "Edit environment variables"', () => {
   it('"Save": one request with the whole map of the rows only; answered: closes, the Flashbar, focus on "Edit"', async () => {
     renderDialog();
     const dialog = await openDialog();
-    type(dialog, 1, 2, 'hello-2');
-    removeRow(dialog, 2);
+    type(dialog, 2, 2, 'hello-2');
+    removeRow(dialog, 1);
     addRow(dialog);
     type(dialog, 2, 1, 'NEW');
     type(dialog, 2, 2, '');
@@ -246,12 +262,12 @@ describe('the dialog "Edit environment variables"', () => {
       .findRows()
       .map((row) => row.findRemoveButton()?.getElement());
     expect(removes.map((remove) => remove?.getAttribute('aria-label'))).toEqual([
-      'Remove GREETING',
       'Remove EXTRA',
+      'Remove GREETING',
       'Remove',
     ]);
     expect(removes.map((remove) => norm(remove?.textContent))).toEqual(['Remove', 'Remove', 'Remove']);
-    expect(within(dialog).getByRole('button', { name: 'Remove GREETING' })).toBe(removes[0]);
+    expect(within(dialog).getByRole('button', { name: 'Remove EXTRA' })).toBe(removes[0]);
   });
 
   it('"Add variable" adds a row; "Remove" removes its row; every row removed and "Save": an empty map is sent', async () => {
@@ -260,13 +276,13 @@ describe('the dialog "Edit environment variables"', () => {
 
     addRow(dialog);
     expect(rows(dialog)).toEqual([
-      ['GREETING', 'hello-1'],
       ['EXTRA', 'x'],
+      ['GREETING', 'hello-1'],
       ['', ''],
     ]);
     removeRow(dialog, 1);
     expect(rows(dialog)).toEqual([
-      ['EXTRA', 'x'],
+      ['GREETING', 'hello-1'],
       ['', ''],
     ]);
     removeRow(dialog, 2);
@@ -278,7 +294,7 @@ describe('the dialog "Edit environment variables"', () => {
     expect(changes().map(({ input: sent }) => sent)).toEqual([{ variables: [] }]);
   });
 
-  it('a refusal of the emulator: the dialog stays with the code and message, the rows as typed', async () => {
+  it('a refusal of the emulator: the dialog stays with the code and message, the rows as typed, in their places', async () => {
     renderDialog();
     const dialog = await openDialog();
     addRow(dialog);
@@ -302,8 +318,8 @@ describe('the dialog "Edit environment variables"', () => {
       `InvalidParameterValueException: ${message}`,
     );
     expect(rows(dialog)).toEqual([
-      ['GREETING', 'hello-1'],
       ['EXTRA', 'x'],
+      ['GREETING', 'hello-1'],
       ['AWS_REGION', 'x'],
     ]);
     expect(shown).toEqual([]);
