@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: bug
 Issue-Source: finder
 Issue-Key: harness|build-cache.bound|shared-records-not-counted
-Issue-Check-Ids:
+Issue-Check-Ids: none (harness issue, no kept guard shows it)
 Issue-Commit: 05b68ccc7d8ea286238146d70e73c9bf6fc44441
 
 # The build cache grows past its 20 GB bound: the product image's cargo build layers are not counted

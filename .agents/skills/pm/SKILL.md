@@ -328,7 +328,7 @@ logged in `.pm/run/events.log` and never delivered; a turn with none wakes you a
 | `pm-watchd` | the event daemon |
 | `pm-issue` | issue files: `new`, `list`, `show`, `close`, `commit` (commits the new issue files as `issue: file #<id> …`) |
 | `pm-worktree` | worktrees and their ports: `new <id>` an issue's issue branch `feat/<id>` and its worktree, `new <id> <unit>` a unit (based on the issue branch when the issue has one), `rm`, `list`; a plan runs `new` and `rm` of a unit for its own issue |
-| `pm-emulator-image` | the machine's emulator image `aws-emulator` on the latest package: `refresh` at session start (returns at once; the outcome comes as `EVENT emulator-image …`), `refresh --foreground` by hand, `status`; a refresh to a new version then prunes Docker's private build cache down to 20 GB (`docker builder prune --max-used-space 20000000000`; the outcome line gives what it reclaimed, the private size left and the image-shared part apart, which is the images' disk and which `docker system df` adds to Build Cache), and nothing else of Docker |
+| `pm-emulator-image` | the machine's emulator image `aws-emulator` on the latest package. Run `refresh` at session start (returns at once and reports the outcome as `EVENT emulator-image …`), `refresh --foreground` by hand, or `status` to read the current image and last refresh. An attempted build triggers idle-time cache maintenance after cleanup. |
 | `pm-emulator-dir` | a port folder under `~/.aws/emulator` once nothing uses it: `rm --worktree` (run by `pm-merge` and `pm-worktree rm`), `rm --port`, `orphans [--remove]` on the owner's request |
 | `pm-probe-services` | which of the board's services the emulator answers: `run` by hand starts an emulator of its own from the machine's image on a free loopback port, sends every read call of its table (`.pm/bin/probe-services.json`), removes the emulator and its folder, and writes `.pm/run/probe-services-<stamp>.json` with the emulator's version and each service's result and summary, which you copy into the board's `Emulator` column; `table` regenerates the table's operations from the AWS CLI's model files (`--board` checks its keys against the board) |
 | `pm-brief` | a pane's brief from its template: `plan` (also writes rev's), `rev` (rev's alone), `harness-engineer`, `worker`, `crit`, `show`; a plan runs `worker`, `crit` and `rev` for its own issue |
@@ -341,6 +341,13 @@ logged in `.pm/run/events.log` and never delivered; a turn with none wakes you a
 | `pm-archive`, `pm-cost` | clean-up and cost |
 | `pm-tokens` | Claude token use against today's target: status, `target <rate>`, `check` |
 | `pm-mem`, `pm-quota` | memory and CPU against the limits (`--check`, `--wait`), Codex quota |
+
+`pm-check` and `pm-emulator-image` try cache maintenance after cleanup (issue 593). It runs at idle against
+the machine's default builder and counts both private and shared records toward the 20,000,000,000-byte cap.
+Above the cap it runs `docker builder prune --all --max-used-space 20000000000 --force` and measures again.
+If the cache remains above the cap, it tries `docker builder prune --all --force` and measures the result.
+The cache line reports the measured sizes before and after. The check or refresh keeps its own verdict.
+A busy builder or another active check or refresh defers maintenance to a later run.
 
 ## Not built yet
 
