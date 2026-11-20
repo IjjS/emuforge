@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: plan
 Issue-Key: studio|lambda.log-and-numbers|task
-Issue-Check-Ids: studio.lambda-monitor-reads-invocations,studio.lambda-monitor-explains-missing-logs,studio.lambda-monitor-reconnects,studio.lambda-monitor-entered-after-reconnect
+Issue-Check-Ids: studio.lambda-monitor-reads-invocations studio.lambda-monitor-explains-missing-logs studio.lambda-monitor-reconnects studio.lambda-monitor-entered-after-reconnect
 Issue-Commit: 7b260c508348edd256975ce57d7da11104dc8891
 
 # Build Lambda's task 7: read a function's log across invocations and its invocation numbers
