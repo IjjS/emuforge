@@ -212,8 +212,28 @@ async function confirmDelete() {
 
 const PATH = '/aws/rds/instances/instance/app-db';
 
+function instanceSection(section: 'connection' | 'details') {
+  const sections = PAGE.findContentLayout()?.findContent().findAllContainers();
+  return sections?.[section === 'connection' ? 0 : 1];
+}
+
 async function loaded() {
-  await screen.findByText('DB instance details');
+  await waitFor(() => {
+    expect(instanceSection('details')?.findHeader()?.getElement()).toHaveTextContent(/^DB instance details$/);
+  });
+}
+
+function masterUserNamePairValue() {
+  const pair = instanceSection('connection')?.findContent().findKeyValuePairs()?.findItems()[2];
+  expect(pair?.findLabel()?.getElement()).toHaveTextContent(/^Master user name$/);
+  return pair?.findValue();
+}
+
+async function expectMasterUserName(username: string) {
+  await waitFor(() => {
+    const displayed = masterUserNamePairValue()?.findCopyToClipboard()?.findDisplayedText()?.getElement();
+    expect(displayed?.textContent).toBe(username);
+  });
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -542,7 +562,7 @@ describe('a DB instance', () => {
     expect(flashes('error')[0]).toContain('InvalidParameterCombination');
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(router.state.location.pathname).toBe(PATH);
-    expect(screen.getByText('DB instance details')).toBeInTheDocument();
+    await loaded();
   });
 
   it('the page names its resources "DB instances" to the frame', async () => {
@@ -766,7 +786,15 @@ describe('modifying a DB instance', () => {
     await loaded();
     expect(control('Refresh')).toBeEnabled();
     expect(modifyButton()).toBeEnabled();
-    expect(control('Actions')).toBeEnabled();
+    const actions = PAGE.findContentLayout()
+      ?.findHeader()
+      ?.findHeader()
+      ?.findActions()
+      ?.findButtonDropdown()
+      ?.findNativeButton()
+      .getElement();
+    expect(actions).toHaveAccessibleName('Actions');
+    expect(actions).toBeEnabled();
     expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
   });
@@ -902,7 +930,7 @@ describe('modifying a DB instance', () => {
       vi.mocked(modifyInstance).mockReturnValue(pending.promise);
       const router = open(PATH, true);
       const dialog = await openModify();
-      await screen.findByText('old-admin');
+      await expectMasterUserName('old-admin');
       update(dialog, 'identifier', 'requested-db');
       saveChanges(dialog);
       if (order === 'before') {
@@ -930,9 +958,9 @@ describe('modifying a DB instance', () => {
         Class: 'db.r6g.xlarge',
         'DB cluster': 'aurora',
       });
-      expect(screen.queryByText('new-admin')).toBeNull();
+      expect(masterUserNamePairValue()?.getElement()).toHaveTextContent(/^-$/);
       await act(async () => cluster.resolve({ masterUsername: 'new-admin' }));
-      await screen.findByText('new-admin');
+      await expectMasterUserName('new-admin');
       expect(pairsOf('DB instance details')['DB identifier']).toBe(UPDATED_ID);
       expect(flashes('success')).toEqual(['Modifying returned-db.']);
       expect(screen.queryByText('DB instance not found')).toBeNull();
