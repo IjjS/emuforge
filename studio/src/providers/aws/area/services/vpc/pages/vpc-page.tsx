@@ -432,9 +432,14 @@ export function VpcPage({ connection, params }: ScreenPageProps) {
       announce(failureLine);
     }
   }
-  const anyFailed = [failure, dnsSupport.failure, dnsHostnames.failure, subnets.failure, routeTables.failure, gateways.failure].some(
-    (each) => each !== undefined,
-  );
+  const anyFailed = [
+    failure,
+    dnsSupport.failure,
+    dnsHostnames.failure,
+    subnets.failure,
+    routeTables.failure,
+    gateways.failure,
+  ].some((each) => each !== undefined);
   if (connected !== seenConnected) {
     setSeenConnected(connected);
     if (connected && (anyFailed || wasDown)) {
