@@ -41,6 +41,7 @@ import {
   expectValue,
   expectValueIs,
   field,
+  filterOf,
   findBy,
   GROUP_NOT_FOUND,
   groupDirect,
@@ -151,7 +152,7 @@ test('studio.ec2-instances-made-elsewhere-are-shown', async ({ ctx, page }) => {
       await findBy(table, `${p}-App`.toUpperCase());
       await expect(emptyOf(table), `"${NO_INSTANCES_MATCH}"`).toContainText(NO_INSTANCES_MATCH, { timeout: 20_000 });
       await button(emptyOf(table), CLEAR_FILTERS).click(ACTION);
-      await expect(page.getByRole('searchbox', { name: 'Name' }).or(table.getByPlaceholder('Find by name')).first()).toHaveValue('');
+      await expect(filterOf(table), 'the name filter after "Clear filters"').toHaveValue('');
       await expect
         .poll(async () => (await rowsOf(table)).length, { message: 'rows after "Clear filters"', timeout: 20_000 })
         .toBeGreaterThan(0);
@@ -167,7 +168,7 @@ test('studio.ec2-instances-made-elsewhere-are-shown', async ({ ctx, page }) => {
   });
 
   await lines.line(
-    'Choose A\'s instance ID → S3 at the address that holds the ID: "Instance details", "Network", "Security groups", "Volumes" and "Tags" each as the emulator reports it; "Termination protection" "Off"',
+    'Choose A\'s instance ID → S3 at the address that holds the ID: "Instance details" shows the ID, `running`, the type, the image ID, the key pair\'s name, the architecture and "Termination protection" "Off"; "Network" the zone `us-east-1b`, the subnet\'s and the VPC\'s ID, the two addresses and DNS names; "Security groups" the group\'s name and ID; "Volumes" a row with the device, the volume ID and "Yes"; "Tags" both tags; each as the emulator reports it',
     async () => {
       await open(page, INSTANCES_PATH, INSTANCES_H1);
       await findBy(table, `${p}-App`);
@@ -268,7 +269,8 @@ test('studio.ec2-launch-an-instance-reaches-the-emulator', async ({ ctx, page })
   const groups = () => field(main, 'Security groups - optional');
   const submit = () => button(main, LAUNCH);
   const chooseImageAndType = async () => {
-    await chooseOption(image(), w.image.id, w.image.name);
+    // A part of the image's name, never the whole of it.
+    await chooseOption(image(), w.image.id, w.image.name.slice(1, -1));
     await chooseOption(type(), w.type, 't3.mic');
   };
   /** The id of the instance whose page the launch led to. */
@@ -279,7 +281,7 @@ test('studio.ec2-launch-an-instance-reaches-the-emulator', async ({ ctx, page })
   let first = '';
 
   await lines.line(
-    'S1, "Launch instance" → S2; the name `<prefix>-web`; an image chosen by typing a part of its name; `t3.micro` by typing `t3.mic`; the key pair, the default subnet of `us-east-1b` and, typing its name, G; "Launch instance" → S3 of a new instance with "Launched instance {id}"',
+    'S1, "Launch instance" → S2; the name `<prefix>-web`; in "Image" type a part of an image\'s name and choose it; in "Instance type" type `t3.mic` and choose `t3.micro`; choose the key pair, the default subnet of `us-east-1b` and, typing its name, G; "Launch instance" → S3 of a new instance with "Launched instance {id}"',
     async () => {
       await open(page, INSTANCES_PATH, INSTANCES_H1);
       await main.getByRole('link', { name: LAUNCH, exact: true }).first().click(ACTION);

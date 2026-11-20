@@ -99,7 +99,8 @@ test('studio.ec2-key-pair-create-import-delete', async ({ ctx, page }) => {
       const { pairs, body } = await keyPairsDirect(ctx, port);
       const reported = pairs.find((each) => each.name === name);
       expect([reported?.name, reported?.type], 'the key pair, directly').toEqual([name, 'ed25519']);
-      expect(fingerprint, 'the fingerprint shown').toContain(reported!.fingerprint);
+      expect(reported!.fingerprint, "the emulator's fingerprint").not.toBe('');
+      expect(fingerprint, 'the fingerprint shown').toBe(reported!.fingerprint);
       expect(body.includes('PRIVATE KEY'), 'a private key in the answer of DescribeKeyPairs').toBe(false);
       expect(/keyMaterial/i.test(body), 'key material in the answer of DescribeKeyPairs').toBe(false);
     },

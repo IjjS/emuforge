@@ -805,6 +805,11 @@ export async function findBy(table: Locator, text: string): Promise<void> {
   await table.locator(TABLE_FILTER).fill(text, ACTION);
 }
 
+/** The table's find field. */
+export function filterOf(table: Locator): Locator {
+  return table.locator(TABLE_FILTER);
+}
+
 /** The table's empty slot (its "No …" words and their action). */
 export function emptyOf(table: Locator): Locator {
   return table.locator(TABLE_EMPTY);
