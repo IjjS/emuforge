@@ -296,7 +296,7 @@ test('studio.ec2-security-group-from-create-to-delete', async ({ ctx, page }) =>
   );
 
   await lines.line(
-    'S6 of the new group, select the inbound rule, "Delete" → "Delete rule?" naming it; type `delete`, "Delete" → "Deleted the rule {rule id}", the row is gone; the emulator reports no inbound rule of the group',
+    'S6 of the new group, select the inbound rule, "Delete rule" → "Delete rule?" naming it; type `delete`, "Delete" → "Deleted the rule {rule id}", the row is gone; the emulator reports no inbound rule of the group',
     async () => {
       const inbound = (await rulesDirect(ctx, port, made())).filter((rule) => !rule.egress);
       expect(inbound.length, 'the inbound rules before, directly').toBe(1);
@@ -356,11 +356,11 @@ test('studio.ec2-security-group-from-create-to-delete', async ({ ctx, page }) =>
   );
 
   await lines.line(
-    'S6 of the new group, "Delete", type `delete`, "Delete" → S4 with "Deleted security group <prefix>-web"; the emulator reports no group of that name',
+    'S6 of the new group, "Delete group", type `delete`, "Delete" → S4 with "Deleted security group <prefix>-web"; the emulator reports no group of that name',
     async () => {
       await open(page, groupPath(made()), name);
       await expectValueIs(page, 'Group ID', id);
-      await button(main, 'Delete security group').click(ACTION);
+      await button(main, 'Delete group').click(ACTION);
       await expect(dialogOf(page), 'the dialog').toContainText('Delete security group?');
       await confirmWith(page, 'delete', DELETE);
       await expect(page).toHaveURL(addressOf(GROUPS_PATH), { timeout: 30_000 });
@@ -467,11 +467,11 @@ test('studio.ec2-security-groups-made-elsewhere-and-in-use', async ({ ctx, page 
   });
 
   await lines.line(
-    'S6 of A, "Delete", type `delete`, "Delete" → the dialog stays and shows the emulator\'s `DependencyViolation` and its message; "Cancel"; the emulator still reports A',
+    'S6 of A, "Delete group", type `delete`, "Delete" → the dialog stays and shows the emulator\'s `DependencyViolation` and its message; "Cancel"; the emulator still reports A',
     async () => {
       await open(page, groupPath(a), aName);
       await expectValueIs(page, 'Group ID', a);
-      await button(main, 'Delete security group').click(ACTION);
+      await button(main, 'Delete group').click(ACTION);
       const dialog = dialogOf(page);
       await expect(dialog, 'the dialog').toContainText('Delete security group?');
       await confirmWith(page, 'delete', DELETE);

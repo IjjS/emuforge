@@ -78,6 +78,7 @@ import {
   tableOf,
   TERMINATE,
   typeInMultiselect,
+  valueOf,
   VIEW_INSTANCES,
   world,
 } from './services/ec2/ec2';
@@ -527,7 +528,13 @@ test('studio.ec2-stop-start-reboot-terminate-an-instance', async ({ ctx, page })
     'S3 of P → "Termination protection" "On"; "Terminate" is unavailable ("Termination protection is on."); the emulator still reports `running`',
     async () => {
       await open(page, instancePath(prot), `${p}-p`);
-      await expectValueIs(page, 'Termination protection', 'On');
+      // The value holds "On" and, below it, how the protection is changed.
+      await expect
+        .poll(async () => (await valueOf(main, 'Termination protection'))?.startsWith('On'), {
+          message: '"Termination protection" reads "On"',
+          timeout: 30_000,
+        })
+        .toBe(true);
       await expectActionUnavailable(page, 'terminate', PROTECTION_IS_ON);
       await closeActions(page);
       expect((await instanceDirect(ctx, port, prot))?.state, 'the state, directly').toBe('running');
