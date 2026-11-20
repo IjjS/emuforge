@@ -20,7 +20,8 @@ import { ChoiceSelect } from '../../../components/choice-select';
 import { DiscardDialog, type DiscardAnswer } from '../../../components/discard-dialog';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { actionFailureItem, CodeAndMessage, ReadFailure, readFailureState } from '../../../components/failure-states';
-import type { GroupChoice, SubnetChoice } from '../../../components/network-choices';
+import type { SecurityGroupChoice } from '../../../components/security-group-choices';
+import type { SubnetChoice } from '../../../lib/ec2-network-choices';
 import { usePageFlash, type FlashItem } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
@@ -381,7 +382,7 @@ function RunTaskForm({ connection, cluster }: RunTaskFormProps) {
                   {vpcId === undefined ? (
                     <Box color="text-status-inactive">Choose a subnet first.</Box>
                   ) : (
-                    <ChoiceMultiselect<GroupChoice>
+                    <ChoiceMultiselect<SecurityGroupChoice>
                       source={runGroupChoices(engineOrigin, vpcId)}
                       connection={connection}
                       things="security groups"

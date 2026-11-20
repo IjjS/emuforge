@@ -4,24 +4,31 @@ import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RequestError } from '../../../../../lib/aws/request';
-import * as network from '../../components/network-choices';
-import { sendEc2 } from './api';
+import * as groupsArea from '../../components/security-group-choices';
+import type { SecurityGroupChoice } from '../../components/security-group-choices';
+import type { ChoiceSource } from '../../components/use-paged-choices';
+import * as network from '../../lib/ec2-network-choices';
 import { ECS_KEYS } from './queries';
 import * as api from './run-api';
 import type { RunRequest } from './run-form';
-import { runGroupChoices, runSubnetChoices, useRunTask } from './run-queries';
+import { runGroupChoices, runSubnetChoices, useHasChoices, useRunTask } from './run-queries';
 
 // The hooks over `run-api.ts`, whose call the case answers (`run-api.test.ts` proves the call), and the choices over
-// the area's `network-choices.ts`, whose calls are spied on.
+// the area's `lib/ec2-network-choices.ts` and `components/security-group-choices.ts`, whose calls are spied on.
 
 vi.mock('./run-api', async (importOriginal) => {
   const real = await importOriginal<typeof import('./run-api')>();
   return { ...real, runTask: vi.fn() };
 });
 
-vi.mock('../../components/network-choices', async (importOriginal) => {
-  const real = await importOriginal<typeof import('../../components/network-choices')>();
-  return { ...real, subnetChoices: vi.fn(real.subnetChoices), groupChoices: vi.fn(real.groupChoices) };
+vi.mock('../../lib/ec2-network-choices', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../lib/ec2-network-choices')>();
+  return { ...real, listSubnetChoices: vi.fn() };
+});
+
+vi.mock('../../components/security-group-choices', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../components/security-group-choices')>();
+  return { ...real, securityGroupChoices: vi.fn(real.securityGroupChoices) };
 });
 
 const ENDPOINT = 'http://127.0.0.1:9997';
@@ -106,13 +113,45 @@ describe('useRunTask', () => {
 });
 
 describe('the network choices', () => {
-  it("subnets and security groups → read through the area's network-choices.ts with api.ts's sendEc2", () => {
-    const subnets = runSubnetChoices(ENDPOINT, 'vpc-1');
+  it('the subnets → listSubnetChoices with the chosen VPC; each option its id, described by its VPC and zone', async () => {
+    vi.mocked(network.listSubnetChoices).mockResolvedValueOnce({
+      choices: [
+        { id: 'subnet-a', vpcId: 'vpc-1', zone: 'us-east-1a', cidr: '10.0.0.0/24', name: 'a' },
+        { id: 'subnet-b' },
+      ],
+      nextToken: 'more',
+    });
+    const source = runSubnetChoices(ENDPOINT, 'vpc-1');
+    const signal = new AbortController().signal;
+    const page = await source.read(ENDPOINT, '', 'token', signal);
+    expect(network.listSubnetChoices).toHaveBeenCalledWith(ENDPOINT, 'token', signal, 'vpc-1');
+    expect(source.operation).toBe('DescribeSubnets');
+    expect(source.filtering).toBe('none');
+    expect(page.next).toBe('more');
+    expect(page.items.map((subnet) => source.optionOf(subnet))).toEqual([
+      { value: 'subnet-a', label: 'subnet-a', description: 'vpc-1, us-east-1a' },
+      { value: 'subnet-b', label: 'subnet-b' },
+    ]);
+    expect(under([...source.key], ECS_KEYS.cluster('dev'))).toBe(false);
+    expect(runSubnetChoices(ENDPOINT, 'vpc-2').key).not.toEqual(source.key);
+  });
+
+  it("the security groups → the area's securityGroupChoices of the chosen VPC; with none given not ready", () => {
     const groups = runGroupChoices(ENDPOINT, 'vpc-1');
-    expect(network.subnetChoices).toHaveBeenCalledWith(sendEc2, expect.any(Array), ENDPOINT, 'vpc-1');
-    expect(network.groupChoices).toHaveBeenCalledWith(sendEc2, expect.any(Array), ENDPOINT, 'vpc-1');
-    expect(subnets.operation).toBe('DescribeSubnets');
-    expect(groups.operation).toBe('DescribeSecurityGroups');
-    expect(under([...subnets.key], ECS_KEYS.cluster('dev'))).toBe(false);
+    expect(groupsArea.securityGroupChoices).toHaveBeenCalledWith(ENDPOINT, 'vpc-1');
+    expect(groups.ready).toBe(true);
+    expect(groups.key).toEqual(groupsArea.securityGroupChoicesKey('vpc-1'));
+    expect(groups.optionOf({ id: 'sg-1', name: 'web', vpcId: 'vpc-1' }).value).toBe('sg-1');
+
+    expect(runGroupChoices(ENDPOINT, undefined).ready).toBe(false);
+    expect(runGroupChoices(ENDPOINT, '').ready).toBe(false);
+  });
+
+  it('the security groups with no VPC given → nothing is asked', async () => {
+    const read = vi.fn<ChoiceSource<SecurityGroupChoice>['read']>();
+    const { result } = renderHook(() => useHasChoices({ ...runGroupChoices(ENDPOINT, undefined), read }), { wrapper });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(result.current).toBeUndefined();
+    expect(read).not.toHaveBeenCalled();
   });
 });
