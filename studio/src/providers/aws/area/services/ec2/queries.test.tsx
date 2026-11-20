@@ -56,6 +56,9 @@ async function nth(calls: Call[], n: number): Promise<Call> {
   return calls[n] as Call;
 }
 
+/** The states that move by themselves, so a list or an instance holding one is read again. */
+const MOVING = ['pending', 'stopping', 'shutting-down'] as const;
+
 function instance(id: string, state: string): api.Instance {
   return { id, state, groups: [], volumes: [], tags: [] };
 }
@@ -109,48 +112,50 @@ describe('the instances listing', () => {
     expect(byBoth.args.slice(1, 3)).toEqual([{ state: 'stopped', name: 'web' }, undefined]);
   });
 
-  it('while a row is pending, stopping or shutting-down → asked again after 3 seconds, same token and filters; no more once none is', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    const calls = held(api.listInstances);
-    const filters = { state: '', name: 'web' };
-    const { result } = renderHook(() => useInstanceListing(ENDPOINT, filters), { wrapper });
-    act(() => {
-      calls[0]?.resolve({ instances: [instance('i-1', 'running')], nextToken: 't1' });
+  for (const moving of MOVING) {
+    it(`while a row is ${moving} → asked again after 3 seconds, same token and filters; no more once none is`, async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      const calls = held(api.listInstances);
+      const filters = { state: '', name: 'web' };
+      const { result } = renderHook(() => useInstanceListing(ENDPOINT, filters), { wrapper });
+      act(() => {
+        calls[0]?.resolve({ instances: [instance('i-1', 'running')], nextToken: 't1' });
+      });
+      await waitFor(() => {
+        expect(result.current.openEnd).toBe(true);
+      });
+      act(() => {
+        result.current.goToPage(2);
+      });
+      const second = await nth(calls, 1);
+      act(() => {
+        second.resolve({ instances: [instance('i-2', moving), instance('i-3', 'running')] });
+      });
+      await waitFor(() => {
+        expect(result.current.items).toHaveLength(2);
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_900);
+      });
+      expect(calls).toHaveLength(2);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(200);
+      });
+      const polled = await nth(calls, 2);
+      expect(polled.args.slice(1, 3)).toEqual([{ name: 'web' }, 't1']);
+      expect(result.current.currentPage).toBe(2);
+      act(() => {
+        polled.resolve({ instances: [instance('i-2', 'stopped'), instance('i-3', 'running')] });
+      });
+      await waitFor(() => {
+        expect(result.current.items?.[0]?.state).toBe('stopped');
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(6_000);
+      });
+      expect(calls).toHaveLength(3);
     });
-    await waitFor(() => {
-      expect(result.current.openEnd).toBe(true);
-    });
-    act(() => {
-      result.current.goToPage(2);
-    });
-    const second = await nth(calls, 1);
-    act(() => {
-      second.resolve({ instances: [instance('i-2', 'stopping'), instance('i-3', 'running')] });
-    });
-    await waitFor(() => {
-      expect(result.current.items).toHaveLength(2);
-    });
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(2_900);
-    });
-    expect(calls).toHaveLength(2);
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(200);
-    });
-    const polled = await nth(calls, 2);
-    expect(polled.args.slice(1, 3)).toEqual([{ name: 'web' }, 't1']);
-    expect(result.current.currentPage).toBe(2);
-    act(() => {
-      polled.resolve({ instances: [instance('i-2', 'stopped'), instance('i-3', 'running')] });
-    });
-    await waitFor(() => {
-      expect(result.current.items?.[0]?.state).toBe('stopped');
-    });
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(6_000);
-    });
-    expect(calls).toHaveLength(3);
-  });
+  }
 
   it('with no such row → not asked again', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
@@ -170,35 +175,37 @@ describe('the instances listing', () => {
 });
 
 describe('an instance', () => {
-  it('read again every 3 seconds while its state moves by itself, and no more once it does not', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    const calls = held(api.getInstance);
-    const { result } = renderHook(() => useInstance(ENDPOINT, 'i-1'), { wrapper });
-    expect(result.current.loading).toBe(true);
-    act(() => {
-      calls[0]?.resolve({ found: true, instance: instance('i-1', 'pending') });
+  for (const moving of MOVING) {
+    it(`while its state is ${moving} → read again every 3 seconds, and no more once it does not move by itself`, async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      const calls = held(api.getInstance);
+      const { result } = renderHook(() => useInstance(ENDPOINT, 'i-1'), { wrapper });
+      expect(result.current.loading).toBe(true);
+      act(() => {
+        calls[0]?.resolve({ found: true, instance: instance('i-1', moving) });
+      });
+      await waitFor(() => {
+        expect(result.current.value).toBeDefined();
+      });
+      expect(calls[0]?.args[1]).toBe('i-1');
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3_000);
+      });
+      const again = await nth(calls, 1);
+      expect(again.args[1]).toBe('i-1');
+      expect(result.current.loading).toBe(false);
+      act(() => {
+        again.resolve({ found: true, instance: instance('i-1', 'running') });
+      });
+      await waitFor(() => {
+        expect(result.current.value).toEqual({ found: true, instance: instance('i-1', 'running') });
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(9_000);
+      });
+      expect(calls).toHaveLength(2);
     });
-    await waitFor(() => {
-      expect(result.current.value).toBeDefined();
-    });
-    expect(calls[0]?.args[1]).toBe('i-1');
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(3_000);
-    });
-    const again = await nth(calls, 1);
-    expect(again.args[1]).toBe('i-1');
-    expect(result.current.loading).toBe(false);
-    act(() => {
-      again.resolve({ found: true, instance: instance('i-1', 'running') });
-    });
-    await waitFor(() => {
-      expect(result.current.value).toEqual({ found: true, instance: instance('i-1', 'running') });
-    });
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(9_000);
-    });
-    expect(calls).toHaveLength(2);
-  });
+  }
 
   it('a failed read of termination protection leaves the instance read as it is', async () => {
     const reads = held(api.getInstance);

@@ -334,31 +334,31 @@ describe('the actions', () => {
 });
 
 describe('every call', () => {
-  const calls: [string, () => Promise<unknown>][] = [
-    ['DescribeInstances', () => listInstances(endpoint, {}, undefined, signal())],
-    ['DescribeInstances', () => getInstance(endpoint, 'i-1', signal())],
-    ['DescribeInstanceAttribute', () => getTerminationProtection(endpoint, 'i-1', signal())],
-    ['StartInstances', () => actOnInstance(endpoint, 'start', 'i-1', signal())],
-    ['StopInstances', () => actOnInstance(endpoint, 'stop', 'i-1', signal())],
-    ['RebootInstances', () => actOnInstance(endpoint, 'reboot', 'i-1', signal())],
-    ['TerminateInstances', () => actOnInstance(endpoint, 'terminate', 'i-1', signal())],
+  const calls: [string, (abort: AbortSignal) => Promise<unknown>][] = [
+    ['DescribeInstances', (abort) => listInstances(endpoint, {}, undefined, abort)],
+    ['DescribeInstances', (abort) => getInstance(endpoint, 'i-1', abort)],
+    ['DescribeInstanceAttribute', (abort) => getTerminationProtection(endpoint, 'i-1', abort)],
+    ['StartInstances', (abort) => actOnInstance(endpoint, 'start', 'i-1', abort)],
+    ['StopInstances', (abort) => actOnInstance(endpoint, 'stop', 'i-1', abort)],
+    ['RebootInstances', (abort) => actOnInstance(endpoint, 'reboot', 'i-1', abort)],
+    ['TerminateInstances', (abort) => actOnInstance(endpoint, 'terminate', 'i-1', abort)],
   ];
   for (const [operation, call] of calls) {
     it(`${operation}: a 501 → "not implemented" with the operation's name`, async () => {
       engine.on(operation, () => notImplemented);
-      expect(await failureOf(call())).toEqual({ kind: 'not-implemented', operation });
+      expect(await failureOf(call(signal()))).toEqual({ kind: 'not-implemented', operation });
+    });
+
+    it(`${operation}: an aborted signal ends the request`, async () => {
+      engine.on(operation, () => 'hold');
+      const controller = new AbortController();
+      const pending = call(controller.signal);
+      await vi.waitFor(() => {
+        expect(engine.of(operation)).toHaveLength(1);
+      });
+      const reason = new Error('left the page');
+      controller.abort(reason);
+      await expect(pending).rejects.toBe(reason);
     });
   }
-
-  it('an aborted signal ends the request', async () => {
-    engine.on('DescribeInstances', () => 'hold');
-    const controller = new AbortController();
-    const pending = listInstances(endpoint, {}, undefined, controller.signal);
-    await vi.waitFor(() => {
-      expect(engine.of('DescribeInstances')).toHaveLength(1);
-    });
-    const reason = new Error('left the page');
-    controller.abort(reason);
-    await expect(pending).rejects.toBe(reason);
-  });
 });

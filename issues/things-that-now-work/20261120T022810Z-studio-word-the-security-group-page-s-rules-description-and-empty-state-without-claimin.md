@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: gap
 Issue-Source: plan
 Issue-Key: studio|ec2.group-rules-wording|critique-p2
-Issue-Check-Ids:
+Issue-Check-Ids: studio-unit:src/providers/aws/area/services/ec2/pages/group-page.test.tsx
 Issue-Commit: 9bb0a6c407d4ad2dac9aaa256bd8789cb6fa5ee5
 
 # Word the security group page's rules description and empty state without claiming enforcement
