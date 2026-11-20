@@ -117,6 +117,7 @@ export function VpcField({
           value={value}
           onChange={onChange}
           selectRef={selectRef}
+          triggerVariant="option"
         />
       )}
     </FormField>

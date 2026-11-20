@@ -304,6 +304,21 @@ describe('Associate subnet', () => {
     expect(vi.mocked(network.listSubnetChoices).mock.lastCall?.[1]).toBe('t-2');
   });
 
+  it('a subnet chosen → the closed field shows its ID, its name, its block and its Availability Zone', async () => {
+    vi.mocked(network.listSubnetChoices).mockResolvedValue({ choices: [SUBNET_1, SUBNET_2] });
+    open();
+    await opened();
+    select().openDropdown();
+    await waitFor(() => {
+      expect(shown()).toHaveLength(2);
+    });
+    select().selectOptionByValue('subnet-1');
+    const closed = text(select().findTrigger().getElement());
+    for (const part of ['subnet-1', 'web', '10.0.1.0/24', 'us-east-1a']) {
+      expect(closed).toContain(part);
+    }
+  });
+
   it('"Associate subnet" with none chosen → "Choose a subnet." and nothing sent', async () => {
     open();
     await opened();
