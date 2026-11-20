@@ -220,6 +220,10 @@ describe('a DB instance', () => {
       'Master user name': 'admin1',
       'Database name': 'app',
     });
+    expect(pairsOf('DB instance identifiers')).toEqual({
+      ARN: 'arn:aws:rds:us-east-1:000000000000:db:app-db',
+      'Resource ID': 'db-ABC123',
+    });
     expect(pairsOf('DB instance details')).toEqual({
       'DB identifier': 'app-db',
       Status: 'available',
@@ -230,8 +234,6 @@ describe('a DB instance', () => {
       'DB cluster': '-',
       'Availability Zone': 'us-east-1a',
       Created: creationDateText(CREATED),
-      ARN: 'arn:aws:rds:us-east-1:000000000000:db:app-db',
-      'Resource ID': 'db-ABC123',
       'Parameter group': 'default.postgres18',
       'Deletion protection': 'Off',
     });

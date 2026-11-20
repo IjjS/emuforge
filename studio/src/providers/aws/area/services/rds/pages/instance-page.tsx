@@ -34,6 +34,9 @@ import { ACTION_LABELS, ACTION_RESULTS, actionTarget, type ActionTarget, type In
 const CONNECTION_DESCRIPTION =
   'The endpoint and the sign-in values as the emulator reports them. The API does not return the master password.';
 
+/** Room for an ARN of an instance's identifier, or a resource ID, beside the other (critique final P2 3). */
+const IDENTIFIERS_MIN_COLUMN = 360;
+
 function Pairs({ label, items }: { label: string; items: { label: string; value: ReactNode }[] }) {
   return <KeyValuePairs columns={3} minColumnWidth={220} items={items} ariaLabel={label} />;
 }
@@ -123,11 +126,6 @@ function Details({ instance }: { instance: DbInstance }) {
           { label: 'DB cluster', value: <Cluster id={instance.clusterId} /> },
           { label: 'Availability Zone', value: <Fixed value={instance.zone} /> },
           { label: 'Created', value: <ValueText kind="fixed" value={creationDateText(instance.createdAt)} /> },
-          { label: 'ARN', value: <CopyValue label="ARN" value={instance.arn} kind="address" none={NONE} /> },
-          {
-            label: 'Resource ID',
-            value: <CopyValue label="Resource ID" value={instance.resourceId} kind="name" none={NONE} />,
-          },
           {
             label: 'Parameter group',
             value: (
@@ -144,6 +142,21 @@ function Details({ instance }: { instance: DbInstance }) {
           },
         ]}
       />
+      {/* The two long identifiers in a row of their own, each wide enough for its whole value (critique final P2 3). */}
+      <Box margin={{ top: 'l' }}>
+        <KeyValuePairs
+          columns={2}
+          minColumnWidth={IDENTIFIERS_MIN_COLUMN}
+          ariaLabel="DB instance identifiers"
+          items={[
+            { label: 'ARN', value: <CopyValue label="ARN" value={instance.arn} kind="address" none={NONE} /> },
+            {
+              label: 'Resource ID',
+              value: <CopyValue label="Resource ID" value={instance.resourceId} kind="name" none={NONE} />,
+            },
+          ]}
+        />
+      </Box>
     </Container>
   );
 }
