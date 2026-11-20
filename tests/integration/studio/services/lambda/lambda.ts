@@ -497,6 +497,32 @@ export async function updateDescriptionDirect(
   );
 }
 
+/**
+ * A direct `UpdateFunctionConfiguration name` with `Environment.Variables` `variables`, the whole map, written in
+ * the order of `variables`' own keys (issue 570).
+ */
+export async function updateVariablesDirect(
+  caller: Caller,
+  port: number,
+  name: string,
+  variables: Record<string, string>,
+): Promise<void> {
+  answered(
+    await lambdaDirect(
+      caller,
+      port,
+      'PUT',
+      ['2015-03-31', 'functions', name, 'configuration'],
+      {},
+      {
+        Environment: { Variables: variables },
+      },
+    ),
+    200,
+    `direct UpdateFunctionConfiguration ${name}`,
+  );
+}
+
 /** A direct `DeleteFunction name`; the caller asserts the answer. */
 export async function deleteFunctionDirect(caller: Caller, port: number, name: string): Promise<Direct> {
   const answer = await lambdaDirect(caller, port, 'DELETE', ['2015-03-31', 'functions', name]);
