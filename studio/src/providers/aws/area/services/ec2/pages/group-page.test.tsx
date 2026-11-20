@@ -1,5 +1,5 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { notifyManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState, useSyncExternalStore } from 'react';
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
@@ -25,6 +25,10 @@ vi.mock('../group-api', async (importOriginal) => {
     deleteSecurityGroupRule: vi.fn(),
   };
 });
+
+// TanStack Query hands its notifications to React on a 0 ms timer; here it notifies in a microtask, as
+// `src/test/home-test-kit.tsx` does, so `settled()` below comes after every notification by order alone.
+notifyManager.setScheduler((callback) => queueMicrotask(callback));
 
 // ---------------------------------------------------------------------------------------------------------------
 // The area as Studio's frame renders it.
@@ -232,8 +236,9 @@ beforeEach(() => {
 });
 
 /**
- * Lets every answer already given settle: React's work, and TanStack Query's notifications, which it batches on a
- * zero-delay timer. A timer set after theirs runs after them, so this waits for order, not for an amount of time.
+ * Lets every answer already given settle. TanStack Query here notifies in a microtask (the scheduler set above), so an
+ * answer's whole chain (its read, the query's data, the notification, React's render) runs in microtasks; a timer
+ * runs only once no microtask is left, so by then every such chain has reached the screen. Order, not time.
  */
 async function settled() {
   await act(async () => {
