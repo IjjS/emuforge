@@ -3,10 +3,9 @@ import type { Page } from '@playwright/test';
 
 import { expect } from '../../support/check';
 import { ACTION } from '../../support/frame';
-import { dialogOf, instancePath } from './rds';
+import { dialogOf } from './rds';
 
-export async function openModify(page: Page, id: string) {
-  await page.goto(instancePath(id));
+export async function openModify(page: Page) {
   const wrapper = createWrapper();
   const modify = page.locator(wrapper.findButton('#rds-modify-instance').toSelector());
   await modify.click(ACTION);

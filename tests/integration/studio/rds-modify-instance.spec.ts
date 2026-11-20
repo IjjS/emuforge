@@ -1,9 +1,11 @@
 import { expect, startStack, test } from './support';
-import { ACTION, addressOf } from './support/frame';
+import { ACTION, addressOf, BREADCRUMB_ITEMS } from './support/frame';
 import { openModify } from './services/rds/modify';
 import {
+  button,
   CHANGED_WITH_INSTANCE,
   clusterDirect,
+  DELETE,
   expectFlash,
   expectNoRow,
   expectValueIs,
@@ -27,7 +29,13 @@ test('studio.rds-modify-and-rename-a-db-instance', async ({ ctx, page }) => {
     storage: 20, masterUsername: 'dbadmin', password: runPassword(), protection: true,
   });
   const renamed = `${prefix}-renamed`;
-  const form = await openModify(page, original);
+  await page.goto(INSTANCES_PATH);
+  const main = page.getByRole('main');
+  const table = main.locator(TABLE);
+  await rowOf(table, 'DB identifier', original);
+  await table.getByRole('link', { name: original, exact: true }).click(ACTION);
+  await expect(page).toHaveURL(addressOf(instancePath(original)));
+  const form = await openModify(page);
   await form.identifier.fill(renamed, ACTION);
   await form.instanceClass.fill('db.t3.small', ACTION);
   await form.storage.fill('30', ACTION);
@@ -40,10 +48,12 @@ test('studio.rds-modify-and-rename-a-db-instance', async ({ ctx, page }) => {
   await expectValueIs(page, 'Class', 'db.t3.small');
   await expectValueIs(page, 'Allocated storage', '30 GiB');
   await expectValueIs(page, 'Deletion protection', 'Off');
-  await expect(page.getByRole('button', { name: 'Delete', exact: true })).toBeEnabled();
+  await expect(button(main, DELETE)).toBeEnabled();
 
-  await page.goto(INSTANCES_PATH);
-  const table = page.getByRole('main').locator(TABLE);
+  const parent = page.locator(BREADCRUMB_ITEMS).nth(-2);
+  await expect(parent).toHaveText('DB instances');
+  await parent.click(ACTION);
+  await expect(page).toHaveURL(addressOf(INSTANCES_PATH));
   await rowOf(table, 'DB identifier', renamed);
   await expectNoRow(table, 'DB identifier', original);
   expect(await instanceDirect(ctx, port, renamed)).toMatchObject({
@@ -63,9 +73,11 @@ test('studio.rds-refuses-an-occupied-instance-identifier', async ({ ctx, page })
     id: `${prefix}-occupied`, engine: 'postgres', instanceClass: 'db.t3.small', storage: 30,
   });
   const before = await Promise.all([original, occupied].map((id) => instanceDirect(ctx, port, id)));
-  const form = await openModify(page, original);
+  await page.goto(instancePath(original));
+  const form = await openModify(page);
   await form.identifier.fill(occupied, ACTION);
   await form.save.click(ACTION);
+  await expect(form.failure).toBeVisible();
   await expect(form.failure).toContainText('DB instance already exists');
   await expect(page).toHaveURL(addressOf(instancePath(original)));
   await form.identifier.fill(`${prefix}-unused`, ACTION);
@@ -88,7 +100,8 @@ test('studio.rds-modifies-a-cluster-member', async ({ ctx, page }) => {
     id: `${prefix}-member`, engine: cluster.engine, instanceClass: 'db.r6g.large', clusterId: cluster.id,
   });
   const renamed = `${prefix}-renamed`;
-  const form = await openModify(page, original);
+  await page.goto(instancePath(original));
+  const form = await openModify(page);
   await expect(form.clusterGuidance).toHaveText('The cluster manages storage and master credentials.');
   await expect(form.storage).toHaveCount(0);
   await expect(form.password).toHaveCount(0);
