@@ -213,11 +213,12 @@ function rulesAre(pages: Record<string, api.RulePage>) {
 }
 
 function headerDelete(): HTMLElement {
-  const found = screen
-    .getAllByRole('button', { name: 'Delete' })
-    .find((button) => !table().getElement().contains(button));
-  expect(found).toBeDefined();
-  return found as HTMLElement;
+  return screen.getByRole('button', { name: 'Delete security group' });
+}
+
+/** The rules' "Delete". */
+function ruleDelete(): HTMLElement {
+  return action('Delete rule');
 }
 
 async function confirmDelete() {
@@ -312,7 +313,8 @@ describe("a security group's page", () => {
     expect(screen.getByText('The emulator holds no security group with this ID.')).toBeInTheDocument();
     expect(screen.queryByText('Security group details')).toBeNull();
     expect(PAGE.findTable()).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Delete security group' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Delete rule' })).toBeNull();
     expect(screen.queryByRole('link', { name: 'Add rule' })).toBeNull();
     expect(screen.getByRole('heading', { level: 1, name: 'sg-gone' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('link', { name: 'View security groups' }));
@@ -397,11 +399,11 @@ describe("a security group's page", () => {
     vi.mocked(api.deleteSecurityGroupRule).mockResolvedValue(undefined);
     open(PATH);
     await expectRows([ROW_RANGE, ROW_OUT]);
-    expect(isDisabled(action('Delete'))).toBe(true);
-    expect(reasonOf(action('Delete'))).toBe('Select one rule.');
+    expect(isDisabled(ruleDelete())).toBe(true);
+    expect(reasonOf(ruleDelete())).toBe('Select one rule.');
     selectRow('sgr-3');
-    expect(isDisabled(action('Delete'))).toBe(false);
-    fireEvent.click(action('Delete'));
+    expect(isDisabled(ruleDelete())).toBe(false);
+    fireEvent.click(ruleDelete());
     expect(text(await screen.findByRole('dialog'))).toContain(
       'The outbound rule All All 0.0.0.0/0 is removed from web.',
     );
@@ -428,13 +430,25 @@ describe("a security group's page", () => {
     open(PATH);
     await expectRows([ROW_RANGE]);
     selectRow('sgr-1');
-    fireEvent.click(action('Delete'));
+    fireEvent.click(ruleDelete());
     await confirmDelete();
     expect(await screen.findByText(/InvalidSecurityGroupRuleId\.NotFound/)).toBeInTheDocument();
     await waitFor(() => {
       expect(screen.queryByRole('dialog')).toBeNull();
     });
     expect(rows()).toEqual([ROW_RANGE]);
+  });
+
+  it('the two "Delete" buttons read "Delete" and are named "Delete security group" and "Delete rule"', async () => {
+    groupIs({ found: true, group: GROUP });
+    rulesAre({ 'sg-a|': { rules: [IN_RANGE] } });
+    open(PATH);
+    await expectRows([ROW_RANGE]);
+    selectRow('sgr-1');
+    expect(text(headerDelete())).toBe('Delete');
+    expect(text(ruleDelete())).toBe('Delete');
+    expect(table().getElement().contains(headerDelete())).toBe(false);
+    expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
   });
 
   it('the header\'s "Delete" confirmed → the groups list with "Deleted security group {name}"', async () => {
@@ -507,7 +521,7 @@ describe("a security group's page", () => {
     });
     await expectRows([ROW_RANGE, ROW_GROUP, ROW_OUT]);
     selectRow('sgr-1');
-    fireEvent.click(action('Delete'));
+    fireEvent.click(ruleDelete());
     await confirmDelete();
     // The rules after the delete (read 2), then "Refresh": the group (read 2) and the rules (read 3).
     await waitFor(() => {
