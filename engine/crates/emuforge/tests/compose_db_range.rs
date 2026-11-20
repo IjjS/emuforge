@@ -69,6 +69,8 @@ fn compose_db_range_checks_decimal_unprivileged_bounds() {
     for (bounds, diagnostic) in [
         (["0x1000", "28255"], "EMUFORGE_DB_PORT_MIN='0x1000'"),
         (["28000", "28 255"], "EMUFORGE_DB_PORT_MAX='28 255'"),
+        (["020000", "020255"], "EMUFORGE_DB_PORT_MIN='020000'"),
+        (["1024", "020255"], "EMUFORGE_DB_PORT_MAX='020255'"),
         (["1023", "28255"], "EMUFORGE_DB_PORT_MIN='1023'"),
         (["28255", "28000"], "range 28255-28000"),
         (["28000", "65536"], "EMUFORGE_DB_PORT_MAX='65536'"),

@@ -20,11 +20,17 @@ parse_port() {
   fi
 }
 
+parse_bound() {
+  parse_port "$1" "$2" 1024
+  # Linux reads a leading zero in the sysctl as octal, while Docker publishes decimal ports.
+  [ "$2" = "$port" ] || fail "$1='$2' must be written without leading zeroes"
+}
+
 # Arguments: MIN MAX [FIXED_PORT_NAME FIXED_PORT]... -- EXECUTABLE [ARG]...
 [ "$#" -ge 2 ] || fail "expected both database range bounds"
-parse_port EMUFORGE_DB_PORT_MIN "$1" 1024
+parse_bound EMUFORGE_DB_PORT_MIN "$1"
 low=$port
-parse_port EMUFORGE_DB_PORT_MAX "$2" 1024
+parse_bound EMUFORGE_DB_PORT_MAX "$2"
 high=$port
 range="$low-$high"
 if [ "$low" -gt "$high" ]; then

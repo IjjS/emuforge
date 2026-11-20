@@ -152,10 +152,10 @@ startup, and each database listener becomes available when the emulator starts i
 a database or emulator restart.
 
 To widen either form's range, set `EMUFORGE_DB_PORT_MIN` and `EMUFORGE_DB_PORT_MAX` to ordered decimal values
-from 1024 through 65535. SQL listeners, outbound sockets and local services share this range, so a busy project
-may need more ports. Keep fixed listeners outside the range and every host port in it free. If Docker reports a
-bind error for an occupied port, run `down` for the failed project with the same settings, then choose another
-free range and start that project again.
+from 1024 through 65535 without leading zeroes. SQL listeners, outbound sockets and local services share this
+range, so a busy project may need more ports. Keep fixed listeners outside the range and every host port in it
+free. If Docker reports a bind error for an occupied port, run `down` for the failed project with the same
+settings, then choose another free range and start that project again.
 
 On the macOS Docker Desktop test machine, publishing 256 standalone ports took about 3 seconds, 1024 ports took
 18–23 seconds, and a free 4096-port standalone block took about 231 seconds. Attempts with 16384 ports and the
