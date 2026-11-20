@@ -49,7 +49,7 @@ export interface UpdateServiceDialogProps {
  * The Revision field's description: what "Keep" sends (no task definition, so the service keeps its own), then which
  * revisions are listed below it.
  */
-export function revisionFieldDescription(service: Pick<Service, 'definition' | 'definitionArn'>): string {
+function revisionFieldDescription(service: Pick<Service, 'definition' | 'definitionArn'>): string {
   const keep = `${keepLabel(service)} sends no task definition.`;
   return service.definition === undefined
     ? keep
@@ -57,12 +57,12 @@ export function revisionFieldDescription(service: Pick<Service, 'definition' | '
 }
 
 /** The description of the listed revision that is the service's own: choosing it sends that revision again. */
-export function currentRevisionSends(current: Definition): string {
+function currentRevisionSends(current: Definition): string {
   return `Sends ${definitionText(current)} again`;
 }
 
 /** What "Force a new deployment" sends, beside its checkbox. */
-export const FORCE_SENDS = 'Sends forceNewDeployment, so the service starts new tasks even when nothing else changes.';
+const FORCE_SENDS = 'Sends forceNewDeployment, so the service starts new tasks even when nothing else changes.';
 
 /**
  * The active revisions of the service's family, the one equal to the service's current revision described by what
@@ -186,10 +186,7 @@ function Dialog({
               }}
             />
           </FormField>
-          <FormField
-            label="Revision"
-            description={revisionFieldDescription(service)}
-          >
+          <FormField label="Revision" description={revisionFieldDescription(service)}>
             <ChoiceSelect
               source={revisionSource(connection.engineOrigin, service.definition)}
               connection={connection}
