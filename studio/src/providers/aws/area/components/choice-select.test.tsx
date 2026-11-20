@@ -207,6 +207,27 @@ describe('ChoiceSelect', () => {
     expect(read).toHaveBeenLastCalledWith('', 'tok-1');
   });
 
+  it("a failed page that is not implemented names the operation; one refused shows the engine's reason", async () => {
+    read
+      .mockRejectedValueOnce(new RequestError({ kind: 'not-implemented', operation: 'ListThings' }))
+      .mockRejectedValueOnce(
+        new RequestError({ kind: 'access-denied', operation: 'ListThings', message: 'User is not allowed to list' }),
+      );
+    open();
+    select().openDropdown();
+    await waitFor(() => {
+      expect(dropdownText()).toContain(
+        'The things could not be loaded: Not implemented by the emulator. The emulator answered 501 Not Implemented for ListThings.',
+      );
+    });
+    select().findErrorRecoveryButton()?.click();
+    await waitFor(() => {
+      expect(dropdownText()).toContain(
+        'The things could not be loaded: Access denied. ListThings was refused: User is not allowed to list',
+      );
+    });
+  });
+
   it('a field given no filter takes no typed text, and its choices are the pages read', async () => {
     read.mockResolvedValueOnce({ items: [thing('a'), thing('b')] });
     open({ filtering: 'none' });

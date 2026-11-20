@@ -17,10 +17,21 @@ import { usePagedChoices, type ChoiceSource, type PagedChoices } from './use-pag
 /** The option value of the fixed first choice; no source's value is empty. */
 const FIXED = '';
 
-/** What failed in a page of the choices, in the area's few words: the first line of its read failure state. */
+/**
+ * What failed in a page of the choices, as one line (the select's error status takes a string): a 501 with the
+ * operation's name, a refusal with the engine's reason, a code with its message, else the first line of the read
+ * failure state.
+ */
 function failureWords(failure: RequestFailure, connection: AreaConnection, things: string): string {
-  if (failure.kind === 'other') {
-    return failure.message === undefined ? failure.code : `${failure.code}: ${failure.message}`;
+  switch (failure.kind) {
+    case 'other':
+      return failure.message === undefined ? failure.code : `${failure.code}: ${failure.message}`;
+    case 'not-implemented':
+      return `Not implemented by the emulator. The emulator answered 501 Not Implemented for ${failure.operation}.`;
+    case 'access-denied':
+      return `Access denied. ${failure.operation} was refused: ${failure.message}`;
+    default:
+      break;
   }
   return readFailureState(failure, connection, things).firstText;
 }

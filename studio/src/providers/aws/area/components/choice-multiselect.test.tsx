@@ -158,4 +158,32 @@ describe('ChoiceMultiselect', () => {
     });
     expect(read).toHaveBeenLastCalledWith('zz', undefined);
   });
+
+  it('an empty first page with no text → "No things"', async () => {
+    read.mockResolvedValue({ items: [] });
+    open();
+    field().openDropdown();
+    await waitFor(() => {
+      expect(dropdownText()).toContain('No things');
+    });
+    expect(dropdownText()).not.toContain('match');
+    expect(read).toHaveBeenCalledWith('', undefined);
+  });
+
+  it("a failed page names the operation when not implemented, and the engine's reason when refused", async () => {
+    read
+      .mockRejectedValueOnce(new RequestError({ kind: 'not-implemented', operation: 'ListThings' }))
+      .mockRejectedValueOnce(
+        new RequestError({ kind: 'access-denied', operation: 'ListThings', message: 'denied here' }),
+      );
+    open();
+    field().openDropdown();
+    await waitFor(() => {
+      expect(dropdownText()).toContain('501 Not Implemented for ListThings.');
+    });
+    field().findErrorRecoveryButton()?.click();
+    await waitFor(() => {
+      expect(dropdownText()).toContain('Access denied. ListThings was refused: denied here');
+    });
+  });
 });
