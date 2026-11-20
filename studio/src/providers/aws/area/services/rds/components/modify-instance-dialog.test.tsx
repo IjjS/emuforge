@@ -178,4 +178,15 @@ describe('Modify DB instance', () => {
     fireEvent.click(save());
     expect(onSave).toHaveBeenCalledExactlyOnceWith({ deletionProtection: false });
   });
+
+  it('describes what happens to the old identifier only while a rename is entered', async () => {
+    open();
+    await screen.findByRole('dialog');
+    const guidance = 'After saving, the old identifier will stop resolving. Studio will open the renamed DB instance.';
+    expect(screen.queryByText(guidance)).toBeNull();
+    change(IDENTIFIER, 'renamed-db');
+    expect(field(IDENTIFIER)).toHaveAccessibleDescription(expect.stringContaining(guidance));
+    change(IDENTIFIER, 'app-db');
+    expect(screen.queryByText(guidance)).toBeNull();
+  });
 });

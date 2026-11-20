@@ -7,7 +7,7 @@ import KeyValuePairs from '@cloudscape-design/components/key-value-pairs';
 import Link from '@cloudscape-design/components/link';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
-import { useRef, useState, type ReactNode } from 'react';
+import { useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 
 import { CopyValue } from '../../../components/copy-value';
 import { actionFailureItem, readFailureState, ReadFailure, useAnnouncer } from '../../../components/failure-states';
@@ -38,6 +38,18 @@ const CONNECTION_DESCRIPTION =
 
 /** Room for an ARN of an instance's identifier, or a resource ID, beside the other (critique final P2 3). */
 const IDENTIFIERS_MIN_COLUMN = 360;
+
+const NARROW_VIEWPORT = '(width < 688px)';
+
+function subscribeToNarrowViewport(onChange: () => void) {
+  const media = window.matchMedia(NARROW_VIEWPORT);
+  media.addEventListener('change', onChange);
+  return () => media.removeEventListener('change', onChange);
+}
+
+function isNarrowViewport() {
+  return window.matchMedia(NARROW_VIEWPORT).matches;
+}
 
 function Pairs({ label, items }: { label: string; items: { label: string; value: ReactNode }[] }) {
   return <KeyValuePairs columns={3} minColumnWidth={220} items={items} ariaLabel={label} />;
@@ -286,6 +298,7 @@ export function InstancePage({ connection, params }: ScreenPageProps) {
   const pageSignal = usePageSignal();
   const act = useInstanceAction(connection.engineOrigin);
   const modify = useModifyInstance(connection.engineOrigin);
+  const compactActions = useSyncExternalStore(subscribeToNarrowViewport, isNarrowViewport);
   const [announcement, announce] = useAnnouncer();
   const [pending, setPending] = useState(false);
   const inFlight = useRef(false);
@@ -302,7 +315,16 @@ export function InstancePage({ connection, params }: ScreenPageProps) {
       ? instance.clusterId
       : undefined;
   const signIn = useClusterSignIn(connection.engineOrigin, signInCluster);
-  const canModify = instance?.status === 'available' && !pending && !modifyUnavailable && failureState === undefined;
+  let modifyReason: string | undefined;
+  if (modifyUnavailable) {
+    modifyReason = 'The emulator does not implement ModifyDBInstance.';
+  } else if (pending) {
+    modifyReason = 'Wait for the current DB instance action to finish.';
+  } else if (failureState !== undefined) {
+    modifyReason = 'Refresh the DB instance before modifying it.';
+  } else if (instance?.status !== 'available') {
+    modifyReason = 'Only an available DB instance can be modified.';
+  }
 
   // Kept from the previous render, as React's own pattern for it, so each change is acted on once.
   const [seenFailureLine, setSeenFailureLine] = useState<string>();
@@ -453,11 +475,13 @@ export function InstancePage({ connection, params }: ScreenPageProps) {
                     signIn.refresh();
                   }}
                 />
-                {instance !== undefined && (
+                {(instance !== undefined || failureState !== undefined) && (
                   <Button
                     ariaHaspopup="dialog"
-                    disabled={!canModify}
+                    disabled={modifyReason !== undefined}
+                    {...(modifyReason === undefined ? {} : { disabledReason: modifyReason })}
                     onClick={() => {
+                      if (instance === undefined || modifyReason !== undefined) return;
                       setModifyFailure(undefined);
                       setEditing(instance);
                     }}
@@ -466,7 +490,12 @@ export function InstancePage({ connection, params }: ScreenPageProps) {
                   </Button>
                 )}
                 {instance !== undefined && (
-                  <InstanceActions instance={actionTarget(instance)} pending={pending} onAction={handleAction} />
+                  <InstanceActions
+                    instance={actionTarget(instance)}
+                    pending={pending}
+                    compact={compactActions}
+                    onAction={handleAction}
+                  />
                 )}
               </SpaceBetween>
             }

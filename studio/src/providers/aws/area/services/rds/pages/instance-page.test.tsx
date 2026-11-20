@@ -435,6 +435,8 @@ describe('a DB instance', () => {
       await waitFor(() => {
         expect(text(PAGE.findContentLayout()?.getElement() as Element)).toMatch(shown);
       });
+      expect(isDisabled(control('Modify'))).toBe(true);
+      expect(reasonOf(control('Modify'))).toBe('Refresh the DB instance before modifying it.');
       vi.mocked(api.getInstance).mockResolvedValue(found());
       const calls = vi.mocked(api.getInstance).mock.calls.length;
       fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
@@ -711,11 +713,27 @@ const ID_LABEL = 'DB instance identifier';
 const CLASS_LABEL = 'DB instance class';
 
 describe('modifying a DB instance', () => {
+  it('keeps Refresh and Modify visible with the compact lifecycle menu on a narrow viewport', async () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      ...matchMedia(query),
+      matches: query === '(width < 688px)',
+    }));
+    vi.mocked(api.getInstance).mockResolvedValue(found());
+    open(PATH);
+    await loaded();
+    expect(control('Refresh')).toBeEnabled();
+    expect(control('Modify')).toBeEnabled();
+    expect(control('Actions')).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
+  });
+
   it('U10 is unavailable during transition', async () => {
     vi.mocked(api.getInstance).mockResolvedValue(found({ status: 'modifying' }));
     open(PATH);
     await loaded();
-    expect(control('Modify')).toBeDisabled();
+    expect(isDisabled(control('Modify'))).toBe(true);
+    expect(reasonOf(control('Modify'))).toBe('Only an available DB instance can be modified.');
   });
 
   it('U10 enables Modify when available and prevents another save while pending', async () => {
@@ -729,6 +747,8 @@ describe('modifying a DB instance', () => {
     update(dialog, CLASS_LABEL, 'db.t3.small');
     const save = saveChanges(dialog);
     expect(isDisabled(save)).toBe(true);
+    expect(isDisabled(control('Modify'))).toBe(true);
+    expect(reasonOf(control('Modify'))).toBe('Wait for the current DB instance action to finish.');
     fireEvent.click(save);
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
     expect(dialog).toBeInTheDocument();
@@ -901,7 +921,8 @@ describe('modifying a DB instance', () => {
     await screen.findByText('Not implemented by the emulator');
     expect(flashes('info')[0]).toContain(MODIFY_INSTANCE);
     expect(screen.queryByRole('dialog')).toBeNull();
-    expect(control('Modify')).toBeDisabled();
+    expect(isDisabled(control('Modify'))).toBe(true);
+    expect(reasonOf(control('Modify'))).toBe('The emulator does not implement ModifyDBInstance.');
   });
 
   it.each([

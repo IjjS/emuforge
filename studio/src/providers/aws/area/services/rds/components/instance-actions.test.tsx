@@ -1,3 +1,4 @@
+import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { useRef } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -17,24 +18,32 @@ beforeEach(() => {
 
 let onAction: ReturnType<typeof vi.fn<(action: InstanceAction, target: ActionTarget) => void>>;
 
-function Harness({ instance, pending }: { instance: ActionTarget | undefined; pending: boolean }) {
+function Harness({
+  instance,
+  pending,
+  compact,
+}: {
+  instance: ActionTarget | undefined;
+  pending: boolean;
+  compact: boolean;
+}) {
   const root = useRef<HTMLDivElement>(null);
   return (
     <div ref={root}>
       <AreaRootContext value={root}>
-        <InstanceActions instance={instance} pending={pending} onAction={onAction} />
+        <InstanceActions instance={instance} pending={pending} compact={compact} onAction={onAction} />
       </AreaRootContext>
     </div>
   );
 }
 
-function renderActions(instance: ActionTarget | undefined, pending = false) {
+function renderActions(instance: ActionTarget | undefined, pending = false, compact = false) {
   onAction = vi.fn();
-  const view = render(<Harness instance={instance} pending={pending} />);
+  const view = render(<Harness instance={instance} pending={pending} compact={compact} />);
   return {
     ...view,
     setPending: (next: boolean) => {
-      view.rerender(<Harness instance={instance} pending={next} />);
+      view.rerender(<Harness instance={instance} pending={next} compact={compact} />);
     },
   };
 }
@@ -167,5 +176,34 @@ describe("a DB instance's actions", () => {
     view.setPending(false);
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(isDisabled(button('Stop'))).toBe(false);
+  });
+
+  it('the compact menu keeps the lifecycle reasons and runs an available action', () => {
+    const instance = target('available', { deletionProtection: true });
+    const view = renderActions(instance, false, true);
+    const menu = createWrapper(view.container).findButtonDropdown();
+    menu?.openDropdown();
+    const start = menu?.findItemById('start', { disabled: true })?.find('[role="menuitem"]')?.getElement();
+    const remove = menu?.findItemById('delete', { disabled: true })?.find('[role="menuitem"]')?.getElement();
+    expect(start).toHaveAccessibleDescription(STARTED);
+    expect(remove).toHaveAccessibleDescription('Deletion protection is on.');
+    fireEvent.click(remove as HTMLElement);
+    expect(onAction).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    fireEvent.click(menu?.findItemById('stop', { disabled: false })?.getElement() as HTMLElement);
+    expect(onAction).toHaveBeenCalledExactlyOnceWith('stop', instance);
+    view.setPending(true);
+    expect(isDisabled(button('Actions'))).toBe(true);
+  });
+
+  it('the compact menu requires the same confirmation before deleting', async () => {
+    const instance = target('available');
+    const { container } = renderActions(instance, false, true);
+    const menu = createWrapper(container).findButtonDropdown();
+    menu?.openDropdown();
+    fireEvent.click(menu?.findItemById('delete', { disabled: false })?.getElement() as HTMLElement);
+    expect(onAction).not.toHaveBeenCalled();
+    await confirmDelete();
+    expect(onAction).toHaveBeenCalledExactlyOnceWith('delete', instance);
   });
 });

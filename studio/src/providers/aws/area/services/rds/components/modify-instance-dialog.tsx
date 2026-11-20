@@ -10,9 +10,16 @@ import { useEffect, useRef, useState } from 'react';
 import { AreaModal } from '../../../components/area-modal';
 import type { FlashItem } from '../../../components/page-flash';
 import type { DbInstance } from '../api';
-import { classError, identifierError, PASSWORD_CONSTRAINT, passwordError, storageError } from '../form';
+import {
+  classError,
+  IDENTIFIER_CONSTRAINT,
+  identifierError,
+  PASSWORD_CONSTRAINT,
+  passwordError,
+  storageError,
+} from '../form';
 import type { InstanceChanges } from '../modify-api';
-import { ClassField, IdentifierField, StorageField } from './create-fields';
+import { ClassField, StorageField } from './create-fields';
 
 interface ModifyInstanceDialogProps {
   instance: DbInstance;
@@ -92,12 +99,26 @@ export function ModifyInstanceDialog({ instance, pending, failure, onSave, onDis
             {failure.content}
           </Alert>
         )}
-        <IdentifierField
+        <FormField
           label="DB instance identifier"
-          value={identifier}
-          error={errors.identifier}
-          onChange={setIdentifier}
-        />
+          description={
+            changes.identifier === undefined
+              ? undefined
+              : 'After saving, the old identifier will stop resolving. Studio will open the renamed DB instance.'
+          }
+          constraintText={IDENTIFIER_CONSTRAINT}
+          errorText={errors.identifier}
+        >
+          <Input
+            value={identifier}
+            invalid={errors.identifier !== undefined}
+            autoComplete={false}
+            spellcheck={false}
+            onChange={({ detail }) => {
+              setIdentifier(detail.value);
+            }}
+          />
+        </FormField>
         <ClassField value={instanceClass} error={errors.instanceClass} onChange={setInstanceClass} />
         {member && <Box variant="p">The cluster manages storage and master credentials.</Box>}
         {!member && <StorageField value={storage} error={errors.storage} onChange={setStorage} />}
