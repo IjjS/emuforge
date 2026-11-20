@@ -6,7 +6,7 @@ import { checkPrefix, creationDateText, SEOUL } from '../../support/service-scre
 import { BASIC_EXECUTION_POLICY, invokeDirect, LambdaSeeded, metricSums } from './lambda';
 import { PYTHON, PYTHON_HANDLER, pythonZip } from './lambda-tasks';
 
-const wrapper = createWrapper();
+const wrapper = createWrapper('[role="tabpanel"]');
 const logs = wrapper.findTable();
 const pairs = wrapper.findKeyValuePairs().findItems();
 const code = pythonZip(
@@ -61,11 +61,12 @@ export async function compareTotals(
   name: string,
   expected: Record<string, number>,
 ) {
-  const panel = page.getByRole('tabpanel');
-  const header = panel
+  const header = page
     .locator(wrapper.findContainer().findHeader().toSelector())
     .filter({ has: page.getByRole('heading', { name: 'Last hour' }) });
-  const end = new Date((await header.locator('time').getAttribute('datetime')) ?? '');
+  const windowEnd = header.locator('time');
+  await expect(windowEnd).toBeVisible();
+  const end = new Date((await windowEnd.getAttribute('datetime')) ?? '');
   for (const [index, metric] of ['Invocations', 'Errors'].entries()) {
     if (!(metric in expected)) continue;
     const sums = await metricSums(ctx, port, name, metric, end);
@@ -73,28 +74,26 @@ export async function compareTotals(
     const total = sums.reduce((a, b) => a + b, 0);
     expect(total).toBe(expected[metric]);
     const item = pairs.get(index + 1);
-    await expect(panel.locator(item.findLabel().toSelector())).toHaveText(metric);
-    await expect(panel.locator(item.findValue().toSelector())).toHaveText(String(total));
+    await expect(page.locator(item.findLabel().toSelector())).toHaveText(metric);
+    await expect(page.locator(item.findValue().toSelector())).toHaveText(String(total));
   }
 }
 
 export async function compareEvents(page: Page, events: { timestamp: number; message: string }[]) {
-  const panel = page.getByRole('tabpanel');
-  await expect(panel.locator(logs.findRows().toSelector())).toHaveCount(events.length);
+  await expect(page.locator(logs.findRows().toSelector())).toHaveCount(events.length);
   for (const [index, event] of events.entries()) {
     const date = new Date(event.timestamp);
     const iso = date.toISOString();
     const formatted = creationDateText(iso, SEOUL).replace(' (UTC', '.' + iso.slice(20, 23) + ' (UTC');
-    const time = panel.locator(logs.findBodyCell(index + 1, 1).toSelector()).locator('time');
+    const time = page.locator(logs.findBodyCell(index + 1, 1).toSelector()).locator('time');
     await expect(time).toHaveText(formatted);
     await expect(time).toHaveAttribute('datetime', iso);
-    const message = panel.locator(logs.findBodyCell(index + 1, 2).toSelector());
+    const message = page.locator(logs.findBodyCell(index + 1, 2).toSelector());
     expect(await message.textContent()).toBe(event.message);
   }
 }
 
 export const missingLog = (page: Page) =>
   page
-    .getByRole('tabpanel')
     .locator(wrapper.findContainer().toSelector())
     .filter({ has: page.getByRole('heading', { name: 'Log events' }) });
