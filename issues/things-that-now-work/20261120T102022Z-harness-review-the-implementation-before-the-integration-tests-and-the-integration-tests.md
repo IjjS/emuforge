@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: harness|lead.order|impl-review-before-integration-tests
-Issue-Check-Ids:
+Issue-Check-Ids: none (harness issue, no kept guard shows it)
 Issue-Commit: c9843ccb7d3ce2af514e2d76109c6a654b55e894
 
 # Review the implementation before the integration tests, and the integration tests by a review of their own

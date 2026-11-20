@@ -97,9 +97,9 @@ An engine, CLI, IAM, Verify or Studio issue goes to a plan:
 `pm-brief` fills `references/briefs/plan.md` and `rev.md` (placeholders: `references/briefs/README.md`), writes
 both briefs and marks the issue `lead: plan`. Never fill a
 template by hand or with a script of your own, and add nothing to a written brief; after `rev.md` changes, an issue
-in flight takes it from its next round with `pm-brief rev <id>`. The plan opens its workers and its crit, and a rev
-for each review round (closed after it), and leads the issue as `lead.md` says. You do nothing until its `ISSUE READY` line, except
-answer its `BLOCKED` lines (Events).
+in flight takes it from its next round with `pm-brief rev <id>`. New issues receive `review_order: split`; issues
+already briefed keep their prior workflow and gate. The plan opens its workers and its crit, and a rev for
+each review round, as `lead.md` says. Wait for its `ISSUE READY` and answer its `BLOCKED` lines (Events).
 
 A harness issue goes to one harness-engineer, in a unit worktree of its own:
 
@@ -131,12 +131,14 @@ On `EVENT ready i<id>-plan ISSUE READY feat/<id> report=…`:
    the plan in one prompt to set it in the file and commit it on `feat/<id>`; it answers `ISSUE READY` again.
 2. Look the change over (`git diff main...feat/<id> --stat`, and what you choose to read). At your own discretion
    look for a further critical fault; file only that, with `pm-issue new --source finder` and its evidence.
-3. `pm-merge <id>`: it asks for the whole check's record on the head of `feat/<id>` and the newest
-   `review-impl-r<k>.md` saying `verdict: pass`. It merges when git merges `feat/<id>` into `main` with no
+3. `pm-merge <id>` asks for the whole check's record on the head of `feat/<id>` and the passing review records.
+   For the split order, these are the newest `impl` and `tests` records, with the tests-stage exception in
+   `lead.md`. Issues already briefed before issue 619 keep the single final `impl` gate.
+   It merges when git merges `feat/<id>` into `main` with no
    conflict, however far `main` moved since the whole check: the output then says `behind main`, and the run on
    GitHub Actions checks the merged result. When git stops on a conflict, nothing is merged: tell the plan in one
-   line to run `pm-merge <id> --take-main`, have the unit that owns each conflicting path resolve it, and run the
-   whole check again; it answers `ISSUE READY` again.
+   line to take main, resolve conflicting paths with their owners, and follow the review and whole-check steps
+   in `lead.md`. It answers `ISSUE READY` again.
 4. `pm-pane close i<id>-plan`, then flow step 3.
 
 Every merge is made on the merged branch's own passing record: `pm-merge` takes a unit's branch into the issue
@@ -246,11 +248,10 @@ flow step 1:
   tab:
   - The oldest issue of the batch is its host. Its `.pm/issue-<host>/` holds the batch's stage documents, and
     `decisions.md` names the other issue files. One `plan` pane leads all five, with one requirement, one set of
-    test criteria and one breakdown, and its `rev` rounds review the requirement, the plan set and the
-    implementation once each for the whole batch.
+    test criteria and one breakdown. Each review stage covers the whole batch.
   - The batch is one issue branch of its host: `pm-worktree new <host>` makes it, and the units belong to the host
     (`pm-worktree new <host> <unit>`) and are cut as for one issue: a unit may fix
-    several of the five and names the ones it fixes; `rev` reviews the whole once. The unit that fixes an issue runs
+    several of the five and names the ones it fixes. The unit that fixes an issue runs
     `pm-issue close` for that issue, so each issue file moves in the commit that fixes it.
   - Studio screens of the batch are critiqued together: one `crit` pane and one `final` critique of the built app
     for all the screens the batch changes.

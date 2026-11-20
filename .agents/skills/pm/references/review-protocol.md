@@ -5,9 +5,12 @@ once its `REVIEWED` line has arrived and the review file is there. The next roun
 a new pane with the same brief, kind, model and effort (`lead.md`, A review round). It is an agent of its own, not a
 sub-agent of the plan, so the reviewer's kind, model and effort stay `pm-pane`'s options. Its brief is written from
 `briefs/rev.md` with the plan's. It sees only files: the deliverable, the issue file, `requirement.md`,
-`decisions.md`, the repository references, `main`, and the earlier rounds of its stage. It never sees the lead's
-reasoning or chat, and it remembers no earlier round. The lead is the issue's plan, for the stage documents and for
-the whole at the end. A harness issue has no rev: the PM judges it.
+`decisions.md`, the references and prior version of the files in scope for its stage, and the earlier rounds of
+that stage. It never sees the lead's reasoning or chat, and it remembers no earlier round. The issue's plan leads
+each review. The PM reviews harness issues directly.
+
+This protocol applies when `brief.json` has `review_order: split`. An already-briefed issue with `lead: plan`
+and no review order uses `git show c9843ccb:.agents/skills/pm/references/review-protocol.md`.
 
 ## Round
 
@@ -16,13 +19,15 @@ lead → rev : REVIEW <stage> r<k> <path-to-deliverable> [<extra paths>]
 rev  → lead: REVIEWED <stage> r<k> verdict=<pass|revise> p1=<n> p2=<n> p3=<n> .pm/issue-<id>/review-<stage>-r<k>.md
 ```
 
-- `stage` is one of `requirement`, `plan-set`, `impl`: three reviews an issue, two before the build and one after
-  it (owner, 2026-11-19). `requirement` is `requirement.md` alone. `plan-set` is `design.md`, `test-criteria.md`
+- `stage` is one of `requirement`, `plan-set`, `impl`, `tests`. `requirement` is `requirement.md` alone.
+  `plan-set` is `design.md`, `test-criteria.md`
   and `breakdown.md`, written together after the requirement passes and sent in one line,
   `REVIEW plan-set r<k> .pm/issue-<id>/design.md .pm/issue-<id>/test-criteria.md .pm/issue-<id>/breakdown.md`;
   rev reads them together and writes one review file with one verdict. When the module's `references/workflow.md`
-  skips the design for the issue's kind, the set is the two documents left. `impl` is the whole: the diff
-  `main...feat/<id>` with the whole check's record, and the integration tests against the scenarios.
+  skips the design for the issue's kind, the set is the two documents left. After the build and any required
+  Studio critique, `impl` reviews the product and unit-test changes on the units' fast checks. Then the plan
+  writes and runs the integration tests. `tests` reviews those changes alone against the scenarios after their
+  focused run. See `lead.md` for the omission and whole-check steps.
 - rev writes the review file, logs the line with `pm-report --from <rev-name>`, then, as its last act, prompts the
   lead with it via `herdr agent prompt <lead> "<line>"` and stops. The lead ends its turn after sending REVIEW; the
   REVIEWED prompt resumes it, and the lead closes the pane. Nobody waits or polls.
@@ -37,8 +42,9 @@ rev  → lead: REVIEWED <stage> r<k> verdict=<pass|revise> p1=<n> p2=<n> p3=<n> 
   reads whole.
 - **Three rounds maximum**, for the plan set as for any stage. After r3 without `pass`, the lead appends the disagreement (both positions, three
   lines each) to `decisions-needed.md` and prints `BLOCKED <lead> review <stage>`; the PM decides and records it.
-- A P1 of `impl` is fixed by the worker that owns it, at the plan's order; the plan merges the fix and runs the whole
-  check again before the next round.
+- The owning worker fixes a P1 of `impl` and passes its fast check. The plan merges the fix and clears any
+  affected screen critique before the next round. The plan fixes a P1 of `tests` and reruns affected IDs before
+  its next round.
 
 ## Review file
 
@@ -92,22 +98,28 @@ praise, no summaries. A finding without a location and a fix is not a finding.
     test; every coverage axis is checked or marked `(Not Scope)`; success and failure are paired; each case sits at
     the lowest level that can prove it; a studio screen that reads again after a change has the unit case of those
     reads answering in another order (`studio/references/test-criteria.md`); an engine case waits for what it
-    asserts (`engine/references/test-criteria.md`).
+    asserts (`engine/references/test-criteria.md`). A tests-stage omission has a reason consistent with the
+    confirmed scenarios.
   - **breakdown**: every criteria line belongs to exactly one unit or to the plan's integration tests; each unit is
     `e<n>` or `s<n>`, never both sides; owned files do not overlap between parallel units; the order leaves the
     collecting branch green when it merges into `main`; no unit is more than a day.
-- **impl** (the whole): the diff `main...feat/<id>`; the whole check's record `emuforge-<id>/output/checks/last.json`
-  is a pass on the head under review and ran the integration checks; each integration test is a scenario of
-  `test-criteria.md` and nothing the criteria do not list, and each scenario left out is named with its reason in
-  `test-criteria.md` or `report.md`; `tests/integration/AGENTS.md` for the tests (a manifest row each, isolation and
-  cleanup, no sleep, loopback only); no criteria or spec file changed by a worker; per side:
+- **impl**: review only the product and unit-test changes in the issue branch's diff against its merge base
+  with main. The fast-check records pass on the units as merged. Check that workers left the confirmed criteria
+  and specs intact. Use only the assigned implementation diff and related references and evidence. The
+  integration diff and the whole check's record are outside this stage. Per side:
   - engine: `engine/AGENTS.md`; every `security-review.md` row; relay fidelity not lower than on `main`; a test
     waits for what it asserts (the line, the answer), never for a neighbouring sign that it should be there by now.
   - studio: `studio/AGENTS.md` and the references its units' briefs named; 501 shown as "not implemented", never
-    hidden or faked; the contact sheet read once; no check or unit test finds the inside of a Cloudscape component
-    by a string of its own or an option by its text, no assertion is on a state in between unless its line is
-    about it, and no check goes on after a time (`tests/integration/AGENTS.md`, Studio checks: what they find and
-    when they assert); no result of a change is shown from a component the page can unmount.
+    hidden or faked; the contact sheet read once; no unit test finds the inside of a Cloudscape component
+    by a string of its own or an option by its text, and no assertion is on a state in between unless its line is
+    about it; no result of a change is shown from a component the page can unmount.
+- **tests**: read only the integration changes under `tests/integration/` against the merge base with main.
+  Read `test-criteria.md`, the focused run record and any referenced omission reasons as evidence. A runnable
+  affected ID has a passing result for the submitted tests. Each test maps to a confirmed scenario and each
+  scenario is covered or has a reason recorded for its omission. Check the tests, support and manifest rows
+  against `tests/integration/AGENTS.md`, including isolation, cleanup, condition waits, loopback and Studio
+  selectors and settled assertions. Keep product code, unit tests and implementation review files outside this
+  round.
 
 ## Independence
 
