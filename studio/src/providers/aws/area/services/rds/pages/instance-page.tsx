@@ -52,7 +52,13 @@ function portText(port: number | undefined): string | undefined {
 
 function Connection({ instance }: { instance: DbInstance }) {
   return (
-    <Container header={<Header variant="h2" description={CONNECTION_DESCRIPTION}>Connection</Header>}>
+    <Container
+      header={
+        <Header variant="h2" description={CONNECTION_DESCRIPTION}>
+          Connection
+        </Header>
+      }
+    >
       <Pairs
         label="Connection"
         items={[
@@ -109,9 +115,7 @@ function Details({ instance }: { instance: DbInstance }) {
             label: 'Allocated storage',
             value: (
               <Fixed
-                value={
-                  instance.allocatedStorage === undefined ? undefined : `${String(instance.allocatedStorage)} GiB`
-                }
+                value={instance.allocatedStorage === undefined ? undefined : `${String(instance.allocatedStorage)} GiB`}
               />
             ),
           },

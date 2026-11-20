@@ -248,9 +248,7 @@ describe('the actions', () => {
   });
 
   it('a refusal → a failure with the code and message as they came', async () => {
-    engine.on('StopDBInstance', () =>
-      refused('InvalidDBInstanceState', 'Instance db-1 is not in available state.'),
-    );
+    engine.on('StopDBInstance', () => refused('InvalidDBInstanceState', 'Instance db-1 is not in available state.'));
     expect(await failureOf(actOnInstance(endpoint, 'stop', 'db-1', signal()))).toEqual({
       kind: 'other',
       operation: 'StopDBInstance',

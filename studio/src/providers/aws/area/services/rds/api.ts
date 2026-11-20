@@ -243,7 +243,11 @@ export async function describeInstances(
 }
 
 /** S1's page: `DescribeDBInstances` with `MaxRecords` 50 and the page's marker when it has one. */
-export function listInstances(endpoint: string, marker: string | undefined, signal: AbortSignal): Promise<InstancePage> {
+export function listInstances(
+  endpoint: string,
+  marker: string | undefined,
+  signal: AbortSignal,
+): Promise<InstancePage> {
   return describeInstances(endpoint, { size: INSTANCES_PAGE_SIZE, marker }, signal);
 }
 

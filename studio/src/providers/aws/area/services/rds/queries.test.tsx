@@ -238,7 +238,7 @@ describe('the actions', () => {
 });
 
 describe('the keys', () => {
-  it('of two lists of different resources or markers differ, and so do an instance\'s and a cluster\'s of one identifier', () => {
+  it("of two lists of different resources or markers differ, and so do an instance's and a cluster's of one identifier", () => {
     const keys = [
       RDS_KEYS.instances(),
       RDS_KEYS.instances('m1'),

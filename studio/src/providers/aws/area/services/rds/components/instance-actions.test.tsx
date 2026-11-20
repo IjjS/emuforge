@@ -44,7 +44,9 @@ function target(status: string, changes: Partial<ActionTarget> = {}): ActionTarg
 }
 
 function button(name: string): HTMLElement {
-  return screen.getAllByRole('button', { name }).find((element) => element.closest('[role="dialog"]') === null) as HTMLElement;
+  return screen
+    .getAllByRole('button', { name })
+    .find((element) => element.closest('[role="dialog"]') === null) as HTMLElement;
 }
 
 function isDisabled(element: Element): boolean {
@@ -97,7 +99,10 @@ describe("a DB instance's actions", () => {
         target('deleting'),
         { Start: STARTED, Stop: STOPPED, Reboot: REBOOTED, Delete: 'This DB instance is already being deleted.' },
       ],
-      [target('available', { engine: 'aurora-postgresql' }), { Start: AURORA, Stop: AURORA, Reboot: true, Delete: true }],
+      [
+        target('available', { engine: 'aurora-postgresql' }),
+        { Start: AURORA, Stop: AURORA, Reboot: true, Delete: true },
+      ],
       [
         target('available', { deletionProtection: true }),
         { Start: STARTED, Stop: true, Reboot: true, Delete: 'Deletion protection is on.' },
@@ -131,13 +136,12 @@ describe("a DB instance's actions", () => {
     const instance = target('available');
     renderActions(instance);
     fireEvent.click(button('Delete'));
-    let dialog = await screen.findByRole('dialog');
+    const dialog = await screen.findByRole('dialog');
     expect(dialog.textContent).toContain('app-db is deleted from the local emulator');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
     expect(onAction).not.toHaveBeenCalled();
 
     fireEvent.click(button('Delete'));
-    dialog = await screen.findByRole('dialog');
     await confirmDelete();
     expect(onAction).toHaveBeenCalledTimes(1);
     expect(onAction).toHaveBeenCalledWith('delete', instance);

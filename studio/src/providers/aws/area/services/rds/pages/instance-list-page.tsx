@@ -48,10 +48,7 @@ const STATUS_MIN_WIDTH = '14ch';
 const CREATED_MIN_WIDTH = '26ch';
 
 type BodyState =
-  | { kind: 'loading' }
-  | { kind: 'rows' }
-  | { kind: 'empty' }
-  | { kind: 'failure'; failure: ReadFailureState };
+  { kind: 'loading' } | { kind: 'rows' } | { kind: 'empty' } | { kind: 'failure'; failure: ReadFailureState };
 
 function bodyState(listing: TokenListing<DbInstance>, connection: AreaConnection): BodyState {
   if (listing.failure !== undefined) {
@@ -183,7 +180,9 @@ export function InstanceListPage({ connection }: { connection: AreaConnection })
     {
       id: 'port',
       header: 'Port',
-      cell: (row) => <ValueText kind="fixed" value={row.port === undefined ? undefined : String(row.port)} none={NONE} />,
+      cell: (row) => (
+        <ValueText kind="fixed" value={row.port === undefined ? undefined : String(row.port)} none={NONE} />
+      ),
     },
     {
       id: 'created',

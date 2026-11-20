@@ -10,7 +10,6 @@ import {
   storageError,
 } from './form';
 
-
 describe('the checks of the forms', () => {
   it('an identifier', () => {
     expect(identifierError('')).toBe('Enter an identifier.');
