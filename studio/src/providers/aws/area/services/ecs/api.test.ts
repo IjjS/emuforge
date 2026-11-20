@@ -1,21 +1,13 @@
 // @vitest-environment node
+import { readFileSync } from 'node:fs';
+
 import { DescribeLogGroupsCommand } from '@aws-sdk/client-cloudwatch-logs';
-import { DescribeVpcsCommand } from '@aws-sdk/client-ec2';
 import { DescribeServicesCommand, DescribeTaskDefinitionCommand, DescribeTasksCommand } from '@aws-sdk/client-ecs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { engineEndpoint } from '../../../../../lib/aws/client-factory';
 import { RequestError, type RequestFailure } from '../../../../../lib/aws/request';
-import {
-  createCluster,
-  cutFractions,
-  deleteCluster,
-  getCluster,
-  listClusters,
-  sendEc2,
-  sendEcs,
-  sendLogs,
-} from './api';
+import { createCluster, cutFractions, deleteCluster, getCluster, listClusters, sendEcs, sendLogs } from './api';
 
 // The test plays the engine behind the page's `fetch`: its session route, and every AWS request as it leaves the
 // browser. ECS and CloudWatch Logs speak JSON 1.1 (`POST /`, the operation in `X-Amz-Target`), EC2 its query
@@ -199,40 +191,18 @@ describe('create and delete', () => {
   });
 });
 
-describe('the other two senders', () => {
-  it('sendLogs and sendEc2 → each its command through sendRequest with the operation named, on its own client', async () => {
-    engine.handle = (sent) =>
-      sent.target === null
-        ? {
-            status: 200,
-            body: '<DescribeVpcsResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/"><requestId>r</requestId><vpcSet/></DescribeVpcsResponse>',
-            type: 'text/xml',
-          }
-        : ok({ logGroups: [] });
+describe('the logs sender', () => {
+  it("sendLogs → its command through sendRequest with the operation named, on CloudWatch Logs' client; no EC2 client", async () => {
+    engine.handle = () => ok({ logGroups: [] });
     await sendLogs(
       endpoint,
       'DescribeLogGroups',
       (client, abortSignal) => client.send(new DescribeLogGroupsCommand({}), { abortSignal }),
       signal(),
     );
-    await sendEc2(
-      endpoint,
-      'DescribeVpcs',
-      (client, abortSignal) => client.send(new DescribeVpcsCommand({}), { abortSignal }),
-      signal(),
-    );
     expect(engine.sent[0]?.target).toBe('Logs_20140328.DescribeLogGroups');
-    expect(engine.sent[1]?.target).toBeNull();
-    expect(engine.sent[1]?.form?.get('Action')).toBe('DescribeVpcs');
 
-    engine.handle = (sent) =>
-      sent.target === null
-        ? {
-            status: 400,
-            body: '<Response><Errors><Error><Code>Bad</Code><Message>no</Message></Error></Errors><RequestID>r</RequestID></Response>',
-            type: 'text/xml',
-          }
-        : refusal('ResourceNotFoundException', 'no group');
+    engine.handle = () => refusal('ResourceNotFoundException', 'no group');
     expect(
       await failureOf(
         sendLogs(
@@ -243,16 +213,9 @@ describe('the other two senders', () => {
         ),
       ),
     ).toMatchObject({ kind: 'other', operation: 'GetLogEvents named', code: 'ResourceNotFoundException' });
-    expect(
-      await failureOf(
-        sendEc2(
-          endpoint,
-          'DescribeSubnets named',
-          (client, abortSignal) => client.send(new DescribeVpcsCommand({}), { abortSignal }),
-          signal(),
-        ),
-      ),
-    ).toMatchObject({ kind: 'other', operation: 'DescribeSubnets named', code: 'Bad' });
+
+    const source = readFileSync(new URL('./api.ts', import.meta.url), 'utf8');
+    expect(source).not.toMatch(/client-ec2|EC2Client\b|sendEc2/);
   });
 });
 

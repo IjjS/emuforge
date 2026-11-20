@@ -1,5 +1,4 @@
 import { CloudWatchLogsClient } from '@aws-sdk/client-cloudwatch-logs';
-import { EC2Client } from '@aws-sdk/client-ec2';
 import {
   CreateClusterCommand,
   DeleteClusterCommand,
@@ -13,11 +12,11 @@ import { createAwsClient } from '../../../../../lib/aws/client-factory';
 import { sendRequest } from '../../../../../lib/aws/request';
 
 // The calls of ECS's cluster screens (issue 575, design tasks 1 and 5), through the engine, mapped to plain typed
-// results, and the one place a client class of ECS's folder meets the factory: ECS's (`sendEcs`), CloudWatch Logs'
-// (`sendLogs`, for a task's log) and EC2's (`sendEc2`, for the subnets and groups "Run task" chooses from). Every other
-// API file of the folder sends its commands through these three. Each command goes through the shared `sendRequest`
-// with its operation's name, so a failed request rejects with its `RequestError` and an aborted one with the signal's
-// reason. Every value is the emulator's, as it came.
+// results, and the one place a client class of ECS's folder meets the factory: ECS's (`sendEcs`) and CloudWatch
+// Logs' (`sendLogs`, for a task's log). Every other API file of the folder sends its commands through these two; the
+// subnets and groups "Run task" chooses from are read through the area's shared EC2 parts (`lib/ec2-client.ts`).
+// Each command goes through the shared `sendRequest` with its operation's name, so a failed request rejects with its
+// `RequestError` and an aborted one with the signal's reason. Every value is the emulator's, as it came.
 
 /** The operations of the cluster screens, as a failure names them. */
 export const OPERATIONS = {
@@ -78,7 +77,6 @@ function withCutFractions(client: ECSClient): ECSClient {
 
 const ecsClient = clientsOf((endpoint) => withCutFractions(createAwsClient(ECSClient, { endpoint })));
 const logsClient = clientsOf((endpoint) => createAwsClient(CloudWatchLogsClient, { endpoint }));
-const ec2Client = clientsOf((endpoint) => createAwsClient(EC2Client, { endpoint }));
 
 /** The sender every API file of the folder uses: `send` is handed the client and the signal to send its command with. */
 type Sender<C> = <T>(
@@ -98,9 +96,6 @@ export const sendEcs: Sender<ECSClient> = senderOf(ecsClient);
 
 /** One request of `operation` to CloudWatch Logs at the engine `endpoint`. */
 export const sendLogs: Sender<CloudWatchLogsClient> = senderOf(logsClient);
-
-/** One request of `operation` to EC2 at the engine `endpoint`. */
-export const sendEc2: Sender<EC2Client> = senderOf(ec2Client);
 
 /** `value` when it is a text that is not empty. */
 export function text(value: unknown): string | undefined {
