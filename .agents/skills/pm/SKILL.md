@@ -29,7 +29,7 @@ issue files, merge or archive; they refuse a plan anything outside its own issue
 3. Panes run on the kind and model the owner names for this session; without one, `claude` on Opus. Ask only if
    the owner has not said and a pane is about to start. The effort goes the same way, `pm-pane new … --effort
    low|medium|high|xhigh|max`; without it a pane opened again gets the kind, model and effort it had and a new one its role's
-   (`plan`, `rev`, `crit`, `harness-engineer` `high`, `worker` `medium`); a Codex pane ignores it. When the owner names a token rate for the day, set it
+   (`plan`, `rev`, `crit`, `harness-engineer` `high`, `worker` `medium`); a Codex pane takes it as its reasoning effort (`max` as `xhigh`). When the owner names a token rate for the day, set it
    with `pm-tokens target <rate>`; without one nothing is limited, and you do not ask for one.
 4. Open work: list every `.pm/issue-*/state.md` in one line each and continue from it. Then `pm-issue list`: the
    open issue files.

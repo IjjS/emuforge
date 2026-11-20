@@ -39,7 +39,7 @@ Effort: --effort goes to the agent as the model does (claude --effort <level>, a
 a plan may pass it for its own panes. A pane opened again under a name it had (a rev opened for each review round,
 a pane reopened after EVENT gone) gets the kind, model and effort it had when not given (the registry and
 .pm/run/panes-history.jsonl remember them; its model only when its kind is the same, issue 557); a new one claude on
-opus at its role's effort: plan, rev, crit and harness-engineer high, worker medium. A codex pane takes no effort: --effort is ignored, with one line saying so. The brief is sent as: "Read <FILE> and follow it. Your pane name is <name>."
+opus at its role's effort: plan, rev, crit and harness-engineer high, worker medium. A codex pane takes its effort as -c model_reasoning_effort="<level>" (owner, 2026-11-20), max as xhigh. The brief is sent as: "Read <FILE> and follow it. Your pane name is <name>."
 To talk to a pane use herdr directly: herdr agent prompt <name> "<text>" (it refuses a pane blocked at a dialog).
 --adopt (the pm's) registers an agent herdr already runs under the exact name, cwd and kind (one left after a startup
 trust dialog, or one the registry lost: EVENT unregistered); its --brief is recorded and not sent, since the agent
@@ -202,13 +202,14 @@ def kind_and_model(a, before):
 
 
 def effort_of(a, before):
-    """The effort a claude pane is started with: --effort, else the one it had, else its role's; None for codex."""
-    if a.kind != "claude":
-        if a.effort:
-            print(f"effort {a.effort} ignored: a {a.kind} pane takes no effort")
-        return None
-    had = before.get("effort") if before.get("kind", "claude") == "claude" else None
-    return a.effort or (had if had in EFFORTS else None) or EFFORT_BY_ROLE.get(a.role)
+    """The effort a pane is started with: --effort, else the one it had under the same kind, else its role's. Codex
+    has no level above xhigh: max is passed as xhigh, with one line saying so."""
+    had = before.get("effort") if before.get("kind", "claude") == a.kind else None
+    effort = a.effort or (had if had in EFFORTS else None) or EFFORT_BY_ROLE.get(a.role)
+    if a.kind == "codex" and effort == "max":
+        print("effort max passed as xhigh: a codex pane has no level above it")
+        effort = "xhigh"
+    return effort
 
 
 def queue(asker, a, side, why, tail=""):
@@ -288,10 +289,12 @@ def new(a, name):
     effort = effort_of(a, before)
     if a.kind == "claude" and model:
         extra += ["--model", model]
-    if effort:
+    if effort and a.kind == "claude":
         extra += ["--effort", effort]
     if a.kind == "codex" and model:
         extra += ["-m", model]
+    if a.kind == "codex" and effort:
+        extra += ["-c", f'model_reasoning_effort="{effort}"']
     if extra:
         args += ["--", *extra]
     r = existing if a.adopt else herdr(*args, check=False)
