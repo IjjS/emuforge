@@ -117,6 +117,14 @@ export async function createKeyPair(
   return created;
 }
 
+/**
+ * The UTF-8 bytes of `value`, as this realm's `Uint8Array`: the SDK sends a blob only when it is one, and an
+ * encoder's array may come from another realm (a test's document).
+ */
+function bytesOf(value: string): Uint8Array {
+  return Uint8Array.from(new TextEncoder().encode(value));
+}
+
 /** `ImportKeyPair` with `KeyName` and `PublicKeyMaterial`, the bytes of the text as it was given. */
 export async function importKeyPair(
   endpoint: string,
@@ -128,10 +136,7 @@ export async function importKeyPair(
     endpoint,
     KEY_PAIR_OPERATIONS.importKeyPair,
     (client, abortSignal) =>
-      client.send(
-        new ImportKeyPairCommand({ KeyName: name, PublicKeyMaterial: new TextEncoder().encode(publicKey) }),
-        { abortSignal },
-      ),
+      client.send(new ImportKeyPairCommand({ KeyName: name, PublicKeyMaterial: bytesOf(publicKey) }), { abortSignal }),
     signal,
   );
 }
