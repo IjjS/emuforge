@@ -842,6 +842,8 @@ describe('"Delete" of the policy, whatever order the reads after it answer in', 
     await openShown();
     deletePolicy.mockRejectedValue(new TypeError('Failed to fetch'));
     const documents = holdDocumentReads();
+    // The policy's read fails as the deletion's did: the page leaves the policy, and the dialog goes with it.
+    getPolicy.mockRejectedValue(new TypeError('Failed to fetch'));
     const policyReads = getPolicy.mock.calls.length;
 
     await confirmDelete();
@@ -851,7 +853,11 @@ describe('"Delete" of the policy, whatever order the reads after it answer in', 
     await waitFor(() => {
       expect(documents.waiting()).toBeGreaterThan(0);
     });
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'Delete p-doc?' })).toBeNull();
+    });
     await settled();
+    expect(screen.queryByRole('heading', { level: 2, name: 'Policy details' })).toBeNull();
 
     documents.release();
     await waitFor(() => {
