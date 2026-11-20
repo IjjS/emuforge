@@ -4,7 +4,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RequestError } from '../../../../../../lib/aws/request';
 import type { AreaConnection } from '../../../components/emulator-line';
@@ -29,16 +29,14 @@ vi.mock('../api', async (original) => ({
 }));
 
 // S2 wires the production routes. Register the detail and a listing observer in the area for this unit.
-vi.mock('../screens', async (original) => {
-  const [real, { VolumePage }, { INSTANCES_NAVIGATION }, paths] = await Promise.all([
-    original<typeof import('../screens')>(),
+vi.mock('../screens', async () => {
+  const [{ VolumePage }, { INSTANCES_NAVIGATION }, paths] = await Promise.all([
     import('./volume-page'),
     import('../navigation'),
     import('../volume-format'),
   ]);
   return {
     SCREENS: [
-      ...real.SCREENS,
       {
         paths: [paths.VOLUME_PATTERN],
         title: 'Volume',
@@ -152,6 +150,12 @@ const page = createWrapper(document.body);
 
 beforeEach(() => {
   vi.resetAllMocks();
+  vi.stubGlobal('matchMedia', (media: string) => ({
+    media,
+    matches: false,
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+  }));
   vi.mocked(api.getVolume).mockResolvedValue(available);
   vi.mocked(api.attachVolume).mockResolvedValue(undefined);
   vi.mocked(api.detachVolume).mockResolvedValue(undefined);
@@ -162,17 +166,21 @@ beforeEach(() => {
   });
 });
 
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
 function button(name: string) {
-  return screen.getByRole('button', { name, exact: true });
+  return screen.getByRole('button', { name });
 }
 
 async function openDialog(name: string) {
-  fireEvent.click(await screen.findByRole('button', { name, exact: true }));
+  fireEvent.click(await screen.findByRole('button', { name }));
   return within(await screen.findByRole('dialog'));
 }
 
 function openChoices() {
-  const select = page.findModal()?.findSelect();
+  const select = page.findSelect();
   if (select == null) throw new Error('Missing instance selector');
   select.openDropdown();
   return select.findDropdown();
@@ -285,6 +293,7 @@ describe('attach volume', () => {
     expect(submit).toBeEnabled();
   });
 
+  // Bound: Allow one real three-second poll plus dialog and query rendering on a busy runner.
   it('preserves the acknowledgment and polls past an unchanged detail while other reads are held', async () => {
     const list = deferred<{ items: api.Volume[] }>();
     const instanceList = deferred<instances.InstancePage>();
@@ -488,7 +497,9 @@ describe('delete volume', () => {
     fireEvent.click(button('Dismiss'));
     expect(screen.queryByText(/501 Not Implemented for DeleteVolume/)).toBeNull();
     await act(async () => {
-      fireEvent.click(screen.getByRole('link', { name: 'Volumes', exact: true }));
+      const crumbs = page.findBreadcrumbGroup();
+      if (crumbs === null) throw new Error('Missing breadcrumbs');
+      fireEvent.click(within(crumbs.getElement()).getByRole('link', { name: 'Volumes' }));
     });
     expect(router.state.location.pathname).toBe(PATH);
   });

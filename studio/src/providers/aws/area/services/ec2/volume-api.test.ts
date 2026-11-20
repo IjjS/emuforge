@@ -81,11 +81,17 @@ describe('volume requests', () => {
     );
   });
 
-  it('creates with only size and zone, and returns the new ID', async () => {
+  it('creates with a size and zone, the default volume type, and the SDK idempotency token', async () => {
     answer('CreateVolume', '<volumeId>vol-new</volumeId>');
     await expect(createVolume(endpoint, { zone: 'us-east-1a', size: 8 }, signal)).resolves.toBe('vol-new');
     expect(sent).toEqual([
-      { Action: 'CreateVolume', Version: '2016-11-15', AvailabilityZone: 'us-east-1a', Size: '8' },
+      {
+        Action: 'CreateVolume',
+        Version: '2016-11-15',
+        AvailabilityZone: 'us-east-1a',
+        Size: '8',
+        ClientToken: expect.stringMatching(/^[0-9a-f-]{36}$/i) as unknown as string,
+      },
     ]);
   });
 
