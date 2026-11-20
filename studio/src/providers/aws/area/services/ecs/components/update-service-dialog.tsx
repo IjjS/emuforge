@@ -15,7 +15,7 @@ import { actionFailureItem, CodeAndMessage } from '../../../components/failure-s
 import { failureOf, usePageSignal } from '../../../components/use-token-listing';
 import type { ChoiceSource } from '../../../components/use-paged-choices';
 import { revisionChoices, type RevisionChoice } from '../definition-choices';
-import type { Definition } from '../task-format';
+import { definitionText, type Definition } from '../task-format';
 import type { Service } from '../service-api';
 import { SERVICE_CHANGE_OPERATIONS } from '../service-change-api';
 import { useUpdateService } from '../service-change-queries';
@@ -45,12 +45,28 @@ export interface UpdateServiceDialogProps {
   onDismiss: () => void;
 }
 
-/** The description of the listed revision that is the service's own, beside "Keep" it, which keeps it unsent. */
-const CURRENT_REVISION = "The service's current revision";
+/**
+ * The Revision field's description: what "Keep" sends (no task definition, so the service keeps its own), then which
+ * revisions are listed below it.
+ */
+function revisionFieldDescription(service: Pick<Service, 'definition' | 'definitionArn'>): string {
+  const keep = `${keepLabel(service)} sends no task definition.`;
+  return service.definition === undefined
+    ? keep
+    : `${keep} Below it, the active revisions of family ${service.definition.family}, newest first.`;
+}
+
+/** The description of the listed revision that is the service's own: choosing it sends that revision again. */
+function currentRevisionSends(current: Definition): string {
+  return `Sends ${definitionText(current)} again`;
+}
+
+/** What "Force a new deployment" sends, beside its checkbox. */
+const FORCE_SENDS = 'Sends forceNewDeployment, so the service starts new tasks even when nothing else changes.';
 
 /**
- * The active revisions of the service's family, the one equal to the service's current revision described as such,
- * so it is told apart from "Keep" it above: choosing it sends that revision, "Keep" sends none.
+ * The active revisions of the service's family, the one equal to the service's current revision described by what
+ * it sends, so it is told apart from "Keep" it above: choosing it sends that revision, "Keep" sends none.
  */
 function revisionSource(endpoint: string | undefined, current: Definition | undefined): ChoiceSource<RevisionChoice> {
   const listed = revisionChoices(endpoint, current?.family);
@@ -59,7 +75,7 @@ function revisionSource(endpoint: string | undefined, current: Definition | unde
     optionOf: (choice) => {
       const option = listed.optionOf(choice);
       return current !== undefined && choice.family === current.family && choice.revision === current.revision
-        ? { ...option, description: CURRENT_REVISION }
+        ? { ...option, description: currentRevisionSends(current) }
         : option;
     },
   };
@@ -170,14 +186,7 @@ function Dialog({
               }}
             />
           </FormField>
-          <FormField
-            label="Revision"
-            description={
-              service.definition === undefined
-                ? undefined
-                : `The active revisions of family ${service.definition.family}, newest first.`
-            }
-          >
+          <FormField label="Revision" description={revisionFieldDescription(service)}>
             <ChoiceSelect
               source={revisionSource(connection.engineOrigin, service.definition)}
               connection={connection}
@@ -191,6 +200,7 @@ function Dialog({
           </FormField>
           <Checkbox
             checked={form.force}
+            description={FORCE_SENDS}
             onChange={({ detail }) => {
               setForm((current) => ({ ...current, force: detail.checked }));
             }}
