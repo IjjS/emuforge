@@ -542,7 +542,7 @@ describe('S5, a task', () => {
     expect(alertText).not.toContain('side');
     expect(alert?.getElement().querySelector('[class*="type-error"]')).not.toBeNull();
     expect(definitions.getRevision).toHaveBeenCalledWith(ENGINE, 'web', 3, expect.anything());
-    expect(alert!.getElement().compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect((alert?.getElement().compareDocumentPosition(summary) ?? 0) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     // The summary keeps every field, with the same labels and values.
     expect(pairs()).toMatchObject({
       'Last status': 'Stopped',
