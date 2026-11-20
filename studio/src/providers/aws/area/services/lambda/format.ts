@@ -11,14 +11,14 @@ export { CREATE_FUNCTION_PATH, FUNCTIONS_PATH, LAMBDA_PATH, functionPath };
 export const NONE = '-';
 
 /** The tabs of a function's page, each addressed by the query of the function's one address (issue 516, design). */
-export type FunctionTab = 'test' | 'code' | 'configuration';
+export type FunctionTab = 'test' | 'code' | 'monitor' | 'configuration';
 
 /** The query parameter that names a function's tab. */
 export const TAB_PARAMETER = 'tab';
 
-/** The tab a value of `?tab=` names: "code" and "configuration" name theirs; no value or any other is "Test". */
+/** The tab a value of `?tab=` names, defaulting to Test. */
 export function tabOf(value: string | null | undefined): FunctionTab {
-  return value === 'code' || value === 'configuration' ? value : 'test';
+  return value === 'code' || value === 'monitor' || value === 'configuration' ? value : 'test';
 }
 
 /** The address of a function's tab: "Test" is the function's path itself, the others add `?tab=`. */
