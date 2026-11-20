@@ -260,7 +260,7 @@ function CreateServiceForm({ cluster, connection }: { cluster: string; connectio
                 Cancel
               </Button>
               <Button variant="primary" disabled={unsupported} loading={pending} loadingText={CREATING}>
-                {CREATE_SERVICE_TITLE}
+                {pending ? CREATING : CREATE_SERVICE_TITLE}
               </Button>
             </SpaceBetween>
           }

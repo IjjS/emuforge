@@ -1,7 +1,8 @@
+import { ECSClient, ECSServiceException } from '@aws-sdk/client-ecs';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { useSyncExternalStore } from 'react';
+import { useState, useSyncExternalStore } from 'react';
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
@@ -54,14 +55,19 @@ const SUBNETS = 'Subnets';
 const GROUPS = 'Security groups';
 const duplicate = 'Creation of service was not idempotent.';
 
-function reply(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/x-amz-json-1.1' },
-  });
+function reply(body: { __type?: string; message?: string } & Record<string, unknown>, status = 200) {
+  if (status >= 400) {
+    throw new ECSServiceException({
+      $metadata: { httpStatusCode: status },
+      $fault: 'client',
+      name: body.__type ?? 'Unknown',
+      ...(body.message === undefined ? {} : { message: body.message }),
+    });
+  }
+  return body;
 }
 
-const emulator = vi.fn<(operation: string, body: unknown) => Response | Promise<Response>>();
+const emulator = vi.fn<(operation: string, body: unknown) => unknown>();
 function normal(operation: string) {
   switch (operation) {
     case 'DescribeClusters':
@@ -112,7 +118,11 @@ const snapshot = () => connection;
 function Area() {
   const current = useSyncExternalStore(subscribe, snapshot);
   const { key } = useLocation();
-  const routeChanges = useRefRouteChanges(key);
+  const [route, setRoute] = useState({ key, changes: 0 });
+  const routeChanges = key === route.key ? route.changes : route.changes + 1;
+  if (key !== route.key) {
+    setRoute({ key, changes: routeChanges });
+  }
   return (
     <AwsArea
       headerSelector="#top-bar"
@@ -122,16 +132,6 @@ function Area() {
       connection={current}
     />
   );
-}
-
-let routeKey: string | undefined;
-let changes: number;
-function useRefRouteChanges(key: string) {
-  if (routeKey !== key) {
-    routeKey = key;
-    changes += 1;
-  }
-  return changes;
 }
 
 function open() {
@@ -152,8 +152,6 @@ function connect() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  changes = -1;
-  routeKey = undefined;
   connect();
   emulator.mockImplementation(normal);
   vi.mocked(network.listSubnetChoices).mockResolvedValue({ choices: [{ id: 'subnet-a', vpcId: 'vpc-dev' }] });
@@ -161,17 +159,17 @@ beforeEach(() => {
     'matchMedia',
     vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })),
   );
-  vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
-    const request = input instanceof Request ? input : new Request(String(input), init);
-    if (new URL(request.url).pathname === '/__emuforge/session') {
-      return reply({ token: 'emuforge-test-token-609' });
-    }
-    const target = request.headers.get('x-amz-target') ?? '';
-    return emulator(target.slice(target.indexOf('.') + 1), await request.json());
+  vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Unexpected request in the page test')));
+  vi.spyOn(ECSClient.prototype, 'send').mockImplementation((command) => {
+    const operation = command.constructor.name.replace(/Command$/, '');
+    return Promise.resolve(emulator(operation, command.input)) as ReturnType<ECSClient['send']>;
   });
 });
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 function field(label: string) {
   const found = createWrapper(document.body)
@@ -184,10 +182,10 @@ function field(label: string) {
 async function choose(label: string, value: string) {
   const input = label === SUBNETS || label === GROUPS ? field(label).findMultiselect() : field(label).findSelect();
   if (!input) throw new Error(`Missing choice field ${label}`);
-  input.openDropdown();
+  if (input.findTrigger().getElement().getAttribute('aria-expanded') !== 'true') input.openDropdown();
   await waitFor(() => expect(input.findDropdown().findOptionByValue(value)).not.toBeNull());
   input.selectOptionByValue(value);
-  fireEvent.keyDown(input.findTrigger().getElement(), { key: 'Escape', code: 'Escape', keyCode: 27 });
+  input.closeDropdown();
 }
 
 async function fill() {
@@ -218,7 +216,7 @@ function expectGated() {
 }
 
 it('holds the form and its choices until the cluster gate finds an active cluster', async () => {
-  const held = deferred<Response>();
+  const held = deferred<unknown>();
   emulator.mockImplementation((op) => (op === 'DescribeClusters' ? held.promise : normal(op)));
   open();
   expect(await screen.findByText('Loading cluster')).toBeInTheDocument();
@@ -241,7 +239,7 @@ it.each([
   expectGated();
 });
 
-function gateError(kind: 'emulator' | 'engine'): Response {
+function gateError(kind: 'emulator' | 'engine') {
   if (kind === 'engine') throw new TypeError('engine fetch failed');
   return reply({ __type: 'EmulatorTimeout', message: 'probe timed out' }, 504);
 }
@@ -260,10 +258,12 @@ it.each(['emulator', 'engine'] as const)(
     emulator.mockImplementation((op) => (op === 'DescribeClusters' && refused ? gateError(kind) : normal(op)));
     open();
     const retry = await screen.findByRole('button', { name: 'Retry' });
-    const recovery = screen.getByRole('link', { name: 'Connection status' });
+    const state = retry.parentElement?.parentElement;
+    if (!state) throw new Error('Missing cluster read failure state');
+    const recovery = within(state).getByRole('link', { name: 'Connection status' });
     expect(recovery).toHaveAttribute('href', '/');
-    expect(recovery.parentElement).toHaveTextContent(kind === 'emulator' ? 'Not answering at' : 'is not answering');
-    expect(recovery.parentElement).toHaveTextContent(kind === 'emulator' ? 'probe timed out' : ENGINE);
+    expect(state).toHaveTextContent(kind === 'emulator' ? 'Not answering at' : 'is not answering');
+    expect(state).toHaveTextContent(kind === 'emulator' ? 'probe timed out' : ENGINE);
     expect(retry).toBeEnabled();
     expectGated();
     refused = false;
@@ -369,13 +369,13 @@ it('keeps dirty input and returns focus on every dismissal, then discards to the
 });
 
 it('sends no second create during Creating service', async () => {
-  const held = deferred<Response>();
+  const held = deferred<unknown>();
   emulator.mockImplementation((op) => (op === 'CreateService' ? held.promise : normal(op)));
   open();
   await fill();
   const button = submitButton();
   fireEvent.click(button);
-  await screen.findByText('Creating service');
+  await screen.findByRole('button', { name: 'Creating service' });
   const form = button.closest('form');
   if (!form) throw new Error('Missing form');
   fireEvent.submit(form);
@@ -385,10 +385,10 @@ it('sends no second create during Creating service', async () => {
 });
 
 it('hands over to the returned service, keeps the flash through out-of-order refresh, and reads the service on return', async () => {
-  const gate = deferred<Response>();
-  const service = deferred<Response>();
-  const refreshGate = deferred<Response>();
-  const refreshService = deferred<Response>();
+  const gate = deferred<unknown>();
+  const service = deferred<unknown>();
+  const refreshGate = deferred<unknown>();
+  const refreshService = deferred<unknown>();
   emulator.mockImplementation((op, body) => {
     if (op === 'DescribeClusters' && calls(op).length === 3) return gate.promise;
     if (op === 'DescribeClusters' && calls(op).length === 4) return refreshGate.promise;

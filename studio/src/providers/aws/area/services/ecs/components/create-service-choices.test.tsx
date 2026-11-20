@@ -122,13 +122,17 @@ function multi(label: string) {
   return found;
 }
 
+function openDropdown(input: ReturnType<typeof select> | ReturnType<typeof multi>) {
+  if (input.findTrigger().getElement().getAttribute('aria-expanded') !== 'true') input.openDropdown();
+}
+
 async function choose(label: string, id: string) {
   const input = label === SUBNETS || label === GROUPS ? multi(label) : select(label);
-  input.openDropdown();
+  openDropdown(input);
   await waitFor(() => expect(input.findDropdown().findOptionByValue(id)).not.toBeNull());
   input.selectOptionByValue(id);
   if (label === SUBNETS || label === GROUPS) {
-    fireEvent.keyDown(input.findTrigger().getElement(), { key: 'Escape', keyCode: 27 });
+    input.closeDropdown();
   }
 }
 
@@ -149,7 +153,8 @@ it('loads a later ACTIVE family page using the returned continuation', async () 
         : { families: ['web'], nextToken: 'families-2' },
   );
   await open();
-  select(FAMILY).openDropdown();
+  openDropdown(select(FAMILY));
+  await screen.findByRole('button', { name: 'Load more' });
   loadMore();
   await waitFor(() => expect(select(FAMILY).findDropdown().findOptionByValue('api')).not.toBeNull());
   select(FAMILY).selectOptionByValue('api');
@@ -174,7 +179,7 @@ it('uses the first eligible page for the preset and options, then chooses an old
   await open();
   await choose(FAMILY, 'web');
   await waitFor(() => expect(select(REVISION).findTrigger().getElement()).toHaveTextContent('web:4'));
-  select(REVISION).openDropdown();
+  openDropdown(select(REVISION));
   expect(select(REVISION).findDropdown().findOptionByValue('web:4')).not.toBeNull();
   loadMore();
   await waitFor(() => expect(select(REVISION).findDropdown().findOptionByValue('web:1')).not.toBeNull());
@@ -202,7 +207,7 @@ it('clears a preset on family change and ignores a delayed page from the old fam
   await open();
   await choose(FAMILY, 'web');
   await waitFor(() => expect(select(REVISION).findTrigger().getElement()).toHaveTextContent('web:2'));
-  select(REVISION).openDropdown();
+  openDropdown(select(REVISION));
   loadMore();
   await choose(FAMILY, 'api');
   expect(select(REVISION).findTrigger().getElement()).toHaveTextContent('Choose a revision');
@@ -272,7 +277,7 @@ it('loads another subnet on the selected VPC continuation', async () => {
   );
   await open();
   await choose(SUBNETS, 'subnet-a');
-  multi(SUBNETS).openDropdown();
+  openDropdown(multi(SUBNETS));
   await screen.findByRole('button', { name: 'Load more' });
   loadMore();
   await waitFor(() => expect(multi(SUBNETS).findDropdown().findOptionByValue('subnet-b')).not.toBeNull());
@@ -287,7 +292,7 @@ it('loads a group on the selected VPC continuation', async () => {
   );
   await open();
   await choose(SUBNETS, 'subnet-a');
-  multi(GROUPS).openDropdown();
+  openDropdown(multi(GROUPS));
   await screen.findByRole('button', { name: 'Load more' });
   loadMore();
   await waitFor(() => expect(multi(GROUPS).findDropdown().findOptionByValue('sg-b')).not.toBeNull());
@@ -306,12 +311,12 @@ it('keeps groups until the last subnet is removed and scopes new choices to the 
   fireEvent.click(screen.getByRole('button', { name: 'Remove subnet-b' }));
   expect(multi(GROUPS).findTokens()).toHaveLength(0);
   await choose(SUBNETS, 'subnet-c');
-  multi(SUBNETS).openDropdown();
+  openDropdown(multi(SUBNETS));
   await waitFor(() => expect(multi(SUBNETS).findDropdown().findOptionByValue('subnet-c')).not.toBeNull());
   expect(multi(SUBNETS).findDropdown().findOptionByValue('subnet-a')).toBeNull();
   await choose(GROUPS, 'sg-c');
   expect(readGroups).toHaveBeenCalledWith('vpc-2', undefined);
-  multi(GROUPS).openDropdown();
+  openDropdown(multi(GROUPS));
   expect(multi(GROUPS).findDropdown().findOptionByValue('sg-a')).toBeNull();
 });
 

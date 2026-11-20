@@ -42,7 +42,20 @@ type MultipleChoices<T> = {
 
 /** One pager supplies both the first answer used by the form and the subsequent dropdown pages. */
 export function CreateServiceChoice<T>(props: ChoiceProps<T> & (SingleChoice<T> | MultipleChoices<T>)) {
-  const { source, listing, label, placeholder, connection, empty, error, description } = props;
+  const {
+    source,
+    listing,
+    label,
+    placeholder,
+    connection,
+    empty,
+    error,
+    description,
+    multiple,
+    value,
+    inputRef,
+    onChange,
+  } = props;
   const items = listing.choices ?? [];
   const blocked = listing.failure?.kind === 'not-implemented';
   const controls = {
@@ -65,15 +78,15 @@ export function CreateServiceChoice<T>(props: ChoiceProps<T> & (SingleChoice<T> 
   return (
     <SpaceBetween size="xs">
       <FormField label={label} {...optional({ errorText: error, description })}>
-        {props.multiple === true ? (
+        {multiple === true ? (
           <Multiselect
             {...controls}
-            ref={props.inputRef}
-            selectedOptions={props.value.map(source.optionOf)}
+            ref={inputRef}
+            selectedOptions={value.map(source.optionOf)}
             deselectAriaLabel={(option) => `Remove ${option.label ?? option.value ?? ''}`}
             onChange={({ detail }) => {
-              const known = [...props.value, ...items];
-              props.onChange(
+              const known = [...value, ...items];
+              onChange(
                 detail.selectedOptions.flatMap((option) => {
                   const found = known.find((item) => source.optionOf(item).value === option.value);
                   return found === undefined ? [] : [found];
@@ -84,13 +97,13 @@ export function CreateServiceChoice<T>(props: ChoiceProps<T> & (SingleChoice<T> 
         ) : (
           <Select
             {...controls}
-            ref={props.inputRef}
+            ref={inputRef}
             dropdownRole="dialog"
-            selectedOption={props.value === undefined ? null : source.optionOf(props.value)}
+            selectedOption={value === undefined ? null : source.optionOf(value)}
             onChange={({ detail }) => {
               const found = items.find((item) => source.optionOf(item).value === detail.selectedOption.value);
               if (found !== undefined) {
-                props.onChange(found);
+                onChange(found);
               }
             }}
           />

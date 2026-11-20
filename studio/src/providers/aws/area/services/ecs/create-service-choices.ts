@@ -15,7 +15,7 @@ export async function listFargateRevisions(
   signal: AbortSignal,
 ): Promise<TokenPage<RevisionChoice>> {
   let next = token;
-  do {
+  while (true) {
     const page = await listRevisionChoices(endpoint, family, next, signal);
     const items: RevisionChoice[] = [];
     for (const revision of page.items) {
@@ -34,12 +34,11 @@ export async function listFargateRevisions(
         items.push(revision);
       }
     }
-    next = page.next;
-    if (items.length > 0 || next === undefined) {
-      return next === undefined ? { items } : { items, next };
+    if (items.length > 0 || page.next === undefined) {
+      return { ...page, items };
     }
-  } while (next !== undefined);
-  return { items: [] };
+    next = page.next;
+  }
 }
 
 export function fargateRevisionChoices(

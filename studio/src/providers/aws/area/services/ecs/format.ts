@@ -3,7 +3,7 @@ import type { SideNavigationProps } from '@cloudscape-design/components/side-nav
 import { AWS_PATH } from '../../../identity';
 import type { ScreenCrumbs, ScreenNavigation } from '../../screens';
 
-// Every address of ECS's ten screens, their titles, crumbs and notice words, the side navigation and the status words
+// Every address of ECS's screens, their titles, crumbs and notice words, the side navigation and the status words
 // (issue 575, requirement R3 and R4; design "Code layout and the cut"): a unit links to another unit's screen by this
 // file alone. A cluster, a service and a family are addressed by their names, a task by its id and a revision by its
 // number, each percent-encoded once as one segment.
