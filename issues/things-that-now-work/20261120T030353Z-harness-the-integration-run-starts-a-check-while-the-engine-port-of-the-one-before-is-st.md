@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: bug
 Issue-Source: finder
 Issue-Key: harness|integration-run|engine-port-not-free-for-the-next-check
-Issue-Check-Ids:
+Issue-Check-Ids: none (harness issue, no kept guard shows it)
 Issue-Commit: f52fddc501b4726bf50ae4ec7f5ea046ee53b7b1
 
 # The integration run starts a check while the engine port of the one before is still taken
