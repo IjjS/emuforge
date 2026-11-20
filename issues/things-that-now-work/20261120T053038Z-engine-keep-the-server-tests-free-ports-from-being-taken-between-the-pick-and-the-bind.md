@@ -4,7 +4,7 @@ Issue-Module: engine
 Issue-Kind: bug
 Issue-Source: finder
 Issue-Key: engine|server-tests.free-port|port-taken-between-pick-and-bind
-Issue-Check-Ids:
+Issue-Check-Ids: engine-test
 Issue-Commit: de75dd4dc2d4a109a752bfe6c62d2580ac505d0a
 
 # Keep the server tests' free ports from being taken between the pick and the bind
