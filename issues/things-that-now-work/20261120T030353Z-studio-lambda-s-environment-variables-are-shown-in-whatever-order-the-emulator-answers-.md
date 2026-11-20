@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: bug
 Issue-Source: finder
 Issue-Key: studio|lambda|environment-variables-order-follows-the-emulators-answer
-Issue-Check-Ids:
+Issue-Check-Ids: studio.lambda-environment-variables-are-listed-by-key studio.lambda-configuration-edits-reach-the-emulator
 Issue-Commit: f52fddc501b4726bf50ae4ec7f5ea046ee53b7b1
 
 # Lambda's environment variables are shown in whatever order the emulator answers, and a check asserts one order

@@ -104,7 +104,7 @@ export interface LambdaFunction extends FunctionSummary {
   codeSize?: number;
   /** `CodeSha256`, as it came. */
   codeSha256?: string;
-  /** `Environment.Variables`, in the answer's order; empty when the function has none. */
+  /** `Environment.Variables`, ascending by key, compared by UTF-16 code unit; empty when the function has none. */
   environment: EnvironmentVariable[];
   /** `State`: `Pending`, `Active`, `Inactive`, `Failed`. */
   state?: string;
@@ -451,12 +451,15 @@ function toFunction(output: GetFunctionCommandOutput, url: FunctionUrl): LambdaF
   return fn;
 }
 
-/** The variables of `Environment.Variables`, in the answer's order; each value as it came, an empty one kept. */
+/**
+ * The variables of `Environment.Variables`, ascending by key, compared by UTF-16 code unit (JavaScript's `<` on
+ * strings, no language's collation): the emulator writes the map in an order of its own on each answer. Each value as
+ * it came, an empty one kept.
+ */
 function toVariables(variables: Record<string, unknown> | undefined): EnvironmentVariable[] {
-  return Object.entries(variables ?? {}).map(([key, value]) => ({
-    key,
-    value: typeof value === 'string' ? value : String(value),
-  }));
+  return Object.entries(variables ?? {})
+    .map(([key, value]) => ({ key, value: typeof value === 'string' ? value : String(value) }))
+    .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 }
 
 function toUrl(output: GetFunctionUrlConfigCommandOutput): FunctionUrl {

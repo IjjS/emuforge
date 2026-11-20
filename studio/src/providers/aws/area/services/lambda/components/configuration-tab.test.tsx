@@ -91,8 +91,8 @@ const ORDERS: LambdaFunction = {
   timeout: 3,
   role: ROLE,
   environment: [
-    { key: 'GREETING', value: 'hello-1' },
     { key: 'EXTRA', value: 'x' },
+    { key: 'GREETING', value: 'hello-1' },
   ],
   url: { kind: 'none' },
 };
@@ -168,7 +168,7 @@ describe('the tab "Configuration"', () => {
     ]);
   });
 
-  it('"Environment variables" with the columns "Key" and "Value", each key and value as text in the read’s order', () => {
+  it('"Environment variables" with the columns "Key" and "Value", each key and value as text in the read’s order (by key, the read’s own)', () => {
     renderTab();
 
     expect(screen.getByRole('heading', { level: 2, name: 'Environment variables' })).toBeInTheDocument();
@@ -178,8 +178,8 @@ describe('the tab "Configuration"', () => {
         .map((header) => norm(header.getElement().textContent)),
     ).toEqual(['Key', 'Value']);
     expect(variableRows()).toEqual([
-      ['GREETING', 'hello-1'],
       ['EXTRA', 'x'],
+      ['GREETING', 'hello-1'],
     ]);
   });
 
@@ -272,12 +272,23 @@ describe('the actions of "Configuration"', () => {
     });
 
     expect(variableRows()).toEqual([
-      ['GREETING', 'hello-1'],
       ['EXTRA', 'x'],
+      ['GREETING', 'hello-1'],
     ]);
     expect(document.body.textContent).not.toContain('typed-in-the-form');
 
-    reread({ ...ORDERS, environment: [{ key: 'GREETING', value: 'hello-2' }] });
-    expect(variableRows()).toEqual([['GREETING', 'hello-2']]);
+    reread({
+      ...ORDERS,
+      environment: [
+        { key: 'AAA', value: '0' },
+        { key: 'EXTRA', value: 'x' },
+        { key: 'GREETING', value: 'hello-1' },
+      ],
+    });
+    expect(variableRows()).toEqual([
+      ['AAA', '0'],
+      ['EXTRA', 'x'],
+      ['GREETING', 'hello-1'],
+    ]);
   });
 });
