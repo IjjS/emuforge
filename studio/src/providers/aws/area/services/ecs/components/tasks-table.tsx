@@ -174,10 +174,7 @@ export function TasksTable({ connection, cluster, service, runHref, onFollowedRe
       loadingText="Loading tasks"
       empty={empty}
       header={
-        <Header
-          variant="h2"
-          counter={items === undefined ? undefined : counterText(items.length, listing.openEnd)}
-        >
+        <Header variant="h2" counter={items === undefined ? undefined : counterText(items.length, listing.openEnd)}>
           Tasks
         </Header>
       }

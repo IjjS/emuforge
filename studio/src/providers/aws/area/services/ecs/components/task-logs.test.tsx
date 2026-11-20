@@ -176,7 +176,9 @@ describe('"Logs"', () => {
       if (log.stream === LOG.stream) {
         // Empty at first, with a token; then a line from that token.
         return Promise.resolve(
-          token === undefined ? { lines: [], nextToken: 'f/0' } : { lines: [{ time: T1, message: 'a' }], nextToken: 'f/1' },
+          token === undefined
+            ? { lines: [], nextToken: 'f/0' }
+            : { lines: [{ time: T1, message: 'a' }], nextToken: 'f/1' },
         );
       }
       // Not there at first; then a line from the head.

@@ -37,9 +37,7 @@ function logOf(definition: ContainerDefinition, container: string, task: string)
   }
   const group = text(configuration.options?.['awslogs-group']);
   const prefix = text(configuration.options?.['awslogs-stream-prefix']);
-  return group === undefined || prefix === undefined
-    ? undefined
-    : { group, stream: `${prefix}/${container}/${task}` };
+  return group === undefined || prefix === undefined ? undefined : { group, stream: `${prefix}/${container}/${task}` };
 }
 
 /**

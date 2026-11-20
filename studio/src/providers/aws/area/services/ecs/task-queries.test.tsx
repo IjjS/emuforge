@@ -75,9 +75,7 @@ describe('the keys', () => {
     });
     const root = ECS_KEYS.clusterTasks('dev');
     expect(
-      keys().some(
-        (key) => under(key, root) && key.includes('STOPPED') && key.includes('api') && key.includes('tok-1'),
-      ),
+      keys().some((key) => under(key, root) && key.includes('STOPPED') && key.includes('api') && key.includes('tok-1')),
     ).toBe(true);
     await waitFor(() => {
       expect(result.current.task.value?.found).toBe(true);
