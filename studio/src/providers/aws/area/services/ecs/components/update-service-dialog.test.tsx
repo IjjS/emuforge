@@ -247,4 +247,82 @@ describe('"Update service"', () => {
     expect(api.updateService).not.toHaveBeenCalled();
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
+
+  it('the service\'s current revision is among the active ones → it keeps its label and is described "The service\'s current revision"; the others have no description', async () => {
+    readRevisions.mockResolvedValue({ items: [revision(5), revision(3)] });
+    open();
+    await screen.findByRole('dialog');
+    const select = revisionSelect();
+    select.openDropdown();
+    await waitFor(() => {
+      expect(select.findDropdown().findOptions()).toHaveLength(3);
+    });
+    const options = select.findDropdown().findOptions();
+    expect(options.map((option) => text(option.findLabel().getElement()))).toEqual(['Keep web:3', 'web:5', 'web:3']);
+    expect(options.map((option) => text(option.findDescription()?.getElement()))).toEqual([
+      '',
+      '',
+      "The service's current revision",
+    ]);
+  });
+
+  it("the Revision select is named once, by its field's label", async () => {
+    open();
+    await screen.findByRole('dialog');
+    const trigger = revisionSelect().findTrigger().getElement();
+    expect(trigger).not.toHaveAttribute('aria-label');
+    const names = (trigger.getAttribute('aria-labelledby') ?? '')
+      .split(' ')
+      .map((id) => text(document.getElementById(id)))
+      .filter((name) => name === 'Revision');
+    expect(names).toHaveLength(1);
+  });
+
+  it('Enter in a field → the dialog is submitted as "Update" does', async () => {
+    vi.mocked(api.updateService).mockResolvedValue(undefined);
+    open();
+    await screen.findByRole('dialog');
+    fireEvent.change(countInput(), { target: { value: '3' } });
+    const form = countInput().form;
+    expect(form).not.toBeNull();
+    fireEvent.submit(form as HTMLFormElement);
+    await waitFor(() => {
+      expect(onUpdated).toHaveBeenCalledWith('api');
+    });
+    expect(vi.mocked(api.updateService).mock.calls[0]?.slice(0, 4)).toEqual([
+      ENGINE,
+      'dev',
+      'api',
+      { desiredCount: 3 },
+    ]);
+  });
+
+  it('Enter with a count that fails its check, or again while an update is pending → its message, or nothing more sent', async () => {
+    let answer: () => void = () => undefined;
+    vi.mocked(api.updateService).mockImplementation(
+      () =>
+        new Promise<undefined>((resolve) => {
+          answer = () => {
+            resolve(undefined);
+          };
+        }),
+    );
+    open();
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(countInput(), { target: { value: '1.5' } });
+    fireEvent.submit(countInput().form as HTMLFormElement);
+    expect(await within(dialog).findByText('Enter a whole number, 0 or more.')).toBeInTheDocument();
+    expect(api.updateService).not.toHaveBeenCalled();
+    fireEvent.change(countInput(), { target: { value: '2' } });
+    fireEvent.submit(countInput().form as HTMLFormElement);
+    await waitFor(() => {
+      expect(api.updateService).toHaveBeenCalledTimes(1);
+    });
+    fireEvent.submit(countInput().form as HTMLFormElement);
+    expect(api.updateService).toHaveBeenCalledTimes(1);
+    answer();
+    await waitFor(() => {
+      expect(onUpdated).toHaveBeenCalledTimes(1);
+    });
+  });
 });
