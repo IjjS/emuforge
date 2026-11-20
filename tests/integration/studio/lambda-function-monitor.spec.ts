@@ -70,23 +70,43 @@ async function reconnect(ctx: Ctx, page: Page, tab: 'Code' | 'Monitor') {
   const name = await monitoredFunction(ctx, port, 'monitor-restart', true);
   await page.goto(functionPath(name) + '?tab=monitor');
   await compareTotals(ctx, port, page, name, { Invocations: 1 });
-  await compareEvents(page, (await directPage(ctx, port, name)).events);
+  const { events } = await directPage(ctx, port, name);
+  expect(
+    events.some((event) => event.message.trimEnd() === 'first 0'),
+    'the previously logged invocation',
+  ).toBe(true);
+  await compareEvents(page, events);
   if (tab === 'Code') await toCode(page, name);
   await markPage(page);
   await emulator.stop();
   await expectLine(page, notStartedOn(port));
   const monitoringRequests: string[] = [];
-  page.on('request', (request) => {
-    const operation = request.headers()['x-amz-target'] ?? '';
-    if (/\.(FilterLogEvents|GetMetricStatistics)$/.test(operation)) monitoringRequests.push(operation);
-  });
+  if (tab === 'Code') {
+    page.on('request', (request) => {
+      const operation = request.headers()['x-amz-target'] ?? '';
+      if (/\.(FilterLogEvents|GetMetricStatistics)$/.test(operation)) monitoringRequests.push(operation);
+    });
+  }
   await emulator.startAgain();
   await expectLine(page, connectedAt(port));
-  if (tab === 'Code') await functionPage(page, name).tab('Monitor').click();
+  if (tab === 'Code') {
+    const [request] = await Promise.all([
+      page.waitForRequest(
+        (request) => request.method() === 'GET' && new URL(request.url()).pathname === `/2015-03-31/functions/${name}`,
+        { timeout: 2 * LINE_CHANGE_BOUND_MS },
+      ),
+      functionPage(page, name).tab('Monitor').click(),
+    ]);
+    const answer = await request.response();
+    if (!answer) throw new Error('Studio received no GetFunction response after selecting Monitor');
+    expect(answer.status()).toBe(404);
+    const refusal = `${answer.headers()['x-amzn-errortype'] ?? ''} ${await answer.text()}`;
+    expect(refusal).toContain('ResourceNotFoundException');
+  }
   await expect(functionPage(page, name).notFound).toBeVisible({ timeout: 2 * LINE_CHANGE_BOUND_MS });
   await expect(page.getByRole('heading', { name: 'Log events' })).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Last hour' })).toHaveCount(0);
-  expect(monitoringRequests).toEqual([]);
+  if (tab === 'Code') expect(monitoringRequests).toEqual([]);
   expect((await getFunctionDirect(ctx, port, name)).found).toBe(false);
   expect(await stillSamePage(page)).toBe(true);
 }
