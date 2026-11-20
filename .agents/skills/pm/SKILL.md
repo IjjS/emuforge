@@ -28,7 +28,7 @@ issue files, merge or archive; they refuse a plan anything outside its own issue
    (Events); `pm-emulator-image status` shows the image and the last refresh.
 3. Panes run on the kind and model the owner names for this session; without one, `claude` on Opus. Ask only if
    the owner has not said and a pane is about to start. The effort goes the same way, `pm-pane new … --effort
-   low|medium|high|xhigh|max`; without it a pane opened again gets the effort it had and a new one its role's
+   low|medium|high|xhigh|max`; without it a pane opened again gets the kind, model and effort it had and a new one its role's
    (`plan`, `rev`, `crit`, `harness-engineer` `high`, `worker` `medium`); a Codex pane ignores it. When the owner names a token rate for the day, set it
    with `pm-tokens target <rate>`; without one nothing is limited, and you do not ask for one.
 4. Open work: list every `.pm/issue-*/state.md` in one line each and continue from it. Then `pm-issue list`: the
@@ -96,8 +96,9 @@ An engine, CLI, IAM, Verify or Studio issue goes to a plan:
 
 `pm-brief` fills `references/briefs/plan.md` and `rev.md` (placeholders: `references/briefs/README.md`), writes
 both briefs and marks the issue `lead: plan`. Never fill a
-template by hand or with a script of your own, and add nothing to a written brief. The plan opens its rev, its
-workers and its crit, and leads the issue as `lead.md` says. You do nothing until its `ISSUE READY` line, except
+template by hand or with a script of your own, and add nothing to a written brief; after `rev.md` changes, an issue
+in flight takes it from its next round with `pm-brief rev <id>`. The plan opens its workers and its crit, and a rev
+for each review round (closed after it), and leads the issue as `lead.md` says. You do nothing until its `ISSUE READY` line, except
 answer its `BLOCKED` lines (Events).
 
 A harness issue goes to one harness-engineer, in a unit worktree of its own:
@@ -245,7 +246,7 @@ flow step 1:
   tab:
   - The oldest issue of the batch is its host. Its `.pm/issue-<host>/` holds the batch's stage documents, and
     `decisions.md` names the other issue files. One `plan` pane leads all five, with one requirement, one set of
-    test criteria and one breakdown, and its one `rev` pane reviews the requirement, the plan set and the
+    test criteria and one breakdown, and its `rev` rounds review the requirement, the plan set and the
     implementation once each for the whole batch.
   - The batch is one issue branch of its host: `pm-worktree new <host>` makes it, and the units belong to the host
     (`pm-worktree new <host> <unit>`) and are cut as for one issue: a unit may fix
@@ -328,8 +329,8 @@ logged in `.pm/run/events.log` and never delivered; a turn with none wakes you a
 | `pm-emulator-image` | the machine's emulator image `aws-emulator` on the latest package: `refresh` at session start (returns at once; the outcome comes as `EVENT emulator-image …`), `refresh --foreground` by hand, `status`; a refresh to a new version then prunes Docker's private build cache down to 20 GB (`docker builder prune --max-used-space 20000000000`; the outcome line gives what it reclaimed, the private size left and the image-shared part apart, which is the images' disk and which `docker system df` adds to Build Cache), and nothing else of Docker |
 | `pm-emulator-dir` | a port folder under `~/.aws/emulator` once nothing uses it: `rm --worktree` (run by `pm-merge` and `pm-worktree rm`), `rm --port`, `orphans [--remove]` on the owner's request |
 | `pm-probe-services` | which of the board's services the emulator answers: `run` by hand starts an emulator of its own from the machine's image on a free loopback port, sends every read call of its table (`.pm/bin/probe-services.json`), removes the emulator and its folder, and writes `.pm/run/probe-services-<stamp>.json` with the emulator's version and each service's result and summary, which you copy into the board's `Emulator` column; `table` regenerates the table's operations from the AWS CLI's model files (`--board` checks its keys against the board) |
-| `pm-brief` | a pane's brief from its template: `plan` (also writes rev's), `harness-engineer`, `worker`, `crit`, `show`; a plan runs `worker` and `crit` for its own issue |
-| `pm-pane` | panes: `new` (`--kind`, `--model`, `--effort`), `reset`, `close`, `list`; a plan runs `new` of a worker, rev or crit and `reset` and `close` of those panes for its own issue; a `QUEUE` answer to a plan becomes `EVENT room` to it later |
+| `pm-brief` | a pane's brief from its template: `plan` (also writes rev's), `rev` (rev's alone), `harness-engineer`, `worker`, `crit`, `show`; a plan runs `worker`, `crit` and `rev` for its own issue |
+| `pm-pane` | panes: `new` (`--kind`, `--model`, `--effort`; a name opened again keeps what it had), `reset`, `close`, `list`; a plan runs `new` of a worker, rev or crit and `reset` and `close` of those panes for its own issue; a `QUEUE` answer to a plan becomes `EVENT room` to it later |
 | `pm-report` | a pane's typed line that ends its turn, to its lead (you, or the plan of its issue) or to the log |
 | `pm-check` | the checks of a checkout, recorded; on a unit of an issue branch the fast check (`integration` left to the issue branch), on the issue's worktree the whole check; `--checks <id>…` single integration checks, never a gate; runs each step once (no second run), a heavy run asks for room and starts or answers `WAIT <n>s` (exit 75; `EVENT room <pane> check <worktree>` follows), the record holds how long it `waited`, `--stop` ends one worktree's run; the harness step runs the three guards |
 | `pm-capture` | screen captures and contact sheets |

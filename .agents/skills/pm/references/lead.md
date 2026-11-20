@@ -21,18 +21,32 @@ issue's collecting branch `feat/<id>`, the integration tests, the whole check, t
   `WAITING i<id>-plan unit <unit>` or `WAITING i<id>-plan review <stage> r<k>`. A turn without one is
   `EVENT silent i<id>-plan` to the `pm`.
 
+## A review round
+
+A `rev` pane lives for one review round (owner, 2026-11-20; `review-protocol.md`). For each `REVIEW <stage> r<k>`:
+
+1. Open a rev for it, with the round as its first prompt:
+   `pm-pane new <id> rev --brief .pm/issue-<id>/brief-rev.md --text "REVIEW <stage> r<k> <paths>"` (pane
+   `i<id>-rev`), then end your turn with `WAITING i<id>-plan review <stage> r<k>`. Every round's pane has the same
+   brief; `pm-pane` gives it the kind, model and effort the last one had, unless you pass them. A `QUEUE` answer:
+   `WAITING i<id>-plan room rev`, and the same command again on `EVENT room`.
+2. Its `REVIEWED` line arrives as your next prompt. When `.pm/issue-<id>/review-<stage>-r<k>.md` is there, close the
+   pane: `pm-pane close i<id>-rev`. When it is missing, prompt the pane once to write it, and close it after.
+3. The next round, of the same stage or the next, is step 1 again: a new pane. r<k+1> reads r1 to r<k> from their
+   files, nothing remembered. A round is answered by the next round, never run again under its own or a higher
+   number: `pm-merge` refuses a stage whose review files are not r1 to its last.
+
 ## Stages before the build
 
 Two reviews by `rev` before any code, per `review-protocol.md` (owner, 2026-11-19): the requirement alone, then
 the plan set. The module's `references/workflow.md` and `references/test-criteria.md` say what each document holds.
 
 1. `requirement.md`. Find out what the emulator answers today by calling one (start it on a free port, stop it
-   after); never from memory. Send `REVIEW requirement r1 .pm/issue-<id>/requirement.md` and end your turn with
-   `WAITING i<id>-plan review requirement r1`.
-2. On its `pass`, the plan set: write its three documents together, then send them in one line,
-   `REVIEW plan-set r1 .pm/issue-<id>/design.md .pm/issue-<id>/test-criteria.md .pm/issue-<id>/breakdown.md`, and
-   end your turn with `WAITING i<id>-plan review plan-set r1`. A `revise` names the document of each P1: fix those,
-   and send the whole set again as r<k+1>.
+   after); never from memory. Its round is `REVIEW requirement r1 .pm/issue-<id>/requirement.md` (A review
+   round).
+2. On its `pass`, the plan set: write its three documents together, then send them in one round,
+   `REVIEW plan-set r1 .pm/issue-<id>/design.md .pm/issue-<id>/test-criteria.md .pm/issue-<id>/breakdown.md`. A
+   `revise` names the document of each P1: fix those, and send the whole set again as r<k+1>, to a new rev.
    - `design.md`, the design stage your brief names (the module's `references/workflow.md`, stage 2); left out of
      the set when the workflow skips the design for the issue's kind.
    - `test-criteria.md`, from the requirement: per unit, the unit-test scenarios that are its worker's end
@@ -63,7 +77,8 @@ On the plan set's `pass`, the build starts.
    (`--close` for the unit that closes the issue), then
    `pm-pane new <id> worker --unit <unit> --cwd <its worktree> --brief .pm/issue-<id>/brief-<unit>.md`. You may
    pass `--effort low|medium|high|xhigh|max` to any pane you open, as the model goes; without it a worker runs at
-   `medium`, `rev` and `crit` at `high`, and a pane opened again at the effort it had.
+   `medium`, `rev` and `crit` at `high`, and a pane opened again under its name (a rev for each round) with the
+   kind, model and effort it had.
 3. On a worker's `UNIT READY`: `pm-merge <id> <unit>` merges its branch into `feat/<id>` on its fast check. A unit
    is merged as many times as it is fixed.
 4. After a merge, tell only a pane whose branch was cut from `feat/<id>` and that needs what it gained:
@@ -104,8 +119,8 @@ When it fails, tell the cause apart first, and act by it (owner, 2026-11-19):
    on its branch, merges `feat/<id>` into its own when `pm-merge` asks, passes its fast check, and is merged again.
    When the fix changed a screen, that screen alone is critiqued once more (`SCORE final <its routes>`), and a P0 or
    P1 it finds is fixed the same way. `feat/<id>` has then moved: run the whole check again.
-2. A fault of your own integration test: fix it on `feat/<id>`, have `rev` read the change, and run the whole check
-   again.
+2. A fault of your own integration test: fix it on `feat/<id>`, have a `rev` round read the change (A review
+   round), and run the whole check again.
 3. A criteria line that is wrong: stop with `BLOCKED i<id>-plan check <id>`; the `pm` decides.
 4. A failure that looks intermittent: there is no second run (issue 569), so a step that fails has failed; tell
    its cause apart as here, and file one that is no unit's as its own issue (below).
@@ -118,10 +133,11 @@ Never run the whole check again without the cause of its failure written in `sta
 
 ## End review
 
-1. When the whole check passes: `REVIEW impl r1 <changed paths> emuforge-<id>/output/checks/last.json` to `rev`: the
-   whole diff `main...feat/<id>`, and whether the integration tests are the scenarios.
+1. When the whole check passes, the round `REVIEW impl r1 <changed paths> emuforge-<id>/output/checks/last.json`
+   (A review round): the whole diff `main...feat/<id>`, and whether the integration tests are the scenarios.
 2. A P1 of the review is fixed by the worker that owns it: fast check, merged again, and the whole check again (a
-   fix that changes a screen has that screen critiqued once more first); then the next review round follows.
+   fix that changes a screen has that screen critiqued once more first); then the next review round follows, to a
+   new rev.
 3. When the review passes: Close, and your `ISSUE READY`.
 
 ## What becomes its own issue
@@ -146,8 +162,8 @@ Write `.pm/issue-<id>/report.md`:
 - every issue you filed, with the severity you gave it and one line of reason;
 - what was not done.
 
-The `pm` reviews those severities and may change them. Close your workers, `rev` and `crit`
-(`pm-pane close <name>`). Then
+The `pm` reviews those severities and may change them. Close your workers and `crit` (`pm-pane close <name>`);
+no rev is open by then, each was closed after its round. Then
 `pm-report "ISSUE READY i<id>-plan feat/<id> report=.pm/issue-<id>/report.md [filed #<n> …]"`, print the same
 line and stop. The `pm` merges `feat/<id>` into `main` and then closes you.
 
@@ -172,15 +188,15 @@ events go to the `pm`.
 | `EVENT ready <pane> BLOCKED depends <unit> <what>` | answer in one line, or tell the pane to wait for the parent's `UNIT READY` |
 | `EVENT ready <pane> BLOCKED check <id>` | a worker believes a confirmed check is wrong: a wrong criteria line is changed only on the `pm`'s decision, so stop with `BLOCKED i<id>-plan check <id>`; an integration test of yours that does not do what its criteria line says you fix yourself, and record why under `## Plan decisions` |
 | `EVENT ready <pane> BLOCKED review <stage>` | three rounds failed: stop with `BLOCKED i<id>-plan review <stage>` |
-| `EVENT ctx <pane> <n>K` | read the pane's state file first (a worker's `output/state.md` in its worktree, `state-rev.md` or `state-crit.md`); when it is behind what the pane last reported, tell the pane in one line to write it, and reset on its next turn; then `pm-pane reset <pane>` with the command timeout set to 10 minutes |
+| `EVENT ctx <pane> <n>K` | read the pane's state file first (a worker's `output/state.md` in its worktree, or `state-crit.md`; a rev keeps none, the reset asks it for its round in progress); when it is behind what the pane last reported, tell the pane in one line to write it, and reset on its next turn; then `pm-pane reset <pane>` with the command timeout set to 10 minutes |
 | `EVENT silent <pane>` | its turn ended with no typed line: `herdr agent read <pane> --lines 80` and its state file; stopped mid-work, prompt it in one line to go on; finished or waiting, prompt it to end its turn with its typed line (`pane-mode.md`, Reporting lines); silent twice in a row with no progress, `pm-pane reset <pane>` |
 | `EVENT stale <pane>` | `herdr agent read <pane> --lines 80`; if it loops, `pm-pane reset <pane>` |
-| `EVENT gone <pane>` | reopen it with the same brief; its worktree and state file are still there |
+| `EVENT gone <pane>` | reopen it with the same brief; its worktree and state file are still there; a rev, with the same round |
 | `EVENT check still <worktree> <step> <n>m` | read the end of `<worktree>/output/logs/check-<step>.log`; a step that still writes is left alone; a hung one: `pm-check <worktree> --stop` and tell its pane in one line |
 | `EVENT room <you> pane <role> <side>` | run the `pm-pane new` that was answered `QUEUE` again |
 | `EVENT room <you> check <worktree>` | run the `pm-check` that was answered `WAIT` again |
 
-`REVIEWED` lines come straight from `rev` as your next prompt; `WAITING`, `REVIEWED` and `RESET READY` lines are
+`REVIEWED` lines come straight from `rev` as your next prompt (A review round, step 2); `WAITING`, `REVIEWED` and `RESET READY` lines are
 logged and never delivered. Talk to your panes with
 `herdr agent prompt <pane> "<one line>"`.
 

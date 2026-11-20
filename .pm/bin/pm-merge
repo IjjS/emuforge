@@ -82,6 +82,10 @@ pm's. Every other pane is refused.
 The lead of the issue, the mark `lead` that pm-brief writes into .pm/issue-<n>/brief.json, changes the review rule:
 `plan`: a unit goes into feat/<issue> on its fast check alone (rev reviews the whole at the end), and feat/<issue>
 goes into main only when the newest review-impl-r<k>.md (the whole, stage `impl`) says verdict: pass.
+Rounds (issue 557): wherever a review file is asked (a plan-led issue branch into main, a unit under the per-unit
+rule), every stage of the issue's review files, review-<stage>-r<k>.md grouped by <stage>, must hold r1 to its
+highest round with no number missing; each stage that does not is one problem. A rev pane lives for one round, so a
+round is answered by the next round, never run again in place of being answered.
 `harness-engineer`: no review file is asked; the pm that runs the merge has judged the change, and the output says so.
 A harness-engineer's part closes its issue (issue 504): a unit into main of such an issue is refused while a file under
 issues/things-that-do-not-work/ holds `Issue-Id: <issue>` at the branch's head, unless brief.json records the unit's
@@ -266,9 +270,31 @@ def stack(wts, wt):
     return chain
 
 
+ROUND = re.compile(r"^review-(.+)-r(\d+)\.md$")
+
+
+def round_gaps(issue):
+    """One problem per stage of the issue's review files (.pm/issue-<n>/review-<stage>-r<k>.md, any stage name) whose
+    rounds are not r1 to its highest, every number there (issue 557): a round is answered by the next one, never run
+    again in place of being answered."""
+    stages = {}
+    for f in (PM / f"issue-{issue}").glob("review-*-r*.md"):
+        m = ROUND.match(f.name)
+        if m:
+            stages.setdefault(m.group(1), set()).add(int(m.group(2)))
+    problems = []
+    for stage, ks in sorted(stages.items()):
+        missing = [k for k in range(1, max(ks) + 1) if k not in ks]
+        if missing:
+            problems.append(f"review-{stage}: {', '.join(f'r{k}' for k in missing)} missing of r1..r{max(ks)}; a review "
+                            "round is answered by the next round, never run again in place of being answered")
+    return problems
+
+
 def review(issue, unit):
     """The review rule: the newest review-impl-<unit>-r<k>.md (for a test unit without one, its newest
-    review-checks-<unit>-r<k>.md) says verdict: pass. Returns (problems, the newest review file or None)."""
+    review-checks-<unit>-r<k>.md) says verdict: pass, and no stage's rounds have a gap (round_gaps). Returns
+    (problems, the newest review file or None)."""
     def rounds(stage):
         return sorted((PM / f"issue-{issue}").glob(f"review-{stage}-{unit}-r*.md"),
                       key=lambda f: int(re.search(r"-r(\d+)\.md$", f.name).group(1)))
@@ -279,9 +305,10 @@ def review(issue, unit):
     if not reviews:
         want = f"review-impl-{unit}-r<k>.md" + (f" or review-checks-{unit}-r<k>.md" if unit.startswith("t") else "")
         return [f"no {want}; rev has not reviewed this unit"], None
+    gaps = round_gaps(issue)
     if not re.search(r"^verdict:\s*pass\s*$", reviews[-1].read_text(errors="replace")[:400], re.M):
-        return [f"{reviews[-1].name} is not verdict: pass"], reviews[-1]
-    return [], reviews[-1]
+        return [f"{reviews[-1].name} is not verdict: pass", *gaps], reviews[-1]
+    return gaps, reviews[-1]
 
 
 def lead(issue):
@@ -322,14 +349,16 @@ def unit_review(issue, unit):
 
 
 def whole_review(issue):
-    """(problems, what it was judged on) for the issue branch of a plan-led issue: the newest review-impl-r<k>.md."""
+    """(problems, what it was judged on) for the issue branch of a plan-led issue: the newest review-impl-r<k>.md says
+    verdict: pass, and no stage's rounds have a gap (round_gaps)."""
     reviews = sorted((PM / f"issue-{issue}").glob("review-impl-r*.md"),
                      key=lambda f: int(re.search(r"-r(\d+)\.md$", f.name).group(1)))
+    gaps = round_gaps(issue)
     if not reviews:
-        return ["no review-impl-r<k>.md; rev has not reviewed the whole issue branch"], None
+        return ["no review-impl-r<k>.md; rev has not reviewed the whole issue branch", *gaps], None
     if not re.search(r"^verdict:\s*pass\s*$", reviews[-1].read_text(errors="replace")[:400], re.M):
-        return [f"{reviews[-1].name} is not verdict: pass"], reviews[-1].name
-    return [], reviews[-1].name
+        return [f"{reviews[-1].name} is not verdict: pass", *gaps], reviews[-1].name
+    return gaps, reviews[-1].name
 
 
 def record_problems(last, head):
