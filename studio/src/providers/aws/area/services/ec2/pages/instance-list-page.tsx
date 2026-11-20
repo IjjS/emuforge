@@ -45,8 +45,11 @@ const STATE_OPTIONS: SelectProps.Option[] = [
 ];
 const NO_FILTERS: ListingFilters = { state: '', name: '' };
 
-/** A name keeps room for 24 characters (`aws-area.md`, entry 4). */
-const NAME_MIN_WIDTH = '28ch';
+/**
+ * A name keeps room for 24 characters (`aws-area.md`, entry 4), lower than the area's 28ch so that at 1280 the
+ * table keeps Private IPv4 and Launched in view (second critique P2 2).
+ */
+const NAME_MIN_WIDTH = '24ch';
 
 /**
  * Room for an instance's ID (`i-` and 17 hex digits) on one line, an IPv4 address whole, and a launch time on two
@@ -55,6 +58,8 @@ const NAME_MIN_WIDTH = '28ch';
 const ID_MIN_WIDTH = '23ch';
 const ADDRESS_MIN_WIDTH = '18ch';
 const LAUNCHED_MIN_WIDTH = '26ch';
+/** A state's icon and its word on one line, up to "terminated" (second critique P2 2). */
+const STATE_MIN_WIDTH = '14ch';
 
 type BodyState =
   | { kind: 'loading' }
@@ -168,7 +173,12 @@ export function InstanceListPage({ connection }: { connection: AreaConnection })
         </Link>
       ),
     },
-    { id: 'state', header: 'State', cell: (row) => <InstanceStateValue state={row.state} /> },
+    {
+      id: 'state',
+      header: 'State',
+      minWidth: STATE_MIN_WIDTH,
+      cell: (row) => <InstanceStateValue state={row.state} />,
+    },
     { id: 'type', header: 'Type', cell: (row) => <ValueText kind="fixed" value={row.type} none={NONE} /> },
     { id: 'zone', header: 'Availability Zone', cell: (row) => <ValueText kind="fixed" value={row.zone} none={NONE} /> },
     {
