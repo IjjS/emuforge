@@ -149,8 +149,8 @@ function CreateServiceForm({ cluster, connection }: { cluster: string; connectio
   const [unsupported, setUnsupported] = useState(false);
   const [duplicateName, setDuplicateName] = useState<string>();
   const familyReasonId = useId();
-  const refusalTitleId = useId();
-  const refusalDetailId = useId();
+  const refusalId = useId();
+  const refusalCount = useRef(0);
   const [pending, setPending] = useState(false);
   const [asking, setAsking] = useState(false);
   const [kept, setKept] = useState(0);
@@ -236,6 +236,11 @@ function CreateServiceForm({ cluster, connection }: { cluster: string; connectio
           setDuplicateName(request.serviceName);
         }
         setUnsupported(failure.kind === 'not-implemented');
+        // A previous item can still be visible during its exit animation.
+        refusalCount.current += 1;
+        const itemId = `${refusalId}-${String(refusalCount.current)}`;
+        const refusalTitleId = `${itemId}-title`;
+        const refusalDetailId = `${itemId}-detail`;
         flash.show([
           {
             ...item,

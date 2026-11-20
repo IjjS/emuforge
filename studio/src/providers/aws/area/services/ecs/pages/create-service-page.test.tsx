@@ -553,3 +553,23 @@ it.each([
     }
   },
 );
+
+it('focuses the latest diagnostic after another refused submission', async () => {
+  let diagnostic = duplicate;
+  emulator.mockImplementation((op) =>
+    op === 'CreateService' ? reply({ __type: 'InvalidParameterException', message: diagnostic }, 400) : normal(op),
+  );
+  open();
+  await fill();
+  fireEvent.click(submitButton());
+  await screen.findByText(duplicate, { exact: false });
+  expect(document.activeElement).toHaveAccessibleDescription(expect.stringContaining(duplicate) as string);
+
+  diagnostic = 'The name contains invalid characters.';
+  fireEvent.change(nameInput(), { target: { value: 'corrected' } });
+  fireEvent.click(submitButton());
+  await screen.findByText(diagnostic, { exact: false });
+  expect(document.activeElement).toHaveAccessibleDescription(expect.stringContaining(diagnostic) as string);
+  expect(screen.queryByText('Choose a different service name.')).not.toBeInTheDocument();
+  expect(calls('CreateService')).toHaveLength(2);
+});
