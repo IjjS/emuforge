@@ -57,7 +57,9 @@ function target(status: string, changes: Partial<ActionTarget> = {}): ActionTarg
 const LIFECYCLE_BUTTON_POSITION = { Start: 0, Stop: 1, Reboot: 2, Delete: 3 } as const;
 
 function button(name: keyof typeof LIFECYCLE_BUTTON_POSITION) {
-  const action = PAGE.findSpaceBetween()?.findAllButtons()[LIFECYCLE_BUTTON_POSITION[name]];
+  const group = PAGE.findSpaceBetween();
+  if (group === null) throw new Error('Missing lifecycle button group.');
+  const action = createWrapper(group.getElement()).findAllButtons()[LIFECYCLE_BUTTON_POSITION[name]];
   if (action === undefined) throw new Error(`Missing lifecycle button: ${name}`);
   expect(action.findTextRegion()?.getElement().textContent?.trim()).toBe(name);
   return action.getElement();
