@@ -25,6 +25,7 @@ import {
   familyPath,
   field,
   JSON_FIELD,
+  jsonOf,
   NOT_REGISTERED,
   open,
   REGISTER,
@@ -50,7 +51,7 @@ test('studio.ecs-definition-made-outside-is-listed-and-shown', async ({ ctx, pag
   const main = page.getByRole('main');
 
   await open(page, DEFINITIONS_PATH, DEFINITIONS_H1);
-  await main.getByRole('textbox', { name: FAMILY_FILTER }).fill(family, ACTION);
+  await main.getByRole('searchbox', { name: FAMILY_FILTER }).fill(family, ACTION);
   await expectRow(main.locator(TABLE).first(), 'Family', family);
   await main.getByRole('link', { name: family, exact: true }).click(ACTION);
   await expect(page).toHaveURL(addressOf(familyPath(family)));
@@ -64,7 +65,7 @@ test('studio.ecs-definition-made-outside-is-listed-and-shown', async ({ ctx, pag
   await expectValue(page, 'Status', 'Active');
   const web = await expectRow(tableOf(main, 'Containers'), 'Name', 'web');
   expect([web.Image, web.Ports], "the container's image and ports").toEqual(['busybox', '80/tcp']);
-  await expect(main.locator('pre').filter({ hasText: `"family": "${family}"` }), "the JSON holds the family's name").toBeVisible();
+  await expect(jsonOf(main), "the JSON holds the family's name").toContainText(`"family": "${family}"`);
 });
 
 test('studio.ecs-register-new-revision-from-a-revision', async ({ ctx, page }) => {

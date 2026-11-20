@@ -532,6 +532,7 @@ const TABLE_HEADERS = inside(wrapper.findTable().findColumnHeaders());
 const TABLE_EMPTY = inside(wrapper.findTable().findEmptySlot());
 const NEXT_PAGE = rel(wrapper.findPagination().findNextPageButton());
 const ALERT = rel(wrapper.findAlert());
+const CONTAINER = rel(wrapper.findContainer());
 const MODAL = rel(wrapper.findModal());
 const FORM_FIELD = rel(wrapper.findFormField());
 const FORM_FIELD_LABEL = inside(wrapper.findFormField().findLabel());
@@ -770,7 +771,20 @@ export async function chooseInMultiselect(formField: Locator, value: string): Pr
 
 /** The alert of `scope` that holds `text` (a refusal kept on a form or in a dialog). */
 export function alertWith(scope: Locator, text: string): Locator {
-  return scope.locator(ALERT).filter({ hasText: text });
+  return scope.locator(ALERT).or(scope.getByRole('alert')).filter({ hasText: text }).first();
+}
+
+/** The links of the not-found state whose heading is `heading`: the state's own, not the navigation's or the crumbs'. */
+export function notFoundLinks(main: Locator, heading: string): Locator {
+  return main
+    .locator(CONTAINER)
+    .filter({ has: main.page().getByText(heading, { exact: true }) })
+    .getByRole('link');
+}
+
+/** The part of a revision's page that shows its JSON: the container headed "JSON". */
+export function jsonOf(main: Locator): Locator {
+  return main.locator(CONTAINER).filter({ has: main.page().getByRole('heading', { name: 'JSON', exact: true }) });
 }
 
 /** The log of the container `container` on a task's page. */
