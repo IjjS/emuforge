@@ -697,14 +697,18 @@ async function openModify() {
   });
 }
 
-function update(dialog: ModifyDialog, label: string, value: string) {
+function modifyInput(dialog: ModifyDialog, label: string) {
   const field = dialog
     .findContent()
     .findAllFormFields()
     .find((field) => field.findLabel()?.getElement().textContent?.trim() === label);
   const input = field?.findControl()?.findInput()?.findNativeInput().getElement();
   if (input === undefined) throw new Error(`Missing input: ${label}`);
-  fireEvent.change(input, { target: { value } });
+  return input;
+}
+
+function update(dialog: ModifyDialog, label: string, value: string) {
+  fireEvent.change(modifyInput(dialog, label), { target: { value } });
 }
 
 function footerButton(dialog: ModifyDialog, action: 'save' | 'cancel') {
@@ -728,10 +732,12 @@ async function waitForModificationFlash(expected: string) {
 
 function held<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((done, fail) => {
     resolve = done;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 function refused(failure: Omit<Extract<RequestFailure, { kind: 'other' }>, 'operation' | 'kind'>) {
@@ -962,6 +968,75 @@ describe('modifying a DB instance', () => {
       expect(flashes('success')).toEqual([]);
     },
   );
+
+  it('locks the submitted draft and hides Close while saving, then restores editing on refusal', async () => {
+    const request = held<string>();
+    vi.mocked(api.getInstance).mockResolvedValue(found({ deletionProtection: true }));
+    vi.mocked(modifyInstance).mockReturnValue(request.promise);
+    open(PATH);
+    const dialog = await openModify();
+    const edits = [
+      [ID_LABEL, 'renamed-db'],
+      [CLASS_LABEL, 'db.t3.small'],
+      ['Allocated storage (GiB)', '30'],
+      ['New master password', 'Example-Only!580'],
+    ] as const;
+    for (const [label, value] of edits) update(dialog, label, value);
+    const protection = dialog.findContent().findCheckbox()?.findNativeInput().getElement() as HTMLInputElement;
+    fireEvent.click(protection);
+    expect(dialog.findDismissButton().getElement()).toHaveAccessibleName('Close');
+    const save = saveChanges(dialog);
+    expect(modifyInstance).toHaveBeenCalledExactlyOnceWith(
+      ENGINE,
+      'app-db',
+      {
+        identifier: 'renamed-db',
+        instanceClass: 'db.t3.small',
+        allocatedStorage: 30,
+        masterPassword: 'Example-Only!580',
+        deletionProtection: false,
+      },
+      expect.any(AbortSignal),
+    );
+
+    expect(dialog.findDismissButton()).toBeNull();
+    expect(footerButton(dialog, 'cancel')).toBeDisabled();
+    expect(isDisabled(save)).toBe(true);
+    expect(save).toHaveFocus();
+    fireEvent.keyDown(save, { key: 'Escape', keyCode: 27 });
+    expect(dialog.getElement()).toBeInTheDocument();
+    for (const [label, value] of edits) {
+      const input = modifyInput(dialog, label);
+      expect(input).toBeDisabled();
+      expect(input).toHaveValue(value);
+    }
+    expect(modifyInput(dialog, 'New master password')).toHaveAttribute('type', 'password');
+    expect(protection).toBeDisabled();
+    protection.click();
+    expect(protection).not.toBeChecked();
+
+    await act(async () =>
+      request.reject(refused({ code: 'DBInstanceAlreadyExists', message: 'DB instance already exists' })),
+    );
+    expect(dialog.findContent().findAlert()?.findContent().getElement()).toHaveTextContent(
+      'DB instance already exists',
+    );
+    for (const [label, value] of edits) {
+      const input = modifyInput(dialog, label);
+      expect(input).toBeEnabled();
+      expect(input).toHaveValue(value);
+    }
+    expect(protection).toBeEnabled();
+    fireEvent.click(protection);
+    expect(protection).toBeChecked();
+    update(dialog, ID_LABEL, 'corrected-db');
+    expect(modifyInput(dialog, ID_LABEL)).toHaveValue('corrected-db');
+    expect(footerButton(dialog, 'save')).toBeEnabled();
+    const close = dialog.findDismissButton().getElement();
+    expect(close).toHaveAccessibleName('Close');
+    fireEvent.click(close);
+    expect(PAGE.findModal()).toBeNull();
+  });
 
   it('U14 refreshes the detail when the target disappears before Save', async () => {
     vi.mocked(api.getInstance).mockResolvedValueOnce(found()).mockResolvedValue({ found: false });
