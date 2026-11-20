@@ -53,7 +53,9 @@ describe("the area's document field", () => {
   });
 
   it("given an error text → shown as the field's error; disabled → the text cannot be changed", () => {
-    const { container, rerender } = render(<Field onChange={vi.fn()} errorText="A task definition is a JSON object." />);
+    const { container, rerender } = render(
+      <Field onChange={vi.fn()} errorText="A task definition is a JSON object." />,
+    );
     const wrapper = createWrapper(container);
     expect(wrapper.findFormField()?.findError()?.getElement().textContent).toBe('A task definition is a JSON object.');
     expect(wrapper.findTextarea()?.findNativeTextarea().getElement().getAttribute('aria-invalid')).toBe('true');

@@ -122,7 +122,10 @@ describe('the register form', () => {
       parserMessage = (error as Error).message;
     }
     expect(parseDefinition('{"family": ')).toEqual({ ok: false, message: `This is not valid JSON: ${parserMessage}` });
-    expect(parseDefinition('')).toMatchObject({ ok: false, message: expect.stringMatching(/^This is not valid JSON: /) });
+    expect(parseDefinition('')).toMatchObject({
+      ok: false,
+      message: expect.stringMatching(/^This is not valid JSON: /),
+    });
 
     for (const value of ['[]', '1', 'null']) {
       expect(parseDefinition(value)).toEqual({ ok: false, message: NOT_AN_OBJECT });

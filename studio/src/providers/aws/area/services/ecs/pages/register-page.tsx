@@ -72,7 +72,11 @@ export function RegisterPage({ connection }: ScreenPageProps) {
       <RegisterForm
         connection={connection}
         start={start}
-        warning={given && found === undefined ? `Revision ${fromText} could not be read; the starter is shown instead.` : undefined}
+        warning={
+          given && found === undefined
+            ? `Revision ${fromText} could not be read; the starter is shown instead.`
+            : undefined
+        }
         leaveTo={from === undefined ? TASK_DEFINITIONS_PATH : revisionHref(from.family, from.revision)}
       />
     );
