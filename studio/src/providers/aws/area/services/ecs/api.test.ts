@@ -1,11 +1,21 @@
 // @vitest-environment node
 import { DescribeLogGroupsCommand } from '@aws-sdk/client-cloudwatch-logs';
 import { DescribeVpcsCommand } from '@aws-sdk/client-ec2';
+import { DescribeServicesCommand, DescribeTaskDefinitionCommand, DescribeTasksCommand } from '@aws-sdk/client-ecs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { engineEndpoint } from '../../../../../lib/aws/client-factory';
 import { RequestError, type RequestFailure } from '../../../../../lib/aws/request';
-import { createCluster, deleteCluster, getCluster, listClusters, sendEc2, sendLogs } from './api';
+import {
+  createCluster,
+  cutFractions,
+  deleteCluster,
+  getCluster,
+  listClusters,
+  sendEc2,
+  sendEcs,
+  sendLogs,
+} from './api';
 
 // The test plays the engine behind the page's `fetch`: its session route, and every AWS request as it leaves the
 // browser. ECS and CloudWatch Logs speak JSON 1.1 (`POST /`, the operation in `X-Amz-Target`), EC2 its query
@@ -272,5 +282,72 @@ describe('a failed request', () => {
     const reason = new Error('left');
     controller.abort(reason);
     await expect(result).rejects.toBe(reason);
+  });
+});
+
+describe('the emulator’s epoch times of 9 fractional digits', () => {
+  // As the emulator writes them (DescribeServices on 9310): more digits than a double holds, which the SDK's own
+  // reader refuses. ECS's client reads each to the emulator's millisecond.
+  const NINE = '1795161554.763557799';
+  const MILLIS = Date.UTC(2026, 10, 20, 7, 59, 14, 763);
+  const raw = (body: string): Answer => ({ status: 200, body, type: JSON_1_1 });
+
+  it('reads DescribeServices whose createdAt has 9 fractional digits, to the millisecond', async () => {
+    engine.handle = () =>
+      raw(
+        `{"services":[{"serviceName":"web","createdAt":${NINE},"deployments":[{"id":"d-1","createdAt":${NINE},"updatedAt":${NINE}}],"events":[{"id":"e-1","createdAt":${NINE},"message":"at 1.123456789"}]}],"failures":[]}`,
+      );
+    const output = await sendEcs(
+      endpoint,
+      'DescribeServices',
+      (client, abortSignal) =>
+        client.send(new DescribeServicesCommand({ cluster: 'dev', services: ['web'] }), { abortSignal }),
+      signal(),
+    );
+    const service = output.services?.[0];
+    expect(service?.createdAt?.getTime()).toBe(MILLIS);
+    expect(service?.deployments?.[0]?.updatedAt?.getTime()).toBe(MILLIS);
+    expect(service?.events?.[0]?.createdAt?.getTime()).toBe(MILLIS);
+    expect(service?.events?.[0]?.message).toBe('at 1.123456789');
+  });
+
+  it('reads DescribeTasks whose times have 9 fractional digits, to the millisecond', async () => {
+    engine.handle = () =>
+      raw(
+        `{"tasks":[{"taskArn":"arn:aws:ecs:us-east-1:000000000000:task/dev/t1","createdAt":${NINE},"startedAt":${NINE},"stoppedAt":${NINE}}],"failures":[]}`,
+      );
+    const output = await sendEcs(
+      endpoint,
+      'DescribeTasks',
+      (client, abortSignal) =>
+        client.send(new DescribeTasksCommand({ cluster: 'dev', tasks: ['t1'] }), { abortSignal }),
+      signal(),
+    );
+    const task = output.tasks?.[0];
+    expect(task?.createdAt?.getTime()).toBe(MILLIS);
+    expect(task?.startedAt?.getTime()).toBe(MILLIS);
+    expect(task?.stoppedAt?.getTime()).toBe(MILLIS);
+  });
+
+  it('reads DescribeTaskDefinition whose registeredAt has 9 fractional digits, to the millisecond', async () => {
+    engine.handle = () =>
+      raw(
+        `{"taskDefinition":{"family":"web","revision":2,"registeredAt":${NINE},"containerDefinitions":[{"name":"app","image":"busybox:1.36.123456"}]}}`,
+      );
+    const output = await sendEcs(
+      endpoint,
+      'DescribeTaskDefinition',
+      (client, abortSignal) =>
+        client.send(new DescribeTaskDefinitionCommand({ taskDefinition: 'web:2' }), { abortSignal }),
+      signal(),
+    );
+    expect(output.taskDefinition?.registeredAt?.getTime()).toBe(MILLIS);
+    expect(output.taskDefinition?.containerDefinitions?.[0]?.image).toBe('busybox:1.36.123456');
+  });
+
+  it('cuts only numbers of more than 3 fractional digits, never inside a string', () => {
+    expect(cutFractions(`{"a":${NINE},"b":1.5,"c":-2.1234,"d":"7.123456","e":1.23456e5,"f":12}`)).toBe(
+      '{"a":1795161554.763,"b":1.5,"c":-2.123,"d":"7.123456","e":1.23456e5,"f":12}',
+    );
   });
 });

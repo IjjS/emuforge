@@ -34,6 +34,9 @@ const ACCESS_DENIED: ReadonlySet<string> = new Set(['AccessDenied', 'AccessDenie
 /** The engine's two answers for an emulator that cannot be reached or does not answer in time. */
 const EMULATOR_SILENT: ReadonlySet<string> = new Set(['EmulatorUnavailable', 'EmulatorTimeout']);
 
+/** The failure of a 2xx answer without a code that the SDK could not decode. */
+export const UNREADABLE_ANSWER = "The emulator's answer could not be read";
+
 /** The SDK's two messages for an answer that gave none. */
 const NO_MESSAGE: ReadonlySet<string> = new Set(['UnknownError', 'Unknown']);
 
@@ -88,6 +91,13 @@ export function requestFailure(operation: string, error: unknown): RequestFailur
     return { kind: 'not-implemented', operation };
   }
   const code = codeOf(answer, status);
+  if (code === undefined && status >= 200 && status < 300) {
+    // A success the SDK could not decode: its status names no failure, the SDK's own message is what went wrong.
+    const message = text(answer.message);
+    return message === undefined
+      ? { kind: 'other', operation, code: UNREADABLE_ANSWER }
+      : { kind: 'other', operation, code: UNREADABLE_ANSWER, message };
+  }
   if (code === undefined) {
     const reason = text(answer.$response?.reason);
     return {

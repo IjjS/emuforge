@@ -234,18 +234,21 @@ export function ClusterListPage({ connection }: { connection: AreaConnection }) 
           </Header>
         }
         pagination={
-          <Pagination
-            currentPageIndex={currentPage}
-            pagesCount={listing.pagesCount}
-            openEnd={listing.openEnd}
-            disabled={!loaded}
-            ariaLabels={{
-              nextPageLabel: 'Next page',
-              previousPageLabel: 'Previous page',
-              pageLabel: (page) => `Page ${String(page)}`,
-            }}
-            onChange={handlePageChange}
-          />
+          // One page and no next token: nothing to page through, so no pagination.
+          listing.pagesCount <= 1 && !listing.openEnd ? undefined : (
+            <Pagination
+              currentPageIndex={currentPage}
+              pagesCount={listing.pagesCount}
+              openEnd={listing.openEnd}
+              disabled={!loaded}
+              ariaLabels={{
+                nextPageLabel: 'Next page',
+                previousPageLabel: 'Previous page',
+                pageLabel: (page) => `Page ${String(page)}`,
+              }}
+              onChange={handlePageChange}
+            />
+          )
         }
       />
       <DeleteClusterDialog
