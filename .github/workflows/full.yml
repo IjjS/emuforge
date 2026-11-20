@@ -6,9 +6,9 @@
 # browser checks of languages, layout, brand, keyboard and each screen's stop, restart and engine away, which run
 # in no other run on GitHub and in no local run but one the owner asks for.
 #
-# Its steps are the preparing steps of `main.yml`, the same text, and the integration step with its second run,
-# as `main.yml` ran it before issue 327. The eight engine and Studio steps are the push run's and are not here
-# (R6.2). A second run that passes is printed and summarized as flaky.
+# Its steps are the preparing steps of `main.yml`, the same text, and the integration step, as `main.yml` ran it
+# before issue 327, once: no step runs a second time (issue 569). The eight engine and Studio steps are the push
+# run's and are not here (R6.2).
 #
 # Rights: as `main.yml`. The token reads the repository's contents and nothing else; no secret is named, nothing
 # is uploaded, cached or published, every action is one of GitHub's own, named by commit sha, and no text from
@@ -16,9 +16,9 @@
 #
 # Bounds (R6.4): set from a measured time, at least twice the longest the step took, in whole half hours. The
 # integration step took 8.7 minutes on the runner (run 43861083645) with every check; the whole set is what
-# grows, so each integration step has 60 minutes and the job 150. When a run's first integration step takes
-# more than half its bound, the `pm` files an issue to raise it; past 150 minutes two runs no longer fit in a
-# hosted job's six hours, and the issue is to split the job.
+# grows, so the integration step has 60 minutes and the job 150. When a run's integration step takes more than
+# half its bound, the `pm` files an issue to raise it; past 300 minutes it no longer fits in a hosted job's six
+# hours, and the issue is to split the job.
 name: full
 
 on:
@@ -104,15 +104,7 @@ jobs:
           docker compose -f infra/aws-emulator/docker-compose.yml build
 
       - name: integration
-        id: integration
         if: ${{ !cancelled() }}
-        continue-on-error: true
         timeout-minutes: 60
         working-directory: tests/integration
         run: ../../.github/ci run --tails -- ./run --not-run ../../.github/not-run.json --full
-
-      - name: integration (second run)
-        if: ${{ !cancelled() && steps.integration.outcome == 'failure' }}
-        timeout-minutes: 60
-        working-directory: tests/integration
-        run: ../../.github/ci run --second integration --tails -- ./run --not-run ../../.github/not-run.json --full
