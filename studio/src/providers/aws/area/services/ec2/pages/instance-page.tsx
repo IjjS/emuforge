@@ -185,7 +185,8 @@ function Volumes({ volumes }: { volumes: BlockDevice[] }) {
     {
       id: 'volume',
       header: 'Volume ID',
-      minWidth: '24ch',
+      // Leave room for the ID, the inline copy button and the cell padding.
+      minWidth: 'calc(24ch + 64px)',
       cell: ({ volumeId }) =>
         volumeId === undefined ? (
           NONE
