@@ -680,28 +680,20 @@ function attributeTypeTrigger(n: number): string {
   return select.findTrigger().toSelector().replace(/^body /, '');
 }
 
-/**
- * S1's `h1`: "Topics", alone while the list is being read and followed by the list's counter once it is read
- * ("Topics (2)": Cloudscape renders a header's counter inside its heading), as IAM's checks find their lists' `h1`.
- */
-export function listHeading(page: Page): Locator {
-  return page.getByRole('heading', { level: 1, name: new RegExp(`^${LIST_H1}(\\s|$)`) });
-}
-
-/** Opens `path` and waits for its `h1` `name`: exactly `name`, and S1's (`LIST_H1`) with its counter allowed. */
+/** Opens `path` and waits for its `h1` `name`. */
 export async function open(page: Page, path: string, h1: string): Promise<void> {
   await page.goto(path);
-  const found = h1 === LIST_H1 ? listHeading(page) : heading(page, h1);
-  await expect(found, `the h1 "${h1}" at ${path}`).toBeVisible({ timeout: 15_000 });
+  await expect(heading(page, h1), `the h1 "${h1}" at ${path}`).toBeVisible({ timeout: 15_000 });
 }
 
 /**
- * The option of S4's open list whose accessible name is exactly `name`. Not by its text: Cloudscape writes the label
- * of a highlighted option a second time, for screen readers, and hides the first from them, so the text of an option
- * is its name once or twice and its accessible name is always the name.
+ * The option of S4's open list that holds `value` (a queue's URL, a function's ARN), by the select's own test
+ * selector. Not by its text: Cloudscape writes the label of a highlighted option a second time, for screen readers.
  */
-function choice(page: Page, name: string): Locator {
-  return page.getByRole('option', { name, exact: true });
+function choice(page: Page, value: string): Locator {
+  return page.getByRole('main').locator(
+    wrapper.findSelect().findDropdown().findOptionByValue(value).toSelector().replace(/^body /, ''),
+  );
 }
 
 /** Opens S3 of the topic `arn` and waits for its details. */
@@ -1000,28 +992,29 @@ export async function openSubscribe(page: Page, arn: string): Promise<void> {
   await expect(subscribeScreen(page).endpoint, 'the endpoint field').toBeVisible({ timeout: 15_000 });
 }
 
-/** On S4 with "Amazon SQS" chosen: types `name` in "Queue" as the prefix and chooses the queue of that name. */
-export async function chooseQueue(page: Page, name: string): Promise<void> {
+/** On S4 with "Amazon SQS" chosen: types the queue's name in "Queue" as the prefix and chooses that queue. */
+export async function chooseQueue(page: Page, queue: MadeQueue): Promise<void> {
   const s = subscribeScreen(page);
   await s.endpoint.click(ACTION);
-  await s.filter.fill(name, ACTION);
-  const option = choice(page, name);
-  await expect(option, `the choice ${name}`).toHaveCount(1, { timeout: 20_000 });
+  await s.filter.fill(queue.name, ACTION);
+  const option = choice(page, queue.url);
+  await expect(option, `the choice ${queue.name}`).toHaveCount(1, { timeout: 20_000 });
   await option.click(ACTION);
-  await expect(s.endpoint, `"Queue" shows ${name}`).toContainText(name);
+  await expect(s.endpoint, `"Queue" shows ${queue.name}`).toContainText(queue.name);
 }
 
 /** The most pages of functions (50 a page) a check loads to find its function. */
 const CHOICE_PAGES_BOUND = 20;
 
 /**
- * On S4 with "AWS Lambda" chosen: opens "Function" and chooses the function `name`, pressing "Load more" for as long
+ * On S4 with "AWS Lambda" chosen: opens "Function" and chooses the function `fn`, pressing "Load more" for as long
  * as the pages shown do not hold it (`ListFunctions` has no filter, and the emulator holds other checks' functions).
  */
-export async function chooseFunction(page: Page, name: string): Promise<void> {
+export async function chooseFunction(page: Page, fn: MadeFunction): Promise<void> {
+  const { name } = fn;
   const s = subscribeScreen(page);
   await s.endpoint.click(ACTION);
-  const option = choice(page, name);
+  const option = choice(page, fn.arn);
   for (let i = 0; i < CHOICE_PAGES_BOUND; i++) {
     const shown = await waitFor(10_000, async () =>
       (await option.count()) > 0 ? 'option' : (await s.loadMore.isVisible()) ? 'more' : undefined,

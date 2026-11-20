@@ -32,7 +32,6 @@ import {
   FIFO_NAME_ENDING,
   findTopicRow,
   LIST_H1,
-  listHeading,
   listScreen,
   NAME_CHARACTERS,
   NO_TOPICS,
@@ -143,7 +142,7 @@ test('studio.sns-topics-made-elsewhere-are-shown', async ({ ctx, page, context }
       await expect(page.getByRole('tab')).toHaveCount(0);
       await main.getByRole('link', { name: VIEW_TOPICS, exact: true }).click(ACTION);
       await expect(page).toHaveURL(addressOf(TOPICS_PATH));
-      await expect(listHeading(page), `S1's h1 "${LIST_H1}"`).toBeVisible();
+      await expect(heading(page, LIST_H1)).toBeVisible();
     },
   );
 
