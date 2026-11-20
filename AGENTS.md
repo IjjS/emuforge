@@ -122,8 +122,8 @@ token rate for the day; over it, no new pane is opened.
 
 The owner does not pick or approve designs. A service's screens serve the tasks a developer does with it locally, as
 far as the emulator's API supports them; they need not match the AWS console. The UI and UX are the `worker`'s to
-shape and are judged by the impeccable critique alone, once, on the built app: a P0 or P1 finding is fixed, and the
-score is told and decides nothing (`studio/references/critique.md`).
+shape and are judged by the impeccable critique alone, once, on the built app: a P0, P1 or P2 finding is fixed in the
+issue, and the score is told and decides nothing (`studio/references/critique.md`).
 
 ## Safety
 

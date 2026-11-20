@@ -2,8 +2,12 @@
 """Fill a brief template for a pane and write it to .pm/issue-<id>/. The PM runs this instead of filling `{{…}}` by hand.
 
   pm-brief plan <issue> [--precedent <archived id>]...
-        writes brief-plan.md and brief-rev.md (one rev pane serves the whole issue)
-        and marks the issue `lead: plan` in brief.json (pm-merge reads it)
+        writes brief-plan.md and brief-rev.md (the brief of every rev pane of the issue: the plan opens one for each
+        review round, with the round's REVIEW line, issue 557) and marks the issue `lead: plan` in brief.json
+        (pm-merge reads it)
+  pm-brief rev <issue>
+        writes brief-rev.md alone, from the template as it is now (an issue in flight takes a changed rev brief
+        from its next round on); brief-plan.md and brief.json are not touched
   pm-brief worker <issue> <unit> --summary "<what the unit does>" [--owned "<files>"] [--scenarios "<where>"]
         [--close "<check ids>" | --close auto] [--precedent <id>]... [--inputs "<a, b>"] [--conventions "<a, b>"]
         writes brief-<unit>.md, for an engine (e<n>) or studio (s<n>) unit. --owned defaults to "the files
@@ -26,7 +30,7 @@ briefs/README.md. Everything that can be looked up is looked up:
   worktree, branch, base                   from the worktree registry (run pm-worktree new first)
   references to read                       from the module (its AGENTS.md and every file in its references/)
   inputs, conventions                      from the unit's side (its first letter: e, s)
-Who may run it: the pm, and a plan for its own issue (`worker`, `crit`, `show`); `plan` and `harness-engineer` are
+Who may run it: the pm, and a plan for its own issue (`worker`, `crit`, `rev`, `show`); `plan` and `harness-engineer` are
 the pm's. Every other pane is refused all but `show`.
 A studio issue has no screen grade (issue 478 removed it with the structure score): its design stage is `design.md`
 and its crit brief is written when the plan has a screen to critique. The command fails, and writes nothing, when a placeholder is left unfilled or a value it needs is
@@ -121,11 +125,21 @@ def cmd_plan(a):
     common = dict(v, root=str(ROOT))
     plan = dict(common, precedents=precedents(a.precedent), design_step=DESIGN_STEP["studio" if v["module"] == "studio" else "engine"],
                 plan_refs=f"AGENTS.md, issues/README.md, tests/integration/AGENTS.md, {refs}")
-    rev = dict(common, refs=f"AGENTS.md, issues/README.md, {refs}, tests/integration/AGENTS.md")
-    texts = [("plan", fill((BRIEFS / "plan.md").read_text(), plan)), ("rev", fill((BRIEFS / "rev.md").read_text(), rev))]
+    texts = [("plan", fill((BRIEFS / "plan.md").read_text(), plan)), ("rev", rev_text(v))]
     for name, text in texts:  # both filled before either is written
         write(a.issue, name, text)
     mark_lead(a.issue, "plan")
+
+
+def rev_text(v):
+    """The rev brief of the issue whose header values are `v`: one brief for every round's rev pane (issue 557)."""
+    refs = module_refs(v["module"])
+    return fill((BRIEFS / "rev.md").read_text(), dict(v, root=str(ROOT), refs=f"AGENTS.md, issues/README.md, {refs}, tests/integration/AGENTS.md"))
+
+
+def cmd_rev(a):
+    guard(f"pm-brief rev {a.issue}", issue=a.issue, plan_may=True)
+    write(a.issue, "rev", rev_text(issue(a.issue)))
 
 
 def cmd_worker(a):
@@ -194,6 +208,7 @@ p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDes
 sp = p.add_subparsers(dest="cmd", required=True)
 x = sp.add_parser("plan"); x.add_argument("issue")
 x.add_argument("--precedent", action="append", default=[]); x.set_defaults(f=cmd_plan)
+x = sp.add_parser("rev"); x.add_argument("issue"); x.set_defaults(f=cmd_rev)
 x = sp.add_parser("worker"); x.add_argument("issue"); x.add_argument("unit")
 x.add_argument("--summary", required=True); x.add_argument("--owned"); x.add_argument("--close"); x.add_argument("--scenarios")
 x.add_argument("--precedent", action="append", default=[]); x.add_argument("--inputs"); x.add_argument("--conventions")

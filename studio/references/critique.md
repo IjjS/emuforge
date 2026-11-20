@@ -8,11 +8,17 @@ shape, and the impeccable critique alone judges them, once, on the built app (ow
 
 | Point | Target | When |
 |---|---|---|
-| `final` | each screen the issue changed, in the built app of the issue branch | once every unit is merged, each on its fast check, and before the whole check, which runs only when the last `final` has no P0 or P1 (owner, 2026-11-19) |
+| `final` | each screen the issue changed, in the built app of the issue branch | once every unit is merged, each on its fast check, and before the whole check, which runs only when the last `final` of each screen has no P0, P1 or P2 (owner, 2026-11-19 and 2026-11-20) |
 | `mock` | an HTML mock, only when the plan asks for one (`workflow.md`, Design) | before the build |
 
-- Every P0 and P1 finding of `final` is fixed by the worker that owns the screen; then `crit` critiques it once
-  more. A fix the whole check calls for that changes a screen has that screen alone critiqued once more. A P2 or P3 is fixed or recorded in `decisions.md` under `## Review decisions`, one reason each.
+- Every P0, P1 and P2 finding of `final` is fixed in the issue by the worker that owns the screen; then `crit`
+  critiques it once more (owner, 2026-11-20: "크리틱 P2도 반영하자"). A fix the whole check calls for that changes a
+  screen has that screen alone critiqued once more, and a P0, P1 or P2 it finds is fixed the same way.
+- A P2 is left unfixed only when fixing it would change the requirement or a confirmed check, or go against a rule of
+  the area or a decision already made: the plan sends it to the `pm` as a decision (`lead.md`, Critique), and only the
+  `pm` lets it stand. A P0 or P1 is never left.
+- A P3 is the plan's to adopt or not: fixed in the issue, filed as an issue of its own, or recorded in `decisions.md`
+  under `## Review decisions` with one reason.
 - The score (`/40`) is recorded and told in the issue's report. It decides nothing: no pass line, no comparison with
   an earlier point.
 - A `mock` is critiqued the same way; what the plan takes from it is the plan's, and it holds nothing back.
@@ -66,7 +72,11 @@ storage state that holds the language choice for Studio's origin, and `--name` n
 ## Records
 
 - Scores go in through the harness script, never by hand: `pm-critique record <issue> final <snapshot>` (or `mock`)
-  into the issue's `critique-scores.json`; `pm-critique check <issue>` fails while the last `final` has a P0 or P1.
+  into the issue's `critique-scores.json`. The impeccable skill's frontmatter counts P0 and P1 only, so `crit` adds
+  `"p2_count":<n>` to its `IMPECCABLE_CRITIQUE_META`; `record` refuses a `final` snapshot without it.
+- `pm-critique check <issue>` fails while the last `final` of any screen (each `--label`) holds a P0, P1 or P2, less
+  the P2 the `pm` let stand on that `final` with `pm-critique leave`. An issue whose last `final` was recorded before
+  this rule is judged on P0 and P1 until its next `final`.
 - The issue's report carries the table (`pm-critique table`).
 - Scores are a working measure of this project's own screens. They are never published as a measure of
   compatibility with AWS.

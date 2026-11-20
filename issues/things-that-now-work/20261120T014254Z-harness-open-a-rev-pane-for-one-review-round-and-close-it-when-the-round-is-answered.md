@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: harness|rev|one-pane-a-review-round
-Issue-Check-Ids:
+Issue-Check-Ids: none (harness issue, no kept guard shows it)
 Issue-Commit: b4afbc3c7e459cd82635adf32d7d1c4b04f45907
 
 # Open a rev pane for one review round and close it when the round is answered

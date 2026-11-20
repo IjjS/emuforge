@@ -36,6 +36,9 @@ Under a heading, a `Given` line is the shared context and each checkbox is one t
 - Pair a success case with its failure case wherever an action can fail.
 - For a `bug`, append `(regression)` to the case that reproduces the reported defect.
 - For a `gap`, the integration check that showed the difference is listed first.
+- A case waits for what it asserts (the line in the log, the answer, the state the emulator reports), with a
+  bound; never for a neighbouring sign that it should be there by now. A port that accepts does not say that the
+  line of its listener is in the log yet (issue 533).
 
 Example:
 
@@ -63,7 +66,10 @@ Eight axes. Each is accounted for in the checklist below whether or not it produ
    empty and large bodies, streaming bodies, presigned URLs, malformed input.
 3. **Caller identity**: Studio session, a signed request, an unsigned request, a wrong key; with IAM on:
    allow, explicit deny, implicit deny, a policy element the evaluator does not support.
-4. **Upstream state**: emulator healthy, down, restarted with new keys, slow past the timeout, answering 501.
+4. **Upstream state**: emulator healthy, down, restarted with new keys, slow past the timeout, answering 501. An
+   integration check of an environment case (the emulator or the engine stopped, killed, restarted, not there, not
+   reachable, or coming up late) is written for the tier `full` and never for the push run or a whole check
+   (`tests/integration/AGENTS.md`, Full tier); a unit test proves what it can without them.
 5. **Boundaries**: zero, one and many; the exact size, time and concurrency limit and one past it.
 6. **Repetition**: the same request twice, a retry after a timeout, a cancelled request.
 7. **Transparency**: what the caller receives through the engine equals what the emulator sends directly

@@ -1,10 +1,13 @@
 # Review protocol
 
-One `rev` pane per issue reviews every round of every stage, from the requirement to the whole implementation,
-and lives until its plan closes it. Its brief is written from `briefs/rev.md` with the plan's, and the plan opens
-it; it sees only files: the deliverable, the issue file, `requirement.md`, `decisions.md`, the repository
-references, and `main`. It never sees the lead's reasoning or chat. The lead is the issue's plan, for the stage
-documents and for the whole at the end. A harness issue has no rev: the PM judges it.
+A `rev` pane lives for one review round (owner, 2026-11-20): the plan opens it for a `REVIEW` line and closes it
+once its `REVIEWED` line has arrived and the review file is there. The next round, of the same stage or the next, is
+a new pane with the same brief, kind, model and effort (`lead.md`, A review round). It is an agent of its own, not a
+sub-agent of the plan, so the reviewer's kind, model and effort stay `pm-pane`'s options. Its brief is written from
+`briefs/rev.md` with the plan's. It sees only files: the deliverable, the issue file, `requirement.md`,
+`decisions.md`, the repository references, `main`, and the earlier rounds of its stage. It never sees the lead's
+reasoning or chat, and it remembers no earlier round. The lead is the issue's plan, for the stage documents and for
+the whole at the end. A harness issue has no rev: the PM judges it.
 
 ## Round
 
@@ -20,8 +23,13 @@ rev  → lead: REVIEWED <stage> r<k> verdict=<pass|revise> p1=<n> p2=<n> p3=<n> 
   rev reads them together and writes one review file with one verdict. When the module's `references/workflow.md`
   skips the design for the issue's kind, the set is the two documents left. `impl` is the whole: the diff
   `main...feat/<id>` with the whole check's record, and the integration tests against the scenarios.
-- rev writes the review file, then prompts the lead with the REVIEWED line via `herdr agent prompt <lead> "<line>"`.
-  The lead ends its turn after sending REVIEW; the REVIEWED prompt resumes it. Nobody waits or polls.
+- rev writes the review file, logs the line with `pm-report --from <rev-name>`, then, as its last act, prompts the
+  lead with it via `herdr agent prompt <lead> "<line>"` and stops. The lead ends its turn after sending REVIEW; the
+  REVIEWED prompt resumes it, and the lead closes the pane. Nobody waits or polls.
+- r<k> with k > 1 reads the review files of the earlier rounds of its stage, `review-<stage>-r1.md` to
+  `r<k-1>.md`, and checks that each of their P1 was answered; one that was not is a P1 again.
+- A round is answered by the next round, never run again in place of being answered: a stage's review files are r1
+  to its last with no number missing, and `pm-merge` refuses an issue whose files are not.
 - `pass` = no P1. The lead moves on. Open P2 and P3 are either fixed or recorded in `decisions.md`
   `## Review decisions` with one reason each; rev does not re-raise a recorded one.
 - `revise` = at least one P1. The lead fixes P1s only and sends r<k+1>. Of a `plan-set` review each P1's location
@@ -77,10 +85,14 @@ praise, no summaries. A finding without a location and a fix is not a finding.
     recorded decision; units and owned files do not overlap.
   - **design** (studio side): every task the requirement builds has its flow and the API call behind each action;
     the console captures named are read for UX only and nothing of them is copied; a part shared with another
-    service is lifted into the area only when a second service needs it; units and owned files do not overlap.
+    service is lifted into the area only when a second service needs it; units and owned files do not overlap; the
+    result of a change is shown from a component that stays mounted while the reads the change starts answer, not
+    from one the page can unmount (a dialog the page drops on "not found").
   - **test-criteria**: the module's `references/test-criteria.md` form; each line is observable and maps to one
     test; every coverage axis is checked or marked `(Not Scope)`; success and failure are paired; each case sits at
-    the lowest level that can prove it.
+    the lowest level that can prove it; a studio screen that reads again after a change has the unit case of those
+    reads answering in another order (`studio/references/test-criteria.md`); an engine case waits for what it
+    asserts (`engine/references/test-criteria.md`).
   - **breakdown**: every criteria line belongs to exactly one unit or to the plan's integration tests; each unit is
     `e<n>` or `s<n>`, never both sides; owned files do not overlap between parallel units; the order leaves the
     collecting branch green when it merges into `main`; no unit is more than a day.
@@ -89,15 +101,20 @@ praise, no summaries. A finding without a location and a fix is not a finding.
   `test-criteria.md` and nothing the criteria do not list, and each scenario left out is named with its reason in
   `test-criteria.md` or `report.md`; `tests/integration/AGENTS.md` for the tests (a manifest row each, isolation and
   cleanup, no sleep, loopback only); no criteria or spec file changed by a worker; per side:
-  - engine: `engine/AGENTS.md`; every `security-review.md` row; relay fidelity not lower than on `main`.
+  - engine: `engine/AGENTS.md`; every `security-review.md` row; relay fidelity not lower than on `main`; a test
+    waits for what it asserts (the line, the answer), never for a neighbouring sign that it should be there by now.
   - studio: `studio/AGENTS.md` and the references its units' briefs named; 501 shown as "not implemented", never
-    hidden or faked; the contact sheet read once.
+    hidden or faked; the contact sheet read once; no check or unit test finds the inside of a Cloudscape component
+    by a string of its own or an option by its text, no assertion is on a state in between unless its line is
+    about it, and no check goes on after a time (`tests/integration/AGENTS.md`, Studio checks: what they find and
+    when they assert); no result of a change is shown from a component the page can unmount.
 
 ## Independence
 
 - rev receives paths, never conclusions. The lead's REVIEW line carries no argument for its choices.
 - rev does not edit deliverables or code. It may run read-only commands, `pm-check --list` and `pm-capture`. It
   never reads a lead's terminal; missing evidence is a P1, not something to go and find.
-- The same rev pane reviews all stages of the issue; its growing knowledge of the issue is the point. Its plan
-  resets it at about 300K like every pane; it resumes from `.pm/issue-<id>/state-rev.md`, which lists stages
-  seen, rounds, and recorded review decisions.
+- Each round is read by a pane that holds nothing but its brief and the files; what an earlier round found reaches
+  it only through that round's review file and `decisions.md`. It keeps no state note across rounds. A pane that
+  passes about 300K within its round is reset like every pane, from `.pm/issue-<id>/state-rev.md`, which then holds
+  the round in progress.

@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: harness|critique|p2-is-fixed-in-the-issue
-Issue-Check-Ids:
+Issue-Check-Ids: none (harness issue, no kept guard shows it)
 Issue-Commit: 52ec3eed0717188191120a2cc0d9349e00f4d5a6
 
 # Fix the critique's P2 findings in the issue too

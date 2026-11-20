@@ -1,8 +1,8 @@
 # Pane mode: rules for every pane
 
 You are one pane in a herdr tab for one issue. The PM pane gives each issue to its lead and talks to the owner;
-you do not. The lead of an issue is its `plan`, which opens the issue's `worker`, `rev` and `crit` panes and hears
-their lines (`lead.md`), or, for a harness issue, the one `harness-engineer` pane the PM opens and hears itself.
+you do not. The lead of an issue is its `plan`, which opens the issue's `worker` and `crit` panes, a `rev` pane for
+each review round, and hears their lines (`lead.md`), or, for a harness issue, the one `harness-engineer` pane the PM opens and hears itself.
 Your brief names your role, the main checkout (`Root`), your issue folder `<Root>/.pm/issue-<id>/` and, for a
 worker or a harness-engineer, your worktree and unit. Read this file and your brief first, then the
 repository references your brief lists, fresh from disk.
@@ -18,8 +18,8 @@ repository references your brief lists, fresh from disk.
   with your recommended option marked `(provisional)`. If the answer changes the structure of what you are
   building, stop with `BLOCKED <name> decision-needed <question in ten words>`.
 - `decisions.md` is the record: `## Owner decisions` (only the PM writes), `## PM decisions`, `## Plan decisions`
-  (only the plan writes), `## Review decisions` (P2 and P3 you chose not to adopt, one reason each). Never
-  contradict an owner decision.
+  (only the plan writes), `## Review decisions` (a review's P2 and P3 and a critique's P3 you chose not to adopt, one
+  reason each). Never contradict an owner decision.
 
 ## Checks are not yours to change
 
@@ -61,7 +61,8 @@ own unit is not this: that is `BLOCKED`.
   your resume note (worker and harness-engineer: `output/state.md` in your worktree; plan, rev and crit:
   `.pm/issue-<id>/state-<role>.md`): what is done, what is next, open P1s, file paths. Then end the turn with the
   marker as your typed line (Reporting lines): `<Root>/.pm/bin/pm-report "RESET READY <name> <token>"`, then the
-  same line, exactly as given, as the last line of your reply, and stop. You are cleared and sent your brief again; do not redo finished work. Keep the
+  same line, exactly as given, as the last line of your reply, and stop. You are cleared and sent your brief again; do not redo finished work. A rev
+  lives for one round and keeps no note otherwise: its note, written only on that prompt, is the round in progress. Keep the
   state file current enough that a reset at any moment loses nothing.
 - Never re-read a file you already have in context unless it changed.
 - Images: you produce captures with `pm-capture`; you do not open them. Only `crit` and `rev` read a contact

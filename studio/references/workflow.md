@@ -69,6 +69,6 @@ that unit (`languages.md`, "Adding a string"). Text inside a provider area is En
 
 Then: the commands in `studio/AGENTS.md` pass; the plan writes the integration tests from the scenarios of stage 3
 (`tests/integration/AGENTS.md`); `crit` critiques each changed screen on the built app of the issue branch
-(`critique.md`), and every P0 or P1 finding is fixed; only then the whole check on the issue branch passes, its
+(`critique.md`), and every P0, P1 or P2 finding is fixed; only then the whole check on the issue branch passes, its
 integration checks included, with no check that passed on `main` now failing; `rev` reviews the whole; and the
 `pm` merges.

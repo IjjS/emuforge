@@ -47,7 +47,22 @@ For each task the issue builds, account for these; each is a scenario or a line 
 - the task done end to end, from the state a developer would have;
 - data made outside Studio (the AWS CLI, an IaC tool) shown, and what Studio did seen from outside;
 - the failure the emulator can give: a name it refuses, a resource that is gone, an operation it answers 501;
-- the emulator restarted while a page is open: Studio reconnects and shows the empty account, not stale data.
+- the emulator restarted while a page is open: Studio reconnects and shows the empty account, not stale data. This
+  and every other environment case (the emulator or the engine stopped, restarted, not there, not reachable, or
+  late) is written for the tier `full` and never for the push run or a whole check (`tests/integration/AGENTS.md`,
+  Full tier);
+- a screen that reads again after a change (a delete, a create or a save that starts reads of the page or its
+  lists): a unit case in which those reads answer in another order than the one the mock gives by default, for
+  whatever the change shows afterwards (a result, a hand-over to another page). Mocked reads answer in one order,
+  and the order of the real ones is the machine's: a result shown from a dialog the page unmounts when one read
+  answers "not found" first is lost (issue 551, IAM).
+
+Good: `- [ ] Delete a policy and the read of the policy answers before the read of its document → the policy list says "Policy {name} deleted."`
+
+A unit test finds what is inside a Cloudscape component (an option, a table's rows and cells, a header's heading
+text and counter, a flash, a modal, a form field's error) with Cloudscape's test utils,
+`@cloudscape-design/components/test-utils/dom`, and chooses an option by its value, as an integration check does
+(`/tests/integration/AGENTS.md`, Studio checks: what they find and when they assert).
 
 Keyboard and safety are not scenarios of a screen. They are checked once, for the app and for the area, by checks of
 no service (keyboard reaches every action of the frame and the area's frame; no request leaves for anything but the
