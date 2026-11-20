@@ -523,7 +523,8 @@ describe("a security group's page", () => {
     selectRow('sgr-1');
     fireEvent.click(ruleDelete());
     await confirmDelete();
-    // The rules after the delete (read 2), then "Refresh": the group (read 2) and the rules (read 3).
+    // The rules after the delete (rules read 2); then "Refresh" twice: the group (reads 2 and 3) and the rules (reads
+    // 3 and 4), two of each in flight at once.
     await waitFor(() => {
       expect(ruleReads).toHaveLength(2);
     });
@@ -533,13 +534,22 @@ describe("a security group's page", () => {
       expect(groupReads).toHaveLength(2);
       expect(ruleReads).toHaveLength(3);
     });
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await waitFor(() => {
+      expect(groupReads).toHaveLength(3);
+      expect(ruleReads).toHaveLength(4);
+    });
+    // The later ones answer first.
     act(() => {
-      groupReads[1]?.resolve({ found: true, group: { ...GROUP, description: 'Newest' } });
-      ruleReads[2]?.resolve({ rules: [OUT_ALL] });
+      groupReads[2]?.resolve({ found: true, group: { ...GROUP, description: 'Newest' } });
+      ruleReads[3]?.resolve({ rules: [OUT_ALL] });
     });
     await expectRows([ROW_OUT]);
+    expect(screen.getByText('Newest')).toBeInTheDocument();
+    // Then the earlier ones.
     act(() => {
-      groupReads[0]?.resolve({ found: true, group: { ...GROUP, description: 'Oldest' } });
+      groupReads[1]?.resolve({ found: true, group: { ...GROUP, description: 'Oldest' } });
+      ruleReads[2]?.resolve({ rules: [IN_RANGE, OUT_ALL] });
       ruleReads[1]?.resolve({ rules: [IN_GROUP, OUT_ALL] });
     });
     await act(async () => {
