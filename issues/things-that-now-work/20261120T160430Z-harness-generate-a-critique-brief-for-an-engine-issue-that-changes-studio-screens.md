@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: bug
 Issue-Source: plan
 Issue-Key: harness|pm-brief-crit|rejects-engine-issue-with-studio-unit
-Issue-Check-Ids:
+Issue-Check-Ids: none (harness issue, no kept guard shows it)
 Issue-Commit: 3254fce25e97f4b4be68dea86254e23480a2aded
 
 # Generate a critique brief for an engine issue that changes Studio screens
