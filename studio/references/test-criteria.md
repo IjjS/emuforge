@@ -74,6 +74,8 @@ How a screen looks at a width, in a theme or in a language is the critique's (`c
 The plan may leave an integration scenario out when the issue is too slight or the test would cost more than it
 shows. It says so here, with the reason, when it can tell before the build, and in its `report.md` at the end. When
 it cannot tell, it asks the `pm` (`lead.md`).
+When the issue will make no integration changes, use the omission line specified by the PM skill's
+`references/lead.md` in the plan set.
 
 ## Scope
 

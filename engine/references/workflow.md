@@ -61,9 +61,9 @@ writes no integration test.
 ## 5. Verification
 
 - The three commands in `engine/AGENTS.md` pass on each unit (its fast check, `pm-check`).
-- When every unit is merged into the issue branch, the plan writes the integration tests from the scenarios of
-  stage 3 (`tests/integration/AGENTS.md`). The whole check on the issue branch runs them against a fresh emulator,
-  with every check that passed on `main`, and passes; its record is the evidence.
-- The relay fidelity score is not lower than on `main` (`references/relay-fidelity.md`).
-- `rev` reviews the whole (the diff, the record, and whether the integration tests are the scenarios), and the
-  `pm` merges.
+- When every unit is merged, `rev` reviews the implementation and unit tests on the fast checks. The relay
+  fidelity score is not lower than on `main` (`references/relay-fidelity.md`).
+- After implementation review passes, the plan writes and runs the integration tests from stage 3
+  (`tests/integration/AGENTS.md`). `rev` reviews the integration changes against those scenarios.
+- The issue branch passes its whole check after its reviews. The `pm` merges on that record. See the PM skill's
+  `references/lead.md` for the stage order and omissions.

@@ -46,9 +46,9 @@ Six roles, no more. A role is a separation of duty, not a head count.
 | Role | Does | Never does |
 |---|---|---|
 | `pm` | Orders the issues and gives each to its lead (a `plan`, or for a harness issue a `harness-engineer`); answers their `BLOCKED` lines; reviews the severity of each issue a plan's closing report names and may change it; looks the change over while it merges and, at its own discretion, files a further critical fault it finds, and only that; merges an issue's collecting branch (its issue branch `feat/<id>`) into local `main`, pushes, reads the run; judges a harness-engineer's plan and change itself; talks to the owner | Edits product code, writes the plan |
-| `plan` | Leads one issue to its end: requirement, design, test criteria, the cut into units, their worktrees, briefs and worker panes, merging the units into the collecting branch `feat/<id>`, the integration tests, the whole check, the end review and critique, the closing report with a severity for each issue it filed | Writes code other than integration tests (no product code, no unit tests of a worker), acts outside its own issue, merges into `main`, talks to the owner |
+| `plan` | Leads one issue to its end: requirement, design, test criteria, the cut into units, their worktrees, briefs and worker panes, merging the units into the collecting branch `feat/<id>`, the critique, the implementation review, the integration tests and their review, the whole check, and the closing report with a severity for each issue it filed | Writes code other than integration tests (no product code, no unit tests of a worker), acts outside its own issue, merges into `main`, talks to the owner |
 | `worker` | Implements one unit, engine or Studio, in its own worktree, with the unit tests its brief's scenarios ask | Writes integration tests, changes a confirmed check, touches files outside its unit, merges |
-| `rev` | Reviews an issue from files only: the stage documents before the build, and at the end the implementation and whether the integration tests are the scenarios | Edits anything, sees the author's reasoning |
+| `rev` | Reviews an issue from files only: the stage documents before the build, the implementation on the units' fast checks, and the integration tests against the confirmed scenarios in their own review | Edits anything, sees the author's reasoning |
 | `crit` | Scores Studio screens with the impeccable critique, on the built app | Fixes anything |
 | `harness-engineer` | Plans and implements a harness issue alone, judged by the `pm` directly; runs `pm-check`, whose harness step is the three guards, and adds no test | Merges, opens panes |
 
@@ -83,8 +83,8 @@ token rate for the day; over it, no new pane is opened.
 - There are no pull requests. An issue led by a `plan` collects its units on its issue branch `feat/<id>`, even
   an issue of one unit: the `plan` merges a unit's branch into it when the unit's fast check passes, which leaves
   the integration checks to the issue branch.
-- The issue branch is checked whole once, integration checks included, and reviewed whole by `rev`; then the `pm`
-  merges it into local `main`. With several issues finished, the `pm` decides the order.
+- The issue branch runs its whole check with integration coverage after its reviews pass. The `pm` merges it
+  into local `main` on that record. With several issues finished, the `pm` decides the order.
 - A harness issue has no issue branch: the `pm` merges its unit's branch into local `main` when its check passes
   and the `pm` has judged it.
 - A branch goes into `main` as a pull request is merged: on its own passing record on its head, when git merges it
@@ -114,8 +114,8 @@ token rate for the day; over it, no new pane is opened.
 ## Checks decide, not agents
 
 - Test criteria are written and confirmed before implementation starts, from the requirement alone.
-- The integration tests are the `plan`'s, written after the build from the scenarios confirmed before it; a
-  `worker` writes the unit tests its brief's scenarios ask and never an integration test.
+- The integration tests are the `plan`'s, written after implementation review from the scenarios confirmed before
+  the build. A `worker` writes the unit tests its brief's scenarios ask.
 - A confirmed check is changed only on the `pm`'s decision with a recorded reason, never by the `worker` whose
   code it tests.
 - An issue is closed by its checks passing. A worker's statement that something works is not evidence.
