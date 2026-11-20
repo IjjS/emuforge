@@ -786,7 +786,13 @@ describe('modifying a DB instance', () => {
     await loaded();
     expect(control('Refresh')).toBeEnabled();
     expect(modifyButton()).toBeEnabled();
-    const actions = PAGE.findButtonDropdown()?.findNativeButton().getElement();
+    const actions = PAGE.findContentLayout()
+      ?.findHeader()
+      ?.findHeader()
+      ?.findActions()
+      ?.findButtonDropdown()
+      ?.findNativeButton()
+      .getElement();
     expect(actions).toHaveAccessibleName('Actions');
     expect(actions).toBeEnabled();
     expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
