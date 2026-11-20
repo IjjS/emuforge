@@ -159,7 +159,12 @@ function summary(): Record<string, string> {
 function containerRows(): string[][] {
   const table = PAGE.findTable();
   expect(table).not.toBeNull();
-  return (table?.findRows() ?? []).map((row) => [...row.getElement().querySelectorAll('td, th')].map(text));
+  const columns = table?.findColumnHeaders().length ?? 0;
+  return (table?.findRows() ?? []).map((_, row) =>
+    Array.from({ length: columns }, (_, column) =>
+      text(table?.findBodyCell(row + 1, column + 1)?.getElement() as HTMLElement),
+    ),
+  );
 }
 
 // ---------------------------------------------------------------------------------------------------------------
