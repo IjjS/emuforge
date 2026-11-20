@@ -42,4 +42,24 @@ describe("EC2's security group screens", () => {
       ]);
     }
   });
+
+  it('S5 at …/security-groups/create and S7 at …/group/{id}/add-rule, with their crumbs and "Security groups" active', () => {
+    const create = '/aws/ec2/security-groups/create';
+    expect(title(create)).toBe('Create security group');
+    expect(crumbs(create)).toEqual([
+      { text: 'Security groups', href: '/aws/ec2/security-groups' },
+      { text: 'Create security group' },
+    ]);
+
+    const addRule = '/aws/ec2/security-groups/group/{id}/add-rule';
+    expect(title(addRule, { id: 'sg-0abc' })).toBe('Add rule');
+    expect(crumbs(addRule, { id: 'sg-0abc' })).toEqual([
+      { text: 'Security groups', href: '/aws/ec2/security-groups' },
+      { text: 'sg-0abc', href: '/aws/ec2/security-groups/group/sg-0abc' },
+      { text: 'Add rule' },
+    ]);
+    for (const path of [create, addRule]) {
+      expect(screenAt(path).navigation.activeHref).toBe('/aws/ec2/security-groups');
+    }
+  });
 });
