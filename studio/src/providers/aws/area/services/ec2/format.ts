@@ -1,4 +1,5 @@
 import { AWS_PATH } from '../../../identity';
+import { nameOf, type Tag } from '../../lib/ec2-client';
 
 // Every address of EC2's nine screens, their titles and notice words (issue 553, design "Code layout and the cut"):
 // a unit links to another unit's screen by this file alone. An instance and a security group are addressed by the id
@@ -65,18 +66,6 @@ export const CREATE_KEY_PAIR_TITLE = 'Create key pair';
 export const INSTANCES_WORD = 'instances';
 export const SECURITY_GROUPS_WORD = 'security groups';
 export const KEY_PAIRS_WORD = 'key pairs';
-
-/** A tag as the API gives it. */
-export interface Tag {
-  key: string;
-  value: string;
-}
-
-/** The value of the tag `Name`; `undefined` without one or with an empty one. */
-export function nameOf(tags: readonly Tag[]): string | undefined {
-  const value = tags.find((tag) => tag.key === 'Name')?.value;
-  return value === undefined || value === '' ? undefined : value;
-}
 
 /** An instance's name as a list shows it: the value of its tag `Name`, "-" without one. */
 export function instanceName(tags: readonly Tag[]): string {

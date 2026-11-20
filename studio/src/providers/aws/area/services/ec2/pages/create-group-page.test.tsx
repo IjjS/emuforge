@@ -9,16 +9,16 @@ import { RequestError } from '../../../../../../lib/aws/request';
 import type { CheckResult } from '../../../../../../lib/engine/engine-client';
 import type { AreaConnection } from '../../../components/emulator-line';
 import AwsArea from '../../../index';
-import * as choices from '../choices-api';
+import * as network from '../../../lib/ec2-network-choices';
 import * as groups from '../group-api';
 import * as forms from '../group-form-api';
 
-// S5 rendered inside the area's layout, with the calls of `choices-api.ts`, `group-form-api.ts` and, for the group's
+// S5 rendered inside the area's layout, with the calls of `lib/ec2-network-choices.ts`, `group-form-api.ts` and, for the group's
 // page the create leads to, `group-api.ts` answered by the case (their own tests prove the calls against a fake
 // engine).
 
-vi.mock('../choices-api', async (importOriginal) => {
-  const real = await importOriginal<typeof import('../choices-api')>();
+vi.mock('../../../lib/ec2-network-choices', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../../lib/ec2-network-choices')>();
   return { ...real, listVpcChoices: vi.fn() };
 });
 
@@ -120,13 +120,13 @@ const CREATE_PATH = '/aws/ec2/security-groups/create';
 const NAME_RULE = '1 to 255 characters: letters, digits, spaces and ._-:/()#,@[]+=&;{}!$*. It cannot start with sg-.';
 const DESCRIPTION_RULE = '1 to 255 characters: letters, digits, spaces and ._-:/()#,@[]+=&;{}!$*.';
 
-const VPCS: choices.VpcChoice[] = [
+const VPCS: network.VpcChoice[] = [
   { id: 'vpc-d', cidr: '172.31.0.0/16', isDefault: true },
   { id: 'vpc-x', cidr: '10.0.0.0/16', isDefault: false },
 ];
 
 beforeEach(() => {
-  vi.mocked(choices.listVpcChoices).mockResolvedValue({ choices: VPCS });
+  vi.mocked(network.listVpcChoices).mockResolvedValue({ choices: VPCS });
   vi.mocked(forms.createSecurityGroup).mockResolvedValue('sg-0new');
   vi.mocked(groups.getSecurityGroup).mockResolvedValue({
     found: true,
@@ -203,7 +203,7 @@ describe('Create security group', () => {
     expect(constraintOf('Name')).toBe(NAME_RULE);
     expect(constraintOf('Description')).toBe(DESCRIPTION_RULE);
     expect(text(vpcSelect().findTrigger().getElement())).toBe('The default VPC');
-    expect(choices.listVpcChoices).not.toHaveBeenCalled();
+    expect(network.listVpcChoices).not.toHaveBeenCalled();
   });
 
   it('a fault → its message at the field, the constraint text beside it, nothing sent', async () => {

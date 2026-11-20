@@ -4,21 +4,24 @@ import { useState } from 'react';
 import type { ChoiceSource } from '../../components/use-paged-choices';
 import { noEndpoint } from '../../components/use-token-listing';
 import {
+  listSubnetChoices,
+  listVpcChoices,
+  NETWORK_CHOICE_OPERATIONS,
+  type ChoicePage,
+  type SubnetChoice,
+  type VpcChoice,
+} from '../../lib/ec2-network-choices';
+import {
   CHOICE_OPERATIONS,
   getDefaultVpc,
   listGroupChoices,
   listImageChoices,
   listInstanceTypeChoices,
   listKeyPairChoices,
-  listSubnetChoices,
-  listVpcChoices,
-  type ChoicePage,
   type GroupChoice,
   type ImageChoice,
   type InstanceTypeChoice,
   type KeyPairChoice,
-  type SubnetChoice,
-  type VpcChoice,
 } from './choices-api';
 import { EC2_KEYS } from './queries';
 
@@ -79,7 +82,7 @@ export function subnetChoices(endpoint: string | undefined): ChoiceSource<Subnet
   return {
     key: EC2_KEYS.choices('subnets'),
     endpoint,
-    operation: CHOICE_OPERATIONS.describeSubnets,
+    operation: NETWORK_CHOICE_OPERATIONS.describeSubnets,
     filtering: 'none',
     read: async (at, _text, token, signal) => tokenPage(await listSubnetChoices(at, token, signal)),
     optionOf: (subnet) => ({
@@ -95,7 +98,7 @@ export function vpcChoices(endpoint: string | undefined): ChoiceSource<VpcChoice
   return {
     key: EC2_KEYS.choices('vpcs'),
     endpoint,
-    operation: CHOICE_OPERATIONS.describeVpcs,
+    operation: NETWORK_CHOICE_OPERATIONS.describeVpcs,
     filtering: 'none',
     read: async (at, _text, token, signal) => tokenPage(await listVpcChoices(at, token, signal)),
     optionOf: (vpc) => ({
