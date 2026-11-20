@@ -68,8 +68,8 @@ function Dialog({
 
   const body: ReactNode = (
     <>
-      The route <ValueText kind="name" value={route.destination} /> to <ValueText kind="name" value={route.target} />{' '}
-      is removed from <ValueText kind="name" value={route.tableLabel} />.
+      The route <ValueText kind="name" value={route.destination} /> to <ValueText kind="name" value={route.target} /> is
+      removed from <ValueText kind="name" value={route.tableLabel} />.
     </>
   );
 

@@ -118,9 +118,7 @@ describe('delete a route', () => {
 
 describe('associate and disassociate', () => {
   it("AssociateRouteTable with RouteTableId and SubnetId; the answer's association ID", async () => {
-    engine.on('AssociateRouteTable', () =>
-      ok('AssociateRouteTable', '<associationId>rtbassoc-0new</associationId>'),
-    );
+    engine.on('AssociateRouteTable', () => ok('AssociateRouteTable', '<associationId>rtbassoc-0new</associationId>'));
     expect(await associateSubnet(endpoint, 'rtb-1', 'subnet-1', signal())).toBe('rtbassoc-0new');
     const sent = engine.of('AssociateRouteTable')[0]?.params ?? new URLSearchParams();
     expect(sent.get('RouteTableId')).toBe('rtb-1');

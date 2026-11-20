@@ -492,9 +492,7 @@ export function RouteTablePage({ connection, params }: ScreenPageProps) {
 
   const handleRouteFailed = (route: RouteTarget, routeFailure: RequestFailure) => {
     setDeletingRoute(undefined);
-    flash.show([
-      actionFailureItem(routeFailure, `Deleting the route ${route.destination}`, connection.engineOrigin),
-    ]);
+    flash.show([actionFailureItem(routeFailure, `Deleting the route ${route.destination}`, connection.engineOrigin)]);
   };
 
   const handleParted = (parted: PartingTarget, partFailure: RequestFailure | undefined) => {
@@ -503,9 +501,7 @@ export function RouteTablePage({ connection, params }: ScreenPageProps) {
       setSelectedAssociation(undefined);
       flash.show([{ type: 'success', content: `Disassociated ${parted.subnetId}` }]);
     } else {
-      flash.show([
-        actionFailureItem(partFailure, `Disassociating ${parted.subnetId}`, connection.engineOrigin),
-      ]);
+      flash.show([actionFailureItem(partFailure, `Disassociating ${parted.subnetId}`, connection.engineOrigin)]);
     }
   };
 
