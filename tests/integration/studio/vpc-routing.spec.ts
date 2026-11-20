@@ -57,6 +57,7 @@ import {
   expectValueIs,
   field,
   findBy,
+  findOnly,
   gatewayDirect,
   GATEWAYS_H1,
   GATEWAYS_PATH,
@@ -151,8 +152,7 @@ test('studio.vpc-route-a-subnet-through-an-internet-gateway', async ({ ctx, page
   const openGateways = async (): Promise<Locator> => {
     await open(page, GATEWAYS_PATH, GATEWAYS_H1);
     const list = listOf(page);
-    await findBy(list, gwName);
-    await expectRow(list, 'Name', gwName);
+    await findOnly(list, gwName);
     return list;
   };
 
@@ -457,8 +457,7 @@ test('studio.vpc-take-routing-apart-and-what-is-refused', async ({ ctx, page }) 
   const selectG = async (): Promise<Locator> => {
     await open(page, GATEWAYS_PATH, GATEWAYS_H1);
     const list = listOf(page);
-    await findBy(list, gName);
-    await expectRow(list, 'Name', gName);
+    await findOnly(list, gName);
     await selectRow(list, 'Name', gName);
     return list;
   };
@@ -567,8 +566,7 @@ test('studio.vpc-take-routing-apart-and-what-is-refused', async ({ ctx, page }) 
     async () => {
       await open(page, ROUTE_TABLES_PATH, ROUTE_TABLES_H1);
       const list = listOf(page);
-      await findBy(list, tName);
-      await expectRow(list, 'Name', tName);
+      await findOnly(list, tName);
       await selectRow(list, 'Name', tName);
       await button(main, DELETE).click(ACTION);
       await confirmWith(page, 'delete', DELETE);

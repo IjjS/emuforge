@@ -44,11 +44,10 @@ import {
   expectFirstPart,
   expectFlash,
   expectNoRow,
-  expectRow,
   expectRows,
   expectUnavailable,
   field,
-  findBy,
+  findOnly,
   idOfAddress,
   instanceDirect,
   KEEP_EDITING,
@@ -385,8 +384,7 @@ test('studio.vpc-delete-subnets-and-vpcs-free-and-in-use', async ({ ctx, page })
   const deleteOnList = async (path: string, h1: string, name: string): Promise<void> => {
     await open(page, path, h1);
     const table = listOf(page);
-    await findBy(table, name);
-    await expectRow(table, 'Name', name);
+    await findOnly(table, name);
     await selectRow(table, 'Name', name);
     await button(main, DELETE).click(ACTION);
   };
@@ -429,8 +427,7 @@ test('studio.vpc-delete-subnets-and-vpcs-free-and-in-use', async ({ ctx, page })
     async () => {
       await open(page, SUBNETS_PATH, SUBNETS_H1);
       const table = listOf(page);
-      await findBy(table, `${p}-a3`);
-      await expectRow(table, 'Name', `${p}-a3`);
+      await findOnly(table, `${p}-a3`);
       await expectUnavailable(button(main, DELETE), SELECT_ONE_SUBNET, '"Delete" with no row selected');
       await selectRow(table, 'Name', `${p}-a3`);
       await button(main, DELETE).click(ACTION);
