@@ -143,6 +143,16 @@ function answer(pages: Record<string, api.InstancePage>) {
   });
 }
 
+/** `value` without the values `keys` name. */
+function without(value: api.Instance, ...keys: (keyof api.Instance)[]): api.Instance {
+  const copy = { ...value };
+  for (const key of keys) {
+    // eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- a test's instance without an absent value
+    delete copy[key];
+  }
+  return copy;
+}
+
 const PAGE = createWrapper(document.body);
 
 function table() {
@@ -199,7 +209,7 @@ describe('the instances list', () => {
       '||': {
         instances: [
           instance('i-1', 'running', { tags: [{ key: 'Name', value: 'web' }] }),
-          instance('i-2', 'stopped', { publicIp: undefined } as Partial<api.Instance>),
+          without(instance('i-2', 'stopped'), 'publicIp'),
           { id: 'i-3', state: 'terminated', type: 't3.nano', zone: 'us-east-1b', launchTime: LAUNCHED, groups: [], volumes: [], tags: [] },
         ],
       },
