@@ -27,6 +27,9 @@ follows `.agents/skills/pm/references/pane-mode.md` and its brief instead; a `pl
 `.agents/skills/pm/references/lead.md`. The scripts every PM and pane uses are in `.pm/bin/`; working files are in
 `.pm/issue-<id>/`, summaries in `.pm/archive/`. Of `.pm/`, only `bin/` is tracked.
 
+During development the product's Compose form is started with the machine's own `.pm/local/compose-up`, never with
+`docker compose up --build` by hand: it removes the images the build replaced.
+
 ## Agents
 
 This repository is written for any coding agent, not one vendor's. `AGENTS.md` and `.agents/` are the source;
