@@ -7,24 +7,26 @@ import KeyValuePairs from '@cloudscape-design/components/key-value-pairs';
 import Link from '@cloudscape-design/components/link';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
-import { useState, type ReactNode } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 
 import { CopyValue } from '../../../components/copy-value';
 import { actionFailureItem, readFailureState, ReadFailure, useAnnouncer } from '../../../components/failure-states';
 import { creationDateText } from '../../../components/format-date';
-import { usePageFlash } from '../../../components/page-flash';
+import { usePageFlash, type FlashItem } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
 import { failureOf, usePageSignal } from '../../../components/use-token-listing';
 import { ValueText } from '../../../components/value-text';
 import type { ScreenPageProps } from '../../../screens';
-import { ACTION_OPERATIONS, type ClusterSignIn, type DbInstance } from '../api';
+import { ACTION_OPERATIONS, isCode, type ClusterSignIn, type DbInstance } from '../api';
 import { InstanceActions } from '../components/instance-actions';
+import { ModifyInstanceDialog } from '../components/modify-instance-dialog';
 import { ProtectionValue } from '../components/protection-value';
 import { StatusValue } from '../components/status';
 import { TagsTable } from '../components/tags-table';
-import { clusterHref, engineText, INSTANCES_PATH, INSTANCES_WORD, NONE } from '../format';
-import { useClusterSignIn, useInstance, useInstanceAction } from '../queries';
+import { clusterHref, engineText, instanceHref, INSTANCES_PATH, INSTANCES_WORD, NONE } from '../format';
+import { MODIFY_INSTANCE, type InstanceChanges } from '../modify-api';
+import { useClusterSignIn, useInstance, useInstanceAction, useModifyInstance } from '../queries';
 import { ACTION_LABELS, ACTION_RESULTS, actionTarget, type ActionTarget, type InstanceAction } from '../status';
 
 // A DB instance's page, S3 (issue 573, design tasks 1 and 3): read by `DBInstanceIdentifier`, so an identifier the
@@ -283,8 +285,13 @@ export function InstancePage({ connection, params }: ScreenPageProps) {
   const flash = usePageFlash();
   const pageSignal = usePageSignal();
   const act = useInstanceAction(connection.engineOrigin);
+  const modify = useModifyInstance(connection.engineOrigin);
   const [announcement, announce] = useAnnouncer();
   const [pending, setPending] = useState(false);
+  const inFlight = useRef(false);
+  const [editing, setEditing] = useState<DbInstance>();
+  const [modifyFailure, setModifyFailure] = useState<FlashItem>();
+  const [modifyUnavailable, setModifyUnavailable] = useState(false);
   const reading = useInstance(connection.engineOrigin, id);
   const { value: read, failure, refresh } = reading;
   const instance = read?.found === true ? read.instance : undefined;
@@ -295,6 +302,7 @@ export function InstancePage({ connection, params }: ScreenPageProps) {
       ? instance.clusterId
       : undefined;
   const signIn = useClusterSignIn(connection.engineOrigin, signInCluster);
+  const canModify = instance?.status === 'available' && !pending && !modifyUnavailable && failureState === undefined;
 
   // Kept from the previous render, as React's own pattern for it, so each change is acted on once.
   const [seenFailureLine, setSeenFailureLine] = useState<string>();
@@ -322,14 +330,16 @@ export function InstancePage({ connection, params }: ScreenPageProps) {
 
   // The request and what follows its answer are this page's, which stays mounted whatever its read shows.
   const handleAction = (action: InstanceAction, target: ActionTarget) => {
-    if (pending) {
+    if (inFlight.current) {
       return;
     }
     const signal = pageSignal();
+    inFlight.current = true;
     setPending(true);
     act(action, target.id, signal).then(
       () => {
         if (signal.aborted) return;
+        inFlight.current = false;
         setPending(false);
         const result = [{ type: 'success', content: `${ACTION_RESULTS[action]} ${target.id}` }] as const;
         if (action === 'delete') {
@@ -340,6 +350,7 @@ export function InstancePage({ connection, params }: ScreenPageProps) {
       },
       (error: unknown) => {
         if (signal.aborted) return;
+        inFlight.current = false;
         setPending(false);
         flash.show([
           actionFailureItem(
@@ -350,6 +361,52 @@ export function InstancePage({ connection, params }: ScreenPageProps) {
         ]);
       },
     );
+  };
+
+  const handleModify = async (changes: InstanceChanges) => {
+    if (editing === undefined || inFlight.current) return;
+    const signal = pageSignal();
+    inFlight.current = true;
+    setPending(true);
+    setModifyFailure(undefined);
+    try {
+      const updatedId = await modify(editing, changes, signal);
+      if (signal.aborted) return;
+      setEditing(undefined);
+      const result = [{ type: 'success', content: `Modifying ${updatedId}.` }] as const;
+      if (updatedId === id) {
+        flash.show(result);
+      } else {
+        flash.handOver(instanceHref(updatedId), result);
+      }
+    } catch (error) {
+      if (signal.aborted) return;
+      if (isCode(error, 'DBInstanceNotFound') || isCode(error, 'DBInstanceNotFoundFault')) {
+        setEditing(undefined);
+        refresh();
+        return;
+      }
+      const failure = { ...failureOf(error, MODIFY_INSTANCE) };
+      const password = changes.masterPassword;
+      if (password !== undefined && password !== '') {
+        const redact = (value: string) => value.replaceAll(password, '…');
+        if ('code' in failure) failure.code = redact(failure.code);
+        if ('message' in failure && failure.message !== undefined) failure.message = redact(failure.message);
+      }
+      const item = actionFailureItem(failure, 'Modify DB instance', connection.engineOrigin);
+      if (failure.kind === 'not-implemented') {
+        setModifyUnavailable(true);
+        setEditing(undefined);
+        flash.show([item]);
+      } else {
+        setModifyFailure(item);
+      }
+    } finally {
+      if (!signal.aborted) {
+        inFlight.current = false;
+        setPending(false);
+      }
+    }
   };
 
   let content;
@@ -397,6 +454,18 @@ export function InstancePage({ connection, params }: ScreenPageProps) {
                   }}
                 />
                 {instance !== undefined && (
+                  <Button
+                    ariaHaspopup="dialog"
+                    disabled={!canModify}
+                    onClick={() => {
+                      setModifyFailure(undefined);
+                      setEditing(instance);
+                    }}
+                  >
+                    Modify
+                  </Button>
+                )}
+                {instance !== undefined && (
                   <InstanceActions instance={actionTarget(instance)} pending={pending} onAction={handleAction} />
                 )}
               </SpaceBetween>
@@ -408,6 +477,17 @@ export function InstancePage({ connection, params }: ScreenPageProps) {
       >
         {content}
       </ContentLayout>
+      {editing !== undefined && (
+        <ModifyInstanceDialog
+          instance={editing}
+          pending={pending}
+          failure={modifyFailure}
+          onSave={(changes) => void handleModify(changes)}
+          onDismiss={() => {
+            setEditing(undefined);
+          }}
+        />
+      )}
       {announcement}
     </>
   );
