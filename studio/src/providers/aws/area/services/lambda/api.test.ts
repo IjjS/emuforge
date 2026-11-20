@@ -537,7 +537,7 @@ describe('a function’s page', () => {
     },
   );
 
-  it('gives memory, timeout, role, code size, SHA-256, package type, variables in the answer’s order and the last update with its reason', async () => {
+  it('gives memory, timeout, role, code size, SHA-256, package type, variables by key and the last update with its reason', async () => {
     engine.answer = (request) =>
       request.operation === 'GetFunction'
         ? json(200, {
@@ -570,12 +570,56 @@ describe('a function’s page', () => {
       lastUpdateStatus: 'InProgress',
       lastUpdateStatusReason: 'The function is being updated.',
     });
-    // The order the answer wrote them in (an integer-like key would be reordered by any object; none is one here).
     expect(fn?.environment).toEqual([
-      { key: 'ZETA', value: 'last' },
-      { key: 'ALPHA', value: '' },
       { key: '1-dash', value: 'x' },
+      { key: 'ALPHA', value: '' },
+      { key: 'ZETA', value: 'last' },
     ]);
+  });
+
+  /** The variables of the read of a `GetFunction` answer whose `Environment.Variables` is `variables`. */
+  async function variablesRead(variables: Record<string, string>) {
+    engine.answer = (request) =>
+      request.operation === 'GetFunction'
+        ? json(200, { Configuration: functionItem('f', { Environment: { Variables: variables } }) })
+        : defaultAnswer(request);
+    const read = await readFunction(endpoint, 'f', signal());
+    return read.found ? read.function.environment : undefined;
+  }
+
+  it('holds the variables ascending by key, compared by UTF-16 code unit, whatever order the answer wrote', async () => {
+    // Written in this order in the answer's body; no key is integer-like, so the object keeps it.
+    expect(
+      await variablesRead({
+        ZETA: 'z',
+        alpha: 'a',
+        '1ST': '1',
+        _under: '',
+        Key: 'K',
+        KEY: 'KK',
+        key: 'k',
+        BETA: 'b',
+        Ä: 'umlaut',
+      }),
+    ).toEqual([
+      { key: '1ST', value: '1' },
+      { key: 'BETA', value: 'b' },
+      { key: 'KEY', value: 'KK' },
+      { key: 'Key', value: 'K' },
+      { key: 'ZETA', value: 'z' },
+      { key: '_under', value: '' },
+      { key: 'alpha', value: 'a' },
+      { key: 'key', value: 'k' },
+      { key: 'Ä', value: 'umlaut' },
+    ]);
+  });
+
+  it('two answers holding the same variables written in two orders give the same list', async () => {
+    const first = await variablesRead({ GREETING: 'hello-2', EXTRA: 'x', MID: '3' });
+    const second = await variablesRead({ MID: '3', EXTRA: 'x', GREETING: 'hello-2' });
+
+    expect(second).toEqual(first);
+    expect(first?.map(({ key }) => key)).toEqual(['EXTRA', 'GREETING', 'MID']);
   });
 
   it('gives no variables for an answer without Environment, and holds Code.Location nowhere', async () => {
