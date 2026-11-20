@@ -54,6 +54,8 @@ import {
 
 /** A name keeps room for 24 characters (`aws-area.md`, entry 4): 28ch is those 24 and the cell's padding. */
 const NAME_MIN_WIDTH = '28ch';
+/** The least width of an ID column that is a row header, so a zero-padded ID keeps to one or two lines at 390. */
+const ID_MIN_WIDTH = '22ch';
 
 const yesNo = (value: boolean) => (value ? 'Yes' : 'No');
 
@@ -194,6 +196,7 @@ function Subnets({ vpcId, listing, connection }: SectionProps<Subnet>) {
       id: 'id',
       header: 'Subnet ID',
       isRowHeader: true,
+      minWidth: ID_MIN_WIDTH,
       cell: (row) => (
         <Link href={subnetHref(row.id)} onFollow={handleFollow}>
           <ValueText kind="name" value={row.id} />
@@ -266,6 +269,7 @@ function RouteTables({ vpcId, listing, connection }: SectionProps<RouteTable>) {
       id: 'id',
       header: 'Route table ID',
       isRowHeader: true,
+      minWidth: ID_MIN_WIDTH,
       cell: (row) => (
         <Link href={routeTableHref(row.id)} onFollow={handleFollow}>
           <ValueText kind="name" value={row.id} />

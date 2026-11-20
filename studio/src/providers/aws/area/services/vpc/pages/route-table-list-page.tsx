@@ -41,6 +41,8 @@ const MAIN_REASON = "A VPC's main route table cannot be deleted.";
 
 /** A name keeps room for 24 characters (`aws-area.md`, entry 4): 28ch is those 24 and the cell's padding on each side. */
 const NAME_MIN_WIDTH = '28ch';
+/** The least width of an ID column that is a row header, so a zero-padded ID keeps to one or two lines at 390. */
+const ID_MIN_WIDTH = '22ch';
 
 type BodyState =
   | { kind: 'loading' }
@@ -154,6 +156,7 @@ export function RouteTableListPage({ connection }: { connection: AreaConnection 
       id: 'id',
       header: 'Route table ID',
       isRowHeader: true,
+      minWidth: ID_MIN_WIDTH,
       cell: (row) => (
         <Link href={routeTableHref(row.id)} onFollow={handleFollow}>
           <ValueText kind="name" value={row.id} />

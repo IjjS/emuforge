@@ -39,6 +39,8 @@ const SELECT_ONE = 'Select one VPC.';
 
 /** A name keeps room for 24 characters (`aws-area.md`, entry 4): 28ch is those 24 and the cell's padding on each side. */
 const NAME_MIN_WIDTH = '28ch';
+/** The least width of an ID column that is a row header, so a zero-padded ID keeps to one or two lines at 390. */
+const ID_MIN_WIDTH = '22ch';
 
 type BodyState =
   | { kind: 'loading' }
@@ -152,6 +154,7 @@ export function VpcListPage({ connection }: { connection: AreaConnection }) {
       id: 'id',
       header: 'VPC ID',
       isRowHeader: true,
+      minWidth: ID_MIN_WIDTH,
       cell: (row) => (
         <Link href={vpcHref(row.id)} onFollow={handleFollow}>
           <ValueText kind="name" value={row.id} />
