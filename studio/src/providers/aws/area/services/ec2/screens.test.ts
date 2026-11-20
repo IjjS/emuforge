@@ -53,7 +53,8 @@ describe("EC2's screens", () => {
         expect(crumbs(path, sample).length).toBeGreaterThan(0);
       }
       expect(screen.navigation.header.text).toBe('EC2');
-      expect(screen.navigation.items.length).toBe(3);
+      expect(screen.navigation.items).toContainEqual({ type: 'link', text: 'Volumes', href: '/aws/ec2/volumes' });
+      expect(screen.navigation.items).toHaveLength(4);
     }
   });
 });

@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -28,7 +28,7 @@ function open() {
   render(
     <QueryClientProvider client={new QueryClient()}>
       <MemoryRouter>
-        <VolumeListPage connection={{ engineOrigin: endpoint }} params={{}} />
+        <VolumeListPage connection={{ engineOrigin: endpoint, result: undefined }} params={{}} />
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -66,16 +66,15 @@ describe('volume list', () => {
 
     const id = await screen.findByRole('link', { name: first.id });
     expect(id).toHaveAttribute('href', '/aws/ec2/volumes/volume/vol-first');
-    const row = id.closest('tr');
-    if (row === null) throw new Error('Missing volume row');
-    for (const value of ['8 GiB', 'gp2', 'us-east-1a', 'available']) {
-      expect(within(row).getByText(value)).toBeInTheDocument();
-    }
+    const rows = createWrapper(document.body).findTable()?.findRows();
+    expect(rows?.map((row) => row.findCells().map((cell) => cell.getElement().textContent))).toEqual([
+      [first.id, '8 GiB', 'gp2', 'us-east-1a', 'available'],
+    ]);
 
     move('next');
     expect(await screen.findByRole('link', { name: second.id })).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: first.id })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Next page' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Next page' })).toHaveAttribute('aria-disabled', 'true');
     move('previous');
     expect(await screen.findByRole('link', { name: first.id })).toBeInTheDocument();
     expect(vi.mocked(listVolumes).mock.calls.map(([, token]) => token)).toEqual([undefined, 'next-token', undefined]);
@@ -93,7 +92,7 @@ describe('volume list', () => {
 
     expect(await screen.findByRole('link', { name: 'vol-external' })).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: second.id })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Previous page' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Previous page' })).toHaveAttribute('aria-disabled', 'true');
     expect(listVolumes).toHaveBeenLastCalledWith(endpoint, undefined, expect.any(AbortSignal));
   });
 

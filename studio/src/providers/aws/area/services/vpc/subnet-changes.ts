@@ -2,13 +2,7 @@ import { useCallback } from 'react';
 
 import { noEndpoint } from '../../components/use-token-listing';
 import { useReadAgain } from './queries';
-import {
-  createSubnet,
-  deleteSubnet,
-  setPublicAddresses,
-  SUBNET_CHANGE_OPERATIONS,
-  type NewSubnet,
-} from './subnet-changes-api';
+import { createSubnet, deleteSubnet, setPublicAddresses, type NewSubnet } from './subnet-changes-api';
 
 // The mutations of a subnet (issue 574, design task 2), for the subnet forms.
 // Once a change succeeds, what it changed is read again (design, "Where a result is shown"): after a create the

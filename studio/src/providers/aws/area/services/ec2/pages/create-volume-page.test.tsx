@@ -195,7 +195,10 @@ describe('create volume', () => {
     expect(router.state.location.pathname).toBe(`${list}/volume/${id}`);
     expect(screen.getByText(`Volume ${id} created.`)).toBeInTheDocument();
     expect(screen.getByText('Refreshing the list')).toBeInTheDocument();
-    expect(await screen.findByText('8 GiB')).toBeInTheDocument();
+    await screen.findByRole('heading', { name: 'Volume details' });
+    const details = createWrapper(document.body).findKeyValuePairs()?.findItems();
+    const size = details?.find((item) => item.findLabel()?.getElement().textContent === 'Size');
+    expect(size?.findValue()?.getElement()).toHaveTextContent('8 GiB');
     expect(getVolume).toHaveBeenCalledWith(endpoint, id, expect.any(AbortSignal));
   });
 
@@ -212,13 +215,15 @@ describe('create volume', () => {
     await chooseZone();
     fillSize('8');
     cancel();
-    const dialog = () => within(screen.getByRole('dialog', { name: 'Discard what you entered?' }));
-    fireEvent.click(dialog().getByRole('button', { name: 'Keep editing' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveTextContent('Discard what you entered?');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Keep editing' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(select().findTrigger().getElement()).toHaveTextContent('us-east-1b');
     expect(sizeField()).toHaveValue('8');
     expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
     cancel();
-    fireEvent.click(dialog().getByRole('button', { name: 'Discard' }));
+    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Discard' }));
     await screen.findByRole('heading', { level: 1, name: 'Volumes' });
     expect(router.state.location.pathname).toBe(list);
     expect(createVolume).not.toHaveBeenCalled();
@@ -236,7 +241,7 @@ describe('create volume', () => {
     expect(screen.getByText(/501 Not Implemented for CreateVolume/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Create volume' })).toBeDisabled();
     cancel();
-    fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Discard' }));
     await screen.findByRole('heading', { level: 1, name: 'Volumes' });
     expect(createVolume).toHaveBeenCalledTimes(1);
   });

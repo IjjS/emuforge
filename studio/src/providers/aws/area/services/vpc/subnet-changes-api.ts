@@ -1,8 +1,4 @@
-import {
-  CreateSubnetCommand,
-  DeleteSubnetCommand,
-  ModifySubnetAttributeCommand,
-} from '@aws-sdk/client-ec2';
+import { CreateSubnetCommand, DeleteSubnetCommand, ModifySubnetAttributeCommand } from '@aws-sdk/client-ec2';
 
 import { DESCRIBE_AVAILABILITY_ZONES } from '../../lib/ec2-availability-zones';
 import { sendEc2, text } from '../../lib/ec2-client';
