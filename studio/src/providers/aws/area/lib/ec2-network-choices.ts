@@ -3,7 +3,7 @@ import { DescribeSubnetsCommand, DescribeVpcsCommand, type Filter } from '@aws-s
 import { nameOf, sendEc2, tagsOf, text, withValues } from './ec2-client';
 
 // The VPCs and the subnets a form of the area chooses from, a page of 50 at a time by the API's own token (EC2's
-// launch and security group forms, VPC's forms). Lifted from `services/ec2` when VPC came to need them (issue 574);
+// launch and security group forms, VPC's forms). Lifted from EC2's screens (issue 574) when VPC came to need them;
 // how a choice is shown stays each service's own. Each read is sent through `sendEc2` with its operation's name, so
 // a failed request rejects with its `RequestError` and an aborted one with the signal's reason.
 

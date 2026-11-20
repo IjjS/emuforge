@@ -14,10 +14,9 @@ import { sendEc2, tagsOf, text, withValues, type Tag } from '../../lib/ec2-clien
 import type { InstanceAction } from './instance-state';
 
 // The calls of EC2's instance screens (issue 553, design tasks 1 and 3), through the engine, mapped to plain typed
-// results, sent, as every API file of the
-// folder sends, through the area's `sendEc2` (`lib/ec2-client.ts`). Every command goes through the shared `sendRequest` with its operation's name, so a
-// failed request rejects with its `RequestError` and an aborted one with the signal's reason. Every value is the
-// emulator's, as it came.
+// results, sent, as every API file of the folder sends, through the area's `sendEc2` (`lib/ec2-client.ts`). Every
+// command goes through the shared `sendRequest` with its operation's name, so a failed request rejects with its
+// `RequestError` and an aborted one with the signal's reason. Every value is the emulator's, as it came.
 
 /** The operations of the instance screens, as a failure names them. */
 export const OPERATIONS = {
