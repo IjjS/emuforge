@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -73,9 +73,9 @@ function open(observe = false) {
 }
 
 function select() {
-  const field = page.findSelect();
-  if (field == null) throw new Error('Missing Availability Zone selector');
-  return field;
+  const control = field('zone').findControl()?.findSelect();
+  if (control == null) throw new Error('Missing Availability Zone selector');
+  return control;
 }
 
 async function openZoneChoices(zone: string) {
@@ -92,30 +92,58 @@ async function chooseZone(zone = zones[0]) {
   act(() => select().selectOptionByValue(zone));
 }
 
-const sizeField = () => screen.getByRole('textbox', { name: 'Size (GiB)' });
-const fillSize = (value: string) => fireEvent.change(sizeField(), { target: { value } });
-const submit = () => fireEvent.click(screen.getByRole('button', { name: 'Create volume' }));
-const cancel = () => fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-
-function field(label: string) {
-  const wrapper = page
-    .findAllFormFields()
-    .find((candidate) => candidate.findLabel()?.getElement().textContent === label);
+function field(name: 'zone' | 'size') {
+  const index = name === 'zone' ? 0 : 1;
+  const label = name === 'zone' ? 'Availability Zone' : 'Size (GiB)';
+  const wrapper = page.findForm()?.findContent()?.findAllFormFields()[index];
   if (wrapper === undefined) throw new Error(`Missing ${label} field`);
+  expect(wrapper.findLabel()?.getElement()).toHaveTextContent(label);
   return wrapper;
 }
 
-function alert(header: string) {
-  return page.findAllAlerts().find((candidate) => candidate.findHeader()?.getElement().textContent === header);
+function sizeInput() {
+  const input = field('size').findControl()?.findInput();
+  if (input == null) throw new Error('Missing size input');
+  return input;
+}
+
+function formAction(name: 'Cancel' | 'Create volume') {
+  const index = name === 'Cancel' ? 0 : 1;
+  const action = page.findForm()?.findActions()?.findAllButtons()[index];
+  if (action === undefined) throw new Error(`Missing ${name} form button`);
+  expect(action.getElement()).toHaveAccessibleName(name);
+  return action;
+}
+
+const fillSize = (value: string) => act(() => sizeInput().setInputValue(value));
+const submit = () => act(() => formAction('Create volume').click());
+const cancel = () => act(() => formAction('Cancel').click());
+
+function creationAlert() {
+  return page
+    .findAllAlerts()
+    .find((candidate) => candidate.getElement().closest('[aria-label="Local emulator notice"]') === null);
+}
+
+function zoneReadFailure() {
+  return page.findAllBoxes().find((box) => box.findStatusIndicator() !== null && box.findButton() !== null);
+}
+
+function expectListHeading() {
+  const heading = page.findTable()?.findHeaderSlot()?.findHeader()?.findHeadingText().getElement();
+  expect(heading?.closest('h1')).toBeVisible();
+  expect(heading).toHaveTextContent(/^Volumes$/);
 }
 
 async function answerDiscard(answer: 'Keep editing' | 'Discard') {
   await waitFor(() =>
     expect(page.findModal()?.findHeader().getElement()).toHaveTextContent('Discard what you entered?'),
   );
-  const footer = page.findModal()?.findFooter()?.getElement();
-  if (footer === undefined) throw new Error('Missing discard dialog footer');
-  fireEvent.click(within(footer).getByRole('button', { name: answer }));
+  const index = answer === 'Keep editing' ? 0 : 1;
+  const button = page.findModal()?.findFooter()?.findAllButtons()[index];
+  if (button === undefined) throw new Error(`Missing discard dialog action ${answer}`);
+  expect(button.getElement()).toHaveAccessibleName(answer);
+  act(() => button.click());
 }
 
 function deferred<T>() {
@@ -141,6 +169,12 @@ function expectCreatedVolume() {
   ]);
 }
 
+function expectVolumeHeading() {
+  const heading = page.findContentLayout()?.findHeader()?.findHeader()?.findHeadingText().getElement();
+  expect(heading?.closest('h1')).toBeVisible();
+  expect(heading?.textContent).toBe(id);
+}
+
 beforeEach(() => {
   vi.resetAllMocks();
   vi.stubGlobal('matchMedia', (media: string) => ({
@@ -163,12 +197,18 @@ afterEach(() => {
 });
 
 describe('create volume', () => {
-  it('requires a zone even when the size is valid', () => {
+  it('requires a zone after choices load even when the size is valid', async () => {
     open();
+    select().findTrigger().getElement().focus();
+    await openZoneChoices('us-east-1b');
+    act(() => select().closeDropdown());
+    expect(select().findTrigger().getElement()).toHaveAttribute('aria-expanded', 'false');
+    expect(select().findPlaceholder()?.getElement()).toHaveTextContent('Choose an Availability Zone');
+
     fillSize('8');
     submit();
-    expect(field('Availability Zone').findError()?.getElement()).toHaveTextContent('Choose an Availability Zone.');
-    expect(field('Size (GiB)').findError()).toBeNull();
+    expect(field('zone').findError()?.getElement()).toHaveTextContent('Choose an Availability Zone.');
+    expect(field('size').findError()).toBeNull();
     expect(createVolume).not.toHaveBeenCalled();
   });
 
@@ -178,7 +218,7 @@ describe('create volume', () => {
     for (const size of ['', '1.5', '0', '16385']) {
       fillSize(size);
       submit();
-      expect(field('Size (GiB)').findError()?.getElement()).toHaveTextContent('Enter a whole number from 1 to 16384.');
+      expect(field('size').findError()?.getElement()).toHaveTextContent('Enter a whole number from 1 to 16384.');
       expect(createVolume).not.toHaveBeenCalled();
     }
   });
@@ -188,7 +228,7 @@ describe('create volume', () => {
     await chooseZone();
     fillSize(String(size));
     submit();
-    expect(await screen.findByRole('heading', { level: 1, name: id })).toBeInTheDocument();
+    await waitFor(expectVolumeHeading);
     expect(createVolume).toHaveBeenCalledExactlyOnceWith(endpoint, { zone: zones[0], size }, expect.any(AbortSignal));
   });
 
@@ -197,13 +237,16 @@ describe('create volume', () => {
       new RequestError({ kind: 'other', operation: 'DescribeAvailabilityZones', code: 'InternalError' }),
     );
     open();
-    await screen.findByText(/InternalError/);
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(zoneReadFailure()?.getElement()).toHaveTextContent('InternalError'));
+    const retry = zoneReadFailure()?.findButton();
+    if (retry == null) throw new Error('Missing availability zone retry action');
+    expect(retry.getElement()).toHaveAccessibleName('Retry');
+    act(() => retry.click());
 
     const dropdown = await openZoneChoices('us-east-1b');
     expect(dropdown.findOptions().map((option) => option.findLabel().getElement().textContent)).toEqual(zones);
     act(() => select().selectOptionByValue('us-east-1a'));
-    expect(screen.queryByText(/InternalError/)).toBeNull();
+    expect(zoneReadFailure()).toBeUndefined();
     expect(select().findTrigger().getElement()).toHaveTextContent('us-east-1a');
   });
 
@@ -222,14 +265,14 @@ describe('create volume', () => {
     submit();
 
     await waitFor(() =>
-      expect(alert('Creating volume failed')?.findContent().getElement()).toHaveTextContent('InvalidParameterValue'),
+      expect(creationAlert()?.findHeader()?.getElement()).toHaveTextContent('Creating volume failed'),
     );
-    expect(alert('Creating volume failed')?.findContent().getElement()).toHaveTextContent(
-      'The requested zone is invalid.',
-    );
+    const refusal = creationAlert()?.findContent().getElement();
+    expect(refusal).toHaveTextContent('InvalidParameterValue');
+    expect(refusal).toHaveTextContent('The requested zone is invalid.');
     expect(select().findTrigger().getElement()).toHaveTextContent('us-east-1b');
-    expect(sizeField()).toHaveValue('8');
-    expect(screen.getByRole('button', { name: 'Create volume' })).toBeEnabled();
+    expect(sizeInput().getInputValue()).toBe('8');
+    expect(formAction('Create volume').getElement()).toBeEnabled();
   });
 
   it('keeps success and the volume details visible after the slower list refresh completes', async () => {
@@ -241,7 +284,7 @@ describe('create volume', () => {
     fillSize('8');
     submit();
 
-    expect(await screen.findByRole('heading', { level: 1, name: id })).toBeInTheDocument();
+    await waitFor(expectVolumeHeading);
     expect(router.state.location.pathname).toBe(`${list}/volume/${id}`);
     expect(screen.getByText('Refreshing the list')).toBeInTheDocument();
     await waitFor(expectCreatedVolume);
@@ -261,7 +304,7 @@ describe('create volume', () => {
     submit();
 
     expect(createVolume).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    expect(formAction('Cancel').getElement()).toBeDisabled();
     cancel();
     expect(page.findModal()).toBeNull();
     expect(router.state.location.pathname).toBe(`${list}/create`);
@@ -274,7 +317,7 @@ describe('create volume', () => {
   it('returns to the list on clean cancel without submitting', async () => {
     const router = open();
     cancel();
-    await screen.findByRole('heading', { level: 1, name: 'Volumes' });
+    await waitFor(expectListHeading);
     expect(router.state.location.pathname).toBe(list);
     expect(createVolume).not.toHaveBeenCalled();
   });
@@ -287,11 +330,11 @@ describe('create volume', () => {
     await answerDiscard('Keep editing');
     await waitFor(() => expect(page.findModal()).toBeNull());
     expect(select().findTrigger().getElement()).toHaveTextContent('us-east-1b');
-    expect(sizeField()).toHaveValue('8');
-    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
+    expect(sizeInput().getInputValue()).toBe('8');
+    expect(formAction('Cancel').getElement()).toHaveFocus();
     cancel();
     await answerDiscard('Discard');
-    await screen.findByRole('heading', { level: 1, name: 'Volumes' });
+    await waitFor(expectListHeading);
     expect(router.state.location.pathname).toBe(list);
     expect(createVolume).not.toHaveBeenCalled();
   });
@@ -305,14 +348,13 @@ describe('create volume', () => {
     fillSize('8');
     submit();
     await waitFor(() =>
-      expect(alert('Not implemented by the emulator')?.findContent().getElement()).toHaveTextContent(
-        '501 Not Implemented for CreateVolume',
-      ),
+      expect(creationAlert()?.findHeader()?.getElement()).toHaveTextContent('Not implemented by the emulator'),
     );
-    expect(screen.getByRole('button', { name: 'Create volume' })).toBeDisabled();
+    expect(creationAlert()?.findContent().getElement()).toHaveTextContent('501 Not Implemented for CreateVolume');
+    expect(formAction('Create volume').getElement()).toBeDisabled();
     cancel();
     await answerDiscard('Discard');
-    await screen.findByRole('heading', { level: 1, name: 'Volumes' });
+    await waitFor(expectListHeading);
     expect(createVolume).toHaveBeenCalledTimes(1);
   });
 });

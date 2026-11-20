@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, render, waitFor, within } from '@testing-library/react';
+import { act, render, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -40,19 +40,18 @@ function table() {
   return wrapper;
 }
 
-function header() {
-  const actions = table().findHeaderSlot();
-  if (actions === null) throw new Error('Missing volume table header');
-  return within(actions.getElement());
+function headerAction(index: number) {
+  const action = table().findHeaderSlot()?.findHeader()?.findActions()?.findAllButtons()[index];
+  if (action === undefined) throw new Error('Missing volume table header action');
+  return action;
 }
 
 function emptySlot() {
-  return table().findEmptySlot()?.getElement();
+  return table().findEmptySlot();
 }
 
 function volumeLink() {
-  const cell = table().findBodyCell(1, 1);
-  return cell == null ? undefined : createWrapper(cell.getElement()).findLink()?.getElement();
+  return table().findBodyCell(1, 1)?.findLink()?.getElement();
 }
 
 async function expectVolume(id: string) {
@@ -88,8 +87,10 @@ describe('volume list', () => {
     open();
 
     expect(table().findLoadingText()?.getElement()).toHaveTextContent('Loading volumes');
-    await waitFor(() => expect(emptySlot()).toHaveTextContent('No volumes'));
-    expect(header().getByRole('link', { name: 'Create volume' })).toHaveAttribute('href', '/aws/ec2/volumes/create');
+    await waitFor(() => expect(emptySlot()?.getElement()).toHaveTextContent('No volumes'));
+    const create = headerAction(1).getElement();
+    expect(create).toHaveAccessibleName('Create volume');
+    expect(create).toHaveAttribute('href', '/aws/ec2/volumes/create');
   });
 
   it('uses the returned token, links the rows and goes back from the last page', async () => {
@@ -97,11 +98,12 @@ describe('volume list', () => {
     open();
 
     await expectVolume(first.id);
-    expect(
-      table()
-        .findRows()
-        .map((row) => row.findAll('th, td').map((cell) => cell.getElement().textContent)),
-    ).toEqual([[first.id, 'available', '8 GiB', 'gp2', 'us-east-1a']]);
+    const listing = table();
+    const row = listing
+      .findColumnHeaders()
+      .map((_, index) => listing.findBodyCell(1, index + 1)?.getElement().textContent);
+    expect(listing.findRows()).toHaveLength(1);
+    expect(row).toEqual([first.id, 'available', '8 GiB', 'gp2', 'us-east-1a']);
 
     move('next');
     await expectVolume(second.id);
@@ -120,7 +122,9 @@ describe('volume list', () => {
     await expectVolume(second.id);
 
     vi.mocked(listVolumes).mockResolvedValueOnce({ items: [{ ...first, id: 'vol-external' }] });
-    act(() => header().getByRole('button', { name: 'Refresh' }).click());
+    const refresh = headerAction(0);
+    expect(refresh.getElement()).toHaveAccessibleName('Refresh');
+    act(() => refresh.click());
 
     await expectVolume('vol-external');
     expect(table().findRows()).toHaveLength(1);
@@ -134,12 +138,13 @@ describe('volume list', () => {
       .mockResolvedValueOnce({ items: [first] });
     open();
 
-    await waitFor(() => expect(emptySlot()).toHaveTextContent('InternalError'));
-    const empty = emptySlot();
-    if (empty === undefined) throw new Error('Missing volume read failure');
-    act(() => within(empty).getByRole('button', { name: 'Retry' }).click());
+    await waitFor(() => expect(emptySlot()?.getElement()).toHaveTextContent('InternalError'));
+    const retry = emptySlot()?.findButton();
+    if (retry == null) throw new Error('Missing volume read retry action');
+    expect(retry.getElement()).toHaveAccessibleName('Retry');
+    act(() => retry.click());
     await expectVolume(first.id);
-    expect(emptySlot()).toBeUndefined();
+    expect(emptySlot()).toBeNull();
   });
 
   it('shows the area’s not-implemented state on a 501', async () => {
@@ -147,7 +152,9 @@ describe('volume list', () => {
       new RequestError({ kind: 'not-implemented', operation: 'DescribeVolumes' }),
     );
     open();
-    await waitFor(() => expect(emptySlot()).toHaveTextContent('Not implemented by the emulator'));
-    expect(emptySlot()).toHaveTextContent('DescribeVolumes');
+    await waitFor(() =>
+      expect(emptySlot()?.findStatusIndicator()?.getElement()).toHaveTextContent('Not implemented by the emulator'),
+    );
+    expect(emptySlot()?.getElement()).toHaveTextContent('DescribeVolumes');
   });
 });
