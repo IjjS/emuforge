@@ -597,6 +597,32 @@ describe('S5, a task', () => {
     });
   }
 
+  it('a task stopped with UserInitiated whose essential container exited 143 → an info Alert that keeps the exit-code line', async () => {
+    vi.mocked(tasks.getTask).mockImplementation(() =>
+      Promise.resolve(
+        found(
+          task({
+            ...STOPPED_TASK,
+            stopCode: 'UserInitiated',
+            stoppedReason: 'Task stopped by user',
+            containers: [{ name: 'app', status: 'STOPPED', exitCode: 143 }],
+          }),
+        ),
+      ),
+    );
+    open();
+    await details();
+    const alert = await waitFor(() => {
+      const found = outcome();
+      expect(found).toBeDefined();
+      return found;
+    });
+    expect(text(alert?.getElement())).toContain('Task stopped: UserInitiated');
+    expect(text(alert?.getElement())).toContain('Exit code of essential container app: 143');
+    expect(alert?.getElement().querySelector('[class*="type-info"]')).not.toBeNull();
+    expect(alert?.getElement().querySelector('[class*="type-error"]')).toBeNull();
+  });
+
   it('a task stopped with TaskFailedToStart and no exit code → an error Alert with no exit-code line', async () => {
     vi.mocked(tasks.getTask).mockImplementation(() =>
       Promise.resolve(

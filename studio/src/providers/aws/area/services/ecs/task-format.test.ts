@@ -7,6 +7,7 @@ import {
   lastStatusType,
   needsRevision,
   serviceOfGroup,
+  stopOutcomeType,
   taskIdOf,
   taskTexts,
 } from './task-format';
@@ -66,5 +67,30 @@ describe("a task's values", () => {
     expect(needsRevision({ ...two, lastStatus: 'STOPPED', definition: { family: 'w', revision: 1 } })).toBe(true);
     expect(needsRevision({ ...two, lastStatus: 'RUNNING', definition: { family: 'w', revision: 1 } })).toBe(false);
     expect(needsRevision({ ...one, lastStatus: 'STOPPED', definition: { family: 'w', revision: 1 } })).toBe(false);
+  });
+});
+
+describe("a stopped task's outcome (critique final r3)", () => {
+  it('TaskFailedToStart → error, with or without an exit code', () => {
+    expect(stopOutcomeType('TaskFailedToStart', [])).toBe('error');
+    expect(stopOutcomeType('TaskFailedToStart', [{ exitCode: 0 }])).toBe('error');
+  });
+
+  it('EssentialContainerExited → error only with a non-zero essential exit code', () => {
+    expect(stopOutcomeType('EssentialContainerExited', [{ exitCode: 3 }])).toBe('error');
+    expect(stopOutcomeType('EssentialContainerExited', [{ exitCode: 0 }])).toBe('info');
+    expect(stopOutcomeType('EssentialContainerExited', [{}])).toBe('info');
+    expect(stopOutcomeType('EssentialContainerExited', undefined)).toBe('info');
+  });
+
+  it("UserInitiated and ServiceSchedulerInitiated → info whatever the exit code, SIGTERM's 143 included", () => {
+    expect(stopOutcomeType('UserInitiated', [{ exitCode: 143 }])).toBe('info');
+    expect(stopOutcomeType('ServiceSchedulerInitiated', [{ exitCode: 143 }])).toBe('info');
+    expect(stopOutcomeType('ServiceSchedulerInitiated', [{ exitCode: 1 }])).toBe('info');
+  });
+
+  it('any other stop code → info, even with a non-zero exit code', () => {
+    expect(stopOutcomeType('SpotInterruption', [{ exitCode: 137 }])).toBe('info');
+    expect(stopOutcomeType(undefined, [{ exitCode: 1 }])).toBe('info');
   });
 });

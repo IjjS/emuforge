@@ -81,24 +81,37 @@ describe('the tasks table', () => {
     expect(row?.textContent).toContain('UserInitiated');
   });
 
-  it('the Group column keeps a group whole: a min width of 28ch', async () => {
+  it('the Group column breaks a group only after its ":" (an address), at a min width of 10ch + 40px', async () => {
     vi.mocked(api.listTasks).mockResolvedValue({ tasks: [task('abc')] });
     const wrapper = open();
     await screen.findByRole('link', { name: 'abc' });
     const group = (wrapper.findTable()?.findColumnHeaders() ?? []).find(
       (header) => header.getElement().textContent === 'Group',
     );
-    expect(group?.getElement().style.minWidth).toBe('28ch');
+    expect(group?.getElement().style.minWidth).toBe('calc(10ch + 40px)');
+    expect(
+      wrapper.findTable()?.findBodyCell(1, 4)?.getElement().querySelector('.aws-area-value-address'),
+    ).not.toBeNull();
   });
 
-  it('the Task column keeps a 32-character task id on one line: a min width of 34ch', async () => {
+  it('the Task column keeps a 32-character task id on one line with its padding: 32ch + 24px', async () => {
     vi.mocked(api.listTasks).mockResolvedValue({ tasks: [task('abc')] });
     const wrapper = open();
     await screen.findByRole('link', { name: 'abc' });
     const column = (wrapper.findTable()?.findColumnHeaders() ?? []).find(
       (header) => header.getElement().textContent === 'Task',
     );
-    expect(column?.getElement().style.minWidth).toBe('34ch');
+    expect(column?.getElement().style.minWidth).toBe('calc(32ch + 24px)');
+  });
+
+  it('the Started at column keeps a date to three lines: 12ch + 40px', async () => {
+    vi.mocked(api.listTasks).mockResolvedValue({ tasks: [task('abc')] });
+    const wrapper = open();
+    await screen.findByRole('link', { name: 'abc' });
+    const column = (wrapper.findTable()?.findColumnHeaders() ?? []).find(
+      (header) => header.getElement().textContent === 'Started at',
+    );
+    expect(column?.getElement().style.minWidth).toBe('calc(12ch + 40px)');
   });
 
   it('a service\'s table → no "Group" column, and the list is read by the service', async () => {
