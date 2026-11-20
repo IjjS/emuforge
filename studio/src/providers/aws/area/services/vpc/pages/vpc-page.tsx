@@ -29,6 +29,7 @@ import {
   CREATE_ROUTE_TABLE_TITLE,
   CREATE_SUBNET_TITLE,
   INTERNET_GATEWAYS_PATH,
+  internetGatewaysHref,
   nameOrId,
   NONE,
   resourceName,
@@ -327,7 +328,7 @@ function RouteTables({ vpcId, listing, connection }: SectionProps<RouteTable>) {
   );
 }
 
-function Gateway({ listing, connection }: Omit<SectionProps<InternetGateway>, 'vpcId'>) {
+function Gateway({ vpcId, listing, connection }: SectionProps<InternetGateway>) {
   const handleFollow = useFollow();
   const { items, failure, refresh } = listing;
   const gateway = items?.[0];
@@ -342,7 +343,15 @@ function Gateway({ listing, connection }: Omit<SectionProps<InternetGateway>, 'v
       </Box>
     );
   } else if (gateway === undefined) {
-    content = <Box variant="p">No internet gateway is attached to this VPC.</Box>;
+    // The way to attach one for this VPC: S12, saying the attach is for it, and S14 with it chosen.
+    content = (
+      <SpaceBetween size="xs">
+        <Box variant="p">No internet gateway is attached to this VPC.</Box>
+        <Link href={internetGatewaysHref(vpcId)} onFollow={handleFollow}>
+          Attach internet gateway
+        </Link>
+      </SpaceBetween>
+    );
   } else {
     content = (
       <KeyValuePairs
@@ -491,7 +500,7 @@ export function VpcPage({ connection, params }: ScreenPageProps) {
         <Details vpc={vpc} dnsSupport={dnsSupport} dnsHostnames={dnsHostnames} connection={connection} />
         <Subnets vpcId={vpc.id} listing={subnets} connection={connection} />
         <RouteTables vpcId={vpc.id} listing={routeTables} connection={connection} />
-        <Gateway listing={gateways} connection={connection} />
+        <Gateway vpcId={vpc.id} listing={gateways} connection={connection} />
         <TagsTable tags={vpc.tags} />
       </SpaceBetween>
     );

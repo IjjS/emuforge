@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { notifyManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState, useSyncExternalStore } from 'react';
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -499,6 +499,33 @@ describe("a VPC's page", () => {
     await waitFor(() => {
       expect(text(container('Internet gateway'))).toContain('No internet gateway is attached to this VPC.');
     });
+  });
+
+  it('"Internet gateway" with none attached → the sentence and "Attach internet gateway" to the gateways with ?vpc= this VPC; one attached → no such link', async () => {
+    const router = open();
+    await loaded();
+    await waitFor(() => {
+      expect(text(container('Internet gateway'))).toContain('No internet gateway is attached to this VPC.');
+    });
+    const link = within(container('Internet gateway')).getByRole('link', { name: 'Attach internet gateway' });
+    expect(link).toHaveAttribute('href', '/aws/vpc/internet-gateways?vpc=vpc-a');
+    fireEvent.click(link);
+    await waitFor(() => {
+      expect(`${router.state.location.pathname}${router.state.location.search}`).toBe(
+        '/aws/vpc/internet-gateways?vpc=vpc-a',
+      );
+    });
+    cleanup();
+
+    vi.mocked(api.listInternetGateways).mockResolvedValue({
+      items: [{ id: 'igw-1', vpcId: 'vpc-a', tags: [{ key: 'Name', value: 'edge' }] }],
+    });
+    open();
+    await loaded();
+    await waitFor(() => {
+      expect(text(container('Internet gateway'))).toContain('igw-1');
+    });
+    expect(within(container('Internet gateway')).queryByRole('link', { name: 'Attach internet gateway' })).toBeNull();
   });
 
   it('"Tags" as the tags table shows them', async () => {
