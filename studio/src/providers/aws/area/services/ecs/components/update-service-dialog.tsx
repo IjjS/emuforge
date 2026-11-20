@@ -13,7 +13,9 @@ import { ChoiceSelect } from '../../../components/choice-select';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { actionFailureItem, CodeAndMessage } from '../../../components/failure-states';
 import { failureOf, usePageSignal } from '../../../components/use-token-listing';
-import { revisionChoices } from '../definition-choices';
+import type { ChoiceSource } from '../../../components/use-paged-choices';
+import { revisionChoices, type RevisionChoice } from '../definition-choices';
+import type { Definition } from '../task-format';
 import type { Service } from '../service-api';
 import { SERVICE_CHANGE_OPERATIONS } from '../service-change-api';
 import { useUpdateService } from '../service-change-queries';
@@ -41,6 +43,26 @@ export interface UpdateServiceDialogProps {
   /** The emulator answered 200 for the service `name`. */
   onUpdated: (name: string) => void;
   onDismiss: () => void;
+}
+
+/** The description of the listed revision that is the service's own, beside "Keep" it, which keeps it unsent. */
+const CURRENT_REVISION = "The service's current revision";
+
+/**
+ * The active revisions of the service's family, the one equal to the service's current revision described as such,
+ * so it is told apart from "Keep" it above: choosing it sends that revision, "Keep" sends none.
+ */
+function revisionSource(endpoint: string | undefined, current: Definition | undefined): ChoiceSource<RevisionChoice> {
+  const listed = revisionChoices(endpoint, current?.family);
+  return {
+    ...listed,
+    optionOf: (choice) => {
+      const option = listed.optionOf(choice);
+      return current !== undefined && choice.family === current.family && choice.revision === current.revision
+        ? { ...option, description: CURRENT_REVISION }
+        : option;
+    },
+  };
 }
 
 /** The refusal in the dialog: the emulator's code and message, or the area's words for any other failure. */
@@ -128,53 +150,62 @@ function Dialog({
         </Box>
       }
     >
-      <SpaceBetween size="m">
-        <FormField label="Desired tasks" constraintText={COUNT_RULE} errorText={messages.count}>
-          <Input
-            value={form.count}
-            inputMode="numeric"
-            invalid={messages.count !== undefined}
+      {/* Enter in a field submits the dialog as "Update" does, under the same guards. */}
+      <form
+        noValidate
+        aria-label={`Update service ${service.name}`}
+        onSubmit={(event) => {
+          event.preventDefault();
+          handleSubmit();
+        }}
+      >
+        <SpaceBetween size="m">
+          <FormField label="Desired tasks" constraintText={COUNT_RULE} errorText={messages.count}>
+            <Input
+              value={form.count}
+              inputMode="numeric"
+              invalid={messages.count !== undefined}
+              onChange={({ detail }) => {
+                setForm((current) => ({ ...current, count: detail.value }));
+              }}
+            />
+          </FormField>
+          <FormField
+            label="Revision"
+            description={
+              service.definition === undefined
+                ? undefined
+                : `The active revisions of family ${service.definition.family}, newest first.`
+            }
+          >
+            <ChoiceSelect
+              source={revisionSource(connection.engineOrigin, service.definition)}
+              connection={connection}
+              things="revisions"
+              fixed={keepLabel(service)}
+              value={form.revision}
+              onChange={(revision) => {
+                setForm((current) => ({ ...current, revision }));
+              }}
+            />
+          </FormField>
+          <Checkbox
+            checked={form.force}
             onChange={({ detail }) => {
-              setForm((current) => ({ ...current, count: detail.value }));
+              setForm((current) => ({ ...current, force: detail.checked }));
             }}
-          />
-        </FormField>
-        <FormField
-          label="Revision"
-          description={
-            service.definition === undefined
-              ? undefined
-              : `The active revisions of family ${service.definition.family}, newest first.`
-          }
-        >
-          <ChoiceSelect
-            source={revisionChoices(connection.engineOrigin, service.definition?.family)}
-            connection={connection}
-            things="revisions"
-            fixed={keepLabel(service)}
-            ariaLabel="Revision"
-            value={form.revision}
-            onChange={(revision) => {
-              setForm((current) => ({ ...current, revision }));
-            }}
-          />
-        </FormField>
-        <Checkbox
-          checked={form.force}
-          onChange={({ detail }) => {
-            setForm((current) => ({ ...current, force: detail.checked }));
-          }}
-        >
-          Force a new deployment
-        </Checkbox>
-        {failure !== undefined && (
-          <Failure
-            failure={failure}
-            name={service.name}
-            {...(connection.engineOrigin === undefined ? {} : { engineOrigin: connection.engineOrigin })}
-          />
-        )}
-      </SpaceBetween>
+          >
+            Force a new deployment
+          </Checkbox>
+          {failure !== undefined && (
+            <Failure
+              failure={failure}
+              name={service.name}
+              {...(connection.engineOrigin === undefined ? {} : { engineOrigin: connection.engineOrigin })}
+            />
+          )}
+        </SpaceBetween>
+      </form>
     </AreaModal>
   );
 }

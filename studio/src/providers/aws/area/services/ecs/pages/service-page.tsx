@@ -105,6 +105,9 @@ function Empty({ children }: { children: string }) {
   );
 }
 
+/** The narrowest a deployment's ID column is: its id on one line. */
+const ID_MIN_WIDTH = '28ch';
+
 function Deployments({ deployments }: { deployments: ServiceDeployment[] }) {
   const fixed = (value: string) => <ValueText kind="fixed" value={value} />;
   const columns: TableProps.ColumnDefinition<ServiceDeployment>[] = [
@@ -112,6 +115,8 @@ function Deployments({ deployments }: { deployments: ServiceDeployment[] }) {
       id: 'id',
       header: 'ID',
       isRowHeader: true,
+      // A deployment's id (`ecs-svc/` and 19 digits) is held on one line, as the other name columns are.
+      minWidth: ID_MIN_WIDTH,
       cell: (deployment) => <ValueText kind="name" value={deployment.id} />,
     },
     { id: 'status', header: 'Status', cell: (deployment) => fixed(statusText(deployment.status)) },
