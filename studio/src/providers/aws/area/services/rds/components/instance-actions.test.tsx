@@ -1,5 +1,5 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, waitFor } from '@testing-library/react';
 import { useRef } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -10,6 +10,8 @@ import { InstanceActions } from './instance-actions';
 // The part alone inside an area's root: it is given an instance, `pending` and `onAction`, and sends nothing.
 
 const fetchSpy = vi.fn();
+const PAGE = createWrapper(document.body);
+type DeleteModal = NonNullable<ReturnType<typeof PAGE.findModal>>;
 
 beforeEach(() => {
   fetchSpy.mockReset();
@@ -52,10 +54,14 @@ function target(status: string, changes: Partial<ActionTarget> = {}): ActionTarg
   return { id: 'app-db', status, engine: 'postgres', deletionProtection: false, ...changes };
 }
 
-function button(name: string): HTMLElement {
-  return screen
-    .getAllByRole('button', { name })
-    .find((element) => element.closest('[role="dialog"]') === null) as HTMLElement;
+function button(name: string) {
+  const modal = PAGE.findModal()?.getElement();
+  const action = PAGE.findAllButtons().find(
+    (button) =>
+      !modal?.contains(button.getElement()) && button.findTextRegion()?.getElement().textContent?.trim() === name,
+  );
+  if (action === undefined) throw new Error(`Missing lifecycle button: ${name}`);
+  return action.getElement();
 }
 
 function isDisabled(element: Element): boolean {
@@ -86,10 +92,28 @@ const STOPPED = 'Only an available DB instance can be stopped.';
 const REBOOTED = 'Only an available DB instance can be rebooted.';
 const AURORA = 'An Aurora DB instance starts and stops only with its DB cluster.';
 
+function deleteModal() {
+  const dialog = PAGE.findModal();
+  if (dialog === null) throw new Error('The delete confirmation is not open.');
+  expect(dialog.findHeader().getElement()).toHaveTextContent('Delete DB instance?');
+  return dialog;
+}
+
+function dialogButton(dialog: DeleteModal, label: 'Cancel' | 'Delete') {
+  const button = dialog
+    .findFooter()
+    ?.findAllButtons()
+    .find((button) => button.findTextRegion()?.getElement().textContent?.trim() === label);
+  if (button === undefined) throw new Error(`Missing confirmation button: ${label}`);
+  return button.getElement();
+}
+
 async function confirmDelete() {
-  const dialog = await screen.findByRole('dialog');
-  fireEvent.change(within(dialog).getByRole('textbox'), { target: { value: 'delete' } });
-  fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+  const dialog = await waitFor(deleteModal);
+  const input = dialog.findContent().findInput();
+  if (input === null) throw new Error('Missing confirmation input.');
+  input.setInputValue('delete');
+  fireEvent.click(dialogButton(dialog, 'Delete'));
 }
 
 describe("a DB instance's actions", () => {
@@ -145,9 +169,9 @@ describe("a DB instance's actions", () => {
     const instance = target('available');
     renderActions(instance);
     fireEvent.click(button('Delete'));
-    const dialog = await screen.findByRole('dialog');
-    expect(dialog.textContent).toContain('app-db is deleted from the local emulator');
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    const dialog = await waitFor(deleteModal);
+    expect(dialog.findContent().getElement()).toHaveTextContent('app-db is deleted from the local emulator');
+    fireEvent.click(dialogButton(dialog, 'Cancel'));
     expect(onAction).not.toHaveBeenCalled();
 
     fireEvent.click(button('Delete'));
@@ -167,41 +191,49 @@ describe("a DB instance's actions", () => {
       expect(isDisabled(button(name)), name).toBe(true);
       fireEvent.click(button(name));
     }
-    const dialog = screen.getByRole('dialog');
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    const dialog = deleteModal();
+    fireEvent.click(dialogButton(dialog, 'Delete'));
+    fireEvent.click(dialogButton(dialog, 'Cancel'));
     expect(onAction).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(PAGE.findModal()?.getElement()).toBeInTheDocument();
 
     view.setPending(false);
-    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(PAGE.findModal()).toBeNull();
     expect(isDisabled(button('Stop'))).toBe(false);
   });
 
-  it('the compact menu keeps the lifecycle reasons and runs an available action', () => {
+  it('the compact menu keeps the lifecycle reasons and runs an available action', async () => {
     const instance = target('available', { deletionProtection: true });
     const view = renderActions(instance, false, true);
-    const menu = createWrapper(view.container).findButtonDropdown();
-    menu?.openDropdown();
-    const start = menu?.findItemById('start', { disabled: true })?.find('[role="menuitem"]')?.getElement();
-    const remove = menu?.findItemById('delete', { disabled: true })?.find('[role="menuitem"]')?.getElement();
-    expect(start).toHaveAccessibleDescription(STARTED);
-    expect(remove).toHaveAccessibleDescription('Deletion protection is on.');
-    fireEvent.click(remove as HTMLElement);
+    const menu = PAGE.findButtonDropdown();
+    if (menu === null) throw new Error('Missing lifecycle Actions dropdown.');
+    menu.openDropdown();
+    const start = menu.findItemById('start', { disabled: true });
+    fireEvent.mouseEnter(start?.getElement() as HTMLElement);
+    await waitFor(() => expect(menu.findDisabledReason()?.getElement()).toHaveTextContent(STARTED));
+    const remove = menu.findItemById('delete', { disabled: true });
+    fireEvent.mouseEnter(remove?.getElement() as HTMLElement);
+    await waitFor(() =>
+      expect(menu.findDisabledReason()?.getElement()).toHaveTextContent('Deletion protection is on.'),
+    );
+    fireEvent.click(remove?.getElement() as HTMLElement);
     expect(onAction).not.toHaveBeenCalled();
-    expect(screen.queryByRole('dialog')).toBeNull();
-    fireEvent.click(menu?.findItemById('stop', { disabled: false })?.getElement() as HTMLElement);
+    expect(PAGE.findModal()).toBeNull();
+    fireEvent.click(menu.findItemById('stop', { disabled: false })?.getElement() as HTMLElement);
     expect(onAction).toHaveBeenCalledExactlyOnceWith('stop', instance);
     view.setPending(true);
-    expect(isDisabled(button('Actions'))).toBe(true);
+    const trigger = menu.findNativeButton().getElement();
+    expect(trigger).toHaveAccessibleName('Actions');
+    expect(isDisabled(trigger)).toBe(true);
   });
 
   it('the compact menu requires the same confirmation before deleting', async () => {
     const instance = target('available');
-    const { container } = renderActions(instance, false, true);
-    const menu = createWrapper(container).findButtonDropdown();
-    menu?.openDropdown();
-    fireEvent.click(menu?.findItemById('delete', { disabled: false })?.getElement() as HTMLElement);
+    renderActions(instance, false, true);
+    const menu = PAGE.findButtonDropdown();
+    if (menu === null) throw new Error('Missing lifecycle Actions dropdown.');
+    menu.openDropdown();
+    fireEvent.click(menu.findItemById('delete', { disabled: false })?.getElement() as HTMLElement);
     expect(onAction).not.toHaveBeenCalled();
     await confirmDelete();
     expect(onAction).toHaveBeenCalledExactlyOnceWith('delete', instance);
