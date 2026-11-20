@@ -44,6 +44,7 @@ function VolumeListing({
             </Link>
           ),
         },
+        { id: 'state', header: 'State', cell: ({ state }) => <ValueText kind="fixed" value={state} none={NONE} /> },
         {
           id: 'size',
           header: 'Size',
@@ -55,7 +56,6 @@ function VolumeListing({
           header: 'Availability Zone',
           cell: ({ zone }) => <ValueText kind="fixed" value={zone} none={NONE} />,
         },
-        { id: 'state', header: 'State', cell: ({ state }) => <ValueText kind="fixed" value={state} none={NONE} /> },
       ]}
       loading={listing.loading}
       loadingText="Loading volumes"
