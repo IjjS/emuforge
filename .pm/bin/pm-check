@@ -1,7 +1,7 @@
 #!/usr/bin/env -S python3 -I
 """Run the checks of a checkout and record the result. The record, not an agent's word, is the evidence.
 
-  pm-check <worktree|.> [--full | --only engine|studio|integration|harness...] [--on-request] [--no-retry] [--list]
+  pm-check <worktree|.> [--full | --only engine|studio|integration|harness...] [--on-request] [--list]
   pm-check <worktree|.> --checks ID [ID ...]
   pm-check <worktree|.> --stop
 
@@ -50,8 +50,8 @@ do not run the harness step.
 
 On request. A check whose manifest row is labelled `on-request` is not part of a default run: the suite reports it
 `not-run` with the reason "on request: not part of a default run; run it with --on-request" and counts it in
-`checks.not_run`. --on-request starts the integration step, when the scope calls for it, as ./run --on-request, and
-its retry the same way, so those checks run with the others; last.json records on_request true (false without the
+`checks.not_run`. --on-request starts the integration step, when the scope calls for it, as ./run --on-request, so
+those checks run with the others; last.json records on_request true (false without the
 option). It changes nothing else: not the scope, not which steps run, not what pm-merge accepts (a pass with the
 option is a pass). --checks runs every id it names, on request or not (the suite starts with --on-request), and
 cannot be combined with --on-request; --stop and --list ignore it.
@@ -59,8 +59,7 @@ cannot be combined with --on-request; --stop and --list ignore it.
 The tier full (issue 482). A check whose manifest row is labelled `full` runs only in .github/workflows/full.yml,
 which the owner starts, and in a local run the owner asks for: the suite reports it `not-run` with the reason
 "full: runs only in the full run; run it with --full" in every other run, and no changed path calls it. The option
---full (not a kind full of changes that cannot be read) starts the integration step as ./run --full, and its retry
-the same way; --checks starts the suite with --full, so an asked check of the tier runs. Either is passed only to a
+--full (not a kind full of changes that cannot be read) starts the integration step as ./run --full; --checks starts the suite with --full, so an asked check of the tier runs. Either is passed only to a
 suite whose tests/integration/run (read up to 1 MiB, as UTF-8) names --full: a checkout cut before the tier gets
 nothing. No agent runs the tier on its own: a plan, a worker or the pm runs --full or --checks of a check of the
 tier only on the owner's word. The integration step's entry gets `full_tier` {of, left_out}, copied from this run's
@@ -72,8 +71,7 @@ Services (issue 327). The decision ends with the services line of pm-scope (`  s
 tree's manifest and the merge base's, each the main manifest's rows and then each service's (issue 402). A path
 under tests/integration/studio/services/<service>/ gives that service, as a path of its screens does. For kind diff,
 when the selection is a set of services, the integration step writes it to <checkout>/output/checks/services.json
-({"services": [names], "why": why}) and starts ./run --services <that file>, after --on-request when both, the retry
-the same way: run then leaves out every check whose manifest row names a service not in the set (`not-run`, counted
+({"services": [names], "why": why}) and starts ./run --services <that file>, after --on-request when both: run then leaves out every check whose manifest row names a service not in the set (`not-run`, counted
 in `checks.not_run`). When the selection is every service (a shared path, the kinds main, full and only, a unit's
 deferred step) it starts ./run as without the option and removes a services.json of an earlier run. The integration
 step's entry of last.json gets `services`, copied from the run's report.json of this run (null when every service's
@@ -95,19 +93,14 @@ Single checks. --checks runs only the integration step, limited to the named man
 (issue 402). It is refused (exit 2, nothing written) for an id that is in neither, a part of the manifest that
 cannot be read (named), a checkout without the main manifest or tests/integration/run, and with --full, --only or
 --on-request. It asks for room like every run that starts
-the suite (Load, below), runs the step once (no retry, no flakes.jsonl line), logs to output/logs/checks-integration.log and
+the suite (Load, below), runs the step once, logs to output/logs/checks-integration.log and
 records to output/checks/checks.json and a timestamped *-checks.json (kind checks, passed false, the step's
 `asked` {id: verdict}); last.json and the check-<step>.log files are not touched. Each asked check is printed
 with its verdict, and the last line says it is a partial run pm-merge does not accept. Exit 0 when every asked
 check passed, else 1.
 
-Intermittent failures. A test step that fails (engine-test, studio-unit, integration, harness-test) is run once
-more. When the second run passes, the step is recorded as "flaky": the run still passes, the first run's log is
-kept as check-<step>.attempt1.log, and a line goes to <root>/.pm/run/flakes.jsonl, which the PM turns into an issue
-file. The line's first_log is a copy of that log, <root>/.pm/run/flakes/<stamp>-<checkout>-<step>.log (UTC stamp,
-the checkout's folder name), so it can be read after the worktree is removed (issue 542); a copy that fails never
-fails the run: the line then names the worktree's log and says why in copy_error. So one intermittent failure costs a rerun of one step, not the unit's merge, and it is never lost. A step
-that fails twice is failed. Format, lint, type and build steps are never retried. --no-retry turns this off.
+No second run (issue 569). Every step runs once: a step that fails has failed, and there is no status "flaky".
+Nothing is written to <root>/.pm/run/flakes.jsonl or <root>/.pm/run/flakes/ any more; what is there stays.
 
 Load (issue 478). A run that calls for a module that builds or tests the product (engine, studio, integration) and
 exists, and every --checks run, asks for room before its first step: _pmlib.check_room judges the machine against
@@ -145,8 +138,8 @@ Compose projects that no container uses, and the run's images emuforge-it-produc
 and aws-emulator:it-<id>; then the folders ~/.aws/emulator/<port>/ of the run's port and of its checks' emulators,
 through pm-emulator-dir (rm --worktree for the checkout's own port, else rm --port), which refuses one in use. A
 run's trap that finished leaves nothing to find. At its start every pm-check (not --stop, not --list) sweeps each
-run an earlier integration log of the checkout names (check-integration.log, its attempt1 log,
-checks-integration.log) and that <checkout>/output/checks/swept.json does not hold, unless running.json names
+run an earlier integration log of the checkout names (check-integration.log, the attempt1 log an
+earlier pm-check left, checks-integration.log) and that <checkout>/output/checks/swept.json does not hold, unless running.json names
 another live pm-check; a sweep is recorded there when Docker answered every call and nothing was refused. What a
 sweep removed, kept or could not ask Docker is printed as `integration: leftovers of run <id> ...` lines; --stop
 prints the stopped run's.
@@ -158,14 +151,13 @@ import json
 import os
 import pathlib
 import re
-import shutil
 import signal
 import subprocess
 import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _pmlib import (CHECKS, ROOT, RUN, caller, check_room, end_check, note_check, now, record_duration,
+from _pmlib import (CHECKS, ROOT, caller, check_room, end_check, note_check, now, record_duration,
                     wait_for_check_room)
 from _pmscope import called, deferred, lines, manifest_parts, scope, services_file
 from _pmitrun import SWEEP_BOUND, sweep_earlier, sweep_log
@@ -195,7 +187,6 @@ SCRUB = ("AWS_PROFILE", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSI
          "AWS_SHARED_CREDENTIALS_FILE", "AWS_ENDPOINT_URL", "AWS_DEFAULT_PROFILE", "AWS_ROLE_ARN", "AWS_WEB_IDENTITY_TOKEN_FILE")
 
 
-RETRY = ("engine-test", "studio-unit", "integration", "harness-test")  # steps whose failure can be intermittent
 HEAVY = ("engine", "studio", "integration")  # modules whose steps load the machine
 WAIT_EXIT = 75  # EX_TEMPFAIL: no room now; ask again after the wait the answer names
 current = None  # the running step's Popen
@@ -538,7 +529,7 @@ def main():
     p.add_argument("--full", action="store_true",
                    help="run every module whatever changed, and the integration checks of the tier full")
     p.add_argument("--checks", nargs="+", metavar="ID", help="run only these integration checks; never a gate")
-    p.add_argument("--no-retry", action="store_true"); p.add_argument("--stop", action="store_true")
+    p.add_argument("--stop", action="store_true")
     p.add_argument("--on-request", action="store_true", help="run the checks labelled on-request with the others")
     a = p.parse_args()
     if a.full and a.only:
@@ -588,20 +579,20 @@ def main():
         cpu = readings.get("cpu")
     else:
         waited_file(co).unlink(missing_ok=True)
-    results, flaky = [], []
+    results = []
     try:
-        results, flaky = run_all(a, co, mods, calls, env, logs, record, commit, held, sc["target"],
+        results = run_all(a, co, mods, calls, env, logs, record, commit, held, sc["target"],
                                  services_file(sc))
     finally:
         record.unlink(missing_ok=True)
         done()
-    finish(co, out, commit, dirty, ports, sc, results, flaky, cpu, bool(a.on_request), waited)
+    finish(co, out, commit, dirty, ports, sc, results, cpu, bool(a.on_request), waited)
 
 
 def run_all(a, co, mods, calls, env, logs, record, commit, held=(), target="main", services=None):
     """Run the called-for steps. `services` is the services file's object (services_file) when the integration
     step is narrowed to a set of services, else None."""
-    results, flaky = [], []
+    results = []
     for mod in mods:
         sub, manifest, steps = STEPS[mod]
         if not (co / sub / manifest).exists():
@@ -626,28 +617,19 @@ def run_all(a, co, mods, calls, env, logs, record, commit, held=(), target="main
                 services_json.write_text(json.dumps(services, indent=1) + "\n")
         for name, cmd in steps:
             if mod == "integration" and a.on_request:
-                cmd = cmd + ["--on-request"]  # the first run and the retry alike
+                cmd = cmd + ["--on-request"]
             if mod == "integration" and a.full and suite_knows_full(co):
-                cmd = cmd + ["--full"]  # the first run and the retry alike
+                cmd = cmd + ["--full"]
             if mod == "integration" and services is not None:
-                cmd = cmd + ["--services", str(services_json)]  # the first run and the retry alike
+                cmd = cmd + ["--services", str(services_json)]
             log = logs / f"check-{name}.log"
             t = started = time.time()
             code = run_step(cmd, str(co / sub), env, log, record, name)
-            first = None
-            if code not in (0, 127) and name in RETRY and not a.no_retry:
-                first = logs / f"check-{name}.attempt1.log"
-                log.replace(first)
-                print(f"  {name:18} failed once; running it again (first log: {first})", flush=True)
-                started = time.time()
-                code = run_step(cmd, str(co / sub), env, log, record, name)
-            status = "error" if code == 127 else "failed" if code != 0 else "flaky" if first else "passed"
+            status = "error" if code == 127 else "failed" if code != 0 else "passed"
             results.append(dict(name=name, module=mod, status=status, seconds=round(time.time() - t, 1), log=str(log)))
             record_duration(name, results[-1]["seconds"], status)
-            if first:
-                results[-1]["first_log"] = str(first)
             if mod == "integration":
-                results[-1]["checks"] = read_report(co, commit, started)  # of its last run
+                results[-1]["checks"] = read_report(co, commit, started)
                 results[-1]["emulator"] = report_emulator(co, commit, started)
                 said, value = report_services(co, commit, started, services is not None)
                 if said:
@@ -655,49 +637,10 @@ def run_all(a, co, mods, calls, env, logs, record, commit, held=(), target="main
                 ft = report_full_tier(co, commit, started)
                 if ft is not None:
                     results[-1]["full_tier"] = ft
-            if status == "flaky":
-                flaky.append(name)
-                line = dict(at=now(), checkout=str(co), commit=commit, step=name, first_log=str(first))
-                kept, error = keep_first_log(co, name, first)
-                if kept:
-                    line["first_log"] = str(kept)
-                else:
-                    line["copy_error"] = error
-                with open(RUN / "flakes.jsonl", "a") as f:
-                    f.write(json.dumps(line) + "\n")
             print(f"  {name:18} {status:7} {results[-1]['seconds']:>7}s  {log}", flush=True)
-            if status == "flaky":
-                print(f"  {name:18} first log kept as {kept}" if kept else
-                      f"  {name:18} first log not copied ({error}); it lies only in {first}", flush=True)
             if full_tier_line(results[-1]):
                 print(full_tier_line(results[-1]), flush=True)
-    return results, flaky
-
-
-def keep_first_log(co, step, first):
-    """Copy a flaky step's first log to <root>/.pm/run/flakes/<stamp>-<checkout>-<step>.log, so it outlives the
-    worktree (issue 542). Never overwrites: a taken name gets -2, -3. Returns (path, None), or (None, reason) when
-    the copy failed, which never fails the run."""
-    try:
-        d = RUN / "flakes"
-        d.mkdir(parents=True, exist_ok=True)
-        stem = f"{dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{co.name}-{step}"
-        for n in range(1, 100):
-            dest = d / (f"{stem}.log" if n == 1 else f"{stem}-{n}.log")
-            try:
-                out = open(dest, "xb")
-            except FileExistsError:
-                continue
-            try:
-                with out, open(first, "rb") as src:
-                    shutil.copyfileobj(src, out)
-            except OSError:
-                dest.unlink(missing_ok=True)  # the partial copy this call created, never another file
-                raise
-            return dest, None
-        return None, f"no free name for {stem} under {d}"
-    except OSError as e:
-        return None, f"{type(e).__name__}: {e}"
+    return results
 
 
 def named_lines(results):
@@ -752,7 +695,7 @@ def checks_run(co, out, logs, env, record, commit, dirty, ports, sc, asked, ids)
     if full_tier_line(entry):
         print(full_tier_line(entry), flush=True)
     summary = dict(at=now(), commit=commit, dirty=dirty, full=False, passed=False,
-                   failed=["integration"] if status in ("failed", "error") else [], flaky=[], cpu_at_start=cpu,
+                   failed=["integration"] if status in ("failed", "error") else [], cpu_at_start=cpu,
                    waited=waited, ports=ports, scope=sc, steps=[entry])
     (out / "checks.json").write_text(json.dumps(summary, indent=1))
     (out / f"{now()[:19].replace(':', '')}-checks.json").write_text(json.dumps(summary, indent=1))
@@ -771,7 +714,7 @@ def checks_run(co, out, logs, env, record, commit, dirty, ports, sc, asked, ids)
     sys.exit(0 if ok else 1)
 
 
-def finish(co, out, commit, dirty, ports, sc, results, flaky, cpu, on_request=False, waited=None):
+def finish(co, out, commit, dirty, ports, sc, results, cpu, on_request=False, waited=None):
     failed = [r["name"] for r in results if r["status"] in ("failed", "error")]
     present = [r for r in results if r["status"] != "absent"]
     ran = [r for r in present if r["status"] not in ("not-needed", "deferred")]
@@ -779,7 +722,7 @@ def finish(co, out, commit, dirty, ports, sc, results, flaky, cpu, on_request=Fa
     partial = sc["kind"] == "only"
     passed = not failed and not dirty and not partial  # a run that called for nothing passes on a clean tree
     summary = dict(at=now(), commit=commit, dirty=dirty, full=full, on_request=on_request, passed=passed, failed=failed,
-                   flaky=flaky, cpu_at_start=cpu, waited=waited or dict(seconds=0, asks=0), ports=ports, scope=sc,
+                   cpu_at_start=cpu, waited=waited or dict(seconds=0, asks=0), ports=ports, scope=sc,
                    steps=results)
     (out / "last.json").write_text(json.dumps(summary, indent=1))
     (out / f"{now()[:19].replace(':', '')}.json").write_text(json.dumps(summary, indent=1))
@@ -792,8 +735,6 @@ def finish(co, out, commit, dirty, ports, sc, results, flaky, cpu, on_request=Fa
         notes.append("nothing to run in this checkout")
     elif not ran:
         notes.append("nothing was called for")
-    if flaky:
-        notes.append(f"flaky (failed once, passed on the second run): {', '.join(flaky)}; recorded in .pm/run/flakes.jsonl")
     for ln in named_lines(results):
         print(ln)
     print(f"{'PASSED' if passed else 'NOT PASSED'} commit={commit[:9]} scope={sc['kind']} failed={failed or '-'} {'; '.join(notes)}")
