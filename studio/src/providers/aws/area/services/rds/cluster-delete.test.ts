@@ -15,10 +15,12 @@ describe("a DB cluster's Delete", () => {
   });
 
   it('each reason, and with several the first of members, protection, status', () => {
-    expect(reason({ memberCount: 1 })).toBe("Delete the cluster's DB instances first.");
+    expect(reason({ memberCount: 1 })).toBe("Delete the cluster's DB instances first, each from its own page.");
     expect(reason({ deletionProtection: true })).toBe('Deletion protection is on.');
     expect(reason({ status: 'deleting' })).toBe('This DB cluster is already being deleted.');
-    expect(reason({ memberCount: 2, deletionProtection: true })).toBe("Delete the cluster's DB instances first.");
+    expect(reason({ memberCount: 2, deletionProtection: true })).toBe(
+      "Delete the cluster's DB instances first, each from its own page.",
+    );
     expect(reason({ deletionProtection: true, status: 'deleting' })).toBe('Deletion protection is on.');
   });
 

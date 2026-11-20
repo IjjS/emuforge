@@ -47,6 +47,10 @@ const CONNECTION_DESCRIPTION =
 
 /** A name keeps room for 24 characters (`aws-area.md`, entry 4). */
 const NAME_MIN_WIDTH = '28ch';
+/** A status's icon, its gap, its word up to "rebooting" or "modifying" and the cell's padding on one line. */
+const STATUS_MIN_WIDTH = '18ch';
+/** A class as the API names it, up to "db.r6g.16xlarge", on one line. */
+const CLASS_MIN_WIDTH = '17ch';
 
 function Pairs({ label, items }: { label: string; items: { label: string; value: ReactNode }[] }) {
   return <KeyValuePairs columns={3} minColumnWidth={220} items={items} ariaLabel={label} />;
@@ -116,27 +120,36 @@ function Lines({ values }: { values: readonly string[] }) {
 function Details({ cluster }: { cluster: DbCluster }) {
   return (
     <Container header={<Header variant="h2">DB cluster details</Header>}>
-      <Pairs
-        label="DB cluster details"
-        items={[
-          { label: 'DB cluster identifier', value: <Name value={cluster.id} /> },
-          { label: 'Status', value: <StatusValue status={cluster.status} /> },
-          { label: 'Engine', value: <Fixed value={engineText(cluster.engine, cluster.engineVersion)} /> },
-          { label: 'Created', value: <ValueText kind="fixed" value={creationDateText(cluster.createdAt)} /> },
-          { label: 'ARN', value: <CopyValue label="ARN" value={cluster.arn} kind="address" none={NONE} /> },
-          {
-            label: 'Resource ID',
-            value: <CopyValue label="Resource ID" value={cluster.resourceId} kind="name" none={NONE} />,
-          },
-          { label: 'DB subnet group', value: <Name value={cluster.subnetGroup} /> },
-          { label: 'Security groups', value: <Lines values={cluster.securityGroups} /> },
-          { label: 'Cluster parameter group', value: <Name value={cluster.parameterGroup} /> },
-          {
-            label: 'Deletion protection',
-            value: <ProtectionValue on={cluster.deletionProtection} operation="ModifyDBCluster" />,
-          },
-        ]}
-      />
+      <SpaceBetween size="l">
+        <Pairs
+          label="DB cluster details"
+          items={[
+            { label: 'DB cluster identifier', value: <Name value={cluster.id} /> },
+            { label: 'Status', value: <StatusValue status={cluster.status} /> },
+            { label: 'Engine', value: <Fixed value={engineText(cluster.engine, cluster.engineVersion)} /> },
+            { label: 'Created', value: <ValueText kind="fixed" value={creationDateText(cluster.createdAt)} /> },
+            { label: 'DB subnet group', value: <Name value={cluster.subnetGroup} /> },
+            { label: 'Security groups', value: <Lines values={cluster.securityGroups} /> },
+            { label: 'Cluster parameter group', value: <Name value={cluster.parameterGroup} /> },
+            {
+              label: 'Deletion protection',
+              value: <ProtectionValue on={cluster.deletionProtection} operation="ModifyDBCluster" />,
+            },
+          ]}
+        />
+        {/* The ARN and the resource ID in a column of their own, as wide as the section, so each is whole. */}
+        <KeyValuePairs
+          columns={1}
+          ariaLabel="DB cluster identifiers"
+          items={[
+            { label: 'ARN', value: <CopyValue label="ARN" value={cluster.arn} kind="address" none={NONE} /> },
+            {
+              label: 'Resource ID',
+              value: <CopyValue label="Resource ID" value={cluster.resourceId} kind="name" none={NONE} />,
+            },
+          ]}
+        />
+      </SpaceBetween>
     </Container>
   );
 }
@@ -188,8 +201,8 @@ function Members({ cluster, members, fetching, connection, onRetry }: MembersPro
       ),
     },
     { id: 'role', header: 'Role', cell: (row) => <ValueText kind="fixed" value={roleOf(cluster, row.id)} /> },
-    { id: 'status', header: 'Status', cell: (row) => <StatusValue status={row.status} /> },
-    { id: 'class', header: 'Class', cell: (row) => <Name value={row.instanceClass} /> },
+    { id: 'status', header: 'Status', minWidth: STATUS_MIN_WIDTH, cell: (row) => <StatusValue status={row.status} /> },
+    { id: 'class', header: 'Class', minWidth: CLASS_MIN_WIDTH, cell: (row) => <Fixed value={row.instanceClass} /> },
     { id: 'port', header: 'Port', cell: (row) => <Fixed value={portText(row.port)} /> },
   ];
 
