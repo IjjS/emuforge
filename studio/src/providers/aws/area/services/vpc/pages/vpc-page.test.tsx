@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { notifyManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState, useSyncExternalStore } from 'react';
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -436,6 +436,45 @@ describe("a VPC's page", () => {
     });
   });
 
+  it('"Subnets" and "Route tables" each show a counter of the rows read; with a further page "(50+)"; none while read or failed', async () => {
+    const counterOf = (title: string) =>
+      section(title).findHeaderSlot()?.findHeader()?.findCounter()?.getElement().textContent?.trim();
+    let answerSubnets: (page: api.Page<api.Subnet>) => void = () => undefined;
+    vi.mocked(api.listSubnets).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          answerSubnets = resolve;
+        }),
+    );
+    vi.mocked(api.listRouteTables).mockRejectedValue(failed('DescribeRouteTables'));
+    open();
+    await loaded();
+    await waitFor(() => {
+      expect(text(section('Route tables').findEmptySlot()?.getElement())).toContain('DescribeRouteTables broke');
+    });
+    expect(text(section('Subnets').getElement())).toContain('Loading subnets');
+    expect(counterOf('Subnets')).toBeUndefined();
+    expect(counterOf('Route tables')).toBeUndefined();
+    act(() => {
+      answerSubnets({ items: [subnet('subnet-1', 'web'), subnet('subnet-2', undefined)] });
+    });
+    await waitFor(() => {
+      expect(counterOf('Subnets')).toBe('(2)');
+    });
+    vi.mocked(api.listRouteTables).mockResolvedValue({
+      items: Array.from({ length: 50 }, (_, index) => routeTable(`rtb-${String(index)}`, undefined, index === 0, 0)),
+      nextToken: 'tok-r',
+    });
+    fireEvent.click(
+      within(section('Route tables').findEmptySlot()?.getElement() as HTMLElement).getByRole('button', {
+        name: 'Retry',
+      }),
+    );
+    await waitFor(() => {
+      expect(counterOf('Route tables')).toBe('(50+)');
+    });
+  });
+
   it('"Internet gateway": the attached gateway\'s ID and name with "View internet gateways"; none → the sentence', async () => {
     vi.mocked(api.listInternetGateways).mockResolvedValue({
       items: [{ id: 'igw-1', vpcId: 'vpc-a', tags: [{ key: 'Name', value: 'edge' }] }],
@@ -460,6 +499,33 @@ describe("a VPC's page", () => {
     await waitFor(() => {
       expect(text(container('Internet gateway'))).toContain('No internet gateway is attached to this VPC.');
     });
+  });
+
+  it('"Internet gateway" with none attached → the sentence and "Attach internet gateway" to the gateways with ?vpc= this VPC; one attached → no such link', async () => {
+    const router = open();
+    await loaded();
+    await waitFor(() => {
+      expect(text(container('Internet gateway'))).toContain('No internet gateway is attached to this VPC.');
+    });
+    const link = within(container('Internet gateway')).getByRole('link', { name: 'Attach internet gateway' });
+    expect(link).toHaveAttribute('href', '/aws/vpc/internet-gateways?vpc=vpc-a');
+    fireEvent.click(link);
+    await waitFor(() => {
+      expect(`${router.state.location.pathname}${router.state.location.search}`).toBe(
+        '/aws/vpc/internet-gateways?vpc=vpc-a',
+      );
+    });
+    cleanup();
+
+    vi.mocked(api.listInternetGateways).mockResolvedValue({
+      items: [{ id: 'igw-1', vpcId: 'vpc-a', tags: [{ key: 'Name', value: 'edge' }] }],
+    });
+    open();
+    await loaded();
+    await waitFor(() => {
+      expect(text(container('Internet gateway'))).toContain('igw-1');
+    });
+    expect(within(container('Internet gateway')).queryByRole('link', { name: 'Attach internet gateway' })).toBeNull();
   });
 
   it('"Tags" as the tags table shows them', async () => {

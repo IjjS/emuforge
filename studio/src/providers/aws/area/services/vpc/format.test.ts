@@ -11,9 +11,11 @@ import {
   CREATE_ROUTE_TABLE_PATH,
   CREATE_SUBNET_PATH,
   CREATE_VPC_PATH,
+  createInternetGatewayHref,
   createRouteTableHref,
   createSubnetHref,
   INTERNET_GATEWAYS_PATH,
+  internetGatewaysHref,
   INTERNET_GATEWAYS_WORD,
   nameOrId,
   resourceName,
@@ -91,6 +93,16 @@ describe("VPC's addresses", () => {
     expect(createSubnetHref()).toBe('/aws/vpc/subnets/create');
     expect(createRouteTableHref()).toBe('/aws/vpc/route-tables/create');
     expect(new URL(createSubnetHref('a&b'), 'http://x').searchParams.get('vpc')).toBe('a&b');
+  });
+
+  it('the internet gateway addresses with a VPC end ?vpc={id}; without one, none', () => {
+    expect(internetGatewaysHref('vpc-1')).toBe('/aws/vpc/internet-gateways?vpc=vpc-1');
+    expect(createInternetGatewayHref('vpc-1')).toBe('/aws/vpc/internet-gateways/create?vpc=vpc-1');
+    expect(attachInternetGatewayHref('igw-1', 'vpc-1')).toBe(
+      '/aws/vpc/internet-gateways/gateway/igw-1/attach?vpc=vpc-1',
+    );
+    expect(internetGatewaysHref()).toBe('/aws/vpc/internet-gateways');
+    expect(createInternetGatewayHref()).toBe('/aws/vpc/internet-gateways/create');
   });
 });
 

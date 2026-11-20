@@ -259,4 +259,23 @@ describe('the "VPC" field', () => {
     open({ fault: true });
     expect(text(PAGE.findFormField()?.findError()?.getElement())).toBe('Choose a VPC.');
   });
+
+  it('a VPC chosen → the closed field shows its ID, its name and its block; one without a name → its ID and its block', async () => {
+    vi.mocked(network.listVpcChoices).mockResolvedValue({ choices: [VPC_1, VPC_D] });
+    open();
+    select().openDropdown();
+    await waitFor(() => {
+      expect(shown()).toEqual(['vpc-1', 'vpc-d']);
+    });
+    select().selectOptionByValue('vpc-1');
+    const named = text(select().findTrigger().getElement());
+    expect(named).toContain('vpc-1');
+    expect(named).toContain('app');
+    expect(named).toContain('10.0.0.0/16');
+    select().openDropdown();
+    select().selectOptionByValue('vpc-d');
+    const unnamed = text(select().findTrigger().getElement());
+    expect(unnamed).toContain('vpc-d');
+    expect(unnamed).toContain('172.31.0.0/16');
+  });
 });

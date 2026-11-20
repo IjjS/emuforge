@@ -9,7 +9,7 @@ import type { SelectProps } from '@cloudscape-design/components/select';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
-import { useNavigate } from 'react-router';
+import { useNavigate, useSearchParams } from 'react-router';
 
 import { DiscardDialog, type DiscardAnswer } from '../../../components/discard-dialog';
 import { actionFailureItem, readFailureState, ReadFailure, useAnnouncer } from '../../../components/failure-states';
@@ -22,7 +22,13 @@ import type { VpcChoice } from '../../../lib/ec2-network-choices';
 import type { ScreenPageProps } from '../../../screens';
 import type { InternetGateway } from '../api';
 import { CHOOSE_A_VPC, VpcField } from '../components/vpc-field';
-import { ATTACH_INTERNET_GATEWAY_TITLE, INTERNET_GATEWAYS_PATH, INTERNET_GATEWAYS_WORD, nameOrId } from '../format';
+import {
+  ATTACH_INTERNET_GATEWAY_TITLE,
+  INTERNET_GATEWAYS_PATH,
+  INTERNET_GATEWAYS_WORD,
+  nameOrId,
+  VPC_QUERY,
+} from '../format';
 import { GATEWAY_CHANGE_OPERATIONS } from '../gateway-changes-api';
 import { useAttachGateway } from '../gateway-changes';
 import { useInternetGateway } from '../queries';
@@ -75,8 +81,15 @@ export function AttachGatewayPage({ connection, params }: ScreenPageProps) {
   const attach = useAttachGateway(engineOrigin);
   const reading = useInternetGateway(engineOrigin, id);
   const { value: read, failure: readFailure, refresh } = reading;
+  // The VPC of `?vpc=`, chosen at start by the one rule of `?vpc=` (S5, S8) when the emulator holds it.
+  const [query] = useSearchParams();
+  const [preset] = useState(() => {
+    const value = query.get(VPC_QUERY);
+    return value === null || value === '' ? undefined : value;
+  });
 
   const [vpc, setVpc] = useState<VpcChoice>();
+  const [openedWith, setOpenedWith] = useState<VpcChoice>();
   const [tried, setTried] = useState(false);
   const [failure, setFailure] = useState<FlashItem>();
   const [pending, setPending] = useState(false);
@@ -176,7 +189,8 @@ export function AttachGatewayPage({ connection, params }: ScreenPageProps) {
     }
   };
 
-  // "Cancel" leaves at once while no VPC is chosen; otherwise it asks (`aws-area.md`, entry 5).
+  // "Cancel" leaves at once while no VPC is chosen, or the one of `?vpc=` still is; otherwise it asks
+  // (`aws-area.md`, entry 5).
   const [asking, setAsking] = useState(false);
   const cancelRef = useRef<ButtonProps.Ref>(null);
   const [kept, setKept] = useState(0);
@@ -186,7 +200,7 @@ export function AttachGatewayPage({ connection, params }: ScreenPageProps) {
     }
   }, [kept]);
   const handleCancel = () => {
-    if (vpc !== undefined) {
+    if (vpc !== undefined && vpc.id !== openedWith?.id) {
       setAsking(true);
       return;
     }
@@ -206,6 +220,9 @@ export function AttachGatewayPage({ connection, params }: ScreenPageProps) {
 
   const handleVpc = useCallback((chosen: VpcChoice | undefined) => {
     setVpc(chosen);
+  }, []);
+  const handlePresetSettled = useCallback((chosen: VpcChoice | undefined) => {
+    setOpenedWith(chosen);
   }, []);
 
   let content;
@@ -245,11 +262,13 @@ export function AttachGatewayPage({ connection, params }: ScreenPageProps) {
           }
         >
           <SpaceBetween size="l">
-            <Container header={<Header variant="h2">VPC</Header>}>
+            <Container>
               <VpcField
                 connection={connection}
                 value={vpc}
                 onChange={handleVpc}
+                preset={preset}
+                onPresetSettled={handlePresetSettled}
                 errorText={tried && vpc === undefined ? CHOOSE_A_VPC : undefined}
                 selectRef={vpcRef}
               />

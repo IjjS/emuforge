@@ -7,7 +7,7 @@ import Header from '@cloudscape-design/components/header';
 import Input, { type InputProps } from '@cloudscape-design/components/input';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
-import { useNavigate } from 'react-router';
+import { useNavigate, useSearchParams } from 'react-router';
 
 import { DiscardDialog, type DiscardAnswer } from '../../../components/discard-dialog';
 import { actionFailureItem } from '../../../components/failure-states';
@@ -15,7 +15,7 @@ import { usePageFlash, type FlashItem } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
 import { failureOf } from '../../../components/use-token-listing';
 import type { ScreenPageProps } from '../../../screens';
-import { CREATE_INTERNET_GATEWAY_TITLE, INTERNET_GATEWAYS_PATH, INTERNET_GATEWAYS_WORD } from '../format';
+import { CREATE_INTERNET_GATEWAY_TITLE, INTERNET_GATEWAYS_WORD, internetGatewaysHref, VPC_QUERY } from '../format';
 import { NAME_CONSTRAINT, nameMessage } from '../form';
 import { GATEWAY_CHANGE_OPERATIONS } from '../gateway-changes-api';
 import { useCreateGateway } from '../gateway-changes';
@@ -32,6 +32,12 @@ const CREATING = 'Creating';
  * entered, and takes the focus.
  */
 export function CreateGatewayPage({ connection }: ScreenPageProps) {
+  // Opened from a VPC's way to its gateway (`?vpc={id}`), the way back to S12 keeps that VPC.
+  const [query] = useSearchParams();
+  const [back] = useState(() => {
+    const value = query.get(VPC_QUERY);
+    return internetGatewaysHref(value === null || value === '' ? undefined : value);
+  });
   useShowsResources(INTERNET_GATEWAYS_WORD);
   const navigate = useNavigate();
   const flash = usePageFlash();
@@ -97,7 +103,7 @@ export function CreateGatewayPage({ connection }: ScreenPageProps) {
         return;
       }
       settle();
-      flash.handOver(INTERNET_GATEWAYS_PATH, [{ type: 'success', content: `Created internet gateway ${id}` }]);
+      flash.handOver(back, [{ type: 'success', content: `Created internet gateway ${id}` }]);
     } catch (error) {
       if (controller.signal.aborted) {
         return;
@@ -121,18 +127,18 @@ export function CreateGatewayPage({ connection }: ScreenPageProps) {
       setAsking(true);
       return;
     }
-    void navigate(INTERNET_GATEWAYS_PATH);
+    void navigate(back);
   };
   const handleDiscardAnswer = useCallback(
     (answer: DiscardAnswer) => {
       setAsking(false);
       if (answer === 'discard') {
-        void navigate(INTERNET_GATEWAYS_PATH);
+        void navigate(back);
       } else {
         setKept((count) => count + 1);
       }
     },
-    [navigate],
+    [navigate, back],
   );
 
   return (

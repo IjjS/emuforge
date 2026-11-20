@@ -24,7 +24,7 @@ vi.mock('../../../lib/ec2-network-choices', async (importOriginal) => {
 
 vi.mock('../api', async (importOriginal) => {
   const real = await importOriginal<typeof import('../api')>();
-  return { ...real, getInternetGateway: vi.fn(), listInternetGateways: vi.fn() };
+  return { ...real, getInternetGateway: vi.fn(), listInternetGateways: vi.fn(), getVpc: vi.fn() };
 });
 
 vi.mock('../gateway-changes-api', async (importOriginal) => {
@@ -215,6 +215,65 @@ describe('Attach internet gateway', () => {
     expect(vi.mocked(api.getInternetGateway).mock.calls[0]?.slice(0, 2)).toEqual([ENGINE, 'igw-1']);
     expect(heading()).toBeInTheDocument();
     expect(screen.getByText('Attaches edge to a VPC.')).toBeInTheDocument();
+    expect(text(vpcSelect().findTrigger().getElement())).toBe('Choose a VPC');
+  });
+
+  it('the form\'s container has no heading that repeats the field\'s label "VPC"', async () => {
+    open();
+    await formShown();
+    const form = document.querySelector('form') as HTMLElement;
+    expect(within(form).queryByRole('heading', { name: 'VPC' })).toBeNull();
+    expect(within(form).queryAllByRole('heading')).toEqual([]);
+    expect(field('VPC')).toBeDefined();
+  });
+
+  it('opened with ?vpc= of a VPC the emulator holds → that VPC chosen once its read answers, the field locked until then; "Attach" sends it', async () => {
+    let answer: (read: api.Read<api.Vpc>) => void = () => undefined;
+    vi.mocked(api.getVpc).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          answer = resolve;
+        }),
+    );
+    const router = open(`${ATTACH_PATH}?vpc=vpc-x`);
+    await formShown();
+    await waitFor(() => {
+      expect(api.getVpc).toHaveBeenCalled();
+    });
+    expect(vi.mocked(api.getVpc).mock.calls[0]?.slice(0, 2)).toEqual([ENGINE, 'vpc-x']);
+    expect(vpcSelect().isDisabled()).toBe(true);
+    act(() => {
+      answer({
+        found: true,
+        value: {
+          id: 'vpc-x',
+          state: 'available',
+          cidr: '10.0.0.0/16',
+          cidrs: ['10.0.0.0/16'],
+          isDefault: false,
+          tags: [{ key: 'Name', value: 'app' }],
+        },
+      });
+    });
+    await waitFor(() => {
+      expect(vpcSelect().isDisabled()).toBe(false);
+    });
+    expect(text(vpcSelect().findTrigger().getElement())).toContain('vpc-x');
+    submit();
+    await waitFor(() => {
+      expect(screen.getByText('Attached igw-1 to vpc-x')).toBeInTheDocument();
+    });
+    expect(router.state.location.pathname).toBe(LIST_PATH);
+    expect(vi.mocked(changes.attachInternetGateway).mock.calls[0]?.slice(0, 3)).toEqual([ENGINE, 'igw-1', 'vpc-x']);
+  });
+
+  it('opened with ?vpc= of a VPC the emulator does not hold → "VPC" unchosen with "The emulator holds no VPC {id}. Choose another."', async () => {
+    vi.mocked(api.getVpc).mockResolvedValue({ found: false });
+    open(`${ATTACH_PATH}?vpc=vpc-gone`);
+    await formShown();
+    await waitFor(() => {
+      expect(text(field('VPC').getElement())).toContain('The emulator holds no VPC vpc-gone. Choose another.');
+    });
     expect(text(vpcSelect().findTrigger().getElement())).toBe('Choose a VPC');
   });
 

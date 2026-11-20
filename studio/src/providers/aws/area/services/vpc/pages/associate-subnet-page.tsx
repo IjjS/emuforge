@@ -165,6 +165,7 @@ function AssociateForm({ table, connection }: { table: RouteTable; connection: A
                   value={subnet}
                   onChange={setSubnet}
                   selectRef={subnetRef}
+                  triggerVariant="option"
                 />
               </FormField>
             </Container>

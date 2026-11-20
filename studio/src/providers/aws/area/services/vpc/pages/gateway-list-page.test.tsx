@@ -400,6 +400,46 @@ describe('the internet gateway list', () => {
     });
   });
 
+  it('opened with ?vpc= → "Attach is for {id}."; "Attach" of a detached gateway → its attach address with ?vpc=; "Create internet gateway" → the create address with ?vpc=', async () => {
+    answer({ '|': { items: [EDGE, SPARE] } });
+    const router = open('/aws/vpc/internet-gateways?vpc=vpc-a');
+    const address = () => `${router.state.location.pathname}${router.state.location.search}`;
+    await waitFor(() => {
+      expect(rows()).toHaveLength(2);
+    });
+    expect(text(table().findHeaderSlot()?.getElement() as HTMLElement)).toContain('Attach is for vpc-a.');
+    selectRow('igw-s');
+    fireEvent.click(action('Attach'));
+    await waitFor(() => {
+      expect(address()).toBe('/aws/vpc/internet-gateways/gateway/igw-s/attach?vpc=vpc-a');
+    });
+    await act(async () => {
+      await router.navigate('/aws/vpc/internet-gateways?vpc=vpc-a');
+    });
+    await waitFor(() => {
+      expect(rows()).toHaveLength(2);
+    });
+    fireEvent.click(action('Create internet gateway'));
+    await waitFor(() => {
+      expect(address()).toBe('/aws/vpc/internet-gateways/create?vpc=vpc-a');
+    });
+  });
+
+  it('opened without ?vpc= → no "Attach is for", and "Attach" leads to the attach address without a query', async () => {
+    answer({ '|': { items: [EDGE, SPARE] } });
+    const router = open();
+    await waitFor(() => {
+      expect(rows()).toHaveLength(2);
+    });
+    expect(text(document.body)).not.toContain('Attach is for');
+    selectRow('igw-s');
+    fireEvent.click(action('Attach'));
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe('/aws/vpc/internet-gateways/gateway/igw-s/attach');
+    });
+    expect(router.state.location.search).toBe('');
+  });
+
   it('"Detach" → "Detach internet gateway?" naming the gateway and its VPC; confirmed → sent with both IDs, "Detached {id} from {vpc id}" and the list read again', async () => {
     answer({ '|': { items: [EDGE, SPARE] } });
     vi.mocked(changes.detachInternetGateway).mockResolvedValue(undefined);

@@ -29,6 +29,7 @@ import {
   CREATE_ROUTE_TABLE_TITLE,
   CREATE_SUBNET_TITLE,
   INTERNET_GATEWAYS_PATH,
+  internetGatewaysHref,
   nameOrId,
   NONE,
   resourceName,
@@ -54,6 +55,8 @@ import {
 
 /** A name keeps room for 24 characters (`aws-area.md`, entry 4): 28ch is those 24 and the cell's padding. */
 const NAME_MIN_WIDTH = '28ch';
+/** The least width of an ID column that is a row header, so a zero-padded ID keeps to one or two lines at 390. */
+const ID_MIN_WIDTH = '22ch';
 
 const yesNo = (value: boolean) => (value ? 'Yes' : 'No');
 
@@ -143,6 +146,14 @@ function Details({ vpc, dnsSupport, dnsHostnames, connection }: DetailsProps) {
   );
 }
 
+/** A section's counter: the page's rows, with a plus while a next page follows ("(50+)"); none while read or failed. */
+function counterOf(listing: TokenListing<unknown>): { counter?: string } {
+  if (listing.failure !== undefined || listing.items === undefined) {
+    return {};
+  }
+  return { counter: `(${String(listing.items.length)}${listing.openEnd ? '+' : ''})` };
+}
+
 interface SectionPagination {
   listing: TokenListing<unknown>;
   of: string;
@@ -194,6 +205,7 @@ function Subnets({ vpcId, listing, connection }: SectionProps<Subnet>) {
       id: 'id',
       header: 'Subnet ID',
       isRowHeader: true,
+      minWidth: ID_MIN_WIDTH,
       cell: (row) => (
         <Link href={subnetHref(row.id)} onFollow={handleFollow}>
           <ValueText kind="name" value={row.id} />
@@ -240,7 +252,11 @@ function Subnets({ vpcId, listing, connection }: SectionProps<Subnet>) {
       loading={failure === undefined && items === undefined}
       loadingText="Loading subnets"
       empty={empty}
-      header={<Header actions={create}>Subnets</Header>}
+      header={
+        <Header actions={create} {...counterOf(listing)}>
+          Subnets
+        </Header>
+      }
       pagination={<SectionPages listing={listing} of="subnets" />}
     />
   );
@@ -266,6 +282,7 @@ function RouteTables({ vpcId, listing, connection }: SectionProps<RouteTable>) {
       id: 'id',
       header: 'Route table ID',
       isRowHeader: true,
+      minWidth: ID_MIN_WIDTH,
       cell: (row) => (
         <Link href={routeTableHref(row.id)} onFollow={handleFollow}>
           <ValueText kind="name" value={row.id} />
@@ -301,13 +318,17 @@ function RouteTables({ vpcId, listing, connection }: SectionProps<RouteTable>) {
       loading={failure === undefined && items === undefined}
       loadingText="Loading route tables"
       empty={empty}
-      header={<Header actions={create}>Route tables</Header>}
+      header={
+        <Header actions={create} {...counterOf(listing)}>
+          Route tables
+        </Header>
+      }
       pagination={<SectionPages listing={listing} of="route tables" />}
     />
   );
 }
 
-function Gateway({ listing, connection }: Omit<SectionProps<InternetGateway>, 'vpcId'>) {
+function Gateway({ vpcId, listing, connection }: SectionProps<InternetGateway>) {
   const handleFollow = useFollow();
   const { items, failure, refresh } = listing;
   const gateway = items?.[0];
@@ -322,7 +343,15 @@ function Gateway({ listing, connection }: Omit<SectionProps<InternetGateway>, 'v
       </Box>
     );
   } else if (gateway === undefined) {
-    content = <Box variant="p">No internet gateway is attached to this VPC.</Box>;
+    // The way to attach one for this VPC: S12, saying the attach is for it, and S14 with it chosen.
+    content = (
+      <SpaceBetween size="xs">
+        <Box variant="p">No internet gateway is attached to this VPC.</Box>
+        <Link href={internetGatewaysHref(vpcId)} onFollow={handleFollow}>
+          Attach internet gateway
+        </Link>
+      </SpaceBetween>
+    );
   } else {
     content = (
       <KeyValuePairs
@@ -471,7 +500,7 @@ export function VpcPage({ connection, params }: ScreenPageProps) {
         <Details vpc={vpc} dnsSupport={dnsSupport} dnsHostnames={dnsHostnames} connection={connection} />
         <Subnets vpcId={vpc.id} listing={subnets} connection={connection} />
         <RouteTables vpcId={vpc.id} listing={routeTables} connection={connection} />
-        <Gateway listing={gateways} connection={connection} />
+        <Gateway vpcId={vpc.id} listing={gateways} connection={connection} />
         <TagsTable tags={vpc.tags} />
       </SpaceBetween>
     );
