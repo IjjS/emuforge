@@ -18,14 +18,16 @@ const INSTANCE: DbInstance = {
   tags: [],
 };
 
-const IDENTIFIER = 'DB instance identifier';
-const CLASS = 'DB instance class';
-const STORAGE = 'Allocated storage (GiB)';
-const PASSWORD = 'New master password';
+const MODIFY_FIELD_LABELS = {
+  identifier: 'DB instance identifier',
+  class: 'DB instance class',
+  storage: 'Allocated storage (GiB)',
+  password: 'New master password',
+} as const;
 const PAGE = createWrapper(document.body);
 const RENAME_GUIDANCE =
   'After saving, the old identifier will stop resolving. Studio will open the renamed DB instance.';
-type Field = typeof IDENTIFIER | typeof CLASS | typeof STORAGE | typeof PASSWORD;
+type Field = keyof typeof MODIFY_FIELD_LABELS;
 
 function open(instance = INSTANCE) {
   const onSave = vi.fn();
@@ -59,21 +61,24 @@ async function opened() {
   });
 }
 
-function formField(label: Field) {
-  return PAGE.findModal()
-    ?.findContent()
-    .findAllFormFields()
-    .find((field) => field.findLabel()?.getElement().textContent?.trim() === label);
+function formField(field: Field) {
+  const content = PAGE.findModal()?.findContent();
+  const selector = `#rds-modify-field-${field}`;
+  const wrapper = content?.findFormField(selector) ?? content?.find(selector)?.findFormField();
+  if (wrapper != null) {
+    expect(wrapper.findLabel()?.getElement().textContent?.trim()).toBe(MODIFY_FIELD_LABELS[field]);
+  }
+  return wrapper ?? undefined;
 }
 
-function field(label: Field) {
-  const input = formField(label)?.findControl()?.findInput()?.findNativeInput().getElement();
-  if (input === undefined) throw new Error(`Missing input: ${label}`);
+function input(field: Field) {
+  const input = formField(field)?.findControl()?.findInput()?.findNativeInput().getElement();
+  if (input === undefined) throw new Error(`Missing input: ${field}`);
   return input;
 }
 
-function change(label: Field, value: string) {
-  fireEvent.change(field(label), { target: { value } });
+function change(field: Field, value: string) {
+  fireEvent.change(input(field), { target: { value } });
 }
 
 function protection() {
@@ -89,19 +94,19 @@ function save() {
 }
 
 function renameGuidance() {
-  return formField(IDENTIFIER)?.findDescription()?.getElement();
+  return formField('identifier')?.findDescription()?.getElement();
 }
 
 describe('Modify DB instance', () => {
   it('U1 opens a standalone instance with its settings and a fresh masked password', async () => {
     const onSave = open();
     await opened();
-    expect(field(IDENTIFIER)).toHaveValue('app-db');
-    expect(field(CLASS)).toHaveValue('db.t3.micro');
-    expect(field(STORAGE)).toHaveValue('20');
-    expect(field(PASSWORD)).toHaveAttribute('type', 'password');
-    expect(field(PASSWORD)).toHaveValue('');
-    expect(formField(PASSWORD)?.findDescription()?.getElement()).toHaveTextContent(
+    expect(input('identifier')).toHaveValue('app-db');
+    expect(input('class')).toHaveValue('db.t3.micro');
+    expect(input('storage')).toHaveValue('20');
+    expect(input('password')).toHaveAttribute('type', 'password');
+    expect(input('password')).toHaveValue('');
+    expect(formField('password')?.findDescription()?.getElement()).toHaveTextContent(
       'Leave blank to keep the current password.',
     );
     expect(protection()).toBeChecked();
@@ -114,10 +119,10 @@ describe('Modify DB instance', () => {
     const onSave = open();
     await opened();
     const edits = [
-      [IDENTIFIER, 'new-db', 'app-db', { identifier: 'new-db' }],
-      [CLASS, 'db.t3.small', 'db.t3.micro', { instanceClass: 'db.t3.small' }],
-      [STORAGE, '30', '20', { allocatedStorage: 30 }],
-      [PASSWORD, 'DemoPass!234', '', { masterPassword: 'DemoPass!234' }],
+      ['identifier', 'new-db', 'app-db', { identifier: 'new-db' }],
+      ['class', 'db.t3.small', 'db.t3.micro', { instanceClass: 'db.t3.small' }],
+      ['storage', '30', '20', { allocatedStorage: 30 }],
+      ['password', 'DemoPass!234', '', { masterPassword: 'DemoPass!234' }],
     ] as const;
     for (const [label, value, original, expected] of edits) {
       change(label, value);
@@ -136,17 +141,17 @@ describe('Modify DB instance', () => {
   });
 
   it.each([
-    [IDENTIFIER, '9bad', 'An identifier begins with a letter.', 'good-db'],
-    [CLASS, '', 'Enter a class.', 'db.t3.small'],
-    [STORAGE, '25.5', 'The storage is a whole number from 20 to 65536.', '30'],
-    [STORAGE, '65537', 'The storage is a whole number from 20 to 65536.', '30'],
-    [PASSWORD, 'short', 'A master password has at least 8 characters.', 'DemoPass!234'],
+    ['identifier', '9bad', 'An identifier begins with a letter.', 'good-db'],
+    ['class', '', 'Enter a class.', 'db.t3.small'],
+    ['storage', '25.5', 'The storage is a whole number from 20 to 65536.', '30'],
+    ['storage', '65537', 'The storage is a whole number from 20 to 65536.', '30'],
+    ['password', 'short', 'A master password has at least 8 characters.', 'DemoPass!234'],
   ] as const)('U3 blocks invalid %s (%s) and permits a correction', async (label, invalid, error, valid) => {
     const onSave = open();
     await opened();
     change(label, invalid);
     expect(formField(label)?.findError()?.getElement()).toHaveTextContent(error);
-    expect(field(label)).toHaveAccessibleDescription(expect.stringContaining(error));
+    expect(input(label)).toHaveAccessibleDescription(expect.stringContaining(error));
     expect(save()).toBeDisabled();
     fireEvent.click(save());
     expect(onSave).not.toHaveBeenCalled();
@@ -158,10 +163,10 @@ describe('Modify DB instance', () => {
   it('U4 cancels the draft and opens with the original settings', async () => {
     const onSave = open();
     await opened();
-    change(IDENTIFIER, 'draft-db');
-    change(CLASS, 'db.t3.small');
-    change(STORAGE, '30');
-    change(PASSWORD, 'DemoPass!234');
+    change('identifier', 'draft-db');
+    change('class', 'db.t3.small');
+    change('storage', '30');
+    change('password', 'DemoPass!234');
     fireEvent.click(protection());
     const cancel = PAGE.findModal()?.findFooter()?.findButton('#rds-modify-cancel')?.getElement();
     expect(cancel).toHaveTextContent('Cancel');
@@ -169,10 +174,10 @@ describe('Modify DB instance', () => {
     expect(PAGE.findModal()).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Modify' }));
     await opened();
-    expect(field(IDENTIFIER)).toHaveValue('app-db');
-    expect(field(CLASS)).toHaveValue('db.t3.micro');
-    expect(field(STORAGE)).toHaveValue('20');
-    expect(field(PASSWORD)).toHaveValue('');
+    expect(input('identifier')).toHaveValue('app-db');
+    expect(input('class')).toHaveValue('db.t3.micro');
+    expect(input('storage')).toHaveValue('20');
+    expect(input('password')).toHaveValue('');
     expect(protection()).toBeChecked();
     expect(save()).toBeDisabled();
     expect(onSave).not.toHaveBeenCalled();
@@ -184,10 +189,10 @@ describe('Modify DB instance', () => {
     expect(PAGE.findModal()?.findContent().find('#rds-modify-cluster-guidance')?.getElement()).toHaveTextContent(
       'The cluster manages storage and master credentials.',
     );
-    expect(formField(STORAGE)).toBeUndefined();
-    expect(formField(PASSWORD)).toBeUndefined();
-    change(IDENTIFIER, 'new-member');
-    change(CLASS, 'db.r6g.xlarge');
+    expect(formField('storage')).toBeUndefined();
+    expect(formField('password')).toBeUndefined();
+    change('identifier', 'new-member');
+    change('class', 'db.r6g.xlarge');
     fireEvent.click(protection());
     fireEvent.click(save());
     expect(onSave).toHaveBeenCalledExactlyOnceWith({
@@ -200,8 +205,8 @@ describe('Modify DB instance', () => {
   it('U6 allows an independent edit with unchanged legacy settings', async () => {
     const onSave = open({ ...INSTANCE, id: 'legacy_db', allocatedStorage: 5 });
     await opened();
-    expect(field(IDENTIFIER)).toHaveValue('legacy_db');
-    expect(field(STORAGE)).toHaveValue('5');
+    expect(input('identifier')).toHaveValue('legacy_db');
+    expect(input('storage')).toHaveValue('5');
     fireEvent.click(protection());
     fireEvent.click(save());
     expect(onSave).toHaveBeenCalledExactlyOnceWith({ deletionProtection: false });
@@ -211,26 +216,26 @@ describe('Modify DB instance', () => {
     open();
     await opened();
     expect(renameGuidance()).toBeUndefined();
-    change(IDENTIFIER, '9bad');
+    change('identifier', '9bad');
     expect(renameGuidance()).toBeUndefined();
-    change(IDENTIFIER, 'renamed-db');
+    change('identifier', 'renamed-db');
     expect(renameGuidance()).toHaveTextContent(RENAME_GUIDANCE);
-    expect(field(IDENTIFIER)).toHaveAccessibleDescription(expect.stringContaining(RENAME_GUIDANCE));
-    change(IDENTIFIER, 'app-db');
+    expect(input('identifier')).toHaveAccessibleDescription(expect.stringContaining(RENAME_GUIDANCE));
+    change('identifier', 'app-db');
     expect(renameGuidance()).toBeUndefined();
   });
 
   it('treats a case-only identifier edit as unchanged while allowing an independent edit', async () => {
     const onSave = open();
     await opened();
-    change(IDENTIFIER, 'APP-DB');
-    expect(field(IDENTIFIER)).toHaveValue('APP-DB');
+    change('identifier', 'APP-DB');
+    expect(input('identifier')).toHaveValue('APP-DB');
     expect(renameGuidance()).toBeUndefined();
     expect(save()).toBeDisabled();
     fireEvent.click(save());
     expect(onSave).not.toHaveBeenCalled();
 
-    change(CLASS, 'db.t3.small');
+    change('class', 'db.t3.small');
     expect(save()).toBeEnabled();
     fireEvent.click(save());
     expect(onSave).toHaveBeenCalledExactlyOnceWith({ instanceClass: 'db.t3.small' });
