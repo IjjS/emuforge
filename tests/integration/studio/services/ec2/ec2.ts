@@ -679,6 +679,7 @@ export const ONLY_STOPPED_STARTS = 'Only a stopped instance can be started.';
 export const ONLY_RUNNING_STOPS = 'Only a running instance can be stopped.';
 export const ONLY_RUNNING_REBOOTS = 'Only a running instance can be rebooted.';
 export const ALREADY_TERMINATED = 'This instance is already terminated.';
+export const PROTECTION_IS_ON = 'Termination protection is on.';
 export const DEFAULT_GROUP_STAYS = 'The default security group cannot be deleted.';
 export const PORT_RULE = 'A port is a whole number from 0 to 65535.';
 export const NAME_NOT_SG = 'A name cannot start with sg-.';

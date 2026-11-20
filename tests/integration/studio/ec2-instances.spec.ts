@@ -68,6 +68,7 @@ import {
   ONLY_RUNNING_STOPS,
   ONLY_STOPPED_STARTS,
   open,
+  PROTECTION_IS_ON,
   REFRESH,
   reportsState,
   rowsOf,
@@ -523,16 +524,29 @@ test('studio.ec2-stop-start-reboot-terminate-an-instance', async ({ ctx, page })
   });
 
   await lines.line(
-    'S3 of P → "Termination protection" "On"; "Terminate", type `terminate`, "Terminate" → the emulator\'s `OperationNotPermitted` and its message are shown; the emulator still reports `running`',
+    'S3 of P → "Termination protection" "On"; "Terminate" is unavailable ("Termination protection is on."); the emulator still reports `running`',
     async () => {
       await open(page, instancePath(prot), `${p}-p`);
       await expectValueIs(page, 'Termination protection', 'On');
+      await expectActionUnavailable(page, 'terminate', PROTECTION_IS_ON);
+      await closeActions(page);
+      expect((await instanceDirect(ctx, port, prot))?.state, 'the state, directly').toBe('running');
+    },
+  );
+
+  await lines.line(
+    'S1, "Name" `<prefix>-p`, select P (the list does not read the protection), "Terminate", type `terminate`, "Terminate" → the emulator\'s `OperationNotPermitted` and its message are shown; the emulator still reports `running`',
+    async () => {
+      await open(page, INSTANCES_PATH, INSTANCES_H1);
+      await findBy(table, `${p}-p`);
+      await expectRows(table, 'Instance ID', [prot], "P's row");
+      await selectRow(table, 'Instance ID', prot);
       await chooseAction(page, 'terminate');
       await confirmWith(page, 'terminate', TERMINATE);
       await expectFlash(page, 'error', 'OperationNotPermitted', 'may not be terminated');
       await expect(dialogOf(page), 'the dialog after the answer').toHaveCount(0);
       expect((await instanceDirect(ctx, port, prot))?.state, 'the state, directly').toBe('running');
-      await expectValue(page, 'State', 'running');
+      await expectCell(table, 'Instance ID', prot, 'State', 'running');
     },
   );
 
