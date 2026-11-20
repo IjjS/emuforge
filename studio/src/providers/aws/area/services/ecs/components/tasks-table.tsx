@@ -43,15 +43,17 @@ const STATUS_OPTIONS: readonly SelectProps.Option[] = [
   { value: 'STOPPED', label: 'Stopped' },
 ];
 
-/** A name keeps room for 24 characters (`aws-area.md`, entry 4). */
-const NAME_MIN_WIDTH = '28ch';
+// The six columns fit at 1280 (949px) in the stopped list too, where a stop code such as `EssentialContainerExited`
+// takes about 200px whole (critique final r3). Every cell has 20px of padding on each side (the first 2px and 20px).
+/** A task id, 32 characters, on one line with its cell padding (critique final r2 and r3: 34ch missed by it). */
+export const TASK_MIN_WIDTH = 'calc(32ch + 24px)';
+/** A start date on at most three lines: its widest part ("September 30,") is under 12ch (critique final r3). */
+export const STARTED_AT_MIN_WIDTH = 'calc(12ch + 40px)';
 /**
- * A task id is 32 characters and is kept on one line at 1280 with the cell's padding on both sides (critique final r2
- * and r3: 34ch alone missed by the padding).
+ * A group (`service:<name>` or `family:<name>`) is shown as an address, breaking only after its `:`, so its column
+ * gives the date its room without breaking a short name inside (critique final r3).
  */
-export const TASK_MIN_WIDTH = 'calc(32ch + 48px)';
-/** A start date ("November 20, 2026, 14:03:22 (UTC+09:00)") on at most two lines (critique final r3). */
-export const STARTED_AT_MIN_WIDTH = 'calc(21ch + 48px)';
+export const GROUP_MIN_WIDTH = 'calc(10ch + 40px)';
 
 function counterText(rows: number, openEnd: boolean): string {
   return `(${String(rows)}${openEnd ? '+' : ''})`;
@@ -131,8 +133,8 @@ export function TasksTable({ connection, cluster, service, runHref, onFollowedRe
           {
             id: 'group',
             header: 'Group',
-            minWidth: NAME_MIN_WIDTH,
-            cell: (task: Task) => <ValueText kind="name" value={task.group} none={NONE} />,
+            minWidth: GROUP_MIN_WIDTH,
+            cell: (task: Task) => <ValueText kind="address" value={task.group} none={NONE} />,
           },
         ]
       : []),
