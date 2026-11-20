@@ -286,7 +286,11 @@ describe('a DB instance', () => {
 
       expect(pairsOf('Connection')['Endpoint address']).toBe('0.0.0.0');
       expect(pairsOf('Connection')['Port']).toBe('28162');
-      expect(screen.getByText('127.0.0.1:28162')).toBeInTheDocument();
+      expect(
+        screen.getByText((_, element) => element?.textContent === '127.0.0.1:28162', {
+          selector: '.aws-area-value-address',
+        }),
+      ).toBeVisible();
       expect(
         screen.getByText(/runs in Docker Compose with database ports published.*machine running Compose/),
       ).toBeInTheDocument();
@@ -313,7 +317,11 @@ describe('a DB instance', () => {
       await waitFor(() => expect(api.getClusterSignIn).toHaveBeenCalled());
       expect(pairsOf('Connection')['Master user name']).toBe('-');
       expect(pairsOf('Connection')['Database name']).toBe('-');
-      expect(screen.getByText('127.0.0.1:28165')).toBeInTheDocument();
+      expect(
+        screen.getByText((_, element) => element?.textContent === '127.0.0.1:28165', {
+          selector: '.aws-area-value-address',
+        }),
+      ).toBeVisible();
       expect(screen.getByRole('button', { name: 'Copy Compose host endpoint' })).toBeInTheDocument();
     },
   );

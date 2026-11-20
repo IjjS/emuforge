@@ -322,7 +322,11 @@ describe('a DB cluster', () => {
     await loaded();
 
     expect(pairsOf('Connection')['Port']).toBe('28304');
-    expect(screen.getByText('127.0.0.1:28304')).toBeInTheDocument();
+    expect(
+      screen.getByText((_, element) => element?.textContent === '127.0.0.1:28304', {
+        selector: '.aws-area-value-address',
+      }),
+    ).toBeVisible();
     expect(screen.getByRole('button', { name: 'Copy Compose host endpoint' })).toBeInTheDocument();
   });
 
