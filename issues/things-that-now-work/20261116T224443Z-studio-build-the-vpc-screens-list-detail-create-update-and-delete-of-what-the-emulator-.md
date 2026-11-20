@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: studio|vpc|service-screens
-Issue-Check-Ids:
+Issue-Check-Ids: studio.vpc-create-a-vpc-and-its-subnets studio.vpc-delete-subnets-and-vpcs-free-and-in-use studio.vpc-network-made-elsewhere-is-shown studio.vpc-route-a-subnet-through-an-internet-gateway studio.vpc-screens-follow-an-emulator-restart studio.vpc-subnet-public-addresses-on-launch studio.vpc-take-routing-apart-and-what-is-refused
 Issue-Commit: a90c718db39c8be1555ceb5aa4d341463e7341fb
 
 # Build the VPC screens: list, detail, create, update and delete of what the emulator holds

@@ -2,26 +2,21 @@ import {
   DescribeInstanceAttributeCommand,
   DescribeInstancesCommand,
   type DescribeInstancesCommandOutput,
-  EC2Client,
   RebootInstancesCommand,
   StartInstancesCommand,
   StopInstancesCommand,
   TerminateInstancesCommand,
   type Filter,
   type Instance as SdkInstance,
-  type Tag as SdkTag,
 } from '@aws-sdk/client-ec2';
 
-import { createAwsClient } from '../../../../../lib/aws/client-factory';
-import { sendRequest } from '../../../../../lib/aws/request';
-import type { Tag } from './format';
+import { sendEc2, tagsOf, text, withValues, type Tag } from '../../lib/ec2-client';
 import type { InstanceAction } from './instance-state';
 
 // The calls of EC2's instance screens (issue 553, design tasks 1 and 3), through the engine, mapped to plain typed
-// results, and the one place EC2's client class meets the factory: every other API file of the folder sends its
-// commands through `sendEc2`. Every command goes through the shared `sendRequest` with its operation's name, so a
-// failed request rejects with its `RequestError` and an aborted one with the signal's reason. Every value is the
-// emulator's, as it came.
+// results, sent, as every API file of the folder sends, through the area's `sendEc2` (`lib/ec2-client.ts`). Every
+// command goes through the shared `sendRequest` with its operation's name, so a failed request rejects with its
+// `RequestError` and an aborted one with the signal's reason. Every value is the emulator's, as it came.
 
 /** The operations of the instance screens, as a failure names them. */
 export const OPERATIONS = {
@@ -35,43 +30,6 @@ export const OPERATIONS = {
 
 /** How many instances one page of S1 asks for. */
 export const INSTANCES_PAGE_SIZE = 50;
-
-const clients = new Map<string, EC2Client>();
-
-function ec2Client(endpoint: string): EC2Client {
-  let client = clients.get(endpoint);
-  if (client === undefined) {
-    client = createAwsClient(EC2Client, { endpoint });
-    clients.set(endpoint, client);
-  }
-  return client;
-}
-
-/**
- * One request of `operation` to EC2 at the engine `endpoint`: `send` is handed the client and the signal to send its
- * command with. What every API file of the folder sends through.
- */
-export function sendEc2<T>(
-  endpoint: string,
-  operation: string,
-  send: (client: EC2Client, abortSignal: AbortSignal) => Promise<T>,
-  signal: AbortSignal,
-): Promise<T> {
-  return sendRequest(operation, (abortSignal) => send(ec2Client(endpoint), abortSignal), signal);
-}
-
-/** `value` when it is a text that is not empty. */
-export function text(value: unknown): string | undefined {
-  return typeof value === 'string' && value !== '' ? value : undefined;
-}
-
-/** The tags of an answer, in its order; a tag without a key is left out. */
-export function tagsOf(tags: readonly SdkTag[] | undefined): Tag[] {
-  return (tags ?? []).flatMap((tag) => {
-    const key = text(tag.Key);
-    return key === undefined ? [] : [{ key, value: tag.Value ?? '' }];
-  });
-}
 
 // ---------------------------------------------------------------------------------------------------------------
 // Instances
@@ -112,16 +70,6 @@ export interface Instance {
   groups: InstanceGroup[];
   volumes: BlockDevice[];
   tags: Tag[];
-}
-
-/** Copies the values of `values` that are not `undefined` onto `target`. */
-function withValues<T extends object>(target: T, values: { [K in keyof T]?: T[K] | undefined }): T {
-  for (const [key, value] of Object.entries(values)) {
-    if (value !== undefined) {
-      (target as Record<string, unknown>)[key] = value;
-    }
-  }
-  return target;
 }
 
 function instanceOf(raw: SdkInstance): Instance | undefined {

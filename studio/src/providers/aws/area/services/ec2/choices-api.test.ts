@@ -8,8 +8,6 @@ import {
   listImageChoices,
   listInstanceTypeChoices,
   listKeyPairChoices,
-  listSubnetChoices,
-  listVpcChoices,
 } from './choices-api';
 
 // The test plays the engine behind the page's `fetch`: its session route, and each request as it leaves the browser,
@@ -172,48 +170,7 @@ describe('the instance types', () => {
   });
 });
 
-describe('the subnets', () => {
-  it('MaxResults 50 and the token; each choice with its zone, CIDR block and VPC', async () => {
-    engine.on('DescribeSubnets', () =>
-      page(
-        'DescribeSubnets',
-        'subnetSet',
-        `<item><subnetId>subnet-1</subnetId><vpcId>vpc-1</vpcId><availabilityZone>us-east-1a</availabilityZone><cidrBlock>172.31.0.0/20</cidrBlock></item>`,
-      ),
-    );
-    expect(await listSubnetChoices(endpoint, 'sub-t', signal())).toEqual({
-      choices: [{ id: 'subnet-1', vpcId: 'vpc-1', zone: 'us-east-1a', cidr: '172.31.0.0/20' }],
-    });
-    const sent = engine.of('DescribeSubnets')[0]?.params;
-    expect(sent?.get('MaxResults')).toBe('50');
-    expect(sent?.get('NextToken')).toBe('sub-t');
-    expect(filters(sent ?? new URLSearchParams())).toEqual({});
-  });
-});
-
-describe('the VPCs', () => {
-  it('MaxResults 50 and the token; each choice with its CIDR block and whether it is the default', async () => {
-    engine.on('DescribeVpcs', () =>
-      page(
-        'DescribeVpcs',
-        'vpcSet',
-        `<item><vpcId>vpc-1</vpcId><cidrBlock>172.31.0.0/16</cidrBlock><isDefault>true</isDefault></item>
-         <item><vpcId>vpc-2</vpcId><cidrBlock>10.0.0.0/16</cidrBlock><isDefault>false</isDefault></item>`,
-        'vpc-t2',
-      ),
-    );
-    expect(await listVpcChoices(endpoint, undefined, signal())).toEqual({
-      choices: [
-        { id: 'vpc-1', cidr: '172.31.0.0/16', isDefault: true },
-        { id: 'vpc-2', cidr: '10.0.0.0/16', isDefault: false },
-      ],
-      nextToken: 'vpc-t2',
-    });
-    const sent = engine.of('DescribeVpcs')[0]?.params;
-    expect(sent?.get('MaxResults')).toBe('50');
-    expect(sent?.has('NextToken')).toBe(false);
-  });
-
+describe('the default VPC', () => {
   it('the default VPC: the filter is-default true → its ID; an answer with none → none', async () => {
     engine.on('DescribeVpcs', () =>
       page('DescribeVpcs', 'vpcSet', '<item><vpcId>vpc-d</vpcId><isDefault>true</isDefault></item>'),
@@ -277,8 +234,6 @@ describe('every call', () => {
   const calls: [string, (given?: AbortSignal) => Promise<unknown>][] = [
     ['DescribeImages', (given = signal()) => listImageChoices(endpoint, '', undefined, given)],
     ['DescribeInstanceTypes', (given = signal()) => listInstanceTypeChoices(endpoint, '', undefined, given)],
-    ['DescribeSubnets', (given = signal()) => listSubnetChoices(endpoint, undefined, given)],
-    ['DescribeVpcs', (given = signal()) => listVpcChoices(endpoint, undefined, given)],
     ['DescribeVpcs', (given = signal()) => getDefaultVpc(endpoint, given)],
     ['DescribeSecurityGroups', (given = signal()) => listGroupChoices(endpoint, {}, undefined, given)],
     ['DescribeKeyPairs', (given = signal()) => listKeyPairChoices(endpoint, given)],
