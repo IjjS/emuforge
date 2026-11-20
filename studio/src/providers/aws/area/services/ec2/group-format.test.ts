@@ -44,9 +44,9 @@ describe("a rule's words", () => {
   });
 
   it('the sentence that names a rule in its delete dialog, from the same words', () => {
-    expect(
-      ruleSentence(rule({ fromPort: 22, toPort: 22, peer: { kind: 'ipv4', value: '10.0.0.0/8' } }), 'web'),
-    ).toBe('The inbound rule TCP 22 10.0.0.0/8 is removed from web.');
+    expect(ruleSentence(rule({ fromPort: 22, toPort: 22, peer: { kind: 'ipv4', value: '10.0.0.0/8' } }), 'web')).toBe(
+      'The inbound rule TCP 22 10.0.0.0/8 is removed from web.',
+    );
     expect(
       ruleSentence(
         rule({ egress: true, protocol: 'udp', fromPort: 5000, toPort: 5010, peer: { kind: 'group', value: 'sg-2' } }),

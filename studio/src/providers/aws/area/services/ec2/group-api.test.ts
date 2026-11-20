@@ -115,7 +115,6 @@ function filters(params: URLSearchParams): Record<string, string[]> {
   return result;
 }
 
-
 const GROUP_A = `<item><ownerId>000000000000</ownerId><groupId>sg-a</groupId><groupName>web</groupName>
   <groupDescription>Web servers</groupDescription><vpcId>vpc-1</vpcId>
   <securityGroupArn>arn:aws:ec2:us-east-1:000000000000:security-group/sg-a</securityGroupArn></item>`;
@@ -147,7 +146,10 @@ describe('the groups page', () => {
 
   it("each group's ID, name, description, VPC and ARN in order; the token", async () => {
     engine.on('DescribeSecurityGroups', () =>
-      ok('DescribeSecurityGroups', `<securityGroupInfo>${GROUP_A}${GROUP_B}</securityGroupInfo><nextToken>tok-9</nextToken>`),
+      ok(
+        'DescribeSecurityGroups',
+        `<securityGroupInfo>${GROUP_A}${GROUP_B}</securityGroupInfo><nextToken>tok-9</nextToken>`,
+      ),
     );
     const page = await listSecurityGroups(endpoint, '', undefined, signal());
     expect(page).toEqual({
@@ -236,9 +238,30 @@ describe('the rules page', () => {
           peer: { kind: 'ipv4', value: '10.1.0.0/16' },
           description: 'api',
         },
-        { id: 'sgr-2', egress: false, protocol: 'tcp', fromPort: 443, toPort: 443, peer: { kind: 'ipv6', value: '::/0' } },
-        { id: 'sgr-3', egress: false, protocol: '-1', fromPort: -1, toPort: -1, peer: { kind: 'group', value: 'sg-b' } },
-        { id: 'sgr-4', egress: true, protocol: '-1', fromPort: -1, toPort: -1, peer: { kind: 'ipv4', value: '0.0.0.0/0' } },
+        {
+          id: 'sgr-2',
+          egress: false,
+          protocol: 'tcp',
+          fromPort: 443,
+          toPort: 443,
+          peer: { kind: 'ipv6', value: '::/0' },
+        },
+        {
+          id: 'sgr-3',
+          egress: false,
+          protocol: '-1',
+          fromPort: -1,
+          toPort: -1,
+          peer: { kind: 'group', value: 'sg-b' },
+        },
+        {
+          id: 'sgr-4',
+          egress: true,
+          protocol: '-1',
+          fromPort: -1,
+          toPort: -1,
+          peer: { kind: 'ipv4', value: '0.0.0.0/0' },
+        },
       ],
       nextToken: 'tok-n',
     });
@@ -260,7 +283,9 @@ describe('the deletes', () => {
       code: 'DependencyViolation',
       message: 'resource sg-a has a dependent object',
     });
-    engine.on('DeleteSecurityGroup', () => refused('CannotDelete', 'the specified group: "sg-b" name: "default" cannot be deleted by a user'));
+    engine.on('DeleteSecurityGroup', () =>
+      refused('CannotDelete', 'the specified group: "sg-b" name: "default" cannot be deleted by a user'),
+    );
     expect(await failureOf(deleteSecurityGroup(endpoint, 'sg-b', signal()))).toMatchObject({
       code: 'CannotDelete',
       message: 'the specified group: "sg-b" name: "default" cannot be deleted by a user',
@@ -291,8 +316,14 @@ describe('every call', () => {
     ['DescribeSecurityGroups', (abort) => getSecurityGroup(endpoint, 'sg-a', abort)],
     ['DescribeSecurityGroupRules', (abort) => listSecurityGroupRules(endpoint, 'sg-a', undefined, abort)],
     ['DeleteSecurityGroup', (abort) => deleteSecurityGroup(endpoint, 'sg-a', abort)],
-    ['RevokeSecurityGroupIngress', (abort) => deleteSecurityGroupRule(endpoint, 'sg-a', { id: 'r', egress: false }, abort)],
-    ['RevokeSecurityGroupEgress', (abort) => deleteSecurityGroupRule(endpoint, 'sg-a', { id: 'r', egress: true }, abort)],
+    [
+      'RevokeSecurityGroupIngress',
+      (abort) => deleteSecurityGroupRule(endpoint, 'sg-a', { id: 'r', egress: false }, abort),
+    ],
+    [
+      'RevokeSecurityGroupEgress',
+      (abort) => deleteSecurityGroupRule(endpoint, 'sg-a', { id: 'r', egress: true }, abort),
+    ],
   ];
   for (const [operation, call] of calls) {
     it(`${operation}: a 501 → "not implemented" with the operation's name`, async () => {

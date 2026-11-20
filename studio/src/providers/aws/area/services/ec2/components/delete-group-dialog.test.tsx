@@ -18,7 +18,7 @@ vi.mock('../group-api', async (importOriginal) => {
 const ENGINE = 'http://127.0.0.1:8309';
 const GROUP: GroupTarget = { id: 'sg-a', name: 'web' };
 
-let onDeleted: ReturnType<typeof vi.fn>;
+let onDeleted: ReturnType<typeof vi.fn<(group: GroupTarget) => void>>;
 
 /** The dialog inside an area's root, open until it is dismissed. */
 function InArea() {
@@ -106,7 +106,7 @@ describe('"Delete security group?"', () => {
     expect(api.deleteSecurityGroup).not.toHaveBeenCalled();
   });
 
-  it("a refusal → the dialog stays open with the emulator's code and message; \"Cancel\" then closes it", async () => {
+  it('a refusal → the dialog stays open with the emulator\'s code and message; "Cancel" then closes it', async () => {
     vi.mocked(api.deleteSecurityGroup).mockRejectedValue(
       new RequestError({
         kind: 'other',

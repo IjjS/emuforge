@@ -170,7 +170,10 @@ describe('after a delete', () => {
       expect(sent.args.slice(1, 2)).toEqual(['sg-1']);
       act(() => {
         if (outcome === '200') sent.resolve(undefined);
-        else sent.reject(new RequestError({ kind: 'other', operation: 'DeleteSecurityGroup', code: 'DependencyViolation' }));
+        else
+          sent.reject(
+            new RequestError({ kind: 'other', operation: 'DeleteSecurityGroup', code: 'DependencyViolation' }),
+          );
       });
       await settled;
       if (outcome === '200') {
