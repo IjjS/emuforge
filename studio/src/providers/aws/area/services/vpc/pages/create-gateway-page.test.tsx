@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { notifyManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useState, useSyncExternalStore } from 'react';
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -291,6 +291,34 @@ describe('Create internet gateway', () => {
       expect(router.state.location.pathname).toBe(LIST_PATH);
     });
     expect(changes.createInternetGateway).not.toHaveBeenCalled();
+  });
+
+  it('opened with ?vpc= → after "Create internet gateway", and after "Cancel", the gateways list with that ?vpc=; without it, none', async () => {
+    const address = (router: ReturnType<typeof open>) =>
+      `${router.state.location.pathname}${router.state.location.search}`;
+    const created = open(`${CREATE_PATH}?vpc=vpc-a`);
+    await opened();
+    submit();
+    await waitFor(() => {
+      expect(screen.getByText('Created internet gateway igw-0new')).toBeInTheDocument();
+    });
+    expect(address(created)).toBe(`${LIST_PATH}?vpc=vpc-a`);
+    cleanup();
+
+    const cancelled = open(`${CREATE_PATH}?vpc=vpc-a`);
+    await opened();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => {
+      expect(address(cancelled)).toBe(`${LIST_PATH}?vpc=vpc-a`);
+    });
+    cleanup();
+
+    const plain = open();
+    await opened();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => {
+      expect(address(plain)).toBe(LIST_PATH);
+    });
   });
 
   it('the page names its resources "internet gateways" to the frame', async () => {
