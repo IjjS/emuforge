@@ -64,6 +64,7 @@ interface FieldParts<T> {
     | 'filteringAriaLabel'
     | 'onLoadItems'
     | 'renderDropdownFooter'
+    | 'onFocus'
   >;
 }
 
@@ -114,6 +115,13 @@ export function useChoiceField<T>(
             filteringPlaceholder: `Find ${things}`,
             filteringAriaLabel: `Find ${things}`,
           }),
+      // The field is focused before it is opened again (Cloudscape asks for no first page a second time), so a
+      // source read again on each opening reads again then.
+      onFocus: () => {
+        if (source.readAgainOnOpen === true && choices.choices !== undefined) {
+          choices.restart();
+        }
+      },
       onLoadItems: ({ detail }) => {
         setOpened(true);
         if (detail.samePage) {

@@ -378,13 +378,38 @@ describe('Launch instance', () => {
     expect(vi.mocked(choices.listGroupChoices).mock.calls[0]?.[1]).toEqual({});
   });
 
-  it('"Create key pair" leads to the create-key-pair address', async () => {
+  it('"Create key pair" leads to the create-key-pair address, in a new tab, and the form keeps what was entered', async () => {
     const router = open();
     await opened();
-    fireEvent.click(screen.getByRole('link', { name: 'Create key pair' }));
+    typeName('web-1');
+    const link = screen.getByRole('link', { name: /^Create key pair/ });
+    expect(link.getAttribute('href')).toBe('/aws/ec2/key-pairs/create');
+    expect(link.getAttribute('target')).toBe('_blank');
+    fireEvent.click(link);
+    expect(router.state.location.pathname).toBe(LAUNCH_PATH);
+    expect(nameInput().value).toBe('web-1');
+  });
+
+  it('the key pairs are read again when the field is next opened, so a key made meanwhile can be chosen', async () => {
+    open();
+    await opened();
+    const keys = selectIn('Key pair - optional');
+    keys.openDropdown();
     await waitFor(() => {
-      expect(router.state.location.pathname).toBe('/aws/ec2/key-pairs/create');
+      expect(keys.findDropdown().findOptionByValue('dev')).not.toBeNull();
     });
+    keys.closeDropdown();
+    // Away to the new tab and back: focus leaves the field and comes back to it before it is opened.
+    screen.getByRole('link', { name: /^Create key pair/ }).focus();
+    vi.mocked(choices.listKeyPairChoices).mockResolvedValue([{ name: 'dev' }, { name: 'made-elsewhere' }]);
+    keys.findTrigger().focus();
+    keys.openDropdown();
+    await waitFor(() => {
+      expect(keys.findDropdown().findOptionByValue('made-elsewhere')).not.toBeNull();
+    });
+    expect(choices.listKeyPairChoices).toHaveBeenCalledTimes(2);
+    keys.selectOptionByValue('made-elsewhere');
+    expect(triggerOf('Key pair - optional')).toContain('made-elsewhere');
   });
 
   it('a refusal → the form stays with the code and message and every entry', async () => {

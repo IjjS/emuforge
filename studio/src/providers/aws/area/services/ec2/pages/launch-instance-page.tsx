@@ -17,7 +17,6 @@ import { DiscardDialog, type DiscardAnswer } from '../../../components/discard-d
 import { actionFailureItem } from '../../../components/failure-states';
 import { usePageFlash, type FlashItem } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
-import { useFollow } from '../../../components/use-follow';
 import { failureOf } from '../../../components/use-token-listing';
 import type { ScreenPageProps } from '../../../screens';
 import type { GroupChoice, ImageChoice, InstanceTypeChoice, KeyPairChoice, SubnetChoice } from '../choices-api';
@@ -107,7 +106,6 @@ function launchOf(form: LaunchFormState, image: ImageChoice, type: InstanceTypeC
 export function LaunchInstancePage({ connection }: ScreenPageProps) {
   useShowsResources(INSTANCES_WORD);
   const navigate = useNavigate();
-  const handleFollow = useFollow();
   const flash = usePageFlash();
   const engineOrigin = connection.engineOrigin;
   const launch = useLaunchInstance(engineOrigin);
@@ -296,7 +294,8 @@ export function LaunchInstancePage({ connection }: ScreenPageProps) {
                 <FormField
                   label="Key pair - optional"
                   secondaryControl={
-                    <Link href={CREATE_KEY_PAIR_PATH} onFollow={handleFollow}>
+                    // In a new tab, so what was entered here stays; the key pairs are read again at the next opening.
+                    <Link href={CREATE_KEY_PAIR_PATH} external externalIconAriaLabel="(opens in a new tab)">
                       {CREATE_KEY_PAIR_TITLE}
                     </Link>
                   }
