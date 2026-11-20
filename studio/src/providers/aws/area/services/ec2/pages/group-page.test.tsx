@@ -231,6 +231,16 @@ beforeEach(() => {
   vi.mocked(api.listSecurityGroups).mockResolvedValue({ groups: [] });
 });
 
+/**
+ * Lets every answer already given settle: React's work, and TanStack Query's notifications, which it batches on a
+ * zero-delay timer. A timer set after theirs runs after them, so this waits for order, not for an amount of time.
+ */
+async function settled() {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 
 describe("a security group's page", () => {
@@ -550,9 +560,7 @@ describe("a security group's page", () => {
       ruleReads[2]?.resolve({ rules: [IN_RANGE, OUT_ALL] });
       ruleReads[1]?.resolve({ rules: [IN_GROUP, OUT_ALL] });
     });
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    });
+    await settled();
     expect(rows()).toEqual([ROW_OUT]);
     expect(screen.getByText('Newest')).toBeInTheDocument();
     expect(screen.queryByText('Oldest')).toBeNull();

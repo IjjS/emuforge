@@ -187,6 +187,16 @@ async function confirmDelete() {
 const WEB = group('sg-a', 'web');
 const DEFAULT = group('sg-d', 'default', { description: 'default VPC security group' });
 
+/**
+ * Lets every answer already given settle: React's work, and TanStack Query's notifications, which it batches on a
+ * zero-delay timer. A timer set after theirs runs after them, so this waits for order, not for an amount of time.
+ */
+async function settled() {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 
 describe('the security groups list', () => {
@@ -389,9 +399,7 @@ describe('the security groups list', () => {
     act(() => {
       reads[1]?.resolve({ groups: [other, DEFAULT] });
     });
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    });
+    await settled();
     expect(rows()).toEqual([['default', 'sg-d', 'vpc-1', 'default VPC security group']]);
   });
 });
