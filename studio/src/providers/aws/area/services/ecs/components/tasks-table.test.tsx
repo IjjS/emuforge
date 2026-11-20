@@ -89,7 +89,9 @@ describe('the tasks table', () => {
       (header) => header.getElement().textContent === 'Group',
     );
     expect(group?.getElement().style.minWidth).toBe('calc(10ch + 40px)');
-    expect(wrapper.findTable()?.findBodyCell(1, 4)?.getElement().querySelector('.aws-area-value-address')).not.toBeNull();
+    expect(
+      wrapper.findTable()?.findBodyCell(1, 4)?.getElement().querySelector('.aws-area-value-address'),
+    ).not.toBeNull();
   });
 
   it('the Task column keeps a 32-character task id on one line with its padding: 32ch + 24px', async () => {

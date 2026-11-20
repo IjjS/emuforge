@@ -597,7 +597,7 @@ describe('S5, a task', () => {
     });
   }
 
-  it("a task stopped with UserInitiated whose essential container exited 143 → an info Alert that keeps the exit-code line", async () => {
+  it('a task stopped with UserInitiated whose essential container exited 143 → an info Alert that keeps the exit-code line', async () => {
     vi.mocked(tasks.getTask).mockImplementation(() =>
       Promise.resolve(
         found(
