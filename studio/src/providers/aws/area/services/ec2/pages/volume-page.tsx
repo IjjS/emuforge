@@ -110,7 +110,12 @@ function Attachments({
               </SpaceBetween>
             ),
         },
-        { id: 'device', header: 'Device', cell: ({ device }) => <ValueText kind="name" value={device} none={NONE} /> },
+        {
+          id: 'device',
+          header: 'Device',
+          minWidth: 'calc(24ch + 40px)',
+          cell: ({ device }) => <ValueText kind="name" value={device} none={NONE} />,
+        },
         { id: 'state', header: 'State', cell: ({ state }) => <ValueText kind="fixed" value={state} none={NONE} /> },
       ]}
     />
