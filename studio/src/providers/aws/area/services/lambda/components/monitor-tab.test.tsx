@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -113,6 +113,20 @@ function logState() {
     })
     ?.findContent()
     .getElement();
+}
+
+function logFooter() {
+  return root.findTable()?.findFooterSlot()?.getElement();
+}
+
+function expectUnimplementedLogRead(region: HTMLElement | undefined) {
+  if (region === undefined) {
+    throw new Error('Log events feedback is not visible');
+  }
+  const indicator = createWrapper(region).findStatusIndicator()?.getElement();
+  expect(indicator).toHaveTextContent(/^Not implemented by the emulator$/);
+  expect(indicator).toBeVisible();
+  expect(within(region).getByText(/501 Not Implemented for FilterLogEvents/)).toBeVisible();
 }
 
 function messages() {
@@ -284,15 +298,15 @@ describe('Lambda monitoring', () => {
         : datapoints();
     open();
     const button = await screen.findByRole('button', { name: 'Load more events' });
-    const completion = root.findTable()?.findFooterSlot()?.getElement().querySelector('[role="status"]');
+    const completion = logFooter()?.querySelector('[role="status"]');
     button.focus();
     await userEvent.setup().keyboard('{Enter}');
 
-    const terminal = await screen.findByText('No more log events');
-    expect(terminal).toHaveAttribute('role', 'status');
-    expect(terminal).toHaveAttribute('aria-live', 'polite');
-    expect(terminal).toHaveFocus();
-    expect(terminal).toBe(completion);
+    await waitFor(() => expect(completion).toHaveTextContent(/^No more log events$/));
+    expect(completion).toHaveAttribute('role', 'status');
+    expect(completion).toHaveAttribute('aria-live', 'polite');
+    expect(completion).toHaveFocus();
+    expect(logFooter()?.querySelector('[role="status"]')).toBe(completion);
     expect(screen.queryByRole('button', { name: 'Load more events' })).not.toBeInTheDocument();
     expect(messages()).toEqual(['first event']);
   });
@@ -310,7 +324,13 @@ describe('Lambda monitoring', () => {
     await waitFor(() => expect(messages()).toEqual(['first event']));
     loadMore();
 
-    expect(await screen.findByText('FilterLogEvents was refused: Permission to read logs is missing')).toBeVisible();
+    await waitFor(() => {
+      const footer = logFooter();
+      if (footer === undefined) {
+        throw new Error('Log events continuation is not visible');
+      }
+      expect(within(footer).getByText('FilterLogEvents was refused: Permission to read logs is missing')).toBeVisible();
+    });
     expect(messages()).toEqual(['first event']);
     fireEvent.click(screen.getByRole('button', { name: 'Retry loading events' }));
     await waitFor(() => expect(messages()).toEqual(['first event', 'second event']));
@@ -326,8 +346,7 @@ describe('Lambda monitoring', () => {
     await waitFor(() => expect(messages()).toEqual(['first event']));
     loadMore();
 
-    expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
-    expect(screen.getByText(/501 Not Implemented for FilterLogEvents/)).toBeVisible();
+    await waitFor(() => expectUnimplementedLogRead(logFooter()));
     expect(screen.getByRole('button', { name: 'Load more events' })).toBeDisabled();
     expect(messages()).toEqual(['first event']);
   });
@@ -336,8 +355,7 @@ describe('Lambda monitoring', () => {
     answer = ({ operation }) => (operation === 'FilterLogEvents' ? json({}, 501) : datapoints(5));
     open();
 
-    expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
-    expect(screen.getByText(/501 Not Implemented for FilterLogEvents/)).toBeVisible();
+    await waitFor(() => expectUnimplementedLogRead(logState()));
     await expectMetric('Invocations', '5');
     await expectMetric('Errors', '5');
   });
