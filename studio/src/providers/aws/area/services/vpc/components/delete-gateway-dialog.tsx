@@ -34,7 +34,15 @@ export interface DeleteGatewayDialogProps {
 const SENTENCE = ' is deleted from the local emulator. This cannot be undone.';
 
 /** The failure in the dialog: inline elements only, since the dialog's body is a paragraph. */
-function Failure({ failure, gateway, engineOrigin }: { failure: RequestFailure; gateway: string; engineOrigin?: string }) {
+function Failure({
+  failure,
+  gateway,
+  engineOrigin,
+}: {
+  failure: RequestFailure;
+  gateway: string;
+  engineOrigin?: string;
+}) {
   const item = actionFailureItem(failure, `Deleting internet gateway ${gateway}`, engineOrigin);
   return (
     <Box variant="span" display="block" margin={{ top: 's' }}>

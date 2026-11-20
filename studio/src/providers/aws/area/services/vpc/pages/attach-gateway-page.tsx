@@ -225,9 +225,7 @@ export function AttachGatewayPage({ connection, params }: ScreenPageProps) {
       </Container>
     );
   } else if (gateway === undefined) {
-    content = (
-      <Notice title="Internet gateway not found" body="The emulator holds no internet gateway with this ID." />
-    );
+    content = <Notice title="Internet gateway not found" body="The emulator holds no internet gateway with this ID." />;
   } else if (gateway.vpcId !== undefined) {
     content = <Notice body={`${gateway.id} is attached to ${gateway.vpcId}.`} />;
   } else {
