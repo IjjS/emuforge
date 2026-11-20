@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: bug
 Issue-Source: finder
 Issue-Key: harness|docker|build-cache-prune-reclaims-nothing
-Issue-Check-Ids:
+Issue-Check-Ids: none (harness issue, no kept guard shows it)
 Issue-Commit: 8fa9756f1c35f10b47234e3b548dd0517141ee0a
 
 # The build cache prune at an image refresh reclaims nothing while the cache stands at 43 GB
