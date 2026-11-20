@@ -284,6 +284,7 @@ describe('attach volume', () => {
     expect(submit).toBeDisabled();
 
     const dropdown = openChoices();
+    expect(dialog.getByText('Choose an instance in us-east-1a, the volume’s Availability Zone.')).toBeVisible();
     await waitFor(() => {
       expect(dropdown.findOptionByValue('i-first')?.getElement()).toHaveTextContent(/i-first.*us-east-1a.*running/);
     });

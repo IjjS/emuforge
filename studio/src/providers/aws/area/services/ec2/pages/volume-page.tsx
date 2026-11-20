@@ -88,34 +88,30 @@ function Attachments({
           id: 'instance',
           header: 'Instance ID',
           isRowHeader: true,
-          cell: ({ instanceId }) =>
+          minWidth: 220,
+          cell: ({ instanceId, device, state }) =>
             instanceId === undefined ? (
               NONE
             ) : (
-              <Link href={instanceHref(instanceId)} onFollow={follow}>
-                <ValueText kind="name" value={instanceId} />
-              </Link>
+              <SpaceBetween size="xs">
+                <Link href={instanceHref(instanceId)} onFollow={follow}>
+                  <ValueText kind="name" value={instanceId} />
+                </Link>
+                {device !== undefined && (
+                  <Button
+                    disabled={detachDisabled || state !== 'attached'}
+                    onClick={() => {
+                      onDetach({ instanceId, device });
+                    }}
+                  >
+                    Detach volume
+                  </Button>
+                )}
+              </SpaceBetween>
             ),
         },
         { id: 'device', header: 'Device', cell: ({ device }) => <ValueText kind="name" value={device} none={NONE} /> },
         { id: 'state', header: 'State', cell: ({ state }) => <ValueText kind="fixed" value={state} none={NONE} /> },
-        {
-          id: 'action',
-          header: 'Actions',
-          cell: ({ instanceId, device, state }) =>
-            instanceId === undefined || device === undefined ? (
-              NONE
-            ) : (
-              <Button
-                disabled={detachDisabled || state !== 'attached'}
-                onClick={() => {
-                  onDetach({ instanceId, device });
-                }}
-              >
-                Detach volume
-              </Button>
-            ),
-        },
       ]}
     />
   );
@@ -312,6 +308,7 @@ function VolumeVisit({
           {...dialogStatus}
           connection={connection}
           endpoint={endpoint}
+          zone={volume?.zone}
           onConfirm={(target) => {
             void confirm({ action: 'attach', target });
           }}
