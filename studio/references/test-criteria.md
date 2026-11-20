@@ -47,7 +47,10 @@ For each task the issue builds, account for these; each is a scenario or a line 
 - the task done end to end, from the state a developer would have;
 - data made outside Studio (the AWS CLI, an IaC tool) shown, and what Studio did seen from outside;
 - the failure the emulator can give: a name it refuses, a resource that is gone, an operation it answers 501;
-- the emulator restarted while a page is open: Studio reconnects and shows the empty account, not stale data.
+- the emulator restarted while a page is open: Studio reconnects and shows the empty account, not stale data. This
+  and every other environment case (the emulator or the engine stopped, restarted, not there, not reachable, or
+  late) is written for the tier `full` and never for the push run or a whole check (`tests/integration/AGENTS.md`,
+  Full tier).
 
 Keyboard and safety are not scenarios of a screen. They are checked once, for the app and for the area, by checks of
 no service (keyboard reaches every action of the frame and the area's frame; no request leaves for anything but the

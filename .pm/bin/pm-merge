@@ -15,19 +15,19 @@ unit's last pm-check run passed on the commit being merged; and rev passed the u
 review-impl-<unit>-r<k>.md in .pm/issue-<n>/ says verdict: pass. A test unit (t<n>) that is merged by itself has
 no implementation review; its newest review-checks-<unit>-r<k>.md counts instead. (A test unit whose checks are
 red by design never gets here: its pm-check does not pass, and it arrives through the unit stacked on it.)
-A run that passed with a flaky step (failed once, passed on the second run) is accepted and named in the output.
+There is no second run (issue 569): a step recorded `flaky` by an earlier pm-check covers nothing, as a failed one.
 
 Coverage. pm-merge decides the branch's paths against main again itself (the paths between its merge base with
 main and its head), with the rules of this main checkout (_pmscope.py, as pm-scope), and refuses unless the
 record's steps show, for every module those paths call for, that the module is absent or that each of its steps
-passed or was flaky. A step recorded not-needed, failed or missing does not cover its module. What the record's
+passed. A step recorded not-needed, failed or missing does not cover its module. What the record's
 `scope` says is not trusted for this; only its steps are. Paths that cannot be read (say, a branch that shares no
 commit with main) call for every module.
 Services (issue 327). For a unit into main and for the issue branch into main, and only when the branch's paths
 against main call for integration, it decides the branch's selection of services again itself (_pmscope.select of
 the same paths, with the manifests of the merge base and of the branch's head, by the rules of this main
 checkout; each manifest is the main manifest's rows, then each service's under tests/integration/studio/services/,
-issue 402), and refuses unless the record's integration step that ran (passed or flaky) ran at least that: its
+issue 402), and refuses unless the record's integration step that passed ran at least that: its
 `services` is null (every service's checks), or the branch's selection is a set and every name of it is in the
 step's list. The refusal names what the record ran and what the branch touches and says run pm-check again. A step
 without `services` in a record whose `scope` has no `services` was written before this question and ran every
@@ -140,7 +140,7 @@ def earlier(last):
 
 
 def covered(statuses):
-    return bool(statuses) and (all(s == "absent" for s in statuses) or all(s in ("passed", "flaky") for s in statuses))
+    return bool(statuses) and (all(s == "absent" for s in statuses) or all(s == "passed" for s in statuses))
 
 
 def plural(n):
@@ -152,7 +152,7 @@ def services_problems(last, need):
     services object of its paths). Asks nothing of a step that did not run (absent, failed, not-needed)."""
     ran = []
     for s in last.get("steps") or []:
-        if s.get("module") != "integration" or s.get("status") not in ("passed", "flaky"):
+        if s.get("module") != "integration" or s.get("status") != "passed":
             continue
         if "services" in s:
             v = s["services"]
@@ -421,10 +421,6 @@ def left(cwd, dest):
     return f"{dest} left unchanged" if ok else f"{dest} may hold an unfinished merge: run git merge --abort in {cwd}"
 
 
-def flaky_note(last):
-    return f"; flaky in its check run: {', '.join(last['flaky'])} (file the flake, see .pm/run/flakes.jsonl)" if last.get("flaky") else ""
-
-
 def predict(branch, remedy):
     """--dry-run of a merge into main (issue 520): whether git merges `branch` into main clean, asked of
     `git merge-tree --write-tree`, which touches no worktree. Returns (problems, line): a conflict is a problem
@@ -541,8 +537,7 @@ def into_main(a, wts, wt):
                  f"\n{r.stdout.strip()[-600:]}")
     new = git("rev-parse", "HEAD").stdout.strip()
     log(f"merge {a.issue} {a.unit} {branch} -> main {new[:9]}{behind_log(count)}")
-    flaky = f"; flaky in its check run: {', '.join(last['flaky'])} (file the flake, see .pm/run/flakes.jsonl)" if last.get("flaky") else ""
-    print(f"merged {branch} into main at {new[:9]} (reviewed: {reviewed}){flaky}; units stacked on it must merge main into their branch")
+    print(f"merged {branch} into main at {new[:9]} (reviewed: {reviewed}); units stacked on it must merge main into their branch")
     for w in stack(wts, wt):
         remove_emulator_dir(w)
 
@@ -574,7 +569,7 @@ def into_issue_branch(a, wts, wt, target):
         return
     new = merge(entry["path"], branch, f"merge: #{a.issue} {a.unit} ({branch}) into {target}", target)
     log(f"merge {a.issue} {a.unit} {branch} -> {target} {new[:9]}")
-    print(f"merged {branch} into {target} at {new[:9]} (reviewed: {reviewed}){flaky_note(last)}; "
+    print(f"merged {branch} into {target} at {new[:9]} (reviewed: {reviewed}); "
           f"units cut from {target} must merge it into their branch")
     for w in stack(wts, wt):
         remove_emulator_dir(w)
@@ -666,7 +661,7 @@ def into_main_whole(a, wts):
     log(f"merge {a.issue} {branch} -> main {new[:9]}{behind_log(count)}")
     names = ", ".join(w["unit"] for w in mine) or "none"
     reviewed = f"; reviewed: {judged}" if lead(a.issue) else ""
-    print(f"merged {branch} into main at {new[:9]} (units: {names}; whole check: {record}{reviewed}){flaky_note(last)}")
+    print(f"merged {branch} into main at {new[:9]} (units: {names}; whole check: {record}{reviewed})")
     for w in [entry, *mine]:
         remove_emulator_dir(w)
 

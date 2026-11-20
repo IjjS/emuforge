@@ -50,7 +50,7 @@ issue files, merge or archive; they refuse a plan anything outside its own issue
 - **Touchpoints.** The owner is asked at most twice per issue: ① requirement decisions, one bundled list, and
   only when a plan's question exists that the repository, the references and the reference behavior cannot answer;
   ② the final report. Nothing else goes to the owner but the one-line notices of flow step 3 (a rejected push, a
-  failed or flaky run, no run or no answer), which tell and ask nothing. Designs are never put to the owner:
+  failed run, no run or no answer), which tell and ask nothing. Designs are never put to the owner:
   the impeccable critique judges them (a P0 or P1 is fixed; the score decides nothing), and where the rules leave
   room you decide and record why.
 - **You edit no product code and write no plan.** Stage documents and integration tests are the plan's; product
@@ -154,16 +154,12 @@ found in use is fixed in the script, and a new guard is written only on your dec
 `decisions.md`, for a new way a script could delete, stop or remove what is not its own. You judge a harness change
 by reading it and, where you can, by running it once.
 
-**Intermittent failures.** `pm-check` runs a failed test step once more; when the second run passes, the step is
-`flaky`, the run passes and the unit is not held up. Every flake is a line in `.pm/run/flakes.jsonl` (step,
-commit, and a copy of the first run's log under `.pm/run/flakes/` that outlives the worktree). After a merge,
-read the new lines: file each as `pm-issue new --source finder --kind bug` with the first log as evidence,
-unless an open issue already names that failure (then add the log path to it). The workflow on GitHub Actions
-retries the same three steps: a step named
-`<step> (second run)` that ran in a successful run of `main` is a flake, filed the same way with the run's url in
-place of the first log, and like everything a run shows it waits for the owner's signal (flow step 3). A step that
-fails twice is a failure; the plan finds out whether a unit caused it before sending it back. Never rerun `pm-check` until
-it passes without recording why the earlier run failed.
+**No second run** (owner, 2026-11-20, issue 569). `pm-check` and the workflows on GitHub Actions run each step
+once: a step that fails has failed, there is no `flaky` status, and nothing is written to `.pm/run/flakes.jsonl` or
+`.pm/run/flakes/` any more (what is there stays). A failure that looks intermittent is a failure: the plan finds out
+whether a unit caused it before sending it back, and one that is no unit's is filed as `pm-issue new --source finder
+--kind bug` with its log as evidence, unless an open issue already names it (then add the log path to it). Never
+rerun `pm-check` until it passes without recording why the earlier run failed.
 
 ### 3. Report and archive
 
@@ -208,8 +204,6 @@ with `gh`: never re-run, cancel or delete one, and write nothing to GitHub. With
   and tell the owner as above, say in that line that the push carried such a merge, and start the issue at once,
   ahead of the queue, without waiting for the owner's signal. A red `main` holds every other merge: while that run
   is red, merge nothing into `main` but its fix (merges into an issue branch go on).
-- A successful run with a step named `<step> (second run)` holds a flake: file it as flow step 2 says for flakes,
-  with the run's url in place of the first log; it waits for the owner's signal too.
 - With no run after the second look, or no answer from `gh`, the run is neither a pass nor a failure: tell the
   owner in one line; nothing is filed.
 
@@ -232,7 +226,7 @@ runs of it no longer fit in a hosted job's six hours, and the issue you file is 
 ### Next issue
 
 Work does not stop at the report. Open issue files come from four places: a `plan` or `worker` that met
-something outside its own issue and filed it instead of fixing it in passing; a failed or flaky run of the
+something outside its own issue and filed it instead of fixing it in passing; a failed run of the
 workflow on GitHub Actions after a push of `main`, filed with `--source finder` (flow step 3), which waits for the
 owner's signal but for a failed run after a merge made behind `main`; a check that fails when you run the full checks on `main` by hand; and the owner. Run
 `pm-check .` on `main` by hand only when the owner asks for it or the emulator version changes
@@ -337,7 +331,7 @@ logged in `.pm/run/events.log` and never delivered; a turn with none wakes you a
 | `pm-brief` | a pane's brief from its template: `plan` (also writes rev's), `harness-engineer`, `worker`, `crit`, `show`; a plan runs `worker` and `crit` for its own issue |
 | `pm-pane` | panes: `new` (`--kind`, `--model`, `--effort`), `reset`, `close`, `list`; a plan runs `new` of a worker, rev or crit and `reset` and `close` of those panes for its own issue; a `QUEUE` answer to a plan becomes `EVENT room` to it later |
 | `pm-report` | a pane's typed line that ends its turn, to its lead (you, or the plan of its issue) or to the log |
-| `pm-check` | the checks of a checkout, recorded; on a unit of an issue branch the fast check (`integration` left to the issue branch), on the issue's worktree the whole check; `--checks <id>…` single integration checks, never a gate; retries a failed test step once (`flaky`), a heavy run asks for room and starts or answers `WAIT <n>s` (exit 75; `EVENT room <pane> check <worktree>` follows), the record holds how long it `waited`, `--stop` ends one worktree's run; the harness step runs the three guards |
+| `pm-check` | the checks of a checkout, recorded; on a unit of an issue branch the fast check (`integration` left to the issue branch), on the issue's worktree the whole check; `--checks <id>…` single integration checks, never a gate; runs each step once (no second run), a heavy run asks for room and starts or answers `WAIT <n>s` (exit 75; `EVENT room <pane> check <worktree>` follows), the record holds how long it `waited`, `--stop` ends one worktree's run; the harness step runs the three guards |
 | `pm-capture` | screen captures and contact sheets |
 | `pm-critique` | impeccable scores: `record`, `table`, `check` (fails while the last `final` has a P0 or P1) |
 | `pm-merge` | `<id> <unit>` a unit's branch into its target (the issue branch, or local `main` for an issue without one); `<id> --take-main` local `main` into the issue branch; `<id>` the issue branch into local `main`; a plan runs the first two for its own issue, into `feat/<id>` only; the review it asks follows the issue's `lead` |
