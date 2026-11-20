@@ -31,6 +31,7 @@ import {
   JSON_FIELD,
   lastPart,
   logOf,
+  logPartOf,
   NO_LOG_YET,
   NOT_RUN,
   notFoundLinks,
@@ -188,7 +189,10 @@ test('studio.ecs-task-run-without-a-public-ip-fails-to-start', async ({ ctx, pag
   await expect(heading(page, `Task ${task}`)).toBeVisible({ timeout: 20_000 });
   await expectValue(page, 'Last status', 'Stopped');
   await expectValue(page, 'Stop code', 'TaskFailedToStart');
-  await expect(main.getByText(NO_LOG_YET, { exact: true }), `"${NO_LOG_YET}"`).toBeVisible({ timeout: 20_000 });
+  await expect(
+    logPartOf(main, 'app').getByText(NO_LOG_YET, { exact: true }),
+    `"${NO_LOG_YET}" in the log part`,
+  ).toBeVisible({ timeout: 20_000 });
   const direct = await taskDirect(ctx, port, cluster, task);
   expect([direct?.lastStatus, direct?.stopCode], 'the task, directly').toEqual(['STOPPED', 'TaskFailedToStart']);
 });
@@ -231,8 +235,8 @@ test('studio.ecs-unknown-task-shows-not-found', async ({ ctx, page }) => {
 
   await page.goto(taskPath(cluster, task));
   await expect(main.getByText(`No task ${task}`, { exact: true })).toBeVisible({ timeout: 20_000 });
-  await expect(
-    notFoundLinks(main, `No task ${task}`).and(main.locator(`[href="${clusterPath(cluster)}"]`)),
-    "a link to the cluster's page",
-  ).toBeVisible();
+  await expect(notFoundLinks(main, `No task ${task}`), "a link to the cluster's page").toHaveAttribute(
+    'href',
+    clusterPath(cluster),
+  );
 });

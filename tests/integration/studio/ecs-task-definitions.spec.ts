@@ -18,6 +18,7 @@ import {
   DEFINITIONS_H1,
   DEFINITIONS_PATH,
   EcsSeeded,
+  errorOf,
   expectFlash,
   expectRow,
   expectValue,
@@ -121,8 +122,11 @@ test('studio.ecs-register-shows-the-emulators-refusal', async ({ ctx, page }) =>
   starter.memory = '8192';
   await text.fill(JSON.stringify(starter, null, 2), ACTION);
   await button(main, REGISTER).click(ACTION);
-  await expect(main.getByText(NOT_REGISTERED), `"${NOT_REGISTERED}"`).toBeVisible({ timeout: 20_000 });
-  await expect(main, "the emulator's message names the CPU and memory").toContainText(/cpu[\s\S]*memory|memory[\s\S]*cpu/i);
+  const refusal = errorOf(field(main, JSON_FIELD));
+  await expect(refusal, `"${NOT_REGISTERED}" at the field`).toContainText(NOT_REGISTERED, { timeout: 20_000 });
+  await expect(refusal, "the emulator's message names the CPU and memory").toContainText(
+    /cpu[\s\S]*memory|memory[\s\S]*cpu/i,
+  );
   await expect(page).toHaveURL(addressOf(REGISTER_PATH));
   expect(
     [await revisionsDirect(ctx, port, family, 'ACTIVE'), await revisionsDirect(ctx, port, family, 'INACTIVE')],

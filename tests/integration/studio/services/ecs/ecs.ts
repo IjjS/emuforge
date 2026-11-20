@@ -787,6 +787,13 @@ export function jsonOf(main: Locator): Locator {
   return main.locator(CONTAINER).filter({ has: main.page().getByRole('heading', { name: 'JSON', exact: true }) });
 }
 
+/** The log part of the container `container` on a task's page: the container headed "Log of {container}". */
+export function logPartOf(main: Locator, container: string): Locator {
+  return main
+    .locator(CONTAINER)
+    .filter({ has: main.page().getByRole('heading', { name: `Log of ${container}`, exact: true }) });
+}
+
 /** The log of the container `container` on a task's page. */
 export function logOf(page: Page, container: string): Locator {
   return page.getByRole('main').getByRole('log', { name: `Log of ${container}`, exact: true });
