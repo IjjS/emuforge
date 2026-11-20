@@ -173,6 +173,10 @@ const PAGE = createWrapper(document.body);
 const text = (element: Element | null | undefined) => (element?.textContent ?? '').replace(/\s+/g, ' ').trim();
 
 /** The key-value sections as label → value. */
+/** "Termination protection" while it reads On: the value, and below it the operation that changes it. */
+const CHANGED = 'Changed with ModifyInstanceAttribute.';
+const PROTECTED = `On${CHANGED}`;
+
 function pairs(): Record<string, string> {
   const result: Record<string, string> = {};
   for (const group of PAGE.findAllKeyValuePairs()) {
@@ -256,9 +260,56 @@ describe("an instance's page", () => {
     open(pathOf('i-0full'));
     await loaded();
     await waitFor(() => {
-      expect(pairs()['Termination protection']).toBe('On');
+      expect(pairs()['Termination protection']).toBe(PROTECTED);
     });
     expect(terminate()).toBe('Termination protection is on.');
+  });
+
+  it('termination protection "On" → below the value "Changed with ModifyInstanceAttribute.", the pair beside "State"', async () => {
+    holding(full(), true);
+    open(pathOf('i-0full'));
+    await loaded();
+    await waitFor(() => {
+      expect(pairs()['Termination protection']).toBe(PROTECTED);
+    });
+    const value = PAGE.findAllKeyValuePairs()
+      .flatMap((group) => group.findItems())
+      .find((item) => text(item.findLabel()?.getElement()) === 'Termination protection')
+      ?.findValue()
+      ?.getElement() as HTMLElement;
+    const lines = [...value.querySelectorAll('*')]
+      .filter((node) => node.children.length === 0)
+      .map((node) => node.textContent);
+    expect(lines).toEqual(['On', CHANGED]);
+    const labels = Object.keys(pairs());
+    expect(labels.indexOf('Termination protection')).toBe(labels.indexOf('State') + 1);
+  });
+
+  it('termination protection "Off", being read or failed → no "Changed with ModifyInstanceAttribute."', async () => {
+    holding(full(), false);
+    open(pathOf('i-0full'));
+    await loaded();
+    await waitFor(() => {
+      expect(pairs()['Termination protection']).toBe('Off');
+    });
+    expect(screen.queryByText(CHANGED)).toBeNull();
+    cleanup();
+
+    vi.mocked(api.getInstance).mockResolvedValue({ found: true, instance: full() });
+    vi.mocked(api.getTerminationProtection).mockImplementation(() => new Promise(() => undefined));
+    open(pathOf('i-0full'));
+    await loaded();
+    expect(pairs()['Termination protection']).toBe('Loading');
+    expect(screen.queryByText(CHANGED)).toBeNull();
+    cleanup();
+
+    holding(full(), new RequestError({ kind: 'other', operation: 'DescribeInstanceAttribute', code: 'InternalError' }));
+    open(pathOf('i-0full'));
+    await loaded();
+    await waitFor(() => {
+      expect(pairs()['Termination protection']).toContain('InternalError');
+    });
+    expect(screen.queryByText(CHANGED)).toBeNull();
   });
 
   it('"Off", being read or failed → the menu\'s "Terminate" available by the state', async () => {
@@ -296,7 +347,7 @@ describe("an instance's page", () => {
     expect(vi.mocked(api.getInstance).mock.calls[0]?.[1]).toBe('i-0full');
     expect(vi.mocked(api.getTerminationProtection).mock.calls[0]?.[1]).toBe('i-0full');
     await waitFor(() => {
-      expect(pairs()['Termination protection']).toBe('On');
+      expect(pairs()['Termination protection']).toBe(PROTECTED);
     });
     expect(pairs()).toEqual({
       'Instance ID': 'i-0full',
@@ -307,7 +358,7 @@ describe("an instance's page", () => {
       'Key pair': 'dev-key',
       Architecture: 'x86_64',
       Platform: 'Linux/UNIX',
-      'Termination protection': 'On',
+      'Termination protection': PROTECTED,
       'Availability Zone': 'us-east-1a',
       'Subnet ID': 'subnet-1',
       'VPC ID': 'vpc-1',
@@ -614,7 +665,7 @@ describe("an instance's page", () => {
     });
     await waitFor(() => {
       expect(pairs()['Private IPv4']).toBe('10.0.0.2');
-      expect(pairs()['Termination protection']).toBe('On');
+      expect(pairs()['Termination protection']).toBe(PROTECTED);
     });
     act(() => {
       reads[1]?.({ found: true, instance: full({ state: 'stopped', privateIp: '10.0.0.1' }) });
@@ -625,6 +676,6 @@ describe("an instance's page", () => {
     });
     expect(pairs()['State']).toBe('running');
     expect(pairs()['Private IPv4']).toBe('10.0.0.2');
-    expect(pairs()['Termination protection']).toBe('On');
+    expect(pairs()['Termination protection']).toBe(PROTECTED);
   });
 });
