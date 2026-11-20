@@ -113,7 +113,7 @@ describe('useRunTask', () => {
 });
 
 describe('the network choices', () => {
-  it("the subnets → listSubnetChoices with the chosen VPC; each option its id, described by its VPC and zone", async () => {
+  it('the subnets → listSubnetChoices with the chosen VPC; each option its id, described by its VPC and zone', async () => {
     vi.mocked(network.listSubnetChoices).mockResolvedValueOnce({
       choices: [
         { id: 'subnet-a', vpcId: 'vpc-1', zone: 'us-east-1a', cidr: '10.0.0.0/24', name: 'a' },

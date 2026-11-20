@@ -227,7 +227,9 @@ beforeEach(() => {
   );
   readGroups.mockReset();
   readGroups.mockImplementation((vpc) =>
-    Promise.resolve({ items: (GROUPS[vpc ?? ''] ?? []).map((group) => ({ id: group.GroupId, name: group.GroupName })) }),
+    Promise.resolve({
+      items: (GROUPS[vpc ?? ''] ?? []).map((group) => ({ id: group.GroupId, name: group.GroupName })),
+    }),
   );
   vi.mocked(running.runTask).mockReset();
   vi.mocked(running.runTask).mockResolvedValue({ taskIds: ['t1'], failures: [] });
