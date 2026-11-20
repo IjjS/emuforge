@@ -48,6 +48,7 @@ export function VolumeDetachDialog({
       <SpaceBetween size="m">
         <KeyValuePairs
           columns={2}
+          minColumnWidth={220}
           items={[
             { label: 'Volume ID', value: <ValueText kind="name" value={id} /> },
             { label: 'Instance ID', value: <ValueText kind="name" value={target.instanceId} /> },

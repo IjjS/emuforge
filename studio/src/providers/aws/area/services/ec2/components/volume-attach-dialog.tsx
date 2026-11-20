@@ -24,12 +24,14 @@ export interface VolumeDialogStatus {
 interface VolumeAttachDialogProps extends VolumeDialogStatus {
   connection: AreaConnection;
   endpoint: string;
+  zone: string | undefined;
   onConfirm: (target: AttachmentTarget) => void;
 }
 
 export function VolumeAttachDialog({
   connection,
   endpoint,
+  zone,
   pending,
   failure,
   unavailable,
@@ -74,7 +76,14 @@ export function VolumeAttachDialog({
             {failure.content}
           </Alert>
         )}
-        <FormField label="Instance" constraintText="Choose an instance in the volume’s Availability Zone.">
+        <FormField
+          label="Instance"
+          description={
+            zone === undefined
+              ? 'Choose an instance in the volume’s Availability Zone.'
+              : `Choose an instance in ${zone}, the volume’s Availability Zone.`
+          }
+        >
           <ChoiceSelect
             source={volumeInstanceChoices(endpoint)}
             connection={connection}
