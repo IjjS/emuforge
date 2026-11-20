@@ -4,7 +4,7 @@ Issue-Module: engine
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: engine|product-image.build|cargo-target-as-cache-mount
-Issue-Check-Ids: 594
+Issue-Check-Ids: engine.product-build-runs-current-worktree-code
 Issue-Commit: 77becf887508a37925676ffdd96a30c33f32d7e1
 
 # Build the product image with cargo's target folder as a cache mount
