@@ -49,7 +49,7 @@ export const REASONS = {
   notStopped: 'Only a stopped DB instance can be started.',
   notAvailableStop: 'Only an available DB instance can be stopped.',
   notAvailableReboot: 'Only an available DB instance can be rebooted.',
-  aurora: 'The emulator does not start or stop an Aurora DB instance by itself.',
+  aurora: 'An Aurora DB instance starts and stops only with its DB cluster.',
   deleting: 'This DB instance is already being deleted.',
   protected: 'Deletion protection is on.',
 } as const;
@@ -58,7 +58,7 @@ function unavailable(reason: string): Availability {
   return { available: false, reason };
 }
 
-/** An engine of Aurora, whose instance the emulator does not start or stop by itself. */
+/** An engine of Aurora, whose instance starts and stops only with its DB cluster. */
 export function isAurora(engine: string | undefined): boolean {
   return engine?.startsWith('aurora') === true;
 }
