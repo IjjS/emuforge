@@ -275,6 +275,17 @@ describe('Launch instance', () => {
     expect(choices.listKeyPairChoices).not.toHaveBeenCalled();
   });
 
+  it("the instance type's description names the chosen image's architecture, and nothing of an image before one is chosen", async () => {
+    open();
+    await opened();
+    const hint = "Type part of a type's name to narrow the list.";
+    expect(text(field('Instance type').findDescription()?.getElement())).toBe(hint);
+    expect(triggerOf('Instance type')).toBe('Choose an instance type');
+    await choose('Image', 'ami-1');
+    expect(text(field('Instance type').findDescription()?.getElement())).toBe(`The chosen image is x86_64. ${hint}`);
+    expect(triggerOf('Instance type')).toBe('Choose an instance type');
+  });
+
   it('"Launch instance" with a fault → its message at the field and nothing sent', async () => {
     open();
     await opened();

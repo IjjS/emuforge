@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest';
 
-import { launchFormMessages } from './launch-form';
+import { launchFormMessages, typeDescription } from './launch-form';
+
+describe("S2's instance type description", () => {
+  it("names the chosen image's architecture and how to narrow the list; with no architecture, only the latter", () => {
+    expect(typeDescription('x86_64')).toBe(
+      "The chosen image is x86_64. Type part of a type's name to narrow the list.",
+    );
+    expect(typeDescription(undefined)).toBe("Type part of a type's name to narrow the list.");
+    expect(typeDescription('')).toBe("Type part of a type's name to narrow the list.");
+  });
+});
 
 describe("S2's checks", () => {
   it('no image → "Choose an image."; no type → "Choose an instance type."; both chosen → none', () => {
