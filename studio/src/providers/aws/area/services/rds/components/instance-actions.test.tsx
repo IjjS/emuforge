@@ -54,13 +54,12 @@ function target(status: string, changes: Partial<ActionTarget> = {}): ActionTarg
   return { id: 'app-db', status, engine: 'postgres', deletionProtection: false, ...changes };
 }
 
-function button(name: string) {
-  const modal = PAGE.findModal()?.getElement();
-  const action = PAGE.findAllButtons().find(
-    (button) =>
-      !modal?.contains(button.getElement()) && button.findTextRegion()?.getElement().textContent?.trim() === name,
-  );
+const LIFECYCLE_BUTTON_POSITION = { Start: 0, Stop: 1, Reboot: 2, Delete: 3 } as const;
+
+function button(name: keyof typeof LIFECYCLE_BUTTON_POSITION) {
+  const action = PAGE.findSpaceBetween()?.findAllButtons()[LIFECYCLE_BUTTON_POSITION[name]];
   if (action === undefined) throw new Error(`Missing lifecycle button: ${name}`);
+  expect(action.findTextRegion()?.getElement().textContent?.trim()).toBe(name);
   return action.getElement();
 }
 
@@ -80,7 +79,7 @@ function reasonOf(element: Element): string {
 /** Each action: `true` when available, else its reason. */
 function shown(): Record<string, true | string> {
   return Object.fromEntries(
-    ['Start', 'Stop', 'Reboot', 'Delete'].map((name) => {
+    (['Start', 'Stop', 'Reboot', 'Delete'] as const).map((name) => {
       const element = button(name);
       return [name, isDisabled(element) ? reasonOf(element) : true];
     }),
@@ -100,11 +99,9 @@ function deleteModal() {
 }
 
 function dialogButton(dialog: DeleteModal, label: 'Cancel' | 'Delete') {
-  const button = dialog
-    .findFooter()
-    ?.findAllButtons()
-    .find((button) => button.findTextRegion()?.getElement().textContent?.trim() === label);
+  const button = dialog.findFooter()?.findAllButtons()[label === 'Cancel' ? 0 : 1];
   if (button === undefined) throw new Error(`Missing confirmation button: ${label}`);
+  expect(button.findTextRegion()?.getElement().textContent?.trim()).toBe(label);
   return button.getElement();
 }
 
@@ -187,7 +184,7 @@ describe("a DB instance's actions", () => {
     await confirmDelete();
     expect(onAction).toHaveBeenCalledTimes(1);
     view.setPending(true);
-    for (const name of ['Start', 'Stop', 'Reboot', 'Delete']) {
+    for (const name of ['Start', 'Stop', 'Reboot', 'Delete'] as const) {
       expect(isDisabled(button(name)), name).toBe(true);
       fireEvent.click(button(name));
     }

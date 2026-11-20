@@ -108,6 +108,7 @@ export function ModifyInstanceDialog({ instance, pending, failure, onSave, onDis
             </Alert>
           )}
           <FormField
+            id="rds-modify-field-identifier"
             label="DB instance identifier"
             description={
               changes.identifier === undefined
@@ -127,15 +128,22 @@ export function ModifyInstanceDialog({ instance, pending, failure, onSave, onDis
               }}
             />
           </FormField>
-          <ClassField value={instanceClass} error={errors.instanceClass} onChange={setInstanceClass} />
+          <div id="rds-modify-field-class">
+            <ClassField value={instanceClass} error={errors.instanceClass} onChange={setInstanceClass} />
+          </div>
           {member && (
             <Box id="rds-modify-cluster-guidance" variant="p">
               The cluster manages storage and master credentials.
             </Box>
           )}
-          {!member && <StorageField value={storage} error={errors.storage} onChange={setStorage} />}
+          {!member && (
+            <div id="rds-modify-field-storage">
+              <StorageField value={storage} error={errors.storage} onChange={setStorage} />
+            </div>
+          )}
           {!member && (
             <FormField
+              id="rds-modify-field-password"
               label="New master password"
               description="Leave blank to keep the current password."
               constraintText={PASSWORD_CONSTRAINT}
