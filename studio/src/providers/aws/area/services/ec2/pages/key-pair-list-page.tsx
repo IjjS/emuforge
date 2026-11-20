@@ -31,7 +31,7 @@ const KEY_PAIRS_PAGE_SIZE = 25;
 const SELECT_ONE = 'Select one key pair.';
 
 /** A name keeps room for 24 characters (`aws-area.md`, entry 4). */
-const NAME_MIN_WIDTH = '28ch';
+const NAME_MIN_WIDTH = '24ch';
 
 /** The key pairs whose name holds `text`, in either case; all of them for no text. */
 function matching(keyPairs: readonly KeyPair[], text: string): KeyPair[] {

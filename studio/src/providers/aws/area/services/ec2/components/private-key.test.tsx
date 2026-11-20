@@ -33,32 +33,34 @@ describe('the private key', () => {
     });
   });
 
-  it('"Save as {name}.pem" → a file of that name whose text is the key; no request; the URL is released after', async () => {
-    vi.useFakeTimers();
-    const blobs: Blob[] = [];
-    const created = vi.fn((blob: Blob) => {
-      blobs.push(blob);
-      return 'blob:studio/1';
+  for (const format of ['pem', 'ppk'] as const) {
+    it(`"Save as {name}.${format}" → a file of that name whose text is the key; no request; the URL is released after`, async () => {
+      vi.useFakeTimers();
+      const blobs: Blob[] = [];
+      const created = vi.fn((blob: Blob) => {
+        blobs.push(blob);
+        return 'blob:studio/1';
+      });
+      const revoked = vi.fn();
+      vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: created, revokeObjectURL: revoked }));
+      const clicked: HTMLAnchorElement[] = [];
+      vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+        clicked.push(this);
+      });
+      render(<PrivateKey name="my key" format={format} privateKey={KEY} />);
+      fireEvent.click(screen.getByRole('button', { name: `Save as my key.${format}` }));
+      expect(clicked).toHaveLength(1);
+      expect(clicked[0]?.download).toBe(`my key.${format}`);
+      expect(clicked[0]?.getAttribute('href')).toBe('blob:studio/1');
+      expect(await blobs[0]?.text()).toBe(KEY);
+      expect(revoked).not.toHaveBeenCalled();
+      act(() => {
+        vi.runAllTimers();
+      });
+      expect(revoked).toHaveBeenCalledWith('blob:studio/1');
+      expect(fetchSpy).not.toHaveBeenCalled();
     });
-    const revoked = vi.fn();
-    vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: created, revokeObjectURL: revoked }));
-    const clicked: HTMLAnchorElement[] = [];
-    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
-      clicked.push(this);
-    });
-    render(<PrivateKey name="my key" format="ppk" privateKey={KEY} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Save as my key.ppk' }));
-    expect(clicked).toHaveLength(1);
-    expect(clicked[0]?.download).toBe('my key.ppk');
-    expect(clicked[0]?.getAttribute('href')).toBe('blob:studio/1');
-    expect(await blobs[0]?.text()).toBe(KEY);
-    expect(revoked).not.toHaveBeenCalled();
-    act(() => {
-      vi.runAllTimers();
-    });
-    expect(revoked).toHaveBeenCalledWith('blob:studio/1');
-    expect(fetchSpy).not.toHaveBeenCalled();
-  });
+  }
 
   it('a key that holds markup is shown as text', () => {
     const markup = '<b>bold</b><img src=x onerror="alert(1)">';
