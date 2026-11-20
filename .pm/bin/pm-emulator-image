@@ -33,13 +33,13 @@ said in that line.
 The outcome is one line, `pm-emulator-image: refreshed <before> -> <after>; <prune>` | `unchanged <version>` |
 `failed: <reason>; image left as it was (<version|none>)`, where <prune> is `build cache pruned to 20GB (reclaimed
 <size|unknown>; private <size|unknown> left; image-shared <size|unknown> apart)` | `build cache prune failed (exit
-<n>)` | `build cache prune did not end within <PRUNE_BOUND> s`. It is appended to .pm/run/events.log and kept with the versions, ids, source tree, the prune (`build_cache`, null but
-after a refresh) and time in .pm/run/emulator-image.json. `refreshed` and `failed` also go to the PM through
-pm-watchd's inbox as `EVENT emulator-image refreshed <before> -> <after>` (without the prune's clause) and `EVENT
-emulator-image failed <reason>`. A reason is
-always one of the fixed texts of this script: what Docker or git printed is only in the refresh log,
-.pm/run/emulator-image-refresh.log, replaced by each refresh. A version or commit is accepted only in the shape
-[0-9A-Za-z._+-]{1,64}.
+<n>)` | `build cache prune did not end within <PRUNE_BOUND> s`. It is appended to .pm/run/events.log and kept
+with the versions, ids, source tree, the prune (`build_cache`, null but after a refresh) and time in
+.pm/run/emulator-image.json. `refreshed` and `failed` also go to the PM through pm-watchd's inbox as `EVENT
+emulator-image refreshed <before> -> <after>` (without the prune's clause) and `EVENT emulator-image failed
+<reason>`. A reason is always one of the fixed texts of this script: what Docker or git printed is only in the
+refresh log, .pm/run/emulator-image-refresh.log, replaced by each refresh. A version or commit is accepted only in
+the shape [0-9A-Za-z._+-]{1,64}.
 
 Every child is an argument array with the environment PATH, HOME, DOCKER_HOST, DOCKER_CONTEXT, DOCKER_CONFIG,
 XDG_RUNTIME_DIR and TMPDIR only, and has a bound (the named constants below): at the bound its process group gets
