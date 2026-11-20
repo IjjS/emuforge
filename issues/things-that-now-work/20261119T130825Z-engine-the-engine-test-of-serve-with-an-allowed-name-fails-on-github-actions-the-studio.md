@@ -4,7 +4,7 @@ Issue-Module: engine
 Issue-Kind: bug
 Issue-Source: finder
 Issue-Key: engine|serve|allow-host-test-reads-the-log-before-studio-says-it-listens
-Issue-Check-Ids:
+Issue-Check-Ids: engine-test
 Issue-Commit: 382aec3a28ca3d26fa2fa389925ae2931ed3728b
 
 # The engine test of serve with an allowed name fails on GitHub Actions: the Studio listener's line is not in the log yet
