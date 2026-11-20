@@ -64,19 +64,20 @@ const NAME_MIN_WIDTH = '28ch';
 const IMAGE_MIN_WIDTH = '32ch';
 
 /**
- * How a stopped task ended, above its summary (critique final r1): the emulator's stop code and stopped reason, and
- * the exit code of each essential container. A task whose essential containers all exited 0 ended as a job does;
- * any other is an error.
+ * How a stopped task ended, above its summary (critique final r1 and r2): the emulator's stop code and stopped
+ * reason, and the exit code of each essential container that has one. Only a task that failed to start, or one
+ * whose essential container exited with a code other than 0, is an error; a task stopped by "Stop task"
+ * (`UserInitiated`) or by a deployment (`ServiceSchedulerInitiated`) is no failure and is told as info.
  */
 function Outcome({ task, essential }: { task: Task; essential: TaskContainer[] | undefined }) {
   const texts = taskTexts(task);
-  const clean =
-    essential !== undefined && essential.length > 0 && essential.every((container) => container.exitCode === 0);
+  const exited = (essential ?? []).filter((container) => container.exitCode !== undefined);
+  const failed = task.stopCode === 'TaskFailedToStart' || exited.some((container) => container.exitCode !== 0);
   return (
-    <Alert type={clean ? 'info' : 'error'} header={`Task stopped: ${texts.stopCode}`}>
+    <Alert type={failed ? 'error' : 'info'} header={`Task stopped: ${texts.stopCode}`}>
       <SpaceBetween size="xxs">
         <ValueText kind="text" value={texts.stoppedReason} />
-        {essential?.map((container) => (
+        {exited.map((container) => (
           <span key={container.name}>
             Exit code of essential container <ValueText kind="name" value={container.name} />:{' '}
             <ValueText kind="fixed" value={exitCodeText(container.exitCode)} />

@@ -569,6 +569,59 @@ describe('S5, a task', () => {
     expect(definitions.getRevision).not.toHaveBeenCalled();
   });
 
+  for (const stopCode of ['UserInitiated', 'ServiceSchedulerInitiated']) {
+    it(`a task stopped with ${stopCode} and no exit code → an info Alert with no exit-code line`, async () => {
+      vi.mocked(tasks.getTask).mockImplementation(() =>
+        Promise.resolve(
+          found(
+            task({
+              ...STOPPED_TASK,
+              stopCode,
+              stoppedReason: 'Task stopped by user',
+              containers: [{ name: 'app', status: 'STOPPED' }],
+            }),
+          ),
+        ),
+      );
+      open();
+      await details();
+      const alert = await waitFor(() => {
+        const found = outcome();
+        expect(found).toBeDefined();
+        return found;
+      });
+      expect(text(alert?.getElement())).toContain(`Task stopped: ${stopCode}`);
+      expect(text(alert?.getElement())).not.toContain('Exit code');
+      expect(alert?.getElement().querySelector('[class*="type-info"]')).not.toBeNull();
+      expect(alert?.getElement().querySelector('[class*="type-error"]')).toBeNull();
+    });
+  }
+
+  it('a task stopped with TaskFailedToStart and no exit code → an error Alert with no exit-code line', async () => {
+    vi.mocked(tasks.getTask).mockImplementation(() =>
+      Promise.resolve(
+        found(
+          task({
+            ...STOPPED_TASK,
+            stopCode: 'TaskFailedToStart',
+            stoppedReason: 'CannotPullContainerError',
+            containers: [{ name: 'app', status: 'STOPPED' }],
+          }),
+        ),
+      ),
+    );
+    open();
+    await details();
+    const alert = await waitFor(() => {
+      const found = outcome();
+      expect(found).toBeDefined();
+      return found;
+    });
+    expect(text(alert?.getElement())).toContain('Task stopped: TaskFailedToStart');
+    expect(text(alert?.getElement())).not.toContain('Exit code');
+    expect(alert?.getElement().querySelector('[class*="type-error"]')).not.toBeNull();
+  });
+
   it('a running task → no Alert, Last status a success StatusIndicator, and no revision read', async () => {
     vi.mocked(tasks.getTask).mockImplementation(() => Promise.resolve(found(task())));
     open();
