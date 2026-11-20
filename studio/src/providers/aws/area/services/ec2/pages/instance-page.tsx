@@ -46,6 +46,9 @@ function Pairs({ label, items }: { label: string; items: { label: string; value:
   return <KeyValuePairs columns={3} minColumnWidth={220} items={items} ariaLabel={label} />;
 }
 
+/** Under "On": the emulator's operation that changes it; Studio has no screen for it yet (critique r3 P2 2, issue 561). */
+const PROTECTION_CHANGED = 'Changed with ModifyInstanceAttribute.';
+
 /** "Termination protection": "On", "Off", loading in that value alone, or its read's failure in that value alone. */
 function Protection({ read, connection }: { read: Ec2Read<boolean>; connection: AreaConnection }) {
   if (read.failure !== undefined) {
@@ -60,7 +63,15 @@ function Protection({ read, connection }: { read: Ec2Read<boolean>; connection: 
   if (read.value === undefined) {
     return <StatusIndicator type="loading">Loading</StatusIndicator>;
   }
-  return <ValueText kind="fixed" value={read.value ? 'On' : 'Off'} />;
+  if (!read.value) {
+    return <ValueText kind="fixed" value="Off" />;
+  }
+  return (
+    <SpaceBetween size="xxs">
+      <ValueText kind="fixed" value="On" />
+      <Box variant="small">{PROTECTION_CHANGED}</Box>
+    </SpaceBetween>
+  );
 }
 
 /** The key pair's name as a link to the key pairs, "-" without one (critique final P3 3). */
@@ -92,13 +103,13 @@ function Details({ instance, protection }: { instance: Instance; protection: Rea
               </SpaceBetween>
             ),
           },
+          { label: 'Termination protection', value: protection },
           { label: 'Type', value: <ValueText kind="fixed" value={instance.type} none={NONE} /> },
           { label: 'Image ID', value: <Copy label="Image ID" value={instance.imageId} /> },
           { label: 'Launched', value: <ValueText kind="fixed" value={creationDateText(instance.launchTime)} /> },
           { label: 'Key pair', value: <KeyPair name={instance.keyName} /> },
           { label: 'Architecture', value: <ValueText kind="fixed" value={instance.architecture} none={NONE} /> },
           { label: 'Platform', value: <ValueText kind="fixed" value={instance.platform} none={NONE} /> },
-          { label: 'Termination protection', value: protection },
         ]}
       />
     </Container>
