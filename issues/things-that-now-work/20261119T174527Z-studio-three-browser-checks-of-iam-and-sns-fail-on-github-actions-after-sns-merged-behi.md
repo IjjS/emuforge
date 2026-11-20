@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: bug
 Issue-Source: finder
 Issue-Key: studio|ci|three-browser-checks-fail-on-the-run-after-sns-merged-behind-main
-Issue-Check-Ids:
+Issue-Check-Ids: 551
 Issue-Commit: 2a72d8a0c10bb46f13863bb2f67af94ca94ff1a5
 
 # Three browser checks of IAM and SNS fail on GitHub Actions after SNS merged behind main
