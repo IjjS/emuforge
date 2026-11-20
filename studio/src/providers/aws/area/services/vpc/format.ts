@@ -8,8 +8,12 @@ import { nameOf, type Tag } from '../../lib/ec2-client';
 /** Shown for a value the answer lacks. */
 export const NONE = '-';
 
-/** The least width of a column of IDs, so a zero-padded ID keeps to one or two lines at 390 (`aws-area.md`, entry 4). */
-export const ID_MIN_WIDTH = '22ch';
+/**
+ * The least width of a column of IDs (`aws-area.md`, entry 4): an ID's prefix and its 17-character tail, hex letters
+ * included, on at most two lines at 1280 and 390. The tail measures about 17.2ch in the area's font; 18ch holds it, and
+ * 40px is the padding of a Cloudscape table cell.
+ */
+export const ID_MIN_WIDTH = 'calc(18ch + 40px)';
 
 /** VPC's route in the area, `/aws/vpc`. */
 export const VPC_PATH = `${AWS_PATH}/vpc`;

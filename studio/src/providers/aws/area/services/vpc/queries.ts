@@ -221,6 +221,33 @@ export function useInternetGateway(endpoint: string | undefined, id: string): Vp
   });
 }
 
+/**
+ * S14's read of which internet gateway each VPC holds: `DescribeInternetGateways`, the read of S12, every page to its
+ * end, as the ID of the gateway attached to a VPC by that VPC's ID. Under the gateways' key, so a change of a gateway
+ * reads it again.
+ */
+export function useGatewayAttachments(endpoint: string | undefined): VpcRead<ReadonlyMap<string, string>> {
+  return useRead({
+    key: VPC_KEYS.gateways('attachments'),
+    endpoint,
+    operation: READ_OPERATIONS.describeInternetGateways,
+    read: async (at, signal) => {
+      const attached = new Map<string, string>();
+      let token: string | undefined;
+      do {
+        const page = await listInternetGateways(at, {}, token, signal);
+        for (const gateway of page.items) {
+          if (gateway.vpcId !== undefined && !attached.has(gateway.vpcId)) {
+            attached.set(gateway.vpcId, gateway.id);
+          }
+        }
+        token = page.nextToken;
+      } while (token !== undefined);
+      return attached;
+    },
+  });
+}
+
 /** The route table whose routes apply to a subnet, and which of the two it is. */
 export interface AppliedRouteTable {
   table: RouteTable;
