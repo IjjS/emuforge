@@ -283,6 +283,16 @@ describe("a revision's page", () => {
     expect(widths['Image']).toBe('28ch');
   });
 
+  it('the Containers table keeps the room of a log group part, so /ecs/web-api breaks only after a slash', async () => {
+    vi.mocked(api.getRevision).mockResolvedValue({ found: true, revision: revision() });
+    open(PATH);
+    expect(await screen.findByText('Task definition details')).toBeInTheDocument();
+    const header = (PAGE.findTable()?.findColumnHeaders() ?? []).find(
+      (column) => text(column.getElement()) === 'Log group',
+    );
+    expect(header?.getElement().style.minWidth).toBe('20ch');
+  });
+
   it('the page names "task definitions" to the frame', async () => {
     vi.mocked(api.getRevision).mockResolvedValue({ found: true, revision: revision() });
     open(PATH);
