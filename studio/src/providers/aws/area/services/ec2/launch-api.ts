@@ -1,4 +1,4 @@
-import { RunInstancesCommand } from '@aws-sdk/client-ec2';
+import { RunInstancesCommand, type _InstanceType } from '@aws-sdk/client-ec2';
 
 import { sendEc2, text } from './api';
 
@@ -31,7 +31,8 @@ export async function launchInstance(endpoint: string, launch: NewInstance, sign
       client.send(
         new RunInstancesCommand({
           ImageId: imageId,
-          InstanceType: instanceType,
+          // A type as the emulator listed it; the SDK's list of names is not the emulator's.
+          InstanceType: instanceType as _InstanceType,
           MinCount: 1,
           MaxCount: 1,
           ...(keyName === undefined || keyName === '' ? {} : { KeyName: keyName }),

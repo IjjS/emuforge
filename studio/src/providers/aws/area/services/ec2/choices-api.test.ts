@@ -215,7 +215,9 @@ describe('the VPCs', () => {
   });
 
   it('the default VPC: the filter is-default true → its ID; an answer with none → none', async () => {
-    engine.on('DescribeVpcs', () => page('DescribeVpcs', 'vpcSet', '<item><vpcId>vpc-d</vpcId><isDefault>true</isDefault></item>'));
+    engine.on('DescribeVpcs', () =>
+      page('DescribeVpcs', 'vpcSet', '<item><vpcId>vpc-d</vpcId><isDefault>true</isDefault></item>'),
+    );
     expect(await getDefaultVpc(endpoint, signal())).toBe('vpc-d');
     expect(filters(engine.of('DescribeVpcs')[0]?.params ?? new URLSearchParams())).toEqual({ 'is-default': ['true'] });
 

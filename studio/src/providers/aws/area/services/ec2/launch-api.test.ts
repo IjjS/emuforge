@@ -96,19 +96,6 @@ async function failureOf(pending: Promise<unknown>) {
   return (error as RequestError).failure;
 }
 
-/** The filters a request sent, by name. */
-function filters(params: URLSearchParams): Record<string, string[]> {
-  const result: Record<string, string[]> = {};
-  for (let n = 1; params.has(`Filter.${String(n)}.Name`); n += 1) {
-    const values: string[] = [];
-    for (let v = 1; params.has(`Filter.${String(n)}.Value.${String(v)}`); v += 1) {
-      values.push(params.get(`Filter.${String(n)}.Value.${String(v)}`) ?? '');
-    }
-    result[params.get(`Filter.${String(n)}.Name`) ?? ''] = values;
-  }
-  return result;
-}
-
 const LAUNCHED = ok(
   'RunInstances',
   '<reservationId>r-1</reservationId><instancesSet><item><instanceId>i-0new</instanceId><instanceState><code>0</code><name>pending</name></instanceState></item></instancesSet>',
@@ -129,9 +116,13 @@ function sentParams(params: URLSearchParams): Record<string, string> {
 describe('the launch', () => {
   it('an image and a type only → ImageId, InstanceType, MinCount 1, MaxCount 1 and nothing else', async () => {
     engine.on('RunInstances', () => LAUNCHED);
-    expect(await launchInstance(endpoint, { imageId: 'ami-1', instanceType: 't3.micro', name: '', securityGroupIds: [] }, signal())).toBe(
-      'i-0new',
-    );
+    expect(
+      await launchInstance(
+        endpoint,
+        { imageId: 'ami-1', instanceType: 't3.micro', name: '', securityGroupIds: [] },
+        signal(),
+      ),
+    ).toBe('i-0new');
     expect(sentParams(engine.of('RunInstances')[0]?.params ?? new URLSearchParams())).toEqual({
       ImageId: 'ami-1',
       InstanceType: 't3.micro',
@@ -174,16 +165,20 @@ describe('the launch', () => {
     const message =
       'Your requested instance type (t3.micro) is not supported in your requested Availability Zone (us-east-1c).';
     engine.on('RunInstances', () => refused('Unsupported', message));
-    expect(await failureOf(launchInstance(endpoint, { imageId: 'ami-1', instanceType: 't3.micro' }, signal()))).toEqual({
-      kind: 'other',
-      operation: 'RunInstances',
-      code: 'Unsupported',
-      message,
-    });
+    expect(await failureOf(launchInstance(endpoint, { imageId: 'ami-1', instanceType: 't3.micro' }, signal()))).toEqual(
+      {
+        kind: 'other',
+        operation: 'RunInstances',
+        code: 'Unsupported',
+        message,
+      },
+    );
     engine.on('RunInstances', () => notImplemented);
-    expect(await failureOf(launchInstance(endpoint, { imageId: 'ami-1', instanceType: 't3.micro' }, signal()))).toEqual({
-      kind: 'not-implemented',
-      operation: 'RunInstances',
-    });
+    expect(await failureOf(launchInstance(endpoint, { imageId: 'ami-1', instanceType: 't3.micro' }, signal()))).toEqual(
+      {
+        kind: 'not-implemented',
+        operation: 'RunInstances',
+      },
+    );
   });
 });

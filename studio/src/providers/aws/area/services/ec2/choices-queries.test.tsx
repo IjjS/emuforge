@@ -94,7 +94,11 @@ describe("EC2's choices", () => {
     await waitFor(() => {
       expect(groups.result.current.choices).toEqual([{ id: 'sg-1', name: 'web' }]);
     });
-    expect(vi.mocked(api.listGroupChoices).mock.calls[0]?.slice(0, 3)).toEqual([ENDPOINT, { vpcId: 'vpc-1' }, undefined]);
+    expect(vi.mocked(api.listGroupChoices).mock.calls[0]?.slice(0, 3)).toEqual([
+      ENDPOINT,
+      { vpcId: 'vpc-1' },
+      undefined,
+    ]);
     groups.rerender({ typed: 'we' });
     await waitFor(() => {
       expect(vi.mocked(api.listGroupChoices).mock.calls[1]?.slice(0, 3)).toEqual([
@@ -125,7 +129,7 @@ describe("EC2's choices", () => {
     expect(vpcChoices(ENDPOINT).filtering).toBe('none');
   });
 
-  it("the key pairs' choices are one answer, with no \"more\"", async () => {
+  it('the key pairs\' choices are one answer, with no "more"', async () => {
     vi.mocked(api.listKeyPairChoices).mockResolvedValue([{ name: 'dev' }, { name: 'ci' }]);
     const source = keyPairChoices(ENDPOINT);
     expect(source.filtering).toBe('local');
@@ -171,7 +175,9 @@ describe("EC2's choices", () => {
     for (const answer of ['failed', 'none'] as const) {
       vi.mocked(api.listGroupChoices).mockClear();
       if (answer === 'failed') {
-        vi.mocked(api.getDefaultVpc).mockRejectedValue(new RequestError({ kind: 'access-denied', operation: 'DescribeVpcs', message: 'no' }));
+        vi.mocked(api.getDefaultVpc).mockRejectedValue(
+          new RequestError({ kind: 'access-denied', operation: 'DescribeVpcs', message: 'no' }),
+        );
       } else {
         vi.mocked(api.getDefaultVpc).mockResolvedValue(undefined);
       }

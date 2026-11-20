@@ -82,7 +82,11 @@ export function subnetChoices(endpoint: string | undefined): ChoiceSource<Subnet
     operation: CHOICE_OPERATIONS.describeSubnets,
     filtering: 'none',
     read: async (at, _text, token, signal) => tokenPage(await listSubnetChoices(at, token, signal)),
-    optionOf: (subnet) => ({ value: subnet.id, label: subnet.id, tags: present(subnet.zone, subnet.cidr, subnet.vpcId) }),
+    optionOf: (subnet) => ({
+      value: subnet.id,
+      label: subnet.id,
+      tags: present(subnet.zone, subnet.cidr, subnet.vpcId),
+    }),
   };
 }
 
@@ -158,7 +162,8 @@ export function useDefaultVpc(endpoint: string | undefined): DefaultVpc {
   const [mount] = useState(() => (mounts += 1));
   const query = useQuery({
     queryKey: [...EC2_KEYS.choices('default-vpc'), endpoint, mount],
-    queryFn: async ({ signal }) => (endpoint === undefined ? noEndpoint() : ((await getDefaultVpc(endpoint, signal)) ?? null)),
+    queryFn: async ({ signal }) =>
+      endpoint === undefined ? noEndpoint() : ((await getDefaultVpc(endpoint, signal)) ?? null),
     enabled: endpoint !== undefined,
     staleTime: 0,
     gcTime: 0,

@@ -1,7 +1,7 @@
 import Box from '@cloudscape-design/components/box';
 import Button from '@cloudscape-design/components/button';
 import Select, { type SelectProps } from '@cloudscape-design/components/select';
-import { useState, type ReactNode, type Ref } from 'react';
+import { useState, type Ref } from 'react';
 
 import type { RequestFailure } from '../../../../lib/aws/request';
 import type { AreaConnection } from './emulator-line';
@@ -25,16 +25,24 @@ function failureWords(failure: RequestFailure, connection: AreaConnection, thing
   return readFailureState(failure, connection, things).firstText;
 }
 
+/** The props of `values` that are given, so an absent one is left out rather than passed as `undefined`. */
+// eslint-disable-next-line react-refresh/only-export-components -- the single and the multiple field are one part over one hook
+export function optional<T extends object>(values: T): { [K in keyof T]?: Exclude<T[K], undefined> } {
+  return Object.fromEntries(Object.entries(values).filter(([, value]) => value !== undefined)) as {
+    [K in keyof T]?: Exclude<T[K], undefined>;
+  };
+}
+
 /** What both fields are given besides their value. */
 export interface ChoiceFieldProps<T> {
   source: ChoiceSource<T>;
   connection: AreaConnection;
   /** The plural of what is chosen, as the states name it: "images" → "Loading images", "No images match". */
   things: string;
-  placeholder?: string;
+  placeholder?: string | undefined;
   /** The field is shown as failing a check. */
-  invalid?: boolean;
-  ariaLabel?: string;
+  invalid?: boolean | undefined;
+  ariaLabel?: string | undefined;
 }
 
 /** What the two fields share of Cloudscape's props, from the choices read. */
@@ -82,8 +90,7 @@ export function useChoiceField<T>(
   const more = statusType === 'finished' && choices.more;
   const none = choices.text === '' ? `No ${things}` : `No ${things} match`;
   // With a fixed first choice the list is never empty, so the words that it holds nothing stand at its end.
-  const finishedText: ReactNode =
-    fixed !== undefined && choices.choices !== undefined && items.length === 0 ? none : undefined;
+  const finishedText = fixed !== undefined && choices.choices !== undefined && items.length === 0 ? none : undefined;
 
   return {
     choices,
@@ -98,7 +105,7 @@ export function useChoiceField<T>(
           : `The ${things} could not be loaded: ${failureWords(choices.failure, connection, things)}`,
       recoveryText: 'Retry',
       empty: none,
-      finishedText,
+      ...(finishedText === undefined ? {} : { finishedText }),
       noMatch: `No ${things} match`,
       ...(filtering === 'none'
         ? {}
@@ -134,8 +141,8 @@ export interface ChoiceSelectProps<T> extends ChoiceFieldProps<T> {
   value: T | undefined;
   onChange: (choice: T | undefined) => void;
   /** The label of a fixed first choice ("No key pair"), offered above the others and the choice at start. */
-  fixed?: string;
-  selectRef?: Ref<SelectProps.Ref>;
+  fixed?: string | undefined;
+  selectRef?: Ref<SelectProps.Ref> | undefined;
 }
 
 /** A field of one choice of `source`, read a page at a time. */
@@ -157,9 +164,7 @@ export function ChoiceSelect<T>(props: ChoiceSelectProps<T>) {
       {...parts}
       selectedOption={selected}
       options={options}
-      placeholder={placeholder}
-      invalid={invalid}
-      ariaLabel={ariaLabel}
+      {...optional({ placeholder, invalid, ariaLabel })}
       dropdownRole="dialog"
       onChange={({ detail }) => {
         if (detail.selectedOption.value === FIXED && fixedOption !== undefined) {

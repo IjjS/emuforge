@@ -1,7 +1,7 @@
 import Multiselect, { type MultiselectProps } from '@cloudscape-design/components/multiselect';
 import type { Ref } from 'react';
 
-import { useChoiceField, type ChoiceFieldProps } from './choice-select';
+import { optional, useChoiceField, type ChoiceFieldProps } from './choice-select';
 
 // A form's field of several choices, read a page at a time (issue 553, design "What is shared"): a Cloudscape
 // `Multiselect` over the same hook and states as `choice-select.tsx`. Each choice made is shown as a token that can
@@ -11,7 +11,7 @@ export interface ChoiceMultiselectProps<T> extends ChoiceFieldProps<T> {
   /** The choices made, in the order they were made. */
   value: readonly T[];
   onChange: (choices: T[]) => void;
-  multiselectRef?: Ref<MultiselectProps.Ref>;
+  multiselectRef?: Ref<MultiselectProps.Ref> | undefined;
 }
 
 /** A field of several choices of `source`, read a page at a time. */
@@ -25,9 +25,7 @@ export function ChoiceMultiselect<T>(props: ChoiceMultiselectProps<T>) {
       {...parts}
       selectedOptions={value.map(source.optionOf)}
       options={options}
-      placeholder={placeholder}
-      invalid={invalid}
-      ariaLabel={ariaLabel}
+      {...optional({ placeholder, invalid, ariaLabel })}
       deselectAriaLabel={(option) => `Remove ${option.label ?? option.value ?? ''}`}
       onChange={({ detail }) => {
         const known = [...value, ...items];

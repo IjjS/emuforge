@@ -37,9 +37,9 @@ export interface ChoiceSource<T> {
   /** The operation a failure is named by. */
   operation: string;
   /** What a typed text does; `none` when not given. */
-  filtering?: ChoiceFiltering;
+  filtering?: ChoiceFiltering | undefined;
   /** `false` while the source cannot read yet (what it filters by is still read): shown loading, nothing asked. */
-  ready?: boolean;
+  ready?: boolean | undefined;
   /** One page: the answer for `text` (`''` for none) and `token` (none for the first page). */
   read: (endpoint: string, text: string, token: string | undefined, signal: AbortSignal) => Promise<TokenPage<T>>;
   /** Each choice as the field shows it. */

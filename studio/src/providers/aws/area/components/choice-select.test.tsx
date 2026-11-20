@@ -147,7 +147,11 @@ describe('ChoiceSelect', () => {
   it('a text typed → the choices start again for that text; none → "No {things} match"; none without a text → "No {things}"', async () => {
     read.mockImplementation((typed) =>
       Promise.resolve(
-        typed === '' ? { items: [thing('a')], next: 'tok-1' } : typed === 'or' ? { items: [thing('orders')] } : { items: [] },
+        typed === ''
+          ? { items: [thing('a')], next: 'tok-1' }
+          : typed === 'or'
+            ? { items: [thing('orders')] }
+            : { items: [] },
       ),
     );
     open();
@@ -179,7 +183,9 @@ describe('ChoiceSelect', () => {
   it('a failed page → "The {things} could not be loaded" with "Retry", the choices already shown kept', async () => {
     read
       .mockResolvedValueOnce({ items: [thing('a')], next: 'tok-1' })
-      .mockRejectedValueOnce(new RequestError({ kind: 'other', operation: 'ListThings', code: 'Throttling', message: 'slow' }))
+      .mockRejectedValueOnce(
+        new RequestError({ kind: 'other', operation: 'ListThings', code: 'Throttling', message: 'slow' }),
+      )
       .mockResolvedValueOnce({ items: [thing('b')] });
     open();
     select().openDropdown();
@@ -240,7 +246,9 @@ describe('ChoiceSelect', () => {
 
   it('a choice made stays shown as chosen after the text or the list changes', async () => {
     read.mockImplementation((typed) =>
-      Promise.resolve(typed === '' ? { items: [thing('a', 'alpha'), thing('b', 'beta')] } : { items: [thing('c', 'gamma')] }),
+      Promise.resolve(
+        typed === '' ? { items: [thing('a', 'alpha'), thing('b', 'beta')] } : { items: [thing('c', 'gamma')] },
+      ),
     );
     open();
     select().openDropdown();
