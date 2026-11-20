@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { engineEndpoint } from '../../../../../../lib/aws/client-factory';
@@ -211,6 +212,50 @@ describe('Lambda monitoring', () => {
       'empty',
       'last',
     ]);
+  });
+
+  it('preserves a long multiline message and shows distinct milliseconds with exact semantic timestamps', async () => {
+    const longMessage = 'Traceback:\n' + 'arn:aws:lambda:us-east-1:000000000000:'.repeat(12) + '\nInvalid order';
+    answer = ({ operation }) =>
+      operation === 'FilterLogEvents'
+        ? json({
+            events: [
+              { eventId: 'first', timestamp, message: longMessage },
+              { eventId: 'second', timestamp: timestamp + 1, message: 'Second event' },
+            ],
+          })
+        : datapoints();
+    open();
+
+    await screen.findByText('Second event');
+    expect(messages()).toEqual([longMessage, 'Second event']);
+    const [first, second] = within(screen.getByRole('table', { name: 'Log events' })).getAllByRole('time');
+    expect(first).toHaveTextContent(/\.123 \(UTC/);
+    expect(first).toHaveAttribute('datetime', new Date(timestamp).toISOString());
+    expect(second).toHaveTextContent(/\.124 \(UTC/);
+    expect(second).toHaveAttribute('datetime', new Date(timestamp + 1).toISOString());
+  });
+
+  it('keeps focus and announces completion when the terminal page has no events', async () => {
+    answer = ({ operation, body }) =>
+      operation === 'FilterLogEvents'
+        ? body.nextToken === undefined
+          ? page(['first event'], 'terminal')
+          : page([])
+        : datapoints();
+    open();
+    const button = await screen.findByRole('button', { name: 'Load more events' });
+    const completion = screen.getAllByRole('status').find((region) => region.textContent === '');
+    button.focus();
+    await userEvent.setup().keyboard('{Enter}');
+
+    const terminal = await screen.findByText('No more log events');
+    expect(terminal).toHaveAttribute('role', 'status');
+    expect(terminal).toHaveAttribute('aria-live', 'polite');
+    expect(terminal).toHaveFocus();
+    expect(terminal).toBe(completion);
+    expect(screen.queryByRole('button', { name: 'Load more events' })).not.toBeInTheDocument();
+    expect(messages()).toEqual(['first event']);
   });
 
   it('preserves earlier events on denial and appends the retried page once', async () => {

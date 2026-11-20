@@ -37,5 +37,5 @@ export function useMonitorReadings(endpoint: string, name: string, logGroup: str
 
   const invocations = useQuery(metricOptions('Invocations'));
   const errors = useQuery(metricOptions('Errors'));
-  return { logs, invocations, errors, customGroup };
+  return { logs, invocations, errors, customGroup, windowEnd: window.end };
 }
