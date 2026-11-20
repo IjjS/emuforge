@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: studio|vpc|tasks-by-the-emulator-api
-Issue-Check-Ids:
+Issue-Check-Ids: studio.vpc-create-a-vpc-and-its-subnets studio.vpc-delete-subnets-and-vpcs-free-and-in-use studio.vpc-network-made-elsewhere-is-shown studio.vpc-route-a-subnet-through-an-internet-gateway studio.vpc-screens-follow-an-emulator-restart studio.vpc-subnet-public-addresses-on-launch studio.vpc-take-routing-apart-and-what-is-refused
 Issue-Commit: 68ba2ca428aaf0f893938e6af03157e5e2603054
 
 # Build VPC's screens from the tasks a developer does with it locally, as far as the emulator's API supports them
