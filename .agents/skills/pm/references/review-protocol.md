@@ -77,10 +77,14 @@ praise, no summaries. A finding without a location and a fix is not a finding.
     recorded decision; units and owned files do not overlap.
   - **design** (studio side): every task the requirement builds has its flow and the API call behind each action;
     the console captures named are read for UX only and nothing of them is copied; a part shared with another
-    service is lifted into the area only when a second service needs it; units and owned files do not overlap.
+    service is lifted into the area only when a second service needs it; units and owned files do not overlap; the
+    result of a change is shown from a component that stays mounted while the reads the change starts answer, not
+    from one the page can unmount (a dialog the page drops on "not found").
   - **test-criteria**: the module's `references/test-criteria.md` form; each line is observable and maps to one
     test; every coverage axis is checked or marked `(Not Scope)`; success and failure are paired; each case sits at
-    the lowest level that can prove it.
+    the lowest level that can prove it; a studio screen that reads again after a change has the unit case of those
+    reads answering in another order (`studio/references/test-criteria.md`); an engine case waits for what it
+    asserts (`engine/references/test-criteria.md`).
   - **breakdown**: every criteria line belongs to exactly one unit or to the plan's integration tests; each unit is
     `e<n>` or `s<n>`, never both sides; owned files do not overlap between parallel units; the order leaves the
     collecting branch green when it merges into `main`; no unit is more than a day.
@@ -89,9 +93,13 @@ praise, no summaries. A finding without a location and a fix is not a finding.
   `test-criteria.md` and nothing the criteria do not list, and each scenario left out is named with its reason in
   `test-criteria.md` or `report.md`; `tests/integration/AGENTS.md` for the tests (a manifest row each, isolation and
   cleanup, no sleep, loopback only); no criteria or spec file changed by a worker; per side:
-  - engine: `engine/AGENTS.md`; every `security-review.md` row; relay fidelity not lower than on `main`.
+  - engine: `engine/AGENTS.md`; every `security-review.md` row; relay fidelity not lower than on `main`; a test
+    waits for what it asserts (the line, the answer), never for a neighbouring sign that it should be there by now.
   - studio: `studio/AGENTS.md` and the references its units' briefs named; 501 shown as "not implemented", never
-    hidden or faked; the contact sheet read once.
+    hidden or faked; the contact sheet read once; no check or unit test finds the inside of a Cloudscape component
+    by a string of its own or an option by its text, no assertion is on a state in between unless its line is
+    about it, and no check goes on after a time (`tests/integration/AGENTS.md`, Studio checks: what they find and
+    when they assert); no result of a change is shown from a component the page can unmount.
 
 ## Independence
 
