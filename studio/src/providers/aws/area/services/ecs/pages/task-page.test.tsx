@@ -214,6 +214,10 @@ const PAGE = createWrapper(document.body);
 const outcome = () => PAGE.findAllAlerts().find((alert) => text(alert.getElement()).startsWith('Task stopped'));
 const text = (element: Element | null | undefined) => (element?.textContent ?? '').replace(/\s+/g, ' ').trim();
 
+/** The icon a screen reader names inside a component (an Alert's or a StatusIndicator's type), or null. */
+const icon = (element: HTMLElement | undefined, name: string) =>
+  element ? within(element).queryByRole('img', { name }) : null;
+
 function pairs(): Record<string, string> {
   const result: Record<string, string> = {};
   for (const group of PAGE.findAllKeyValuePairs()) {
@@ -540,7 +544,7 @@ describe('S5, a task', () => {
     expect(alertText).toContain('Task stopped: EssentialContainerExited');
     expect(alertText).toContain('Essential container in task exited');
     expect(alertText).not.toContain('side');
-    expect(alert?.getElement().querySelector('[class*="type-error"]')).not.toBeNull();
+    expect(icon(alert?.getElement(), 'Error')).toBeInTheDocument();
     expect(definitions.getRevision).toHaveBeenCalledWith(ENGINE, 'web', 3, expect.anything());
     expect((alert?.getElement().compareDocumentPosition(summary) ?? 0) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     // The summary keeps every field, with the same labels and values.
@@ -554,7 +558,7 @@ describe('S5, a task', () => {
       'Network interface': 'eni-1',
     });
     const status = PAGE.findKeyValuePairs()?.findItems()[1]?.findValue()?.findStatusIndicator();
-    expect(status?.getElement().className).toMatch(/status-stopped/);
+    expect(icon(status?.getElement(), 'Stopped')).toBeInTheDocument();
   });
 
   it('a STOPPED task of one container whose exit code is 0 → an info Alert, and no revision read', async () => {
@@ -565,7 +569,7 @@ describe('S5, a task', () => {
     await details();
     const alert = outcome();
     expect(text(alert?.getElement())).toContain('Exit code of essential container app: 0');
-    expect(alert?.getElement().querySelector('[class*="type-info"]')).not.toBeNull();
+    expect(icon(alert?.getElement(), 'Info')).toBeInTheDocument();
     expect(definitions.getRevision).not.toHaveBeenCalled();
   });
 
@@ -592,8 +596,8 @@ describe('S5, a task', () => {
       });
       expect(text(alert?.getElement())).toContain(`Task stopped: ${stopCode}`);
       expect(text(alert?.getElement())).not.toContain('Exit code');
-      expect(alert?.getElement().querySelector('[class*="type-info"]')).not.toBeNull();
-      expect(alert?.getElement().querySelector('[class*="type-error"]')).toBeNull();
+      expect(icon(alert?.getElement(), 'Info')).toBeInTheDocument();
+      expect(icon(alert?.getElement(), 'Error')).toBeNull();
     });
   }
 
@@ -619,8 +623,8 @@ describe('S5, a task', () => {
     });
     expect(text(alert?.getElement())).toContain('Task stopped: UserInitiated');
     expect(text(alert?.getElement())).toContain('Exit code of essential container app: 143');
-    expect(alert?.getElement().querySelector('[class*="type-info"]')).not.toBeNull();
-    expect(alert?.getElement().querySelector('[class*="type-error"]')).toBeNull();
+    expect(icon(alert?.getElement(), 'Info')).toBeInTheDocument();
+    expect(icon(alert?.getElement(), 'Error')).toBeNull();
   });
 
   it('a task stopped with TaskFailedToStart and no exit code → an error Alert with no exit-code line', async () => {
@@ -645,7 +649,7 @@ describe('S5, a task', () => {
     });
     expect(text(alert?.getElement())).toContain('Task stopped: TaskFailedToStart');
     expect(text(alert?.getElement())).not.toContain('Exit code');
-    expect(alert?.getElement().querySelector('[class*="type-error"]')).not.toBeNull();
+    expect(icon(alert?.getElement(), 'Error')).toBeInTheDocument();
   });
 
   it('a running task → no Alert, Last status a success StatusIndicator, and no revision read', async () => {
@@ -654,7 +658,7 @@ describe('S5, a task', () => {
     await details();
     expect(outcome()).toBeUndefined();
     const status = PAGE.findKeyValuePairs()?.findItems()[1]?.findValue()?.findStatusIndicator();
-    expect(status?.getElement().className).toMatch(/status-success/);
+    expect(icon(status?.getElement(), 'Success')).toBeInTheDocument();
     expect(text(status?.getElement())).toBe('Running');
     expect(definitions.getRevision).not.toHaveBeenCalled();
   });

@@ -1,30 +1,53 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useState } from 'react';
 
-import { groupChoices, subnetChoices, type GroupChoice, type SubnetChoice } from '../../components/network-choices';
+import { securityGroupChoices, type SecurityGroupChoice } from '../../components/security-group-choices';
 import type { ChoiceSource } from '../../components/use-paged-choices';
 import { noEndpoint } from '../../components/use-token-listing';
-import { sendEc2 } from './api';
+import { listSubnetChoices, NETWORK_CHOICE_OPERATIONS, type SubnetChoice } from '../../lib/ec2-network-choices';
 import { DEFINITION_CHOICE_KEYS, listRevisionChoices, type RevisionChoice } from './definition-choices';
 import { ECS_KEY, ECS_KEYS } from './queries';
 import { runTask, type RunOutcome } from './run-api';
 import type { RunRequest } from './run-form';
 
 // The hooks of S6, "Run task" (issue 575, design task 2): the run, which reads again what it changed; the subnet and
-// security group choices, read through the area's `network-choices.ts` with `api.ts`'s `sendEc2`; and the first page
-// of a choice, read at once, so a field that has nothing to offer says why before it is opened.
+// security group choices, the subnets read through the area's `lib/ec2-network-choices.ts` and the groups the area's
+// `components/security-group-choices.ts`; and the first page of a choice, read at once, so a field that has nothing
+// to offer says why before it is opened.
 
-/** The root of S6's network choices. */
-const NETWORK_KEY = [...ECS_KEY, 'choices', 'network'] as const;
+/** The root of S6's subnet choices. */
+const SUBNETS_KEY = [...ECS_KEY, 'choices', 'subnets'] as const;
 
-/** The subnets, of the VPC `vpcId` when it is given. */
+/**
+ * The subnets, of the VPC `vpcId` when it is given: each its id, with its VPC and Availability Zone as its
+ * description. The field takes no typed text.
+ */
 export function runSubnetChoices(endpoint: string | undefined, vpcId: string | undefined): ChoiceSource<SubnetChoice> {
-  return subnetChoices(sendEc2, NETWORK_KEY, endpoint, vpcId);
+  return {
+    key: [...SUBNETS_KEY, vpcId ?? null],
+    endpoint,
+    operation: NETWORK_CHOICE_OPERATIONS.describeSubnets,
+    filtering: 'none',
+    read: async (at, _text, token, signal) => {
+      const page = await listSubnetChoices(at, token, signal, vpcId);
+      return page.nextToken === undefined ? { items: page.choices } : { items: page.choices, next: page.nextToken };
+    },
+    optionOf: (subnet) => {
+      const description = [subnet.vpcId, subnet.zone].filter((each) => each !== undefined).join(', ');
+      return description === ''
+        ? { value: subnet.id, label: subnet.id }
+        : { value: subnet.id, label: subnet.id, description };
+    },
+  };
 }
 
-/** The security groups of the VPC `vpcId`; not ready while it is none. */
-export function runGroupChoices(endpoint: string | undefined, vpcId: string | undefined): ChoiceSource<GroupChoice> {
-  return groupChoices(sendEc2, NETWORK_KEY, endpoint, vpcId);
+/** The security groups of the VPC `vpcId`, as the area offers them; not ready, asking nothing, while it is none. */
+export function runGroupChoices(
+  endpoint: string | undefined,
+  vpcId: string | undefined,
+): ChoiceSource<SecurityGroupChoice> {
+  const given = vpcId !== undefined && vpcId !== '';
+  return { ...securityGroupChoices(endpoint, given ? vpcId : undefined), ready: given };
 }
 
 /**
