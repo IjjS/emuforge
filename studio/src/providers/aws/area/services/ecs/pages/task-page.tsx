@@ -7,7 +7,7 @@ import Header from '@cloudscape-design/components/header';
 import KeyValuePairs from '@cloudscape-design/components/key-value-pairs';
 import Link from '@cloudscape-design/components/link';
 import SpaceBetween from '@cloudscape-design/components/space-between';
-import StatusIndicator from '@cloudscape-design/components/status-indicator';
+import StatusIndicator, { type StatusIndicatorProps } from '@cloudscape-design/components/status-indicator';
 import Table, { type TableProps } from '@cloudscape-design/components/table';
 import { useCallback, useState } from 'react';
 
@@ -68,12 +68,17 @@ const IMAGE_MIN_WIDTH = '32ch';
 const OUTCOME_ICON_LABELS = { errorIconAriaLabel: 'Error', infoIconAriaLabel: 'Info' };
 
 /** The name a screen reader gives the Last status icon, by its type. */
-const STATUS_ICON_LABELS: Record<string, string> = {
+const STATUS_ICON_LABELS: Record<StatusIndicatorProps.Type, string> = {
   success: 'Success',
   stopped: 'Stopped',
   pending: 'Pending',
   'in-progress': 'In progress',
   info: 'Info',
+  error: 'Error',
+  warning: 'Warning',
+  loading: 'Loading',
+  'not-started': 'Not started',
+  log: 'Log',
 };
 
 /**
