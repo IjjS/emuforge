@@ -2,6 +2,7 @@
 // run's emulator (issue 516, test-criteria.md, "Integration"; requirement "Configuration (task 5)", "Code"): what
 // the emulator holds is shown, each "Edit" dialog's "Save" reaches the emulator and takes effect at the next invoke,
 // and a change the emulator refuses stays in its dialog and changes nothing.
+// The rows of "Environment variables" are in one order, by key (issue 570, R1), whatever order they were typed in.
 //
 // `studio.lambda-configuration-edits-reach-the-emulator`.
 //
@@ -143,7 +144,7 @@ test('studio.lambda-configuration-edits-reach-the-emulator', async ({ ctx, page 
   );
 
   await lines.line(
-    '"Edit" of "Environment variables": `GREETING` to `hello-2`, "Add variable" `EXTRA` = `x`, "Save" → "Environment variables of {name} saved."; the section shows both; the emulator reports exactly those two; on "Test", "Invoke" → the response holds `hello-2`',
+    '"Edit" of "Environment variables": `GREETING` to `hello-2`, "Add variable" `EXTRA` = `x`, "Save" → "Environment variables of {name} saved."; the section shows `EXTRA` `x`, then `GREETING` `hello-2`; the emulator reports exactly those two; on "Test", "Invoke" → the response holds `hello-2`',
     async () => {
       await openOnTest(page, env);
       await toConfiguration(page, env);
@@ -162,8 +163,8 @@ test('studio.lambda-configuration-edits-reach-the-emulator', async ({ ctx, page 
       await expect
         .poll(() => shownVariables(page), { message: 'the rows of "Environment variables"' })
         .toEqual([
-          ['GREETING', 'hello-2'],
           ['EXTRA', 'x'],
+          ['GREETING', 'hello-2'],
         ]);
       expect(await variablesDirect(ctx, port, env), 'the variables the emulator reports').toEqual({
         GREETING: 'hello-2',

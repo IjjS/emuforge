@@ -2,7 +2,7 @@
 // test-criteria.md, "Integration"): the tab "Test" (the event, "Invoke", "Result"), the tab "Code" (the package, the
 // upload of a .zip file, "Runtime settings"), the tab "Configuration" (its two sections and their dialogs), "Delete"
 // in the page's header, and the code choice of "Create Event Function". Used by the `lambda-function-invoke`,
-// `-code`, `-configuration`, `-delete-page` and `-create-zip` checks.
+// `-code`, `-configuration`, `-delete-page` and `-create-zip` checks, and by `lambda-environment-variables` (issue 570).
 //
 // - The check's own code: each a zip archive of one stored file the check writes (`storedZip` of
 //   `services/lambda/lambda.ts`), never Studio's starter code.
@@ -14,6 +14,7 @@
 // Every value a check compares with comes from the run: names from the check's own prefix, the rest from a direct
 // answer of the emulator.
 
+import createWrapper from '@cloudscape-design/components/test-utils/selectors';
 import type { BrowserContext, Locator, Page } from '@playwright/test';
 
 import { expect } from '../../support/check';
@@ -319,23 +320,64 @@ export function variablesSavedText(name: string): string {
   return `Environment variables of ${name} saved.`;
 }
 
-/** The rows of "Environment variables" as shown: each key and value, in order; `[]` when the table is empty. */
+// Cloudscape's selectors start at `body`: the table's is used under a locator, so that root is taken off; the rows'
+// and the cells' are matched from the document and kept whole.
+const VARIABLES_TABLE = createWrapper().findTable().toSelector().replace(/^body /, '');
+const TABLE_ROWS = createWrapper().findTable().findRows().toSelector();
+/** Cloudscape's selector of the body cell of row `row` and column `column`, both from 1. */
+const bodyCell = (row: number, column: number) => createWrapper().findTable().findBodyCell(row, column).toSelector();
+/** The Cloudscape `Table` in the page's main whose header holds the heading "Environment variables". */
+function variablesTable(page: Page): Locator {
+  return page
+    .getByRole('main')
+    .locator(VARIABLES_TABLE)
+    .filter({ has: page.getByRole('heading', { level: 2, name: VARIABLES }) });
+}
+
+/**
+ * The rows of "Environment variables" as shown: each key and value, in the table's order; `[]` when the table has
+ * no row or is not there. Rows and cells are Cloudscape's (`findTable().findRows()`, `findBodyCell(row, column)`),
+ * those inside that table. The cells are read in one pass, which also counts the rows again: a table drawn anew
+ * between the count and the read is read again, so a row is never half of one answer and half of the next.
+ */
 export async function shownVariables(page: Page): Promise<[string, string][]> {
-  return page.evaluate((title) => {
-    const norm = (s: string) => s.replace(/\s+/g, ' ').trim();
-    const main = document.querySelector('main, [role="main"]');
-    const heading = main ? [...main.querySelectorAll('h2')].find((h) => norm(h.innerText) === title) : undefined;
-    if (!heading) return [];
-    for (let at = heading.parentElement; at && at !== main; at = at.parentElement) {
-      const table = at.querySelector('table');
-      if (!table) continue;
-      return [...table.querySelectorAll('tbody tr')]
-        .map((row) => [...row.querySelectorAll('td')].map((cell) => norm(cell.innerText)))
-        .filter((cells) => cells.length === 2)
-        .map((cells) => [cells[0], cells[1]] as [string, string]);
-    }
-    return [];
-  }, VARIABLES);
+  const table = variablesTable(page);
+  const inTable = (selector: string) =>
+    table.evaluateAll(
+      (tables, wanted) =>
+        tables.flatMap((one) => [...document.querySelectorAll(wanted)].filter((found) => one.contains(found))).length,
+      selector,
+    );
+  let read: [string, string][] = [];
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const count = await inTable(TABLE_ROWS);
+    const cells = Array.from({ length: count }, (_, at) => [bodyCell(at + 1, 1), bodyCell(at + 1, 2)]);
+    const answer = await table.evaluateAll(
+      (tables, wanted) => {
+        const within = (selector: string) =>
+          tables.flatMap((one) => [...document.querySelectorAll(selector)].filter((found) => one.contains(found)));
+        const texts = wanted.cells.map((pair) =>
+          pair.map((selector) => {
+            const cell = within(selector)[0];
+            return cell instanceof HTMLElement ? cell.innerText : null;
+          }),
+        );
+        return { rows: within(wanted.rows).length, texts };
+      },
+      { rows: TABLE_ROWS, cells },
+    );
+    read = answer.texts.map((pair) => {
+      const [key = '', value = ''] = pair.map((text) => (text ?? '').replace(/\s+/g, ' ').trim());
+      return [key, value];
+    });
+    if (answer.rows === count && answer.texts.every((pair) => pair.every((text) => text !== null))) break;
+  }
+  return read;
+}
+
+/** The keys of the editor's rows, in the rows' order, as its "Key" boxes hold them. */
+export async function editorKeys(boxes: Locator): Promise<string[]> {
+  return boxes.evaluateAll((found) => found.map((box) => (box as HTMLInputElement).value));
 }
 
 // ---------------------------------------------------------------------------------------------------------------

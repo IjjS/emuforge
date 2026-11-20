@@ -109,7 +109,7 @@ function GeneralConfiguration(props: SectionProps) {
   );
 }
 
-/** "Environment variables": each key and value as text, in the order the emulator reported them. */
+/** "Environment variables": each key and value as text, in the order of the function read (by key). */
 function EnvironmentVariables(props: SectionProps) {
   const { fn, name } = props;
   const { button, dialog } = useEdit(props, 'environment variables', EditVariablesDialog);
