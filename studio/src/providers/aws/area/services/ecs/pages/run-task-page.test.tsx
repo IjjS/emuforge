@@ -10,6 +10,7 @@ import type { CheckResult } from '../../../../../../lib/engine/engine-client';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { PageFlashContext, type FlashResult, type PageFlash } from '../../../components/page-flash';
 import AwsArea from '../../../index';
+import * as network from '../../../lib/ec2-network-choices';
 import * as api from '../api';
 import { ECS_KEYS } from '../queries';
 import * as running from '../run-api';
@@ -17,14 +18,34 @@ import type { RunRequest } from '../run-form';
 import { RunTaskPage } from './run-task-page';
 
 // S6 with the calls answered by the case: the cluster's gate (`getCluster`), the run (`runTask`), and the choices'
-// reads at `api.ts`'s senders, which a fake client behind answers by operation (`definition-choices.test.ts`,
-// `network-choices.test.ts` and `run-api.test.ts` prove the calls themselves). The pages a run leads to are later
+// reads: the families' and revisions' at `api.ts`'s `sendEcs`, which a fake client behind answers by operation, the
+// subnets' at the area's `listSubnetChoices` and the groups' at the reader of the area's security group source
+// (`definition-choices.test.ts`, `run-queries.test.tsx` and `run-api.test.ts` prove the calls themselves). The pages a run leads to are later
 // units', so most cases render the page alone under a flash that records what it is handed and leads to its address;
 // the cases of "Cancel" render the area, whose root the discard dialog opens in.
 
 vi.mock('../api', async (importOriginal) => {
   const real = await importOriginal<typeof import('../api')>();
-  return { ...real, getCluster: vi.fn(), listClusters: vi.fn(), sendEcs: vi.fn(), sendEc2: vi.fn() };
+  return { ...real, getCluster: vi.fn(), listClusters: vi.fn(), sendEcs: vi.fn() };
+});
+
+vi.mock('../../../lib/ec2-network-choices', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../../lib/ec2-network-choices')>();
+  return { ...real, listSubnetChoices: vi.fn() };
+});
+
+// The area's source reads through its own module's reader, which a mock of the module cannot reach from inside it;
+// the page is given the area's own source, with its reader answered by the case.
+const readGroups = vi.fn<(vpcId: string | undefined) => Promise<{ items: { id: string; name: string }[] }>>();
+vi.mock('../../../components/security-group-choices', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../../components/security-group-choices')>();
+  return {
+    ...real,
+    securityGroupChoices: (endpoint: string | undefined, vpcId?: string) => ({
+      ...real.securityGroupChoices(endpoint, vpcId),
+      read: () => readGroups(vpcId),
+    }),
+  };
 });
 
 vi.mock('../run-api', async (importOriginal) => {
@@ -50,11 +71,6 @@ const GROUPS: Record<string, { GroupId: string; GroupName: string }[]> = {
 
 interface Input {
   familyPrefix?: string;
-  Filters?: { Name: string; Values: string[] }[];
-}
-
-function vpcFilter(input: Input): string | undefined {
-  return input.Filters?.find((filter) => filter.Name === 'vpc-id')?.Values[0];
 }
 
 function answerEcs(operation: string, input: Input): unknown {
@@ -63,17 +79,6 @@ function answerEcs(operation: string, input: Input): unknown {
   }
   if (operation === 'ListTaskDefinitions') {
     return { taskDefinitionArns: (revisions[input.familyPrefix ?? ''] ?? []).map(ARN) };
-  }
-  throw new Error(`unexpected ${operation}`);
-}
-
-function answerEc2(operation: string, input: Input): unknown {
-  const vpc = vpcFilter(input);
-  if (operation === 'DescribeSubnets') {
-    return { Subnets: vpc === undefined ? subnets : subnets.filter((subnet) => subnet.VpcId === vpc) };
-  }
-  if (operation === 'DescribeSecurityGroups') {
-    return { SecurityGroups: GROUPS[vpc ?? ''] ?? [] };
   }
   throw new Error(`unexpected ${operation}`);
 }
@@ -213,7 +218,17 @@ beforeEach(() => {
   vi.mocked(api.getCluster).mockResolvedValue({ found: true, cluster: { name: 'dev', status: 'ACTIVE' } });
   vi.mocked(api.listClusters).mockResolvedValue({ clusters: [] });
   vi.mocked(api.sendEcs).mockImplementation(fakeSender(answerEcs) as unknown as typeof api.sendEcs);
-  vi.mocked(api.sendEc2).mockImplementation(fakeSender(answerEc2) as unknown as typeof api.sendEc2);
+  vi.mocked(network.listSubnetChoices).mockImplementation((_endpoint, _token, _signal, vpc) =>
+    Promise.resolve({
+      choices: subnets
+        .filter((subnet) => vpc === undefined || subnet.VpcId === vpc)
+        .map((subnet) => ({ id: subnet.SubnetId, vpcId: subnet.VpcId, zone: subnet.AvailabilityZone })),
+    }),
+  );
+  readGroups.mockReset();
+  readGroups.mockImplementation((vpc) =>
+    Promise.resolve({ items: (GROUPS[vpc ?? ''] ?? []).map((group) => ({ id: group.GroupId, name: group.GroupName })) }),
+  );
   vi.mocked(running.runTask).mockReset();
   vi.mocked(running.runTask).mockResolvedValue({ taskIds: ['t1'], failures: [] });
 });
@@ -554,7 +569,8 @@ describe('Run task', () => {
     expect(await screen.findByText('No cluster named dev')).toBeInTheDocument();
     expect(document.querySelector('form')).toBeNull();
     expect(api.sendEcs).not.toHaveBeenCalled();
-    expect(api.sendEc2).not.toHaveBeenCalled();
+    expect(network.listSubnetChoices).not.toHaveBeenCalled();
+    expect(readGroups).not.toHaveBeenCalled();
   });
 
   it("a run that started tasks → the route and flash of the result, the cluster's read and its tasks' reads stale", async () => {

@@ -1,4 +1,5 @@
-import type { GroupChoice, SubnetChoice } from '../../components/network-choices';
+import type { SecurityGroupChoice } from '../../components/security-group-choices';
+import type { SubnetChoice } from '../../lib/ec2-network-choices';
 import type { RevisionChoice } from './definition-choices';
 
 // What S6, "Run task", holds and checks before it sends `RunTask` (issue 575, requirement S6; design task 2): a
@@ -21,7 +22,7 @@ export interface RunFormState {
   /** As typed. */
   count: string;
   subnets: SubnetChoice[];
-  groups: GroupChoice[];
+  groups: SecurityGroupChoice[];
   publicIp: boolean;
 }
 
