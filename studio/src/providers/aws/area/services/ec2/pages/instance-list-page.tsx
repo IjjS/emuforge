@@ -173,7 +173,12 @@ export function InstanceListPage({ connection }: { connection: AreaConnection })
         </Link>
       ),
     },
-    { id: 'state', header: 'State', minWidth: STATE_MIN_WIDTH, cell: (row) => <InstanceStateValue state={row.state} /> },
+    {
+      id: 'state',
+      header: 'State',
+      minWidth: STATE_MIN_WIDTH,
+      cell: (row) => <InstanceStateValue state={row.state} />,
+    },
     { id: 'type', header: 'Type', cell: (row) => <ValueText kind="fixed" value={row.type} none={NONE} /> },
     { id: 'zone', header: 'Availability Zone', cell: (row) => <ValueText kind="fixed" value={row.zone} none={NONE} /> },
     {
