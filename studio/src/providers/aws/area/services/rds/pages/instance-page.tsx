@@ -305,8 +305,10 @@ export function InstancePage({ connection, params }: ScreenPageProps) {
   const [editing, setEditing] = useState<DbInstance>();
   const [modifyFailure, setModifyFailure] = useState<FlashItem>();
   const [modifyUnavailable, setModifyUnavailable] = useState(false);
+  const [awaitingModifiedRead, setAwaitingModifiedRead] = useState(false);
   const reading = useInstance(connection.engineOrigin, id);
-  const { value: read, failure, refresh } = reading;
+  const { value: read, failure, loading, refresh } = reading;
+  if (awaitingModifiedRead && !loading) setAwaitingModifiedRead(false);
   const instance = read?.found === true ? read.instance : undefined;
   const failureState = failure === undefined ? undefined : readFailureState(failure, connection, 'DB instance');
   // A member without sign-in values of its own reads its DB cluster's; that read never fails the page.
@@ -320,6 +322,8 @@ export function InstancePage({ connection, params }: ScreenPageProps) {
     modifyReason = 'The emulator does not implement ModifyDBInstance.';
   } else if (pending) {
     modifyReason = 'Wait for the current DB instance action to finish.';
+  } else if (awaitingModifiedRead) {
+    modifyReason = 'Wait for the updated DB instance details.';
   } else if (failureState !== undefined) {
     modifyReason = 'Refresh the DB instance before modifying it.';
   } else if (instance?.status !== 'available') {
@@ -397,6 +401,8 @@ export function InstancePage({ connection, params }: ScreenPageProps) {
       setEditing(undefined);
       const result = [{ type: 'success', content: `Modifying ${updatedId}.` }] as const;
       if (updatedId === id) {
+        setAwaitingModifiedRead(true);
+        refresh();
         flash.show(result);
       } else {
         flash.handOver(instanceHref(updatedId), result);
@@ -475,8 +481,9 @@ export function InstancePage({ connection, params }: ScreenPageProps) {
                     signIn.refresh();
                   }}
                 />
-                {(instance !== undefined || failureState !== undefined) && (
+                {(instance !== undefined || failureState !== undefined || awaitingModifiedRead) && (
                   <Button
+                    id="rds-modify-instance"
                     ariaHaspopup="dialog"
                     disabled={modifyReason !== undefined}
                     {...(modifyReason === undefined ? {} : { disabledReason: modifyReason })}

@@ -198,8 +198,13 @@ export function useModifyInstance(endpoint: string | undefined) {
       if (endpoint === undefined) noEndpoint();
       const id = await modifyInstance(endpoint, instance.id, changes, signal);
       signal.throwIfAborted();
-      const keys = [RDS_KEYS.instances(), RDS_KEYS.instance(instance.id)];
-      if (id !== instance.id) keys.push(RDS_KEYS.instance(id));
+      const keys = [RDS_KEYS.instances()];
+      if (id === instance.id) {
+        // The detail page opens a new read generation after acceptance.
+        void client.invalidateQueries({ queryKey: RDS_KEYS.instance(id), refetchType: 'none' });
+      } else {
+        keys.push(RDS_KEYS.instance(instance.id), RDS_KEYS.instance(id));
+      }
       if (instance.clusterId !== undefined) {
         keys.push(RDS_KEYS.cluster(instance.clusterId), RDS_KEYS.members(instance.clusterId));
       }
