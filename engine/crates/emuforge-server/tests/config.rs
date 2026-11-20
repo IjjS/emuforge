@@ -575,13 +575,17 @@ fn settings_folder_beside_aws_or_relative_elsewhere_is_accepted_and_made_absolut
     }
 }
 
-/// The lines of every `tracing` event captured so far.
+/// The lines of every `tracing` event captured so far, and the signal each write gives a waiting test.
 #[derive(Clone)]
-struct Lines(Arc<Mutex<Vec<u8>>>);
+struct Lines {
+    bytes: Arc<Mutex<Vec<u8>>>,
+    written: Arc<tokio::sync::Notify>,
+}
 
 impl std::io::Write for Lines {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(bytes);
+        self.bytes.lock().unwrap().extend_from_slice(bytes);
+        self.written.notify_waiters();
         Ok(bytes.len())
     }
     fn flush(&mut self) -> std::io::Result<()> {
@@ -593,21 +597,36 @@ impl std::io::Write for Lines {
 const LINE_BOUND: Duration = Duration::from_secs(10);
 
 impl Lines {
-    fn text(&self) -> String {
-        String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
+    fn new() -> Self {
+        Self {
+            bytes: Arc::new(Mutex::new(Vec::new())),
+            written: Arc::new(tokio::sync::Notify::new()),
+        }
     }
 
-    /// Returns once the captured lines hold `text`; panics with them when `bound` passes first.
+    fn text(&self) -> String {
+        String::from_utf8(self.bytes.lock().unwrap().clone()).unwrap()
+    }
+
+    /// Returns once the captured lines hold `text`, woken by each write; panics with them when `bound` passes
+    /// first.
     async fn logged_within(&self, text: &str, bound: Duration) {
-        let deadline = tokio::time::Instant::now() + bound;
-        while !self.text().contains(text) {
-            assert!(
-                tokio::time::Instant::now() < deadline,
-                "{text:?} not logged within {bound:?}: {}",
-                self.text()
-            );
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
+        let found = tokio::time::timeout(bound, async {
+            loop {
+                // Made before the check, so a write between the check and the await still wakes it.
+                let woken = self.written.notified();
+                if self.text().contains(text) {
+                    break;
+                }
+                woken.await;
+            }
+        })
+        .await;
+        assert!(
+            found.is_ok(),
+            "{text:?} not logged within {bound:?}: {}",
+            self.text()
+        );
     }
 
     /// [`Lines::logged_within`] the [`LINE_BOUND`].
@@ -627,7 +646,7 @@ where
     F: std::future::Future<Output = ()>,
     R: FnOnce(Lines) -> F,
 {
-    let lines = Lines(Arc::new(Mutex::new(Vec::new())));
+    let lines = Lines::new();
     let writer = lines.clone();
     let subscriber = tracing_subscriber::fmt()
         .with_writer(move || writer.clone())
@@ -640,7 +659,7 @@ where
     lines.text()
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "current_thread", start_paused = true)]
 async fn a_line_logged_after_the_wait_starts_is_waited_for() {
     let log = captured_with(|lines| async move {
         tokio::join!(
@@ -655,7 +674,7 @@ async fn a_line_logged_after_the_wait_starts_is_waited_for() {
     assert!(log.contains("late line"), "{log}");
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "current_thread", start_paused = true)]
 #[should_panic(expected = "early line")]
 async fn a_line_not_logged_within_the_bound_fails_with_the_log() {
     captured_with(|lines| async move {
