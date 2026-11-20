@@ -187,7 +187,8 @@ function detailStatus() {
 }
 
 function detailMessage() {
-  return detailContainer()?.findContent().findBox()?.findBox()?.getElement();
+  const box = detailContainer()?.findContent().findBox()?.getElement();
+  return box === undefined ? undefined : createWrapper(box).findBox()?.getElement();
 }
 
 function expectAvailable() {
@@ -649,11 +650,10 @@ describe('delete volume', () => {
     const dialog = await openDialog('Delete volume');
     confirmDelete(dialog);
     await waitFor(() => {
-      const warning = dialog.content.findBox();
-      const status = warning?.findStatusIndicator()?.getElement();
-      expect(status).toBeVisible();
-      if (warning === null || warning === undefined) throw new Error('Missing delete confirmation warning');
-      const alert = within(warning.getElement()).getByRole('alert');
+      const warning = dialog.content.findBox()?.getElement();
+      expect(dialog.content.findStatusIndicator()?.getElement()).toBeVisible();
+      if (warning === undefined) throw new Error('Missing delete confirmation warning');
+      const alert = within(warning).getByRole('alert');
       expect(alert).toBeVisible();
       expect(alert).toHaveTextContent('VolumeInUse: The volume is attached.');
     });
