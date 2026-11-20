@@ -279,9 +279,23 @@ describe("a revision's page", () => {
         header.getElement().style.minWidth,
       ]),
     );
-    expect(widths['Name']).toBe('20ch');
+    expect(widths['Name']).toBe('calc(24ch + 40px)');
     expect(widths['Image']).toBe('calc(13ch + 40px)');
-    expect(widths['Command']).toBe('29ch');
+    expect(widths['Command']).toBe('calc(25ch - 40px)');
+  });
+
+  it('the Containers table keeps the room of a 24-character name, so web-api-sidecar-proxy-v2 stays whole', async () => {
+    const name = 'web-api-sidecar-proxy-v2';
+    expect(name).toHaveLength(24);
+    vi.mocked(api.getRevision).mockResolvedValue({
+      found: true,
+      revision: revision({ containers: [{ name, image: 'busybox', essential: true, ports: [] }] }),
+    });
+    open(PATH);
+    expect(await screen.findByText(name)).toBeInTheDocument();
+    const header = (PAGE.findTable()?.findColumnHeaders() ?? []).find((column) => text(column.getElement()) === 'Name');
+    expect(header?.getElement().style.minWidth).toBe('calc(24ch + 40px)');
+    expect(screen.getByText(name)).toHaveClass('aws-area-value-name');
   });
 
   it('the Containers table keeps the room of a log group part, so /ecs/web-api breaks only after a slash', async () => {

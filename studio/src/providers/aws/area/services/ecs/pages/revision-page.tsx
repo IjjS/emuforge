@@ -30,15 +30,18 @@ import { familyHref, NONE, registerHref, statusText, TASK_DEFINITIONS_WORD } fro
 // The Containers table's minimums, with Essential and Ports at about 100px each and the table's own 40px, add up to
 // its container at 1280 (949px), so it scrolls sideways only on a narrow screen, and there it scrolls instead of
 // breaking a value mid-word. A minimum is the column's width, the cell's padding (about 40px) included.
-/** Name keeps the room of a usual container name such as `web-api-sidecar`. */
-const NAME_MIN_WIDTH = '20ch';
+/** Name keeps the room of a container name of 24 characters (`studio/AGENTS.md`, aws-area entry 4) and the padding. */
+const NAME_MIN_WIDTH = 'calc(24ch + 40px)';
 /**
  * An image address such as public.ecr.aws/docker/library/busybox:latest breaks after each `/` and `:`, so it needs
  * only the room of its longest usual part (`public.ecr.aws/`) and the padding.
  */
 const IMAGE_MIN_WIDTH = 'calc(13ch + 40px)';
-/** A command of ten words keeps lines of a few words instead of one word per line. */
-const COMMAND_MIN_WIDTH = '29ch';
+/**
+ * A command of ten words keeps lines of a few words instead of one word per line; it gives Name the room Name gained
+ * (4ch and the padding), so the sum stays the container's width at 1280.
+ */
+const COMMAND_MIN_WIDTH = 'calc(25ch - 40px)';
 // A log group such as /ecs/web-api breaks only after a slash while each part fits.
 const LOG_GROUP_MIN_WIDTH = '20ch';
 
