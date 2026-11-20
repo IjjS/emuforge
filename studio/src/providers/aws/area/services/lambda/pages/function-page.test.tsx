@@ -949,6 +949,29 @@ function flashTexts(): string[] {
 }
 
 describe('Monitor', () => {
+  function lastHourHeader() {
+    return PAGE.findAllHeaders().find(
+      (header) => norm(header.findHeadingText().getElement().textContent) === 'Last hour',
+    );
+  }
+
+  function metric(name: string) {
+    const panel = tabs()?.findTabContent()?.getElement();
+    if (panel === undefined) {
+      return undefined;
+    }
+    const item = createWrapper(panel)
+      .findKeyValuePairs()
+      ?.findItems()
+      .find((candidate) => norm(candidate.findLabel()?.getElement().textContent) === name);
+    return item?.findValue()?.getElement();
+  }
+
+  function logMessages() {
+    const table = PAGE.findTable();
+    return table?.findRows().map((_, index) => table.findBodyCell(index + 1, 2)?.getElement().textContent) ?? [];
+  }
+
   function logAnswer(message: string, nextToken?: string) {
     return json(200, { events: [{ eventId: message, message, timestamp: 1_796_000_000_123 }], nextToken });
   }
@@ -960,14 +983,14 @@ describe('Monitor', () => {
   it('opens from its tab and restores the same function’s Monitor on reload', async () => {
     const { router, unmount } = await openLoaded();
     fireEvent.click(tabLink('Monitor'));
-    await screen.findByRole('heading', { name: 'Last hour' });
+    await waitFor(() => expect(lastHourHeader()?.findHeadingText().getElement()).toBeVisible());
     expect(activeTab()).toBe('Monitor');
     expect(router.state.location).toMatchObject({ pathname: pagePath('orders'), search: '?tab=monitor' });
     const { pathname, search } = router.state.location;
 
     unmount();
     open(pathname + search);
-    await screen.findByRole('heading', { name: 'Last hour' });
+    await waitFor(() => expect(lastHourHeader()?.findHeadingText().getElement()).toBeVisible());
     expect(activeTab()).toBe('Monitor');
     expect(headingText()).toBe('orders');
   });
@@ -999,7 +1022,7 @@ describe('Monitor', () => {
     try {
       engine.functions = [ORDERS];
       open(`${pagePath('orders')}?tab=monitor`);
-      await screen.findByText('old first event');
+      await waitFor(() => expect(logMessages()).toContain('old first event'));
       fireEvent.click(screen.getByRole('button', { name: 'Load more events' }));
       await waitFor(() => expect(delayed).toHaveLength(3));
 
@@ -1007,19 +1030,24 @@ describe('Monitor', () => {
       const newEnd = 1_796_000_120;
       time.mockReturnValue(newEnd * 1000);
       fireEvent.click(within(header()).getByRole('button', { name: 'Refresh' }));
-      await screen.findByText('refreshed first event');
-      expect(await screen.findByText('12')).toBeVisible();
-      expect(screen.getByText('Window ended').querySelector('time')).toHaveAttribute(
-        'datetime',
-        new Date(newEnd * 1000).toISOString(),
-      );
+      await waitFor(() => expect(logMessages()).toContain('refreshed first event'));
+      await waitFor(() => {
+        expect(metric('Invocations')?.textContent).toBe('12');
+        expect(metric('Invocations')).toBeVisible();
+      });
+      const description = lastHourHeader()?.findDescription()?.getElement();
+      expect(description).toHaveTextContent('Window ended');
+      expect(description?.querySelector('time')).toHaveAttribute('datetime', new Date(newEnd * 1000).toISOString());
       expect(said).not.toContain('Function refreshed');
       expect(said).not.toContain('Monitor refreshed');
       await act(async () => {
         expect(finishRefreshedErrors).toBeDefined();
         finishRefreshedErrors?.();
       });
-      expect(await screen.findByText('4')).toBeVisible();
+      await waitFor(() => {
+        expect(metric('Errors')?.textContent).toBe('4');
+        expect(metric('Errors')).toBeVisible();
+      });
       await waitFor(() => expect(said.filter((message) => message === 'Monitor refreshed')).toHaveLength(1));
       expect(said).not.toContain('Function refreshed');
 
@@ -1036,12 +1064,11 @@ describe('Monitor', () => {
       await act(async () => {
         delayed.forEach((finish) => finish());
       });
-      expect(screen.getByText('refreshed first event')).toBeVisible();
-      expect(screen.getByText('12')).toBeVisible();
-      expect(screen.getByText('4')).toBeVisible();
-      expect(screen.queryByText('old first event')).not.toBeInTheDocument();
-      expect(screen.queryByText('old next event')).not.toBeInTheDocument();
-      expect(screen.queryByText('98')).not.toBeInTheDocument();
+      expect(logMessages()).toEqual(['refreshed first event']);
+      expect(metric('Invocations')?.textContent).toBe('12');
+      expect(metric('Invocations')).toBeVisible();
+      expect(metric('Errors')?.textContent).toBe('4');
+      expect(metric('Errors')).toBeVisible();
       expect(screen.queryByRole('button', { name: 'Load more events' })).not.toBeInTheDocument();
     } finally {
       time.mockRestore();
@@ -1063,13 +1090,18 @@ describe('Monitor', () => {
 
     engine.functions = [ORDERS];
     open(`${pagePath('orders')}?tab=monitor`);
-    await screen.findByText('original logged event');
+    await waitFor(() => expect(logMessages()).toContain('original logged event'));
     refreshed = true;
     fireEvent.click(within(header()).getByRole('button', { name: 'Refresh' }));
 
-    expect(await screen.findByText('GetMetricStatistics was refused: Missing metric permission')).toBeVisible();
-    expect(await screen.findByText('3')).toBeVisible();
-    expect(await screen.findByText('new logged event')).toBeVisible();
+    await waitFor(() => {
+      const invocations = metric('Invocations');
+      expect(invocations).toHaveTextContent('GetMetricStatistics was refused: Missing metric permission');
+      expect(invocations).toBeVisible();
+      expect(metric('Errors')?.textContent).toBe('3');
+      expect(metric('Errors')).toBeVisible();
+      expect(logMessages()).toContain('new logged event');
+    });
     await waitFor(() => expect(said).toContain('Monitor partially refreshed. Could not read Invocations.'));
     expect(said).not.toContain('Function refreshed');
     expect(said).not.toContain('Monitor refreshed');
@@ -1080,14 +1112,14 @@ describe('Monitor', () => {
     engine.answerMonitoring = ({ operation }) =>
       operation === 'FilterLogEvents' ? logAnswer('events from the previous account') : metricAnswer(98);
     open(`${pagePath('orders')}?tab=monitor`);
-    await screen.findByText('events from the previous account');
+    await waitFor(() => expect(logMessages()).toContain('events from the previous account'));
     if (tab === 'Code') {
       fireEvent.click(tabLink('Code'));
       await screen.findByTestId('stand-in-code');
     }
 
     connection.set(notStartedResult());
-    expect(screen.queryByText('events from the previous account')).not.toBeInTheDocument();
+    expect(logMessages()).toEqual([]);
     engine.functions = [];
     connection.set(connectedResult());
     if (tab === 'Code') {
@@ -1097,8 +1129,9 @@ describe('Monitor', () => {
     expect(await screen.findByText('Function not found')).toBeVisible();
     expect(engine.gets).toHaveLength(2);
     expect(engine.monitoring).toHaveLength(3);
-    expect(screen.queryByText('events from the previous account')).not.toBeInTheDocument();
-    expect(screen.queryByText('98')).not.toBeInTheDocument();
+    expect(logMessages()).toEqual([]);
+    expect(metric('Invocations')).toBeUndefined();
+    expect(metric('Errors')).toBeUndefined();
   });
 });
 
