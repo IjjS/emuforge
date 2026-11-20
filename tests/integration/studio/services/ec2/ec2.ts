@@ -829,6 +829,23 @@ export async function valueOf(scope: Locator, label: string): Promise<string | n
   }, label);
 }
 
+/** The texts of the parts of the value of `label` inside `scope`, in order (each element that holds text alone). */
+export async function valuePartsOf(scope: Locator, label: string): Promise<string[]> {
+  return scope.evaluate((root, wanted) => {
+    const norm = (s: string | null | undefined) => (s ?? '').replace(/\s+/g, ' ').trim();
+    for (const dt of root.querySelectorAll('dt')) {
+      if (norm(dt.textContent) !== wanted) continue;
+      const dd = dt.nextElementSibling;
+      if (dd === null) return [];
+      return [...dd.querySelectorAll('*')]
+        .filter((each) => each.childElementCount === 0)
+        .map((each) => norm(each.textContent))
+        .filter((text) => text !== '');
+    }
+    return [];
+  }, label);
+}
+
 /** Waits until the value of `label` on the page holds `want`. */
 export async function expectValue(page: Page, label: string, want: string): Promise<void> {
   await expect
@@ -845,13 +862,15 @@ export async function expectValueIs(page: Page, label: string, want: string): Pr
 
 type FlashType = 'success' | 'error' | 'info' | 'warning';
 
-/** Waits for one flash item of `type` holding every text of `texts`. */
+/** Waits until one flash item of `type` holds every text of `texts`; the items' texts are read and compared. */
 export async function expectFlash(page: Page, type: FlashType, ...texts: string[]): Promise<void> {
-  let item = page.locator(wrapper.findFlashbar().findItemsByType(type).toSelector());
-  for (const text of texts) item = item.filter({ hasText: text });
-  await expect(item, `a ${type} flash holding ${texts.map((t) => `"${t}"`).join(', ')}`).toHaveCount(1, {
-    timeout: 20_000,
-  });
+  const items = page.locator(wrapper.findFlashbar().findItemsByType(type).toSelector());
+  await expect
+    .poll(async () => (await items.allTextContents()).filter((text) => texts.every((each) => text.includes(each))).length, {
+      message: `one ${type} flash holding ${texts.map((t) => `"${t}"`).join(', ')}`,
+      timeout: 20_000,
+    })
+    .toBe(1);
 }
 
 /** The open dialog. */
@@ -923,24 +942,29 @@ export async function closeActions(page: Page): Promise<void> {
   await expect(page.locator(MENU_OPEN), `"${INSTANCE_STATE}" closed`).toHaveCount(0);
 }
 
-const DISABLED = '[aria-disabled="true"]';
+const MENU_REASON = rel(wrapper.findButtonDropdown().findDisabledReason());
+function menuItemBy(id: string, disabled: boolean): string {
+  return rel(wrapper.findButtonDropdown().findItemById(id, { disabled }));
+}
 
-/** Asserts that the action `id` is unavailable in the menu and, with a `reason`, that the menu says it. */
+/**
+ * Asserts that the action `id` is unavailable in the menu and, with a `reason`, that the menu shows it as that
+ * item's reason (Cloudscape draws the reason of the item the pointer is on).
+ */
 export async function expectActionUnavailable(page: Page, id: string, reason: string | null): Promise<void> {
-  const item = await actionItem(page, id);
-  await expect(item.locator(DISABLED).or(item.and(page.locator(DISABLED))).first(), `the action ${id} is unavailable`).toBeAttached({
-    timeout: 15_000,
-  });
+  await actionItem(page, id);
+  const item = page.locator(menuItemBy(id, true));
+  await expect(item, `the action ${id} is unavailable`).toBeVisible({ timeout: 15_000 });
   if (reason !== null) {
     await item.hover();
-    await expect(page.getByText(reason, { exact: true }).first(), `the reason of the action ${id}`).toBeAttached();
+    await expect(page.locator(MENU_REASON), `the reason of the action ${id}`).toHaveText(reason);
   }
 }
 
 /** Asserts that the action `id` is available in the menu. */
 export async function expectActionAvailable(page: Page, id: string): Promise<void> {
-  const item = await actionItem(page, id);
-  await expect(item.locator(DISABLED).or(item.and(page.locator(DISABLED))), `the action ${id} is available`).toHaveCount(0);
+  await actionItem(page, id);
+  await expect(page.locator(menuItemBy(id, false)), `the action ${id} is available`).toBeVisible({ timeout: 15_000 });
 }
 
 /** Chooses the action `id` in the "Instance state" menu. */
@@ -1024,7 +1048,11 @@ export function alertWith(scope: Locator, text: string): Locator {
   return scope.locator(ALERT).filter({ hasText: text });
 }
 
-/** The table of `main` below the section heading `name` (a container table of a page of one resource). */
+const HEADER_TEXT = rel(wrapper.findHeader().findHeadingText());
+
+/** The table of `main` whose header's heading text is `name` (a container table of a page of one resource). */
 export function tableOf(main: Locator, name: string): Locator {
-  return main.locator(TABLE).filter({ has: main.page().getByRole('heading', { name, exact: true }) });
+  return main.locator(TABLE).filter({
+    has: main.page().locator(HEADER_TEXT).filter({ hasText: new RegExp(`^\\s*${escaped(name)}\\s*$`) }),
+  });
 }
