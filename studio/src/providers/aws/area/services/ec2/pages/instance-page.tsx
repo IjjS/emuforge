@@ -180,6 +180,7 @@ function Volumes({ volumes }: { volumes: BlockDevice[] }) {
       id: 'device',
       header: 'Device',
       isRowHeader: true,
+      minWidth: 'calc(24ch + 40px)',
       cell: (volume) => <ValueText kind="name" value={volume.device} none={NONE} />,
     },
     {
