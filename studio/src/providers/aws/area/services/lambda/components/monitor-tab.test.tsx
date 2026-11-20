@@ -1,5 +1,6 @@
+import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -86,19 +87,49 @@ function open(logGroup?: string) {
   return { switchTo: (name: string) => result.rerender(view(name)) };
 }
 
+const root = createWrapper(document.body);
+
 function metric(name: string) {
-  const pair = screen.getByText(name).closest('dt')?.nextElementSibling;
-  if (!(pair instanceof HTMLElement)) {
-    throw new Error(`No field for ${name}`);
-  }
-  return within(pair);
+  const item = root
+    .findKeyValuePairs()
+    ?.findItems()
+    .find((candidate) => candidate.findLabel()?.getElement().textContent === name);
+  return item?.findValue()?.getElement();
+}
+
+async function expectMetric(name: string, text: string) {
+  await waitFor(() => expect(metric(name)?.textContent).toBe(text));
+}
+
+function logState() {
+  return root
+    .findAllContainers()
+    .find((container) => {
+      const header = container.findHeader()?.getElement();
+      return (
+        header !== undefined &&
+        createWrapper(header).findHeader()?.findHeadingText().getElement().textContent === 'Log events'
+      );
+    })
+    ?.findContent()
+    .getElement();
 }
 
 function messages() {
-  return within(screen.getByRole('table', { name: 'Log events' }))
-    .getAllByRole('row')
-    .slice(1)
-    .map((row) => within(row).getAllByRole('cell')[1]?.textContent);
+  const table = root.findTable();
+  return table?.findRows().map((_, index) => table.findBodyCell(index + 1, 2)?.getElement().textContent) ?? [];
+}
+
+function timestamps() {
+  const table = root.findTable();
+  return (
+    table?.findRows().map((_, index) =>
+      table
+        .findBodyCell(index + 1, 1)
+        ?.getElement()
+        .querySelector('time'),
+    ) ?? []
+  );
 }
 
 function loadMore() {
@@ -118,9 +149,12 @@ describe('Lambda monitoring', () => {
           : datapoints(1, 0, 2);
     open();
 
-    await metric('Invocations').findByText('6');
-    await metric('Errors').findByText('3');
-    expect(screen.getByRole('heading', { name: 'Last hour' })).toBeVisible();
+    await expectMetric('Invocations', '6');
+    await expectMetric('Errors', '3');
+    const heading = root
+      .findAllHeaders()
+      .find((header) => header.findHeadingText().getElement().textContent === 'Last hour');
+    expect(heading?.findHeadingText().getElement()).toBeVisible();
     const metrics = calls.filter(({ operation }) => operation === 'GetMetricStatistics').map(({ body }) => body);
     expect(metrics.map(({ MetricName }) => MetricName).sort()).toEqual(['Errors', 'Invocations']);
     for (const body of metrics) {
@@ -141,15 +175,19 @@ describe('Lambda monitoring', () => {
       operation === 'FilterLogEvents' ? page([]) : body.MetricName === 'Invocations' ? datapoints(0) : datapoints();
     open();
 
-    await metric('Invocations').findByText('0');
-    await metric('Errors').findByText('No data');
+    await expectMetric('Invocations', '0');
+    await expectMetric('Errors', 'No data');
   });
 
   it('shows an empty log group with no continuation', async () => {
     answer = ({ operation }) => (operation === 'FilterLogEvents' ? page([]) : datapoints());
     open();
 
-    expect(await screen.findByText('No log events')).toBeVisible();
+    await waitFor(() => {
+      const empty = root.findTable()?.findEmptySlot()?.getElement();
+      expect(empty).toHaveTextContent('No log events');
+      expect(empty).toBeVisible();
+    });
     expect(screen.queryByRole('button', { name: 'Load more events' })).not.toBeInTheDocument();
     expect(calls.find(({ operation }) => operation === 'FilterLogEvents')?.body).toEqual({
       logGroupName: '/aws/lambda/orders',
@@ -164,19 +202,24 @@ describe('Lambda monitoring', () => {
         : datapoints(3);
     open();
 
-    expect(await screen.findByText('No log group')).toBeVisible();
-    expect(
-      screen.getByText('Invoke the function and check that its execution role can write to CloudWatch Logs.'),
-    ).toBeVisible();
-    await metric('Invocations').findByText('3');
+    await waitFor(() => {
+      const state = logState();
+      expect(state).toBeVisible();
+      expect(state).toHaveTextContent('No log group');
+      expect(state).toHaveTextContent(
+        'Invoke the function and check that its execution role can write to CloudWatch Logs.',
+      );
+    });
+    await expectMetric('Invocations', '3');
   });
 
   it('explains a custom log group without requesting logs', async () => {
     open('/shared/app');
 
-    expect(screen.getByText('This function uses a custom log group.')).toBeVisible();
-    await metric('Invocations').findByText('2');
-    await metric('Errors').findByText('1');
+    expect(logState()).toBeVisible();
+    expect(logState()).toHaveTextContent('This function uses a custom log group.');
+    await expectMetric('Invocations', '2');
+    await expectMetric('Errors', '1');
     expect(calls.map(({ operation }) => operation)).toEqual(['GetMetricStatistics', 'GetMetricStatistics']);
   });
 
@@ -189,11 +232,9 @@ describe('Lambda monitoring', () => {
     };
     open();
 
-    await screen.findByText('<script>second</script>');
     const original = ['first\nline', '<script>second</script>'];
-    expect(messages()).toEqual(original);
-    const shownTimes = within(screen.getByRole('table', { name: 'Log events' })).getAllByRole('time');
-    expect(shownTimes.map((time) => time.getAttribute('datetime'))).toEqual(
+    await waitFor(() => expect(messages()).toEqual(original));
+    expect(timestamps().map((time) => time?.getAttribute('datetime'))).toEqual(
       original.map(() => new Date(timestamp).toISOString()),
     );
     loadMore();
@@ -204,8 +245,7 @@ describe('Lambda monitoring', () => {
     expect(messages()).toEqual(original);
     loadMore();
 
-    await screen.findByText('final');
-    expect(messages()).toEqual([...original, 'final']);
+    await waitFor(() => expect(messages()).toEqual([...original, 'final']));
     expect(screen.queryByRole('button', { name: 'Load more events' })).not.toBeInTheDocument();
     expect(calls.filter(({ operation }) => operation === 'FilterLogEvents').map(({ body }) => body.nextToken)).toEqual([
       undefined,
@@ -227,9 +267,8 @@ describe('Lambda monitoring', () => {
         : datapoints();
     open();
 
-    await screen.findByText('Second event');
-    expect(messages()).toEqual([longMessage, 'Second event']);
-    const [first, second] = within(screen.getByRole('table', { name: 'Log events' })).getAllByRole('time');
+    await waitFor(() => expect(messages()).toEqual([longMessage, 'Second event']));
+    const [first, second] = timestamps();
     expect(first).toHaveTextContent(/\.123 \(UTC/);
     expect(first).toHaveAttribute('datetime', new Date(timestamp).toISOString());
     expect(second).toHaveTextContent(/\.124 \(UTC/);
@@ -245,7 +284,7 @@ describe('Lambda monitoring', () => {
         : datapoints();
     open();
     const button = await screen.findByRole('button', { name: 'Load more events' });
-    const completion = screen.getAllByRole('status').find((region) => region.textContent === '');
+    const completion = root.findTable()?.findFooterSlot()?.getElement().querySelector('[role="status"]');
     button.focus();
     await userEvent.setup().keyboard('{Enter}');
 
@@ -268,14 +307,13 @@ describe('Lambda monitoring', () => {
       return json({ message: 'Permission to read logs is missing' }, 403, 'AccessDeniedException');
     };
     open();
-    await screen.findByText('first event');
+    await waitFor(() => expect(messages()).toEqual(['first event']));
     loadMore();
 
     expect(await screen.findByText('FilterLogEvents was refused: Permission to read logs is missing')).toBeVisible();
     expect(messages()).toEqual(['first event']);
     fireEvent.click(screen.getByRole('button', { name: 'Retry loading events' }));
-    await screen.findByText('second event');
-    expect(messages()).toEqual(['first event', 'second event']);
+    await waitFor(() => expect(messages()).toEqual(['first event', 'second event']));
   });
 
   it('shows the unavailable continuation and preserves earlier events after a 501', async () => {
@@ -285,7 +323,7 @@ describe('Lambda monitoring', () => {
       return json({ message: 'Unsupported' }, 501);
     };
     open();
-    await screen.findByText('first event');
+    await waitFor(() => expect(messages()).toEqual(['first event']));
     loadMore();
 
     expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
@@ -300,8 +338,8 @@ describe('Lambda monitoring', () => {
 
     expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
     expect(screen.getByText(/501 Not Implemented for FilterLogEvents/)).toBeVisible();
-    await metric('Invocations').findByText('5');
-    await metric('Errors').findByText('5');
+    await expectMetric('Invocations', '5');
+    await expectMetric('Errors', '5');
   });
 
   it('identifies the denied metric without obscuring the other count or events', async () => {
@@ -313,34 +351,47 @@ describe('Lambda monitoring', () => {
     };
     open();
 
-    expect(
-      await metric('Invocations').findByText('GetMetricStatistics was refused: Metric read denied by policy'),
-    ).toBeVisible();
-    await metric('Errors').findByText('1');
-    expect(await screen.findByText('invoked')).toBeVisible();
+    await waitFor(() => {
+      const invocations = metric('Invocations');
+      expect(invocations).toHaveTextContent('GetMetricStatistics was refused: Metric read denied by policy');
+      expect(invocations).toBeVisible();
+    });
+    await expectMetric('Errors', '1');
+    await waitFor(() => expect(messages()).toEqual(['invoked']));
   });
 
   it('keeps only the selected function’s results when the earlier reads finish last', async () => {
-    const delayed: (() => void)[] = [];
+    const delayed: Promise<Response>[] = [];
+    let releaseOrders: () => void = () => undefined;
+    const ordersGate = new Promise<void>((resolve) => {
+      releaseOrders = resolve;
+    });
     answer = ({ operation, body }) => {
       const isOrders = body.logGroupName === '/aws/lambda/orders' || body.Dimensions?.[0]?.Value === 'orders';
       const result =
         operation === 'FilterLogEvents'
           ? page([isOrders ? 'old orders' : 'new refunds'])
           : datapoints(isOrders ? 42 : 8);
-      return isOrders ? new Promise((resolve) => delayed.push(() => resolve(result))) : result;
+      if (!isOrders) {
+        return result;
+      }
+      const response = ordersGate.then(() => result);
+      delayed.push(response);
+      return response;
     };
     const { switchTo } = open();
     await waitFor(() => expect(delayed).toHaveLength(3));
 
     switchTo('refunds');
-    await screen.findByText('new refunds');
-    await metric('Invocations').findByText('8');
-    await metric('Errors').findByText('8');
+    await waitFor(() => expect(messages()).toEqual(['new refunds']));
+    await expectMetric('Invocations', '8');
+    await expectMetric('Errors', '8');
     await act(async () => {
-      delayed.forEach((finish) => finish());
+      releaseOrders();
+      await Promise.all(delayed);
     });
+    expect(metric('Invocations')?.textContent).toBe('8');
+    expect(metric('Errors')?.textContent).toBe('8');
     expect(messages()).toEqual(['new refunds']);
-    expect(screen.queryByText('42')).not.toBeInTheDocument();
   });
 });
