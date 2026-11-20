@@ -947,17 +947,25 @@ async fn accepts(ip: IpAddr, port: u16) -> bool {
     false
 }
 
-/// `GET path` on `127.0.0.1:port` with that `Host`; the whole answer.
+/// `GET path` on `127.0.0.1:port` with that `Host`; the whole answer. Panics with the port and the path when the
+/// answer has not ended within the [`LINE_BOUND`].
 async fn get_raw(port: u16, path: &str) -> String {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    let mut stream = tokio::net::TcpStream::connect((Ipv4Addr::LOCALHOST, port))
-        .await
-        .unwrap();
-    let request =
-        format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
-    stream.write_all(request.as_bytes()).await.unwrap();
-    let mut answer = Vec::new();
-    stream.read_to_end(&mut answer).await.unwrap();
+    let answer = tokio::time::timeout(LINE_BOUND, async {
+        let mut stream = tokio::net::TcpStream::connect((Ipv4Addr::LOCALHOST, port))
+            .await
+            .unwrap();
+        let request =
+            format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
+        stream.write_all(request.as_bytes()).await.unwrap();
+        let mut answer = Vec::new();
+        stream.read_to_end(&mut answer).await.unwrap();
+        answer
+    })
+    .await
+    .unwrap_or_else(|_| {
+        panic!("GET {path} on 127.0.0.1:{port} not answered within {LINE_BOUND:?}")
+    });
     String::from_utf8_lossy(&answer).into_owned()
 }
 
