@@ -90,18 +90,42 @@ async function reconnect(ctx: Ctx, page: Page, tab: 'Code' | 'Monitor') {
   await emulator.startAgain();
   await expectLine(page, connectedAt(port));
   if (tab === 'Code') {
-    const [request] = await Promise.all([
-      page.waitForRequest(
-        (request) => request.method() === 'GET' && new URL(request.url()).pathname === `/2015-03-31/functions/${name}`,
-        { timeout: 2 * LINE_CHANGE_BOUND_MS },
-      ),
-      functionPage(page, name).tab('Monitor').click(),
-    ]);
-    const answer = await request.response();
-    if (!answer) throw new Error('Studio received no GetFunction response after selecting Monitor');
-    expect(answer.status()).toBe(404);
-    const refusal = `${answer.headers()['x-amzn-errortype'] ?? ''} ${await answer.text()}`;
-    expect(refusal).toContain('ResourceNotFoundException');
+    // Read the document address synchronously at fetch dispatch. A request from Code
+    // can finish after the tab changes, but cannot contribute a Monitor response.
+    const observation = await page.evaluateHandle(
+      ({ functionRoute, detailPath }) => {
+        const result = { status: 0, refusal: '' };
+        const original = window.fetch;
+        window.fetch = function (input, init) {
+          const url = new URL(input instanceof Request ? input.url : String(input), location.href);
+          const method = init?.method ?? (input instanceof Request ? input.method : 'GET');
+          const fromMonitor =
+            location.pathname === functionRoute && new URLSearchParams(location.search).get('tab') === 'monitor';
+          const response = original.call(window, input, init);
+          if (fromMonitor && method === 'GET' && url.pathname === detailPath) {
+            window.fetch = original;
+            void response
+              .then(async (answer) => {
+                const body = await answer.clone().text();
+                result.refusal = (answer.headers.get('x-amzn-errortype') ?? '') + ' ' + body;
+                result.status = answer.status;
+              })
+              .catch(() => {
+                result.status = -1;
+              });
+          }
+          return response;
+        };
+        return result;
+      },
+      { functionRoute: functionPath(name), detailPath: '/2015-03-31/functions/' + name },
+    );
+    await functionPage(page, name).tab('Monitor').click();
+    await expect
+      .poll(() => observation.evaluate((result) => result.status), { timeout: 2 * LINE_CHANGE_BOUND_MS })
+      .toBe(404);
+    expect(await observation.evaluate((result) => result.refusal)).toContain('ResourceNotFoundException');
+    await observation.dispose();
   }
   await expect(functionPage(page, name).notFound).toBeVisible({ timeout: 2 * LINE_CHANGE_BOUND_MS });
   await expect(page.getByRole('heading', { name: 'Log events' })).toHaveCount(0);
