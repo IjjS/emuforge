@@ -66,26 +66,28 @@ port folders of the unit and of the units it is stacked on, not the issue's work
 issue branch as many times as it is fixed.
 --take-main. Merges local main into feat/<issue> in the issue's worktree, which must be registered, on its branch
 and clean. When main is already an ancestor it says so and changes nothing. On a conflict it aborts, leaves the
-issue branch as it was and names the conflicting paths: the unit that owns them merges main into its branch.
+issue branch as it was and names the conflicting paths. The plan follows the conflict steps in lead.md.
 The issue branch into main. Merged with --no-ff in the main checkout. Refuses unless: the main checkout is on main
 and clean; the issue's worktree is on feat/<issue> and clean; the branch of every registered unit of the issue is
-an ancestor of feat/<issue>; the review rule holds for each of them; the issue's worktree's last pm-check run
+an ancestor of feat/<issue>; the review rule below holds; the issue's worktree's last pm-check run
 (the whole check) passed on the head of feat/<issue> and covers every module the branch's paths against main call
 for, a "deferred" step covering nothing. What main gained is judged as for a unit into main: a clean merge goes in,
-behind or not; a conflict is refused, main left as it was, and the output says: pm-merge <issue> --take-main, the
-unit that owns each conflicting path merges main into its branch and resolves it, is merged into feat/<issue>
-again, the whole check, rerun. After the merge it removes the emulator port folders of the
-issue's worktree and of every unit's, and names the units and the record it merged on.
+behind or not. On a conflict main is left as it was, and the output gives the plan's next step. After the merge
+it removes the emulator port folders of the issue's worktree and of every unit's, and names the units and the
+record it merged on.
 Who may run it (issue 478). The pm runs every form. A plan runs `pm-merge <its issue> <unit>` for a unit whose target
 is feat/<its issue>, and `pm-merge <its issue> --take-main`; a unit into main and the issue branch into main are the
 pm's. Every other pane is refused.
 The lead of the issue, the mark `lead` that pm-brief writes into .pm/issue-<n>/brief.json, changes the review rule:
-`plan`: a unit goes into feat/<issue> on its fast check alone (rev reviews the whole at the end), and feat/<issue>
-goes into main only when the newest review-impl-r<k>.md (the whole, stage `impl`) says verdict: pass.
+`plan`: a unit goes into feat/<issue> on its fast check. For an issue marked `review_order: split`, feat/<issue>
+goes into main only when the newest file for each of `impl` and `tests` says verdict: pass. The `tests` stage
+may be omitted when the confirmed test-criteria.md has an `Integration review: omitted - <reason>` line, the
+branch has no changes under tests/integration/ against its merge base with main, and there is no `tests` round.
+A plan-led issue begun before issue 619 still needs only its newest `impl` review to pass.
 Rounds (issue 557): wherever a review file is asked (a plan-led issue branch into main, a unit under the per-unit
 rule), every stage of rev's review files, review-<stage>-r<k>.md grouped by <stage>, must hold r1 to its highest
 round with no number missing; each stage that does not is one problem. rev's stages are those of review-protocol.md,
-`requirement`, `plan-set`, `impl`, and the per-unit `impl-<unit>` and `checks-<unit>`; a critique's review-final*.md
+`requirement`, `plan-set`, `impl`, `tests`, and the per-unit `impl-<unit>` and `checks-<unit>`; a critique's review-final*.md
 is not a review round and is never counted (issue 572). A rev pane lives for one round, so a
 round is answered by the next round, never run again in place of being answered.
 `harness-engineer`: no review file is asked; the pm that runs the merge has judged the change, and the output says so.
@@ -274,7 +276,7 @@ def stack(wts, wt):
 
 # rev's stages (review-protocol.md) and the per-unit ones of review(); anything else, as a critique's
 # review-final*.md, is not a review round (issue 572)
-ROUND = re.compile(r"^review-(requirement|plan-set|impl|(?:impl|checks)-[^.]+?)-r(\d+)\.md$")
+ROUND = re.compile(r"^review-(requirement|plan-set|impl|tests|(?:impl|checks)-[^.]+?)-r(\d+)\.md$")
 
 
 def round_gaps(issue):
@@ -320,6 +322,10 @@ def lead(issue):
     return load(PM / f"issue-{issue}" / "brief.json", {}).get("lead")
 
 
+def split_reviews(issue):
+    return load(PM / f"issue-{issue}" / "brief.json", {}).get("review_order") == "split"
+
+
 def open_issue_files(issue, ref):
     """The files under issues/things-that-do-not-work/ that hold `Issue-Id: <issue>` at ref."""
     r = git("grep", "-l", "-E", f"^Issue-Id: {int(issue)}$", ref, "--", "issues/things-that-do-not-work/")
@@ -347,22 +353,47 @@ def unit_review(issue, unit):
     if led == "harness-engineer":
         return [], "the pm's own judgement (harness issue)"
     if led == "plan":
-        return [], "its fast check (rev reviews the whole at the end)"
+        return [], "its fast check"
     found, reviewed = review(issue, unit)
     return found, (reviewed.name if reviewed else None)
 
 
-def whole_review(issue):
-    """(problems, what it was judged on) for the issue branch of a plan-led issue: the newest review-impl-r<k>.md says
-    verdict: pass, and no stage's rounds have a gap (round_gaps)."""
-    reviews = sorted((PM / f"issue-{issue}").glob("review-impl-r*.md"),
-                     key=lambda f: int(re.search(r"-r(\d+)\.md$", f.name).group(1)))
-    gaps = round_gaps(issue)
-    if not reviews:
-        return ["no review-impl-r<k>.md; rev has not reviewed the whole issue branch", *gaps], None
-    if not re.search(r"^verdict:\s*pass\s*$", reviews[-1].read_text(errors="replace")[:400], re.M):
-        return [f"{reviews[-1].name} is not verdict: pass", *gaps], reviews[-1].name
-    return gaps, reviews[-1].name
+def tests_review_omitted(folder, head):
+    """A reason in the criteria can excuse the tests review if the branch changes no integration path."""
+    try:
+        criteria = (folder / "test-criteria.md").read_text()
+        if not re.search(r"^Integration review: omitted - [ \t]*\S", criteria, re.M):
+            return False
+        base = merge_base(ROOT, head, "refs/heads/main")
+        return not any(path == "tests/integration" or path.startswith("tests/integration/")
+                       for path in between(ROOT, base, head))
+    except (OSError, UnicodeError, Unreadable):
+        return False
+
+
+def whole_review(issue, head):
+    """The review records for a plan-led issue branch and any problems with them."""
+    folder = PM / f"issue-{issue}"
+    stages = ("impl", "tests") if split_reviews(issue) else ("impl",)
+    judged = []
+    problems = round_gaps(issue)
+    for stage in stages:
+        rounds = {}
+        for path in folder.glob(f"review-{stage}-r*.md"):
+            match = ROUND.fullmatch(path.name)
+            if match and match[1] == stage:
+                rounds[int(match[2])] = path
+        if not rounds:
+            if stage == "tests" and tests_review_omitted(folder, head):
+                judged.append("tests omitted per test-criteria.md")
+            else:
+                problems.append(f"no review-{stage}-r<k>.md; the {stage} review is required")
+            continue
+        latest = rounds[max(rounds)]
+        judged.append(latest.name)
+        if not re.search(r"^verdict:\s*pass\s*$", latest.read_text(errors="replace")[:400], re.M):
+            problems.append(f"{latest.name} is not verdict: pass")
+    return problems, ", ".join(judged)
 
 
 def record_problems(last, head):
@@ -486,6 +517,9 @@ def unit_remedy(issue, branch):
 
 def whole_remedy(issue):
     """What a conflict of the issue branch into main asks of its plan (issue 520)."""
+    if split_reviews(issue):
+        return (f"the plan runs pm-merge {issue} --take-main and follows lead.md for conflict resolution, "
+                f"review and the whole check, then rerun pm-merge {issue}")
     return (f"the plan runs pm-merge {issue} --take-main, the unit that owns each path merges main into its branch "
             f"and resolves it, is merged into feat/{issue} again, then the whole check, then rerun pm-merge {issue}")
 
@@ -631,7 +665,9 @@ def take_main(a, wts):
         return
     new = merge(entry["path"], main_at, f"merge: main into {branch} (#{a.issue})", branch)
     log(f"merge main {main_at[:9]} -> {branch} {new[:9]}")
-    print(f"merged main ({main_at[:9]}) into {branch} at {new[:9]}; run the whole check: pm-check {entry['path']}")
+    next_step = ("continue with the review and check order in lead.md" if split_reviews(a.issue)
+                 else f"run the whole check: pm-check {entry['path']}")
+    print(f"merged main ({main_at[:9]}) into {branch} at {new[:9]}; {next_step}")
 
 
 def into_main_whole(a, wts):
@@ -671,7 +707,7 @@ def into_main_whole(a, wts):
         problems += more
     judged = None
     if lead(a.issue) == "plan":
-        more, judged = whole_review(a.issue)
+        more, judged = whole_review(a.issue, head)
         problems += more
     else:
         for w in mine:

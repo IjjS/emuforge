@@ -3,11 +3,11 @@
 
   pm-brief plan <issue> [--precedent <archived id>]...
         writes brief-plan.md and brief-rev.md (the brief of every rev pane of the issue: the plan opens one for each
-        review round, with the round's REVIEW line, issue 557) and marks the issue `lead: plan` in brief.json
-        (pm-merge reads it)
+        review round, with the round's REVIEW line, issue 557). Marks the issue `lead: plan` and, for a new
+        issue, `review_order: split` in brief.json (pm-merge reads it). An existing issue keeps its review order.
   pm-brief rev <issue>
-        writes brief-rev.md alone, from the template as it is now (an issue in flight takes a changed rev brief
-        from its next round on); brief-plan.md and brief.json are not touched
+        writes brief-rev.md alone from the current template, with the protocol for the issue's recorded order.
+        brief-plan.md and brief.json are not touched
   pm-brief worker <issue> <unit> --summary "<what the unit does>" [--owned "<files>"] [--scenarios "<where>"]
         [--close "<check ids>" | --close auto] [--precedent <id>]... [--inputs "<a, b>"] [--conventions "<a, b>"]
         writes brief-<unit>.md, for an engine (e<n>) or studio (s<n>) unit. --owned defaults to "the files
@@ -46,6 +46,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _pmlib import PM, ROOT, WORKTREES, guard, issue_dir, load, save
 
 BRIEFS = ROOT / ".agents" / "skills" / "pm" / "references" / "briefs"
+LEGACY_REVIEW_COMMIT = "c9843ccb7d3ce2af514e2d76109c6a654b55e894"
 ISSUE_DIRS = ("issues/things-that-do-not-work", "issues/things-that-now-work")
 # the folder whose AGENTS.md and references/ an issue of this module is planned and reviewed against
 MODULE_DIR = {"studio": "studio", "engine": "engine", "cli": "engine", "iam": "engine", "verify": "engine", "harness": "engine"}
@@ -118,28 +119,47 @@ def mark_lead(n, who):
         save(issue_dir(n) / "brief.json", {**memo, "lead": who})
 
 
+def workflow_ref(name, split):
+    path = f".agents/skills/pm/references/{name}.md"
+    if split:
+        return f"`{ROOT / path}`"
+    return f"`{path}` at the issue's prior workflow revision (`git show {LEGACY_REVIEW_COMMIT}:{path}`)"
+
+
 def cmd_plan(a):
     guard(f"pm-brief plan {a.issue}")
     v = issue(a.issue)
     refs = module_refs(v["module"])
+    folder = issue_dir(a.issue)
+    metadata = folder / "brief.json"
+    memo = load(metadata, {})
+    already_briefed = memo.get("lead") == "plan" or (folder / "brief-plan.md").is_file()
+    if not already_briefed:
+        memo["review_order"] = "split"
+    split = memo.get("review_order") == "split"
     common = dict(v, root=str(ROOT))
     plan = dict(common, precedents=precedents(a.precedent), design_step=DESIGN_STEP["studio" if v["module"] == "studio" else "engine"],
-                plan_refs=f"AGENTS.md, issues/README.md, tests/integration/AGENTS.md, {refs}")
-    texts = [("plan", fill((BRIEFS / "plan.md").read_text(), plan)), ("rev", rev_text(v))]
+                plan_refs=f"AGENTS.md, issues/README.md, tests/integration/AGENTS.md, {refs}",
+                lead_ref=workflow_ref("lead", split), review_ref=workflow_ref("review-protocol", split))
+    texts = [("plan", fill((BRIEFS / "plan.md").read_text(), plan)), ("rev", rev_text(v, split))]
+    save(metadata, {**memo, "lead": "plan"})
     for name, text in texts:  # both filled before either is written
         write(a.issue, name, text)
-    mark_lead(a.issue, "plan")
 
 
-def rev_text(v):
+def rev_text(v, split):
     """The rev brief of the issue whose header values are `v`: one brief for every round's rev pane (issue 557)."""
     refs = module_refs(v["module"])
-    return fill((BRIEFS / "rev.md").read_text(), dict(v, root=str(ROOT), refs=f"AGENTS.md, issues/README.md, {refs}, tests/integration/AGENTS.md"))
+    return fill((BRIEFS / "rev.md").read_text(), dict(v, root=str(ROOT),
+                refs=f"AGENTS.md, issues/README.md, {refs}, tests/integration/AGENTS.md",
+                review_ref=workflow_ref("review-protocol", split)))
 
 
 def cmd_rev(a):
     guard(f"pm-brief rev {a.issue}", issue=a.issue, plan_may=True)
-    write(a.issue, "rev", rev_text(issue(a.issue)))
+    v = issue(a.issue)
+    memo = load(PM / f"issue-{a.issue}" / "brief.json", {})
+    write(a.issue, "rev", rev_text(v, memo.get("review_order") == "split"))
 
 
 def cmd_worker(a):
