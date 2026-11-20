@@ -248,10 +248,7 @@ function routeTableOf(raw: SdkRouteTable): RouteTable | undefined {
       id,
       main: associations.some((association) => association.main),
       routes: (raw.Routes ?? []).map((route) =>
-        withValues<Route>(
-          {},
-          { destination: destinationOf(route), target: targetOf(route), state: text(route.State) },
-        ),
+        withValues<Route>({}, { destination: destinationOf(route), target: targetOf(route), state: text(route.State) }),
       ),
       associations,
       subnetCount: associations.filter((association) => association.subnetId !== undefined).length,
@@ -266,7 +263,9 @@ function gatewayOf(raw: SdkInternetGateway): InternetGateway | undefined {
   if (id === undefined) {
     return undefined;
   }
-  const vpcId = (raw.Attachments ?? []).map((attachment) => text(attachment.VpcId)).find((value) => value !== undefined);
+  const vpcId = (raw.Attachments ?? [])
+    .map((attachment) => text(attachment.VpcId))
+    .find((value) => value !== undefined);
   return withValues<InternetGateway>({ id, tags: tagsOf(raw.Tags) }, { vpcId });
 }
 

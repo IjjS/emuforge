@@ -160,7 +160,11 @@ export function VpcListPage({ connection }: { connection: AreaConnection }) {
     },
     { id: 'state', header: 'State', cell: (row) => <ValueText kind="fixed" value={row.state} none={NONE} /> },
     { id: 'cidr', header: 'IPv4 CIDR', cell: (row) => <ValueText kind="fixed" value={row.cidr} none={NONE} /> },
-    { id: 'default', header: 'Default', cell: (row) => <ValueText kind="fixed" value={row.isDefault ? 'Yes' : 'No'} /> },
+    {
+      id: 'default',
+      header: 'Default',
+      cell: (row) => <ValueText kind="fixed" value={row.isDefault ? 'Yes' : 'No'} />,
+    },
   ];
 
   let empty = null;
