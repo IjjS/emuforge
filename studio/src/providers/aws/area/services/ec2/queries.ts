@@ -75,9 +75,7 @@ export function useInstanceListing(endpoint: string | undefined, filters: Listin
     operation: OPERATIONS.describeInstances,
     read: async (at, token, signal) => {
       const page = await listInstances(at, sent, token, signal);
-      return page.nextToken === undefined
-        ? { items: page.instances }
-        : { items: page.instances, next: page.nextToken };
+      return page.nextToken === undefined ? { items: page.instances } : { items: page.instances, next: page.nextToken };
     },
     readAgainAfter: anyMoving,
   });

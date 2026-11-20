@@ -47,7 +47,12 @@ describe("EC2's addresses", () => {
 
 describe("an instance's name", () => {
   it('is the value of its tag Name, "-" without one or with an empty one', () => {
-    expect(instanceName([{ key: 'env', value: 'dev' }, { key: 'Name', value: 'web' }])).toBe('web');
+    expect(
+      instanceName([
+        { key: 'env', value: 'dev' },
+        { key: 'Name', value: 'web' },
+      ]),
+    ).toBe('web');
     expect(instanceName([{ key: 'env', value: 'dev' }])).toBe('-');
     expect(instanceName([])).toBe('-');
     expect(instanceName([{ key: 'Name', value: '' }])).toBe('-');

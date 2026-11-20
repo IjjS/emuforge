@@ -317,7 +317,15 @@ describe("an instance's page", () => {
     open(pathOf('i-0full'));
     await loaded();
     const values = pairs();
-    for (const label of ['Key pair', 'Subnet ID', 'VPC ID', 'Private IPv4', 'Public IPv4', 'Private DNS name', 'Public DNS name']) {
+    for (const label of [
+      'Key pair',
+      'Subnet ID',
+      'VPC ID',
+      'Private IPv4',
+      'Public IPv4',
+      'Private DNS name',
+      'Public DNS name',
+    ]) {
       expect(values[label], label).toBe('-');
     }
     expect(values['State']).toBe('terminated');
@@ -356,7 +364,12 @@ describe("an instance's page", () => {
   it('its read failed → the failure in that value alone, the rest shown', async () => {
     holding(
       full(),
-      new RequestError({ kind: 'other', operation: 'DescribeInstanceAttribute', code: 'InternalError', message: 'broke' }),
+      new RequestError({
+        kind: 'other',
+        operation: 'DescribeInstanceAttribute',
+        code: 'InternalError',
+        message: 'broke',
+      }),
     );
     open(pathOf('i-0full'));
     await loaded();
@@ -408,7 +421,11 @@ describe("an instance's page", () => {
       { kind: 'emulator-did-not-answer', operation: 'DescribeInstances', message: 'timed out' },
       /The emulator did not answer/,
     ],
-    ['the engine not answering', { kind: 'engine-did-not-answer', operation: 'DescribeInstances' }, /engine.*did not answer/],
+    [
+      'the engine not answering',
+      { kind: 'engine-did-not-answer', operation: 'DescribeInstances' },
+      /engine.*did not answer/,
+    ],
     [
       'another code and message',
       { kind: 'other', operation: 'DescribeInstances', code: 'InternalError', message: 'broke' },

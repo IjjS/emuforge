@@ -129,14 +129,17 @@ function instanceOf(raw: SdkInstance): Instance | undefined {
   if (id === undefined) {
     return undefined;
   }
-  const launchTime = raw.LaunchTime instanceof Date && !Number.isNaN(raw.LaunchTime.getTime()) ? raw.LaunchTime : undefined;
+  const launchTime =
+    raw.LaunchTime instanceof Date && !Number.isNaN(raw.LaunchTime.getTime()) ? raw.LaunchTime : undefined;
   return withValues<Instance>(
     {
       id,
       state: text(raw.State?.Name) ?? '',
       groups: (raw.SecurityGroups ?? []).flatMap((group) => {
         const groupId = text(group.GroupId);
-        return groupId === undefined ? [] : [withValues<InstanceGroup>({ id: groupId }, { name: text(group.GroupName) })];
+        return groupId === undefined
+          ? []
+          : [withValues<InstanceGroup>({ id: groupId }, { name: text(group.GroupName) })];
       }),
       volumes: (raw.BlockDeviceMappings ?? []).map((mapping) =>
         withValues<BlockDevice>(

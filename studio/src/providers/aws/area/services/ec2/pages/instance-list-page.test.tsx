@@ -210,7 +210,16 @@ describe('the instances list', () => {
         instances: [
           instance('i-1', 'running', { tags: [{ key: 'Name', value: 'web' }] }),
           without(instance('i-2', 'stopped'), 'publicIp'),
-          { id: 'i-3', state: 'terminated', type: 't3.nano', zone: 'us-east-1b', launchTime: LAUNCHED, groups: [], volumes: [], tags: [] },
+          {
+            id: 'i-3',
+            state: 'terminated',
+            type: 't3.nano',
+            zone: 'us-east-1b',
+            launchTime: LAUNCHED,
+            groups: [],
+            volumes: [],
+            tags: [],
+          },
         ],
       },
     });
@@ -220,9 +229,16 @@ describe('the instances list', () => {
       ['-', 'i-2', 'stopped', 't3.micro', 'us-east-1a', '-', '172.31.0.5', launched],
       ['-', 'i-3', 'terminated', 't3.nano', 'us-east-1b', '-', '-', launched],
     ]);
-    expect(
-      (table().findColumnHeaders() ?? []).map((header) => text(header.getElement())).slice(1),
-    ).toEqual(['Name', 'Instance ID', 'State', 'Type', 'Availability Zone', 'Public IPv4', 'Private IPv4', 'Launched']);
+    expect((table().findColumnHeaders() ?? []).map((header) => text(header.getElement())).slice(1)).toEqual([
+      'Name',
+      'Instance ID',
+      'State',
+      'Type',
+      'Availability Zone',
+      'Public IPv4',
+      'Private IPv4',
+      'Launched',
+    ]);
     const link = screen.getByRole('link', { name: 'i-1' });
     expect(link).toHaveAttribute('href', '/aws/ec2/instances/instance/i-1');
     vi.mocked(api.getInstance).mockResolvedValue({ found: false });
@@ -261,7 +277,9 @@ describe('the instances list', () => {
       expect(screen.getByText('No instances match')).toBeInTheDocument();
     });
     expect(screen.queryByText('No instances')).toBeNull();
-    fireEvent.click(within(table().findEmptySlot()?.getElement() as HTMLElement).getByRole('button', { name: 'Clear filters' }));
+    fireEvent.click(
+      within(table().findEmptySlot()?.getElement() as HTMLElement).getByRole('button', { name: 'Clear filters' }),
+    );
     await expectRows([['-', 'i-1', 'running', 't3.micro', 'us-east-1a', '54.0.0.1', '172.31.0.5', launched]]);
     expect(lastCall()?.[1]).toEqual({});
     expect(PAGE.findTextFilter()?.findInput().getInputValue()).toBe('');
@@ -294,7 +312,11 @@ describe('the instances list', () => {
       { kind: 'emulator-did-not-answer', operation: 'DescribeInstances', message: 'timed out' },
       /The emulator did not answer/,
     ],
-    ['the engine not answering', { kind: 'engine-did-not-answer', operation: 'DescribeInstances' }, /engine.*did not answer/],
+    [
+      'the engine not answering',
+      { kind: 'engine-did-not-answer', operation: 'DescribeInstances' },
+      /engine.*did not answer/,
+    ],
     [
       'another code and message',
       { kind: 'other', operation: 'DescribeInstances', code: 'InternalError', message: 'broke' },
@@ -354,7 +376,11 @@ describe('the instances list', () => {
   });
 
   it('a row selected → the actions are that instance\'s; "Refresh" reads the page again and keeps the selection', async () => {
-    answer({ '||': { instances: [instance('i-1', 'stopped', { tags: [{ key: 'Name', value: 'web' }] }), instance('i-2', 'running')] } });
+    answer({
+      '||': {
+        instances: [instance('i-1', 'stopped', { tags: [{ key: 'Name', value: 'web' }] }), instance('i-2', 'running')],
+      },
+    });
     open();
     await waitFor(() => {
       expect(rows()).toHaveLength(2);

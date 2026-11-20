@@ -92,7 +92,10 @@ const BARE = (id: string, state = 'terminated') =>
 
 function reservations(...sets: string[][]): string {
   return `<reservationSet>${sets
-    .map((items, n) => `<item><reservationId>r-${String(n)}</reservationId><instancesSet>${items.join('')}</instancesSet></item>`)
+    .map(
+      (items, n) =>
+        `<item><reservationId>r-${String(n)}</reservationId><instancesSet>${items.join('')}</instancesSet></item>`,
+    )
     .join('')}</reservationSet>`;
 }
 
@@ -163,7 +166,10 @@ describe('the instances page', () => {
 
   it("the answer: every reservation's instances in order, each with its values and name; the NextToken", async () => {
     engine.on('DescribeInstances', () =>
-      ok('DescribeInstances', `${reservations([FULL, BARE('i-2')], [BARE('i-3', 'running')])}<nextToken>tok-9</nextToken>`),
+      ok(
+        'DescribeInstances',
+        `${reservations([FULL, BARE('i-2')], [BARE('i-3', 'running')])}<nextToken>tok-9</nextToken>`,
+      ),
     );
     const page = await listInstances(endpoint, {}, undefined, signal());
     expect(page.nextToken).toBe('tok-9');
@@ -242,7 +248,16 @@ describe('an instance', () => {
     const read = await getInstance(endpoint, 'i-2', signal());
     expect(read.found).toBe(true);
     const instance = read.found ? read.instance : undefined;
-    for (const key of ['stateReason', 'imageId', 'keyName', 'subnetId', 'vpcId', 'publicIp', 'privateDns', 'publicDns']) {
+    for (const key of [
+      'stateReason',
+      'imageId',
+      'keyName',
+      'subnetId',
+      'vpcId',
+      'publicIp',
+      'privateDns',
+      'publicDns',
+    ]) {
       expect(instance && key in instance, key).toBe(false);
     }
   });
@@ -256,7 +271,10 @@ describe('an instance', () => {
 describe('termination protection', () => {
   it('DescribeInstanceAttribute with disableApiTermination; true → on, false → off', async () => {
     engine.on('DescribeInstanceAttribute', () =>
-      ok('DescribeInstanceAttribute', '<instanceId>i-1</instanceId><disableApiTermination><value>true</value></disableApiTermination>'),
+      ok(
+        'DescribeInstanceAttribute',
+        '<instanceId>i-1</instanceId><disableApiTermination><value>true</value></disableApiTermination>',
+      ),
     );
     await expect(getTerminationProtection(endpoint, 'i-1', signal())).resolves.toBe(true);
     const [sent] = engine.of('DescribeInstanceAttribute');
@@ -264,7 +282,10 @@ describe('termination protection', () => {
     expect(sent?.params.get('Attribute')).toBe('disableApiTermination');
 
     engine.on('DescribeInstanceAttribute', () =>
-      ok('DescribeInstanceAttribute', '<instanceId>i-1</instanceId><disableApiTermination><value>false</value></disableApiTermination>'),
+      ok(
+        'DescribeInstanceAttribute',
+        '<instanceId>i-1</instanceId><disableApiTermination><value>false</value></disableApiTermination>',
+      ),
     );
     await expect(getTerminationProtection(endpoint, 'i-1', signal())).resolves.toBe(false);
   });
@@ -276,7 +297,9 @@ describe('the actions', () => {
     await actOnInstance(endpoint, 'stop', 'i-2', signal());
     await actOnInstance(endpoint, 'reboot', 'i-3', signal());
     await actOnInstance(endpoint, 'terminate', 'i-4', signal());
-    expect(engine.sent.map((sent) => [sent.action, sent.params.get('InstanceId.1'), sent.params.has('InstanceId.2')])).toEqual([
+    expect(
+      engine.sent.map((sent) => [sent.action, sent.params.get('InstanceId.1'), sent.params.has('InstanceId.2')]),
+    ).toEqual([
       ['StartInstances', 'i-1', false],
       ['StopInstances', 'i-2', false],
       ['RebootInstances', 'i-3', false],
@@ -285,7 +308,8 @@ describe('the actions', () => {
   });
 
   it('a refusal → a failure with the code and message as they came', async () => {
-    const message = "The instance 'i-1' may not be terminated. Modify its 'disableApiTermination' instance attribute and try again.";
+    const message =
+      "The instance 'i-1' may not be terminated. Modify its 'disableApiTermination' instance attribute and try again.";
     engine.on('TerminateInstances', () => refused('OperationNotPermitted', message));
     expect(await failureOf(actOnInstance(endpoint, 'terminate', 'i-1', signal()))).toEqual({
       kind: 'other',

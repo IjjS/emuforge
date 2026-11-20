@@ -21,15 +21,7 @@ import type { ScreenPageProps } from '../../../screens';
 import type { BlockDevice, Instance, InstanceGroup } from '../api';
 import { InstanceActions } from '../components/instance-actions';
 import { InstanceStateValue } from '../components/instance-state';
-import {
-  instanceHeading,
-  INSTANCES_PATH,
-  INSTANCES_WORD,
-  nameOf,
-  NONE,
-  securityGroupHref,
-  type Tag,
-} from '../format';
+import { instanceHeading, INSTANCES_PATH, INSTANCES_WORD, nameOf, NONE, securityGroupHref, type Tag } from '../format';
 import { useInstance, useTerminationProtection, type Ec2Read } from '../queries';
 
 // An instance's page, S3 (issue 553, design task 1 and task 3): read by the filter `instance-id`, so an id the
