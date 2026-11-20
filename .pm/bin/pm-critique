@@ -2,13 +2,19 @@
 """Record impeccable critique scores per issue and print the score table.
 
   pm-critique record <issue> <phase> <snapshot.md> [--label A]   phase: final, or mock when the plan asked for one
+  pm-critique leave <issue> --p2 N --reason TEXT [--label A]      the pm only: N P2 of that screen's last final stand
   pm-critique table <issue>                                       markdown table for the issue report
-  pm-critique check <issue>                                       exit 1 when the last final has a P0 or P1 finding
+  pm-critique check <issue>                                       exit 1 when a screen's last final has a P0, P1 or P2
 
 The critic pane runs the impeccable critique skill itself (two sub-agents, same viewports every time); the snapshot
 it persists under <worktree>/studio/.impeccable/critique/<ts>__<slug>.md carries the score in its frontmatter. This
 script only copies that frontmatter into .pm/issue-<n>/critique-scores.json. The score is told in the issue's report
-and decides nothing (issue 478); only a P0 or P1 finding of the final point holds the screen back, until it is fixed.
+and decides nothing (issue 478); a P0, P1 or P2 finding of a screen's last final point holds the issue back until it
+is fixed (issue 552). The skill's frontmatter has no P2 count of its own: crit adds "p2_count" to the skill's
+IMPECCABLE_CRITIQUE_META, and a final snapshot without it is refused. A screen is a label (rows without one are one
+screen). A P2 is left standing only by the pm's decision, recorded under ## PM decisions and with `leave`, which
+check subtracts from that screen's last final. A final row recorded before issue 552 has no p2 and is judged on P0
+and P1 alone.
 """
 import argparse
 import json
@@ -47,21 +53,63 @@ def scores_path(issue):
 
 def cmd_record(a):
     fm = frontmatter(a.snapshot)
+    p2 = num(fm.get("p2_count"), None)
+    if p2 is None and a.phase == "final":
+        sys.exit(f"no p2_count in the frontmatter of {a.snapshot}: nothing recorded. Write the snapshot again with "
+                 '"p2_count":<n> in IMPECCABLE_CRITIQUE_META, beside p0_count and p1_count, then record it.')
     rows = load(scores_path(a.issue), [])
     rows.append(dict(phase=a.phase, label=a.label, total=num(fm.get("total_score")), max=num(fm.get("max_score"), 40) or 40,
-                     na=fm.get("na_heuristics", ""), p0=num(fm.get("p0_count")), p1=num(fm.get("p1_count")),
+                     na=fm.get("na_heuristics", ""), p0=num(fm.get("p0_count")), p1=num(fm.get("p1_count")), p2=p2,
                      target=fm.get("target", ""), snapshot=os.path.abspath(a.snapshot), at=fm.get("timestamp") or now()))
     save(scores_path(a.issue), rows)
-    print(f"recorded {a.phase}{'-' + a.label if a.label else ''}: {rows[-1]['total']}/{rows[-1]['max']} p0={rows[-1]['p0']} p1={rows[-1]['p1']}")
+    print(f"recorded {a.phase}{'-' + a.label if a.label else ''}: {rows[-1]['total']}/{rows[-1]['max']} "
+          f"p0={rows[-1]['p0']} p1={rows[-1]['p1']} p2={shown(p2)}")
+
+
+def cmd_leave(a):
+    if a.p2 < 1:
+        sys.exit("--p2 must be 1 or more")
+    if not a.reason.strip():
+        sys.exit("--reason is required: the same reason as under ## PM decisions")
+    rows = load(scores_path(a.issue), [])
+    if not [r for r in rows if r["phase"] == "final" and r.get("label") == a.label]:
+        sys.exit(f"no final of screen {a.label or '(no label)'} to leave a P2 on")
+    rows.append(dict(phase="leave", label=a.label, p2=a.p2, reason=a.reason.strip(), at=now()))
+    save(scores_path(a.issue), rows)
+    print(f"left {a.p2} P2 standing on the last final of {a.label or '(no label)'}")
+
+
+def shown(v):
+    return "–" if v is None else v
 
 
 def table(issue):
     rows = load(scores_path(issue), [])
-    out = ["| Point | Score | P0 | P1 | Target |", "|---|---|---|---|---|"]
+    out = ["| Point | Score | P0 | P1 | P2 | Target |", "|---|---|---|---|---|---|"]
     for r in rows:
         name = r["phase"] + (f"-{r['label']}" if r.get("label") else "")
-        out.append(f"| {name} | {r['total']}/{r['max']} | {r['p0']} | {r['p1']} | {r['target'][:60]} |")
+        if r["phase"] == "leave":
+            out.append(f"| {name} | | | | {r['p2']} left by the pm | {r['reason'][:60]} |")
+            continue
+        out.append(f"| {name} | {r['total']}/{r['max']} | {r['p0']} | {r['p1']} | {shown(r.get('p2'))} | {r['target'][:60]} |")
     return "\n".join(out), rows
+
+
+def open_findings(rows):
+    """Per screen (label): its last final and what of it holds the issue back. A leave counts only after that final."""
+    last, left = {}, {}
+    for r in rows:
+        if r["phase"] == "final":
+            last[r.get("label")] = r
+            left[r.get("label")] = 0
+        elif r["phase"] == "leave" and r.get("label") in last:
+            left[r.get("label")] += r["p2"]
+    out = []
+    for label, f in last.items():
+        p2 = max(0, (f.get("p2") or 0) - left[label])
+        if f["p0"] or f["p1"] or p2:
+            out.append(f"{label or '(no label)'}: P0={f['p0']} P1={f['p1']} P2={p2}")
+    return last, out
 
 
 def cmd_table(a):
@@ -70,20 +118,19 @@ def cmd_table(a):
 
 def cmd_check(a):
     t, rows = table(a.issue)
-    fin = [r for r in rows if r["phase"] == "final"]
-    if not fin:
+    last, held = open_findings(rows)
+    if not last:
         sys.exit("no final score yet")
-    f = fin[-1]
-    ok = not (f["p0"] or f["p1"])
-    if not ok:
-        print(f"final has P0={f['p0']} P1={f['p1']}: fix each before the issue is ready")
+    for line in held:
+        print(f"last final of {line}: fix each before the issue is ready")
     print(t)
-    sys.exit(0 if ok else 1)
+    sys.exit(1 if held else 0)
 
 
 p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 sp = p.add_subparsers(dest="cmd", required=True)
 r = sp.add_parser("record"); r.add_argument("issue"); r.add_argument("phase"); r.add_argument("snapshot"); r.add_argument("--label"); r.set_defaults(f=cmd_record)
+l = sp.add_parser("leave"); l.add_argument("issue"); l.add_argument("--p2", type=int, required=True); l.add_argument("--reason", required=True); l.add_argument("--label"); l.set_defaults(f=cmd_leave)
 t = sp.add_parser("table"); t.add_argument("issue"); t.set_defaults(f=cmd_table)
 c = sp.add_parser("check"); c.add_argument("issue"); c.set_defaults(f=cmd_check)
 a = p.parse_args()
