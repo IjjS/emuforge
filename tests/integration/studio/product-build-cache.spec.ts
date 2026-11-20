@@ -14,7 +14,22 @@ test('engine.product-build-runs-current-worktree-code', async ({ ctx }) => {
   test.setTimeout(3 * BUILD_TIMEOUT_MS + 120_000);
   const root = freshHome(ctx);
   const archive = path.join(root, 'context.tar');
-  execFileSync('git', ['archive', '-o', archive, 'HEAD', 'engine', 'studio', 'infra/emuforge'], { cwd: ctx.checkout });
+  // Snapshot the live checkout once so both builds include pending source and Dockerfile edits.
+  // Omit bulky host outputs before copying. Buildx applies the checkout's Dockerfile.dockerignore at build time.
+  execFileSync('tar', [
+    '-cf',
+    archive,
+    '-C',
+    ctx.checkout,
+    '--exclude=engine/target',
+    '--exclude=studio/node_modules',
+    '--exclude=studio/dist',
+    '--exclude=output',
+    '--exclude=.impeccable',
+    'engine',
+    'studio',
+    'infra/emuforge',
+  ]);
 
   const run = randomUUID();
   for (const revision of ['a', 'b']) {
