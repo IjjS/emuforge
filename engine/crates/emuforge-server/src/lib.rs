@@ -4,6 +4,7 @@
 #![forbid(unsafe_code)]
 
 mod aws_error;
+mod bound;
 mod browser;
 mod channel;
 mod config;
@@ -18,14 +19,12 @@ mod targets;
 use std::future::IntoFuture;
 use std::io;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use emuforge_core::{Limits, PROBE_DEADLINE, Replaced, Settings, Store, check, probe, relay};
-use tokio::net::TcpListener;
-
 pub use aws_error::{ErrorType, Protocol, render};
+pub use bound::Bound;
 pub use browser::{PREFLIGHT_MAX_AGE_SECS, SESSION_HEADER, StudioOrigin, is_engine_path};
 pub use channel::CHANNEL_PATH;
 pub use config::{
@@ -33,6 +32,7 @@ pub use config::{
     LISTEN_IP, MAX_IN_FLIGHT, allow_host_warning, engine_addr, listen_warning, seed_settings,
     settings_dir, studio_addr,
 };
+use emuforge_core::{Limits, PROBE_DEADLINE, Replaced, Settings, Store, check, probe, relay};
 pub use hosts::{AcceptedHost, AcceptedHosts, AllowedHost, AllowedHostError};
 pub use listener::{CLIENT_WRITE_IDLE, DRAIN_BOUND, Drain, IdleListener, MAX_DRAINING};
 pub use routes::{
@@ -152,31 +152,47 @@ pub async fn serve(
     home: PathBuf,
     studio: Option<StudioFiles>,
 ) -> Result<(), Error> {
+    let prepared = prepare(&config, &home)?;
+    let bound = Bound::bind(config, studio).await?;
+    run(prepared, bound, home).await
+}
+
+/// Serves what `bound` holds, as `serve` does once it has bound: the same steps before and after the bind. When
+/// the folder of its `Config` is refused, nothing is served and the listeners end with `bound`.
+pub async fn serve_bound(bound: Bound, home: PathBuf) -> Result<(), Error> {
+    let prepared = prepare(bound.config(), &home)?;
+    run(prepared, bound, home).await
+}
+
+/// What the step before the binds hands the step after them.
+struct Prepared {
+    dir: PathBuf,
+    session: Arc<SessionToken>,
+}
+
+/// The step of `serve` before the binds: the `Config` is checked, the settings folder resolved and refused at or
+/// under `~/.aws`, the session token created and the listen warning logged.
+fn prepare(config: &Config, home: &Path) -> Result<Prepared, Error> {
     config.validate()?;
     let cwd = std::env::current_dir().map_err(Error::WorkingDir)?;
-    let dir = settings_dir(&config, &home, &cwd)?;
+    let dir = settings_dir(config, home, &cwd)?;
     let session = Arc::new(SessionToken::generate()?);
-    let studio_origin = StudioOrigin::new(config.studio_port);
     if let Some(warning) = listen_warning(config.listen_address) {
         tracing::warn!(listen_address = %config.listen_address, "{warning}");
     }
+    Ok(Prepared { dir, session })
+}
+
+/// The step of `serve` after the binds: the host warnings, the settings step, and serving both listeners until
+/// either stops.
+async fn run(prepared: Prepared, bound: Bound, home: PathBuf) -> Result<(), Error> {
+    let Prepared { dir, session } = prepared;
+    let (config, engine_listener, studio) = bound.into_parts();
+    let studio_origin = StudioOrigin::new(config.studio_port);
     let allowed = config.allow_hosts.as_slice();
     let accepted_hosts = AcceptedHosts::new(config.studio_port, allowed.to_vec());
     let engine_at = engine_addr(&config);
-    let engine_listener = TcpListener::bind(engine_at)
-        .await
-        .map_err(|error| Error::engine_bind(engine_at, error))?;
-    // A failed bind here returns, and drops the engine's listener with it, before anything is served.
-    let studio = match studio {
-        Some(files) => {
-            let studio_at = studio_addr(&config);
-            let listener = TcpListener::bind(studio_at)
-                .await
-                .map_err(|error| Error::studio_bind(studio_at, error))?;
-            Some((listener, studio_at, files))
-        }
-        None => None,
-    };
+    let studio = studio.map(|(listener, files)| (listener, studio_addr(&config), files));
     if studio.is_some() {
         if let Some(warning) = allow_host_warning(allowed, config.studio_port) {
             tracing::warn!("{warning}");
