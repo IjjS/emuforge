@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: bug
 Issue-Source: plan
 Issue-Key: studio|sqs-checks|list-h1-matched-exactly-races-the-list-read
-Issue-Check-Ids:
+Issue-Check-Ids: studio.sqs-queues-made-outside-are-listed-with-counts studio.sqs-delete-dead-letter-queue-from-its-page
 Issue-Commit: ec8a9a9ee055e5466df8afcdec0b666c0c7ff784
 
 # Find the queue list's h1 with its counter in the SQS checks
