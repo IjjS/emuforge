@@ -1,6 +1,9 @@
+import type { StatusIndicatorProps } from '@cloudscape-design/components/status-indicator';
+
 import { creationDateText } from '../../components/format-date';
+import type { RevisionContainer } from './definition-api';
 import { NONE } from './format';
-import type { Task } from './task-api';
+import type { Task, TaskContainer } from './task-api';
 
 // How the task screens read and write a task's values (issue 575, R4, S5 and the tasks table): its id from its ARN,
 // its revision from its definition's ARN, the service of its group, and each value of S5's summary as text, an
@@ -95,4 +98,48 @@ export function taskTexts(task: Task): TaskTexts {
 /** A container's exit code as text: 0 as "0", none as "-". */
 export function exitCodeText(code: number | undefined): string {
   return code === undefined ? NONE : String(code);
+}
+
+/** How S5 shows a task's last status (critique final r1): Cloudscape's `StatusIndicator` type of each ECS status. */
+export function lastStatusType(status: string | undefined): StatusIndicatorProps.Type {
+  switch (status) {
+    case 'RUNNING':
+      return 'success';
+    case 'STOPPED':
+      return 'stopped';
+    case 'PROVISIONING':
+    case 'PENDING':
+    case 'ACTIVATING':
+      return 'pending';
+    case 'DEACTIVATING':
+    case 'STOPPING':
+    case 'DEPROVISIONING':
+      return 'in-progress';
+    default:
+      return 'info';
+  }
+}
+
+/**
+ * The essential containers of a task (critique final r1), whose exit codes tell how a stopped task ended. A task's
+ * own answer does not say which container is essential, its revision does: a task of one container needs no revision;
+ * of several, those its revision does not mark `essential: false`. None is known while the revision is not read.
+ */
+export function essentialContainers(
+  task: Task,
+  revision: readonly Pick<RevisionContainer, 'name' | 'essential'>[] | undefined,
+): TaskContainer[] | undefined {
+  if (task.containers.length === 1) {
+    return task.containers;
+  }
+  if (revision === undefined) {
+    return undefined;
+  }
+  const essential = new Set(revision.filter((container) => container.essential !== false).map((c) => c.name));
+  return task.containers.filter((container) => essential.has(container.name));
+}
+
+/** Whether a task needs its revision read to know its essential containers: stopped, of several containers. */
+export function needsRevision(task: Task): boolean {
+  return task.lastStatus === 'STOPPED' && task.containers.length > 1 && task.definition !== undefined;
 }

@@ -81,6 +81,16 @@ describe('the tasks table', () => {
     expect(row?.textContent).toContain('UserInitiated');
   });
 
+  it('the Group column keeps a group whole: a min width of 28ch', async () => {
+    vi.mocked(api.listTasks).mockResolvedValue({ tasks: [task('abc')] });
+    const wrapper = open();
+    await screen.findByRole('link', { name: 'abc' });
+    const group = (wrapper.findTable()?.findColumnHeaders() ?? []).find(
+      (header) => header.getElement().textContent === 'Group',
+    );
+    expect(group?.getElement().style.minWidth).toBe('28ch');
+  });
+
   it('a service\'s table → no "Group" column, and the list is read by the service', async () => {
     vi.mocked(api.listTasks).mockResolvedValue({ tasks: [task('abc')] });
     const wrapper = open({ service: 'api' });

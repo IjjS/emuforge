@@ -11,6 +11,7 @@ import type { AreaConnection } from '../../../components/emulator-line';
 import { usePageFlash } from '../../../components/page-flash';
 import AwsArea from '../../../index';
 import * as api from '../api';
+import * as definitions from '../definition-api';
 import * as logs from '../logs-api';
 import * as tasks from '../task-api';
 
@@ -25,6 +26,10 @@ vi.mock('../api', async (importOriginal) => {
 vi.mock('../task-api', async (importOriginal) => {
   const real = await importOriginal<typeof import('../task-api')>();
   return { ...real, getTask: vi.fn(), stopTask: vi.fn(), listTasks: vi.fn() };
+});
+vi.mock('../definition-api', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../definition-api')>();
+  return { ...real, getRevision: vi.fn() };
 });
 vi.mock('../logs-api', async (importOriginal) => {
   const real = await importOriginal<typeof import('../logs-api')>();
@@ -179,7 +184,34 @@ function task(changes: Partial<tasks.Task> = {}): tasks.Task {
 
 const found = (value: tasks.Task): tasks.TaskRead => ({ found: true, task: value });
 
+/** The task's revision web:3: "app" essential, "side" not. */
+const REVISION: definitions.Revision = {
+  family: 'web',
+  revision: 3,
+  status: 'ACTIVE',
+  compatibilities: ['FARGATE'],
+  containers: [
+    { name: 'app', essential: true, ports: [] },
+    { name: 'side', essential: false, ports: [] },
+  ],
+  answer: {},
+};
+
+const STOPPED_TASK = {
+  lastStatus: 'STOPPED',
+  desiredStatus: 'STOPPED',
+  stopCode: 'EssentialContainerExited',
+  stoppedReason: 'Essential container in task exited',
+  containers: [
+    { name: 'app', image: 'busybox:1', status: 'STOPPED', exitCode: 3 },
+    { name: 'side', image: 'busybox:1', status: 'STOPPED', exitCode: 1 },
+  ],
+} satisfies Partial<tasks.Task>;
+
 const PAGE = createWrapper(document.body);
+
+/** S5's own Alert of a stopped task, not the area's notice. */
+const outcome = () => PAGE.findAllAlerts().find((alert) => text(alert.getElement()).startsWith('Task stopped'));
 const text = (element: Element | null | undefined) => (element?.textContent ?? '').replace(/\s+/g, ' ').trim();
 
 function pairs(): Record<string, string> {
@@ -219,6 +251,7 @@ beforeEach(() => {
   connection.value = { result: connectedResult(), engineOrigin: ENGINE };
   vi.mocked(api.getCluster).mockResolvedValue({ found: true, cluster: CLUSTER });
   vi.mocked(tasks.getTask).mockImplementation(() => Promise.resolve(found(task({ lastStatus: 'STOPPED' }))));
+  vi.mocked(definitions.getRevision).mockResolvedValue({ found: true, revision: REVISION });
   vi.mocked(logs.getContainerLogs).mockResolvedValue([
     { container: 'app', log: { group: '/ecs/web', stream: 'web/app/abc' } },
     { container: 'side' },
@@ -492,5 +525,82 @@ describe('S5, a task', () => {
     expect(screen.getByText('These services and tasks are in your local emulator')).toBeInTheDocument();
     fireEvent.click(action('Retry'));
     await details();
+  });
+
+  it('a STOPPED task → an Alert above the summary with its stop code, stopped reason and the essential exit code', async () => {
+    vi.mocked(tasks.getTask).mockImplementation(() => Promise.resolve(found(task(STOPPED_TASK))));
+    open();
+    const summary = await details();
+    const alert = await waitFor(() => {
+      const found = outcome();
+      expect(text(found?.getElement())).toContain('Exit code of essential container app: 3');
+      return found;
+    });
+    const alertText = text(alert?.getElement());
+    expect(alertText).toContain('Task stopped: EssentialContainerExited');
+    expect(alertText).toContain('Essential container in task exited');
+    expect(alertText).not.toContain('side');
+    expect(alert?.getElement().querySelector('[class*="type-error"]')).not.toBeNull();
+    expect(definitions.getRevision).toHaveBeenCalledWith(ENGINE, 'web', 3, expect.anything());
+    expect((alert?.getElement().compareDocumentPosition(summary) ?? 0) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The summary keeps every field, with the same labels and values.
+    expect(pairs()).toMatchObject({
+      'Last status': 'Stopped',
+      'Desired status': 'Stopped',
+      'Stop code': 'EssentialContainerExited',
+      'Stopped reason': 'Essential container in task exited',
+      'Private IP': '10.0.0.7',
+      Subnet: 'subnet-1',
+      'Network interface': 'eni-1',
+    });
+    const status = PAGE.findKeyValuePairs()?.findItems()[1]?.findValue()?.findStatusIndicator();
+    expect(status?.getElement().className).toMatch(/status-stopped/);
+  });
+
+  it('a STOPPED task of one container whose exit code is 0 → an info Alert, and no revision read', async () => {
+    vi.mocked(tasks.getTask).mockImplementation(() =>
+      Promise.resolve(found(task({ ...STOPPED_TASK, containers: [{ name: 'app', status: 'STOPPED', exitCode: 0 }] }))),
+    );
+    open();
+    await details();
+    const alert = outcome();
+    expect(text(alert?.getElement())).toContain('Exit code of essential container app: 0');
+    expect(alert?.getElement().querySelector('[class*="type-info"]')).not.toBeNull();
+    expect(definitions.getRevision).not.toHaveBeenCalled();
+  });
+
+  it('a running task → no Alert, Last status a success StatusIndicator, and no revision read', async () => {
+    vi.mocked(tasks.getTask).mockImplementation(() => Promise.resolve(found(task())));
+    open();
+    await details();
+    expect(outcome()).toBeUndefined();
+    const status = PAGE.findKeyValuePairs()?.findItems()[1]?.findValue()?.findStatusIndicator();
+    expect(status?.getElement().className).toMatch(/status-success/);
+    expect(text(status?.getElement())).toBe('Running');
+    expect(definitions.getRevision).not.toHaveBeenCalled();
+  });
+
+  it('Subnet, Network interface and Private IP each have a copy control', async () => {
+    vi.mocked(tasks.getTask).mockImplementation(() => Promise.resolve(found(task())));
+    open();
+    await details();
+    for (const label of ['Subnet', 'Network interface', 'Private IP']) {
+      expect(screen.getByRole('button', { name: `Copy ${label}` })).toBeInTheDocument();
+    }
+  });
+
+  it("the containers table keeps a container's name and image whole: a min width on Name and on Image", async () => {
+    vi.mocked(tasks.getTask).mockImplementation(() => Promise.resolve(found(task())));
+    open();
+    await details();
+    const table = PAGE.findAllTables()[0];
+    const widths = Object.fromEntries(
+      (table?.findColumnHeaders() ?? []).map((header) => [
+        text(header.getElement()),
+        header.getElement().style.minWidth,
+      ]),
+    );
+    expect(widths['Name']).toBe('28ch');
+    expect(widths['Image']).toBe('32ch');
   });
 });

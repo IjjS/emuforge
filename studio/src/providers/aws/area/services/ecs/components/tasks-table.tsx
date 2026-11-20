@@ -124,6 +124,7 @@ export function TasksTable({ connection, cluster, service, runHref, onFollowedRe
           {
             id: 'group',
             header: 'Group',
+            minWidth: NAME_MIN_WIDTH,
             cell: (task: Task) => <ValueText kind="name" value={task.group} none={NONE} />,
           },
         ]
