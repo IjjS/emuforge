@@ -278,4 +278,22 @@ describe('the "VPC" field', () => {
     expect(unnamed).toContain('vpc-d');
     expect(unnamed).toContain('172.31.0.0/16');
   });
+
+  it('without the marks passed → the options are as before (S5, S8): ID, name, block, "default VPC"', async () => {
+    vi.mocked(network.listVpcChoices).mockResolvedValue({ choices: [VPC_1, VPC_D] });
+    open();
+    select().openDropdown();
+    await waitFor(() => {
+      expect(shown()).toEqual(['vpc-1', 'vpc-d']);
+    });
+    const option = (id: string) => text(select().findDropdown().findOptionByValue(id)?.getElement());
+    for (const part of ['vpc-1', 'app', '10.0.0.0/16']) {
+      expect(option('vpc-1')).toContain(part);
+    }
+    for (const part of ['vpc-d', '172.31.0.0/16', 'default VPC']) {
+      expect(option('vpc-d')).toContain(part);
+    }
+    expect(option('vpc-1')).not.toContain('Has ');
+    expect(option('vpc-d')).not.toContain('Has ');
+  });
 });

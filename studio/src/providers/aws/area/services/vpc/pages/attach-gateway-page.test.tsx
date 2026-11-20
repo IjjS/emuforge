@@ -539,6 +539,134 @@ describe('Attach internet gateway', () => {
     expect(addressOf(plain)).toBe(LIST_PATH);
   });
 
+  const optionText = (id: string) => text(vpcSelect().findDropdown().findOptionByValue(id)?.getElement());
+  const optionDisabled = (id: string) =>
+    vpcSelect().findDropdown().findOptionByValue(id)?.getElement().getAttribute('aria-disabled') === 'true';
+
+  async function openChoices() {
+    const select = vpcSelect();
+    select.openDropdown();
+    await waitFor(() => {
+      expect(select.findDropdown().findOptionByValue('vpc-x')).not.toBeNull();
+    });
+  }
+
+  it('the gateways read with one attached to one of two VPCs → that VPC\'s option tagged "Has {id}", not disabled; the other untagged', async () => {
+    open();
+    await formShown();
+    await waitFor(() => {
+      expect(api.listInternetGateways).toHaveBeenCalled();
+    });
+    expect(vi.mocked(api.listInternetGateways).mock.calls[0]?.slice(0, 3)).toEqual([ENGINE, {}, undefined]);
+    await openChoices();
+    await waitFor(() => {
+      expect(optionText('vpc-x')).toContain('Has igw-1');
+    });
+    expect(optionDisabled('vpc-x')).toBe(false);
+    expect(optionText('vpc-d')).not.toContain('Has ');
+  });
+
+  it("the gateways read in two pages, the attachment on the second → the VPC's option tagged (the read goes to its end)", async () => {
+    vi.mocked(api.listInternetGateways).mockImplementation((_endpoint, _filters, token) =>
+      Promise.resolve(
+        token === undefined
+          ? { items: [gateway('igw-2', 'spare')], nextToken: 'tok-g' }
+          : { items: [gateway('igw-1', 'edge', 'vpc-x')] },
+      ),
+    );
+    open();
+    await formShown();
+    await openChoices();
+    await waitFor(() => {
+      expect(optionText('vpc-x')).toContain('Has igw-1');
+    });
+    expect(vi.mocked(api.listInternetGateways).mock.calls.map((call) => call[2])).toEqual([undefined, 'tok-g']);
+  });
+
+  it('a marked VPC chosen, "Attach" → sent with it; the emulator\'s refusal shown as it came, the form kept', async () => {
+    const message = 'Network vpc-x already has an internet gateway attached';
+    vi.mocked(changes.attachInternetGateway).mockRejectedValue(
+      new RequestError({
+        kind: 'other',
+        operation: 'AttachInternetGateway',
+        code: 'Resource.AlreadyAssociated',
+        message,
+      }),
+    );
+    const router = open();
+    await formShown();
+    await openChoices();
+    await waitFor(() => {
+      expect(optionText('vpc-x')).toContain('Has igw-1');
+    });
+    vpcSelect().selectOptionByValue('vpc-x');
+    submit();
+    await waitFor(() => {
+      expect(alertText()).toContain('Resource.AlreadyAssociated');
+    });
+    expect(alertText()).toContain(message);
+    expect(vi.mocked(changes.attachInternetGateway).mock.calls[0]?.slice(0, 3)).toEqual([ENGINE, 'igw-1', 'vpc-x']);
+    expect(router.state.location.pathname).toBe(ATTACH_PATH);
+    expect(text(vpcSelect().findTrigger().getElement())).toContain('vpc-x');
+  });
+
+  const unanswered: [string, () => void, RegExp | undefined][] = [
+    [
+      'not yet answered',
+      () => {
+        vi.mocked(api.listInternetGateways).mockImplementation(() => new Promise(() => undefined));
+      },
+      undefined,
+    ],
+    ...(
+      [
+        [{ kind: 'not-implemented', operation: 'DescribeInternetGateways' }, /Not implemented by the emulator/],
+        [{ kind: 'access-denied', operation: 'DescribeInternetGateways', message: 'no' }, /Access denied/],
+        [
+          { kind: 'emulator-did-not-answer', operation: 'DescribeInternetGateways', message: 'timed out' },
+          /The emulator did not answer/,
+        ],
+        [{ kind: 'engine-did-not-answer', operation: 'DescribeInternetGateways' }, /engine.*did not answer/],
+        [
+          { kind: 'other', operation: 'DescribeInternetGateways', code: 'InternalError', message: 'broke' },
+          /InternalError/,
+        ],
+      ] as [RequestFailure, RegExp][]
+    ).map(([failure, words]): [string, () => void, RegExp] => [
+      `failed, ${failure.kind}`,
+      () => {
+        vi.mocked(api.listInternetGateways).mockRejectedValue(new RequestError(failure));
+      },
+      words,
+    ]),
+  ];
+  for (const [kind, arrange, words] of unanswered) {
+    it(`the gateways read ${kind} → the options untagged, no failure shown for it, a VPC chosen and "Attach" sent as before`, async () => {
+      arrange();
+      const router = open();
+      await formShown();
+      await waitFor(() => {
+        expect(api.listInternetGateways).toHaveBeenCalled();
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      await openChoices();
+      expect(optionText('vpc-x')).not.toContain('Has ');
+      expect(optionText('vpc-d')).not.toContain('Has ');
+      if (words !== undefined) {
+        expect(text(document.querySelector('main') ?? document.body)).not.toMatch(words);
+      }
+      expect(alertText()).toBe('');
+      vpcSelect().selectOptionByValue('vpc-x');
+      submit();
+      await waitFor(() => {
+        expect(router.state.location.pathname).toBe(LIST_PATH);
+      });
+      expect(vi.mocked(changes.attachInternetGateway).mock.calls[0]?.slice(0, 3)).toEqual([ENGINE, 'igw-1', 'vpc-x']);
+    });
+  }
+
   it('the page names its resources "internet gateways" to the frame', async () => {
     open();
     await formShown();
@@ -588,23 +716,33 @@ describe('Attach internet gateway', () => {
         await router.navigate(ATTACH_PATH);
       });
       await formShown();
+      // S14's own read of which VPCs hold a gateway is the second call; it answers none.
+      await waitFor(() => {
+        expect(reads).toHaveLength(2);
+      });
+      act(() => {
+        reads[1]?.({ items: [] });
+      });
       await chooseVpc('vpc-x');
       submit();
       await waitFor(() => {
         expect(router.state.location.pathname).toBe(LIST_PATH);
       });
+      // The attach reads the gateways again: S14's read of the VPCs that hold one, then S12's list, both answered newer.
       await waitFor(() => {
-        expect(reads).toHaveLength(2);
+        expect(reads).toHaveLength(4);
       });
       const older = { items: [gateway('igw-1', 'older')] };
       const newer = { items: [gateway('igw-1', 'newer', 'vpc-x')] };
       act(() => {
         if (order === 'the newest first') {
-          reads[1]?.(newer);
+          reads[2]?.(newer);
+          reads[3]?.(newer);
           reads[0]?.(older);
         } else {
           reads[0]?.(older);
-          reads[1]?.(newer);
+          reads[2]?.(newer);
+          reads[3]?.(newer);
         }
       });
       await waitFor(() => {

@@ -4,6 +4,7 @@ import { useEffect, useRef, type Ref } from 'react';
 
 import { ChoiceSelect } from '../../../components/choice-select';
 import type { AreaConnection } from '../../../components/emulator-line';
+import type { ChoiceSource } from '../../../components/use-paged-choices';
 import { nameOf } from '../../../lib/ec2-client';
 import type { VpcChoice } from '../../../lib/ec2-network-choices';
 import type { Vpc } from '../api';
@@ -31,6 +32,11 @@ export interface VpcFieldProps {
   /** The form's message for the field ("Choose a VPC."). */
   errorText?: string | undefined;
   selectRef?: Ref<SelectProps.Ref> | undefined;
+  /**
+   * A tag added to the option of each VPC it names, by the VPC's ID ("Has igw-…" on S14). None given, the options are
+   * as they always were (S5, S8).
+   */
+  marks?: ReadonlyMap<string, string> | undefined;
 }
 
 /** A VPC as a choice of the field. */
@@ -44,6 +50,21 @@ function choiceOf(vpc: Vpc): VpcChoice {
   };
 }
 
+/** `source` with the tag of `marks` added to the option of each VPC it names. */
+function marked(source: ChoiceSource<VpcChoice>, marks: ReadonlyMap<string, string> | undefined) {
+  if (marks === undefined || marks.size === 0) {
+    return source;
+  }
+  return {
+    ...source,
+    optionOf: (vpc: VpcChoice) => {
+      const option = source.optionOf(vpc);
+      const mark = marks.get(vpc.id);
+      return mark === undefined ? option : { ...option, tags: [...(option.tags ?? []), mark] };
+    },
+  };
+}
+
 type PresetState = 'reading' | 'chosen' | 'missing' | 'failed';
 
 export function VpcField({
@@ -54,6 +75,7 @@ export function VpcField({
   onPresetSettled,
   errorText,
   selectRef,
+  marks,
 }: VpcFieldProps) {
   const read = useVpc(connection.engineOrigin, preset ?? '', preset !== undefined);
   const told = useRef(false);
@@ -108,7 +130,7 @@ export function VpcField({
         />
       ) : (
         <ChoiceSelect<VpcChoice>
-          source={vpcChoices(connection.engineOrigin)}
+          source={marked(vpcChoices(connection.engineOrigin), marks)}
           connection={connection}
           things="VPCs"
           placeholder="Choose a VPC"

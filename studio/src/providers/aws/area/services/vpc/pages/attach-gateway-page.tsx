@@ -8,7 +8,7 @@ import Link from '@cloudscape-design/components/link';
 import type { SelectProps } from '@cloudscape-design/components/select';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 
 import { DiscardDialog, type DiscardAnswer } from '../../../components/discard-dialog';
@@ -31,7 +31,7 @@ import {
 } from '../format';
 import { GATEWAY_CHANGE_OPERATIONS } from '../gateway-changes-api';
 import { useAttachGateway } from '../gateway-changes';
-import { useInternetGateway } from '../queries';
+import { useGatewayAttachments, useInternetGateway } from '../queries';
 
 // S14, "Attach internet gateway" (issue 574, design task 3): the gateway of the address, read by the filter
 // `internet-gateway-id`, and the VPC, chosen a page of `DescribeVpcs` at a time when the field opens. One
@@ -81,6 +81,15 @@ export function AttachGatewayPage({ connection, params }: ScreenPageProps) {
   const attach = useAttachGateway(engineOrigin);
   const reading = useInternetGateway(engineOrigin, id);
   const { value: read, failure: readFailure, refresh } = reading;
+  // Which VPCs hold a gateway, marked in "VPC" with "Has {id}"; unmarked while read or failed, and its failure unshown.
+  const attachments = useGatewayAttachments(engineOrigin).value;
+  const marks = useMemo(
+    () =>
+      attachments === undefined
+        ? undefined
+        : new Map([...attachments].map(([vpcId, gatewayId]) => [vpcId, `Has ${gatewayId}`])),
+    [attachments],
+  );
   // The VPC of `?vpc=`, chosen at start by the one rule of `?vpc=` (S5, S8) when the emulator holds it.
   const [query] = useSearchParams();
   const [preset] = useState(() => {
@@ -277,6 +286,7 @@ export function AttachGatewayPage({ connection, params }: ScreenPageProps) {
                 onChange={handleVpc}
                 preset={preset}
                 onPresetSettled={handlePresetSettled}
+                marks={marks}
                 errorText={tried && vpc === undefined ? CHOOSE_A_VPC : undefined}
                 selectRef={vpcRef}
               />
