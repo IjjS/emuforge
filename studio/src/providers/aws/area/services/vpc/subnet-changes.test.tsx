@@ -33,17 +33,15 @@ function wrapper({ children }: { children: ReactNode }) {
 const signal = () => new AbortController().signal;
 const refusal = new RequestError({ kind: 'other', operation: 'X', code: 'DependencyViolation', message: 'in use' });
 
-function asked(spy: { mock: { calls: [{ queryKey?: readonly unknown[] } | undefined, ...unknown[]][] } }) {
-  return spy.mock.calls.map(([filters]) => key(filters?.queryKey)).sort();
-}
-
 describe("a subnet's changes", () => {
   it('after a create succeeds → the subnet lists, that subnet and the subnet choices are asked again', async () => {
     vi.mocked(api.createSubnet).mockResolvedValue('subnet-1');
     const spy = vi.spyOn(client, 'invalidateQueries');
     const create = renderHook(() => useCreateSubnet(ENDPOINT), { wrapper }).result.current;
     expect(await create({ vpcId: 'vpc-1', cidr: '10.0.1.0/24' }, signal())).toBe('subnet-1');
-    expect(asked(spy)).toEqual(sorted([VPC_KEYS.subnets(), VPC_KEYS.subnet('subnet-1'), VPC_KEYS.choices('subnets')]));
+    expect(spy.mock.calls.map(([filters]) => key(filters?.queryKey)).sort()).toEqual(
+      sorted([VPC_KEYS.subnets(), VPC_KEYS.subnet('subnet-1'), VPC_KEYS.choices('subnets')]),
+    );
   });
 
   it('after a change of the public addresses succeeds → that subnet and the subnet lists', async () => {
@@ -52,7 +50,9 @@ describe("a subnet's changes", () => {
     const change = renderHook(() => useSetPublicAddresses(ENDPOINT), { wrapper }).result.current;
     await change('subnet-1', true, signal());
     expect(vi.mocked(api.setPublicAddresses).mock.calls[0]?.slice(0, 3)).toEqual([ENDPOINT, 'subnet-1', true]);
-    expect(asked(spy)).toEqual(sorted([VPC_KEYS.subnet('subnet-1'), VPC_KEYS.subnets()]));
+    expect(spy.mock.calls.map(([filters]) => key(filters?.queryKey)).sort()).toEqual(
+      sorted([VPC_KEYS.subnet('subnet-1'), VPC_KEYS.subnets()]),
+    );
   });
 
   it('after a delete succeeds → the subnet lists, that subnet, the subnet choices and the route tables', async () => {
@@ -61,7 +61,7 @@ describe("a subnet's changes", () => {
     const remove = renderHook(() => useDeleteSubnet(ENDPOINT), { wrapper }).result.current;
     await remove('subnet-1', signal());
     expect(vi.mocked(api.deleteSubnet).mock.calls[0]?.slice(0, 2)).toEqual([ENDPOINT, 'subnet-1']);
-    expect(asked(spy)).toEqual(
+    expect(spy.mock.calls.map(([filters]) => key(filters?.queryKey)).sort()).toEqual(
       sorted([VPC_KEYS.subnets(), VPC_KEYS.subnet('subnet-1'), VPC_KEYS.choices('subnets'), VPC_KEYS.routeTables()]),
     );
   });
