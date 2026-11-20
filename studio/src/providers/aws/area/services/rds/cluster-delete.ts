@@ -14,7 +14,7 @@ export interface ClusterDeleteSubject {
 
 export const CLUSTER_REASONS = {
   selectOne: 'Select one DB cluster.',
-  members: "Delete the cluster's DB instances first.",
+  members: "Delete the cluster's DB instances first, each from its own page.",
   protected: 'Deletion protection is on.',
   deleting: 'This DB cluster is already being deleted.',
 } as const;

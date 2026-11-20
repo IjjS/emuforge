@@ -348,7 +348,7 @@ describe('the DB clusters list', () => {
     expect(isDisabled(action('Delete'))).toBe(true);
     expect(reasonOf(action('Delete'))).toBe('Select one DB cluster.');
     for (const [id, reason] of [
-      ['with-member', "Delete the cluster's DB instances first."],
+      ['with-member', "Delete the cluster's DB instances first, each from its own page."],
       ['kept', 'Deletion protection is on.'],
       ['going', 'This DB cluster is already being deleted.'],
     ] as const) {
