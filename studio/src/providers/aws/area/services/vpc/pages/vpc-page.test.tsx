@@ -436,6 +436,45 @@ describe("a VPC's page", () => {
     });
   });
 
+  it('"Subnets" and "Route tables" each show a counter of the rows read; with a further page "(50+)"; none while read or failed', async () => {
+    const counterOf = (title: string) =>
+      section(title).findHeaderSlot()?.findHeader()?.findCounter()?.getElement().textContent?.trim();
+    let answerSubnets: (page: api.Page<api.Subnet>) => void = () => undefined;
+    vi.mocked(api.listSubnets).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          answerSubnets = resolve;
+        }),
+    );
+    vi.mocked(api.listRouteTables).mockRejectedValue(failed('DescribeRouteTables'));
+    open();
+    await loaded();
+    await waitFor(() => {
+      expect(text(section('Route tables').findEmptySlot()?.getElement())).toContain('DescribeRouteTables broke');
+    });
+    expect(text(section('Subnets').getElement())).toContain('Loading subnets');
+    expect(counterOf('Subnets')).toBeUndefined();
+    expect(counterOf('Route tables')).toBeUndefined();
+    act(() => {
+      answerSubnets({ items: [subnet('subnet-1', 'web'), subnet('subnet-2', undefined)] });
+    });
+    await waitFor(() => {
+      expect(counterOf('Subnets')).toBe('(2)');
+    });
+    vi.mocked(api.listRouteTables).mockResolvedValue({
+      items: Array.from({ length: 50 }, (_, index) => routeTable(`rtb-${String(index)}`, undefined, index === 0, 0)),
+      nextToken: 'tok-r',
+    });
+    fireEvent.click(
+      within(section('Route tables').findEmptySlot()?.getElement() as HTMLElement).getByRole('button', {
+        name: 'Retry',
+      }),
+    );
+    await waitFor(() => {
+      expect(counterOf('Route tables')).toBe('(50+)');
+    });
+  });
+
   it('"Internet gateway": the attached gateway\'s ID and name with "View internet gateways"; none → the sentence', async () => {
     vi.mocked(api.listInternetGateways).mockResolvedValue({
       items: [{ id: 'igw-1', vpcId: 'vpc-a', tags: [{ key: 'Name', value: 'edge' }] }],

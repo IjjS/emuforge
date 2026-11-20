@@ -145,6 +145,14 @@ function Details({ vpc, dnsSupport, dnsHostnames, connection }: DetailsProps) {
   );
 }
 
+/** A section's counter: the page's rows, with a plus while a next page follows ("(50+)"); none while read or failed. */
+function counterOf(listing: TokenListing<unknown>): { counter?: string } {
+  if (listing.failure !== undefined || listing.items === undefined) {
+    return {};
+  }
+  return { counter: `(${String(listing.items.length)}${listing.openEnd ? '+' : ''})` };
+}
+
 interface SectionPagination {
   listing: TokenListing<unknown>;
   of: string;
@@ -243,7 +251,11 @@ function Subnets({ vpcId, listing, connection }: SectionProps<Subnet>) {
       loading={failure === undefined && items === undefined}
       loadingText="Loading subnets"
       empty={empty}
-      header={<Header actions={create}>Subnets</Header>}
+      header={
+        <Header actions={create} {...counterOf(listing)}>
+          Subnets
+        </Header>
+      }
       pagination={<SectionPages listing={listing} of="subnets" />}
     />
   );
@@ -305,7 +317,11 @@ function RouteTables({ vpcId, listing, connection }: SectionProps<RouteTable>) {
       loading={failure === undefined && items === undefined}
       loadingText="Loading route tables"
       empty={empty}
-      header={<Header actions={create}>Route tables</Header>}
+      header={
+        <Header actions={create} {...counterOf(listing)}>
+          Route tables
+        </Header>
+      }
       pagination={<SectionPages listing={listing} of="route tables" />}
     />
   );
