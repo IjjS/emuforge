@@ -40,15 +40,13 @@ import { ACTION_LABELS, ACTION_RESULTS, actionTarget, type ActionTarget, type In
 // `DescribeDBInstances` at a time on the API's markers, in the API's order, a cluster's members among them. For the
 // one selected row, the instance's actions; this page holds their request and shows their answer.
 
-/** A name's room, narrowed so that the table fits at 1280 with Port whole; a longer name breaks inside its cell (critique final r2 P2). */
-const NAME_MIN_WIDTH = '21ch';
+/** A name's room for 24 characters (aws-area.md, long values, entry 4); the table scrolls inside itself when it is wider. */
+const NAME_MIN_WIDTH = '28ch';
 /** A status's icon, its gap and its word on one line, up to "rebooting" and "modifying" (critique final P2 2). */
 const STATUS_MIN_WIDTH = '16ch';
 /** A class as the API names it on one line, up to "db.r6g.xlarge" and its like (critique final P2 1). */
 const CLASS_MIN_WIDTH = '14ch';
-/** A DB cluster's identifier, short in practice; a longer one breaks inside its cell (critique final r2 P2). */
-const CLUSTER_MIN_WIDTH = '10ch';
-/** A creation time on three lines at most, so that the table fits at 1280 with Port whole (critique final r2 P2). */
+/** A creation time's room; the table scrolls inside itself past it at 1280 (critique final r3 P2). */
 const CREATED_MIN_WIDTH = '14ch';
 
 type BodyState =
@@ -169,15 +167,16 @@ export function InstanceListPage({ connection }: { connection: AreaConnection })
       cell: (row) => <ValueText kind="fixed" value={engineText(row.engine, row.engineVersion)} none={NONE} />,
     },
     {
-      id: 'class',
-      header: 'Class',
-      minWidth: CLASS_MIN_WIDTH,
-      cell: (row) => <ValueText kind="fixed" value={row.instanceClass} none={NONE} />,
+      id: 'port',
+      header: 'Port',
+      cell: (row) => (
+        <ValueText kind="fixed" value={row.port === undefined ? undefined : String(row.port)} none={NONE} />
+      ),
     },
     {
       id: 'cluster',
       header: 'DB cluster',
-      minWidth: CLUSTER_MIN_WIDTH,
+      minWidth: NAME_MIN_WIDTH,
       cell: (row) =>
         row.clusterId === undefined ? (
           NONE
@@ -188,11 +187,10 @@ export function InstanceListPage({ connection }: { connection: AreaConnection })
         ),
     },
     {
-      id: 'port',
-      header: 'Port',
-      cell: (row) => (
-        <ValueText kind="fixed" value={row.port === undefined ? undefined : String(row.port)} none={NONE} />
-      ),
+      id: 'class',
+      header: 'Class',
+      minWidth: CLASS_MIN_WIDTH,
+      cell: (row) => <ValueText kind="fixed" value={row.instanceClass} none={NONE} />,
     },
     {
       id: 'created',
@@ -241,6 +239,7 @@ export function InstanceListPage({ connection }: { connection: AreaConnection })
           itemSelectionLabel: (_, row) => row.id,
         }}
         columnDefinitions={columns}
+        stickyColumns={{ first: 1 }}
         wrapLines
         loading={state.kind === 'loading'}
         loadingText="Loading DB instances"
