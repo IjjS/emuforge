@@ -330,6 +330,7 @@ export function InstancePage({ connection, params }: ScreenPageProps) {
                   <InstanceActions
                     instance={{ id: instance.id, state: instance.state, ...(name === undefined ? {} : { name }) }}
                     connection={connection}
+                    protectionOn={protection.failure === undefined && protection.value === true}
                   />
                 )}
               </SpaceBetween>

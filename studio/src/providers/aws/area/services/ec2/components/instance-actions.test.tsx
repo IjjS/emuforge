@@ -21,24 +21,28 @@ const CONNECTION: AreaConnection = { result: undefined, engineOrigin: 'http://12
 
 let shown: FlashResult[];
 
-function Harness({ instance }: { instance: ActionTarget | undefined }) {
+function Harness({ instance, protectionOn }: { instance: ActionTarget | undefined; protectionOn?: boolean }) {
   const root = useRef<HTMLDivElement>(null);
   return (
     <div ref={root}>
       <AreaRootContext value={root}>
         <PageFlashContext value={{ show: (result) => shown.push(result), handOver: () => undefined }}>
-          <InstanceActions instance={instance} connection={CONNECTION} />
+          <InstanceActions
+            instance={instance}
+            connection={CONNECTION}
+            {...(protectionOn === undefined ? {} : { protectionOn })}
+          />
         </PageFlashContext>
       </AreaRootContext>
     </div>
   );
 }
 
-function renderActions(instance: ActionTarget | undefined) {
+function renderActions(instance: ActionTarget | undefined, protectionOn?: boolean) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <Harness instance={instance} />
+      <Harness instance={instance} {...(protectionOn === undefined ? {} : { protectionOn })} />
     </QueryClientProvider>,
   );
 }
@@ -212,6 +216,24 @@ describe("an instance's actions", () => {
       expect(shown[0]).toEqual([{ type: 'success', content: result }]);
     });
   }
+
+  it('termination protection on → "Terminate" unavailable with "Termination protection is on."; off or not given → by the state alone', () => {
+    for (const state of ['running', 'stopped']) {
+      const on = renderActions({ id: 'i-1', state }, true);
+      expect(availabilities().Terminate).toBe('Termination protection is on.');
+      on.unmount();
+      for (const protectionOn of [false, undefined]) {
+        const off = renderActions({ id: 'i-1', state }, protectionOn);
+        expect(availabilities().Terminate).toBe('available');
+        off.unmount();
+      }
+    }
+    const gone = renderActions({ id: 'i-1', state: 'terminated' }, false);
+    const byState = availabilities().Terminate;
+    gone.unmount();
+    renderActions({ id: 'i-1', state: 'terminated' }, true);
+    expect(availabilities().Terminate).toBe(byState);
+  });
 
   it('"Terminate" → the dialog; confirmed → sent and "Terminating i-1" shown; the dialog closed', async () => {
     const calls = held();
