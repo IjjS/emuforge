@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: plan
 Issue-Key: studio|ecs.create-service|task
-Issue-Check-Ids:
+Issue-Check-Ids: studio.ecs-create-service-opens-the-created-service,studio.ecs-create-service-keeps-input-on-duplicate-name
 Issue-Commit: ed00e3ee1f63bf394dd7f507baf0d93aa6e36224
 
 # Build ECS's create service screen

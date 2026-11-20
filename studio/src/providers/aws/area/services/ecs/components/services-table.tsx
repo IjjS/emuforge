@@ -1,8 +1,8 @@
 import Box from '@cloudscape-design/components/box';
+import Button from '@cloudscape-design/components/button';
 import Header from '@cloudscape-design/components/header';
 import Link from '@cloudscape-design/components/link';
 import Pagination from '@cloudscape-design/components/pagination';
-import SpaceBetween from '@cloudscape-design/components/space-between';
 import Table, { type TableProps } from '@cloudscape-design/components/table';
 import { useEffect, useRef, useState } from 'react';
 
@@ -10,7 +10,7 @@ import type { AreaConnection } from '../../../components/emulator-line';
 import { readFailureState, ReadFailure } from '../../../components/failure-states';
 import { useFollow } from '../../../components/use-follow';
 import { ValueText } from '../../../components/value-text';
-import { NONE, revisionHref, serviceHref, statusText } from '../format';
+import { CREATE_SERVICE_TITLE, createServiceHref, NONE, revisionHref, serviceHref, statusText } from '../format';
 import type { Service } from '../service-api';
 import { countText } from '../service-format';
 import { useServiceListing } from '../service-queries';
@@ -111,14 +111,9 @@ export function ServicesTable({ connection, cluster, onFollowedRead, refreshKey 
       </Box>
     ) : (
       <Box textAlign="center" color="inherit">
-        <SpaceBetween size="xxs">
-          <Box variant="strong" color="inherit">
-            No services
-          </Box>
-          <Box variant="p" color="inherit">
-            A service made with the AWS CLI or an IaC tool is listed here.
-          </Box>
-        </SpaceBetween>
+        <Box variant="strong" color="inherit">
+          No services
+        </Box>
       </Box>
     );
   }
@@ -134,7 +129,15 @@ export function ServicesTable({ connection, cluster, onFollowedRead, refreshKey 
       loadingText="Loading services"
       empty={empty}
       header={
-        <Header variant="h2" counter={items === undefined ? undefined : counterText(items.length, listing.openEnd)}>
+        <Header
+          variant="h2"
+          counter={items === undefined ? undefined : counterText(items.length, listing.openEnd)}
+          actions={
+            <Button href={createServiceHref(cluster)} onFollow={handleFollow}>
+              {CREATE_SERVICE_TITLE}
+            </Button>
+          }
+        >
           Services
         </Header>
       }

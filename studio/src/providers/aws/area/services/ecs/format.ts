@@ -3,7 +3,7 @@ import type { SideNavigationProps } from '@cloudscape-design/components/side-nav
 import { AWS_PATH } from '../../../identity';
 import type { ScreenCrumbs, ScreenNavigation } from '../../screens';
 
-// Every address of ECS's ten screens, their titles, crumbs and notice words, the side navigation and the status words
+// Every address of ECS's screens, their titles, crumbs and notice words, the side navigation and the status words
 // (issue 575, requirement R3 and R4; design "Code layout and the cut"): a unit links to another unit's screen by this
 // file alone. A cluster, a service and a family are addressed by their names, a task by its id and a revision by its
 // number, each percent-encoded once as one segment.
@@ -25,6 +25,13 @@ export const CLUSTER_PATTERN = `${CLUSTERS_PATH}/cluster/{cluster}`;
 
 /** S4's pattern, a service of a cluster. */
 export const SERVICE_PATTERN = `${CLUSTER_PATTERN}/services/service/{service}`;
+
+export const CREATE_SERVICE_PATTERN = `${CLUSTER_PATTERN}/services/create`;
+export const CREATE_SERVICE_TITLE = 'Create service';
+
+export function createServiceHref(cluster: string): string {
+  return `${clusterHref(cluster)}/services/create`;
+}
 
 /** S5's pattern, a task of a cluster. */
 export const TASK_PATTERN = `${CLUSTER_PATTERN}/tasks/task/{task}`;
@@ -96,6 +103,14 @@ export const CREATE_CLUSTER_CRUMBS: ScreenCrumbs = [
   { text: CLUSTERS_TITLE, href: CLUSTERS_PATH },
   { text: CREATE_CLUSTER_TITLE },
 ];
+
+export function createServiceCrumbs(cluster: string): ScreenCrumbs {
+  return [
+    { text: CLUSTERS_TITLE, href: CLUSTERS_PATH },
+    { text: cluster, href: clusterHref(cluster) },
+    { text: CREATE_SERVICE_TITLE },
+  ];
+}
 
 export function clusterCrumbs(cluster: string): ScreenCrumbs {
   return [{ text: CLUSTERS_TITLE, href: CLUSTERS_PATH }, { text: cluster }];
