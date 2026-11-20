@@ -1,6 +1,6 @@
 import Alert, { type AlertProps } from '@cloudscape-design/components/alert';
 import Box from '@cloudscape-design/components/box';
-import Button from '@cloudscape-design/components/button';
+import Button, { type ButtonProps } from '@cloudscape-design/components/button';
 import Checkbox from '@cloudscape-design/components/checkbox';
 import FormField from '@cloudscape-design/components/form-field';
 import Input from '@cloudscape-design/components/input';
@@ -41,10 +41,13 @@ export function ModifyInstanceDialog({ instance, pending, failure, onSave, onDis
   const [storage, setStorage] = useState(originalStorage);
   const [password, setPassword] = useState('');
   const [protection, setProtection] = useState(originalProtection);
+  const saveRef = useRef<ButtonProps.Ref>(null);
   const failureRef = useRef<AlertProps.Ref>(null);
   useEffect(() => {
-    if (failure !== undefined) failureRef.current?.focus();
-  }, [failure]);
+    // Hiding Close changes the modal's autofocus target. Keep focus on the loading Save button.
+    if (pending) saveRef.current?.focus();
+    else if (failure !== undefined) failureRef.current?.focus();
+  }, [pending, failure]);
 
   const renamed = identifier.toLowerCase() !== instance.id.toLowerCase();
   const errors = {
@@ -70,6 +73,7 @@ export function ModifyInstanceDialog({ instance, pending, failure, onSave, onDis
       visible
       header="Modify DB instance"
       closeAriaLabel="Close"
+      hideDismissButton={pending}
       onDismiss={() => {
         if (!pending) onDismiss();
       }}
@@ -80,6 +84,7 @@ export function ModifyInstanceDialog({ instance, pending, failure, onSave, onDis
               Cancel
             </Button>
             <Button
+              ref={saveRef}
               id="rds-modify-save"
               variant="primary"
               loading={pending}
@@ -95,67 +100,70 @@ export function ModifyInstanceDialog({ instance, pending, failure, onSave, onDis
         </Box>
       }
     >
-      <SpaceBetween size="m">
-        {failure !== undefined && (
-          <Alert ref={failureRef} type={failure.type} header={failure.header}>
-            {failure.content}
-          </Alert>
-        )}
-        <FormField
-          label="DB instance identifier"
-          description={
-            changes.identifier === undefined
-              ? undefined
-              : 'After saving, the old identifier will stop resolving. Studio will open the renamed DB instance.'
-          }
-          constraintText={IDENTIFIER_CONSTRAINT}
-          errorText={errors.identifier}
-        >
-          <Input
-            value={identifier}
-            invalid={errors.identifier !== undefined}
-            autoComplete={false}
-            spellcheck={false}
-            onChange={({ detail }) => {
-              setIdentifier(detail.value);
-            }}
-          />
-        </FormField>
-        <ClassField value={instanceClass} error={errors.instanceClass} onChange={setInstanceClass} />
-        {member && (
-          <Box id="rds-modify-cluster-guidance" variant="p">
-            The cluster manages storage and master credentials.
-          </Box>
-        )}
-        {!member && <StorageField value={storage} error={errors.storage} onChange={setStorage} />}
-        {!member && (
+      <fieldset disabled={pending} style={{ border: 0, margin: 0, padding: 0, minInlineSize: 0 }}>
+        <SpaceBetween size="m">
+          {failure !== undefined && (
+            <Alert ref={failureRef} type={failure.type} header={failure.header}>
+              {failure.content}
+            </Alert>
+          )}
           <FormField
-            label="New master password"
-            description="Leave blank to keep the current password."
-            constraintText={PASSWORD_CONSTRAINT}
-            errorText={errors.password}
+            label="DB instance identifier"
+            description={
+              changes.identifier === undefined
+                ? undefined
+                : 'After saving, the old identifier will stop resolving. Studio will open the renamed DB instance.'
+            }
+            constraintText={IDENTIFIER_CONSTRAINT}
+            errorText={errors.identifier}
           >
             <Input
-              type="password"
-              value={password}
+              value={identifier}
+              invalid={errors.identifier !== undefined}
+              autoComplete={false}
               spellcheck={false}
-              autoComplete="new-password"
-              invalid={errors.password !== undefined}
               onChange={({ detail }) => {
-                setPassword(detail.value);
+                setIdentifier(detail.value);
               }}
             />
           </FormField>
-        )}
-        <Checkbox
-          checked={protection}
-          onChange={({ detail }) => {
-            setProtection(detail.checked);
-          }}
-        >
-          Deletion protection
-        </Checkbox>
-      </SpaceBetween>
+          <ClassField value={instanceClass} error={errors.instanceClass} onChange={setInstanceClass} />
+          {member && (
+            <Box id="rds-modify-cluster-guidance" variant="p">
+              The cluster manages storage and master credentials.
+            </Box>
+          )}
+          {!member && <StorageField value={storage} error={errors.storage} onChange={setStorage} />}
+          {!member && (
+            <FormField
+              label="New master password"
+              description="Leave blank to keep the current password."
+              constraintText={PASSWORD_CONSTRAINT}
+              errorText={errors.password}
+            >
+              <Input
+                type="password"
+                value={password}
+                spellcheck={false}
+                autoComplete="new-password"
+                invalid={errors.password !== undefined}
+                onChange={({ detail }) => {
+                  setPassword(detail.value);
+                }}
+              />
+            </FormField>
+          )}
+          <Checkbox
+            checked={protection}
+            disabled={pending}
+            onChange={({ detail }) => {
+              setProtection(detail.checked);
+            }}
+          >
+            Deletion protection
+          </Checkbox>
+        </SpaceBetween>
+      </fieldset>
     </AreaModal>
   );
 }
