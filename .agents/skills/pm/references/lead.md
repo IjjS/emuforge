@@ -99,15 +99,20 @@ An issue that changes a Studio screen is critiqued before its whole check (owner
 merged into `feat/<id>`, each on its fast check, run `pm-brief crit <id> --targets "<routes>" --capture-wt
 emuforge-<id>`, then `pm-pane new <id> crit --brief .pm/issue-<id>/brief-crit.md`, and prompt it
 `SCORE final <routes>`: the impeccable critique on the built app of `feat/<id>` (`studio/references/critique.md`).
-Every P0 and P1 finding goes to the worker that owns the screen; it is fixed, passes its fast check and is merged,
-and the screen is critiqued again. The score goes in `report.md` and decides nothing. A mock before the build is
+Every P0, P1 and P2 finding goes to the worker that owns the screen; it is fixed, passes its fast check and is
+merged, and the screen is critiqued again (owner, 2026-11-20). A P2 whose fix would change the requirement or a
+confirmed check, or go against a rule of the area or a decision already made, you do not send to the worker: append
+it to `decisions-needed.md` and stop with `BLOCKED i<id>-plan decision-needed critique-p2 <screen> <finding>`. The
+`pm` either has it fixed or lets it stand, records why under `## PM decisions` and runs `pm-critique leave`; never
+run that yourself. A P3 is yours to adopt or not (What becomes its own issue). The score goes in `report.md` and
+decides nothing. A mock before the build is
 never required: ask `crit` for one (`SCORE mock <file>`) only when a screen is new and large and the build would
 otherwise be a guess. The integration tests may be written while the critique runs.
 
 ## Whole check
 
 The whole check runs once every unit is merged and, for an issue that changes a Studio screen, only when the last
-`final` has no P0 or P1 (`pm-critique check <id>` passes). `pm-merge <id> --take-main`, then
+`final` of each screen has no P0, P1 or P2 but those the `pm` let stand (`pm-critique check <id>` passes). `pm-merge <id> --take-main`, then
 `pm-check emuforge-<id>`, the whole check, `integration` included. In the whole
 check the integration step of the issue branch runs every check of no service and the browser checks of the
 services its paths touch, every service's when a shared path changed; the `services` line of `pm-scope` and
@@ -117,8 +122,8 @@ When it fails, tell the cause apart first, and act by it (owner, 2026-11-19):
 
 1. A fault of product code: a failed check goes to the unit that owns what failed, by `breakdown.md`. It fixes it
    on its branch, merges `feat/<id>` into its own when `pm-merge` asks, passes its fast check, and is merged again.
-   When the fix changed a screen, that screen alone is critiqued once more (`SCORE final <its routes>`), and a P0 or
-   P1 it finds is fixed the same way. `feat/<id>` has then moved: run the whole check again.
+   When the fix changed a screen, that screen alone is critiqued once more (`SCORE final <its routes>`), and a P0,
+   P1 or P2 it finds is fixed the same way. `feat/<id>` has then moved: run the whole check again.
 2. A fault of your own integration test: fix it on `feat/<id>`, have a `rev` round read the change (A review
    round), and run the whole check again.
 3. A criteria line that is wrong: stop with `BLOCKED i<id>-plan check <id>`; the `pm` decides.
@@ -142,12 +147,12 @@ Never run the whole check again without the cause of its failure written in `sta
 
 ## What becomes its own issue
 
-You decide first, by a finding's size and whether it is the issue's own. A P2 or P3 of the critique or of the
+You decide first, by a finding's size and whether it is the issue's own. A P3 of the critique, a P2 or P3 of the
 review, and a fault outside the issue, may become an issue of its own: file it with
 `pm-issue new --source plan --severity <S> … --in emuforge-<id>` and `pm-issue commit --in emuforge-<id>`, with the
-severity you give it; it reaches `main` with the issue. A P2 or P3 you neither fix nor file is recorded under
-`## Review decisions` with one reason. A small fault inside the issue is fixed in it. A P0 or P1 of the critique is
-always fixed in the issue, never filed. The `pm` reviews the severity of each issue you filed at the close and may
+severity you give it; it reaches `main` with the issue. Such a P2 or P3 you neither fix nor file is recorded under
+`## Review decisions` with one reason. A small fault inside the issue is fixed in it. A P0, P1 or P2 of the critique
+is always fixed in the issue, never filed, but for a P2 the `pm` let stand (Critique). The `pm` reviews the severity of each issue you filed at the close and may
 change it.
 
 ## Close
@@ -158,7 +163,8 @@ Write `.pm/issue-<id>/report.md`:
 - the scenarios, which became integration tests, which were left out and why;
 - the record `feat/<id>` passed on, with its path;
 - the review rounds;
-- the critique's findings;
+- the critique's findings: the P0, P1 and P2 fixed, each P2 the `pm` let stand with its decision, and the P3 with
+  what became of each;
 - every issue you filed, with the severity you gave it and one line of reason;
 - what was not done.
 

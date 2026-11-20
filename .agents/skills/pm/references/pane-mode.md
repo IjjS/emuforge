@@ -18,8 +18,8 @@ repository references your brief lists, fresh from disk.
   with your recommended option marked `(provisional)`. If the answer changes the structure of what you are
   building, stop with `BLOCKED <name> decision-needed <question in ten words>`.
 - `decisions.md` is the record: `## Owner decisions` (only the PM writes), `## PM decisions`, `## Plan decisions`
-  (only the plan writes), `## Review decisions` (P2 and P3 you chose not to adopt, one reason each). Never
-  contradict an owner decision.
+  (only the plan writes), `## Review decisions` (a review's P2 and P3 and a critique's P3 you chose not to adopt, one
+  reason each). Never contradict an owner decision.
 
 ## Checks are not yours to change
 

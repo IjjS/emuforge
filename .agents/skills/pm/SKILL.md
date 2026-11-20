@@ -51,7 +51,7 @@ issue files, merge or archive; they refuse a plan anything outside its own issue
   only when a plan's question exists that the repository, the references and the reference behavior cannot answer;
   ② the final report. Nothing else goes to the owner but the one-line notices of flow step 3 (a rejected push, a
   failed run, no run or no answer), which tell and ask nothing. Designs are never put to the owner:
-  the impeccable critique judges them (a P0 or P1 is fixed; the score decides nothing), and where the rules leave
+  the impeccable critique judges them (a P0, P1 or P2 is fixed; the score decides nothing), and where the rules leave
   room you decide and record why.
 - **You edit no product code and write no plan.** Stage documents and integration tests are the plan's; product
   code and unit tests change only in worker panes inside their worktrees; harness changes in a harness-engineer's.
@@ -276,6 +276,7 @@ flow step 1:
 | `EVENT ready <pane> UNIT READY <branch>` | a harness-engineer: judge its change and merge it (flow step 1); for an issue begun before issue 478, note it in `state.md` and take it when its turn in the order comes |
 | `EVENT ready <pane> DONE <what>` | a post-processing order finished: note it; report at ② or in three lines if ② already went |
 | `EVENT ready <pane> BLOCKED decision-needed …` | read the pane's line in `decisions-needed.md`; decide from `decisions.md` and the references and record it under `## PM decisions`, or put it to the owner as ①; answer the pane in one line |
+| `EVENT ready <pane> BLOCKED decision-needed critique-p2 …` | a P2 of the critique whose fix the plan says would change the requirement or a confirmed check, or go against a rule of the area or a decision made: have it fixed unless that is so (the default); to let it stand, record why under `## PM decisions` and run `pm-critique leave <id> --label <screen> --p2 <n> --reason "<why>"` on that screen's last `final` (a later `final` of the screen needs it again); answer the plan in one line. A P0 or P1 is never left |
 | `EVENT ready <pane> BLOCKED depends emulator image` | the pane's check run stopped because the emulator it built differs from the machine's image `aws-emulator` of the same files: `pm-emulator-image refresh` (a `refresh is already running` line means one is on its way); on its `EVENT emulator-image refreshed`, or when `pm-emulator-image status` shows it ended `unchanged` (that outcome sends no event), tell the pane in one line to run its check again; after `EVENT emulator-image failed` the pane waits and the line goes to the owner |
 | `EVENT ready <pane> BLOCKED depends <unit> <what>` | check the parent unit's branch (`git log -1 <branch>`, `state.md`); answer in one line, or tell the pane to wait for the parent's `UNIT READY` |
 | `EVENT ready <pane> BLOCKED review <stage>` | three rounds failed: read both positions in `decisions-needed.md`, decide and record it; answer the lead and rev in one line each |
@@ -334,7 +335,7 @@ logged in `.pm/run/events.log` and never delivered; a turn with none wakes you a
 | `pm-report` | a pane's typed line that ends its turn, to its lead (you, or the plan of its issue) or to the log |
 | `pm-check` | the checks of a checkout, recorded; on a unit of an issue branch the fast check (`integration` left to the issue branch), on the issue's worktree the whole check; `--checks <id>…` single integration checks, never a gate; runs each step once (no second run), a heavy run asks for room and starts or answers `WAIT <n>s` (exit 75; `EVENT room <pane> check <worktree>` follows), the record holds how long it `waited`, `--stop` ends one worktree's run; the harness step runs the three guards |
 | `pm-capture` | screen captures and contact sheets |
-| `pm-critique` | impeccable scores: `record`, `table`, `check` (fails while the last `final` has a P0 or P1) |
+| `pm-critique` | impeccable scores: `record` (a `final` needs `p2_count`), `table`, `check` (fails while a screen's last `final` has a P0, P1 or P2), `leave` (yours only: a P2 you let stand) |
 | `pm-merge` | `<id> <unit>` a unit's branch into its target (the issue branch, or local `main` for an issue without one); `<id> --take-main` local `main` into the issue branch; `<id>` the issue branch into local `main`; a plan runs the first two for its own issue, into `feat/<id>` only; the review it asks follows the issue's `lead` |
 | `pm-archive`, `pm-cost` | clean-up and cost |
 | `pm-tokens` | Claude token use against today's target: status, `target <rate>`, `check` |
