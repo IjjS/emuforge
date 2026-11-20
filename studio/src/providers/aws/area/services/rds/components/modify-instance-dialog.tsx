@@ -46,14 +46,15 @@ export function ModifyInstanceDialog({ instance, pending, failure, onSave, onDis
     if (failure !== undefined) failureRef.current?.focus();
   }, [failure]);
 
+  const renamed = identifier.toLowerCase() !== instance.id.toLowerCase();
   const errors = {
-    identifier: identifier === instance.id ? undefined : identifierError(identifier),
+    identifier: renamed ? identifierError(identifier) : undefined,
     instanceClass: instanceClass === originalClass ? undefined : classError(instanceClass),
     storage: member || storage === originalStorage ? undefined : storageError(storage),
     password: member || password === '' ? undefined : passwordError(password),
   };
   const changes: InstanceChanges = {};
-  if (identifier !== instance.id) changes.identifier = identifier;
+  if (renamed && errors.identifier === undefined) changes.identifier = identifier;
   if (instanceClass !== originalClass) changes.instanceClass = instanceClass;
   if (!member && storage !== originalStorage && Number(storage) !== instance.allocatedStorage) {
     changes.allocatedStorage = Number(storage);

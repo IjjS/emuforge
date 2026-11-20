@@ -23,6 +23,8 @@ const CLASS = 'DB instance class';
 const STORAGE = 'Allocated storage (GiB)';
 const PASSWORD = 'New master password';
 const PROTECTION = 'Deletion protection';
+const RENAME_GUIDANCE =
+  'After saving, the old identifier will stop resolving. Studio will open the renamed DB instance.';
 type Field = typeof IDENTIFIER | typeof CLASS | typeof STORAGE | typeof PASSWORD;
 
 function open(instance = INSTANCE) {
@@ -179,14 +181,32 @@ describe('Modify DB instance', () => {
     expect(onSave).toHaveBeenCalledExactlyOnceWith({ deletionProtection: false });
   });
 
-  it('describes what happens to the old identifier only while a rename is entered', async () => {
+  it('describes what happens to the old identifier only for a valid rename', async () => {
     open();
     await screen.findByRole('dialog');
-    const guidance = 'After saving, the old identifier will stop resolving. Studio will open the renamed DB instance.';
-    expect(screen.queryByText(guidance)).toBeNull();
+    expect(screen.queryByText(RENAME_GUIDANCE)).toBeNull();
+    change(IDENTIFIER, '9bad');
+    expect(screen.queryByText(RENAME_GUIDANCE)).toBeNull();
     change(IDENTIFIER, 'renamed-db');
-    expect(field(IDENTIFIER)).toHaveAccessibleDescription(expect.stringContaining(guidance));
+    expect(field(IDENTIFIER)).toHaveAccessibleDescription(expect.stringContaining(RENAME_GUIDANCE));
     change(IDENTIFIER, 'app-db');
-    expect(screen.queryByText(guidance)).toBeNull();
+    expect(screen.queryByText(RENAME_GUIDANCE)).toBeNull();
+  });
+
+  it('treats a case-only identifier edit as unchanged while allowing an independent edit', async () => {
+    const onSave = open();
+    await screen.findByRole('dialog');
+    change(IDENTIFIER, 'APP-DB');
+    expect(field(IDENTIFIER)).toHaveValue('APP-DB');
+    expect(screen.queryByText(RENAME_GUIDANCE)).toBeNull();
+    expect(save()).toBeDisabled();
+    fireEvent.click(save());
+    expect(onSave).not.toHaveBeenCalled();
+
+    change(CLASS, 'db.t3.small');
+    expect(save()).toBeEnabled();
+    fireEvent.click(save());
+    expect(onSave).toHaveBeenCalledExactlyOnceWith({ instanceClass: 'db.t3.small' });
+    expect(screen.queryByText(RENAME_GUIDANCE)).toBeNull();
   });
 });
