@@ -31,9 +31,10 @@ test('engine.product-build-runs-current-worktree-code', async ({ ctx }) => {
     'infra/emuforge',
   ]);
 
+  // Buildx keys local source snapshots by context basename. Isolate input snapshots across runs.
   const run = randomUUID();
   for (const revision of ['a', 'b']) {
-    const dir = path.join(root, revision);
+    const dir = path.join(root, `${run}-${revision}`);
     fs.mkdirSync(dir);
     execFileSync('tar', ['-xf', archive, '-C', dir]);
     const main = path.join(dir, 'engine/crates/emuforge/src/main.rs');
@@ -45,7 +46,7 @@ test('engine.product-build-runs-current-worktree-code', async ({ ctx }) => {
   }
 
   for (const [index, revision] of ['a', 'b', 'a'].entries()) {
-    const dir = path.join(root, revision);
+    const dir = path.join(root, `${run}-${revision}`);
     // Vary the COPY layer even on the return to A while keeping the builder's Cargo mounts warm.
     fs.writeFileSync(path.join(dir, 'engine/.issue-594-build-input'), run + '-' + index);
     const tag = 'emuforge-it-cache-' + run + ':' + index;
