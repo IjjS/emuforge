@@ -1,7 +1,9 @@
+import Checkbox from '@cloudscape-design/components/checkbox';
 import FormField from '@cloudscape-design/components/form-field';
 import Input, { type InputProps } from '@cloudscape-design/components/input';
 import RadioGroup from '@cloudscape-design/components/radio-group';
-import type { Ref } from 'react';
+import { useState, type Ref } from 'react';
+import SpaceBetween from '@cloudscape-design/components/space-between';
 
 import { ChoiceMultiselect } from '../../../components/choice-multiselect';
 import { ChoiceSelect } from '../../../components/choice-select';
@@ -151,9 +153,12 @@ export function MasterUserNameField({ engine, ...props }: TextFieldProps & { eng
 
 /**
  * "Master password", typed into a password field; its description names what is created ("the DB instance", "the DB
- * cluster"). The value is the form's alone and is never shown again once the form is left.
+ * cluster"). "Show password" under it switches the field to text and back, so what is typed can be checked before it is
+ * noted; the choice is this field's own state, a password field at start on every form, and stored nowhere. The value
+ * is the form's alone and is never shown again once the form is left.
  */
 export function MasterPasswordField({ what, ...props }: TextFieldProps & { what: string }) {
+  const [shown, setShown] = useState(false);
   return (
     <FormField
       label="Master password"
@@ -161,7 +166,17 @@ export function MasterPasswordField({ what, ...props }: TextFieldProps & { what:
       constraintText={PASSWORD_CONSTRAINT}
       errorText={props.error}
     >
-      <TextInput {...props} type="password" />
+      <SpaceBetween size="xs">
+        <TextInput {...props} type={shown ? 'text' : 'password'} />
+        <Checkbox
+          checked={shown}
+          onChange={({ detail }) => {
+            setShown(detail.checked);
+          }}
+        >
+          Show password
+        </Checkbox>
+      </SpaceBetween>
     </FormField>
   );
 }
