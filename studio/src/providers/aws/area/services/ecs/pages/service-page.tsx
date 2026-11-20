@@ -108,7 +108,12 @@ function Empty({ children }: { children: string }) {
 function Deployments({ deployments }: { deployments: ServiceDeployment[] }) {
   const fixed = (value: string) => <ValueText kind="fixed" value={value} />;
   const columns: TableProps.ColumnDefinition<ServiceDeployment>[] = [
-    { id: 'id', header: 'ID', isRowHeader: true, cell: (deployment) => <ValueText kind="name" value={deployment.id} /> },
+    {
+      id: 'id',
+      header: 'ID',
+      isRowHeader: true,
+      cell: (deployment) => <ValueText kind="name" value={deployment.id} />,
+    },
     { id: 'status', header: 'Status', cell: (deployment) => fixed(statusText(deployment.status)) },
     { id: 'rollout', header: 'Rollout', cell: (deployment) => fixed(statusText(deployment.rolloutState)) },
     {
