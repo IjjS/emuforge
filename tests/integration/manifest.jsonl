@@ -164,3 +164,4 @@
 {"check_id": "engine.product-channel-relay-s3-object-matches-direct", "path": "tests/integration/studio/product-allow-host.spec.ts", "module": "engine", "operations": ["s3:CreateBucket", "s3:PutObject", "s3:GetObject"], "labels": ["transparency"], "issue": 503}
 {"check_id": "engine.product-allow-host-start-warns-and-keeps-secrets", "path": "tests/integration/studio/product-allow-host.spec.ts", "module": "engine", "operations": ["s3:CreateBucket", "s3:DeleteBucket"], "labels": ["safety"], "issue": 503}
 {"check_id": "engine.product-page-calls-the-engine-through-studios-port", "path": "tests/integration/studio/product-allow-host.spec.ts", "module": "engine", "operations": ["s3:CreateBucket", "s3:ListBuckets"], "labels": [], "issue": 503}
+{"check_id": "engine.product-build-runs-current-worktree-code", "path": "tests/integration/studio/product-build-cache.spec.ts", "module": "engine", "operations": [], "labels": [], "issue": 594}
