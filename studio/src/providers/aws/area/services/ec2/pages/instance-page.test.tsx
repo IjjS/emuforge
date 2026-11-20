@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState, useSyncExternalStore } from 'react';
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -233,9 +233,61 @@ function isDisabled(element: Element): boolean {
   return (element as HTMLButtonElement).disabled || element.getAttribute('aria-disabled') === 'true';
 }
 
+/** The reason a disabled item gives, as Cloudscape renders it for assistive technology. */
+function reasonOf(element: Element): string {
+  const ids = (element.getAttribute('aria-describedby') ?? '').split(' ').filter((id) => id !== '');
+  return ids
+    .map((id) => document.getElementById(id)?.textContent ?? '')
+    .join(' ')
+    .trim();
+}
+
+/** The menu's "Terminate": "available", or the reason it is not. */
+function terminate(): string {
+  const element = stateItem('Terminate');
+  return isDisabled(element) ? reasonOf(element) : 'available';
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 
 describe("an instance's page", () => {
+  it('termination protection "On" → the menu\'s "Terminate" unavailable with "Termination protection is on."', async () => {
+    holding(full(), true);
+    open(pathOf('i-0full'));
+    await loaded();
+    await waitFor(() => {
+      expect(pairs()['Termination protection']).toBe('On');
+    });
+    expect(terminate()).toBe('Termination protection is on.');
+  });
+
+  it('"Off", being read or failed → the menu\'s "Terminate" available by the state', async () => {
+    holding(full(), false);
+    open(pathOf('i-0full'));
+    await loaded();
+    await waitFor(() => {
+      expect(pairs()['Termination protection']).toBe('Off');
+    });
+    expect(terminate()).toBe('available');
+    cleanup();
+
+    vi.mocked(api.getInstance).mockResolvedValue({ found: true, instance: full() });
+    vi.mocked(api.getTerminationProtection).mockImplementation(() => new Promise(() => undefined));
+    open(pathOf('i-0full'));
+    await loaded();
+    expect(pairs()['Termination protection']).toBe('Loading');
+    expect(terminate()).toBe('available');
+    cleanup();
+
+    holding(full(), new RequestError({ kind: 'other', operation: 'DescribeInstanceAttribute', code: 'InternalError' }));
+    open(pathOf('i-0full'));
+    await loaded();
+    await waitFor(() => {
+      expect(pairs()['Termination protection']).toContain('InternalError');
+    });
+    expect(terminate()).toBe('available');
+  });
+
   it('a running instance with every value → its name, the five sections, copy controls, a group link, Yes and No', async () => {
     holding(full(), true);
     const router = open(pathOf('i-0full'));
@@ -408,9 +460,14 @@ describe("an instance's page", () => {
     expect(screen.getByText('The emulator holds no instance with this ID.')).toBeInTheDocument();
     expect(screen.queryByText('Instance details')).toBeNull();
     expect(screen.queryByText('Network')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Instance state' })).toBeNull();
     for (const name of ['Start', 'Stop', 'Reboot', 'Terminate']) {
       expect(screen.queryByRole('button', { name })).toBeNull();
     }
+    for (const heading of ['Security groups', 'Volumes', 'Tags']) {
+      expect(screen.queryByRole('heading', { name: heading })).toBeNull();
+    }
+    expect(screen.queryByRole('table')).toBeNull();
     fireEvent.click(screen.getByRole('link', { name: 'View instances' }));
     await waitFor(() => {
       expect(router.state.location.pathname).toBe('/aws/ec2/instances');

@@ -274,31 +274,31 @@ describe('the key pairs', () => {
 });
 
 describe('every call', () => {
-  const calls: [string, () => Promise<unknown>][] = [
-    ['DescribeImages', () => listImageChoices(endpoint, '', undefined, signal())],
-    ['DescribeInstanceTypes', () => listInstanceTypeChoices(endpoint, '', undefined, signal())],
-    ['DescribeSubnets', () => listSubnetChoices(endpoint, undefined, signal())],
-    ['DescribeVpcs', () => listVpcChoices(endpoint, undefined, signal())],
-    ['DescribeVpcs', () => getDefaultVpc(endpoint, signal())],
-    ['DescribeSecurityGroups', () => listGroupChoices(endpoint, {}, undefined, signal())],
-    ['DescribeKeyPairs', () => listKeyPairChoices(endpoint, signal())],
+  const calls: [string, (given?: AbortSignal) => Promise<unknown>][] = [
+    ['DescribeImages', (given = signal()) => listImageChoices(endpoint, '', undefined, given)],
+    ['DescribeInstanceTypes', (given = signal()) => listInstanceTypeChoices(endpoint, '', undefined, given)],
+    ['DescribeSubnets', (given = signal()) => listSubnetChoices(endpoint, undefined, given)],
+    ['DescribeVpcs', (given = signal()) => listVpcChoices(endpoint, undefined, given)],
+    ['DescribeVpcs', (given = signal()) => getDefaultVpc(endpoint, given)],
+    ['DescribeSecurityGroups', (given = signal()) => listGroupChoices(endpoint, {}, undefined, given)],
+    ['DescribeKeyPairs', (given = signal()) => listKeyPairChoices(endpoint, given)],
   ];
   for (const [operation, call] of calls) {
     it(`${operation}: a 501 → "not implemented" with the operation's name`, async () => {
       engine.on(operation, () => notImplemented);
       expect(await failureOf(call())).toEqual({ kind: 'not-implemented', operation });
     });
-  }
 
-  it('an aborted signal ends the request', async () => {
-    engine.on('DescribeImages', () => 'hold');
-    const controller = new AbortController();
-    const pending = listImageChoices(endpoint, '', undefined, controller.signal);
-    await vi.waitFor(() => {
-      expect(engine.of('DescribeImages')).toHaveLength(1);
+    it(`${operation}: an aborted signal ends the request`, async () => {
+      engine.on(operation, () => 'hold');
+      const controller = new AbortController();
+      const pending = call(controller.signal);
+      await vi.waitFor(() => {
+        expect(engine.of(operation)).toHaveLength(1);
+      });
+      const reason = new Error('left the page');
+      controller.abort(reason);
+      await expect(pending).rejects.toBe(reason);
     });
-    const reason = new Error('left the page');
-    controller.abort(reason);
-    await expect(pending).rejects.toBe(reason);
-  });
+  }
 });

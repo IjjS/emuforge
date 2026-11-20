@@ -249,10 +249,14 @@ describe('failures', () => {
     });
   });
 
-  it('an aborted signal ends the request', async () => {
+  it('every call: an aborted signal ends the request', async () => {
     for (const [action, start] of [
       ['CreateSecurityGroup', (s: AbortSignal) => createSecurityGroup(endpoint, { name: 'a', description: 'd' }, s)],
       ['AuthorizeSecurityGroupIngress', (s: AbortSignal) => addSecurityGroupRule(endpoint, 'sg-1', RANGE, s)],
+      [
+        'AuthorizeSecurityGroupEgress',
+        (s: AbortSignal) => addSecurityGroupRule(endpoint, 'sg-1', { ...RANGE, egress: true }, s),
+      ],
     ] as const) {
       engine.on(action, () => 'hold');
       const controller = new AbortController();

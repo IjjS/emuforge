@@ -36,7 +36,7 @@ import { useGroupListing } from '../group-queries';
 const SELECT_ONE = 'Select one security group.';
 const DEFAULT_REASON = 'The default security group cannot be deleted.';
 
-/** A name keeps room for 24 characters (`aws-area.md`, entry 4). */
+/** A name keeps room for 24 characters (`aws-area.md`, entry 4): 28ch is those 24 and the cell's padding on each side. */
 const NAME_MIN_WIDTH = '28ch';
 
 type BodyState =
