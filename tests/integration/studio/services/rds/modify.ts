@@ -27,3 +27,11 @@ export async function openModify(page: Page) {
     clusterGuidance: dialog.locator('#rds-modify-cluster-guidance'),
   };
 }
+
+/** The acceptance message shown after a successful save, including a rename. */
+export async function expectModifyResult(page: Page, id: string) {
+  const items = createWrapper().findFlashbar().findItemsByType('success');
+  const visible = page.locator(items.toSelector()).filter({ visible: true });
+  await expect(visible).toBeVisible();
+  await expect(visible).toContainText(`Modifying ${id}.`);
+}

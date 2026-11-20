@@ -1,12 +1,11 @@
 import { expect, startStack, test } from './support';
 import { ACTION, addressOf, BREADCRUMB_ITEMS } from './support/frame';
-import { openModify } from './services/rds/modify';
+import { expectModifyResult, openModify } from './services/rds/modify';
 import {
   button,
   CHANGED_WITH_INSTANCE,
   clusterDirect,
   DELETE,
-  expectFlash,
   expectNoRow,
   expectValueIs,
   expectValueParts,
@@ -43,7 +42,7 @@ test('studio.rds-modify-and-rename-a-db-instance', async ({ ctx, page }) => {
   await form.protection.uncheck(ACTION);
   await form.save.click(ACTION);
   await expect(page).toHaveURL(addressOf(instancePath(renamed)));
-  await expectFlash(page, 'success', `Modifying ${renamed}.`);
+  await expectModifyResult(page, renamed);
   await expectValueIs(page, 'Status', 'available');
   await expectValueIs(page, 'Class', 'db.t3.small');
   await expectValueIs(page, 'Allocated storage', '30 GiB');
@@ -102,6 +101,7 @@ test('studio.rds-modifies-a-cluster-member', async ({ ctx, page }) => {
   const renamed = `${prefix}-renamed`;
   await page.goto(instancePath(original));
   const form = await openModify(page);
+  await expect(form.clusterGuidance).toBeVisible();
   await expect(form.clusterGuidance).toHaveText('The cluster manages storage and master credentials.');
   await expect(form.storage).toHaveCount(0);
   await expect(form.password).toHaveCount(0);
@@ -110,7 +110,7 @@ test('studio.rds-modifies-a-cluster-member', async ({ ctx, page }) => {
   await form.protection.check(ACTION);
   await form.save.click(ACTION);
   await expect(page).toHaveURL(addressOf(instancePath(renamed)));
-  await expectFlash(page, 'success', `Modifying ${renamed}.`);
+  await expectModifyResult(page, renamed);
   await expectValueIs(page, 'Status', 'available');
   await expectValueIs(page, 'Class', 'db.r6g.xlarge');
   await expectValueParts(page, 'Deletion protection', ['On', CHANGED_WITH_INSTANCE]);
