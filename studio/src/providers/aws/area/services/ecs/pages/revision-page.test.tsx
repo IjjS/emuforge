@@ -269,7 +269,7 @@ describe("a revision's page", () => {
     expect(await screen.findByText('Task definition details')).toBeInTheDocument();
   });
 
-  it('the Containers table keeps the room of a name for Name and Image, so neither breaks mid-word', async () => {
+  it('the Containers table fits its container at 1280: Name, an address part for Image and a line for Command', async () => {
     vi.mocked(api.getRevision).mockResolvedValue({ found: true, revision: revision() });
     open(PATH);
     expect(await screen.findByText('Task definition details')).toBeInTheDocument();
@@ -279,8 +279,9 @@ describe("a revision's page", () => {
         header.getElement().style.minWidth,
       ]),
     );
-    expect(widths['Name']).toBe('28ch');
-    expect(widths['Image']).toBe('28ch');
+    expect(widths['Name']).toBe('20ch');
+    expect(widths['Image']).toBe('calc(13ch + 40px)');
+    expect(widths['Command']).toBe('29ch');
   });
 
   it('the Containers table keeps the room of a log group part, so /ecs/web-api breaks only after a slash', async () => {
