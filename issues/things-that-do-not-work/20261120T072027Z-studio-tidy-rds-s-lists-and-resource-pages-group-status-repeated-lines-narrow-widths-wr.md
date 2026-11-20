@@ -13,13 +13,14 @@ Issue-Commit: 4fe827cf353b884942e2cae067a6fb063e5d2f0f
 
 ## Description
 
-The critique of RDS's lists and resource pages left five cosmetic findings:
+The critique of RDS's lists and resource pages left six cosmetic findings:
 
 - A DB instance's "Security groups" shows a group's status as loose text after its ID (`pages/instance-page.tsx`, "Network").
 - A member's page reads "From DB cluster {id}" twice in a row, once under each of the two sign-in values.
 - An empty DB cluster shows "Add DB instance" in the section's header and in its empty state (`pages/cluster-page.tsx`).
 - At 390 the DB instance list's four actions wrap to three rows above the table.
-- At 1280 "Created" wraps to two lines in every row of both lists, and "Engine" wraps for a long version (`aurora-mysql 8.0.mysql_aurora.3.10.3`).
+- At 1280 "Created" wraps in every row of both lists (to four lines on the DB instance list, whose column keeps the least room, so a row is about twice as tall as on the DB cluster list), and "Engine" wraps for a long version (`aurora-mysql 8.0.mysql_aurora.3.10.3`).
+- "Refresh" on the DB instance list shows no in-flight state after the first load.
 
 ## Evidence
 
@@ -36,7 +37,8 @@ The impeccable critique of issue 573 on the built app, `final` r1 and r2 (the re
 - A member's page says once where its sign-in values are from, with the link to the cluster.
 - An empty cluster offers "Add DB instance" once.
 - At 390 the list's actions take one row (the area's actions menu, as EC2's list has it).
-- A row of either list is one line at 1280 for the values the emulator gives today, with "Port" whole.
+- "Created" takes two lines at most in either list at 1280, with "Port" whole without scrolling and each name column keeping room for 24 characters.
+- "Refresh" shows that a read is under way each time it is chosen.
 - Every check of RDS's screens still passes, their texts unchanged where a criteria line names them.
 
 ## Out of scope
