@@ -22,7 +22,7 @@ const RULE: RuleFormValues = {
 const rule = (values: Partial<RuleFormValues>) => ruleFormMessages({ ...RULE, ...values });
 
 describe("S5's and S7's checks", () => {
-  it('a group\'s name: empty, 256 characters, é or %, sg- → each its message; 255 of the set → none', () => {
+  it("a group's name: empty, 256 characters, é or %, sg- → each its message; 255 of the set → none", () => {
     expect(FULL).toHaveLength(255);
     expect(nameOf('')).toBe('Enter a name.');
     expect(nameOf('n'.repeat(256))).toBe('A name can have up to 255 characters.');

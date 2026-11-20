@@ -122,7 +122,10 @@ describe('create a group', () => {
   it("GroupName and Description, VpcId only when a VPC is chosen; the answer's group ID", async () => {
     engine.on('CreateSecurityGroup', () => CREATED);
     expect(await createSecurityGroup(endpoint, { name: 'web', description: 'Web servers' }, signal())).toBe('sg-0new');
-    expect(sentParams(engine.of('CreateSecurityGroup')[0])).toEqual({ GroupName: 'web', GroupDescription: 'Web servers' });
+    expect(sentParams(engine.of('CreateSecurityGroup')[0])).toEqual({
+      GroupName: 'web',
+      GroupDescription: 'Web servers',
+    });
     expect(
       await createSecurityGroup(endpoint, { name: 'web', description: 'Web servers', vpcId: 'vpc-1' }, signal()),
     ).toBe('sg-0new');
@@ -192,7 +195,9 @@ describe('add a rule', () => {
 
 describe('failures', () => {
   it('InvalidGroup.Duplicate, InvalidPermission.Duplicate, InvalidParameterValue → a failure with the code and message', async () => {
-    engine.on('CreateSecurityGroup', () => refused('InvalidGroup.Duplicate', "The security group 'web' already exists"));
+    engine.on('CreateSecurityGroup', () =>
+      refused('InvalidGroup.Duplicate', "The security group 'web' already exists"),
+    );
     expect(await failureOf(createSecurityGroup(endpoint, { name: 'web', description: 'd' }, signal()))).toEqual({
       kind: 'other',
       operation: 'CreateSecurityGroup',
@@ -211,7 +216,12 @@ describe('failures', () => {
     engine.on('AuthorizeSecurityGroupEgress', () => refused('InvalidParameterValue', 'invalid CIDR: nope'));
     expect(
       await failureOf(
-        addSecurityGroupRule(endpoint, 'sg-1', { ...RANGE, egress: true, peer: { kind: 'ipv4', value: 'nope' } }, signal()),
+        addSecurityGroupRule(
+          endpoint,
+          'sg-1',
+          { ...RANGE, egress: true, peer: { kind: 'ipv4', value: 'nope' } },
+          signal(),
+        ),
       ),
     ).toEqual({
       kind: 'other',

@@ -18,7 +18,12 @@ vi.mock('./group-form-api', async (importOriginal) => {
 
 const ENDPOINT = 'http://127.0.0.1:9995';
 const GROUP: api.NewSecurityGroup = { name: 'web', description: 'Web servers' };
-const RULE: api.NewRule = { egress: false, protocol: 'tcp', fromPort: 22, peer: { kind: 'ipv4', value: '10.0.0.0/16' } };
+const RULE: api.NewRule = {
+  egress: false,
+  protocol: 'tcp',
+  fromPort: 22,
+  peer: { kind: 'ipv4', value: '10.0.0.0/16' },
+};
 
 let client: QueryClient;
 

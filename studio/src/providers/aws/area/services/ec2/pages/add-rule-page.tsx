@@ -472,8 +472,7 @@ export function AddRulePage({ connection, params }: ScreenPageProps) {
     content = <RuleForm group={group} connection={connection} />;
   }
 
-  const description =
-    group === undefined ? undefined : `Adds a rule to ${group.name === '' ? group.id : group.name}.`;
+  const description = group === undefined ? undefined : `Adds a rule to ${group.name === '' ? group.id : group.name}.`;
 
   return (
     <SpaceBetween size="l">

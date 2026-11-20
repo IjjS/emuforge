@@ -80,7 +80,8 @@ export function permissionOf(rule: NewRule): IpPermission {
   const ports = hasPorts(rule.protocol);
   const from = ports ? (rule.fromPort ?? -1) : -1;
   const to = ports ? (rule.toPort ?? from) : -1;
-  const description = rule.description === undefined || rule.description === '' ? {} : { Description: rule.description };
+  const description =
+    rule.description === undefined || rule.description === '' ? {} : { Description: rule.description };
   const permission: IpPermission = {
     IpProtocol: rule.protocol === 'all' ? '-1' : rule.protocol,
     FromPort: from,
