@@ -36,9 +36,10 @@ Limits (enforced unless --no-limit): worker panes per side (studio 8, engine 8, 
 memory 22.5 GB, swap free 256 MB, CPU 90%, and the Claude token rate of the last hour under today's target when one is set (pm-tokens).
 Default: claude on opus. Any pane takes --kind/--model (the PM passes what the owner chose at session start).
 Effort: --effort goes to the agent as the model does (claude --effort <level>, after the -- of herdr agent start);
-a plan may pass it for its own panes. Without it, a pane opened again gets the effort it had (the registry and
-.pm/run/panes-history.jsonl remember it), and a new one its role's: plan, rev, crit and harness-engineer high,
-worker medium. A codex pane takes no effort: --effort is ignored, with one line saying so. The brief is sent as: "Read <FILE> and follow it. Your pane name is <name>."
+a plan may pass it for its own panes. A pane opened again under a name it had (a rev opened for each review round,
+a pane reopened after EVENT gone) gets the kind, model and effort it had when not given (the registry and
+.pm/run/panes-history.jsonl remember them; its model only when its kind is the same, issue 557); a new one claude on
+opus at its role's effort: plan, rev, crit and harness-engineer high, worker medium. A codex pane takes no effort: --effort is ignored, with one line saying so. The brief is sent as: "Read <FILE> and follow it. Your pane name is <name>."
 To talk to a pane use herdr directly: herdr agent prompt <name> "<text>" (it refuses a pane blocked at a dialog).
 --adopt (the pm's) registers an agent herdr already runs under the exact name, cwd and kind (one left after a startup
 trust dialog, or one the registry lost: EVENT unregistered); its --brief is recorded and not sent, since the agent
@@ -166,14 +167,15 @@ def brief_text(entry, resumed=False):
 
 
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
+KINDS = ("claude", "codex")
 EFFORT_BY_ROLE = {"plan": "high", "rev": "high", "crit": "high", "harness-engineer": "high", "worker": "medium"}
 
 
-def remembered_effort(name, old):
-    """The effort the pane of this name had when last opened: its registry entry, else its last history line."""
-    if old and old.get("effort"):
-        return old["effort"]
-    last = None
+def last_opened(name, old):
+    """The pane of this name as it was when last opened: its registry entry, else its last history line, else {}."""
+    if old:
+        return old
+    last = {}
     try:
         with open(PANES_HISTORY) as f:
             for ln in f:
@@ -181,20 +183,32 @@ def remembered_effort(name, old):
                     r = json.loads(ln)
                 except json.JSONDecodeError:
                     continue
-                if r.get("name") == name and r.get("effort") in EFFORTS:
-                    last = r["effort"]
+                if isinstance(r, dict) and r.get("name") == name:
+                    last = r
     except OSError:
         pass
     return last
 
 
-def effort_of(a, name, old):
+def kind_and_model(a, before):
+    """The kind and model id a pane is started with (issue 557): --kind, else the kind it had, else claude; --model,
+    else the model it had when the kind is the one it had, else Opus for claude and none for codex."""
+    kind = a.kind or (before.get("kind") if before.get("kind") in KINDS else None) or "claude"
+    if a.model:
+        return kind, MODEL_IDS.get(a.model, a.model)
+    if before.get("model") and before.get("kind") == kind:
+        return kind, before["model"]
+    return kind, (MODEL_IDS["opus"] if kind == "claude" else None)
+
+
+def effort_of(a, before):
     """The effort a claude pane is started with: --effort, else the one it had, else its role's; None for codex."""
     if a.kind != "claude":
         if a.effort:
             print(f"effort {a.effort} ignored: a {a.kind} pane takes no effort")
         return None
-    return a.effort or remembered_effort(name, old) or EFFORT_BY_ROLE.get(a.role)
+    had = before.get("effort") if before.get("kind", "claude") == "claude" else None
+    return a.effort or (had if had in EFFORTS else None) or EFFORT_BY_ROLE.get(a.role)
 
 
 def queue(asker, a, side, why, tail=""):
@@ -241,6 +255,10 @@ def new(a, name):
         sys.exit(f"no launched agent {name} to adopt")
     old = next((r for r in reg if r["name"] == name), None)
     reg = [r for r in reg if r["name"] != name]  # a gone entry of the same name is replaced
+    # a name opened again (a rev for its next round, a pane reopened after EVENT gone) keeps its kind, model and
+    # effort unless they are given (issue 557)
+    before = last_opened(name, old)
+    a.kind, model = kind_and_model(a, before)
     cwd = os.path.abspath(a.cwd or str(ROOT))
     if a.adopt and (os.path.abspath(existing.get("cwd", "")) != cwd or existing.get("agent") != a.kind):
         sys.exit("adoption requires the exact expected cwd and agent kind")
@@ -265,10 +283,9 @@ def new(a, name):
     else:
         tab_id, fresh = issue_tab(a.issue, workspace)
         pane_id = shell_pane_in(tab_id, cwd, fresh)
-    model = MODEL_IDS.get(a.model, a.model) if a.model else (MODEL_IDS["opus"] if a.kind == "claude" else None)
     args = ["agent", "start", name, "--kind", a.kind, "--pane", pane_id, "--timeout", "90000"]
     extra = []
-    effort = effort_of(a, name, old)
+    effort = effort_of(a, before)
     if a.kind == "claude" and model:
         extra += ["--model", model]
     if effort:
@@ -461,7 +478,8 @@ def cmd_list(a):
 p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 sp = p.add_subparsers(dest="cmd", required=True)
 n = sp.add_parser("new"); n.add_argument("issue"); n.add_argument("role", choices=PANE_ROLES)
-n.add_argument("--unit"); n.add_argument("--kind", default="claude", choices=["claude", "codex"]); n.add_argument("--model")
+n.add_argument("--unit"); n.add_argument("--kind", choices=KINDS, help="default: the kind the name had, else claude")
+n.add_argument("--model", help="default: the model the name had with that kind, else opus for claude")
 n.add_argument("--effort", choices=EFFORTS)
 n.add_argument("--cwd"); n.add_argument("--brief"); n.add_argument("--text"); n.add_argument("--no-limit", action="store_true")
 n.add_argument("--adopt", action="store_true", help="register an exact-name/cwd/kind agent left after a startup trust dialog")
