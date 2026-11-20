@@ -40,6 +40,11 @@ export interface ChoiceSource<T> {
   filtering?: ChoiceFiltering | undefined;
   /** `false` while the source cannot read yet (what it filters by is still read): shown loading, nothing asked. */
   ready?: boolean | undefined;
+  /**
+   * The choices are read again from the first page each time the field is opened again, for a list that may change
+   * while the form is open (what it lists is made in another tab).
+   */
+  readAgainOnOpen?: boolean | undefined;
   /** One page: the answer for `text` (`''` for none) and `token` (none for the first page). */
   read: (endpoint: string, text: string, token: string | undefined, signal: AbortSignal) => Promise<TokenPage<T>>;
   /** Each choice as the field shows it. */
@@ -62,6 +67,8 @@ export interface PagedChoices<T> {
   loadMore: () => void;
   /** After a failure: the page that failed, again, the first or a further one. */
   retry: () => void;
+  /** Reads the choices again from the first page, those read dropped. */
+  restart: () => void;
 }
 
 /** A number per mount, so a read of an earlier mount is never shown. */
@@ -123,6 +130,10 @@ export function usePagedChoices<T>(source: ChoiceSource<T>, opened: boolean, tex
     }
   }, [data, isFetching, fetchNextPage]);
 
+  const restart = useCallback(() => {
+    setGeneration((current) => current + 1);
+  }, []);
+
   const waiting = opened && (!ready || endpoint === undefined);
   return {
     choices: data?.pages.flatMap((page) => page.items),
@@ -132,5 +143,6 @@ export function usePagedChoices<T>(source: ChoiceSource<T>, opened: boolean, tex
     text: settled,
     loadMore,
     retry,
+    restart,
   };
 }

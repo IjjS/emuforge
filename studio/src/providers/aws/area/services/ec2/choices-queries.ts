@@ -101,7 +101,7 @@ export function vpcChoices(endpoint: string | undefined): ChoiceSource<VpcChoice
     optionOf: (vpc) => ({
       value: vpc.id,
       label: vpc.id,
-      tags: present(vpc.cidr, vpc.isDefault ? 'Default VPC' : undefined),
+      tags: present(vpc.cidr, vpc.isDefault ? 'Default' : undefined),
     }),
   };
 }
@@ -134,13 +134,18 @@ export function groupChoices(
   };
 }
 
-/** The key pairs, in one answer with no "more"; a typed text narrows what that answer holds. */
+/**
+ * The key pairs, in one answer with no "more"; a typed text narrows what that answer holds. They are read again each
+ * time the field is opened again.
+ */
 export function keyPairChoices(endpoint: string | undefined): ChoiceSource<KeyPairChoice> {
   return {
     key: EC2_KEYS.choices('key-pairs'),
     endpoint,
     operation: CHOICE_OPERATIONS.describeKeyPairs,
     filtering: 'local',
+    // A key pair made in another tab ("Create key pair") is offered the next time the field is opened.
+    readAgainOnOpen: true,
     read: async (at, _text, _token, signal) => ({ items: await listKeyPairChoices(at, signal) }),
     optionOf: (pair) => ({ value: pair.name, label: pair.name }),
   };
