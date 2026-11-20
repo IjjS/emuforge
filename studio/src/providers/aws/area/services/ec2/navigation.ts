@@ -10,6 +10,7 @@ import {
   SECURITY_GROUPS_PATH,
   SECURITY_GROUPS_TITLE,
 } from './format';
+import { VOLUMES_PATH } from './volume-format';
 
 // EC2's side navigation (issue 553, design "Shared states"): the header "EC2" and an entry per section, the entry of
 // a screen's section the active one.
@@ -18,6 +19,7 @@ const HEADER: ScreenNavigation['header'] = { text: 'EC2', href: EC2_PATH };
 
 const ITEMS: readonly SideNavigationProps.Item[] = [
   { type: 'link', text: INSTANCES_TITLE, href: INSTANCES_PATH },
+  { type: 'link', text: 'Volumes', href: VOLUMES_PATH },
   { type: 'link', text: SECURITY_GROUPS_TITLE, href: SECURITY_GROUPS_PATH },
   { type: 'link', text: KEY_PAIRS_TITLE, href: KEY_PAIRS_PATH },
 ];
@@ -34,3 +36,5 @@ export const SECURITY_GROUPS_NAVIGATION: ScreenNavigation = {
 
 /** The navigation of the key pair screens (S8, S9): "Key pairs" active. */
 export const KEY_PAIRS_NAVIGATION: ScreenNavigation = { header: HEADER, items: ITEMS, activeHref: KEY_PAIRS_PATH };
+
+export const VOLUMES_NAVIGATION: ScreenNavigation = { header: HEADER, items: ITEMS, activeHref: VOLUMES_PATH };
