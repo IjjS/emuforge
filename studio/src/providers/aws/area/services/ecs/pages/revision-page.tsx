@@ -30,6 +30,8 @@ import { familyHref, NONE, registerHref, statusText, TASK_DEFINITIONS_WORD } fro
 /** Name and Image keep the room of a name, so a narrow screen scrolls the table instead of breaking them mid-word. */
 const NAME_MIN_WIDTH = '28ch';
 const IMAGE_MIN_WIDTH = '28ch';
+// A log group such as /ecs/web-api breaks only after a slash while each part fits.
+const LOG_GROUP_MIN_WIDTH = '20ch';
 
 function Summary({ revision }: { revision: Revision }) {
   return (
@@ -91,6 +93,7 @@ const CONTAINER_COLUMNS: TableProps.ColumnDefinition<RevisionContainer>[] = [
   {
     id: 'log-group',
     header: 'Log group',
+    minWidth: LOG_GROUP_MIN_WIDTH,
     cell: (container) => <ValueText kind="address" value={container.logGroup} none={NONE} />,
   },
 ];
