@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: bug
 Issue-Source: finder
 Issue-Key: harness|pm-merge|round-gap-check-takes-critique-files-for-review-rounds
-Issue-Check-Ids:
+Issue-Check-Ids: none (harness issue, no kept guard shows it)
 Issue-Commit: 53b7b955cbf9a1a93dcdf2d2f1381431d8e5030a
 
 # pm-merge's round check refuses an issue for its critique files
