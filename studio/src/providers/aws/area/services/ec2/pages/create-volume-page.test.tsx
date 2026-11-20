@@ -126,7 +126,10 @@ function creationAlert() {
 }
 
 function zoneReadFailure() {
-  return page.findAllBoxes().find((box) => box.findStatusIndicator() !== null && box.findButton() !== null);
+  return page
+    .findAllBoxes()
+    .map((box) => createWrapper(box.getElement()))
+    .find((box) => box.findStatusIndicator() !== null && box.findButton() !== null);
 }
 
 function expectListHeading() {
