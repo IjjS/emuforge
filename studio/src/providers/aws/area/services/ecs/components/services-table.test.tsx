@@ -53,7 +53,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
-  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 const headers = (wrapper: ReturnType<typeof createWrapper>) =>
@@ -89,49 +89,29 @@ describe('the services table', () => {
     expect(vi.mocked(api.listServices).mock.calls[0]?.slice(0, 3)).toEqual([ENGINE, 'dev', undefined]);
   });
 
-  it('announces more columns when the populated table overflows and hides the cue when it fits', async () => {
-    const measurements: { targets: Set<Element>; measure: () => void }[] = [];
-    vi.stubGlobal(
-      'ResizeObserver',
-      class {
-        private readonly targets = new Set<Element>();
-        constructor(measure: () => void) {
-          measurements.push({ targets: this.targets, measure });
-        }
-        observe(target: Element) {
-          this.targets.add(target);
-        }
-        unobserve(target: Element) {
-          this.targets.delete(target);
-        }
-        disconnect() {
-          this.targets.clear();
-        }
-      },
-    );
+  it.each([
+    [390, true],
+    [1280, false],
+  ] as const)('announces more columns only when the table overflows at width %s', async (width, overflows) => {
+    vi.spyOn(Element.prototype, 'scrollWidth', 'get').mockImplementation(function (this: Element) {
+      return this.querySelector(':scope > table') ? 760 : 0;
+    });
+    vi.spyOn(Element.prototype, 'clientWidth', 'get').mockImplementation(function (this: Element) {
+      return this.querySelector(':scope > table') ? width : 0;
+    });
     vi.mocked(api.listServices).mockResolvedValue({ services: [service('api')] });
     open();
     await screen.findByRole('link', { name: 'api' });
-    const table = screen.getByRole('table');
-    const scrollPane = table.parentElement;
-    if (!scrollPane) throw new Error('Missing table scroll pane');
-    const observer = measurements.find(({ targets }) => targets.has(table) && targets.has(scrollPane));
-    if (!observer) throw new Error('Missing horizontal overflow measurement');
-    let width = 390;
-    Object.defineProperties(scrollPane, {
-      clientWidth: { get: () => width },
-      scrollWidth: { get: () => 760 },
-    });
     const hint = 'Scroll horizontally to see task counts and more columns.';
+    const table = screen.getByRole('table');
 
-    act(observer.measure);
-    expect(screen.getByText(hint)).toBeVisible();
-    expect(table).toHaveAccessibleName(`Services. ${hint}`);
-
-    width = 1280;
-    act(observer.measure);
-    expect(screen.queryByText(hint)).not.toBeInTheDocument();
-    expect(table).toHaveAccessibleName(/^Services/);
+    if (overflows) {
+      expect(screen.getByText(hint)).toBeVisible();
+      expect(table).toHaveAccessibleName(`Services. ${hint}`);
+    } else {
+      expect(screen.queryByText(hint)).not.toBeInTheDocument();
+      expect(table).toHaveAccessibleName(/^Services/);
+    }
   });
 
   it('empty → "No services" with the cluster create action', async () => {

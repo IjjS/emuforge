@@ -54,7 +54,7 @@ const CREATING = 'Creating service';
 const DUPLICATE_MESSAGE = 'Creation of service was not idempotent.';
 const RENAME_SERVICE = 'Choose a different service name.';
 
-// The Flashbar focuses its error items. Its informational 501 needs its own focus target.
+// The area mounts its Flashbar with the first result already present.
 function focusRefusal(node: HTMLSpanElement | null) {
   node?.focus();
 }
@@ -150,6 +150,7 @@ function CreateServiceForm({ cluster, connection }: { cluster: string; connectio
   const [duplicateName, setDuplicateName] = useState<string>();
   const familyReasonId = useId();
   const refusalTitleId = useId();
+  const refusalDetailId = useId();
   const [pending, setPending] = useState(false);
   const [asking, setAsking] = useState(false);
   const [kept, setKept] = useState(0);
@@ -234,22 +235,24 @@ function CreateServiceForm({ cluster, connection }: { cluster: string; connectio
         ) {
           setDuplicateName(request.serviceName);
         }
-        if (failure.kind === 'not-implemented') {
-          setUnsupported(true);
-          flash.show([
-            {
-              ...item,
-              header: <span id={refusalTitleId}>{item.header}</span>,
-              content: (
-                <span role="group" aria-labelledby={refusalTitleId} tabIndex={-1} ref={focusRefusal}>
-                  {item.content}
-                </span>
-              ),
-            },
-          ]);
-        } else {
-          flash.show([item]);
-        }
+        setUnsupported(failure.kind === 'not-implemented');
+        flash.show([
+          {
+            ...item,
+            header: (
+              <span
+                role="group"
+                aria-labelledby={refusalTitleId}
+                aria-describedby={item.content === undefined ? undefined : refusalDetailId}
+                tabIndex={-1}
+                ref={focusRefusal}
+              >
+                <span id={refusalTitleId}>{item.header}</span>
+              </span>
+            ),
+            content: item.content === undefined ? undefined : <span id={refusalDetailId}>{item.content}</span>,
+          },
+        ]);
       }
     } finally {
       if (!signal.aborted) {

@@ -520,10 +520,16 @@ it.each([
     await fill();
     fireEvent.click(submitButton());
     const message = await screen.findByText(detail, { exact: code === undefined });
-    const alert = message.closest('[role="alert"], [tabindex="-1"]');
     const flashbar = createWrapper(document.body).findFlashbar();
-    expect(flashbar?.getElement()).toContainElement(message);
-    await waitFor(() => expect(alert).toContainElement(document.activeElement as HTMLElement));
+    const item = flashbar?.findItems()[0]?.getElement();
+    expect(item).toContainElement(message);
+    await waitFor(() => expect(item).toContainElement(document.activeElement as HTMLElement));
+    if (title !== undefined) {
+      expect(document.activeElement).toHaveAccessibleName(title);
+      expect(document.activeElement).toHaveAccessibleDescription(expect.stringContaining(detail) as string);
+    } else {
+      expect(document.activeElement).toHaveAccessibleName(`The EmuForge engine at ${detail} did not answer`);
+    }
     if (title !== undefined) expect(screen.getByText(title)).toBeInTheDocument();
     if (code !== undefined) expect(screen.getByText(code)).toBeInTheDocument();
     expect(router.state.location.pathname).toBe(FORM);
