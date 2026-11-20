@@ -20,6 +20,7 @@ import { DeleteVpcDialog, type VpcTarget } from '../components/delete-vpc-dialog
 import {
   CREATE_VPC_PATH,
   CREATE_VPC_TITLE,
+  ID_MIN_WIDTH,
   NAME_FILTER_DESCRIPTION,
   nameOrId,
   NONE,
@@ -39,8 +40,6 @@ const SELECT_ONE = 'Select one VPC.';
 
 /** A name keeps room for 24 characters (`aws-area.md`, entry 4): 28ch is those 24 and the cell's padding on each side. */
 const NAME_MIN_WIDTH = '28ch';
-/** The least width of an ID column that is a row header, so a zero-padded ID keeps to one or two lines at 390. */
-const ID_MIN_WIDTH = '22ch';
 
 type BodyState =
   | { kind: 'loading' }

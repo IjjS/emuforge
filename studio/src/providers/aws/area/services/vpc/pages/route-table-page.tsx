@@ -31,6 +31,7 @@ import { TagsTable } from '../components/tags-table';
 import {
   addRouteHref,
   associateSubnetHref,
+  ID_MIN_WIDTH,
   nameOrId,
   NONE,
   ROUTE_TABLES_PATH,
@@ -224,13 +225,19 @@ function Associations({ table, selectedId, onSelect, onDisassociate }: Associati
       id: 'subnet',
       header: 'Subnet ID',
       isRowHeader: true,
+      minWidth: ID_MIN_WIDTH,
       cell: (association) => (
         <Link href={subnetHref(association.subnetId ?? '')} onFollow={handleFollow}>
           <ValueText kind="name" value={association.subnetId} />
         </Link>
       ),
     },
-    { id: 'id', header: 'Association ID', cell: (association) => <ValueText kind="name" value={association.id} /> },
+    {
+      id: 'id',
+      header: 'Association ID',
+      minWidth: ID_MIN_WIDTH,
+      cell: (association) => <ValueText kind="name" value={association.id} />,
+    },
   ];
   return (
     <Table<Association>
