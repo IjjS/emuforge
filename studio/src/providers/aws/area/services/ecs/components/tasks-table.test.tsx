@@ -91,6 +91,16 @@ describe('the tasks table', () => {
     expect(group?.getElement().style.minWidth).toBe('28ch');
   });
 
+  it('the Task column keeps a 32-character task id on one line: a min width of 34ch', async () => {
+    vi.mocked(api.listTasks).mockResolvedValue({ tasks: [task('abc')] });
+    const wrapper = open();
+    await screen.findByRole('link', { name: 'abc' });
+    const column = (wrapper.findTable()?.findColumnHeaders() ?? []).find(
+      (header) => header.getElement().textContent === 'Task',
+    );
+    expect(column?.getElement().style.minWidth).toBe('34ch');
+  });
+
   it('a service\'s table → no "Group" column, and the list is read by the service', async () => {
     vi.mocked(api.listTasks).mockResolvedValue({ tasks: [task('abc')] });
     const wrapper = open({ service: 'api' });

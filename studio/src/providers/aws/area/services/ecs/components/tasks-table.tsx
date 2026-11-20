@@ -45,6 +45,8 @@ const STATUS_OPTIONS: readonly SelectProps.Option[] = [
 
 /** A name keeps room for 24 characters (`aws-area.md`, entry 4). */
 const NAME_MIN_WIDTH = '28ch';
+/** A task id is 32 characters and is kept on one line at 1280 (critique final r2). */
+const TASK_MIN_WIDTH = '34ch';
 
 function counterText(rows: number, openEnd: boolean): string {
   return `(${String(rows)}${openEnd ? '+' : ''})`;
@@ -95,7 +97,7 @@ export function TasksTable({ connection, cluster, service, runHref, onFollowedRe
       id: 'task',
       header: 'Task',
       isRowHeader: true,
-      minWidth: NAME_MIN_WIDTH,
+      minWidth: TASK_MIN_WIDTH,
       cell: (task) => (
         <Link href={taskHref(cluster, task.id)} onFollow={handleFollow}>
           <ValueText kind="name" value={task.id} />
