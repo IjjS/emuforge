@@ -1,56 +1,21 @@
-import { useQuery } from '@tanstack/react-query';
-import { useCallback, useState } from 'react';
+import { useCallback } from 'react';
 
-import type { RequestFailure } from '../../../../../lib/aws/request';
-import { failureOf, noEndpoint } from '../../components/use-token-listing';
-import { useReadAgain, VPC_KEY } from './queries';
+import { noEndpoint } from '../../components/use-token-listing';
+import { useReadAgain } from './queries';
 import {
   createSubnet,
   deleteSubnet,
-  listAvailabilityZones,
   setPublicAddresses,
   SUBNET_CHANGE_OPERATIONS,
   type NewSubnet,
 } from './subnet-changes-api';
 
-// The mutations of a subnet (issue 574, design task 2), and the create form's own read of the Availability Zones.
+// The mutations of a subnet (issue 574, design task 2), for the subnet forms.
 // Once a change succeeds, what it changed is read again (design, "Where a result is shown"): after a create the
 // subnet lists, that subnet and the subnet choices; after a delete those and the route tables; after a change of the
 // public addresses that subnet and the subnet lists. A failed one reads nothing again.
 
-/** S5's zones: their names, a failure, and "Retry". */
-export interface ZonesRead {
-  zones: string[] | undefined;
-  failure: RequestFailure | undefined;
-  loading: boolean;
-  retry: () => void;
-}
-
-/** A number per mount, so a read of an earlier opening is never shown. */
-let mounts = 0;
-
-/** One `DescribeAvailabilityZones` on each opening of the form and each "Retry"; a failure never fails the form. */
-export function useAvailabilityZones(endpoint: string | undefined): ZonesRead {
-  const [generation, setGeneration] = useState(0);
-  const [mount] = useState(() => (mounts += 1));
-  const query = useQuery({
-    queryKey: [...VPC_KEY, 'availability-zones', endpoint, mount, generation],
-    queryFn: ({ signal }) => (endpoint === undefined ? noEndpoint() : listAvailabilityZones(endpoint, signal)),
-    enabled: endpoint !== undefined,
-    staleTime: 0,
-    gcTime: 0,
-    retry: false,
-  });
-  const retry = useCallback(() => {
-    setGeneration((current) => current + 1);
-  }, []);
-  return {
-    zones: query.isError ? undefined : query.data,
-    failure: query.isError ? failureOf(query.error, SUBNET_CHANGE_OPERATIONS.describeAvailabilityZones) : undefined,
-    loading: !query.isError && query.data === undefined,
-    retry,
-  };
-}
+export { useAvailabilityZones, type ZonesRead } from '../../components/use-availability-zones';
 
 /** "Create subnet": the new subnet's ID. */
 export function useCreateSubnet(
