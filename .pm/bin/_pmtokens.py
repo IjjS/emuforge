@@ -6,7 +6,7 @@ import os
 import re
 import time
 
-from _pmlib import PANES, PMINFO, ROOT, RUN, load, save
+from _pmlib import PANES, PANES_HISTORY, PMINFO, ROOT, RUN, load, save
 
 PROJ = os.path.expanduser("~/.claude/projects")
 CONFIG = RUN / "tokens.json"   # {"target": {"unit": "tok"|"usd", "per_hour": float, "day": "YYYY-MM-DD"}}
@@ -16,8 +16,21 @@ PRICE = {"claude-opus-5-5": (4, 20, 0.20, 5.0), "claude-fable-5-2": (10, 50, 0.2
 
 
 def names():
-    """session id -> pane name, for the panes and the PM of this project."""
-    out = {r.get("session"): r.get("name") for r in load(PANES, []) if r.get("session")}
+    """session id -> pane name, for the panes and the PM of this project: the registry's, and of the panes it no longer
+    holds (a closed rev of an earlier review round, issue 557) the name panes-history.jsonl gives the session."""
+    out = {}
+    try:
+        with open(PANES_HISTORY) as f:
+            for ln in f:
+                try:
+                    r = json.loads(ln)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(r, dict) and r.get("session") and r.get("name"):
+                    out[r["session"]] = r["name"]
+    except OSError:
+        pass
+    out.update({r.get("session"): r.get("name") for r in load(PANES, []) if r.get("session")})
     info = load(PMINFO, {})
     for s in info.get("pm_sessions") or [info.get("pm_session")]:
         if s:
