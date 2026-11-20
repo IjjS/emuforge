@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: studio|ec2|instances-list
-Issue-Check-Ids:
+Issue-Check-Ids: studio.ec2-instances-made-elsewhere-are-shown studio.ec2-stop-start-reboot-terminate-an-instance studio.ec2-screens-follow-an-emulator-restart
 Issue-Commit: fe28fb4faecc4a824bf214f5b547ac759ca7f7aa
 
 # Show the emulator's EC2 instances: the Instances screen
