@@ -269,6 +269,20 @@ describe("a revision's page", () => {
     expect(await screen.findByText('Task definition details')).toBeInTheDocument();
   });
 
+  it('the Containers table keeps the room of a name for Name and Image, so neither breaks mid-word', async () => {
+    vi.mocked(api.getRevision).mockResolvedValue({ found: true, revision: revision() });
+    open(PATH);
+    expect(await screen.findByText('Task definition details')).toBeInTheDocument();
+    const widths = Object.fromEntries(
+      (PAGE.findTable()?.findColumnHeaders() ?? []).map((header) => [
+        text(header.getElement()),
+        header.getElement().style.minWidth,
+      ]),
+    );
+    expect(widths['Name']).toBe('28ch');
+    expect(widths['Image']).toBe('28ch');
+  });
+
   it('the page names "task definitions" to the frame', async () => {
     vi.mocked(api.getRevision).mockResolvedValue({ found: true, revision: revision() });
     open(PATH);

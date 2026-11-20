@@ -157,17 +157,20 @@ export function FamilyPage({ connection, params }: ScreenPageProps) {
       loadingText="Loading revisions"
       empty={empty}
       filter={
-        <Select
-          inlineLabelText="Status"
-          selectedOption={STATUS_OPTIONS.find((option) => option.value === status) ?? null}
-          options={STATUS_OPTIONS}
-          onChange={({ detail }) => {
-            const value = detail.selectedOption.value;
-            if (value === 'ACTIVE' || value === 'INACTIVE') {
-              setStatus(value);
-            }
-          }}
-        />
+        // In a horizontal SpaceBetween the select keeps the width of its two options, not the container's.
+        <SpaceBetween direction="horizontal" size="xs">
+          <Select
+            inlineLabelText="Status"
+            selectedOption={STATUS_OPTIONS.find((option) => option.value === status) ?? null}
+            options={STATUS_OPTIONS}
+            onChange={({ detail }) => {
+              const value = detail.selectedOption.value;
+              if (value === 'ACTIVE' || value === 'INACTIVE') {
+                setStatus(value);
+              }
+            }}
+          />
+        </SpaceBetween>
       }
       header={<Header variant="h2">Revisions</Header>}
       pagination={
