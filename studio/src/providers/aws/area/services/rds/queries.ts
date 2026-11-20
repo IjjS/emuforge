@@ -3,7 +3,16 @@ import { useCallback, useState } from 'react';
 
 import type { RequestFailure } from '../../../../../lib/aws/request';
 import { failureOf, noEndpoint, useTokenListing, type TokenListing } from '../../components/use-token-listing';
-import { actOnInstance, getInstance, listInstances, OPERATIONS, type DbInstance, type InstanceRead } from './api';
+import {
+  actOnInstance,
+  getClusterSignIn,
+  getInstance,
+  listInstances,
+  OPERATIONS,
+  type ClusterSignIn,
+  type DbInstance,
+  type InstanceRead,
+} from './api';
 import { isInProgress, READ_AGAIN_MS, type InstanceAction } from './status';
 
 // The TanStack Query hooks of RDS's DB instance screens, and the query keys of every resource of RDS (issue 573,
@@ -80,16 +89,25 @@ export interface ReadOptions<T> {
   operation: string;
   read: (endpoint: string, signal: AbortSignal) => Promise<T>;
   readAgainAfter?: (value: T) => number | false;
+  /** Whether it reads at all; a read that does not stays loading with nothing shown. */
+  enabled?: boolean;
 }
 
 /** One read of a page of RDS, as S3, S6 and S7 make theirs. */
-export function useRdsRead<T>({ key, endpoint, operation, read, readAgainAfter }: ReadOptions<T>): RdsRead<T> {
+export function useRdsRead<T>({
+  key,
+  endpoint,
+  operation,
+  read,
+  readAgainAfter,
+  enabled = true,
+}: ReadOptions<T>): RdsRead<T> {
   const [mount] = useState(() => (mounts += 1));
   const [generation, setGeneration] = useState(0);
   const query = useQuery({
     queryKey: [...key, endpoint, mount, generation],
     queryFn: ({ signal }) => (endpoint === undefined ? noEndpoint() : read(endpoint, signal)),
-    enabled: endpoint !== undefined,
+    enabled: enabled && endpoint !== undefined,
     refetchInterval: (current) => {
       const value = current.state.data;
       return readAgainAfter === undefined || value === undefined || current.state.status === 'error'
@@ -122,6 +140,20 @@ export function useInstance(endpoint: string | undefined, id: string): RdsRead<I
     operation: OPERATIONS.describeDBInstances,
     read: (at, signal) => getInstance(at, id, signal),
     readAgainAfter: (read) => (read.found && isInProgress(read.instance.status) ? READ_AGAIN_MS : false),
+  });
+}
+
+/**
+ * S3's read of a member's DB cluster, for the sign-in values the member has none of its own; none is read while
+ * `clusterId` is not given.
+ */
+export function useClusterSignIn(endpoint: string | undefined, clusterId: string | undefined): RdsRead<ClusterSignIn> {
+  return useRdsRead({
+    key: RDS_KEYS.cluster(clusterId ?? '', 'sign-in'),
+    endpoint,
+    operation: OPERATIONS.describeDBClusters,
+    read: (at, signal) => (clusterId === undefined ? Promise.resolve({}) : getClusterSignIn(at, clusterId, signal)),
+    enabled: clusterId !== undefined,
   });
 }
 

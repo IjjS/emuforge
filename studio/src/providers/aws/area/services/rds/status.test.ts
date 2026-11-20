@@ -8,7 +8,7 @@ const STARTED = 'Only a stopped DB instance can be started.';
 const STOPPED = 'Only an available DB instance can be stopped.';
 const REBOOTED = 'Only an available DB instance can be rebooted.';
 const DELETING = 'This DB instance is already being deleted.';
-const AURORA = 'The emulator does not start or stop an Aurora DB instance by itself.';
+const AURORA = 'An Aurora DB instance starts and stops only with its DB cluster.';
 const PROTECTED = 'Deletion protection is on.';
 
 /** Each action's availability: `true`, or the reason it is not. */

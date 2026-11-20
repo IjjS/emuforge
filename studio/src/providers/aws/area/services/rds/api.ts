@@ -1,5 +1,6 @@
 import {
   DeleteDBInstanceCommand,
+  DescribeDBClustersCommand,
   DescribeDBInstancesCommand,
   RDSClient,
   RebootDBInstanceCommand,
@@ -24,6 +25,7 @@ import type { InstanceAction } from './status';
 /** The operations of the DB instance screens, as a failure names them. */
 export const OPERATIONS = {
   describeDBInstances: 'DescribeDBInstances',
+  describeDBClusters: 'DescribeDBClusters',
   startDBInstance: 'StartDBInstance',
   stopDBInstance: 'StopDBInstance',
   rebootDBInstance: 'RebootDBInstance',
@@ -32,6 +34,9 @@ export const OPERATIONS = {
 
 /** How many DB instances one page of S1 asks for. */
 export const INSTANCES_PAGE_SIZE = 50;
+
+/** RDS's answer for a DB cluster it does not hold. */
+const CLUSTER_NOT_FOUND = 'DBClusterNotFoundFault';
 
 /** RDS's answer for a DB instance it does not hold. */
 const INSTANCE_NOT_FOUND = 'DBInstanceNotFound';
@@ -269,6 +274,42 @@ export async function getInstance(endpoint: string, id: string, signal: AbortSig
   } catch (error) {
     if (isCode(error, INSTANCE_NOT_FOUND)) {
       return { found: false };
+    }
+    throw error;
+  }
+}
+
+/** What a member's S3 shows of its DB cluster: the sign-in values a member has none of its own. */
+export interface ClusterSignIn {
+  masterUsername?: string;
+  databaseName?: string;
+}
+
+/**
+ * The sign-in values of the DB cluster `clusterId`, for its member's S3: `DescribeDBClusters` by
+ * `DBClusterIdentifier`; a cluster the emulator does not hold has none.
+ */
+export async function getClusterSignIn(
+  endpoint: string,
+  clusterId: string,
+  signal: AbortSignal,
+): Promise<ClusterSignIn> {
+  try {
+    const output = await sendRds(
+      endpoint,
+      OPERATIONS.describeDBClusters,
+      (client, abortSignal) =>
+        client.send(new DescribeDBClustersCommand({ DBClusterIdentifier: clusterId }), { abortSignal }),
+      signal,
+    );
+    const [cluster] = output.DBClusters ?? [];
+    return withValues<ClusterSignIn>(
+      {},
+      { masterUsername: text(cluster?.MasterUsername), databaseName: text(cluster?.DatabaseName) },
+    );
+  } catch (error) {
+    if (isCode(error, CLUSTER_NOT_FOUND)) {
+      return {};
     }
     throw error;
   }

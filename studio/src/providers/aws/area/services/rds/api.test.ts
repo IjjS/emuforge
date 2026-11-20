@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { engineEndpoint } from '../../../../../lib/aws/client-factory';
 import { RequestError } from '../../../../../lib/aws/request';
-import { actOnInstance, getInstance, listInstances } from './api';
+import { actOnInstance, getClusterSignIn, getInstance, listInstances } from './api';
 
 // The test plays the engine behind the page's `fetch`: its session route, and each request as it leaves the browser,
 // answered in RDS's query protocol (form in, XML out) as the emulator answers.
@@ -226,6 +226,24 @@ describe('an instance', () => {
   });
 });
 
+describe("a member's DB cluster", () => {
+  it('asked by DBClusterIdentifier → its master user name and database name; one it does not hold → none', async () => {
+    engine.on('DescribeDBClusters', () =>
+      ok(
+        'DescribeDBClusters',
+        '<DBClusters><DBCluster><DBClusterIdentifier>aur-1</DBClusterIdentifier><MasterUsername>clusteradmin</MasterUsername><DatabaseName>cdb</DatabaseName></DBCluster></DBClusters>',
+      ),
+    );
+    await expect(getClusterSignIn(endpoint, 'aur-1', signal())).resolves.toEqual({
+      masterUsername: 'clusteradmin',
+      databaseName: 'cdb',
+    });
+    expect(engine.of('DescribeDBClusters')[0]?.params.get('DBClusterIdentifier')).toBe('aur-1');
+    engine.on('DescribeDBClusters', () => refused('DBClusterNotFoundFault', 'DBCluster gone not found.', 404));
+    await expect(getClusterSignIn(endpoint, 'gone', signal())).resolves.toEqual({});
+  });
+});
+
 describe('the actions', () => {
   it('start, stop, reboot → each its operation with the one identifier; delete with SkipFinalSnapshot true', async () => {
     await actOnInstance(endpoint, 'start', 'db-1', signal());
@@ -277,6 +295,7 @@ describe('every call', () => {
   const calls: [string, (abort: AbortSignal) => Promise<unknown>][] = [
     ['DescribeDBInstances', (abort) => listInstances(endpoint, undefined, abort)],
     ['DescribeDBInstances', (abort) => getInstance(endpoint, 'db-1', abort)],
+    ['DescribeDBClusters', (abort) => getClusterSignIn(endpoint, 'aur-1', abort)],
     ['StartDBInstance', (abort) => actOnInstance(endpoint, 'start', 'db-1', abort)],
     ['StopDBInstance', (abort) => actOnInstance(endpoint, 'stop', 'db-1', abort)],
     ['RebootDBInstance', (abort) => actOnInstance(endpoint, 'reboot', 'db-1', abort)],

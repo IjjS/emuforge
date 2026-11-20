@@ -17,7 +17,13 @@ import * as api from '../api';
 
 vi.mock('../api', async (importOriginal) => {
   const real = await importOriginal<typeof import('../api')>();
-  return { ...real, listInstances: vi.fn(), getInstance: vi.fn(), actOnInstance: vi.fn() };
+  return {
+    ...real,
+    listInstances: vi.fn(),
+    getInstance: vi.fn(),
+    actOnInstance: vi.fn(),
+    getClusterSignIn: vi.fn(),
+  };
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -220,6 +226,10 @@ describe('a DB instance', () => {
       'Master user name': 'admin1',
       'Database name': 'app',
     });
+    expect(pairsOf('DB instance identifiers')).toEqual({
+      ARN: 'arn:aws:rds:us-east-1:000000000000:db:app-db',
+      'Resource ID': 'db-ABC123',
+    });
     expect(pairsOf('DB instance details')).toEqual({
       'DB identifier': 'app-db',
       Status: 'available',
@@ -230,8 +240,6 @@ describe('a DB instance', () => {
       'DB cluster': '-',
       'Availability Zone': 'us-east-1a',
       Created: creationDateText(CREATED),
-      ARN: 'arn:aws:rds:us-east-1:000000000000:db:app-db',
-      'Resource ID': 'db-ABC123',
       'Parameter group': 'default.postgres18',
       'Deletion protection': 'Off',
     });
@@ -273,6 +281,72 @@ describe('a DB instance', () => {
     open(PATH);
     await loaded();
     expect(screen.getByRole('link', { name: 'aur-1' })).toHaveAttribute('href', '/aws/rds/clusters/cluster/aur-1');
+  });
+
+  it('a member without its own master user name and database name → its cluster\'s, each copyable, "From DB cluster {id}" to its page', async () => {
+    const member = { ...FULL, clusterId: 'aur-1', engine: 'aurora-postgresql' } as Partial<api.DbInstance>;
+    delete member.masterUsername;
+    delete member.dbName;
+    vi.mocked(api.getInstance).mockResolvedValue({ found: true, instance: member as api.DbInstance });
+    vi.mocked(api.getClusterSignIn).mockResolvedValue({ masterUsername: 'clusteradmin', databaseName: 'cdb' });
+    open(PATH);
+    await loaded();
+    await waitFor(() => {
+      expect(pairsOf('Connection')['Master user name']).toBe('clusteradminFrom DB cluster aur-1');
+    });
+    expect(pairsOf('Connection')['Database name']).toBe('cdbFrom DB cluster aur-1');
+    expect(vi.mocked(api.getClusterSignIn).mock.calls[0]?.[1]).toBe('aur-1');
+    expect(screen.getByRole('button', { name: 'Copy Master user name' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Copy Database name' })).toBeInTheDocument();
+    const links = screen.getAllByRole('link', { name: 'DB cluster aur-1' });
+    expect(links).toHaveLength(2);
+    for (const link of links) {
+      expect(link).toHaveAttribute('href', '/aws/rds/clusters/cluster/aur-1');
+    }
+  });
+
+  for (const [what, settle] of [
+    ['while the cluster read is out', () => new Promise<api.ClusterSignIn>(() => undefined)],
+    [
+      'when it fails',
+      () => Promise.reject(new RequestError({ kind: 'other', operation: 'DescribeDBClusters', code: 'Boom' })),
+    ],
+    ['when the cluster has no such value', () => Promise.resolve({})],
+  ] as const) {
+    it(`a member's sign-in values ${what} → "-" with no copy control, the rest of the page shown`, async () => {
+      const member = { ...FULL, clusterId: 'aur-1' } as Partial<api.DbInstance>;
+      delete member.masterUsername;
+      delete member.dbName;
+      vi.mocked(api.getInstance).mockResolvedValue({ found: true, instance: member as api.DbInstance });
+      vi.mocked(api.getClusterSignIn).mockImplementation(settle);
+      open(PATH);
+      await loaded();
+      await waitFor(() => {
+        expect(api.getClusterSignIn).toHaveBeenCalled();
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
+      expect(pairsOf('Connection')['Master user name']).toBe('-');
+      expect(pairsOf('Connection')['Database name']).toBe('-');
+      expect(screen.queryByRole('button', { name: 'Copy Master user name' })).toBeNull();
+      expect(screen.queryByText(/From DB cluster/)).toBeNull();
+      expect(pairsOf('DB instance details').Status).toBe('available');
+      expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+    });
+  }
+
+  it('an instance outside a cluster, or a member with its own values, reads no cluster', async () => {
+    vi.mocked(api.getInstance).mockResolvedValue(found());
+    open(PATH);
+    await loaded();
+    vi.mocked(api.getInstance).mockResolvedValue(found({ clusterId: 'aur-1' }));
+    fireEvent.click(control('Refresh'));
+    await waitFor(() => {
+      expect(pairsOf('DB instance details')['DB cluster']).toBe('aur-1');
+    });
+    expect(api.getClusterSignIn).not.toHaveBeenCalled();
+    expect(pairsOf('Connection')['Master user name']).toBe('admin1');
   });
 
   it('deletion protection "On" → "Changed with ModifyDBInstance." and "Delete" unavailable with its reason; "Off" → neither', async () => {

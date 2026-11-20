@@ -18,13 +18,13 @@ import { useFollow } from '../../../components/use-follow';
 import { failureOf, usePageSignal } from '../../../components/use-token-listing';
 import { ValueText } from '../../../components/value-text';
 import type { ScreenPageProps } from '../../../screens';
-import { ACTION_OPERATIONS, type DbInstance } from '../api';
+import { ACTION_OPERATIONS, type ClusterSignIn, type DbInstance } from '../api';
 import { InstanceActions } from '../components/instance-actions';
 import { ProtectionValue } from '../components/protection-value';
 import { StatusValue } from '../components/status';
 import { TagsTable } from '../components/tags-table';
 import { clusterHref, engineText, INSTANCES_PATH, INSTANCES_WORD, NONE } from '../format';
-import { useInstance, useInstanceAction } from '../queries';
+import { useClusterSignIn, useInstance, useInstanceAction } from '../queries';
 import { ACTION_LABELS, ACTION_RESULTS, actionTarget, type ActionTarget, type InstanceAction } from '../status';
 
 // A DB instance's page, S3 (issue 573, design tasks 1 and 3): read by `DBInstanceIdentifier`, so an identifier the
@@ -33,6 +33,9 @@ import { ACTION_LABELS, ACTION_RESULTS, actionTarget, type ActionTarget, type In
 
 const CONNECTION_DESCRIPTION =
   'The endpoint and the sign-in values as the emulator reports them. The API does not return the master password.';
+
+/** Room for an ARN of an instance's identifier, or a resource ID, beside the other (critique final P2 3). */
+const IDENTIFIERS_MIN_COLUMN = 360;
 
 function Pairs({ label, items }: { label: string; items: { label: string; value: ReactNode }[] }) {
   return <KeyValuePairs columns={3} minColumnWidth={220} items={items} ariaLabel={label} />;
@@ -50,7 +53,41 @@ function portText(port: number | undefined): string | undefined {
   return port === undefined ? undefined : String(port);
 }
 
-function Connection({ instance }: { instance: DbInstance }) {
+/** A sign-in value of a member taken from its DB cluster, with its copy control and, below it, where it is from. */
+function FromCluster({ label, value, clusterId }: { label: string; value: string; clusterId: string }) {
+  const handleFollow = useFollow();
+  return (
+    <SpaceBetween size="xxs">
+      <CopyValue label={label} value={value} kind="name" />
+      <Box variant="small">
+        {'From '}
+        <Link href={clusterHref(clusterId)} onFollow={handleFollow} variant="primary">
+          {`DB cluster ${clusterId}`}
+        </Link>
+      </Box>
+    </SpaceBetween>
+  );
+}
+
+/** A sign-in value: the instance's own, else its DB cluster's when read, else "-". */
+function SignInValue({
+  label,
+  own,
+  fromCluster,
+  clusterId,
+}: {
+  label: string;
+  own: string | undefined;
+  fromCluster: string | undefined;
+  clusterId: string | undefined;
+}) {
+  if (own === undefined && fromCluster !== undefined && clusterId !== undefined) {
+    return <FromCluster label={label} value={fromCluster} clusterId={clusterId} />;
+  }
+  return <CopyValue label={label} value={own} kind="name" none={NONE} />;
+}
+
+function Connection({ instance, signIn }: { instance: DbInstance; signIn: ClusterSignIn | undefined }) {
   return (
     <Container
       header={
@@ -69,11 +106,25 @@ function Connection({ instance }: { instance: DbInstance }) {
           { label: 'Port', value: <CopyValue label="Port" value={portText(instance.port)} kind="fixed" none={NONE} /> },
           {
             label: 'Master user name',
-            value: <CopyValue label="Master user name" value={instance.masterUsername} kind="name" none={NONE} />,
+            value: (
+              <SignInValue
+                label="Master user name"
+                own={instance.masterUsername}
+                fromCluster={signIn?.masterUsername}
+                clusterId={instance.clusterId}
+              />
+            ),
           },
           {
             label: 'Database name',
-            value: <CopyValue label="Database name" value={instance.dbName} kind="name" none={NONE} />,
+            value: (
+              <SignInValue
+                label="Database name"
+                own={instance.dbName}
+                fromCluster={signIn?.databaseName}
+                clusterId={instance.clusterId}
+              />
+            ),
           },
         ]}
       />
@@ -123,11 +174,6 @@ function Details({ instance }: { instance: DbInstance }) {
           { label: 'DB cluster', value: <Cluster id={instance.clusterId} /> },
           { label: 'Availability Zone', value: <Fixed value={instance.zone} /> },
           { label: 'Created', value: <ValueText kind="fixed" value={creationDateText(instance.createdAt)} /> },
-          { label: 'ARN', value: <CopyValue label="ARN" value={instance.arn} kind="address" none={NONE} /> },
-          {
-            label: 'Resource ID',
-            value: <CopyValue label="Resource ID" value={instance.resourceId} kind="name" none={NONE} />,
-          },
           {
             label: 'Parameter group',
             value: (
@@ -144,6 +190,21 @@ function Details({ instance }: { instance: DbInstance }) {
           },
         ]}
       />
+      {/* The two long identifiers in a row of their own, each wide enough for its whole value (critique final P2 3). */}
+      <Box margin={{ top: 'l' }}>
+        <KeyValuePairs
+          columns={2}
+          minColumnWidth={IDENTIFIERS_MIN_COLUMN}
+          ariaLabel="DB instance identifiers"
+          items={[
+            { label: 'ARN', value: <CopyValue label="ARN" value={instance.arn} kind="address" none={NONE} /> },
+            {
+              label: 'Resource ID',
+              value: <CopyValue label="Resource ID" value={instance.resourceId} kind="name" none={NONE} />,
+            },
+          ]}
+        />
+      </Box>
     </Container>
   );
 }
@@ -228,6 +289,12 @@ export function InstancePage({ connection, params }: ScreenPageProps) {
   const { value: read, failure, refresh } = reading;
   const instance = read?.found === true ? read.instance : undefined;
   const failureState = failure === undefined ? undefined : readFailureState(failure, connection, 'DB instance');
+  // A member without sign-in values of its own reads its DB cluster's; that read never fails the page.
+  const signInCluster =
+    instance?.clusterId !== undefined && (instance.masterUsername === undefined || instance.dbName === undefined)
+      ? instance.clusterId
+      : undefined;
+  const signIn = useClusterSignIn(connection.engineOrigin, signInCluster);
 
   // Kept from the previous render, as React's own pattern for it, so each change is acted on once.
   const [seenFailureLine, setSeenFailureLine] = useState<string>();
@@ -305,7 +372,7 @@ export function InstancePage({ connection, params }: ScreenPageProps) {
   } else {
     content = (
       <SpaceBetween size="l">
-        <Connection instance={instance} />
+        <Connection instance={instance} signIn={signIn.failure === undefined ? signIn.value : undefined} />
         <Details instance={instance} />
         <Network instance={instance} />
         <TagsTable tags={instance.tags} />
@@ -321,7 +388,14 @@ export function InstancePage({ connection, params }: ScreenPageProps) {
             variant="h1"
             actions={
               <SpaceBetween direction="horizontal" size="xs">
-                <Button iconName="refresh" ariaLabel="Refresh" onClick={refresh} />
+                <Button
+                  iconName="refresh"
+                  ariaLabel="Refresh"
+                  onClick={() => {
+                    refresh();
+                    signIn.refresh();
+                  }}
+                />
                 {instance !== undefined && (
                   <InstanceActions instance={actionTarget(instance)} pending={pending} onAction={handleAction} />
                 )}
