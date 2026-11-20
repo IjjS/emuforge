@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, waitFor } from '@testing-library/react';
+import { fireEvent, render, waitFor } from '@testing-library/react';
 import { useState } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -229,7 +229,7 @@ describe('the create fields', () => {
 
   it('the password is typed into a password field, and its description names what is being created', () => {
     const { unmount } = open();
-    const input = field('Master password').getElement().querySelector('input');
+    const input = field('Master password').getElement().querySelector('input:not([type="checkbox"])');
     expect(input?.getAttribute('type')).toBe('password');
     expect(text(field('Master password').findDescription()?.getElement())).toBe(
       'EmuForge Studio does not keep the password and the API does not return it: note it before you create the DB instance.',
@@ -239,6 +239,38 @@ describe('the create fields', () => {
     expect(text(field('Master password').findDescription()?.getElement())).toBe(
       'EmuForge Studio does not keep the password and the API does not return it: note it before you create the DB cluster.',
     );
+  });
+
+  it('"Show password" under the password switches it between a password field and text, starts off on each form, and is stored nowhere', () => {
+    localStorage.clear();
+    sessionStorage.clear();
+    const first = open();
+    const input = () => field('Master password').getElement().querySelector('input:not([type="checkbox"])');
+    const toggle = () => {
+      const found = createWrapper(field('Master password').getElement()).findCheckbox();
+      if (found === null) {
+        throw new Error('no checkbox');
+      }
+      return found;
+    };
+    expect(text(toggle().findLabel().getElement())).toBe('Show password');
+    expect(toggle().findNativeInput().getElement().checked).toBe(false);
+    expect(input()?.getAttribute('type')).toBe('password');
+    fireEvent.change(input() as HTMLInputElement, { target: { value: 'pa55-Word!x' } });
+    toggle().findNativeInput().click();
+    expect(input()?.getAttribute('type')).toBe('text');
+    expect((input() as HTMLInputElement).value).toBe('pa55-Word!x');
+    toggle().findNativeInput().click();
+    expect(input()?.getAttribute('type')).toBe('password');
+    toggle().findNativeInput().click();
+    expect(localStorage.length).toBe(0);
+    expect(sessionStorage.length).toBe(0);
+    expect(window.location.href).not.toContain('pa55-Word!x');
+    first.unmount();
+
+    open({ what: 'the DB cluster' });
+    expect(toggle().findNativeInput().getElement().checked).toBe(false);
+    expect(input()?.getAttribute('type')).toBe('password');
   });
 
   it('"Engine version": the emulator\'s default at start and above the versions; loading, then the versions', async () => {
