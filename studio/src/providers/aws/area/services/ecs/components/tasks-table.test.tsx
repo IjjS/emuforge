@@ -91,14 +91,24 @@ describe('the tasks table', () => {
     expect(group?.getElement().style.minWidth).toBe('28ch');
   });
 
-  it('the Task column keeps a 32-character task id on one line: a min width of 34ch', async () => {
+  it('the Task column keeps a 32-character task id on one line with its padding: 32ch + 48px', async () => {
     vi.mocked(api.listTasks).mockResolvedValue({ tasks: [task('abc')] });
     const wrapper = open();
     await screen.findByRole('link', { name: 'abc' });
     const column = (wrapper.findTable()?.findColumnHeaders() ?? []).find(
       (header) => header.getElement().textContent === 'Task',
     );
-    expect(column?.getElement().style.minWidth).toBe('34ch');
+    expect(column?.getElement().style.minWidth).toBe('calc(32ch + 48px)');
+  });
+
+  it('the Started at column keeps a date to two lines: 21ch + 48px', async () => {
+    vi.mocked(api.listTasks).mockResolvedValue({ tasks: [task('abc')] });
+    const wrapper = open();
+    await screen.findByRole('link', { name: 'abc' });
+    const column = (wrapper.findTable()?.findColumnHeaders() ?? []).find(
+      (header) => header.getElement().textContent === 'Started at',
+    );
+    expect(column?.getElement().style.minWidth).toBe('calc(21ch + 48px)');
   });
 
   it('a service\'s table → no "Group" column, and the list is read by the service', async () => {

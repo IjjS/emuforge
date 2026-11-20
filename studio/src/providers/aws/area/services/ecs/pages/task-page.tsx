@@ -48,6 +48,7 @@ import {
   lastStatusType,
   needsRevision,
   serviceOfGroup,
+  stopOutcomeType,
   taskTexts,
 } from '../task-format';
 import { useTask } from '../task-queries';
@@ -65,16 +66,14 @@ const IMAGE_MIN_WIDTH = '32ch';
 
 /**
  * How a stopped task ended, above its summary (critique final r1 and r2): the emulator's stop code and stopped
- * reason, and the exit code of each essential container that has one. Only a task that failed to start, or one
- * whose essential container exited with a code other than 0, is an error; a task stopped by "Stop task"
- * (`UserInitiated`) or by a deployment (`ServiceSchedulerInitiated`) is no failure and is told as info.
+ * reason, and the exit code of each essential container that has one. The stop code decides the Alert's type
+ * (`stopOutcomeType`, critique final r3): a stop by "Stop task" or a deployment is info even with SIGTERM's 143.
  */
 function Outcome({ task, essential }: { task: Task; essential: TaskContainer[] | undefined }) {
   const texts = taskTexts(task);
   const exited = (essential ?? []).filter((container) => container.exitCode !== undefined);
-  const failed = task.stopCode === 'TaskFailedToStart' || exited.some((container) => container.exitCode !== 0);
   return (
-    <Alert type={failed ? 'error' : 'info'} header={`Task stopped: ${texts.stopCode}`}>
+    <Alert type={stopOutcomeType(task.stopCode, essential)} header={`Task stopped: ${texts.stopCode}`}>
       <SpaceBetween size="xxs">
         <ValueText kind="text" value={texts.stoppedReason} />
         {exited.map((container) => (

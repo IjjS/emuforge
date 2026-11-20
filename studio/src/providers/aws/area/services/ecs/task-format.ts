@@ -139,6 +139,23 @@ export function essentialContainers(
   return task.containers.filter((container) => essential.has(container.name));
 }
 
+/**
+ * How S5 tells a stopped task's end (critique final r3), decided by its stop code: `TaskFailedToStart` is an error,
+ * and so is `EssentialContainerExited` with an essential container's exit code other than 0; any other code is info
+ * whatever the exit code, as a task stopped by "Stop task" (`UserInitiated`) or by a deployment
+ * (`ServiceSchedulerInitiated`) exits with the 143 of SIGTERM and did not fail.
+ */
+export function stopOutcomeType(
+  stopCode: string | undefined,
+  essential: readonly Pick<TaskContainer, 'exitCode'>[] | undefined,
+): 'error' | 'info' {
+  if (stopCode === 'TaskFailedToStart') {
+    return 'error';
+  }
+  const nonZero = (essential ?? []).some((container) => container.exitCode !== undefined && container.exitCode !== 0);
+  return stopCode === 'EssentialContainerExited' && nonZero ? 'error' : 'info';
+}
+
 /** Whether a task needs its revision read to know its essential containers: stopped, of several containers. */
 export function needsRevision(task: Task): boolean {
   return task.lastStatus === 'STOPPED' && task.containers.length > 1 && task.definition !== undefined;

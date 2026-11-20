@@ -45,8 +45,13 @@ const STATUS_OPTIONS: readonly SelectProps.Option[] = [
 
 /** A name keeps room for 24 characters (`aws-area.md`, entry 4). */
 const NAME_MIN_WIDTH = '28ch';
-/** A task id is 32 characters and is kept on one line at 1280 (critique final r2). */
-const TASK_MIN_WIDTH = '34ch';
+/**
+ * A task id is 32 characters and is kept on one line at 1280 with the cell's padding on both sides (critique final r2
+ * and r3: 34ch alone missed by the padding).
+ */
+export const TASK_MIN_WIDTH = 'calc(32ch + 48px)';
+/** A start date ("November 20, 2026, 14:03:22 (UTC+09:00)") on at most two lines (critique final r3). */
+export const STARTED_AT_MIN_WIDTH = 'calc(21ch + 48px)';
 
 function counterText(rows: number, openEnd: boolean): string {
   return `(${String(rows)}${openEnd ? '+' : ''})`;
@@ -134,6 +139,7 @@ export function TasksTable({ connection, cluster, service, runHref, onFollowedRe
     {
       id: 'started-at',
       header: 'Started at',
+      minWidth: STARTED_AT_MIN_WIDTH,
       cell: (task) => <ValueText kind="fixed" value={creationDateText(task.startedAt)} />,
     },
     {
