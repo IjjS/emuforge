@@ -32,6 +32,11 @@ for integration. The steps, for each module that exists in the checkout:
                keyed by each module's own text, so it can hold the result of an earlier tree)
   integration  tests/integration/run (the suite's own entry point), given the worktree's engine and emulator ports
   harness      .pm/bin/tests/run (the harness guards, issue 523: unittest discovery, under 30 s in all)
+Before its Studio steps, pm-check uses the digest of studio/bun.lock in studio/node_modules/.pm-bun-lock.sha256
+to tell whether a frozen install is current. A missing or different stamp calls for bun install --frozen-lockfile
+as studio-install, which stamps the tree only on success. A preparation error records studio-install as "error"
+and the Studio checks as "not-run". The integration runner does its own install, so pm-check removes a stamp
+for a different lock before it starts integration.
 A module whose manifest is missing (engine/Cargo.toml, studio/package.json, tests/integration/run,
 .pm/bin/tests/run) is reported as "absent" and does not count as a failure, called for or not. A checkout where
 every module is absent, or where nothing was called for (only issue files changed), passes on a clean tree.
@@ -151,6 +156,7 @@ the measured sizes or why maintenance was deferred. The check verdict comes from
 import argparse
 import datetime as dt
 import fcntl
+import hashlib
 import json
 import os
 import pathlib
@@ -193,6 +199,7 @@ SCRUB = ("AWS_PROFILE", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSI
 
 
 HEAVY = ("engine", "studio", "integration")  # modules whose steps load the machine
+STUDIO_INSTALL = "studio-install"
 WAIT_EXIT = 75  # EX_TEMPFAIL: no room now; ask again after the wait the answer names
 current = None  # the running step's Popen
 current_step = None  # the running step's name
@@ -374,10 +381,44 @@ def other_run(record):
     return pid != os.getpid() and alive(pid)
 
 
+def studio_stamp(studio):
+    return studio / "node_modules" / ".pm-bun-lock.sha256"
+
+
+def studio_lock_digest(studio):
+    return hashlib.sha256((studio / "bun.lock").read_bytes()).hexdigest()
+
+
+def installed_studio_lock(studio):
+    try:
+        return studio_stamp(studio).read_text(encoding="ascii", errors="replace").strip()
+    except OSError:
+        return None
+
+
+def studio_install_current(studio):
+    try:
+        return installed_studio_lock(studio) == studio_lock_digest(studio)
+    except OSError:
+        return False
+
+
+def invalidate_studio_install(studio):
+    stamp = studio_stamp(studio)
+    if stamp.exists() and not studio_install_current(studio):
+        stamp.unlink(missing_ok=True)
+
+
 def run_step(cmd, cwd, env, log, record, name, cache_fd):
     """Run one step in its own process group with its output in `log`; return the exit code (127: not found)."""
     global current, current_step
     with open(log, "w") as f:
+        if name == "integration":
+            try:
+                invalidate_studio_install(record.parents[2] / "studio")
+            except OSError as e:
+                print(f"cannot invalidate the Studio install stamp: {e}", file=f)
+                return 127
         try:
             current = subprocess.Popen(cmd, cwd=cwd, stdout=f, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                                        env=env, start_new_session=True, pass_fds=(cache_fd,))
@@ -396,6 +437,37 @@ def run_step(cmd, cwd, env, log, record, name, cache_fd):
             if name == "integration":  # what the run's EXIT trap could not remove (issue 342)
                 for line in sweep_log(pathlib.Path(record).parents[2], log, BIN_DIR):
                     print(line, flush=True)
+
+
+def prepare_studio(studio, env, log, record, cache_fd):
+    """Install Studio's locked packages if needed and return the preparation result, if any."""
+    started = time.time()
+    stamp = studio_stamp(studio)
+    ran_install = False
+    status = "error"
+    try:
+        digest = studio_lock_digest(studio)
+        if installed_studio_lock(studio) == digest:
+            return None
+        stamp.unlink(missing_ok=True)
+        ran_install = True
+        code = run_step(["bun", "install", "--frozen-lockfile"], str(studio), env, log, record, STUDIO_INSTALL, cache_fd)
+        if code:
+            with log.open("a") as f:
+                print(f"bun install --frozen-lockfile exited with status {code}", file=f)
+        elif studio_lock_digest(studio) != digest:
+            with log.open("a") as f:
+                print("Studio's bun.lock changed during the install", file=f)
+        else:
+            stamp.write_text(digest + "\n", encoding="ascii")
+            status = "passed"
+    except OSError as e:
+        with log.open("a" if ran_install else "w") as f:
+            print(f"cannot prepare Studio packages: {e}", file=f)
+    seconds = round(time.time() - started, 1)
+    record_duration(STUDIO_INSTALL, seconds, status)
+    print(f"  {STUDIO_INSTALL:18} {status:7} {seconds:>7}s  {log}", flush=True)
+    return dict(name=STUDIO_INSTALL, module="studio", status=status, seconds=seconds, log=str(log))
 
 
 def this_report(co, commit, started):
@@ -586,8 +658,13 @@ def run_check(a, co, ids, cache_fd):
     held = deferred(sc)
     present = [m for m in mods if (co / STEPS[m][0] / STEPS[m][1]).exists()]
     cpu, waited = None, dict(seconds=0, asks=0)
-    if any(m in HEAVY for m in present if m in calls and m not in held):
-        steps = [n for m in present if m in calls and m not in held for n, _ in STEPS[m][2]]
+    active = [m for m in present if m in calls and m not in held]
+    if any(m in HEAVY for m in active):
+        steps = []
+        for mod in active:
+            if mod == "studio" and not studio_install_current(co / "studio"):
+                steps.append(STUDIO_INSTALL)
+            steps.extend(name for name, _ in STEPS[mod][2])
         readings, waited = ask(co, steps)
         cpu = readings.get("cpu")
     else:
@@ -622,6 +699,15 @@ def run_all(a, co, mods, calls, env, logs, record, commit, cache_fd, held=(), ta
                 results.append(dict(name=name, module=mod, status="not-needed", seconds=0, log=None))
                 print(f"  {name:18} not needed", flush=True)
             continue
+        if mod == "studio":
+            install = prepare_studio(co / sub, env, logs / f"check-{STUDIO_INSTALL}.log", record, cache_fd)
+            if install is not None:
+                results.append(install)
+                if install["status"] == "error":
+                    for name, _ in steps:
+                        results.append(dict(name=name, module=mod, status="not-run", seconds=0, log=None))
+                        print(f"  {name:18} not run  {STUDIO_INSTALL} had an error", flush=True)
+                    continue
         if mod == "integration":
             services_json = co / "output" / "checks" / "services.json"
             if services is None:
@@ -730,7 +816,7 @@ def checks_run(co, out, logs, env, record, commit, dirty, ports, sc, asked, ids,
 def finish(co, out, commit, dirty, ports, sc, results, cpu, on_request=False, waited=None):
     failed = [r["name"] for r in results if r["status"] in ("failed", "error")]
     present = [r for r in results if r["status"] != "absent"]
-    ran = [r for r in present if r["status"] not in ("not-needed", "deferred")]
+    ran = [r for r in present if r["status"] not in ("not-needed", "not-run", "deferred")]
     full = sc["kind"] == "full"
     partial = sc["kind"] == "only"
     passed = not failed and not dirty and not partial  # a run that called for nothing passes on a clean tree
