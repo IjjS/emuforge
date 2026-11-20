@@ -96,9 +96,12 @@ export function DeletePolicyDialog({ policy, entities, from, connection, onClose
   const engineOrigin = connection.engineOrigin;
   const remove = useDeletePolicy(engineOrigin);
 
+  // The result is shown from the deletion's own promise, not from callbacks of `mutate`: those run only while the
+  // dialog is mounted, and the policy's page unmounts it once the read the deletion starts finds the policy gone,
+  // which may be before the deletion's other reads have answered (issue 551). `flash` and `onClose` are the page's.
   const handleConfirm = () => {
-    remove.mutate(policy.arn, {
-      onSuccess: (result) => {
+    remove.mutateAsync(policy.arn).then(
+      (result) => {
         if (result.kind === 'deleted') {
           if (from === 'page') {
             flash.handOver(POLICIES_PATH, deletedPolicyResult(policy.name));
@@ -110,11 +113,11 @@ export function DeletePolicyDialog({ policy, entities, from, connection, onClose
         }
         onClose();
       },
-      onError: (error) => {
+      (error: unknown) => {
         flash.show([actionFailureItem(failureOf(error), 'Deleting the policy', engineOrigin)]);
         onClose();
       },
-    });
+    );
   };
 
   return (
