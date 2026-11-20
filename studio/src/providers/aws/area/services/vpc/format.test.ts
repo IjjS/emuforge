@@ -98,7 +98,9 @@ describe("VPC's addresses", () => {
   it('the internet gateway addresses with a VPC end ?vpc={id}; without one, none', () => {
     expect(internetGatewaysHref('vpc-1')).toBe('/aws/vpc/internet-gateways?vpc=vpc-1');
     expect(createInternetGatewayHref('vpc-1')).toBe('/aws/vpc/internet-gateways/create?vpc=vpc-1');
-    expect(attachInternetGatewayHref('igw-1', 'vpc-1')).toBe('/aws/vpc/internet-gateways/gateway/igw-1/attach?vpc=vpc-1');
+    expect(attachInternetGatewayHref('igw-1', 'vpc-1')).toBe(
+      '/aws/vpc/internet-gateways/gateway/igw-1/attach?vpc=vpc-1',
+    );
     expect(internetGatewaysHref()).toBe('/aws/vpc/internet-gateways');
     expect(createInternetGatewayHref()).toBe('/aws/vpc/internet-gateways/create');
   });

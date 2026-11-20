@@ -307,7 +307,7 @@ describe('ChoiceSelect', () => {
     expect(triggerText()).toContain('beta');
   });
 
-  it('without a trigger variant → the closed field shows the chosen option\'s label alone, as before', async () => {
+  it("without a trigger variant → the closed field shows the chosen option's label alone, as before", async () => {
     read.mockResolvedValueOnce({ items: [thing('t-1', 'alpha', '2', 'the first')] });
     open();
     select().openDropdown();
