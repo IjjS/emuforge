@@ -975,6 +975,8 @@ describe('Monitor', () => {
   it('refreshes the first page and the shared window while older reads are outstanding', async () => {
     const time = vi.spyOn(Date, 'now').mockReturnValue(1_796_000_000_000);
     const delayed: (() => void)[] = [];
+    const said = recordAnnouncements();
+    let finishRefreshedErrors: (() => void) | undefined;
     let refreshed = false;
     engine.answerMonitoring = ({ operation, body }) => {
       if (operation === 'FilterLogEvents' && body.nextToken === undefined) {
@@ -984,7 +986,14 @@ describe('Monitor', () => {
         operation === 'FilterLogEvents'
           ? logAnswer('old next event')
           : metricAnswer(refreshed ? (body.MetricName === 'Invocations' ? 12 : 4) : 98);
-      return refreshed ? answer : new Promise((resolve) => delayed.push(() => resolve(answer)));
+      if (!refreshed) {
+        return new Promise((resolve) => delayed.push(() => resolve(answer)));
+      }
+      return body.MetricName === 'Errors'
+        ? new Promise((resolve) => {
+            finishRefreshedErrors = () => resolve(answer);
+          })
+        : answer;
     };
 
     try {
@@ -1000,7 +1009,19 @@ describe('Monitor', () => {
       fireEvent.click(within(header()).getByRole('button', { name: 'Refresh' }));
       await screen.findByText('refreshed first event');
       expect(await screen.findByText('12')).toBeVisible();
+      expect(screen.getByText('Window ended').querySelector('time')).toHaveAttribute(
+        'datetime',
+        new Date(newEnd * 1000).toISOString(),
+      );
+      expect(said).not.toContain('Function refreshed');
+      expect(said).not.toContain('Monitor refreshed');
+      await act(async () => {
+        expect(finishRefreshedErrors).toBeDefined();
+        finishRefreshedErrors?.();
+      });
       expect(await screen.findByText('4')).toBeVisible();
+      await waitFor(() => expect(said.filter((message) => message === 'Monitor refreshed')).toHaveLength(1));
+      expect(said).not.toContain('Function refreshed');
 
       const newCalls = engine.monitoring.slice(4);
       expect(
@@ -1025,6 +1046,33 @@ describe('Monitor', () => {
     } finally {
       time.mockRestore();
     }
+  });
+
+  it('announces a partial Monitor refresh with the failed read after the other reads settle', async () => {
+    const said = recordAnnouncements();
+    let refreshed = false;
+    engine.answerMonitoring = ({ operation, body }) => {
+      if (operation === 'FilterLogEvents') {
+        return logAnswer(refreshed ? 'new logged event' : 'original logged event');
+      }
+      if (refreshed && body.MetricName === 'Invocations') {
+        return errorAnswer(403, 'AccessDenied', 'Missing metric permission');
+      }
+      return metricAnswer(refreshed ? 3 : 1);
+    };
+
+    engine.functions = [ORDERS];
+    open(`${pagePath('orders')}?tab=monitor`);
+    await screen.findByText('original logged event');
+    refreshed = true;
+    fireEvent.click(within(header()).getByRole('button', { name: 'Refresh' }));
+
+    expect(await screen.findByText('GetMetricStatistics was refused: Missing metric permission')).toBeVisible();
+    expect(await screen.findByText('3')).toBeVisible();
+    expect(await screen.findByText('new logged event')).toBeVisible();
+    await waitFor(() => expect(said).toContain('Monitor partially refreshed. Could not read Invocations.'));
+    expect(said).not.toContain('Function refreshed');
+    expect(said).not.toContain('Monitor refreshed');
   });
 
   it.each(['Monitor', 'Code'])('revalidates the detail after a disconnect on %s', async (tab) => {

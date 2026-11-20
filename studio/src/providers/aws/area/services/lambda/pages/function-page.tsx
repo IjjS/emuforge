@@ -53,6 +53,7 @@ interface FunctionTabsProps {
   onEventTextChange: (text: string) => void;
   invoke: Invocation;
   active: ReturnType<typeof tabOf>;
+  onMonitorRefreshSettled: ((message: string) => void) | undefined;
 }
 
 /**
@@ -68,6 +69,7 @@ function FunctionTabs({
   onEventTextChange,
   invoke,
   active,
+  onMonitorRefreshSettled,
 }: FunctionTabsProps) {
   const navigate = useNavigate();
   const endpoint = connection.engineOrigin;
@@ -100,7 +102,12 @@ function FunctionTabs({
       href: functionTabHref(name, 'monitor'),
       content:
         endpoint !== undefined && connection.result?.kind === 'connected' ? (
-          <MonitorTab endpoint={endpoint} name={name} logGroup={fn.logGroup} />
+          <MonitorTab
+            endpoint={endpoint}
+            name={name}
+            logGroup={fn.logGroup}
+            onRefreshSettled={onMonitorRefreshSettled}
+          />
         ) : (
           <Container>
             <Box textAlign="center">Monitoring data is available when the emulator is connected.</Box>
@@ -165,10 +172,11 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
   const [searchParams] = useSearchParams();
   const active = tabOf(searchParams.get(TAB_PARAMETER));
   const [announcement, announce] = useAnnouncer();
+  const connected = connection.result?.kind === 'connected';
   const reading = useFunctionReading({
     endpoint: connection.engineOrigin,
     name,
-    connected: connection.result?.kind === 'connected',
+    connected,
     disconnected: connection.result !== undefined && connection.result.kind !== 'connected',
     monitorActive: active === 'monitor',
   });
@@ -195,17 +203,30 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
 
   // Kept from the previous render, as React's own pattern for it, so each change is announced once, in the render
   // that first shows it. What one render has to say is said as one announcement, since a newer one replaces it.
-  const [refreshing, setRefreshing] = useState(false);
+  const [refreshing, setRefreshing] = useState<'function' | 'monitor'>();
+  const handleMonitorRefreshSettled = useCallback(
+    (message: string) => {
+      setRefreshing(undefined);
+      announce(message);
+    },
+    [announce],
+  );
   const [seenStatus, setSeenStatus] = useState<{ text: string | undefined } | undefined>(undefined);
   const [seenFailureLine, setSeenFailureLine] = useState<string>();
   const failureLine = failureState?.firstText;
   const toSay: string[] = [];
-  // "Function refreshed", once the refreshed reading is shown (R8).
-  if (refreshing && read !== undefined) {
-    setRefreshing(false);
-    toSay.push(REFRESHED);
-  } else if (refreshing && failure !== undefined) {
-    setRefreshing(false);
+  if (refreshing === 'function' && (read !== undefined || failure !== undefined)) {
+    setRefreshing(undefined);
+    if (read !== undefined) {
+      toSay.push(REFRESHED);
+    }
+  } else if (refreshing === 'monitor') {
+    if (active !== 'monitor') {
+      setRefreshing(undefined);
+    } else if (!connected || failure !== undefined || read?.found === false) {
+      setRefreshing(undefined);
+      toSay.push('Monitor could not be refreshed');
+    }
   }
   // A change of the status, once (R5.2): its new text, or "Function ready" when it clears; the first status read is
   // shown, not announced.
@@ -227,7 +248,7 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
   }
 
   const handleRefresh = () => {
-    setRefreshing(true);
+    setRefreshing(active === 'monitor' ? 'monitor' : 'function');
     refresh();
   };
 
@@ -261,6 +282,7 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
           onEventTextChange={setEventText}
           invoke={invoke}
           active={active}
+          onMonitorRefreshSettled={refreshing === 'monitor' ? handleMonitorRefreshSettled : undefined}
         />
       </SpaceBetween>
     );

@@ -6,7 +6,7 @@ import KeyValuePairs from '@cloudscape-design/components/key-value-pairs';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Table from '@cloudscape-design/components/table';
-import type { ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, type ReactNode } from 'react';
 
 import { requestFailure, type RequestFailure } from '../../../../../../lib/aws/request';
 import { creationDateText } from '../../../components/format-date';
@@ -19,6 +19,7 @@ interface MonitorTabProps {
   endpoint: string;
   name: string;
   logGroup?: string | undefined;
+  onRefreshSettled?: ((message: string) => void) | undefined;
 }
 
 type Readings = ReturnType<typeof useMonitorReadings>;
@@ -53,14 +54,68 @@ function LogState({ children }: { children: ReactNode }) {
   );
 }
 
+function MonitorTime({ date, showMilliseconds = false }: { date: Date; showMilliseconds?: boolean }) {
+  const text = creationDateText(date);
+  const milliseconds = String(date.getMilliseconds()).padStart(3, '0');
+  return (
+    <time dateTime={date.toISOString()}>
+      <ValueText kind="fixed" value={showMilliseconds ? text.replace(' (UTC', `.${milliseconds} (UTC`) : text} />
+    </time>
+  );
+}
+
 function EventTime({ timestamp }: { timestamp: number | undefined }) {
   const date = timestamp === undefined ? undefined : new Date(timestamp);
   return date === undefined || Number.isNaN(date.getTime()) ? (
     creationDateText(undefined)
   ) : (
-    <time dateTime={date.toISOString()}>
-      <ValueText kind="fixed" value={creationDateText(date)} />
-    </time>
+    <MonitorTime date={date} showMilliseconds />
+  );
+}
+
+function LogContinuation({
+  logs,
+  failure,
+  endpoint,
+}: {
+  logs: Readings['logs'];
+  failure: RequestFailure | undefined;
+  endpoint: string;
+}) {
+  const terminal = !logs.hasNextPage;
+  const controls = useRef<HTMLDivElement>(null);
+  const completion = useRef<HTMLDivElement>(null);
+  const actionHadFocus = useRef(false);
+
+  useLayoutEffect(() => {
+    // Only reclaim focus lost when the continuation control was removed.
+    if (terminal && actionHadFocus.current && document.activeElement === document.body) {
+      completion.current?.focus({ preventScroll: true });
+    }
+  }, [terminal]);
+
+  return (
+    <div ref={controls}>
+      <SpaceBetween size="s">
+        {failure !== undefined && <MonitoringFailure failure={failure} endpoint={endpoint} />}
+        {!terminal && (
+          <Button
+            loading={logs.isFetchingNextPage}
+            loadingText="Loading more log events"
+            disabled={failure?.kind === 'not-implemented'}
+            onClick={() => {
+              actionHadFocus.current = controls.current?.contains(document.activeElement) ?? false;
+              void logs.fetchNextPage({ cancelRefetch: false });
+            }}
+          >
+            {failure === undefined || failure.kind === 'not-implemented' ? 'Load more events' : 'Retry loading events'}
+          </Button>
+        )}
+      </SpaceBetween>
+      <div ref={completion} tabIndex={terminal ? -1 : undefined} role="status" aria-live="polite">
+        {terminal ? 'No more log events' : null}
+      </div>
+    </div>
   );
 }
 
@@ -95,21 +150,10 @@ function LogEvents({ logs, customGroup, endpoint }: Pick<Readings, 'logs' | 'cus
   }
 
   const events = logs.data.pages.flatMap((page) => (page.kind === 'events' ? page.events : []));
-  const footer = logs.hasNextPage ? (
-    <SpaceBetween size="s">
-      {failure !== undefined && <MonitoringFailure failure={failure} endpoint={endpoint} />}
-      <Button
-        loading={logs.isFetchingNextPage}
-        loadingText="Loading more log events"
-        disabled={failure?.kind === 'not-implemented'}
-        onClick={() => {
-          void logs.fetchNextPage({ cancelRefetch: false });
-        }}
-      >
-        {failure === undefined || failure.kind === 'not-implemented' ? 'Load more events' : 'Retry loading events'}
-      </Button>
-    </SpaceBetween>
-  ) : undefined;
+  const footer =
+    logs.hasNextPage || logs.data.pages.length > 1 ? (
+      <LogContinuation logs={logs} failure={failure} endpoint={endpoint} />
+    ) : undefined;
 
   return (
     <Table
@@ -128,7 +172,8 @@ function LogEvents({ logs, customGroup, endpoint }: Pick<Readings, 'logs' | 'cus
           id: 'message',
           header: 'Message',
           cell: ({ message }) => (
-            <div style={{ whiteSpace: 'pre-wrap' }}>
+            // Let the cell size to the table, then let the area's ValueText wrap within it.
+            <div style={{ contain: 'inline-size', whiteSpace: 'pre-wrap' }}>
               <ValueText kind="text" value={message} />
             </div>
           ),
@@ -144,11 +189,53 @@ function LogEvents({ logs, customGroup, endpoint }: Pick<Readings, 'logs' | 'cus
   );
 }
 
-function MonitorReadings({ endpoint, name, logGroup }: MonitorTabProps) {
+function MonitorReadings({ endpoint, name, logGroup, onRefreshSettled }: MonitorTabProps) {
   const readings = useMonitorReadings(endpoint, name, logGroup);
+  const { invocations, errors, logs, customGroup } = readings;
+  const firstLogPagePending = !customGroup && logs.data === undefined && !logs.isError;
+  const firstLogPageFailed = !customGroup && logs.data === undefined && logs.isError;
+
+  useEffect(() => {
+    if (onRefreshSettled === undefined || invocations.isPending || errors.isPending || firstLogPagePending) {
+      return;
+    }
+    const failed = [
+      ...(invocations.isError ? ['Invocations'] : []),
+      ...(errors.isError ? ['Errors'] : []),
+      ...(firstLogPageFailed ? ['Log events'] : []),
+    ];
+    if (failed.length === 0) {
+      onRefreshSettled('Monitor refreshed');
+      return;
+    }
+    const result = failed.length === (customGroup ? 2 : 3) ? 'Monitor refresh failed' : 'Monitor partially refreshed';
+    onRefreshSettled(`${result}. Could not read ${new Intl.ListFormat('en').format(failed)}.`);
+  }, [
+    onRefreshSettled,
+    invocations.isPending,
+    invocations.isError,
+    errors.isPending,
+    errors.isError,
+    firstLogPagePending,
+    firstLogPageFailed,
+    customGroup,
+  ]);
   return (
     <SpaceBetween size="l">
-      <Container header={<Header variant="h2">Last hour</Header>}>
+      <Container
+        header={
+          <Header
+            variant="h2"
+            description={
+              <>
+                Window ended <MonitorTime date={readings.windowEnd} />
+              </>
+            }
+          >
+            Last hour
+          </Header>
+        }
+      >
         <KeyValuePairs
           columns={2}
           items={[
