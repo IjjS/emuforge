@@ -32,6 +32,7 @@ import { CLUSTER_OPERATIONS, type DbCluster } from '../cluster-api';
 import { deleteTarget } from '../cluster-delete';
 import { useClusterDelete, useClusterRound, type MembersRead } from '../cluster-queries';
 import { ClusterDeleteAction } from '../components/cluster-delete-action';
+import { ComposeHostEndpoint } from '../components/compose-host-endpoint';
 import { ProtectionValue } from '../components/protection-value';
 import { StatusValue } from '../components/status';
 import { TagsTable } from '../components/tags-table';
@@ -77,6 +78,7 @@ function Connection({ cluster }: { cluster: DbCluster }) {
         </Header>
       }
     >
+      <ComposeHostEndpoint kind="cluster" engine={cluster.engine} port={cluster.port} />
       <Pairs
         label="Connection"
         items={[

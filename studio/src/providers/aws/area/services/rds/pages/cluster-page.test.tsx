@@ -316,6 +316,34 @@ describe('a DB cluster', () => {
     expect(screen.queryByRole('button', { name: 'Copy Database name' })).toBeNull();
   });
 
+  it.each(['aurora-postgresql', 'aurora-mysql'])('uses the described port of an %s cluster', async (engine) => {
+    answer(found({ engine, port: 28304 }), [member('app-aur-1', { engine, port: 28305 })]);
+    open(PATH);
+    await loaded();
+
+    expect(pairsOf('Connection')['Port']).toBe('28304');
+    expect(
+      screen.getByText((_, element) => element?.textContent === '127.0.0.1:28304', {
+        selector: '.aws-area-value-address',
+      }),
+    ).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Copy Compose host endpoint' })).toBeInTheDocument();
+  });
+
+  it('keeps the reported cluster endpoints when no port is reported', async () => {
+    const cluster = { ...FULL };
+    delete cluster.port;
+    answer({ found: true, cluster });
+    open(PATH);
+    await loaded();
+
+    expect(pairsOf('Connection')['Writer endpoint']).toBe(FULL.endpoint);
+    expect(pairsOf('Connection')['Reader endpoint']).toBe(FULL.readerEndpoint);
+    expect(pairsOf('Connection')['Port']).toBe('-');
+    expect(screen.queryByRole('button', { name: 'Copy Port' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Copy Compose host endpoint' })).toBeNull();
+  });
+
   it('members → a row each with its identifier (to its page), role, status, class and port', async () => {
     answer(
       found({

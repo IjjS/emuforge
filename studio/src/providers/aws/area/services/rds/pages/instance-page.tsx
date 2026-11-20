@@ -19,6 +19,7 @@ import { failureOf, usePageSignal } from '../../../components/use-token-listing'
 import { ValueText } from '../../../components/value-text';
 import type { ScreenPageProps } from '../../../screens';
 import { ACTION_OPERATIONS, type ClusterSignIn, type DbInstance } from '../api';
+import { ComposeHostEndpoint } from '../components/compose-host-endpoint';
 import { InstanceActions } from '../components/instance-actions';
 import { ProtectionValue } from '../components/protection-value';
 import { StatusValue } from '../components/status';
@@ -96,6 +97,12 @@ function Connection({ instance, signIn }: { instance: DbInstance; signIn: Cluste
         </Header>
       }
     >
+      <ComposeHostEndpoint
+        kind="instance"
+        engine={instance.engine}
+        clusterId={instance.clusterId}
+        port={instance.port}
+      />
       <Pairs
         label="Connection"
         items={[
