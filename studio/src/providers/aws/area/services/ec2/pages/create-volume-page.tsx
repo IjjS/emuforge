@@ -61,7 +61,7 @@ function CreateVolumeForm({
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
-    if (busy.current || unavailable || endpoint === undefined) return;
+    if (busy.current || asking || unavailable || endpoint === undefined) return;
 
     setTried(true);
     if (selected === undefined || zone === undefined) {
@@ -93,6 +93,7 @@ function CreateVolumeForm({
   };
 
   const handleCancel = () => {
+    if (busy.current) return;
     if (zone !== undefined || size !== '') {
       setAsking(true);
     } else {
@@ -126,7 +127,7 @@ function CreateVolumeForm({
         <Form
           actions={
             <SpaceBetween direction="horizontal" size="xs">
-              <Button ref={cancelRef} variant="link" formAction="none" onClick={handleCancel}>
+              <Button ref={cancelRef} variant="link" formAction="none" disabled={pending} onClick={handleCancel}>
                 Cancel
               </Button>
               <Button

@@ -11,6 +11,7 @@ import type { AreaConnection } from '../../../components/emulator-line';
 import { creationDateText } from '../../../components/format-date';
 import AwsArea from '../../../index';
 import * as api from '../api';
+import { getVolume } from '../volume-api';
 
 // S3 rendered inside the area's layout, with the calls of `api.ts` answered by the case (`api.test.ts` proves the
 // calls against a fake engine).
@@ -25,6 +26,11 @@ vi.mock('../api', async (importOriginal) => {
     actOnInstance: vi.fn(),
   };
 });
+
+vi.mock('../volume-api', async (original) => ({
+  ...(await original<typeof import('../volume-api')>()),
+  getVolume: vi.fn(),
+}));
 
 // ---------------------------------------------------------------------------------------------------------------
 // The area as Studio's frame renders it.
@@ -403,13 +409,20 @@ describe("an instance's page", () => {
 
   it('links a reported block device to its volume from the instance view', async () => {
     holding(full());
+    vi.mocked(getVolume).mockResolvedValue({
+      found: true,
+      volume: { id: 'vol-1', size: 16, state: 'available', attachments: [] },
+    });
     const router = open(pathOf('i-0full'));
     const link = await screen.findByRole('link', { name: 'vol-1' });
     expect(screen.getByRole('heading', { level: 1, name: 'web-1' })).toBeInTheDocument();
     expect(await screen.findByText('These instances are in your local emulator')).toBeInTheDocument();
     expect(link).toHaveAttribute('href', '/aws/ec2/volumes/volume/vol-1');
     fireEvent.click(link);
-    await waitFor(() => expect(router.state.location.pathname).toBe('/aws/ec2/volumes/volume/vol-1'));
+    await screen.findByRole('heading', { name: 'Volume details' });
+    expect(router.state.location.pathname).toBe('/aws/ec2/volumes/volume/vol-1');
+    expect(getVolume).toHaveBeenCalledWith(ENGINE, 'vol-1', expect.any(AbortSignal));
+    expect(pairs()).toMatchObject({ 'Volume ID': 'vol-1', Size: '16 GiB', State: 'available' });
   });
 
   it('no name → the heading is its ID; stopped → the state with its reason and "Public IPv4" "-" with no copy control', async () => {
