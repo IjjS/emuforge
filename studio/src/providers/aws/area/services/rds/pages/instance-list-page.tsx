@@ -40,14 +40,16 @@ import { ACTION_LABELS, ACTION_RESULTS, actionTarget, type ActionTarget, type In
 // `DescribeDBInstances` at a time on the API's markers, in the API's order, a cluster's members among them. For the
 // one selected row, the instance's actions; this page holds their request and shows their answer.
 
-/** A name keeps room for 24 characters (`aws-area.md`, entry 4). */
-const NAME_MIN_WIDTH = '28ch';
+/** A name's room, narrowed so that the table fits at 1280 with Port whole; a longer name breaks inside its cell (critique final r2 P2). */
+const NAME_MIN_WIDTH = '21ch';
 /** A status's icon, its gap and its word on one line, up to "rebooting" and "modifying" (critique final P2 2). */
-const STATUS_MIN_WIDTH = '18ch';
+const STATUS_MIN_WIDTH = '16ch';
 /** A class as the API names it on one line, up to "db.r6g.xlarge" and its like (critique final P2 1). */
-const CLASS_MIN_WIDTH = '16ch';
-/** A creation time on two lines at most. */
-const CREATED_MIN_WIDTH = '26ch';
+const CLASS_MIN_WIDTH = '14ch';
+/** A DB cluster's identifier, short in practice; a longer one breaks inside its cell (critique final r2 P2). */
+const CLUSTER_MIN_WIDTH = '10ch';
+/** A creation time on three lines at most, so that the table fits at 1280 with Port whole (critique final r2 P2). */
+const CREATED_MIN_WIDTH = '14ch';
 
 type BodyState =
   { kind: 'loading' } | { kind: 'rows' } | { kind: 'empty' } | { kind: 'failure'; failure: ReadFailureState };
@@ -175,7 +177,7 @@ export function InstanceListPage({ connection }: { connection: AreaConnection })
     {
       id: 'cluster',
       header: 'DB cluster',
-      minWidth: NAME_MIN_WIDTH,
+      minWidth: CLUSTER_MIN_WIDTH,
       cell: (row) =>
         row.clusterId === undefined ? (
           NONE
