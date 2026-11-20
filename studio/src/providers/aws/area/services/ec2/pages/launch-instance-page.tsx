@@ -30,7 +30,7 @@ import {
   LAUNCH_INSTANCE_TITLE,
 } from '../format';
 import { LAUNCH_OPERATION, type NewInstance } from '../launch-api';
-import { launchFormMessages, NAME_RULE, type LaunchFormMessages } from '../launch-form';
+import { launchFormMessages, NAME_RULE, typeDescription, type LaunchFormMessages } from '../launch-form';
 import { useLaunchInstance } from '../launch-queries';
 
 // S2, "Launch instance" (issue 553, design task 2): one short form of six fields, the name, the image, the instance
@@ -272,7 +272,11 @@ export function LaunchInstancePage({ connection }: ScreenPageProps) {
                     }}
                   />
                 </FormField>
-                <FormField label="Instance type" errorText={messages.type}>
+                <FormField
+                  label="Instance type"
+                  description={typeDescription(form.image?.architecture)}
+                  errorText={messages.type}
+                >
                   <ChoiceSelect<InstanceTypeChoice>
                     selectRef={typeRef}
                     source={instanceTypeChoices(engineOrigin)}

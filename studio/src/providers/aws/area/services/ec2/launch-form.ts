@@ -10,6 +10,18 @@ export const NAME_TOO_LONG = 'A name can have up to 256 characters.';
 export const CHOOSE_IMAGE = 'Choose an image.';
 export const CHOOSE_TYPE = 'Choose an instance type.';
 
+export const TYPE_FILTER_HINT = "Type part of a type's name to narrow the list.";
+
+/**
+ * The instance type field's description: the chosen image's architecture when the form holds one, then how the
+ * list is narrowed. Nothing is said of an image when none is chosen or its answer gave no architecture.
+ */
+export function typeDescription(imageArchitecture: string | undefined): string {
+  return imageArchitecture === undefined || imageArchitecture === ''
+    ? TYPE_FILTER_HINT
+    : `The chosen image is ${imageArchitecture}. ${TYPE_FILTER_HINT}`;
+}
+
 /** What the checks read of the form. */
 export interface LaunchFormValues {
   name: string;
