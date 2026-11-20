@@ -736,6 +736,19 @@ describe('"Delete" of the policy, whatever order the reads after it answer in', 
     }
   }
 
+  /**
+   * The page's own "Policy not found": its sections are gone and the words stand beside the link "Policies". The
+   * section "Policy document" says "Policy not found" too once the document's read finds nothing, while the page
+   * still holds the policy, so the words alone do not say the page has left it.
+   */
+  async function pageNotFound() {
+    await waitFor(() => {
+      expect(screen.queryByRole('heading', { level: 2, name: 'Policy details' })).toBeNull();
+      expect(screen.getAllByText('Policy not found')).toHaveLength(1);
+      expect(notFoundLink()).toBeInTheDocument();
+    });
+  }
+
   async function openShown() {
     const router = open();
     await loaded();
@@ -757,7 +770,7 @@ describe('"Delete" of the policy, whatever order the reads after it answer in', 
     const documents = holdDocumentReads();
 
     await confirmDelete();
-    expect(await screen.findByText('Policy not found')).toBeInTheDocument();
+    await pageNotFound();
     await waitFor(() => {
       expect(documents.waiting()).toBeGreaterThan(0);
     });
@@ -772,7 +785,7 @@ describe('"Delete" of the policy, whatever order the reads after it answer in', 
     expect(items).toHaveLength(1);
     expect(items[0]).toContain('Reading what the policy is attached to failed');
     expect(items[0]).toContain('NoSuchEntity');
-    expect(screen.getByText('Policy not found')).toBeInTheDocument();
+    await pageNotFound();
     expect(deletePolicy).toHaveBeenCalledTimes(1);
   });
 
@@ -800,7 +813,7 @@ describe('"Delete" of the policy, whatever order the reads after it answer in', 
     await settled();
 
     policies.release();
-    expect(await screen.findByText('Policy not found')).toBeInTheDocument();
+    await pageNotFound();
     await waitFor(() => {
       expect(flashItems()).toHaveLength(1);
     });
@@ -809,7 +822,7 @@ describe('"Delete" of the policy, whatever order the reads after it answer in', 
     expect(items).toHaveLength(1);
     expect(items[0]).toContain('Reading what the policy is attached to failed');
     expect(items[0]).toContain('NoSuchEntity');
-    expect(screen.getByText('Policy not found')).toBeInTheDocument();
+    await pageNotFound();
   });
 
   it('deleted by "Delete", the policy’s read answers "not found" before the document’s → the policy list with "Policy p-doc deleted." once', async () => {
@@ -824,7 +837,7 @@ describe('"Delete" of the policy, whatever order the reads after it answer in', 
     await waitFor(() => {
       expect(documents.waiting()).toBeGreaterThan(0);
     });
-    expect(await screen.findByText('Policy not found')).toBeInTheDocument();
+    await pageNotFound();
 
     documents.release();
     await waitFor(() => {
