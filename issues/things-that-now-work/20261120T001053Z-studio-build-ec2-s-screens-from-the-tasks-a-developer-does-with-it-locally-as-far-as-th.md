@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: studio|ec2|tasks-by-the-emulator-api
-Issue-Check-Ids:
+Issue-Check-Ids: studio.ec2-instances-made-elsewhere-are-shown studio.ec2-launch-an-instance-reaches-the-emulator studio.ec2-stop-start-reboot-terminate-an-instance studio.ec2-security-group-from-create-to-delete studio.ec2-security-groups-made-elsewhere-and-in-use studio.ec2-key-pair-create-import-delete studio.ec2-screens-follow-an-emulator-restart
 Issue-Commit: 52ec3eed0717188191120a2cc0d9349e00f4d5a6
 
 # Build EC2's screens from the tasks a developer does with it locally, as far as the emulator's API supports them
