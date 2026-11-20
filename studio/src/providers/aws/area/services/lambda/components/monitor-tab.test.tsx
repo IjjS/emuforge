@@ -87,7 +87,7 @@ function open(logGroup?: string) {
 
 function metric(name: string) {
   const pair = screen.getByText(name).closest('dt')?.nextElementSibling;
-  if (pair === null || pair === undefined) {
+  if (!(pair instanceof HTMLElement)) {
     throw new Error(`No field for ${name}`);
   }
   return within(pair);
@@ -198,7 +198,7 @@ describe('Lambda monitoring', () => {
     loadMore();
     await waitFor(() => {
       expect(calls.some(({ body }) => body.nextToken === 'empty')).toBe(true);
-      expect(screen.getByRole('button', { name: 'Load more events' })).toBeEnabled();
+      expect(screen.getByRole('button', { name: 'Load more events' })).not.toHaveAttribute('aria-disabled', 'true');
     });
     expect(messages()).toEqual(original);
     loadMore();

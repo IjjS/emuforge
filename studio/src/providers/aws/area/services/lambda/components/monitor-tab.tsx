@@ -100,6 +100,7 @@ function LogEvents({ logs, customGroup, endpoint }: Pick<Readings, 'logs' | 'cus
       {failure !== undefined && <MonitoringFailure failure={failure} endpoint={endpoint} />}
       <Button
         loading={logs.isFetchingNextPage}
+        loadingText="Loading more log events"
         disabled={failure?.kind === 'not-implemented'}
         onClick={() => {
           void logs.fetchNextPage({ cancelRefetch: false });
