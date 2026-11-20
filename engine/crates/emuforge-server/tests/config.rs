@@ -4,6 +4,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::num::NonZeroU16;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use clap::error::ErrorKind;
 use clap::{Args, FromArgMatches};
@@ -574,19 +575,58 @@ fn settings_folder_beside_aws_or_relative_elsewhere_is_accepted_and_made_absolut
     }
 }
 
-/// The lines of every `tracing` event while `run` runs, the subscriber set on this thread only.
-async fn captured<F: std::future::Future<Output = ()>>(run: F) -> String {
-    #[derive(Clone)]
-    struct Lines(Arc<Mutex<Vec<u8>>>);
-    impl std::io::Write for Lines {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(bytes);
-            Ok(bytes.len())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
+/// The lines of every `tracing` event captured so far.
+#[derive(Clone)]
+struct Lines(Arc<Mutex<Vec<u8>>>);
+
+impl std::io::Write for Lines {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// How long a test waits for a line it asserts: a slow runner logs a line some time after its port accepts.
+const LINE_BOUND: Duration = Duration::from_secs(10);
+
+impl Lines {
+    fn text(&self) -> String {
+        String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
+    }
+
+    /// Returns once the captured lines hold `text`; panics with them when `bound` passes first.
+    async fn logged_within(&self, text: &str, bound: Duration) {
+        let deadline = tokio::time::Instant::now() + bound;
+        while !self.text().contains(text) {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "{text:?} not logged within {bound:?}: {}",
+                self.text()
+            );
+            tokio::time::sleep(Duration::from_millis(5)).await;
         }
     }
+
+    /// [`Lines::logged_within`] the [`LINE_BOUND`].
+    async fn logged(&self, text: &str) {
+        self.logged_within(text, LINE_BOUND).await;
+    }
+}
+
+/// The lines of every `tracing` event while `run` runs, the subscriber set on this thread only.
+async fn captured<F: std::future::Future<Output = ()>>(run: F) -> String {
+    captured_with(|_| run).await
+}
+
+/// [`captured`], `run` given the lines so far, so it can wait for a line before the capture ends.
+async fn captured_with<F, R>(run: R) -> String
+where
+    F: std::future::Future<Output = ()>,
+    R: FnOnce(Lines) -> F,
+{
     let lines = Lines(Arc::new(Mutex::new(Vec::new())));
     let writer = lines.clone();
     let subscriber = tracing_subscriber::fmt()
@@ -595,9 +635,36 @@ async fn captured<F: std::future::Future<Output = ()>>(run: F) -> String {
         .with_max_level(tracing::Level::TRACE)
         .finish();
     let guard = tracing::subscriber::set_default(subscriber);
-    run.await;
+    run(lines.clone()).await;
     drop(guard);
-    String::from_utf8(lines.0.lock().unwrap().clone()).unwrap()
+    lines.text()
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_line_logged_after_the_wait_starts_is_waited_for() {
+    let log = captured_with(|lines| async move {
+        tokio::join!(
+            lines.logged_within("late line", Duration::from_secs(5)),
+            async {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                tracing::info!("late line");
+            }
+        );
+    })
+    .await;
+    assert!(log.contains("late line"), "{log}");
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[should_panic(expected = "early line")]
+async fn a_line_not_logged_within_the_bound_fails_with_the_log() {
+    captured_with(|lines| async move {
+        tracing::info!("early line");
+        lines
+            .logged_within("absent line", Duration::from_millis(50))
+            .await;
+    })
+    .await;
 }
 
 const UNUSABLE: &str = "{not json";
@@ -894,11 +961,12 @@ async fn serve_without_studio_and_an_allowed_name_warns_it_has_no_effect_and_ser
     let dir = tempfile::tempdir().unwrap();
     let config = allowing_name_test(dir.path());
     let (engine, studio) = (config.port.get(), config.studio_port.get());
-    let log = captured(async {
+    let log = captured_with(|lines| async move {
         tokio::select! {
             ended = serve(config, dir.path().to_owned(), None) => panic!("serve ended: {ended:?}"),
             () = async {
                 assert!(accepts(IpAddr::V4(LISTEN_IP), engine).await, "engine port");
+                lines.logged(NO_EFFECT).await;
                 let answer = get_raw(engine, "/__emuforge/health").await;
                 assert!(answer.starts_with("HTTP/1.1 "), "{answer}");
                 assert!(!answer.starts_with("HTTP/1.1 421"), "{answer}");
@@ -923,7 +991,8 @@ async fn serve_with_studio_and_an_allowed_name_warns_and_binds_loopback_only() {
     let warning = allow_host_warning(config.allow_hosts.as_slice(), config.studio_port).unwrap();
     let files = StudioFiles::new([("index.html", &b"<p>studio</p>"[..])]).unwrap();
     let elsewhere = non_loopback_ipv4();
-    let log = captured(async {
+    let awaited = &warning;
+    let log = captured_with(|lines| async move {
         tokio::select! {
             ended = serve(config, dir.path().to_owned(), Some(files)) => panic!("serve ended: {ended:?}"),
             () = async {
@@ -935,6 +1004,10 @@ async fn serve_with_studio_and_an_allowed_name_warns_and_binds_loopback_only() {
                             "{name} accepts on {ip}"
                         );
                     }
+                }
+                lines.logged(awaited).await;
+                for port in [engine, studio] {
+                    lines.logged(&format!("listen=127.0.0.1:{port}")).await;
                 }
             } => {}
         }
