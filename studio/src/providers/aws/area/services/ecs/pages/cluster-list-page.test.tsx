@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { notifyManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState, useSyncExternalStore } from 'react';
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -229,6 +229,18 @@ describe('the clusters list', () => {
     fireEvent.click(within(slot()).getByRole('button', { name: 'Retry' }));
     await expectRows([['dev', 'Active', '1', '2', '0']]);
     expect(vi.mocked(api.listClusters).mock.calls.length).toBe(calls + 1);
+  });
+
+  it('one page and no next token → no pagination; a next token → the pagination', async () => {
+    answer({ '': { clusters: [DEV] } });
+    open();
+    await expectRows([['dev', 'Active', '1', '2', '0']]);
+    expect(table().findPagination()).toBeNull();
+    cleanup();
+    answer({ '': { clusters: [DEV], nextToken: 'tok-2' } });
+    open();
+    await expectRows([['dev', 'Active', '1', '2', '0']]);
+    expect(table().findPagination()).not.toBeNull();
   });
 
   it('a next page → asked with the token the first page answered; "Refresh" reads the current page again', async () => {
