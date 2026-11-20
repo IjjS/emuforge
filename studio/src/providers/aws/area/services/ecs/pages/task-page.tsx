@@ -64,6 +64,18 @@ const ALREADY_STOPPED = 'The task is already stopped or stopping.';
 const NAME_MIN_WIDTH = '28ch';
 const IMAGE_MIN_WIDTH = '32ch';
 
+/** The names a screen reader gives the outcome Alert's icon, by its type. */
+const OUTCOME_ICON_LABELS = { errorIconAriaLabel: 'Error', infoIconAriaLabel: 'Info' };
+
+/** The name a screen reader gives the Last status icon, by its type. */
+const STATUS_ICON_LABELS: Record<string, string> = {
+  success: 'Success',
+  stopped: 'Stopped',
+  pending: 'Pending',
+  'in-progress': 'In progress',
+  info: 'Info',
+};
+
 /**
  * How a stopped task ended, above its summary (critique final r1 and r2): the emulator's stop code and stopped
  * reason, and the exit code of each essential container that has one. The stop code decides the Alert's type
@@ -73,7 +85,11 @@ function Outcome({ task, essential }: { task: Task; essential: TaskContainer[] |
   const texts = taskTexts(task);
   const exited = (essential ?? []).filter((container) => container.exitCode !== undefined);
   return (
-    <Alert type={stopOutcomeType(task.stopCode, essential)} header={`Task stopped: ${texts.stopCode}`}>
+    <Alert
+      type={stopOutcomeType(task.stopCode, essential)}
+      i18nStrings={OUTCOME_ICON_LABELS}
+      header={`Task stopped: ${texts.stopCode}`}
+    >
       <SpaceBetween size="xxs">
         <ValueText kind="text" value={texts.stoppedReason} />
         {exited.map((container) => (
@@ -103,7 +119,12 @@ function Summary({ cluster, task }: { cluster: string; task: Task }) {
           {
             label: 'Last status',
             value: (
-              <StatusIndicator type={lastStatusType(task.lastStatus)}>{statusText(task.lastStatus)}</StatusIndicator>
+              <StatusIndicator
+                type={lastStatusType(task.lastStatus)}
+                iconAriaLabel={STATUS_ICON_LABELS[lastStatusType(task.lastStatus)]}
+              >
+                {statusText(task.lastStatus)}
+              </StatusIndicator>
             ),
           },
           { label: 'Desired status', value: fixed(statusText(task.desiredStatus)) },
