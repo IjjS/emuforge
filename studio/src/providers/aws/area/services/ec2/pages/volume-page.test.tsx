@@ -179,11 +179,24 @@ async function openDialog(name: string) {
   return within(await screen.findByRole('dialog'));
 }
 
-function openChoices() {
+function instanceSelect() {
   const select = page.findSelect();
   if (select == null) throw new Error('Missing instance selector');
-  select.openDropdown();
+  return select;
+}
+
+function openChoices() {
+  const select = instanceSelect();
+  act(() => {
+    select.openDropdown();
+  });
   return select.findDropdown();
+}
+
+function selectInstance(id: string) {
+  act(() => {
+    instanceSelect().selectOptionByValue(id);
+  });
 }
 
 async function chooseInstance(id = TARGET.instanceId) {
@@ -191,7 +204,7 @@ async function chooseInstance(id = TARGET.instanceId) {
   await waitFor(() => {
     expect(dropdown.findOptionByValue(id)).not.toBeNull();
   });
-  dropdown.findOptionByValue(id)?.click();
+  selectInstance(id);
 }
 
 async function fillAttachDialog() {
@@ -212,7 +225,18 @@ describe('volume detail', () => {
     open();
     expect(screen.getByRole('heading', { level: 1, name: ID })).toBeVisible();
     await screen.findByRole('heading', { name: 'Volume details' });
-    for (const value of ['8 GiB', 'gp2', 'us-east-1a', 'in-use', TARGET.device, 'attached']) {
+    const details = page
+      .findKeyValuePairs()
+      ?.findItems()
+      .map((item) => [item.findLabel()?.getElement().textContent, item.findValue()?.getElement().textContent]);
+    expect(details).toEqual([
+      ['Volume ID', ID],
+      ['Size', '8 GiB'],
+      ['Type', 'gp2'],
+      ['Availability Zone', 'us-east-1a'],
+      ['State', 'in-use'],
+    ]);
+    for (const value of [TARGET.device, 'attached']) {
       expect(screen.getByText(value, { exact: true })).toBeVisible();
     }
     expect(screen.getByRole('link', { name: TARGET.instanceId })).toHaveAttribute(
@@ -269,7 +293,7 @@ describe('attach volume', () => {
     });
     expect(instances.listInstances).toHaveBeenLastCalledWith(ENDPOINT, {}, 'second', expect.any(AbortSignal));
     fireEvent.change(device, { target: { value: '   ' } });
-    dropdown.findOptionByValue('i-second')?.click();
+    selectInstance('i-second');
     expect(submit).toBeDisabled();
     fireEvent.change(device, { target: { value: TARGET.device } });
     expect(submit).toBeEnabled();
@@ -331,8 +355,8 @@ describe('attach volume', () => {
     await waitFor(() => {
       expect(dropdown.findOptionByValue(TARGET.instanceId)).not.toBeNull();
     });
-    dropdown.findOptionByValue(TARGET.instanceId)?.click();
-    expect(dialog.getByText(TARGET.instanceId)).toBeVisible();
+    selectInstance(TARGET.instanceId);
+    expect(instanceSelect().findTrigger().getElement()).toHaveTextContent(TARGET.instanceId);
   });
 
   it('names AttachVolume on 501 and keeps the action unavailable after dismissal', async () => {
@@ -483,7 +507,7 @@ describe('delete volume', () => {
     const dialog = await openDialog('Delete volume');
     confirmDelete(dialog);
     expect(await screen.findAllByText('Not implemented by the emulator')).not.toHaveLength(0);
-    expect(screen.getByText(/501 Not Implemented for DeleteVolume/)).toBeVisible();
+    expect(screen.getByText('The emulator answered 501 Not Implemented for DeleteVolume.')).toBeVisible();
     expect(screen.queryByRole('dialog')).toBeNull();
     const trigger = button('Delete volume');
     expect(trigger).toBeDisabled();
