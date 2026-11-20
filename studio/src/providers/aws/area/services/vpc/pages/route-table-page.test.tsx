@@ -10,14 +10,21 @@ import type { CheckResult } from '../../../../../../lib/engine/engine-client';
 import type { AreaConnection } from '../../../components/emulator-line';
 import AwsArea from '../../../index';
 import * as api from '../api';
+import { VPC_KEYS } from '../queries';
+import * as routeChanges from '../route-changes-api';
 import * as changes from '../route-table-changes-api';
 
-// S9 rendered inside the area's layout, with the calls of `api.ts` and `route-table-changes-api.ts` answered by the
-// case (`api.test.ts` and `route-table-changes-api.test.ts` prove the calls against a fake engine).
+// S9 rendered inside the area's layout, with the calls of `api.ts`, `route-table-changes-api.ts` and
+// `route-changes-api.ts` answered by the case (their own tests prove the calls against a fake engine).
 
 vi.mock('../api', async (importOriginal) => {
   const real = await importOriginal<typeof import('../api')>();
   return { ...real, getRouteTable: vi.fn(), listRouteTables: vi.fn() };
+});
+
+vi.mock('../route-changes-api', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../route-changes-api')>();
+  return { ...real, deleteRoute: vi.fn(), disassociateSubnet: vi.fn() };
 });
 
 vi.mock('../route-table-changes-api', async (importOriginal) => {
@@ -57,6 +64,8 @@ const notStartedResult = (): CheckResult => ({
 });
 
 let connection: Connection;
+/** The query client of the case's page, so a case can ask a read of its own as another part of the page would. */
+let queryClient: QueryClient;
 const ENGINE = 'http://127.0.0.1:8574';
 
 function AreaWithStudioProps() {
@@ -109,6 +118,7 @@ function open(path = PAGE_PATH) {
     { initialEntries: [path] },
   );
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  queryClient = client;
   render(
     <QueryClientProvider client={client}>
       <RouterProvider router={router} />
@@ -488,5 +498,281 @@ describe('a route table', () => {
     open();
     await loaded();
     expect(await screen.findByText('These route tables are in your local emulator')).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// Its routes and associations (unit s5).
+
+/** Selects row `n` (from 1) of the table whose header reads `title`. */
+function select(title: string, n: number) {
+  fireEvent.click(section(title).findRowSelectionArea(n)?.getElement() as HTMLElement);
+}
+
+function button(title: string, name: string): HTMLElement {
+  return within(section(title).findHeaderSlot()?.getElement() as HTMLElement).getByRole('button', { name });
+}
+
+/** Every read of the table from now on held, each until the case answers it, in the order they were asked. */
+function holdReads(): ((table: api.RouteTable) => void)[] {
+  const answers: ((table: api.RouteTable) => void)[] = [];
+  vi.mocked(api.getRouteTable).mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        answers.push((table) => {
+          resolve(found(table));
+        });
+      }),
+  );
+  return answers;
+}
+
+/** A read of the table asked now, while the page shows it, as a change elsewhere on the page would ask it. */
+function askReadNow() {
+  void queryClient.invalidateQueries({ queryKey: VPC_KEYS.routeTable('rtb-a') });
+}
+
+describe("a route table's routes and associations", () => {
+  it('"Add route" leads to the table\'s add-route address; "Associate subnet" to its associate-subnet address', async () => {
+    open();
+    await loaded();
+    const add = screen.getByRole('link', { name: 'Add route' });
+    expect(add).toHaveAttribute('href', '/aws/vpc/route-tables/route-table/rtb-a/add-route');
+    expect(screen.getByRole('link', { name: 'Associate subnet' })).toHaveAttribute(
+      'href',
+      '/aws/vpc/route-tables/route-table/rtb-a/associate-subnet',
+    );
+  });
+
+  it('the empty state\'s "Associate subnet" leads to the associate-subnet address too', async () => {
+    vi.mocked(api.getRouteTable).mockResolvedValue(
+      found(routeTable({ associations: [{ id: 'rtbassoc-m', main: true }], subnetCount: 0 })),
+    );
+    open();
+    await loaded();
+    const links = screen.getAllByRole('link', { name: 'Associate subnet' });
+    expect(links).toHaveLength(2);
+    for (const link of links) {
+      expect(link).toHaveAttribute('href', '/aws/vpc/route-tables/route-table/rtb-a/associate-subnet');
+    }
+  });
+
+  it('"Delete route": none selected → "Select one route."; the local route → "The local route cannot be deleted."', async () => {
+    open();
+    await loaded();
+    expect(isDisabled(button('Routes', 'Delete route'))).toBe(true);
+    expect(reasonOf(button('Routes', 'Delete route'))).toBe('Select one route.');
+    select('Routes', 1);
+    await waitFor(() => {
+      expect(reasonOf(button('Routes', 'Delete route'))).toBe('The local route cannot be deleted.');
+    });
+    expect(isDisabled(button('Routes', 'Delete route'))).toBe(true);
+  });
+
+  it('a route with an IPv6 destination or a prefix list\'s ID → "Studio deletes a route by its IPv4 destination only."', async () => {
+    vi.mocked(api.getRouteTable).mockResolvedValue(
+      found(
+        routeTable({
+          routes: [
+            { destination: { kind: 'ipv6', value: '::/0' }, target: 'igw-1', state: 'active' },
+            { destination: { kind: 'prefix-list', value: 'pl-1' }, target: 'vpce-1', state: 'active' },
+          ],
+        }),
+      ),
+    );
+    open();
+    await loaded();
+    for (const n of [1, 2]) {
+      select('Routes', n);
+      await waitFor(() => {
+        expect(reasonOf(button('Routes', 'Delete route'))).toBe('Studio deletes a route by its IPv4 destination only.');
+      });
+      expect(isDisabled(button('Routes', 'Delete route'))).toBe(true);
+    }
+  });
+
+  it('a route selected and confirmed → its delete with its destination, "Deleted the route {destination}", the table read again', async () => {
+    vi.mocked(routeChanges.deleteRoute).mockResolvedValue(undefined);
+    open();
+    await loaded();
+    select('Routes', 2);
+    await waitFor(() => {
+      expect(isDisabled(button('Routes', 'Delete route'))).toBe(false);
+    });
+    fireEvent.click(button('Routes', 'Delete route'));
+    const shown = await screen.findByRole('dialog');
+    expect(text(shown)).toContain('The route 0.0.0.0/0 to igw-1 is removed from app.');
+    const calls = vi.mocked(api.getRouteTable).mock.calls.length;
+    vi.mocked(api.getRouteTable).mockResolvedValue(found(routeTable({ routes: routeTable().routes.slice(0, 1) })));
+    await confirmDelete();
+    expect(await screen.findByText('Deleted the route 0.0.0.0/0')).toBeInTheDocument();
+    expect(vi.mocked(routeChanges.deleteRoute).mock.calls[0]?.slice(0, 3)).toEqual([ENGINE, 'rtb-a', '0.0.0.0/0']);
+    await waitFor(() => {
+      expect(rowsOf('Routes')).toEqual([['10.0.0.0/16', 'local', 'active']]);
+    });
+    expect(vi.mocked(api.getRouteTable).mock.calls.length).toBeGreaterThan(calls);
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it("a route's delete that fails → the failure in the flash, the dialog closed and the row stays", async () => {
+    vi.mocked(routeChanges.deleteRoute).mockRejectedValue(
+      new RequestError({ kind: 'other', operation: 'DeleteRoute', code: 'InvalidRoute.NotFound', message: 'no route' }),
+    );
+    open();
+    await loaded();
+    select('Routes', 2);
+    fireEvent.click(button('Routes', 'Delete route'));
+    await confirmDelete();
+    await waitFor(() => {
+      expect(text(document.body)).toContain('InvalidRoute.NotFound');
+    });
+    expect(text(document.body)).toContain('no route');
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
+    expect(rowsOf('Routes')).toHaveLength(2);
+  });
+
+  it('"Disassociate": none selected → "Select one association."; one selected → "Disassociate subnet?" naming the subnet and the table', async () => {
+    open();
+    await loaded();
+    expect(isDisabled(button('Subnet associations', 'Disassociate'))).toBe(true);
+    expect(reasonOf(button('Subnet associations', 'Disassociate'))).toBe('Select one association.');
+    select('Subnet associations', 1);
+    await waitFor(() => {
+      expect(isDisabled(button('Subnet associations', 'Disassociate'))).toBe(false);
+    });
+    fireEvent.click(button('Subnet associations', 'Disassociate'));
+    const shown = await screen.findByRole('dialog');
+    expect(text(shown)).toContain('Disassociate subnet?');
+    expect(text(shown)).toContain('subnet-1 is no longer associated with app.');
+    expect(within(shown).queryByRole('textbox')).toBeNull();
+  });
+
+  it('confirmed with its button → sent with the association\'s ID, "Disassociated {subnet id}", the table read again', async () => {
+    vi.mocked(routeChanges.disassociateSubnet).mockResolvedValue(undefined);
+    open();
+    await loaded();
+    select('Subnet associations', 1);
+    fireEvent.click(button('Subnet associations', 'Disassociate'));
+    const shown = await screen.findByRole('dialog');
+    vi.mocked(api.getRouteTable).mockResolvedValue(found(routeTable({ associations: [], subnetCount: 0 })));
+    fireEvent.click(within(shown).getByRole('button', { name: 'Disassociate' }));
+    expect(await screen.findByText('Disassociated subnet-1')).toBeInTheDocument();
+    expect(vi.mocked(routeChanges.disassociateSubnet).mock.calls[0]?.slice(0, 2)).toEqual([ENGINE, 'rtbassoc-1']);
+    expect(await screen.findByText('No subnet associations')).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('a disassociation that fails → the failure in the flash, the dialog closed and the row stays', async () => {
+    vi.mocked(routeChanges.disassociateSubnet).mockRejectedValue(
+      new RequestError({ kind: 'not-implemented', operation: 'DisassociateRouteTable' }),
+    );
+    open();
+    await loaded();
+    select('Subnet associations', 1);
+    fireEvent.click(button('Subnet associations', 'Disassociate'));
+    const shown = await screen.findByRole('dialog');
+    fireEvent.click(within(shown).getByRole('button', { name: 'Disassociate' }));
+    await waitFor(() => {
+      expect(text(document.body)).toMatch(/Not implemented by the emulator.*DisassociateRouteTable/);
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
+    expect(rowsOf('Subnet associations')).toEqual([['subnet-1', 'rtbassoc-1']]);
+  });
+
+  it("after a route's delete, a read asked before it answering last → the routes settle on the newest read, and the result stays", async () => {
+    let finish: () => void = () => undefined;
+    vi.mocked(routeChanges.deleteRoute).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = () => {
+            resolve(undefined);
+          };
+        }),
+    );
+    open();
+    await loaded();
+    select('Routes', 2);
+    fireEvent.click(button('Routes', 'Delete route'));
+    await confirmDelete();
+    await waitFor(() => {
+      expect(routeChanges.deleteRoute).toHaveBeenCalledTimes(1);
+    });
+    const answers = holdReads();
+    askReadNow();
+    await waitFor(() => {
+      expect(answers).toHaveLength(1);
+    });
+    act(() => {
+      finish();
+    });
+    expect(await screen.findByText('Deleted the route 0.0.0.0/0')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(answers.length).toBeGreaterThanOrEqual(2);
+    });
+    const newest = answers.length - 1;
+    act(() => {
+      answers[newest]?.(routeTable({ routes: routeTable().routes.slice(0, 1) }));
+    });
+    await waitFor(() => {
+      expect(rowsOf('Routes')).toEqual([['10.0.0.0/16', 'local', 'active']]);
+    });
+    act(() => {
+      for (let index = 0; index < newest; index += 1) {
+        answers[index]?.(routeTable());
+      }
+    });
+    await settled();
+    expect(rowsOf('Routes')).toEqual([['10.0.0.0/16', 'local', 'active']]);
+    expect(screen.getByText('Deleted the route 0.0.0.0/0')).toBeInTheDocument();
+  });
+
+  it('after a disassociation, a read asked before it answering last → the associations settle on the newest read, and the result stays', async () => {
+    let finish: () => void = () => undefined;
+    vi.mocked(routeChanges.disassociateSubnet).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = () => {
+            resolve(undefined);
+          };
+        }),
+    );
+    open();
+    await loaded();
+    select('Subnet associations', 1);
+    fireEvent.click(button('Subnet associations', 'Disassociate'));
+    const shown = await screen.findByRole('dialog');
+    fireEvent.click(within(shown).getByRole('button', { name: 'Disassociate' }));
+    await waitFor(() => {
+      expect(routeChanges.disassociateSubnet).toHaveBeenCalledTimes(1);
+    });
+    const answers = holdReads();
+    askReadNow();
+    await waitFor(() => {
+      expect(answers).toHaveLength(1);
+    });
+    act(() => {
+      finish();
+    });
+    expect(await screen.findByText('Disassociated subnet-1')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(answers.length).toBeGreaterThanOrEqual(2);
+    });
+    const newest = answers.length - 1;
+    act(() => {
+      answers[newest]?.(routeTable({ associations: [], subnetCount: 0 }));
+    });
+    expect(await screen.findByText('No subnet associations')).toBeInTheDocument();
+    act(() => {
+      for (let index = 0; index < newest; index += 1) {
+        answers[index]?.(routeTable());
+      }
+    });
+    await settled();
+    expect(screen.getByText('No subnet associations')).toBeInTheDocument();
+    expect(screen.getByText('Disassociated subnet-1')).toBeInTheDocument();
   });
 });
