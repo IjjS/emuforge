@@ -184,6 +184,25 @@ test('studio.vpc-route-a-subnet-through-an-internet-gateway', async ({ ctx, page
   );
 
   await lines.line(
+    'S3 of the VPC, "Attach internet gateway" → S12 at `?vpc=` the VPC\'s ID, which says "Attach is for {vpc id}."; "Find by name" `<prefix>-gw`, select it, "Attach" → S14 with that VPC chosen in "VPC"',
+    async () => {
+      const forVpc = `?vpc=${encodeURIComponent(vpc)}`;
+      await open(page, vpcPath(vpc), `${p}-v`);
+      await link(main, ATTACH_GATEWAY).click(ACTION);
+      await expect(page).toHaveURL(addressOf(`${GATEWAYS_PATH}${forVpc}`));
+      await expect(heading(page, GATEWAYS_H1)).toBeVisible();
+      await expect(main, 'S12 says which VPC the attach is for').toContainText(`Attach is for ${vpc}.`);
+      const list = listOf(page);
+      await findOnly(list, gwName);
+      await selectRow(list, 'Name', gwName);
+      await link(main, ATTACH).click(ACTION);
+      await expect(page).toHaveURL(addressOf(`${attachGatewayPath(gateway())}${forVpc}`));
+      await expect(heading(page, ATTACH_GATEWAY)).toBeVisible();
+      await expect(selectOf(field(main, VPC_FIELD)), 'the VPC chosen in "VPC"').toContainText(vpc, { timeout: 30_000 });
+    },
+  );
+
+  await lines.line(
     'Select it → "Detach" is unavailable ("This gateway is not attached."); "Attach" → S14 naming the gateway; "Attach" with no VPC → "Choose a VPC." at the field, no request to attach left the page; choose the VPC by its ID (the choice shows its name and block), "Attach" → S12 with "Attached {id} to {vpc id}"; the row reads "Attached" with the VPC\'s ID; the emulator reports the attachment',
     async () => {
       const list = await openGateways();
