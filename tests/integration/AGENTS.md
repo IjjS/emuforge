@@ -4,8 +4,8 @@ What holds for every integration check. The root `AGENTS.md` applies first. Whic
 the manifest's two files and fields, are in `references/services-and-manifest.md`.
 
 These checks are the project's ground truth. They run against a real aws-emulator and decide whether an issue
-is closed. The issue's `plan` writes them after the build, from the scenarios of `test-criteria.md` confirmed before
-it, and the worker whose code they test never writes or changes them.
+is closed. The issue's `plan` writes them after the implementation review, from the scenarios of
+`test-criteria.md` confirmed before the build. The worker whose code they test never writes or changes them.
 
 ```
 tests/integration/
@@ -20,8 +20,9 @@ tests/integration/
 ## Who edits
 
 - The `plan` writes an issue's checks, their helper code and their manifest rows, in the issue's worktree on its
-  issue branch, after every unit is merged; `rev` reviews whether they are the scenarios. A scenario left out says
-  why, in `test-criteria.md` or the plan's `report.md`.
+  issue branch. After the plan runs the affected checks, `rev` reviews the integration changes against the
+  scenarios. A scenario left out says why, in `test-criteria.md` or the plan's `report.md`. See the PM skill's
+  `references/lead.md` for the stage order and omissions.
 - A check that does not do what its scenario says is fixed by the plan, with the reason under `## Plan decisions`.
   A scenario that is wrong, and any check once its issue is merged, is changed only on the `pm`'s decision, with the
   reason in the issue's `decisions.md`. A check is never fixed by loosening an assertion until it passes.

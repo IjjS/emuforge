@@ -3,7 +3,12 @@
 A `plan` leads one issue from its requirement to its closing report. The `pm` gave it the issue and hears of it
 again only through the plan's `BLOCKED` lines and its closing line `ISSUE READY`. Everything in between is the
 plan's: the stage documents, the cut into units, the worktrees, briefs and panes of its workers, the merges into the
-issue's collecting branch `feat/<id>`, the integration tests, the whole check, the end review and critique.
+issue's collecting branch `feat/<id>`, the critique, the implementation review, the integration tests and their
+review, and the whole check.
+
+This order applies when `brief.json` has `review_order: split`. An already-briefed issue with `lead: plan` and no
+review order finishes under its prior stages. Read the prior version of this file with
+`git show c9843ccb:.agents/skills/pm/references/lead.md`.
 
 ## What you may do
 
@@ -32,9 +37,8 @@ A `rev` pane lives for one review round (owner, 2026-11-20; `review-protocol.md`
    `WAITING i<id>-plan room rev`, and the same command again on `EVENT room`.
 2. Its `REVIEWED` line arrives as your next prompt. When `.pm/issue-<id>/review-<stage>-r<k>.md` is there, close the
    pane: `pm-pane close i<id>-rev`. When it is missing, prompt the pane once to write it, and close it after.
-3. The next round, of the same stage or the next, is step 1 again: a new pane. r<k+1> reads r1 to r<k> from their
-   files, nothing remembered. A round is answered by the next round, never run again under its own or a higher
-   number: `pm-merge` refuses a stage whose review files are not r1 to its last.
+3. For the next round, open a new pane. Within a stage, r<k+1> reads r1 to r<k> from their files. Use the next
+   number to review a changed submission. `pm-merge` requires each stage's files to span r1 to its last round.
 
 ## Stages before the build
 
@@ -52,9 +56,10 @@ the plan set. The module's `references/workflow.md` and `references/test-criteri
    - `test-criteria.md`, from the requirement: per unit, the unit-test scenarios that are its worker's end
      condition; for the issue, the scenarios its integration tests will be. When you can already tell that an
      integration test will be left out (the issue is too slight, or the test would cost more than it shows), say
-     so here, with the reason. An environment case (the emulator or the engine stopped, killed, restarted, not
-     there, not reachable, or coming up late) is written for the tier `full` and never for the push run or the
-     whole check (`tests/integration/AGENTS.md`, Full tier).
+     so here, with the reason. If the issue will make no integration changes, record the omission before the
+     plan set review (Integration tests and review). An environment case (the emulator or the engine stopped,
+     killed, restarted, not there, not reachable, or coming up late) is written for the tier `full` and never for
+     the push run or the whole check (`tests/integration/AGENTS.md`, Full tier).
    - `breakdown.md`: the units, each with a one-line summary, its owned files, its base and the order they land in.
 
 On the plan set's `pass`, the build starts.
@@ -85,17 +90,9 @@ On the plan set's `pass`, the build starts.
    `herdr agent prompt <pane> "feat/<id> is at <sha>; merge it into your branch"`. Telling every pane makes each
    check again for nothing.
 
-## Integration tests
-
-When every unit is merged, write the integration tests yourself in `emuforge-<id>` on `feat/<id>`: one per
-integration scenario of `test-criteria.md`, as `tests/integration/AGENTS.md` says, and commit them. One that is left
-out is said so in `test-criteria.md` before the build when you could tell then, and in `report.md` at the end. When
-you cannot tell whether to leave one out, stop with `BLOCKED i<id>-plan decision-needed integration <scenario>`.
-Leaving tests out does not leave the whole check out: `pm-merge` into `main` asks for its record.
-
 ## Critique
 
-An issue that changes a Studio screen is critiqued before its whole check (owner, 2026-11-19): when every unit is
+An issue that changes a Studio screen is critiqued before the implementation review. When every unit is
 merged into `feat/<id>`, each on its fast check, run `pm-brief crit <id> --targets "<routes>" --capture-wt
 emuforge-<id>`, then `pm-pane new <id> crit --brief .pm/issue-<id>/brief-crit.md`, and prompt it
 `SCORE final <routes>`: the impeccable critique on the built app of `feat/<id>` (`studio/references/critique.md`).
@@ -105,45 +102,75 @@ confirmed check, or go against a rule of the area or a decision already made, yo
 it to `decisions-needed.md` and stop with `BLOCKED i<id>-plan decision-needed critique-p2 <screen> <finding>`. The
 `pm` either has it fixed or lets it stand, records why under `## PM decisions` and runs `pm-critique leave`; never
 run that yourself. A P3 is yours to adopt or not (What becomes its own issue). The score goes in `report.md` and
-decides nothing. A mock before the build is
-never required: ask `crit` for one (`SCORE mock <file>`) only when a screen is new and large and the build would
-otherwise be a guess. The integration tests may be written while the critique runs.
+decides nothing. Ask `crit` for a mock before the build (`SCORE mock <file>`) only when a screen is new and large
+and the build would otherwise be a guess.
+
+## Implementation review
+
+When every unit is merged, take local main with `pm-merge <id> --take-main` before the first `impl` round. For
+Studio screen changes, the last `final` must clear `pm-critique check <id>` before the round. If taking main
+changed a screen under review, critique it again.
+
+Open `REVIEW impl r1 <implementation diff> <fast-check records>` (A review round). Give rev the issue branch's
+product and unit-test changes against its merge base with main, and the fast-check records of the units as
+merged. Have the owning workers fix findings on their branches, pass their fast checks and merge again. If a fix
+changes a screen, clear its critique before sending the next implementation round. When you adopt a finding
+that changes a passing submission, send the revised implementation for its next round too. Start writing the
+integration tests once the resulting implementation passes.
+
+## Integration tests and review
+
+Write the integration tests in `emuforge-<id>` on `feat/<id>`, one per integration scenario of
+`test-criteria.md`, and commit them with their support and manifest rows as `tests/integration/AGENTS.md` says.
+Record the reason for each scenario left out in the criteria when known before the build, and in the closing
+report. When you cannot tell whether to leave one out, stop with
+`BLOCKED i<id>-plan decision-needed integration <scenario>`.
+
+Run the affected check IDs with `pm-check emuforge-<id> --checks <id>…` before the review. Include IDs exercised
+by changed support. Only the owner's request authorizes a local run of a `full`-tier check, including by ID.
+Record cases excluded from the run and why. If no affected ID is runnable, give the reviewer that reason with
+the integration changes. Handle failures by cause (Whole check) and record the reason before retrying.
+
+Open `REVIEW tests r1 <integration diff> <test-criteria.md> <focused run record>`. Limit the diff to
+`tests/integration/` against the branch's merge base with main. Include the record from `output/checks/`
+for the submitted tests and cite any omission reasons. Fix adopted findings on `feat/<id>`, run the affected IDs
+on the revised tests, and send the next tests round.
+
+To omit this stage, include the line `Integration review: omitted - <reason>` in the pre-build
+`test-criteria.md` confirmed in the plan set. The issue branch must have no changes under `tests/integration/`
+against its merge base with main and no tests round. The whole check is still required.
 
 ## Whole check
 
-The whole check runs once every unit is merged and, for an issue that changes a Studio screen, only when the last
-`final` of each screen has no P0, P1 or P2 but those the `pm` let stand (`pm-critique check <id>` passes). `pm-merge <id> --take-main`, then
-`pm-check emuforge-<id>`, the whole check, `integration` included. In the whole
+After the reviews pass, or after `impl` passes for an issue with the tests stage omitted, run
+`pm-check emuforge-<id>`. Finish adopted review fixes and issue-file commits first. The resulting
+`output/checks/last.json` must pass on the branch's final head. The focused records show what the named IDs did
+on their submitted integration changes. In the whole
 check the integration step of the issue branch runs every check of no service and the browser checks of the
 services its paths touch, every service's when a shared path changed; the `services` line of `pm-scope` and
 `pm-check` names them, and `pm-merge` refuses a record that ran fewer.
 
-When it fails, tell the cause apart first, and act by it (owner, 2026-11-19):
+When a focused run or the whole check fails, determine its cause before acting (owner, 2026-11-19):
 
 1. A fault of product code: a failed check goes to the unit that owns what failed, by `breakdown.md`. It fixes it
    on its branch, merges `feat/<id>` into its own when `pm-merge` asks, passes its fast check, and is merged again.
    When the fix changed a screen, that screen alone is critiqued once more (`SCORE final <its routes>`), and a P0,
-   P1 or P2 it finds is fixed the same way. `feat/<id>` has then moved: run the whole check again.
-2. A fault of your own integration test: fix it on `feat/<id>`, have a `rev` round read the change (A review
-   round), and run the whole check again.
+   P1 or P2 it finds is fixed the same way. Renew the `impl` review if its reviewed changes moved, then resume the
+   interrupted stage.
+2. A fault of your own integration test: fix it on `feat/<id>`, rerun the affected IDs, and send the tests for
+   review. When the whole check found the fault, run it again after the tests review passes.
 3. A criteria line that is wrong: stop with `BLOCKED i<id>-plan check <id>`; the `pm` decides.
 4. A failure that looks intermittent: there is no second run (issue 569), so a step that fails has failed; tell
    its cause apart as here, and file one that is no unit's as its own issue (below).
 5. The environment, as the emulator's image: stop with `BLOCKED i<id>-plan depends <what>` (`depends emulator image`
    for the image) to the `pm`.
 6. A fault of `main` outside the issue: file it as its own issue first (below), then take `main`
-   (`pm-merge <id> --take-main`) once its fix is there, and run the whole check again.
+   (`pm-merge <id> --take-main`) once its fix is there, renew any review whose submitted changes moved, and resume
+   the interrupted stage.
 
-Never run the whole check again without the cause of its failure written in `state-plan.md`.
-
-## End review
-
-1. When the whole check passes, the round `REVIEW impl r1 <changed paths> emuforge-<id>/output/checks/last.json`
-   (A review round): the whole diff `main...feat/<id>`, and whether the integration tests are the scenarios.
-2. A P1 of the review is fixed by the worker that owns it: fast check, merged again, and the whole check again (a
-   fix that changes a screen has that screen critiqued once more first); then the next review round follows, to a
-   new rev.
-3. When the review passes: Close, and your `ISSUE READY`.
+Write the cause of a failed run in `state-plan.md` before retrying. Renew a review using its next round and the
+same scope. If the stage has used three rounds, stop with `BLOCKED i<id>-plan review <stage>`. When the whole
+check passes, proceed to Close.
 
 ## What becomes its own issue
 
@@ -162,7 +189,7 @@ Write `.pm/issue-<id>/report.md`:
 - the tasks built;
 - the scenarios, which became integration tests, which were left out and why;
 - the record `feat/<id>` passed on, with its path;
-- the review rounds;
+- the review rounds, including `impl` and `tests` or the reason the tests stage was omitted;
 - the critique's findings: the P0, P1 and P2 fixed, each P2 the `pm` let stand with its decision, and the P3 with
   what became of each;
 - every issue you filed, with the severity you gave it and one line of reason;
@@ -174,10 +201,12 @@ no rev is open by then, each was closed after its round. Then
 line and stop. The `pm` merges `feat/<id>` into `main` and then closes you.
 
 `pm-merge` takes `feat/<id>` into `main` on the whole check's record when git merges it with no conflict, however
-far `main` moved since: no second whole check. When git stops on a conflict, nothing is merged and the `pm` tells
-you so: `pm-merge <id> --take-main`, which names the conflicting paths; the unit that owns each path merges `main`
-into its branch, resolves the conflict, passes its fast check and is merged into `feat/<id>` again; then
-`--take-main` again, the whole check again, and your `ISSUE READY` again.
+far `main` moved since. On a conflict, use `pm-merge <id> --take-main` to identify the paths. For a unit's paths,
+have the owner merge `main` into its branch, resolve the conflict, pass its fast check and merge into the issue
+branch. For conflicting integration paths you own, save the issue's changes to those paths, commit their
+versions from `main`, take main with `--take-main` and reapply the changes on the updated base. Clear any affected
+screen critique and renew each review whose submitted changes moved. For a changed integration submission, run
+its affected IDs before the new review round. Run the whole check on the new head and send `ISSUE READY` again.
 
 ## Events that reach you
 

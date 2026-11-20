@@ -1,11 +1,13 @@
 # Brief: rev pane {{issue}}
 
-Role: `rev`. Root: `{{root}}`. Read `{{root}}/.agents/skills/pm/references/pane-mode.md` and `review-protocol.md`
+Role: `rev`. Root: `{{root}}`. Read `{{root}}/.agents/skills/pm/references/pane-mode.md` and {{review_ref}}
 first; the protocol is your whole job.
 
 Issue #{{issue}} ({{module}}, {{kind}}): {{title}}
 Ground truth, in this order: `.pm/issue-{{issue}}/decisions.md` (`Owner decisions` win), the issue file
-`{{issue_file}}`, `.pm/issue-{{issue}}/requirement.md`, the repository references ({{refs}}), `main` siblings.
+`{{issue_file}}`, `.pm/issue-{{issue}}/requirement.md`, the applicable repository references ({{refs}}) and
+`main` siblings within the stage's scope. In the split order, `impl` reads the implementation and unit tests.
+`tests` reads the integration changes against the confirmed criteria.
 
 You review one round: the `REVIEW <stage> r<k> <paths>` line that comes with this brief from your issue's plan
 `i{{issue}}-plan`. You were opened for it and are closed after it; the next round is another pane. What you know of
