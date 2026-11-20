@@ -63,6 +63,10 @@ describe('the services table', () => {
     vi.mocked(api.listServices).mockResolvedValue({ services: [service('api', { running: 1, pending: 1 })] });
     const wrapper = open();
     const link = await screen.findByRole('link', { name: 'api' });
+    expect(screen.getByRole('link', { name: 'Create service' })).toHaveAttribute(
+      'href',
+      '/aws/ecs/clusters/cluster/dev/services/create',
+    );
     expect(link).toHaveAttribute('href', '/aws/ecs/clusters/cluster/dev/services/service/api');
     expect(screen.getByRole('link', { name: 'web:3' })).toHaveAttribute(
       'href',
@@ -84,11 +88,14 @@ describe('the services table', () => {
     expect(vi.mocked(api.listServices).mock.calls[0]?.slice(0, 3)).toEqual([ENGINE, 'dev', undefined]);
   });
 
-  it('empty → "No services" and its sentence', async () => {
+  it('empty → "No services" with the cluster create action', async () => {
     vi.mocked(api.listServices).mockResolvedValue({ services: [] });
     open();
     expect(await screen.findByText('No services')).toBeInTheDocument();
-    expect(screen.getByText('A service made with the AWS CLI or an IaC tool is listed here.')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Create service' })).toHaveAttribute(
+      'href',
+      '/aws/ecs/clusters/cluster/dev/services/create',
+    );
   });
 
   it('a failed read → the failure state with a retry', async () => {

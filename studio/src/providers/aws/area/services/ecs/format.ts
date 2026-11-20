@@ -26,6 +26,13 @@ export const CLUSTER_PATTERN = `${CLUSTERS_PATH}/cluster/{cluster}`;
 /** S4's pattern, a service of a cluster. */
 export const SERVICE_PATTERN = `${CLUSTER_PATTERN}/services/service/{service}`;
 
+export const CREATE_SERVICE_PATTERN = `${CLUSTER_PATTERN}/services/create`;
+export const CREATE_SERVICE_TITLE = 'Create service';
+
+export function createServiceHref(cluster: string): string {
+  return `${clusterHref(cluster)}/services/create`;
+}
+
 /** S5's pattern, a task of a cluster. */
 export const TASK_PATTERN = `${CLUSTER_PATTERN}/tasks/task/{task}`;
 
@@ -96,6 +103,14 @@ export const CREATE_CLUSTER_CRUMBS: ScreenCrumbs = [
   { text: CLUSTERS_TITLE, href: CLUSTERS_PATH },
   { text: CREATE_CLUSTER_TITLE },
 ];
+
+export function createServiceCrumbs(cluster: string): ScreenCrumbs {
+  return [
+    { text: CLUSTERS_TITLE, href: CLUSTERS_PATH },
+    { text: cluster, href: clusterHref(cluster) },
+    { text: CREATE_SERVICE_TITLE },
+  ];
+}
 
 export function clusterCrumbs(cluster: string): ScreenCrumbs {
   return [{ text: CLUSTERS_TITLE, href: CLUSTERS_PATH }, { text: cluster }];

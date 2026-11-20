@@ -6,6 +6,7 @@ import {
   CLUSTERS_NAVIGATION,
   CLUSTERS_PATH,
   CREATE_CLUSTER_PATH,
+  createServiceHref,
   ECS_PATH,
   FAMILY_PATTERN,
   familyHref,
@@ -100,4 +101,8 @@ describe('the side navigation', () => {
     expect(CLUSTERS_NAVIGATION.activeHref).toBe('/aws/ecs/clusters');
     expect(TASK_DEFINITIONS_NAVIGATION.activeHref).toBe('/aws/ecs/task-definitions');
   });
+});
+
+it('keeps a cluster name in one encoded create-service segment', () => {
+  expect(createServiceHref('dev/west %')).toBe('/aws/ecs/clusters/cluster/dev%2Fwest%20%25/services/create');
 });
