@@ -276,6 +276,58 @@ describe('a DB instance', () => {
     expect(screen.getByText('No tags')).toBeInTheDocument();
   });
 
+  it.each(['postgres', 'mysql', 'mariadb'])('copies the Compose host endpoint of a %s instance', async (engine) => {
+    const writeText = vi.fn(() => Promise.resolve());
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+    try {
+      vi.mocked(api.getInstance).mockResolvedValue(found({ engine, port: 28162 }));
+      open(PATH);
+      await loaded();
+
+      expect(pairsOf('Connection')['Endpoint address']).toBe('0.0.0.0');
+      expect(pairsOf('Connection')['Port']).toBe('28162');
+      expect(screen.getByText('127.0.0.1:28162')).toBeInTheDocument();
+      expect(
+        screen.getByText(/runs in Docker Compose with database ports published.*machine running Compose/),
+      ).toBeInTheDocument();
+      expect(writeText).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole('button', { name: 'Copy Compose host endpoint' }));
+      expect(await screen.findByText('Compose host endpoint copied')).toBeInTheDocument();
+      expect(writeText).toHaveBeenCalledExactlyOnceWith('127.0.0.1:28162');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it.each(['aurora-postgresql', 'aurora-mysql'])(
+    'shows the %s member port while cluster sign-in loads',
+    async (engine) => {
+      const member = { ...FULL, engine, clusterId: 'aur-1', port: 28165 };
+      delete member.masterUsername;
+      delete member.dbName;
+      vi.mocked(api.getInstance).mockResolvedValue({ found: true, instance: member });
+      vi.mocked(api.getClusterSignIn).mockImplementation(() => new Promise(() => undefined));
+      open(PATH);
+      await loaded();
+
+      await waitFor(() => expect(api.getClusterSignIn).toHaveBeenCalled());
+      expect(pairsOf('Connection')['Master user name']).toBe('-');
+      expect(pairsOf('Connection')['Database name']).toBe('-');
+      expect(screen.getByText('127.0.0.1:28165')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Copy Compose host endpoint' })).toBeInTheDocument();
+    },
+  );
+
+  it('keeps the reported endpoint fields of a metadata-only Aurora instance', async () => {
+    vi.mocked(api.getInstance).mockResolvedValue(found({ engine: 'aurora-postgresql', port: 5432 }));
+    open(PATH);
+    await loaded();
+
+    expect(pairsOf('Connection')['Endpoint address']).toBe('0.0.0.0');
+    expect(pairsOf('Connection')['Port']).toBe('5432');
+    expect(screen.queryByRole('button', { name: 'Copy Compose host endpoint' })).toBeNull();
+  });
+
   it('a cluster\'s member → "DB cluster" links to the cluster\'s page; outside a cluster "-"', async () => {
     vi.mocked(api.getInstance).mockResolvedValue(found({ clusterId: 'aur-1', engine: 'aurora-postgresql' }));
     open(PATH);
