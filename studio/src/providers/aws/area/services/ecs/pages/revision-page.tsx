@@ -27,6 +27,10 @@ import { familyHref, NONE, registerHref, statusText, TASK_DEFINITIONS_WORD } fro
 // containers and its JSON as the emulator answered it. A revision the emulator cannot describe is the not-found
 // state.
 
+/** Name and Image keep the room of a name, so a narrow screen scrolls the table instead of breaking them mid-word. */
+const NAME_MIN_WIDTH = '28ch';
+const IMAGE_MIN_WIDTH = '28ch';
+
 function Summary({ revision }: { revision: Revision }) {
   return (
     <Container header={<Header variant="h2">Task definition details</Header>}>
@@ -64,11 +68,13 @@ const CONTAINER_COLUMNS: TableProps.ColumnDefinition<RevisionContainer>[] = [
     id: 'name',
     header: 'Name',
     isRowHeader: true,
+    minWidth: NAME_MIN_WIDTH,
     cell: (container) => <ValueText kind="name" value={container.name} />,
   },
   {
     id: 'image',
     header: 'Image',
+    minWidth: IMAGE_MIN_WIDTH,
     cell: (container) => <ValueText kind="address" value={container.image} none={NONE} />,
   },
   {
