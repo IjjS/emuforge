@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: studio|rds|service-screens
-Issue-Check-Ids:
+Issue-Check-Ids: studio.rds-instances-made-elsewhere-are-shown studio.rds-create-a-db-instance-reaches-the-emulator studio.rds-stop-start-reboot-delete-a-db-instance studio.rds-cluster-from-create-to-delete studio.rds-clusters-made-elsewhere-are-shown studio.rds-screens-follow-an-emulator-restart
 Issue-Commit: a90c718db39c8be1555ceb5aa4d341463e7341fb
 
 # Build the Aurora and RDS screens: list, detail, create, update and delete of what the emulator holds
