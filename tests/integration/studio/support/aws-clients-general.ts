@@ -445,6 +445,19 @@ export function directEc2(
   });
 }
 
+/** An RDS action (AWS Query) with its parameters, straight to the emulator (issue 573: RDS's checks). */
+export function directRds(
+  ctx: Ctx,
+  port: number,
+  action: string,
+  params: Record<string, string>,
+): Promise<DirectAnswer> {
+  const body = new URLSearchParams({ Action: action, Version: '2014-10-31', ...params }).toString();
+  return direct(ctx, port, 'rds', 'POST', '/', {}, body, {
+    'content-type': 'application/x-www-form-urlencoded; charset=utf-8',
+  });
+}
+
 /** A CloudWatch Logs action (AWS JSON 1.1) with its JSON input, straight to the emulator (issue 536: a function's log). */
 export function directLogs(ctx: Ctx, port: number, action: string, input: object): Promise<DirectAnswer> {
   return direct(ctx, port, 'logs', 'POST', '/', {}, JSON.stringify(input), {

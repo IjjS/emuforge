@@ -10,8 +10,9 @@ use clap::error::ErrorKind;
 use clap::{Args, FromArgMatches};
 use emuforge_core::{SETTINGS_FILE, Store};
 use emuforge_server::{
-    AllowHosts, Config, Error, Form, LISTEN_IP, StudioFiles, allow_host_warning, engine_addr,
-    listen_warning, seed_settings, serve, settings_dir, settings_step, studio_addr,
+    AllowHosts, Bound, Config, DEFAULT_ENGINE_PORT, Error, Form, LISTEN_IP, StudioFiles,
+    allow_host_warning, engine_addr, listen_warning, seed_settings, serve, serve_bound,
+    settings_dir, settings_step, studio_addr,
 };
 
 /// `Config` augmented onto a command, as a binary flattens it.
@@ -915,13 +916,13 @@ fn allow_hosts_flag_wins_over_the_variable() {
     assert!(stdout.contains("allow_hosts=[b.test]"), "{stdout}");
 }
 
-/// A loopback port nothing listens on now.
-fn free_port() -> u16 {
-    std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
+/// `N` loopback ports that nothing is to listen on: an emulator port with no emulator, or a Studio port that must
+/// stay closed. Every listener is held until all are read, so the ports differ from each other and from any
+/// listener the caller holds; none is for something bound later.
+fn closed_ports<const N: usize>() -> [NonZeroU16; N] {
+    let held: [std::net::TcpListener; N] =
+        std::array::from_fn(|_| std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap());
+    held.map(|listener| port(listener.local_addr().unwrap().port()))
 }
 
 /// The machine's first non-loopback IPv4 address, as the route to a documentation address picks it; `None` on a
@@ -946,26 +947,36 @@ async fn accepts(ip: IpAddr, port: u16) -> bool {
     false
 }
 
-/// `GET path` on `127.0.0.1:port` with that `Host`; the whole answer.
+/// `GET path` on `127.0.0.1:port` with that `Host`; the whole answer. Panics with the port and the path when the
+/// answer has not ended within the [`LINE_BOUND`].
 async fn get_raw(port: u16, path: &str) -> String {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    let mut stream = tokio::net::TcpStream::connect((Ipv4Addr::LOCALHOST, port))
-        .await
-        .unwrap();
-    let request =
-        format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
-    stream.write_all(request.as_bytes()).await.unwrap();
-    let mut answer = Vec::new();
-    stream.read_to_end(&mut answer).await.unwrap();
+    let answer = tokio::time::timeout(LINE_BOUND, async {
+        let mut stream = tokio::net::TcpStream::connect((Ipv4Addr::LOCALHOST, port))
+            .await
+            .unwrap();
+        let request =
+            format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
+        stream.write_all(request.as_bytes()).await.unwrap();
+        let mut answer = Vec::new();
+        stream.read_to_end(&mut answer).await.unwrap();
+        answer
+    })
+    .await
+    .unwrap_or_else(|_| {
+        panic!("GET {path} on 127.0.0.1:{port} not answered within {LINE_BOUND:?}")
+    });
     String::from_utf8_lossy(&answer).into_owned()
 }
 
-/// A `Config` on free loopback ports with the settings folder under `dir` and the allowed name `name.test`.
-fn allowing_name_test(dir: &Path) -> Config {
+/// A `Config` on loopback with the engine port `engine`, the settings folder under `dir`, the allowed name
+/// `name.test`, and an emulator port and a Studio port that nothing listens on.
+fn allowing_name_test(dir: &Path, engine: NonZeroU16) -> Config {
+    let [emulator_port, studio_port] = closed_ports();
     Config {
-        port: port(free_port()),
-        emulator_port: port(free_port()),
-        studio_port: port(free_port()),
+        port: engine,
+        emulator_port,
+        studio_port,
         listen_address: IpAddr::V4(LISTEN_IP),
         settings_dir: Some(dir.join("settings")),
         form: Form::Native,
@@ -973,16 +984,23 @@ fn allowing_name_test(dir: &Path) -> Config {
     }
 }
 
+/// [`allowing_name_test`] for [`Bound::bind_free`], which replaces the engine port with one it holds.
+fn allowing_name_to_bind(dir: &Path) -> Config {
+    allowing_name_test(dir, DEFAULT_ENGINE_PORT)
+}
+
 const NO_EFFECT: &str = "--allow-host (EMUFORGE_ALLOW_HOSTS) has no effect";
 
 #[tokio::test(flavor = "current_thread")]
 async fn serve_without_studio_and_an_allowed_name_warns_it_has_no_effect_and_serves_the_engine() {
     let dir = tempfile::tempdir().unwrap();
-    let config = allowing_name_test(dir.path());
-    let (engine, studio) = (config.port.get(), config.studio_port.get());
+    let bound = Bound::bind_free(allowing_name_to_bind(dir.path()), None)
+        .await
+        .unwrap();
+    let (engine, studio) = (bound.config().port.get(), bound.config().studio_port.get());
     let log = captured_with(|lines| async move {
         tokio::select! {
-            ended = serve(config, dir.path().to_owned(), None) => panic!("serve ended: {ended:?}"),
+            ended = serve_bound(bound, dir.path().to_owned()) => panic!("serve ended: {ended:?}"),
             () = async {
                 assert!(accepts(IpAddr::V4(LISTEN_IP), engine).await, "engine port");
                 lines.logged(NO_EFFECT).await;
@@ -1005,15 +1023,18 @@ async fn serve_without_studio_and_an_allowed_name_warns_it_has_no_effect_and_ser
 #[tokio::test(flavor = "current_thread")]
 async fn serve_with_studio_and_an_allowed_name_warns_and_binds_loopback_only() {
     let dir = tempfile::tempdir().unwrap();
-    let config = allowing_name_test(dir.path());
+    let files = StudioFiles::new([("index.html", &b"<p>studio</p>"[..])]).unwrap();
+    let bound = Bound::bind_free(allowing_name_to_bind(dir.path()), Some(files))
+        .await
+        .unwrap();
+    let config = bound.config();
     let (engine, studio) = (config.port.get(), config.studio_port.get());
     let warning = allow_host_warning(config.allow_hosts.as_slice(), config.studio_port).unwrap();
-    let files = StudioFiles::new([("index.html", &b"<p>studio</p>"[..])]).unwrap();
     let elsewhere = non_loopback_ipv4();
     let awaited = &warning;
     let log = captured_with(|lines| async move {
         tokio::select! {
-            ended = serve(config, dir.path().to_owned(), Some(files)) => panic!("serve ended: {ended:?}"),
+            ended = serve_bound(bound, dir.path().to_owned()) => panic!("serve ended: {ended:?}"),
             () = async {
                 for (name, port) in [("engine", engine), ("studio", studio)] {
                     assert!(accepts(IpAddr::V4(LISTEN_IP), port).await, "{name} on 127.0.0.1");
@@ -1037,4 +1058,173 @@ async fn serve_with_studio_and_an_allowed_name_warns_and_binds_loopback_only() {
     for port in [engine, studio] {
         assert!(log.contains(&format!("listen=127.0.0.1:{port}")), "{log}");
     }
+}
+
+const INDEX: &[u8] = b"<p>studio</p>";
+
+fn studio_files() -> StudioFiles {
+    StudioFiles::new([("index.html", INDEX)]).unwrap()
+}
+
+/// Whether binding `127.0.0.1:port` now fails with `AddrInUse`.
+fn bind_is_refused_in_use(port: u16) -> bool {
+    std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, port))
+        .is_err_and(|error| error.kind() == std::io::ErrorKind::AddrInUse)
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn bind_free_holds_the_engine_port_until_serve_bound_answers_on_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let bound = Bound::bind_free(allowing_name_to_bind(dir.path()), None)
+        .await
+        .unwrap();
+    let engine = bound.config().port.get();
+    assert!(
+        bind_is_refused_in_use(engine),
+        "engine port {engine} was free before serve_bound"
+    );
+    tokio::select! {
+        ended = serve_bound(bound, dir.path().to_owned()) => panic!("serve_bound ended: {ended:?}"),
+        answer = get_raw(engine, "/__emuforge/health") => {
+            assert!(answer.starts_with("HTTP/1.1 "), "{answer}");
+        }
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn bind_free_with_studio_holds_the_studio_port_until_serve_bound_serves_index_on_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let bound = Bound::bind_free(allowing_name_to_bind(dir.path()), Some(studio_files()))
+        .await
+        .unwrap();
+    let studio = bound.config().studio_port.get();
+    assert!(
+        bind_is_refused_in_use(studio),
+        "studio port {studio} was free before serve_bound"
+    );
+    tokio::select! {
+        ended = serve_bound(bound, dir.path().to_owned()) => panic!("serve_bound ended: {ended:?}"),
+        answer = get_raw(studio, "/") => {
+            assert!(answer.starts_with("HTTP/1.1 200"), "{answer}");
+            assert!(answer.ends_with(std::str::from_utf8(INDEX).unwrap()), "{answer}");
+        }
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn bind_free_with_studio_gives_three_different_ports_and_a_valid_config() {
+    let dir = tempfile::tempdir().unwrap();
+    let given = allowing_name_to_bind(dir.path());
+    let bound = Bound::bind_free(given.clone(), Some(studio_files()))
+        .await
+        .unwrap();
+    let config = bound.config();
+    let ports = [config.port, config.studio_port, config.emulator_port];
+    assert!(
+        ports[0] != ports[1] && ports[1] != ports[2] && ports[0] != ports[2],
+        "{ports:?}"
+    );
+    assert_eq!(config.emulator_port, given.emulator_port);
+    config.validate().unwrap();
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn bind_free_without_studio_keeps_the_engine_off_the_given_ports_and_a_valid_config() {
+    let dir = tempfile::tempdir().unwrap();
+    let given = allowing_name_to_bind(dir.path());
+    let bound = Bound::bind_free(given.clone(), None).await.unwrap();
+    let config = bound.config();
+    assert_ne!(config.port, config.emulator_port);
+    assert_ne!(config.port, config.studio_port);
+    assert_eq!(
+        (config.emulator_port, config.studio_port),
+        (given.emulator_port, given.studio_port)
+    );
+    config.validate().unwrap();
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn bind_free_twice_held_shares_no_listener_port() {
+    let dir = tempfile::tempdir().unwrap();
+    let listener_ports = |bound: &Bound| [bound.config().port, bound.config().studio_port];
+    let cases = [("without Studio", false), ("with Studio", true)];
+    for (name, with_studio) in cases {
+        let files = || with_studio.then(studio_files);
+        let first = Bound::bind_free(allowing_name_to_bind(dir.path()), files())
+            .await
+            .unwrap();
+        let second = Bound::bind_free(allowing_name_to_bind(dir.path()), files())
+            .await
+            .unwrap();
+        let (first_ports, second_ports) = if with_studio {
+            (
+                listener_ports(&first).to_vec(),
+                listener_ports(&second).to_vec(),
+            )
+        } else {
+            (vec![first.config().port], vec![second.config().port])
+        };
+        assert!(
+            first_ports.iter().all(|port| !second_ports.contains(port)),
+            "case {name}: {first_ports:?} and {second_ports:?}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn serve_bound_with_settings_under_aws_is_refused_before_the_engine_listens() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = allowing_name_to_bind(dir.path());
+    config.settings_dir = Some(dir.path().join(".aws/emuforge"));
+    let bound = Bound::bind_free(config, None).await.unwrap();
+    let mut ended = None;
+    let log = captured(async {
+        ended = Some(serve_bound(bound, dir.path().to_owned()).await);
+    })
+    .await;
+    let ended = ended.unwrap();
+    assert!(
+        matches!(ended, Err(Error::SettingsDirUnderAws { .. })),
+        "{ended:?}"
+    );
+    assert!(!log.contains("engine listening"), "{log}");
+}
+
+/// A listener of the test's own on a loopback port, held, and a `Config` whose engine port is that port, with its
+/// emulator port and Studio port picked while the listener is held.
+fn config_on_a_held_engine_port(dir: &Path) -> (std::net::TcpListener, Config) {
+    let held = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+    let engine = port(held.local_addr().unwrap().port());
+    (held, allowing_name_test(dir, engine))
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn serve_on_a_held_engine_port_fails_to_bind_naming_the_flag_and_variable() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_held, config) = config_on_a_held_engine_port(dir.path());
+    let at = engine_addr(&config);
+    match serve(config, dir.path().to_owned(), None).await {
+        Err(Error::Bind {
+            addr,
+            flag,
+            variable,
+            ..
+        }) => assert_eq!(
+            (addr, flag, variable),
+            (at, "--port", "EMUFORGE_ENGINE_PORT")
+        ),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn serve_on_a_held_engine_port_with_settings_under_aws_refuses_the_folder_before_binding() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_held, mut config) = config_on_a_held_engine_port(dir.path());
+    config.settings_dir = Some(dir.path().join(".aws/emuforge"));
+    let ended = serve(config, dir.path().to_owned(), None).await;
+    assert!(
+        matches!(ended, Err(Error::SettingsDirUnderAws { .. })),
+        "{ended:?}"
+    );
 }
