@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: studio|ecs|tasks-by-the-emulator-api
-Issue-Check-Ids:
+Issue-Check-Ids: studio.ecs-cluster-made-outside-is-listed-with-its-tasks studio.ecs-create-cluster-and-delete-it studio.ecs-create-cluster-refuses-a-name-that-exists studio.ecs-delete-cluster-is-refused-while-a-task-is-not-stopped studio.ecs-delete-cluster-is-refused-while-it-has-an-active-service studio.ecs-deleted-cluster-shows-not-found studio.ecs-starter-registers-runs-and-logs studio.ecs-task-whose-command-ends-is-followed-to-stopped studio.ecs-stop-task-stops-it-in-the-emulator studio.ecs-task-run-without-a-public-ip-fails-to-start studio.ecs-run-task-shows-the-emulators-refusal studio.ecs-unknown-task-shows-not-found studio.ecs-definition-made-outside-is-listed-and-shown studio.ecs-register-new-revision-from-a-revision studio.ecs-register-shows-the-emulators-refusal studio.ecs-service-made-outside-is-shown-with-its-tasks studio.ecs-update-service-changes-its-count-and-revision studio.ecs-update-service-shows-the-emulators-refusal studio.ecs-delete-service-removes-it-and-stops-its-tasks studio.ecs-clusters-follow-an-emulator-restart
 Issue-Commit: 68ba2ca428aaf0f893938e6af03157e5e2603054
 
 # Build ECS's screens from the tasks a developer does with it locally, as far as the emulator's API supports them

@@ -12,7 +12,7 @@ import { GetQueueUrlCommand, SQSClient } from '@aws-sdk/client-sqs';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { createAwsClient, createS3Client, engineEndpoint } from './client-factory';
-import { RequestError, sendRequest, untilAborted, type RequestFailure } from './request';
+import { RequestError, sendRequest, UNREADABLE_ANSWER, untilAborted, type RequestFailure } from './request';
 
 // The shared mapping of a failed request and the wait on its signal (issue 445, requirement R4 to R6). The test plays
 // the engine behind the page's `fetch`: its session route, and every AWS request, answered in the shape the emulator
@@ -509,6 +509,21 @@ describe('the code and the message', () => {
       operation: 'ListHostedZones',
       code: 'HTTP 503 Service Unavailable',
     });
+  });
+
+  it('names an answer it could not read, with the SDK’s message and no status, for Lambda ListFunctions answered 200 OK not json', async () => {
+    engine.aws = () => ({
+      status: 200,
+      statusText: 'OK',
+      body: '{"Functions": [',
+      headers: { 'content-type': REST_JSON },
+    });
+
+    const result = await failureOf('ListFunctions');
+
+    expect(result).toMatchObject({ kind: 'other', operation: 'ListFunctions', code: UNREADABLE_ANSWER });
+    expect(result.kind === 'other' ? result.message : undefined).toMatch(/\S/);
+    expect(JSON.stringify(result)).not.toMatch(/HTTP 200|"OK"/);
   });
 });
 
