@@ -160,6 +160,15 @@ describe('create, import, delete', () => {
     ]);
   });
 
+  it('an answer without a private key → none, rather than an empty one', async () => {
+    engine.on('CreateKeyPair', () =>
+      ok('CreateKeyPair', `<keyName>dev</keyName><keyFingerprint>${FINGERPRINT}</keyFingerprint>`),
+    );
+    const created = await createKeyPair(endpoint, { name: 'dev', type: 'rsa', format: 'pem' }, signal());
+    expect(created).toEqual({ name: 'dev', fingerprint: FINGERPRINT });
+    expect('privateKey' in created).toBe(false);
+  });
+
   it('import → KeyName and PublicKeyMaterial as the bytes of the text', async () => {
     engine.on('ImportKeyPair', () => ok('ImportKeyPair', '<keyName>imp</keyName><keyPairId>key-0imp</keyPairId>'));
     await importKeyPair(endpoint, 'imp', PUBLIC_KEY, signal());
@@ -194,28 +203,28 @@ describe('create, import, delete', () => {
 });
 
 describe('every call', () => {
-  const calls: [string, () => Promise<unknown>][] = [
-    ['DescribeKeyPairs', () => listKeyPairs(endpoint, signal())],
-    ['CreateKeyPair', () => createKeyPair(endpoint, { name: 'a', type: 'rsa', format: 'pem' }, signal())],
-    ['ImportKeyPair', () => importKeyPair(endpoint, 'a', PUBLIC_KEY, signal())],
-    ['DeleteKeyPair', () => deleteKeyPair(endpoint, 'a', signal())],
+  const calls: [string, (signal: AbortSignal) => Promise<unknown>][] = [
+    ['DescribeKeyPairs', (at) => listKeyPairs(endpoint, at)],
+    ['CreateKeyPair', (at) => createKeyPair(endpoint, { name: 'a', type: 'rsa', format: 'pem' }, at)],
+    ['ImportKeyPair', (at) => importKeyPair(endpoint, 'a', PUBLIC_KEY, at)],
+    ['DeleteKeyPair', (at) => deleteKeyPair(endpoint, 'a', at)],
   ];
   for (const [operation, call] of calls) {
     it(`${operation}: a 501 → "not implemented" with the operation's name`, async () => {
       engine.on(operation, () => notImplemented);
-      expect(await failureOf(call())).toEqual({ kind: 'not-implemented', operation });
+      expect(await failureOf(call(signal()))).toEqual({ kind: 'not-implemented', operation });
+    });
+
+    it(`${operation}: an aborted signal ends the request`, async () => {
+      engine.on(operation, () => 'hold');
+      const controller = new AbortController();
+      const pending = call(controller.signal);
+      await vi.waitFor(() => {
+        expect(engine.of(operation)).toHaveLength(1);
+      });
+      const reason = new Error('left the page');
+      controller.abort(reason);
+      await expect(pending).rejects.toBe(reason);
     });
   }
-
-  it('an aborted signal ends the request', async () => {
-    engine.on('CreateKeyPair', () => 'hold');
-    const controller = new AbortController();
-    const pending = createKeyPair(endpoint, { name: 'a', type: 'rsa', format: 'pem' }, controller.signal);
-    await vi.waitFor(() => {
-      expect(engine.of('CreateKeyPair')).toHaveLength(1);
-    });
-    const reason = new Error('left the page');
-    controller.abort(reason);
-    await expect(pending).rejects.toBe(reason);
-  });
 });

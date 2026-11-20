@@ -81,10 +81,13 @@ export interface NewKeyPair {
   format: KeyFormat;
 }
 
-/** The answer of a create: the private key, exactly as it came, with the key pair's fingerprint and ID. */
+/**
+ * The answer of a create: the private key, exactly as it came, with the key pair's fingerprint and ID; an answer
+ * without a private key has none, never an empty one.
+ */
 export interface CreatedKeyPair {
   name: string;
-  privateKey: string;
+  privateKey?: string;
   fingerprint?: string;
   id?: string;
 }
@@ -105,7 +108,11 @@ export async function createKeyPair(
       ),
     signal,
   );
-  const created: CreatedKeyPair = { name: text(output.KeyName) ?? keyPair.name, privateKey: output.KeyMaterial ?? '' };
+  const created: CreatedKeyPair = { name: text(output.KeyName) ?? keyPair.name };
+  const privateKey = text(output.KeyMaterial);
+  if (privateKey !== undefined) {
+    created.privateKey = privateKey;
+  }
   const fingerprint = text(output.KeyFingerprint);
   if (fingerprint !== undefined) {
     created.fingerprint = fingerprint;

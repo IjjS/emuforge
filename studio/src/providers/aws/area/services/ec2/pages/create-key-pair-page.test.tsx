@@ -228,6 +228,23 @@ describe('"Create key pair"', () => {
     expect(screen.queryByRole('button', { name: 'Create key pair' })).toBeNull();
   });
 
+  it('a create whose answer holds no private key → "-" in its place, with no copy or save control', async () => {
+    vi.mocked(api.createKeyPair).mockResolvedValue({ name: 'dev', fingerprint: FINGERPRINT });
+    open();
+    await screen.findByRole('heading', { level: 1, name: 'Create key pair' });
+    typeInto('Name', 'dev');
+    submit('Create key pair');
+    expect(await screen.findByText('Key pair dev created')).toBeInTheDocument();
+    const value = createWrapper(document.body)
+      .findAllKeyValuePairs()
+      .flatMap((pairs) => pairs.findItems())
+      .find((item) => item.findLabel()?.getElement().textContent === 'Private key');
+    expect(text(value?.findValue()?.getElement() ?? document.createElement('span'))).toBe('-');
+    expect(screen.queryByRole('textbox', { name: 'Private key' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Copy private key/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Save as/ })).toBeNull();
+  });
+
   it('an import → sent with the name and the text; the page leads to the key pairs list with "Imported key pair {name}"', async () => {
     vi.mocked(api.importKeyPair).mockResolvedValue(undefined);
     const router = open();

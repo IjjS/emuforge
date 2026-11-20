@@ -118,7 +118,12 @@ function CreatedView({ created }: { created: Created }) {
       </Alert>
       <Container header={<Header variant="h2">Private key</Header>}>
         <SpaceBetween size="l">
-          <PrivateKey name={keyPair.name} format={format} privateKey={keyPair.privateKey} />
+          {keyPair.privateKey === undefined ? (
+            // An answer without a private key: nothing to copy or save.
+            <KeyValuePairs items={[{ label: 'Private key', value: NONE }]} />
+          ) : (
+            <PrivateKey name={keyPair.name} format={format} privateKey={keyPair.privateKey} />
+          )}
           <KeyValuePairs
             items={[
               {
