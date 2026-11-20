@@ -57,6 +57,7 @@ import {
   expectValueIs,
   field,
   findBy,
+  findOnly,
   gatewayDirect,
   GATEWAYS_H1,
   GATEWAYS_PATH,
@@ -151,8 +152,7 @@ test('studio.vpc-route-a-subnet-through-an-internet-gateway', async ({ ctx, page
   const openGateways = async (): Promise<Locator> => {
     await open(page, GATEWAYS_PATH, GATEWAYS_H1);
     const list = listOf(page);
-    await findBy(list, gwName);
-    await expectRow(list, 'Name', gwName);
+    await findOnly(list, gwName);
     return list;
   };
 
@@ -189,7 +189,8 @@ test('studio.vpc-route-a-subnet-through-an-internet-gateway', async ({ ctx, page
       const list = await openGateways();
       await selectRow(list, 'Name', gwName);
       await expectUnavailable(button(main, DETACH), NOT_ATTACHED, '"Detach" of a detached gateway');
-      await button(main, ATTACH).click(ACTION);
+      // With a gateway selected "Attach" is a link to that gateway's S14.
+      await link(main, ATTACH).click(ACTION);
       await expect(page).toHaveURL(addressOf(attachGatewayPath(gateway())));
       await expect(heading(page, ATTACH_GATEWAY)).toBeVisible();
       await expect(main, 'S14 names the gateway').toContainText(`Attaches ${gwName} to a VPC.`, { timeout: 30_000 });
@@ -457,8 +458,7 @@ test('studio.vpc-take-routing-apart-and-what-is-refused', async ({ ctx, page }) 
   const selectG = async (): Promise<Locator> => {
     await open(page, GATEWAYS_PATH, GATEWAYS_H1);
     const list = listOf(page);
-    await findBy(list, gName);
-    await expectRow(list, 'Name', gName);
+    await findOnly(list, gName);
     await selectRow(list, 'Name', gName);
     return list;
   };
@@ -567,8 +567,7 @@ test('studio.vpc-take-routing-apart-and-what-is-refused', async ({ ctx, page }) 
     async () => {
       await open(page, ROUTE_TABLES_PATH, ROUTE_TABLES_H1);
       const list = listOf(page);
-      await findBy(list, tName);
-      await expectRow(list, 'Name', tName);
+      await findOnly(list, tName);
       await selectRow(list, 'Name', tName);
       await button(main, DELETE).click(ACTION);
       await confirmWith(page, 'delete', DELETE);
@@ -582,7 +581,8 @@ test('studio.vpc-take-routing-apart-and-what-is-refused', async ({ ctx, page }) 
     'S12, G selected → "Attach" is unavailable ("This gateway is already attached.") and "Delete" unavailable ("Detach the gateway before deleting it."); asked directly to delete G, the emulator refuses and still reports it',
     async () => {
       await selectG();
-      await expectUnavailable(button(main, ATTACH), ALREADY_ATTACHED, '"Attach" of an attached gateway');
+      // With a gateway selected "Attach" is a link to that gateway's S14, here an unavailable one.
+      await expectUnavailable(link(main, ATTACH), ALREADY_ATTACHED, '"Attach" of an attached gateway');
       await expectUnavailable(button(main, DELETE), DETACH_FIRST, '"Delete" of an attached gateway');
       refusal(await ec2(ctx, port, 'DeleteInternetGateway', { InternetGatewayId: g }), null, 'deleting G attached');
       expect(await gatewayDirect(ctx, port, g), 'G, directly').not.toBeNull();

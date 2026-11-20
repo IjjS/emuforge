@@ -1107,3 +1107,12 @@ export async function openOption(formField: Locator, value: string, typed?: stri
   await expect(option, `the option ${value}`).toBeVisible({ timeout: 20_000 });
   return option;
 }
+
+/**
+ * Types `name` in the list's find field and waits until the list shows the row of that name alone: the filter is
+ * then applied, and a selection made after it stays (a list drops its selection when its filter changes).
+ */
+export async function findOnly(table: Locator, name: string): Promise<void> {
+  await findBy(table, name);
+  await expectRows(table, 'Name', [name], `the row ${name} alone`);
+}
