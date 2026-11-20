@@ -22,6 +22,7 @@ interface ChoiceProps<T> {
   label: string;
   placeholder: string;
   empty: React.ReactNode;
+  unavailable?: boolean;
   error?: string | undefined;
   description?: string | undefined;
 }
@@ -51,6 +52,7 @@ export function CreateServiceChoice<T>(props: ChoiceProps<T> & (SingleChoice<T> 
     empty,
     error,
     description,
+    unavailable = false,
     multiple,
     value,
     inputRef,
@@ -60,7 +62,7 @@ export function CreateServiceChoice<T>(props: ChoiceProps<T> & (SingleChoice<T> 
   const blocked = listing.failure?.kind === 'not-implemented';
   const controls = {
     ...optional({ placeholder, invalid: error === undefined ? undefined : true }),
-    disabled: blocked || source.ready === false,
+    disabled: unavailable || blocked || source.ready === false,
     options: items.map(source.optionOf),
     statusType: listing.loading ? ('loading' as const) : ('finished' as const),
     loadingText: `Loading ${label.toLowerCase()}`,
@@ -77,7 +79,7 @@ export function CreateServiceChoice<T>(props: ChoiceProps<T> & (SingleChoice<T> 
 
   return (
     <SpaceBetween size="xs">
-      <FormField label={label} {...optional({ errorText: error, description })}>
+      <FormField label={label} {...optional({ errorText: error, description: unavailable ? empty : description })}>
         {multiple === true ? (
           <Multiselect
             {...controls}
@@ -112,7 +114,7 @@ export function CreateServiceChoice<T>(props: ChoiceProps<T> & (SingleChoice<T> 
       {listing.failure !== undefined ? (
         <ChoiceFailure failure={listing.failure} connection={connection} label={label} onRetry={listing.retry} />
       ) : (
-        emptyNow && <Box>{empty}</Box>
+        emptyNow && !unavailable && <Box>{empty}</Box>
       )}
     </SpaceBetween>
   );

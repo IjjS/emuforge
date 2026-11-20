@@ -281,6 +281,29 @@ describe('S3, a cluster', () => {
     }
   });
 
+  it.each([false, true])(
+    'jumps from the header to Services and its create action (populated: %s)',
+    async (populated) => {
+      vi.mocked(services.listServices).mockResolvedValue({ services: populated ? [service()] : [] });
+      const { router } = open();
+      const jump = await screen.findByRole('link', { name: 'Jump to Services' });
+      const section = screen.getByRole('region', { name: 'Services' });
+      const scrollIntoView = vi.fn();
+      Object.defineProperty(section, 'scrollIntoView', { value: scrollIntoView });
+
+      expect(jump).toHaveAttribute('href', `#${section.id}`);
+      fireEvent.click(jump);
+
+      expect(section).toHaveFocus();
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: 'start' });
+      expect(router.state.location.pathname).toBe(PATH);
+      expect(within(section).getByRole('link', { name: 'Create service' })).toHaveAttribute(
+        'href',
+        '/aws/ecs/clusters/cluster/dev/services/create',
+      );
+    },
+  );
+
   it('while its tasks table is followed → the summary is read again with it and shows the new counts', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.mocked(tasks.listTasks).mockImplementation(() =>

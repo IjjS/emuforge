@@ -1,4 +1,3 @@
-import Alert, { type AlertProps } from '@cloudscape-design/components/alert';
 import Box from '@cloudscape-design/components/box';
 import Button, { type ButtonProps } from '@cloudscape-design/components/button';
 import Checkbox from '@cloudscape-design/components/checkbox';
@@ -12,7 +11,7 @@ import type { MultiselectProps } from '@cloudscape-design/components/multiselect
 import type { SelectProps } from '@cloudscape-design/components/select';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
 
 import type { RequestFailure } from '../../../../../../lib/aws/request';
@@ -52,6 +51,13 @@ import { runGroupChoices, runSubnetChoices } from '../run-queries';
 import { COUNT_RULE } from '../update-form';
 
 const CREATING = 'Creating service';
+const DUPLICATE_MESSAGE = 'Creation of service was not idempotent.';
+const RENAME_SERVICE = 'Choose a different service name.';
+
+// The Flashbar focuses its error items. Its informational 501 needs its own focus target.
+function focusRefusal(node: HTMLSpanElement | null) {
+  node?.focus();
+}
 
 function ClusterReadFailure({
   connection,
@@ -140,7 +146,10 @@ function CreateServiceForm({ cluster, connection }: { cluster: string; connectio
 
   const [held, setForm] = useState(CREATE_SERVICE_START);
   const [tried, setTried] = useState(false);
-  const [failure, setFailure] = useState<RequestFailure>();
+  const [unsupported, setUnsupported] = useState(false);
+  const [duplicateName, setDuplicateName] = useState<string>();
+  const familyReasonId = useId();
+  const refusalTitleId = useId();
   const [pending, setPending] = useState(false);
   const [asking, setAsking] = useState(false);
   const [kept, setKept] = useState(0);
@@ -152,7 +161,6 @@ function CreateServiceForm({ cluster, connection }: { cluster: string; connectio
   const countRef = useRef<InputProps.Ref>(null);
   const subnetsRef = useRef<MultiselectProps.Ref>(null);
   const cancelRef = useRef<ButtonProps.Ref>(null);
-  const failureRef = useRef<AlertProps.Ref>(null);
   const fields: Record<CreateServiceField, typeof nameRef | typeof familyRef | typeof subnetsRef> = {
     name: nameRef,
     family: familyRef,
@@ -173,13 +181,9 @@ function CreateServiceForm({ cluster, connection }: { cluster: string; connectio
   const groupList = useCreateServiceChoices(groups);
   const form = { ...held, revision: held.revision ?? revisionList.choices?.[0] };
   const errors = tried ? createServiceMessages(form) : {};
-  const unsupported = failure?.kind === 'not-implemented';
+  const noFamilies = familyList.choices?.length === 0 && !familyList.more && !familyList.loading && !familyList.failure;
+  const nameError = errors.name ?? (duplicateName === form.name.trim() ? RENAME_SERVICE : undefined);
 
-  useEffect(() => {
-    if (failure !== undefined) {
-      failureRef.current?.focus();
-    }
-  }, [failure]);
   useEffect(() => {
     if (kept > 0) {
       cancelRef.current?.focus();
@@ -188,11 +192,11 @@ function CreateServiceForm({ cluster, connection }: { cluster: string; connectio
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
-    if (busy.current || unsupported) {
+    if (busy.current || unsupported || noFamilies) {
       return;
     }
     setTried(true);
-    setFailure(undefined);
+    setDuplicateName(undefined);
     const request = createServiceRequestOf(cluster, form);
     if (request === undefined) {
       const messages = createServiceMessages(form);
@@ -213,7 +217,39 @@ function CreateServiceForm({ cluster, connection }: { cluster: string; connectio
       }
     } catch (error) {
       if (!signal.aborted) {
-        setFailure(failureOf(error, CREATE_SERVICE_OPERATION));
+        const failure = failureOf(error, CREATE_SERVICE_OPERATION);
+        const item =
+          failure.kind === 'other'
+            ? {
+                type: 'error' as const,
+                header: 'The emulator did not create the service.',
+                content: <CodeAndMessage code={failure.code} message={failure.message} />,
+              }
+            : actionFailureItem(failure, CREATING, endpoint);
+        if (
+          failure.kind === 'other' &&
+          failure.operation === CREATE_SERVICE_OPERATION &&
+          failure.code === 'InvalidParameterException' &&
+          failure.message === DUPLICATE_MESSAGE
+        ) {
+          setDuplicateName(request.serviceName);
+        }
+        if (failure.kind === 'not-implemented') {
+          setUnsupported(true);
+          flash.show([
+            {
+              ...item,
+              header: <span id={refusalTitleId}>{item.header}</span>,
+              content: (
+                <span role="group" aria-labelledby={refusalTitleId} tabIndex={-1} ref={focusRefusal}>
+                  {item.content}
+                </span>
+              ),
+            },
+          ]);
+        } else {
+          flash.show([item]);
+        }
       }
     } finally {
       if (!signal.aborted) {
@@ -239,17 +275,6 @@ function CreateServiceForm({ cluster, connection }: { cluster: string; connectio
     }
   };
 
-  const notice =
-    failure === undefined
-      ? undefined
-      : failure.kind === 'other'
-        ? {
-            type: 'error' as const,
-            header: 'The emulator did not create the service.',
-            content: <CodeAndMessage code={failure.code} message={failure.message} />,
-          }
-        : actionFailureItem(failure, CREATING, endpoint);
-
   return (
     <>
       <form onSubmit={(event) => void handleSubmit(event)} noValidate>
@@ -259,21 +284,22 @@ function CreateServiceForm({ cluster, connection }: { cluster: string; connectio
               <Button ref={cancelRef} variant="link" formAction="none" disabled={pending} onClick={handleCancel}>
                 Cancel
               </Button>
-              <Button variant="primary" disabled={unsupported} loading={pending} loadingText={CREATING}>
+              <Button
+                variant="primary"
+                disabled={unsupported || noFamilies}
+                {...(noFamilies ? { ariaDescribedby: familyReasonId } : {})}
+                loading={pending}
+                loadingText={CREATING}
+              >
                 {pending ? CREATING : CREATE_SERVICE_TITLE}
               </Button>
             </SpaceBetween>
           }
         >
           <SpaceBetween size="l">
-            {notice !== undefined && (
-              <Alert ref={failureRef} type={notice.type} header={notice.header}>
-                {notice.content}
-              </Alert>
-            )}
             <Container header={<Header variant="h2">Service configuration</Header>}>
               <SpaceBetween size="l">
-                <FormField label="Service name" errorText={errors.name}>
+                <FormField label="Service name" errorText={nameError}>
                   <Input
                     ref={nameRef}
                     value={form.name}
@@ -290,14 +316,15 @@ function CreateServiceForm({ cluster, connection }: { cluster: string; connectio
                   inputRef={familyRef}
                   value={form.family}
                   placeholder="Choose a family"
-                  error={errors.family}
+                  unavailable={noFamilies}
+                  error={noFamilies ? undefined : errors.family}
                   empty={
-                    <>
+                    <span id={familyReasonId}>
                       No task definitions.{' '}
                       <Link href={registerHref()} onFollow={follow}>
                         Register one first.
                       </Link>
-                    </>
+                    </span>
                   }
                   onChange={(family) =>
                     setForm((current) =>

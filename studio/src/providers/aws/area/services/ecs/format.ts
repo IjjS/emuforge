@@ -28,6 +28,7 @@ export const SERVICE_PATTERN = `${CLUSTER_PATTERN}/services/service/{service}`;
 
 export const CREATE_SERVICE_PATTERN = `${CLUSTER_PATTERN}/services/create`;
 export const CREATE_SERVICE_TITLE = 'Create service';
+export const SERVICES_SECTION_ID = 'ecs-services';
 
 export function createServiceHref(cluster: string): string {
   return `${clusterHref(cluster)}/services/create`;
