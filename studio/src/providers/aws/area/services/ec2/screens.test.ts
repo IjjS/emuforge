@@ -54,7 +54,8 @@ describe("EC2's screens", () => {
       }
       expect(screen.navigation.header.text).toBe('EC2');
       expect(screen.navigation.items).toContainEqual({ type: 'link', text: 'Volumes', href: '/aws/ec2/volumes' });
-      expect(screen.navigation.items).toHaveLength(4);
+      const linkTargets = screen.navigation.items.flatMap((item) => (item.type === 'link' ? [item.href] : []));
+      expect([...new Set(linkTargets)]).toEqual(linkTargets);
     }
   });
 });

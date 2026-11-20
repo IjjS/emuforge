@@ -32,6 +32,7 @@ const connection: AreaConnection = {
   engineOrigin: endpoint,
   result: { kind: 'connected', checkedAt: 0, emulator: { port: 9311, endpoint: 'https://127.0.0.1:9311' } },
 };
+const page = createWrapper(document.body);
 
 function ListingObserver() {
   const query = useQuery({
@@ -72,7 +73,7 @@ function open(observe = false) {
 }
 
 function select() {
-  const field = createWrapper(document.body).findSelect();
+  const field = page.findSelect();
   if (field == null) throw new Error('Missing Availability Zone selector');
   return field;
 }
@@ -96,6 +97,50 @@ const fillSize = (value: string) => fireEvent.change(sizeField(), { target: { va
 const submit = () => fireEvent.click(screen.getByRole('button', { name: 'Create volume' }));
 const cancel = () => fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
+function field(label: string) {
+  const wrapper = page
+    .findAllFormFields()
+    .find((candidate) => candidate.findLabel()?.getElement().textContent === label);
+  if (wrapper === undefined) throw new Error(`Missing ${label} field`);
+  return wrapper;
+}
+
+function alert(header: string) {
+  return page.findAllAlerts().find((candidate) => candidate.findHeader()?.getElement().textContent === header);
+}
+
+async function answerDiscard(answer: 'Keep editing' | 'Discard') {
+  await waitFor(() =>
+    expect(page.findModal()?.findHeader().getElement()).toHaveTextContent('Discard what you entered?'),
+  );
+  const footer = page.findModal()?.findFooter()?.getElement();
+  if (footer === undefined) throw new Error('Missing discard dialog footer');
+  fireEvent.click(within(footer).getByRole('button', { name: answer }));
+}
+
+function deferred<T>() {
+  let resolve!: (answer: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+function expectCreatedVolume() {
+  const result = page.findFlashbar()?.findItemsByType('success')[0]?.findContent()?.getElement();
+  expect(result).toHaveTextContent(`Volume ${id} created.`);
+  const details = page.findKeyValuePairs()?.findItems();
+  expect(
+    details?.map((item) => [item.findLabel()?.getElement().textContent, item.findValue()?.getElement().textContent]),
+  ).toEqual([
+    ['Volume ID', id],
+    ['Size', '8 GiB'],
+    ['Type', 'gp2'],
+    ['Availability Zone', 'us-east-1b'],
+    ['State', 'available'],
+  ]);
+}
+
 beforeEach(() => {
   vi.resetAllMocks();
   vi.stubGlobal('matchMedia', (media: string) => ({
@@ -118,17 +163,22 @@ afterEach(() => {
 });
 
 describe('create volume', () => {
-  it('requires a zone and a whole size between 1 and 16384 GiB', async () => {
+  it('requires a zone even when the size is valid', () => {
     open();
+    fillSize('8');
     submit();
-    expect(screen.getByText('Choose an Availability Zone.', { exact: true })).toBeInTheDocument();
-    expect(sizeField()).toHaveAttribute('aria-invalid', 'true');
+    expect(field('Availability Zone').findError()?.getElement()).toHaveTextContent('Choose an Availability Zone.');
+    expect(field('Size (GiB)').findError()).toBeNull();
+    expect(createVolume).not.toHaveBeenCalled();
+  });
+
+  it('requires a whole size between 1 and 16384 GiB when a zone is selected', async () => {
+    open();
     await chooseZone();
     for (const size of ['', '1.5', '0', '16385']) {
       fillSize(size);
       submit();
-      expect(sizeField()).toHaveAttribute('aria-invalid', 'true');
-      expect(screen.getAllByText('Enter a whole number from 1 to 16384.')).toHaveLength(2);
+      expect(field('Size (GiB)').findError()?.getElement()).toHaveTextContent('Enter a whole number from 1 to 16384.');
       expect(createVolume).not.toHaveBeenCalled();
     }
   });
@@ -171,35 +221,54 @@ describe('create volume', () => {
     fillSize('8');
     submit();
 
-    expect(await screen.findByText('InvalidParameterValue')).toBeInTheDocument();
-    expect(screen.getByText(/The requested zone is invalid/)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(alert('Creating volume failed')?.findContent().getElement()).toHaveTextContent('InvalidParameterValue'),
+    );
+    expect(alert('Creating volume failed')?.findContent().getElement()).toHaveTextContent(
+      'The requested zone is invalid.',
+    );
     expect(select().findTrigger().getElement()).toHaveTextContent('us-east-1b');
     expect(sizeField()).toHaveValue('8');
     expect(screen.getByRole('button', { name: 'Create volume' })).toBeEnabled();
   });
 
-  it('hands success to the returned detail page while the list is still refreshing', async () => {
+  it('keeps success and the volume details visible after the slower list refresh completes', async () => {
     const router = open(true);
     await screen.findByText('List current');
-    vi.mocked(listVolumes).mockImplementationOnce(
-      (_endpoint, _token, signal) =>
-        new Promise((_, reject) =>
-          signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError'))),
-        ),
-    );
+    const refresh = deferred<Awaited<ReturnType<typeof listVolumes>>>();
+    vi.mocked(listVolumes).mockReturnValueOnce(refresh.promise);
     await chooseZone();
     fillSize('8');
     submit();
 
     expect(await screen.findByRole('heading', { level: 1, name: id })).toBeInTheDocument();
     expect(router.state.location.pathname).toBe(`${list}/volume/${id}`);
-    expect(screen.getByText(`Volume ${id} created.`)).toBeInTheDocument();
     expect(screen.getByText('Refreshing the list')).toBeInTheDocument();
-    await screen.findByRole('heading', { name: 'Volume details' });
-    const details = createWrapper(document.body).findKeyValuePairs()?.findItems();
-    const size = details?.find((item) => item.findLabel()?.getElement().textContent === 'Size');
-    expect(size?.findValue()?.getElement()).toHaveTextContent('8 GiB');
+    await waitFor(expectCreatedVolume);
     expect(getVolume).toHaveBeenCalledWith(endpoint, id, expect.any(AbortSignal));
+
+    refresh.resolve({ items: [{ id, size: 8, attachments: [] }] });
+    await screen.findByText('List current');
+    expectCreatedVolume();
+  });
+
+  it('prevents cancellation while CreateVolume is awaiting a reply', async () => {
+    const submission = deferred<string>();
+    vi.mocked(createVolume).mockReturnValueOnce(submission.promise);
+    const router = open();
+    await chooseZone();
+    fillSize('8');
+    submit();
+
+    expect(createVolume).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    cancel();
+    expect(page.findModal()).toBeNull();
+    expect(router.state.location.pathname).toBe(`${list}/create`);
+
+    submission.resolve(id);
+    await waitFor(expectCreatedVolume);
+    expect(router.state.location.pathname).toBe(`${list}/volume/${id}`);
   });
 
   it('returns to the list on clean cancel without submitting', async () => {
@@ -215,15 +284,13 @@ describe('create volume', () => {
     await chooseZone();
     fillSize('8');
     cancel();
-    const dialog = await screen.findByRole('dialog');
-    expect(dialog).toHaveTextContent('Discard what you entered?');
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Keep editing' }));
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await answerDiscard('Keep editing');
+    await waitFor(() => expect(page.findModal()).toBeNull());
     expect(select().findTrigger().getElement()).toHaveTextContent('us-east-1b');
     expect(sizeField()).toHaveValue('8');
     expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
     cancel();
-    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Discard' }));
+    await answerDiscard('Discard');
     await screen.findByRole('heading', { level: 1, name: 'Volumes' });
     expect(router.state.location.pathname).toBe(list);
     expect(createVolume).not.toHaveBeenCalled();
@@ -237,11 +304,14 @@ describe('create volume', () => {
     await chooseZone();
     fillSize('8');
     submit();
-    expect(await screen.findByText('Not implemented by the emulator')).toBeInTheDocument();
-    expect(screen.getByText(/501 Not Implemented for CreateVolume/)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(alert('Not implemented by the emulator')?.findContent().getElement()).toHaveTextContent(
+        '501 Not Implemented for CreateVolume',
+      ),
+    );
     expect(screen.getByRole('button', { name: 'Create volume' })).toBeDisabled();
     cancel();
-    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Discard' }));
+    await answerDiscard('Discard');
     await screen.findByRole('heading', { level: 1, name: 'Volumes' });
     expect(createVolume).toHaveBeenCalledTimes(1);
   });

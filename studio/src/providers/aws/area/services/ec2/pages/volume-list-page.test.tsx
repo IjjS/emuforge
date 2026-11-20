@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, render, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -34,10 +34,42 @@ function open() {
   );
 }
 
+function table() {
+  const wrapper = createWrapper(document.body).findTable();
+  if (wrapper === null) throw new Error('Missing volume table');
+  return wrapper;
+}
+
+function header() {
+  const actions = table().findHeaderSlot();
+  if (actions === null) throw new Error('Missing volume table header');
+  return within(actions.getElement());
+}
+
+function emptySlot() {
+  return table().findEmptySlot()?.getElement();
+}
+
+function volumeLink() {
+  const cell = table().findBodyCell(1, 1);
+  return cell == null ? undefined : createWrapper(cell.getElement()).findLink()?.getElement();
+}
+
+async function expectVolume(id: string) {
+  await waitFor(() => {
+    expect(volumeLink()).toHaveTextContent(id);
+    expect(volumeLink()).toHaveAttribute('href', `/aws/ec2/volumes/volume/${id}`);
+  });
+}
+
+function pageButton(direction: 'next' | 'previous') {
+  const pagination = table().findPagination();
+  if (pagination === null) throw new Error('Missing volume pagination');
+  return direction === 'next' ? pagination.findNextPageButton() : pagination.findPreviousPageButton();
+}
+
 function move(direction: 'next' | 'previous') {
-  const pagination = createWrapper(document.body).findPagination();
-  const button = direction === 'next' ? pagination?.findNextPageButton() : pagination?.findPreviousPageButton();
-  act(() => button?.click());
+  act(() => pageButton(direction).click());
 }
 
 function pages() {
@@ -55,44 +87,44 @@ describe('volume list', () => {
     vi.mocked(listVolumes).mockResolvedValue({ items: [] });
     open();
 
-    expect(screen.getByText('Loading volumes')).toBeInTheDocument();
-    expect(await screen.findByText('No volumes')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Create volume' })).toHaveAttribute('href', '/aws/ec2/volumes/create');
+    expect(table().findLoadingText()?.getElement()).toHaveTextContent('Loading volumes');
+    await waitFor(() => expect(emptySlot()).toHaveTextContent('No volumes'));
+    expect(header().getByRole('link', { name: 'Create volume' })).toHaveAttribute('href', '/aws/ec2/volumes/create');
   });
 
   it('uses the returned token, links the rows and goes back from the last page', async () => {
     pages();
     open();
 
-    const id = await screen.findByRole('link', { name: first.id });
-    expect(id).toHaveAttribute('href', '/aws/ec2/volumes/volume/vol-first');
-    const rows = createWrapper(document.body).findTable()?.findRows();
-    expect(rows?.map((row) => row.findAll('th, td').map((cell) => cell.getElement().textContent))).toEqual([
-      [first.id, 'available', '8 GiB', 'gp2', 'us-east-1a'],
-    ]);
+    await expectVolume(first.id);
+    expect(
+      table()
+        .findRows()
+        .map((row) => row.findAll('th, td').map((cell) => cell.getElement().textContent)),
+    ).toEqual([[first.id, 'available', '8 GiB', 'gp2', 'us-east-1a']]);
 
     move('next');
-    expect(await screen.findByRole('link', { name: second.id })).toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: first.id })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Next page' })).toHaveAttribute('aria-disabled', 'true');
+    await expectVolume(second.id);
+    expect(table().findRows()).toHaveLength(1);
+    expect(pageButton('next').getElement()).toHaveAttribute('aria-disabled', 'true');
     move('previous');
-    expect(await screen.findByRole('link', { name: first.id })).toBeInTheDocument();
+    await expectVolume(first.id);
     expect(vi.mocked(listVolumes).mock.calls.map(([, token]) => token)).toEqual([undefined, 'next-token', undefined]);
   });
 
   it('refreshes page one after an external change while viewing page two', async () => {
     pages();
     open();
-    await screen.findByRole('link', { name: first.id });
+    await expectVolume(first.id);
     move('next');
-    await screen.findByRole('link', { name: second.id });
+    await expectVolume(second.id);
 
     vi.mocked(listVolumes).mockResolvedValueOnce({ items: [{ ...first, id: 'vol-external' }] });
-    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    act(() => header().getByRole('button', { name: 'Refresh' }).click());
 
-    expect(await screen.findByRole('link', { name: 'vol-external' })).toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: second.id })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Previous page' })).toHaveAttribute('aria-disabled', 'true');
+    await expectVolume('vol-external');
+    expect(table().findRows()).toHaveLength(1);
+    expect(pageButton('previous').getElement()).toHaveAttribute('aria-disabled', 'true');
     expect(listVolumes).toHaveBeenLastCalledWith(endpoint, undefined, expect.any(AbortSignal));
   });
 
@@ -102,10 +134,12 @@ describe('volume list', () => {
       .mockResolvedValueOnce({ items: [first] });
     open();
 
-    expect(await screen.findByText(/InternalError/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    expect(await screen.findByRole('link', { name: first.id })).toBeInTheDocument();
-    expect(screen.queryByText(/InternalError/)).toBeNull();
+    await waitFor(() => expect(emptySlot()).toHaveTextContent('InternalError'));
+    const empty = emptySlot();
+    if (empty === undefined) throw new Error('Missing volume read failure');
+    act(() => within(empty).getByRole('button', { name: 'Retry' }).click());
+    await expectVolume(first.id);
+    expect(emptySlot()).toBeUndefined();
   });
 
   it('shows the area’s not-implemented state on a 501', async () => {
@@ -113,7 +147,7 @@ describe('volume list', () => {
       new RequestError({ kind: 'not-implemented', operation: 'DescribeVolumes' }),
     );
     open();
-    expect(await screen.findByText('Not implemented by the emulator')).toBeInTheDocument();
-    expect(screen.getByText(/DescribeVolumes/)).toBeInTheDocument();
+    await waitFor(() => expect(emptySlot()).toHaveTextContent('Not implemented by the emulator'));
+    expect(emptySlot()).toHaveTextContent('DescribeVolumes');
   });
 });
