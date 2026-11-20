@@ -162,11 +162,16 @@ export interface ChoiceSelectProps<T> extends ChoiceFieldProps<T> {
   /** The label of a fixed first choice ("No key pair"), offered above the others and the choice at start. */
   fixed?: string | undefined;
   selectRef?: Ref<SelectProps.Ref> | undefined;
+  /**
+   * What the closed field shows of the choice made: its label alone (`label`, the default), or its label with its
+   * description and tags (`option`), for choices that differ only in a few characters of their label.
+   */
+  triggerVariant?: SelectProps.TriggerVariant | undefined;
 }
 
 /** A field of one choice of `source`, read a page at a time. */
 export function ChoiceSelect<T>(props: ChoiceSelectProps<T>) {
-  const { source, value, onChange, fixed, placeholder, invalid, ariaLabel, selectRef } = props;
+  const { source, value, onChange, fixed, placeholder, invalid, ariaLabel, selectRef, triggerVariant } = props;
   const fixedOption = fixed === undefined ? undefined : { value: FIXED, label: fixed };
   const { items, options, props: parts } = useChoiceField(props, fixedOption);
 
@@ -183,7 +188,7 @@ export function ChoiceSelect<T>(props: ChoiceSelectProps<T>) {
       {...parts}
       selectedOption={selected}
       options={options}
-      {...optional({ placeholder, invalid, ariaLabel })}
+      {...optional({ placeholder, invalid, ariaLabel, triggerVariant })}
       dropdownRole="dialog"
       onChange={({ detail }) => {
         if (detail.selectedOption.value === FIXED && fixedOption !== undefined) {

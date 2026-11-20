@@ -22,9 +22,15 @@ interface Thing {
   id: string;
   name: string;
   size: string;
+  note?: string;
 }
 
-const thing = (id: string, name = id, size = '1'): Thing => ({ id, name, size });
+const thing = (id: string, name = id, size = '1', note?: string): Thing => ({
+  id,
+  name,
+  size,
+  ...(note === undefined ? {} : { note }),
+});
 
 type Reader = (text: string, token: string | undefined) => Promise<TokenPage<Thing>>;
 
@@ -38,11 +44,22 @@ function source(filtering: ChoiceFiltering | undefined): ChoiceSource<Thing> {
     operation: 'ListThings',
     filtering,
     read: (_endpoint, text, token) => read(text, token),
-    optionOf: (each) => ({ value: each.id, label: each.name, tags: [each.id, `size ${each.size}`] }),
+    optionOf: (each) => ({
+      value: each.id,
+      label: each.name,
+      ...(each.note === undefined ? {} : { description: each.note }),
+      tags: [each.id, `size ${each.size}`],
+    }),
   };
 }
 
-function Field({ filtering, fixed }: { filtering: ChoiceFiltering | undefined; fixed: string | undefined }) {
+interface FieldOptions {
+  filtering: ChoiceFiltering | undefined;
+  fixed: string | undefined;
+  triggerVariant: 'label' | 'option' | undefined;
+}
+
+function Field({ filtering, fixed, triggerVariant }: FieldOptions) {
   const [value, setValue] = useState<Thing>();
   return (
     <ChoiceSelect<Thing>
@@ -51,6 +68,7 @@ function Field({ filtering, fixed }: { filtering: ChoiceFiltering | undefined; f
       things="things"
       placeholder="Choose a thing"
       fixed={fixed}
+      triggerVariant={triggerVariant}
       value={value}
       onChange={(choice) => {
         chosen.push(choice);
@@ -60,11 +78,15 @@ function Field({ filtering, fixed }: { filtering: ChoiceFiltering | undefined; f
   );
 }
 
-function open({ filtering = 'sent', fixed }: { filtering?: ChoiceFiltering; fixed?: string } = {}) {
+function open({
+  filtering = 'sent',
+  fixed,
+  triggerVariant,
+}: { filtering?: ChoiceFiltering; fixed?: string; triggerVariant?: 'label' | 'option' } = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
-      <Field filtering={filtering} fixed={fixed} />
+      <Field filtering={filtering} fixed={fixed} triggerVariant={triggerVariant} />
     </QueryClientProvider>,
   );
 }
@@ -283,5 +305,30 @@ describe('ChoiceSelect', () => {
       expect(shown()).toEqual(['gamma']);
     });
     expect(triggerText()).toContain('beta');
+  });
+
+  it('without a trigger variant → the closed field shows the chosen option\'s label alone, as before', async () => {
+    read.mockResolvedValueOnce({ items: [thing('t-1', 'alpha', '2', 'the first')] });
+    open();
+    select().openDropdown();
+    await waitFor(() => {
+      expect(shown()).toEqual(['alpha']);
+    });
+    select().selectOptionByValue('t-1');
+    expect(triggerText()).toBe('alpha');
+  });
+
+  it('with the trigger variant "option" → the closed field shows the chosen option\'s label, its description and its tags', async () => {
+    read.mockResolvedValueOnce({ items: [thing('t-1', 'alpha', '2', 'the first')] });
+    open({ triggerVariant: 'option' });
+    select().openDropdown();
+    await waitFor(() => {
+      expect(shown()).toEqual(['alpha']);
+    });
+    select().selectOptionByValue('t-1');
+    expect(triggerText()).toContain('alpha');
+    expect(triggerText()).toContain('the first');
+    expect(triggerText()).toContain('t-1');
+    expect(triggerText()).toContain('size 2');
   });
 });
