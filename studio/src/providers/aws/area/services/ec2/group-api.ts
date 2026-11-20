@@ -9,7 +9,7 @@ import {
 } from '@aws-sdk/client-ec2';
 
 import { RequestError } from '../../../../../lib/aws/request';
-import { sendEc2, text } from './api';
+import { sendEc2, text } from '../../lib/ec2-client';
 
 // The calls of EC2's security group screens, S4 and S6 (issue 553, design task 4), through `sendEc2` with each
 // operation's name, mapped to plain typed results. Every value is the emulator's, as it came.

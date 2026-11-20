@@ -1,6 +1,6 @@
 import { RunInstancesCommand, type _InstanceType } from '@aws-sdk/client-ec2';
 
-import { sendEc2, text } from './api';
+import { sendEc2, text } from '../../lib/ec2-client';
 
 // The launch of S2 (issue 553, design task 2): one `RunInstances` of one instance, through `sendEc2` with its
 // operation's name, so a refusal rejects with its `RequestError` carrying the emulator's code and message as they

@@ -16,7 +16,7 @@ import { usePageFlash, type FlashItem } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
 import { failureOf } from '../../../components/use-token-listing';
 import type { ScreenPageProps } from '../../../screens';
-import type { VpcChoice } from '../choices-api';
+import type { VpcChoice } from '../../../lib/ec2-network-choices';
 import { vpcChoices } from '../choices-queries';
 import { CREATE_SECURITY_GROUP_TITLE, securityGroupHref, SECURITY_GROUPS_PATH, SECURITY_GROUPS_WORD } from '../format';
 import { GROUP_DESCRIPTION_RULE, groupFormMessages, GROUP_NAME_RULE, type GroupFormMessages } from '../group-form';

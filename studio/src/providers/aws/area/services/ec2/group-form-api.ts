@@ -5,7 +5,7 @@ import {
   type IpPermission,
 } from '@aws-sdk/client-ec2';
 
-import { sendEc2, text } from './api';
+import { sendEc2, text } from '../../lib/ec2-client';
 import type { RulePeer } from './group-api';
 import { hasPorts, type RuleProtocol } from './group-form';
 

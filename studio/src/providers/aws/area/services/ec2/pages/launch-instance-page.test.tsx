@@ -10,10 +10,11 @@ import type { CheckResult } from '../../../../../../lib/engine/engine-client';
 import type { AreaConnection } from '../../../components/emulator-line';
 import AwsArea from '../../../index';
 import * as api from '../api';
+import * as network from '../../../lib/ec2-network-choices';
 import * as choices from '../choices-api';
 import * as launching from '../launch-api';
 
-// S2 rendered inside the area's layout, with the calls of `choices-api.ts`, `launch-api.ts` and, for the instance's page
+// S2 rendered inside the area's layout, with the calls of `choices-api.ts`, `lib/ec2-network-choices.ts`, `launch-api.ts` and, for the instance's page
 // the launch leads to, `api.ts` answered by the case (their own tests prove the calls against a fake engine).
 
 vi.mock('../api', async (importOriginal) => {
@@ -33,12 +34,15 @@ vi.mock('../choices-api', async (importOriginal) => {
     ...real,
     listImageChoices: vi.fn(),
     listInstanceTypeChoices: vi.fn(),
-    listSubnetChoices: vi.fn(),
-    listVpcChoices: vi.fn(),
     listGroupChoices: vi.fn(),
     listKeyPairChoices: vi.fn(),
     getDefaultVpc: vi.fn(),
   };
+});
+
+vi.mock('../../../lib/ec2-network-choices', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../../lib/ec2-network-choices')>();
+  return { ...real, listSubnetChoices: vi.fn(), listVpcChoices: vi.fn() };
 });
 
 vi.mock('../launch-api', async (importOriginal) => {
@@ -134,7 +138,7 @@ const NAME_RULE = 'Up to 256 characters. Stored as the Name tag.';
 
 const IMAGE: choices.ImageChoice = { id: 'ami-1', name: 'al2023', architecture: 'x86_64', platform: 'Linux/UNIX' };
 const TYPE: choices.InstanceTypeChoice = { type: 't3.micro', vcpus: 2, memoryMiB: 1024, architectures: ['x86_64'] };
-const SUBNETS: choices.SubnetChoice[] = [
+const SUBNETS: network.SubnetChoice[] = [
   { id: 'subnet-a', vpcId: 'vpc-d', zone: 'us-east-1a', cidr: '172.31.0.0/20' },
   { id: 'subnet-b', vpcId: 'vpc-d', zone: 'us-east-1b', cidr: '172.31.16.0/20' },
   { id: 'subnet-x', vpcId: 'vpc-x', zone: 'us-east-1a', cidr: '10.0.0.0/24' },
@@ -152,7 +156,7 @@ beforeEach(() => {
   vi.mocked(choices.listImageChoices).mockResolvedValue({ choices: [IMAGE] });
   vi.mocked(choices.listInstanceTypeChoices).mockResolvedValue({ choices: [TYPE] });
   vi.mocked(choices.listKeyPairChoices).mockResolvedValue([{ name: 'dev' }]);
-  vi.mocked(choices.listSubnetChoices).mockResolvedValue({ choices: SUBNETS });
+  vi.mocked(network.listSubnetChoices).mockResolvedValue({ choices: SUBNETS });
   vi.mocked(choices.getDefaultVpc).mockResolvedValue('vpc-d');
   vi.mocked(choices.listGroupChoices).mockImplementation((_at, filters) =>
     Promise.resolve({ choices: GROUPS[filters.vpcId ?? 'any'] ?? [] }),

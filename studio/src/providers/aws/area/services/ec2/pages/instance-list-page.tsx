@@ -16,18 +16,11 @@ import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
 import type { TokenListing } from '../../../components/use-token-listing';
 import { ValueText } from '../../../components/value-text';
+import { nameOf } from '../../../lib/ec2-client';
 import type { Instance } from '../api';
 import { InstanceActions } from '../components/instance-actions';
 import { InstanceStateValue } from '../components/instance-state';
-import {
-  instanceHref,
-  instanceName,
-  INSTANCES_TITLE,
-  INSTANCES_WORD,
-  LAUNCH_INSTANCE_PATH,
-  nameOf,
-  NONE,
-} from '../format';
+import { instanceHref, instanceName, INSTANCES_TITLE, INSTANCES_WORD, LAUNCH_INSTANCE_PATH, NONE } from '../format';
 import { INSTANCE_STATES } from '../instance-state';
 import { useInstanceListing, type ListingFilters } from '../queries';
 
