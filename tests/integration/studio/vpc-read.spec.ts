@@ -38,7 +38,6 @@ import {
   NO_VPCS_MATCH,
   open,
   PUBLIC_ON_LAUNCH,
-  REFRESH,
   ROUTE_TABLE_NOT_FOUND,
   ROUTE_TABLES_H1,
   ROUTE_TABLES_PATH,
@@ -414,11 +413,10 @@ test('studio.vpc-screens-follow-an-emulator-restart', async ({ ctx, page, contex
     'S1, S3 of the VPC, S4, S6 of the subnet, S7, S9 of the table and S12 each open in a page of its own; the emulator is restarted → once the emulator line reads "Connected" again: S1 shows the default VPC alone; S3 "VPC not found"; S4 the three default subnets alone; S6 "Subnet not found"; S7 the default VPC\'s main table alone; S9 "Route table not found"; S12 the default world\'s one gateway alone; none with a row or a value of before',
     async () => {
       await emulator.stop();
-      // A read while the emulator is stopped fails; each page reads again by itself once it is connected again.
+      // Nothing is pressed on a page: each reads again by itself once it is connected again.
       for (const each of pages) {
         await each.bringToFront();
         await expectLine(each, notStartedOn(port));
-        await button(each.getByRole('main'), REFRESH).first().click(ACTION);
       }
       await emulator.startAgain();
       for (const each of pages) {
