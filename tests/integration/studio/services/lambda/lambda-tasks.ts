@@ -321,9 +321,11 @@ export function variablesSavedText(name: string): string {
 }
 
 // Cloudscape's selectors start at `body`: the table's is used under a locator, so that root is taken off; the rows'
-// is matched from the document and kept whole.
+// and the cells' are matched from the document and kept whole.
 const VARIABLES_TABLE = createWrapper().findTable().toSelector().replace(/^body /, '');
 const TABLE_ROWS = createWrapper().findTable().findRows().toSelector();
+/** Cloudscape's selector of the body cell of row `row` and column `column`, both from 1. */
+const bodyCell = (row: number, column: number) => createWrapper().findTable().findBodyCell(row, column).toSelector();
 /** The Cloudscape `Table` in the page's main whose header holds the heading "Environment variables". */
 function variablesTable(page: Page): Locator {
   return page
@@ -334,23 +336,43 @@ function variablesTable(page: Page): Locator {
 
 /**
  * The rows of "Environment variables" as shown: each key and value, in the table's order; `[]` when the table has
- * no row or is not there. The rows are Cloudscape's (`findTable().findRows()`), those inside that table, read in one
- * pass, each row's cells in their order.
+ * no row or is not there. Rows and cells are Cloudscape's (`findTable().findRows()`, `findBodyCell(row, column)`),
+ * those inside that table. The cells are read in one pass, which also counts the rows again: a table drawn anew
+ * between the count and the read is read again, so a row is never half of one answer and half of the next.
  */
 export async function shownVariables(page: Page): Promise<[string, string][]> {
-  const texts = await variablesTable(page).evaluateAll(
-    (tables, rows) =>
-      tables.flatMap((table) =>
-        [...document.querySelectorAll(rows)]
-          .filter((row) => table.contains(row))
-          .map((row) => [...row.querySelectorAll('td')].map((cell) => (cell as HTMLElement).innerText)),
-      ),
-    TABLE_ROWS,
-  );
-  return texts.map((cells) => {
-    const [key = '', value = ''] = cells.map((text) => text.replace(/\s+/g, ' ').trim());
-    return [key, value];
-  });
+  const table = variablesTable(page);
+  const inTable = (selector: string) =>
+    table.evaluateAll(
+      (tables, wanted) =>
+        tables.flatMap((one) => [...document.querySelectorAll(wanted)].filter((found) => one.contains(found))).length,
+      selector,
+    );
+  let read: [string, string][] = [];
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const count = await inTable(TABLE_ROWS);
+    const cells = Array.from({ length: count }, (_, at) => [bodyCell(at + 1, 1), bodyCell(at + 1, 2)]);
+    const answer = await table.evaluateAll(
+      (tables, wanted) => {
+        const within = (selector: string) =>
+          tables.flatMap((one) => [...document.querySelectorAll(selector)].filter((found) => one.contains(found)));
+        const texts = wanted.cells.map((pair) =>
+          pair.map((selector) => {
+            const cell = within(selector)[0];
+            return cell instanceof HTMLElement ? cell.innerText : null;
+          }),
+        );
+        return { rows: within(wanted.rows).length, texts };
+      },
+      { rows: TABLE_ROWS, cells },
+    );
+    read = answer.texts.map((pair) => {
+      const [key = '', value = ''] = pair.map((text) => (text ?? '').replace(/\s+/g, ' ').trim());
+      return [key, value];
+    });
+    if (answer.rows === count && answer.texts.every((pair) => pair.every((text) => text !== null))) break;
+  }
+  return read;
 }
 
 /** The keys of the editor's rows, in the rows' order, as its "Key" boxes hold them. */
