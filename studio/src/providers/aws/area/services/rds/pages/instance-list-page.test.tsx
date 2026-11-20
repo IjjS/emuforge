@@ -196,7 +196,7 @@ async function confirmDelete() {
   fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
 }
 
-const ROW_1 = ['app-db', 'available', 'postgres 18.3', 'db.t3.micro', '-', '41000', created];
+const ROW_1 = ['app-db', 'available', 'postgres 18.3', '41000', '-', 'db.t3.micro', created];
 
 // ---------------------------------------------------------------------------------------------------------------
 
@@ -227,16 +227,16 @@ describe('the DB instances list', () => {
     const router = open('/aws/rds');
     await expectRows([
       ROW_1,
-      ['aur-1-w', 'creating', 'aurora-postgresql 16.4', 'db.r6g.large', 'aur-1', '42000', created],
+      ['aur-1-w', 'creating', 'aurora-postgresql 16.4', '42000', 'aur-1', 'db.r6g.large', created],
       ['bare', 'stopped', '-', '-', '-', '-', '-'],
     ]);
     expect((table().findColumnHeaders() ?? []).map((header) => text(header.getElement())).slice(1)).toEqual([
       'DB identifier',
       'Status',
       'Engine',
-      'Class',
-      'DB cluster',
       'Port',
+      'DB cluster',
+      'Class',
       'Created',
     ]);
     expect(screen.getByRole('link', { name: 'aur-1' })).toHaveAttribute('href', '/aws/rds/clusters/cluster/aur-1');
@@ -509,7 +509,7 @@ describe('the DB instances list', () => {
       reads[2]?.resolve({ instances: [instance('app-db', 'available', { port: 2 })] });
     });
     await waitFor(() => {
-      expect(rows()[0]?.[5]).toBe('2');
+      expect(rows()[0]?.[3]).toBe('2');
     });
     act(() => {
       reads[1]?.resolve({ instances: [instance('app-db', 'rebooting', { port: 1 })] });
@@ -518,7 +518,7 @@ describe('the DB instances list', () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
     });
     expect(rows()[0]?.[1]).toBe('available');
-    expect(rows()[0]?.[5]).toBe('2');
+    expect(rows()[0]?.[3]).toBe('2');
   });
 
   for (const order of ['before', 'after'] as const) {
