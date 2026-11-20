@@ -4,14 +4,14 @@
 #   docker compose down
 #
 # `emuforge` is one process from one binary that serves Studio and the engine; `aws-emulator` is the form's own
-# emulator, from the emulator's image, in emuforge's network namespace. Then open http://127.0.0.1:8296/. Nothing
-# of the form is on the host: the emulator's files are in the volume `emulator` and emuforge's target settings in
-# the volume `settings`, both of which `docker compose down -v` removes. An AWS client on the host is pointed at the engine's port with any key; the emulator's own port is not
-# published.
+# emulator, from the emulator's image, in emuforge's network namespace. Then open http://127.0.0.1:8296/. The
+# emulator's files are in the volume `emulator` and emuforge's target settings in the volume `settings`, both
+# of which `docker compose down -v` removes. AWS clients on the host use the engine with any key.
 # Change the ports with EMUFORGE_STUDIO_PORT (8296) and EMUFORGE_ENGINE_PORT (8297), and give the stop command the
 # same values. EMULATOR_PORT (9297) is the emulator's port inside the form; set it only to free that number for
-# one of the other two. The three must differ; emuforge refuses otherwise, naming both variables. Every published
-# port is on 127.0.0.1 only.
+# one of the other two. The three must differ; emuforge refuses otherwise, naming both variables. Host SQL uses
+# EMUFORGE_DB_PORT_MIN through EMUFORGE_DB_PORT_MAX (28000-28255), excluding all three control ports. Every
+# published port is on 127.0.0.1 only.
 # Each EMUFORGE_STUDIO_PORT is its own project (emuforge-app-<port>) with its own emulator and volume, so forms on
 # different Studio and engine ports run side by side; left unset, the project is emuforge-app. Set no
 # COMPOSE_PROJECT_NAME or -p.
@@ -20,7 +20,7 @@
 name: emuforge-app${EMUFORGE_STUDIO_PORT:+-${EMUFORGE_STUDIO_PORT}}
 
 services:
-  # Studio and the engine, one process. Owns the form's network namespace and its two published ports.
+  # Studio and the engine, one process. Owns the form's network namespace and its published ports.
   emuforge:
     image: ${EMUFORGE_IMAGE:-emuforge}
     build:
@@ -30,6 +30,18 @@ services:
     # Inside the container both listeners take the container's address, so the ports Docker publishes reach them
     # (security review N1: an explicit flag, and a warning in the log). On the host they are on 127.0.0.1 only.
     # The Compose form holds one target, `compose`, this form's own emulator; emuforge writes it at every start.
+    entrypoint:
+      - /usr/local/bin/compose-db-range
+      - "${EMUFORGE_DB_PORT_MIN:-28000}"
+      - "${EMUFORGE_DB_PORT_MAX:-28255}"
+      - EMULATOR_PORT
+      - "${EMULATOR_PORT:-9297}"
+      - EMUFORGE_ENGINE_PORT
+      - "${EMUFORGE_ENGINE_PORT:-8297}"
+      - EMUFORGE_STUDIO_PORT
+      - "${EMUFORGE_STUDIO_PORT:-8296}"
+      - "--"
+      - emuforge
     command: ["serve", "--listen-address", "0.0.0.0", "--form", "compose"]
     environment:
       EMULATOR_PORT: ${EMULATOR_PORT:-9297}
@@ -44,6 +56,9 @@ services:
       # Studio accept only Host 127.0.0.1:<their port>.
       - "127.0.0.1:${EMUFORGE_STUDIO_PORT:-8296}:${EMUFORGE_STUDIO_PORT:-8296}"
       - "127.0.0.1:${EMUFORGE_ENGINE_PORT:-8297}:${EMUFORGE_ENGINE_PORT:-8297}"
+      - "127.0.0.1:${EMUFORGE_DB_PORT_MIN:-28000}-${EMUFORGE_DB_PORT_MAX:-28255}:${EMUFORGE_DB_PORT_MIN:-28000}-${EMUFORGE_DB_PORT_MAX:-28255}"
+    sysctls:
+      net.ipv4.ip_local_port_range: "${EMUFORGE_DB_PORT_MIN:-28000} ${EMUFORGE_DB_PORT_MAX:-28255}"
     volumes:
       # The emulator's files, read-only. The parent, not the port's own directory, so emuforge sees the emulator's
       # files after every start, stop and restart.

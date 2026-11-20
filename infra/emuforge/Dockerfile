@@ -1,7 +1,7 @@
 # The product form's image (issues 34, 437, 484): one binary, `emuforge`, with Studio's production build embedded.
 # Built by the root docker-compose.yml with the repository root as its context, cut down by Dockerfile.dockerignore
-# to engine/ and studio/ without what a host build writes. The final stage holds that one binary and Debian's slim
-# base, whose bash the healthcheck of docker-compose.yml uses: no bun, no Node, no Studio source.
+# to engine/, studio/ and the Compose port validator, without what a host build writes. The final stage holds
+# the binary and validator on Debian's slim base, whose bash the healthcheck of docker-compose.yml uses.
 #
 # Every base image has an exact tag: the Rust and bun versions equal the toolchains pm-check uses.
 
@@ -34,6 +34,7 @@ FROM debian:bookworm-20261104-slim
 # that owner and the engine can write targets.json.
 RUN mkdir -p /home/emuforge/.config/emuforge-compose && chown -R 1000:1000 /home/emuforge
 COPY --from=build /emuforge /usr/local/bin/emuforge
+COPY --chmod=755 infra/aws-emulator/compose-db-range.sh /usr/local/bin/compose-db-range
 USER 1000:1000
 ENV HOME=/home/emuforge
 WORKDIR /home/emuforge
