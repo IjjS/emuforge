@@ -2,7 +2,7 @@
 # Change the port with EMULATOR_PORT=9298. The host port, the container port and the emulator's -p must match,
 # because the emulator writes its port into the files it creates.
 # Each EMULATOR_PORT is its own project and container (emuforge-<port>, emuforge-aws-emulator-<port>), so
-# emulators on different ports run side by side; stop one with the same EMULATOR_PORT and `down`.
+# emulators with separate control ports and database ranges run side by side. Reuse the same port settings with `down`.
 # Left unset, the names are emuforge and emuforge-aws-emulator on 9297; set no COMPOSE_PROJECT_NAME or -p.
 name: emuforge${EMULATOR_PORT:+-${EMULATOR_PORT}}
 services:
@@ -11,10 +11,23 @@ services:
     image: aws-emulator
     container_name: emuforge-aws-emulator${EMULATOR_PORT:+-${EMULATOR_PORT}}
     # Telemetry off: nothing in this repository may send anything off the machine.
+    entrypoint:
+      - /usr/local/bin/compose-db-range
+      - "${EMUFORGE_DB_PORT_MIN:-28256}"
+      - "${EMUFORGE_DB_PORT_MAX:-28511}"
+      - EMULATOR_PORT
+      - "${EMULATOR_PORT:-9297}"
+      - "--"
+      - /usr/local/bin/emulator-entrypoint
+      - "-b"
+      - "0.0.0.0"
     command: ["-p", "${EMULATOR_PORT:-9297}", "-t", "off"]
     ports:
       # Published on 127.0.0.1 only, never on the whole network.
       - "127.0.0.1:${EMULATOR_PORT:-9297}:${EMULATOR_PORT:-9297}"
+      - "127.0.0.1:${EMUFORGE_DB_PORT_MIN:-28256}-${EMUFORGE_DB_PORT_MAX:-28511}:${EMUFORGE_DB_PORT_MIN:-28256}-${EMUFORGE_DB_PORT_MAX:-28511}"
+    sysctls:
+      net.ipv4.ip_local_port_range: "${EMUFORGE_DB_PORT_MIN:-28256} ${EMUFORGE_DB_PORT_MAX:-28511}"
     environment:
       # Same HOME inside and outside the container, so the paths the emulator writes into its config are valid on the host.
       # Where HOME is not set (PowerShell, cmd) the folder is the one under USERPROFILE and the container's HOME is

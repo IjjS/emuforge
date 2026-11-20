@@ -18,6 +18,7 @@ RUN mkdir -p /home/emulator/.aws/emulator && chown -R 1000:0 /home/emulator/.aws
 # No USER: the container starts as root only to pick the emulator's user, the owner of the mounted
 # ~/.aws/emulator, and the entrypoint never runs the emulator as root (entrypoint.sh).
 COPY --chmod=755 entrypoint.sh /usr/local/bin/emulator-entrypoint
+COPY --chmod=755 compose-db-range.sh /usr/local/bin/compose-db-range
 ENV HOME=/home/emulator
 EXPOSE 9297
 ENTRYPOINT ["/usr/local/bin/emulator-entrypoint", "-b", "0.0.0.0"]
