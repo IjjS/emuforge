@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: owner
 Issue-Key: studio|rds|tasks-by-the-emulator-api
-Issue-Check-Ids:
+Issue-Check-Ids: studio.rds-instances-made-elsewhere-are-shown studio.rds-create-a-db-instance-reaches-the-emulator studio.rds-stop-start-reboot-delete-a-db-instance studio.rds-cluster-from-create-to-delete studio.rds-clusters-made-elsewhere-are-shown studio.rds-screens-follow-an-emulator-restart
 Issue-Commit: 68ba2ca428aaf0f893938e6af03157e5e2603054
 
 # Build Aurora and RDS's screens from the tasks a developer does with it locally, as far as the emulator's API supports them
