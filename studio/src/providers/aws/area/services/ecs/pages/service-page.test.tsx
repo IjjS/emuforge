@@ -298,13 +298,13 @@ describe('S4, a service', () => {
     expect(vi.mocked(services.getService).mock.calls[0]?.slice(0, 3)).toEqual([ENGINE, 'dev', 'api']);
   });
 
-  it('the Deployments "ID" column holds a deployment\'s id on one line → its minWidth is 28ch', async () => {
+  it('the Deployments "ID" column holds a deployment\'s id on one line → its minWidth is the id\'s width plus the cell\'s padding', async () => {
     open();
     await details();
     const id = table(/^Deployments/)
       .findColumnHeaders()
       .find((header) => text(header.getElement()) === 'ID');
-    expect(id?.getElement().style.minWidth).toBe('28ch');
+    expect(id?.getElement().style.minWidth).toBe('calc(26ch + 24px)');
   });
 
   it('no event → "No events yet"', async () => {

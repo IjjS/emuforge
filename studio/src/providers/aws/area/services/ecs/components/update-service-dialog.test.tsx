@@ -248,7 +248,7 @@ describe('"Update service"', () => {
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 
-  it('the service\'s current revision is among the active ones → it keeps its label and is described "The service\'s current revision"; the others have no description', async () => {
+  it('the service\'s current revision is among the active ones → it keeps its label and is described "Sends web:3 again"; the others have no description', async () => {
     readRevisions.mockResolvedValue({ items: [revision(5), revision(3)] });
     open();
     await screen.findByRole('dialog');
@@ -262,8 +262,27 @@ describe('"Update service"', () => {
     expect(options.map((option) => text(option.findDescription()?.getElement()))).toEqual([
       '',
       '',
-      "The service's current revision",
+      'Sends web:3 again',
     ]);
+  });
+
+  it('the Revision field says what "Keep" sends: "Keep web:3 sends no task definition." before the listed revisions', async () => {
+    open();
+    await screen.findByRole('dialog');
+    expect(text(field('Revision').findDescription()?.getElement())).toBe(
+      'Keep web:3 sends no task definition. Below it, the active revisions of family web, newest first.',
+    );
+    expect(text(revisionSelect().findTrigger().getElement())).toBe('Keep web:3');
+  });
+
+  it('"Force a new deployment" is described by what it sends', async () => {
+    open();
+    const dialog = await screen.findByRole('dialog');
+    const checkbox = createWrapper(dialog).findCheckbox();
+    expect(text(checkbox?.findDescription()?.getElement())).toBe(
+      'Sends forceNewDeployment, so the service starts new tasks even when nothing else changes.',
+    );
+    expect(within(dialog).getByRole('checkbox', { name: 'Force a new deployment' })).not.toBeChecked();
   });
 
   it("the Revision select is named once, by its field's label", async () => {

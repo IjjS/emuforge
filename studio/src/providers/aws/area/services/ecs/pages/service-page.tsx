@@ -105,8 +105,11 @@ function Empty({ children }: { children: string }) {
   );
 }
 
-/** The narrowest a deployment's ID column is: its id on one line. */
-const ID_MIN_WIDTH = '28ch';
+/**
+ * The narrowest a deployment's ID column is: its id (`ecs-svc/` and 19 digits, 25.4ch in the table's font) on one
+ * line, plus the cell's own padding (22px), which a column's width holds as well.
+ */
+const ID_MIN_WIDTH = 'calc(26ch + 24px)';
 
 function Deployments({ deployments }: { deployments: ServiceDeployment[] }) {
   const fixed = (value: string) => <ValueText kind="fixed" value={value} />;
