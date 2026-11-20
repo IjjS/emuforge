@@ -36,6 +36,9 @@ Under a heading, a `Given` line is the shared context and each checkbox is one t
 - Pair a success case with its failure case wherever an action can fail.
 - For a `bug`, append `(regression)` to the case that reproduces the reported defect.
 - For a `gap`, the integration check that showed the difference is listed first.
+- A case waits for what it asserts (the line in the log, the answer, the state the emulator reports), with a
+  bound; never for a neighbouring sign that it should be there by now. A port that accepts does not say that the
+  line of its listener is in the log yet (issue 533).
 
 Example:
 
@@ -53,6 +56,8 @@ Example:
 
 Bad: `- [ ] relay works` — no target, no checkable result.
 Bad: `- [ ] \`resign\` When called → Then self.cache is updated` — an internal field, not an observable result.
+Bad: a test that reads the log once both ports accept and then asserts the second listener's line — it waits for
+a neighbouring sign, not for the line.
 
 ## Coverage
 
