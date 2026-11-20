@@ -67,7 +67,7 @@ describe('volume list', () => {
     const id = await screen.findByRole('link', { name: first.id });
     expect(id).toHaveAttribute('href', '/aws/ec2/volumes/volume/vol-first');
     const rows = createWrapper(document.body).findTable()?.findRows();
-    expect(rows?.map((row) => row.findCells().map((cell) => cell.getElement().textContent))).toEqual([
+    expect(rows?.map((row) => row.findAll('th, td').map((cell) => cell.getElement().textContent))).toEqual([
       [first.id, '8 GiB', 'gp2', 'us-east-1a', 'available'],
     ]);
 
