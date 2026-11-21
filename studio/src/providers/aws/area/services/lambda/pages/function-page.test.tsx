@@ -1,6 +1,6 @@
 import Flashbar from '@cloudscape-design/components/flashbar';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { onlineManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState, useSyncExternalStore } from 'react';
 import { createMemoryRouter, MemoryRouter, RouterProvider, useLocation } from 'react-router';
@@ -15,6 +15,7 @@ import AwsArea from '../../../index';
 import type { CodeTabProps } from '../components/code-tab';
 import type { ConfigurationTabProps } from '../components/configuration-tab';
 import type { TestTabProps } from '../components/test-tab';
+import type { FunctionTab } from '../format';
 import { FunctionPage } from './function-page';
 
 // A function's page rendered inside the area's layout, as Studio's frame renders the area, against a fake engine
@@ -421,7 +422,7 @@ function open(path: string) {
       <RouterProvider router={router} />
     </QueryClientProvider>,
   );
-  return { ...result, router };
+  return { ...result, router, client };
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -436,26 +437,24 @@ function headingText(): string {
   return norm(screen.getByRole('heading', { level: 1 }).textContent);
 }
 
-/** The key-value pairs of the section titled `title`, as label and value text, in order. */
-function section(title: string): HTMLElement {
-  const container = PAGE.findAllContainers().find(
-    (found) => norm(found.findHeader()?.findHeader()?.findHeadingText().getElement().textContent) === title,
-  );
-  expect(container).toBeDefined();
-  return (container as NonNullable<typeof container>).getElement();
+function overview() {
+  const container = PAGE.findAllContainers()[0];
+  expect(container?.findHeader()?.findHeader()?.findHeadingText().getElement()).toHaveTextContent('Function overview');
+  return container;
 }
 
-function pairs(title: string): [string, string][] {
-  const found = createWrapper(section(title)).findKeyValuePairs();
-  expect(found).not.toBeNull();
+/** The overview's key-value pairs as label and value text, in order. */
+function pairs(): [string, string][] {
+  const found = overview()?.findContent().findKeyValuePairs();
+  expect(found).toBeTruthy();
   return (found?.findItems() ?? []).map((item) => [
     norm(item.findLabel()?.getElement().textContent),
     norm(item.findValue()?.getElement().textContent),
   ]);
 }
 
-function value(title: string, label: string): string | undefined {
-  return pairs(title).find(([key]) => key === label)?.[1];
+function value(label: string): string | undefined {
+  return pairs().find(([key]) => key === label)?.[1];
 }
 
 function tabs() {
@@ -470,10 +469,20 @@ function activeTab(): string {
   return norm(tabs()?.findActiveTab()?.getElement().textContent);
 }
 
-function tabLink(label: string): HTMLElement {
-  const found = (tabs()?.findTabLinks() ?? []).find((tab) => norm(tab.getElement().textContent) === label);
-  expect(found).toBeDefined();
-  return (found as NonNullable<typeof found>).getElement();
+function tabLink(id: FunctionTab): HTMLElement {
+  const labels: Record<FunctionTab, string> = {
+    test: 'Test',
+    code: 'Code',
+    monitor: 'Monitor',
+    configuration: 'Configuration',
+    versions: 'Versions and aliases',
+  };
+  const tab = tabs()?.findTabLinkById(id)?.getElement();
+  if (!tab) {
+    throw new Error(`Expected the ${id} tab`);
+  }
+  expect(tab).toHaveTextContent(labels[id]);
+  return tab;
 }
 
 /** Every text said in a polite live region from now on, in order. */
@@ -572,17 +581,10 @@ describe('a function loaded', () => {
     expect(within(header()).getByRole('button', { name: 'Delete' })).toBeInTheDocument();
     expect(tabLabels()).toEqual(['Test', 'Code', 'Monitor', 'Configuration', 'Versions and aliases']);
     expect(activeTab()).toBe('Test');
-    expect(pairs('Function overview').map(([label]) => label)).toEqual([
-      'Description',
-      'Last modified',
-      'Function ARN',
-      'Function URL',
-    ]);
-    expect(value('Function overview', 'Description')).toBe('Takes the orders');
-    expect(value('Function overview', 'Last modified')).toMatch(
-      /^November \d{1,2}, 2026, \d{2}:\d{2}:\d{2} \(UTC[+-]\d{2}:\d{2}\)$/,
-    );
-    expect(value('Function overview', 'Function ARN')).toBe(`${ACCOUNT_ARN}:orders`);
+    expect(pairs().map(([label]) => label)).toEqual(['Description', 'Last modified', 'Function ARN', 'Function URL']);
+    expect(value('Description')).toBe('Takes the orders');
+    expect(value('Last modified')).toMatch(/^November \d{1,2}, 2026, \d{2}:\d{2}:\d{2} \(UTC[+-]\d{2}:\d{2}\)$/);
+    expect(value('Function ARN')).toBe(`${ACCOUNT_ARN}:orders`);
     expect(tabs()?.findTabContent()?.getElement()).toContainElement(screen.getByTestId('stand-in-test'));
     expect(screen.queryByRole('heading', { name: 'Code source' })).toBeNull();
   });
@@ -610,26 +612,26 @@ describe('a function loaded', () => {
 
   it('"Function URL": the URL as text and not a link; "-" without one; "Not read" when it failed; "Not implemented by the emulator" on 501; the other values shown each time', async () => {
     const first = await openLoaded();
-    expect(value('Function overview', 'Function URL')).toBe(ORDERS.url);
-    expect(within(section('Function overview')).queryByRole('link')).toBeNull();
+    expect(value('Function URL')).toBe(ORDERS.url);
+    expect(within(overview().getElement()).queryByRole('link')).toBeNull();
     first.unmount();
 
     const second = await openLoaded(withoutUrl(ORDERS));
-    expect(value('Function overview', 'Function URL')).toBe('-');
+    expect(value('Function URL')).toBe('-');
     second.unmount();
 
     engine.answerUrl = () => errorAnswer(500, 'ServiceException', 'broken');
     const third = await openLoaded();
     // The one status indicator of the section is the URL's.
-    expect(statusIn(section('Function overview'))).toEqual({ type: 'warning', text: 'Not read' });
-    expect(value('Function overview', 'Function URL')).toBe('Not read');
-    expect(value('Function overview', 'Function ARN')).toBe(`${ACCOUNT_ARN}:orders`);
+    expect(statusIn(overview().getElement())).toEqual({ type: 'warning', text: 'Not read' });
+    expect(value('Function URL')).toBe('Not read');
+    expect(value('Function ARN')).toBe(`${ACCOUNT_ARN}:orders`);
     third.unmount();
 
     engine.answerUrl = () => errorAnswer(501, 'NotImplemented', 'GetFunctionUrlConfig is not implemented');
     await openLoaded();
-    expect(value('Function overview', 'Function URL')).toBe('Not implemented by the emulator');
-    expect(value('Function overview', 'Description')).toBe('Takes the orders');
+    expect(value('Function URL')).toBe('Not implemented by the emulator');
+    expect(value('Description')).toBe('Takes the orders');
   });
 
   it('the page as it opens, on "Test", shows neither the signed URL of the code nor an environment variable of the answer', async () => {
@@ -644,7 +646,7 @@ describe('a function loaded', () => {
   it('a description `<b id="injected">x</b>` is shown as that text, no element made from it', async () => {
     await openLoaded({ ...ORDERS, description: '<b id="injected">x</b>' });
 
-    expect(value('Function overview', 'Description')).toBe('<b id="injected">x</b>');
+    expect(value('Description')).toBe('<b id="injected">x</b>');
     expect(document.getElementById('injected')).toBeNull();
   });
 });
@@ -722,7 +724,7 @@ describe('"Refresh"', () => {
     fn.description = 'Takes more orders';
     fireEvent.click(within(header()).getByRole('button', { name: 'Refresh' }));
     await waitFor(() => {
-      expect(value('Function overview', 'Description')).toBe('Takes more orders');
+      expect(value('Description')).toBe('Takes more orders');
     });
     expect(engine.gets).toHaveLength(2);
     expect(engine.urlGets).toHaveLength(2);
@@ -867,9 +869,9 @@ describe('loading and failure states', () => {
 // Issue 467: the `h1`'s description (R3), the copy controls (R5), each value as its kind (R6).
 // ---------------------------------------------------------------------------------------------------------------
 
-/** The value element of the pair `label` of the section `title`. */
-function valueElement(title: string, label: string): HTMLElement {
-  const item = (createWrapper(section(title)).findKeyValuePairs()?.findItems() ?? []).find(
+/** The value element of the overview pair `label`. */
+function valueElement(label: string): HTMLElement {
+  const item = (overview()?.findContent().findKeyValuePairs()?.findItems() ?? []).find(
     (found) => norm(found.findLabel()?.getElement().textContent) === label,
   );
   expect(item, `the pair "${label}"`).toBeDefined();
@@ -927,16 +929,16 @@ describe('issue 467', () => {
   it('"Function overview" of a function with a URL: "Copy Function ARN" before the ARN and "Copy Function URL" before the URL, both addresses; "Description" free text', async () => {
     await openLoaded();
 
-    const arn = valueElement('Function overview', 'Function ARN');
+    const arn = valueElement('Function ARN');
     expect(copyBefore(arn, 'Function ARN')).not.toBeNull();
     expect(kindsIn(arn)).toEqual(['address']);
     expect(norm(arn.querySelector('.aws-area-value-address')?.textContent)).toBe(`${ACCOUNT_ARN}:orders`);
-    const url = valueElement('Function overview', 'Function URL');
+    const url = valueElement('Function URL');
     expect(copyBefore(url, 'Function URL')).not.toBeNull();
     expect(kindsIn(url)).toEqual(['address']);
     expect(norm(url.querySelector('.aws-area-value-address')?.textContent)).toBe(ORDERS.url);
-    expect(kindsIn(valueElement('Function overview', 'Description'))).toEqual(['text']);
-    expect(kindsIn(valueElement('Function overview', 'Last modified'))).toEqual(['fixed']);
+    expect(kindsIn(valueElement('Description'))).toEqual(['text']);
+    expect(kindsIn(valueElement('Last modified'))).toEqual(['fixed']);
   });
 
   it('without a URL, a URL the emulator answers 501 for and a URL that was not read: no "Copy Function URL"; the field shows what it did', async () => {
@@ -960,10 +962,10 @@ describe('issue 467', () => {
     for (const [arrange, fn, shown] of cases) {
       arrange();
       const opened = await openLoaded(fn);
-      const url = valueElement('Function overview', 'Function URL');
+      const url = valueElement('Function URL');
       expect(within(url).queryByRole('button')).toBeNull();
       expect(norm(url.textContent)).toBe(shown);
-      expect(copyBefore(valueElement('Function overview', 'Function ARN'), 'Function ARN')).not.toBeNull();
+      expect(copyBefore(valueElement('Function ARN'), 'Function ARN')).not.toBeNull();
       opened.unmount();
     }
   });
@@ -1028,7 +1030,7 @@ describe('Monitor', () => {
 
   it('opens from its tab and restores the same function’s Monitor on reload', async () => {
     const { router, unmount } = await openLoaded();
-    fireEvent.click(tabLink('Monitor'));
+    fireEvent.click(tabLink('monitor'));
     await waitFor(() => expect(lastHourHeader()?.findHeadingText().getElement()).toBeVisible());
     expect(activeTab()).toBe('Monitor');
     expect(router.state.location).toMatchObject({ pathname: pagePath('orders'), search: '?tab=monitor' });
@@ -1160,7 +1162,7 @@ describe('Monitor', () => {
     const { router } = open(`${pagePath('orders')}?tab=monitor`);
     await waitFor(() => expect(logMessages()).toContain('events from the previous account'));
     if (tab === 'Code') {
-      fireEvent.click(tabLink('Code'));
+      fireEvent.click(tabLink('code'));
       await screen.findByTestId('stand-in-code');
     }
 
@@ -1234,7 +1236,7 @@ describe('Versions and aliases', () => {
 
   it('opens from the tab and reopens the same function on its release address', async () => {
     const { router, unmount } = await openLoaded();
-    fireEvent.click(tabLink('Versions and aliases'));
+    fireEvent.click(tabLink('versions'));
     await waitFor(() => expect(versionsShown()).toContainEqual(['$LATEST', '-']));
     expect(activeTab()).toBe('Versions and aliases');
     expect(router.state.location).toMatchObject({ pathname: pagePath('orders'), search: versionsPath });
@@ -1272,9 +1274,11 @@ describe('Versions and aliases', () => {
     });
     current = true;
     engine.functions = [{ name: 'orders', description: 'Refreshed function details' }];
-    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    const refresh = pageActions()[0];
+    expect(refresh?.getElement()).toHaveAccessibleName('Refresh');
+    refresh?.click();
     await waitFor(() => {
-      expect(pairs('Function overview')).toContainEqual(['Description', 'Refreshed function details']);
+      expect(pairs()).toContainEqual(['Description', 'Refreshed function details']);
       expect(versionsShown()).toEqual([
         ['$LATEST', '-'],
         ['2', 'Release 2'],
@@ -1304,7 +1308,7 @@ describe('Versions and aliases', () => {
       expect(versionsShown()).toContainEqual(['1', 'Release 1']);
       expect(aliasesShown()).toEqual([['old-live', '1']]);
     });
-    fireEvent.click(tabLink('Code'));
+    fireEvent.click(tabLink('code'));
     expect(activeTab()).toBe('Code');
     connection.set(notStartedResult());
     engine.functions = [];
@@ -1429,9 +1433,14 @@ describe('Qualified Test invocations', () => {
   }
 
   function findResultPanel() {
-    return PAGE.findAllContainers()
-      .find((container) => norm(container.findHeader()?.getElement().textContent) === 'Result')
-      ?.getElement();
+    const tabSet = tabs();
+    const panel = tabSet
+      ? tabSet.findTabContent()?.findGrid()?.findColumn(2)?.findContainer()
+      : PAGE.findAllContainers()[1];
+    if (panel) {
+      expect(panel.findHeader()?.findHeader()?.findHeadingText().getElement()).toHaveTextContent('Result');
+    }
+    return panel?.getElement();
   }
 
   function resultPanel() {
@@ -1472,7 +1481,7 @@ describe('Qualified Test invocations', () => {
     await waitFor(() => expect(engine.gets).toEqual([request.url]));
     await act(async () => preliminary.resolve(engine.emulator(request)));
     await waitForResult('Not invoked yet');
-    expect(value('Function overview', 'Description')).toBe('Initial invocation details');
+    expect(value('Description')).toBe('Initial invocation details');
     const preliminaryEditor = eventField().findNativeTextarea().getElement();
     expect(preliminaryEditor).toHaveAccessibleName('Event JSON');
     expect(preliminaryEditor).toHaveAttribute('readonly');
@@ -1490,7 +1499,7 @@ describe('Qualified Test invocations', () => {
 
     await act(async () => verifiedDetail.resolve(engine.emulator(request)));
     await waitFor(() => {
-      expect(value('Function overview', 'Description')).toBe('Verified invocation details');
+      expect(value('Description')).toBe('Verified invocation details');
       expect(handed.test?.versions.loading).toBe(true);
       expect(handed.test?.aliases.loading).toBe(true);
     });
@@ -1542,11 +1551,11 @@ describe('Qualified Test invocations', () => {
       invokeTarget();
       await waitFor(() => expect(submitted()[0]?.url.searchParams.get('Qualifier')).toBe('live'));
       await chooseTarget('2');
-      fireEvent.click(tabLink('Code'));
+      fireEvent.click(tabLink('code'));
       expect(await screen.findByTestId('stand-in-code')).toBeVisible();
 
       reopening = true;
-      fireEvent.click(tabLink('Test'));
+      fireEvent.click(tabLink('test'));
       await waitForResult('Not invoked yet');
       expect(eventField().getTextareaValue()).toBe(event);
       expect(targets().findTrigger().getElement()).toHaveTextContent('2');
@@ -1568,7 +1577,7 @@ describe('Qualified Test invocations', () => {
           ),
         );
         await waitFor(() => {
-          expect(value('Function overview', 'Description')).toBe('Details after qualified Invoke');
+          expect(value('Description')).toBe('Details after qualified Invoke');
         });
       };
       const settleReleases = async () => {
@@ -1587,10 +1596,10 @@ describe('Qualified Test invocations', () => {
         await settleReleases();
       } else {
         await settleReleases();
-        expect(value('Function overview', 'Description')).toBe('Initial invocation details');
+        expect(value('Description')).toBe('Initial invocation details');
         await settleDetail();
       }
-      expect(value('Function overview', 'Description')).toBe('Details after qualified Invoke');
+      expect(value('Description')).toBe('Details after qualified Invoke');
       expect(targets().findTrigger().getElement()).toHaveTextContent('2');
       targets().openDropdown();
       expect(targetOption('3')).toHaveTextContent('3');
@@ -1614,14 +1623,14 @@ describe('Qualified Test invocations', () => {
     invokeTarget();
     await waitFor(() => expect(submitted()).toHaveLength(1));
 
-    fireEvent.click(tabLink('Code'));
+    fireEvent.click(tabLink('code'));
     expect(await screen.findByTestId('stand-in-code')).toBeVisible();
     await act(async () => pending.resolve(result('first reply', 'first tail')));
     await waitFor(() => expect(announcements.filter((message) => message === 'Succeeded')).toHaveLength(1));
     expect(PAGE.findTextarea()).toBeNull();
     expect(scroll).not.toHaveBeenCalled();
 
-    fireEvent.click(tabLink('Test'));
+    fireEvent.click(tabLink('test'));
     await waitFor(() => expect(resultPanel()).toHaveTextContent('first reply'));
     expect(announcements.filter((message) => message === 'Succeeded')).toHaveLength(1);
     expect(scroll).not.toHaveBeenCalled();
@@ -1654,7 +1663,7 @@ describe('Qualified Test invocations', () => {
       invokeTarget();
       await waitFor(() => expect(submitted()[0]?.url.searchParams.get('Qualifier')).toBe('live'));
       if (tab === 'Code') {
-        fireEvent.click(tabLink(tab));
+        fireEvent.click(tabLink('code'));
         expect(await screen.findByTestId('stand-in-code')).toBeVisible();
       }
 
@@ -1700,9 +1709,9 @@ describe('Qualified Test invocations', () => {
 
     await waitFor(() => expect(announcements.filter((message) => message === words)).toHaveLength(1));
     expect(resultPanel()).toHaveTextContent(words);
-    fireEvent.click(tabLink('Code'));
+    fireEvent.click(tabLink('code'));
     expect(await screen.findByTestId('stand-in-code')).toBeVisible();
-    fireEvent.click(tabLink('Test'));
+    fireEvent.click(tabLink('test'));
     await waitFor(() => expect(resultPanel()).toHaveTextContent(words));
     expect(announcements.filter((message) => message === words)).toHaveLength(1);
   });
@@ -1848,9 +1857,9 @@ describe('the tabs by ?tab=', () => {
   it('each tab links to its address: the function’s path, ?tab=code, ?tab=configuration', async () => {
     await openLoaded();
 
-    expect(tabLink('Test')).toHaveAttribute('href', pagePath('orders'));
-    expect(tabLink('Code')).toHaveAttribute('href', `${pagePath('orders')}?tab=code`);
-    expect(tabLink('Configuration')).toHaveAttribute('href', `${pagePath('orders')}?tab=configuration`);
+    expect(tabLink('test')).toHaveAttribute('href', pagePath('orders'));
+    expect(tabLink('code')).toHaveAttribute('href', `${pagePath('orders')}?tab=code`);
+    expect(tabLink('configuration')).toHaveAttribute('href', `${pagePath('orders')}?tab=configuration`);
   });
 
   it('choosing a tab changes the address’s query and not its path, adds an entry to the history, and reads nothing again', async () => {
@@ -1858,7 +1867,7 @@ describe('the tabs by ?tab=', () => {
     const reads = engine.gets.length;
     const overview = screen.getByRole('heading', { level: 2, name: 'Function overview' });
 
-    fireEvent.click(tabLink('Code'));
+    fireEvent.click(tabLink('code'));
     await waitFor(() => {
       expect(router.state.location.search).toBe('?tab=code');
     });
@@ -1866,7 +1875,7 @@ describe('the tabs by ?tab=', () => {
     expect(router.state.historyAction).toBe('PUSH');
     expect(activeTab()).toBe('Code');
 
-    fireEvent.click(tabLink('Configuration'));
+    fireEvent.click(tabLink('configuration'));
     await waitFor(() => {
       expect(router.state.location.search).toBe('?tab=configuration');
     });
@@ -1889,7 +1898,7 @@ describe('the tabs by ?tab=', () => {
     expect(handed.test?.invoke).toMatchObject({ isPending: false, data: undefined, error: undefined });
     expect(typeof handed.test?.invoke.mutate).toBe('function');
 
-    fireEvent.click(tabLink('Code'));
+    fireEvent.click(tabLink('code'));
     await waitFor(() => {
       expect(router.state.location.search).toBe('?tab=code');
     });
@@ -1903,7 +1912,7 @@ describe('the tabs by ?tab=', () => {
       environment: [{ key: 'SECRET', value: 'orders-secret-value' }],
     });
 
-    fireEvent.click(tabLink('Configuration'));
+    fireEvent.click(tabLink('configuration'));
     await waitFor(() => {
       expect(router.state.location.search).toBe('?tab=configuration');
     });
@@ -1926,12 +1935,12 @@ describe('the tabs by ?tab=', () => {
     });
     const invoke = handed.test?.invoke;
 
-    fireEvent.click(tabLink('Code'));
+    fireEvent.click(tabLink('code'));
     await waitFor(() => {
       expect(router.state.location.search).toBe('?tab=code');
     });
     expect(screen.queryByTestId('stand-in-test')).toBeNull();
-    fireEvent.click(tabLink('Test'));
+    fireEvent.click(tabLink('test'));
     await screen.findByTestId('stand-in-test');
 
     expect(handed.test?.eventText).toBe('{"tag": "kept"}');
@@ -2107,7 +2116,7 @@ describe('"Delete" in the header', () => {
     await waitFor(() => expect(engine.gets).toHaveLength(1));
     await act(async () => beforeConnection.resolve(engine.emulator(functionRequest)));
     await waitFor(() => {
-      expect(value('Function overview', 'Description')).toBe('Read while checking the connection');
+      expect(value('Description')).toBe('Read while checking the connection');
     });
     const checkingDelete = pageDeleteAction();
     expect(checkingDelete?.getElement()).toHaveTextContent('Delete');
@@ -2129,7 +2138,7 @@ describe('"Delete" in the header', () => {
     engine.answerFunction = (request) => engine.emulator(request);
     await act(async () => afterConnection.resolve(engine.emulator(functionRequest)));
     await waitFor(() => {
-      expect(value('Function overview', 'Description')).toBe('Verified in the first connected session');
+      expect(value('Description')).toBe('Verified in the first connected session');
     });
     await openDialog();
     expectFreshConfirmation('orders');
@@ -2194,7 +2203,7 @@ describe('"Delete" in the header', () => {
         );
       });
       await waitFor(() => {
-        expect(value('Function overview', 'Description')).toBe('Replacement at the same endpoint');
+        expect(value('Description')).toBe('Replacement at the same endpoint');
       });
       await openDialog();
       expectFreshConfirmation('orders');
@@ -2358,6 +2367,58 @@ describe('"Delete" in the header', () => {
     },
   );
 
+  it.each(['leaving the page', 'replacing the session'] as const)(
+    'does not dispatch an offline deletion after %s',
+    async (boundary) => {
+      const { client, router, unmount } = await openLoaded();
+      const wasOnline = onlineManager.isOnline();
+      try {
+        act(() => onlineManager.setOnline(false));
+        const { input, submit } = await openDialog();
+        input.setInputValue('confirm');
+        submit.click();
+        await waitFor(() => {
+          expect(client.getMutationCache().getAll()).toHaveLength(1);
+          expect(client.getMutationCache().getAll()[0]?.state.isPaused).toBe(true);
+        });
+        const queued = client.getMutationCache().getAll()[0];
+        expect(deleteRequests()).toEqual([]);
+
+        if (boundary === 'leaving the page') {
+          await act(() => router.navigate('/'));
+        } else {
+          connection.set(notStartedResult());
+        }
+        expect(deletionDialog()).toBeUndefined();
+        engine.functions = [{ ...ORDERS, description: 'Replacement before the queued deletion resumes' }];
+        if (boundary === 'replacing the session') {
+          connection.set(connectedResult());
+        }
+
+        await act(async () => {
+          onlineManager.setOnline(true);
+          await client.resumePausedMutations();
+        });
+        await waitFor(() => {
+          expect(queued?.state.status).toBe('error');
+          expect(queued?.state.error).toMatchObject({ name: 'AbortError' });
+        });
+        expect(deleteRequests()).toEqual([]);
+
+        if (boundary === 'leaving the page') {
+          await act(() => router.navigate(pagePath('orders')));
+        }
+        await waitFor(() => {
+          expect(value('Description')).toBe('Replacement before the queued deletion resumes');
+        });
+        expect(deleteRequests()).toEqual([]);
+      } finally {
+        unmount();
+        onlineManager.setOnline(wasOnline);
+      }
+    },
+  );
+
   it('ignores a submitted deletion that settles after the same-name function reconnects', async () => {
     const deletion = deferredAnswer();
     engine.answerDelete = () => deletion.promise;
@@ -2373,7 +2434,7 @@ describe('"Delete" in the header', () => {
     engine.functions = [{ ...ORDERS, description: 'Replacement after submitted deletion' }];
     connection.set(connectedResult());
     await waitFor(() => {
-      expect(value('Function overview', 'Description')).toBe('Replacement after submitted deletion');
+      expect(value('Description')).toBe('Replacement after submitted deletion');
     });
 
     await act(async () => {

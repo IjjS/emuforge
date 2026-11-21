@@ -21,7 +21,6 @@ import {
   type CreatedFunction,
   type CreatedRole,
   type CreateFunctionRequest,
-  type DeleteResult,
   type FunctionPage,
   type FunctionRead,
   type FunctionSummary,
@@ -437,28 +436,44 @@ export function useFunctionReading({
  */
 export function useDeleteFunctions(endpoint: string | undefined) {
   const client = useQueryClient();
-  const controller = useRef<AbortController | undefined>(undefined);
-  useEffect(
-    () => () => {
-      controller.current?.abort();
-    },
-    [],
-  );
-  const mutation = useMutation<DeleteResult, unknown, readonly string[]>({
-    mutationFn: (names) => {
+  const submissions = useRef(new Set<AbortController>());
+  useLayoutEffect(() => {
+    const pending = submissions.current;
+    return () => {
+      for (const submission of pending) {
+        submission.abort();
+      }
+    };
+  }, [endpoint]);
+  const { mutateAsync, isPending } = useMutation({
+    mutationFn: (submission: { endpoint: string | undefined; names: readonly string[]; signal: AbortSignal }) => {
+      const { endpoint, names, signal } = submission;
+      signal.throwIfAborted();
       if (endpoint === undefined) {
         throw new Error('The engine endpoint is not known yet.');
       }
-      controller.current = new AbortController();
-      return deleteFunctions(endpoint, names, controller.current.signal);
+      return deleteFunctions(endpoint, names, signal);
     },
-    onSettled: () => client.invalidateQueries({ queryKey: generationKey(endpoint) }),
+    onSettled: (_result, _error, submission) => {
+      if (!submission.signal.aborted) {
+        return client.invalidateQueries({ queryKey: generationKey(submission.endpoint) });
+      }
+    },
   });
-  return {
-    /** Resolves with the result of every `DeleteFunction`; rejects only when the screen left first. */
-    remove: mutation.mutateAsync,
-    pending: mutation.isPending,
-  };
+  const remove = useCallback(
+    async (names: readonly string[]) => {
+      // TanStack Query can pause before mutationFn runs. Scope the signal when the deletion is confirmed.
+      const controller = new AbortController();
+      submissions.current.add(controller);
+      try {
+        return await mutateAsync({ endpoint, names, signal: controller.signal });
+      } finally {
+        submissions.current.delete(controller);
+      }
+    },
+    [endpoint, mutateAsync],
+  );
+  return { remove, pending: isPending };
 }
 
 // ---------------------------------------------------------------------------------------------------------------
