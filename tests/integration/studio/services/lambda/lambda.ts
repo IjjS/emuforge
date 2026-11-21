@@ -64,6 +64,7 @@ export type Direct =
   | {
       status: number;
       body: string;
+      logResult?: string;
       errorType: string | null;
       message: string | null;
     }
@@ -207,6 +208,7 @@ async function signed(
           resolve({
             status,
             body: text,
+            ...(typeof response.headers['x-amz-log-result'] === 'string' && { logResult: response.headers['x-amz-log-result'] }),
             errorType: error?.type ?? null,
             message: error?.message ?? null,
           });
@@ -239,6 +241,17 @@ export function lambdaDirect(
     input === null ? '' : JSON.stringify(input),
     input === null ? {} : { 'content-type': 'application/json' },
   );
+}
+
+/** Invoke one qualifier directly with a synchronous response and the tail of that invocation. */
+export async function qualifiedInvocation(caller: Caller, port: number, name: string, target: string, event: object) {
+  const response = await signed(caller, port, 'lambda', 'POST', encodedPath(['2015-03-31', 'functions', name, 'invocations']),
+    { Qualifier: target }, JSON.stringify(event), {
+      'content-type': 'application/json', 'x-amz-invocation-type': 'RequestResponse', 'x-amz-log-type': 'Tail',
+    });
+  if ('error' in response || response.status !== 200 || !response.logResult)
+    throw Error(`Qualified Invoke with Tail: ${shownDirect(response)}`);
+  return { payload: JSON.parse(response.body), tail: Buffer.from(response.logResult, 'base64').toString('utf8') };
 }
 
 /** The last-hour Sum datapoints for a function, read directly in the CloudWatch JSON protocol. */

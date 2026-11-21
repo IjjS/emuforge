@@ -2,7 +2,14 @@ import createWrapper from '@cloudscape-design/components/test-utils/selectors';
 import type { Page } from '@playwright/test';
 import { expect, type Ctx } from '../../support';
 import { checkPrefix } from '../../support/service-screens';
-import { functionConfigurationDirect, lambdaDirect, LambdaSeeded, shownDirect, storedZip } from './lambda';
+import {
+  functionConfigurationDirect,
+  lambdaDirect,
+  qualifiedInvocation,
+  LambdaSeeded,
+  shownDirect,
+  storedZip,
+} from './lambda';
 import { functionPath } from './lambda-list';
 import { invokeWith, LOG_TAIL, outputText, RESPONSE } from './lambda-tasks';
 
@@ -63,8 +70,7 @@ export async function releaseFunction(ctx: Ctx, port: number, tag: string) {
     createAlias: (version: string) => request('POST', ['aliases'], { Name: 'live', FunctionVersion: version }),
     moveAlias: (version: string) => request('PUT', ['aliases', 'live'], { FunctionVersion: version }),
     deleteAlias: () => request('DELETE', ['aliases', 'live']),
-    invoke: async (target: string, event: object) =>
-      JSON.parse(await request('POST', ['invocations'], event, { Qualifier: target })),
+    invoke: (target: string, event: object) => qualifiedInvocation(ctx, port, name, target, event),
   };
 }
 
@@ -72,12 +78,44 @@ const panel = createWrapper('[role="tabpanel"]');
 const table = panel.findTable();
 const modal = createWrapper().findModal();
 const dialog = createWrapper(modal.toSelector());
-export const dialogLocator = (page: Page) => page.locator(modal.toSelector());
+export async function submitDialog(page: Page, label: string) {
+  const submit = page.locator(modal.findFooter().findAllButtons().toSelector()).last();
+  await expect(submit).toHaveText(label);
+  await submit.click();
+}
 const select = panel.findSelect();
+export const targetTrigger = (page: Page) => page.locator(select.findTrigger().toSelector());
 const modalSelect = dialog.findSelect();
+
+export async function refreshTargets(page: Page, name: string, version: string) {
+  const base = '/2015-03-31/functions/' + encodeURIComponent(name);
+  const reread = (collection: string) =>
+    page
+      .waitForRequest(
+        (request) => request.method() === 'GET' && new URL(request.url()).pathname === base + '/' + collection,
+      )
+      .then((request) => request.response());
+  const [versions, aliases] = await Promise.all([
+    reread('versions'),
+    reread('aliases'),
+    page.getByRole('button', { name: 'Refresh', exact: true }).click(),
+  ]);
+  for (const response of [versions, aliases]) {
+    if (!response?.ok()) throw Error('Refresh did not return the release collection');
+    expect(await response.finished()).toBeNull();
+  }
+  await expect(targetTrigger(page)).toBeEnabled();
+  await targetTrigger(page).click();
+  const option = page.locator(select.findDropdown().findOptionByValue('live').toSelector());
+  await expect(option).toContainText('Version ' + version);
+  await option.click();
+}
+
 export const result = (page: Page) =>
   page.locator(panel.findContainer().toSelector()).filter({
-    has: page.getByRole('heading', { name: 'Result', exact: true }),
+    has: page
+      .locator(createWrapper(':scope').findHeader().findHeadingText().toSelector())
+      .filter({ hasText: /^Result$/ }),
   });
 
 export async function openReleases(page: Page, name: string) {
@@ -89,6 +127,19 @@ export async function openReleases(page: Page, name: string) {
 export function inCollection(page: Page, name: 'Versions' | 'Aliases', element: { toSelector(): string }) {
   const collection = page.locator(table.toSelector()).filter({ has: page.getByRole('table', { name, exact: true }) });
   return page.locator(element.toSelector()).and(collection.locator('*'));
+}
+export async function expectPublished(page: Page, number: string) {
+  await expect
+    .poll(async () => {
+      const count = await inCollection(page, 'Versions', table.findRows()).count();
+      for (let row = 1; row <= count; row++) {
+        const value = await inCollection(page, 'Versions', table.findBodyCell(row, 1)).textContent();
+        if (value?.trim() === number)
+          return (await inCollection(page, 'Versions', table.findBodyCell(row, 2)).textContent())?.trim();
+      }
+      return undefined;
+    })
+    .toBe('Published');
 }
 export const tableParts = table;
 export const headerAction = table.findHeaderSlot().findHeader().findActions().findButton();
@@ -110,7 +161,7 @@ export async function createAlias(page: Page, version: string) {
   await inCollection(page, 'Aliases', headerAction).click();
   await page.locator(dialog.findInput().findNativeInput().toSelector()).fill('live');
   await chooseTarget(page, version, true);
-  await dialogLocator(page).getByRole('button', { name: 'Create alias', exact: true }).click();
+  await submitDialog(page, 'Create alias');
 }
 export const refusal = (page: Page) => page.locator(dialog.findAlert().toSelector());
 export const success = (page: Page) =>
@@ -125,7 +176,8 @@ export async function compareInvocation(
 ) {
   const event = { tag };
   const direct = await fn.invoke(target, event);
-  expect(direct).toEqual({ marker, event });
+  expect(direct.payload).toEqual({ marker, event });
+  expect(direct.tail).toContain(marker);
   await chooseTarget(page, target);
   await invokeWith(page, fn.name, JSON.stringify(event));
   await expect(result(page)).toContainText('Submitted target ' + target);
@@ -134,6 +186,6 @@ export async function compareInvocation(
       const payload = await outputText(page, RESPONSE);
       return payload ? JSON.parse(payload) : null;
     })
-    .toEqual(direct);
+    .toEqual(direct.payload);
   await expect.poll(() => outputText(page, LOG_TAIL)).toContain(marker);
 }

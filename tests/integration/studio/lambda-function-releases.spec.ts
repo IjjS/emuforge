@@ -9,7 +9,10 @@ import {
   chooseTarget,
   compareInvocation,
   createAlias,
-  dialogLocator,
+  submitDialog,
+  expectPublished,
+  targetTrigger,
+  refreshTargets,
   headerAction,
   inCollection,
   mapping,
@@ -38,10 +41,8 @@ test('studio.lambda-publishes-function-version', async ({ ctx, page }) => {
   expect(published).toHaveLength(1);
   const number = published[0];
   await expect(success(page)).toContainText(`Published version ${number}.`);
-  const row = versions.indexOf(number) + 1;
-  await expect(inCollection(page, 'Versions', tableParts.findBodyCell(row, 1))).toHaveText(number);
-  await expect(inCollection(page, 'Versions', tableParts.findBodyCell(row, 2))).toHaveText('Published');
-  expect(await fn.invoke(number, {})).toEqual({ marker: 'first-release', event: {} });
+  await expectPublished(page, number);
+  expect((await fn.invoke(number, {})).payload).toEqual({ marker: 'first-release', event: {} });
 });
 
 test('studio.lambda-manages-function-alias', async ({ ctx, page }) => {
@@ -55,12 +56,12 @@ test('studio.lambda-manages-function-alias', async ({ ctx, page }) => {
   expect(await fn.aliases()).toEqual([{ Name: 'live', FunctionVersion: first }]);
   await openAliasAction(page, 'UpdateAlias');
   await chooseTarget(page, second, true);
-  await dialogLocator(page).getByRole('button', { name: 'Save changes' }).click();
+  await submitDialog(page, 'Save changes');
   await expect(success(page)).toContainText(`Updated alias live to version ${second}.`);
   await mapping(page, second);
   expect(await fn.aliases()).toEqual([{ Name: 'live', FunctionVersion: second }]);
   await openAliasAction(page, 'DeleteAlias');
-  await dialogLocator(page).getByRole('button', { name: 'Delete alias', exact: true }).click();
+  await submitDialog(page, 'Delete alias');
   await expect(success(page)).toContainText('Deleted alias live.');
   await expect(inCollection(page, 'Aliases', tableParts.findEmptySlot())).toContainText('No aliases');
   expect(await fn.aliases()).toEqual([]);
@@ -89,7 +90,7 @@ test('studio.lambda-invokes-selected-release', async ({ ctx, page }) => {
   await compareInvocation(page, fn, second, 'second-release', 'numbered');
   await compareInvocation(page, fn, 'live', 'first-release', 'before-move');
   await fn.moveAlias(second);
-  await functionPage(page, fn.name).refresh.click();
+  await refreshTargets(page, fn.name, second);
   await compareInvocation(page, fn, 'live', 'second-release', 'after-move');
 });
 
@@ -117,13 +118,11 @@ async function reconnect(ctx: Ctx, page: Page, view: 'versions' | 'test') {
   if (view === 'versions') {
     await openReleases(page, fn.name);
     await mapping(page, version);
-    const versions = await fn.versions();
-    await expect(inCollection(page, 'Versions', tableParts.findBodyCell(versions.indexOf(version) + 1, 1))).toHaveText(
-      version,
-    );
+    await expectPublished(page, version);
   } else {
     await openOnTest(page, fn.name);
     await compareInvocation(page, fn, 'live', 'first-release', 'before-restart');
+    await expect(targetTrigger(page)).toContainText('live');
   }
   await markPage(page);
   await emulator.stop();
@@ -133,6 +132,7 @@ async function reconnect(ctx: Ctx, page: Page, view: 'versions' | 'test') {
   await expect(functionPage(page, fn.name).notFound).toBeVisible({ timeout: 2 * LINE_CHANGE_BOUND_MS });
   await expect(page.getByRole('table', { name: 'Versions', exact: true })).toHaveCount(0);
   await expect(page.getByRole('table', { name: 'Aliases', exact: true })).toHaveCount(0);
+  if (view === 'test') await expect(targetTrigger(page)).toHaveCount(0);
   await expect(page.getByText('Submitted target live', { exact: true })).toHaveCount(0);
   await expect(page.getByText(/before-restart/)).toHaveCount(0);
   expect((await getFunctionDirect(ctx, emulator.port, fn.name)).found).toBe(false);
