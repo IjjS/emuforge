@@ -79,9 +79,24 @@ test('studio.s3-notification-edit-delete-preserve-settings', async ({ ctx, page 
   await expect(success(page)).toContainText('Event notification deleted');
   await page.reload();
   await expect(page.getByRole('link', { name: 'Edit function-peer' })).toBeVisible();
-  await expect(page.locator(wrappers.findTable().findRows().toSelector()).allTextContents()).resolves.toEqual(
-    expect.arrayContaining([expect.stringContaining(topicArn)]),
-  );
+  const table = createWrapper('[role="region"][aria-label="Event notifications"]').findTable();
+  const headers = await page.locator(table.findColumnHeaders().toSelector()).allTextContents();
+  const column =
+    headers.findIndex((header) => ['Destination', 'Event name and destination'].includes(header.trim())) + 1;
+  expect(column).toBeGreaterThan(0);
+  await expect
+    .poll(
+      async () => {
+        const count = await page.locator(table.findRows().toSelector()).count();
+        for (let index = 1; index <= count; index++) {
+          const cell = page.locator(table.findBodyCell(index, column).toSelector());
+          if ((await cell.isVisible()) && (await cell.innerText()).includes(topicArn)) return true;
+        }
+        return false;
+      },
+      { message: 'the destination cell shows the seeded topic ARN' },
+    )
+    .toBe(true);
   await expect(edit).toHaveCount(0);
   expect(await f.read()).toEqual(peers);
 });
@@ -96,9 +111,11 @@ test('studio.s3-notification-refused-destination-keeps-draft', async ({ ctx, pag
   await openCreate(page, f.bucket);
   await fillRule(page, 'denied', arn, 'SQS queue', 's3:ObjectCreated:Put');
   await submitCreate(page).click();
-  const alert = page.locator(
-    createWrapper('main').findAlert(':has([class*="awsui_type-error"])').findContent().toSelector(),
-  );
+  // The status and the form are siblings under the editor heading.
+  const editor = page
+    .getByRole('heading', { level: 1, name: 'Create event notification' })
+    .locator('xpath=ancestor::*[descendant::form][1]');
+  const alert = editor.locator(createWrapper(':scope').findAlert().findContent().toSelector());
   await expect(alert).toContainText('InvalidArgument');
   await expect(alert).toContainText('Unable to validate the following destination configurations');
   await expect(alert).toContainText('Check that the queue policy allows S3 to send messages from this bucket');
@@ -106,6 +123,9 @@ test('studio.s3-notification-refused-destination-keeps-draft', async ({ ctx, pag
   await expect(page.getByRole('textbox', { name: 'Destination ARN' })).toHaveValue(arn);
   await expect(nameField(page)).toBeEditable();
   await expect(page.getByRole('textbox', { name: 'Destination ARN' })).toBeEditable();
+  for (const name of ['Prefix (optional)', 'Suffix (optional)']) {
+    await expect(page.getByRole('textbox', { name })).toBeEditable();
+  }
   for (const value of ['SQS queue', 's3:ObjectCreated:Put']) {
     const selected = page.locator(wrappers.findRadioGroup().findInputByValue(value).toSelector());
     await expect(selected).toBeChecked();
