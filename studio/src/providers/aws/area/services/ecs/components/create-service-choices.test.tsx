@@ -103,12 +103,16 @@ async function open(result: AreaConnection['result'] = undefined) {
   await screen.findByRole('textbox', { name: 'Service name' });
 }
 
-function wrapper(label: string) {
+function labeledField(label: string) {
   const field = createWrapper(document.body)
     .findAllFormFields()
     .find((each) => each.findLabel()?.getElement().textContent === label);
   if (!field) throw new Error(`Missing field ${label}`);
-  return createWrapper(field.getElement());
+  return field;
+}
+
+function wrapper(label: string) {
+  return createWrapper(labeledField(label).getElement());
 }
 
 function select(label: string) {
@@ -121,6 +125,19 @@ function multi(label: string) {
   const found = wrapper(label).findMultiselect();
   if (!found) throw new Error(`Missing multiselect ${label}`);
   return found;
+}
+
+async function choiceDiagnostic(label: string) {
+  return createWrapper(await screen.findByRole('group', { name: `${label} diagnostic` }));
+}
+
+function emptyChoiceMessage(label: string) {
+  return waitFor(() => {
+    const state = wrapper(label).getElement().parentElement?.parentElement?.nextElementSibling;
+    const message = state && createWrapper(state).findBox()?.getElement();
+    if (!message) throw new Error(`Missing empty message for ${label}`);
+    return message;
+  });
 }
 
 function openDropdown(input: ReturnType<typeof select> | ReturnType<typeof multi>) {
@@ -246,7 +263,9 @@ it.each(['picker', 'another field', 'nonfocusable content'] as const)(
     await act(async () => refuse(new RequestError({ kind: 'not-implemented', operation })));
 
     const diagnostic = await screen.findByRole('group', { name: `${REVISION} diagnostic` });
-    expect(diagnostic).toHaveTextContent('Not implemented by the emulator');
+    expect(createWrapper(diagnostic).findStatusIndicator()?.getElement()).toHaveTextContent(
+      /^Not implemented by the emulator$/,
+    );
     expect(diagnostic).toHaveAccessibleDescription(
       /501 Not Implemented for ListTaskDefinitions\. Studio cannot load more revisions\./,
     );
@@ -330,7 +349,7 @@ it('exhausts ineligible revision pages and links to registration', async () => {
   });
   await open();
   await choose(FAMILY, 'web');
-  expect(await screen.findByText('This family has no active Fargate revisions.')).toBeInTheDocument();
+  expect(await emptyChoiceMessage(REVISION)).toHaveTextContent('This family has no active Fargate revisions.');
   expect(select(REVISION).findTrigger().getElement()).toHaveTextContent('Choose a revision');
   expect(screen.getByRole('link', { name: 'Register task definition' })).toHaveAttribute(
     'href',
@@ -343,7 +362,12 @@ it('shows the registration entry for an empty family list', async () => {
     op === 'ListTaskDefinitionFamilies' ? { families: [] } : normal(op, input),
   );
   await open();
-  expect(await screen.findByText('No task definitions.')).toBeInTheDocument();
+  const description = await waitFor(() => {
+    const message = labeledField(FAMILY).findDescription()?.getElement();
+    if (!message) throw new Error('Missing empty family description');
+    return message;
+  });
+  expect(description).toHaveTextContent('No task definitions.');
   expect(screen.getByRole('link', { name: 'Register one first.' })).toHaveAttribute(
     'href',
     '/aws/ecs/task-definitions/register',
@@ -353,12 +377,12 @@ it('shows the registration entry for an empty family list', async () => {
 it('reports an empty subnet list', async () => {
   vi.mocked(network.listSubnetChoices).mockResolvedValue({ choices: [] });
   await open();
-  expect(await screen.findByText('No subnets in the local emulator.')).toBeInTheDocument();
+  expect(await emptyChoiceMessage(SUBNETS)).toHaveTextContent(/^No subnets in the local emulator\.$/);
 });
 
 it('asks for a subnet before any groups can be read', async () => {
   await open();
-  expect(screen.getByText('Choose a subnet first.')).toBeInTheDocument();
+  expect(multi(GROUPS).findPlaceholder()?.getElement()).toHaveTextContent(/^Choose a subnet first\.$/);
   expect(multi(GROUPS).findTrigger().getElement()).toBeDisabled();
   expect(readGroups).not.toHaveBeenCalled();
 });
@@ -367,7 +391,7 @@ it('reports a successful empty group list in the selected VPC', async () => {
   readGroups.mockResolvedValue({ items: [] });
   await open();
   await choose(SUBNETS, 'subnet-a');
-  expect(await screen.findByText('No security groups in this VPC.')).toBeInTheDocument();
+  expect(await emptyChoiceMessage(GROUPS)).toHaveTextContent(/^No security groups in this VPC\.$/);
   expect(readGroups).toHaveBeenCalledWith('vpc-1', undefined);
 });
 
@@ -441,9 +465,10 @@ it('retries the failed revision description and keeps the family and name', asyn
   await open();
   fireEvent.change(screen.getByRole('textbox', { name: 'Service name' }), { target: { value: 'entered' } });
   await choose(FAMILY, 'web');
-  expect(await screen.findByText('DescribeTaskDefinition')).toBeInTheDocument();
-  expect(screen.getByText('ClientException')).toBeInTheDocument();
-  expect(screen.getByText(/Unable to describe task definition/)).toBeInTheDocument();
+  const diagnostic = await choiceDiagnostic(REVISION);
+  expect(diagnostic.getElement()).toHaveTextContent('DescribeTaskDefinition');
+  expect(diagnostic.getElement()).toHaveTextContent('ClientException');
+  expect(diagnostic.getElement()).toHaveTextContent('Unable to describe task definition.');
   refused = false;
   fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
   await waitFor(() => expect(select(REVISION).findTrigger().getElement()).toHaveTextContent('web:2'));
@@ -466,8 +491,9 @@ it.each([
   fireEvent.change(screen.getByRole('textbox', { name: 'Service name' }), { target: { value: 'entered' } });
   if (label === REVISION) await choose(FAMILY, 'web');
   if (label === GROUPS) await choose(SUBNETS, 'subnet-a');
-  expect(await screen.findByText('Not implemented by the emulator')).toBeInTheDocument();
-  expect(screen.getByText(new RegExp(`501.*${operation}`))).toBeInTheDocument();
+  const diagnostic = await choiceDiagnostic(label);
+  expect(diagnostic.findStatusIndicator()?.getElement()).toHaveTextContent(/^Not implemented by the emulator$/);
+  expect(diagnostic.getElement()).toHaveTextContent(new RegExp(`501.*${operation}`));
   const trigger = (label === SUBNETS || label === GROUPS ? multi(label) : select(label)).findTrigger().getElement();
   expect(trigger).toBeDisabled();
   fireEvent.click(trigger);
@@ -487,8 +513,11 @@ it('reports the operation and real reason for a denied choice', async () => {
     reject({ kind: 'access-denied', operation, message: 'policy denied the family list' }),
   );
   await open();
-  expect(await screen.findByText('Access denied')).toBeInTheDocument();
-  expect(screen.getByText('ListTaskDefinitionFamilies was refused: policy denied the family list')).toBeInTheDocument();
+  const diagnostic = await choiceDiagnostic(FAMILY);
+  expect(diagnostic.findStatusIndicator()?.getElement()).toHaveTextContent(/^Access denied$/);
+  expect(diagnostic.getElement()).toHaveTextContent(
+    'ListTaskDefinitionFamilies was refused: policy denied the family list',
+  );
 });
 
 it.each(['emulator-did-not-answer', 'engine-did-not-answer'] as const)(
@@ -510,12 +539,14 @@ it.each(['emulator-did-not-answer', 'engine-did-not-answer'] as const)(
     );
     fireEvent.change(screen.getByRole('textbox', { name: 'Service name' }), { target: { value: 'entered' } });
     await choose(FAMILY, 'web');
+    const diagnostic = await choiceDiagnostic(REVISION);
+    const indicator = diagnostic.findStatusIndicator()?.getElement();
     if (kind === 'engine-did-not-answer') {
-      expect(await screen.findByText(ENGINE)).toBeInTheDocument();
+      expect(indicator).toHaveTextContent(`The EmuForge engine at ${ENGINE} did not answer`);
       expect(screen.getByRole('link', { name: 'Connection status' })).toHaveAttribute('href', '/');
     } else {
-      expect(await screen.findByText('The emulator did not answer')).toBeInTheDocument();
-      expect(screen.getByText('probe timed out')).toBeInTheDocument();
+      expect(indicator).toHaveTextContent(/^The emulator did not answer$/);
+      expect(diagnostic.getElement()).toHaveTextContent('probe timed out');
     }
     expect(screen.getByRole('textbox', { name: 'Service name' })).toHaveValue('entered');
     expect(select(FAMILY).findTrigger().getElement()).toHaveTextContent('web');
