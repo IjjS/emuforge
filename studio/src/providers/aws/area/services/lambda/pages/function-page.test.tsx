@@ -1660,9 +1660,13 @@ describe('Qualified Test invocations', () => {
       if (!remove) throw new Error('Expected the DeleteAlias action');
       expect(remove).toHaveAccessibleName('Delete alias live');
       fireEvent.click(remove);
-      const dialog = PAGE.findAllModals().find((modal) => modal.isVisible());
-      expect(dialog?.findHeader().getElement()).toHaveTextContent('Delete alias');
-      const [cancel, confirm] = dialog?.findFooter()?.findAllButtons() ?? [];
+      const dialog = await waitFor(() => {
+        const visible = PAGE.findAllModals().find((modal) => modal.isVisible());
+        if (!visible) throw new Error('Expected the alias deletion dialog');
+        return visible;
+      });
+      expect(dialog.findHeader().getElement()).toHaveTextContent('Delete alias');
+      const [cancel, confirm] = dialog.findFooter()?.findAllButtons() ?? [];
       expect(cancel?.getElement()).toHaveAccessibleName('Cancel');
       expect(confirm?.getElement()).toHaveAccessibleName('Delete alias');
 
@@ -2764,8 +2768,8 @@ describe('"Delete" in the header', () => {
         const reads = engine.gets.length;
         connection.set(connectedResult());
         await waitFor(() => expect(engine.gets.length).toBeGreaterThan(reads));
-        expect(pageDeleteAction()?.getElement()).toBeDisabled();
-        pageDeleteAction()?.click();
+        expect(pageActions()[0]?.getElement()).toHaveAccessibleName('Refresh');
+        expect(pageDeleteAction()).toBeUndefined();
         expect(deletionDialog()).toBeUndefined();
         expect(deleteRequests()).toEqual(['orders']);
         await act(async () =>
@@ -2792,34 +2796,49 @@ describe('"Delete" in the header', () => {
     },
   );
 
-  it('delivers an already dispatched delete after a native connectivity cycle within the same session', async () => {
-    const deletion = deferredAnswer();
-    engine.answerDelete = () => deletion.promise;
-    const { shown, handedOver } = openWithRecordedDeleteOutcomes();
-    await screen.findByTestId('stand-in-test');
-    const wasOnline = onlineManager.isOnline();
-    const browserOnline = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true);
-    try {
-      const { input, submit } = await openDialog();
-      input.setInputValue('confirm');
-      submit.click();
-      await waitFor(() => expect(deleteRequests()).toEqual(['orders']));
+  it.each(['success', 'refusal'] as const)(
+    'delivers an already dispatched delete %s once after a native connectivity cycle within the same session',
+    async (outcome) => {
+      const deletion = deferredAnswer();
+      engine.answerDelete = () => deletion.promise;
+      const { shown, handedOver } = openWithRecordedDeleteOutcomes();
+      await waitFor(() => expect(value('Description')).toBe(ORDERS.description));
+      const wasOnline = onlineManager.isOnline();
+      const browserOnline = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true);
+      try {
+        const { input, submit } = await openDialog();
+        input.setInputValue('confirm');
+        submit.click();
+        await waitFor(() => expect(deleteRequests()).toEqual(['orders']));
 
-      browserOnline.mockReturnValue(false);
-      fireEvent(window, new Event('offline'));
-      expect(deletionDialog()).toBeUndefined();
-      browserOnline.mockReturnValue(true);
-      fireEvent(window, new Event('online'));
+        browserOnline.mockReturnValue(false);
+        fireEvent(window, new Event('offline'));
+        expect(deletionDialog()).toBeUndefined();
+        browserOnline.mockReturnValue(true);
+        fireEvent(window, new Event('online'));
 
-      await act(async () => deletion.resolve({ status: 204, body: '' }));
-      await waitFor(() => expect(handedOver).toHaveBeenCalledTimes(1));
-      expect(shown).not.toHaveBeenCalled();
-      expect(deleteRequests()).toEqual(['orders']);
-    } finally {
-      browserOnline.mockRestore();
-      onlineManager.setOnline(wasOnline);
-    }
-  });
+        await act(async () => {
+          deletion.resolve(
+            outcome === 'success'
+              ? { status: 204, body: '' }
+              : errorAnswer(409, 'ResourceConflictException', 'Function is in use'),
+          );
+        });
+        if (outcome === 'success') {
+          await waitFor(() => expect(handedOver).toHaveBeenCalledTimes(1));
+          expect(shown).not.toHaveBeenCalled();
+        } else {
+          await waitFor(() => expect(shown).toHaveBeenCalledTimes(1));
+          expect(flashTexts()).toEqual(['Deleting orders failed ResourceConflictException: Function is in use']);
+          expect(handedOver).not.toHaveBeenCalled();
+        }
+        expect(deleteRequests()).toEqual(['orders']);
+      } finally {
+        browserOnline.mockRestore();
+        onlineManager.setOnline(wasOnline);
+      }
+    },
+  );
 
   it('ignores a submitted deletion that settles after the same-name function reconnects', async () => {
     const deletion = deferredAnswer();
