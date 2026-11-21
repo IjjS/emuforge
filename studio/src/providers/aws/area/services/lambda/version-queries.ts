@@ -1,7 +1,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useId, useLayoutEffect, useRef, useState } from 'react';
 
-import { requestFailure } from '../../../../../lib/aws/request';
+import { reportedServiceCode, requestFailure } from '../../../../../lib/aws/request';
 import type { FlashItem } from '../../components/page-flash';
 import { lambdaKey } from './queries';
 import {
@@ -10,7 +10,6 @@ import {
   LIST_ALIASES,
   LIST_VERSIONS,
   listVersions,
-  ReleaseRequestError,
   type ReleaseChange,
   type ReleaseFailure,
   type ReleaseResult,
@@ -18,7 +17,11 @@ import {
 
 function releaseFailure(operation: string, error: unknown): ReleaseFailure {
   const failure = requestFailure(operation, error);
-  return error instanceof ReleaseRequestError ? { ...failure, reportedCode: error.reportedCode } : failure;
+  if (failure.kind === 'access-denied' || failure.kind === 'emulator-did-not-answer') {
+    const reportedCode = reportedServiceCode(failure);
+    if (reportedCode !== undefined) return { ...failure, reportedCode };
+  }
+  return failure;
 }
 
 export interface ReleaseReading<T> {
