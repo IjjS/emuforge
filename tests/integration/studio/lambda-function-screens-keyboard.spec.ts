@@ -324,7 +324,7 @@ test('studio.lambda-function-screens-keyboard-and-layout', async ({ ctx, page, c
   await lines.line(
     // Issue 516 (test-criteria.md, "Rewritten lines of checks on `main`"; the pm's decision of 2026-11-19). This
     // check is of the tier `full`: the plan of issue 516 rewrote these lines and did not run them.
-    'With the keyboard only on the page of a function with a URL → "Refresh", "Delete", "Copy Function ARN", "Copy Function URL", the tab list (one stop; the arrow keys move between "Test", "Code", "Monitor", "Configuration") and then the selected tab\'s controls are reached in that order, focus visible on each; Enter on "Copy Function ARN" shows "Function ARN copied" and focus stays on the control; on the create form with "Use another role" → the fields in visible order, the code choice between the execution role and the buttons, then "Cancel", "Create Event Function"',
+    'With the keyboard only on the page of a function with a URL → "Refresh", "Delete", "Copy Function ARN", "Copy Function URL", the tab list (one stop; the arrow keys move between "Test", "Code", "Monitor", "Configuration", "Versions and aliases") and then the selected tab\'s controls are reached in that order, focus visible on each; Enter on "Copy Function ARN" shows "Function ARN copied" and focus stays on the control; on the create form with "Use another role" → the fields in visible order, the code choice between the execution role and the buttons, then "Cancel", "Create Event Function"',
     async () => {
       const found: string[] = [];
       const name = withUrl;
@@ -368,9 +368,10 @@ test('studio.lambda-function-screens-keyboard-and-layout', async ({ ctx, page, c
             if (stop.ring === null) found.push(`the tab "${tab}" draws no focus indicator`);
           }
         }
-        // The arrow keys ended on "Configuration": its first control, "Edit" of "General configuration", comes
-        // next (the tab's panel may be a stop of its own before it).
+        // Return to Configuration and enter its panel after traversing the full tab list.
         if (found.length === 0) {
+          await page.keyboard.press('ArrowLeft');
+          await page.keyboard.press('Enter');
           let onEdit = false;
           for (let i = 0; i < 2 && !onEdit; i++) {
             await page.keyboard.press('Tab');
