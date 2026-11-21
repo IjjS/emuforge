@@ -1,4 +1,5 @@
 import { AWS_PATH } from '../../../identity';
+import { functionPath, queuePath } from '../../components/resource-paths';
 
 // The routes of S3's screens and the words S3's values are shown in (issue 56, requirement R6; issue 256,
 // requirement R0, R5.3, R10). Creation dates are written by the area's shared `components/format-date.ts`
@@ -62,6 +63,32 @@ export function editPropertyPath(name: string, property: EditableProperty): stri
 /** "Create event notification" of "Event notifications". */
 export function createEventNotificationPath(name: string): string {
   return `${S3_PATH}/bucket/${segment(name)}/property/event-notification/create`;
+}
+
+export function editEventNotificationPath(name: string, id: string): string {
+  return `${S3_PATH}/bucket/${segment(name)}/property/event-notification/~${segment(id)}/edit`;
+}
+
+/** The area has already decoded the segment once. The marker also protects dot-segment IDs. */
+export function eventNotificationId(segmentValue: string | undefined): string | undefined {
+  return segmentValue?.startsWith('~') ? segmentValue.slice(1) : undefined;
+}
+
+const QUEUE_ARN = /^arn:aws(?:-[a-z0-9-]+)?:sqs:[a-z0-9-]+:\d{12}:([A-Za-z0-9_-]{1,80}(?:\.fifo)?)$/;
+const FUNCTION_ARN =
+  /^arn:aws(?:-[a-z0-9-]+)?:lambda:[a-z0-9-]+:\d{12}:function:([A-Za-z0-9_-]{1,64})(?::[A-Za-z0-9_$-]+)?$/;
+
+export function notificationDestinationPath(type: string, arn: string | undefined): string | undefined {
+  if (arn === undefined) return undefined;
+  if (type === 'SQS queue') {
+    const name = QUEUE_ARN.exec(arn)?.[1];
+    return name === undefined ? undefined : queuePath(name);
+  }
+  if (type === 'Lambda function') {
+    const name = FUNCTION_ARN.exec(arn)?.[1];
+    return name === undefined ? undefined : `${functionPath(name)}?tab=monitor`;
+  }
+  return undefined;
 }
 
 /** "Empty" for a bucket. */

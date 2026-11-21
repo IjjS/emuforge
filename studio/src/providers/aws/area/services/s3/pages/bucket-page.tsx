@@ -5,18 +5,23 @@ import Tabs, { type TabsProps } from '@cloudscape-design/components/tabs';
 import { useCallback, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router';
 
+import { usePageFlash } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
 import { ValueText } from '../../../components/value-text';
 import type { ScreenPageProps } from '../../../screens';
-import { lineText, pageState, type PageState } from '../components/bucket-read';
+import { connectionStatus, lineText, pageState, type PageState } from '../components/bucket-read';
 import { BucketLoading, BucketNotFound, BucketReadFailure } from '../components/bucket-read-state';
 import { BucketSections } from '../components/bucket-sections';
+import { NotificationChangeStatus } from '../components/notification-change-status';
+import { DeleteNotificationDialog } from '../components/notification-section';
 import { ObjectsBucketGone } from '../components/objects-states';
 import { ObjectsTab } from '../components/objects-tab';
 import { useAnnouncer } from '../components/use-announcer';
 import { anySectionMissing, useBucketSections } from '../components/use-bucket-sections';
 import { bucketPropertiesPath, objectsPath } from '../format';
 import type { Bucket } from '../api';
+import type { EditableNotification } from '../notifications';
+import { useNotificationChange } from '../use-notification-change';
 import { useBucketLookup } from '../queries';
 
 // S1, a general purpose bucket's own page (issue 256, requirement R4, R5, R9.1, R10, R11; issue 480): two tabs,
@@ -56,6 +61,18 @@ export function BucketPage({ connection, params }: ScreenPageProps) {
     generation: lookup.generation,
     enabled: found.kind === 'loaded' && tab === PROPERTIES_TAB,
   });
+  const flash = usePageFlash();
+  const [deleting, setDeleting] = useState<EditableNotification>();
+  const deletion = useNotificationChange(connection.engineOrigin, name, () => {
+    sections.notifications.again();
+    flash.show([{ type: 'success', content: 'Event notification deleted' }]);
+  });
+  const deleteDisabled =
+    deletion.locked ||
+    deletion.readFailed ||
+    deletion.state.kind === 'changed' ||
+    deletion.state.kind === 'missing' ||
+    connectionStatus(connection) !== undefined;
   const state: PageState<Bucket> =
     found.kind === 'loaded' && tab === PROPERTIES_TAB && anySectionMissing(sections) ? { kind: 'not-found' } : found;
 
@@ -138,7 +155,15 @@ export function BucketPage({ connection, params }: ScreenPageProps) {
       id: PROPERTIES_TAB,
       label: 'Properties',
       href: propertiesPath,
-      content: <BucketSections bucket={bucket} reads={sections} connection={connection} />,
+      content: (
+        <BucketSections
+          bucket={bucket}
+          reads={sections}
+          connection={connection}
+          deleteNotificationDisabled={deleteDisabled}
+          onDeleteNotification={setDeleting}
+        />
+      ),
     },
   ];
 
@@ -157,6 +182,17 @@ export function BucketPage({ connection, params }: ScreenPageProps) {
       >
         <ValueText kind="name" value={name} />
       </Header>
+      {tab === PROPERTIES_TAB && (
+        <NotificationChangeStatus
+          change={deletion}
+          connection={connection}
+          action="Deleting"
+          onRefresh={() => {
+            deletion.clear();
+            refresh();
+          }}
+        />
+      )}
       <div>
         {state.kind === 'loading' && <BucketLoading />}
         {state.kind === 'failure' && <BucketReadFailure view={state.view} onRetry={handleRetry} />}
@@ -164,6 +200,16 @@ export function BucketPage({ connection, params }: ScreenPageProps) {
           (tab === OBJECTS_TAB ? <ObjectsBucketGone name={name} /> : <BucketNotFound name={name} />)}
         {state.kind === 'loaded' && (
           <Tabs tabs={tabs(state.value)} activeTabId={tab} keyboardActivationMode="manual" onChange={handleTabChange} />
+        )}
+        {deleting !== undefined && state.kind === 'loaded' && (
+          <DeleteNotificationDialog
+            target={deleting}
+            onCancel={() => setDeleting(undefined)}
+            onConfirm={() => {
+              setDeleting(undefined);
+              if (!deleteDisabled) deletion.submit({ kind: 'delete', target: deleting });
+            }}
+          />
         )}
         {announcement}
       </div>

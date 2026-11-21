@@ -189,6 +189,12 @@ class FakeEngine {
   objectList: (url: URL) => EngineAnswer = (url) => objectListing(this.objects, url, this.objectPageSize);
   /** Every AWS request, its URL as sent. */
   readonly aws: URL[] = [];
+  readonly notificationReads: Request[] = [];
+  readonly notificationWrites: string[] = [];
+  writeNotifications: (body: string) => EngineAnswer = (body) => {
+    this.parts.notification = () => ok(body);
+    return { status: 204, body: '' };
+  };
   /** The answer to `ListBuckets`; by default the emulator's listing of `buckets`. */
   list: (url: URL) => EngineAnswer = (url) => this.listing(url);
   /** The answer to each section's read; by default a bucket with nothing set. */
@@ -208,8 +214,17 @@ class FakeEngine {
       return new Response(JSON.stringify({ token: 'token-1' }), { status: 200 });
     }
     this.aws.push(url);
+    const notification = partOf(url) === 'notification';
+    const writing = notification && request.method === 'PUT';
+    if (notification && !writing) this.notificationReads.push(request);
+    const response = writing
+      ? request.text().then((body) => {
+          this.notificationWrites.push(body);
+          return this.writeNotifications(body);
+        })
+      : this.answer(url);
     const answer = await Promise.race([
-      Promise.resolve(this.answer(url)),
+      Promise.resolve(response),
       new Promise<never>((_, reject) => {
         request.signal.addEventListener('abort', () => {
           reject(new DOMException('The operation was aborted.', 'AbortError'));
@@ -219,7 +234,7 @@ class FakeEngine {
     if (answer === 'network-error') {
       throw new TypeError('Failed to fetch');
     }
-    return new Response(answer.body, { status: answer.status });
+    return new Response(answer.status === 204 ? null : answer.body, { status: answer.status });
   };
 
   private answer(url: URL): EngineAnswer {
@@ -261,6 +276,7 @@ const PROPERTIES = '/aws/s3/buckets/alpha/properties';
 /** The connection Studio hands the area, as a case sets it; each change re-renders the area as the frame does. */
 class Connection {
   value: AreaConnection = { result: undefined, engineOrigin: undefined };
+  targetGeneration = 0;
   private readonly listeners = new Set<() => void>();
 
   readonly subscribe = (listener: () => void) => {
@@ -273,6 +289,14 @@ class Connection {
   readonly get = () => this.value;
 
   set(result: CheckResult | undefined) {
+    const previous = this.value.result;
+    if (
+      previous?.kind === 'connected' &&
+      result?.kind === 'connected' &&
+      previous.target !== undefined &&
+      previous.target !== result.target
+    )
+      this.targetGeneration += 1;
     this.value = { ...this.value, result };
     act(() => {
       for (const listener of this.listeners) {
@@ -285,7 +309,7 @@ class Connection {
 const EMULATOR_PORT = 9304;
 const EMULATOR_ENDPOINT = `https://127.0.0.1:${String(EMULATOR_PORT)}`;
 
-function connectedResult(): CheckResult {
+function connectedResult(): Extract<CheckResult, { kind: 'connected' }> {
   return { kind: 'connected', checkedAt: Date.now(), emulator: { port: EMULATOR_PORT, endpoint: EMULATOR_ENDPOINT } };
 }
 
@@ -320,6 +344,7 @@ function AreaWithStudioProps() {
       onPageTitle={() => undefined}
       onContentTarget={() => undefined}
       routeChanges={changes}
+      targetGeneration={connection.targetGeneration}
       connection={current}
     />
   );
@@ -854,7 +879,7 @@ async function expectSectionsShown() {
   await waitFor(() => {
     expect(sectionHeadings()).toEqual(SECTIONS);
     for (const title of SECTIONS) {
-      expect(within(section(title)).queryByText('Loading')).toBeNull();
+      expect(within(section(title)).queryByText(/^Loading(?: event notifications)?$/)).toBeNull();
     }
   });
 }
@@ -897,7 +922,15 @@ describe('a bucket’s page, its sections', () => {
     expect(field('Default encryption', 'AWS KMS key')).toBe(KMS_KEY);
     expect(field('Default encryption', 'Bucket Key')).toBe('Enabled');
     expect(tableRows('Event notifications')).toEqual([
-      ['to-queue', 's3:ObjectCreated:Put, s3:ObjectRemoved:*', 'in/', '.csv', 'SQS queue', QUEUE],
+      [
+        'to-queue',
+        's3:ObjectCreated:Put, s3:ObjectRemoved:*',
+        'in/',
+        '.csv',
+        'SQS queue',
+        `${QUEUE}Open queue`,
+        'EditDelete',
+      ],
     ]);
     expect(field('Static website hosting', 'Static website hosting')).toBe('Enabled');
     expect(field('Static website hosting', 'Index document')).toBe('index.html');
@@ -917,6 +950,7 @@ describe('a bucket’s page, its sections', () => {
       'Suffix',
       'Destination type',
       'Destination',
+      'Actions',
     ]);
   });
 
@@ -1670,5 +1704,282 @@ describe('the tab "Objects", its selection and "Copy S3 URI"', () => {
     await expectKeys(['logs/', '한글/', 'a.txt', 'q?#%.txt']);
 
     expect(selectedNames()).toEqual([]);
+  });
+});
+
+const NOTIFICATION_CREATE = '/aws/s3/bucket/alpha/property/event-notification/create';
+const NOTIFICATION_EDIT = '/aws/s3/bucket/alpha/property/event-notification/~to-queue/edit';
+
+function queueRule(id: string | undefined, arn = QUEUE) {
+  return `<QueueConfiguration>${id === undefined ? '' : `<Id>${xml(id)}</Id>`}<Queue>${xml(arn)}</Queue><Event>s3:ObjectCreated:Put</Event></QueueConfiguration>`;
+}
+
+function notificationDocument(...rules: string[]) {
+  return ok(`<NotificationConfiguration>${rules.join('')}</NotificationConfiguration>`);
+}
+
+async function startDelete() {
+  fireEvent.click(await screen.findByRole('button', { name: 'Delete to-queue' }));
+  return screen.findByRole('dialog', { name: 'Delete event notification' });
+}
+
+function confirmDelete(dialog: HTMLElement) {
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+}
+
+describe('bucket event notifications', () => {
+  it('shows a loading state, readable destinations, and actions for only unique named queues and functions', async () => {
+    const pending = held();
+    engine.buckets = [ALPHA];
+    engine.parts.notification = () => pending.answer;
+    open();
+    expect(await screen.findByText('Loading event notifications')).toBeVisible();
+    pending.release(
+      notificationDocument(
+        queueRule('unique'),
+        queueRule('duplicate'),
+        queueRule(undefined, 'invalid<'),
+        '<TopicConfiguration><Id>duplicate</Id><Topic>arn:aws:sns:us-east-1:000000000000:topic</Topic><Event>s3:ObjectCreated:Copy</Event></TopicConfiguration>',
+        '<CloudFunctionConfiguration><Id>fn</Id><CloudFunction>arn:aws:lambda:us-east-1:000000000000:function:fn:1</CloudFunction><Event>s3:ObjectCreated:Put</Event><Event>s3:ObjectRemoved:*</Event></CloudFunctionConfiguration>',
+      ),
+    );
+    expect(await screen.findByRole('link', { name: 'Edit unique' })).toBeVisible();
+    expect(screen.getByRole('link', { name: 'Edit fn' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Delete unique' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Delete fn' })).toBeEnabled();
+    expect(screen.queryByRole('link', { name: 'Edit duplicate' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Delete duplicate' })).toBeNull();
+    expect(screen.getAllByText('Read only')).toHaveLength(3);
+    expect(screen.getByText('invalid<')).toBeVisible();
+    expect(screen.getByRole('link', { name: 'Edit fn' }).closest('tr')).toHaveTextContent(
+      's3:ObjectCreated:Put, s3:ObjectRemoved:*',
+    );
+    for (const queue of screen.getAllByRole('link', { name: 'Open queue' })) {
+      expect(queue).toHaveAttribute('href', '/aws/sqs/queues/queue/alpha-events');
+    }
+    expect(screen.getByRole('link', { name: 'Open function monitor' })).toHaveAttribute(
+      'href',
+      '/aws/lambda/functions/function/fn?tab=monitor',
+    );
+  });
+
+  const ids = ['.', '..', '~.', '~..', 'parent/child', 'literal%2F'];
+  it.each(ids)('follows and freshly opens the exact rule with ID %s', async (id) => {
+    const { router, unmount } = await openBucket({
+      notification: () => notificationDocument(...ids.map((value) => queueRule(value))),
+    });
+    const hrefs = within(section('Event notifications'))
+      .getAllByRole('link', { name: /^Edit / })
+      .map((link) => link.getAttribute('href'));
+    expect(new Set(hrefs).size).toBe(ids.length);
+    const link = screen.getByRole('link', { name: `Edit ${id}` });
+    const href = link.getAttribute('href') ?? '';
+    expect(href).toBe(`/aws/s3/bucket/alpha/property/event-notification/~${encodeURIComponent(id)}/edit`);
+    fireEvent.click(link);
+    expect(await screen.findByRole('textbox', { name: 'Notification name' })).toHaveValue(id);
+    expect(router.state.location.pathname).toBe(href);
+    unmount();
+    open(href);
+    expect(await screen.findByRole('textbox', { name: 'Notification name' })).toHaveValue(id);
+    expect(engine.notificationWrites).toEqual([]);
+  });
+
+  it('rejects an unmarked edit segment and offers a return link', async () => {
+    open(NOTIFICATION_EDIT.replace('~to-queue', 'to-queue'));
+    expect(await screen.findByText('The notification address is invalid.')).toBeVisible();
+    expect(screen.getByRole('link', { name: 'Return to Properties' })).toHaveAttribute('href', PROPERTIES);
+    expect(engine.notificationWrites).toEqual([]);
+  });
+
+  it('names the delete target, cancels without writing, then removes only the confirmed rule', async () => {
+    await openBucket({ notification: () => notificationDocument(queueRule('to-queue'), queueRule('keep')) });
+    let dialog = await startDelete();
+    expect(dialog).toHaveTextContent('Stop sending matching events for to-queue?');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(engine.notificationWrites).toHaveLength(0);
+    dialog = await startDelete();
+    confirmDelete(dialog);
+    expect(await screen.findByText('Event notification deleted')).toBeVisible();
+    expect(engine.notificationWrites).toHaveLength(1);
+    expect(engine.notificationWrites[0]).toContain('<Id>keep</Id>');
+    expect(engine.notificationWrites[0]).not.toContain('<Id>to-queue</Id>');
+  });
+
+  describe.each(['Create', 'Edit'])('%s verified flash', (mode) => {
+    it.each(['notifications first', 'other sections first'])('survives new Properties reads with %s', async (order) => {
+      const editing = mode === 'Edit';
+      const verify = held();
+      const notifications = held();
+      const versioning = held();
+      engine.buckets = [ALPHA];
+      let saved = '';
+      engine.parts.notification = () =>
+        editing ? notificationDocument(queueRule('to-queue')) : notificationDocument();
+      engine.writeNotifications = (body) => {
+        saved = body;
+        engine.parts.notification = () => verify.answer;
+        return { status: 204, body: '' };
+      };
+      const { router } = open(editing ? NOTIFICATION_EDIT : NOTIFICATION_CREATE);
+      const name = await screen.findByRole('textbox', { name: 'Notification name' });
+      if (editing) {
+        fireEvent.change(screen.getByRole('textbox', { name: 'Prefix (optional)' }), { target: { value: 'ready/' } });
+      } else {
+        fireEvent.change(name, { target: { value: 'new' } });
+        fireEvent.change(screen.getByRole('textbox', { name: 'Destination ARN' }), { target: { value: QUEUE } });
+      }
+      fireEvent.click(screen.getByRole('button', { name: editing ? 'Save changes' : 'Create event notification' }));
+      await waitFor(() => expect(engine.notificationReads).toHaveLength(3));
+      expect(router.state.location.pathname).toBe(editing ? NOTIFICATION_EDIT : NOTIFICATION_CREATE);
+      expect(screen.queryByText('Event notification saved')).toBeNull();
+      engine.parts.notification = () => notifications.answer;
+      engine.parts.versioning = () => versioning.answer;
+      verify.release(ok(saved));
+      expect(await screen.findByText('Event notification saved')).toBeVisible();
+      expect(router.state.location.pathname).toBe(PROPERTIES);
+      await waitFor(() => expect(engine.reads('versioning')).toHaveLength(1));
+      const releaseNotifications = async () => {
+        notifications.release(ok(saved));
+        expect(await screen.findByRole('link', { name: editing ? 'Edit to-queue' : 'Edit new' })).toBeVisible();
+      };
+      const releaseVersioning = async () => {
+        versioning.release(FULL.versioning() as Answer);
+        await waitFor(() => expect(field('Bucket Versioning', 'Bucket Versioning')).toBe('Enabled'));
+      };
+      if (order === 'notifications first') {
+        await releaseNotifications();
+        await releaseVersioning();
+      } else {
+        await releaseVersioning();
+        await releaseNotifications();
+      }
+      expect(screen.getAllByText('Event notification saved')).toHaveLength(1);
+    });
+  });
+
+  it.each(['verification first', 'other sections first'])(
+    'confirms deletion once with %s even when a section goes missing',
+    async (order) => {
+      await openBucket({ notification: () => notificationDocument(queueRule('to-queue')) });
+      const verify = held();
+      const versioning = held();
+      engine.writeNotifications = () => {
+        engine.parts.notification = () => verify.answer;
+        return { status: 204, body: '' };
+      };
+      confirmDelete(await startDelete());
+      await waitFor(() => expect(engine.notificationReads).toHaveLength(3));
+      engine.parts.versioning = () => versioning.answer;
+      fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+      await waitFor(() => expect(engine.reads('versioning')).toHaveLength(2));
+      engine.parts.notification = () => notificationDocument();
+      const releaseVersioning = async () => {
+        versioning.release(errorAnswer(404, 'NoSuchBucket', 'Bucket missing'));
+        expect(await screen.findByText('Bucket not found')).toBeVisible();
+      };
+      if (order === 'other sections first') {
+        await releaseVersioning();
+        expect(screen.queryByText('Event notification deleted')).toBeNull();
+      }
+      verify.release(notificationDocument());
+      expect(await screen.findByText('Event notification deleted')).toBeVisible();
+      if (order === 'verification first') await releaseVersioning();
+      expect(screen.queryByRole('dialog', { name: 'Delete event notification' })).toBeNull();
+      expect(screen.getAllByText('Event notification deleted')).toHaveLength(1);
+      expect(engine.notificationWrites).toHaveLength(1);
+      expect(engine.notificationWrites[0]).not.toContain('<QueueConfiguration');
+    },
+  );
+
+  it('refuses to replace the configuration when the fresh read fails, with read recovery', async () => {
+    await openBucket({ notification: () => notificationDocument(queueRule('to-queue')) });
+    const dialog = await startDelete();
+    engine.parts.notification = () => errorAnswer(400, 'InvalidRequest', 'Fresh read refused');
+    confirmDelete(dialog);
+    expect(await screen.findByText(/Fresh read refused/)).toBeVisible();
+    expect(engine.notificationWrites).toEqual([]);
+    expect(screen.getByRole('button', { name: 'Delete to-queue' })).toBeDisabled();
+    engine.parts.notification = () => notificationDocument(queueRule('to-queue'));
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByRole('button', { name: 'Delete to-queue' })).toBeEnabled();
+  });
+
+  it.each([
+    [403, 'AccessDenied', 'You may not delete this notification', false],
+    [501, 'NotImplemented', 'PutBucketNotificationConfiguration', true],
+  ])('shows a failed delete status %s and preserves the action', async (status, code, detail, disabled) => {
+    await openBucket({ notification: () => notificationDocument(queueRule('to-queue')) });
+    engine.writeNotifications = () => errorAnswer(status, code, detail);
+    confirmDelete(await startDelete());
+    expect(await screen.findByText(new RegExp(detail))).toBeVisible();
+    expect(screen.queryByText('Event notification deleted')).toBeNull();
+    const button = screen.getByRole('button', { name: 'Delete to-queue' });
+    if (disabled) {
+      expect(button).toBeDisabled();
+      expect(screen.getByText('Not implemented by the emulator')).toBeVisible();
+    } else expect(button).toBeEnabled();
+  });
+
+  it.each(['failure', 'different configuration'])('only repeats the verification read after %s', async (mode) => {
+    await openBucket({ notification: () => notificationDocument(queueRule('to-queue')) });
+    engine.writeNotifications = () => {
+      engine.parts.notification = () =>
+        mode === 'failure'
+          ? errorAnswer(400, 'InvalidRequest', 'Readback refused')
+          : notificationDocument(queueRule('to-queue'));
+      return { status: 204, body: '' };
+    };
+    confirmDelete(await startDelete());
+    const retry = await screen.findByRole('button', { name: 'Check again' });
+    expect(screen.queryByText('Event notification deleted')).toBeNull();
+    if (mode === 'failure') expect(screen.getByText(/Readback refused/)).toBeVisible();
+    else {
+      expect(screen.getByText('The saved configuration differs from the requested change.')).toBeVisible();
+      expect(screen.getByRole('heading', { name: 'Observed event notifications' })).toBeVisible();
+    }
+    const reads = engine.notificationReads.length;
+    engine.parts.notification = () => notificationDocument();
+    fireEvent.click(retry);
+    expect(await screen.findByText('Event notification deleted')).toBeVisible();
+    expect(engine.notificationReads.length).toBeGreaterThan(reads);
+    expect(engine.notificationWrites).toHaveLength(1);
+  });
+
+  describe.each(['leave', 'switch target'])('while deleting, %s', (cause) => {
+    it.each(['pre-write read', 'verification success', 'verification failure'])('abandons a held %s', async (step) => {
+      connection.set({ ...connectedResult(), target: 'first' });
+      const original = notificationDocument(queueRule('to-queue'));
+      const { router } = await openBucket({ notification: () => original });
+      const pending = held();
+      if (step === 'pre-write read') engine.parts.notification = () => pending.answer;
+      else {
+        engine.writeNotifications = () => {
+          engine.parts.notification = () => pending.answer;
+          return { status: 204, body: '' };
+        };
+      }
+      confirmDelete(await startDelete());
+      await waitFor(() => expect(engine.notificationReads).toHaveLength(step === 'pre-write read' ? 2 : 3));
+      const request = engine.notificationReads.at(-1);
+      engine.parts.notification = () => original;
+      if (cause === 'leave') await act(() => router.navigate('/'));
+      else {
+        connection.set({ ...connectedResult(), target: 'second' });
+        expect(await screen.findByRole('button', { name: 'Delete to-queue' })).toBeEnabled();
+      }
+      expect(request?.signal.aborted).toBe(true);
+      const reads = engine.notificationReads.length;
+      await act(async () => {
+        pending.release(
+          step === 'verification failure' ? errorAnswer(400, 'InvalidRequest', 'Late failure') : notificationDocument(),
+        );
+        await pending.answer;
+      });
+      expect(engine.notificationReads).toHaveLength(reads);
+      expect(engine.notificationWrites).toHaveLength(step === 'pre-write read' ? 0 : 1);
+      expect(screen.queryByText('Event notification deleted')).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Check again' })).toBeNull();
+      expect(router.state.location.pathname).toBe(cause === 'leave' ? '/' : PROPERTIES);
+    });
   });
 });

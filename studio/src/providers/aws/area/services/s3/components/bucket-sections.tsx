@@ -13,9 +13,11 @@ import type { AreaConnection } from '../../../components/emulator-line';
 import { creationDateText } from '../../../components/format-date';
 import { useFollow } from '../../../components/use-follow';
 import { ValueText, type ValueKind } from '../../../components/value-text';
-import { NO_SUCH_BUCKET, type Bucket, type EventNotification, type NoSuchBucket, type Tag } from '../api';
-import { createEventNotificationPath, editPropertyPath, encryptionTypeLabel, type EditableProperty } from '../format';
+import { NO_SUCH_BUCKET, type Bucket, type NoSuchBucket, type Tag } from '../api';
+import { editPropertyPath, encryptionTypeLabel, type EditableProperty } from '../format';
 import type { BucketRead } from '../queries';
+import type { EditableNotification } from '../notifications';
+import { NotificationSection } from './notification-section';
 import { regionText } from '../regions';
 import { sectionFailure } from './bucket-read';
 import { StateLineText } from './bucket-read-state';
@@ -211,37 +213,26 @@ const TAG_COLUMNS: readonly Column<Tag>[] = [
   { id: 'value', header: 'Value', kind: 'text', cell: (tag) => tag.value },
 ];
 
-const NOTIFICATION_COLUMNS: readonly Column<EventNotification>[] = [
-  { id: 'name', header: 'Event name', kind: 'name', cell: (notification) => notification.name },
-  {
-    id: 'events',
-    header: 'Event types',
-    kind: 'fixed',
-    cell: (notification) => (notification.events.length === 0 ? undefined : notification.events.join(', ')),
-  },
-  { id: 'prefix', header: 'Prefix', kind: 'text', cell: (notification) => notification.prefix },
-  { id: 'suffix', header: 'Suffix', kind: 'text', cell: (notification) => notification.suffix },
-  {
-    id: 'destination-type',
-    header: 'Destination type',
-    kind: 'fixed',
-    cell: (notification) => notification.destinationType,
-  },
-  { id: 'destination', header: 'Destination', kind: 'address', cell: (notification) => notification.destination },
-];
-
 interface BucketSectionsProps {
   /** The bucket as the page's `ListBuckets` found it. */
   bucket: Bucket;
   reads: BucketSectionReads;
   connection: AreaConnection;
+  deleteNotificationDisabled: boolean;
+  onDeleteNotification: (target: EditableNotification) => void;
 }
 
 /**
  * The six sections of a bucket's "Properties" (R5.3; issue 480: the overview, versioning, tags, encryption, event
  * notifications and website, what the tasks a developer does locally read), in the spec's order.
  */
-export function BucketSections({ bucket, reads, connection }: BucketSectionsProps) {
+export function BucketSections({
+  bucket,
+  reads,
+  connection,
+  deleteNotificationDisabled,
+  onDeleteNotification,
+}: BucketSectionsProps) {
   const { name } = bucket;
   return (
     <SpaceBetween size="l">
@@ -285,14 +276,18 @@ export function BucketSections({ bucket, reads, connection }: BucketSectionsProp
           { label: 'Bucket Key', kind: 'fixed', value: bucketKey },
         ]}
       />
-      <TableSection
-        title="Event notifications"
-        action={{ label: 'Create event notification', href: createEventNotificationPath(name) }}
-        read={reads.notifications}
-        connection={connection}
-        rows={({ notifications }) => notifications}
-        columns={NOTIFICATION_COLUMNS}
-        empty={{ title: 'No event notifications', text: 'This bucket sends no event notifications.' }}
+      <NotificationSection
+        bucket={name}
+        configuration={reads.notifications.failure === undefined ? answered(reads.notifications) : undefined}
+        loading={reads.notifications.loading}
+        failure={
+          reads.notifications.failure === undefined ? undefined : (
+            <SectionFailure read={reads.notifications} connection={connection} />
+          )
+        }
+        unsupported={reads.notifications.failure?.kind === 'not-implemented'}
+        deleteDisabled={deleteNotificationDisabled}
+        onDelete={onDeleteNotification}
       />
       <FieldsSection
         title="Static website hosting"
