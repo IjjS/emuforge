@@ -1763,6 +1763,40 @@ describe('bucket event notifications', () => {
     );
   });
 
+  it('keeps actions and the copyable destination in the first column at narrow widths', async () => {
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(private readonly onResize: ResizeObserverCallback) {}
+
+        observe(element: Element) {
+          if (element.querySelector('th')?.textContent?.trim() === 'Event name') {
+            this.onResize([{ target: element, contentRect: { width: 348 } } as ResizeObserverEntry], this);
+          }
+        }
+
+        unobserve() {}
+
+        disconnect() {}
+      },
+    );
+
+    await openBucket(FULL);
+    const notificationSection = within(section('Event notifications'));
+    const row = notificationSection.getByRole('link', { name: 'Edit to-queue' }).closest('tr');
+    const firstCell = row?.cells[0];
+    if (firstCell === undefined) throw new Error('Expected the first notification cell');
+    const controls = within(firstCell);
+    expect(controls.getByRole('link', { name: 'Edit to-queue' })).toBeVisible();
+    expect(controls.getByRole('button', { name: 'Delete to-queue' })).toBeVisible();
+    expect(controls.getByRole('link', { name: 'Open queue' })).toBeVisible();
+    expect(controls.getByRole('button', { name: 'Copy Destination ARN' })).toBeVisible();
+    expect(firstCell).toHaveTextContent(QUEUE);
+    for (const column of ['Event types', 'Prefix', 'Suffix', 'Destination type']) {
+      expect(notificationSection.getByRole('columnheader', { name: column })).toBeVisible();
+    }
+  });
+
   const ids = ['.', '..', '~.', '~..', 'parent/child', 'literal%2F'];
   it.each(ids)('follows and freshly opens the exact rule with ID %s', async (id) => {
     const { router, unmount } = await openBucket({
