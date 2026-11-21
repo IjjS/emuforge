@@ -1,7 +1,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useId, useLayoutEffect, useRef, useState } from 'react';
 
-import { reportedServiceCode, requestFailure } from '../../../../../lib/aws/request';
+import { bindAwsMutationAuthorization, reportedServiceCode, requestFailure } from '../../../../../lib/aws/request';
 import type { FlashItem } from '../../components/page-flash';
 import { lambdaKey } from './queries';
 import {
@@ -136,15 +136,25 @@ export function useReleaseMutation({ endpoint, name, scope, onSuccess, onFailure
       change: ReleaseChange;
       signal: AbortSignal;
       scope: string;
-    }) => changeRelease(endpoint, name, change, signal),
+    }) => {
+      signal.throwIfAborted();
+      return changeRelease(endpoint, name, change, signal);
+    },
   });
 
   /** True when the action succeeded or is unsupported, so its dialog can close. */
   async function submit(change: ReleaseChange, showInline?: InlineReleaseRefusal): Promise<boolean> {
-    if (endpoint === undefined || inFlight.current !== undefined || state.unsupported.has(change.operation)) {
+    if (
+      endpoint === undefined ||
+      !navigator.onLine ||
+      inFlight.current !== undefined ||
+      state.unsupported.has(change.operation)
+    ) {
       return false;
     }
     const controller = new AbortController();
+    // TanStack can pause before mutationFn starts, so bind the submission at confirmation.
+    const dispose = bindAwsMutationAuthorization(controller);
     inFlight.current = { scope, controller };
     try {
       const result = await mutation.mutateAsync({ endpoint, name, change, signal: controller.signal, scope });
@@ -165,6 +175,7 @@ export function useReleaseMutation({ endpoint, name, scope, onSuccess, onFailure
       onFailure(failure, unsupported ? undefined : showInline);
       return unsupported;
     } finally {
+      dispose();
       if (inFlight.current?.controller === controller) {
         inFlight.current = undefined;
       }

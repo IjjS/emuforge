@@ -1,6 +1,6 @@
 import Flashbar from '@cloudscape-design/components/flashbar';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { onlineManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, waitFor } from '@testing-library/react';
 import { useState } from 'react';
 import { MemoryRouter } from 'react-router';
@@ -111,16 +111,14 @@ afterEach(() => vi.unstubAllGlobals());
 
 function renderTab() {
   const root = { current: null as HTMLDivElement | null };
-  const connection: AreaConnection = {
-    engineOrigin: `http://127.0.0.1:${enginePort}`,
-    result: {
-      kind: 'connected',
-      checkedAt: 0,
-      emulator: { port: 9305, endpoint: 'https://127.0.0.1:9305' },
-    },
+  const connected = {
+    kind: 'connected' as const,
+    checkedAt: 0,
+    emulator: { port: 9305, endpoint: 'https://127.0.0.1:9305' },
   };
+  const connection: AreaConnection = { engineOrigin: `http://127.0.0.1:${enginePort}`, result: connected };
 
-  function ReleasePage() {
+  function ReleasePage({ connection }: { connection: AreaConnection }) {
     const [flash, show] = useState<FlashResult>();
     return (
       <AreaRootContext.Provider value={root}>
@@ -138,13 +136,24 @@ function renderTab() {
     );
   }
 
-  render(
-    <QueryClientProvider client={new QueryClient()}>
-      <MemoryRouter initialEntries={[functionTabHref('orders', 'versions')]}>
-        <ReleasePage />
-      </MemoryRouter>
-    </QueryClientProvider>,
-  );
+  const client = new QueryClient();
+  function app(connection: AreaConnection) {
+    return (
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={[functionTabHref('orders', 'versions')]}>
+          <ReleasePage connection={connection} />
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+  }
+  const { rerender, unmount } = render(app(connection));
+  return {
+    client,
+    unmount,
+    replaceHealth: () => {
+      rerender(app({ ...connection, result: { ...connected, checkedAt: Date.now() + 1 } }));
+    },
+  };
 }
 
 const PAGE = createWrapper(document.body);
@@ -417,6 +426,57 @@ describe('Release actions', () => {
     expect(PAGE.findModal()).toBeNull();
     expectAlias('live', '1');
     expect(engine.count('DeleteAlias')).toBe(0);
+  });
+
+  it('cancels a paused alias deletion at native disconnect before it can reach a same-name replacement', async () => {
+    const wasOnline = onlineManager.isOnline();
+    const browserOnline = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true);
+    const { client, unmount, replaceHealth } = renderTab();
+    try {
+      await waitForBothLists();
+      const confirm = await prepareAction('DeleteAlias');
+      act(() => onlineManager.setOnline(false));
+      fireEvent.click(confirm);
+      const [queued] = client.getMutationCache().getAll();
+      await waitFor(() => expect(queued?.state.isPaused).toBe(true));
+      expect(engine.count('DeleteAlias')).toBe(0);
+
+      const detail = holdResponse();
+      await act(async () => {
+        browserOnline.mockReturnValue(false);
+        window.dispatchEvent(new Event('offline'));
+
+        engine.aliases = { live: '2' };
+        engine.handlers.DeleteAlias = () => succeed('DeleteAlias');
+        engine.handlers.GetFunction = async () => (await detail.promise).clone();
+        browserOnline.mockReturnValue(true);
+        // Resume in the same React batch so a newly committed page scope cannot be the only guard.
+        window.dispatchEvent(new Event('online'));
+        await client.resumePausedMutations();
+      });
+      expect(PAGE.findModal()).toBeNull();
+      expect(queued?.state.error).toMatchObject({ name: 'AbortError' });
+      expect(engine.count('DeleteAlias')).toBe(0);
+      expectNoPageFlash();
+
+      const reads = engine.count('GetFunction');
+      replaceHealth();
+      await waitFor(() => expect(engine.count('GetFunction')).toBeGreaterThan(reads));
+      expect(engine.count('DeleteAlias')).toBe(0);
+      await settle(detail, functionAnswer('Replacement function details'));
+      await waitFor(() => expectAlias('live', '2'));
+      engine.handlers.GetFunction = () => functionAnswer('Replacement function details');
+      expect(engine.count('DeleteAlias')).toBe(0);
+      expectNoPageFlash();
+
+      fireEvent.click(await prepareAction('DeleteAlias'));
+      await waitFor(() => expectPageFlash('success', 'Deleted alias live.'));
+      expect(engine.count('DeleteAlias')).toBe(1);
+    } finally {
+      unmount();
+      browserOnline.mockRestore();
+      onlineManager.setOnline(wasOnline);
+    }
   });
 
   it.each(actions)('%s submits once while pending and identifies its success', async (operation, message) => {
