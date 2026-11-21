@@ -259,8 +259,13 @@ it.each(['Keep editing', 'Escape', 'Close'])('%s restores the draft and Cancel f
   cancelButton().focus();
   fireEvent.click(cancelButton());
   const dialog = await screen.findByRole('dialog', { name: 'Discard what you entered?' });
-  if (answer === 'Escape') fireEvent.keyDown(dialog, { key: 'Escape', keyCode: 27 });
-  else fireEvent.click(within(dialog).getByRole('button', { name: answer }));
+  if (answer === 'Escape') {
+    const keepEditing = within(dialog).getByRole('button', { name: 'Keep editing' });
+    keepEditing.focus();
+    fireEvent.keyDown(keepEditing, { key: 'Escape', code: 'Escape', keyCode: 27 });
+  } else {
+    fireEvent.click(within(dialog).getByRole('button', { name: answer }));
+  }
   await waitFor(() => expect(dialog).not.toBeInTheDocument());
   await waitFor(() => expect(cancelButton()).toHaveFocus());
   expect(nameField()).toHaveValue('new');
