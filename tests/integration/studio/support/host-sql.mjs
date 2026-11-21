@@ -15,7 +15,7 @@ const client = new SQL({
 try {
   const rows =
     adapter === 'mysql'
-      ? await client`SELECT DATABASE() AS db, 578 AS marker`
+      ? await client`SELECT DATABASE() AS db, 578 AS marker`.simple()
       : await client`SELECT current_database() AS db, 578 AS marker`;
   console.log(JSON.stringify(rows[0]));
 } catch (error) {
