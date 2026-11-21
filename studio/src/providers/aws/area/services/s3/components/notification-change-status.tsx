@@ -18,12 +18,14 @@ export function NotificationChangeStatus({
   connection,
   action,
   destination,
+  showObserved = true,
   onRefresh,
 }: {
   change: NotificationChangeControl;
   connection: AreaConnection;
   action: 'Saving' | 'Deleting';
   destination?: DestinationType;
+  showObserved?: boolean;
   onRefresh: () => void;
 }) {
   const { state } = change;
@@ -67,7 +69,7 @@ export function NotificationChangeStatus({
             </>
           )}
         </Alert>
-        {observed !== undefined && (
+        {showObserved && observed !== undefined && (
           <NotificationTable
             configuration={observed}
             header={() => (

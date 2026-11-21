@@ -20,7 +20,7 @@ import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
 import { ValueText } from '../../../components/value-text';
 import type { ScreenPageProps } from '../../../screens';
-import { NO_SUCH_BUCKET, type NotificationConfiguration } from '../api';
+import { NO_SUCH_BUCKET, type NotificationConfiguration, type NoSuchBucket } from '../api';
 import { connectionStatus, pageFailure } from '../components/bucket-read';
 import { BucketNotFound, BucketReadFailure } from '../components/bucket-read-state';
 import { NotificationChangeStatus } from '../components/notification-change-status';
@@ -60,23 +60,34 @@ export function NotificationPage({ connection, params }: ScreenPageProps) {
   const flash = usePageFlash();
   useShowsResources('buckets');
   const [generation, setGeneration] = useState(0);
+  const [submittedDestination, setSubmittedDestination] = useState<NotificationDraft['type']>();
   const read = useBucketProperty(connection.engineOrigin, bucket, 'notifications', { generation, enabled: true });
-  const change = useNotificationChange(connection.engineOrigin, bucket, () => {
-    flash.handOver(properties, [{ type: 'success', content: 'Event notification saved' }]);
-  });
+  const [readback, setReadback] = useState<{
+    generation: number;
+    value: NotificationConfiguration | NoSuchBucket;
+  }>();
+  const change = useNotificationChange(
+    connection.engineOrigin,
+    bucket,
+    () => flash.handOver(properties, [{ type: 'success', content: 'Event notification saved' }]),
+    (value) => setReadback({ generation, value }),
+  );
 
   const status = connectionStatus(connection);
   const disconnected = status !== undefined;
   const [wasDisconnected, setWasDisconnected] = useState(false);
   if (wasDisconnected !== disconnected) {
     setWasDisconnected(disconnected);
-    if (!disconnected && !change.pending && change.state.kind !== 'unconfirmed') {
+    if (!disconnected) {
       setGeneration((current) => current + 1);
     }
   }
 
   const id = eventNotificationId(params.id);
-  const configuration = read.value;
+  // A verification read belongs to the editor's read generation at the time it began.
+  // A reconnect opens a fresh generation so a delayed answer cannot replace its result.
+  const currentReadback = readback?.generation === generation ? readback : undefined;
+  const configuration = currentReadback?.value ?? read.value;
   const rules = configuration === undefined || configuration === NO_SUCH_BUCKET ? [] : notificationRules(configuration);
   const counts = notificationIdCounts(rules);
   const target = rules.find((rule) => rule.data.Id === id && editableNotification(rule, counts));
@@ -90,6 +101,12 @@ export function NotificationPage({ connection, params }: ScreenPageProps) {
           ? 'More than one notification has this name.'
           : 'Only queue and function notifications can be edited.';
   const unsupportedRead = read.failure?.kind === 'not-implemented';
+
+  const returnLink = (
+    <Link href={properties} onFollow={follow}>
+      Return to Properties
+    </Link>
+  );
 
   function handleRefresh() {
     change.clear();
@@ -108,18 +125,24 @@ export function NotificationPage({ connection, params }: ScreenPageProps) {
       >
         {editing ? EDIT_TITLE : CREATE_TITLE}
       </Header>
+      <NotificationChangeStatus
+        change={change}
+        connection={connection}
+        action="Saving"
+        showObserved={!disconnected && currentReadback !== undefined}
+        {...(submittedDestination === undefined ? {} : { destination: submittedDestination })}
+        onRefresh={handleRefresh}
+      />
       {editing && id === undefined ? (
         <Container>
           <SpaceBetween size="s">
             <Box>{editProblem}</Box>
-            <Link href={properties} onFollow={follow}>
-              Return to Properties
-            </Link>
+            {returnLink}
           </SpaceBetween>
         </Container>
-      ) : disconnected && !change.locked && !unsupportedRead ? (
+      ) : disconnected && !unsupportedRead ? (
         <BucketReadFailure view={{ type: status.type, first: status, recovery: true }} onRetry={read.again} />
-      ) : read.failure !== undefined ? (
+      ) : currentReadback === undefined && read.failure !== undefined ? (
         <SpaceBetween size="s">
           <BucketReadFailure
             view={pageFailure(read.failure, connection, 'The event notifications could not be read')}
@@ -135,7 +158,10 @@ export function NotificationPage({ connection, params }: ScreenPageProps) {
           )}
         </SpaceBetween>
       ) : configuration === NO_SUCH_BUCKET ? (
-        <BucketNotFound name={bucket} />
+        <SpaceBetween size="s">
+          <BucketNotFound name={bucket} />
+          {editing && returnLink}
+        </SpaceBetween>
       ) : configuration === undefined ? (
         <Container>
           <StatusIndicator type="loading">Loading event notifications</StatusIndicator>
@@ -144,9 +170,7 @@ export function NotificationPage({ connection, params }: ScreenPageProps) {
         <Container>
           <SpaceBetween size="s">
             <Box>{editProblem}</Box>
-            <Link href={properties} onFollow={follow}>
-              Return to Properties
-            </Link>
+            {returnLink}
           </SpaceBetween>
         </Container>
       ) : (
@@ -157,7 +181,7 @@ export function NotificationPage({ connection, params }: ScreenPageProps) {
           change={change}
           connection={connection}
           onLeave={() => void navigate(properties)}
-          onRefresh={handleRefresh}
+          onSubmitDestination={setSubmittedDestination}
         />
       )}
     </SpaceBetween>
@@ -170,14 +194,14 @@ function NotificationForm({
   change,
   connection,
   onLeave,
-  onRefresh,
+  onSubmitDestination,
 }: {
   configuration: NotificationConfiguration;
   target: EditableNotification | undefined;
   change: NotificationChangeControl;
   connection: AreaConnection;
   onLeave: () => void;
-  onRefresh: () => void;
+  onSubmitDestination: (destination: NotificationDraft['type']) => void;
 }) {
   const [initial] = useState(() => notificationDraft(target));
   const [draft, setDraft] = useState(initial);
@@ -224,6 +248,7 @@ function NotificationForm({
       return;
     }
     const savedDraft = { ...draft, id, arn };
+    onSubmitDestination(draft.type);
     change.submit(
       target === undefined ? { kind: 'create', draft: savedDraft } : { kind: 'edit', target, draft: savedDraft },
     );
@@ -265,13 +290,6 @@ function NotificationForm({
         }
       >
         <SpaceBetween size="l">
-          <NotificationChangeStatus
-            change={change}
-            connection={connection}
-            action="Saving"
-            destination={draft.type}
-            onRefresh={onRefresh}
-          />
           <Container header={<Header variant="h2">Notification rule</Header>}>
             <SpaceBetween size="l">
               <FormField label="Notification name" errorText={invalidAttempt === undefined ? undefined : idError}>
