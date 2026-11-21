@@ -110,6 +110,7 @@ export function BucketPage({ connection, params }: ScreenPageProps) {
   const [wasDown, setWasDown] = useState(down);
   if (down && !wasDown) {
     setWasDown(true);
+    setDeleting(undefined);
   }
   // "Bucket refreshed", once the page's read and, on a page shown, every section's read have answered again (R5.6).
   const sectionsReading = state.kind === 'loaded' && Object.values(sections).some((read) => read.loading);
@@ -213,7 +214,7 @@ export function BucketPage({ connection, params }: ScreenPageProps) {
         {state.kind === 'loaded' && (
           <Tabs tabs={tabs(state.value)} activeTabId={tab} keyboardActivationMode="manual" onChange={handleTabChange} />
         )}
-        {deleting !== undefined && state.kind === 'loaded' && (
+        {deleting !== undefined && state.kind === 'loaded' && !down && (
           <DeleteNotificationDialog
             target={deleting}
             onCancel={() => setDeleting(undefined)}

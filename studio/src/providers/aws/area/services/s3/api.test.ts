@@ -579,13 +579,28 @@ describe('the reads of a bucket’s page', () => {
     }
     const create = replaceNotification(original, {
       kind: 'create',
-      draft: { ...notificationDraft(), id: 'new', arn: 'arn:aws:sqs:us-east-1:000000000000:new' },
+      draft: {
+        ...notificationDraft(),
+        id: 'new',
+        arn: 'arn:aws:sqs:us-east-1:000000000000:new',
+        prefix: 'uploads/',
+        suffix: '.json',
+      },
     });
     if (!('configuration' in create)) throw new Error('Creation refused');
     expect(notificationRules(create.configuration).filter((rule) => rule.data.Id !== 'new')).toEqual(rules);
     expect(create.configuration.EventBridgeConfiguration).toEqual({});
     await putBucketNotificationConfiguration(endpoint, 'b', create.configuration, signal());
-    expect(await engine.sent.at(-1)?.text()).toContain('<Id>new</Id>');
+    const request = engine.sent.at(-1);
+    if (request === undefined) throw new Error('Missing create notification request');
+    const newQueue =
+      '<QueueConfiguration><Id>new</Id><Queue>arn:aws:sqs:us-east-1:000000000000:new</Queue>' +
+      `<Event>s3:ObjectCreated:*</Event>${filter(['prefix', 'uploads/'], ['suffix', '.json'])}</QueueConfiguration>`;
+    expect(request.method).toBe('PUT');
+    expect(new URL(request.url).searchParams.has('notification')).toBe(true);
+    expect(parseXml(await request.text())).toEqual(
+      parseXml(configurationXml(topic, originalQueue, newQueue, originalLambda)),
+    );
   });
 
   it('represents an empty notification document without enabling EventBridge', async () => {
