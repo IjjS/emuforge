@@ -1,3 +1,4 @@
+import createWrapper from '@cloudscape-design/components/test-utils/selectors';
 import type { NotificationConfiguration } from '@aws-sdk/client-s3';
 import { expect, startStack, test } from './support';
 import { LocalNotifications, topicSettings } from './support/bucket-notifications';
@@ -95,9 +96,9 @@ test('studio.s3-notification-refused-destination-keeps-draft', async ({ ctx, pag
   await openCreate(page, f.bucket);
   await fillRule(page, 'denied', arn, 'SQS queue', 's3:ObjectCreated:Put');
   await submitCreate(page).click();
-  const alert = page
-    .getByRole('main')
-    .locator(wrappers.findAlert('[class*="awsui_type-error"]').findContent().toSelector());
+  const alert = page.locator(
+    createWrapper('main').findAlert(':has([class*="awsui_type-error"])').findContent().toSelector(),
+  );
   await expect(alert).toContainText('InvalidArgument');
   await expect(alert).toContainText('Unable to validate the following destination configurations');
   await expect(alert).toContainText('Check that the queue policy allows S3 to send messages from this bucket');
