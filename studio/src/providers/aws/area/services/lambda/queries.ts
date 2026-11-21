@@ -311,6 +311,7 @@ export interface FunctionReadingOptions {
   connected: boolean;
   disconnected?: boolean;
   emulatorIdentity?: string | undefined;
+  /** Read the function anew when a confirmed session replaces another session or the initial check. */
   revalidateOnReconnect?: boolean;
 }
 
@@ -346,6 +347,7 @@ export function useFunctionReading({
   const [readings, setReadings] = useState(0);
   const generation = useListingGeneration(endpoint);
   const [connection, setConnection] = useState({
+    connected,
     disconnected,
     emulatorIdentity,
     epoch: Number(disconnected),
@@ -353,15 +355,19 @@ export function useFunctionReading({
   });
   const changedTarget =
     connected && connection.emulatorIdentity !== undefined && connection.emulatorIdentity !== emulatorIdentity;
-  const epoch = connection.epoch + Number((disconnected && !connection.disconnected) || changedTarget);
+  // A detail fetched while the connection check was pending belongs to no confirmed session.
+  const connectedFromChecking = connected && !connection.connected && !connection.disconnected;
+  const epoch =
+    connection.epoch + Number((disconnected && !connection.disconnected) || changedTarget || connectedFromChecking);
   const readingEpoch = connected && revalidateOnReconnect ? epoch : connection.readingEpoch;
   const identity = connected ? emulatorIdentity : connection.emulatorIdentity;
   if (
+    connection.connected !== connected ||
     connection.disconnected !== disconnected ||
     identity !== connection.emulatorIdentity ||
     readingEpoch !== connection.readingEpoch
   ) {
-    setConnection({ disconnected, emulatorIdentity: identity, epoch, readingEpoch });
+    setConnection({ connected, disconnected, emulatorIdentity: identity, epoch, readingEpoch });
   }
   /** This reading's re-reads: `quiet` while one is in flight or has failed; `stopped` once one has failed. */
   const [rereading, setRereading] = useState({ reading: 0, epoch: 0, quiet: false, stopped: false });
@@ -417,7 +423,7 @@ export function useFunctionReading({
     failure: failed ? failureOf(query.error, 'GetFunction') : undefined,
     loading: data === undefined && (isFetching || endpoint === undefined),
     session: epoch,
-    sessionVerified: readingEpoch === epoch,
+    sessionVerified: connected && readingEpoch === epoch,
     refresh,
   };
 }

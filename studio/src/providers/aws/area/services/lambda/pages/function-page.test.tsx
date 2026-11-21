@@ -2039,6 +2039,51 @@ describe('"Delete" in the header', () => {
     },
   );
 
+  it('requires a fresh detail read and explicit confirmation after the first connected status', async () => {
+    const beforeConnection = deferredAnswer();
+    const afterConnection = deferredAnswer();
+    connection.value = { engineOrigin, result: undefined };
+    engine.functions = [{ ...ORDERS, description: 'Read while checking the connection' }];
+    engine.answerFunction = () => beforeConnection.promise;
+    const { router } = open(pagePath('orders'));
+
+    const functionRequest = { method: 'GET', url: new URL('/2015-03-31/functions/orders', engineOrigin) };
+    await waitFor(() => expect(engine.gets).toHaveLength(1));
+    await act(async () => beforeConnection.resolve(engine.emulator(functionRequest)));
+    await waitFor(() => {
+      expect(value('Function overview', 'Description')).toBe('Read while checking the connection');
+    });
+    const checkingDelete = pageDeleteAction();
+    expect(checkingDelete?.getElement()).toHaveTextContent('Delete');
+    expect(checkingDelete?.getElement()).toBeDisabled();
+    checkingDelete?.click();
+    expect(deletionDialog()).toBeUndefined();
+    expect(deleteRequests()).toEqual([]);
+
+    engine.functions = [{ ...ORDERS, description: 'Verified in the first connected session' }];
+    engine.answerFunction = () => afterConnection.promise;
+    connection.set(connectedResult());
+    await waitFor(() => expect(engine.gets).toHaveLength(2));
+    const pendingDelete = pageDeleteAction();
+    pendingDelete?.click();
+    expect(pendingDelete).toBeUndefined();
+    expect(deletionDialog()).toBeUndefined();
+    expect(deleteRequests()).toEqual([]);
+
+    engine.answerFunction = (request) => engine.emulator(request);
+    await act(async () => afterConnection.resolve(engine.emulator(functionRequest)));
+    await waitFor(() => {
+      expect(value('Function overview', 'Description')).toBe('Verified in the first connected session');
+    });
+    await openDialog();
+    expectFreshConfirmation('orders');
+    expect(deleteRequests()).toEqual([]);
+
+    deletionControls().submit.click();
+    await waitFor(() => expect(router.state.location.pathname).toBe('/aws/lambda/functions'));
+    expect(deleteRequests()).toEqual(['orders']);
+  });
+
   it.each(['Test', 'Code'] as const)(
     'blocks deletion from %s until a same-endpoint, same-name replacement is verified',
     async (tab) => {
