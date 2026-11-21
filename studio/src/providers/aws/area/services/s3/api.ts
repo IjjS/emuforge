@@ -317,7 +317,7 @@ export function putBucketNotificationConfiguration(
   bucket: string,
   configuration: NotificationConfiguration,
   signal: AbortSignal,
-): Promise<void | NoSuchBucket> {
+): Promise<undefined | NoSuchBucket> {
   return onBucket(
     endpoint,
     OPERATIONS.putBucketNotificationConfiguration,

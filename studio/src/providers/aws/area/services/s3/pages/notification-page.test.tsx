@@ -1,8 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
-import { useSyncExternalStore } from 'react';
-import { createMemoryRouter, RouterProvider } from 'react-router';
+import { useState, useSyncExternalStore } from 'react';
+import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { engineEndpoint } from '../../../../../../lib/aws/client-factory';
@@ -28,6 +27,14 @@ const response = (body = EMPTY) => new Response(body, { status: 200 });
 const refusal = (status: number, code: string, message: string) =>
   new Response(`<Error><Code>${code}</Code><Message>${message}</Message></Error>`, { status });
 
+function heldResponse() {
+  let resolve: (response: Response) => void = () => undefined;
+  const promise = new Promise<Response>((release) => {
+    resolve = release;
+  });
+  return { promise, resolve };
+}
+
 function connected(target: string): AreaConnection['result'] {
   return { kind: 'connected', checkedAt: 0, emulator: { port: 9305, endpoint: 'https://127.0.0.1:9305' }, target };
 }
@@ -36,7 +43,7 @@ class FakeEngine {
   reads: Request[] = [];
   writes: string[] = [];
   document = EMPTY;
-  read = (_request: Request): Response | Promise<Response> => response(this.document);
+  read = (): Response | Promise<Response> => response(this.document);
   write = (body: string): Response => {
     this.document = body;
     return new Response(null, { status: 204 });
@@ -53,7 +60,7 @@ class FakeEngine {
         return this.write(body);
       }
       this.reads.push(request);
-      return this.read(request);
+      return this.read();
     }
     if (url.searchParams.get('x-id') === 'ListBuckets') {
       return response(
@@ -67,9 +74,14 @@ class FakeEngine {
 let engine: FakeEngine;
 let nextPort = 8800;
 let connection: AreaConnection;
+let targetGeneration = 0;
 let listener: (() => void) | undefined;
 
 function Area() {
+  const { pathname } = useLocation();
+  const [visit, setVisit] = useState({ pathname, changes: 0 });
+  const changes = visit.pathname === pathname ? visit.changes : visit.changes + 1;
+  if (visit.pathname !== pathname) setVisit({ pathname, changes });
   const current = useSyncExternalStore(
     (update) => {
       listener = update;
@@ -85,13 +97,22 @@ function Area() {
       onPageTitle={() => undefined}
       onContentTarget={() => undefined}
       connection={current}
-      routeChanges={0}
+      routeChanges={changes}
+      targetGeneration={targetGeneration}
     />
   );
 }
 
 function setConnection(result: AreaConnection['result']) {
   act(() => {
+    const previous = connection.result;
+    if (
+      previous?.kind === 'connected' &&
+      result?.kind === 'connected' &&
+      previous.target !== undefined &&
+      previous.target !== result.target
+    )
+      targetGeneration += 1;
     connection = { ...connection, result };
     listener?.();
   });
@@ -116,6 +137,7 @@ function open(path = CREATE) {
 
 beforeEach(() => {
   engine = new FakeEngine();
+  targetGeneration = 0;
   connection = { engineOrigin: engineEndpoint(++nextPort), result: connected('first') };
   vi.stubGlobal('fetch', engine.fetch);
   vi.stubGlobal('matchMedia', (media: string) => ({
@@ -194,7 +216,7 @@ it.each([
   ['SQS queue', QUEUE, 'Object PUTs', 's3:ObjectCreated:Put'],
   ['Lambda function', FUNCTION, 'All object creation events', 's3:ObjectCreated:*'],
 ])('submits one %s save while pending and serializes the event and filters', async (type, arn, label, event) => {
-  const hold = Promise.withResolvers<Response>();
+  const hold = heldResponse();
   const router = open();
   await loaded();
   engine.read = () => (engine.writes.length === 0 ? hold.promise : response(engine.document));
@@ -231,14 +253,15 @@ it.each(['clean', 'restored', 'discarded'])('cancels a %s create without writing
 });
 
 it.each(['Keep editing', 'Escape', 'Close'])('%s restores the draft and Cancel focus', async (answer) => {
-  const user = userEvent.setup();
   open();
   await loaded();
   fill();
-  await user.click(cancelButton());
+  cancelButton().focus();
+  fireEvent.click(cancelButton());
   const dialog = await screen.findByRole('dialog', { name: 'Discard what you entered?' });
-  if (answer === 'Escape') await user.keyboard('{Escape}');
-  else await user.click(within(dialog).getByRole('button', { name: answer }));
+  if (answer === 'Escape') fireEvent.keyDown(dialog, { key: 'Escape', keyCode: 27 });
+  else fireEvent.click(within(dialog).getByRole('button', { name: answer }));
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
   await waitFor(() => expect(cancelButton()).toHaveFocus());
   expect(nameField()).toHaveValue('new');
   expect(arnField()).toHaveValue(QUEUE);
@@ -282,7 +305,7 @@ it.each([
 });
 
 it('shows the loading state, retries a failed read, and handles a missing bucket', async () => {
-  const held = Promise.withResolvers<Response>();
+  const held = heldResponse();
   engine.read = () => held.promise;
   open();
   expect(await screen.findByText('Loading event notifications')).toBeVisible();
@@ -299,7 +322,7 @@ it('distinguishes engine and emulator outages, then reads fresh before allowing 
   open();
   await loaded();
   const emulator = { port: 9305, endpoint: 'https://127.0.0.1:9305' };
-  setConnection({ kind: 'engine-unreachable', checkedAt: 1 });
+  setConnection({ kind: 'engine-unreachable', checkedAt: 1, lastEmulatorPort: 9305 });
   expect(screen.getAllByText(/is not answering/).length).toBeGreaterThan(1);
   expect(screen.getAllByRole('link', { name: 'Connection status' }).length).toBeGreaterThan(1);
   expect(screen.queryByRole('textbox', { name: 'Notification name' })).toBeNull();
@@ -345,7 +368,7 @@ it.each(['failed read', 'missing rule', 'different field'])(
 
 describe.each(['leave', 'switch target'])('while saving, %s', (cause) => {
   it.each(['pre-write read', 'verification success', 'verification failure'])('abandons a held %s', async (step) => {
-    const hold = Promise.withResolvers<Response>();
+    const hold = heldResponse();
     const router = open();
     await loaded();
     fill();

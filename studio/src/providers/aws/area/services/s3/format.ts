@@ -1,4 +1,5 @@
 import { AWS_PATH } from '../../../identity';
+import { functionPath, queuePath } from '../../components/resource-paths';
 
 // The routes of S3's screens and the words S3's values are shown in (issue 56, requirement R6; issue 256,
 // requirement R0, R5.3, R10). Creation dates are written by the area's shared `components/format-date.ts`
@@ -81,11 +82,11 @@ export function notificationDestinationPath(type: string, arn: string | undefine
   if (arn === undefined) return undefined;
   if (type === 'SQS queue') {
     const name = QUEUE_ARN.exec(arn)?.[1];
-    return name === undefined ? undefined : `${AWS_PATH}/sqs/queues/queue/${segment(name)}`;
+    return name === undefined ? undefined : queuePath(name);
   }
   if (type === 'Lambda function') {
     const name = FUNCTION_ARN.exec(arn)?.[1];
-    return name === undefined ? undefined : `${AWS_PATH}/lambda/functions/function/${segment(name)}?tab=monitor`;
+    return name === undefined ? undefined : `${functionPath(name)}?tab=monitor`;
   }
   return undefined;
 }

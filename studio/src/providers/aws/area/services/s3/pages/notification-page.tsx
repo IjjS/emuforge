@@ -62,7 +62,6 @@ export function NotificationPage({ connection, params }: ScreenPageProps) {
   const read = useBucketProperty(connection.engineOrigin, bucket, 'notifications', { generation, enabled: true });
   const change = useNotificationChange(connection.engineOrigin, bucket, () => {
     flash.handOver(properties, [{ type: 'success', content: 'Event notification saved' }]);
-    void navigate(properties);
   });
 
   const status = connectionStatus(connection);
@@ -70,7 +69,9 @@ export function NotificationPage({ connection, params }: ScreenPageProps) {
   const [wasDisconnected, setWasDisconnected] = useState(false);
   if (wasDisconnected !== disconnected) {
     setWasDisconnected(disconnected);
-    if (!disconnected) setGeneration((current) => current + 1);
+    if (!disconnected && !change.pending && change.state.kind !== 'unconfirmed') {
+      setGeneration((current) => current + 1);
+    }
   }
 
   const id = eventNotificationId(params.id);

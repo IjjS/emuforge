@@ -276,6 +276,7 @@ const PROPERTIES = '/aws/s3/buckets/alpha/properties';
 /** The connection Studio hands the area, as a case sets it; each change re-renders the area as the frame does. */
 class Connection {
   value: AreaConnection = { result: undefined, engineOrigin: undefined };
+  targetGeneration = 0;
   private readonly listeners = new Set<() => void>();
 
   readonly subscribe = (listener: () => void) => {
@@ -288,6 +289,14 @@ class Connection {
   readonly get = () => this.value;
 
   set(result: CheckResult | undefined) {
+    const previous = this.value.result;
+    if (
+      previous?.kind === 'connected' &&
+      result?.kind === 'connected' &&
+      previous.target !== undefined &&
+      previous.target !== result.target
+    )
+      this.targetGeneration += 1;
     this.value = { ...this.value, result };
     act(() => {
       for (const listener of this.listeners) {
@@ -300,7 +309,7 @@ class Connection {
 const EMULATOR_PORT = 9304;
 const EMULATOR_ENDPOINT = `https://127.0.0.1:${String(EMULATOR_PORT)}`;
 
-function connectedResult(): CheckResult {
+function connectedResult(): Extract<CheckResult, { kind: 'connected' }> {
   return { kind: 'connected', checkedAt: Date.now(), emulator: { port: EMULATOR_PORT, endpoint: EMULATOR_ENDPOINT } };
 }
 
@@ -335,6 +344,7 @@ function AreaWithStudioProps() {
       onPageTitle={() => undefined}
       onContentTarget={() => undefined}
       routeChanges={changes}
+      targetGeneration={connection.targetGeneration}
       connection={current}
     />
   );
@@ -1701,7 +1711,7 @@ const NOTIFICATION_CREATE = '/aws/s3/bucket/alpha/property/event-notification/cr
 const NOTIFICATION_EDIT = '/aws/s3/bucket/alpha/property/event-notification/~to-queue/edit';
 
 function queueRule(id: string | undefined, arn = QUEUE) {
-  return `<QueueConfiguration>${id === undefined ? '' : `<Id>${xml(id)}</Id>`}<Queue>${arn}</Queue><Event>s3:ObjectCreated:Put</Event></QueueConfiguration>`;
+  return `<QueueConfiguration>${id === undefined ? '' : `<Id>${xml(id)}</Id>`}<Queue>${xml(arn)}</Queue><Event>s3:ObjectCreated:Put</Event></QueueConfiguration>`;
 }
 
 function notificationDocument(...rules: string[]) {
@@ -1728,7 +1738,7 @@ describe('bucket event notifications', () => {
       notificationDocument(
         queueRule('unique'),
         queueRule('duplicate'),
-        queueRule(undefined, 'invalid<'.replace('<', '&lt;')),
+        queueRule(undefined, 'invalid<'),
         '<TopicConfiguration><Id>duplicate</Id><Topic>arn:aws:sns:us-east-1:000000000000:topic</Topic><Event>s3:ObjectCreated:Copy</Event></TopicConfiguration>',
         '<CloudFunctionConfiguration><Id>fn</Id><CloudFunction>arn:aws:lambda:us-east-1:000000000000:function:fn:1</CloudFunction><Event>s3:ObjectCreated:Put</Event><Event>s3:ObjectRemoved:*</Event></CloudFunctionConfiguration>',
       ),
@@ -1741,7 +1751,9 @@ describe('bucket event notifications', () => {
     expect(screen.queryByRole('button', { name: 'Delete duplicate' })).toBeNull();
     expect(screen.getAllByText('Read only')).toHaveLength(3);
     expect(screen.getByText('invalid<')).toBeVisible();
-    expect(screen.getByText('s3:ObjectCreated:Put, s3:ObjectRemoved:*')).toBeVisible();
+    expect(screen.getByRole('link', { name: 'Edit fn' }).closest('tr')).toHaveTextContent(
+      's3:ObjectCreated:Put, s3:ObjectRemoved:*',
+    );
     for (const queue of screen.getAllByRole('link', { name: 'Open queue' })) {
       expect(queue).toHaveAttribute('href', '/aws/sqs/queues/queue/alpha-events');
     }

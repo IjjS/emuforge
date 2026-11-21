@@ -65,7 +65,16 @@ export function NotificationChangeStatus({
         {state.observed !== undefined && state.observed !== NO_SUCH_BUCKET && (
           <NotificationTable
             configuration={state.observed}
-            header={<Header variant="h2">Observed event notifications</Header>}
+            header={
+              <Header
+                variant="h2"
+                description={
+                  state.observed.EventBridgeConfiguration === undefined ? 'EventBridge disabled' : 'EventBridge enabled'
+                }
+              >
+                Observed event notifications
+              </Header>
+            }
           />
         )}
       </SpaceBetween>
