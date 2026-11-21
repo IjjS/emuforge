@@ -118,14 +118,6 @@ function result(): HTMLElement {
   return (container as NonNullable<typeof container>).getElement();
 }
 
-function announced(): string[] {
-  const region = document.querySelector('.aws-area-announcer');
-  return [...(region?.querySelectorAll('span') ?? [])].map((span) => span.textContent ?? '');
-}
-
-// jsdom lays nothing out and has no `scrollIntoView`; the tab calls it when a new answer arrives.
-Element.prototype.scrollIntoView = () => undefined;
-
 const ANSWER: InvokeAnswer = { payload: '{"got": {}, "version": "v1"}', log: 'echo-line a\nREPORT RequestId: 1' };
 
 describe('the tab "Test"', () => {
@@ -170,37 +162,14 @@ describe('the tab "Test"', () => {
     expect(result().textContent).toContain('{"got": {}, "version": "v1"}');
   });
 
-  it('shows "Succeeded" with the response and the log tail, announced once per invoke', () => {
-    const { rerender, unmount } = render(<Harness invoke={invocation()} />);
-    expect(announced()).toEqual([]);
-    rerender(<Harness invoke={invocation({ data: ANSWER, answers: 1 })} />);
+  it('shows "Succeeded" with the response and the log tail', () => {
+    render(<Harness invoke={invocation({ data: ANSWER, answers: 1 })} />);
     const text = norm(result().textContent);
     expect(text).toContain('Succeeded');
     expect(text).toContain('Response');
     expect(text).toContain('Log tail');
     expect(text).toContain("The end of this invocation's log, as the emulator returned it.");
     expect(result().textContent).toContain('echo-line a\nREPORT RequestId: 1');
-    expect(announced()).toEqual(['Succeeded']);
-    // Pressed again: in flight, then the same words again
-    rerender(<Harness invoke={invocation({ data: ANSWER, answers: 1, isPending: true })} />);
-    expect(announced()).toEqual(['Succeeded']);
-    rerender(<Harness invoke={invocation({ data: ANSWER, answers: 2 })} />);
-    expect(announced()).toEqual(['Succeeded']);
-    expect(document.querySelector('.aws-area-announcer span')?.textContent).toBe('Succeeded');
-    // The tab opened again on the same outcome says nothing
-    unmount();
-    render(<Harness invoke={invocation({ data: ANSWER, answers: 2 })} />);
-    expect(announced()).toEqual([]);
-  });
-
-  it('counts each new answer as one announcement, even with the same words', () => {
-    const { rerender } = render(<Harness invoke={invocation({ data: ANSWER, answers: 1 })} />);
-    rerender(<Harness invoke={invocation({ data: ANSWER, answers: 2 })} />);
-    const first = document.querySelector('.aws-area-announcer span');
-    rerender(<Harness invoke={invocation({ data: ANSWER, answers: 3 })} />);
-    const second = document.querySelector('.aws-area-announcer span');
-    expect(second?.textContent).toBe('Succeeded');
-    expect(second).not.toBe(first);
   });
 
   it('shows "The function returned an error" with its value, the response and the log tail', () => {
@@ -218,7 +187,6 @@ describe('the tab "Test"', () => {
     expect(text).toContain('Response');
     expect(text).toContain('Log tail');
     expect(text).toContain('boom-p');
-    expect(announced()).toEqual(['The function returned an error']);
   });
 
   const refusals: [string, RequestFailure, string][] = [
@@ -240,7 +208,6 @@ describe('the tab "Test"', () => {
     expect(text).not.toContain('Response');
     expect(text).not.toContain('Log tail');
     expect(result().querySelector('b')).toBeNull();
-    expect(announced()).toEqual(['The invocation was refused']);
   });
 
   const silences: [string, RequestFailure, string[]][] = [
@@ -262,7 +229,6 @@ describe('the tab "Test"', () => {
     }
     expect(text).not.toContain('Response');
     expect(text).not.toContain('Log tail');
-    expect(announced()).toEqual(['The invocation got no answer']);
   });
 
   it('shows "-" for an empty response and no log', () => {
@@ -324,34 +290,6 @@ describe('the tab "Test" after the critique (final r1)', () => {
       expect(names).toMatch(/colspan-12/);
     }
   });
-
-  it('brings "Result" into view, nearest, when a new answer arrives, and leaves focus where it was', () => {
-    const scroll = vi.fn();
-    const original = Element.prototype.scrollIntoView;
-    Element.prototype.scrollIntoView = scroll;
-    try {
-      const { rerender, unmount } = render(<Harness invoke={invocation()} />);
-      expect(scroll).not.toHaveBeenCalled();
-      const native = field().findNativeTextarea().getElement();
-      native.focus();
-      rerender(<Harness invoke={invocation({ data: ANSWER, answers: 1 })} />);
-      expect(scroll).toHaveBeenCalledTimes(1);
-      expect(scroll).toHaveBeenCalledWith({ block: 'nearest' });
-      expect((scroll.mock.contexts[0] as Element).contains(result())).toBe(true);
-      expect(document.activeElement).toBe(native);
-      rerender(<Harness invoke={invocation({ data: ANSWER, answers: 1, isPending: true })} />);
-      expect(scroll).toHaveBeenCalledTimes(1);
-      rerender(
-        <Harness invoke={invocation({ error: { kind: 'engine-did-not-answer', operation: 'Invoke' }, answers: 2 })} />,
-      );
-      expect(scroll).toHaveBeenCalledTimes(2);
-      unmount();
-      render(<Harness invoke={invocation({ data: ANSWER, answers: 2 })} />);
-      expect(scroll).toHaveBeenCalledTimes(2);
-    } finally {
-      Element.prototype.scrollIntoView = original;
-    }
-  });
 });
 
 describe('components/output-text.css', () => {
@@ -370,7 +308,7 @@ describe('invoke targets', () => {
   it('defaults to $LATEST and offers published versions and aliases', () => {
     const invoke = invocation();
     render(<Harness invoke={invoke} />);
-    expect(screen.getByRole('button', { name: /Invoke target/ })).toHaveTextContent('$LATEST');
+    expect(targetSelect().findTrigger().getElement()).toHaveTextContent('$LATEST');
     invokeButton().click();
     chooseTarget('2');
     invokeButton().click();
@@ -397,10 +335,13 @@ describe('invoke targets', () => {
         aliasReading={operation === 'ListAliases' ? reading(undefined, failure) : aliases}
       />,
     );
-    expect(screen.getByText(new RegExp(operation))).toBeVisible();
-    expect(
-      screen.getByText(kind === 'other' ? 'ResourceNotFoundException' : 'Not implemented by the emulator'),
-    ).toBeVisible();
+    const event = createWrapper(document.body)
+      .findAllContainers()
+      .find((container) => container.getElement().contains(targetSelect().getElement()));
+    expect(event?.findContent().getElement()).toHaveTextContent(operation);
+    expect(event?.findContent().getElement()).toHaveTextContent(
+      kind === 'other' ? 'ResourceNotFoundException' : 'Not implemented by the emulator',
+    );
     invokeButton().click();
     const select = targetSelect();
     select.openDropdown();
@@ -445,7 +386,10 @@ describe('invoke targets', () => {
     const { rerender } = render(<Harness invoke={invoke} />);
     chooseTarget('live');
     rerender(<Harness invoke={invoke} aliasReading={reading([])} targetUnavailable />);
-    expect(screen.getByText('live is unavailable. Choose another target.')).toBeVisible();
+    const targetField = createWrapper(document.body)
+      .findAllFormFields()
+      .find((form) => norm(form.findLabel()?.getElement().textContent) === 'Invoke target');
+    expect(targetField?.findError()?.getElement()).toHaveTextContent('live is unavailable. Choose another target.');
     const button = invokeButton().getElement();
     expect(button).toBeDisabled();
     fireEvent.click(button);

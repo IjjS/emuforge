@@ -7,7 +7,7 @@ import Link from '@cloudscape-design/components/link';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Tabs, { type TabsProps } from '@cloudscape-design/components/tabs';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 
 import { actionFailureItem, Code } from '../../../components/failure-states';
@@ -30,6 +30,7 @@ import { quoting } from '../components/quoting';
 import { InvocationResult, TestTab, type TestTabProps } from '../components/test-tab';
 import { VersionsTab, type VersionsTabProps } from '../components/versions-tab';
 import { FUNCTIONS_PATH, functionTabHref, releaseSuccessText, TAB_PARAMETER, tabOf } from '../format';
+import { invokeOutcome } from '../invoke-result';
 import { isChanging, useFunctionReading, useInvoke, useReadAgain } from '../queries';
 import { useReleaseMutation, useReleaseReadings } from '../version-queries';
 
@@ -212,6 +213,26 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
   const reread = useReadAgain(connection.engineOrigin, name);
   const sessionScope = JSON.stringify([connection.engineOrigin, name, reading.session]);
   const invoke = useInvoke(connection.engineOrigin, name, reading.session);
+  const invocationPanel = useRef<HTMLDivElement>(null);
+  const scroll = useRef({ scope: sessionScope, answers: 0, shown: false });
+  const showInvocationFallback = fn === undefined && invoke.answers > 0;
+  const invocationAnswers = invoke.answers;
+  useEffect(() => {
+    const completed = scroll.current.scope !== sessionScope || scroll.current.answers !== invocationAnswers;
+    if (completed) {
+      scroll.current = { scope: sessionScope, answers: invocationAnswers, shown: false };
+    }
+    // If the detail disappears after a completion off Test, its fallback is the first visible result panel.
+    if (
+      invocationAnswers > 0 &&
+      (completed || showInvocationFallback) &&
+      !scroll.current.shown &&
+      invocationPanel.current !== null
+    ) {
+      invocationPanel.current.scrollIntoView({ block: 'nearest' });
+      scroll.current.shown = true;
+    }
+  }, [sessionScope, invocationAnswers, showInvocationFallback]);
   const [test, setTest] = useState({
     scope: sessionScope,
     eventText: INITIAL_EVENT,
@@ -341,7 +362,21 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
       toSay.push(failureLine);
     }
   }
-  if (toSay.length > 0) {
+  const [seenInvocation, setSeenInvocation] = useState({ scope: sessionScope, answers: 0 });
+  const invocationScopeChanged = seenInvocation.scope !== sessionScope;
+  if (invocationScopeChanged || seenInvocation.answers !== invocationAnswers) {
+    setSeenInvocation({ scope: sessionScope, answers: invocationAnswers });
+    if (invocationAnswers > 0) {
+      const words =
+        invoke.error?.kind === 'not-implemented' && invoke.qualifier !== undefined
+          ? 'Not implemented by the emulator'
+          : invokeOutcome(invoke.data, invoke.error)?.words;
+      if (words !== undefined) {
+        toSay.push(words);
+      }
+    }
+  }
+  if (toSay.length > 0 || invocationScopeChanged) {
     announce(toSay.join('. '));
   }
 
@@ -383,6 +418,7 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
           testScope={sessionScope}
           test={{
             invoke,
+            resultRef: invocationPanel,
             eventText: test.eventText,
             onEventTextChange: (eventText) => setTest((current) => ({ ...current, eventText })),
             qualifier,
@@ -426,7 +462,7 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
       >
         <SpaceBetween size="l">
           {content}
-          {fn === undefined && invoke.answers > 0 && <InvocationResult invoke={invoke} />}
+          {showInvocationFallback && <InvocationResult invoke={invoke} resultRef={invocationPanel} />}
         </SpaceBetween>
       </ContentLayout>
       <DeleteFunctionsDialog

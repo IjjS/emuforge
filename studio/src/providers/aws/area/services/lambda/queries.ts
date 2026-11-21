@@ -8,7 +8,6 @@ import {
   deleteFunctions,
   INVOKE,
   invoke,
-  InvokeRequestError,
   isFunctionNotFound,
   LambdaRequestError,
   listFunctions,
@@ -27,7 +26,6 @@ import {
   type FunctionRead,
   type FunctionSummary,
   type InvokeAnswer,
-  type InvokeFailure,
   type LambdaFailure,
   type Role,
 } from './api';
@@ -641,7 +639,7 @@ export interface Invocation {
   isPending: boolean;
   /** The last completed request, kept until the next answer or failure replaces it. */
   data: InvokeAnswer | undefined;
-  error: InvokeFailure | undefined;
+  error: RequestFailure | undefined;
   qualifier: string | undefined;
   /** One more per answer or failure, so a screen says each outcome once. */
   answers: number;
@@ -652,9 +650,10 @@ export function useInvoke(endpoint: string | undefined, name: string, session = 
   const readAgain = useReadAgain(endpoint, name);
   const scope = JSON.stringify([endpoint, name, session]);
   const request = useRef<AbortController | undefined>(undefined);
-  const [last, setLast] = useState(() => emptyInvocation(scope));
-  if (last.scope !== scope) {
-    setLast(emptyInvocation(scope));
+  const [saved, setLast] = useState(() => emptyInvocation(scope));
+  const last = saved.scope === scope ? saved : emptyInvocation(scope);
+  if (saved !== last) {
+    setLast(last);
   }
 
   useLayoutEffect(
@@ -672,17 +671,13 @@ export function useInvoke(endpoint: string | undefined, name: string, session = 
       eventText: string;
       qualifier: string | undefined;
       signal: AbortSignal;
+      scope: string;
     }) => invoke(input.endpoint, input.name, input.eventText, input.signal, input.qualifier),
-    onSettled: (data, error, { qualifier, signal }) => {
+    onSettled: (data, error, { qualifier, signal, scope }) => {
       if (signal.aborted) {
         return;
       }
-      const failure =
-        error instanceof InvokeRequestError
-          ? { ...error.failure, reportedCode: error.reportedCode }
-          : error === null
-            ? undefined
-            : requestFailure(INVOKE, error);
+      const failure = error === null ? undefined : requestFailure(INVOKE, error);
       setLast((current) => ({
         scope,
         data,
@@ -706,12 +701,12 @@ export function useInvoke(endpoint: string | undefined, name: string, session = 
     }
     const controller = new AbortController();
     request.current = controller;
-    mutation.mutate({ endpoint, name, eventText, qualifier, signal: controller.signal });
+    mutation.mutate({ endpoint, name, eventText, qualifier, signal: controller.signal, scope });
   };
 
   return {
     mutate,
-    isPending: mutation.isPending && !mutation.variables.signal.aborted,
+    isPending: mutation.isPending && mutation.variables.scope === scope && !mutation.variables.signal.aborted,
     data: last.data,
     error: last.error,
     qualifier: last.qualifier,
@@ -724,7 +719,7 @@ function emptyInvocation(scope: string) {
   return {
     scope,
     data: undefined as InvokeAnswer | undefined,
-    error: undefined as InvokeFailure | undefined,
+    error: undefined as RequestFailure | undefined,
     qualifier: undefined as string | undefined,
     answers: 0,
     unsupported: new Set<boolean>(),

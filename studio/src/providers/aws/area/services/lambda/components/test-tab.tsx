@@ -8,10 +8,11 @@ import Select, { type SelectProps } from '@cloudscape-design/components/select';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Textarea, { type TextareaProps } from '@cloudscape-design/components/textarea';
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState, type Ref } from 'react';
 
+import { reportedServiceCode } from '../../../../../../lib/aws/request';
 import type { AreaConnection } from '../../../components/emulator-line';
-import { Code, ReadFailure, readFailureState, useAnnouncer } from '../../../components/failure-states';
+import { Code, ReadFailure, readFailureState } from '../../../components/failure-states';
 import { invokeOutcome } from '../invoke-result';
 import type { Invocation } from '../queries';
 import type { FunctionAlias, FunctionVersion } from '../version-api';
@@ -19,8 +20,7 @@ import type { ReleaseReading } from '../version-queries';
 import { InvokeResult } from './invoke-result';
 
 // The tab "Test" of a function's page (issue 516, design "Task 2"): the event as JSON text and "Invoke", then
-// "Result". The event text and the invoke live in the page, so they stay across its tabs; the field's message and
-// the announcement are the tab's own.
+// "Result". The page keeps the event and invocation across tabs. The field's validation message lives here.
 
 export interface TestTabProps {
   functionName: string;
@@ -29,6 +29,7 @@ export interface TestTabProps {
   onEventTextChange: (text: string) => void;
   /** The page's invoke: its `mutate`, `isPending`, and the last answer or failure. */
   invoke: Invocation;
+  resultRef?: Ref<HTMLDivElement> | undefined;
   connection: AreaConnection;
   versions: ReleaseReading<FunctionVersion>;
   aliases: ReleaseReading<FunctionAlias>;
@@ -92,39 +93,51 @@ function TargetReadFailure<T>({
 }
 
 /** Keep the submitted target with the result, even if the detail reread removes the tabs. */
-export function InvocationResult({ invoke }: { invoke: Invocation }) {
+export function InvocationResult({
+  invoke,
+  resultRef,
+}: {
+  invoke: Invocation;
+  resultRef?: Ref<HTMLDivElement> | undefined;
+}) {
   const outcome = invokeOutcome(invoke.data, invoke.error);
   const failure = invoke.error;
+  const reportedCode =
+    failure?.kind === 'access-denied' || failure?.kind === 'emulator-did-not-answer'
+      ? reportedServiceCode(failure)
+      : undefined;
   return (
-    <Container header={<Header variant="h2">Result</Header>}>
-      <SpaceBetween size="s">
-        {outcome !== undefined && (
-          <Box variant="p">
-            Submitted target <Code>{invoke.qualifier ?? LATEST}</Code>
-          </Box>
-        )}
-        {failure !== undefined && failure.kind !== 'not-implemented' && failure.kind !== 'access-denied' && (
-          <Box variant="p">
-            <Code>{failure.operation}</Code> failed.
-          </Box>
-        )}
-        {failure?.reportedCode !== undefined && (
-          <Box variant="p">
-            <Code>{failure.reportedCode}</Code>
-          </Box>
-        )}
-        {failure?.kind === 'not-implemented' && invoke.qualifier !== undefined ? (
-          <SpaceBetween size="xxs">
-            <StatusIndicator type="info">{NOT_IMPLEMENTED}</StatusIndicator>
+    <div ref={resultRef}>
+      <Container header={<Header variant="h2">Result</Header>}>
+        <SpaceBetween size="s">
+          {outcome !== undefined && (
             <Box variant="p">
-              The emulator answered 501 Not Implemented for <Code>{failure.operation}</Code>.
+              Submitted target <Code>{invoke.qualifier ?? LATEST}</Code>
             </Box>
-          </SpaceBetween>
-        ) : (
-          <InvokeResult outcome={outcome} />
-        )}
-      </SpaceBetween>
-    </Container>
+          )}
+          {failure !== undefined && failure.kind !== 'not-implemented' && failure.kind !== 'access-denied' && (
+            <Box variant="p">
+              <Code>{failure.operation}</Code> failed.
+            </Box>
+          )}
+          {reportedCode !== undefined && (
+            <Box variant="p">
+              <Code>{reportedCode}</Code>
+            </Box>
+          )}
+          {failure?.kind === 'not-implemented' && invoke.qualifier !== undefined ? (
+            <SpaceBetween size="xxs">
+              <StatusIndicator type="info">{NOT_IMPLEMENTED}</StatusIndicator>
+              <Box variant="p">
+                The emulator answered 501 Not Implemented for <Code>{failure.operation}</Code>.
+              </Box>
+            </SpaceBetween>
+          ) : (
+            <InvokeResult outcome={outcome} />
+          )}
+        </SpaceBetween>
+      </Container>
+    </div>
   );
 }
 
@@ -133,6 +146,7 @@ export function TestTab({
   eventText,
   onEventTextChange,
   invoke,
+  resultRef,
   connection,
   versions,
   aliases,
@@ -162,24 +176,6 @@ export function TestTab({
   const disabled = connection.result?.kind !== 'connected' || targetUnavailable || !verifiedTarget || unsupported;
   const field = useRef<TextareaProps.Ref>(null);
   const [fieldError, setFieldError] = useState<string | undefined>(undefined);
-  const [announcement, announce] = useAnnouncer();
-  const outcome = invokeOutcome(invoke.data, invoke.error);
-  // Each outcome is said once, when it arrives: not again when the tab is opened again on the same one.
-  // A new outcome is also brought into view, focus left where it is, so it is seen beside or below the event.
-  const said = useRef(invoke.answers);
-  const resultPlace = useRef<HTMLDivElement>(null);
-  const words =
-    invoke.error?.kind === 'not-implemented' && invoke.qualifier !== undefined ? NOT_IMPLEMENTED : outcome?.words;
-  useEffect(() => {
-    if (invoke.answers !== said.current) {
-      said.current = invoke.answers;
-      if (words !== undefined) {
-        announce(words);
-      }
-      resultPlace.current?.scrollIntoView({ block: 'nearest' });
-    }
-  }, [invoke.answers, words, announce]);
-
   const handleInvoke = () => {
     if (invoke.isPending || disabled) {
       return;
@@ -201,70 +197,64 @@ export function TestTab({
 
   // "Event" and "Result" side by side from Cloudscape's `l` breakpoint, stacked below it.
   return (
-    <>
-      {announcement}
-      <Grid gridDefinition={[{ colspan: { default: 12, l: 6 } }, { colspan: { default: 12, l: 6 } }]}>
-        <Container
-          header={
-            <Header
-              variant="h2"
-              description="The JSON the function receives as its event. Ctrl+Enter or Cmd+Enter in the field invokes."
-              actions={
-                <Button variant="primary" loading={invoke.isPending} disabled={disabled} onClick={handleInvoke}>
-                  {invoke.isPending ? 'Invoking' : 'Invoke'}
-                </Button>
-              }
-            >
-              Event
-            </Header>
-          }
-        >
-          <SpaceBetween size="m">
-            <FormField
-              label="Invoke target"
-              errorText={targetUnavailable ? `${qualifier} is unavailable. Choose another target.` : undefined}
-            >
-              <Select
-                options={options}
-                selectedOption={selectedOption}
-                onChange={({ detail }) => {
-                  const value = detail.selectedOption.value;
-                  onTargetChange(value === LATEST ? undefined : value);
-                }}
-              />
-            </FormField>
-            {loadingTargets && <StatusIndicator type="loading">Loading invoke targets</StatusIndicator>}
-            <TargetReadFailure reading={versions} connection={connection} label="published versions" />
-            <TargetReadFailure reading={aliases} connection={connection} label="aliases" />
-            {unsupported &&
-              !(
-                invoke.error?.kind === 'not-implemented' &&
-                (invoke.qualifier === undefined) === (qualifier === undefined)
-              ) && (
-                <StatusIndicator type="info">
-                  {NOT_IMPLEMENTED}. {qualifier === undefined ? 'Invoke' : 'Qualified Invoke'} is unavailable.
-                </StatusIndicator>
-              )}
-            <FormField label="Event JSON" stretch errorText={fieldError}>
-              <Textarea
-                ref={field}
-                value={eventText}
-                rows={8}
-                spellcheck={false}
-                invalid={fieldError !== undefined}
-                onKeyDown={handleKeyDown}
-                onChange={({ detail }) => {
-                  setFieldError(undefined);
-                  onEventTextChange(detail.value);
-                }}
-              />
-            </FormField>
-          </SpaceBetween>
-        </Container>
-        <div ref={resultPlace}>
-          <InvocationResult invoke={invoke} />
-        </div>
-      </Grid>
-    </>
+    <Grid gridDefinition={[{ colspan: { default: 12, l: 6 } }, { colspan: { default: 12, l: 6 } }]}>
+      <Container
+        header={
+          <Header
+            variant="h2"
+            description="The JSON the function receives as its event. Ctrl+Enter or Cmd+Enter in the field invokes."
+            actions={
+              <Button variant="primary" loading={invoke.isPending} disabled={disabled} onClick={handleInvoke}>
+                {invoke.isPending ? 'Invoking' : 'Invoke'}
+              </Button>
+            }
+          >
+            Event
+          </Header>
+        }
+      >
+        <SpaceBetween size="m">
+          <FormField
+            label="Invoke target"
+            errorText={targetUnavailable ? `${qualifier} is unavailable. Choose another target.` : undefined}
+          >
+            <Select
+              options={options}
+              selectedOption={selectedOption}
+              onChange={({ detail }) => {
+                const value = detail.selectedOption.value;
+                onTargetChange(value === LATEST ? undefined : value);
+              }}
+            />
+          </FormField>
+          {loadingTargets && <StatusIndicator type="loading">Loading invoke targets</StatusIndicator>}
+          <TargetReadFailure reading={versions} connection={connection} label="published versions" />
+          <TargetReadFailure reading={aliases} connection={connection} label="aliases" />
+          {unsupported &&
+            !(
+              invoke.error?.kind === 'not-implemented' && (invoke.qualifier === undefined) === (qualifier === undefined)
+            ) && (
+              <StatusIndicator type="info">
+                {NOT_IMPLEMENTED}. {qualifier === undefined ? 'Invoke' : 'Qualified Invoke'} is unavailable.
+              </StatusIndicator>
+            )}
+          <FormField label="Event JSON" stretch errorText={fieldError}>
+            <Textarea
+              ref={field}
+              value={eventText}
+              rows={8}
+              spellcheck={false}
+              invalid={fieldError !== undefined}
+              onKeyDown={handleKeyDown}
+              onChange={({ detail }) => {
+                setFieldError(undefined);
+                onEventTextChange(detail.value);
+              }}
+            />
+          </FormField>
+        </SpaceBetween>
+      </Container>
+      <InvocationResult invoke={invoke} resultRef={resultRef} />
+    </Grid>
   );
 }
