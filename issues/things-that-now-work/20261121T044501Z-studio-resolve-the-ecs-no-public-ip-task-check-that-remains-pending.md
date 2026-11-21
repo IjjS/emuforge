@@ -37,3 +37,7 @@ Establish the current emulator behavior and ensure Studio follows the task to it
 ## Out of scope
 
 Creating or editing ECS services.
+
+## Disposition
+
+Duplicate of #626. The failing run used the earlier 60-second observation window. Local main carries #626's 90-second wait for this scenario at the same terminal-state assertion, and feat/609 incorporated that fix. The original run evidence is preserved in emuforge-609/output/issue-627-evidence/.
