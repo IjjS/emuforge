@@ -1,4 +1,5 @@
-#![cfg(all(test, unix))]
+#![cfg(test)]
+#![cfg(unix)]
 
 use std::fs;
 use std::path::Path;
