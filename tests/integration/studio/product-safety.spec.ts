@@ -85,15 +85,13 @@ test('engine.product-ports-are-published-on-loopback-only', async ({ ctx }) => {
   // The two published ports at a non-loopback address of the host → refused.
   const addresses = hostIPv4();
   if (addresses.length === 0) throw new EnvError('the host has no non-loopback IPv4 address to connect from');
-  const accepted: string[] = [];
   for (const address of addresses) {
     for (const port of [form.studioPort, form.enginePort]) {
       const result = await probeAt(address, port);
       ctx.log(`a TCP connection to ${address}:${String(port)}: ${result}`);
-      if (result === 'open') accepted.push(`${address}:${String(port)}`);
+      expect(result, `a TCP connection to ${address}:${port}`).toBe('refused');
     }
   }
-  expect(accepted, 'connections accepted at a non-loopback address').toEqual([]);
 
   // `docker compose logs emuforge` → the warning of --listen-address, naming 0.0.0.0 (#484 R5).
   const logs = await form.run(form.compose('logs', '--no-color', 'emuforge'), STOP_BOUND_MS);

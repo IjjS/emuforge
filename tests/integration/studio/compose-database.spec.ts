@@ -18,6 +18,8 @@ import {
   expectExit,
   Form,
   freshHome,
+  inspectContainers,
+  type ContainerState,
   madeUpKey,
   productTimeout,
   publishedBy,
@@ -35,10 +37,11 @@ async function standaloneForm(ctx: Ctx, range: Range) {
   const home = freshHome(ctx);
   fs.mkdirSync(path.join(home, '.aws/emulator'), { recursive: true });
   const port = await freePortExcept(home, [ctx.enginePort, ctx.studioPort, ctx.emulatorPort]);
-  const project = `emuforge-${port}`;
+  const project = `emuforge-it-standalone-${randomBytes(12).toString('hex')}`;
   const env: Record<string, string> = {
     HOME: home,
     PATH: process.env.PATH!,
+    COMPOSE_PROJECT_NAME: project,
     EMULATOR_PORT: String(port),
     EMUFORGE_EMULATOR_IMAGE: ctx.emulatorImage,
     DOCKER_CONFIG: process.env.DOCKER_CONFIG ?? path.join(ctx.home, '.docker'),
@@ -55,7 +58,25 @@ async function standaloneForm(ctx: Ctx, range: Range) {
   });
   expectExit(await compose('up', '-d', '--no-build', '--pull', 'never'), 'zero');
   expect(await waitFor(30_000, async () => (await answersOk(home, port)) || undefined)).toBe(true);
-  return { home, port, compose, env };
+  async function containers() {
+    const ids = await compose('ps', '-aq');
+    expectExit(ids, 'zero');
+    return inspectContainers(ids.stdout.trim().split(/\s+/).filter(Boolean));
+  }
+  return { home, port, containers, env };
+}
+
+async function expectMappings(containers: ContainerState[], owner: string, ports: number[]) {
+  const published = [];
+  for (const container of containers) {
+    const bindings = await publishedBy(container.id);
+    for (const binding of bindings.running) published.push({ service: container.service, ...binding });
+  }
+  expect(published.sort((a, b) => Number(a.hostPort) - Number(b.hostPort))).toEqual(
+    [...ports].sort((a, b) => a - b).map((port) => ({
+      service: owner, hostIp: '127.0.0.1', hostPort: String(port), containerPort: port + '/tcp',
+    })),
+  );
 }
 
 function hostQuery(
@@ -219,6 +240,8 @@ test('engine.compose-database-range-refuses-occupied-ports', async ({ ctx }) => 
   const a = await Form.create(ctx, { developerPorts: true, env: range.env });
   const b = await Form.create(ctx, { developerPorts: true, env: range.env });
   expectExit(await a.start(), 'zero');
+  const ports = [a.enginePort, a.studioPort, ...portNumbers(range.low, range.high)];
+  await expectMappings(await a.containers(), 'emuforge', ports);
   const failed = await b.start();
   expectExit(failed, 'non-zero');
   expect(failed.stderr + failed.stdout).toMatch(
@@ -226,24 +249,31 @@ test('engine.compose-database-range-refuses-occupied-ports', async ({ ctx }) => 
   );
   expectExit(await b.removeVolume(), 'zero');
   expect(await waitReachable(a.enginePort, true)).toMatchObject({ body: { emulator: { reachable: true } } });
-  const bindings = await publishedBy((await a.byService(['emuforge'])).emuforge.id);
-  const published = bindings.running.map((b) => Number(b.hostPort));
-  for (const port of portNumbers(range.low, range.high)) expect(published).toContain(port);
+  await expectMappings(await a.containers(), 'emuforge', ports);
   expectExit(await a.removeVolume(), 'zero');
   for (const port of portNumbers(range.low, range.high)) await ensurePortFree(port, 10_000);
 });
 
 test('engine.compose-check-forms-omit-database-publications', async ({ ctx }) => {
   test.setTimeout(productTimeout(3, 5));
-  const standalone = await standaloneForm(ctx, await leaseDatabaseRange(ctx));
+  const standRange = await leaseDatabaseRange(ctx);
+  const standalone = await standaloneForm(ctx, standRange);
   const range = await leaseDatabaseRange(ctx);
   const developer = await Form.create(ctx, { developerPorts: true, env: range.env });
   expectExit(await developer.start(), 'zero');
+  async function expectDeveloperMappings() {
+    await expectMappings(await standalone.containers(), 'aws-emulator', [
+      standalone.port, ...portNumbers(standRange.low, standRange.high),
+    ]);
+    await expectMappings(await developer.containers(), 'emuforge', [
+      developer.enginePort, developer.studioPort, ...portNumbers(range.low, range.high),
+    ]);
+  }
+  await expectDeveloperMappings();
   const ordinary = await Form.create(ctx);
   expectExit(await ordinary.start(), 'zero');
   const owner = (await ordinary.byService(['emuforge'])).emuforge;
-  const ports = (await publishedBy(owner.id)).running.map((b) => Number(b.hostPort)).sort();
-  expect(ports).toEqual([ordinary.enginePort, ordinary.studioPort].sort());
+  await expectMappings(await ordinary.containers(), 'emuforge', [ordinary.enginePort, ordinary.studioPort]);
   const inspect = await ordinary.run(
     ['docker', 'inspect', '--format', '{{json .HostConfig.Sysctls}}', owner.id],
     STOP_BOUND_MS,
@@ -279,6 +309,7 @@ test('engine.compose-check-forms-omit-database-publications', async ({ ctx }) =>
   });
   expect(service.sysctls ?? {}).not.toHaveProperty('net.ipv4.ip_local_port_range');
   expectExit(await ordinary.removeVolume(), 'zero');
+  await expectDeveloperMappings();
   expect(await waitReachable(developer.enginePort, true)).toMatchObject({ body: { emulator: { reachable: true } } });
   expect(await answersOk(standalone.home, standalone.port)).toBe(true);
 });

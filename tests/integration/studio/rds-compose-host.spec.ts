@@ -1,3 +1,4 @@
+import { CONTAINER } from './support/screen-rules';
 import { expect, startStack, test } from './support';
 import {
   clusterPath,
@@ -47,7 +48,11 @@ test('studio.rds-compose-host-endpoints-match-describe', async ({ ctx, page }) =
     await expectValueIs(page, row.label, row.address!);
     await expectValueIs(page, 'Port', row.port!);
     const main = page.getByRole('main');
-    await expect(main.getByText('127.0.0.1:' + row.port, { exact: true })).toBeVisible();
-    await expect(main.getByText(/database ports published.*SQL client on the machine running Compose/)).toBeVisible();
+    const connection = main.locator(CONTAINER).filter({
+      has: page.getByRole('heading', { name: 'Connection', exact: true, level: 2 }),
+    });
+    await expect(connection.getByRole('button', { name: 'Copy Compose host endpoint' })).toBeVisible();
+    await expect(connection.getByText('127.0.0.1:' + row.port, { exact: true })).toBeVisible();
+    await expect(connection.getByText(/database ports published.*SQL client on the machine running Compose/)).toBeVisible();
   }
 });
