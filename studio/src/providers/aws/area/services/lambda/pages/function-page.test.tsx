@@ -1179,17 +1179,47 @@ function aliasAnswer(name: string, version: string) {
 describe('Versions and aliases', () => {
   const versionsPath = '?tab=versions';
 
+  function releaseTable(name: 'Versions' | 'Aliases') {
+    return PAGE.findAllTables().find(
+      (table) => norm(table.findHeaderSlot()?.findHeader()?.findHeadingText().getElement().textContent) === name,
+    );
+  }
+
+  function versionsShown() {
+    const table = releaseTable('Versions');
+    return (
+      table
+        ?.findRows()
+        .map((_, index) => [
+          norm(table.findBodyCell(index + 1, 1)?.getElement().textContent),
+          norm(table.findBodyCell(index + 1, 3)?.getElement().textContent),
+        ]) ?? []
+    );
+  }
+
+  function aliasesShown() {
+    const table = releaseTable('Aliases');
+    return (
+      table
+        ?.findRows()
+        .map((_, index) => [
+          norm(table.findBodyCell(index + 1, 2)?.getElement().textContent),
+          norm(table.findBodyCell(index + 1, 3)?.getElement().textContent),
+        ]) ?? []
+    );
+  }
+
   it('opens from the tab and reopens the same function on its release address', async () => {
     const { router, unmount } = await openLoaded();
     fireEvent.click(tabLink('Versions and aliases'));
-    expect(await screen.findByText('$LATEST')).toBeVisible();
+    await waitFor(() => expect(versionsShown()).toContainEqual(['$LATEST', '-']));
     expect(activeTab()).toBe('Versions and aliases');
     expect(router.state.location).toMatchObject({ pathname: pagePath('orders'), search: versionsPath });
     const { pathname, search } = router.state.location;
 
     unmount();
     open(pathname + search);
-    expect(await screen.findByText('$LATEST')).toBeVisible();
+    await waitFor(() => expect(versionsShown()).toContainEqual(['$LATEST', '-']));
     expect(activeTab()).toBe('Versions and aliases');
     expect(headingText()).toBe('orders');
     expect(
@@ -1218,20 +1248,27 @@ describe('Versions and aliases', () => {
       expect(engine.aws.filter(({ url }) => RELEASE_PATH.test(url.pathname))).toHaveLength(2);
     });
     current = true;
+    engine.functions = [{ name: 'orders', description: 'Refreshed function details' }];
     fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
-    expect(await screen.findByText('Release 2')).toBeVisible();
-    expect(await screen.findByText('current-live')).toBeVisible();
+    await waitFor(() => {
+      expect(pairs('Function overview')).toContainEqual(['Description', 'Refreshed function details']);
+      expect(versionsShown()).toEqual([
+        ['$LATEST', '-'],
+        ['2', 'Release 2'],
+      ]);
+      expect(aliasesShown()).toEqual([['current-live', '2']]);
+    });
 
     await act(async () => {
       oldVersions.resolve(versionAnswer('1'));
       oldAliases.resolve(aliasAnswer('old-live', '1'));
       await Promise.all([oldVersions.promise, oldAliases.promise]);
     });
-    expect(screen.getByText('Release 2')).toBeVisible();
-    const row = screen.getByText('current-live').closest('tr');
-    expect(row).toHaveTextContent('2');
-    expect(screen.queryByText('Release 1')).toBeNull();
-    expect(screen.queryByText('old-live')).toBeNull();
+    expect(versionsShown()).toEqual([
+      ['$LATEST', '-'],
+      ['2', 'Release 2'],
+    ]);
+    expect(aliasesShown()).toEqual([['current-live', '2']]);
   });
 
   it('verifies the function on reconnect from another tab before displaying release data', async () => {
@@ -1240,8 +1277,10 @@ describe('Versions and aliases', () => {
       url.pathname.endsWith('/versions') ? versionAnswer('1') : aliasAnswer('old-live', '1');
 
     open(pagePath('orders') + versionsPath);
-    expect(await screen.findByText('Release 1')).toBeVisible();
-    expect(await screen.findByText('old-live')).toBeVisible();
+    await waitFor(() => {
+      expect(versionsShown()).toContainEqual(['1', 'Release 1']);
+      expect(aliasesShown()).toEqual([['old-live', '1']]);
+    });
     fireEvent.click(tabLink('Code'));
     expect(activeTab()).toBe('Code');
     connection.set(notStartedResult());
@@ -1251,8 +1290,8 @@ describe('Versions and aliases', () => {
     connection.set(connectedResult());
     fireEvent.click(tabLink('Versions and aliases'));
     await waitFor(() => expect(engine.gets).toHaveLength(2));
-    expect(screen.queryByText('Release 1')).toBeNull();
-    expect(screen.queryByText('old-live')).toBeNull();
+    expect(releaseTable('Versions')).toBeUndefined();
+    expect(releaseTable('Aliases')).toBeUndefined();
     expect(screen.queryByRole('tab', { name: 'Versions and aliases' })).toBeNull();
     expect(engine.aws.filter(({ url }) => RELEASE_PATH.test(url.pathname))).toHaveLength(2);
 
@@ -1261,8 +1300,8 @@ describe('Versions and aliases', () => {
       await reconnect.promise;
     });
     expect(await screen.findByText('Function not found')).toBeVisible();
-    expect(screen.queryByText('Release 1')).toBeNull();
-    expect(screen.queryByText('old-live')).toBeNull();
+    expect(releaseTable('Versions')).toBeUndefined();
+    expect(releaseTable('Aliases')).toBeUndefined();
     expect(engine.aws.filter(({ url }) => RELEASE_PATH.test(url.pathname))).toHaveLength(2);
   });
 
@@ -1285,9 +1324,9 @@ describe('Versions and aliases', () => {
     };
 
     open(pagePath('orders') + versionsPath);
-    expect(await screen.findByText('Release 1')).toBeVisible();
+    await waitFor(() => expect(versionsShown()).toContainEqual(['1', 'Release 1']));
     fireEvent.click(screen.getByRole('button', { name: 'Publish version' }));
-    expect(await screen.findByText('Published version 2.')).toBeVisible();
+    await waitFor(() => expect(flashTexts()).toContain('Published version 2.'));
     await waitFor(() => expect(engine.gets).toHaveLength(2));
     await waitFor(() =>
       expect(
@@ -1299,13 +1338,13 @@ describe('Versions and aliases', () => {
       await detail.promise;
     });
     expect(await screen.findByText('Function not found')).toBeVisible();
-    expect(screen.getByText('Published version 2.')).toBeVisible();
+    expect(flashTexts()).toContain('Published version 2.');
     await act(async () => {
       releases.resolve(versionAnswer('2'));
       await releases.promise;
     });
-    expect(screen.queryByText('Release 2')).toBeNull();
-    expect(screen.getByText('Published version 2.')).toBeVisible();
+    expect(releaseTable('Versions')).toBeUndefined();
+    expect(flashTexts()).toContain('Published version 2.');
   });
 });
 

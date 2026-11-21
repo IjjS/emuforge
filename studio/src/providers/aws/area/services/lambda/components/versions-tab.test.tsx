@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -48,8 +48,10 @@ function aliasAnswer(aliases: Record<string, string>, marker?: string) {
   });
 }
 
-function functionAnswer() {
-  return json({ Configuration: { FunctionName: 'orders', State: 'Active', LastUpdateStatus: 'Successful' } });
+function functionAnswer(Description = 'Initial function details') {
+  return json({
+    Configuration: { FunctionName: 'orders', State: 'Active', LastUpdateStatus: 'Successful', Description },
+  });
 }
 
 class ReleaseEngine {
@@ -149,36 +151,95 @@ function renderTab() {
   );
 }
 
-function versionsTable() {
-  return within(screen.getByRole('table', { name: 'Versions' }));
+const PAGE = createWrapper(document.body);
+type TableName = 'Versions' | 'Aliases';
+
+function releaseTable(name: TableName) {
+  return PAGE.findAllTables().find(
+    (table) => table.findHeaderSlot()?.findHeader()?.findHeadingText().getElement().textContent === name,
+  );
 }
 
-function aliasesTable() {
-  return within(screen.getByRole('table', { name: 'Aliases' }));
+function releaseRows(name: TableName, columnCount: number) {
+  const table = releaseTable(name);
+  return (
+    table?.findRows().map((_, index) =>
+      Array.from({ length: columnCount }, (_, column) =>
+        table
+          .findBodyCell(index + 1, column + 1)
+          ?.getElement()
+          .textContent?.trim(),
+      ),
+    ) ?? []
+  );
 }
 
-function aliasActions(name: string) {
-  return screen.getByRole('button', { name: `Actions for alias ${name}` });
+function aliasIndex(name: string) {
+  return releaseRows('Aliases', 2).findIndex(([, label]) => label === name) + 1;
+}
+
+function aliasMenu(row: number) {
+  const menu = releaseTable('Aliases')?.findBodyCell(row, 1)?.findButtonDropdown();
+  if (menu == null) throw new Error('Expected an alias action menu');
+  return menu;
+}
+
+function openAliasMenu(row: number) {
+  const menu = aliasMenu(row);
+  if (menu.findNativeButton().getElement().getAttribute('aria-expanded') !== 'true') {
+    menu.openDropdown();
+  }
+  return menu;
+}
+
+function menuAction(row: number, operation: 'UpdateAlias' | 'DeleteAlias') {
+  const item = openAliasMenu(row).findItemById(operation)?.find('[role="menuitem"]')?.getElement();
+  if (item === undefined) throw new Error(`Expected the ${operation} menu action`);
+  return item;
 }
 
 function releaseAction(operation: MutationOperation) {
   if (operation === 'PublishVersion' || operation === 'CreateAlias') {
-    return screen.getByRole('button', { name: operation === 'PublishVersion' ? 'Publish version' : 'Create alias' });
+    const table = releaseTable(operation === 'PublishVersion' ? 'Versions' : 'Aliases');
+    const button = table?.findHeaderSlot()?.findHeader()?.findActions()?.findButton()?.getElement();
+    if (button === undefined) throw new Error(`Expected the ${operation} button`);
+    return button;
   }
-  const trigger = aliasActions('live');
-  if (trigger.getAttribute('aria-expanded') !== 'true') {
-    fireEvent.click(trigger);
-  }
-  return screen.getByRole('menuitem', { name: operation === 'UpdateAlias' ? 'Edit alias live' : 'Delete alias live' });
+  return menuAction(aliasIndex('live'), operation);
 }
 
-function openTargetSelect(dialog: HTMLElement) {
-  const select = createWrapper(dialog).findSelect();
-  if (select === null) {
-    throw new Error('Expected a target version selector');
-  }
-  select.openDropdown();
+function manageDialog() {
+  const dialog = PAGE.findModal();
+  if (dialog === null) throw new Error('Expected an alias dialog');
+  return dialog;
+}
+
+function aliasNameField(dialog = manageDialog()) {
+  const field = dialog
+    .findContent()
+    .findAllFormFields()
+    .find((candidate) => candidate.findLabel()?.getElement().textContent === 'Alias name');
+  if (field === undefined) throw new Error('Expected the Alias name field');
+  return field;
+}
+
+function aliasNameInput(dialog = manageDialog()) {
+  const input = aliasNameField(dialog).findControl()?.findInput()?.findNativeInput().getElement();
+  if (input === undefined) throw new Error('Expected the Alias name input');
+  return input;
+}
+
+function targetSelect(dialog = manageDialog()) {
+  const select = dialog.findContent().findSelect();
+  if (select === null) throw new Error('Expected a target version selector');
   return select;
+}
+
+function dialogButton(label: string) {
+  const footer = manageDialog().findFooter();
+  const button = footer?.findAllButtons().find((candidate) => candidate.getElement().textContent === label);
+  if (button === undefined) throw new Error(`Expected the ${label} dialog button`);
+  return button.getElement();
 }
 
 async function prepareAction(operation: MutationOperation, aliasName = 'next') {
@@ -186,17 +247,18 @@ async function prepareAction(operation: MutationOperation, aliasName = 'next') {
     return releaseAction(operation);
   }
   fireEvent.click(releaseAction(operation));
-  const dialog = await screen.findByRole('dialog');
+  const dialog = await waitFor(manageDialog);
   if (operation === 'CreateAlias') {
-    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Alias name' }), { target: { value: aliasName } });
+    fireEvent.change(aliasNameInput(dialog), { target: { value: aliasName } });
   }
   if (operation === 'CreateAlias' || operation === 'UpdateAlias') {
-    const select = openTargetSelect(dialog);
+    const select = targetSelect(dialog);
+    select.openDropdown();
     select.selectOptionByValue('2');
   }
-  return within(dialog).getByRole('button', {
-    name: operation === 'CreateAlias' ? 'Create alias' : operation === 'UpdateAlias' ? 'Save changes' : 'Delete alias',
-  });
+  return dialogButton(
+    operation === 'CreateAlias' ? 'Create alias' : operation === 'UpdateAlias' ? 'Save changes' : 'Delete alias',
+  );
 }
 
 function holdResponse() {
@@ -239,13 +301,16 @@ const actions = [
 ] as const;
 
 async function waitForBothLists() {
-  expect(await screen.findByText('Source 2')).toBeVisible();
-  expect(await screen.findByText('live')).toBeVisible();
+  await waitFor(() => {
+    expect(releaseRows('Versions', 3)).toContainEqual(['2', 'Published', 'Source 2']);
+    expectAlias('live', '1');
+  });
 }
 
 function expectAlias(name: string, version: string) {
-  const row = aliasesTable().getByText(name).closest('tr');
-  expect(row).toHaveTextContent(version);
+  const row = aliasIndex(name);
+  expect(row).toBeGreaterThan(0);
+  expect(releaseTable('Aliases')?.findBodyCell(row, 3)?.getElement().textContent).toBe(version);
 }
 
 describe('Release listings', () => {
@@ -255,12 +320,14 @@ describe('Release listings', () => {
     engine.handlers[LIST_ALIASES] = (marker) =>
       marker === null ? aliasAnswer({ live: '1' }, 'more-aliases') : aliasAnswer({ candidate: '2' });
     renderTab();
-    expect(await screen.findByText('Source 2')).toBeVisible();
-    expect(await screen.findByText('candidate')).toBeVisible();
-    const latest = versionsTable().getByRole('row', { name: /\$LATEST Editable/ });
-    expect(latest).toBeVisible();
-    expect(versionsTable().getByRole('row', { name: /1 Published Source 1/ })).toBeVisible();
-    expect(versionsTable().getByRole('row', { name: /2 Published Source 2/ })).toBeVisible();
+    await waitFor(() => {
+      expect(releaseRows('Versions', 3)).toEqual([
+        ['$LATEST', 'Editable', 'Source $LATEST'],
+        ['1', 'Published', 'Source 1'],
+        ['2', 'Published', 'Source 2'],
+      ]);
+      expectAlias('candidate', '2');
+    });
     expectAlias('live', '1');
     expectAlias('candidate', '2');
     expect(engine.calls.filter(({ operation }) => operation === LIST_VERSIONS).map(({ marker }) => marker)).toEqual([
@@ -273,24 +340,23 @@ describe('Release listings', () => {
     ]);
 
     fireEvent.click(releaseAction('CreateAlias'));
-    expect(
-      openTargetSelect(await screen.findByRole('dialog'))
-        .findDropdown()
-        .findOptions()
-        .map((item) => item.findLabel().getElement().textContent),
-    ).toEqual(['1', '2']);
+    const select = targetSelect(await waitFor(manageDialog));
+    select.openDropdown();
+    const options = select.findDropdown();
+    expect(options.findOptions()).toHaveLength(2);
+    expect(options.findOptionByValue('1')?.findLabel().getElement()).toHaveTextContent('1');
+    expect(options.findOptionByValue('2')?.findLabel().getElement()).toHaveTextContent('2');
+    expect(options.findOptionByValue('$LATEST')).toBeNull();
   });
 
   it('explains the requirement to publish a version before creating an alias', async () => {
     engine.versions = ['$LATEST'];
     engine.aliases = {};
     renderTab();
-    expect(await screen.findByText('$LATEST')).toBeVisible();
-    expect(
-      screen
-        .getAllByText('Publish a version before creating an alias.')
-        .some((node) => node.closest('[hidden]') === null),
-    ).toBe(true);
+    await waitFor(() => expect(releaseRows('Versions', 1)).toEqual([['$LATEST']]));
+    expect(releaseTable('Aliases')?.findHeaderSlot()?.findHeader()?.findDescription()?.getElement()).toHaveTextContent(
+      'Publish a version before creating an alias.',
+    );
     expect(releaseAction('CreateAlias')).toHaveAttribute('aria-disabled', 'true');
   });
 
@@ -302,10 +368,17 @@ describe('Release listings', () => {
   ] as const)('%s can fail with %s without hiding the other listing', async (operation, status, message) => {
     engine.handlers[operation] = () => json({ message: 'Operation unavailable' }, status, message);
     renderTab();
-    const other = operation === LIST_VERSIONS ? 'live' : 'Source 2';
-    expect(await screen.findByText(other)).toBeVisible();
-    expect(await screen.findByText(message)).toBeVisible();
-    expect(screen.getByText(new RegExp(operation))).toBeVisible();
+    const failed = operation === LIST_VERSIONS ? 'Versions' : 'Aliases';
+    await waitFor(() => {
+      if (operation === LIST_VERSIONS) {
+        expectAlias('live', '1');
+      } else {
+        expect(releaseRows('Versions', 3)).toContainEqual(['2', 'Published', 'Source 2']);
+      }
+      const state = releaseTable(failed)?.findEmptySlot()?.getElement();
+      expect(state).toHaveTextContent(message);
+      expect(state).toHaveTextContent(operation);
+    });
   });
 });
 
@@ -314,10 +387,9 @@ describe('Release actions', () => {
     renderTab();
     await waitForBothLists();
     await prepareAction('DeleteAlias');
-    const dialog = screen.getByRole('dialog');
-    expect(within(dialog).getByText('live')).toBeVisible();
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
-    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(manageDialog().findContent().getElement()).toHaveTextContent('Delete alias live?');
+    fireEvent.click(dialogButton('Cancel'));
+    expect(PAGE.findModal()).toBeNull();
     expectAlias('live', '1');
     expect(engine.count('DeleteAlias')).toBe(0);
   });
@@ -354,31 +426,33 @@ describe('Release actions', () => {
     fireEvent.click(submit);
 
     if (operation !== 'PublishVersion') {
-      const dialog = screen.getByRole('dialog');
-      const inline = within(dialog);
-      expect(await inline.findByText('ResourceConflictException')).toBeVisible();
+      const dialog = manageDialog();
+      await waitFor(() =>
+        expect(dialog.findContent().findAlert()?.findContent().getElement()).toHaveTextContent(
+          'ResourceConflictException',
+        ),
+      );
+      const alert = dialog.findContent().findAlert();
       expect(screen.getAllByText('ResourceConflictException')).toHaveLength(1);
-      const alert = inline.getByRole('alert');
-      expect(within(alert).getByText(`${operation} failed`)).toBeVisible();
-      expect(alert).toContainElement(document.activeElement as HTMLElement);
+      expect(alert?.findHeader()?.getElement()).toHaveTextContent(`${operation} failed`);
+      expect(alert?.getElement()).toContainElement(document.activeElement as HTMLElement);
       if (operation === 'CreateAlias') {
-        expect(inline.getByRole('textbox', { name: 'Alias name' })).toHaveValue('live');
+        expect(aliasNameInput(dialog)).toHaveValue('live');
       } else {
-        expect(inline.getByText('live')).toBeVisible();
+        expect(dialog.findContent().getElement()).toHaveTextContent('live');
       }
       if (operation === 'CreateAlias' || operation === 'UpdateAlias') {
-        const select = createWrapper(dialog).findSelect();
-        expect(select?.findTrigger().getElement()).toHaveTextContent('2');
+        expect(targetSelect(dialog).findTrigger().getElement()).toHaveTextContent('2');
       }
-      fireEvent.click(inline.getByRole('button', { name: 'Cancel' }));
-      expect(screen.queryByRole('dialog')).toBeNull();
+      fireEvent.click(dialogButton('Cancel'));
+      expect(PAGE.findModal()).toBeNull();
     }
 
     expect(await screen.findByText('ResourceConflictException')).toBeVisible();
     expect(screen.getByText(`${operation} failed`)).toBeVisible();
     expect(screen.queryByText(message)).toBeNull();
-    expect(screen.queryByText('next')).toBeNull();
-    expect(screen.queryByText('Source 3')).toBeNull();
+    expect(aliasIndex('next')).toBe(0);
+    expect(releaseRows('Versions', 3)).not.toContainEqual(['3', 'Published', 'Source 3']);
     expectAlias('live', '1');
   });
 
@@ -387,15 +461,19 @@ describe('Release actions', () => {
     renderTab();
     await waitForBothLists();
     fireEvent.click(await prepareAction('CreateAlias', 'live'));
-    const dialog = within(screen.getByRole('dialog'));
-    expect(await dialog.findByText('ResourceConflictException')).toBeVisible();
+    const dialog = manageDialog();
+    await waitFor(() =>
+      expect(dialog.findContent().findAlert()?.findContent().getElement()).toHaveTextContent(
+        'ResourceConflictException',
+      ),
+    );
     expect(screen.getAllByText('ResourceConflictException')).toHaveLength(1);
-    fireEvent.change(dialog.getByRole('textbox', { name: 'Alias name' }), { target: { value: 'next' } });
-    expect(dialog.queryByRole('alert')).toBeNull();
+    fireEvent.change(aliasNameInput(dialog), { target: { value: 'next' } });
+    expect(dialog.findContent().findAlert()).toBeNull();
     expect(screen.queryByText('ResourceConflictException')).toBeNull();
 
     engine.handlers.CreateAlias = () => succeed('CreateAlias');
-    fireEvent.click(dialog.getByRole('button', { name: 'Create alias' }));
+    fireEvent.click(dialogButton('Create alias'));
     expect(await screen.findByText('Created alias next to version 2.')).toBeVisible();
     await waitFor(() => expectAlias('next', '2'));
   });
@@ -407,8 +485,10 @@ describe('Release actions', () => {
     await waitForBothLists();
     fireEvent.click(await prepareAction('CreateAlias', 'live'));
     await waitFor(() => expect(engine.count('CreateAlias')).toBe(1));
-    fireEvent.click(screen.getByRole('tab', { name: 'Test' }));
-    expect(screen.queryByRole('dialog')).toBeNull();
+    const test = PAGE.findTabs()?.findTabLinkById('test');
+    expect(test?.getElement()).toBeVisible();
+    test?.click();
+    expect(PAGE.findModal()).toBeNull();
     await settle(response, json({ message: 'Alias exists' }, 409, 'ResourceConflictException'));
     expect(await screen.findByText('ResourceConflictException')).toBeVisible();
     expect(screen.getByText('CreateAlias failed')).toBeVisible();
@@ -418,13 +498,11 @@ describe('Release actions', () => {
     const name = 'candidate-release-stable';
     engine.aliases = { [name]: '1' };
     renderTab();
-    const rowHeader = await screen.findByRole('rowheader', { name });
-    const row = rowHeader.closest('tr');
-    expect(row?.cells[0]).toContainElement(aliasActions(name));
-    expect(row?.cells[1]).toBe(rowHeader);
-    fireEvent.click(aliasActions(name));
-    expect(screen.getByRole('menuitem', { name: `Edit alias ${name}` })).toBeVisible();
-    expect(screen.getByRole('menuitem', { name: `Delete alias ${name}` })).toBeVisible();
+    await waitFor(() => expectAlias(name, '1'));
+    expect(aliasMenu(1).findNativeButton().getElement()).toHaveAccessibleName(`Actions for alias ${name}`);
+    expect(releaseTable('Aliases')?.findBodyCell(1, 2)?.getElement()).toHaveTextContent(name);
+    expect(menuAction(1, 'UpdateAlias')).toHaveAccessibleName(`Edit alias ${name}`);
+    expect(menuAction(1, 'DeleteAlias')).toHaveAccessibleName(`Delete alias ${name}`);
   });
 
   it('keeps the action focused while moving the labeled target beneath the alias on narrow screens', async () => {
@@ -441,10 +519,9 @@ describe('Release actions', () => {
     }));
     engine.aliases = { [name]: target };
     renderTab();
-    const desktopHeader = await screen.findByRole('rowheader', { name });
-    expect(aliasesTable().getByRole('columnheader', { name: 'Target version' })).toBeVisible();
-    expect(desktopHeader.closest('tr')?.cells[2]).toHaveTextContent(target);
-    const trigger = aliasActions(name);
+    await waitFor(() => expectAlias(name, target));
+    expect(releaseTable('Aliases')?.findColumnHeaders()[2]?.getElement()).toHaveTextContent('Target version');
+    const trigger = aliasMenu(1).findNativeButton().getElement();
     trigger.focus();
 
     act(() => {
@@ -452,32 +529,29 @@ describe('Release actions', () => {
       media.dispatchEvent(new Event('change'));
     });
 
-    const details = aliasesTable().getByRole('rowheader', { name: new RegExp(name) });
-    expect(within(details).getByText(name)).toBeVisible();
-    expect(within(details).getByText('Target version')).toBeVisible();
-    expect(within(details).getByText(target)).toBeVisible();
-    expect(aliasesTable().queryByRole('columnheader', { name: 'Target version' })).toBeNull();
-    expect(details.closest('tr')?.cells).toHaveLength(2);
-    expect(aliasActions(name)).toBe(trigger);
+    const table = releaseTable('Aliases');
+    expect(table?.findBodyCell(1, 2)?.getElement()).toHaveTextContent(`${name}Target version ${target}`);
+    expect(table?.findColumnHeaders()).toHaveLength(2);
+    expect(table?.findBodyCell(1, 3)).toBeNull();
+    expect(aliasMenu(1).findNativeButton().getElement()).toBe(trigger);
     expect(trigger).toHaveFocus();
-    fireEvent.click(trigger);
-    expect(screen.getByRole('menuitem', { name: `Edit alias ${name}` })).toBeVisible();
-    expect(screen.getByRole('menuitem', { name: `Delete alias ${name}` })).toBeVisible();
+    expect(menuAction(1, 'UpdateAlias')).toHaveAccessibleName(`Edit alias ${name}`);
+    expect(menuAction(1, 'DeleteAlias')).toHaveAccessibleName(`Delete alias ${name}`);
   });
 
   it('describes the alias name constraints before submission and rejects a numeric name', async () => {
     renderTab();
     await waitForBothLists();
     const submit = await prepareAction('CreateAlias', '123');
-    const dialog = within(screen.getByRole('dialog'));
-    const name = dialog.getByRole('textbox', { name: 'Alias name' });
+    const name = aliasNameInput();
+    const field = aliasNameField();
     const constraints = /Use 1–128 letters.*numbers, hyphens, or underscores.*cannot be all numbers/;
-    expect(dialog.getByText(constraints)).toBeVisible();
+    expect(field.findConstraint()?.getElement()).toHaveTextContent(constraints);
     expect(name).toHaveAccessibleDescription(constraints);
     fireEvent.click(submit);
-    expect(
-      dialog.getByText('Enter 1–128 letters, numbers, hyphens, or underscores. The name cannot be all numbers.'),
-    ).toBeVisible();
+    expect(field.findError()?.getElement()).toHaveTextContent(
+      'Enter 1–128 letters, numbers, hyphens, or underscores. The name cannot be all numbers.',
+    );
     expect(engine.count('CreateAlias')).toBe(0);
   });
 
@@ -488,13 +562,13 @@ describe('Release actions', () => {
     fireEvent.click(await prepareAction(operation));
     expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
     expect(screen.getByText(`The emulator answered 501 Not Implemented for ${operation}.`)).toBeVisible();
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await waitFor(() => expect(PAGE.findModal()).toBeNull());
     const unsupported = releaseAction(operation);
     expect(unsupported).toBeVisible();
     expect(unsupported).toHaveAttribute('aria-disabled', 'true');
     fireEvent.click(unsupported);
     expect(engine.count(operation)).toBe(1);
-    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(PAGE.findModal()).toBeNull();
     for (const [other] of actions.filter(([other]) => other !== operation)) {
       expect(releaseAction(other)).not.toHaveAttribute('aria-disabled', 'true');
       expect(releaseAction(other)).not.toBeDisabled();
@@ -526,26 +600,42 @@ describe('Release actions', () => {
 
     const expectCurrentAliases = async () => {
       if (operation === 'DeleteAlias') {
-        expect(await screen.findByText('No aliases')).toBeVisible();
-        expect(aliasesTable().queryByText('live')).toBeNull();
+        await waitFor(() =>
+          expect(releaseTable('Aliases')?.findEmptySlot()?.getElement()).toHaveTextContent('No aliases'),
+        );
+        expect(releaseRows('Aliases', 3)).toEqual([]);
       } else {
         const name = operation === 'CreateAlias' ? 'next' : 'live';
         await waitFor(() => expectAlias(name, '2'));
       }
     };
+    const refreshedDescription = 'Updated function details after the alias changed';
+    function description() {
+      return PAGE.findKeyValuePairs()
+        ?.findItems()
+        .find((pair) => pair.findLabel()?.getElement().textContent === 'Description')
+        ?.findValue()
+        ?.getElement();
+    }
+    async function settleDetail() {
+      await settle(detail, functionAnswer(refreshedDescription));
+      await waitFor(() => expect(description()).toHaveTextContent(refreshedDescription));
+    }
+
+    expect(description()).toHaveTextContent('Initial function details');
     if (first === 'aliases') {
       await settle(aliases, aliasAnswer(engine.aliases));
       await expectCurrentAliases();
       expect(screen.getByText(message)).toBeVisible();
-      await settle(detail, functionAnswer());
+      await settleDetail();
     } else {
-      await settle(detail, functionAnswer());
-      expect(await screen.findByText('Source 2')).toBeVisible();
+      await settleDetail();
       expect(screen.getByText(message)).toBeVisible();
       await settle(aliases, aliasAnswer(engine.aliases));
     }
     await expectCurrentAliases();
-    expect(screen.getByText('Source 2')).toBeVisible();
+    expect(description()).toHaveTextContent(refreshedDescription);
+    expect(releaseRows('Versions', 3)).toContainEqual(['2', 'Published', 'Source 2']);
     expect(screen.getByText(message)).toBeVisible();
   });
 });

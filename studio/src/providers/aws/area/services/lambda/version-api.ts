@@ -11,52 +11,8 @@ import {
 import { RequestError, sendRequest, UNREADABLE_ANSWER, type RequestFailure } from '../../../../../lib/aws/request';
 import { lambdaClient } from './api';
 
+/** Failure view shared by release management and the Test target lists. */
 export type ReleaseFailure = RequestFailure & { reportedCode?: string };
-
-export class ReleaseRequestError extends RequestError {
-  constructor(
-    failure: RequestFailure,
-    readonly reportedCode: string,
-  ) {
-    super(failure);
-  }
-}
-
-/** Keep the SDK code for the failure kinds whose shared mapping keeps only the message. */
-async function sendReleaseRequest<T>(
-  operation: string,
-  send: (signal: AbortSignal) => Promise<T>,
-  signal: AbortSignal,
-): Promise<T> {
-  let source: { Code?: unknown; name?: unknown } | undefined;
-  try {
-    return await sendRequest(
-      operation,
-      async (abortSignal) => {
-        try {
-          return await send(abortSignal);
-        } catch (error) {
-          if (typeof error === 'object' && error !== null) {
-            source = error;
-          }
-          throw error;
-        }
-      },
-      signal,
-    );
-  } catch (error) {
-    if (
-      error instanceof RequestError &&
-      (error.failure.kind === 'access-denied' || error.failure.kind === 'emulator-did-not-answer')
-    ) {
-      const code = source?.Code || source?.name;
-      if (typeof code === 'string' && code !== '') {
-        throw new ReleaseRequestError(error.failure, code);
-      }
-    }
-    throw error;
-  }
-}
 
 export const LIST_VERSIONS = 'ListVersionsByFunction';
 export const LIST_ALIASES = 'ListAliases';
@@ -107,11 +63,7 @@ export function listVersions(endpoint: string, name: string, signal: AbortSignal
   const client = lambdaClient(endpoint);
   return readAll(LIST_VERSIONS, async (marker) => {
     const command = new ListVersionsByFunctionCommand({ FunctionName: name, Marker: marker });
-    const answer = await sendReleaseRequest(
-      LIST_VERSIONS,
-      (abortSignal) => client.send(command, { abortSignal }),
-      signal,
-    );
+    const answer = await sendRequest(LIST_VERSIONS, (abortSignal) => client.send(command, { abortSignal }), signal);
     return {
       items: (answer.Versions ?? []).flatMap(({ Version, Description }) =>
         Version ? [{ version: Version, description: Description }] : [],
@@ -125,11 +77,7 @@ export function listAliases(endpoint: string, name: string, signal: AbortSignal)
   const client = lambdaClient(endpoint);
   return readAll(LIST_ALIASES, async (marker) => {
     const command = new ListAliasesCommand({ FunctionName: name, Marker: marker });
-    const answer = await sendReleaseRequest(
-      LIST_ALIASES,
-      (abortSignal) => client.send(command, { abortSignal }),
-      signal,
-    );
+    const answer = await sendRequest(LIST_ALIASES, (abortSignal) => client.send(command, { abortSignal }), signal);
     return { items: (answer.Aliases ?? []).flatMap(aliasOf), nextMarker: answer.NextMarker };
   });
 }
@@ -154,7 +102,7 @@ export async function changeRelease(
   const { operation } = change;
   if (operation === 'PublishVersion') {
     const command = new PublishVersionCommand({ FunctionName: name });
-    const answer = await sendReleaseRequest(operation, (abortSignal) => client.send(command, { abortSignal }), signal);
+    const answer = await sendRequest(operation, (abortSignal) => client.send(command, { abortSignal }), signal);
     if (!answer.Version) {
       throw new RequestError({ kind: 'other', operation, code: UNREADABLE_ANSWER });
     }
@@ -162,11 +110,11 @@ export async function changeRelease(
   }
   if (operation === 'DeleteAlias') {
     const command = new DeleteAliasCommand({ FunctionName: name, Name: change.name });
-    await sendReleaseRequest(operation, (abortSignal) => client.send(command, { abortSignal }), signal);
+    await sendRequest(operation, (abortSignal) => client.send(command, { abortSignal }), signal);
     return { operation, name: change.name };
   }
   const input = { FunctionName: name, Name: change.alias.name, FunctionVersion: change.alias.version };
-  const answer = await sendReleaseRequest<AliasConfiguration>(
+  const answer = await sendRequest<AliasConfiguration>(
     operation,
     (abortSignal) =>
       operation === 'CreateAlias'
