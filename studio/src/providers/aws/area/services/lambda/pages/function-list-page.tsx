@@ -208,7 +208,8 @@ export function FunctionListPage({ connection }: { connection: AreaConnection })
     preliminaryPreferencesEndpoint !== undefined &&
     (preliminaryPreferencesEndpoint !== endpoint ||
       observed.revision > 1 ||
-      (result !== undefined && (!connected || loaded || listing.failure !== undefined)))
+      (result !== undefined &&
+        (!connected || (observed.identity === identity && (loaded || listing.failure !== undefined)))))
   ) {
     setPreliminaryPreferencesEndpoint(undefined);
   }
