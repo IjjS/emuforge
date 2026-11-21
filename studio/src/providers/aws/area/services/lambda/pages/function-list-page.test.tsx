@@ -880,6 +880,76 @@ describe('preferences', () => {
     expect(engine.lists.at(-1)?.searchParams.get('MaxItems')).toBe('10');
     expect(engine.lists.at(-1)?.searchParams.get('Marker')).toBeNull();
   });
+  it('keeps Preferences responsive when the first connected health result follows a click on the preliminary list', async () => {
+    const seeded = many(12);
+    engine.functions = seeded;
+    connection.value = { ...connection.value, result: undefined };
+    open();
+    await expectNames(seeded.map(({ name }) => name));
+    expect(connection.value.result).toBeUndefined();
+    expect(engine.lists).toHaveLength(1);
+    fireEvent.click(selectionAt(1, 'f-01'));
+
+    let release!: (answer: Answer) => void;
+    const verification = new Promise<Answer>((resolve) => {
+      release = resolve;
+    });
+    engine.answer = (request) =>
+      request.url.searchParams.get('MaxItems') === '25' ? verification : engine.emulator(request);
+    const preferences = () => table().findCollectionPreferences();
+    const trigger = preferences()?.findTriggerButton();
+    if (!trigger) throw new Error('Expected the Preferences trigger');
+    expect(trigger.getElement()).toHaveAccessibleName('Preferences');
+    expect(trigger.getElement()).toBeEnabled();
+    fireEvent.click(trigger.getElement());
+    // The click has run, but the modal portal has not had a chance to attach before the health update.
+    expect(preferences()?.findModal()).toBeNull();
+    connection.set(connectedResult());
+    await waitFor(() => expect(engine.lists).toHaveLength(2));
+    expect(engine.lists[1]?.searchParams.get('MaxItems')).toBe('25');
+    expect(table().findLoadingText()?.getElement()).toHaveTextContent('Loading functions');
+    expect(isDisabled(deletionMenu().findNativeButton().getElement())).toBe(true);
+    expect(engine.deletes).toEqual([]);
+    const modal = await waitFor(() => {
+      const found = preferences()?.findModal();
+      if (!found) throw new Error('Expected Preferences while the verifying read is held');
+      expect(found.getElement()).toBeVisible();
+      return found;
+    });
+    expect(modal.findHeader().getElement()).toHaveTextContent('Preferences');
+    const [ten] = modal.findPageSizePreference()?.findOptions() ?? [];
+    if (!ten) throw new Error('Expected the first page-size option');
+    expect(ten.findLabel()?.getElement()).toHaveTextContent('10 functions');
+    fireEvent.click(ten.findNativeInput().getElement());
+    const confirm = modal.findConfirmButton();
+    expect(confirm?.getElement()).toHaveAccessibleName('Confirm');
+    confirm?.click();
+
+    const pageOne = seeded.slice(0, 10).map(({ name }) => name);
+    await expectNames(pageOne);
+    expect(preferences()?.findModal()).toBeNull();
+    expect(engine.lists.at(-1)?.searchParams.get('MaxItems')).toBe('10');
+    expect(isDisabled(deletionMenu().findNativeButton().getElement())).toBe(false);
+    const pagination = table().findPagination();
+    const next = pagination?.findNextPageButton().getElement();
+    if (!next) throw new Error('Expected the next page button');
+    expect(next).toHaveAccessibleName('Next page');
+    expect(isDisabled(next)).toBe(false);
+    engine.functions = seeded.slice(0, 10);
+    fireEvent.click(next);
+    await waitFor(() => {
+      expect(engine.lists.at(-1)?.searchParams.get('Marker')).toBe('f-10');
+      expect(isDisabled(next)).toBe(true);
+    });
+    await expectNames(pageOne);
+    expect(table().findPagination()?.findCurrentPage().getElement()).toHaveAccessibleName('Page 1');
+    const heldRequest = engine.lists[1];
+    if (!heldRequest) throw new Error('Expected the held verification read');
+    await act(async () => release(engine.emulator({ method: 'GET', url: heldRequest })));
+    expect(names()).toEqual(pageOne);
+    expect(engine.deletes).toEqual([]);
+  });
+
   it('"Preferences" opened, "50 functions" chosen with the arrow keys, then a new connection answer: the same dialog, "50 functions" has focus and is chosen (issue 462)', async () => {
     const user = userEvent.setup();
     await openLoaded();
