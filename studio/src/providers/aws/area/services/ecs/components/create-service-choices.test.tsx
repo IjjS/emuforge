@@ -137,8 +137,19 @@ async function choose(label: string, id: string) {
   }
 }
 
-function loadMore() {
-  fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
+function loadMoreButton(picker: ReturnType<typeof select> | ReturnType<typeof multi>) {
+  return waitFor(() => {
+    const menu = picker.findDropdown().findOpenDropdown()?.getElement();
+    if (!menu) throw new Error('Missing open choice menu');
+    const button = createWrapper(menu).findButton()?.getElement();
+    if (!button) throw new Error('Missing continuation button');
+    expect(button).toHaveTextContent('Load more');
+    return button;
+  });
+}
+
+async function loadMore(picker: ReturnType<typeof select> | ReturnType<typeof multi>) {
+  fireEvent.click(await loadMoreButton(picker));
 }
 
 function reject(failure: RequestFailure): never {
@@ -155,8 +166,7 @@ it('loads a later ACTIVE family page using the returned continuation', async () 
   );
   await open();
   openDropdown(select(FAMILY));
-  await screen.findByRole('button', { name: 'Load more' });
-  loadMore();
+  await loadMore(select(FAMILY));
   await waitFor(() => expect(select(FAMILY).findDropdown().findOptionByValue('api')).not.toBeNull());
   select(FAMILY).selectOptionByValue('api');
   expect(select(FAMILY).findTrigger().getElement()).toHaveTextContent('api');
@@ -182,7 +192,7 @@ it('closes an open revision menu on continuation 501 and keeps the chosen revisi
   expect(menu).toBeInTheDocument();
   expect(before.findDropdown().findOptionByValue('web:3')?.getElement()).toBeVisible();
 
-  loadMore();
+  await loadMore(before);
 
   const diagnostic = await screen.findByRole('group', { name: `${REVISION} diagnostic` });
   expect(diagnostic).toHaveTextContent('501 Not Implemented for ListTaskDefinitions');
@@ -192,7 +202,6 @@ it('closes an open revision menu on continuation 501 and keeps the chosen revisi
   expect(after.findTrigger().getElement()).toHaveTextContent('web:2');
   openDropdown(after);
   expect(after.findDropdown().findOpenDropdown()).toBeNull();
-  expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
   expect(answers.mock.calls.filter(([op]) => op === operation).map(([, input]) => input.nextToken)).toEqual([
     undefined,
@@ -218,7 +227,7 @@ it.each(['picker', 'another field', 'nonfocusable content'] as const)(
     await choose(FAMILY, 'web');
     await choose(REVISION, 'web:2');
     openDropdown(select(REVISION));
-    const more = await screen.findByRole('button', { name: 'Load more' });
+    const more = await loadMoreButton(select(REVISION));
     more.focus();
     await user.keyboard('{Enter}');
     await waitFor(() => expect(more).toHaveAttribute('aria-disabled', 'true'));
@@ -276,7 +285,7 @@ it('uses the first eligible page for the preset and options, then chooses an old
   await waitFor(() => expect(select(REVISION).findTrigger().getElement()).toHaveTextContent('web:4'));
   openDropdown(select(REVISION));
   expect(select(REVISION).findDropdown().findOptionByValue('web:4')).not.toBeNull();
-  loadMore();
+  await loadMore(select(REVISION));
   await waitFor(() => expect(select(REVISION).findDropdown().findOptionByValue('web:1')).not.toBeNull());
   select(REVISION).selectOptionByValue('web:1');
   expect(select(REVISION).findTrigger().getElement()).toHaveTextContent('web:1');
@@ -303,7 +312,7 @@ it('clears a preset on family change and ignores a delayed page from the old fam
   await choose(FAMILY, 'web');
   await waitFor(() => expect(select(REVISION).findTrigger().getElement()).toHaveTextContent('web:2'));
   openDropdown(select(REVISION));
-  loadMore();
+  await loadMore(select(REVISION));
   await choose(FAMILY, 'api');
   expect(select(REVISION).findTrigger().getElement()).toHaveTextContent('Choose a revision');
   await act(async () => resolveNew(page(['api:3'])));
@@ -373,8 +382,7 @@ it('loads another subnet on the selected VPC continuation', async () => {
   await open();
   await choose(SUBNETS, 'subnet-a');
   openDropdown(multi(SUBNETS));
-  await screen.findByRole('button', { name: 'Load more' });
-  loadMore();
+  await loadMore(multi(SUBNETS));
   await waitFor(() => expect(multi(SUBNETS).findDropdown().findOptionByValue('subnet-b')).not.toBeNull());
   multi(SUBNETS).selectOptionByValue('subnet-b');
   expect(network.listSubnetChoices).toHaveBeenCalledWith(ENGINE, 'subnets-2', expect.any(AbortSignal), 'vpc-1');
@@ -388,8 +396,7 @@ it('loads a group on the selected VPC continuation', async () => {
   await open();
   await choose(SUBNETS, 'subnet-a');
   openDropdown(multi(GROUPS));
-  await screen.findByRole('button', { name: 'Load more' });
-  loadMore();
+  await loadMore(multi(GROUPS));
   await waitFor(() => expect(multi(GROUPS).findDropdown().findOptionByValue('sg-b')).not.toBeNull());
   multi(GROUPS).selectOptionByValue('sg-b');
   expect(multi(GROUPS).findTokens()).toHaveLength(1);
