@@ -7,8 +7,6 @@ import FormField from '@cloudscape-design/components/form-field';
 import Header from '@cloudscape-design/components/header';
 import Input, { type InputProps } from '@cloudscape-design/components/input';
 import Link from '@cloudscape-design/components/link';
-import type { MultiselectProps } from '@cloudscape-design/components/multiselect';
-import type { SelectProps } from '@cloudscape-design/components/select';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
@@ -23,7 +21,11 @@ import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
 import { failureOf, usePageSignal } from '../../../components/use-token-listing';
 import type { ScreenPageProps } from '../../../screens';
-import { CreateServiceChoice, useCreateServiceChoices } from '../components/create-service-choices';
+import {
+  CreateServiceChoice,
+  useCreateServiceChoices,
+  type CreateServiceChoiceRef,
+} from '../components/create-service-choices';
 import { NotFound } from '../components/not-found';
 import { CREATE_SERVICE_OPERATION } from '../create-service-api';
 import { fargateRevisionChoices } from '../create-service-choices';
@@ -146,9 +148,10 @@ function CreateServiceForm({ cluster, connection }: { cluster: string; connectio
 
   const [held, setForm] = useState(CREATE_SERVICE_START);
   const [tried, setTried] = useState(false);
-  const [unsupported, setUnsupported] = useState(false);
+  const [unsupportedReason, setUnsupportedReason] = useState<ReactNode>();
   const [duplicateName, setDuplicateName] = useState<string>();
   const familyReasonId = useId();
+  const unsupportedReasonId = useId();
   const refusalId = useId();
   const refusalCount = useRef(0);
   const [pending, setPending] = useState(false);
@@ -157,10 +160,10 @@ function CreateServiceForm({ cluster, connection }: { cluster: string; connectio
 
   const busy = useRef(false);
   const nameRef = useRef<InputProps.Ref>(null);
-  const familyRef = useRef<SelectProps.Ref>(null);
-  const revisionRef = useRef<SelectProps.Ref>(null);
+  const familyRef = useRef<CreateServiceChoiceRef>(null);
+  const revisionRef = useRef<CreateServiceChoiceRef>(null);
   const countRef = useRef<InputProps.Ref>(null);
-  const subnetsRef = useRef<MultiselectProps.Ref>(null);
+  const subnetsRef = useRef<CreateServiceChoiceRef>(null);
   const cancelRef = useRef<ButtonProps.Ref>(null);
   const fields: Record<CreateServiceField, typeof nameRef | typeof familyRef | typeof subnetsRef> = {
     name: nameRef,
@@ -183,6 +186,8 @@ function CreateServiceForm({ cluster, connection }: { cluster: string; connectio
   const form = { ...held, revision: held.revision ?? revisionList.choices?.[0] };
   const errors = tried ? createServiceMessages(form) : {};
   const noFamilies = familyList.choices?.length === 0 && !familyList.more && !familyList.loading && !familyList.failure;
+  const unsupported = unsupportedReason !== undefined;
+  const submitReasonId = unsupported ? unsupportedReasonId : noFamilies ? familyReasonId : undefined;
   const nameError = errors.name ?? (duplicateName === form.name.trim() ? RENAME_SERVICE : undefined);
 
   useEffect(() => {
@@ -235,7 +240,9 @@ function CreateServiceForm({ cluster, connection }: { cluster: string; connectio
         ) {
           setDuplicateName(request.serviceName);
         }
-        setUnsupported(failure.kind === 'not-implemented');
+        if (failure.kind === 'not-implemented') {
+          setUnsupportedReason(item.content);
+        }
         // A previous item can still be visible during its exit animation.
         refusalCount.current += 1;
         const itemId = `${refusalId}-${String(refusalCount.current)}`;
@@ -295,7 +302,7 @@ function CreateServiceForm({ cluster, connection }: { cluster: string; connectio
               <Button
                 variant="primary"
                 disabled={unsupported || noFamilies}
-                {...(noFamilies ? { ariaDescribedby: familyReasonId } : {})}
+                {...(submitReasonId === undefined ? {} : { ariaDescribedby: submitReasonId })}
                 loading={pending}
                 loadingText={CREATING}
               >
@@ -321,7 +328,7 @@ function CreateServiceForm({ cluster, connection }: { cluster: string; connectio
                   source={families}
                   listing={familyList}
                   connection={connection}
-                  inputRef={familyRef}
+                  focusRef={familyRef}
                   value={form.family}
                   placeholder="Choose a family"
                   unavailable={noFamilies}
@@ -345,7 +352,7 @@ function CreateServiceForm({ cluster, connection }: { cluster: string; connectio
                   source={revisions}
                   listing={revisionList}
                   connection={connection}
-                  inputRef={revisionRef}
+                  focusRef={revisionRef}
                   value={form.revision}
                   placeholder={form.family === undefined ? 'Choose a family first' : 'Choose a revision'}
                   error={errors.revision}
@@ -380,7 +387,7 @@ function CreateServiceForm({ cluster, connection }: { cluster: string; connectio
                   connection={connection}
                   value={form.subnets}
                   placeholder="Choose subnets"
-                  inputRef={subnetsRef}
+                  focusRef={subnetsRef}
                   error={errors.subnets}
                   description="Choose one or more subnets in the same VPC."
                   empty="No subnets in the local emulator."
@@ -412,6 +419,11 @@ function CreateServiceForm({ cluster, connection }: { cluster: string; connectio
                 </Checkbox>
               </SpaceBetween>
             </Container>
+            {unsupported && (
+              <Box variant="p" color="text-status-inactive">
+                <span id={unsupportedReasonId}>{unsupportedReason}</span>
+              </Box>
+            )}
           </SpaceBetween>
         </Form>
       </form>

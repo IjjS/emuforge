@@ -6,7 +6,7 @@ import Multiselect, { type MultiselectProps } from '@cloudscape-design/component
 import Select, { type SelectProps } from '@cloudscape-design/components/select';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
-import type { Ref } from 'react';
+import { useId, useImperativeHandle, useRef, type Ref } from 'react';
 
 import type { RequestFailure } from '../../../../../../lib/aws/request';
 import { optional } from '../../../components/choice-select';
@@ -15,8 +15,13 @@ import { Code, readFailureState } from '../../../components/failure-states';
 import { useFollow } from '../../../components/use-follow';
 import { usePagedChoices, type ChoiceSource, type PagedChoices } from '../../../components/use-paged-choices';
 
+export interface CreateServiceChoiceRef {
+  focus(): void;
+}
+
 interface ChoiceProps<T> {
   source: ChoiceSource<T>;
+  focusRef?: Ref<CreateServiceChoiceRef>;
   listing: PagedChoices<T>;
   connection: AreaConnection;
   label: string;
@@ -30,14 +35,12 @@ interface ChoiceProps<T> {
 type SingleChoice<T> = {
   multiple?: false;
   value: T | undefined;
-  inputRef?: Ref<SelectProps.Ref> | undefined;
   onChange: (value: T) => void;
 };
 
 type MultipleChoices<T> = {
   multiple: true;
   value: readonly T[];
-  inputRef?: Ref<MultiselectProps.Ref> | undefined;
   onChange: (values: T[]) => void;
 };
 
@@ -55,14 +58,29 @@ export function CreateServiceChoice<T>(props: ChoiceProps<T> & (SingleChoice<T> 
     unavailable = false,
     multiple,
     value,
-    inputRef,
+    focusRef,
     onChange,
   } = props;
   const items = listing.choices ?? [];
   const blocked = listing.failure?.kind === 'not-implemented';
+  const disabled = unavailable || blocked || source.ready === false;
+  const selectRef = useRef<SelectProps.Ref>(null);
+  const multiRef = useRef<MultiselectProps.Ref>(null);
+  const diagnosticRef = useRef<HTMLDivElement>(null);
+  const diagnosticId = useId();
+  useImperativeHandle(
+    focusRef,
+    () => ({
+      focus() {
+        const target = disabled ? diagnosticRef : multiple ? multiRef : selectRef;
+        target.current?.focus();
+      },
+    }),
+    [disabled, multiple],
+  );
   const controls = {
     ...optional({ placeholder, invalid: error === undefined ? undefined : true }),
-    disabled: unavailable || blocked || source.ready === false,
+    disabled,
     options: items.map(source.optionOf),
     statusType: listing.loading ? ('loading' as const) : ('finished' as const),
     loadingText: `Loading ${label.toLowerCase()}`,
@@ -83,7 +101,7 @@ export function CreateServiceChoice<T>(props: ChoiceProps<T> & (SingleChoice<T> 
         {multiple === true ? (
           <Multiselect
             {...controls}
-            ref={inputRef}
+            ref={multiRef}
             selectedOptions={value.map(source.optionOf)}
             deselectAriaLabel={(option) => `Remove ${option.label ?? option.value ?? ''}`}
             onChange={({ detail }) => {
@@ -99,7 +117,7 @@ export function CreateServiceChoice<T>(props: ChoiceProps<T> & (SingleChoice<T> 
         ) : (
           <Select
             {...controls}
-            ref={inputRef}
+            ref={selectRef}
             dropdownRole="dialog"
             selectedOption={value === undefined ? null : source.optionOf(value)}
             onChange={({ detail }) => {
@@ -112,7 +130,17 @@ export function CreateServiceChoice<T>(props: ChoiceProps<T> & (SingleChoice<T> 
         )}
       </FormField>
       {listing.failure !== undefined ? (
-        <ChoiceFailure failure={listing.failure} connection={connection} label={label} onRetry={listing.retry} />
+        <div
+          ref={diagnosticRef}
+          tabIndex={-1}
+          role="group"
+          aria-label={`${label} diagnostic`}
+          aria-describedby={diagnosticId}
+        >
+          <div id={diagnosticId}>
+            <ChoiceFailure failure={listing.failure} connection={connection} label={label} onRetry={listing.retry} />
+          </div>
+        </div>
       ) : (
         emptyNow && !unavailable && <Box>{empty}</Box>
       )}
