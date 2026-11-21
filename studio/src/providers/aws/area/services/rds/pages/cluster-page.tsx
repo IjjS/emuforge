@@ -71,36 +71,38 @@ function portText(port: number | undefined): string | undefined {
 
 function Connection({ cluster }: { cluster: DbCluster }) {
   return (
-    <Container
-      header={
-        <Header variant="h2" description={CONNECTION_DESCRIPTION}>
-          Connection
-        </Header>
-      }
-    >
+    <Container header={<Header variant="h2">Connection</Header>}>
       <ComposeHostEndpoint kind="cluster" engine={cluster.engine} port={cluster.port} />
-      <Pairs
-        label="Connection"
-        items={[
-          {
-            label: 'Writer endpoint',
-            value: <CopyValue label="Writer endpoint" value={cluster.endpoint} kind="address" none={NONE} />,
-          },
-          {
-            label: 'Reader endpoint',
-            value: <CopyValue label="Reader endpoint" value={cluster.readerEndpoint} kind="address" none={NONE} />,
-          },
-          { label: 'Port', value: <CopyValue label="Port" value={portText(cluster.port)} kind="fixed" none={NONE} /> },
-          {
-            label: 'Master user name',
-            value: <CopyValue label="Master user name" value={cluster.masterUsername} kind="name" none={NONE} />,
-          },
-          {
-            label: 'Database name',
-            value: <CopyValue label="Database name" value={cluster.databaseName} kind="name" none={NONE} />,
-          },
-        ]}
-      />
+      <SpaceBetween size="s">
+        <Header variant="h3" description={CONNECTION_DESCRIPTION}>
+          Reported by the emulator
+        </Header>
+        <Pairs
+          label="Connection"
+          items={[
+            {
+              label: 'Writer endpoint',
+              value: <CopyValue label="Writer endpoint" value={cluster.endpoint} kind="address" none={NONE} />,
+            },
+            {
+              label: 'Reader endpoint',
+              value: <CopyValue label="Reader endpoint" value={cluster.readerEndpoint} kind="address" none={NONE} />,
+            },
+            {
+              label: 'Port',
+              value: <CopyValue label="Port" value={portText(cluster.port)} kind="fixed" none={NONE} />,
+            },
+            {
+              label: 'Master user name',
+              value: <CopyValue label="Master user name" value={cluster.masterUsername} kind="name" none={NONE} />,
+            },
+            {
+              label: 'Database name',
+              value: <CopyValue label="Database name" value={cluster.databaseName} kind="name" none={NONE} />,
+            },
+          ]}
+        />
+      </SpaceBetween>
     </Container>
   );
 }

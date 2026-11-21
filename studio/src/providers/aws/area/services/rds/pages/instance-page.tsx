@@ -90,51 +90,53 @@ function SignInValue({
 
 function Connection({ instance, signIn }: { instance: DbInstance; signIn: ClusterSignIn | undefined }) {
   return (
-    <Container
-      header={
-        <Header variant="h2" description={CONNECTION_DESCRIPTION}>
-          Connection
-        </Header>
-      }
-    >
+    <Container header={<Header variant="h2">Connection</Header>}>
       <ComposeHostEndpoint
         kind="instance"
         engine={instance.engine}
         clusterId={instance.clusterId}
         port={instance.port}
       />
-      <Pairs
-        label="Connection"
-        items={[
-          {
-            label: 'Endpoint address',
-            value: <CopyValue label="Endpoint address" value={instance.address} kind="address" none={NONE} />,
-          },
-          { label: 'Port', value: <CopyValue label="Port" value={portText(instance.port)} kind="fixed" none={NONE} /> },
-          {
-            label: 'Master user name',
-            value: (
-              <SignInValue
-                label="Master user name"
-                own={instance.masterUsername}
-                fromCluster={signIn?.masterUsername}
-                clusterId={instance.clusterId}
-              />
-            ),
-          },
-          {
-            label: 'Database name',
-            value: (
-              <SignInValue
-                label="Database name"
-                own={instance.dbName}
-                fromCluster={signIn?.databaseName}
-                clusterId={instance.clusterId}
-              />
-            ),
-          },
-        ]}
-      />
+      <SpaceBetween size="s">
+        <Header variant="h3" description={CONNECTION_DESCRIPTION}>
+          Reported by the emulator
+        </Header>
+        <Pairs
+          label="Connection"
+          items={[
+            {
+              label: 'Endpoint address',
+              value: <CopyValue label="Endpoint address" value={instance.address} kind="address" none={NONE} />,
+            },
+            {
+              label: 'Port',
+              value: <CopyValue label="Port" value={portText(instance.port)} kind="fixed" none={NONE} />,
+            },
+            {
+              label: 'Master user name',
+              value: (
+                <SignInValue
+                  label="Master user name"
+                  own={instance.masterUsername}
+                  fromCluster={signIn?.masterUsername}
+                  clusterId={instance.clusterId}
+                />
+              ),
+            },
+            {
+              label: 'Database name',
+              value: (
+                <SignInValue
+                  label="Database name"
+                  own={instance.dbName}
+                  fromCluster={signIn?.databaseName}
+                  clusterId={instance.clusterId}
+                />
+              ),
+            },
+          ]}
+        />
+      </SpaceBetween>
     </Container>
   );
 }

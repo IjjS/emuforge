@@ -28,8 +28,8 @@ export function ComposeHostEndpoint(resource: ComposeHostEndpointProps) {
         <Box variant="strong">{LABEL}</Box>
         <CopyValue label={LABEL} value={`127.0.0.1:${port}`} />
         <Box variant="p">
-          If your emulator runs in Docker Compose with database ports published, use this endpoint in a SQL client on
-          the machine running Compose.
+          If the emulator runs in Docker Compose with database ports published, run your SQL client on the machine
+          running Compose.
         </Box>
       </SpaceBetween>
     </Box>
