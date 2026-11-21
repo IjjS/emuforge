@@ -3,7 +3,7 @@ import { SFNClient } from '@aws-sdk/client-sfn';
 import { FetchHttpHandler } from '@smithy/fetch-http-handler';
 import { acceptedChannel, ENGINE_HOST } from '../engine/engine-base';
 import { SESSION_HEADER } from '../engine/engine-client';
-import { engineSession, type EngineSession } from './engine-session';
+import { EngineCommandSessionRefusal, engineSession, type EngineSession } from './engine-session';
 
 export { EngineSessionError, type EngineSessionFailure } from './engine-session';
 
@@ -273,7 +273,7 @@ function carrySession<C extends SdkClient>(client: C, session: EngineSession, si
         }
         if (singleAttempt) {
           session.forget(token);
-          throw error;
+          throw new EngineCommandSessionRefusal(error);
         }
       }
       token = await session.renew(token, signal);

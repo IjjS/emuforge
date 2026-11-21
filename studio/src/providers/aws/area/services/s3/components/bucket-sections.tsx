@@ -228,6 +228,8 @@ interface BucketSectionsProps {
   reads: BucketSectionReads;
   connection: AreaConnection;
   deleteNotificationDisabled: boolean;
+  notificationComparisonOnly: boolean;
+  notificationActionsHidden: boolean;
   deleteNotificationFeedback: ReactNode;
   deleteConsentRecovery: DeleteConsentRecovery | undefined;
   onDeleteNotification: (target: EditableNotification) => void;
@@ -242,6 +244,8 @@ export function BucketSections({
   reads,
   connection,
   deleteNotificationDisabled,
+  notificationComparisonOnly,
+  notificationActionsHidden,
   deleteNotificationFeedback,
   deleteConsentRecovery,
   onDeleteNotification,
@@ -296,23 +300,28 @@ export function BucketSections({
           { label: 'Bucket Key', kind: 'fixed', value: bucketKey },
         ]}
       />
-      <NotificationSection
-        bucket={name}
-        configuration={notificationRead.failure === undefined ? answered(notificationRead) : undefined}
-        loading={notificationRead.loading}
-        failure={
-          notificationsUnavailable ? (
-            <NotificationLoadUnavailable focus={notificationRetryRequested} />
-          ) : notificationRead.failure === undefined ? undefined : (
-            <SectionFailure read={notificationRead} connection={connection} onRetry={retryNotifications} />
-          )
-        }
-        unsupported={notificationsUnavailable}
-        feedback={deleteNotificationFeedback}
-        consentRecovery={deleteConsentRecovery}
-        deleteDisabled={deleteNotificationDisabled}
-        onDelete={onDeleteNotification}
-      />
+      {notificationComparisonOnly ? (
+        deleteNotificationFeedback
+      ) : (
+        <NotificationSection
+          bucket={name}
+          configuration={notificationRead.failure === undefined ? answered(notificationRead) : undefined}
+          loading={notificationRead.loading}
+          failure={
+            notificationsUnavailable ? (
+              <NotificationLoadUnavailable focus={notificationRetryRequested} />
+            ) : notificationRead.failure === undefined ? undefined : (
+              <SectionFailure read={notificationRead} connection={connection} onRetry={retryNotifications} />
+            )
+          }
+          unsupported={notificationsUnavailable}
+          feedback={deleteNotificationFeedback}
+          consentRecovery={deleteConsentRecovery}
+          deleteDisabled={deleteNotificationDisabled}
+          hideRuleActions={notificationActionsHidden}
+          onDelete={onDeleteNotification}
+        />
+      )}
       <FieldsSection
         title="Static website hosting"
         action={edit(name, 'website')}

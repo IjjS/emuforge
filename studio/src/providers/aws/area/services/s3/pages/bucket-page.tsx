@@ -20,7 +20,7 @@ import { ObjectsTab } from '../components/objects-tab';
 import { useAnnouncer } from '../components/use-announcer';
 import { anySectionMissing, useBucketSections } from '../components/use-bucket-sections';
 import { bucketPropertiesPath, objectsPath } from '../format';
-import type { Bucket } from '../api';
+import { NO_SUCH_BUCKET, type Bucket, type NotificationConfiguration } from '../api';
 import type { EditableNotification } from '../notifications';
 import { useNotificationChange } from '../use-notification-change';
 import { useBucketLookup } from '../queries';
@@ -87,10 +87,34 @@ export function BucketPage({ connection, params }: ScreenPageProps) {
   }, []);
   const connected = connection.result?.kind === 'connected';
   const down = connection.result !== undefined && !connected;
-  const deletion = useNotificationChange(connection.engineOrigin, name, down, () => {
+  const [observed, setObserved] = useState<{ generation: number; value: NotificationConfiguration }>();
+  const deletion = useNotificationChange(
+    connection.engineOrigin,
+    name,
+    down,
+    () => {
+      setObserved(undefined);
+      sections.notifications.again();
+      flash.show([{ type: 'success', content: 'Event notification deleted' }]);
+    },
+    (value) => setObserved(value === NO_SUCH_BUCKET ? undefined : { generation: lookup.generation, value }),
+  );
+  const verifyingDelete =
+    deletion.state.kind === 'unconfirmed' || (deletion.state.kind === 'pending' && deletion.state.checkingAgain);
+  const currentObservation =
+    !down && verifyingDelete && observed?.generation === lookup.generation ? observed.value : undefined;
+  const showDeleteComparison =
+    currentObservation !== undefined && deletion.state.kind === 'unconfirmed' && deletion.state.observed !== undefined;
+  const notificationRead =
+    currentObservation === undefined
+      ? sections.notifications
+      : { ...sections.notifications, value: currentObservation, loading: false, failure: undefined };
+
+  function viewCurrentNotifications() {
+    deletion.clear();
+    setObserved(undefined);
     sections.notifications.again();
-    flash.show([{ type: 'success', content: 'Event notification deleted' }]);
-  });
+  }
   const deleteDisabled =
     deletion.locked ||
     deletion.readFailed ||
@@ -124,8 +148,11 @@ export function BucketPage({ connection, params }: ScreenPageProps) {
         change={deletion}
         connection={connection}
         action="Deleting"
+        showObserved={showDeleteComparison}
+        {...(observed === undefined ? {} : { onViewCurrent: viewCurrentNotifications })}
         onRefresh={() => {
           deletion.clear();
+          setObserved(undefined);
           refresh();
         }}
       />
@@ -217,9 +244,11 @@ export function BucketPage({ connection, params }: ScreenPageProps) {
       content: (
         <BucketSections
           bucket={bucket}
-          reads={sections}
+          reads={{ ...sections, notifications: notificationRead }}
           connection={connection}
           deleteNotificationDisabled={deleteDisabled}
+          notificationComparisonOnly={showDeleteComparison}
+          notificationActionsHidden={verifyingDelete}
           deleteNotificationFeedback={
             <>
               {expiryNotice}

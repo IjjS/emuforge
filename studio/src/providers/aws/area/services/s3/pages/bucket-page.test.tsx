@@ -2242,6 +2242,64 @@ describe('bucket event notifications', () => {
     },
   );
 
+  it('explains a session-refused deletion and requires another explicit confirmation', async () => {
+    await openBucket({ notification: () => notificationDocument(queueRule('to-queue')) });
+    const apply = engine.writeNotifications;
+    engine.writeNotifications = (body) =>
+      engine.notificationWrites.length === 1
+        ? errorAnswer(401, 'SessionInvalid', 'The engine did not recognize the session.')
+        : apply(body);
+    confirmDelete(await startDelete());
+
+    const error = await screen.findByRole('region', { name: 'The engine refused the write before forwarding it' });
+    expect(error).toHaveFocus();
+    expect(error).toHaveAccessibleDescription(/select Delete and confirm again/);
+    expect(error).toHaveAccessibleDescription(/The engine did not recognize the session/);
+    expect(notificationModal()).toBeNull();
+    expect(screen.getByRole('button', { name: 'Delete to-queue' })).toBeEnabled();
+    expect(engine.notificationWrites).toHaveLength(1);
+    expect(notificationFlashes('Event notification deleted')).toHaveLength(0);
+
+    engine.parts.notification = () => notificationDocument(queueRule('to-queue'), queueRule('external-audit'));
+    const freshConsent = await startDelete();
+    expect(engine.notificationWrites).toHaveLength(1);
+    confirmDelete(freshConsent);
+    await waitFor(() => expect(notificationFlashes('Event notification deleted')).toHaveLength(1));
+    expect(engine.notificationWrites).toHaveLength(2);
+    expect(engine.notificationWrites[1]).toContain('<Id>external-audit</Id>');
+  });
+
+  it('shows the current divergent rows and reads fresh when leaving deletion verification', async () => {
+    await openBucket({ notification: () => notificationDocument(queueRule('to-queue')) });
+    const firstObservation = notificationDocument(queueRule('external-audit'));
+    engine.writeNotifications = () => {
+      engine.parts.notification = () => firstObservation;
+      return { status: 204, body: '' };
+    };
+    confirmDelete(await startDelete());
+    await waitFor(() => expect(observedTable()?.findBodyCell(1, 1)?.getElement()).toHaveTextContent('external-audit'));
+    expect(screen.queryByRole('link', { name: 'Edit to-queue' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Delete to-queue' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Delete external-audit' })).toBeNull();
+
+    const priorReads = engine.notificationReads.length;
+    fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
+    await waitFor(() => expect(observedTable()?.findBodyCell(1, 1)?.getElement()).toHaveTextContent('external-audit'));
+    expect(engine.notificationReads.slice(priorReads).map((request) => request.method)).toEqual(['GET']);
+    expect(notificationFlashes('Event notification deleted')).toHaveLength(0);
+    expect(engine.notificationWrites).toHaveLength(1);
+
+    engine.parts.notification = () => notificationDocument(queueRule('external-audit'), queueRule('newer-external'));
+    fireEvent.click(screen.getByRole('button', { name: 'View current configuration' }));
+    expect(await screen.findByRole('button', { name: 'Delete newer-external' })).toBeEnabled();
+    expect(screen.getByRole('link', { name: 'Edit external-audit' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Check again' })).toBeNull();
+    expect(observedTable()).toBeUndefined();
+    expect(engine.notificationReads.slice(priorReads).map((request) => request.method)).toEqual(['GET', 'GET']);
+    expect(engine.notificationWrites).toHaveLength(1);
+    expect(notificationFlashes('Event notification deleted')).toHaveLength(0);
+  });
+
   it('names the unavailable verification GET and disables the deletion recovery action', async () => {
     await openBucket({ notification: () => notificationDocument(queueRule('to-queue')) });
     engine.writeNotifications = () => {

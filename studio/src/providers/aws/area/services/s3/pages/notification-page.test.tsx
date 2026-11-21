@@ -708,6 +708,44 @@ it.each(['Create', 'Edit'])('%s focuses the unavailable verification GET and dis
   expect(notificationFlashes('Event notification saved')).toHaveLength(0);
 });
 
+it.each(['Create', 'Edit'])('%s explains a confirmed session refusal and reveals the retained submit', async (mode) => {
+  const editing = mode === 'Edit';
+  if (editing) engine.document = documentOf(SAVED_RULE);
+  const original = engine.document;
+  open(editing ? editEventNotificationPath(BUCKET, 'saved') : CREATE);
+  await loaded();
+  if (!editing) fill();
+  changeValue(input('Prefix (optional)'), 'attempted/');
+  const submit = editing ? 'Save changes' : 'Create event notification';
+  const apply = engine.write;
+  engine.write = (body) =>
+    engine.writes.length === 1
+      ? refusal(401, 'SessionInvalid', 'The engine did not recognize the session.')
+      : apply(body);
+
+  fireEvent.click(screen.getByRole('button', { name: submit }));
+  const error = await screen.findByRole('region', { name: 'The engine refused the write before forwarding it' });
+  expect(error).toHaveFocus();
+  expect(error).toHaveAccessibleDescription(/Studio can renew the session when you submit again/);
+  expect(error).toHaveAccessibleDescription(/The engine did not recognize the session/);
+  expect(engine.document).toBe(original);
+  expect(engine.writeRequests).toHaveLength(1);
+  expect(input('Prefix (optional)')).toHaveValue('attempted/');
+  expect(notificationFlashes('Event notification saved')).toHaveLength(0);
+
+  fireEvent.click(within(error).getByRole('button', { name: `Go to ${submit}` }));
+  const originalSubmit = screen.getByRole('button', { name: submit });
+  expect(originalSubmit).toHaveFocus();
+  expect(engine.writeRequests).toHaveLength(1);
+
+  engine.document = original === EMPTY ? documentOf(TOPIC) : documentOf(SAVED_RULE + TOPIC);
+  fireEvent.click(originalSubmit);
+  await waitFor(() => expect(notificationFlashes('Event notification saved')).toHaveLength(1));
+  expect(engine.writeRequests).toHaveLength(2);
+  expect(engine.document).toContain('<Id>topic</Id>');
+  expect(engine.document).toContain('attempted/');
+});
+
 it('sends one configuration PUT when the applied write loses its response and preserves a later external edit', async () => {
   const lostResponse = heldResponse();
   const router = open();

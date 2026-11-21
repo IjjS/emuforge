@@ -93,6 +93,7 @@ export function NotificationPage({ connection, params }: ScreenPageProps) {
 
   const changeKind = change.state.kind;
   const feedbackRef = useRef<HTMLDivElement>(null);
+  const submitRef = useRef<ButtonProps.Ref>(null);
   useEffect(() => {
     if (changeKind !== 'idle' && changeKind !== 'unconfirmed') {
       feedbackRef.current?.scrollIntoView?.({ block: 'center' });
@@ -167,6 +168,10 @@ export function NotificationPage({ connection, params }: ScreenPageProps) {
             action="Saving"
             showObserved={!disconnected && currentReadback !== undefined}
             {...(submitted === undefined ? {} : { destination: submitted.save.draft.type })}
+            nextWrite={{
+              label: editing ? 'Go to Save changes' : 'Go to Create event notification',
+              onClick: () => submitRef.current?.focus(),
+            }}
             onRefresh={handleRefresh}
           />
         </div>
@@ -229,6 +234,7 @@ export function NotificationPage({ connection, params }: ScreenPageProps) {
           connection={connection}
           onLeave={() => void navigate(properties)}
           onSave={handleSave}
+          submitRef={submitRef}
         />
       )}
     </SpaceBetween>
@@ -310,6 +316,7 @@ function NotificationForm({
   connection,
   onLeave,
   onSave,
+  submitRef,
 }: {
   configuration: NotificationConfiguration;
   target: EditableNotification | undefined;
@@ -317,6 +324,7 @@ function NotificationForm({
   connection: AreaConnection;
   onLeave: () => void;
   onSave: (save: NotificationSave) => void;
+  submitRef: React.Ref<ButtonProps.Ref>;
 }) {
   const [initial] = useState(() => notificationDraft(target));
   const [draft, setDraft] = useState(initial);
@@ -392,6 +400,7 @@ function NotificationForm({
               Cancel
             </Button>
             <Button
+              ref={submitRef}
               variant="primary"
               formAction="submit"
               disabled={locked || connection.engineOrigin === undefined || connectionStatus(connection) !== undefined}
