@@ -161,6 +161,37 @@ export function untilAborted<T>(pending: Promise<T>, signal: AbortSignal): Promi
   });
 }
 
+const mutationAuthorizations = new WeakMap<AbortSignal, () => void>();
+
+/**
+ * Bind a mutation to the browser connection before it can queue. Losing browser connectivity invalidates future attempts without
+ * interrupting a response already relayed to the engine. The caller still owns cancellation on session teardown.
+ */
+export function bindAwsMutationAuthorization(controller: AbortController): () => void {
+  let interrupted = !navigator.onLine;
+  const interrupt = () => {
+    interrupted = true;
+  };
+  window.addEventListener('offline', interrupt, true);
+  window.addEventListener('online', interrupt, true);
+  mutationAuthorizations.set(controller.signal, () => {
+    if (interrupted || !navigator.onLine) {
+      controller.abort();
+    }
+  });
+  return () => {
+    mutationAuthorizations.delete(controller.signal);
+    window.removeEventListener('offline', interrupt, true);
+    window.removeEventListener('online', interrupt, true);
+  };
+}
+
+/** Check an authorization at dispatch without aborting an already-relayed response on a connectivity event. */
+export function assertAwsRequestAuthorized(signal: AbortSignal): void {
+  mutationAuthorizations.get(signal)?.();
+  signal.throwIfAborted();
+}
+
 /**
  * One request of `operation`, sent by `send` with `signal` (R6.2). Rejects with a `RequestError` for a failed
  * request, and with `signal`'s reason, and nothing else, once it aborts.
@@ -170,7 +201,7 @@ export async function sendRequest<T>(
   send: (signal: AbortSignal) => Promise<T>,
   signal: AbortSignal,
 ): Promise<T> {
-  signal.throwIfAborted();
+  assertAwsRequestAuthorized(signal);
   let sent: Promise<T>;
   try {
     sent = send(signal);
