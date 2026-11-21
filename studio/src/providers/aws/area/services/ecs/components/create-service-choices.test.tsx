@@ -165,6 +165,40 @@ it('loads a later ACTIVE family page using the returned continuation', async () 
   ]);
 });
 
+it('closes an open revision menu on continuation 501 and keeps the chosen revision', async () => {
+  const operation = 'ListTaskDefinitions';
+  answers.mockImplementation((op, input) => {
+    if (op !== operation) return normal(op, input);
+    if (input.nextToken) reject({ kind: 'not-implemented', operation });
+    return page(['web:3', 'web:2'], 'older');
+  });
+  await open();
+  await choose(FAMILY, 'web');
+  await choose(REVISION, 'web:2');
+  const before = select(REVISION);
+  openDropdown(before);
+  const menu = before.findDropdown().findOpenDropdown()?.getElement();
+  expect(menu).toBeInTheDocument();
+  expect(before.findDropdown().findOptionByValue('web:3')?.getElement()).toBeVisible();
+
+  loadMore();
+
+  const diagnostic = await screen.findByRole('group', { name: `${REVISION} diagnostic` });
+  expect(diagnostic).toHaveTextContent('501 Not Implemented for ListTaskDefinitions');
+  const after = select(REVISION);
+  expect(menu).not.toBeInTheDocument();
+  expect(after.findTrigger().getElement()).toBeDisabled();
+  expect(after.findTrigger().getElement()).toHaveTextContent('web:2');
+  openDropdown(after);
+  expect(after.findDropdown().findOpenDropdown()).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+  expect(answers.mock.calls.filter(([op]) => op === operation).map(([, input]) => input.nextToken)).toEqual([
+    undefined,
+    'older',
+  ]);
+});
+
 it('uses the first eligible page for the preset and options, then chooses an older revision', async () => {
   answers.mockImplementation((op, input) => {
     if (op === 'ListTaskDefinitions') {
