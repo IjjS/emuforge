@@ -176,14 +176,14 @@ function openTargetSelect(dialog: HTMLElement) {
   return select;
 }
 
-async function prepareAction(operation: MutationOperation) {
+async function prepareAction(operation: MutationOperation, aliasName = 'next') {
   if (operation === 'PublishVersion') {
     return operationButton(operation);
   }
   fireEvent.click(operationButton(operation));
   const dialog = await screen.findByRole('dialog');
   if (operation === 'CreateAlias') {
-    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Alias name' }), { target: { value: 'next' } });
+    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Alias name' }), { target: { value: aliasName } });
   }
   if (operation === 'CreateAlias' || operation === 'UpdateAlias') {
     const select = openTargetSelect(dialog);
@@ -344,13 +344,52 @@ describe('Release actions', () => {
       json({ message: 'The emulator refused the change' }, 409, 'ResourceConflictException');
     renderTab();
     await waitForBothLists();
-    fireEvent.click(await prepareAction(operation));
+    const submit = await prepareAction(operation, 'live');
+    submit.focus();
+    fireEvent.click(submit);
+
+    if (operation !== 'PublishVersion') {
+      const dialog = screen.getByRole('dialog');
+      const inline = within(dialog);
+      expect(await inline.findByText('ResourceConflictException')).toBeVisible();
+      const alert = inline.getByRole('alert');
+      expect(within(alert).getByText(`${operation} failed`)).toBeVisible();
+      expect(alert).toContainElement(document.activeElement as HTMLElement);
+      if (operation === 'CreateAlias') {
+        expect(inline.getByRole('textbox', { name: 'Alias name' })).toHaveValue('live');
+      } else {
+        expect(inline.getByText('live')).toBeVisible();
+      }
+      if (operation === 'CreateAlias' || operation === 'UpdateAlias') {
+        const select = createWrapper(dialog).findSelect();
+        expect(select?.findTrigger().getElement()).toHaveTextContent('2');
+      }
+      fireEvent.click(inline.getByRole('button', { name: 'Cancel' }));
+      expect(screen.queryByRole('dialog')).toBeNull();
+    }
+
     expect(await screen.findByText('ResourceConflictException')).toBeVisible();
     expect(screen.getByText(`${operation} failed`)).toBeVisible();
     expect(screen.queryByText(message)).toBeNull();
     expect(screen.queryByText('next')).toBeNull();
     expect(screen.queryByText('Source 3')).toBeNull();
     expectAlias('live', '1');
+  });
+
+  it('describes the alias name constraints before submission and rejects a numeric name', async () => {
+    renderTab();
+    await waitForBothLists();
+    const submit = await prepareAction('CreateAlias', '123');
+    const dialog = within(screen.getByRole('dialog'));
+    const name = dialog.getByRole('textbox', { name: 'Alias name' });
+    const constraints = /Use 1–128 letters.*numbers, hyphens, or underscores.*cannot be all numbers/;
+    expect(dialog.getByText(constraints)).toBeVisible();
+    expect(name).toHaveAccessibleDescription(constraints);
+    fireEvent.click(submit);
+    expect(
+      dialog.getByText('Enter 1–128 letters, numbers, hyphens, or underscores. The name cannot be all numbers.'),
+    ).toBeVisible();
+    expect(engine.count('CreateAlias')).toBe(0);
   });
 
   it.each(actions)('%s stays visible but unavailable after a 501', async (operation) => {

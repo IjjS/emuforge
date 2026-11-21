@@ -259,28 +259,28 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
       (result.operation === 'PublishVersion' ? releases.versions : releases.aliases).refresh();
     },
     onFailure: (failure) => {
-      const item = actionFailureItem(failure, failure.operation, connection.engineOrigin);
+      const summary = actionFailureItem(failure, failure.operation, connection.engineOrigin);
       const operationInContent = failure.kind === 'engine-did-not-answer' || failure.kind === 'emulator-did-not-answer';
-      flash.show([
-        {
-          ...item,
-          content: (
-            <>
-              {operationInContent && (
-                <>
-                  <Code>{failure.operation}</Code> failed.{' '}
-                </>
-              )}
-              {failure.reportedCode !== undefined && (
-                <>
-                  <Code>{failure.reportedCode}</Code>.{' '}
-                </>
-              )}
-              {item.content}
-            </>
-          ),
-        },
-      ]);
+      const item = {
+        ...summary,
+        content: (
+          <>
+            {operationInContent && (
+              <>
+                <Code>{failure.operation}</Code> failed.{' '}
+              </>
+            )}
+            {failure.reportedCode !== undefined && (
+              <>
+                <Code>{failure.reportedCode}</Code>.{' '}
+              </>
+            )}
+            {summary.content}
+          </>
+        ),
+      };
+      flash.show([item]);
+      return item;
     },
   });
   const [deleting, setDeleting] = useState(false);
