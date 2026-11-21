@@ -1901,8 +1901,18 @@ describe('the tabs by ?tab=', () => {
 
 describe('"Delete" in the header', () => {
   async function openDialog(): Promise<HTMLElement> {
-    fireEvent.click(within(header()).getByRole('button', { name: 'Delete' }));
-    return screen.findByRole('dialog', { name: 'Delete functions' });
+    const pageHeader = PAGE.findAllHeaders().find((candidate) =>
+      candidate.findHeadingText().getElement().closest('h1'),
+    );
+    const open = pageHeader
+      ?.findActions()
+      ?.findAllButtons()
+      .find((button) => norm(button.getElement().textContent) === 'Delete');
+    if (open === undefined) {
+      throw new Error('Expected the function page Delete action');
+    }
+    open.click();
+    return waitFor(() => deletionControls().dialog.getElement());
   }
 
   function confirmAndDelete(dialog: HTMLElement) {
@@ -1930,7 +1940,7 @@ describe('"Delete" in the header', () => {
     if (!dialog || !input || !submit || !cancel) {
       throw new Error('Expected the visible deletion dialog and its controls');
     }
-    return { input, submit, cancel, content: dialog.findContent() };
+    return { dialog, input, submit, cancel, content: dialog.findContent() };
   }
 
   function deleteRequests() {
