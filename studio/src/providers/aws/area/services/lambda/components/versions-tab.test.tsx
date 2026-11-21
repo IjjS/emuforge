@@ -1,6 +1,7 @@
+import Flashbar from '@cloudscape-design/components/flashbar';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, waitFor } from '@testing-library/react';
 import { useState } from 'react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -129,12 +130,7 @@ function renderTab() {
               root.current = element;
             }}
           >
-            {flash?.map(({ header, content }, index) => (
-              <div key={index} role="status">
-                {header}
-                <div>{content}</div>
-              </div>
-            ))}
+            {flash !== undefined && <Flashbar items={[...flash]} />}
             <FunctionPage connection={connection} params={{ name: 'orders' }} />
           </div>
         </PageFlashContext.Provider>
@@ -152,6 +148,30 @@ function renderTab() {
 }
 
 const PAGE = createWrapper(document.body);
+function expectPageFlash(type: 'error' | 'info' | 'success', content: string, header?: string) {
+  const flashbar = PAGE.findFlashbar();
+  expect(flashbar?.findItems()).toHaveLength(1);
+  const flash = flashbar?.findItemsByType(type)[0];
+  if (header !== undefined) {
+    expect(flash?.findHeader()?.getElement()).toHaveTextContent(header);
+  }
+  expect(flash?.findContent()?.getElement()).toHaveTextContent(content);
+}
+
+function expectNoPageFlash() {
+  expect(PAGE.findFlashbar()?.findItems() ?? []).toHaveLength(0);
+}
+
+function expectInlineRefusal(dialog: ReturnType<typeof manageDialog>, operation: MutationOperation, message: string) {
+  const alerts = dialog.findContent().findAllAlerts();
+  expect(alerts).toHaveLength(1);
+  const [alert] = alerts;
+  expect(alert?.findHeader()?.getElement()).toHaveTextContent(`${operation} failed`);
+  expect(alert?.findContent().getElement()).toHaveTextContent(`ResourceConflictException: ${message}`);
+  expect(alert?.getElement()).toBeVisible();
+  return alert;
+}
+
 type TableName = 'Versions' | 'Aliases';
 
 function releaseTable(name: TableName) {
@@ -406,7 +426,7 @@ describe('Release actions', () => {
     });
     await waitFor(() => expect(engine.count(operation)).toBe(1));
     await settle(response, succeed(operation));
-    expect(await screen.findByText(message)).toBeVisible();
+    await waitFor(() => expectPageFlash('success', message));
     expect(engine.count(operation)).toBe(1);
     const call = engine.calls.find((entry) => entry.operation === operation);
     if (operation === 'CreateAlias') {
@@ -416,7 +436,7 @@ describe('Release actions', () => {
     }
   });
 
-  it.each(actions)('%s shows the refusal and leaves the listings intact', async (operation, message) => {
+  it.each(actions)('%s shows the refusal and leaves the listings intact', async (operation) => {
     engine.handlers[operation] = () =>
       json({ message: 'The emulator refused the change' }, 409, 'ResourceConflictException');
     renderTab();
@@ -427,14 +447,8 @@ describe('Release actions', () => {
 
     if (operation !== 'PublishVersion') {
       const dialog = manageDialog();
-      await waitFor(() =>
-        expect(dialog.findContent().findAlert()?.findContent().getElement()).toHaveTextContent(
-          'ResourceConflictException',
-        ),
-      );
-      const alert = dialog.findContent().findAlert();
-      expect(screen.getAllByText('ResourceConflictException')).toHaveLength(1);
-      expect(alert?.findHeader()?.getElement()).toHaveTextContent(`${operation} failed`);
+      const alert = await waitFor(() => expectInlineRefusal(dialog, operation, 'The emulator refused the change'));
+      expectNoPageFlash();
       expect(alert?.getElement()).toContainElement(document.activeElement as HTMLElement);
       if (operation === 'CreateAlias') {
         expect(aliasNameInput(dialog)).toHaveValue('live');
@@ -448,9 +462,9 @@ describe('Release actions', () => {
       expect(PAGE.findModal()).toBeNull();
     }
 
-    expect(await screen.findByText('ResourceConflictException')).toBeVisible();
-    expect(screen.getByText(`${operation} failed`)).toBeVisible();
-    expect(screen.queryByText(message)).toBeNull();
+    await waitFor(() =>
+      expectPageFlash('error', 'ResourceConflictException: The emulator refused the change', `${operation} failed`),
+    );
     expect(aliasIndex('next')).toBe(0);
     expect(releaseRows('Versions', 3)).not.toContainEqual(['3', 'Published', 'Source 3']);
     expectAlias('live', '1');
@@ -462,19 +476,15 @@ describe('Release actions', () => {
     await waitForBothLists();
     fireEvent.click(await prepareAction('CreateAlias', 'live'));
     const dialog = manageDialog();
-    await waitFor(() =>
-      expect(dialog.findContent().findAlert()?.findContent().getElement()).toHaveTextContent(
-        'ResourceConflictException',
-      ),
-    );
-    expect(screen.getAllByText('ResourceConflictException')).toHaveLength(1);
+    await waitFor(() => expectInlineRefusal(dialog, 'CreateAlias', 'Alias exists'));
+    expectNoPageFlash();
     fireEvent.change(aliasNameInput(dialog), { target: { value: 'next' } });
-    expect(dialog.findContent().findAlert()).toBeNull();
-    expect(screen.queryByText('ResourceConflictException')).toBeNull();
+    expect(dialog.findContent().findAllAlerts()).toHaveLength(0);
+    expectNoPageFlash();
 
     engine.handlers.CreateAlias = () => succeed('CreateAlias');
     fireEvent.click(dialogButton('Create alias'));
-    expect(await screen.findByText('Created alias next to version 2.')).toBeVisible();
+    await waitFor(() => expectPageFlash('success', 'Created alias next to version 2.'));
     await waitFor(() => expectAlias('next', '2'));
   });
 
@@ -489,9 +499,9 @@ describe('Release actions', () => {
     expect(test?.getElement()).toBeVisible();
     test?.click();
     expect(PAGE.findModal()).toBeNull();
+    expectNoPageFlash();
     await settle(response, json({ message: 'Alias exists' }, 409, 'ResourceConflictException'));
-    expect(await screen.findByText('ResourceConflictException')).toBeVisible();
-    expect(screen.getByText('CreateAlias failed')).toBeVisible();
+    await waitFor(() => expectPageFlash('error', 'ResourceConflictException: Alias exists', 'CreateAlias failed'));
   });
 
   it('places both alias actions behind the labeled leading control beside the full name', async () => {
@@ -560,8 +570,13 @@ describe('Release actions', () => {
     renderTab();
     await waitForBothLists();
     fireEvent.click(await prepareAction(operation));
-    expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
-    expect(screen.getByText(`The emulator answered 501 Not Implemented for ${operation}.`)).toBeVisible();
+    await waitFor(() =>
+      expectPageFlash(
+        'info',
+        `The emulator answered 501 Not Implemented for ${operation}.`,
+        'Not implemented by the emulator',
+      ),
+    );
     await waitFor(() => expect(PAGE.findModal()).toBeNull());
     const unsupported = releaseAction(operation);
     expect(unsupported).toBeVisible();
@@ -592,7 +607,7 @@ describe('Release actions', () => {
     renderTab();
     await waitForBothLists();
     fireEvent.click(await prepareAction(operation));
-    expect(await screen.findByText(message)).toBeVisible();
+    await waitFor(() => expectPageFlash('success', message));
     await waitFor(() => {
       expect(engine.count('GetFunction')).toBe(2);
       expect(engine.count(LIST_ALIASES)).toBe(2);
@@ -626,16 +641,16 @@ describe('Release actions', () => {
     if (first === 'aliases') {
       await settle(aliases, aliasAnswer(engine.aliases));
       await expectCurrentAliases();
-      expect(screen.getByText(message)).toBeVisible();
+      expectPageFlash('success', message);
       await settleDetail();
     } else {
       await settleDetail();
-      expect(screen.getByText(message)).toBeVisible();
+      expectPageFlash('success', message);
       await settle(aliases, aliasAnswer(engine.aliases));
     }
     await expectCurrentAliases();
     expect(description()).toHaveTextContent(refreshedDescription);
     expect(releaseRows('Versions', 3)).toContainEqual(['2', 'Published', 'Source 2']);
-    expect(screen.getByText(message)).toBeVisible();
+    expectPageFlash('success', message);
   });
 });
