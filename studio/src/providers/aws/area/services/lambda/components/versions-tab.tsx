@@ -8,7 +8,7 @@ import Input from '@cloudscape-design/components/input';
 import Select from '@cloudscape-design/components/select';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Table from '@cloudscape-design/components/table';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 
 import { AreaModal } from '../../../components/area-modal';
 import type { AreaConnection } from '../../../components/emulator-line';
@@ -19,9 +19,20 @@ import { valueText } from '../format';
 import type { FunctionAlias, FunctionVersion, ReleaseChange } from '../version-api';
 import type { InlineReleaseRefusal, ReleaseReading, useReleaseMutation } from '../version-queries';
 
+const NARROW_VIEWPORT = '(width < 688px)';
 const ALIAS_NAME_MIN_WIDTH = '28ch';
 const ALIAS_NAME_CONSTRAINT =
   'Use 1–128 letters (A–Z, a–z), numbers, hyphens, or underscores. The name cannot be all numbers.';
+
+function subscribeToNarrowViewport(onChange: () => void) {
+  const media = window.matchMedia?.(NARROW_VIEWPORT);
+  media?.addEventListener('change', onChange);
+  return () => media?.removeEventListener('change', onChange);
+}
+
+function isNarrowViewport() {
+  return window.matchMedia?.(NARROW_VIEWPORT).matches ?? false;
+}
 
 type ReleaseAction = ReleaseChange['operation'];
 
@@ -223,6 +234,7 @@ function ManageAliasDialog({ dialog, versions, pending, onDismiss, onSubmit }: A
 
 export function VersionsTab({ connection, ready, versions, aliases, mutation }: VersionsTabProps) {
   const [dialog, setDialog] = useState<AliasDialog>();
+  const narrow = useSyncExternalStore(subscribeToNarrowViewport, isNarrowViewport);
   const published = (versions.items ?? []).filter(({ version }) => /^[1-9]\d*$/.test(version));
   const aliasPrerequisite =
     versions.items === undefined
@@ -301,6 +313,11 @@ export function VersionsTab({ connection, ready, versions, aliases, mutation }: 
         ariaLabels={{ tableLabel: 'Aliases' }}
         trackBy="name"
         wrapLines
+        columnDisplay={[
+          { id: 'actions', visible: true },
+          { id: 'name', visible: true },
+          { id: 'version', visible: !narrow },
+        ]}
         header={
           <Header
             variant="h2"
@@ -360,8 +377,17 @@ export function VersionsTab({ connection, ready, versions, aliases, mutation }: 
             id: 'name',
             header: 'Alias name',
             isRowHeader: true,
-            minWidth: ALIAS_NAME_MIN_WIDTH,
-            cell: ({ name }) => <ValueText kind="name" value={name} />,
+            ...(narrow ? {} : { minWidth: ALIAS_NAME_MIN_WIDTH }),
+            cell: ({ name, version }) => (
+              <>
+                <ValueText kind="name" value={name} />
+                {narrow && (
+                  <Box variant="small" display="block">
+                    Target version <Code>{version}</Code>
+                  </Box>
+                )}
+              </>
+            ),
           },
           { id: 'version', header: 'Target version', cell: ({ version }) => <Code>{version}</Code> },
         ]}

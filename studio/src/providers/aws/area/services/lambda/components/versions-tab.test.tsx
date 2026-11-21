@@ -427,6 +427,44 @@ describe('Release actions', () => {
     expect(screen.getByRole('menuitem', { name: `Delete alias ${name}` })).toBeVisible();
   });
 
+  it('keeps the action focused while moving the labeled target beneath the alias on narrow screens', async () => {
+    const name = 'release-candidate-012345';
+    const target = '1234567890';
+    const media = new EventTarget();
+    let narrow = false;
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      get matches() {
+        return narrow && query === '(width < 688px)';
+      },
+      addEventListener: media.addEventListener.bind(media),
+      removeEventListener: media.removeEventListener.bind(media),
+    }));
+    engine.aliases = { [name]: target };
+    renderTab();
+    const desktopHeader = await screen.findByRole('rowheader', { name });
+    expect(aliasesTable().getByRole('columnheader', { name: 'Target version' })).toBeVisible();
+    expect(desktopHeader.closest('tr')?.cells[2]).toHaveTextContent(target);
+    const trigger = aliasActions(name);
+    trigger.focus();
+
+    act(() => {
+      narrow = true;
+      media.dispatchEvent(new Event('change'));
+    });
+
+    const details = aliasesTable().getByRole('rowheader', { name: new RegExp(name) });
+    expect(within(details).getByText(name)).toBeVisible();
+    expect(within(details).getByText('Target version')).toBeVisible();
+    expect(within(details).getByText(target)).toBeVisible();
+    expect(aliasesTable().queryByRole('columnheader', { name: 'Target version' })).toBeNull();
+    expect(details.closest('tr')?.cells).toHaveLength(2);
+    expect(aliasActions(name)).toBe(trigger);
+    expect(trigger).toHaveFocus();
+    fireEvent.click(trigger);
+    expect(screen.getByRole('menuitem', { name: `Edit alias ${name}` })).toBeVisible();
+    expect(screen.getByRole('menuitem', { name: `Delete alias ${name}` })).toBeVisible();
+  });
+
   it('describes the alias name constraints before submission and rejects a numeric name', async () => {
     renderTab();
     await waitForBothLists();
