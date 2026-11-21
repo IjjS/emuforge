@@ -1242,6 +1242,94 @@ describe('Versions and aliases', () => {
     );
   }
 
+  it('explains a forced alias confirmation dismissal once and leaves ordinary Escape focus restoration intact', async () => {
+    const explanation =
+      'The Delete alias confirmation closed. After verification, reopen it from the actions menu in the alias row.';
+    const notice = () =>
+      PAGE.findContentLayout()
+        ?.findNotifications()
+        .findAllAlerts()
+        .find((alert) => norm(alert.findContent().getElement().textContent) === explanation)
+        ?.getElement();
+    const visibleDialog = () => PAGE.findAllModals().find((modal) => modal.isVisible());
+    async function openAliasDelete() {
+      const menu = await waitFor(() => {
+        expect(aliasesShown()).toEqual([['live', '2']]);
+        const dropdown = releaseTable('Aliases')?.findBodyCell(1, 1)?.findButtonDropdown();
+        if (!dropdown) throw new Error('Expected the alias row menu');
+        return dropdown;
+      });
+      const menuButton = menu.findNativeButton().getElement();
+      expect(menuButton).toHaveAccessibleName('Actions for alias live');
+      menuButton.focus();
+      act(() => menu.openDropdown());
+      const item = menu.findItemById('DeleteAlias')?.find('[role="menuitem"]')?.getElement();
+      if (!item) throw new Error('Expected the DeleteAlias action');
+      expect(item).toHaveAccessibleName('Delete alias live');
+      fireEvent.click(item);
+      const cancel = await waitFor(() => {
+        const dialog = visibleDialog();
+        expect(dialog?.findHeader().getElement()).toHaveTextContent('Delete alias');
+        const [cancel, submit] = dialog?.findFooter()?.findAllButtons() ?? [];
+        if (!cancel) throw new Error('Expected the dialog Cancel action');
+        expect(cancel.getElement()).toHaveAccessibleName('Cancel');
+        expect(submit?.getElement()).toHaveAccessibleName('Delete alias');
+        return cancel.getElement();
+      });
+      cancel.focus();
+      expect(cancel).toHaveFocus();
+      return { cancel, menuButton };
+    }
+
+    const announcements = recordAnnouncements();
+    const dismissalCount = () => announcements.filter((message) => message.includes(explanation)).length;
+    engine.functions = [{ name: 'orders', description: 'Before reconnect' }];
+    engine.answerRelease = ({ url }) =>
+      url.pathname.endsWith('/versions') ? versionAnswer('2') : aliasAnswer('live', '2');
+    const { unmount } = open(pagePath('orders') + versionsPath);
+    const wasOnline = onlineManager.isOnline();
+    const browserOnline = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true);
+    try {
+      const ordinary = await openAliasDelete();
+      fireEvent.keyDown(ordinary.cancel, { key: 'Escape', keyCode: 27 });
+      await waitFor(() => expect(ordinary.menuButton).toHaveFocus());
+      expect(visibleDialog()).toBeUndefined();
+      expect(notice()).toBeUndefined();
+      expect(dismissalCount()).toBe(0);
+
+      await openAliasDelete();
+      const refresh = pageActions()[0]?.getElement();
+      expect(refresh).toHaveAccessibleName('Refresh');
+      browserOnline.mockReturnValue(false);
+      fireEvent(window, new Event('offline'));
+      await waitFor(() => {
+        expect(visibleDialog()).toBeUndefined();
+        expect(refresh).toHaveFocus();
+        expect(notice()).toBeVisible();
+        expect(dismissalCount()).toBe(1);
+      });
+
+      engine.functions = [{ name: 'orders', description: 'Verified after reconnect' }];
+      browserOnline.mockReturnValue(true);
+      fireEvent(window, new Event('online'));
+      expect(releaseTable('Aliases')).toBeUndefined();
+      expect(notice()).toBeVisible();
+      connection.set(connectedResult());
+      await waitFor(() => expect(value('Description')).toBe('Verified after reconnect'));
+      expect(notice()).toBeVisible();
+      const reopened = await openAliasDelete();
+      expect(notice()).toBeUndefined();
+      fireEvent.click(reopened.cancel);
+      await waitFor(() => expect(reopened.menuButton).toHaveFocus());
+      expect(dismissalCount()).toBe(1);
+      expect(engine.aws.filter(({ method, url }) => method === 'DELETE' && ALIAS_PATH.test(url.pathname))).toEqual([]);
+    } finally {
+      unmount();
+      browserOnline.mockRestore();
+      onlineManager.setOnline(wasOnline);
+    }
+  });
+
   it('opens from the tab and reopens the same function on its release address', async () => {
     const { router, unmount } = await openLoaded();
     fireEvent.click(tabLink('versions'));
@@ -1620,6 +1708,88 @@ describe('Qualified Test invocations', () => {
       expect(resultPanel()).toHaveTextContent('from the live alias');
       expect(resultPanel()).toHaveTextContent('live tail');
       expect(eventField().getTextareaValue()).toBe(event);
+    },
+  );
+
+  it.each(['editor', 'picker', 'tab'] as const)(
+    'explains the Invoke target reset once after native reconnect with focus on the %s',
+    async (focused) => {
+      const explanation =
+        'Invoke target reset to $LATEST. After verification, use Invoke target to select a version or alias for your preserved event draft.';
+      const description = () => {
+        const event = tabs()?.findTabContent()?.findGrid()?.findColumn(1)?.findContainer();
+        expect(event?.findHeader()?.findHeader()?.findHeadingText().getElement()).toHaveTextContent('Event');
+        const [target] = event?.findContent().findAllFormFields() ?? [];
+        expect(target?.findLabel()?.getElement()).toHaveTextContent('Invoke target');
+        return target?.findDescription()?.getElement();
+      };
+      const announcements = recordAnnouncements();
+      const resetCount = () => announcements.filter((message) => message.includes(explanation)).length;
+      const event = '{"event":"keep this draft"}';
+      const detail = deferredAnswer();
+      const { unmount } = open(pagePath('orders'));
+      const wasOnline = onlineManager.isOnline();
+      const browserOnline = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true);
+      try {
+        await waitForResult('Not invoked yet');
+        await chooseTarget('live');
+        expect(targets().findTrigger().getElement()).toHaveTextContent('live');
+        expect(targets().findTrigger().getElement()).toHaveAccessibleName(/Invoke target/);
+        expect(eventField().findNativeTextarea().getElement()).toHaveAccessibleName('Event JSON');
+        eventField().setTextareaValue(event);
+        const control = {
+          editor: eventField().findNativeTextarea().getElement(),
+          picker: targets().findTrigger().getElement(),
+          tab: tabLink('test'),
+        }[focused];
+        const refresh = pageActions()[0]?.getElement();
+        expect(refresh).toHaveAccessibleName('Refresh');
+        control.focus();
+        expect(control).toHaveFocus();
+        expect(description()).toBeUndefined();
+
+        browserOnline.mockReturnValue(false);
+        fireEvent(window, new Event('offline'));
+        expect(focused === 'tab' ? control : refresh).toHaveFocus();
+        expect(targets().findTrigger().getElement()).toHaveTextContent('$LATEST');
+        expect(eventField().getTextareaValue()).toBe(event);
+        expect(description()).toHaveTextContent(explanation);
+        expect(invokeButton().getElement()).toBeDisabled();
+        await waitFor(() => expect(resetCount()).toBe(1));
+
+        engine.functions = [{ name: 'orders', description: 'Invocation target verified' }];
+        engine.answerFunction = () => detail.promise;
+        browserOnline.mockReturnValue(true);
+        fireEvent(window, new Event('online'));
+        expect(description()).toHaveTextContent(explanation);
+        const reads = engine.gets.length;
+        connection.set(connectedResult());
+        await waitFor(() => expect(engine.gets.length).toBeGreaterThan(reads));
+        expect(tabs()).toBeNull();
+        expect(resetCount()).toBe(1);
+        await act(async () =>
+          detail.resolve(
+            engine.emulator({ method: 'GET', url: new URL('/2015-03-31/functions/orders', engineOrigin) }),
+          ),
+        );
+        await waitFor(() => expect(value('Description')).toBe('Invocation target verified'));
+        await waitForResult('Not invoked yet');
+        expect(description()).toHaveTextContent(explanation);
+        expect(eventField().getTextareaValue()).toBe(event);
+        expect(targets().findTrigger().getElement()).toHaveTextContent('$LATEST');
+        expect(invokeButton().getElement()).toBeEnabled();
+        expect(resetCount()).toBe(1);
+        await chooseTarget('live');
+        expect(targets().findTrigger().getElement()).toHaveTextContent('live');
+        expect(description()).toBeUndefined();
+        expect(eventField().getTextareaValue()).toBe(event);
+        expect(resetCount()).toBe(1);
+        expect(submitted()).toEqual([]);
+      } finally {
+        unmount();
+        browserOnline.mockRestore();
+        onlineManager.setOnline(wasOnline);
+      }
     },
   );
 

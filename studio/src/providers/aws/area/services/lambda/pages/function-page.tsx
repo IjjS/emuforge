@@ -8,7 +8,7 @@ import Link from '@cloudscape-design/components/link';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Tabs, { type TabsProps } from '@cloudscape-design/components/tabs';
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Ref } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 
 import { startedAtOf } from '../../../../../../lib/engine/engine-client';
@@ -29,7 +29,7 @@ import { FunctionOverview, FunctionStatusLine } from '../components/function-sec
 import { functionStatus } from '../components/function-status';
 import { MonitorTab } from '../components/monitor-tab';
 import { quoting } from '../components/quoting';
-import { InvocationResult, TestTab, type TestTabProps } from '../components/test-tab';
+import { INVOKE_TARGET_RESET, InvocationResult, TestTab, type TestTabProps } from '../components/test-tab';
 import { VersionsTab, type VersionsTabProps } from '../components/versions-tab';
 import { FUNCTIONS_PATH, functionTabHref, releaseSuccessText, TAB_PARAMETER, tabOf } from '../format';
 import { invokeOutcome } from '../invoke-result';
@@ -45,6 +45,8 @@ import { useReleaseMutation, useReleaseReadings } from '../version-queries';
 const REFRESHED = 'Function refreshed';
 const READY = 'Function ready';
 const NO_DELETE_TARGETS: readonly string[] = [];
+const ALIAS_CONFIRMATION_INTERRUPTED =
+  'The Delete alias confirmation closed. After verification, reopen it from the actions menu in the alias row.';
 
 /** The event text "Test" holds when the page opens. */
 export const INITIAL_EVENT = '{}';
@@ -56,7 +58,8 @@ interface FunctionTabsProps {
   ready: boolean;
   testScope: string;
   test: Omit<TestTabProps, 'functionName' | 'connection' | 'versions' | 'aliases'>;
-  releases: Pick<VersionsTabProps, 'versions' | 'aliases' | 'mutation'>;
+  releases: Pick<VersionsTabProps, 'versions' | 'aliases' | 'mutation' | 'onAliasConfirmationChange'>;
+  releaseViewRef: Ref<HTMLDivElement>;
   waitingForReleases: boolean;
   active: ReturnType<typeof tabOf>;
   onMonitorRefreshSettled: ((message: string) => void) | undefined;
@@ -74,6 +77,7 @@ function FunctionTabs({
   testScope,
   test,
   releases,
+  releaseViewRef,
   waitingForReleases,
   active,
   onMonitorRefreshSettled,
@@ -139,11 +143,13 @@ function FunctionTabs({
       label: 'Versions and aliases',
       href: functionTabHref(name, 'versions'),
       content: test.verified ? (
-        <VersionsTab
-          {...releases}
-          connection={connection}
-          ready={ready && !releases.versions.loading && !releases.aliases.loading}
-        />
+        <div ref={releaseViewRef}>
+          <VersionsTab
+            {...releases}
+            connection={connection}
+            ready={ready && !releases.versions.loading && !releases.aliases.loading}
+          />
+        </div>
       ) : (
         <Container>
           <Box textAlign="center">
@@ -287,6 +293,7 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
     eventText: INITIAL_EVENT,
     qualifier: undefined as string | undefined,
     targetUnavailable: false,
+    targetReset: false,
   });
   if (test.scope !== verificationScope) {
     setTest({
@@ -295,6 +302,7 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
       eventText: test.functionScope === functionScope ? test.eventText : INITIAL_EVENT,
       qualifier: undefined,
       targetUnavailable: false,
+      targetReset: test.functionScope === functionScope && (test.targetReset || test.qualifier !== undefined),
     });
   }
   const [verification, setVerification] = useState({ scope: verificationScope, found: false });
@@ -309,6 +317,21 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
   if (verification.scope !== verificationScope || verification.found !== verified) {
     setVerification({ scope: verificationScope, found: verified });
   }
+  const [aliasConfirmation, setAliasConfirmation] = useState<{ functionScope: string; open: boolean }>();
+  if (aliasConfirmation !== undefined) {
+    if (aliasConfirmation.functionScope !== functionScope || active !== 'versions') {
+      setAliasConfirmation(undefined);
+    } else if (aliasConfirmation.open && !verified) {
+      // An ordinary dismissal reports false before the release view unmounts.
+      setAliasConfirmation({ functionScope, open: false });
+    }
+  }
+  const aliasInterrupted =
+    active === 'versions' && aliasConfirmation?.functionScope === functionScope && !aliasConfirmation.open;
+  const handleAliasConfirmationChange = useCallback(
+    (open: boolean) => setAliasConfirmation(open ? { functionScope, open: true } : undefined),
+    [functionScope],
+  );
   const releases = useReleaseReadings({
     endpoint: connection.engineOrigin,
     name,
@@ -411,6 +434,34 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
     : confirmationHint;
   const refreshButton = useRef<ButtonProps.Ref>(null);
   const dismissedWithFocus = useRef(false);
+  const removedFocus = useRef<'alias' | 'test' | undefined>(undefined);
+  const captureAliasFocus = useCallback((element: HTMLDivElement | null) => {
+    if (element === null) return;
+    return () => {
+      // The alias dialog is portaled outside the release view.
+      if (document.activeElement?.closest('[role="dialog"]')) {
+        removedFocus.current = 'alias';
+      }
+    };
+  }, []);
+  const captureTestFocus = useCallback((element: HTMLDivElement | null) => {
+    if (element === null) return;
+    return () => {
+      if (element.contains(document.activeElement)) {
+        removedFocus.current = 'test';
+      }
+    };
+  }, []);
+  useLayoutEffect(() => {
+    const removed = removedFocus.current;
+    removedFocus.current = undefined;
+    if (
+      document.activeElement === document.body &&
+      ((removed === 'alias' && aliasInterrupted) || (removed === 'test' && active === 'test' && test.targetReset))
+    ) {
+      refreshButton.current?.focus();
+    }
+  });
   const handleFocusedDismissal = useCallback(() => {
     dismissedWithFocus.current = true;
   }, []);
@@ -449,11 +500,21 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
   const failureLine = failureState?.firstText;
   const toSay: string[] = [];
   const [seenNotice, setSeenNotice] = useState<string>();
+  const [seenAliasInterruption, setSeenAliasInterruption] = useState(false);
+  const [seenTargetReset, setSeenTargetReset] = useState(false);
   if (seenNotice !== noticeWords) {
     setSeenNotice(noticeWords);
     if (noticeWords !== undefined) {
       toSay.push(noticeWords);
     }
+  }
+  if (seenAliasInterruption !== aliasInterrupted) {
+    setSeenAliasInterruption(aliasInterrupted);
+    if (aliasInterrupted) toSay.push(ALIAS_CONFIRMATION_INTERRUPTED);
+  }
+  if (seenTargetReset !== test.targetReset) {
+    setSeenTargetReset(test.targetReset);
+    if (test.targetReset) toSay.push(INVOKE_TARGET_RESET);
   }
   if (refreshing === 'function' && (read !== undefined || failure !== undefined)) {
     setRefreshing(undefined);
@@ -545,9 +606,17 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
             onEventTextChange: (eventText) => setTest((current) => ({ ...current, eventText })),
             qualifier,
             targetUnavailable: test.targetUnavailable,
-            onTargetChange: (qualifier) => setTest((current) => ({ ...current, qualifier, targetUnavailable: false })),
+            targetReset: test.targetReset,
+            invokeInputRef: captureTestFocus,
+            onTargetChange: (qualifier) =>
+              setTest((current) => ({ ...current, qualifier, targetUnavailable: false, targetReset: false })),
           }}
-          releases={{ ...releases, mutation: releaseMutation }}
+          releases={{
+            ...releases,
+            mutation: releaseMutation,
+            onAliasConfirmationChange: handleAliasConfirmationChange,
+          }}
+          releaseViewRef={captureAliasFocus}
           waitingForReleases={network.online && (result === undefined || connected)}
           active={active}
           onMonitorRefreshSettled={refreshing === 'monitor' ? handleMonitorRefreshSettled : undefined}
@@ -560,13 +629,16 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
     <>
       <ContentLayout
         notifications={
-          networkNotice ? (
-            <Alert type={networkNotice.type} header={networkNotice.header}>
-              {networkNotice.detail} {confirmationHint}
-            </Alert>
-          ) : (
-            confirmationHint && <Alert type="info">{confirmationHint}</Alert>
-          )
+          <>
+            {networkNotice ? (
+              <Alert type={networkNotice.type} header={networkNotice.header}>
+                {networkNotice.detail} {confirmationHint}
+              </Alert>
+            ) : (
+              confirmationHint && <Alert type="info">{confirmationHint}</Alert>
+            )}
+            {aliasInterrupted && <Alert type="info">{ALIAS_CONFIRMATION_INTERRUPTED}</Alert>}
+          </>
         }
         header={
           <Header
