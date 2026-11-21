@@ -434,6 +434,7 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
           testScope={sessionScope}
           test={{
             invoke,
+            verified,
             resultRef: invocationPanel,
             eventText: test.eventText,
             onEventTextChange: (eventText) => setTest((current) => ({ ...current, eventText })),
