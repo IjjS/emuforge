@@ -226,10 +226,12 @@ test('engine.product-database-range-refuses-private-api', async ({ ctx }) => {
   test.setTimeout(productTimeout(1, 2));
   const range = await leaseDatabaseRange(ctx);
   const form = await Form.create(ctx, { developerPorts: true, env: range.env, emulatorPort: range.low + 1 });
-  expectExit(await form.start(), 'non-zero');
+  const failed = await form.start();
+  expectExit(failed, 'non-zero');
   const log = await form.run(form.compose('logs', '--no-color', 'emuforge'), STOP_BOUND_MS);
-  expect(log.stdout + log.stderr).toContain(String(form.emulatorPort));
-  expect(log.stdout + log.stderr).toContain(`${range.low}-${range.high}`);
+  const diagnostic = `EMULATOR_PORT=${form.emulatorPort} conflicts with database port range ${range.low}-${range.high}`;
+  const output = [failed.stdout, failed.stderr, log.stdout, log.stderr].join('\n');
+  expect(output).toContain('Compose database port configuration: ' + diagnostic);
   const listed = await form.run(form.compose('ps', '--all', '--quiet', 'aws-emulator'), STOP_BOUND_MS);
   expectExit(listed, 'zero');
   for (const id of listed.stdout.trim().split(/\s+/).filter(Boolean)) {
@@ -243,14 +245,20 @@ test('engine.compose-database-range-refuses-occupied-ports', async ({ ctx }) => 
   const range = await leaseDatabaseRange(ctx);
   const a = await Form.create(ctx, { developerPorts: true, env: range.env });
   const b = await Form.create(ctx, { developerPorts: true, env: range.env });
+  expect(new Set([a.enginePort, a.studioPort, b.enginePort, b.studioPort]).size).toBe(4);
   expectExit(await a.start(), 'zero');
   const ports = [a.enginePort, a.studioPort, ...portNumbers(range.low, range.high)];
   await expectMappings(await a.containers(), 'emuforge', ports);
   const failed = await b.start();
   expectExit(failed, 'non-zero');
-  expect(failed.stderr + failed.stdout).toMatch(
-    /port is already allocated|address already in use|port is already in use/i,
+  const output = [failed.stderr, failed.stdout].join('\n');
+  const bindFailure = output.match(
+    /(?:bind(?: for| host port)?|listen tcp4?)\s+127\.0\.0\.1:(\d+)\b[^\r\n]*(?:port is already allocated|address already in use|port is already in use)/i,
   );
+  expect(bindFailure, 'a failed bind to the contender’s loopback host port').not.toBeNull();
+  const occupiedPort = Number(bindFailure![1]);
+  expect(occupiedPort).toBeGreaterThanOrEqual(range.low);
+  expect(occupiedPort).toBeLessThanOrEqual(range.high);
   expectExit(await b.removeVolume(), 'zero');
   expect(await waitReachable(a.enginePort, true)).toMatchObject({ body: { emulator: { reachable: true } } });
   await expectMappings(await a.containers(), 'emuforge', ports);
