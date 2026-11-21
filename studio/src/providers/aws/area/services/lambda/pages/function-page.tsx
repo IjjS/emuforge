@@ -280,6 +280,7 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
   const verified =
     connected &&
     network.online &&
+    healthCheckedAfterReconnect &&
     readNetworkRevision === network.revision &&
     reading.sessionVerified &&
     (read?.found ?? (failure === undefined && verification.scope === verificationScope && verification.found));
@@ -342,10 +343,7 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
   });
   // A confirmation belongs to the function and connection that opened the dialog.
   const [deletion, setDeletion] = useState<{ scope: string; names: readonly [string] }>();
-  const reconnect = network.reconnect;
-  const healthCheckedAfterReconnect =
-    reconnect === undefined || (connected && result !== reconnect.previous && startedAtOf(result) >= reconnect.at);
-  const canDelete = connection.engineOrigin !== undefined && verified && healthCheckedAfterReconnect;
+  const canDelete = connection.engineOrigin !== undefined && verified;
   const activeDeletion = canDelete && deletion?.scope === verificationScope ? deletion : undefined;
   if (activeDeletion !== deletion) {
     setDeletion(undefined);
