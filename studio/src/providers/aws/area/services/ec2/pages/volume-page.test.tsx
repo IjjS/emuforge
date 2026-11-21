@@ -550,8 +550,40 @@ describe('attach volume', () => {
     expect(button('Attach volume')).toBeEnabled();
     expect(button('Delete volume')).toBeEnabled();
     expectAcknowledgment(acknowledgment);
-    await openDialog('Delete volume');
+    // A repeated read or render keeps the existing announcement node. A new timeout replaces it.
+    const liveTimeout = () =>
+      [...document.querySelectorAll('.aws-area-announcer[aria-live="polite"][aria-atomic="true"] > span')].find(
+        (element) => element.textContent === `${heading?.textContent}. ${message?.textContent}`,
+      );
+    const firstAnnouncement = liveTimeout();
+    expect(firstAnnouncement).toBeInTheDocument();
+
+    fireEvent.click(button('Refresh'));
+    await waitFor(() => expectVolumeState('available'));
+    expect(liveTimeout()).toBe(firstAnnouncement);
+    expectAcknowledgment(acknowledgment);
+
+    const deleteDialog = await openDialog('Delete volume');
+    fireEvent.click(deleteDialog.button('Cancel'));
     expect(api.deleteVolume).not.toHaveBeenCalled();
+    expect(liveTimeout()).toBe(firstAnnouncement);
+
+    const nextAttach = await fillAttachDialog();
+    fireEvent.click(nextAttach.button('Attach volume'));
+    await waitFor(() => {
+      expectAcknowledgment(acknowledgment);
+      expect(button('Attach volume')).toBeDisabled();
+    });
+    expect(liveTimeout()).toBe(firstAnnouncement);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ATTACHMENT_CONFIRMATION_MS);
+    });
+    expect(liveTimeout()).toBeInTheDocument();
+    expect(liveTimeout()).not.toBe(firstAnnouncement);
+    expect(firstAnnouncement).not.toBeInTheDocument();
+    expectAcknowledgment(acknowledgment);
+    expect(button('Attach volume')).toBeEnabled();
+    expect(button('Delete volume')).toBeEnabled();
   });
 
   it('retries a failed instance choice read and offers fresh results', async () => {
