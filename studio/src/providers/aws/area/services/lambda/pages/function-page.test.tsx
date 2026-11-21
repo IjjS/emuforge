@@ -1849,8 +1849,21 @@ describe('Qualified Test invocations', () => {
 
       act(() => onlineManager.setOnline(false));
       invokeTarget();
-      const [queued] = client.getMutationCache().getAll();
+      const cache = client.getMutationCache();
+      const [queued] = cache.getAll();
       await waitFor(() => expect(queued?.state.isPaused).toBe(true));
+      const settled = new Promise<void>((resolve) => {
+        const unsubscribe = cache.subscribe((event) => {
+          if (
+            event.type === 'updated' &&
+            event.mutation === queued &&
+            (event.action.type === 'success' || event.action.type === 'error')
+          ) {
+            unsubscribe();
+            resolve();
+          }
+        });
+      });
       expect(submitted()).toEqual([]);
       const oldHealth = connection.value.result;
       engine.answerInvoke = () => result('stale invocation payload', 'stale invocation log');
@@ -1863,6 +1876,7 @@ describe('Qualified Test invocations', () => {
         browserOnline.mockReturnValue(true);
         window.dispatchEvent(new Event('online'));
         await client.resumePausedMutations();
+        await settled;
 
         // The queued mutation has settled while the original Test controls are still committed.
         expect(eventField().findNativeTextarea().getElement()).toBe(originalEditor);

@@ -1037,6 +1037,7 @@ describe('loading and empty', () => {
         await waitFor(() => {
           expect(visibleDialog()).toBeUndefined();
           expect(flashTexts()).toEqual([reported, interruption]);
+          expect(original.menuButton).toHaveFocus();
         });
         expect(engine.deletes).toEqual(['orders']);
         if (success) {
@@ -1047,7 +1048,6 @@ describe('loading and empty', () => {
           fireEvent.click(selectionAt(1, 'orders'));
         }
         expect(selectionAt(success ? 1 : 2, 'payments')).toBeChecked();
-        expect(original.menuButton).toHaveFocus();
 
         const fresh = await confirmDialog();
         expect(fresh.names).toEqual(['payments']);
@@ -1060,9 +1060,11 @@ describe('loading and empty', () => {
         expect(fresh.submit.getElement()).toBeEnabled();
         act(() => fresh.submit.click());
         await expectNames(success ? [] : ['orders']);
-        await waitFor(() => expect(visibleDialog()).toBeUndefined());
+        await waitFor(() => {
+          expect(visibleDialog()).toBeUndefined();
+          expect(flashTexts()).toEqual(['1 function was deleted from the local emulator.']);
+        });
         expect(engine.deletes).toEqual(['orders', 'payments']);
-        expect(flashTexts()).toEqual(['1 function was deleted from the local emulator.']);
       } finally {
         unmount();
         browserOnline.mockRestore();
