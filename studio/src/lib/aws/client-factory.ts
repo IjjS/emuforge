@@ -131,6 +131,7 @@ export function engineEndpoint(enginePort: number): string {
 // from its cache: a `no-store` request also gets `Cache-Control: no-cache` from the browser, which the engine relays
 // and which `PutObject` would store as the object's metadata.
 const UNCACHED_METHODS: ReadonlySet<string> = new Set(['GET', 'HEAD']);
+const REDIRECT_STATUSES: ReadonlySet<number> = new Set([301, 302, 303, 307, 308]);
 
 type HttpRequest = Parameters<FetchHttpHandler['handle']>[0];
 
@@ -151,14 +152,25 @@ class EngineRequestHandler extends FetchHttpHandler {
       requestInit: (request): RequestInit => {
         // Smithy calls this synchronously before constructing the browser request on each attempt.
         const signal = attemptSignals.get(request);
-        if (signal !== undefined) {
-          assertAwsRequestAuthorized(signal);
-        }
+        const authorizedMutation = signal !== undefined && assertAwsRequestAuthorized(signal);
         return {
           ...(UNCACHED_METHODS.has(request.method) && { cache: 'no-store' }),
+          ...(authorizedMutation && { redirect: 'manual' }),
           // Fetch follows redirects below the handler's destination guard and Smithy's retry policy.
           ...(rejectWriteRedirects && request.method === 'PUT' && { redirect: 'error' }),
         };
+      },
+      customFetch: async (input) => {
+        const response = await fetch(input);
+        // A refused redirect is not a network error that Smithy should retry.
+        if (
+          input instanceof Request &&
+          input.redirect === 'manual' &&
+          (response.type === 'opaqueredirect' || REDIRECT_STATUSES.has(response.status))
+        ) {
+          throw new Error('The engine redirected an authorized AWS mutation.');
+        }
+        return response;
       },
     });
     this.address = address;
