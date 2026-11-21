@@ -229,9 +229,17 @@ test('engine.product-database-range-refuses-private-api', async ({ ctx }) => {
   const failed = await form.start();
   expectExit(failed, 'non-zero');
   const log = await form.run(form.compose('logs', '--no-color', 'emuforge'), STOP_BOUND_MS);
-  const diagnostic = `EMULATOR_PORT=${form.emulatorPort} conflicts with database port range ${range.low}-${range.high}`;
-  const output = [failed.stdout, failed.stderr, log.stdout, log.stderr].join('\n');
-  expect(output).toContain('Compose database port configuration: ' + diagnostic);
+  const diagnostic = `Compose database port configuration: EMULATOR_PORT=${form.emulatorPort} conflicts with database port range ${range.low}-${range.high}`;
+  const suffix = ' (EMUFORGE_DB_PORT_MIN and EMUFORGE_DB_PORT_MAX)';
+  function isConflictLine(line: string): boolean {
+    const message = line.replace(/^emuforge-1[ \t]+\| /, '');
+    return message === diagnostic || message === diagnostic + suffix;
+  }
+  const full = diagnostic + suffix;
+  expect(isConflictLine(`echo "${full}"`), 'a command echo').toBe(false);
+  expect(isConflictLine(`emuforge-1  | + echo ${full}`), 'a shell trace in the owner log').toBe(false);
+  const lines = [failed.stdout, failed.stderr, log.stdout, log.stderr].flatMap((text) => text.split(/\r?\n/));
+  expect(lines.some(isConflictLine), 'the emitted private API conflict diagnostic').toBe(true);
   const listed = await form.run(form.compose('ps', '--all', '--quiet', 'aws-emulator'), STOP_BOUND_MS);
   expectExit(listed, 'zero');
   for (const id of listed.stdout.trim().split(/\s+/).filter(Boolean)) {
