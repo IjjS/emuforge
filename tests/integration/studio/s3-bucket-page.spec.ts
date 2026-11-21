@@ -39,6 +39,7 @@ import {
   expectedSections,
   expectSections,
   NO_NOTIFICATIONS,
+  sectionBox,
   NO_TAGS,
   NOTIFICATIONS,
   OBJECTS,
@@ -132,6 +133,12 @@ test.describe(() => {
         ctx.log(`direct properties of ${name}: ${JSON.stringify(props)}`);
         const expected = expectedSections(await directBucket(ctx, port, name), props, SEOUL);
         ctx.log(`expected sections: ${JSON.stringify(expected)}`);
+        await expect(
+          sectionBox(page, NOTIFICATIONS).getByRole('columnheader', {
+            name: 'Event name and destination',
+            exact: true,
+          }),
+        ).toBeVisible();
         await expectSections(page, expected, 'every section shows what the direct reads return');
       },
     );
@@ -171,6 +178,10 @@ test.describe(() => {
           await bucketPropertiesDirect(ctx, port, name),
           SEOUL,
         );
+        await page.setViewportSize({ width: 1920, height: 900 });
+        await expect(
+          sectionBox(page, NOTIFICATIONS).getByRole('columnheader', { name: 'Destination', exact: true }),
+        ).toBeVisible();
         await expectSections(page, expected, 'every section at /properties shows what the direct reads return');
         await expect(page).toHaveURL(addressOf(propertiesPath(name)));
       },
