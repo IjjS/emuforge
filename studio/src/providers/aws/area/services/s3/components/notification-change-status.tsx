@@ -35,6 +35,7 @@ export function NotificationChangeStatus({
     );
   }
   if (state.kind === 'unconfirmed') {
+    const observed = state.observed === NO_SUCH_BUCKET ? undefined : state.observed;
     const failure =
       state.failure === undefined
         ? undefined
@@ -66,14 +67,14 @@ export function NotificationChangeStatus({
             </>
           )}
         </Alert>
-        {state.observed !== undefined && state.observed !== NO_SUCH_BUCKET && (
+        {observed !== undefined && (
           <NotificationTable
-            configuration={state.observed}
+            configuration={observed}
             header={() => (
               <Header
                 variant="h2"
                 description={
-                  state.observed.EventBridgeConfiguration === undefined ? 'EventBridge disabled' : 'EventBridge enabled'
+                  observed.EventBridgeConfiguration === undefined ? 'EventBridge disabled' : 'EventBridge enabled'
                 }
               >
                 Observed event notifications
