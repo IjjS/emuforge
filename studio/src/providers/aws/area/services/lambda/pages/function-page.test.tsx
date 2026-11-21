@@ -1140,7 +1140,7 @@ describe('Monitor', () => {
     engine.functions = [ORDERS];
     engine.answerMonitoring = ({ operation }) =>
       operation === 'FilterLogEvents' ? logAnswer('events from the previous account') : metricAnswer(98);
-    open(`${pagePath('orders')}?tab=monitor`);
+    const { router } = open(`${pagePath('orders')}?tab=monitor`);
     await waitFor(() => expect(logMessages()).toContain('events from the previous account'));
     if (tab === 'Code') {
       fireEvent.click(tabLink('Code'));
@@ -1152,7 +1152,7 @@ describe('Monitor', () => {
     engine.functions = [];
     connection.set(connectedResult());
     if (tab === 'Code') {
-      fireEvent.click(tabLink('Monitor'));
+      await act(() => router.navigate(`${pagePath('orders')}?tab=monitor`));
     }
 
     expect(await screen.findByText('Function not found')).toBeVisible();
@@ -1280,7 +1280,7 @@ describe('Versions and aliases', () => {
     engine.answerRelease = ({ url }) =>
       url.pathname.endsWith('/versions') ? versionAnswer('1') : aliasAnswer('old-live', '1');
 
-    open(pagePath('orders') + versionsPath);
+    const { router } = open(pagePath('orders') + versionsPath);
     await waitFor(() => {
       expect(versionsShown()).toContainEqual(['1', 'Release 1']);
       expect(aliasesShown()).toEqual([['old-live', '1']]);
@@ -1292,9 +1292,7 @@ describe('Versions and aliases', () => {
     const reconnect = deferredAnswer();
     engine.answerFunction = () => reconnect.promise;
     connection.set(connectedResult());
-    const releaseTab = tabs()?.findTabLinkById('versions');
-    expect(releaseTab).toBeTruthy();
-    releaseTab?.click();
+    await act(() => router.navigate(pagePath('orders') + versionsPath));
     await waitFor(() => expect(engine.gets).toHaveLength(2));
     expect(releaseTable('Versions')).toBeUndefined();
     expect(releaseTable('Aliases')).toBeUndefined();
@@ -1900,47 +1898,35 @@ describe('the tabs by ?tab=', () => {
 });
 
 describe('"Delete" in the header', () => {
-  async function openDialog(): Promise<HTMLElement> {
+  function pageDeleteAction() {
     const pageHeader = PAGE.findAllHeaders().find((candidate) =>
       candidate.findHeadingText().getElement().closest('h1'),
     );
-    const open = pageHeader
-      ?.findActions()
-      ?.findAllButtons()
-      .find((button) => norm(button.getElement().textContent) === 'Delete');
-    if (open === undefined) {
-      throw new Error('Expected the function page Delete action');
-    }
-    open.click();
-    return waitFor(() => deletionControls().dialog.getElement());
+    return pageHeader?.findActions()?.findAllButtons()[1];
   }
 
-  function confirmAndDelete(dialog: HTMLElement) {
-    fireEvent.change(within(dialog).getByLabelText('To confirm deletion, type "confirm" in the field.'), {
-      target: { value: 'confirm' },
-    });
-    const button = within(dialog)
-      .getAllByRole('button', { name: 'Delete' })
-      .find((found) => norm(found.textContent) === 'Delete');
-    fireEvent.click(button as HTMLElement);
+  async function openDialog() {
+    const action = pageDeleteAction();
+    expect(action?.getElement()).toHaveTextContent('Delete');
+    action?.click();
+    return waitFor(() => deletionControls());
   }
 
   function deletionDialog() {
-    return PAGE.findAllModals().find(
-      (dialog) => dialog.isVisible() && norm(dialog.findHeader().getElement().textContent) === 'Delete functions',
-    );
+    return PAGE.findAllModals().find((dialog) => dialog.isVisible());
   }
 
   function deletionControls() {
     const dialog = deletionDialog();
     const input = dialog?.findContent().findInput();
-    const actions = dialog?.findFooter()?.findAllButtons() ?? [];
-    const submit = actions.find((button) => norm(button.getElement().textContent) === 'Delete');
-    const cancel = actions.find((button) => norm(button.getElement().textContent) === 'Cancel');
+    const [cancel, submit] = dialog?.findFooter()?.findAllButtons() ?? [];
     if (!dialog || !input || !submit || !cancel) {
       throw new Error('Expected the visible deletion dialog and its controls');
     }
-    return { dialog, input, submit, cancel, content: dialog.findContent() };
+    expect(dialog.findHeader().getElement()).toHaveTextContent('Delete functions');
+    expect(cancel.getElement()).toHaveTextContent('Cancel');
+    expect(submit.getElement()).toHaveTextContent('Delete');
+    return { input, submit, cancel, content: dialog.findContent() };
   }
 
   function deleteRequests() {
@@ -1987,54 +1973,106 @@ describe('"Delete" in the header', () => {
     expect(deleteRequests()).toEqual(['orders']);
   });
 
-  it.each(['another function', 'a reopened dialog', 'a new session on the same endpoint'] as const)(
+  function expectFreshConfirmation(target: string) {
+    const { input, submit, content } = deletionControls();
+    expect(norm(content.find('li')?.getElement().textContent)).toBe(target);
+    expect(input.getInputValue()).toBe('');
+    expect(submit.getElement()).toBeDisabled();
+    fireEvent.keyDown(input.findNativeInput().getElement(), { key: 'Enter' });
+    submit.click();
+    expect(deleteRequests()).toEqual([]);
+
+    input.setInputValue('confirm');
+    expect(submit.getElement()).toBeEnabled();
+  }
+
+  it.each(['another function', 'a reopened dialog'] as const)(
     'requires fresh confirmation for %s',
     async (boundary) => {
       const { router } = await openLoaded();
       engine.functions.push({ name: 'payments' });
-      await openDialog();
-      deletionControls().input.setInputValue('confirm');
-      expect(deletionControls().submit.getElement()).toBeEnabled();
+      const { input, submit, cancel } = await openDialog();
+      input.setInputValue('confirm');
+      expect(submit.getElement()).toBeEnabled();
 
       if (boundary === 'another function') {
         await act(() => router.navigate(pagePath('payments')));
-      } else if (boundary === 'a reopened dialog') {
-        deletionControls().cancel.click();
-      } else {
-        connection.set(notStartedResult());
-        expect(deletionDialog()).toBeUndefined();
-        connection.set(connectedResult());
         await screen.findByTestId('stand-in-test');
+      } else {
+        cancel.click();
       }
 
       expect(deletionDialog()).toBeUndefined();
-      if (boundary === 'another function') {
-        await screen.findByTestId('stand-in-test');
-      }
       await openDialog();
-      const { input, submit, content } = deletionControls();
-      const target = boundary === 'another function' ? 'payments' : 'orders';
-      expect(norm(content.find('li')?.getElement().textContent)).toBe(target);
-      expect(input.getInputValue()).toBe('');
-      expect(submit.getElement()).toBeDisabled();
-      fireEvent.keyDown(input.findNativeInput().getElement(), { key: 'Enter' });
-      expect(deleteRequests()).toEqual([]);
+      expectFreshConfirmation(boundary === 'another function' ? 'payments' : 'orders');
+    },
+  );
 
+  it.each(['Test', 'Code'] as const)(
+    'blocks deletion from %s until a same-endpoint, same-name replacement is verified',
+    async (tab) => {
+      const replacement = deferredAnswer();
+      const { router } = await openLoaded();
+      if (tab === 'Code') {
+        await act(() => router.navigate(`${pagePath('orders')}?tab=code`));
+        await screen.findByTestId('stand-in-code');
+      }
+      const { input, submit } = await openDialog();
       input.setInputValue('confirm');
       expect(submit.getElement()).toBeEnabled();
+      const reads = engine.gets.length;
+
+      connection.set(notStartedResult());
+      expect(deletionDialog()).toBeUndefined();
+      const disconnectedDelete = pageDeleteAction();
+      expect(disconnectedDelete?.getElement()).toHaveTextContent('Delete');
+      expect(disconnectedDelete?.getElement()).toBeDisabled();
+      disconnectedDelete?.click();
+      submit.click();
+      expect(deletionDialog()).toBeUndefined();
+      expect(deleteRequests()).toEqual([]);
+
+      engine.functions = [{ ...ORDERS, description: 'Replacement at the same endpoint' }];
+      engine.answerFunction = (request) =>
+        request.method === 'GET' && FUNCTION_PATH.test(request.url.pathname)
+          ? replacement.promise
+          : engine.emulator(request);
+      connection.set(connectedResult());
+      await waitFor(() => expect(engine.gets).toHaveLength(reads + 1));
+      expect(await screen.findByText('Loading function')).toBeVisible();
+      const pendingDelete = pageDeleteAction();
+      pendingDelete?.click();
+      submit.click();
+      fireEvent.keyDown(input.findNativeInput().getElement(), { key: 'Enter' });
+      expect(pendingDelete).toBeUndefined();
+      expect(deletionDialog()).toBeUndefined();
+      expect(deleteRequests()).toEqual([]);
+
+      await act(async () => {
+        replacement.resolve(
+          engine.emulator({ method: 'GET', url: new URL('/2015-03-31/functions/orders', engineOrigin) }),
+        );
+      });
+      await waitFor(() => {
+        expect(value('Function overview', 'Description')).toBe('Replacement at the same endpoint');
+      });
+      await openDialog();
+      expectFreshConfirmation('orders');
+      expect(deleteRequests()).toEqual([]);
+
+      deletionControls().submit.click();
+      await waitFor(() => expect(router.state.location.pathname).toBe('/aws/lambda/functions'));
+      expect(deleteRequests()).toEqual(['orders']);
     },
   );
 
   it('opens main’s dialog holding this one function; deleted: the list’s route with the result in its Flashbar', async () => {
     const { router } = await openLoaded();
 
-    const dialog = await openDialog();
-    expect(
-      within(dialog)
-        .getAllByRole('listitem')
-        .map((item) => norm(item.textContent)),
-    ).toEqual(['orders']);
-    confirmAndDelete(dialog);
+    const { input, submit, content } = await openDialog();
+    expect(content.findAll('li').map((item) => norm(item.getElement().textContent))).toEqual(['orders']);
+    input.setInputValue('confirm');
+    submit.click();
 
     await waitFor(() => {
       expect(router.state.location.pathname).toBe('/aws/lambda/functions');
@@ -2047,12 +2085,13 @@ describe('"Delete" in the header', () => {
 
   it('failed: the page stays, shows the failure and reads the function again, which is then not found', async () => {
     const { router } = await openLoaded();
-    const dialog = await openDialog();
+    const { input, submit } = await openDialog();
     // Deleted elsewhere meanwhile.
     engine.functions = [];
     const reads = engine.gets.length;
 
-    confirmAndDelete(dialog);
+    input.setInputValue('confirm');
+    submit.click();
 
     await waitFor(() => {
       expect(flashTexts()).toEqual([
@@ -2068,7 +2107,7 @@ describe('"Delete" in the header', () => {
     open(pagePath('gone'));
 
     await screen.findByText('Function not found');
-    expect(within(header()).queryByRole('button', { name: 'Delete' })).toBeNull();
+    expect(pageDeleteAction()).toBeUndefined();
   });
 });
 
