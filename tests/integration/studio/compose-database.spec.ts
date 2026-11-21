@@ -137,9 +137,13 @@ test('engine.compose-databases-answer-on-described-host-ports', async ({ ctx }) 
       await client.send(
         new CreateDBClusterCommand({ DBClusterIdentifier: id, Engine: family, DatabaseName: db, ...login }),
       );
-      const answer = await client.send(new DescribeDBClustersCommand({ DBClusterIdentifier: id }));
-      expect(answer.DBClusters?.[0]?.DBClusterIdentifier).toBe(id);
-      port = answer.DBClusters?.[0]?.Port;
+      const resource = await waitFor(60_000, async () => {
+        const answer = await client.send(new DescribeDBClustersCommand({ DBClusterIdentifier: id }));
+        const row = answer.DBClusters?.[0];
+        return row?.Status === 'available' ? row : undefined;
+      });
+      expect(resource?.DBClusterIdentifier).toBe(id);
+      port = resource?.Port;
     } else {
       await client.send(
         new CreateDBInstanceCommand({
@@ -149,19 +153,25 @@ test('engine.compose-databases-answer-on-described-host-ports', async ({ ctx }) 
           ...(cluster ? { DBClusterIdentifier: cluster } : { DBName: db, AllocatedStorage: 20, ...login }),
         }),
       );
-      const answer = await client.send(new DescribeDBInstancesCommand({ DBInstanceIdentifier: id }));
-      expect(answer.DBInstances?.[0]?.DBInstanceIdentifier).toBe(id);
-      port = answer.DBInstances?.[0]?.Endpoint?.Port;
+      const resource = await waitFor(60_000, async () => {
+        const answer = await client.send(new DescribeDBInstancesCommand({ DBInstanceIdentifier: id }));
+        const row = answer.DBInstances?.[0];
+        return row?.DBInstanceStatus === 'available' ? row : undefined;
+      });
+      expect(resource?.DBInstanceIdentifier).toBe(id);
+      port = resource?.Endpoint?.Port;
     }
     expect(port).toBeGreaterThanOrEqual(range.low);
     expect(port).toBeLessThanOrEqual(range.high);
     const adapter = family.includes('postgres') ? 'postgres' : 'mysql';
+    // Availability and provisioning of the SQL login are observed through different protocols.
+    let lastCode: string | undefined;
     const answer = await waitFor(30_000, async () => {
       const result = await hostQuery(ctx, adapter, port!, db, password);
-      // PostgreSQL can accept connections during startup and answer cannot_connect_now.
-      return result.code === '57P03' ? undefined : result;
+      lastCode = result.code;
+      return result.code === undefined ? result : undefined;
     });
-    expect(answer).toEqual({ db, marker: 578 });
+    expect(answer, id + ' SQL query, last code ' + lastCode).toEqual({ db, marker: 578 });
     if (client === engine) {
       const addresses = hostIPv4();
       expect(addresses.length).toBeGreaterThan(0);
