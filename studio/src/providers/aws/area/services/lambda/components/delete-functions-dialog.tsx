@@ -3,7 +3,7 @@ import Button, { type ButtonProps } from '@cloudscape-design/components/button';
 import FormField from '@cloudscape-design/components/form-field';
 import Input from '@cloudscape-design/components/input';
 import SpaceBetween from '@cloudscape-design/components/space-between';
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 
 import { AwsMutationInterrupted } from '../../../../../../lib/aws/request';
 import { AreaModal } from '../../../components/area-modal';
@@ -26,8 +26,22 @@ const CONFIRM_WORD = 'confirm';
 
 const CONFIRM_LABEL = 'To confirm deletion, type "confirm" in the field.';
 const DELETING = 'Deleting functions…';
+const OFFLINE_REASON = 'The browser is offline. Reconnect before deleting functions.';
 const EMPTY_INTERRUPTION =
   'The browser connection changed before any deletion outcome was confirmed. Reopen Delete from Actions and confirm again.';
+
+function subscribeToBrowserConnection(onChange: () => void): () => void {
+  window.addEventListener('offline', onChange);
+  window.addEventListener('online', onChange);
+  return () => {
+    window.removeEventListener('offline', onChange);
+    window.removeEventListener('online', onChange);
+  };
+}
+
+function browserOnline(): boolean {
+  return navigator.onLine;
+}
 
 function deletedText(count: number): string {
   return count === 1
@@ -83,6 +97,9 @@ export function DeleteFunctionsDialog({
   const flash = usePageFlash();
   const { remove, pending } = useDeleteFunctions(connection.engineOrigin);
   const [typed, setTyped] = useState('');
+  const online = useSyncExternalStore(subscribeToBrowserConnection, browserOnline);
+  const offlineReasonId = useId();
+  const showOfflineReason = !online && !pending;
   const visible = names.length > 0;
   const confirmed = typed === CONFIRM_WORD;
 
@@ -125,7 +142,7 @@ export function DeleteFunctionsDialog({
   }
 
   const handleDelete = useCallback(() => {
-    if (!visible || !confirmed || pending || submitting.current) {
+    if (!visible || !confirmed || !browserOnline() || pending || submitting.current) {
       return;
     }
     submitting.current = true;
@@ -205,7 +222,8 @@ export function DeleteFunctionsDialog({
             <Button
               ref={deleteButton}
               variant="primary"
-              disabled={!pending && !confirmed}
+              disabled={!pending && (!confirmed || !online)}
+              ariaDescribedby={showOfflineReason ? offlineReasonId : undefined}
               loading={pending}
               loadingText={DELETING}
               onClick={handleDelete}
@@ -225,7 +243,14 @@ export function DeleteFunctionsDialog({
           ))}
         </ul>
         <Box variant="p">{sentence}</Box>
-        <FormField label={CONFIRM_LABEL}>
+        <FormField
+          label={CONFIRM_LABEL}
+          description={
+            <span id={offlineReasonId} role="status">
+              {showOfflineReason ? OFFLINE_REASON : ''}
+            </span>
+          }
+        >
           <Input
             value={typed}
             placeholder={CONFIRM_WORD}
