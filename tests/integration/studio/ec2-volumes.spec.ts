@@ -18,6 +18,7 @@ import {
   items,
   open,
   parseXml,
+  rowsOf,
   tableOf,
   textAt,
 } from './services/ec2/ec2';
@@ -74,8 +75,31 @@ test('studio.ec2-create-and-delete-a-volume', async ({ ctx, page }) => {
   await (await findVolume(page, id)).click(ACTION);
   await expect(page).toHaveURL(addressOf(volumePath(id)));
   await button(main, 'Delete volume').click(ACTION);
-  await confirmWith(page, id, 'Delete volume');
+  const deleted = page.waitForResponse((response) => {
+    const params = new URLSearchParams(response.request().postData() ?? '');
+    return response.ok() && params.get('Action') === 'DeleteVolume' && params.get('VolumeId') === id;
+  });
+  // Match a request started after the successful deletion so an earlier, still-pending read cannot satisfy this wait.
+  const freshList = deleted.then(() =>
+    page.waitForRequest((request) => {
+      const params = new URLSearchParams(request.postData() ?? '');
+      return (
+        params.get('Action') === 'DescribeVolumes' &&
+        !params.has('NextToken') &&
+        !Array.from(params.keys()).some((key) => /^(?:Filter|VolumeId)(?:\.|$)/.test(key))
+      );
+    }),
+  );
+  const [listRequest] = await Promise.all([freshList, confirmWith(page, id, 'Delete volume')]);
+  const listResponse = await listRequest.response();
+  if (!listResponse?.ok()) throw new Error('The volume list refresh after deletion did not succeed');
+  const reply = parseXml(await listResponse.text());
+  expect(reply.name).toBe('DescribeVolumesResponse');
+  const ids = items(reply, 'volumeSet').map((volume) => textAt(volume, 'volumeId'));
   await expect(page).toHaveURL(addressOf(volumesPath));
+  const list = volumeTable(page);
+  if (!ids.length) await expect(emptyOf(list)).toHaveText('No volumes');
+  await expect.poll(async () => (await rowsOf(list)).map((row) => row['Volume ID'])).toEqual(ids);
   await expectFlash(page, 'success', 'Volume ' + id + ' deleted.');
   await expectVolumeAbsent(page, id);
   expect(await readVolume(ctx, port, id)).toBeNull();
