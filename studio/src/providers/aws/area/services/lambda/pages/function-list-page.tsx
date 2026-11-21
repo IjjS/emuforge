@@ -436,7 +436,12 @@ export function FunctionListPage({ connection }: { connection: AreaConnection })
           />
         }
       />
-      <DeleteFunctionsDialog names={deleting} connection={connection} onClose={handleDialogClose} />
+      <DeleteFunctionsDialog
+        names={deleting}
+        connection={connection}
+        onClose={handleDialogClose}
+        reportEmptyInterruption
+      />
       {announcement}
     </>
   );
