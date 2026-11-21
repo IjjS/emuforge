@@ -175,9 +175,11 @@ function expectInlineRefusal(dialog: ReturnType<typeof manageDialog>, operation:
 type TableName = 'Versions' | 'Aliases';
 
 function releaseTable(name: TableName) {
-  return PAGE.findAllTables().find(
-    (table) => table.findHeaderSlot()?.findHeader()?.findHeadingText().getElement().textContent === name,
-  );
+  const table = PAGE.findAllTables()[name === 'Versions' ? 0 : 1];
+  if (table !== undefined) {
+    expect(table.findHeaderSlot()?.findHeader()?.findHeadingText().getElement()).toHaveTextContent(name);
+  }
+  return table;
 }
 
 function releaseRows(name: TableName, columnCount: number) {
@@ -223,6 +225,7 @@ function releaseAction(operation: MutationOperation) {
     const table = releaseTable(operation === 'PublishVersion' ? 'Versions' : 'Aliases');
     const button = table?.findHeaderSlot()?.findHeader()?.findActions()?.findButton()?.getElement();
     if (button === undefined) throw new Error(`Expected the ${operation} button`);
+    expect(button).toHaveAccessibleName(operation === 'PublishVersion' ? 'Publish version' : 'Create alias');
     return button;
   }
   return menuAction(aliasIndex('live'), operation);
@@ -235,31 +238,32 @@ function manageDialog() {
 }
 
 function aliasNameField(dialog = manageDialog()) {
-  const field = dialog
-    .findContent()
-    .findAllFormFields()
-    .find((candidate) => candidate.findLabel()?.getElement().textContent === 'Alias name');
-  if (field === undefined) throw new Error('Expected the Alias name field');
+  const field = dialog.findContent().findAllFormFields()[0];
+  if (field === undefined) throw new Error('Expected the alias name field');
+  expect(field.findLabel()?.getElement()).toHaveTextContent('Alias name');
   return field;
 }
 
 function aliasNameInput(dialog = manageDialog()) {
   const input = aliasNameField(dialog).findControl()?.findInput()?.findNativeInput().getElement();
-  if (input === undefined) throw new Error('Expected the Alias name input');
+  if (input === undefined) throw new Error('Expected the alias name input');
+  expect(input).toHaveAccessibleName('Alias name');
   return input;
 }
 
 function targetSelect(dialog = manageDialog()) {
-  const select = dialog.findContent().findSelect();
-  if (select === null) throw new Error('Expected a target version selector');
+  const field = dialog.findContent().findAllFormFields()[1];
+  const select = field?.findControl()?.findSelect();
+  if (select == null) throw new Error('Expected a target version selector');
+  expect(field?.findLabel()?.getElement()).toHaveTextContent('Target version');
   return select;
 }
 
-function dialogButton(label: string) {
-  const footer = manageDialog().findFooter();
-  const button = footer?.findAllButtons().find((candidate) => candidate.getElement().textContent === label);
-  if (button === undefined) throw new Error(`Expected the ${label} dialog button`);
-  return button.getElement();
+function dialogButton(action: 'cancel' | 'submit', label: string) {
+  const button = manageDialog().findFooter()?.findAllButtons()[action === 'cancel' ? 0 : 1]?.getElement();
+  if (button === undefined) throw new Error(`Expected the ${action} dialog button`);
+  expect(button).toHaveAccessibleName(label);
+  return button;
 }
 
 async function prepareAction(operation: MutationOperation, aliasName = 'next') {
@@ -277,6 +281,7 @@ async function prepareAction(operation: MutationOperation, aliasName = 'next') {
     select.selectOptionByValue('2');
   }
   return dialogButton(
+    'submit',
     operation === 'CreateAlias' ? 'Create alias' : operation === 'UpdateAlias' ? 'Save changes' : 'Delete alias',
   );
 }
@@ -408,7 +413,7 @@ describe('Release actions', () => {
     await waitForBothLists();
     await prepareAction('DeleteAlias');
     expect(manageDialog().findContent().getElement()).toHaveTextContent('Delete alias live?');
-    fireEvent.click(dialogButton('Cancel'));
+    fireEvent.click(dialogButton('cancel', 'Cancel'));
     expect(PAGE.findModal()).toBeNull();
     expectAlias('live', '1');
     expect(engine.count('DeleteAlias')).toBe(0);
@@ -458,7 +463,7 @@ describe('Release actions', () => {
       if (operation === 'CreateAlias' || operation === 'UpdateAlias') {
         expect(targetSelect(dialog).findTrigger().getElement()).toHaveTextContent('2');
       }
-      fireEvent.click(dialogButton('Cancel'));
+      fireEvent.click(dialogButton('cancel', 'Cancel'));
       expect(PAGE.findModal()).toBeNull();
     }
 
@@ -483,7 +488,7 @@ describe('Release actions', () => {
     expectNoPageFlash();
 
     engine.handlers.CreateAlias = () => succeed('CreateAlias');
-    fireEvent.click(dialogButton('Create alias'));
+    fireEvent.click(dialogButton('submit', 'Create alias'));
     await waitFor(() => expectPageFlash('success', 'Created alias next to version 2.'));
     await waitFor(() => expectAlias('next', '2'));
   });
@@ -626,11 +631,9 @@ describe('Release actions', () => {
     };
     const refreshedDescription = 'Updated function details after the alias changed';
     function description() {
-      return PAGE.findKeyValuePairs()
-        ?.findItems()
-        .find((pair) => pair.findLabel()?.getElement().textContent === 'Description')
-        ?.findValue()
-        ?.getElement();
+      const pair = PAGE.findKeyValuePairs()?.findItems()[0];
+      expect(pair?.findLabel()?.getElement()).toHaveTextContent('Description');
+      return pair?.findValue()?.getElement();
     }
     async function settleDetail() {
       await settle(detail, functionAnswer(refreshedDescription));
