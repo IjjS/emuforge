@@ -3,7 +3,7 @@ import Button, { type ButtonProps } from '@cloudscape-design/components/button';
 import Header from '@cloudscape-design/components/header';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
-import { useId, type Ref } from 'react';
+import { useEffect, useId, useRef } from 'react';
 
 import type { AreaConnection } from '../../../components/emulator-line';
 import { NO_SUCH_BUCKET } from '../api';
@@ -20,7 +20,6 @@ export function NotificationChangeStatus({
   action,
   destination,
   showObserved = true,
-  checkAgainRef,
   onRefresh,
 }: {
   change: NotificationChangeControl;
@@ -28,11 +27,23 @@ export function NotificationChangeStatus({
   action: 'Saving' | 'Deleting';
   destination?: DestinationType;
   showObserved?: boolean;
-  checkAgainRef?: Ref<ButtonProps.Ref>;
   onRefresh: () => void;
 }) {
   const { state } = change;
   const messageId = useId();
+  const headingId = useId();
+  const verificationRef = useRef<HTMLDivElement>(null);
+  const checkAgainRef = useRef<ButtonProps.Ref>(null);
+  const verifying = state.kind === 'unconfirmed';
+  const unavailable = verifying && state.failure?.kind === 'not-implemented';
+  const retryEnabled = verifying && !change.checkAgainDisabled;
+
+  useEffect(() => {
+    if (!verifying) return;
+    verificationRef.current?.scrollIntoView?.({ block: 'center' });
+    if (unavailable) verificationRef.current?.focus();
+    else if (retryEnabled) checkAgainRef.current?.focus();
+  }, [verifying, unavailable, retryEnabled]);
   if (state.kind === 'pending') {
     return (
       <StatusIndicator type="loading">
@@ -52,7 +63,6 @@ export function NotificationChangeStatus({
     );
   }
   if (state.kind === 'unconfirmed') {
-    const unavailable = state.failure?.kind === 'not-implemented';
     const observed = !showObserved || state.observed === NO_SUCH_BUCKET ? undefined : state.observed;
     const failure =
       state.failure === undefined
@@ -60,43 +70,54 @@ export function NotificationChangeStatus({
         : actionFailure(state.failure, 'Reading event notifications', connection.engineOrigin);
     return (
       <SpaceBetween size="s">
-        <Alert
-          type={unavailable ? 'info' : 'warning'}
-          header={
-            unavailable
-              ? failure?.header
-              : observed !== undefined
-                ? 'The saved configuration differs from the requested change.'
-                : 'Could not verify the saved configuration'
-          }
-          action={
-            <Button
-              ref={checkAgainRef}
-              formAction="none"
-              ariaDescribedby={messageId}
-              disabled={change.checkAgainDisabled}
-              onClick={change.checkAgain}
-            >
-              Check again
-            </Button>
-          }
+        <div
+          ref={verificationRef}
+          {...(unavailable
+            ? { role: 'region', tabIndex: -1, 'aria-labelledby': headingId, 'aria-describedby': messageId }
+            : {})}
         >
-          <div id={messageId}>
-            <SpaceBetween size="xxs">
-              {failure !== undefined && (
-                <div>
-                  {!unavailable && <>{failure.header}. </>}
-                  {failure.detail}
-                </div>
-              )}
-              {state.observed === NO_SUCH_BUCKET && 'The bucket was not found during verification.'}
-              {!unavailable &&
-                (observed === undefined
-                  ? 'Select Check again to read the current configuration.'
-                  : 'Review the configuration returned by the emulator.')}
-            </SpaceBetween>
-          </div>
-        </Alert>
+          <Alert
+            type={unavailable ? 'info' : 'warning'}
+            header={
+              unavailable ? (
+                <span id={headingId}>Not implemented by the emulator</span>
+              ) : observed !== undefined ? (
+                'The saved configuration differs from the requested change.'
+              ) : (
+                'Could not verify the saved configuration'
+              )
+            }
+            action={
+              <Button
+                ref={checkAgainRef}
+                formAction="none"
+                ariaDescribedby={messageId}
+                disabled={change.checkAgainDisabled}
+                onClick={change.checkAgain}
+              >
+                Check again
+              </Button>
+            }
+          >
+            <div id={messageId}>
+              <SpaceBetween size="xxs">
+                {failure !== undefined && (
+                  <div>
+                    {!unavailable && <>{failure.header}. </>}
+                    {failure.detail}
+                  </div>
+                )}
+                {state.observed === NO_SUCH_BUCKET && 'The bucket was not found during verification.'}
+                {!unavailable &&
+                  (!retryEnabled
+                    ? 'Verification can resume when the connection is restored.'
+                    : observed === undefined
+                      ? 'Select Check again to read the current configuration.'
+                      : 'Review the configuration returned by the emulator.')}
+              </SpaceBetween>
+            </div>
+          </Alert>
+        </div>
         {observed !== undefined && (
           <NotificationTable
             configuration={observed}

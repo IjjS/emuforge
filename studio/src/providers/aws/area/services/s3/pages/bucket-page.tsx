@@ -80,7 +80,9 @@ export function BucketPage({ connection, params }: ScreenPageProps) {
 
   const deleteFeedbackRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    deleteFeedbackRef.current?.scrollIntoView?.({ block: 'nearest' });
+    if (deletion.state.kind !== 'unconfirmed') {
+      deleteFeedbackRef.current?.scrollIntoView?.({ block: 'nearest' });
+    }
   }, [deletion.state, state.kind]);
 
   const deleteFeedback = tab === PROPERTIES_TAB && deletion.state.kind !== 'idle' && (
