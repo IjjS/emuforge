@@ -4,7 +4,7 @@ import type { Locator, Page } from '@playwright/test';
 import { directEc2 } from '../../support/aws-clients-general';
 import { EnvError, expect, type Ctx } from '../../support/check';
 import { ACTION, addressOf, heading } from '../../support/frame';
-import { action, clusterPath, ecs, field, lastPart, open, tableOf, world } from './ecs';
+import { action, clusterPath, ecs, emptyOf, expectRow, field, lastPart, open, tableOf, world } from './ecs';
 
 export const CREATE = 'Create service';
 
@@ -25,10 +25,18 @@ export async function network(ctx: Ctx, port: number) {
   return { subnet, other, group };
 }
 
-export async function enterForm(page: Page, cluster: string) {
+export async function enterForm(page: Page, cluster: string, existingService?: string) {
   await open(page, clusterPath(cluster), cluster);
   const main = page.getByRole('main');
-  await action(tableOf(main, 'Services'), CREATE).click(ACTION);
+  const services = tableOf(main, 'Services');
+  if (existingService === undefined) {
+    const empty = emptyOf(services);
+    await expect(empty).toHaveText('No services');
+    await expect(empty).toBeVisible();
+  } else {
+    await expectRow(services, 'Name', existingService);
+  }
+  await action(services, CREATE).click(ACTION);
   await expect(page).toHaveURL(addressOf(clusterPath(cluster) + '/services/create'));
   await expect(heading(page, CREATE)).toBeVisible();
   return main;
@@ -40,6 +48,23 @@ export function input(main: Locator, label: string) {
 
 export function tokens(main: Locator, label: string) {
   return field(main, label).locator(createWrapper().findMultiselect().findTokens().toSelector().replace(/^body /, ''));
+}
+
+const wrapper = createWrapper();
+
+export function publicIpInput(main: Locator) {
+  return main.locator(wrapper.findCheckbox().findNativeInput().toSelector().replace(/^body /, ''));
+}
+
+export function groupPicker(main: Locator) {
+  return field(main, 'Security groups').locator(wrapper.findMultiselect().toSelector().replace(/^body /, ''));
+}
+
+/** This isolated cluster has one service. Its Name cell is the first cell of that data row. */
+export function createdServiceLink(main: Locator) {
+  const section = main.getByRole('region', { name: 'Services', exact: true });
+  const nameCell = wrapper.findTable().findBodyCell(1, 1);
+  return section.locator(nameCell.findLink().toSelector().replace(/^body /, ''));
 }
 
 /** Verify the entire submitted configuration through a fresh request outside Studio. */

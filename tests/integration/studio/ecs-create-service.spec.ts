@@ -1,7 +1,7 @@
 import { expect, startStack, test } from './support';
-import { ACTION, addressOf, BREADCRUMB_GROUP, heading } from './support/frame';
+import { ACTION, addressOf, BREADCRUMB_ITEMS, heading } from './support/frame';
 import { checkPrefix } from './support/service-screens';
-import { CREATE, enterForm, expectService, input, network, tokens } from './services/ecs/create-service';
+import { CREATE, createdServiceLink, enterForm, expectService, groupPicker, input, network, publicIpInput, tokens } from './services/ecs/create-service';
 import {
   button, chooseInMultiselect, chooseOption, clusterPath, ecs, EcsSeeded, expectFlash, expectRow,
   expectValue, field, selectOf, serviceNamesDirect, servicePath, tableOf,
@@ -32,7 +32,7 @@ test('studio.ecs-create-service-opens-the-created-service', async ({ ctx, page }
   await input(main, 'Desired tasks').fill('2', ACTION);
   await chooseInMultiselect(field(main, 'Subnets'), subnet);
   await chooseInMultiselect(field(main, 'Security groups'), group);
-  await expect(main.getByRole('checkbox', { name: 'Assign public IP' })).toBeChecked();
+  await expect(publicIpInput(main)).toBeChecked();
   await button(main, CREATE).click(ACTION);
 
   await expect(page).toHaveURL(addressOf(servicePath(cluster, name)));
@@ -45,11 +45,15 @@ test('studio.ecs-create-service-opens-the-created-service', async ({ ctx, page }
   await expectValue(page, 'Security groups', group);
   await expectValue(page, 'Public IP', 'Enabled');
   await expectFlash(page, 'success', 'Service ' + name + ' created.');
-  await page.locator(BREADCRUMB_GROUP).getByRole('link', { name: cluster, exact: true }).click(ACTION);
+  const clusterCrumb = page.locator(BREADCRUMB_ITEMS).and(page.locator('a[href="' + clusterPath(cluster) + '"]'));
+  await expect(clusterCrumb).toHaveText(cluster);
+  await clusterCrumb.click(ACTION);
   await expect(page).toHaveURL(addressOf(clusterPath(cluster)));
   const services = tableOf(main, 'Services');
   await expectRow(services, 'Name', name);
-  await expect(services.getByRole('link', { name, exact: true })).toHaveAttribute('href', servicePath(cluster, name));
+  const link = createdServiceLink(main);
+  await expect(link).toHaveText(name);
+  await expect(link).toHaveAttribute('href', servicePath(cluster, name));
   await expectService(ctx, port, cluster, name, older, 2, subnet, group);
 });
 
@@ -69,13 +73,13 @@ test('studio.ecs-create-service-keeps-input-on-duplicate-name', async ({ ctx, pa
     networkConfiguration: { awsvpcConfiguration: { subnets: [subnet], securityGroups: [group], assignPublicIp: 'ENABLED' } },
   });
   expect(seeded.status).toBe(200);
-  const main = await enterForm(page, cluster);
+  const main = await enterForm(page, cluster, name);
   await input(main, 'Service name').fill(name, ACTION);
   await chooseOption(field(main, 'Task definition family'), family);
   await expect(selectOf(field(main, 'Revision'))).toContainText(revision);
   await input(main, 'Desired tasks').fill('0', ACTION);
   await chooseInMultiselect(field(main, 'Subnets'), other);
-  const publicIp = main.getByRole('checkbox', { name: 'Assign public IP' });
+  const publicIp = publicIpInput(main);
   await publicIp.uncheck(ACTION);
   await button(main, CREATE).click(ACTION);
 
@@ -87,6 +91,7 @@ test('studio.ecs-create-service-keeps-input-on-duplicate-name', async ({ ctx, pa
   await expect(input(main, 'Desired tasks')).toHaveValue('0');
   await expect(tokens(main, 'Subnets')).toHaveCount(1);
   await expect(tokens(main, 'Subnets')).toContainText(other);
+  await expect(groupPicker(main)).toBeVisible();
   await expect(tokens(main, 'Security groups')).toHaveCount(0);
   await expect(publicIp).not.toBeChecked();
   expect(await serviceNamesDirect(ctx, port, cluster)).toEqual([name]);
