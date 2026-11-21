@@ -437,25 +437,45 @@ export function useFunctionReading({
 export function useDeleteFunctions(endpoint: string | undefined) {
   const client = useQueryClient();
   const submissions = useRef(new Set<AbortController>());
+  const queued = useRef(new Set<AbortController>());
   useLayoutEffect(() => {
     const pending = submissions.current;
+    const waiting = queued.current;
+    const cancelQueued = () => {
+      for (const submission of waiting) {
+        submission.abort();
+      }
+    };
+    // Invalidate waiting confirmations before TanStack's online listener resumes them.
+    window.addEventListener('offline', cancelQueued, true);
+    window.addEventListener('online', cancelQueued, true);
     return () => {
+      window.removeEventListener('offline', cancelQueued, true);
+      window.removeEventListener('online', cancelQueued, true);
       for (const submission of pending) {
         submission.abort();
       }
     };
   }, [endpoint]);
   const { mutateAsync, isPending } = useMutation({
-    mutationFn: (submission: { endpoint: string | undefined; names: readonly string[]; signal: AbortSignal }) => {
-      const { endpoint, names, signal } = submission;
-      signal.throwIfAborted();
+    mutationFn: (submission: {
+      endpoint: string | undefined;
+      names: readonly string[];
+      controller: AbortController;
+    }) => {
+      const { endpoint, names, controller } = submission;
+      if (!navigator.onLine) {
+        controller.abort();
+      }
+      controller.signal.throwIfAborted();
       if (endpoint === undefined) {
         throw new Error('The engine endpoint is not known yet.');
       }
-      return deleteFunctions(endpoint, names, signal);
+      queued.current.delete(controller);
+      return deleteFunctions(endpoint, names, controller.signal);
     },
     onSettled: (_result, _error, submission) => {
-      if (!submission.signal.aborted) {
+      if (!submission.controller.signal.aborted) {
         return client.invalidateQueries({ queryKey: generationKey(submission.endpoint) });
       }
     },
@@ -465,9 +485,11 @@ export function useDeleteFunctions(endpoint: string | undefined) {
       // TanStack Query can pause before mutationFn runs. Scope the signal when the deletion is confirmed.
       const controller = new AbortController();
       submissions.current.add(controller);
+      queued.current.add(controller);
       try {
-        return await mutateAsync({ endpoint, names, signal: controller.signal });
+        return await mutateAsync({ endpoint, names, controller });
       } finally {
+        queued.current.delete(controller);
         submissions.current.delete(controller);
       }
     },

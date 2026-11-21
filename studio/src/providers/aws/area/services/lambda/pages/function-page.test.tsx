@@ -2422,6 +2422,105 @@ describe('"Delete" in the header', () => {
     },
   );
 
+  it('requires a new verified confirmation after native connectivity returns to the same mounted page', async () => {
+    const replacementRead = deferredAnswer();
+    const { client, router, unmount } = await openLoaded();
+    const wasOnline = onlineManager.isOnline();
+    const browserOnline = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true);
+    try {
+      const oldHealth = connection.value.result;
+      const { input, submit } = await openDialog();
+      input.setInputValue('confirm');
+      // Model the query queue pausing before the old page receives its browser event.
+      act(() => onlineManager.setOnline(false));
+      submit.click();
+      await waitFor(() => {
+        expect(client.getMutationCache().getAll()[0]?.state.isPaused).toBe(true);
+      });
+      const queued = client.getMutationCache().getAll()[0];
+      expect(deleteRequests()).toEqual([]);
+
+      browserOnline.mockReturnValue(false);
+      fireEvent(window, new Event('offline'));
+      expect(deletionDialog()).toBeUndefined();
+      engine.functions = [{ ...ORDERS, description: 'Replacement while the browser was offline' }];
+      engine.answerFunction = (request) =>
+        request.method === 'GET' && FUNCTION_PATH.test(request.url.pathname)
+          ? replacementRead.promise
+          : engine.emulator(request);
+
+      browserOnline.mockReturnValue(true);
+      await act(async () => {
+        window.dispatchEvent(new Event('online'));
+        await client.resumePausedMutations();
+      });
+      await waitFor(() => {
+        expect(queued?.state.status).toBe('error');
+        expect(queued?.state.error).toMatchObject({ name: 'AbortError' });
+      });
+      expect(onlineManager.isOnline()).toBe(true);
+      expect(connection.value.result).toBe(oldHealth);
+      expect(router.state.location.pathname).toBe(pagePath('orders'));
+      expect(deleteRequests()).toEqual([]);
+      const beforeHealthDelete = pageDeleteAction();
+      expect(beforeHealthDelete?.getElement()).toHaveTextContent('Delete');
+      expect(beforeHealthDelete?.getElement()).toBeDisabled();
+      beforeHealthDelete?.click();
+      expect(deletionDialog()).toBeUndefined();
+
+      const beforeHealthReads = engine.gets.length;
+      connection.set(connectedResult());
+      await waitFor(() => expect(engine.gets.length).toBeGreaterThan(beforeHealthReads));
+      pageDeleteAction()?.click();
+      expect(deletionDialog()).toBeUndefined();
+      expect(deleteRequests()).toEqual([]);
+
+      const request = { method: 'GET', url: new URL('/2015-03-31/functions/orders', engineOrigin) };
+      await act(async () => replacementRead.resolve(engine.emulator(request)));
+      await waitFor(() => expect(value('Description')).toBe('Replacement while the browser was offline'));
+      await openDialog();
+      expectFreshConfirmation('orders');
+      expect(deleteRequests()).toEqual([]);
+
+      deletionControls().submit.click();
+      await waitFor(() => expect(router.state.location.pathname).toBe('/aws/lambda/functions'));
+      expect(deleteRequests()).toEqual(['orders']);
+    } finally {
+      unmount();
+      browserOnline.mockRestore();
+      onlineManager.setOnline(wasOnline);
+    }
+  });
+
+  it('delivers an already dispatched delete after a native connectivity cycle within the same session', async () => {
+    const deletion = deferredAnswer();
+    engine.answerDelete = () => deletion.promise;
+    const { shown, handedOver } = openWithRecordedDeleteOutcomes();
+    await screen.findByTestId('stand-in-test');
+    const wasOnline = onlineManager.isOnline();
+    const browserOnline = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true);
+    try {
+      const { input, submit } = await openDialog();
+      input.setInputValue('confirm');
+      submit.click();
+      await waitFor(() => expect(deleteRequests()).toEqual(['orders']));
+
+      browserOnline.mockReturnValue(false);
+      fireEvent(window, new Event('offline'));
+      expect(deletionDialog()).toBeUndefined();
+      browserOnline.mockReturnValue(true);
+      fireEvent(window, new Event('online'));
+
+      await act(async () => deletion.resolve({ status: 204, body: '' }));
+      await waitFor(() => expect(handedOver).toHaveBeenCalledTimes(1));
+      expect(shown).not.toHaveBeenCalled();
+      expect(deleteRequests()).toEqual(['orders']);
+    } finally {
+      browserOnline.mockRestore();
+      onlineManager.setOnline(wasOnline);
+    }
+  });
+
   it('ignores a submitted deletion that settles after the same-name function reconnects', async () => {
     const deletion = deferredAnswer();
     engine.answerDelete = () => deletion.promise;

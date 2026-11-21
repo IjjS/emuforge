@@ -10,6 +10,7 @@ import Tabs, { type TabsProps } from '@cloudscape-design/components/tabs';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 
+import { startedAtOf } from '../../../../../../lib/engine/engine-client';
 import { actionFailureItem, Code } from '../../../components/failure-states';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
@@ -206,6 +207,38 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
     revalidateOnReconnect: true,
   });
   const { read, failure, refresh } = reading;
+  const [network, setNetwork] = useState(() => ({
+    online: navigator.onLine,
+    revision: 0,
+    reconnect: undefined as { at: number; previous: typeof result } | undefined,
+  }));
+  useLayoutEffect(() => {
+    const handleOffline = () => {
+      setNetwork((current) => ({ ...current, online: false }));
+    };
+    const handleOnline = () => {
+      const at = Date.now();
+      setNetwork((current) => ({
+        online: true,
+        revision: current.revision + 1,
+        reconnect: { at, previous: result },
+      }));
+    };
+    window.addEventListener('offline', handleOffline, true);
+    window.addEventListener('online', handleOnline, true);
+    return () => {
+      window.removeEventListener('offline', handleOffline, true);
+      window.removeEventListener('online', handleOnline, true);
+    };
+  }, [result]);
+  const reconnect = network.reconnect;
+  const healthCheckedAfterReconnect =
+    reconnect === undefined || (connected && result !== reconnect.previous && startedAtOf(result) >= reconnect.at);
+  const [readNetworkRevision, setReadNetworkRevision] = useState(0);
+  if (network.online && healthCheckedAfterReconnect && readNetworkRevision !== network.revision) {
+    setReadNetworkRevision(network.revision);
+    refresh();
+  }
   const fn = read?.found === true ? read.function : undefined;
   const ready = !isChanging(read);
   const flash = usePageFlash();
@@ -241,14 +274,18 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
   if (test.scope !== sessionScope) {
     setTest({ scope: sessionScope, eventText: INITIAL_EVENT, qualifier: undefined, targetUnavailable: false });
   }
-  const [verification, setVerification] = useState({ scope: sessionScope, found: false });
+  const verificationScope = JSON.stringify([sessionScope, network.revision]);
+  const [verification, setVerification] = useState({ scope: verificationScope, found: false });
   // A refresh can read releases in parallel once this connection has verified the function.
   const verified =
     connected &&
+    network.online &&
+    healthCheckedAfterReconnect &&
+    readNetworkRevision === network.revision &&
     reading.sessionVerified &&
-    (read?.found ?? (failure === undefined && verification.scope === sessionScope && verification.found));
-  if (verification.scope !== sessionScope || verification.found !== verified) {
-    setVerification({ scope: sessionScope, found: verified });
+    (read?.found ?? (failure === undefined && verification.scope === verificationScope && verification.found));
+  if (verification.scope !== verificationScope || verification.found !== verified) {
+    setVerification({ scope: verificationScope, found: verified });
   }
   const releases = useReleaseReadings({
     endpoint: connection.engineOrigin,
@@ -307,7 +344,7 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
   // A confirmation belongs to the function and connection that opened the dialog.
   const [deletion, setDeletion] = useState<{ scope: string; names: readonly [string] }>();
   const canDelete = connection.engineOrigin !== undefined && verified;
-  const activeDeletion = canDelete && deletion?.scope === sessionScope ? deletion : undefined;
+  const activeDeletion = canDelete && deletion?.scope === verificationScope ? deletion : undefined;
   if (activeDeletion !== deletion) {
     setDeletion(undefined);
   }
@@ -466,7 +503,7 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
                     disabled={!canDelete}
                     onClick={() => {
                       if (canDelete) {
-                        setDeletion({ scope: sessionScope, names: [name] });
+                        setDeletion({ scope: verificationScope, names: [name] });
                       }
                     }}
                   >
