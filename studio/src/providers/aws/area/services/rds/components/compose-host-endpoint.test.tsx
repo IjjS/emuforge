@@ -1,4 +1,5 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import createWrapper from '@cloudscape-design/components/test-utils/dom';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 
 import { ComposeHostEndpoint } from './compose-host-endpoint';
@@ -46,12 +47,17 @@ it('reports clipboard failure and leaves the host endpoint visible', async () =>
   const writeText = vi.fn(() => Promise.reject(new DOMException('denied', 'NotAllowedError')));
   vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
   try {
-    render(<ComposeHostEndpoint kind="cluster" engine="aurora-mysql" port={28161} />);
+    const { container } = render(<ComposeHostEndpoint kind="cluster" engine="aurora-mysql" port={28161} />);
     expect(queryEndpoint('127.0.0.1:28161')).toBeVisible();
+    const copy = createWrapper(container).findCopyToClipboard();
 
     fireEvent.click(screen.getByRole('button', { name: COPY }));
 
-    expect(await screen.findByText('Compose host endpoint could not be copied')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(copy?.findStatusText({ popoverRenderWithPortal: false })?.getElement()).toHaveTextContent(
+        /^Compose host endpoint could not be copied$/,
+      );
+    });
     expect(writeText).toHaveBeenCalledExactlyOnceWith('127.0.0.1:28161');
     expect(queryEndpoint('127.0.0.1:28161')).toBeVisible();
   } finally {

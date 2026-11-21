@@ -295,8 +295,14 @@ describe('a DB instance', () => {
         screen.getByText(/runs in Docker Compose with database ports published.*machine running Compose/),
       ).toBeInTheDocument();
       expect(writeText).not.toHaveBeenCalled();
-      fireEvent.click(screen.getByRole('button', { name: 'Copy Compose host endpoint' }));
-      expect(await screen.findByText('Compose host endpoint copied')).toBeInTheDocument();
+      const button = screen.getByRole('button', { name: 'Copy Compose host endpoint' });
+      const copy = PAGE.findAllCopyToClipboards().find((control) => control.findCopyButton().getElement() === button);
+      fireEvent.click(button);
+      await waitFor(() => {
+        expect(copy?.findStatusText({ popoverRenderWithPortal: false })?.getElement()).toHaveTextContent(
+          /^Compose host endpoint copied$/,
+        );
+      });
       expect(writeText).toHaveBeenCalledExactlyOnceWith('127.0.0.1:28162');
     } finally {
       vi.unstubAllGlobals();
