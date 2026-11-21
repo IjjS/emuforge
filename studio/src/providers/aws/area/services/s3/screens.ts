@@ -1,6 +1,7 @@
 import type { ScreenCrumbs, ScreenNavigation, ServiceScreen } from '../../screens';
 import {
   bucketPath,
+  bucketPropertiesPath,
   BUCKETS_PATH,
   CREATE_BUCKET_PATH,
   keyName,
@@ -14,6 +15,7 @@ import { BucketPage } from './pages/bucket-page';
 import { CreateBucketPage } from './pages/create-bucket-page';
 import { DeleteBucketPage } from './pages/delete-bucket-page';
 import { EmptyBucketPage } from './pages/empty-bucket-page';
+import { CREATE_TITLE, EDIT_TITLE, NotificationPage } from './pages/notification-page';
 import { ObjectPage } from './pages/object-page';
 import { UploadPage } from './pages/upload-page';
 import { withAbandonedUploads } from './components/upload-abandoned-flash';
@@ -104,6 +106,20 @@ const OWN_SCREENS: readonly ServiceScreen[] = [
     navigation: NAVIGATION,
     Page: BucketPage,
   },
+  ...[
+    { path: 'create', title: CREATE_TITLE },
+    { path: '{id}/edit', title: EDIT_TITLE },
+  ].map(({ path, title }): ServiceScreen => ({
+    paths: [`${S3_PATH}/bucket/{name}/property/event-notification/${path}`],
+    title,
+    crumbs: ({ name }) => [
+      BUCKETS_CRUMB,
+      { text: name ?? '', href: bucketPropertiesPath(name ?? '') },
+      { text: title },
+    ],
+    navigation: NAVIGATION,
+    Page: NotificationPage,
+  })),
   // An object's page (issue 480, task 2): its key in the query, `?key=`; its title the key's name.
   {
     paths: [`${BUCKETS_PATH}/{name}/object`],

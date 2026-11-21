@@ -103,7 +103,6 @@ import {
   OBJECTS,
   openBucketPage,
   sectionButton,
-  NOTIFICATIONS,
   VERSIONING,
   WEBSITE,
 } from './services/s3/s3-bucket-page';
@@ -126,9 +125,6 @@ const versioningEditPath = (name: string) => `/aws/s3/bucket/${name}/property/ve
 const websiteEditPath = (name: string) => `/aws/s3/bucket/${name}/property/website/edit`;
 const tieringCreatePath = (name: string) => `/aws/s3/bucket/${name}/property/intelligent-tiering/create`;
 const metricsPath = (name: string) => `${bucketPath(name)}/metrics`;
-
-/** "Create event notification" of "Event notifications", for `name` (R2's table). */
-const notificationCreatePath = (name: string) => `/aws/s3/bucket/${name}/property/event-notification/create`;
 
 /** The crumbs of the page at a path below a bucket's page (R4.3). */
 const bucketCrumbs = (name: string) => ['EmuForge', 'AWS', S3.crumb, 'Buckets', name, NO_SCREEN_PART_H1];
@@ -364,18 +360,6 @@ test('studio.aws-no-screen-part-changes-nothing-in-the-emulator', async ({ ctx, 
 
   const VERSIONING_EDIT = '"Edit" of "Bucket Versioning"';
   const WEBSITE_EDIT = '"Edit" of "Static website hosting"';
-  const NOTIFICATION_CREATE = '"Create event notification"';
-  const notificationVisit = () =>
-    visit(
-      NOTIFICATION_CREATE,
-      notificationCreatePath(keep),
-      () => openBucketPage(page, keep),
-      () => chooseSectionButton(page, NOTIFICATIONS, 'Create event notification'),
-      async () => {
-        await expectNoScreenPart(page, S3.label, notificationCreatePath(keep));
-        await expectPath(page, notificationCreatePath(keep));
-      },
-    );
   const editVisit = () =>
     visit(
       VERSIONING_EDIT,
@@ -399,17 +383,16 @@ test('studio.aws-no-screen-part-changes-nothing-in-the-emulator', async ({ ctx, 
       },
     );
 
-  /** The three visits, each made once; a visit a line before already made is not made again. */
-  async function threeVisits(): Promise<void> {
+  /** The two visits, each made once; a visit a line before already made is not made again. */
+  async function fallbackVisits(): Promise<void> {
     for (const [what, make] of [
       [VERSIONING_EDIT, editVisit],
       [WEBSITE_EDIT, websiteVisit],
-      [NOTIFICATION_CREATE, notificationVisit],
     ] as const) {
       if (!visits.has(what)) await make().catch(() => undefined);
     }
-    expect([...visits.keys()].sort(), 'the three controls were followed').toEqual(
-      [VERSIONING_EDIT, WEBSITE_EDIT, NOTIFICATION_CREATE].sort(),
+    expect([...visits.keys()].sort(), 'the two controls were followed').toEqual(
+      [VERSIONING_EDIT, WEBSITE_EDIT].sort(),
     );
   }
 
@@ -419,17 +402,14 @@ test('studio.aws-no-screen-part-changes-nothing-in-the-emulator', async ({ ctx, 
   );
 
   await lines.line(
-    'Open it again, choose "Edit" of "Static website hosting" → the changed page at `/aws/s3/bucket/<p>-keep/property/website/edit`; open it again, choose "Create event notification" → the changed page at `/aws/s3/bucket/<p>-keep/property/event-notification/create`',
-    async () => {
-      await websiteVisit();
-      await notificationVisit();
-    },
+    'Open it again, choose "Edit" of "Static website hosting" → the changed page at `/aws/s3/bucket/<p>-keep/property/website/edit`',
+    websiteVisit,
   );
 
   await lines.line(
-    'After the three → a direct `ListBuckets` still returns `<p>-keep`, and a direct `ListObjectsV2` of it returns the same one key',
+    'After both visits → a direct `ListBuckets` still returns `<p>-keep`, and a direct `ListObjectsV2` of it returns the same one key',
     async () => {
-      await threeVisits();
+      await fallbackVisits();
       expect(await bucketNamesDirect(ctx, port, p), `a direct ListBuckets under ${p}`).toContain(keep);
       expect(await objectKeysDirect(ctx, port, keep), `a direct ListObjectsV2 of ${keep}`).toEqual([key]);
     },
@@ -438,7 +418,7 @@ test('studio.aws-no-screen-part-changes-nothing-in-the-emulator', async ({ ctx, 
   await lines.line(
     'From the load of each changed page until the check leaves it → the engine received no AWS request (only its own connection checks)',
     async () => {
-      await threeVisits();
+      await fallbackVisits();
       record.log();
       const sent = [...visits.values()].filter((v) => v.requests.length > 0);
       expect(

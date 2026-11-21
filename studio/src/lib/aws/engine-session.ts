@@ -34,6 +34,14 @@ export class EngineSessionError extends Error {
   }
 }
 
+/** The engine rejected a command at its session gate before sending it upstream. */
+export class EngineCommandSessionRefusal extends Error {
+  constructor(cause: unknown) {
+    super('The engine refused the command session.', { cause });
+    this.name = 'EngineCommandSessionRefusal';
+  }
+}
+
 export interface EngineSession {
   /**
    * The held token, or the token of the one session request in flight, starting it when there is none. Rejects with

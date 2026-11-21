@@ -17,12 +17,12 @@ import {
   ListObjectsV2Command,
   ListObjectVersionsCommand,
   PutBucketEncryptionCommand,
+  PutBucketNotificationConfigurationCommand,
   PutBucketVersioningCommand,
   PutObjectCommand,
   PutPublicAccessBlockCommand,
   UploadPartCommand,
-  type FilterRule,
-  type GetBucketNotificationConfigurationCommandOutput,
+  type NotificationConfiguration,
   type HeadObjectCommandOutput,
   type ListBucketsCommandOutput,
   type ListObjectsV2CommandOutput,
@@ -71,13 +71,15 @@ export interface BucketPageRequest {
 export const LIST_BUCKETS = 'ListBuckets';
 
 const clients = new Map<string, S3Client>();
+const notificationWriteClients = new Map<string, S3Client>();
 
-/** The area's S3 client for the engine at `endpoint`, one per endpoint for the life of the page. */
-function s3Client(endpoint: string): S3Client {
-  let client = clients.get(endpoint);
+/** Cache the regular client and the single-attempt client for each engine separately. */
+function s3Client(endpoint: string, singleAttempt = false): S3Client {
+  const cache = singleAttempt ? notificationWriteClients : clients;
+  let client = cache.get(endpoint);
   if (client === undefined) {
-    client = createS3Client({ endpoint });
-    clients.set(endpoint, client);
+    client = createS3Client({ endpoint, singleAttempt });
+    cache.set(endpoint, client);
   }
   return client;
 }
@@ -156,6 +158,7 @@ export const OPERATIONS = {
   getBucketTagging: 'GetBucketTagging',
   getBucketEncryption: 'GetBucketEncryption',
   getBucketNotificationConfiguration: 'GetBucketNotificationConfiguration',
+  putBucketNotificationConfiguration: 'PutBucketNotificationConfiguration',
   getBucketWebsite: 'GetBucketWebsite',
   listObjectsV2: 'ListObjectsV2',
   listObjectVersions: 'ListObjectVersions',
@@ -194,7 +197,13 @@ async function onBucket<Output, Result>(
 ): Promise<Result | NoSuchBucket> {
   let output: Output;
   try {
-    output = await sendRequest(operation, (abortSignal) => send(s3Client(endpoint), abortSignal), signal);
+    // Replaying a whole notification configuration can erase a change made after a lost response.
+    const singleAttempt = operation === OPERATIONS.putBucketNotificationConfiguration;
+    output = await sendRequest(
+      operation,
+      (abortSignal) => send(s3Client(endpoint, singleAttempt), abortSignal),
+      signal,
+    );
   } catch (error) {
     const code = answeredCode(error);
     if (code === NO_SUCH_BUCKET_CODE) {
@@ -289,72 +298,43 @@ export function getBucketEncryption(
   );
 }
 
-/** One row of "Event notifications" (R5.3). */
-export interface EventNotification {
-  /** "Event name", `Id`. */
-  name?: string;
-  /** "Event types", `Events` in the answer's order. */
-  events: string[];
-  prefix?: string;
-  suffix?: string;
-  destinationType: 'SNS topic' | 'SQS queue' | 'Lambda function';
-  /** "Destination", the ARN. */
-  destination?: string;
-}
-
-/** "Event notifications". */
-export interface NotificationSettings {
-  notifications: EventNotification[];
-}
-
-interface NotificationConfiguration {
-  Id?: string | undefined;
-  Events?: string[] | undefined;
-  Filter?: { Key?: { FilterRules?: FilterRule[] | undefined } | undefined } | undefined;
-}
-
-function toNotification(
-  { Id, Events, Filter }: NotificationConfiguration,
-  destinationType: EventNotification['destinationType'],
-  arn: string | undefined,
-): EventNotification {
-  const rule = (name: string) =>
-    text(Filter?.Key?.FilterRules?.find((filterRule) => filterRule.Name?.toLowerCase() === name)?.Value);
-  const notification: EventNotification = { events: (Events ?? []).filter((event) => event !== ''), destinationType };
-  const eventName = text(Id);
-  const prefix = rule('prefix');
-  const suffix = rule('suffix');
-  const destination = text(arn);
-  if (eventName !== undefined) notification.name = eventName;
-  if (prefix !== undefined) notification.prefix = prefix;
-  if (suffix !== undefined) notification.suffix = suffix;
-  if (destination !== undefined) notification.destination = destination;
-  return notification;
-}
-
-function toNotifications(output: GetBucketNotificationConfigurationCommandOutput): NotificationSettings {
-  return {
-    notifications: [
-      ...(output.TopicConfigurations ?? []).map((c) => toNotification(c, 'SNS topic', c.TopicArn)),
-      ...(output.QueueConfigurations ?? []).map((c) => toNotification(c, 'SQS queue', c.QueueArn)),
-      ...(output.LambdaFunctionConfigurations ?? []).map((c) =>
-        toNotification(c, 'Lambda function', c.LambdaFunctionArn),
-      ),
-    ],
-  };
-}
+export type { NotificationConfiguration } from '@aws-sdk/client-s3';
 
 export function getBucketNotificationConfiguration(
   endpoint: string,
   bucket: string,
   signal: AbortSignal,
-): Promise<NotificationSettings | NoSuchBucket> {
+): Promise<NotificationConfiguration | NoSuchBucket> {
   return onBucket(
     endpoint,
     OPERATIONS.getBucketNotificationConfiguration,
     (client, abortSignal) =>
       client.send(new GetBucketNotificationConfigurationCommand({ Bucket: bucket }), { abortSignal }),
-    toNotifications,
+    ({ QueueConfigurations, LambdaFunctionConfigurations, TopicConfigurations, EventBridgeConfiguration }) => ({
+      QueueConfigurations,
+      LambdaFunctionConfigurations,
+      TopicConfigurations,
+      EventBridgeConfiguration,
+    }),
+    signal,
+  );
+}
+
+export function putBucketNotificationConfiguration(
+  endpoint: string,
+  bucket: string,
+  configuration: NotificationConfiguration,
+  signal: AbortSignal,
+): Promise<undefined | NoSuchBucket> {
+  return onBucket(
+    endpoint,
+    OPERATIONS.putBucketNotificationConfiguration,
+    (client, abortSignal) =>
+      client.send(
+        new PutBucketNotificationConfigurationCommand({ Bucket: bucket, NotificationConfiguration: configuration }),
+        { abortSignal },
+      ),
+    () => undefined,
     signal,
   );
 }
