@@ -164,7 +164,7 @@ export function untilAborted<T>(pending: Promise<T>, signal: AbortSignal): Promi
 const mutationAuthorizations = new WeakMap<AbortSignal, () => void>();
 
 /**
- * Sign off on a mutation before it can queue. Losing browser connectivity invalidates future attempts without
+ * Bind a mutation to the browser connection before it can queue. Losing browser connectivity invalidates future attempts without
  * interrupting a response already relayed to the engine. The caller still owns cancellation on session teardown.
  */
 export function bindAwsMutationAuthorization(controller: AbortController): () => void {

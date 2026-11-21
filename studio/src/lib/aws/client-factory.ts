@@ -143,10 +143,10 @@ type HttpRequest = Parameters<FetchHttpHandler['handle']>[0];
 // no request leaves the channel for another path of Studio's origin (issue 503).
 class EngineRequestHandler extends FetchHttpHandler {
   private readonly address: EngineAddress;
-  private readonly attemptSignals: WeakMap<HttpRequest, AbortSignal>;
+  private readonly attemptSignals: WeakMap<object, AbortSignal>;
 
   constructor(address: EngineAddress) {
-    const attemptSignals = new WeakMap<HttpRequest, AbortSignal>();
+    const attemptSignals = new WeakMap<object, AbortSignal>();
     super({
       requestInit: (request): RequestInit => {
         // Smithy calls this synchronously before constructing the browser request on each attempt.
