@@ -46,6 +46,7 @@ import {
   routeTablesOf,
   ROUTES_OF_TABLE,
   rowsOf,
+  STATE_BOUND_MS,
   SUBNET_NOT_FOUND,
   subnetDirect,
   subnetPath,
@@ -123,8 +124,15 @@ test('studio.vpc-network-made-elsewhere-is-shown', async ({ ctx, page }) => {
     'Open S1 from the side navigation of `/aws/vpc`, type `<prefix>` in "Find by name" → the VPC\'s row with its name, VPC ID, state `available`, `10.61.0.0/16` and "No" under "Default", as the emulator reports them',
     async () => {
       await open(page, VPC_PATH, VPCS_H1);
-      await link(page.locator(SIDE_NAVIGATION), VPCS_H1).click(ACTION);
-      await expect(page).toHaveURL(addressOf(VPCS_PATH));
+      const previousFilter = await filterOf(listOf(page)).elementHandle({ timeout: STATE_BOUND_MS });
+      try {
+        await link(page.locator(SIDE_NAVIGATION), VPCS_H1).click(ACTION);
+        await expect(page).toHaveURL(addressOf(VPCS_PATH));
+        // Both routes show VPCs. The address can change before the old search field leaves.
+        await previousFilter.waitForElementState('hidden', { timeout: STATE_BOUND_MS });
+      } finally {
+        await previousFilter.dispose();
+      }
       await expect(heading(page, VPCS_H1)).toBeVisible();
       const table = listOf(page);
       // The unfiltered list includes a VPC outside the search prefix.
