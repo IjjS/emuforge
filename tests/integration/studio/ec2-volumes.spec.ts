@@ -3,6 +3,7 @@ import { expect, startStack, test } from './support';
 import { connectedAt, expectLine, notStartedOn } from './support/aws-area';
 import { ACTION, addressOf } from './support/frame';
 import {
+  alertWith,
   button,
   chooseOption,
   confirmWith,
@@ -17,13 +18,13 @@ import {
   items,
   open,
   parseXml,
-  rowsOf,
   tableOf,
   textAt,
 } from './services/ec2/ec2';
 import {
   device,
   expectAttached,
+  expectVolumeAbsent,
   findVolume,
   instanceOption,
   ownVolume,
@@ -70,13 +71,13 @@ test('studio.ec2-create-and-delete-a-volume', async ({ ctx, page }) => {
     type: 'gp2',
     attachments: [],
   });
+  await (await findVolume(page, id)).click(ACTION);
+  await expect(page).toHaveURL(addressOf(volumePath(id)));
   await button(main, 'Delete volume').click(ACTION);
   await confirmWith(page, id, 'Delete volume');
   await expect(page).toHaveURL(addressOf(volumesPath));
   await expectFlash(page, 'success', 'Volume ' + id + ' deleted.');
-  const table = volumeTable(page);
-  await expect(page.locator(ui.findTable().findRows().toSelector()).first().or(emptyOf(table)).first()).toBeVisible();
-  expect((await rowsOf(table)).map((row) => row['Volume ID'])).not.toContain(id);
+  await expectVolumeAbsent(page, id);
   expect(await readVolume(ctx, port, id)).toBeNull();
 });
 
@@ -111,7 +112,7 @@ test('studio.ec2-volume-refusals-preserve-storage', async ({ ctx, page }) => {
   const main = page.getByRole('main');
   await button(main, 'Attach volume').click(ACTION);
   await submitAttachment(page, other!);
-  const alert = dialogOf(page).locator(ui.findAlert().toSelector().replace(/^body /, ''));
+  const alert = alertWith(dialogOf(page), 'InvalidVolume.ZoneMismatch');
   await expect(alert).toContainText('InvalidVolume.ZoneMismatch');
   expect(await readVolume(ctx, port, id)).toMatchObject({ state: 'available', attachments: [] });
   await submitAttachment(page, instance);

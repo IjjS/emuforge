@@ -8,6 +8,8 @@ import {
   dialogOf,
   ec2,
   Ec2Seeded,
+  emptyOf,
+  instanceDirect,
   expectCell,
   expectFlash,
   expectValueIs,
@@ -46,29 +48,45 @@ export async function readVolume(ctx: Ctx, port: number, id: string) {
   };
 }
 
+async function removeVolume(ctx: Ctx, port: number, id: string) {
+  const volume = await readVolume(ctx, port, id);
+  if (!volume) return;
+  if (volume.attachments.length) {
+    const detached = await ec2(ctx, port, 'DetachVolume', { VolumeId: id });
+    expect(detached.status).toBe(200);
+  }
+  await expect.poll(async () => (await readVolume(ctx, port, id))?.state, { timeout: 30_000 }).toBe('available');
+  expect((await ec2(ctx, port, 'DeleteVolume', { VolumeId: id })).status).toBe(200);
+  await expect.poll(() => readVolume(ctx, port, id), { timeout: 30_000 }).toBeNull();
+}
+
 export function ownVolume(ctx: Ctx, port: number, id: string) {
-  ctx.own({
-    async dispose() {
-      const volume = await readVolume(ctx, port, id);
-      if (!volume) return;
-      if (volume.attachments.length) {
-        const detached = await ec2(ctx, port, 'DetachVolume', { VolumeId: id });
-        expect(detached.status).toBe(200);
-      }
-      await expect.poll(async () => (await readVolume(ctx, port, id))?.state, { timeout: 30_000 }).toBe('available');
-      expect((await ec2(ctx, port, 'DeleteVolume', { VolumeId: id })).status).toBe(200);
-    },
-  });
+  ctx.own({ dispose: () => removeVolume(ctx, port, id) });
 }
 
 export async function seedStorage(ctx: Ctx, port: number, secondZone = false) {
   const defaults = await world(ctx, port);
-  const prefix = checkPrefix(ctx, 'volume');
+  const prefix = checkPrefix(ctx, ctx.id.split('.').pop()!);
+  const bootVolumes = new Set<string>();
+  // Owned resources are disposed in reverse order: terminate the instances before collecting surviving boot volumes.
+  ctx.own({
+    async dispose() {
+      for (const id of bootVolumes) await removeVolume(ctx, port, id);
+    },
+  });
   const seeded = new Ec2Seeded(ctx, port, prefix, defaults);
-  const instance = await seeded.instance({ name: prefix + '-same', subnetId: defaults.subnet['us-east-1a']! });
-  const other = secondZone
-    ? await seeded.instance({ name: prefix + '-other', subnetId: defaults.subnet['us-east-1b']! })
-    : undefined;
+  async function launch(suffix: string, zone: string) {
+    const id = await seeded.instance({ name: prefix + suffix, subnetId: defaults.subnet[zone]! });
+    const instance = await instanceDirect(ctx, port, id);
+    if (!instance?.volumes.length) throw new EnvError('The seeded instance has no reported block devices');
+    for (const mapping of instance.volumes) {
+      if (!mapping.volumeId) throw new EnvError('The seeded block device has no volume ID');
+      bootVolumes.add(mapping.volumeId);
+    }
+    return id;
+  }
+  const instance = await launch('-same', 'us-east-1a');
+  const other = secondZone ? await launch('-other', 'us-east-1b') : undefined;
   const created = await ec2(ctx, port, 'CreateVolume', { AvailabilityZone: 'us-east-1a', Size: '4' });
   const id = textAt(created.root, 'volumeId');
   if (!id || created.status !== 200) throw new EnvError('CreateVolume did not return the seed volume ID');
@@ -77,33 +95,58 @@ export async function seedStorage(ctx: Ctx, port: number, secondZone = false) {
   return { id, instance, other };
 }
 
-/** Find this check's ID, following actual list pages when the account holds older volumes. */
+/** Read complete pages until the requested ID is found or the last settled page is exhausted. */
+async function listContains(page: Page, id: string) {
+  const table = volumeTable(page);
+  const next = page.locator(ui.findPagination().findNextPageButton().toSelector());
+  let previousFirst: string | undefined;
+  for (;;) {
+    const ids = async () => (await rowsOf(table)).map((row) => row['Volume ID']);
+    await expect
+      .poll(
+        async () => {
+          const first = (await ids())[0];
+          if (first) return first !== previousFirst;
+          const empty = emptyOf(table);
+          return (await empty.isVisible()) && /^No (more )?volumes$/.test((await empty.innerText()).trim());
+        },
+        { timeout: 30_000 },
+      )
+      .toBe(true);
+    const current = await ids();
+    if (current.includes(id)) return true;
+    if (!(await next.isEnabled())) return false;
+    previousFirst = current[0];
+    await next.click(ACTION);
+  }
+}
+
 export async function findVolume(page: Page, id: string) {
   await open(page, volumesPath, 'Volumes');
-  const table = volumeTable(page);
-  const link = table.getByRole('link', { name: id, exact: true });
-  const next = page.locator(ui.findPagination().findNextPageButton().toSelector());
-  const loading = page.locator(ui.findTable().findLoadingText().toSelector());
-  await expect.poll(async () => (await rowsOf(table)).length, { timeout: 30_000 }).toBeGreaterThan(0);
-  while (!(await link.isVisible())) {
-    const previous = (await rowsOf(table))[0]?.['Volume ID'];
-    await expect(next).toBeEnabled();
-    await next.click(ACTION);
-    await expect.poll(async () => (await rowsOf(table))[0]?.['Volume ID']).not.toBe(previous);
-    await expect(loading).toBeHidden();
-  }
-  return link;
+  expect(await listContains(page, id), 'the created volume is listed').toBe(true);
+  return volumeTable(page).getByRole('link', { name: id, exact: true });
+}
+
+export async function expectVolumeAbsent(page: Page, id: string) {
+  expect(await listContains(page, id), 'the deleted volume across all list pages').toBe(false);
 }
 
 export async function instanceOption(page: Page, id: string) {
   const dialog = dialogOf(page);
   await selectOf(field(dialog, 'Instance')).click(ACTION);
   const option = page.locator(ui.findSelect().findDropdown().findOptionByValue(id).toSelector());
+  const options = page.locator(ui.findSelect().findDropdown().findOptions().toSelector());
   const more = button(dialog, 'Load more');
   await expect(option.or(more).first()).toBeVisible({ timeout: 20_000 });
   while (!(await option.isVisible())) {
+    const before = await options.count();
     await more.click(ACTION);
-    await expect(option.or(more).first()).toBeVisible({ timeout: 20_000 });
+    await expect
+      .poll(async () => (await option.isVisible()) || (await options.count()) > before, {
+        timeout: 20_000,
+        message: 'the selected instance or another page of instance choices',
+      })
+      .toBe(true);
   }
   return option;
 }
