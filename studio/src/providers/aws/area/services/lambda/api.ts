@@ -848,9 +848,10 @@ function decodeLog(logResult: string | undefined): string {
 export type InvokeFailure = RequestFailure & { reportedCode?: string };
 
 export class InvokeRequestError extends RequestError {
-  declare readonly failure: InvokeFailure;
-
-  constructor(failure: InvokeFailure) {
+  constructor(
+    failure: RequestFailure,
+    readonly reportedCode: string,
+  ) {
     super(failure);
   }
 }
@@ -888,7 +889,7 @@ export async function invoke(
     signal,
   ).catch((error: unknown) => {
     if (error instanceof RequestError && error.failure.kind === 'access-denied' && reportedCode !== undefined) {
-      throw new InvokeRequestError({ ...error.failure, reportedCode });
+      throw new InvokeRequestError(error.failure, reportedCode);
     }
     throw error;
   });

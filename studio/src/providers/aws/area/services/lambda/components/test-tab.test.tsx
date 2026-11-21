@@ -4,6 +4,7 @@ import path from 'node:path';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { useState } from 'react';
+import { MemoryRouter } from 'react-router';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { RequestFailure } from '../../../../../../lib/aws/request';
@@ -54,21 +55,23 @@ function Harness({
   const [eventText, setEventText] = useState(initial);
   const [qualifier, setQualifier] = useState<string>();
   return (
-    <TestTab
-      functionName="orders"
-      eventText={eventText}
-      onEventTextChange={setEventText}
-      invoke={invoke}
-      connection={{
-        engineOrigin: 'http://127.0.0.1:8308',
-        result: { kind: 'connected', checkedAt: 0, emulator: { port: 9308, endpoint: 'https://127.0.0.1:9308' } },
-      }}
-      versions={versionReading}
-      aliases={aliasReading}
-      qualifier={qualifier}
-      targetUnavailable={targetUnavailable && qualifier === 'live'}
-      onTargetChange={setQualifier}
-    />
+    <MemoryRouter>
+      <TestTab
+        functionName="orders"
+        eventText={eventText}
+        onEventTextChange={setEventText}
+        invoke={invoke}
+        connection={{
+          engineOrigin: 'http://127.0.0.1:8308',
+          result: { kind: 'connected', checkedAt: 0, emulator: { port: 9308, endpoint: 'https://127.0.0.1:9308' } },
+        }}
+        versions={versionReading}
+        aliases={aliasReading}
+        qualifier={qualifier}
+        targetUnavailable={targetUnavailable && qualifier === 'live'}
+        onTargetChange={setQualifier}
+      />
+    </MemoryRouter>
   );
 }
 
@@ -84,6 +87,12 @@ function chooseTarget(value: string) {
   const select = targetSelect();
   select.openDropdown();
   select.selectOptionByValue(value);
+}
+
+function eventField() {
+  return createWrapper(document.body)
+    .findAllFormFields()
+    .find((form) => norm(form.findLabel()?.getElement().textContent) === 'Event JSON');
 }
 
 function field() {
@@ -123,9 +132,7 @@ describe('the tab "Test"', () => {
   it('opens with "{}" in "Event JSON" and "Not invoked yet"', () => {
     render(<Harness invoke={invocation()} />);
     expect(field().getTextareaValue()).toBe('{}');
-    expect(norm(createWrapper(document.body).findFormField()?.findLabel()?.getElement().textContent)).toBe(
-      'Event JSON',
-    );
+    expect(norm(eventField()?.findLabel()?.getElement().textContent)).toBe('Event JSON');
     expect(norm(result().textContent)).toContain('Not invoked yet');
     expect(norm(result().textContent)).toContain('Invoke the function to see what it returns and the end of its log.');
     expect(norm(invokeButton().getElement().textContent)).toBe('Invoke');
@@ -137,9 +144,7 @@ describe('the tab "Test"', () => {
       const invoke = invocation();
       render(<Harness invoke={invoke} initial={text} />);
       invokeButton().click();
-      expect(norm(createWrapper(document.body).findFormField()?.findError()?.getElement().textContent)).toBe(
-        'Enter the event as one JSON value.',
-      );
+      expect(norm(eventField()?.findError()?.getElement().textContent)).toBe('Enter the event as one JSON value.');
       expect(document.activeElement).toBe(field().findNativeTextarea().getElement());
       expect(invoke.mutate).not.toHaveBeenCalled();
     },
@@ -152,7 +157,7 @@ describe('the tab "Test"', () => {
     invokeButton().click();
     expect(invoke.mutate).toHaveBeenCalledTimes(1);
     expect(invoke.mutate).toHaveBeenCalledWith(text, undefined);
-    expect(createWrapper(document.body).findFormField()?.findError()).toBeNull();
+    expect(eventField()?.findError()).toBeNull();
   });
 
   it('reads "Invoking" while an invoke is in flight, sends nothing on a second press and keeps the earlier result', () => {
@@ -302,9 +307,7 @@ describe('the tab "Test" after the critique (final r1)', () => {
     const invoke = invocation();
     render(<Harness invoke={invoke} initial={'{"a":'} />);
     fireEvent.keyDown(field().findNativeTextarea().getElement(), { key: 'Enter', ctrlKey: true });
-    expect(norm(createWrapper(document.body).findFormField()?.findError()?.getElement().textContent)).toBe(
-      'Enter the event as one JSON value.',
-    );
+    expect(norm(eventField()?.findError()?.getElement().textContent)).toBe('Enter the event as one JSON value.');
     expect(invoke.mutate).not.toHaveBeenCalled();
   });
 

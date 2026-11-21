@@ -1323,14 +1323,17 @@ describe('Qualified Test invocations', () => {
   }
 
   async function chooseTarget(value: string) {
-    await waitFor(() => expect(handed.test?.aliases.loading).toBe(false));
+    await waitFor(() => {
+      expect(handed.test?.aliases.loading).toBe(false);
+      expect(handed.test?.versions.loading).toBe(false);
+    });
     const select = targets();
     select.openDropdown();
     select.selectOptionByValue(value);
   }
 
   function invokeTarget() {
-    fireEvent.click(screen.getByRole('button', { name: 'Invoke', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: 'Invoke' }));
   }
 
   function result(payload: string, log: string): Answer {
@@ -1338,7 +1341,12 @@ describe('Qualified Test invocations', () => {
   }
 
   function resultPanel() {
-    return screen.getByRole('heading', { name: 'Result', level: 2 }).closest('section') ?? document.body;
+    const heading = screen.getByRole('heading', { name: 'Result', level: 2 });
+    const panel = PAGE.findAllContainers().find((container) => container.getElement().contains(heading));
+    if (panel === undefined) {
+      throw new Error('Expected the invocation result panel');
+    }
+    return panel.getElement();
   }
 
   beforeEach(() => {
@@ -1397,7 +1405,7 @@ describe('Qualified Test invocations', () => {
           detail.resolve(
             engine.emulator({
               method: 'GET',
-              url: new URL(submitted()[0]!.url.pathname.replace('/invocations', ''), engineOrigin),
+              url: new URL('/2015-03-31/functions/orders', engineOrigin),
             }),
           ),
         );
@@ -1476,7 +1484,7 @@ describe('Qualified Test invocations', () => {
     await chooseTarget('live');
     invokeTarget();
     expect(await screen.findByText('previous result', { exact: false })).toBeVisible();
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Invoke', exact: true })).toBeEnabled());
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Invoke' })).toBeEnabled());
     invokeTarget();
     await waitFor(() => expect(submitted()).toHaveLength(2));
     expect(resultPanel()).toHaveTextContent('previous result');
@@ -1516,7 +1524,7 @@ describe('Qualified Test invocations', () => {
       url.pathname.endsWith('/versions') ? versionAnswer('2') : json(200, { Aliases: [] });
     fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     expect(await screen.findByText('live is unavailable. Choose another target.')).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Invoke', exact: true })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Invoke' })).toBeDisabled();
     fireEvent.keyDown(screen.getByRole('textbox', { name: 'Event JSON' }), { key: 'Enter', ctrlKey: true });
     expect(submitted()).toHaveLength(0);
     await chooseTarget('2');

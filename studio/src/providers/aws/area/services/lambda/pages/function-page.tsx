@@ -52,6 +52,7 @@ interface FunctionTabsProps {
   fn: LambdaFunction;
   connection: AreaConnection;
   ready: boolean;
+  testScope: string;
   test: Omit<TestTabProps, 'functionName' | 'connection' | 'versions' | 'aliases'>;
   releases: Pick<VersionsTabProps, 'versions' | 'aliases' | 'mutation'>;
   active: ReturnType<typeof tabOf>;
@@ -67,6 +68,7 @@ function FunctionTabs({
   fn,
   connection,
   ready,
+  testScope,
   test,
   releases,
   active,
@@ -89,6 +91,7 @@ function FunctionTabs({
       href: functionTabHref(name, 'test'),
       content: (
         <TestTab
+          key={testScope}
           {...test}
           functionName={name}
           connection={connection}
@@ -207,25 +210,25 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
   const ready = !isChanging(read);
   const flash = usePageFlash();
   const reread = useReadAgain(connection.engineOrigin, name);
-  const releaseScope = JSON.stringify([connection.engineOrigin, name, reading.session]);
+  const sessionScope = JSON.stringify([connection.engineOrigin, name, reading.session]);
   const invoke = useInvoke(connection.engineOrigin, name, reading.session);
   const [test, setTest] = useState({
-    scope: releaseScope,
+    scope: sessionScope,
     eventText: INITIAL_EVENT,
     qualifier: undefined as string | undefined,
     targetUnavailable: false,
   });
-  if (test.scope !== releaseScope) {
-    setTest({ scope: releaseScope, eventText: INITIAL_EVENT, qualifier: undefined, targetUnavailable: false });
+  if (test.scope !== sessionScope) {
+    setTest({ scope: sessionScope, eventText: INITIAL_EVENT, qualifier: undefined, targetUnavailable: false });
   }
-  const [verification, setVerification] = useState({ scope: releaseScope, found: false });
+  const [verification, setVerification] = useState({ scope: sessionScope, found: false });
   // A refresh can read releases in parallel once this connection has verified the function.
   const verified =
     connected &&
     reading.sessionVerified &&
-    (read?.found ?? (failure === undefined && verification.scope === releaseScope && verification.found));
-  if (verification.scope !== releaseScope || verification.found !== verified) {
-    setVerification({ scope: releaseScope, found: verified });
+    (read?.found ?? (failure === undefined && verification.scope === sessionScope && verification.found));
+  if (verification.scope !== sessionScope || verification.found !== verified) {
+    setVerification({ scope: sessionScope, found: verified });
   }
   const releases = useReleaseReadings({
     endpoint: connection.engineOrigin,
@@ -235,16 +238,21 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
     verified,
   });
   const { qualifier } = test;
-  const currentTargets = /^\d+$/.test(qualifier ?? '')
-    ? releases.versions.items?.map(({ version }) => version)
-    : releases.aliases.items?.map(({ name }) => name);
-  if (qualifier !== undefined && !test.targetUnavailable && currentTargets?.includes(qualifier) === false) {
+  const refreshedTargetExists = /^\d+$/.test(qualifier ?? '')
+    ? releases.versions.items?.some(({ version }) => version === qualifier)
+    : releases.aliases.items?.some(({ name }) => name === qualifier);
+  if (
+    test.scope === sessionScope &&
+    qualifier !== undefined &&
+    !test.targetUnavailable &&
+    refreshedTargetExists === false
+  ) {
     setTest({ ...test, targetUnavailable: true });
   }
   const releaseMutation = useReleaseMutation({
     endpoint: connection.engineOrigin,
     name,
-    scope: releaseScope,
+    scope: sessionScope,
     onSuccess: (result) => {
       flash.show([{ type: 'success', content: releaseSuccessText(result) }]);
       void reread();
@@ -371,6 +379,7 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
           fn={fn}
           connection={connection}
           ready={ready}
+          testScope={sessionScope}
           test={{
             invoke,
             eventText: test.eventText,

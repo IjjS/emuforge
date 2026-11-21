@@ -679,7 +679,7 @@ export function useInvoke(endpoint: string | undefined, name: string, session = 
       }
       const failure =
         error instanceof InvokeRequestError
-          ? error.failure
+          ? { ...error.failure, reportedCode: error.reportedCode }
           : error === null
             ? undefined
             : requestFailure(INVOKE, error);

@@ -130,10 +130,10 @@ export function TestTab({
   targetUnavailable,
   onTargetChange,
 }: TestTabProps) {
-  const versionOptions = (versions.items ?? [])
+  const versionOptions = (versions.failure === undefined ? (versions.items ?? []) : [])
     .filter(({ version }) => version !== LATEST)
     .map(({ version }) => ({ label: version, value: version }));
-  const aliasOptions = (aliases.items ?? []).map(({ name, version }) => ({
+  const aliasOptions = (aliases.failure === undefined ? (aliases.items ?? []) : []).map(({ name, version }) => ({
     label: name,
     value: name,
     description: `Version ${version}`,
@@ -231,7 +231,8 @@ export function TestTab({
                 (invoke.qualifier === undefined) === (qualifier === undefined)
               ) && (
                 <StatusIndicator type="info">
-                  {qualifier === undefined ? 'Invoke' : 'Qualified Invoke'} is not implemented by the emulator.
+                  Not implemented by the emulator. {qualifier === undefined ? 'Invoke' : 'Qualified Invoke'} is
+                  unavailable.
                 </StatusIndicator>
               )}
             <FormField label="Event JSON" stretch errorText={fieldError}>
