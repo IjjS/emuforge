@@ -1898,11 +1898,15 @@ describe('the tabs by ?tab=', () => {
 });
 
 describe('"Delete" in the header', () => {
-  function pageDeleteAction() {
+  function pageActions() {
     const pageHeader = PAGE.findAllHeaders().find((candidate) =>
       candidate.findHeadingText().getElement().closest('h1'),
     );
-    return pageHeader?.findActions()?.findAllButtons()[1];
+    return pageHeader?.findActions()?.findAllButtons() ?? [];
+  }
+
+  function pageDeleteAction() {
+    return pageActions()[1];
   }
 
   async function openDialog() {
@@ -1948,6 +1952,8 @@ describe('"Delete" in the header', () => {
 
     await openDialog();
     const { input, submit } = deletionControls();
+    const field = input.findNativeInput().getElement();
+    field.focus();
     expect(submit.getElement()).toBeDisabled();
     input.setInputValue('confirm');
     expect(submit.getElement()).toBeEnabled();
@@ -1958,6 +1964,7 @@ describe('"Delete" in the header', () => {
       expect(handed.test?.aliases.loading).toBe(true);
     });
     expect(deletionControls().input.getInputValue()).toBe('confirm');
+    expect(field).toHaveFocus();
     expect(deletionControls().submit.getElement()).toBeEnabled();
 
     await act(async () => aliases.resolve(aliasAnswer('live', '2')));
@@ -1965,6 +1972,7 @@ describe('"Delete" in the header', () => {
       expect(handed.test?.aliases.items).toEqual([{ name: 'live', version: '2' }]);
     });
     expect(deletionControls().input.getInputValue()).toBe('confirm');
+    expect(field).toHaveFocus();
     expect(deletionControls().submit.getElement()).toBeEnabled();
     expect(deleteRequests()).toEqual([]);
 
@@ -1986,12 +1994,17 @@ describe('"Delete" in the header', () => {
     expect(submit.getElement()).toBeEnabled();
   }
 
-  it.each(['another function', 'a reopened dialog'] as const)(
-    'requires fresh confirmation for %s',
+  it.each(['another function', 'Cancel', 'Escape'] as const)(
+    'requires fresh confirmation after %s',
     async (boundary) => {
       const { router } = await openLoaded();
       engine.functions.push({ name: 'payments' });
+      const opener = pageDeleteAction()?.getElement();
+      opener?.focus();
       const { input, submit, cancel } = await openDialog();
+      const field = input.findNativeInput().getElement();
+      field.focus();
+      expect(field).toHaveFocus();
       input.setInputValue('confirm');
       expect(submit.getElement()).toBeEnabled();
 
@@ -1999,7 +2012,12 @@ describe('"Delete" in the header', () => {
         await act(() => router.navigate(pagePath('payments')));
         await screen.findByTestId('stand-in-test');
       } else {
-        cancel.click();
+        if (boundary === 'Cancel') {
+          cancel.click();
+        } else {
+          fireEvent.keyDown(field, { key: 'Escape', keyCode: 27 });
+        }
+        expect(opener).toHaveFocus();
       }
 
       expect(deletionDialog()).toBeUndefined();
@@ -2017,13 +2035,21 @@ describe('"Delete" in the header', () => {
         await act(() => router.navigate(`${pagePath('orders')}?tab=code`));
         await screen.findByTestId('stand-in-code');
       }
+      pageDeleteAction()?.getElement().focus();
+      const refresh = pageActions()[0]?.getElement();
+      expect(refresh).toHaveAccessibleName('Refresh');
       const { input, submit } = await openDialog();
+      const field = input.findNativeInput().getElement();
+      field.focus();
+      expect(field).toHaveFocus();
       input.setInputValue('confirm');
       expect(submit.getElement()).toBeEnabled();
       const reads = engine.gets.length;
 
       connection.set(notStartedResult());
       expect(deletionDialog()).toBeUndefined();
+      expect(refresh).toHaveFocus();
+      expect(refresh).toBeEnabled();
       const disconnectedDelete = pageDeleteAction();
       expect(disconnectedDelete?.getElement()).toHaveTextContent('Delete');
       expect(disconnectedDelete?.getElement()).toBeDisabled();
