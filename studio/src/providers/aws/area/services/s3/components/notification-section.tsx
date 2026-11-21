@@ -22,6 +22,7 @@ export function NotificationSection({
   configuration,
   loading,
   failure,
+  feedback,
   unsupported,
   deleteDisabled,
   onDelete,
@@ -30,6 +31,7 @@ export function NotificationSection({
   configuration: NotificationConfiguration | undefined;
   loading: boolean;
   failure?: ReactNode;
+  feedback: ReactNode;
   unsupported: boolean;
   deleteDisabled: boolean;
   onDelete: (target: EditableNotification) => void;
@@ -37,37 +39,51 @@ export function NotificationSection({
   const follow = useFollow();
   const ids = notificationIdCounts(notificationRules(configuration ?? {}));
   return (
-    <NotificationTable
-      configuration={configuration}
-      loading={loading}
-      failure={failure}
-      header={
-        <Header
-          variant="h2"
-          actions={
-            <Button href={createEventNotificationPath(bucket)} onFollow={follow} disabled={unsupported}>
-              Create event notification
-            </Button>
-          }
-        >
-          Event notifications
-        </Header>
-      }
-      actions={(rule) => {
-        const id = rule.data.Id;
-        if (!editableNotification(rule, ids) || id === undefined) return <Box>Read only</Box>;
-        return (
-          <SpaceBetween direction="horizontal" size="xs">
-            <Button href={editEventNotificationPath(bucket, id)} onFollow={follow} ariaLabel={`Edit ${id}`}>
-              Edit
-            </Button>
-            <Button onClick={() => onDelete(rule)} disabled={deleteDisabled} ariaLabel={`Delete ${id}`}>
-              Delete
-            </Button>
-          </SpaceBetween>
-        );
-      }}
-    />
+    <SpaceBetween size="s">
+      {feedback}
+      <NotificationTable
+        configuration={configuration}
+        loading={loading}
+        failure={failure}
+        header={(compact) => (
+          <Header
+            variant="h2"
+            description={compact ? 'Scroll sideways for event types and filters.' : undefined}
+            actions={
+              <Button href={createEventNotificationPath(bucket)} onFollow={follow} disabled={unsupported}>
+                Create event notification
+              </Button>
+            }
+          >
+            Event notifications
+          </Header>
+        )}
+        actions={(rule) => {
+          const id = rule.data.Id;
+          if (!editableNotification(rule, ids) || id === undefined) return <Box>Read only</Box>;
+          return (
+            <SpaceBetween direction="horizontal" size="xs">
+              <Button
+                href={editEventNotificationPath(bucket, id)}
+                onFollow={follow}
+                wrapText={false}
+                ariaLabel={`Edit ${id}`}
+              >
+                Edit
+              </Button>
+              <Button
+                onClick={() => onDelete(rule)}
+                disabled={deleteDisabled}
+                wrapText={false}
+                ariaLabel={`Delete ${id}`}
+              >
+                Delete
+              </Button>
+            </SpaceBetween>
+          );
+        }}
+      />
+    </SpaceBetween>
   );
 }
 

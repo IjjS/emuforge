@@ -1763,6 +1763,52 @@ describe('bucket event notifications', () => {
     );
   });
 
+  it('keeps actions and the copyable destination in the first column at narrow widths', async () => {
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(private readonly onResize: ResizeObserverCallback) {}
+
+        observe(element: Element) {
+          if (element.querySelector('th')?.textContent?.trim() === 'Event name') {
+            const box = { inlineSize: 348, blockSize: 100 };
+            this.onResize(
+              [
+                {
+                  target: element,
+                  contentRect: new DOMRectReadOnly(0, 0, box.inlineSize, box.blockSize),
+                  contentBoxSize: [box],
+                  borderBoxSize: [box],
+                  devicePixelContentBoxSize: [box],
+                },
+              ],
+              this,
+            );
+          }
+        }
+
+        unobserve() {}
+
+        disconnect() {}
+      },
+    );
+
+    await openBucket(FULL);
+    const notificationSection = within(section('Event notifications'));
+    const row = notificationSection.getByRole('link', { name: 'Edit to-queue' }).closest('tr');
+    const firstCell = row?.cells[0];
+    if (firstCell === undefined) throw new Error('Expected the first notification cell');
+    const controls = within(firstCell);
+    expect(controls.getByRole('link', { name: 'Edit to-queue' })).toBeVisible();
+    expect(controls.getByRole('button', { name: 'Delete to-queue' })).toBeVisible();
+    expect(controls.getByRole('link', { name: 'Open queue' })).toBeVisible();
+    expect(controls.getByRole('button', { name: 'Copy Destination ARN' })).toBeVisible();
+    expect(firstCell).toHaveTextContent(QUEUE);
+    for (const column of ['Event types', 'Prefix', 'Suffix', 'Destination type']) {
+      expect(notificationSection.getByRole('columnheader', { name: column })).toBeVisible();
+    }
+  });
+
   const ids = ['.', '..', '~.', '~..', 'parent/child', 'literal%2F'];
   it.each(ids)('follows and freshly opens the exact rule with ID %s', async (id) => {
     const { router, unmount } = await openBucket({
@@ -1894,9 +1940,12 @@ describe('bucket event notifications', () => {
   it('refuses to replace the configuration when the fresh read fails, with read recovery', async () => {
     await openBucket({ notification: () => notificationDocument(queueRule('to-queue')) });
     const dialog = await startDelete();
-    engine.parts.notification = () => errorAnswer(400, 'InvalidRequest', 'Fresh read refused');
+    const preWrite = held();
+    engine.parts.notification = () => preWrite.answer;
     confirmDelete(dialog);
-    expect(await screen.findByText(/Fresh read refused/)).toBeVisible();
+    expect(within(section('Event notifications')).getByText('Deleting event notification')).toBeVisible();
+    preWrite.release(errorAnswer(400, 'InvalidRequest', 'Fresh read refused'));
+    expect(await within(section('Event notifications')).findByText(/Fresh read refused/)).toBeVisible();
     expect(engine.notificationWrites).toEqual([]);
     expect(screen.getByRole('button', { name: 'Delete to-queue' })).toBeDisabled();
     engine.parts.notification = () => notificationDocument(queueRule('to-queue'));

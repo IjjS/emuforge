@@ -4,7 +4,7 @@ import Container from '@cloudscape-design/components/container';
 import Form from '@cloudscape-design/components/form';
 import FormField from '@cloudscape-design/components/form-field';
 import Header from '@cloudscape-design/components/header';
-import Input from '@cloudscape-design/components/input';
+import Input, { type InputProps } from '@cloudscape-design/components/input';
 import Link from '@cloudscape-design/components/link';
 import RadioGroup from '@cloudscape-design/components/radio-group';
 import SpaceBetween from '@cloudscape-design/components/space-between';
@@ -12,6 +12,7 @@ import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router';
 
+import { CopyValue } from '../../../components/copy-value';
 import { DiscardDialog } from '../../../components/discard-dialog';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { usePageFlash } from '../../../components/page-flash';
@@ -47,7 +48,7 @@ const DESTINATIONS = [
 ];
 const EVENTS = [
   { value: ALL_CREATIONS, label: 'All object creation events' },
-  { value: OBJECT_PUT, label: 'Object PUTs' },
+  { value: OBJECT_PUT, label: 'Object PUTs', description: 'Uploads made with one PUT request.' },
 ];
 
 export function NotificationPage({ connection, params }: ScreenPageProps) {
@@ -181,7 +182,13 @@ function NotificationForm({
   const [initial] = useState(() => notificationDraft(target));
   const [draft, setDraft] = useState(initial);
   const [asking, setAsking] = useState(false);
-  const [validated, setValidated] = useState(false);
+  const [invalidAttempt, setInvalidAttempt] = useState<{ field: 'name' | 'arn' }>();
+  const nameRef = useRef<InputProps.Ref>(null);
+  const arnRef = useRef<InputProps.Ref>(null);
+  useEffect(() => {
+    if (invalidAttempt?.field === 'name') nameRef.current?.focus();
+    if (invalidAttempt?.field === 'arn') arnRef.current?.focus();
+  }, [invalidAttempt]);
   const cancelRef = useRef<ButtonProps.Ref>(null);
   const [kept, setKept] = useState(0);
   useEffect(() => {
@@ -212,8 +219,10 @@ function NotificationForm({
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (locked || connectionStatus(connection) !== undefined || connection.engineOrigin === undefined) return;
-    setValidated(true);
-    if (idError !== undefined || arnError !== undefined) return;
+    if (idError !== undefined || arnError !== undefined) {
+      setInvalidAttempt({ field: idError !== undefined ? 'name' : 'arn' });
+      return;
+    }
     const savedDraft = { ...draft, id, arn };
     change.submit(
       target === undefined ? { kind: 'create', draft: savedDraft } : { kind: 'edit', target, draft: savedDraft },
@@ -265,8 +274,9 @@ function NotificationForm({
           />
           <Container header={<Header variant="h2">Notification rule</Header>}>
             <SpaceBetween size="l">
-              <FormField label="Notification name" errorText={validated ? idError : undefined}>
+              <FormField label="Notification name" errorText={invalidAttempt === undefined ? undefined : idError}>
                 <Input
+                  ref={nameRef}
                   value={draft.id}
                   onChange={({ detail }) => set('id', detail.value)}
                   readOnly={editing || change.locked}
@@ -282,10 +292,21 @@ function NotificationForm({
               <FormField
                 label="Destination ARN"
                 description="Enter the ARN of the queue or function that should receive matching object events."
-                errorText={validated ? arnError : undefined}
+                errorText={invalidAttempt === undefined ? undefined : arnError}
               >
-                <Input value={draft.arn} onChange={({ detail }) => set('arn', detail.value)} readOnly={change.locked} />
+                <Input
+                  ref={arnRef}
+                  value={draft.arn}
+                  onChange={({ detail }) => set('arn', detail.value)}
+                  readOnly={change.locked}
+                />
               </FormField>
+              {target?.arn !== undefined && target.arn !== '' && (
+                <SpaceBetween size="xxs">
+                  <Box variant="strong">Saved destination ARN</Box>
+                  <CopyValue label="saved destination ARN" value={target.arn} />
+                </SpaceBetween>
+              )}
               <FormField label="Event type">
                 <RadioGroup
                   value={draft.event}
@@ -317,7 +338,10 @@ function NotificationForm({
           </Container>
           <Container
             header={
-              <Header variant="h2" description="Leave both filters empty to match every key.">
+              <Header
+                variant="h2"
+                description="Leave both filters empty to match every key. Prefix incoming/ and suffix .csv match incoming/orders.csv."
+              >
                 Object key filters
               </Header>
             }

@@ -2,7 +2,7 @@ import Button from '@cloudscape-design/components/button';
 import Header from '@cloudscape-design/components/header';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Tabs, { type TabsProps } from '@cloudscape-design/components/tabs';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router';
 
 import { usePageFlash } from '../../../components/page-flash';
@@ -75,6 +75,25 @@ export function BucketPage({ connection, params }: ScreenPageProps) {
     connectionStatus(connection) !== undefined;
   const state: PageState<Bucket> =
     found.kind === 'loaded' && tab === PROPERTIES_TAB && anySectionMissing(sections) ? { kind: 'not-found' } : found;
+
+  const deleteFeedbackRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    deleteFeedbackRef.current?.scrollIntoView?.({ block: 'nearest' });
+  }, [deletion.state, state.kind]);
+
+  const deleteFeedback = tab === PROPERTIES_TAB && deletion.state.kind !== 'idle' && (
+    <div ref={deleteFeedbackRef} aria-live="polite">
+      <NotificationChangeStatus
+        change={deletion}
+        connection={connection}
+        action="Deleting"
+        onRefresh={() => {
+          deletion.clear();
+          refresh();
+        }}
+      />
+    </div>
+  );
 
   // Kept from the previous render, as React's own pattern for it: what was last seen of the read and the connection,
   // so each change is acted on once, in the render that first shows it.
@@ -161,6 +180,7 @@ export function BucketPage({ connection, params }: ScreenPageProps) {
           reads={sections}
           connection={connection}
           deleteNotificationDisabled={deleteDisabled}
+          deleteNotificationFeedback={deleteFeedback}
           onDeleteNotification={setDeleting}
         />
       ),
@@ -182,17 +202,7 @@ export function BucketPage({ connection, params }: ScreenPageProps) {
       >
         <ValueText kind="name" value={name} />
       </Header>
-      {tab === PROPERTIES_TAB && (
-        <NotificationChangeStatus
-          change={deletion}
-          connection={connection}
-          action="Deleting"
-          onRefresh={() => {
-            deletion.clear();
-            refresh();
-          }}
-        />
-      )}
+      {state.kind !== 'loaded' && deleteFeedback}
       <div>
         {state.kind === 'loading' && <BucketLoading />}
         {state.kind === 'failure' && <BucketReadFailure view={state.view} onRetry={handleRetry} />}
