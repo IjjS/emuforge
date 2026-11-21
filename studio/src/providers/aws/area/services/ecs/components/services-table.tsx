@@ -10,7 +10,15 @@ import type { AreaConnection } from '../../../components/emulator-line';
 import { readFailureState, ReadFailure } from '../../../components/failure-states';
 import { useFollow } from '../../../components/use-follow';
 import { ValueText } from '../../../components/value-text';
-import { CREATE_SERVICE_TITLE, createServiceHref, NONE, revisionHref, serviceHref, statusText } from '../format';
+import {
+  CREATE_SERVICE_TITLE,
+  createServiceHref,
+  NONE,
+  revisionHref,
+  serviceHref,
+  SERVICES_SECTION_ID,
+  statusText,
+} from '../format';
 import type { Service } from '../service-api';
 import { countText } from '../service-format';
 import { useServiceListing } from '../service-queries';
@@ -33,6 +41,7 @@ export interface ServicesTableProps {
 
 /** A name keeps room for 24 characters (`aws-area.md`, entry 4). */
 const NAME_MIN_WIDTH = '28ch';
+const OVERFLOW_HINT = 'Scroll horizontally to see task counts and more columns.';
 
 function counterText(rows: number, openEnd: boolean): string {
   return `(${String(rows)}${openEnd ? '+' : ''})`;
@@ -42,6 +51,28 @@ export function ServicesTable({ connection, cluster, onFollowedRead, refreshKey 
   const handleFollow = useFollow();
   const listing = useServiceListing(connection.engineOrigin, cluster);
   const { items, refresh, goToPage } = listing;
+  const section = useRef<HTMLDivElement>(null);
+  const [overflows, setOverflows] = useState(false);
+  const hasRows = items !== undefined && items.length > 0;
+
+  useEffect(() => {
+    const table = section.current?.querySelector('table');
+    const scrollPane = table?.parentElement;
+    if (!hasRows || !table || !scrollPane) {
+      return;
+    }
+    const measure = () => setOverflows(scrollPane.scrollWidth > scrollPane.clientWidth);
+    measure();
+    if (typeof ResizeObserver === 'undefined') {
+      return;
+    }
+    const observer = new ResizeObserver(measure);
+    observer.observe(table);
+    observer.observe(scrollPane);
+    return () => observer.disconnect();
+  }, [hasRows]);
+
+  const showOverflow = hasRows && overflows;
 
   // A read in place, by following, replaces one answer by another with nothing in between; every other read starts
   // from nothing shown.
@@ -119,44 +150,48 @@ export function ServicesTable({ connection, cluster, onFollowedRead, refreshKey 
   }
 
   return (
-    <Table<Service>
-      variant="container"
-      items={items ?? []}
-      trackBy="name"
-      columnDefinitions={columns}
-      wrapLines
-      loading={listing.failure === undefined && items === undefined}
-      loadingText="Loading services"
-      empty={empty}
-      header={
-        <Header
-          variant="h2"
-          counter={items === undefined ? undefined : counterText(items.length, listing.openEnd)}
-          actions={
-            <Button href={createServiceHref(cluster)} onFollow={handleFollow}>
-              {CREATE_SERVICE_TITLE}
-            </Button>
-          }
-        >
-          Services
-        </Header>
-      }
-      pagination={
-        <Pagination
-          currentPageIndex={listing.currentPage}
-          pagesCount={listing.pagesCount}
-          openEnd={listing.openEnd}
-          disabled={items === undefined}
-          ariaLabels={{
-            nextPageLabel: 'Next page',
-            previousPageLabel: 'Previous page',
-            pageLabel: (page) => `Page ${String(page)}`,
-          }}
-          onChange={({ detail }) => {
-            goToPage(detail.currentPageIndex);
-          }}
-        />
-      }
-    />
+    <div ref={section} id={SERVICES_SECTION_ID} tabIndex={-1} role="region" aria-label="Services">
+      <Table<Service>
+        variant="container"
+        {...(showOverflow ? { ariaLabels: { tableLabel: `Services. ${OVERFLOW_HINT}` } } : {})}
+        items={items ?? []}
+        trackBy="name"
+        columnDefinitions={columns}
+        wrapLines
+        loading={listing.failure === undefined && items === undefined}
+        loadingText="Loading services"
+        empty={empty}
+        header={
+          <Header
+            variant="h2"
+            description={showOverflow ? OVERFLOW_HINT : undefined}
+            counter={items === undefined ? undefined : counterText(items.length, listing.openEnd)}
+            actions={
+              <Button href={createServiceHref(cluster)} onFollow={handleFollow}>
+                {CREATE_SERVICE_TITLE}
+              </Button>
+            }
+          >
+            Services
+          </Header>
+        }
+        pagination={
+          <Pagination
+            currentPageIndex={listing.currentPage}
+            pagesCount={listing.pagesCount}
+            openEnd={listing.openEnd}
+            disabled={items === undefined}
+            ariaLabels={{
+              nextPageLabel: 'Next page',
+              previousPageLabel: 'Previous page',
+              pageLabel: (page) => `Page ${String(page)}`,
+            }}
+            onChange={({ detail }) => {
+              goToPage(detail.currentPageIndex);
+            }}
+          />
+        }
+      />
+    </div>
   );
 }

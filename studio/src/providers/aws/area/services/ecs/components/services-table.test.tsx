@@ -53,6 +53,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 const headers = (wrapper: ReturnType<typeof createWrapper>) =>
@@ -86,6 +87,31 @@ describe('the services table', () => {
     );
     expect(cells).toEqual(['Active', '2', '1', '1', 'web:3', 'FARGATE']);
     expect(vi.mocked(api.listServices).mock.calls[0]?.slice(0, 3)).toEqual([ENGINE, 'dev', undefined]);
+  });
+
+  it.each([
+    [390, true],
+    [1280, false],
+  ] as const)('announces more columns only when the table overflows at width %s', async (width, overflows) => {
+    vi.spyOn(Element.prototype, 'scrollWidth', 'get').mockImplementation(function (this: Element) {
+      return this.querySelector(':scope > table') ? 760 : 0;
+    });
+    vi.spyOn(Element.prototype, 'clientWidth', 'get').mockImplementation(function (this: Element) {
+      return this.querySelector(':scope > table') ? width : 0;
+    });
+    vi.mocked(api.listServices).mockResolvedValue({ services: [service('api')] });
+    open();
+    await screen.findByRole('link', { name: 'api' });
+    const hint = 'Scroll horizontally to see task counts and more columns.';
+    const table = screen.getByRole('table');
+
+    if (overflows) {
+      expect(screen.getByText(hint)).toBeVisible();
+      expect(table).toHaveAccessibleName(`Services. ${hint}`);
+    } else {
+      expect(screen.queryByText(hint)).not.toBeInTheDocument();
+      expect(table).toHaveAccessibleName(/^Services/);
+    }
   });
 
   it('empty → "No services" with the cluster create action', async () => {

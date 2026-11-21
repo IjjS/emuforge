@@ -314,6 +314,37 @@ it('identifies the cluster and launch type and presents the seven initial inputs
   expect(screen.getByText('These services and tasks are in your local emulator')).toBeInTheDocument();
 });
 
+it('disables family and create only after a successful empty family read and associates the registration reason', async () => {
+  const first = deferred<unknown>();
+  let retry = false;
+  emulator.mockImplementation((operation) => {
+    if (operation !== 'ListTaskDefinitionFamilies') return normal(operation);
+    return retry ? reply({ families: [] }) : first.promise;
+  });
+  open();
+  await screen.findByRole('textbox', { name: 'Service name' });
+  const family = () => field(FAMILY).findSelect()?.findTrigger().getElement();
+  expect(family()).toBeEnabled();
+  expect(submitButton()).toBeEnabled();
+
+  first.resolve(Promise.resolve().then(() => reply({ __type: 'ClientException', message: 'family read failed' }, 400)));
+  expect(await screen.findByText(/family read failed/)).toBeInTheDocument();
+  expect(family()).toBeEnabled();
+  expect(submitButton()).toBeEnabled();
+
+  retry = true;
+  fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  const register = await screen.findByRole('link', { name: 'Register one first.' });
+  expect(register).toBeVisible();
+  expect(register).toHaveAttribute('href', '/aws/ecs/task-definitions/register');
+  expect(family()).toBeDisabled();
+  expect(family()).toHaveAccessibleDescription(/No task definitions\./);
+  expect(submitButton()).toBeDisabled();
+  expect(submitButton()).toHaveAccessibleDescription(/No task definitions\./);
+  fireEvent.click(submitButton());
+  expect(calls('CreateService')).toHaveLength(0);
+});
+
 it('validates each missing or invalid field and focuses the first without sending a create', async () => {
   open();
   await screen.findByRole('textbox', { name: 'Service name' });
@@ -451,7 +482,21 @@ it.each([
     title: 'The emulator did not create the service.',
     detail: duplicate,
     code: 'InvalidParameterException',
+    rename: true,
     response: () => reply({ __type: 'InvalidParameterException', message: duplicate }, 400),
+  },
+  {
+    title: 'The emulator did not create the service.',
+    detail: 'The name contains invalid characters.',
+    code: 'InvalidParameterException',
+    response: () =>
+      reply({ __type: 'InvalidParameterException', message: 'The name contains invalid characters.' }, 400),
+  },
+  {
+    title: 'The emulator did not create the service.',
+    detail: duplicate,
+    code: 'ClientException',
+    response: () => reply({ __type: 'ClientException', message: duplicate }, 400),
   },
   {
     title: 'Access denied',
@@ -468,19 +513,32 @@ it.each([
   { title: undefined, detail: ENGINE, response: () => gateError('engine') },
 ])(
   'focuses and retains every value after the create refusal %j',
-  async ({ title, detail, code, response, unsupported }) => {
+  async ({ title, detail, code, response, unsupported, rename }) => {
     let refused = true;
     emulator.mockImplementation((op) => (op === 'CreateService' && refused ? response() : normal(op)));
     const { router } = open();
     await fill();
     fireEvent.click(submitButton());
     const message = await screen.findByText(detail, { exact: code === undefined });
-    const alert = message.closest('[role="alert"], [tabindex="-1"]');
-    expect(alert).toContainElement(document.activeElement as HTMLElement);
+    const flashbar = createWrapper(document.body).findFlashbar();
+    const item = flashbar?.findItems()[0]?.getElement();
+    expect(item).toContainElement(message);
+    await waitFor(() => expect(item).toContainElement(document.activeElement as HTMLElement));
+    if (title !== undefined) {
+      expect(document.activeElement).toHaveAccessibleName(title);
+      expect(document.activeElement).toHaveAccessibleDescription(expect.stringContaining(detail) as string);
+    } else {
+      expect(document.activeElement).toHaveAccessibleName(`The EmuForge engine at ${detail} did not answer`);
+    }
     if (title !== undefined) expect(screen.getByText(title)).toBeInTheDocument();
     if (code !== undefined) expect(screen.getByText(code)).toBeInTheDocument();
     expect(router.state.location.pathname).toBe(FORM);
     expectKept();
+    if (rename) {
+      expect(nameInput()).toHaveAccessibleDescription('Choose a different service name.');
+    } else {
+      expect(screen.queryByText('Choose a different service name.')).not.toBeInTheDocument();
+    }
     if (unsupported) {
       expect(submitButton()).toBeDisabled();
       fireEvent.click(submitButton());
@@ -488,9 +546,30 @@ it.each([
     } else {
       refused = false;
       fireEvent.change(nameInput(), { target: { value: 'corrected' } });
+      expect(screen.queryByText('Choose a different service name.')).not.toBeInTheDocument();
       fireEvent.click(submitButton());
       await waitFor(() => expect(router.state.location.pathname).toBe(DETAIL));
       expect(calls('CreateService')[1]?.[1]).toMatchObject({ serviceName: 'corrected' });
     }
   },
 );
+
+it('focuses the latest diagnostic after another refused submission', async () => {
+  let diagnostic = duplicate;
+  emulator.mockImplementation((op) =>
+    op === 'CreateService' ? reply({ __type: 'InvalidParameterException', message: diagnostic }, 400) : normal(op),
+  );
+  open();
+  await fill();
+  fireEvent.click(submitButton());
+  await screen.findByText(duplicate, { exact: false });
+  expect(document.activeElement).toHaveAccessibleDescription(expect.stringContaining(duplicate) as string);
+
+  diagnostic = 'The name contains invalid characters.';
+  fireEvent.change(nameInput(), { target: { value: 'corrected' } });
+  fireEvent.click(submitButton());
+  await screen.findByText(diagnostic, { exact: false });
+  expect(document.activeElement).toHaveAccessibleDescription(expect.stringContaining(diagnostic) as string);
+  expect(screen.queryByText('Choose a different service name.')).not.toBeInTheDocument();
+  expect(calls('CreateService')).toHaveLength(2);
+});
