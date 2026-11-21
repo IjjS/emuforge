@@ -8,7 +8,6 @@ import {
   deleteFunctions,
   INVOKE,
   invoke,
-  InvokeRequestError,
   isFunctionNotFound,
   LambdaRequestError,
   listFunctions,
@@ -27,7 +26,6 @@ import {
   type FunctionRead,
   type FunctionSummary,
   type InvokeAnswer,
-  type InvokeFailure,
   type LambdaFailure,
   type Role,
 } from './api';
@@ -641,7 +639,7 @@ export interface Invocation {
   isPending: boolean;
   /** The last completed request, kept until the next answer or failure replaces it. */
   data: InvokeAnswer | undefined;
-  error: InvokeFailure | undefined;
+  error: RequestFailure | undefined;
   qualifier: string | undefined;
   /** One more per answer or failure, so a screen says each outcome once. */
   answers: number;
@@ -677,12 +675,7 @@ export function useInvoke(endpoint: string | undefined, name: string, session = 
       if (signal.aborted) {
         return;
       }
-      const failure =
-        error instanceof InvokeRequestError
-          ? { ...error.failure, reportedCode: error.reportedCode }
-          : error === null
-            ? undefined
-            : requestFailure(INVOKE, error);
+      const failure = error === null ? undefined : requestFailure(INVOKE, error);
       setLast((current) => ({
         scope,
         data,
@@ -724,7 +717,7 @@ function emptyInvocation(scope: string) {
   return {
     scope,
     data: undefined as InvokeAnswer | undefined,
-    error: undefined as InvokeFailure | undefined,
+    error: undefined as RequestFailure | undefined,
     qualifier: undefined as string | undefined,
     answers: 0,
     unsupported: new Set<boolean>(),
