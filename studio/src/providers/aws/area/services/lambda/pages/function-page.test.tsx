@@ -108,6 +108,11 @@ interface SentRequest {
   url: URL;
 }
 
+interface MonitoringRequest {
+  operation: string;
+  body: { MetricName?: string; StartTime?: number; EndTime?: number; nextToken?: string };
+}
+
 const FUNCTION_PATH = /^\/2015-03-31\/functions\/([^/]+)$/;
 const URL_PATH = /^\/2021-10-31\/functions\/([^/]+)\/url$/;
 const INVOKE_PATH = /^\/2015-03-31\/functions\/([^/]+)\/invocations$/;
@@ -132,6 +137,9 @@ class FakeEngine {
   functions: FakeFunction[] = [];
   /** Every AWS request, as sent. */
   readonly aws: SentRequest[] = [];
+  readonly monitoring: MonitoringRequest[] = [];
+  answerMonitoring: (request: MonitoringRequest) => Answer | Promise<Answer> = ({ operation }) =>
+    json(200, operation === 'FilterLogEvents' ? { events: [] } : { Datapoints: [] });
   /** The answer to `GetFunction`; by default the emulator's. */
   answerFunction: (request: SentRequest) => EngineAnswer = (request) => this.emulator(request);
   /** The invocations answered so far. */
@@ -214,6 +222,14 @@ class FakeEngine {
     const url = new URL(request.url);
     if (url.pathname === '/__emuforge/session') {
       return new Response(JSON.stringify({ token: 'emuforge-test-token-84' }), { status: 200 });
+    }
+    const operation = request.headers.get('x-amz-target')?.split('.').at(-1);
+    if (operation === 'FilterLogEvents' || operation === 'GetMetricStatistics') {
+      const sent = { operation, body: (await request.json()) as MonitoringRequest['body'] };
+      this.monitoring.push(sent);
+      // Let old responses settle even if their observer is gone.
+      const answer = await this.answerMonitoring(sent);
+      return new Response(answer.body, { status: answer.status, headers: answer.headers ?? {} });
     }
     const sent = { method: request.method, url };
     this.aws.push(sent);
@@ -502,13 +518,13 @@ async function openLoaded(fn: FakeFunction = ORDERS) {
 // ---------------------------------------------------------------------------------------------------------------
 
 describe('a function loaded', () => {
-  it('the h1 its name, "Refresh", "Delete", "Function overview" with its fields in order, and the tabs "Test", "Code", "Configuration" and no other, "Test" selected', async () => {
+  it('the h1 its name, "Refresh", "Delete", "Function overview" with its fields in order, and the tabs "Test", "Code", "Monitor", "Configuration" and no other, "Test" selected', async () => {
     await openLoaded();
 
     expect(headingText()).toBe('orders');
     expect(within(header()).getByRole('button', { name: 'Refresh' })).toBeInTheDocument();
     expect(within(header()).getByRole('button', { name: 'Delete' })).toBeInTheDocument();
-    expect(tabLabels()).toEqual(['Test', 'Code', 'Configuration']);
+    expect(tabLabels()).toEqual(['Test', 'Code', 'Monitor', 'Configuration']);
     expect(activeTab()).toBe('Test');
     expect(pairs('Function overview').map(([label]) => label)).toEqual([
       'Description',
@@ -920,7 +936,7 @@ describe('issue 467', () => {
 });
 
 // ---------------------------------------------------------------------------------------------------------------
-// Issue 516: the three tabs by the query, the state of "Test", "Delete", ready.
+// Function tabs by the query, the state of "Test", "Delete", ready.
 // ---------------------------------------------------------------------------------------------------------------
 
 /** The area's Flashbar items as text: header and content. */
@@ -931,6 +947,193 @@ function flashTexts(): string[] {
     ),
   );
 }
+
+describe('Monitor', () => {
+  function lastHourHeader() {
+    return PAGE.findAllHeaders().find(
+      (header) => norm(header.findHeadingText().getElement().textContent) === 'Last hour',
+    );
+  }
+
+  function metric(name: string) {
+    const panel = tabs()?.findTabContent()?.getElement();
+    if (panel === undefined) {
+      return undefined;
+    }
+    const item = createWrapper(panel)
+      .findKeyValuePairs()
+      ?.findItems()
+      .find((candidate) => norm(candidate.findLabel()?.getElement().textContent) === name);
+    return item?.findValue()?.getElement();
+  }
+
+  function logMessages() {
+    const table = PAGE.findTable();
+    return table?.findRows().map((_, index) => table.findBodyCell(index + 1, 2)?.getElement().textContent) ?? [];
+  }
+
+  function logAnswer(message: string, nextToken?: string) {
+    return json(200, { events: [{ eventId: message, message, timestamp: 1_796_000_000_123 }], nextToken });
+  }
+
+  function metricAnswer(Sum: number) {
+    return json(200, { Datapoints: [{ Timestamp: 1_796_000_000, Sum }] });
+  }
+
+  it('opens from its tab and restores the same function’s Monitor on reload', async () => {
+    const { router, unmount } = await openLoaded();
+    fireEvent.click(tabLink('Monitor'));
+    await waitFor(() => expect(lastHourHeader()?.findHeadingText().getElement()).toBeVisible());
+    expect(activeTab()).toBe('Monitor');
+    expect(router.state.location).toMatchObject({ pathname: pagePath('orders'), search: '?tab=monitor' });
+    const { pathname, search } = router.state.location;
+
+    unmount();
+    open(pathname + search);
+    await waitFor(() => expect(lastHourHeader()?.findHeadingText().getElement()).toBeVisible());
+    expect(activeTab()).toBe('Monitor');
+    expect(headingText()).toBe('orders');
+  });
+
+  it('refreshes the first page and the shared window while older reads are outstanding', async () => {
+    const time = vi.spyOn(Date, 'now').mockReturnValue(1_796_000_000_000);
+    const delayed: (() => void)[] = [];
+    const said = recordAnnouncements();
+    let finishRefreshedErrors: (() => void) | undefined;
+    let refreshed = false;
+    engine.answerMonitoring = ({ operation, body }) => {
+      if (operation === 'FilterLogEvents' && body.nextToken === undefined) {
+        return refreshed ? logAnswer('refreshed first event') : logAnswer('old first event', 'old-next-page');
+      }
+      const answer =
+        operation === 'FilterLogEvents'
+          ? logAnswer('old next event')
+          : metricAnswer(refreshed ? (body.MetricName === 'Invocations' ? 12 : 4) : 98);
+      if (!refreshed) {
+        return new Promise((resolve) => delayed.push(() => resolve(answer)));
+      }
+      return body.MetricName === 'Errors'
+        ? new Promise((resolve) => {
+            finishRefreshedErrors = () => resolve(answer);
+          })
+        : answer;
+    };
+
+    try {
+      engine.functions = [ORDERS];
+      open(`${pagePath('orders')}?tab=monitor`);
+      await waitFor(() => expect(logMessages()).toContain('old first event'));
+      fireEvent.click(screen.getByRole('button', { name: 'Load more events' }));
+      await waitFor(() => expect(delayed).toHaveLength(3));
+
+      refreshed = true;
+      const newEnd = 1_796_000_120;
+      time.mockReturnValue(newEnd * 1000);
+      fireEvent.click(within(header()).getByRole('button', { name: 'Refresh' }));
+      await waitFor(() => expect(logMessages()).toContain('refreshed first event'));
+      await waitFor(() => {
+        expect(metric('Invocations')?.textContent).toBe('12');
+        expect(metric('Invocations')).toBeVisible();
+      });
+      const description = lastHourHeader()?.findDescription()?.getElement();
+      expect(description).toHaveTextContent('Window ended');
+      expect(description?.querySelector('time')).toHaveAttribute('datetime', new Date(newEnd * 1000).toISOString());
+      expect(said).not.toContain('Function refreshed');
+      expect(said).not.toContain('Monitor refreshed');
+      await act(async () => {
+        expect(finishRefreshedErrors).toBeDefined();
+        finishRefreshedErrors?.();
+      });
+      await waitFor(() => {
+        expect(metric('Errors')?.textContent).toBe('4');
+        expect(metric('Errors')).toBeVisible();
+      });
+      await waitFor(() => expect(said.filter((message) => message === 'Monitor refreshed')).toHaveLength(1));
+      expect(said).not.toContain('Function refreshed');
+
+      const newCalls = engine.monitoring.slice(4);
+      expect(
+        newCalls.filter(({ operation }) => operation === 'FilterLogEvents').map(({ body }) => body.nextToken),
+      ).toEqual([undefined]);
+      const metrics = newCalls.filter(({ operation }) => operation === 'GetMetricStatistics');
+      expect(metrics.map(({ body }) => body.MetricName).sort()).toEqual(['Errors', 'Invocations']);
+      for (const { body } of metrics) {
+        expect(body).toMatchObject({ StartTime: newEnd - 3_600, EndTime: newEnd });
+      }
+
+      await act(async () => {
+        delayed.forEach((finish) => finish());
+      });
+      expect(logMessages()).toEqual(['refreshed first event']);
+      expect(metric('Invocations')?.textContent).toBe('12');
+      expect(metric('Invocations')).toBeVisible();
+      expect(metric('Errors')?.textContent).toBe('4');
+      expect(metric('Errors')).toBeVisible();
+      expect(screen.queryByRole('button', { name: 'Load more events' })).not.toBeInTheDocument();
+    } finally {
+      time.mockRestore();
+    }
+  });
+
+  it('announces a partial Monitor refresh with the failed read after the other reads settle', async () => {
+    const said = recordAnnouncements();
+    let refreshed = false;
+    engine.answerMonitoring = ({ operation, body }) => {
+      if (operation === 'FilterLogEvents') {
+        return logAnswer(refreshed ? 'new logged event' : 'original logged event');
+      }
+      if (refreshed && body.MetricName === 'Invocations') {
+        return errorAnswer(403, 'AccessDenied', 'Missing metric permission');
+      }
+      return metricAnswer(refreshed ? 3 : 1);
+    };
+
+    engine.functions = [ORDERS];
+    open(`${pagePath('orders')}?tab=monitor`);
+    await waitFor(() => expect(logMessages()).toContain('original logged event'));
+    refreshed = true;
+    fireEvent.click(within(header()).getByRole('button', { name: 'Refresh' }));
+
+    await waitFor(() => {
+      const invocations = metric('Invocations');
+      expect(invocations).toHaveTextContent('GetMetricStatistics was refused: Missing metric permission');
+      expect(invocations).toBeVisible();
+      expect(metric('Errors')?.textContent).toBe('3');
+      expect(metric('Errors')).toBeVisible();
+      expect(logMessages()).toContain('new logged event');
+    });
+    await waitFor(() => expect(said).toContain('Monitor partially refreshed. Could not read Invocations.'));
+    expect(said).not.toContain('Function refreshed');
+    expect(said).not.toContain('Monitor refreshed');
+  });
+
+  it.each(['Monitor', 'Code'])('revalidates the detail after a disconnect on %s', async (tab) => {
+    engine.functions = [ORDERS];
+    engine.answerMonitoring = ({ operation }) =>
+      operation === 'FilterLogEvents' ? logAnswer('events from the previous account') : metricAnswer(98);
+    open(`${pagePath('orders')}?tab=monitor`);
+    await waitFor(() => expect(logMessages()).toContain('events from the previous account'));
+    if (tab === 'Code') {
+      fireEvent.click(tabLink('Code'));
+      await screen.findByTestId('stand-in-code');
+    }
+
+    connection.set(notStartedResult());
+    expect(logMessages()).toEqual([]);
+    engine.functions = [];
+    connection.set(connectedResult());
+    if (tab === 'Code') {
+      fireEvent.click(tabLink('Monitor'));
+    }
+
+    expect(await screen.findByText('Function not found')).toBeVisible();
+    expect(engine.gets).toHaveLength(2);
+    expect(engine.monitoring).toHaveLength(3);
+    expect(logMessages()).toEqual([]);
+    expect(metric('Invocations')).toBeUndefined();
+    expect(metric('Errors')).toBeUndefined();
+  });
+});
 
 describe('the tabs by ?tab=', () => {
   it.each([
@@ -944,7 +1147,7 @@ describe('the tabs by ?tab=', () => {
     open(`${pagePath('orders')}${query}`);
     await screen.findByRole('heading', { level: 2, name: 'Function overview' });
 
-    expect(tabLabels()).toEqual(['Test', 'Code', 'Configuration']);
+    expect(tabLabels()).toEqual(['Test', 'Code', 'Monitor', 'Configuration']);
     expect(activeTab()).toBe(label);
     expect(tabs()?.findTabContent()?.getElement()).toContainElement(screen.getByTestId(testId));
   });

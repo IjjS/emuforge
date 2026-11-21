@@ -309,6 +309,8 @@ export interface FunctionReadingOptions {
   endpoint: string | undefined;
   name: string;
   connected: boolean;
+  disconnected?: boolean;
+  monitorActive?: boolean;
 }
 
 export interface FunctionReading {
@@ -327,10 +329,23 @@ export interface FunctionReading {
  * read again `REREAD_DELAY_MS` after each answer, until it is neither or is gone; a re-reading that fails shows
  * nothing and ends the re-reading until the next reading.
  */
-export function useFunctionReading({ endpoint, name, connected }: FunctionReadingOptions): FunctionReading {
+export function useFunctionReading({
+  endpoint,
+  name,
+  connected,
+  disconnected = false,
+  monitorActive = false,
+}: FunctionReadingOptions): FunctionReading {
   const [mount] = useState(() => (mounts += 1));
   const [readings, setReadings] = useState(0);
   const generation = useListingGeneration(endpoint);
+  const [connection, setConnection] = useState({ disconnected: false, epoch: 0 });
+  const [monitorEpoch, setMonitorEpoch] = useState(0);
+  if (connection.disconnected !== disconnected) {
+    setConnection({ disconnected, epoch: connection.epoch + Number(disconnected) });
+  }
+  // A detail read that started before or during an observed disconnect cannot authorize Monitor after it.
+  const requestEpoch = connected || connection.epoch === 0 ? connection.epoch : undefined;
   /** This reading's re-reads: `quiet` while one is in flight or has failed; `stopped` once one has failed. */
   const [rereading, setRereading] = useState({ reading: 0, quiet: false, stopped: false });
   const quiet = rereading.reading === readings && rereading.quiet;
@@ -338,11 +353,11 @@ export function useFunctionReading({ endpoint, name, connected }: FunctionReadin
 
   const query = useQuery({
     queryKey: [...functionKey(endpoint, name), mount, generation, readings],
-    queryFn: ({ signal }) => {
+    queryFn: async ({ signal }) => {
       if (endpoint === undefined) {
         throw new Error('The engine endpoint is not known yet.');
       }
-      return readFunction(endpoint, name, signal);
+      return { read: await readFunction(endpoint, name, signal), epoch: requestEpoch };
     },
     enabled: endpoint !== undefined,
     staleTime: 0,
@@ -350,7 +365,8 @@ export function useFunctionReading({ endpoint, name, connected }: FunctionReadin
     retry: false,
     structuralSharing: false,
   });
-  const { refetch, data, isError, isFetching } = query;
+  const { refetch, isError, isFetching } = query;
+  const data = query.data?.read;
 
   if (quiet && isError && !stopped) {
     setRereading({ reading: readings, quiet: true, stopped: true });
@@ -376,10 +392,16 @@ export function useFunctionReading({ endpoint, name, connected }: FunctionReadin
   }, []);
 
   const failed = isError && !quiet;
-  useReconnect(connected, failed, refresh);
+  const needsMonitorRead =
+    monitorActive && connected && connection.epoch !== monitorEpoch && query.data?.epoch !== connection.epoch;
+  if (needsMonitorRead) {
+    setMonitorEpoch(connection.epoch);
+    refresh();
+  }
+  useReconnect(connected, failed && !needsMonitorRead, refresh);
 
   return {
-    read: failed ? undefined : data,
+    read: failed || needsMonitorRead ? undefined : data,
     failure: failed ? failureOf(query.error, 'GetFunction') : undefined,
     loading: data === undefined && (isFetching || endpoint === undefined),
     refresh,
