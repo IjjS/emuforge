@@ -1,7 +1,7 @@
 import { ECSClient, ECSServiceException } from '@aws-sdk/client-ecs';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useState, useSyncExternalStore } from 'react';
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -246,11 +246,29 @@ function expectGated() {
   expect(network.listSubnetChoices).not.toHaveBeenCalled();
 }
 
+function clusterGate() {
+  const header = createWrapper(document.body).findHeader()?.getElement();
+  const gate = header?.parentElement?.nextElementSibling;
+  return gate && createWrapper(gate);
+}
+
+function clusterGateStatus(state: 'loading' | 'failed') {
+  return waitFor(() => {
+    const gate = clusterGate();
+    const indicator = gate?.findStatusIndicator()?.getElement();
+    if (!gate || !indicator || Boolean(gate.findButton()) !== (state === 'failed')) {
+      throw new Error(`Missing ${state} cluster gate status indicator`);
+    }
+    return { gate, indicator };
+  });
+}
+
 it('holds the form and its choices until the cluster gate finds an active cluster', async () => {
   const held = deferred<unknown>();
   emulator.mockImplementation((op) => (op === 'DescribeClusters' ? held.promise : normal(op)));
   open();
-  expect(await screen.findByText('Loading cluster')).toBeInTheDocument();
+  const { indicator } = await clusterGateStatus('loading');
+  expect(indicator).toHaveTextContent(/^Loading cluster$/);
   expectGated();
   held.resolve(reply(ACTIVE));
   expect(await screen.findByRole('textbox', { name: 'Service name' })).toBeInTheDocument();
@@ -262,11 +280,18 @@ it.each([
 ])('shows the missing cluster state for %j', async (answer) => {
   emulator.mockImplementation((op) => (op === 'DescribeClusters' ? reply(answer) : normal(op)));
   open();
-  expect(await screen.findByText('No cluster named dev')).toBeInTheDocument();
-  expect(screen.getByText('The local emulator has no active cluster of this name.')).toBeInTheDocument();
-  expect(
-    screen.getAllByRole('link', { name: 'Clusters' }).some((link) => link.getAttribute('href') === '/aws/ecs/clusters'),
-  ).toBe(true);
+  const heading = await waitFor(() => {
+    const element = clusterGate()?.findBox('h2')?.getElement();
+    if (!element) throw new Error('Missing cluster gate heading');
+    return element;
+  });
+  expect(heading).toHaveTextContent(/^No cluster named dev$/);
+  expect(clusterGate()?.findBox('p')?.getElement()).toHaveTextContent(
+    /^The local emulator has no active cluster of this name\.$/,
+  );
+  const link = clusterGate()?.findLink()?.getElement();
+  expect(link).toHaveTextContent(/^Clusters$/);
+  expect(link).toHaveAttribute('href', '/aws/ecs/clusters');
   expectGated();
 });
 
@@ -288,13 +313,15 @@ it.each(['emulator', 'engine'] as const)(
     let refused = true;
     emulator.mockImplementation((op) => (op === 'DescribeClusters' && refused ? gateError(kind) : normal(op)));
     open();
-    const retry = await screen.findByRole('button', { name: 'Retry' });
-    const state = retry.parentElement?.parentElement;
-    if (!state) throw new Error('Missing cluster read failure state');
-    const recovery = within(state).getByRole('link', { name: 'Connection status' });
+    const { gate, indicator } = await clusterGateStatus('failed');
+    const retry = gate.findButton()?.getElement();
+    if (!retry) throw new Error('Missing cluster gate retry');
+    const recovery = gate.findLink()?.getElement();
+    expect(recovery).toHaveTextContent(/^Connection status$/);
     expect(recovery).toHaveAttribute('href', '/');
-    expect(state).toHaveTextContent(kind === 'emulator' ? 'Not answering at' : 'is not answering');
-    expect(state).toHaveTextContent(kind === 'emulator' ? 'probe timed out' : ENGINE);
+    expect(retry).toHaveTextContent('Retry');
+    expect(indicator).toHaveTextContent(kind === 'emulator' ? 'Not answering at' : 'is not answering');
+    expect(gate.getElement()).toHaveTextContent(kind === 'emulator' ? 'probe timed out' : ENGINE);
     expect(retry).toBeEnabled();
     expectGated();
     refused = false;
@@ -312,17 +339,21 @@ it('shows the DescribeClusters denial and withholds the form and choices', async
       : normal(op),
   );
   open();
-  expect(await screen.findByText('Access denied')).toBeInTheDocument();
-  expect(screen.getByText('DescribeClusters was refused: only operations may view this cluster')).toBeInTheDocument();
+  const { gate, indicator } = await clusterGateStatus('failed');
+  expect(indicator).toHaveTextContent(/^Access denied$/);
+  expect(gate.getElement()).toHaveTextContent('DescribeClusters was refused: only operations may view this cluster');
   expectGated();
 });
 
 it('keeps Retry visible and disabled for unsupported DescribeClusters', async () => {
   emulator.mockImplementation((op) => (op === 'DescribeClusters' ? reply({}, 501) : normal(op)));
   open();
-  expect(await screen.findByText('Not implemented by the emulator')).toBeInTheDocument();
-  expect(screen.getByText(/501 Not Implemented for DescribeClusters/)).toBeInTheDocument();
-  const retry = screen.getByRole('button', { name: 'Retry' });
+  const { gate, indicator } = await clusterGateStatus('failed');
+  expect(indicator).toHaveTextContent(/^Not implemented by the emulator$/);
+  expect(gate.getElement()).toHaveTextContent(/501 Not Implemented for DescribeClusters/);
+  const retry = gate.findButton()?.getElement();
+  if (!retry) throw new Error('Missing cluster gate retry');
+  expect(retry).toHaveTextContent('Retry');
   expect(retry).toBeDisabled();
   fireEvent.click(retry);
   expect(calls('DescribeClusters')).toHaveLength(1);
@@ -363,7 +394,8 @@ it('disables family and create only after a successful empty family read and ass
   expect(submitButton()).toBeEnabled();
 
   first.resolve(Promise.resolve().then(() => reply({ __type: 'ClientException', message: 'family read failed' }, 400)));
-  expect(await screen.findByText(/family read failed/)).toBeInTheDocument();
+  const diagnostic = await screen.findByRole('group', { name: `${FAMILY} diagnostic` });
+  expect(diagnostic).toHaveTextContent('family read failed');
   expect(family()).toBeEnabled();
   expect(submitButton()).toBeEnabled();
 
@@ -519,7 +551,15 @@ it('blocks submit only after the locked family successfully exhausts its eligibl
   if (!retryButton) throw new Error('Missing revision retry action');
   expect(retryButton).toHaveTextContent('Retry');
   fireEvent.click(retryButton);
-  const exhausted = await screen.findByText('This family has no active Fargate revisions.');
+  const exhausted = await waitFor(() => {
+    const state = labeledField(REVISION).getElement().parentElement?.parentElement?.nextElementSibling;
+    const message = state?.firstElementChild?.matches('[role="group"]')
+      ? undefined
+      : state && createWrapper(state).findBox()?.getElement();
+    if (!message) throw new Error('Missing empty revision explanation');
+    return message;
+  });
+  expect(exhausted).toHaveTextContent('This family has no active Fargate revisions.');
   fireEvent.click(submitButton());
 
   expect(familyDiagnostic).toHaveFocus();
@@ -851,7 +891,10 @@ it.each([
       await waitFor(() => expect(flashItems()).toHaveLength(0));
       expect(submitButton()).toBeDisabled();
       expect(submitButton()).toHaveAccessibleDescription(detail);
-      expect(within(submitButton().closest('form') as HTMLFormElement).getByText(detail)).toBeVisible();
+      const reasonId = submitButton().getAttribute('aria-describedby');
+      const reason = reasonId && document.getElementById(reasonId);
+      expect(reason).toBeVisible();
+      expect(reason).toHaveTextContent(detail);
       expectKept();
       fireEvent.click(submitButton());
       expect(calls('CreateService')).toHaveLength(1);
