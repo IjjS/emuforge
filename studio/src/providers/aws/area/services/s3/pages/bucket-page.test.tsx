@@ -1,6 +1,7 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { useState, useSyncExternalStore } from 'react';
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -1900,20 +1901,35 @@ describe('bucket event notifications', () => {
     expect(engine.notificationWrites).toEqual([]);
   });
 
-  it('requires a new delete confirmation after a same-target outage even when the rule is unchanged', async () => {
+  it.each(['stays', 'moves on'])('expires consent on reconnect when the user %s', async (flow) => {
     const sameTarget = { ...connectedResult(), target: 'first' };
     connection.set(sameTarget);
     await openBucket({ notification: () => notificationDocument(queueRule('to-queue')) });
     const oldModal = await startDelete();
+    oldModal.findDismissButton().getElement().focus();
     const reads = engine.notificationReads.length;
     connection.set(notStartedResult());
     expect(notificationModal()).toBeNull();
     expect(oldModal.getElement()).not.toBeInTheDocument();
+    const announcements = [...document.querySelectorAll('[aria-live="polite"]')];
+    expect(
+      announcements.some((region) => region.textContent === 'Delete confirmation expired. No deletion was sent.'),
+    ).toBe(true);
+
+    if (flow === 'moves on') {
+      const otherAction = screen.getByRole('button', { name: 'Refresh' });
+      fireEvent.pointerDown(otherAction);
+      otherAction.focus();
+      otherAction.blur();
+    }
     connection.set(sameTarget);
 
     await waitFor(() => {
       expect(engine.notificationReads).toHaveLength(reads + 1);
-      expect(screen.getByRole('button', { name: 'Delete to-queue' })).toBeEnabled();
+      const freshDelete = screen.getByRole('button', { name: 'Delete to-queue' });
+      expect(freshDelete).toBeEnabled();
+      if (flow === 'stays') expect(freshDelete).toHaveFocus();
+      else expect(freshDelete).not.toHaveFocus();
     });
     expect(notificationModal()).toBeNull();
     expect(engine.notificationWrites).toEqual([]);
@@ -1933,13 +1949,17 @@ describe('bucket event notifications', () => {
     expect(engine.notificationReads).toHaveLength(1);
 
     engine.parts.notification = () => errorAnswer(501, 'NotImplemented', 'Operation unavailable');
-    fireEvent.click(retry);
+    retry.focus();
+    await userEvent.setup().keyboard('{Enter}');
     await waitFor(() => {
       const slot = notificationTable().findEmptySlot();
       const alert = slot === null ? null : createWrapper(slot.getElement()).findAlert();
       expect(alert?.findHeader()?.getElement()).toHaveTextContent('Not implemented by the emulator');
       expect(alert?.findContent().getElement()).toHaveTextContent('GetBucketNotificationConfiguration');
     });
+    const information = screen.getByRole('region', { name: 'Not implemented by the emulator' });
+    expect(information).toHaveFocus();
+    expect(information).toHaveAccessibleDescription(/GetBucketNotificationConfiguration/);
     const action = notificationAlert('Not implemented by the emulator')?.findActionSlot()?.getElement();
     if (action === undefined) throw new Error('Missing notification Retry action');
     const unavailable = within(action).getByRole('button', { name: 'Retry' });

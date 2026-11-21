@@ -1,3 +1,4 @@
+import Alert from '@cloudscape-design/components/alert';
 import Button from '@cloudscape-design/components/button';
 import Header from '@cloudscape-design/components/header';
 import SpaceBetween from '@cloudscape-design/components/space-between';
@@ -30,6 +31,7 @@ import { useBucketLookup } from '../queries';
 // requirement R6). The `h1` has no description: the area's frame says where the bucket is (issue 467, R3).
 
 const REFRESHED = 'Bucket refreshed';
+const DELETE_CONFIRMATION_EXPIRED = 'Delete confirmation expired. No deletion was sent.';
 
 const OBJECTS_TAB = 'objects';
 const PROPERTIES_TAB = 'properties';
@@ -63,6 +65,26 @@ export function BucketPage({ connection, params }: ScreenPageProps) {
   });
   const flash = usePageFlash();
   const [deleting, setDeleting] = useState<EditableNotification>();
+  const [expiredConsent, setExpiredConsent] = useState<{ target: EditableNotification; generation: number }>();
+  const expiryFocus = useRef(false);
+  useEffect(() => {
+    if (expiredConsent === undefined) return;
+    expiryFocus.current = true;
+    const yieldFocus = () => {
+      expiryFocus.current = false;
+    };
+    const events = ['keydown', 'pointerdown', 'wheel'] as const;
+    for (const event of events) document.addEventListener(event, yieldFocus, true);
+    return () => {
+      yieldFocus();
+      for (const event of events) document.removeEventListener(event, yieldFocus, true);
+    };
+  }, [expiredConsent]);
+  const takeExpiryFocus = useCallback(() => {
+    const shouldRestore = expiryFocus.current && document.activeElement === document.body;
+    expiryFocus.current = false;
+    return shouldRestore;
+  }, []);
   const connected = connection.result?.kind === 'connected';
   const down = connection.result !== undefined && !connected;
   const deletion = useNotificationChange(connection.engineOrigin, name, down, () => {
@@ -84,6 +106,17 @@ export function BucketPage({ connection, params }: ScreenPageProps) {
       deleteFeedbackRef.current?.scrollIntoView?.({ block: 'nearest' });
     }
   }, [deletion.state, state.kind]);
+
+  const expiryRecovery =
+    expiredConsent !== undefined &&
+    connected &&
+    lookup.generation > expiredConsent.generation &&
+    (sections.notifications.value !== undefined || sections.notifications.failure !== undefined)
+      ? { target: expiredConsent.target, takeFocus: takeExpiryFocus }
+      : undefined;
+  const expiryNotice = tab === PROPERTIES_TAB && expiredConsent !== undefined && (
+    <Alert type="info">{DELETE_CONFIRMATION_EXPIRED}</Alert>
+  );
 
   const deleteFeedback = tab === PROPERTIES_TAB && deletion.state.kind !== 'idle' && (
     <div ref={deleteFeedbackRef} aria-live="polite">
@@ -110,7 +143,11 @@ export function BucketPage({ connection, params }: ScreenPageProps) {
   const [wasDown, setWasDown] = useState(down);
   if (down && !wasDown) {
     setWasDown(true);
-    setDeleting(undefined);
+    if (deleting !== undefined) {
+      setExpiredConsent({ target: deleting, generation: lookup.generation });
+      setDeleting(undefined);
+      announce(DELETE_CONFIRMATION_EXPIRED);
+    }
   }
   // "Bucket refreshed", once the page's read and, on a page shown, every section's read have answered again (R5.6).
   const sectionsReading = state.kind === 'loaded' && Object.values(sections).some((read) => read.loading);
@@ -183,8 +220,17 @@ export function BucketPage({ connection, params }: ScreenPageProps) {
           reads={sections}
           connection={connection}
           deleteNotificationDisabled={deleteDisabled}
-          deleteNotificationFeedback={deleteFeedback}
-          onDeleteNotification={setDeleting}
+          deleteNotificationFeedback={
+            <>
+              {expiryNotice}
+              {deleteFeedback}
+            </>
+          }
+          deleteConsentRecovery={expiryRecovery}
+          onDeleteNotification={(target) => {
+            setExpiredConsent(undefined);
+            setDeleting(target);
+          }}
         />
       ),
     },
@@ -205,7 +251,12 @@ export function BucketPage({ connection, params }: ScreenPageProps) {
       >
         <ValueText kind="name" value={name} />
       </Header>
-      {state.kind !== 'loaded' && deleteFeedback}
+      {state.kind !== 'loaded' && (
+        <>
+          {expiryNotice}
+          {deleteFeedback}
+        </>
+      )}
       <div>
         {state.kind === 'loading' && <BucketLoading />}
         {state.kind === 'failure' && <BucketReadFailure view={state.view} onRetry={handleRetry} />}

@@ -66,6 +66,7 @@ export function NotificationPage({ connection, params }: ScreenPageProps) {
   const flash = usePageFlash();
   useShowsResources('buckets');
   const [generation, setGeneration] = useState(0);
+  const [loadRetryGeneration, setLoadRetryGeneration] = useState<number>();
   const [submitted, setSubmitted] = useState<{ generation: number; save: NotificationSave }>();
   const read = useBucketProperty(connection.engineOrigin, bucket, 'notifications', { generation, enabled: true });
   const [readback, setReadback] = useState<{
@@ -133,6 +134,11 @@ export function NotificationPage({ connection, params }: ScreenPageProps) {
     </Link>
   );
 
+  function handleLoadRetry() {
+    setLoadRetryGeneration(generation);
+    read.again();
+  }
+
   function handleRefresh() {
     change.clear();
     setGeneration((current) => current + 1);
@@ -176,15 +182,15 @@ export function NotificationPage({ connection, params }: ScreenPageProps) {
           </SpaceBetween>
         </Container>
       ) : disconnected && !unsupportedRead ? (
-        <BucketReadFailure view={{ type: status.type, first: status, recovery: true }} onRetry={read.again} />
+        <BucketReadFailure view={{ type: status.type, first: status, recovery: true }} onRetry={handleLoadRetry} />
       ) : currentReadback === undefined && read.failure !== undefined ? (
         <SpaceBetween size="s">
           {unsupportedRead ? (
-            <NotificationLoadUnavailable />
+            <NotificationLoadUnavailable focus={loadRetryGeneration === generation} />
           ) : (
             <BucketReadFailure
               view={pageFailure(read.failure, connection, 'The event notifications could not be read')}
-              onRetry={read.again}
+              onRetry={handleLoadRetry}
             />
           )}
           {unsupportedRead && (
