@@ -22,7 +22,7 @@ import {
 } from '@aws-sdk/client-lambda';
 
 import { createAwsClient, EngineSessionError } from '../../../../../lib/aws/client-factory';
-import { sendRequest, type RequestFailure } from '../../../../../lib/aws/request';
+import { RequestError, sendRequest, type RequestFailure } from '../../../../../lib/aws/request';
 import { cutAtText, firstPageMarker } from './marker';
 import { starterCode } from './starter-code';
 import { storedZip } from './zip';
@@ -845,24 +845,53 @@ function decodeLog(logResult: string | undefined): string {
   return UTF8.decode(bytes);
 }
 
+export type InvokeFailure = RequestFailure & { reportedCode?: string };
+
+export class InvokeRequestError extends RequestError {
+  declare readonly failure: InvokeFailure;
+
+  constructor(failure: InvokeFailure) {
+    super(failure);
+  }
+}
+
 /**
  * Invokes the function `name` with `eventText`, its bytes as typed, through the engine at `endpoint`: one `Invoke`
- * to `$LATEST` with `InvocationType` `RequestResponse` and `LogType` `Tail`.
+ * with `InvocationType` `RequestResponse` and `LogType` `Tail`. Omit the qualifier for `$LATEST`.
  */
 export async function invoke(
   endpoint: string,
   name: string,
   eventText: string,
   signal: AbortSignal,
+  qualifier?: string,
 ): Promise<InvokeAnswer> {
   const client = lambdaClient(endpoint);
   const command = new InvokeCommand({
     FunctionName: name,
+    Qualifier: qualifier,
     InvocationType: 'RequestResponse',
     LogType: 'Tail',
     Payload: new TextEncoder().encode(eventText),
   });
-  const output = await sendRequest(INVOKE, (abortSignal) => client.send(command, { abortSignal }), signal);
+  let reportedCode: string | undefined;
+  const output = await sendRequest(
+    INVOKE,
+    async (abortSignal) => {
+      try {
+        return await client.send(command, { abortSignal });
+      } catch (error) {
+        reportedCode = answerCode(errorAnswer(error));
+        throw error;
+      }
+    },
+    signal,
+  ).catch((error: unknown) => {
+    if (error instanceof RequestError && error.failure.kind === 'access-denied' && reportedCode !== undefined) {
+      throw new InvokeRequestError({ ...error.failure, reportedCode });
+    }
+    throw error;
+  });
   const answer: InvokeAnswer = {
     payload: payloadText(output.Payload),
     log: decodeLog(output.LogResult),

@@ -9,6 +9,8 @@ import { describe, expect, it, vi } from 'vitest';
 import type { RequestFailure } from '../../../../../../lib/aws/request';
 import type { InvokeAnswer } from '../api';
 import type { Invocation } from '../queries';
+import type { FunctionAlias, FunctionVersion, ReleaseFailure } from '../version-api';
+import type { ReleaseReading } from '../version-queries';
 import { TestTab } from './test-tab';
 
 // The tab "Test": the event field, "Invoke" and "Result" (issue 516, test criteria "Unit s2 —
@@ -17,13 +19,71 @@ import { TestTab } from './test-tab';
 const norm = (text: string | null | undefined) => (text ?? '').replace(/\s+/g, ' ').trim();
 
 function invocation(over: Partial<Invocation> = {}): Invocation {
-  return { mutate: vi.fn(), isPending: false, data: undefined, error: undefined, answers: 0, ...over };
+  return {
+    mutate: vi.fn(),
+    isPending: false,
+    data: undefined,
+    error: undefined,
+    answers: 0,
+    qualifier: undefined,
+    isUnsupported: () => false,
+    ...over,
+  };
 }
 
-/** The tab with the page's event text kept as the page keeps it. */
-function Harness({ invoke, initial = '{}' }: { invoke: Invocation; initial?: string }) {
+const versions = reading<FunctionVersion>([{ version: '$LATEST' }, { version: '2' }]);
+const aliases = reading<FunctionAlias>([{ name: 'live', version: '2' }]);
+
+function reading<T>(items: T[] | undefined, failure?: ReleaseFailure): ReleaseReading<T> {
+  return { items, failure, loading: false, refresh: vi.fn() };
+}
+
+function Harness({
+  invoke,
+  initial = '{}',
+  versionReading = versions,
+  aliasReading = aliases,
+  targetUnavailable = false,
+}: {
+  invoke: Invocation;
+  initial?: string;
+  versionReading?: ReleaseReading<FunctionVersion>;
+  aliasReading?: ReleaseReading<FunctionAlias>;
+  targetUnavailable?: boolean;
+}) {
   const [eventText, setEventText] = useState(initial);
-  return <TestTab functionName="orders" eventText={eventText} onEventTextChange={setEventText} invoke={invoke} />;
+  const [qualifier, setQualifier] = useState<string>();
+  return (
+    <TestTab
+      functionName="orders"
+      eventText={eventText}
+      onEventTextChange={setEventText}
+      invoke={invoke}
+      connection={{
+        engineOrigin: 'http://127.0.0.1:8308',
+        result: { kind: 'connected', checkedAt: 0, emulator: { port: 9308, endpoint: 'https://127.0.0.1:9308' } },
+      }}
+      versions={versionReading}
+      aliases={aliasReading}
+      qualifier={qualifier}
+      targetUnavailable={targetUnavailable && qualifier === 'live'}
+      onTargetChange={setQualifier}
+    />
+  );
+}
+
+function targetSelect() {
+  const select = createWrapper(document.body).findSelect();
+  if (select === null) {
+    throw new Error('Expected the Invoke target selector');
+  }
+  return select;
+}
+
+function chooseTarget(value: string) {
+  const select = targetSelect();
+  select.openDropdown();
+  select.selectOptionByValue(value);
 }
 
 function field() {
@@ -91,7 +151,7 @@ describe('the tab "Test"', () => {
     field().setTextareaValue(text);
     invokeButton().click();
     expect(invoke.mutate).toHaveBeenCalledTimes(1);
-    expect(invoke.mutate).toHaveBeenCalledWith(text);
+    expect(invoke.mutate).toHaveBeenCalledWith(text, undefined);
     expect(createWrapper(document.body).findFormField()?.findError()).toBeNull();
   });
 
@@ -235,7 +295,7 @@ describe('the tab "Test" after the critique (final r1)', () => {
     fireEvent.keyDown(native, { key: 'Enter', ctrlKey: true });
     fireEvent.keyDown(native, { key: 'Enter', metaKey: true });
     expect(invoke.mutate).toHaveBeenCalledTimes(2);
-    expect(invoke.mutate).toHaveBeenCalledWith('{}');
+    expect(invoke.mutate).toHaveBeenCalledWith('{}', undefined);
   });
 
   it('checks the text on Ctrl+Enter as on "Invoke"', () => {
@@ -300,5 +360,114 @@ describe('components/output-text.css', () => {
     expect(css).toMatch(/white-space:\s*pre-wrap/);
     expect(css).not.toMatch(/overflow-wrap/);
     expect(css).not.toMatch(/word-break/);
+  });
+});
+
+describe('invoke targets', () => {
+  it('defaults to $LATEST and offers published versions and aliases', () => {
+    const invoke = invocation();
+    render(<Harness invoke={invoke} />);
+    expect(screen.getByRole('button', { name: /Invoke target/ })).toHaveTextContent('$LATEST');
+    invokeButton().click();
+    chooseTarget('2');
+    invokeButton().click();
+    chooseTarget('live');
+    invokeButton().click();
+    expect(invoke.mutate).toHaveBeenNthCalledWith(1, '{}', undefined);
+    expect(invoke.mutate).toHaveBeenNthCalledWith(2, '{}', '2');
+    expect(invoke.mutate).toHaveBeenNthCalledWith(3, '{}', 'live');
+  });
+
+  it.each([
+    ['ListVersionsByFunction', 'other', 'live', '2'],
+    ['ListAliases', 'other', '2', 'live'],
+    ['ListVersionsByFunction', 'not-implemented', 'live', '2'],
+    ['ListAliases', 'not-implemented', '2', 'live'],
+  ] as const)('keeps the other targets usable after %s returns %s', (operation, kind, available, missing) => {
+    const invoke = invocation();
+    const failure: ReleaseFailure =
+      kind === 'other' ? { kind, operation, code: 'ResourceNotFoundException' } : { kind, operation };
+    render(
+      <Harness
+        invoke={invoke}
+        versionReading={operation === 'ListVersionsByFunction' ? reading(undefined, failure) : versions}
+        aliasReading={operation === 'ListAliases' ? reading(undefined, failure) : aliases}
+      />,
+    );
+    expect(screen.getByText(new RegExp(operation))).toBeVisible();
+    expect(
+      screen.getByText(kind === 'other' ? 'ResourceNotFoundException' : 'Not implemented by the emulator'),
+    ).toBeVisible();
+    invokeButton().click();
+    const select = targetSelect();
+    select.openDropdown();
+    expect(select.findDropdown().findOptionByValue(missing)).toBeNull();
+    select.selectOptionByValue(available);
+    invokeButton().click();
+    expect(invoke.mutate).toHaveBeenNthCalledWith(1, '{}', undefined);
+    expect(invoke.mutate).toHaveBeenNthCalledWith(2, '{}', available);
+  });
+
+  it('shows a qualified Invoke refusal for 501 and prevents button and shortcut resubmission', () => {
+    const initial = invocation();
+    const { rerender } = render(<Harness invoke={initial} />);
+    chooseTarget('live');
+    invokeButton().click();
+    expect(initial.mutate).toHaveBeenCalledWith('{}', 'live');
+
+    const invoke = invocation({
+      error: { kind: 'not-implemented', operation: 'Invoke' },
+      qualifier: 'live',
+      answers: 1,
+      isUnsupported: (qualifier) => qualifier !== undefined,
+    });
+    rerender(<Harness invoke={invoke} />);
+    expect(result()).toHaveTextContent('Submitted target live');
+    expect(result()).toHaveTextContent('Not implemented by the emulator');
+    expect(result()).toHaveTextContent('501 Not Implemented for Invoke');
+    const button = invokeButton().getElement();
+    expect(button).toBeVisible();
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    fireEvent.keyDown(field().findNativeTextarea().getElement(), { key: 'Enter', ctrlKey: true });
+    expect(invoke.mutate).not.toHaveBeenCalled();
+
+    chooseTarget('$LATEST');
+    invokeButton().click();
+    expect(invoke.mutate).toHaveBeenCalledWith('{}', undefined);
+  });
+
+  it('requires another choice after a refresh drops the selected alias', () => {
+    const invoke = invocation();
+    const { rerender } = render(<Harness invoke={invoke} />);
+    chooseTarget('live');
+    rerender(<Harness invoke={invoke} aliasReading={reading([])} targetUnavailable />);
+    expect(screen.getByText('live is unavailable. Choose another target.')).toBeVisible();
+    const button = invokeButton().getElement();
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    fireEvent.keyDown(field().findNativeTextarea().getElement(), { key: 'Enter', metaKey: true });
+    expect(invoke.mutate).not.toHaveBeenCalled();
+
+    chooseTarget('2');
+    invokeButton().click();
+    expect(invoke.mutate).toHaveBeenCalledWith('{}', '2');
+  });
+
+  it('keeps a qualified function error, response and log together with the submitted target', () => {
+    render(
+      <Harness
+        invoke={invocation({
+          data: { payload: '{"errorMessage":"release failed"}', log: 'release log', functionError: 'Unhandled' },
+          qualifier: 'live',
+          answers: 1,
+        })}
+      />,
+    );
+    expect(result()).toHaveTextContent('Submitted target live');
+    expect(result()).toHaveTextContent('The function returned an error');
+    expect(result()).toHaveTextContent('Unhandled');
+    expect(result()).toHaveTextContent('{"errorMessage":"release failed"}');
+    expect(result()).toHaveTextContent('release log');
   });
 });

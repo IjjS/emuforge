@@ -27,10 +27,10 @@ import { FunctionOverview, FunctionStatusLine } from '../components/function-sec
 import { functionStatus } from '../components/function-status';
 import { MonitorTab } from '../components/monitor-tab';
 import { quoting } from '../components/quoting';
-import { TestTab } from '../components/test-tab';
+import { InvocationResult, TestTab, type TestTabProps } from '../components/test-tab';
 import { VersionsTab, type VersionsTabProps } from '../components/versions-tab';
 import { FUNCTIONS_PATH, functionTabHref, releaseSuccessText, TAB_PARAMETER, tabOf } from '../format';
-import { isChanging, useFunctionReading, useInvoke, useReadAgain, type Invocation } from '../queries';
+import { isChanging, useFunctionReading, useInvoke, useReadAgain } from '../queries';
 import { useReleaseMutation, useReleaseReadings } from '../version-queries';
 
 // A Lambda function's own page (issue 84, requirement R5, R10; issue 516, design "The function's page"): its header
@@ -52,9 +52,7 @@ interface FunctionTabsProps {
   fn: LambdaFunction;
   connection: AreaConnection;
   ready: boolean;
-  eventText: string;
-  onEventTextChange: (text: string) => void;
-  invoke: Invocation;
+  test: Omit<TestTabProps, 'functionName' | 'connection' | 'versions' | 'aliases'>;
   releases: Pick<VersionsTabProps, 'versions' | 'aliases' | 'mutation'>;
   active: ReturnType<typeof tabOf>;
   onMonitorRefreshSettled: ((message: string) => void) | undefined;
@@ -69,9 +67,7 @@ function FunctionTabs({
   fn,
   connection,
   ready,
-  eventText,
-  onEventTextChange,
-  invoke,
+  test,
   releases,
   active,
   onMonitorRefreshSettled,
@@ -92,7 +88,13 @@ function FunctionTabs({
       label: 'Test',
       href: functionTabHref(name, 'test'),
       content: (
-        <TestTab functionName={name} eventText={eventText} onEventTextChange={onEventTextChange} invoke={invoke} />
+        <TestTab
+          {...test}
+          functionName={name}
+          connection={connection}
+          versions={releases.versions}
+          aliases={releases.aliases}
+        />
       ),
     },
     {
@@ -198,16 +200,24 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
     connected,
     disconnected: connection.result !== undefined && connection.result.kind !== 'connected',
     emulatorIdentity: connected ? JSON.stringify([result.emulator.endpoint, result.target]) : undefined,
-    revalidateOnReconnect: active === 'monitor' || active === 'versions',
+    revalidateOnReconnect: active === 'monitor' || active === 'versions' || active === 'test',
   });
   const { read, failure, refresh } = reading;
   const fn = read?.found === true ? read.function : undefined;
   const ready = !isChanging(read);
-  const [eventText, setEventText] = useState(INITIAL_EVENT);
-  const invoke = useInvoke(connection.engineOrigin, name);
   const flash = usePageFlash();
   const reread = useReadAgain(connection.engineOrigin, name);
   const releaseScope = JSON.stringify([connection.engineOrigin, name, reading.session]);
+  const invoke = useInvoke(connection.engineOrigin, name, reading.session);
+  const [test, setTest] = useState({
+    scope: releaseScope,
+    eventText: INITIAL_EVENT,
+    qualifier: undefined as string | undefined,
+    targetUnavailable: false,
+  });
+  if (test.scope !== releaseScope) {
+    setTest({ scope: releaseScope, eventText: INITIAL_EVENT, qualifier: undefined, targetUnavailable: false });
+  }
   const [verification, setVerification] = useState({ scope: releaseScope, found: false });
   // A refresh can read releases in parallel once this connection has verified the function.
   const verified =
@@ -221,9 +231,16 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
     endpoint: connection.engineOrigin,
     name,
     session: reading.session,
-    view: active === 'versions' ? active : undefined,
+    view: active === 'versions' || active === 'test' ? active : undefined,
     verified,
   });
+  const { qualifier } = test;
+  const currentTargets = /^\d+$/.test(qualifier ?? '')
+    ? releases.versions.items?.map(({ version }) => version)
+    : releases.aliases.items?.map(({ name }) => name);
+  if (qualifier !== undefined && !test.targetUnavailable && currentTargets?.includes(qualifier) === false) {
+    setTest({ ...test, targetUnavailable: true });
+  }
   const releaseMutation = useReleaseMutation({
     endpoint: connection.engineOrigin,
     name,
@@ -322,7 +339,7 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
   const handleRefresh = () => {
     setRefreshing(active === 'monitor' ? 'monitor' : 'function');
     refresh();
-    if (active === 'versions') {
+    if (active === 'versions' || active === 'test') {
       releases.versions.refresh();
       releases.aliases.refresh();
     }
@@ -354,9 +371,14 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
           fn={fn}
           connection={connection}
           ready={ready}
-          eventText={eventText}
-          onEventTextChange={setEventText}
-          invoke={invoke}
+          test={{
+            invoke,
+            eventText: test.eventText,
+            onEventTextChange: (eventText) => setTest((current) => ({ ...current, eventText })),
+            qualifier,
+            targetUnavailable: test.targetUnavailable,
+            onTargetChange: (qualifier) => setTest((current) => ({ ...current, qualifier, targetUnavailable: false })),
+          }}
           releases={{ ...releases, mutation: releaseMutation }}
           active={active}
           onMonitorRefreshSettled={refreshing === 'monitor' ? handleMonitorRefreshSettled : undefined}
@@ -392,7 +414,10 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
           </Header>
         }
       >
-        {content}
+        <SpaceBetween size="l">
+          {content}
+          {fn === undefined && invoke.answers > 0 && <InvocationResult invoke={invoke} />}
+        </SpaceBetween>
       </ContentLayout>
       <DeleteFunctionsDialog
         names={deleting ? [name] : NO_NAMES}

@@ -713,6 +713,32 @@ describe('the actions of a function’s page', () => {
     expect(sentOf('/invocations')).toHaveLength(1);
   });
 
+  it('keeps qualified Invoke unavailable after a 501 and still permits the default target', async () => {
+    const page = await openedPage();
+    engine.auto = (request) =>
+      request.url.pathname.endsWith('/url')
+        ? notFound()
+        : /^\/2015-03-31\/functions\/[^/]+$/.test(request.url.pathname)
+          ? functionAnswer('Active', 'Successful')
+          : undefined;
+
+    act(() => page.result.current.invocation.mutate('{}', 'live'));
+    const qualified = await nthOf('/invocations', 0);
+    expect(qualified.url.searchParams.get('Qualifier')).toBe('live');
+    qualified.respond(new Response('', { status: 501 }));
+
+    await waitFor(() => expect(page.result.current.invocation.isUnsupported('live')).toBe(true));
+    expect(page.result.current.invocation.qualifier).toBe('live');
+    expect(page.result.current.invocation.error).toEqual({ kind: 'not-implemented', operation: 'Invoke' });
+    act(() => page.result.current.invocation.mutate('{}', 'live'));
+    act(() => page.result.current.invocation.mutate('{}'));
+    const unqualified = await nthOf('/invocations', 1);
+    expect(unqualified.url.searchParams.has('Qualifier')).toBe(false);
+    unqualified.respond(invokeAnswer('"ok"'));
+    await waitFor(() => expect(page.result.current.invocation.data?.payload).toBe('"ok"'));
+    expect(sentOf('/invocations')).toHaveLength(2);
+  });
+
   it('an invoke in flight when the page unmounts is aborted', async () => {
     const page = await openedPage();
 

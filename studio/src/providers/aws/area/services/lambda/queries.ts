@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { requestFailure, type RequestFailure } from '../../../../../lib/aws/request';
 import {
@@ -8,6 +8,7 @@ import {
   deleteFunctions,
   INVOKE,
   invoke,
+  InvokeRequestError,
   isFunctionNotFound,
   LambdaRequestError,
   listFunctions,
@@ -26,6 +27,7 @@ import {
   type FunctionRead,
   type FunctionSummary,
   type InvokeAnswer,
+  type InvokeFailure,
   type LambdaFailure,
   type Role,
 } from './api';
@@ -633,65 +635,100 @@ function useAbortOnUnmount(): () => AbortSignal {
   }, []);
 }
 
-/** An invoke of the function's page: the mutation's `mutate` and `isPending`, and the last answer or failure. */
+/** The invocation state kept by the function page while its Test tab comes and goes. */
 export interface Invocation {
-  /** Sends one `Invoke` with the event text as typed; a call while one is in flight sends nothing. */
-  mutate: (eventText: string) => void;
-  /** An invoke is in flight. */
+  mutate: (eventText: string, qualifier?: string) => void;
   isPending: boolean;
-  /** The last answer, kept until the next answer or failure replaces it (an invoke in flight does not). */
+  /** The last completed request, kept until the next answer or failure replaces it. */
   data: InvokeAnswer | undefined;
-  /** The last failure, kept as `data` is; never both. */
-  error: RequestFailure | undefined;
+  error: InvokeFailure | undefined;
+  qualifier: string | undefined;
   /** One more per answer or failure, so a screen says each outcome once. */
   answers: number;
+  isUnsupported: (qualifier: string | undefined) => boolean;
 }
 
-/**
- * Invokes the function `name` through the engine at `endpoint` (task 2). After any answer, the function's own
- * failure and a refusal of the emulator included, the function is read again; leaving the page aborts the request.
- */
-export function useInvoke(endpoint: string | undefined, name: string): Invocation {
+export function useInvoke(endpoint: string | undefined, name: string, session = 0): Invocation {
   const readAgain = useReadAgain(endpoint, name);
-  const nextSignal = useAbortOnUnmount();
-  const [last, setLast] = useState<{
-    data: InvokeAnswer | undefined;
-    error: RequestFailure | undefined;
-    answers: number;
-  }>({ data: undefined, error: undefined, answers: 0 });
-  const mutation = useMutation<InvokeAnswer, unknown, { eventText: string; signal: AbortSignal }>({
-    mutationFn: ({ eventText, signal }) => {
-      if (endpoint === undefined) {
-        throw new Error('The engine endpoint is not known yet.');
-      }
-      return invoke(endpoint, name, eventText, signal);
+  const scope = JSON.stringify([endpoint, name, session]);
+  const request = useRef<AbortController | undefined>(undefined);
+  const [last, setLast] = useState(() => emptyInvocation(scope));
+  if (last.scope !== scope) {
+    setLast(emptyInvocation(scope));
+  }
+
+  useLayoutEffect(
+    () => () => {
+      request.current?.abort();
+      request.current = undefined;
     },
-    onSuccess: (data) => {
-      setLast((current) => ({ data, error: undefined, answers: current.answers + 1 }));
-      return readAgain();
-    },
-    onError: (error, { signal }) => {
+    [scope],
+  );
+
+  const mutation = useMutation({
+    mutationFn: (input: {
+      endpoint: string;
+      name: string;
+      eventText: string;
+      qualifier: string | undefined;
+      signal: AbortSignal;
+    }) => invoke(input.endpoint, input.name, input.eventText, input.signal, input.qualifier),
+    onSettled: (data, error, { qualifier, signal }) => {
       if (signal.aborted) {
         return;
       }
+      const failure =
+        error instanceof InvokeRequestError
+          ? error.failure
+          : error === null
+            ? undefined
+            : requestFailure(INVOKE, error);
       setLast((current) => ({
-        data: undefined,
-        error: requestFailure(INVOKE, error),
+        scope,
+        data,
+        error: failure,
+        qualifier,
         answers: current.answers + 1,
+        unsupported:
+          failure?.kind === 'not-implemented'
+            ? new Set([...current.unsupported, qualifier !== undefined])
+            : current.unsupported,
       }));
-      return readAgain();
+      request.current = undefined;
+      void readAgain();
     },
   });
-  const { mutate: send, isPending } = mutation;
-  const mutate = useCallback(
-    (eventText: string) => {
-      if (!isPending) {
-        send({ eventText, signal: nextSignal() });
-      }
-    },
-    [isPending, send, nextSignal],
-  );
-  return { mutate, isPending, data: last.data, error: last.error, answers: last.answers };
+
+  const isUnsupported = (qualifier: string | undefined) => last.unsupported.has(qualifier !== undefined);
+  const mutate = (eventText: string, qualifier?: string) => {
+    if (endpoint === undefined || request.current !== undefined || isUnsupported(qualifier)) {
+      return;
+    }
+    const controller = new AbortController();
+    request.current = controller;
+    mutation.mutate({ endpoint, name, eventText, qualifier, signal: controller.signal });
+  };
+
+  return {
+    mutate,
+    isPending: mutation.isPending && !mutation.variables.signal.aborted,
+    data: last.data,
+    error: last.error,
+    qualifier: last.qualifier,
+    answers: last.answers,
+    isUnsupported,
+  };
+}
+
+function emptyInvocation(scope: string) {
+  return {
+    scope,
+    data: undefined as InvokeAnswer | undefined,
+    error: undefined as InvokeFailure | undefined,
+    qualifier: undefined as string | undefined,
+    answers: 0,
+    unsupported: new Set<boolean>(),
+  };
 }
 
 /** What a change of the function asks of the screen that sends it. */
