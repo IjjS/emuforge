@@ -1,6 +1,7 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
@@ -193,6 +194,56 @@ it('closes an open revision menu on continuation 501 and keeps the chosen revisi
   expect(after.findDropdown().findOpenDropdown()).toBeNull();
   expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+  expect(answers.mock.calls.filter(([op]) => op === operation).map(([, input]) => input.nextToken)).toEqual([
+    undefined,
+    'older',
+  ]);
+});
+
+it.each([false, true])('handles focus on a pending continuation 501 (moved away: %s)', async (movedAway) => {
+  const operation = 'ListTaskDefinitions';
+  let refuse = (_error: RequestError) => {};
+  const continuation = new Promise((_resolve, rejectPage) => {
+    refuse = rejectPage;
+  });
+  answers.mockImplementation((op, input) => {
+    if (op !== operation) return normal(op, input);
+    return input.nextToken ? continuation : page(['web:3', 'web:2'], 'older');
+  });
+
+  const user = userEvent.setup();
+  await open();
+  await choose(FAMILY, 'web');
+  await choose(REVISION, 'web:2');
+  openDropdown(select(REVISION));
+  const more = await screen.findByRole('button', { name: 'Load more' });
+  more.focus();
+  await user.keyboard('{Enter}');
+  await waitFor(() => expect(more).toHaveAttribute('aria-disabled', 'true'));
+  expect(more).toHaveFocus();
+
+  const name = screen.getByRole('textbox', { name: 'Service name' });
+  if (movedAway) {
+    name.focus();
+    expect(name).toHaveFocus();
+  }
+  await act(async () => refuse(new RequestError({ kind: 'not-implemented', operation })));
+
+  const diagnostic = await screen.findByRole('group', { name: `${REVISION} diagnostic` });
+  expect(diagnostic).toHaveTextContent('Not implemented by the emulator');
+  expect(diagnostic).toHaveAccessibleDescription(
+    /501 Not Implemented for ListTaskDefinitions\. Studio cannot load more revisions\./,
+  );
+  expect(select(REVISION).findTrigger().getElement()).toBeDisabled();
+  expect(select(REVISION).findTrigger().getElement()).toHaveTextContent('web:2');
+  expect(select(REVISION).findDropdown().findOpenDropdown()).toBeNull();
+  if (movedAway) {
+    expect(name).toHaveFocus();
+  } else {
+    expect(diagnostic).toHaveFocus();
+    await user.tab();
+    expect(screen.getByRole('spinbutton', { name: 'Desired tasks' })).toHaveFocus();
+  }
   expect(answers.mock.calls.filter(([op]) => op === operation).map(([, input]) => input.nextToken)).toEqual([
     undefined,
     'older',
