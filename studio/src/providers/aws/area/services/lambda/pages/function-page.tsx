@@ -10,6 +10,7 @@ import Tabs, { type TabsProps } from '@cloudscape-design/components/tabs';
 import { useCallback, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 
+import { actionFailureItem } from '../../../components/failure-states';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
 import { ValueText } from '../../../components/value-text';
@@ -27,8 +28,10 @@ import { functionStatus } from '../components/function-status';
 import { MonitorTab } from '../components/monitor-tab';
 import { quoting } from '../components/quoting';
 import { TestTab } from '../components/test-tab';
-import { FUNCTIONS_PATH, functionTabHref, TAB_PARAMETER, tabOf } from '../format';
+import { VersionsTab, type VersionsTabProps } from '../components/versions-tab';
+import { FUNCTIONS_PATH, functionTabHref, releaseSuccessText, TAB_PARAMETER, tabOf } from '../format';
 import { isChanging, useFunctionReading, useInvoke, type Invocation } from '../queries';
+import { useReleaseMutation, useReleaseReadings } from '../version-queries';
 
 // A Lambda function's own page (issue 84, requirement R5, R10; issue 516, design "The function's page"): its header
 // with "Refresh" and "Delete", "Function overview", then the tabs, each addressed
@@ -52,6 +55,7 @@ interface FunctionTabsProps {
   eventText: string;
   onEventTextChange: (text: string) => void;
   invoke: Invocation;
+  releases: Pick<VersionsTabProps, 'versions' | 'aliases' | 'mutation'>;
   active: ReturnType<typeof tabOf>;
   onMonitorRefreshSettled: ((message: string) => void) | undefined;
 }
@@ -68,6 +72,7 @@ function FunctionTabs({
   eventText,
   onEventTextChange,
   invoke,
+  releases,
   active,
   onMonitorRefreshSettled,
 }: FunctionTabsProps) {
@@ -119,6 +124,19 @@ function FunctionTabs({
       label: 'Configuration',
       href: functionTabHref(name, 'configuration'),
       content: <ConfigurationTab fn={fn} name={name} connection={connection} ready={ready} />,
+    },
+    {
+      id: 'versions',
+      label: 'Versions and aliases',
+      href: functionTabHref(name, 'versions'),
+      content:
+        endpoint !== undefined && connection.result?.kind === 'connected' ? (
+          <VersionsTab {...releases} connection={connection} ready={ready} />
+        ) : (
+          <Container>
+            <Box textAlign="center">Versions and aliases are available when the emulator is connected.</Box>
+          </Container>
+        ),
     },
   ];
   return (
@@ -172,13 +190,14 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
   const [searchParams] = useSearchParams();
   const active = tabOf(searchParams.get(TAB_PARAMETER));
   const [announcement, announce] = useAnnouncer();
-  const connected = connection.result?.kind === 'connected';
+  const result = connection.result;
+  const connected = result?.kind === 'connected';
   const reading = useFunctionReading({
     endpoint: connection.engineOrigin,
     name,
     connected,
     disconnected: connection.result !== undefined && connection.result.kind !== 'connected',
-    monitorActive: active === 'monitor',
+    emulatorIdentity: connected ? JSON.stringify([result.emulator.endpoint, result.target]) : undefined,
   });
   const { read, failure, refresh } = reading;
   const fn = read?.found === true ? read.function : undefined;
@@ -186,6 +205,34 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
   const [eventText, setEventText] = useState(INITIAL_EVENT);
   const invoke = useInvoke(connection.engineOrigin, name);
   const flash = usePageFlash();
+  const releaseScope = JSON.stringify([connection.engineOrigin, name, reading.session]);
+  const [verification, setVerification] = useState({ scope: releaseScope, found: false });
+  // A refresh can read releases in parallel once this connection has verified the function.
+  const verified =
+    connected && (read?.found ?? (failure === undefined && verification.scope === releaseScope && verification.found));
+  if (verification.scope !== releaseScope || verification.found !== verified) {
+    setVerification({ scope: releaseScope, found: verified });
+  }
+  const releases = useReleaseReadings({
+    endpoint: connection.engineOrigin,
+    name,
+    session: reading.session,
+    view: active === 'versions' ? active : undefined,
+    verified,
+  });
+  const releaseMutation = useReleaseMutation({
+    endpoint: connection.engineOrigin,
+    name,
+    scope: releaseScope,
+    onSuccess: (result) => {
+      flash.show([{ type: 'success', content: releaseSuccessText(result) }]);
+      refresh();
+      (result.operation === 'PublishVersion' ? releases.versions : releases.aliases).refresh();
+    },
+    onFailure: (failure) => {
+      flash.show([actionFailureItem(failure, failure.operation, connection.engineOrigin)]);
+    },
+  });
   const [deleting, setDeleting] = useState(false);
   const handleDeleteClose = useCallback(() => {
     setDeleting(false);
@@ -250,6 +297,10 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
   const handleRefresh = () => {
     setRefreshing(active === 'monitor' ? 'monitor' : 'function');
     refresh();
+    if (active === 'versions') {
+      releases.versions.refresh();
+      releases.aliases.refresh();
+    }
   };
 
   let content;
@@ -281,6 +332,7 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
           eventText={eventText}
           onEventTextChange={setEventText}
           invoke={invoke}
+          releases={{ ...releases, mutation: releaseMutation }}
           active={active}
           onMonitorRefreshSettled={refreshing === 'monitor' ? handleMonitorRefreshSettled : undefined}
         />

@@ -115,6 +115,7 @@ interface MonitoringRequest {
 
 const FUNCTION_PATH = /^\/2015-03-31\/functions\/([^/]+)$/;
 const URL_PATH = /^\/2021-10-31\/functions\/([^/]+)\/url$/;
+const RELEASE_PATH = /^\/2015-03-31\/functions\/([^/]+)\/(versions|aliases)$/;
 const INVOKE_PATH = /^\/2015-03-31\/functions\/([^/]+)\/invocations$/;
 
 function json(status: number, body: unknown): Answer {
@@ -142,6 +143,12 @@ class FakeEngine {
     json(200, operation === 'FilterLogEvents' ? { events: [] } : { Datapoints: [] });
   /** The answer to `GetFunction`; by default the emulator's. */
   answerFunction: (request: SentRequest) => EngineAnswer = (request) => this.emulator(request);
+  answerRelease: (request: SentRequest) => Answer | Promise<Answer> = ({ method, url }) => {
+    if (method === 'POST') {
+      return json(201, { Version: '1' });
+    }
+    return json(200, url.pathname.endsWith('/versions') ? { Versions: [{ Version: '$LATEST' }] } : { Aliases: [] });
+  };
   /** The invocations answered so far. */
   invocations = 0;
   /** The answer to `GetFunctionUrlConfig`; by default the emulator's. */
@@ -233,6 +240,10 @@ class FakeEngine {
     }
     const sent = { method: request.method, url };
     this.aws.push(sent);
+    if (RELEASE_PATH.test(url.pathname)) {
+      const answer = await this.answerRelease(sent);
+      return new Response(answer.body, { status: answer.status, headers: answer.headers });
+    }
     const answer = await Promise.race([
       Promise.resolve(URL_PATH.test(url.pathname) ? this.answerUrl(sent) : this.answerFunction(sent)),
       new Promise<never>((_, reject) => {
@@ -518,13 +529,13 @@ async function openLoaded(fn: FakeFunction = ORDERS) {
 // ---------------------------------------------------------------------------------------------------------------
 
 describe('a function loaded', () => {
-  it('the h1 its name, "Refresh", "Delete", "Function overview" with its fields in order, and the tabs "Test", "Code", "Monitor", "Configuration" and no other, "Test" selected', async () => {
+  it('the h1 its name, "Refresh", "Delete", "Function overview" with its fields in order, and the tabs "Test", "Code", "Monitor", "Configuration", "Versions and aliases" and no other, "Test" selected', async () => {
     await openLoaded();
 
     expect(headingText()).toBe('orders');
     expect(within(header()).getByRole('button', { name: 'Refresh' })).toBeInTheDocument();
     expect(within(header()).getByRole('button', { name: 'Delete' })).toBeInTheDocument();
-    expect(tabLabels()).toEqual(['Test', 'Code', 'Monitor', 'Configuration']);
+    expect(tabLabels()).toEqual(['Test', 'Code', 'Monitor', 'Configuration', 'Versions and aliases']);
     expect(activeTab()).toBe('Test');
     expect(pairs('Function overview').map(([label]) => label)).toEqual([
       'Description',
@@ -1135,6 +1146,154 @@ describe('Monitor', () => {
   });
 });
 
+describe('Versions and aliases', () => {
+  const versionsPath = '?tab=versions';
+
+  function deferredAnswer() {
+    let resolve!: (answer: Answer) => void;
+    const promise = new Promise<Answer>((done) => {
+      resolve = done;
+    });
+    return { promise, resolve };
+  }
+
+  function versionAnswer(number: string) {
+    return json(200, { Versions: [{ Version: '$LATEST' }, { Version: number, Description: `Release ${number}` }] });
+  }
+
+  function aliasAnswer(name: string, version: string) {
+    return json(200, { Aliases: [{ Name: name, FunctionVersion: version }] });
+  }
+
+  it('opens from the tab and reopens the same function on its release address', async () => {
+    const { router, unmount } = await openLoaded();
+    fireEvent.click(tabLink('Versions and aliases'));
+    expect(await screen.findByText('$LATEST')).toBeVisible();
+    expect(activeTab()).toBe('Versions and aliases');
+    expect(router.state.location).toMatchObject({ pathname: pagePath('orders'), search: versionsPath });
+    const { pathname, search } = router.state.location;
+
+    unmount();
+    open(pathname + search);
+    expect(await screen.findByText('$LATEST')).toBeVisible();
+    expect(activeTab()).toBe('Versions and aliases');
+    expect(headingText()).toBe('orders');
+    expect(
+      engine.aws
+        .filter(({ url }) => RELEASE_PATH.test(url.pathname))
+        .every(({ url }) => RELEASE_PATH.exec(url.pathname)?.[1] === 'orders'),
+    ).toBe(true);
+  });
+
+  it('keeps refreshed releases when the older reads finish after them', async () => {
+    engine.functions = [{ name: 'orders' }];
+    const oldVersions = deferredAnswer();
+    const oldAliases = deferredAnswer();
+    let current = false;
+    engine.answerRelease = ({ url }) =>
+      url.pathname.endsWith('/versions')
+        ? current
+          ? versionAnswer('2')
+          : oldVersions.promise
+        : current
+          ? aliasAnswer('current-live', '2')
+          : oldAliases.promise;
+
+    open(pagePath('orders') + versionsPath);
+    await waitFor(() => {
+      expect(engine.aws.filter(({ url }) => RELEASE_PATH.test(url.pathname))).toHaveLength(2);
+    });
+    current = true;
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    expect(await screen.findByText('Release 2')).toBeVisible();
+    expect(await screen.findByText('current-live')).toBeVisible();
+
+    await act(async () => {
+      oldVersions.resolve(versionAnswer('1'));
+      oldAliases.resolve(aliasAnswer('old-live', '1'));
+      await Promise.all([oldVersions.promise, oldAliases.promise]);
+    });
+    expect(screen.getByText('Release 2')).toBeVisible();
+    const row = screen.getByText('current-live').closest('tr');
+    expect(row).toHaveTextContent('2');
+    expect(screen.queryByText('Release 1')).toBeNull();
+    expect(screen.queryByText('old-live')).toBeNull();
+  });
+
+  it('verifies the function on reconnect from another tab before displaying release data', async () => {
+    engine.functions = [{ name: 'orders' }];
+    engine.answerRelease = ({ url }) =>
+      url.pathname.endsWith('/versions') ? versionAnswer('1') : aliasAnswer('old-live', '1');
+
+    open(pagePath('orders') + versionsPath);
+    expect(await screen.findByText('Release 1')).toBeVisible();
+    expect(await screen.findByText('old-live')).toBeVisible();
+    fireEvent.click(tabLink('Code'));
+    expect(activeTab()).toBe('Code');
+    connection.set(notStartedResult());
+    engine.functions = [];
+    const reconnect = deferredAnswer();
+    engine.answerFunction = () => reconnect.promise;
+    connection.set(connectedResult());
+    await waitFor(() => expect(engine.gets).toHaveLength(2));
+    expect(screen.queryByText('Release 1')).toBeNull();
+    expect(screen.queryByText('old-live')).toBeNull();
+    expect(screen.queryByRole('tab', { name: 'Versions and aliases' })).toBeNull();
+    expect(engine.aws.filter(({ url }) => RELEASE_PATH.test(url.pathname))).toHaveLength(2);
+
+    await act(async () => {
+      reconnect.resolve(errorAnswer(404, 'ResourceNotFoundException', 'Function not found'));
+      await reconnect.promise;
+    });
+    expect(await screen.findByText('Function not found')).toBeVisible();
+    expect(screen.queryByText('Release 1')).toBeNull();
+    expect(screen.queryByText('old-live')).toBeNull();
+    expect(engine.aws.filter(({ url }) => RELEASE_PATH.test(url.pathname))).toHaveLength(2);
+  });
+
+  it('keeps the published number visible when the detail reread removes the tab before the release reread', async () => {
+    engine.functions = [{ name: 'orders' }];
+    const detail = deferredAnswer();
+    const releases = deferredAnswer();
+    let published = false;
+    engine.answerFunction = (request) => (published ? detail.promise : engine.emulator(request));
+    engine.answerRelease = ({ method, url }) => {
+      if (method === 'POST') {
+        published = true;
+        return json(201, { Version: '2' });
+      }
+      return url.pathname.endsWith('/aliases')
+        ? aliasAnswer('live', '1')
+        : published
+          ? releases.promise
+          : versionAnswer('1');
+    };
+
+    open(pagePath('orders') + versionsPath);
+    expect(await screen.findByText('Release 1')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Publish version' }));
+    expect(await screen.findByText('Published version 2.')).toBeVisible();
+    await waitFor(() => expect(engine.gets).toHaveLength(2));
+    await waitFor(() =>
+      expect(
+        engine.aws.filter(({ method, url }) => method === 'GET' && url.pathname.endsWith('/versions')),
+      ).toHaveLength(2),
+    );
+    await act(async () => {
+      detail.resolve(errorAnswer(404, 'ResourceNotFoundException', 'Function not found'));
+      await detail.promise;
+    });
+    expect(await screen.findByText('Function not found')).toBeVisible();
+    expect(screen.getByText('Published version 2.')).toBeVisible();
+    await act(async () => {
+      releases.resolve(versionAnswer('2'));
+      await releases.promise;
+    });
+    expect(screen.queryByText('Release 2')).toBeNull();
+    expect(screen.getByText('Published version 2.')).toBeVisible();
+  });
+});
+
 describe('the tabs by ?tab=', () => {
   it.each([
     ['', 'Test', 'stand-in-test'],
@@ -1147,7 +1306,7 @@ describe('the tabs by ?tab=', () => {
     open(`${pagePath('orders')}${query}`);
     await screen.findByRole('heading', { level: 2, name: 'Function overview' });
 
-    expect(tabLabels()).toEqual(['Test', 'Code', 'Monitor', 'Configuration']);
+    expect(tabLabels()).toEqual(['Test', 'Code', 'Monitor', 'Configuration', 'Versions and aliases']);
     expect(activeTab()).toBe(label);
     expect(tabs()?.findTabContent()?.getElement()).toContainElement(screen.getByTestId(testId));
   });

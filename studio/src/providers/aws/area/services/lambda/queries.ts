@@ -222,7 +222,7 @@ export function useFunctionListing({ endpoint, pageSize, filter, connected }: Fu
       position.page,
       position.visit,
     ],
-    queryFn: async ({ signal }) => {
+    queryFn: ({ signal }) => {
       if (endpoint === undefined) {
         throw new Error('The engine endpoint is not known yet.');
       }
@@ -310,7 +310,7 @@ export interface FunctionReadingOptions {
   name: string;
   connected: boolean;
   disconnected?: boolean;
-  monitorActive?: boolean;
+  emulatorIdentity?: string;
 }
 
 export interface FunctionReading {
@@ -320,6 +320,8 @@ export interface FunctionReading {
   failure: LambdaFailure | undefined;
   /** The reading's first answer has not arrived. */
   loading: boolean;
+  /** Changes when a connected session ends or the emulator target changes. */
+  session: number;
   /** Reads the function again, from nothing shown. */
   refresh: () => void;
 }
@@ -334,30 +336,40 @@ export function useFunctionReading({
   name,
   connected,
   disconnected = false,
-  monitorActive = false,
+  emulatorIdentity,
 }: FunctionReadingOptions): FunctionReading {
   const [mount] = useState(() => (mounts += 1));
   const [readings, setReadings] = useState(0);
   const generation = useListingGeneration(endpoint);
-  const [connection, setConnection] = useState({ disconnected: false, epoch: 0 });
-  const [monitorEpoch, setMonitorEpoch] = useState(0);
-  if (connection.disconnected !== disconnected) {
-    setConnection({ disconnected, epoch: connection.epoch + Number(disconnected) });
+  const [connection, setConnection] = useState({
+    disconnected,
+    emulatorIdentity,
+    epoch: Number(disconnected),
+    readingEpoch: 0,
+  });
+  const changedTarget =
+    connected && connection.emulatorIdentity !== undefined && connection.emulatorIdentity !== emulatorIdentity;
+  if (connection.disconnected !== disconnected || (connected && connection.emulatorIdentity !== emulatorIdentity)) {
+    const epoch = connection.epoch + Number(disconnected || changedTarget);
+    setConnection({
+      disconnected,
+      emulatorIdentity: connected ? emulatorIdentity : connection.emulatorIdentity,
+      epoch,
+      readingEpoch: connected ? epoch : connection.readingEpoch,
+    });
   }
-  // A detail read that started before or during an observed disconnect cannot authorize Monitor after it.
-  const requestEpoch = connected || connection.epoch === 0 ? connection.epoch : undefined;
   /** This reading's re-reads: `quiet` while one is in flight or has failed; `stopped` once one has failed. */
   const [rereading, setRereading] = useState({ reading: 0, quiet: false, stopped: false });
   const quiet = rereading.reading === readings && rereading.quiet;
   const stopped = rereading.reading === readings && rereading.stopped;
 
   const query = useQuery({
-    queryKey: [...functionKey(endpoint, name), mount, generation, readings],
-    queryFn: async ({ signal }) => {
+    queryKey: [...functionKey(endpoint, name), mount, generation, readings, connection.readingEpoch],
+    queryFn: ({ signal }) => {
       if (endpoint === undefined) {
         throw new Error('The engine endpoint is not known yet.');
       }
-      return { read: await readFunction(endpoint, name, signal), epoch: requestEpoch };
+      return readFunction(endpoint, name, signal);
     },
     enabled: endpoint !== undefined,
     staleTime: 0,
@@ -366,7 +378,7 @@ export function useFunctionReading({
     structuralSharing: false,
   });
   const { refetch, isError, isFetching } = query;
-  const data = query.data?.read;
+  const data = query.data;
 
   if (quiet && isError && !stopped) {
     setRereading({ reading: readings, quiet: true, stopped: true });
@@ -392,18 +404,13 @@ export function useFunctionReading({
   }, []);
 
   const failed = isError && !quiet;
-  const needsMonitorRead =
-    monitorActive && connected && connection.epoch !== monitorEpoch && query.data?.epoch !== connection.epoch;
-  if (needsMonitorRead) {
-    setMonitorEpoch(connection.epoch);
-    refresh();
-  }
-  useReconnect(connected, failed && !needsMonitorRead, refresh);
+  useReconnect(connected, failed && connection.epoch === 0, refresh);
 
   return {
-    read: failed || needsMonitorRead ? undefined : data,
+    read: failed ? undefined : data,
     failure: failed ? failureOf(query.error, 'GetFunction') : undefined,
     loading: data === undefined && (isFetching || endpoint === undefined),
+    session: connection.epoch,
     refresh,
   };
 }
