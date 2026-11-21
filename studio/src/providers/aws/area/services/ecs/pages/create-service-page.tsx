@@ -186,6 +186,8 @@ function CreateServiceForm({ cluster, connection }: { cluster: string; connectio
   const form = { ...held, revision: held.revision ?? revisionList.choices?.[0] };
   const errors = tried ? createServiceMessages(form) : {};
   const noFamilies = familyList.choices?.length === 0 && !familyList.more && !familyList.loading && !familyList.failure;
+  const familyUnavailable =
+    familyList.failure?.kind === 'not-implemented' && familyList.failure.operation === families.operation;
   const unsupported = unsupportedReason !== undefined;
   const submitReasonId = unsupported ? unsupportedReasonId : noFamilies ? familyReasonId : undefined;
   const nameError = errors.name ?? (duplicateName === form.name.trim() ? RENAME_SERVICE : undefined);
@@ -202,6 +204,10 @@ function CreateServiceForm({ cluster, connection }: { cluster: string; connectio
       return;
     }
     setTried(true);
+    if (familyUnavailable) {
+      familyRef.current?.focus();
+      return;
+    }
     setDuplicateName(undefined);
     const request = createServiceRequestOf(cluster, form);
     if (request === undefined) {
@@ -330,9 +336,9 @@ function CreateServiceForm({ cluster, connection }: { cluster: string; connectio
                   connection={connection}
                   focusRef={familyRef}
                   value={form.family}
-                  placeholder="Choose a family"
+                  placeholder={familyUnavailable ? 'Family selection unavailable' : 'Choose a family'}
                   unavailable={noFamilies}
-                  error={noFamilies ? undefined : errors.family}
+                  error={noFamilies || familyUnavailable ? undefined : errors.family}
                   empty={
                     <span id={familyReasonId}>
                       No task definitions.{' '}
@@ -354,8 +360,14 @@ function CreateServiceForm({ cluster, connection }: { cluster: string; connectio
                   connection={connection}
                   focusRef={revisionRef}
                   value={form.revision}
-                  placeholder={form.family === undefined ? 'Choose a family first' : 'Choose a revision'}
-                  error={errors.revision}
+                  placeholder={
+                    familyUnavailable
+                      ? 'No revision selected'
+                      : form.family === undefined
+                        ? 'Choose a family first'
+                        : 'Choose a revision'
+                  }
+                  error={familyUnavailable ? undefined : errors.revision}
                   empty={
                     <>
                       This family has no active Fargate revisions.{' '}
