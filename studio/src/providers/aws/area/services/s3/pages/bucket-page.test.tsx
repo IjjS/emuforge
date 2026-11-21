@@ -2300,6 +2300,67 @@ describe('bucket event notifications', () => {
     expect(notificationFlashes('Event notification deleted')).toHaveLength(0);
   });
 
+  it('uses a current missing-bucket verification result instead of cached Properties', async () => {
+    const original = notificationDocument(queueRule('to-queue'));
+    await openBucket({ notification: () => original });
+    expect(notificationTable().findBodyCell(1, 1)?.getElement()).toHaveTextContent('to-queue');
+    expect(screen.getByRole('link', { name: 'Open queue' })).toBeVisible();
+    expect(screen.getByRole('link', { name: 'Create event notification' })).toBeVisible();
+    const bucketReads = engine.lists.length;
+    const missing = errorAnswer(404, 'NoSuchBucket', 'Bucket missing');
+    engine.writeNotifications = () => {
+      engine.parts.notification = () => missing;
+      return { status: 204, body: '' };
+    };
+
+    confirmDelete(await startDelete());
+    expect(await screen.findByText('Bucket not found')).toBeVisible();
+    expect(engine.lists).toHaveLength(bucketReads);
+    expect(createWrapper(document.body).findAllTables()).toHaveLength(0);
+    expect(screen.queryByRole('link', { name: 'Open queue' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Edit to-queue' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Delete to-queue' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Create event notification' })).toBeNull();
+    expect(notificationFlashes('Event notification deleted')).toHaveLength(0);
+
+    const priorReads = engine.notificationReads.length;
+    const retry = screen.getByRole('button', { name: 'Check again' });
+    expect(retry).toBeEnabled();
+    fireEvent.click(retry);
+    await waitFor(() => {
+      expect(
+        notificationAlert('Could not verify the saved configuration')?.findContent().getElement(),
+      ).toHaveTextContent('The bucket was not found during verification.');
+    });
+    expect(engine.notificationReads.slice(priorReads).map((request) => request.method)).toEqual(['GET']);
+    expect(engine.notificationWrites).toHaveLength(1);
+    expect(notificationFlashes('Event notification deleted')).toHaveLength(0);
+  });
+
+  it('keeps the refreshed Properties if an earlier verification reports a missing bucket', async () => {
+    const verify = held();
+    await openBucket({ notification: () => notificationDocument(queueRule('to-queue')) });
+    engine.writeNotifications = () => {
+      engine.parts.notification = () => verify.answer;
+      return { status: 204, body: '' };
+    };
+    confirmDelete(await startDelete());
+    await waitFor(() => expect(engine.notificationReads).toHaveLength(3));
+    engine.parts.notification = () => notificationDocument(queueRule('fresh-rule'));
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await waitFor(() => expect(notificationTable().findBodyCell(1, 1)?.getElement()).toHaveTextContent('fresh-rule'));
+
+    verify.release(errorAnswer(404, 'NoSuchBucket', 'Earlier bucket missing'));
+    expect(await screen.findByRole('button', { name: 'Check again' })).toBeEnabled();
+    expect(screen.queryByText('Bucket not found')).toBeNull();
+    expect(notificationTable().findBodyCell(1, 1)?.getElement()).toHaveTextContent('fresh-rule');
+    expect(
+      notificationAlert('Could not verify the saved configuration')?.findContent().getElement(),
+    ).not.toHaveTextContent('The bucket was not found during verification.');
+    expect(engine.notificationWrites).toHaveLength(1);
+    expect(notificationFlashes('Event notification deleted')).toHaveLength(0);
+  });
+
   it('names the unavailable verification GET and disables the deletion recovery action', async () => {
     await openBucket({ notification: () => notificationDocument(queueRule('to-queue')) });
     engine.writeNotifications = () => {
@@ -2323,40 +2384,48 @@ describe('bucket event notifications', () => {
   });
 
   describe.each(['leave', 'switch target'])('while deleting, %s', (cause) => {
-    it.each(['pre-write read', 'verification success', 'verification failure'])('abandons a held %s', async (step) => {
-      connection.set({ ...connectedResult(), target: 'first' });
-      const original = notificationDocument(queueRule('to-queue'));
-      const { router } = await openBucket({ notification: () => original });
-      const pending = held();
-      if (step === 'pre-write read') engine.parts.notification = () => pending.answer;
-      else {
-        engine.writeNotifications = () => {
-          engine.parts.notification = () => pending.answer;
-          return { status: 204, body: '' };
-        };
-      }
-      confirmDelete(await startDelete());
-      await waitFor(() => expect(engine.notificationReads).toHaveLength(step === 'pre-write read' ? 2 : 3));
-      const request = engine.notificationReads.at(-1);
-      engine.parts.notification = () => original;
-      if (cause === 'leave') await act(() => router.navigate('/'));
-      else {
-        connection.set({ ...connectedResult(), target: 'second' });
-        expect(await screen.findByRole('button', { name: 'Delete to-queue' })).toBeEnabled();
-      }
-      expect(request?.signal.aborted).toBe(true);
-      const reads = engine.notificationReads.length;
-      await act(async () => {
-        pending.release(
-          step === 'verification failure' ? errorAnswer(400, 'InvalidRequest', 'Late failure') : notificationDocument(),
-        );
-        await pending.answer;
-      });
-      expect(engine.notificationReads).toHaveLength(reads);
-      expect(engine.notificationWrites).toHaveLength(step === 'pre-write read' ? 0 : 1);
-      expect(notificationFlashes('Event notification deleted')).toHaveLength(0);
-      expect(screen.queryByRole('button', { name: 'Check again' })).toBeNull();
-      expect(router.state.location.pathname).toBe(cause === 'leave' ? '/' : PROPERTIES);
-    });
+    it.each(['pre-write read', 'verification success', 'verification failure', 'verification missing bucket'])(
+      'abandons a held %s',
+      async (step) => {
+        connection.set({ ...connectedResult(), target: 'first' });
+        const original = notificationDocument(queueRule('to-queue'));
+        const { router } = await openBucket({ notification: () => original });
+        const pending = held();
+        if (step === 'pre-write read') engine.parts.notification = () => pending.answer;
+        else {
+          engine.writeNotifications = () => {
+            engine.parts.notification = () => pending.answer;
+            return { status: 204, body: '' };
+          };
+        }
+        confirmDelete(await startDelete());
+        await waitFor(() => expect(engine.notificationReads).toHaveLength(step === 'pre-write read' ? 2 : 3));
+        const request = engine.notificationReads.at(-1);
+        engine.parts.notification = () => original;
+        if (cause === 'leave') await act(() => router.navigate('/'));
+        else {
+          connection.set({ ...connectedResult(), target: 'second' });
+          expect(await screen.findByRole('button', { name: 'Delete to-queue' })).toBeEnabled();
+        }
+        expect(request?.signal.aborted).toBe(true);
+        const reads = engine.notificationReads.length;
+        await act(async () => {
+          pending.release(
+            step === 'verification failure'
+              ? errorAnswer(400, 'InvalidRequest', 'Late failure')
+              : step === 'verification missing bucket'
+                ? errorAnswer(404, 'NoSuchBucket', 'Late missing bucket')
+                : notificationDocument(),
+          );
+          await pending.answer;
+        });
+        expect(engine.notificationReads).toHaveLength(reads);
+        expect(engine.notificationWrites).toHaveLength(step === 'pre-write read' ? 0 : 1);
+        expect(notificationFlashes('Event notification deleted')).toHaveLength(0);
+        expect(screen.queryByRole('button', { name: 'Check again' })).toBeNull();
+        expect(screen.queryByText('Bucket not found')).toBeNull();
+        expect(router.state.location.pathname).toBe(cause === 'leave' ? '/' : PROPERTIES);
+      },
+    );
   });
 });

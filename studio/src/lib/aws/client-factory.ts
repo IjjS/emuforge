@@ -143,9 +143,13 @@ type HttpRequest = Parameters<FetchHttpHandler['handle']>[0];
 class EngineRequestHandler extends FetchHttpHandler {
   private readonly address: EngineAddress;
 
-  constructor(address: EngineAddress) {
+  constructor(address: EngineAddress, rejectWriteRedirects: boolean) {
     super({
-      requestInit: (request): RequestInit => (UNCACHED_METHODS.has(request.method) ? { cache: 'no-store' } : {}),
+      requestInit: (request): RequestInit => ({
+        ...(UNCACHED_METHODS.has(request.method) && { cache: 'no-store' }),
+        // Fetch follows redirects below the handler's destination guard and Smithy's retry policy.
+        ...(rejectWriteRedirects && request.method === 'PUT' && { redirect: 'error' }),
+      }),
     });
     this.address = address;
   }
@@ -198,7 +202,7 @@ type FactorySetting = (typeof FACTORY_SETTINGS)[number];
 
 // Options every client shares. Each one that the SDK would otherwise resolve from the environment or a shared
 // config file, and that decides where a request goes or how it is authenticated, is set here.
-function commonConfig({ endpoint }: AwsClientOptions) {
+function commonConfig({ endpoint }: AwsClientOptions, rejectWriteRedirects = false) {
   const checked = checkedEndpoint(endpoint);
   return {
     endpoint: checked.endpoint,
@@ -207,7 +211,7 @@ function commonConfig({ endpoint }: AwsClientOptions) {
     useDualstackEndpoint: false,
     useFipsEndpoint: false,
     credentials: PLACEHOLDER_CREDENTIAL,
-    requestHandler: new EngineRequestHandler(checked),
+    requestHandler: new EngineRequestHandler(checked, rejectWriteRedirects),
   } satisfies Record<Exclude<FactorySetting, 'endpointProvider' | 'extensions'>, unknown>;
 }
 
@@ -293,7 +297,7 @@ function carrySession<C extends SdkClient>(client: C, session: EngineSession, si
 }
 
 export function createS3Client(options: AwsClientOptions & { singleAttempt?: boolean }): S3Client {
-  const config = commonConfig(options);
+  const config = commonConfig(options, options.singleAttempt);
   const client = new S3Client({
     ...config,
     forcePathStyle: true,
