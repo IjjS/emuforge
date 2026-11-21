@@ -36,6 +36,8 @@ Error: Test timed out in 5000ms.
 A fourth case ("stores nothing in localStorage, …", 70 to 85 ms) fails in the same runs, after the timed-out
 case before it; whether it fails by itself or from what that case left behind is not known.
 
+- On 2026-11-21 the whole check of issue 524 at 4f41c5cf reproduced both app.test.tsx failures: the second-provider case exceeded 5000 ms and the subsequent storage case missed the AWS heading. See ../emuforge-524/output/logs/whole-retry-studio-unit-4f41c5cf.log.
+
 ## Steps to Reproduce
 
 1. Run `pm-check` in a worktree while two other heavy checks run.

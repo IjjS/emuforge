@@ -121,6 +121,7 @@ export function deleteFailedText(name: string): string {
 export const TAB_QUERIES: { tab: string; query: string; section: string }[] = [
   { tab: 'Test', query: '', section: 'Event' },
   { tab: 'Code', query: '?tab=code', section: 'Package' },
+  { tab: 'Monitor', query: '?tab=monitor', section: 'Log events' },
   { tab: 'Configuration', query: '?tab=configuration', section: 'General configuration' },
 ];
 

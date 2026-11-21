@@ -24,13 +24,14 @@ import { readFailureState, useAnnouncer } from '../components/failure-states';
 import { ReadFailure } from '../components/failures';
 import { FunctionOverview, FunctionStatusLine } from '../components/function-sections';
 import { functionStatus } from '../components/function-status';
+import { MonitorTab } from '../components/monitor-tab';
 import { quoting } from '../components/quoting';
 import { TestTab } from '../components/test-tab';
 import { FUNCTIONS_PATH, functionTabHref, TAB_PARAMETER, tabOf } from '../format';
 import { isChanging, useFunctionReading, useInvoke, type Invocation } from '../queries';
 
 // A Lambda function's own page (issue 84, requirement R5, R10; issue 516, design "The function's page"): its header
-// with "Refresh" and "Delete", "Function overview", then the tabs "Test", "Code" and "Configuration", each addressed
+// with "Refresh" and "Delete", "Function overview", then the tabs, each addressed
 // by the query of the function's one address (`?tab=`), so the page stays mounted across them. Every value from the
 // engine or the emulator is rendered as text, each as the kind of value it is (issue 467, requirement R6). The `h1`
 // has no description but the status line (issue 467, R3): the area's frame says where the function is.
@@ -51,16 +52,27 @@ interface FunctionTabsProps {
   eventText: string;
   onEventTextChange: (text: string) => void;
   invoke: Invocation;
+  active: ReturnType<typeof tabOf>;
+  onMonitorRefreshSettled: ((message: string) => void) | undefined;
 }
 
 /**
- * "Test", "Code", "Configuration": the active one is read from `?tab=`, and choosing one changes the query alone, as
+ * The active tab is read from `?tab=`, and choosing one changes the query alone, as
  * a new entry of the history. Cloudscape renders only the active tab's content, so what "Test" keeps lives here.
  */
-function FunctionTabs({ name, fn, connection, ready, eventText, onEventTextChange, invoke }: FunctionTabsProps) {
+function FunctionTabs({
+  name,
+  fn,
+  connection,
+  ready,
+  eventText,
+  onEventTextChange,
+  invoke,
+  active,
+  onMonitorRefreshSettled,
+}: FunctionTabsProps) {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
-  const active = tabOf(searchParams.get(TAB_PARAMETER));
+  const endpoint = connection.engineOrigin;
   const handleChange = useCallback(
     ({ detail }: { detail: TabsProps.ChangeDetail }) => {
       if (detail.activeTabHref !== undefined) {
@@ -83,6 +95,24 @@ function FunctionTabs({ name, fn, connection, ready, eventText, onEventTextChang
       label: 'Code',
       href: functionTabHref(name, 'code'),
       content: <CodeTab fn={fn} name={name} connection={connection} ready={ready} />,
+    },
+    {
+      id: 'monitor',
+      label: 'Monitor',
+      href: functionTabHref(name, 'monitor'),
+      content:
+        endpoint !== undefined && connection.result?.kind === 'connected' ? (
+          <MonitorTab
+            endpoint={endpoint}
+            name={name}
+            logGroup={fn.logGroup}
+            onRefreshSettled={onMonitorRefreshSettled}
+          />
+        ) : (
+          <Container>
+            <Box textAlign="center">Monitoring data is available when the emulator is connected.</Box>
+          </Container>
+        ),
     },
     {
       id: 'configuration',
@@ -139,11 +169,16 @@ function NotFound({ name }: { name: string }) {
 export function FunctionPage({ connection, params }: ScreenPageProps) {
   useShowsResources('functions');
   const name = params['name'] ?? '';
+  const [searchParams] = useSearchParams();
+  const active = tabOf(searchParams.get(TAB_PARAMETER));
   const [announcement, announce] = useAnnouncer();
+  const connected = connection.result?.kind === 'connected';
   const reading = useFunctionReading({
     endpoint: connection.engineOrigin,
     name,
-    connected: connection.result?.kind === 'connected',
+    connected,
+    disconnected: connection.result !== undefined && connection.result.kind !== 'connected',
+    monitorActive: active === 'monitor',
   });
   const { read, failure, refresh } = reading;
   const fn = read?.found === true ? read.function : undefined;
@@ -168,17 +203,30 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
 
   // Kept from the previous render, as React's own pattern for it, so each change is announced once, in the render
   // that first shows it. What one render has to say is said as one announcement, since a newer one replaces it.
-  const [refreshing, setRefreshing] = useState(false);
+  const [refreshing, setRefreshing] = useState<'function' | 'monitor'>();
+  const handleMonitorRefreshSettled = useCallback(
+    (message: string) => {
+      setRefreshing(undefined);
+      announce(message);
+    },
+    [announce],
+  );
   const [seenStatus, setSeenStatus] = useState<{ text: string | undefined } | undefined>(undefined);
   const [seenFailureLine, setSeenFailureLine] = useState<string>();
   const failureLine = failureState?.firstText;
   const toSay: string[] = [];
-  // "Function refreshed", once the refreshed reading is shown (R8).
-  if (refreshing && read !== undefined) {
-    setRefreshing(false);
-    toSay.push(REFRESHED);
-  } else if (refreshing && failure !== undefined) {
-    setRefreshing(false);
+  if (refreshing === 'function' && (read !== undefined || failure !== undefined)) {
+    setRefreshing(undefined);
+    if (read !== undefined) {
+      toSay.push(REFRESHED);
+    }
+  } else if (refreshing === 'monitor') {
+    if (active !== 'monitor') {
+      setRefreshing(undefined);
+    } else if (!connected || failure !== undefined || read?.found === false) {
+      setRefreshing(undefined);
+      toSay.push('Monitor could not be refreshed');
+    }
   }
   // A change of the status, once (R5.2): its new text, or "Function ready" when it clears; the first status read is
   // shown, not announced.
@@ -200,7 +248,7 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
   }
 
   const handleRefresh = () => {
-    setRefreshing(true);
+    setRefreshing(active === 'monitor' ? 'monitor' : 'function');
     refresh();
   };
 
@@ -233,6 +281,8 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
           eventText={eventText}
           onEventTextChange={setEventText}
           invoke={invoke}
+          active={active}
+          onMonitorRefreshSettled={refreshing === 'monitor' ? handleMonitorRefreshSettled : undefined}
         />
       </SpaceBetween>
     );
