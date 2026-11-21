@@ -50,7 +50,6 @@ const RUNTIME_MIN_WIDTH = '18ch';
 const FILTER_LABEL = 'Search by attributes or search by keyword';
 const SELECT_FIRST = 'Select a function first';
 const WAIT_FOR_LIST = 'Wait for the current function list to load.';
-const WAIT_FOR_EMULATOR = 'Wait for the emulator to connect.';
 const REFRESHED = 'Function list refreshed';
 const NO_MORE = 'No more functions';
 
@@ -239,14 +238,13 @@ export function FunctionListPage({ connection }: { connection: AreaConnection })
     deleting !== undefined &&
     (connectionChanged ||
       emulatorChanged ||
-      !connected ||
       deleting.endpoint !== connection.engineOrigin ||
       !loaded ||
       listing.failure !== undefined ||
       !deleting.names.every((name) => selected.some((fn) => fn.name === name)));
   const canSubmitDeletion = useCallback(
-    () => !confirmationExpired && deleting?.revision === connectionRevision.current && isEmulatorCurrent(),
-    [confirmationExpired, deleting, isEmulatorCurrent],
+    () => connected && !confirmationExpired && deleting?.revision === connectionRevision.current && isEmulatorCurrent(),
+    [connected, confirmationExpired, deleting, isEmulatorCurrent],
   );
 
   const startListing = useCallback(() => {
@@ -340,7 +338,6 @@ export function FunctionListPage({ connection }: { connection: AreaConnection })
     ({ detail }: { detail: ButtonDropdownProps.ItemClickDetails }) => {
       if (
         detail.id === 'delete' &&
-        connected &&
         selected.length > 0 &&
         listing.failure === undefined &&
         network.revision === connectionRevision.current &&
@@ -355,7 +352,6 @@ export function FunctionListPage({ connection }: { connection: AreaConnection })
       }
     },
     [
-      connected,
       selected,
       listing.failure,
       network.revision,
@@ -471,10 +467,8 @@ export function FunctionListPage({ connection }: { connection: AreaConnection })
                 <ButtonDropdown
                   ref={actionsRef}
                   items={[{ id: 'delete', text: 'Delete' }]}
-                  disabled={!connected || selected.length === 0 || listing.failure !== undefined}
-                  disabledReason={
-                    !connected ? WAIT_FOR_EMULATOR : state.kind === 'loading' ? WAIT_FOR_LIST : SELECT_FIRST
-                  }
+                  disabled={selected.length === 0 || listing.failure !== undefined}
+                  disabledReason={state.kind === 'loading' ? WAIT_FOR_LIST : SELECT_FIRST}
                   onItemClick={handleAction}
                 >
                   Actions

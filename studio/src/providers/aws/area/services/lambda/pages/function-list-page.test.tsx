@@ -1082,8 +1082,16 @@ describe('loading and empty', () => {
           expect(visibleDialog()).toBeUndefined();
           expect(navigator.onLine).toBe(true);
           expect(onlineManager.isOnline()).toBe(true);
-          expect(isDisabled(deletionMenu().findNativeButton().getElement())).toBe(true);
+          const stopped = await confirmDialog();
+          act(() => stopped.input.setInputValue('confirm'));
+          expect(stopped.submit.getElement()).toBeDisabled();
+          expect(stopped.submit.getElement()).toHaveAccessibleDescription(
+            'Wait for the emulator to connect before deleting functions.',
+          );
+          fireEvent.keyDown(stopped.input.findNativeInput().getElement(), { key: 'Enter', keyCode: 13 });
           expect(engine.deletes).toEqual([]);
+          act(() => stopped.cancel.click());
+          await waitFor(() => expect(visibleDialog()).toBeUndefined());
         }
         engine.functions = [{ ...NODE, description: 'Replacement orders' }];
         let holdListing = true;
