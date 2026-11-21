@@ -45,6 +45,12 @@ import type { RequestFailure } from '../../../../../../lib/aws/request';
 type Action = 'attach' | 'detach' | 'delete';
 type Dialog = { action: 'detach'; target: AttachmentTarget } | { action: 'attach' | 'delete' };
 type VolumeMutation = AttachmentChange | { action: 'delete' };
+const TIMEOUT_DETAIL = 'The details below show the latest state reported by the emulator.';
+const timeoutHeadings = {
+  attach: 'Attachment confirmation timed out',
+  detach: 'Detachment confirmation timed out',
+};
+
 const actions = {
   attach: { operation: VOLUME_OPERATIONS.attachVolume, label: 'Attach volume' },
   detach: { operation: VOLUME_OPERATIONS.detachVolume, label: 'Detach volume' },
@@ -177,6 +183,9 @@ function VolumeVisit({
   const volume = read?.found === true ? read.volume : undefined;
   const failureState = readFailure === undefined ? undefined : readFailureState(readFailure, connection, 'volume');
   const [seenFailure, setSeenFailure] = useState<string>();
+  const [announcedTimeout, setAnnouncedTimeout] = useState<AttachmentChange>();
+  const expiredChange = settlement?.expired === true ? settlement.change : undefined;
+  const timeoutHeading = expiredChange === undefined ? undefined : timeoutHeadings[expiredChange.action];
   if (failureState?.firstText !== seenFailure) {
     setSeenFailure(failureState?.firstText);
     if (failureState !== undefined) announce(failureState.firstText);
@@ -187,6 +196,9 @@ function VolumeVisit({
     (volume === undefined || attachmentChangeConfirmed(volume, settlement.change))
   ) {
     setSettlement(undefined);
+  } else if (volume !== undefined && timeoutHeading !== undefined && expiredChange !== announcedTimeout) {
+    setAnnouncedTimeout(expiredChange);
+    announce(`${timeoutHeading}. ${TIMEOUT_DETAIL}`);
   }
 
   const open = (next: Dialog) => {
@@ -269,16 +281,9 @@ function VolumeVisit({
   } else {
     content = (
       <SpaceBetween size="l">
-        {settlement?.expired === true && (
-          <Alert
-            type="warning"
-            header={
-              settlement.change.action === 'attach'
-                ? 'Attachment confirmation timed out'
-                : 'Detachment confirmation timed out'
-            }
-          >
-            The details below show the latest state reported by the emulator.
+        {timeoutHeading !== undefined && (
+          <Alert type="warning" header={timeoutHeading}>
+            {TIMEOUT_DETAIL}
           </Alert>
         )}
         <Details volume={volume} />
