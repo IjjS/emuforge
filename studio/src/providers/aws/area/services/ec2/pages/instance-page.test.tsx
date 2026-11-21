@@ -414,12 +414,29 @@ describe("an instance's page", () => {
       volume: { id: 'vol-1', size: 16, state: 'available', attachments: [] },
     });
     const router = open(pathOf('i-0full'));
-    const link = await screen.findByRole('link', { name: 'vol-1' });
-    expect(screen.getByRole('heading', { level: 1, name: 'web-1' })).toBeInTheDocument();
-    expect(await screen.findByText('These instances are in your local emulator')).toBeInTheDocument();
-    expect(link).toHaveAttribute('href', '/aws/ec2/volumes/volume/vol-1');
-    fireEvent.click(link);
-    await screen.findByRole('heading', { name: 'Volume details' });
+    const volumes = await waitFor(() => {
+      const table = PAGE.findContentLayout()?.findContent().findAllTables()[1];
+      if (table === undefined) throw new Error('Missing instance volumes table');
+      return table;
+    });
+    expect(volumes.findHeaderSlot()?.findHeader()?.findHeadingText().getElement()).toHaveTextContent('Volumes');
+    const link = volumes.findBodyCell(1, 2)?.findLink();
+    if (link == null) throw new Error('Missing linked volume ID');
+    expect(link.getElement()).toHaveAccessibleName('vol-1');
+    expect(link.getElement()).toHaveAttribute('href', '/aws/ec2/volumes/volume/vol-1');
+    const heading = PAGE.findContentLayout()?.findHeader()?.findHeader()?.findHeadingText().getElement();
+    expect(heading?.closest('h1')).toBeVisible();
+    expect(heading).toHaveTextContent('web-1');
+    await waitFor(() => {
+      const notice = PAGE.find('[aria-label="Local emulator notice"]')?.findAlert();
+      expect(notice?.findHeader()?.getElement()).toHaveTextContent('These instances are in your local emulator');
+    });
+
+    fireEvent.click(link.getElement());
+    await waitFor(() => {
+      const detail = PAGE.findContentLayout()?.findContent().findContainer();
+      expect(detail?.findHeader()?.findHeader()?.findHeadingText().getElement()).toHaveTextContent('Volume details');
+    });
     expect(router.state.location.pathname).toBe('/aws/ec2/volumes/volume/vol-1');
     expect(getVolume).toHaveBeenCalledWith(ENGINE, 'vol-1', expect.any(AbortSignal));
     expect(pairs()).toMatchObject({ 'Volume ID': 'vol-1', Size: '16 GiB', State: 'available' });
