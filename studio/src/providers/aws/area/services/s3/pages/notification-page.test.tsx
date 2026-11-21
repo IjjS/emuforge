@@ -396,7 +396,13 @@ it('shows the loading state, retries a failed read, and handles a missing bucket
   const held = heldResponse();
   engine.read = () => held.promise;
   open();
-  expect(await screen.findByText('Loading event notifications')).toBeVisible();
+  await waitFor(() => {
+    const loading = createWrapper(screen.getByRole('main'))
+      .findAllContainers()
+      .map((container) => container.findContent().findStatusIndicator())
+      .find((indicator) => indicator !== null);
+    expect(loading?.getElement()).toHaveTextContent('Loading event notifications');
+  });
   held.resolve(refusal(400, 'InvalidRequest', 'Could not read this bucket'));
   expect(await screen.findByText(/Could not read this bucket/)).toBeVisible();
   expect(screen.queryByRole('textbox', { name: 'Notification name' })).toBeNull();
@@ -700,6 +706,42 @@ it.each(['Create', 'Edit'])('%s focuses the unavailable verification GET and dis
   expect(engine.reads).toHaveLength(reads);
   expect(engine.writes).toHaveLength(1);
   expect(notificationFlashes('Event notification saved')).toHaveLength(0);
+});
+
+it('sends one configuration PUT when the applied write loses its response and preserves a later external edit', async () => {
+  const lostResponse = heldResponse();
+  const router = open();
+  await loaded();
+  fill();
+
+  engine.write = (body) => {
+    engine.document = body;
+    return engine.writes.length === 1 ? lostResponse.promise : new Response(null, { status: 204 });
+  };
+  fireEvent.click(createButton());
+  await waitFor(() => expect(engine.writeRequests).toHaveLength(1));
+  await waitFor(() => expect(engine.document).toContain('<Id>new</Id>'));
+
+  const externalConfiguration = engine.document.replace(
+    '</NotificationConfiguration>',
+    `${TOPIC}</NotificationConfiguration>`,
+  );
+  engine.document = externalConfiguration;
+  lostResponse.resolve(refusal(504, 'EmulatorTimeout', 'The write response was lost'));
+
+  const retry = await screen.findByRole('button', { name: 'Check again' });
+  expect(engine.writeRequests).toHaveLength(1);
+  expect(engine.reads).toHaveLength(2);
+  expect(engine.document).toBe(externalConfiguration);
+  expect(notificationFlashes('Event notification saved')).toHaveLength(0);
+
+  fireEvent.click(retry);
+  await waitFor(() => expect(observedTable()?.findBodyCell(1, 1)?.getElement()).toHaveTextContent('topic'));
+  expect(engine.reads.slice(2).map((request) => request.method)).toEqual(['GET']);
+  expect(engine.writeRequests.map((request) => request.method)).toEqual(['PUT']);
+  expect(engine.document).toBe(externalConfiguration);
+  expect(notificationFlashes('Event notification saved')).toHaveLength(0);
+  expect(router.state.location.pathname).toBe(CREATE);
 });
 
 describe.each(['leave', 'switch target'])('while saving, %s', (cause) => {

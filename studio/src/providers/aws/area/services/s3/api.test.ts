@@ -603,6 +603,23 @@ describe('the reads of a bucket’s page', () => {
     );
   });
 
+  it('does not resend a notification PUT after a session refusal and renews the session for the next GET', async () => {
+    const sessionResponse = engine.session;
+    const session = vi.fn(sessionResponse);
+    engine.session = session;
+    engine.aws = () => errorAnswer(401, 'SessionInvalid', 'Expired engine session');
+    expect(await failure(putBucketNotificationConfiguration(endpoint, 'b', {}, signal()))).toMatchObject({
+      code: 'SessionInvalid',
+    });
+    expect(engine.sent.map((request) => request.method)).toEqual(['PUT']);
+    expect(session).toHaveBeenCalledTimes(1);
+
+    engine.aws = () => xml('<NotificationConfiguration/>');
+    expect(await getBucketNotificationConfiguration(endpoint, 'b', signal())).not.toBe(NO_SUCH_BUCKET);
+    expect(engine.sent.map((request) => request.method)).toEqual(['PUT', 'GET']);
+    expect(session).toHaveBeenCalledTimes(2);
+  });
+
   it('represents an empty notification document without enabling EventBridge', async () => {
     engine.aws = () => xml('<NotificationConfiguration/>');
     const configuration = await getBucketNotificationConfiguration(endpoint, 'b', signal());
