@@ -59,7 +59,7 @@ interface Service {
   sysctls?: Record<string, string>;
   command?: string[] | null;
   environment?: Record<string, string | null>;
-  ports?: { host_ip?: string; published?: string | number; target?: number }[] | null;
+  ports?: { host_ip?: string; published?: string | number; target?: number; protocol?: string }[] | null;
   pull_policy?: string;
   volumes?: { type?: string; source?: string; target?: string; read_only?: boolean }[] | null;
   container_name?: string;
@@ -145,10 +145,10 @@ test('engine.product-configuration-names-loopback-and-the-emulator-only', async 
 
   async function checkMappings(config: Rendered, owner: string, controls: number[], low: number, high: number) {
     const actual = Object.entries(config.services ?? {}).flatMap(([service, value]) =>
-      (value.ports ?? []).map((port) => [service, port.host_ip, Number(port.published), port.target]));
+      (value.ports ?? []).map((port) => [service, port.host_ip, Number(port.published), port.target, port.protocol]));
     const ports = [...controls, ...portNumbers(low, high)].sort((a, b) => a - b);
     expect(actual.sort((a, b) => Number(a[3]) - Number(b[3]))).toEqual(
-      ports.map((port) => [owner, '127.0.0.1', port, port]));
+      ports.map((port) => [owner, '127.0.0.1', port, port, 'tcp']));
     expect(config.services?.[owner]?.sysctls?.['net.ipv4.ip_local_port_range']).toBe(`${low} ${high}`);
   }
   const productControls = [form.studioPort, form.enginePort];

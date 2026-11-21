@@ -2,7 +2,7 @@ import { CONTAINER } from './support/screen-rules';
 import { expect, startStack, test } from './support';
 import {
   clusterPath,
-  expectValueIs,
+  valueLocator,
   instanceDirect,
   instancePath,
   open,
@@ -32,6 +32,7 @@ test('studio.rds-compose-host-endpoints-match-describe', async ({ ctx, page }) =
     databaseName: 'clusterapp',
     ...login,
   });
+  expect(cluster.readerEndpoint).toBeTruthy();
   for (const row of [
     { url: instancePath(id), id, port: instance?.port, label: 'Endpoint address', address: instance?.address },
     {
@@ -45,11 +46,14 @@ test('studio.rds-compose-host-endpoints-match-describe', async ({ ctx, page }) =
     expect(row.port).toMatch(/^\d+$/);
     expect(row.address).toBeTruthy();
     await open(page, row.url, row.id);
-    await expectValueIs(page, row.label, row.address!);
-    await expectValueIs(page, 'Port', row.port!);
     const connection = page.locator(CONTAINER).filter({
       has: page.getByRole('heading', { name: 'Connection', exact: true, level: 2 }),
     });
+    await expect(valueLocator(connection, row.label)).toHaveText(row.address!);
+    await expect(valueLocator(connection, 'Port')).toHaveText(row.port!);
+    if (row.id === cluster.id) {
+      await expect(valueLocator(connection, 'Reader endpoint')).toHaveText(cluster.readerEndpoint!);
+    }
     await expect(connection.getByRole('button', { name: 'Copy Compose host endpoint' })).toBeVisible();
     await expect(connection.getByText('127.0.0.1:' + row.port, { exact: true })).toBeVisible();
     await expect(connection.getByText(/database ports published.*SQL client on the machine running Compose/)).toBeVisible();

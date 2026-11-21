@@ -280,6 +280,16 @@ test('engine.compose-check-forms-omit-database-publications', async ({ ctx }) =>
   );
   expectExit(inspect, 'zero');
   expect(JSON.parse(inspect.stdout) ?? {}).not.toHaveProperty('net.ipv4.ip_local_port_range');
+  const rangeFile = '/proc/sys/net/ipv4/ip_local_port_range';
+  const baseline = await ordinary.run(
+    ['docker', 'run', '--rm', '--pull', 'never', '--entrypoint', 'cat', ctx.emulatorImage, rangeFile],
+    STOP_BOUND_MS,
+  );
+  expectExit(baseline, 'zero');
+  const live = await ordinary.run(['docker', 'exec', owner.id, 'cat', rangeFile], STOP_BOUND_MS);
+  expectExit(live, 'zero');
+  expect(baseline.stdout.trim()).toMatch(/^\d+\s+\d+$/);
+  expect(live.stdout.trim().split(/\s+/)).toEqual(baseline.stdout.trim().split(/\s+/));
   const controls = await runAt(
     ctx,
     ctx.checkout,
