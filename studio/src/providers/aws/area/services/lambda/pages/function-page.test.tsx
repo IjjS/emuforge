@@ -1901,8 +1901,18 @@ describe('the tabs by ?tab=', () => {
 
 describe('"Delete" in the header', () => {
   async function openDialog(): Promise<HTMLElement> {
-    fireEvent.click(within(header()).getByRole('button', { name: 'Delete' }));
-    return screen.findByRole('dialog', { name: 'Delete functions' });
+    const pageHeader = PAGE.findAllHeaders().find((candidate) =>
+      candidate.findHeadingText().getElement().closest('h1'),
+    );
+    const open = pageHeader
+      ?.findActions()
+      ?.findAllButtons()
+      .find((button) => norm(button.getElement().textContent) === 'Delete');
+    if (open === undefined) {
+      throw new Error('Expected the function page Delete action');
+    }
+    open.click();
+    return waitFor(() => deletionControls().dialog.getElement());
   }
 
   function confirmAndDelete(dialog: HTMLElement) {
@@ -1914,6 +1924,106 @@ describe('"Delete" in the header', () => {
       .find((found) => norm(found.textContent) === 'Delete');
     fireEvent.click(button as HTMLElement);
   }
+
+  function deletionDialog() {
+    return PAGE.findAllModals().find(
+      (dialog) => dialog.isVisible() && norm(dialog.findHeader().getElement().textContent) === 'Delete functions',
+    );
+  }
+
+  function deletionControls() {
+    const dialog = deletionDialog();
+    const input = dialog?.findContent().findInput();
+    const actions = dialog?.findFooter()?.findAllButtons() ?? [];
+    const submit = actions.find((button) => norm(button.getElement().textContent) === 'Delete');
+    const cancel = actions.find((button) => norm(button.getElement().textContent) === 'Cancel');
+    if (!dialog || !input || !submit || !cancel) {
+      throw new Error('Expected the visible deletion dialog and its controls');
+    }
+    return { dialog, input, submit, cancel, content: dialog.findContent() };
+  }
+
+  function deleteRequests() {
+    return engine.aws
+      .filter(({ method, url }) => method === 'DELETE' && FUNCTION_PATH.test(url.pathname))
+      .map(({ url }) => FUNCTION_PATH.exec(url.pathname)?.[1]);
+  }
+
+  it('keeps deletion confirmation while the Test release reads finish independently', async () => {
+    const versions = deferredAnswer();
+    const aliases = deferredAnswer();
+    engine.answerRelease = ({ url }) => (url.pathname.endsWith('/versions') ? versions.promise : aliases.promise);
+    const { router } = await openLoaded();
+    await waitFor(() => {
+      expect(handed.test?.versions.loading).toBe(true);
+      expect(handed.test?.aliases.loading).toBe(true);
+      expect(engine.aws.filter(({ url }) => RELEASE_PATH.test(url.pathname))).toHaveLength(2);
+    });
+
+    await openDialog();
+    const { input, submit } = deletionControls();
+    expect(submit.getElement()).toBeDisabled();
+    input.setInputValue('confirm');
+    expect(submit.getElement()).toBeEnabled();
+
+    await act(async () => versions.resolve(versionAnswer('2')));
+    await waitFor(() => {
+      expect(handed.test?.versions.items).toContainEqual({ version: '2', description: 'Release 2' });
+      expect(handed.test?.aliases.loading).toBe(true);
+    });
+    expect(deletionControls().input.getInputValue()).toBe('confirm');
+    expect(deletionControls().submit.getElement()).toBeEnabled();
+
+    await act(async () => aliases.resolve(aliasAnswer('live', '2')));
+    await waitFor(() => {
+      expect(handed.test?.aliases.items).toEqual([{ name: 'live', version: '2' }]);
+    });
+    expect(deletionControls().input.getInputValue()).toBe('confirm');
+    expect(deletionControls().submit.getElement()).toBeEnabled();
+    expect(deleteRequests()).toEqual([]);
+
+    deletionControls().submit.click();
+    await waitFor(() => expect(router.state.location.pathname).toBe('/aws/lambda/functions'));
+    expect(deleteRequests()).toEqual(['orders']);
+  });
+
+  it.each(['another function', 'a reopened dialog', 'a new session on the same endpoint'] as const)(
+    'requires fresh confirmation for %s',
+    async (boundary) => {
+      const { router } = await openLoaded();
+      engine.functions.push({ name: 'payments' });
+      await openDialog();
+      deletionControls().input.setInputValue('confirm');
+      expect(deletionControls().submit.getElement()).toBeEnabled();
+
+      if (boundary === 'another function') {
+        await act(() => router.navigate(pagePath('payments')));
+      } else if (boundary === 'a reopened dialog') {
+        deletionControls().cancel.click();
+      } else {
+        connection.set(notStartedResult());
+        expect(deletionDialog()).toBeUndefined();
+        connection.set(connectedResult());
+        await screen.findByTestId('stand-in-test');
+      }
+
+      expect(deletionDialog()).toBeUndefined();
+      if (boundary === 'another function') {
+        await screen.findByTestId('stand-in-test');
+      }
+      await openDialog();
+      const { input, submit, content } = deletionControls();
+      const target = boundary === 'another function' ? 'payments' : 'orders';
+      expect(norm(content.find('li')?.getElement().textContent)).toBe(target);
+      expect(input.getInputValue()).toBe('');
+      expect(submit.getElement()).toBeDisabled();
+      fireEvent.keyDown(input.findNativeInput().getElement(), { key: 'Enter' });
+      expect(deleteRequests()).toEqual([]);
+
+      input.setInputValue('confirm');
+      expect(submit.getElement()).toBeEnabled();
+    },
+  );
 
   it('opens main’s dialog holding this one function; deleted: the list’s route with the result in its Flashbar', async () => {
     const { router } = await openLoaded();

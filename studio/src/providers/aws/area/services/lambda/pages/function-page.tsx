@@ -305,9 +305,14 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
       }
     },
   });
-  const [deleting, setDeleting] = useState(false);
+  // A confirmation belongs to the function and connection that opened the dialog.
+  const [deletion, setDeletion] = useState<{ scope: string; names: readonly [string] }>();
+  const activeDeletion = deletion?.scope === sessionScope ? deletion : undefined;
+  if (activeDeletion !== deletion) {
+    setDeletion(undefined);
+  }
   const handleDeleteClose = useCallback(() => {
-    setDeleting(false);
+    setDeletion(undefined);
   }, []);
   // Deleted: the list opens with the result. A failed delete stays here, its result in the Flashbar, and the delete
   // reads the function again, so one already gone shows "Function not found".
@@ -447,7 +452,7 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
                 {fn !== undefined && (
                   <Button
                     onClick={() => {
-                      setDeleting(true);
+                      setDeletion({ scope: sessionScope, names: [name] });
                     }}
                   >
                     Delete
@@ -466,7 +471,8 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
         </SpaceBetween>
       </ContentLayout>
       <DeleteFunctionsDialog
-        names={deleting ? [name] : NO_NAMES}
+        key={sessionScope}
+        names={activeDeletion?.names ?? NO_NAMES}
         connection={connection}
         onClose={handleDeleteClose}
         onDeleted={handleDeleted}
