@@ -105,6 +105,8 @@ test('studio.vpc-network-made-elsewhere-is-shown', async ({ ctx, page }) => {
   const vpcName = `${p}-Main`;
   const block = '10.61.0.0/16';
   const vpc = await seeded.vpc(vpcName, block, { Purpose: `Shown ${p}` });
+  const otherPrefix = checkPrefix(ctx, 'vpcinventory-control');
+  const otherVpc = await new VpcSeeded(ctx, port, otherPrefix).vpc(otherPrefix, '10.60.0.0/16');
   const a = await seeded.subnet(vpc, `${p}-a`, '10.61.1.0/24', 'us-east-1a');
   const b = await seeded.subnet(vpc, `${p}-b`, '10.61.2.0/24', 'us-east-1b');
   await seeded.publicOnLaunch(b, true);
@@ -125,8 +127,10 @@ test('studio.vpc-network-made-elsewhere-is-shown', async ({ ctx, page }) => {
       await expect(page).toHaveURL(addressOf(VPCS_PATH));
       await expect(heading(page, VPCS_H1)).toBeVisible();
       const table = listOf(page);
+      // The unfiltered list includes a VPC outside the search prefix.
+      await expectRow(table, 'VPC ID', otherVpc);
       await findBy(table, p);
-      const row = await expectRow(table, 'Name', vpcName);
+      const row = await expectRow(table, 'Name', vpcName, { only: true });
       const reported = await vpcDirect(ctx, port, vpc);
       expect(reported, 'the VPC, directly').not.toBeNull();
       expect(reported?.state, 'its state, directly').toBe('available');

@@ -1042,17 +1042,28 @@ export function listOf(page: Page): Locator {
   return page.getByRole('main').locator(TABLE).first();
 }
 
-/** Waits until `table` shows a row whose `column` is `value`; that row. */
-export async function expectRow(table: Locator, column: string, value: string): Promise<Record<string, string>> {
+/** Waits for a matching row and returns it from that observation. With `only`, it must be the sole row. */
+export async function expectRow(
+  table: Locator,
+  column: string,
+  value: string,
+  { only = false }: { only?: boolean } = {},
+): Promise<Record<string, string>> {
+  let row: Record<string, string> | undefined;
   await expect
-    .poll(async () => (await rowsOf(table)).some((row) => row[column] === value), {
-      message: `a row whose "${column}" is ${value}`,
-      timeout: STATE_BOUND_MS,
-    })
+    .poll(
+      async () => {
+        const rows = await rowsOf(table);
+        row = only && rows.length !== 1 ? undefined : rows.find((each) => each[column] === value);
+        return row !== undefined;
+      },
+      {
+        message: `${only ? 'the only row has' : 'a row has'} "${column}" equal to ${value}`,
+        timeout: STATE_BOUND_MS,
+      },
+    )
     .toBe(true);
-  const row = (await rowsOf(table)).find((each) => each[column] === value);
-  if (row === undefined) throw new Error(`the row whose "${column}" is ${value} went again`);
-  return row;
+  return row!;
 }
 
 /** Waits until `table` shows no row whose `column` is `value`. */
