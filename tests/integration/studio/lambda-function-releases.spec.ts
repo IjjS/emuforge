@@ -6,17 +6,31 @@ import { getFunctionDirect } from './services/lambda/lambda';
 import { functionPage } from './services/lambda/lambda-page';
 import { invokeWith, openOnTest } from './services/lambda/lambda-tasks';
 import {
-  chooseTarget, compareInvocation, createAlias, dialogLocator, headerAction, inCollection,
-  mapping, openAliasAction, openReleases, refusal, releaseFunction, result, success, tableParts,
+  chooseTarget,
+  compareInvocation,
+  createAlias,
+  dialogLocator,
+  headerAction,
+  inCollection,
+  mapping,
+  openAliasAction,
+  openReleases,
+  refusal,
+  releaseFunction,
+  result,
+  success,
+  tableParts,
 } from './services/lambda/lambda-releases';
 
 test('studio.lambda-publishes-function-version', async ({ ctx, page }) => {
   const { emulatorPort } = await startStack(ctx);
-  const fn = await releaseFunction(ctx, emulatorPort);
+  const fn = await releaseFunction(ctx, emulatorPort, 'rel-publish');
   await openReleases(page, fn.name);
   await expect(inCollection(page, 'Versions', tableParts.findBodyCell(1, 1))).toHaveText('$LATEST');
   await expect(inCollection(page, 'Versions', tableParts.findBodyCell(1, 2))).toHaveText('Editable');
-  await expect(inCollection(page, 'Aliases', tableParts.findHeaderSlot())).toContainText('Publish a version before creating an alias.');
+  await expect(inCollection(page, 'Aliases', tableParts.findHeaderSlot())).toContainText(
+    'Publish a version before creating an alias.',
+  );
   await inCollection(page, 'Versions', headerAction).click();
   await expect(success(page)).toBeVisible();
   const versions = await fn.versions();
@@ -32,7 +46,7 @@ test('studio.lambda-publishes-function-version', async ({ ctx, page }) => {
 
 test('studio.lambda-manages-function-alias', async ({ ctx, page }) => {
   const { emulatorPort } = await startStack(ctx);
-  const fn = await releaseFunction(ctx, emulatorPort);
+  const fn = await releaseFunction(ctx, emulatorPort, 'rel-manage');
   const { first, second } = await fn.publishTwo();
   await openReleases(page, fn.name);
   await createAlias(page, first);
@@ -55,7 +69,7 @@ test('studio.lambda-manages-function-alias', async ({ ctx, page }) => {
 
 test('studio.lambda-reports-duplicate-alias', async ({ ctx, page }) => {
   const { emulatorPort } = await startStack(ctx);
-  const fn = await releaseFunction(ctx, emulatorPort);
+  const fn = await releaseFunction(ctx, emulatorPort, 'rel-duplicate');
   const { first, second } = await fn.publishTwo();
   await fn.createAlias(first);
   await openReleases(page, fn.name);
@@ -68,7 +82,7 @@ test('studio.lambda-reports-duplicate-alias', async ({ ctx, page }) => {
 
 test('studio.lambda-invokes-selected-release', async ({ ctx, page }) => {
   const { emulatorPort } = await startStack(ctx);
-  const fn = await releaseFunction(ctx, emulatorPort);
+  const fn = await releaseFunction(ctx, emulatorPort, 'rel-invoke');
   const { first, second } = await fn.publishTwo();
   await fn.createAlias(first);
   await openOnTest(page, fn.name);
@@ -81,7 +95,7 @@ test('studio.lambda-invokes-selected-release', async ({ ctx, page }) => {
 
 test('studio.lambda-reports-deleted-invoke-target', async ({ ctx, page }) => {
   const { emulatorPort } = await startStack(ctx);
-  const fn = await releaseFunction(ctx, emulatorPort);
+  const fn = await releaseFunction(ctx, emulatorPort, 'rel-deleted');
   await fn.createAlias(await fn.publish());
   await openOnTest(page, fn.name);
   await chooseTarget(page, 'live');
@@ -97,14 +111,16 @@ async function reconnect(ctx: Ctx, page: Page, view: 'versions' | 'test') {
   test.setTimeout(240_000);
   const { emulator } = await startStack(ctx, { ownEmulator: true });
   if (!emulator) throw Error('Missing private emulator');
-  const fn = await releaseFunction(ctx, emulator.port);
+  const fn = await releaseFunction(ctx, emulator.port, view === 'versions' ? 'rel-view-restart' : 'rel-test-restart');
   const version = await fn.publish();
   await fn.createAlias(version);
   if (view === 'versions') {
     await openReleases(page, fn.name);
     await mapping(page, version);
     const versions = await fn.versions();
-    await expect(inCollection(page, 'Versions', tableParts.findBodyCell(versions.indexOf(version) + 1, 1))).toHaveText(version);
+    await expect(inCollection(page, 'Versions', tableParts.findBodyCell(versions.indexOf(version) + 1, 1))).toHaveText(
+      version,
+    );
   } else {
     await openOnTest(page, fn.name);
     await compareInvocation(page, fn, 'live', 'first-release', 'before-restart');
