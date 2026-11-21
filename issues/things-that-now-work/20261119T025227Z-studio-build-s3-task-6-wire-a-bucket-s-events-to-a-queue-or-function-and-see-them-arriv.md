@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: plan
 Issue-Key: studio|s3|bucket-event-notifications
-Issue-Check-Ids:
+Issue-Check-Ids: studio.s3-notification-queue-receives-upload
 Issue-Commit: 5dca87cc1f4351f4e61bff199ef41f16ef2210ef
 
 # Build S3 task 6: wire a bucket's events to a queue or function and see them arrive

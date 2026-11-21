@@ -6,16 +6,19 @@ import KeyValuePairs from '@cloudscape-design/components/key-value-pairs';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Table, { type TableProps } from '@cloudscape-design/components/table';
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 
 import { CopyValue } from '../../../components/copy-value';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { creationDateText } from '../../../components/format-date';
 import { useFollow } from '../../../components/use-follow';
 import { ValueText, type ValueKind } from '../../../components/value-text';
-import { NO_SUCH_BUCKET, type Bucket, type EventNotification, type NoSuchBucket, type Tag } from '../api';
-import { createEventNotificationPath, editPropertyPath, encryptionTypeLabel, type EditableProperty } from '../format';
+import { NO_SUCH_BUCKET, type Bucket, type NoSuchBucket, type Tag } from '../api';
+import { editPropertyPath, encryptionTypeLabel, type EditableProperty } from '../format';
 import type { BucketRead } from '../queries';
+import type { EditableNotification } from '../notifications';
+import { NotificationLoadUnavailable } from './notification-read-state';
+import { NotificationSection, type DeleteConsentRecovery } from './notification-section';
 import { regionText } from '../regions';
 import { sectionFailure } from './bucket-read';
 import { StateLineText } from './bucket-read-state';
@@ -67,7 +70,15 @@ function SectionHeader({ title, action }: { title: string; action?: SectionActio
 }
 
 /** A section's read that failed (R11.3): its status and first line, the line after it, and "Retry" for it alone. */
-function SectionFailure({ read, connection }: { read: BucketRead<unknown>; connection: AreaConnection }) {
+function SectionFailure({
+  read,
+  connection,
+  onRetry = read.again,
+}: {
+  read: BucketRead<unknown>;
+  connection: AreaConnection;
+  onRetry?: () => void;
+}) {
   if (read.failure === undefined) {
     return null;
   }
@@ -85,7 +96,7 @@ function SectionFailure({ read, connection }: { read: BucketRead<unknown>; conne
         )}
       </SpaceBetween>
       <Box>
-        <Button onClick={read.again}>Retry</Button>
+        <Button onClick={onRetry}>Retry</Button>
       </Box>
     </SpaceBetween>
   );
@@ -211,38 +222,42 @@ const TAG_COLUMNS: readonly Column<Tag>[] = [
   { id: 'value', header: 'Value', kind: 'text', cell: (tag) => tag.value },
 ];
 
-const NOTIFICATION_COLUMNS: readonly Column<EventNotification>[] = [
-  { id: 'name', header: 'Event name', kind: 'name', cell: (notification) => notification.name },
-  {
-    id: 'events',
-    header: 'Event types',
-    kind: 'fixed',
-    cell: (notification) => (notification.events.length === 0 ? undefined : notification.events.join(', ')),
-  },
-  { id: 'prefix', header: 'Prefix', kind: 'text', cell: (notification) => notification.prefix },
-  { id: 'suffix', header: 'Suffix', kind: 'text', cell: (notification) => notification.suffix },
-  {
-    id: 'destination-type',
-    header: 'Destination type',
-    kind: 'fixed',
-    cell: (notification) => notification.destinationType,
-  },
-  { id: 'destination', header: 'Destination', kind: 'address', cell: (notification) => notification.destination },
-];
-
 interface BucketSectionsProps {
   /** The bucket as the page's `ListBuckets` found it. */
   bucket: Bucket;
   reads: BucketSectionReads;
   connection: AreaConnection;
+  deleteNotificationDisabled: boolean;
+  notificationComparisonOnly: boolean;
+  notificationActionsHidden: boolean;
+  deleteNotificationFeedback: ReactNode;
+  deleteConsentRecovery: DeleteConsentRecovery | undefined;
+  onDeleteNotification: (target: EditableNotification) => void;
 }
 
 /**
  * The six sections of a bucket's "Properties" (R5.3; issue 480: the overview, versioning, tags, encryption, event
  * notifications and website, what the tasks a developer does locally read), in the spec's order.
  */
-export function BucketSections({ bucket, reads, connection }: BucketSectionsProps) {
+export function BucketSections({
+  bucket,
+  reads,
+  connection,
+  deleteNotificationDisabled,
+  notificationComparisonOnly,
+  notificationActionsHidden,
+  deleteNotificationFeedback,
+  deleteConsentRecovery,
+  onDeleteNotification,
+}: BucketSectionsProps) {
   const { name } = bucket;
+  const notificationRead = reads.notifications;
+  const [notificationRetryRequested, setNotificationRetryRequested] = useState(false);
+  function retryNotifications() {
+    setNotificationRetryRequested(true);
+    notificationRead.again();
+  }
+  const notificationsUnavailable = notificationRead.failure?.kind === 'not-implemented';
   return (
     <SpaceBetween size="l">
       <Container header={<SectionHeader title="Bucket overview" />}>
@@ -285,15 +300,28 @@ export function BucketSections({ bucket, reads, connection }: BucketSectionsProp
           { label: 'Bucket Key', kind: 'fixed', value: bucketKey },
         ]}
       />
-      <TableSection
-        title="Event notifications"
-        action={{ label: 'Create event notification', href: createEventNotificationPath(name) }}
-        read={reads.notifications}
-        connection={connection}
-        rows={({ notifications }) => notifications}
-        columns={NOTIFICATION_COLUMNS}
-        empty={{ title: 'No event notifications', text: 'This bucket sends no event notifications.' }}
-      />
+      {notificationComparisonOnly ? (
+        deleteNotificationFeedback
+      ) : (
+        <NotificationSection
+          bucket={name}
+          configuration={notificationRead.failure === undefined ? answered(notificationRead) : undefined}
+          loading={notificationRead.loading}
+          failure={
+            notificationsUnavailable ? (
+              <NotificationLoadUnavailable focus={notificationRetryRequested} />
+            ) : notificationRead.failure === undefined ? undefined : (
+              <SectionFailure read={notificationRead} connection={connection} onRetry={retryNotifications} />
+            )
+          }
+          unsupported={notificationsUnavailable}
+          feedback={deleteNotificationFeedback}
+          consentRecovery={deleteConsentRecovery}
+          deleteDisabled={deleteNotificationDisabled}
+          hideRuleActions={notificationActionsHidden}
+          onDelete={onDeleteNotification}
+        />
+      )}
       <FieldsSection
         title="Static website hosting"
         action={edit(name, 'website')}

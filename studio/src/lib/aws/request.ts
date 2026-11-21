@@ -1,4 +1,4 @@
-import { EngineSessionError } from './engine-session';
+import { EngineCommandSessionRefusal, EngineSessionError } from './engine-session';
 
 // The one mapping of a failed request of the AWS area to a screen's states, and the wait on a request's signal
 // (issue 445, requirement R4 to R6). A service's `api.ts` sends every command through `sendRequest` with the
@@ -16,7 +16,7 @@ export type RequestFailure =
   /** No answer came from the engine: the request, or the session request before it, failed at the network level. */
   | { kind: 'engine-did-not-answer'; operation: string }
   /** Any other answer: its code, or its status line when it has none, and its message when it has one. */
-  | { kind: 'other'; operation: string; code: string; message?: string };
+  | { kind: 'other'; operation: string; code: string; message?: string; sessionRefused?: true };
 
 const reportedCodes = new WeakMap<RequestFailure, string>();
 
@@ -93,6 +93,12 @@ function codeOf(answer: ErrorAnswer, status: number): string | undefined {
 export function requestFailure(operation: string, error: unknown): RequestFailure {
   if (error instanceof RequestError) {
     return error.failure;
+  }
+  if (error instanceof EngineCommandSessionRefusal) {
+    const answer = error.cause as ErrorAnswer;
+    const code = codeOf(answer, 401) ?? 'HTTP 401';
+    const message = text(answer.message);
+    return { kind: 'other', operation, code, sessionRefused: true, ...(message === undefined ? {} : { message }) };
   }
   if (error instanceof EngineSessionError) {
     return error.reason === 'unreachable'

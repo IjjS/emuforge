@@ -198,7 +198,7 @@ export async function readSection(page: Page, title: string, labels: string[] = 
   const box = sectionBox(page, title);
   if ((await box.count()) !== 1) return null;
   return box.evaluate(
-    (root, wanted) => {
+    (root, { wanted, notifications }) => {
       const norm = (s: string) => s.replace(/\s+/g, ' ').trim();
       const lines = (root as HTMLElement).innerText.split('\n').map(norm).filter(Boolean);
       const fields: Record<string, string | null> = {};
@@ -225,14 +225,26 @@ export async function readSection(page: Page, title: string, labels: string[] = 
           if (row.cells.length <= 1) continue;
           const record: Record<string, string> = {};
           headings.forEach((h, i) => {
-            if (h !== '') record[h] = norm((row.cells[i] as HTMLElement | undefined)?.innerText ?? '');
+            const cell = row.cells[i];
+            if (h !== '' && cell) record[h] = norm(cell.innerText);
+            if (!notifications || !cell) return;
+            const combined = h === 'Event name and destination';
+            // Only read displayed values, never the neighboring Edit, Delete, Copy or Open controls.
+            for (const [label, kind] of [
+              ['Event name', 'name'],
+              ['Destination', 'address'],
+            ]) {
+              if (!combined && h !== label) continue;
+              const value = cell.querySelector<HTMLElement>('.aws-area-value-' + kind);
+              record[label] = value?.checkVisibility({ visibilityProperty: true }) ? value.innerText : '';
+            }
           });
           rows.push(record);
         }
       }
       return { fields, rows, lines };
     },
-    labels,
+    { wanted: labels, notifications: title === NOTIFICATIONS },
     ACTION,
   );
 }

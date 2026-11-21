@@ -1,22 +1,28 @@
+import Alert from '@cloudscape-design/components/alert';
 import Button from '@cloudscape-design/components/button';
 import Header from '@cloudscape-design/components/header';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Tabs, { type TabsProps } from '@cloudscape-design/components/tabs';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router';
 
+import { usePageFlash } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
 import { ValueText } from '../../../components/value-text';
 import type { ScreenPageProps } from '../../../screens';
 import { lineText, pageState, type PageState } from '../components/bucket-read';
 import { BucketLoading, BucketNotFound, BucketReadFailure } from '../components/bucket-read-state';
 import { BucketSections } from '../components/bucket-sections';
+import { NotificationChangeStatus } from '../components/notification-change-status';
+import { DeleteNotificationDialog } from '../components/notification-section';
 import { ObjectsBucketGone } from '../components/objects-states';
 import { ObjectsTab } from '../components/objects-tab';
 import { useAnnouncer } from '../components/use-announcer';
 import { anySectionMissing, useBucketSections } from '../components/use-bucket-sections';
 import { bucketPropertiesPath, objectsPath } from '../format';
-import type { Bucket } from '../api';
+import { NO_SUCH_BUCKET, type Bucket, type NoSuchBucket, type NotificationConfiguration } from '../api';
+import type { EditableNotification } from '../notifications';
+import { useNotificationChange } from '../use-notification-change';
 import { useBucketLookup } from '../queries';
 
 // S1, a general purpose bucket's own page (issue 256, requirement R4, R5, R9.1, R10, R11; issue 480): two tabs,
@@ -25,6 +31,7 @@ import { useBucketLookup } from '../queries';
 // requirement R6). The `h1` has no description: the area's frame says where the bucket is (issue 467, R3).
 
 const REFRESHED = 'Bucket refreshed';
+const DELETE_CONFIRMATION_EXPIRED = 'Delete confirmation expired. No deletion was sent.';
 
 const OBJECTS_TAB = 'objects';
 const PROPERTIES_TAB = 'properties';
@@ -56,22 +63,126 @@ export function BucketPage({ connection, params }: ScreenPageProps) {
     generation: lookup.generation,
     enabled: found.kind === 'loaded' && tab === PROPERTIES_TAB,
   });
+  const flash = usePageFlash();
+  const [deleting, setDeleting] = useState<EditableNotification>();
+  const [expiredConsent, setExpiredConsent] = useState<{ target: EditableNotification; generation: number }>();
+  const expiryFocus = useRef(false);
+  useEffect(() => {
+    if (expiredConsent === undefined) return;
+    expiryFocus.current = true;
+    const yieldFocus = () => {
+      expiryFocus.current = false;
+    };
+    const events = ['keydown', 'pointerdown', 'wheel'] as const;
+    for (const event of events) document.addEventListener(event, yieldFocus, true);
+    return () => {
+      yieldFocus();
+      for (const event of events) document.removeEventListener(event, yieldFocus, true);
+    };
+  }, [expiredConsent]);
+  const takeExpiryFocus = useCallback(() => {
+    const shouldRestore = expiryFocus.current && document.activeElement === document.body;
+    expiryFocus.current = false;
+    return shouldRestore;
+  }, []);
+  const connected = connection.result?.kind === 'connected';
+  const down = connection.result !== undefined && !connected;
+  const [observed, setObserved] = useState<{ generation: number; value: NotificationConfiguration | NoSuchBucket }>();
+  const deletion = useNotificationChange(
+    connection.engineOrigin,
+    name,
+    down,
+    () => {
+      setObserved(undefined);
+      sections.notifications.again();
+      flash.show([{ type: 'success', content: 'Event notification deleted' }]);
+    },
+    (value) => setObserved({ generation: lookup.generation, value }),
+  );
+  const verifyingDelete =
+    deletion.state.kind === 'unconfirmed' || (deletion.state.kind === 'pending' && deletion.state.checkingAgain);
+  const currentObservation =
+    !down && verifyingDelete && observed?.generation === lookup.generation ? observed.value : undefined;
+  const showDeleteComparison =
+    currentObservation !== undefined &&
+    currentObservation !== NO_SUCH_BUCKET &&
+    deletion.state.kind === 'unconfirmed' &&
+    deletion.state.observed !== undefined;
+  const notificationRead =
+    currentObservation === undefined
+      ? sections.notifications
+      : { ...sections.notifications, value: currentObservation, loading: false, failure: undefined };
+
+  function viewCurrentNotifications() {
+    deletion.clear();
+    setObserved(undefined);
+    sections.notifications.again();
+  }
+  const deleteDisabled =
+    deletion.locked ||
+    deletion.readFailed ||
+    deletion.state.kind === 'changed' ||
+    deletion.state.kind === 'missing' ||
+    down;
+  const displayedSections = { ...sections, notifications: notificationRead };
   const state: PageState<Bucket> =
-    found.kind === 'loaded' && tab === PROPERTIES_TAB && anySectionMissing(sections) ? { kind: 'not-found' } : found;
+    found.kind === 'loaded' && tab === PROPERTIES_TAB && anySectionMissing(displayedSections)
+      ? { kind: 'not-found' }
+      : found;
+
+  const deleteFeedbackRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (deletion.state.kind !== 'unconfirmed') {
+      deleteFeedbackRef.current?.scrollIntoView?.({ block: 'nearest' });
+    }
+  }, [deletion.state, state.kind]);
+
+  const expiryRecovery =
+    expiredConsent !== undefined &&
+    connected &&
+    lookup.generation > expiredConsent.generation &&
+    (sections.notifications.value !== undefined || sections.notifications.failure !== undefined)
+      ? { target: expiredConsent.target, takeFocus: takeExpiryFocus }
+      : undefined;
+  const expiryNotice = tab === PROPERTIES_TAB && expiredConsent !== undefined && (
+    <Alert type="info">{DELETE_CONFIRMATION_EXPIRED}</Alert>
+  );
+
+  const deleteFeedback = tab === PROPERTIES_TAB && deletion.state.kind !== 'idle' && (
+    <div ref={deleteFeedbackRef} aria-live="polite">
+      <NotificationChangeStatus
+        change={deletion}
+        connection={connection}
+        action="Deleting"
+        showObserved={currentObservation !== undefined}
+        {...(observed === undefined || observed.value === NO_SUCH_BUCKET
+          ? {}
+          : { onViewCurrent: viewCurrentNotifications })}
+        onRefresh={() => {
+          deletion.clear();
+          setObserved(undefined);
+          refresh();
+        }}
+      />
+    </div>
+  );
 
   // Kept from the previous render, as React's own pattern for it: what was last seen of the read and the connection,
   // so each change is acted on once, in the render that first shows it.
   const failureLine = state.kind === 'failure' ? lineText(state.view.first) : undefined;
   const [seenFailureLine, setSeenFailureLine] = useState<string>();
   const [refreshing, setRefreshing] = useState(false);
-  const connected = connection.result?.kind === 'connected';
   const [seenConnected, setSeenConnected] = useState(connected);
   // Whether the connection was not connected (a state other than "Checking") since the page last read: the emulator
   // may have restarted then, so the bucket shown may be gone.
-  const down = connection.result !== undefined && !connected;
   const [wasDown, setWasDown] = useState(down);
   if (down && !wasDown) {
     setWasDown(true);
+    if (deleting !== undefined) {
+      setExpiredConsent({ target: deleting, generation: lookup.generation });
+      setDeleting(undefined);
+      announce(DELETE_CONFIRMATION_EXPIRED);
+    }
   }
   // "Bucket refreshed", once the page's read and, on a page shown, every section's read have answered again (R5.6).
   const sectionsReading = state.kind === 'loaded' && Object.values(sections).some((read) => read.loading);
@@ -138,7 +249,27 @@ export function BucketPage({ connection, params }: ScreenPageProps) {
       id: PROPERTIES_TAB,
       label: 'Properties',
       href: propertiesPath,
-      content: <BucketSections bucket={bucket} reads={sections} connection={connection} />,
+      content: (
+        <BucketSections
+          bucket={bucket}
+          reads={displayedSections}
+          connection={connection}
+          deleteNotificationDisabled={deleteDisabled}
+          notificationComparisonOnly={showDeleteComparison}
+          notificationActionsHidden={verifyingDelete}
+          deleteNotificationFeedback={
+            <>
+              {expiryNotice}
+              {deleteFeedback}
+            </>
+          }
+          deleteConsentRecovery={expiryRecovery}
+          onDeleteNotification={(target) => {
+            setExpiredConsent(undefined);
+            setDeleting(target);
+          }}
+        />
+      ),
     },
   ];
 
@@ -157,6 +288,12 @@ export function BucketPage({ connection, params }: ScreenPageProps) {
       >
         <ValueText kind="name" value={name} />
       </Header>
+      {state.kind !== 'loaded' && (
+        <>
+          {expiryNotice}
+          {deleteFeedback}
+        </>
+      )}
       <div>
         {state.kind === 'loading' && <BucketLoading />}
         {state.kind === 'failure' && <BucketReadFailure view={state.view} onRetry={handleRetry} />}
@@ -164,6 +301,16 @@ export function BucketPage({ connection, params }: ScreenPageProps) {
           (tab === OBJECTS_TAB ? <ObjectsBucketGone name={name} /> : <BucketNotFound name={name} />)}
         {state.kind === 'loaded' && (
           <Tabs tabs={tabs(state.value)} activeTabId={tab} keyboardActivationMode="manual" onChange={handleTabChange} />
+        )}
+        {deleting !== undefined && state.kind === 'loaded' && !down && (
+          <DeleteNotificationDialog
+            target={deleting}
+            onCancel={() => setDeleting(undefined)}
+            onConfirm={() => {
+              setDeleting(undefined);
+              if (!deleteDisabled) deletion.submit({ kind: 'delete', target: deleting });
+            }}
+          />
         )}
         {announcement}
       </div>
