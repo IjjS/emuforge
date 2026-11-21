@@ -253,8 +253,8 @@ function isHttpRequest(request: unknown): request is { headers: Record<string, s
 }
 
 // Puts the session token on each request before it is signed, and answers a session refusal with one new session
-// and one resend, signed again with the new token (requirement R3-R7). The SDK's own retries run inside, unchanged.
-function carrySession<C extends SdkClient>(client: C, session: EngineSession): C {
+// and one resend, signed again with the new token (requirement R3-R7), unless this client sends single-attempt writes.
+function carrySession<C extends SdkClient>(client: C, session: EngineSession, singleAttempt = false): C {
   (client as unknown as SFNClient).middlewareStack.add(
     (next, context) => async (args) => {
       if (!isHttpRequest(args.request)) {
@@ -269,6 +269,10 @@ function carrySession<C extends SdkClient>(client: C, session: EngineSession): C
         return await next(args);
       } catch (error) {
         if (!isSessionRefusal(error)) {
+          throw error;
+        }
+        if (singleAttempt) {
+          session.forget(token);
           throw error;
         }
       }
@@ -288,15 +292,16 @@ function carrySession<C extends SdkClient>(client: C, session: EngineSession): C
   return client;
 }
 
-export function createS3Client(options: AwsClientOptions): S3Client {
+export function createS3Client(options: AwsClientOptions & { singleAttempt?: boolean }): S3Client {
   const config = commonConfig(options);
   const client = new S3Client({
     ...config,
     forcePathStyle: true,
     useArnRegion: false,
     disableS3ExpressSessionAuth: true,
+    ...(options.singleAttempt && { maxAttempts: 1 }),
   });
-  return carrySession(client, engineSession(config.endpoint));
+  return carrySession(client, engineSession(config.endpoint), options.singleAttempt);
 }
 
 export function createSfnClient(options: AwsClientOptions): SFNClient {

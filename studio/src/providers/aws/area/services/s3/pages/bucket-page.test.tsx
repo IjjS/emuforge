@@ -2078,7 +2078,9 @@ describe('bucket event notifications', () => {
     const preWrite = held();
     engine.parts.notification = () => preWrite.answer;
     confirmDelete(dialog);
-    expect(within(section('Event notifications')).getByText('Deleting event notification')).toBeVisible();
+    expect(createWrapper(section('Event notifications')).findStatusIndicator()?.getElement()).toHaveTextContent(
+      'Deleting event notification',
+    );
     preWrite.release(errorAnswer(400, 'InvalidRequest', 'Fresh read refused'));
     expect(await within(section('Event notifications')).findByText(/Fresh read refused/)).toBeVisible();
     expect(engine.notificationWrites).toEqual([]);

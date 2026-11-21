@@ -71,13 +71,15 @@ export interface BucketPageRequest {
 export const LIST_BUCKETS = 'ListBuckets';
 
 const clients = new Map<string, S3Client>();
+const notificationWriteClients = new Map<string, S3Client>();
 
-/** The area's S3 client for the engine at `endpoint`, one per endpoint for the life of the page. */
-function s3Client(endpoint: string): S3Client {
-  let client = clients.get(endpoint);
+/** Cache the regular client and the single-attempt client for each engine separately. */
+function s3Client(endpoint: string, singleAttempt = false): S3Client {
+  const cache = singleAttempt ? notificationWriteClients : clients;
+  let client = cache.get(endpoint);
   if (client === undefined) {
-    client = createS3Client({ endpoint });
-    clients.set(endpoint, client);
+    client = createS3Client({ endpoint, singleAttempt });
+    cache.set(endpoint, client);
   }
   return client;
 }
@@ -195,7 +197,13 @@ async function onBucket<Output, Result>(
 ): Promise<Result | NoSuchBucket> {
   let output: Output;
   try {
-    output = await sendRequest(operation, (abortSignal) => send(s3Client(endpoint), abortSignal), signal);
+    // Replaying a whole notification configuration can erase a change made after a lost response.
+    const singleAttempt = operation === OPERATIONS.putBucketNotificationConfiguration;
+    output = await sendRequest(
+      operation,
+      (abortSignal) => send(s3Client(endpoint, singleAttempt), abortSignal),
+      signal,
+    );
   } catch (error) {
     const code = answeredCode(error);
     if (code === NO_SUCH_BUCKET_CODE) {
