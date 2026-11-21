@@ -149,8 +149,8 @@ export async function mapping(page: Page, version: string) {
 }
 export async function openAliasAction(page: Page, action: 'UpdateAlias' | 'DeleteAlias') {
   const menu = table.findBodyCell(1, 1).findButtonDropdown();
-  await page.locator(menu.findTriggerButton().toSelector()).click();
-  await page.locator(menu.findItemById(action).toSelector()).click();
+  await inCollection(page, 'Aliases', menu.findTriggerButton()).click();
+  await inCollection(page, 'Aliases', menu.findItemById(action)).click();
 }
 export async function chooseTarget(page: Page, target: string, inDialog = false) {
   const choice = inDialog ? modalSelect : select;
