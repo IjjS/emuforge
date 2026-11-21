@@ -187,14 +187,22 @@ function flashItems() {
   return createWrapper(document.body).findFlashbar()?.findItems() ?? [];
 }
 
-function flashWithText(text: string, part: 'header' | 'content' = 'content') {
+function flashByType(type: 'success' | 'info' | 'error', previous?: Element) {
   return waitFor(() => {
-    const found = flashItems().find((item) => {
-      const element = part === 'header' ? item.findHeader() : item.findContent();
-      return element?.getElement().textContent?.includes(text);
-    });
-    if (!found) throw new Error(`No flash ${part} contains ${text}`);
-    return found;
+    const item = createWrapper(document.body)
+      .findFlashbar()
+      ?.findItemsByType(type)
+      .find((candidate) => candidate.getElement() !== previous);
+    if (!item) throw new Error(`No new ${type} flash item`);
+    return item;
+  });
+}
+
+function discardModal() {
+  return waitFor(() => {
+    const modal = createWrapper(document.body).findModal();
+    if (!modal) throw new Error('Missing discard dialog');
+    return modal;
   });
 }
 
@@ -481,18 +489,34 @@ it('keeps dirty input and returns focus on every dismissal, then discards to the
   const cancel = screen.getByRole('button', { name: 'Cancel' });
   for (const action of ['Keep editing', 'Escape', 'Close']) {
     fireEvent.click(cancel);
-    const dialog = await screen.findByRole('dialog', { name: 'Discard what you entered?' });
+    const modal = await discardModal();
+    expect(modal.findHeader().getElement()).toHaveTextContent('Discard what you entered?');
     if (action === 'Escape') {
-      fireEvent.keyDown(document.activeElement ?? dialog, { key: 'Escape', code: 'Escape', keyCode: 27 });
+      fireEvent.keyDown(document.activeElement ?? modal.getElement(), { key: 'Escape', code: 'Escape', keyCode: 27 });
+    } else if (action === 'Close') {
+      const close = modal.findDismissButton().getElement();
+      expect(close).toHaveAccessibleName('Close');
+      fireEvent.click(close);
     } else {
-      fireEvent.click(within(dialog).getByRole('button', { name: action }));
+      const footer = modal.findFooter()?.getElement();
+      if (!footer) throw new Error('Missing discard dialog footer');
+      const keep = createWrapper(footer).findAllButtons()[0]?.getElement();
+      if (!keep) throw new Error('Missing first discard dialog action');
+      expect(keep).toHaveTextContent('Keep editing');
+      fireEvent.click(keep);
     }
     expect(cancel).toHaveFocus();
     expectKept();
     expect(router.state.location.pathname).toBe(FORM);
   }
   fireEvent.click(cancel);
-  fireEvent.click(await screen.findByRole('button', { name: 'Discard' }));
+  const modal = await discardModal();
+  const footer = modal.findFooter()?.getElement();
+  if (!footer) throw new Error('Missing discard dialog footer');
+  const discard = createWrapper(footer).findAllButtons()[1]?.getElement();
+  if (!discard) throw new Error('Missing second discard dialog action');
+  expect(discard).toHaveTextContent('Discard');
+  fireEvent.click(discard);
   await waitFor(() => expect(router.state.location.pathname).toBe(CLUSTER));
   expect(calls('CreateService')).toHaveLength(0);
 });
@@ -510,9 +534,7 @@ it('sends no second create during Creating service', async () => {
   fireEvent.submit(form);
   expect(calls('CreateService')).toHaveLength(1);
   held.resolve(reply({ service: SERVICE }));
-  expect((await flashWithText('Service returned created.')).findContent()?.getElement()).toHaveTextContent(
-    'Service returned created.',
-  );
+  expect((await flashByType('success')).findContent()?.getElement()).toHaveTextContent('Service returned created.');
 });
 
 it('hands over to the returned service, keeps the flash through out-of-order refresh, and reads the service on return', async () => {
@@ -555,20 +577,24 @@ it('hands over to the returned service, keeps the flash through out-of-order ref
   gate.resolve(reply(ACTIVE));
   await waitFor(() => expect(calls('DescribeServices')).toHaveLength(1));
   service.resolve(reply({ services: [SERVICE] }));
-  expect(await screen.findByText('subnet-a')).toBeInTheDocument();
+  const details = () => createWrapper(document.body).findKeyValuePairs()?.findItems();
+  await waitFor(() => expect(details()?.[8]?.findValue()?.getElement()).toHaveTextContent('subnet-a'));
   fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
   await waitFor(() => {
     expect(calls('DescribeServices')).toHaveLength(2);
     expect(calls('DescribeClusters')).toHaveLength(4);
   });
-  refreshService.resolve(reply({ services: [SERVICE] }));
-  expect(await screen.findByText('subnet-a')).toBeInTheDocument();
+  const refreshed = { ...SERVICE, desiredCount: 7, runningCount: 7 };
+  refreshService.resolve(reply({ services: [refreshed] }));
+  await waitFor(() => expect(details()?.[2]?.findValue()?.getElement()).toHaveTextContent(/^7$/));
   await act(async () => refreshGate.resolve(reply(ACTIVE)));
   await waitFor(() => expect(client.isFetching({ queryKey: ECS_KEYS.cluster('dev') })).toBe(0));
-  expect(screen.getByRole('heading', { name: 'returned', level: 1 })).toBeInTheDocument();
-  expect((await flashWithText('Service returned created.')).findContent()?.getElement()).toHaveTextContent(
-    'Service returned created.',
-  );
+  expect(createWrapper(document.body).findHeader()?.findHeadingText().getElement()).toHaveTextContent('returned');
+  const settled = details();
+  expect(settled?.[2]?.findLabel()?.getElement()).toHaveTextContent('Desired tasks');
+  expect(settled?.[2]?.findValue()?.getElement()).toHaveTextContent(/^7$/);
+  expect(settled?.[8]?.findValue()?.getElement()).toHaveTextContent('subnet-a');
+  expect((await flashByType('success')).findContent()?.getElement()).toHaveTextContent('Service returned created.');
   const clusterLink = screen
     .getAllByRole('link', { name: 'dev' })
     .find((link) => link.getAttribute('href') === CLUSTER);
@@ -621,7 +647,7 @@ it.each([
     const { router } = open();
     await fill();
     fireEvent.click(submitButton());
-    const item = await flashWithText(detail, title === undefined ? 'header' : 'content');
+    const item = await flashByType(unsupported ? 'info' : 'error');
     await waitFor(() => expect(item.getElement()).toContainElement(document.activeElement as HTMLElement));
     if (title !== undefined) {
       expect(item.findHeader()?.getElement()).toHaveTextContent(title);
@@ -674,14 +700,16 @@ it('focuses the latest diagnostic after another refused submission', async () =>
   open();
   await fill();
   fireEvent.click(submitButton());
-  const first = await flashWithText(duplicate);
+  const first = await flashByType('error');
+  expect(first.findContent()?.getElement()).toHaveTextContent(duplicate);
   expect(first.getElement()).toContainElement(document.activeElement as HTMLElement);
   expect(document.activeElement).toHaveAccessibleDescription(expect.stringContaining(duplicate) as string);
 
   diagnostic = 'The name contains invalid characters.';
   fireEvent.change(nameInput(), { target: { value: 'corrected' } });
   fireEvent.click(submitButton());
-  const next = await flashWithText(diagnostic);
+  const next = await flashByType('error', first.getElement());
+  expect(next.findContent()?.getElement()).toHaveTextContent(diagnostic);
   expect(next.getElement()).toContainElement(document.activeElement as HTMLElement);
   expect(document.activeElement).toHaveAccessibleDescription(expect.stringContaining(diagnostic) as string);
   expect(labeledField('Service name').findError()).toBeNull();

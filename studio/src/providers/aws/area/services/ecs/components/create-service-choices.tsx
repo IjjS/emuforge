@@ -89,11 +89,11 @@ export function CreateServiceChoice<T>(props: ChoiceProps<T> & (SingleChoice<T> 
   const controls = {
     ...optional({ placeholder, invalid: error === undefined ? undefined : true }),
     disabled,
-    options: items.map(source.optionOf),
+    options: disabled ? [] : items.map(source.optionOf),
     statusType: listing.loading ? ('loading' as const) : ('finished' as const),
     loadingText: `Loading ${label.toLowerCase()}`,
     renderDropdownFooter: () =>
-      listing.more && !listing.failure && !listing.loading ? (
+      !disabled && listing.more && !listing.failure && !listing.loading ? (
         <Box padding={{ vertical: 'xs', horizontal: 's' }}>
           <Button variant="inline-link" formAction="none" onClick={listing.loadMore}>
             Load more
@@ -108,11 +108,13 @@ export function CreateServiceChoice<T>(props: ChoiceProps<T> & (SingleChoice<T> 
       <FormField label={label} {...optional({ errorText: error, description: unavailable ? empty : description })}>
         {multiple === true ? (
           <Multiselect
+            key={disabled ? 'unavailable' : 'available'}
             {...controls}
             ref={multiRef}
             selectedOptions={value.map(source.optionOf)}
             deselectAriaLabel={(option) => `Remove ${option.label ?? option.value ?? ''}`}
             onChange={({ detail }) => {
+              if (disabled) return;
               const known = [...value, ...items];
               onChange(
                 detail.selectedOptions.flatMap((option) => {
@@ -124,11 +126,13 @@ export function CreateServiceChoice<T>(props: ChoiceProps<T> & (SingleChoice<T> 
           />
         ) : (
           <Select
+            key={disabled ? 'unavailable' : 'available'}
             {...controls}
             ref={selectRef}
             dropdownRole="dialog"
             selectedOption={value === undefined ? null : source.optionOf(value)}
             onChange={({ detail }) => {
+              if (disabled) return;
               const found = items.find((item) => source.optionOf(item).value === detail.selectedOption.value);
               if (found !== undefined) {
                 onChange(found);

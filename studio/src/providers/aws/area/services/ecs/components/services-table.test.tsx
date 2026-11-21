@@ -100,28 +100,36 @@ describe('the services table', () => {
       return this.querySelector(':scope > table') ? width : 0;
     });
     vi.mocked(api.listServices).mockResolvedValue({ services: [service('api')] });
-    open();
-    await screen.findByRole('link', { name: 'api' });
-    const hint = 'Scroll sideways for task counts.';
-    const table = screen.getByRole('table');
+    const wrapper = open();
+    await waitFor(() => expect(wrapper.findTable()?.findRows()).toHaveLength(1));
+    const table = wrapper.findTable();
+    const slot = table?.findHeaderSlot()?.getElement();
+    if (!slot) throw new Error('Missing Services header slot');
+    const description = createWrapper(slot).findHeader()?.findDescription()?.getElement();
+    const nativeTable = table?.find('table')?.getElement();
 
     if (overflows) {
-      expect(screen.getByText(hint)).toBeVisible();
-      expect(table).toHaveAccessibleName('Services. Scroll sideways for task counts and more columns.');
+      expect(description).toBeVisible();
+      expect(description).toHaveTextContent('Scroll sideways for task counts.');
+      expect(nativeTable).toHaveAccessibleName('Services. Scroll sideways for task counts and more columns.');
     } else {
-      expect(screen.queryByText(hint)).not.toBeInTheDocument();
-      expect(table).toHaveAccessibleName(/^Services/);
+      expect(description).toBeUndefined();
+      expect(nativeTable).toHaveAccessibleName(/^Services/);
     }
   });
 
   it('empty → "No services" with the cluster create action', async () => {
     vi.mocked(api.listServices).mockResolvedValue({ services: [] });
-    open();
-    expect(await screen.findByText('No services')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Create service' })).toHaveAttribute(
-      'href',
-      '/aws/ecs/clusters/cluster/dev/services/create',
-    );
+    const wrapper = open();
+    const table = wrapper.findTable();
+    await waitFor(() => expect(table?.findEmptySlot()?.getElement()).toHaveTextContent('No services'));
+    const header = table?.findHeaderSlot()?.getElement();
+    if (!header) throw new Error('Missing Services header slot');
+    const action = createWrapper(header).findHeader()?.findActions()?.getElement();
+    if (!action) throw new Error('Missing Services header actions');
+    const button = createWrapper(action).findButton()?.getElement();
+    expect(button).toHaveTextContent('Create service');
+    expect(button).toHaveAttribute('href', '/aws/ecs/clusters/cluster/dev/services/create');
   });
 
   it('a failed read → the failure state with a retry', async () => {
