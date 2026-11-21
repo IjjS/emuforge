@@ -163,10 +163,10 @@ export function untilAborted<T>(pending: Promise<T>, signal: AbortSignal): Promi
 
 const mutationAuthorizations = new WeakMap<AbortSignal, () => void>();
 
-/** The browser connection ended before a mutation could finish sending its requests. */
+/** The connection ended before a mutation could finish sending its requests. */
 export class AwsMutationInterrupted extends DOMException {
-  constructor() {
-    super('The browser connection changed.', 'AbortError');
+  constructor(readonly connection: 'browser' | 'emulator' = 'browser') {
+    super(`The ${connection} connection changed.`, 'AbortError');
   }
 }
 
@@ -176,7 +176,7 @@ export class AwsMutationInterrupted extends DOMException {
  */
 export function bindAwsMutationAuthorization(
   controller: AbortController,
-  { cancelInFlight = false }: { cancelInFlight?: boolean } = {},
+  { cancelInFlight = false, isEmulatorCurrent }: { cancelInFlight?: boolean; isEmulatorCurrent?: () => boolean } = {},
 ): () => void {
   let interrupted = !navigator.onLine;
   const cancel = () => controller.abort(new AwsMutationInterrupted());
@@ -189,6 +189,8 @@ export function bindAwsMutationAuthorization(
   mutationAuthorizations.set(controller.signal, () => {
     if (interrupted || !navigator.onLine) {
       cancel();
+    } else if (isEmulatorCurrent?.() === false) {
+      controller.abort(new AwsMutationInterrupted('emulator'));
     }
   });
   return () => {

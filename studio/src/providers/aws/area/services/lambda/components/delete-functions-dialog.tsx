@@ -27,8 +27,6 @@ const CONFIRM_WORD = 'confirm';
 const CONFIRM_LABEL = 'To confirm deletion, type "confirm" in the field.';
 const DELETING = 'Deleting functions…';
 const OFFLINE_REASON = 'The browser is offline. Reconnect before deleting functions.';
-const EMPTY_INTERRUPTION =
-  'The browser connection changed before any deletion outcome was confirmed. Reopen Delete from Actions and confirm again.';
 
 function deletedText(count: number): string {
   return count === 1
@@ -45,7 +43,10 @@ function resultItems(result: DeleteResult, engineOrigin: string | undefined): Fl
     items.push({ type: 'success', content: deletedText(result.deleted.length) });
   }
   if (result.interrupted) {
-    items.push({ type: 'info', content: 'The browser connection changed. Confirm any remaining deletions again.' });
+    items.push({
+      type: 'info',
+      content: `The ${result.interrupted} connection changed. Confirm any remaining deletions again.`,
+    });
   }
   const [first, ...rest] = items;
   return first === undefined ? undefined : [first, ...rest];
@@ -65,6 +66,8 @@ export interface DeleteFunctionsDialogProps {
   onExpiredDraft?: () => void;
   /** Checks the list's connection revision before a queued React render can close an expired draft. */
   canSubmit?: () => boolean;
+  /** Captures the emulator session authorized by a list confirmation for every attempt in the batch. */
+  isEmulatorCurrent?: () => boolean;
   /** The list reports interrupted submissions even when no outcome was settled. */
   reportEmptyInterruption?: boolean;
   /** Called before removing a confirmation that contains keyboard focus. */
@@ -89,6 +92,7 @@ export function DeleteFunctionsDialog({
   confirmationExpired = false,
   onExpiredDraft,
   canSubmit,
+  isEmulatorCurrent,
   reportEmptyInterruption = false,
   onDeleted,
   onFocusedDismissal,
@@ -153,7 +157,7 @@ export function DeleteFunctionsDialog({
     }
     submitting.current = true;
     const engineOrigin = connection.engineOrigin;
-    void remove(names).then(
+    void remove(names, isEmulatorCurrent).then(
       (result) => {
         submitting.current = false;
         if (!mounted.current) {
@@ -172,7 +176,12 @@ export function DeleteFunctionsDialog({
         if (mounted.current && error instanceof AwsMutationInterrupted) {
           setTyped('');
           if (reportEmptyInterruption) {
-            flash.show([{ type: 'info', content: EMPTY_INTERRUPTION }]);
+            flash.show([
+              {
+                type: 'info',
+                content: `The ${error.connection} connection changed before any deletion outcome was confirmed. Reopen Delete from Actions and confirm again.`,
+              },
+            ]);
           }
           onClose();
         }
@@ -184,6 +193,7 @@ export function DeleteFunctionsDialog({
     pending,
     online,
     canSubmit,
+    isEmulatorCurrent,
     connection.engineOrigin,
     remove,
     names,

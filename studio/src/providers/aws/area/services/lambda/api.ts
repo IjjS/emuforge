@@ -778,7 +778,7 @@ export interface DeleteResult {
   /** The names whose `DeleteFunction` failed, each with its failure. */
   failed: { name: string; failure: LambdaFailure }[];
   /** A connection change stopped the batch after at least one outcome. */
-  interrupted?: true;
+  interrupted?: AwsMutationInterrupted['connection'];
 }
 
 /**
@@ -809,7 +809,7 @@ export async function deleteFunctions(
           signal.reason instanceof AwsMutationInterrupted &&
           (result.deleted.length > 0 || result.failed.length > 0)
         ) {
-          return { ...result, interrupted: true };
+          return { ...result, interrupted: signal.reason.connection };
         }
         throw signal.reason;
       }
