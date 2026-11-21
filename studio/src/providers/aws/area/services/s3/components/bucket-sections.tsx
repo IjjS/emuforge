@@ -17,6 +17,7 @@ import { NO_SUCH_BUCKET, type Bucket, type NoSuchBucket, type Tag } from '../api
 import { editPropertyPath, encryptionTypeLabel, type EditableProperty } from '../format';
 import type { BucketRead } from '../queries';
 import type { EditableNotification } from '../notifications';
+import { NotificationLoadUnavailable } from './notification-read-state';
 import { NotificationSection } from './notification-section';
 import { regionText } from '../regions';
 import { sectionFailure } from './bucket-read';
@@ -236,6 +237,8 @@ export function BucketSections({
   onDeleteNotification,
 }: BucketSectionsProps) {
   const { name } = bucket;
+  const notificationRead = reads.notifications;
+  const notificationsUnavailable = notificationRead.failure?.kind === 'not-implemented';
   return (
     <SpaceBetween size="l">
       <Container header={<SectionHeader title="Bucket overview" />}>
@@ -280,14 +283,16 @@ export function BucketSections({
       />
       <NotificationSection
         bucket={name}
-        configuration={reads.notifications.failure === undefined ? answered(reads.notifications) : undefined}
-        loading={reads.notifications.loading}
+        configuration={notificationRead.failure === undefined ? answered(notificationRead) : undefined}
+        loading={notificationRead.loading}
         failure={
-          reads.notifications.failure === undefined ? undefined : (
-            <SectionFailure read={reads.notifications} connection={connection} />
+          notificationsUnavailable ? (
+            <NotificationLoadUnavailable />
+          ) : notificationRead.failure === undefined ? undefined : (
+            <SectionFailure read={notificationRead} connection={connection} />
           )
         }
-        unsupported={reads.notifications.failure?.kind === 'not-implemented'}
+        unsupported={notificationsUnavailable}
         feedback={deleteNotificationFeedback}
         deleteDisabled={deleteNotificationDisabled}
         onDelete={onDeleteNotification}

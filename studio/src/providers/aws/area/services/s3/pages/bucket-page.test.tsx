@@ -1726,6 +1726,19 @@ function notificationDocument(...rules: string[]) {
   return ok(`<NotificationConfiguration>${rules.join('')}</NotificationConfiguration>`);
 }
 
+const notificationAlert = (title: string) =>
+  createWrapper(document.body)
+    .findAllAlerts()
+    .find((alert) => alert.findHeader()?.getElement().textContent === title);
+const observedTable = () =>
+  createWrapper(document.body)
+    .findAllTables()
+    .find(
+      (table) =>
+        table.findHeaderSlot()?.findHeader()?.findHeadingText().getElement().textContent ===
+        'Observed event notifications',
+    );
+
 function notificationTable() {
   const table = createWrapper(section('Event notifications')).findTable();
   if (table === null) throw new Error('Missing event notifications table');
@@ -1781,23 +1794,26 @@ describe('bucket event notifications', () => {
         '<CloudFunctionConfiguration><Id>fn</Id><CloudFunction>arn:aws:lambda:us-east-1:000000000000:function:fn:1</CloudFunction><Event>s3:ObjectCreated:Put</Event><Event>s3:ObjectRemoved:*</Event></CloudFunctionConfiguration>',
       ),
     );
-    expect(await screen.findByRole('link', { name: 'Edit unique' })).toBeVisible();
-    expect(screen.getByRole('link', { name: 'Edit fn' })).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Delete unique' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Delete fn' })).toBeEnabled();
-    expect(screen.queryByRole('link', { name: 'Edit duplicate' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Delete duplicate' })).toBeNull();
-    expect(screen.getAllByText('Read only')).toHaveLength(3);
+    await waitFor(() => expect(notificationTable().findRows()).toHaveLength(5));
     const table = notificationTable();
+    const rows = within(table.getElement());
+    expect(rows.getByRole('link', { name: 'Edit unique' })).toBeVisible();
+    expect(rows.getByRole('link', { name: 'Edit fn' })).toBeVisible();
+    expect(rows.getByRole('button', { name: 'Delete unique' })).toBeEnabled();
+    expect(rows.getByRole('button', { name: 'Delete fn' })).toBeEnabled();
+    expect(rows.queryByRole('link', { name: 'Edit duplicate' })).toBeNull();
+    expect(rows.queryByRole('button', { name: 'Delete duplicate' })).toBeNull();
+    const actions = table.findRows().map((_, index) => table.findBodyCell(index + 1, 7)?.getElement().textContent);
+    expect(actions.filter((action) => action === 'Read only')).toHaveLength(3);
     const destinations = table.findRows().map((_, index) => table.findBodyCell(index + 1, 6)?.getElement().textContent);
     expect(destinations).toContain('invalid<');
     expect(table.findBodyCell(notificationRowIndex('fn'), 2)?.getElement()).toHaveTextContent(
       's3:ObjectCreated:Put, s3:ObjectRemoved:*',
     );
-    for (const queue of screen.getAllByRole('link', { name: 'Open queue' })) {
+    for (const queue of rows.getAllByRole('link', { name: 'Open queue' })) {
       expect(queue).toHaveAttribute('href', '/aws/sqs/queues/queue/alpha-events');
     }
-    expect(screen.getByRole('link', { name: 'Open function monitor' })).toHaveAttribute(
+    expect(rows.getByRole('link', { name: 'Open function monitor' })).toHaveAttribute(
       'href',
       '/aws/lambda/functions/function/fn?tab=monitor',
     );
@@ -1881,6 +1897,58 @@ describe('bucket event notifications', () => {
     open(NOTIFICATION_EDIT.replace('~to-queue', 'to-queue'));
     expect(await screen.findByText('The notification address is invalid.')).toBeVisible();
     expect(screen.getByRole('link', { name: 'Return to Properties' })).toHaveAttribute('href', PROPERTIES);
+    expect(engine.notificationWrites).toEqual([]);
+  });
+
+  it('requires a new delete confirmation after a same-target outage even when the rule is unchanged', async () => {
+    const sameTarget = { ...connectedResult(), target: 'first' };
+    connection.set(sameTarget);
+    await openBucket({ notification: () => notificationDocument(queueRule('to-queue')) });
+    const oldModal = await startDelete();
+    const reads = engine.notificationReads.length;
+    connection.set(notStartedResult());
+    expect(notificationModal()).toBeNull();
+    expect(oldModal.getElement()).not.toBeInTheDocument();
+    connection.set(sameTarget);
+
+    await waitFor(() => {
+      expect(engine.notificationReads).toHaveLength(reads + 1);
+      expect(screen.getByRole('button', { name: 'Delete to-queue' })).toBeEnabled();
+    });
+    expect(notificationModal()).toBeNull();
+    expect(engine.notificationWrites).toEqual([]);
+
+    confirmDelete(await startDelete());
+    await waitFor(() => expect(notificationFlashes('Event notification deleted')).toHaveLength(1));
+    expect(engine.notificationWrites).toHaveLength(1);
+  });
+
+  it('keeps Properties notification-load Retry visible and unavailable after 501', async () => {
+    await openBucket({ notification: () => errorAnswer(400, 'InvalidRequest', 'Could not load notifications') });
+    const empty = notificationTable().findEmptySlot();
+    if (empty === null) throw new Error('Missing notification read failure');
+    expect(empty.getElement()).toHaveTextContent('Could not load notifications');
+    const retry = within(empty.getElement()).getByRole('button', { name: 'Retry' });
+    expect(retry).toBeEnabled();
+    expect(engine.notificationReads).toHaveLength(1);
+
+    engine.parts.notification = () => errorAnswer(501, 'NotImplemented', 'Operation unavailable');
+    fireEvent.click(retry);
+    await waitFor(() => {
+      const slot = notificationTable().findEmptySlot();
+      const alert = slot === null ? null : createWrapper(slot.getElement()).findAlert();
+      expect(alert?.findHeader()?.getElement()).toHaveTextContent('Not implemented by the emulator');
+      expect(alert?.findContent().getElement()).toHaveTextContent('GetBucketNotificationConfiguration');
+    });
+    const action = notificationAlert('Not implemented by the emulator')?.findActionSlot()?.getElement();
+    if (action === undefined) throw new Error('Missing notification Retry action');
+    const unavailable = within(action).getByRole('button', { name: 'Retry' });
+    expect(unavailable).toBeVisible();
+    expect(unavailable).toBeDisabled();
+    await act(async () => {
+      fireEvent.click(unavailable);
+    });
+    expect(engine.notificationReads.map((request) => request.method)).toEqual(['GET', 'GET']);
     expect(engine.notificationWrites).toEqual([]);
   });
 
@@ -2007,12 +2075,12 @@ describe('bucket event notifications', () => {
     await openBucket({ notification: () => notificationDocument(queueRule('to-queue')) });
     engine.writeNotifications = () => errorAnswer(status, code, detail);
     confirmDelete(await startDelete());
-    expect(await screen.findByText(new RegExp(detail))).toBeVisible();
+    const title = disabled ? 'Not implemented by the emulator' : 'Access denied';
+    await waitFor(() => expect(notificationAlert(title)?.findContent().getElement()).toHaveTextContent(detail));
     expect(notificationFlashes('Event notification deleted')).toHaveLength(0);
     const button = screen.getByRole('button', { name: 'Delete to-queue' });
     if (disabled) {
       expect(button).toBeDisabled();
-      expect(screen.getByText('Not implemented by the emulator')).toBeVisible();
     } else expect(button).toBeEnabled();
   });
 
@@ -2028,10 +2096,15 @@ describe('bucket event notifications', () => {
     confirmDelete(await startDelete());
     const retry = await screen.findByRole('button', { name: 'Check again' });
     expect(notificationFlashes('Event notification deleted')).toHaveLength(0);
-    if (mode === 'failure') expect(screen.getByText(/Readback refused/)).toBeVisible();
-    else {
-      expect(screen.getByText('The saved configuration differs from the requested change.')).toBeVisible();
-      expect(screen.getByRole('heading', { name: 'Observed event notifications' })).toBeVisible();
+    if (mode === 'failure') {
+      expect(
+        notificationAlert('Could not verify the saved configuration')?.findContent().getElement(),
+      ).toHaveTextContent('Readback refused');
+    } else {
+      expect(
+        notificationAlert('The saved configuration differs from the requested change.')?.getElement(),
+      ).toBeVisible();
+      expect(observedTable()?.getElement()).toBeVisible();
     }
     const reads = engine.notificationReads.length;
     engine.parts.notification = () => notificationDocument();
@@ -2107,21 +2180,25 @@ describe('bucket event notifications', () => {
         return { status: 204, body: '' };
       };
       confirmDelete(await startDelete());
-      expect(await screen.findByRole('heading', { name: 'Observed event notifications' })).toBeVisible();
-      expect(screen.getByText('old-observed-rule')).toBeVisible();
+      await waitFor(() =>
+        expect(observedTable()?.findBodyCell(1, 1)?.getElement()).toHaveTextContent('old-observed-rule'),
+      );
 
       connection.set(notStartedResult());
       if (presence === 'missing') engine.buckets = [];
       engine.parts.notification = () =>
         presence === 'missing' ? errorAnswer(404, 'NoSuchBucket', 'Bucket missing') : notificationDocument();
       connection.set(sameTarget);
-      expect(
-        await screen.findByText(
-          presence === 'missing' ? 'Bucket not found' : 'This bucket sends no event notifications.',
-        ),
-      ).toBeVisible();
-      expect(screen.queryByRole('heading', { name: 'Observed event notifications' })).toBeNull();
-      expect(screen.queryByText('old-observed-rule')).toBeNull();
+      if (presence === 'missing') {
+        expect(await screen.findByText('Bucket not found')).toBeVisible();
+      } else {
+        await waitFor(() =>
+          expect(notificationTable().findEmptySlot()?.getElement()).toHaveTextContent(
+            'This bucket sends no event notifications.',
+          ),
+        );
+      }
+      expect(observedTable()).toBeUndefined();
       expect(notificationFlashes('Event notification deleted')).toHaveLength(0);
 
       const beforeRetry = engine.notificationReads.length;
@@ -2129,7 +2206,11 @@ describe('bucket event notifications', () => {
       expect(retry).toBeEnabled();
       fireEvent.click(retry);
       if (presence === 'missing') {
-        expect(await screen.findByText('The bucket was not found during verification.')).toBeVisible();
+        await waitFor(() =>
+          expect(
+            notificationAlert('Could not verify the saved configuration')?.findContent().getElement(),
+          ).toHaveTextContent('The bucket was not found during verification.'),
+        );
         expect(notificationFlashes('Event notification deleted')).toHaveLength(0);
       } else {
         await waitFor(() => expect(notificationFlashes('Event notification deleted')).toHaveLength(1));

@@ -162,6 +162,17 @@ function notificationFlashes(message: string) {
   );
 }
 
+const notificationAlert = (title: string) =>
+  page.findAllAlerts().find((alert) => alert.findHeader()?.getElement().textContent === title);
+const observedTable = () =>
+  page
+    .findAllTables()
+    .find(
+      (table) =>
+        table.findHeaderSlot()?.findHeader()?.findHeadingText().getElement().textContent ===
+        'Observed event notifications',
+    );
+
 function field(label: string) {
   const found = page.findAllFormFields().find((candidate) => candidate.findLabel()?.getElement().textContent === label);
   if (found === undefined) throw new Error(`Missing form field ${label}`);
@@ -352,9 +363,11 @@ it.each([
   fireEvent.click(radio('Destination type', type));
   fill(arn);
   fireEvent.click(createButton());
-  expect(await screen.findByText(hint)).toBeVisible();
-  expect(screen.getByText('InvalidArgument')).toBeVisible();
-  expect(screen.getByText(/Unable to validate destination/)).toBeVisible();
+  await waitFor(() => {
+    const message = notificationAlert('Saving the event notification failed')?.findContent().getElement();
+    expect(message).toHaveTextContent(hint);
+    expect(message).toHaveTextContent('InvalidArgument: Unable to validate destination');
+  });
   expect(arnField()).toHaveValue(arn);
   expect(nameField()).toHaveValue('new');
 });
@@ -368,9 +381,9 @@ it.each([
   await loaded();
   fill();
   fireEvent.click(createButton());
-  expect(await screen.findByText(new RegExp(detail))).toBeVisible();
+  const title = disabled ? 'Not implemented by the emulator' : 'Access denied';
+  await waitFor(() => expect(notificationAlert(title)?.findContent().getElement()).toHaveTextContent(detail));
   if (disabled) {
-    expect(screen.getByText('Not implemented by the emulator')).toBeVisible();
     expect(createButton()).toBeDisabled();
   } else {
     expect(createButton()).toBeEnabled();
@@ -389,6 +402,31 @@ it('shows the loading state, retries a failed read, and handles a missing bucket
   engine.read = () => refusal(404, 'NoSuchBucket', 'Bucket missing');
   fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
   expect(await screen.findByText('Bucket not found')).toBeVisible();
+  expect(engine.writes).toEqual([]);
+});
+
+it.each(['Create', 'Edit'])('%s keeps the notification-load Retry visible and unavailable after 501', async (mode) => {
+  engine.read = () => refusal(400, 'InvalidRequest', 'Could not load notifications');
+  open(mode === 'Create' ? CREATE : editEventNotificationPath(BUCKET, 'saved'));
+  const retry = await screen.findByRole('button', { name: 'Retry' });
+  expect(retry).toBeEnabled();
+  expect(engine.reads).toHaveLength(1);
+
+  engine.read = () => refusal(501, 'NotImplemented', 'Operation unavailable');
+  fireEvent.click(retry);
+  await waitFor(() => {
+    const alert = notificationAlert('Not implemented by the emulator');
+    expect(alert?.findContent().getElement()).toHaveTextContent('GetBucketNotificationConfiguration');
+  });
+  const action = notificationAlert('Not implemented by the emulator')?.findActionSlot()?.getElement();
+  if (action === undefined) throw new Error('Missing notification Retry action');
+  const unavailable = within(action).getByRole('button', { name: 'Retry' });
+  expect(unavailable).toBeVisible();
+  expect(unavailable).toBeDisabled();
+  await act(async () => {
+    fireEvent.click(unavailable);
+  });
+  expect(engine.reads.map((request) => request.method)).toEqual(['GET', 'GET']);
   expect(engine.writes).toEqual([]);
 });
 
@@ -428,9 +466,16 @@ it.each(['failed read', 'missing rule', 'different field'])(
     const retry = await screen.findByRole('button', { name: 'Check again' });
     expect(retry).toHaveFocus();
     expect(notificationFlashes('Event notification saved')).toHaveLength(0);
-    if (mode === 'failed read') expect(screen.getByText(/Verification read failed/)).toBeVisible();
-    else expect(screen.getByText('The saved configuration differs from the requested change.')).toBeVisible();
-    if (editing) expect(screen.getByText('observed/')).toBeVisible();
+    if (mode === 'failed read') {
+      expect(
+        notificationAlert('Could not verify the saved configuration')?.findContent().getElement(),
+      ).toHaveTextContent('Verification read failed');
+    } else {
+      expect(
+        notificationAlert('The saved configuration differs from the requested change.')?.getElement(),
+      ).toBeVisible();
+    }
+    if (editing) expect(observedTable()?.findBodyCell(1, 3)?.getElement()).toHaveTextContent('observed/');
     const before = engine.reads.length;
     engine.read = () => response(engine.document);
     fireEvent.click(retry);
@@ -459,7 +504,7 @@ it.each(['missing rule', 'missing bucket'])(
     expect(await screen.findByRole('button', { name: 'Check again' })).toBeVisible();
     expect(engine.writes).toHaveLength(1);
     if (missing === 'missing rule') {
-      expect(screen.getByRole('heading', { name: 'Observed event notifications' })).toBeVisible();
+      expect(observedTable()?.getElement()).toBeVisible();
     }
 
     setConnection({ kind: 'engine-unreachable', checkedAt: 1, lastEmulatorPort: 9305 });
@@ -470,14 +515,18 @@ it.each(['missing rule', 'missing bucket'])(
       await screen.findByText(missing === 'missing rule' ? 'The notification was not found.' : 'Bucket not found'),
     ).toBeVisible();
     expect(screen.queryByRole('textbox', { name: 'Notification name' })).toBeNull();
-    expect(screen.queryByRole('heading', { name: 'Observed event notifications' })).toBeNull();
+    expect(observedTable()).toBeUndefined();
     expect(screen.getByRole('link', { name: 'Return to Properties' })).toHaveAttribute('href', PROPERTIES);
     expect(engine.reads.slice(beforeReconnect).map((request) => request.method)).toEqual(['GET']);
 
     const beforeRetry = engine.reads.length;
     engine.read = () => refusal(404, 'NoSuchBucket', 'Bucket missing');
     fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
-    expect(await screen.findByText('The bucket was not found during verification.')).toBeVisible();
+    await waitFor(() =>
+      expect(
+        notificationAlert('Could not verify the saved configuration')?.findContent().getElement(),
+      ).toHaveTextContent('The bucket was not found during verification.'),
+    );
     expect(screen.getByText('Bucket not found')).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
     expect(engine.reads.slice(beforeRetry).map((request) => request.method)).toEqual(['GET']);
@@ -504,14 +553,18 @@ it('keeps the submitted create settings and read-only recovery after the observa
   fireEvent.click(createButton());
   const retry = await screen.findByRole('button', { name: 'Check again' });
   expect(retry).toHaveFocus();
-  expect(screen.getByText('Review the configuration returned by the emulator.')).toBeVisible();
+  expect(
+    notificationAlert('The saved configuration differs from the requested change.')?.findContent().getElement(),
+  ).toHaveTextContent('Review the configuration returned by the emulator.');
 
   setConnection({ kind: 'engine-unreachable', checkedAt: 1, lastEmulatorPort: 9305 });
   const beforeReconnect = engine.reads.length;
   setConnection(connected('first'));
   expect(await screen.findByRole('heading', { name: 'Submitted notification' })).toBeVisible();
-  expect(screen.queryByRole('heading', { name: 'Observed event notifications' })).toBeNull();
-  expect(screen.queryByText('Review the configuration returned by the emulator.')).toBeNull();
+  expect(observedTable()).toBeUndefined();
+  expect(
+    notificationAlert('Could not verify the saved configuration')?.findContent().getElement(),
+  ).not.toHaveTextContent('Review the configuration returned by the emulator.');
   expect(screen.getByRole('button', { name: 'Check again' })).toHaveAccessibleDescription(
     'Select Check again to read the current configuration.',
   );

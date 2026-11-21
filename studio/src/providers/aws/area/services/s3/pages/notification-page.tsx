@@ -26,6 +26,7 @@ import { NO_SUCH_BUCKET, type NotificationConfiguration, type NoSuchBucket } fro
 import { connectionStatus, pageFailure } from '../components/bucket-read';
 import { BucketNotFound, BucketReadFailure } from '../components/bucket-read-state';
 import { NotificationChangeStatus } from '../components/notification-change-status';
+import { NotificationLoadUnavailable } from '../components/notification-read-state';
 import { bucketPropertiesPath, eventNotificationId, notificationDestinationPath } from '../format';
 import {
   ALL_CREATIONS,
@@ -178,10 +179,14 @@ export function NotificationPage({ connection, params }: ScreenPageProps) {
         <BucketReadFailure view={{ type: status.type, first: status, recovery: true }} onRetry={read.again} />
       ) : currentReadback === undefined && read.failure !== undefined ? (
         <SpaceBetween size="s">
-          <BucketReadFailure
-            view={pageFailure(read.failure, connection, 'The event notifications could not be read')}
-            onRetry={read.again}
-          />
+          {unsupportedRead ? (
+            <NotificationLoadUnavailable />
+          ) : (
+            <BucketReadFailure
+              view={pageFailure(read.failure, connection, 'The event notifications could not be read')}
+              onRetry={read.again}
+            />
+          )}
           {unsupportedRead && (
             <SpaceBetween size="xs" direction="horizontal">
               <Button onClick={() => void navigate(properties)}>Cancel</Button>
