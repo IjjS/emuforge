@@ -1,17 +1,21 @@
+import Flashbar from '@cloudscape-design/components/flashbar';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState, useSyncExternalStore } from 'react';
-import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
+import { createMemoryRouter, MemoryRouter, RouterProvider, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { engineEndpoint } from '../../../../../../lib/aws/client-factory';
 import type { CheckResult } from '../../../../../../lib/engine/engine-client';
+import { AreaRootContext } from '../../../area-root';
 import type { AreaConnection } from '../../../components/emulator-line';
+import { PageFlashContext, type FlashResult, type PageFlash } from '../../../components/page-flash';
 import AwsArea from '../../../index';
 import type { CodeTabProps } from '../components/code-tab';
 import type { ConfigurationTabProps } from '../components/configuration-tab';
 import type { TestTabProps } from '../components/test-tab';
+import { FunctionPage } from './function-page';
 
 // A function's page rendered inside the area's layout, as Studio's frame renders the area, against a fake engine
 // behind the page's `fetch` (test-criteria.md, issue 84, "Unit — services/lambda/pages/function-page.test.tsx";
@@ -152,6 +156,7 @@ class FakeEngine {
   /** The answer to `GetFunction`; by default the emulator's. */
   answerFunction: (request: SentRequest) => EngineAnswer = (request) => this.emulator(request);
   answerInvoke: (request: SentRequest) => EngineAnswer = (request) => this.emulator(request);
+  answerDelete: (request: SentRequest) => Answer | Promise<Answer> = (request) => this.emulator(request);
   answerRelease: (request: SentRequest) => Answer | Promise<Answer> = ({ method, url }) => {
     if (method === 'POST') {
       return json(201, { Version: '1' });
@@ -259,6 +264,13 @@ class FakeEngine {
         throw new TypeError('Failed to fetch');
       }
       return new Response(answer.body, { status: answer.status, headers: answer.headers ?? {} });
+    }
+    if (sent.method === 'DELETE' && FUNCTION_PATH.test(url.pathname)) {
+      const answer = await this.answerDelete(sent);
+      return new Response(answer.status === 204 ? null : answer.body, {
+        status: answer.status,
+        headers: answer.headers ?? {},
+      });
     }
     const answer = await Promise.race([
       Promise.resolve(URL_PATH.test(url.pathname) ? this.answerUrl(sent) : this.answerFunction(sent)),
@@ -504,6 +516,11 @@ function header(): HTMLElement {
   const found = PAGE.findAllHeaders().find((candidate) => candidate.getElement().contains(h1));
   expect(found).toBeDefined();
   return (found as NonNullable<typeof found>).getElement();
+}
+
+function pageActions() {
+  const pageHeader = PAGE.findAllHeaders().find((candidate) => candidate.findHeadingText().getElement().closest('h1'));
+  return pageHeader?.findActions()?.findAllButtons() ?? [];
 }
 
 /** The `h1`'s description element, or `null` when the `h1` has none. */
@@ -1184,9 +1201,11 @@ describe('Versions and aliases', () => {
   const versionsPath = '?tab=versions';
 
   function releaseTable(name: 'Versions' | 'Aliases') {
-    return PAGE.findAllTables().find(
-      (table) => norm(table.findHeaderSlot()?.findHeader()?.findHeadingText().getElement().textContent) === name,
-    );
+    const table = tabs()?.findTabContent()?.findAllTables()[name === 'Versions' ? 0 : 1];
+    if (table) {
+      expect(table.findHeaderSlot()?.findHeader()?.findHeadingText().getElement()).toHaveTextContent(name);
+    }
+    return table;
   }
 
   function versionsShown() {
@@ -1378,10 +1397,14 @@ describe('Qualified Test invocations', () => {
   }
 
   function invokeButton() {
-    const button = PAGE.findAllButtons().find((button) => norm(button.getElement().textContent) === 'Invoke');
-    if (button === undefined) {
-      throw new Error('Expected the Invoke button');
+    const event = PAGE.findAllContainers().find((container) => container.findContent().findTextarea() !== null);
+    const header = event?.findHeader()?.findHeader();
+    const button = header?.findActions()?.findButton();
+    if (!button) {
+      throw new Error('Expected the Test event panel action');
     }
+    expect(header?.findHeadingText().getElement()).toHaveTextContent('Event');
+    expect(button.getElement()).toHaveTextContent(/^Invok(e|ing)$/);
     return button;
   }
 
@@ -1732,15 +1755,12 @@ describe('Qualified Test invocations', () => {
     await chooseTarget('live');
     engine.answerRelease = ({ url }) =>
       url.pathname.endsWith('/versions') ? versionAnswer('2') : json(200, { Aliases: [] });
-    const refresh = PAGE.findAllButtons().find(
-      (button) => button.getElement().getAttribute('aria-label') === 'Refresh',
-    );
-    expect(refresh).toBeDefined();
+    const refresh = pageActions()[0];
+    expect(refresh?.getElement()).toHaveAccessibleName('Refresh');
     refresh?.click();
     await waitFor(() => {
-      const targetField = PAGE.findAllFormFields().find(
-        (field) => norm(field.findLabel()?.getElement().textContent) === 'Invoke target',
-      );
+      const targetField = PAGE.findAllFormFields().find((field) => field.findControl()?.findSelect() != null);
+      expect(targetField?.findLabel()?.getElement()).toHaveTextContent('Invoke target');
       expect(targetField?.findError()?.getElement()).toHaveTextContent('live is unavailable. Choose another target.');
     });
     expect(invokeButton().getElement()).toBeDisabled();
@@ -1898,13 +1918,6 @@ describe('the tabs by ?tab=', () => {
 });
 
 describe('"Delete" in the header', () => {
-  function pageActions() {
-    const pageHeader = PAGE.findAllHeaders().find((candidate) =>
-      candidate.findHeadingText().getElement().closest('h1'),
-    );
-    return pageHeader?.findActions()?.findAllButtons() ?? [];
-  }
-
   function pageDeleteAction() {
     return pageActions()[1];
   }
@@ -2127,6 +2140,138 @@ describe('"Delete" in the header', () => {
     expect(router.state.location.pathname).toBe(pagePath('orders'));
     expect(await screen.findByText('Function not found')).toBeInTheDocument();
     expect(engine.gets.length).toBeGreaterThan(reads);
+  });
+
+  function openWithRecordedDeleteOutcomes() {
+    const shown = vi.fn<PageFlash['show']>();
+    const handedOver = vi.fn<PageFlash['handOver']>();
+    const root = { current: null as HTMLDivElement | null };
+
+    function Page() {
+      const [items, setItems] = useState<FlashResult>();
+      const current = useSyncExternalStore(connection.subscribe, connection.get);
+      return (
+        <AreaRootContext.Provider value={root}>
+          <PageFlashContext.Provider
+            value={{
+              show: (result) => {
+                shown(result);
+                setItems(result);
+              },
+              handOver: handedOver,
+            }}
+          >
+            <div
+              ref={(element) => {
+                root.current = element;
+              }}
+            >
+              {items !== undefined && <Flashbar items={[...items]} />}
+              <FunctionPage connection={current} params={{ name: 'orders' }} />
+            </div>
+          </PageFlashContext.Provider>
+        </AreaRootContext.Provider>
+      );
+    }
+
+    engine.functions = [ORDERS];
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter initialEntries={[pagePath('orders')]}>
+          <Page />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    return { shown, handedOver };
+  }
+
+  it.each(['success', 'refusal'] as const)(
+    'delivers one delete %s after an Invoke reread removes the confirmation in the same session',
+    async (outcome) => {
+      const invoke = deferredAnswer();
+      const deletion = deferredAnswer();
+      const detail = deferredAnswer();
+      engine.answerInvoke = () => invoke.promise;
+      engine.answerDelete = () => deletion.promise;
+      const { shown, handedOver } = openWithRecordedDeleteOutcomes();
+      await screen.findByTestId('stand-in-test');
+      fireEvent.click(screen.getByRole('button', { name: 'Stand-in invoke' }));
+      await waitFor(() => expect(engine.aws.filter(({ url }) => INVOKE_PATH.test(url.pathname))).toHaveLength(1));
+
+      const { input, submit } = await openDialog();
+      input.setInputValue('confirm');
+      const field = input.findNativeInput().getElement();
+      act(() => {
+        fireEvent.keyDown(field, { key: 'Enter' });
+        fireEvent.keyDown(field, { key: 'Enter' });
+      });
+      await waitFor(() => expect(deleteRequests()).toEqual(['orders']));
+      expect(deletionDialog()).toBeDefined();
+      expect(submit.getElement()).toBeDisabled();
+      const reads = engine.gets.length;
+      engine.answerFunction = () => detail.promise;
+
+      await act(async () => invoke.resolve(json(200, { invoked: true })));
+      await waitFor(() => expect(engine.gets).toHaveLength(reads + 1));
+      engine.functions = [];
+      engine.answerFunction = (request) => engine.emulator(request);
+      await act(async () => detail.resolve(errorAnswer(404, 'ResourceNotFoundException', 'Function not found')));
+
+      expect(await screen.findByText('Function not found')).toBeVisible();
+      expect(deletionDialog()).toBeUndefined();
+      expect(shown).not.toHaveBeenCalled();
+      expect(handedOver).not.toHaveBeenCalled();
+
+      await act(async () => {
+        deletion.resolve(
+          outcome === 'success'
+            ? { status: 204, body: '' }
+            : errorAnswer(404, 'ResourceNotFoundException', 'Already removed'),
+        );
+      });
+      if (outcome === 'success') {
+        await waitFor(() => expect(handedOver).toHaveBeenCalledTimes(1));
+        expect(handedOver).toHaveBeenCalledWith('/aws/lambda/functions', [
+          { type: 'success', content: '1 function was deleted from the local emulator.' },
+        ]);
+        expect(shown).not.toHaveBeenCalled();
+      } else {
+        await waitFor(() => expect(shown).toHaveBeenCalledTimes(1));
+        expect(flashTexts()).toEqual(['Deleting orders failed ResourceNotFoundException: Already removed']);
+        expect(handedOver).not.toHaveBeenCalled();
+      }
+      expect(deleteRequests()).toEqual(['orders']);
+    },
+  );
+
+  it('ignores a submitted deletion that settles after the same-name function reconnects', async () => {
+    const deletion = deferredAnswer();
+    engine.answerDelete = () => deletion.promise;
+    const { shown, handedOver } = openWithRecordedDeleteOutcomes();
+    await screen.findByTestId('stand-in-test');
+    const { input, submit } = await openDialog();
+    input.setInputValue('confirm');
+    submit.click();
+    await waitFor(() => expect(deleteRequests()).toEqual(['orders']));
+
+    connection.set(notStartedResult());
+    expect(deletionDialog()).toBeUndefined();
+    engine.functions = [{ ...ORDERS, description: 'Replacement after submitted deletion' }];
+    connection.set(connectedResult());
+    await waitFor(() => {
+      expect(value('Function overview', 'Description')).toBe('Replacement after submitted deletion');
+    });
+
+    await act(async () => {
+      deletion.resolve({ status: 204, body: '' });
+      await deletion.promise;
+    });
+    expect(shown).not.toHaveBeenCalled();
+    expect(handedOver).not.toHaveBeenCalled();
+    expect(deleteRequests()).toEqual(['orders']);
+    const reopened = await openDialog();
+    expect(reopened.input.getInputValue()).toBe('');
+    expect(reopened.submit.getElement()).toBeDisabled();
   });
 
   it('is not offered while the function is not found', async () => {

@@ -3,7 +3,7 @@ import Button from '@cloudscape-design/components/button';
 import FormField from '@cloudscape-design/components/form-field';
 import Input from '@cloudscape-design/components/input';
 import SpaceBetween from '@cloudscape-design/components/space-between';
-import { useCallback, useState } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 
 import { AreaModal } from '../../../components/area-modal';
 import type { AreaConnection } from '../../../components/emulator-line';
@@ -49,6 +49,8 @@ export interface DeleteFunctionsDialogProps {
   connection: AreaConnection;
   /** Called when the dialog closes: by "Cancel" or Esc, or once every request is answered. */
   onClose: () => void;
+  /** Called before removing a confirmation that contains keyboard focus. */
+  onFocusedDismissal?: () => void;
   /**
    * Called once, before `onClose`, when every function was deleted, with the result the Flashbar would show; the
    * dialog then shows nothing itself, so the caller can hand the result to the page it leads to (issue 516, task 6).
@@ -61,12 +63,41 @@ export interface DeleteFunctionsDialogProps {
  * The dialog that deletes `names` from the emulator, one `DeleteFunction` after another, once the field holds
  * exactly "confirm". It stays mounted with the list, so leaving the screen is what aborts its requests.
  */
-export function DeleteFunctionsDialog({ names, connection, onClose, onDeleted }: DeleteFunctionsDialogProps) {
+export function DeleteFunctionsDialog({
+  names,
+  connection,
+  onClose,
+  onDeleted,
+  onFocusedDismissal,
+}: DeleteFunctionsDialogProps) {
   const flash = usePageFlash();
   const { remove, pending } = useDeleteFunctions(connection.engineOrigin);
   const [typed, setTyped] = useState('');
   const visible = names.length > 0;
   const confirmed = typed === CONFIRM_WORD;
+
+  const submitting = useRef(false);
+  const mounted = useRef(false);
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  const focused = useRef<Element | null>(null);
+  const trackDialogRemoval = useCallback(
+    (element: HTMLDivElement | null) => {
+      if (element === null) {
+        // The ref detaches before the modal portal restores focus to its opener.
+        if (focused.current === document.activeElement) {
+          onFocusedDismissal?.();
+        }
+        focused.current = null;
+      }
+    },
+    [onFocusedDismissal],
+  );
 
   // The field starts empty each time the dialog opens.
   const [shownFor, setShownFor] = useState(names);
@@ -76,12 +107,17 @@ export function DeleteFunctionsDialog({ names, connection, onClose, onDeleted }:
   }
 
   const handleDelete = useCallback(() => {
-    if (!confirmed || pending) {
+    if (!visible || !confirmed || pending || submitting.current) {
       return;
     }
+    submitting.current = true;
     const engineOrigin = connection.engineOrigin;
-    remove(names).then(
+    void remove(names).then(
       (result) => {
+        submitting.current = false;
+        if (!mounted.current) {
+          return;
+        }
         const items = resultItems(result, engineOrigin);
         if (items !== undefined && onDeleted !== undefined && result.failed.length === 0) {
           onDeleted(items);
@@ -91,12 +127,14 @@ export function DeleteFunctionsDialog({ names, connection, onClose, onDeleted }:
         onClose();
       },
       // The screen was left first: nothing is shown.
-      () => undefined,
+      () => {
+        submitting.current = false;
+      },
     );
-  }, [confirmed, pending, connection.engineOrigin, remove, names, flash, onClose, onDeleted]);
+  }, [visible, confirmed, pending, connection.engineOrigin, remove, names, flash, onClose, onDeleted]);
 
   const handleDismiss = useCallback(() => {
-    if (!pending) {
+    if (!pending && !submitting.current) {
       onClose();
     }
   }, [pending, onClose]);
@@ -112,7 +150,11 @@ export function DeleteFunctionsDialog({ names, connection, onClose, onDeleted }:
       'They will be deleted from your local emulator, with their code and settings. This cannot be undone.'
     );
 
-  return (
+  if (!visible) {
+    return null;
+  }
+
+  const modal = (
     <AreaModal
       visible={visible}
       header={DELETE_FUNCTIONS_TITLE}
@@ -156,5 +198,18 @@ export function DeleteFunctionsDialog({ names, connection, onClose, onDeleted }:
         </FormField>
       </SpaceBetween>
     </AreaModal>
+  );
+  if (onFocusedDismissal === undefined) {
+    return modal;
+  }
+  return (
+    <div
+      ref={trackDialogRemoval}
+      onFocusCapture={(event) => {
+        focused.current = event.target;
+      }}
+    >
+      {modal}
+    </div>
   );
 }
