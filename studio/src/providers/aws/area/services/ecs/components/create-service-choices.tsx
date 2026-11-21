@@ -65,6 +65,7 @@ export function CreateServiceChoice<T>(props: ChoiceProps<T> & (SingleChoice<T> 
   const items = listing.choices ?? [];
   const blocked = listing.failure?.kind === 'not-implemented';
   const continuationBlocked = blocked && listing.choices !== undefined;
+  const loadingContinuation = listing.loading && listing.choices !== undefined;
   const disabled = unavailable || blocked || source.ready === false;
   const pickerRef = useRef<HTMLDivElement>(null);
   const pickerHadFocus = useRef(false);
@@ -89,6 +90,21 @@ export function CreateServiceChoice<T>(props: ChoiceProps<T> & (SingleChoice<T> 
     }),
     [disabled, multiple],
   );
+  useLayoutEffect(() => {
+    const picker = pickerRef.current;
+    if (picker === null || !loadingContinuation) {
+      return;
+    }
+    const handleOutsidePointer = ({ target }: PointerEvent) => {
+      if (target instanceof Node && !picker.contains(target)) {
+        pickerHadFocus.current = false;
+      }
+    };
+    const { ownerDocument } = picker;
+    ownerDocument.addEventListener('pointerdown', handleOutsidePointer, true);
+    return () => ownerDocument.removeEventListener('pointerdown', handleOutsidePointer, true);
+  }, [loadingContinuation]);
+
   useLayoutEffect(() => {
     const diagnostic = diagnosticRef.current;
     if (!continuationBlocked || !pickerHadFocus.current || diagnostic === null) {

@@ -231,8 +231,12 @@ function expectKept() {
   expect(countInput()).toHaveValue(0);
   expect(field(FAMILY).findSelect()?.findTrigger().getElement()).toHaveTextContent('web');
   expect(field(REVISION).findSelect()?.findTrigger().getElement()).toHaveTextContent('web:2');
-  expect(screen.getByRole('button', { name: 'Remove subnet-a' })).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Remove frontend' })).toBeInTheDocument();
+  const subnet = field(SUBNETS).findMultiselect()?.findTokens()[0];
+  expect(subnet?.findLabel().getElement()).toHaveTextContent('subnet-a');
+  expect(subnet?.findDismiss().getElement()).toHaveAccessibleName('Remove subnet-a');
+  const group = field(GROUPS).findMultiselect()?.findTokens()[0];
+  expect(group?.findLabel().getElement()).toHaveTextContent('frontend');
+  expect(group?.findDismiss().getElement()).toHaveAccessibleName('Remove frontend');
   expect(publicIp()).not.toBeChecked();
 }
 
@@ -328,7 +332,9 @@ it('keeps Retry visible and disabled for unsupported DescribeClusters', async ()
 it('identifies the cluster and launch type and presents the seven initial inputs and notice', async () => {
   open();
   expect(await screen.findByRole('textbox', { name: 'Service name' })).toHaveValue('');
-  expect(screen.getByText('Cluster dev · Launch type Fargate')).toBeInTheDocument();
+  expect(createWrapper(document.body).findHeader()?.findDescription()?.getElement()).toHaveTextContent(
+    'Cluster dev · Launch type Fargate',
+  );
   expect(field(FAMILY).findSelect()?.findTrigger().getElement()).toHaveTextContent('Choose a family');
   expect(field(REVISION).findSelect()?.findTrigger().getElement()).toHaveTextContent('Choose a family first');
   expect(countInput()).toHaveValue(1);
@@ -338,7 +344,9 @@ it('identifies the cluster and launch type and presents the seven initial inputs
   expect(publicIp()).toBeChecked();
   const about = screen.getByRole('button', { name: 'About the local emulator' });
   if (about.getAttribute('aria-expanded') !== 'true') fireEvent.click(about);
-  expect(screen.getByText('These services and tasks are in your local emulator')).toBeInTheDocument();
+  expect(createWrapper(document.body).findAlert()?.findHeader()?.getElement()).toHaveTextContent(
+    'These services and tasks are in your local emulator',
+  );
 });
 
 it('disables family and create only after a successful empty family read and associates the registration reason', async () => {
@@ -413,6 +421,46 @@ it('focuses the diagnostic when the first invalid choice failed with 501', async
   expect(diagnostic).toHaveAccessibleDescription(/501 Not Implemented for ListTaskDefinitionFamilies/);
   expect(nameInput()).toHaveValue('entered');
   expect(calls('CreateService')).toHaveLength(0);
+});
+
+it('creates with the retained family and eligible revision after a family continuation 501', async () => {
+  const operation = 'ListTaskDefinitionFamilies';
+  emulator.mockImplementation((op, input) => {
+    if (op !== operation) return normal(op);
+    return (input as { nextToken?: string }).nextToken
+      ? reply({}, 501)
+      : reply({ families: ['web'], nextToken: 'more' });
+  });
+  const { router } = open();
+  await fill();
+  const picker = field(FAMILY).findSelect();
+  if (!picker) throw new Error('Missing family picker');
+  picker.openDropdown();
+  const footer = picker.findDropdown().findFooterRegion()?.getElement();
+  if (!footer) throw new Error('Missing family continuation footer');
+  const loadMore = createWrapper(footer).findButton()?.getElement();
+  if (!loadMore) throw new Error('Missing continuation button');
+  expect(loadMore).toHaveTextContent('Load more');
+  fireEvent.click(loadMore);
+
+  const diagnostic = await screen.findByRole('group', { name: `${FAMILY} diagnostic` });
+  expect(diagnostic).toHaveTextContent('501 Not Implemented for ListTaskDefinitionFamilies');
+  expect(field(FAMILY).findSelect()?.findTrigger().getElement()).toBeDisabled();
+  expectKept();
+  expect(submitButton()).toBeEnabled();
+
+  fireEvent.click(submitButton());
+
+  await waitFor(() => expect(router.state.location.pathname).toBe(DETAIL));
+  expect(calls(operation)).toHaveLength(2);
+  expect(calls('CreateService')).toHaveLength(1);
+  expect(calls('CreateService')[0]?.[1]).toMatchObject({
+    cluster: 'dev',
+    serviceName: 'entered',
+    taskDefinition: 'web:2',
+    desiredCount: 0,
+    networkConfiguration: SERVICE.networkConfiguration,
+  });
 });
 
 it.each(['covered mobile', 'visible mobile', 'desktop'] as const)(

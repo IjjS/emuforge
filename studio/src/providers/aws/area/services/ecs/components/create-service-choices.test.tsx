@@ -200,55 +200,65 @@ it('closes an open revision menu on continuation 501 and keeps the chosen revisi
   ]);
 });
 
-it.each([false, true])('handles focus on a pending continuation 501 (moved away: %s)', async (movedAway) => {
-  const operation = 'ListTaskDefinitions';
-  let refuse: (error: RequestError) => void = () => undefined;
-  const continuation = new Promise((_resolve, rejectPage) => {
-    refuse = rejectPage;
-  });
-  answers.mockImplementation((op, input) => {
-    if (op !== operation) return normal(op, input);
-    return input.nextToken ? continuation : page(['web:3', 'web:2'], 'older');
-  });
+it.each(['picker', 'another field', 'nonfocusable content'] as const)(
+  'handles focus on a pending continuation 501 after moving to %s',
+  async (destination) => {
+    const operation = 'ListTaskDefinitions';
+    let refuse: (error: RequestError) => void = () => undefined;
+    const continuation = new Promise((_resolve, rejectPage) => {
+      refuse = rejectPage;
+    });
+    answers.mockImplementation((op, input) => {
+      if (op !== operation) return normal(op, input);
+      return input.nextToken ? continuation : page(['web:3', 'web:2'], 'older');
+    });
 
-  const user = userEvent.setup();
-  await open();
-  await choose(FAMILY, 'web');
-  await choose(REVISION, 'web:2');
-  openDropdown(select(REVISION));
-  const more = await screen.findByRole('button', { name: 'Load more' });
-  more.focus();
-  await user.keyboard('{Enter}');
-  await waitFor(() => expect(more).toHaveAttribute('aria-disabled', 'true'));
-  expect(more).toHaveFocus();
+    const user = userEvent.setup();
+    await open();
+    await choose(FAMILY, 'web');
+    await choose(REVISION, 'web:2');
+    openDropdown(select(REVISION));
+    const more = await screen.findByRole('button', { name: 'Load more' });
+    more.focus();
+    await user.keyboard('{Enter}');
+    await waitFor(() => expect(more).toHaveAttribute('aria-disabled', 'true'));
+    expect(more).toHaveFocus();
 
-  const name = screen.getByRole('textbox', { name: 'Service name' });
-  if (movedAway) {
-    name.focus();
-    expect(name).toHaveFocus();
-  }
-  await act(async () => refuse(new RequestError({ kind: 'not-implemented', operation })));
+    const name = screen.getByRole('textbox', { name: 'Service name' });
+    if (destination === 'another field') {
+      name.focus();
+      expect(name).toHaveFocus();
+    } else if (destination === 'nonfocusable content') {
+      const description = createWrapper(document.body).findHeader()?.findDescription()?.getElement();
+      if (!description) throw new Error('Missing nonfocusable header description');
+      await user.click(description);
+      expect(document.body).toHaveFocus();
+    }
+    await act(async () => refuse(new RequestError({ kind: 'not-implemented', operation })));
 
-  const diagnostic = await screen.findByRole('group', { name: `${REVISION} diagnostic` });
-  expect(diagnostic).toHaveTextContent('Not implemented by the emulator');
-  expect(diagnostic).toHaveAccessibleDescription(
-    /501 Not Implemented for ListTaskDefinitions\. Studio cannot load more revisions\./,
-  );
-  expect(select(REVISION).findTrigger().getElement()).toBeDisabled();
-  expect(select(REVISION).findTrigger().getElement()).toHaveTextContent('web:2');
-  expect(select(REVISION).findDropdown().findOpenDropdown()).toBeNull();
-  if (movedAway) {
-    expect(name).toHaveFocus();
-  } else {
-    expect(diagnostic).toHaveFocus();
-    await user.tab();
-    expect(screen.getByRole('spinbutton', { name: 'Desired tasks' })).toHaveFocus();
-  }
-  expect(answers.mock.calls.filter(([op]) => op === operation).map(([, input]) => input.nextToken)).toEqual([
-    undefined,
-    'older',
-  ]);
-});
+    const diagnostic = await screen.findByRole('group', { name: `${REVISION} diagnostic` });
+    expect(diagnostic).toHaveTextContent('Not implemented by the emulator');
+    expect(diagnostic).toHaveAccessibleDescription(
+      /501 Not Implemented for ListTaskDefinitions\. Studio cannot load more revisions\./,
+    );
+    expect(select(REVISION).findTrigger().getElement()).toBeDisabled();
+    expect(select(REVISION).findTrigger().getElement()).toHaveTextContent('web:2');
+    expect(select(REVISION).findDropdown().findOpenDropdown()).toBeNull();
+    if (destination === 'another field') {
+      expect(name).toHaveFocus();
+    } else if (destination === 'nonfocusable content') {
+      expect(document.body).toHaveFocus();
+    } else {
+      expect(diagnostic).toHaveFocus();
+      await user.tab();
+      expect(screen.getByRole('spinbutton', { name: 'Desired tasks' })).toHaveFocus();
+    }
+    expect(answers.mock.calls.filter(([op]) => op === operation).map(([, input]) => input.nextToken)).toEqual([
+      undefined,
+      'older',
+    ]);
+  },
+);
 
 it('uses the first eligible page for the preset and options, then chooses an older revision', async () => {
   answers.mockImplementation((op, input) => {
@@ -391,9 +401,17 @@ it('keeps groups until the last subnet is removed and scopes new choices to the 
   await choose(SUBNETS, 'subnet-a');
   await choose(SUBNETS, 'subnet-b');
   await choose(GROUPS, 'sg-a');
-  fireEvent.click(screen.getByRole('button', { name: 'Remove subnet-a' }));
+  const first = multi(SUBNETS).findTokens()[0];
+  if (!first) throw new Error('Missing first subnet token');
+  expect(first.findLabel().getElement()).toHaveTextContent('subnet-a');
+  expect(first.findDismiss().getElement()).toHaveAccessibleName('Remove subnet-a');
+  fireEvent.click(first.findDismiss().getElement());
   expect(multi(GROUPS).findTokens()).toHaveLength(1);
-  fireEvent.click(screen.getByRole('button', { name: 'Remove subnet-b' }));
+  const remaining = multi(SUBNETS).findTokens()[0];
+  if (!remaining) throw new Error('Missing remaining subnet token');
+  expect(remaining.findLabel().getElement()).toHaveTextContent('subnet-b');
+  expect(remaining.findDismiss().getElement()).toHaveAccessibleName('Remove subnet-b');
+  fireEvent.click(remaining.findDismiss().getElement());
   expect(multi(GROUPS).findTokens()).toHaveLength(0);
   await choose(SUBNETS, 'subnet-c');
   openDropdown(multi(SUBNETS));
