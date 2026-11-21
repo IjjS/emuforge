@@ -111,7 +111,7 @@ test('studio.ec2-volume-refusals-preserve-storage', async ({ ctx, page }) => {
   const main = page.getByRole('main');
   await button(main, 'Attach volume').click(ACTION);
   await submitAttachment(page, other!);
-  const alert = page.locator(ui.findModal().findAlert().toSelector());
+  const alert = dialogOf(page).locator(ui.findAlert().toSelector().replace(/^body /, ''));
   await expect(alert).toContainText('InvalidVolume.ZoneMismatch');
   expect(await readVolume(ctx, port, id)).toMatchObject({ state: 'available', attachments: [] });
   await submitAttachment(page, instance);
