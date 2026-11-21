@@ -246,7 +246,9 @@ function open(path = '/aws/lambda/functions') {
     ],
     { initialEntries: [path] },
   );
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false, refetchOnReconnect: false } },
+  });
   const result = render(
     <QueryClientProvider client={client}>
       <RouterProvider router={router} />
@@ -418,11 +420,16 @@ function selectionAt(index: number, label: string) {
   expect(selection).toHaveAccessibleName(label);
   return selection;
 }
-async function confirmDialog() {
+function deletionMenu() {
   const menu = table().findHeaderSlot()?.findHeader()?.findActions()?.findButtonDropdown();
   if (!menu) throw new Error('Expected the function list action menu');
+  expect(menu.findNativeButton().getElement()).toHaveAccessibleName('Actions');
+  return menu;
+}
+
+async function confirmDialog() {
+  const menu = deletionMenu();
   const menuButton = menu.findNativeButton().getElement();
-  expect(menuButton).toHaveAccessibleName('Actions');
   menuButton.focus();
   act(() => menu.openDropdown());
   const entry = menu.findItemById('delete')?.find('[role="menuitem"]')?.getElement();
@@ -1038,6 +1045,71 @@ describe('loading and empty', () => {
     },
   );
 
+  it('expires an open offline confirmation and verifies a same-name replacement before a new deletion', async () => {
+    let release!: (answer: Answer) => void;
+    const heldList = new Promise<Answer>((resolve) => {
+      release = resolve;
+    });
+    const { client, unmount } = await openLoaded([NODE, { name: 'payments' }]);
+    const wasOnline = onlineManager.isOnline();
+    const browserOnline = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
+    try {
+      fireEvent(window, new Event('offline'));
+      fireEvent.click(selectionAt(1, 'orders'));
+      fireEvent.click(selectionAt(2, 'payments'));
+      const draft = await confirmDialog();
+      expect(draft.names).toEqual(['orders', 'payments']);
+      act(() => draft.input.setInputValue('confirm'));
+      expect(draft.input.getInputValue()).toBe('confirm');
+      expect(draft.submit.getElement()).toBeDisabled();
+      expect(visibleDialog()?.getElement()).toBeVisible();
+
+      engine.functions = [{ ...NODE, description: 'Replacement orders' }];
+      let holdListing = true;
+      engine.answer = (request) => (request.method === 'GET' && holdListing ? heldList : engine.emulator(request));
+      const reads = engine.lists.length;
+      browserOnline.mockReturnValue(true);
+      act(() => {
+        window.dispatchEvent(new Event('online'));
+        fireEvent.keyDown(draft.input.findNativeInput().getElement(), { key: 'Enter', keyCode: 13 });
+      });
+      await waitFor(() => {
+        expect(engine.lists.length).toBeGreaterThan(reads);
+        expect(table().findLoadingText()?.getElement()).toHaveTextContent('Loading functions');
+        expect(visibleDialog()).toBeUndefined();
+      });
+      const menu = deletionMenu().findNativeButton().getElement();
+      expect(isDisabled(menu)).toBe(true);
+      fireEvent.click(menu);
+      expect(visibleDialog()).toBeUndefined();
+      expect(engine.deletes).toEqual([]);
+      expect(client.getMutationCache().getAll()).toEqual([]);
+
+      holdListing = false;
+      const list = engine.lists.at(-1);
+      if (!list) throw new Error('Expected the replacement list request');
+      await act(async () => release(engine.emulator({ method: 'GET', url: list })));
+      await expectNames(['orders']);
+      expect(table().findBodyCell(1, 3)?.getElement()).toHaveTextContent('Replacement orders');
+      expect(selectionAt(1, 'orders')).toBeChecked();
+      const fresh = await confirmDialog();
+      expect(fresh.names).toEqual(['orders']);
+      expect(fresh.input.getInputValue()).toBe('');
+      expect(fresh.submit.getElement()).toBeDisabled();
+      fireEvent.keyDown(fresh.input.findNativeInput().getElement(), { key: 'Enter', keyCode: 13 });
+      expect(engine.deletes).toEqual([]);
+      act(() => fresh.input.setInputValue('confirm'));
+      act(() => fresh.submit.click());
+      await expectNames([]);
+      await waitFor(() => expect(visibleDialog()).toBeUndefined());
+      expect(engine.deletes).toEqual(['orders']);
+    } finally {
+      unmount();
+      browserOnline.mockRestore();
+      onlineManager.setOnline(wasOnline);
+    }
+  });
+
   it('reports a connection interruption once when online submission was queued before dispatch', async () => {
     const message =
       'The browser connection changed before any deletion outcome was confirmed. Reopen Delete from Actions and confirm again.';
@@ -1121,12 +1193,17 @@ describe('loading and empty', () => {
       const held = new Promise<Answer>((resolve) => {
         release = resolve;
       });
+      let holdListing = false;
+      let releaseList!: (answer: Answer) => void;
+      const heldList = new Promise<Answer>((resolve) => {
+        releaseList = resolve;
+      });
       engine.answer = (request) => {
         if (request.method === 'DELETE' && engine.deletes.length === 1) {
           firstRequest = request;
           return held;
         }
-        return engine.emulator(request);
+        return request.method === 'GET' && holdListing ? heldList : engine.emulator(request);
       };
       const { unmount } = await openLoaded([NODE, { name: 'payments' }]);
       const wasOnline = onlineManager.isOnline();
@@ -1147,8 +1224,14 @@ describe('loading and empty', () => {
 
         browserOnline.mockReturnValue(false);
         fireEvent(window, new Event('offline'));
+        const listsBeforeReconnect = engine.lists.length;
+        if (!success) {
+          engine.functions = [{ name: 'payments' }, { name: 'shipments' }];
+          holdListing = true;
+        }
         browserOnline.mockReturnValue(true);
         fireEvent(window, new Event('online'));
+        await waitFor(() => expect(engine.lists.length).toBeGreaterThan(listsBeforeReconnect));
         expect(engine.deletes).toEqual(['orders']);
         expect(flashTexts()).toEqual([]);
         const listsBeforeSettlement = engine.lists.length;
@@ -1168,10 +1251,24 @@ describe('loading and empty', () => {
           await expectNames(['payments']);
           expect(engine.lists.length).toBeGreaterThan(listsBeforeSettlement);
         } else {
-          await expectNames(['orders', 'payments']);
-          fireEvent.click(selectionAt(1, 'orders'));
+          expect(PAGE.findFlashbar()?.findItemsByType('error')).toHaveLength(1);
+          await waitFor(() => {
+            expect(engine.lists.length).toBeGreaterThan(listsBeforeSettlement);
+            expect(table().findLoadingText()?.getElement()).toHaveTextContent('Loading functions');
+          });
+          const menu = deletionMenu().findNativeButton().getElement();
+          expect(isDisabled(menu)).toBe(true);
+          fireEvent.click(menu);
+          expect(visibleDialog()).toBeUndefined();
+          expect(engine.deletes).toEqual(['orders']);
+          const list = engine.lists.at(-1);
+          if (!list) throw new Error('Expected the list refresh after the refusal');
+          holdListing = false;
+          await act(async () => releaseList(engine.emulator({ method: 'GET', url: list })));
+          await expectNames(['payments', 'shipments']);
+          expect(selectionAt(2, 'shipments')).not.toBeChecked();
         }
-        expect(selectionAt(success ? 1 : 2, 'payments')).toBeChecked();
+        expect(selectionAt(1, 'payments')).toBeChecked();
 
         const fresh = await confirmDialog();
         expect(fresh.names).toEqual(['payments']);
@@ -1183,7 +1280,7 @@ describe('loading and empty', () => {
         act(() => fresh.input.setInputValue('confirm'));
         expect(fresh.submit.getElement()).toBeEnabled();
         act(() => fresh.submit.click());
-        await expectNames(success ? [] : ['orders']);
+        await expectNames(success ? [] : ['shipments']);
         await waitFor(() => {
           expect(visibleDialog()).toBeUndefined();
           expect(flashTexts()).toEqual(['1 function was deleted from the local emulator.']);

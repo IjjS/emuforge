@@ -464,7 +464,7 @@ export function useDeleteFunctions(endpoint: string | undefined) {
       return deleteFunctions(endpoint, names, controller.signal);
     },
     onSettled: (result, _error, submission) => {
-      if (!submission.controller.signal.aborted || (result?.deleted.length ?? 0) > 0) {
+      if (!submission.controller.signal.aborted || result?.interrupted) {
         return client.invalidateQueries({ queryKey: generationKey(submission.endpoint) });
       }
     },
