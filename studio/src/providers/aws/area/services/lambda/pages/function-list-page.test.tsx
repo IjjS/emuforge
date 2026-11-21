@@ -252,7 +252,7 @@ function open(path = '/aws/lambda/functions') {
       <RouterProvider router={router} />
     </QueryClientProvider>,
   );
-  return { ...result, router };
+  return { ...result, router, client };
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -405,6 +405,50 @@ async function openDeleteDialog(): Promise<HTMLElement> {
   fireEvent.click(action('Actions'));
   fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }));
   return screen.findByRole('dialog', { name: 'Delete functions' });
+}
+
+const visibleDialog = () => PAGE.findAllModals().find((dialog) => dialog.isVisible());
+const flashTexts = () =>
+  (PAGE.findFlashbar()?.findItems() ?? []).map((item) =>
+    norm(`${item.findHeader()?.getElement().textContent ?? ''} ${item.findContent()?.getElement().textContent ?? ''}`),
+  );
+function selectionAt(index: number, label: string) {
+  const selection = table().findRowSelectionArea(index)?.find('input[type="checkbox"]')?.getElement();
+  if (!selection) throw new Error('Expected a function selection control');
+  expect(selection).toHaveAccessibleName(label);
+  return selection;
+}
+async function confirmDialog() {
+  const menu = table().findHeaderSlot()?.findHeader()?.findActions()?.findButtonDropdown();
+  if (!menu) throw new Error('Expected the function list action menu');
+  const menuButton = menu.findNativeButton().getElement();
+  expect(menuButton).toHaveAccessibleName('Actions');
+  menuButton.focus();
+  act(() => menu.openDropdown());
+  const entry = menu.findItemById('delete')?.find('[role="menuitem"]')?.getElement();
+  if (!entry) throw new Error('Expected the Delete menu action');
+  expect(entry).toHaveAccessibleName('Delete');
+  fireEvent.click(entry);
+  return waitFor(() => {
+    const dialog = visibleDialog();
+    if (!dialog) throw new Error('Expected the bulk deletion confirmation');
+    expect(dialog.findHeader().getElement()).toHaveTextContent('Delete functions');
+    const content = dialog.findContent();
+    const field = content.findFormField();
+    const input = field?.findControl()?.findInput();
+    const [cancel, submit] = dialog.findFooter()?.findAllButtons() ?? [];
+    if (!input || !submit || !cancel) throw new Error('Expected the confirmation controls');
+    expect(field?.findLabel()?.getElement()).toHaveTextContent('To confirm deletion, type "confirm" in the field.');
+    expect(cancel.getElement()).toHaveAccessibleName('Cancel');
+    expect(submit.getElement()).toHaveAccessibleName('Delete');
+    return {
+      input,
+      cancel,
+      submit,
+      menuButton,
+      names: content.findAll('li').map((item) => norm(item.getElement().textContent)),
+    };
+  });
 }
 
 const NODE: FakeFunction = {
@@ -936,6 +980,72 @@ describe('loading and empty', () => {
     expect(filterInput()).not.toBeDisabled();
     expect(headingText()).toBe('Event Functions (1)');
   });
+  it('reports an expired offline confirmation once when no deletion was sent', async () => {
+    const message =
+      'The browser connection changed before any deletion outcome was confirmed. Reopen Delete from Actions and confirm again.';
+    const announcements = recordAnnouncements();
+    const interruptionEntries = () => announcements.filter((entry) => entry.includes(message));
+    const { client, unmount } = await openLoaded([NODE, { name: 'payments' }]);
+    const wasOnline = onlineManager.isOnline();
+    const browserOnline = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true);
+    try {
+      fireEvent.click(selectionAt(1, 'orders'));
+      fireEvent.click(selectionAt(2, 'payments'));
+      const original = await confirmDialog();
+      expect(original.names).toEqual(['orders', 'payments']);
+      act(() => original.input.setInputValue('confirm'));
+      expect(original.submit.getElement()).toBeEnabled();
+
+      browserOnline.mockReturnValue(false);
+      fireEvent(window, new Event('offline'));
+      expect(onlineManager.isOnline()).toBe(false);
+      act(() => original.submit.click());
+      await waitFor(() => {
+        const [queued] = client.getMutationCache().getAll();
+        expect(queued?.state.isPaused).toBe(true);
+        expect(visibleDialog()?.findContent().getElement()).toHaveTextContent('Deleting functions…');
+        expect(original.cancel.getElement()).toBeDisabled();
+      });
+      expect(engine.deletes).toEqual([]);
+      expect(flashTexts()).toEqual([]);
+
+      browserOnline.mockReturnValue(true);
+      await act(async () => {
+        window.dispatchEvent(new Event('online'));
+        await client.resumePausedMutations();
+      });
+      await waitFor(() => {
+        expect(visibleDialog()).toBeUndefined();
+        expect(original.menuButton).toHaveFocus();
+        expect(flashTexts()).toEqual([message]);
+      });
+      expect(engine.deletes).toEqual([]);
+      await expectNames(['orders', 'payments']);
+      expect(selectionAt(1, 'orders')).toBeChecked();
+      expect(selectionAt(2, 'payments')).toBeChecked();
+      // Flashbar commits the polite update after its announcement delay, outside the dialog.
+      await waitFor(() => expect(interruptionEntries()).toEqual([`Info ${message}`]), { timeout: 2500 });
+
+      const fresh = await confirmDialog();
+      expect(fresh.names).toEqual(['orders', 'payments']);
+      expect(fresh.input.getInputValue()).toBe('');
+      expect(fresh.submit.getElement()).toBeDisabled();
+      fireEvent.keyDown(fresh.input.findNativeInput().getElement(), { key: 'Enter' });
+      expect(engine.deletes).toEqual([]);
+      act(() => fresh.cancel.click());
+      await waitFor(() => {
+        expect(visibleDialog()).toBeUndefined();
+        expect(fresh.menuButton).toHaveFocus();
+      });
+      expect(flashTexts()).toEqual([message]);
+      expect(interruptionEntries()).toEqual([`Info ${message}`]);
+    } finally {
+      unmount();
+      browserOnline.mockRestore();
+      onlineManager.setOnline(wasOnline);
+    }
+  });
+
   it.each(['success', 'refusal'] as const)(
     'keeps the first bulk deletion %s after native reconnect and requires a fresh confirmation for the rest',
     async (outcome) => {
@@ -944,54 +1054,6 @@ describe('loading and empty', () => {
       const reported = success
         ? '1 function was deleted from the local emulator.'
         : 'Deleting orders failed ResourceConflictException: Function is in use';
-      const visibleDialog = () => PAGE.findAllModals().find((dialog) => dialog.isVisible());
-      const flashTexts = () =>
-        (PAGE.findFlashbar()?.findItems() ?? []).map((item) =>
-          norm(
-            `${item.findHeader()?.getElement().textContent ?? ''} ${item.findContent()?.getElement().textContent ?? ''}`,
-          ),
-        );
-      function selectionAt(index: number, label: string) {
-        const selection = table().findRowSelectionArea(index)?.find('input[type="checkbox"]')?.getElement();
-        if (!selection) throw new Error('Expected a function selection control');
-        expect(selection).toHaveAccessibleName(label);
-        return selection;
-      }
-      async function confirmDialog() {
-        const menu = table().findHeaderSlot()?.findHeader()?.findActions()?.findButtonDropdown();
-        if (!menu) throw new Error('Expected the function list action menu');
-        const menuButton = menu.findNativeButton().getElement();
-        expect(menuButton).toHaveAccessibleName('Actions');
-        menuButton.focus();
-        act(() => menu.openDropdown());
-        const entry = menu.findItemById('delete')?.find('[role="menuitem"]')?.getElement();
-        if (!entry) throw new Error('Expected the Delete menu action');
-        expect(entry).toHaveAccessibleName('Delete');
-        fireEvent.click(entry);
-        return waitFor(() => {
-          const dialog = visibleDialog();
-          if (!dialog) throw new Error('Expected the bulk deletion confirmation');
-          expect(dialog.findHeader().getElement()).toHaveTextContent('Delete functions');
-          const content = dialog.findContent();
-          const field = content.findFormField();
-          const input = field?.findControl()?.findInput();
-          const [cancel, submit] = dialog.findFooter()?.findAllButtons() ?? [];
-          if (!input || !submit || !cancel) throw new Error('Expected the confirmation controls');
-          expect(field?.findLabel()?.getElement()).toHaveTextContent(
-            'To confirm deletion, type "confirm" in the field.',
-          );
-          expect(cancel.getElement()).toHaveAccessibleName('Cancel');
-          expect(submit.getElement()).toHaveAccessibleName('Delete');
-          return {
-            input,
-            cancel,
-            submit,
-            menuButton,
-            names: content.findAll('li').map((item) => norm(item.getElement().textContent)),
-          };
-        });
-      }
-
       let firstRequest: SentRequest | undefined;
       let release!: (answer: Answer) => void;
       const held = new Promise<Answer>((resolve) => {

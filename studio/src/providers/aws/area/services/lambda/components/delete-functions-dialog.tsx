@@ -26,6 +26,8 @@ const CONFIRM_WORD = 'confirm';
 
 const CONFIRM_LABEL = 'To confirm deletion, type "confirm" in the field.';
 const DELETING = 'Deleting functions…';
+const EMPTY_INTERRUPTION =
+  'The browser connection changed before any deletion outcome was confirmed. Reopen Delete from Actions and confirm again.';
 
 function deletedText(count: number): string {
   return count === 1
@@ -54,6 +56,8 @@ export interface DeleteFunctionsDialogProps {
   connection: AreaConnection;
   /** Called on dismissal, or with the settled outcomes when a submission closes the dialog. */
   onClose: (result?: DeleteResult) => void;
+  /** The list reports interrupted submissions even when no outcome was settled. */
+  reportEmptyInterruption?: boolean;
   /** Called before removing a confirmation that contains keyboard focus. */
   onFocusedDismissal?: () => void;
   /**
@@ -72,6 +76,7 @@ export function DeleteFunctionsDialog({
   names,
   connection,
   onClose,
+  reportEmptyInterruption = false,
   onDeleted,
   onFocusedDismissal,
 }: DeleteFunctionsDialogProps) {
@@ -143,11 +148,25 @@ export function DeleteFunctionsDialog({
         submitting.current = false;
         if (mounted.current && error instanceof AwsMutationInterrupted) {
           setTyped('');
+          if (reportEmptyInterruption) {
+            flash.show([{ type: 'info', content: EMPTY_INTERRUPTION }]);
+          }
           onClose();
         }
       },
     );
-  }, [visible, confirmed, pending, connection.engineOrigin, remove, names, flash, onClose, onDeleted]);
+  }, [
+    visible,
+    confirmed,
+    pending,
+    connection.engineOrigin,
+    remove,
+    names,
+    flash,
+    onClose,
+    onDeleted,
+    reportEmptyInterruption,
+  ]);
 
   const handleDismiss = useCallback(() => {
     if (!pending && !submitting.current) {
