@@ -13,6 +13,7 @@ import {
   type DbInstance,
   type InstanceRead,
 } from './api';
+import { modifyInstance, type InstanceChanges } from './modify-api';
 import { isInProgress, READ_AGAIN_MS, type InstanceAction } from './status';
 
 // The TanStack Query hooks of RDS's DB instance screens, and the query keys of every resource of RDS (issue 573,
@@ -184,6 +185,33 @@ export function useInstanceAction(
           void client.invalidateQueries({ queryKey });
         }
       }
+    },
+    [endpoint, client],
+  );
+}
+
+/** Invalidate affected reads independently of navigation and the modification result. */
+export function useModifyInstance(endpoint: string | undefined) {
+  const client = useQueryClient();
+  return useCallback(
+    async (instance: DbInstance, changes: InstanceChanges, signal: AbortSignal): Promise<string> => {
+      if (endpoint === undefined) noEndpoint();
+      const id = await modifyInstance(endpoint, instance.id, changes, signal);
+      signal.throwIfAborted();
+      const keys = [RDS_KEYS.instances()];
+      if (id === instance.id) {
+        // The detail page opens a new read generation after acceptance.
+        void client.invalidateQueries({ queryKey: RDS_KEYS.instance(id), refetchType: 'none' });
+      } else {
+        keys.push(RDS_KEYS.instance(instance.id), RDS_KEYS.instance(id));
+      }
+      if (instance.clusterId !== undefined) {
+        keys.push(RDS_KEYS.cluster(instance.clusterId), RDS_KEYS.members(instance.clusterId));
+      }
+      for (const queryKey of keys) {
+        void client.invalidateQueries({ queryKey });
+      }
+      return id;
     },
     [endpoint, client],
   );
