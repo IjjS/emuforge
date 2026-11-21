@@ -59,10 +59,18 @@ export function clusterBreadcrumb(page: Page) {
 
 const serviceDetails = wrapper.findKeyValuePairs('[aria-label="Service details"]').findItems();
 
-export async function expectServiceDetail(page: Page, position: number, label: string, value: string) {
-  const pair = serviceDetails.get(position);
-  const key = page.locator(pair.findLabel().toSelector());
-  const detail = page.locator(pair.findValue().toSelector());
+// Cloudscape exposes label and value selectors on its item wrapper. Strip the item's
+// prefix so Playwright evaluates each part relative to the matching item.
+const itemWrapper = serviceDetails.get(1);
+const itemPrefix = itemWrapper.toSelector();
+const labelPart = itemWrapper.findLabel().toSelector().slice(itemPrefix.length).trim();
+const valuePart = itemWrapper.findValue().toSelector().slice(itemPrefix.length).trim();
+
+export async function expectServiceDetail(page: Page, label: string, value: string) {
+  const exactLabel = page.locator(labelPart).and(page.getByText(label, { exact: true }));
+  const pair = page.locator(serviceDetails.toSelector()).filter({ has: exactLabel });
+  const key = pair.locator(labelPart);
+  const detail = pair.locator(valuePart);
   await expect(key).toBeVisible();
   await expect(key).toHaveText(label, { useInnerText: true });
   await expect(detail).toBeVisible();

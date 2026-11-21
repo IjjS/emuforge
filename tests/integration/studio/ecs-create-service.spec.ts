@@ -37,13 +37,13 @@ test('studio.ecs-create-service-opens-the-created-service', async ({ ctx, page }
 
   await expect(page).toHaveURL(addressOf(servicePath(cluster, name)));
   await expect(heading(page, name)).toBeVisible();
-  await expectServiceDetail(page, 2, 'Status', 'Active');
-  await expectServiceDetail(page, 3, 'Desired tasks', '2');
-  await expectServiceDetail(page, 6, 'Task definition', older);
-  await expectServiceDetail(page, 7, 'Launch type', 'FARGATE');
-  await expectServiceDetail(page, 9, 'Subnets', subnet);
-  await expectServiceDetail(page, 10, 'Security groups', group);
-  await expectServiceDetail(page, 11, 'Public IP', 'Enabled');
+  await expectServiceDetail(page, 'Status', 'Active');
+  await expectServiceDetail(page, 'Desired tasks', '2');
+  await expectServiceDetail(page, 'Task definition', older);
+  await expectServiceDetail(page, 'Launch type', 'FARGATE');
+  await expectServiceDetail(page, 'Subnets', subnet);
+  await expectServiceDetail(page, 'Security groups', group);
+  await expectServiceDetail(page, 'Public IP', 'Enabled');
   await expectVisibleResult(page, 'success', 'Service ' + name + ' created.');
   const clusterCrumb = clusterBreadcrumb(page);
   await expect(clusterCrumb).toHaveText(cluster);
