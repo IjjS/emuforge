@@ -120,6 +120,8 @@ export interface FunctionListingOptions {
   filter: string;
   /** The connection is connected: a failed reading is made again when it becomes so (R10.2). */
   connected: boolean;
+  /** Identifies the emulator session whose rows can authorize deletion. */
+  emulatorReadingEpoch?: number;
 }
 
 /** The counter after the title (R4.5): the functions of the pages read, with "+" while more remain. */
@@ -206,11 +208,17 @@ function answered(at: Position, page: number, answer: FunctionPage): Position {
  * The function list of the emulator behind the engine at `endpoint`, one page at a time, following the API's own
  * markers. It reads nothing again by itself while connected (R4.9).
  */
-export function useFunctionListing({ endpoint, pageSize, filter, connected }: FunctionListingOptions): FunctionListing {
+export function useFunctionListing({
+  endpoint,
+  pageSize,
+  filter,
+  connected,
+  emulatorReadingEpoch = 0,
+}: FunctionListingOptions): FunctionListing {
   const [mount] = useState(() => (mounts += 1));
   const [refreshes, setRefreshes] = useState(0);
   const generation = useListingGeneration(endpoint);
-  const listing = JSON.stringify([endpoint ?? null, generation, refreshes, pageSize, filter]);
+  const listing = JSON.stringify([endpoint ?? null, generation, refreshes, pageSize, filter, emulatorReadingEpoch]);
 
   const [stored, setPosition] = useState<Position>(() => fresh(listing));
   // A change of listing starts at page 1 with no marker.
@@ -223,6 +231,7 @@ export function useFunctionListing({ endpoint, pageSize, filter, connected }: Fu
       mount,
       generation,
       refreshes,
+      emulatorReadingEpoch,
       position.page,
       position.visit,
     ],
@@ -470,11 +479,11 @@ export function useDeleteFunctions(endpoint: string | undefined) {
     },
   });
   const remove = useCallback(
-    async (names: readonly string[]) => {
+    async (names: readonly string[], isEmulatorCurrent?: () => boolean) => {
       // TanStack Query can pause before mutationFn runs. Scope the signal when the deletion is confirmed.
       const controller = new AbortController();
       submissions.current.add(controller);
-      const dispose = bindAwsMutationAuthorization(controller);
+      const dispose = bindAwsMutationAuthorization(controller, isEmulatorCurrent ? { isEmulatorCurrent } : undefined);
       try {
         return await mutateAsync({ endpoint, names, controller });
       } finally {

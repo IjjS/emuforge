@@ -27,8 +27,7 @@ const CONFIRM_WORD = 'confirm';
 const CONFIRM_LABEL = 'To confirm deletion, type "confirm" in the field.';
 const DELETING = 'Deleting functions…';
 const OFFLINE_REASON = 'The browser is offline. Reconnect before deleting functions.';
-const EMPTY_INTERRUPTION =
-  'The browser connection changed before any deletion outcome was confirmed. Reopen Delete from Actions and confirm again.';
+const EMULATOR_REASON = 'Wait for the emulator to connect before deleting functions.';
 
 function deletedText(count: number): string {
   return count === 1
@@ -45,7 +44,10 @@ function resultItems(result: DeleteResult, engineOrigin: string | undefined): Fl
     items.push({ type: 'success', content: deletedText(result.deleted.length) });
   }
   if (result.interrupted) {
-    items.push({ type: 'info', content: 'The browser connection changed. Confirm any remaining deletions again.' });
+    items.push({
+      type: 'info',
+      content: `The ${result.interrupted} connection changed. Confirm any remaining deletions again.`,
+    });
   }
   const [first, ...rest] = items;
   return first === undefined ? undefined : [first, ...rest];
@@ -65,6 +67,8 @@ export interface DeleteFunctionsDialogProps {
   onExpiredDraft?: () => void;
   /** Checks the list's connection revision before a queued React render can close an expired draft. */
   canSubmit?: () => boolean;
+  /** Captures the emulator session authorized by a list confirmation for every attempt in the batch. */
+  isEmulatorCurrent?: () => boolean;
   /** The list reports interrupted submissions even when no outcome was settled. */
   reportEmptyInterruption?: boolean;
   /** Called before removing a confirmation that contains keyboard focus. */
@@ -89,6 +93,7 @@ export function DeleteFunctionsDialog({
   confirmationExpired = false,
   onExpiredDraft,
   canSubmit,
+  isEmulatorCurrent,
   reportEmptyInterruption = false,
   onDeleted,
   onFocusedDismissal,
@@ -96,8 +101,9 @@ export function DeleteFunctionsDialog({
   const flash = usePageFlash();
   const { remove, pending } = useDeleteFunctions(connection.engineOrigin);
   const [typed, setTyped] = useState('');
-  const offlineReasonId = useId();
-  const showOfflineReason = online === false && !pending;
+  const connectionReasonId = useId();
+  const emulatorUnavailable = online !== undefined && connection.result?.kind !== 'connected';
+  const connectionReason = online === false ? OFFLINE_REASON : emulatorUnavailable ? EMULATOR_REASON : undefined;
   const visible = names.length > 0;
   const confirmed = typed === CONFIRM_WORD;
 
@@ -153,7 +159,7 @@ export function DeleteFunctionsDialog({
     }
     submitting.current = true;
     const engineOrigin = connection.engineOrigin;
-    void remove(names).then(
+    void remove(names, isEmulatorCurrent).then(
       (result) => {
         submitting.current = false;
         if (!mounted.current) {
@@ -172,7 +178,12 @@ export function DeleteFunctionsDialog({
         if (mounted.current && error instanceof AwsMutationInterrupted) {
           setTyped('');
           if (reportEmptyInterruption) {
-            flash.show([{ type: 'info', content: EMPTY_INTERRUPTION }]);
+            flash.show([
+              {
+                type: 'info',
+                content: `The ${error.connection} connection changed before any deletion outcome was confirmed. Reopen Delete from Actions and confirm again.`,
+              },
+            ]);
           }
           onClose();
         }
@@ -184,6 +195,7 @@ export function DeleteFunctionsDialog({
     pending,
     online,
     canSubmit,
+    isEmulatorCurrent,
     connection.engineOrigin,
     remove,
     names,
@@ -230,8 +242,8 @@ export function DeleteFunctionsDialog({
             <Button
               ref={deleteButton}
               variant="primary"
-              disabled={!pending && (!confirmed || online === false || confirmationExpired)}
-              {...(showOfflineReason && { ariaDescribedby: offlineReasonId })}
+              disabled={!pending && (!confirmed || connectionReason !== undefined || confirmationExpired)}
+              {...(!pending && connectionReason !== undefined && { ariaDescribedby: connectionReasonId })}
               loading={pending}
               loadingText={DELETING}
               onClick={handleDelete}
@@ -255,8 +267,8 @@ export function DeleteFunctionsDialog({
           label={CONFIRM_LABEL}
           description={
             online !== undefined && (
-              <span id={offlineReasonId} role="status">
-                {showOfflineReason ? OFFLINE_REASON : ''}
+              <span id={connectionReasonId} role="status">
+                {pending ? '' : connectionReason}
               </span>
             )
           }

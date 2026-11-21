@@ -50,8 +50,6 @@ const RUNTIME_MIN_WIDTH = '18ch';
 const FILTER_LABEL = 'Search by attributes or search by keyword';
 const SELECT_FIRST = 'Select a function first';
 const WAIT_FOR_LIST = 'Wait for the current function list to load.';
-const EXPIRED_DRAFT =
-  'The delete confirmation closed because the browser connection changed. After the current function list loads, reopen Delete from Actions and confirm again.';
 const REFRESHED = 'Function list refreshed';
 const NO_MORE = 'No more functions';
 
@@ -174,12 +172,28 @@ export function FunctionListPage({ connection }: { connection: AreaConnection })
   const [filter, setFilter] = useState('');
   const [preferences, setPreferences] = useState(START_PREFERENCES);
   const [starter, setStarter] = useState<Starter>(null);
-  const connected = connection.result?.kind === 'connected';
+  const result = connection.result;
+  const connected = result?.kind === 'connected';
+  const identity = connected
+    ? JSON.stringify([connection.engineOrigin, result.emulator.endpoint, result.target])
+    : undefined;
+  const [observed, setObserved] = useState({ identity, revision: 0, readingEpoch: 0 });
+  if (observed.identity !== identity) {
+    const revision = observed.revision + 1;
+    setObserved({ identity, revision, readingEpoch: connected ? revision : observed.readingEpoch });
+  }
+  const emulatorRevision = useRef(observed.revision);
+  useLayoutEffect(() => {
+    emulatorRevision.current = observed.revision;
+  }, [observed.revision]);
+  const isEmulatorCurrent = useCallback(() => observed.revision === emulatorRevision.current, [observed.revision]);
+
   const listing = useFunctionListing({
     endpoint: connection.engineOrigin,
     pageSize: preferences.pageSize,
     filter,
     connected,
+    emulatorReadingEpoch: observed.readingEpoch,
   });
   const { functions, refresh } = listing;
   const loaded = functions !== undefined;
@@ -215,19 +229,22 @@ export function FunctionListPage({ connection }: { connection: AreaConnection })
   const [deleting, setDeleting] = useState<{
     names: readonly string[];
     revision: number;
+    emulatorRevision: number;
     endpoint: string | undefined;
   }>();
   const connectionChanged = deleting !== undefined && deleting.revision !== network.revision;
+  const emulatorChanged = deleting !== undefined && deleting.emulatorRevision !== observed.revision;
   const confirmationExpired =
     deleting !== undefined &&
     (connectionChanged ||
+      emulatorChanged ||
       deleting.endpoint !== connection.engineOrigin ||
       !loaded ||
       listing.failure !== undefined ||
       !deleting.names.every((name) => selected.some((fn) => fn.name === name)));
   const canSubmitDeletion = useCallback(
-    () => !confirmationExpired && deleting?.revision === connectionRevision.current,
-    [confirmationExpired, deleting],
+    () => connected && !confirmationExpired && deleting?.revision === connectionRevision.current && isEmulatorCurrent(),
+    [connected, confirmationExpired, deleting, isEmulatorCurrent],
   );
 
   const startListing = useCallback(() => {
@@ -323,16 +340,26 @@ export function FunctionListPage({ connection }: { connection: AreaConnection })
         detail.id === 'delete' &&
         selected.length > 0 &&
         listing.failure === undefined &&
-        network.revision === connectionRevision.current
+        network.revision === connectionRevision.current &&
+        isEmulatorCurrent()
       ) {
         setDeleting({
           names: selected.map((fn) => fn.name),
           revision: network.revision,
+          emulatorRevision: observed.revision,
           endpoint: connection.engineOrigin,
         });
       }
     },
-    [selected, listing.failure, network.revision, connection.engineOrigin, setDeleting],
+    [
+      selected,
+      listing.failure,
+      network.revision,
+      isEmulatorCurrent,
+      observed.revision,
+      connection.engineOrigin,
+      setDeleting,
+    ],
   );
 
   const handleDialogClose = useCallback(
@@ -347,10 +374,16 @@ export function FunctionListPage({ connection }: { connection: AreaConnection })
     [setDeleting],
   );
   const handleExpiredDraft = useCallback(() => {
-    if (connectionChanged) {
-      flash.show([{ type: 'info', content: EXPIRED_DRAFT }]);
+    if (connectionChanged || emulatorChanged) {
+      const source = connectionChanged ? 'browser' : 'emulator';
+      flash.show([
+        {
+          type: 'info',
+          content: `The delete confirmation closed because the ${source} connection changed. After the current function list loads, reopen Delete from Actions and confirm again.`,
+        },
+      ]);
     }
-  }, [connectionChanged, flash]);
+  }, [connectionChanged, emulatorChanged, flash]);
 
   const handleCreate = useCallback(() => {
     void navigate(CREATE_FUNCTION_PATH);
@@ -501,6 +534,7 @@ export function FunctionListPage({ connection }: { connection: AreaConnection })
         confirmationExpired={confirmationExpired}
         onExpiredDraft={handleExpiredDraft}
         canSubmit={canSubmitDeletion}
+        isEmulatorCurrent={isEmulatorCurrent}
         onClose={handleDialogClose}
         reportEmptyInterruption
       />
