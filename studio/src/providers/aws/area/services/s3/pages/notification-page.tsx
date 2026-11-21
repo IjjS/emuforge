@@ -149,7 +149,10 @@ export function NotificationPage({ connection, params }: ScreenPageProps) {
         {editing ? EDIT_TITLE : CREATE_TITLE}
       </Header>
       {changeKind !== 'idle' && (
-        <div ref={feedbackRef} role={changeKind === 'pending' ? 'status' : undefined}>
+        <div
+          ref={feedbackRef}
+          {...(changeKind === 'pending' ? { role: 'status', 'aria-label': 'Notification save progress' } : {})}
+        >
           <NotificationChangeStatus
             change={change}
             connection={connection}

@@ -525,7 +525,9 @@ it('keeps the submitted create settings and read-only recovery after the observa
   engine.read = () => verify.promise;
   const beforeRetry = engine.reads.length;
   fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
-  expect(screen.getByRole('status')).toHaveTextContent('Checking saved configuration');
+  expect(screen.getByRole('status', { name: 'Notification save progress' })).toHaveTextContent(
+    'Checking saved configuration',
+  );
   expect(screen.getByRole('heading', { name: 'Submitted notification' })).toBeVisible();
   verify.resolve(response(engine.document));
   await waitFor(() => expect(router.state.location.pathname).toBe(PROPERTIES));
