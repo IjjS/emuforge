@@ -151,7 +151,7 @@ class FakeEngine {
     json(200, operation === 'FilterLogEvents' ? { events: [] } : { Datapoints: [] });
   /** The answer to `GetFunction`; by default the emulator's. */
   answerFunction: (request: SentRequest) => EngineAnswer = (request) => this.emulator(request);
-  answerInvoke: (request: SentRequest) => Answer | Promise<Answer> = (request) => this.emulator(request);
+  answerInvoke: (request: SentRequest) => EngineAnswer = (request) => this.emulator(request);
   answerRelease: (request: SentRequest) => Answer | Promise<Answer> = ({ method, url }) => {
     if (method === 'POST') {
       return json(201, { Version: '1' });
@@ -255,6 +255,9 @@ class FakeEngine {
     }
     if (INVOKE_PATH.test(url.pathname)) {
       const answer = await this.answerInvoke(sent);
+      if (answer === 'network-error') {
+        throw new TypeError('Failed to fetch');
+      }
       return new Response(answer.body, { status: answer.status, headers: answer.headers ?? {} });
     }
     const answer = await Promise.race([
@@ -1577,6 +1580,39 @@ describe('Qualified Test invocations', () => {
     },
   );
 
+  it.each([
+    [
+      'a function error',
+      {
+        status: 200,
+        body: '{"errorMessage":"handler failed"}',
+        headers: { 'x-amz-function-error': 'Unhandled' },
+      },
+      'The function returned an error',
+    ],
+    ['an absent engine answer', 'network-error', 'The invocation got no answer'],
+    [
+      'an unimplemented qualified Invoke',
+      errorAnswer(501, 'NotImplemented', 'Invoke qualifiers are unsupported.'),
+      'Not implemented by the emulator',
+    ],
+  ] as const)('announces %s once from the page', async (_case, answer, words) => {
+    const announcements = recordAnnouncements();
+    engine.answerInvoke = () => answer;
+    open(pagePath('orders'));
+    await waitFor(() => expect(resultPanel()).toHaveTextContent('Not invoked yet'));
+    await chooseTarget('live');
+    invokeTarget();
+
+    await waitFor(() => expect(announcements.filter((message) => message === words)).toHaveLength(1));
+    expect(resultPanel()).toHaveTextContent(words);
+    fireEvent.click(tabLink('Code'));
+    expect(await screen.findByTestId('stand-in-code')).toBeVisible();
+    fireEvent.click(tabLink('Test'));
+    await waitFor(() => expect(resultPanel()).toHaveTextContent(words));
+    expect(announcements.filter((message) => message === words)).toHaveLength(1);
+  });
+
   it('shows the reported service code and the access-denied reason for qualified Invoke', async () => {
     engine.answerInvoke = () => errorAnswer(403, 'AccessDeniedException', 'The alias requires invoke permission.');
     open(pagePath('orders'));
@@ -1664,6 +1700,13 @@ describe('Qualified Test invocations', () => {
     expect(screen.getByText('Not invoked yet')).toBeVisible();
     expect(resultPanel()).not.toHaveTextContent('late result');
     expect(announcements.filter((message) => message === 'Succeeded')).toHaveLength(1);
+
+    targets().selectOptionByValue('replacement');
+    engine.answerInvoke = () => result('replacement result', 'replacement tail');
+    invokeTarget();
+    await waitFor(() => expect(announcements.filter((message) => message === 'Succeeded')).toHaveLength(2));
+    expect(resultPanel()).toHaveTextContent('Submitted target replacement');
+    expect(resultPanel()).toHaveTextContent('replacement result');
   });
 
   it('refreshes targets and keeps a disappeared alias blocked until replaced by an explicit choice', async () => {
