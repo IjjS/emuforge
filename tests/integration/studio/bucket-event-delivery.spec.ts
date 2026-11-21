@@ -55,9 +55,43 @@ test('studio.s3-notification-queue-receives-upload', async ({ ctx, page }) => {
   await page.goto(properties(f.bucket));
   await page.getByRole('link', { name: 'Open queue' }).click();
   await page.getByRole('tab', { name: 'Messages', exact: true }).click();
-  await page.getByRole('button', { name: 'Read messages' }).click();
-  const row = page.locator(wrappers.findTable().findRows().toSelector()).filter({ hasText: key });
-  await row.getByRole('button').click({ timeout: 10000 });
+  const read = page.getByRole('button', { name: 'Read messages' });
+  let messageId: string | undefined;
+  await expect
+    .poll(
+      async () => {
+        const [response] = await Promise.all([
+          page.waitForResponse((r) => r.request().headers()['x-amz-target']?.endsWith('.ReceiveMessage') === true, {
+            timeout: 10000,
+          }),
+          read.click({ timeout: 10000 }),
+        ]);
+        expect(response.ok()).toBe(true);
+        const result = (await response.json()) as { Messages?: { MessageId: string; Body: string }[] };
+        messageId = result.Messages?.find((message) => {
+          const body = JSON.parse(message.Body) as {
+            Records?: {
+              eventName: string;
+              s3: { configurationId: string; bucket: { name: string }; object: { key: string } };
+            }[];
+          };
+          return body.Records?.some(
+            (r) =>
+              r.eventName === 'ObjectCreated:Put' &&
+              r.s3.configurationId === 'queue-puts' &&
+              r.s3.bucket.name === f.bucket &&
+              r.s3.object.key === key,
+          );
+        })?.MessageId;
+        return messageId;
+      },
+      { timeout: 30000 },
+    )
+    .toBeTruthy();
+  await page
+    .getByRole('table', { name: 'Messages read' })
+    .getByRole('button', { name: messageId!, exact: true })
+    .click({ timeout: 10000 });
   const body = JSON.parse(await page.locator('.aws-sqs-message-body').innerText());
   expect(body.Records).toContainEqual(
     expect.objectContaining({
@@ -80,7 +114,11 @@ test('studio.s3-notification-function-receives-upload', async ({ ctx, page }) =>
   await fillRule(page, 'function-uploads', fn.arn, 'Lambda function', 's3:ObjectCreated:*');
   await submitCreate(page).click();
   await expect(success(page)).toContainText('Event notification saved');
-  await expect(page.getByRole('link', { name: 'Edit function-uploads' })).toBeVisible();
+  const rule = page
+    .locator(wrappers.findTable().findRows().toSelector())
+    .filter({ has: page.getByRole('link', { name: 'Edit function-uploads' }) });
+  await expect(rule).toContainText(fn.arn);
+  await expect(rule).toContainText('s3:ObjectCreated:*');
   expect(await f.read()).toEqual({
     LambdaFunctionConfigurations: [
       { Id: 'function-uploads', LambdaFunctionArn: fn.arn, Events: ['s3:ObjectCreated:*'] },
@@ -91,8 +129,31 @@ test('studio.s3-notification-function-receives-upload', async ({ ctx, page }) =>
   await expect.poll(() => f.logged(fn.name, key), { timeout: 30000 }).toBeTruthy();
   await page.goto(properties(f.bucket));
   await page.getByRole('link', { name: 'Open function monitor' }).click();
-  const log = page.locator(wrappers.findTable().findRows().toSelector()).filter({ hasText: key });
-  await expect(log).toContainText(f.bucket);
-  await expect(log).toContainText('ObjectCreated:Put');
-  await expect(log).toContainText('function-uploads');
+  const table = page.getByRole('table', { name: 'Log events' });
+  await expect(table).toBeVisible();
+  await expect
+    .poll(async () => {
+      const rows = table.getByRole('row').and(page.locator(wrappers.findTable().findRows().toSelector()));
+      const messages = await Promise.all(
+        Array.from({ length: await rows.count() }, (_, index) =>
+          table
+            .getByRole('cell')
+            .and(
+              page.locator(
+                wrappers
+                  .findTable()
+                  .findBodyCell(index + 1, 2)
+                  .toSelector(),
+              ),
+            )
+            .allTextContents(),
+        ),
+      );
+      return messages
+        .flat()
+        .some((text) =>
+          [f.bucket, key, 'ObjectCreated:Put', 'function-uploads'].every((value) => text.includes(value)),
+        );
+    })
+    .toBe(true);
 });

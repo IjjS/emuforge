@@ -20,8 +20,9 @@ test('studio.s3-notification-edit-delete-preserve-settings', async ({ ctx, page 
   await f.createBucket();
   const QueueArn = await f.queue(true);
   const fn = await f.functionDestination();
+  const topicArn = await f.topic();
   const peers: NotificationConfiguration = {
-    ...topicSettings(await f.topic()),
+    ...topicSettings(topicArn),
     LambdaFunctionConfigurations: [
       {
         Id: 'function-peer',
@@ -34,7 +35,18 @@ test('studio.s3-notification-edit-delete-preserve-settings', async ({ ctx, page 
   const withPrefix = (prefix: string): NotificationConfiguration => ({
     ...peers,
     QueueConfigurations: [
-      { ...queue, Events: [...queue.Events], Filter: { Key: { FilterRules: [{ Name: 'Prefix', Value: prefix }] } } },
+      {
+        ...queue,
+        Events: [...queue.Events],
+        Filter: {
+          Key: {
+            FilterRules: [
+              { Name: 'Suffix', Value: '.csv' },
+              { Name: 'Prefix', Value: prefix },
+            ],
+          },
+        },
+      },
     ],
   });
   await f.seed(withPrefix('old/'));
@@ -47,9 +59,13 @@ test('studio.s3-notification-edit-delete-preserve-settings', async ({ ctx, page 
   await page.getByRole('textbox', { name: 'Prefix (optional)' }).fill('edited/');
   await page.getByRole('button', { name: 'Save changes' }).click();
   await expect(success(page)).toContainText('Event notification saved');
-  await page.reload();
   const row = page.locator(wrappers.findTable().findRows().toSelector()).filter({ has: edit });
-  for (const value of [...queue.Events, 'edited/']) await expect(row).toContainText(value);
+  const expectEditedRow = async () => {
+    for (const value of [...queue.Events, 'edited/', '.csv']) await expect(row).toContainText(value);
+  };
+  await expectEditedRow();
+  await page.reload();
+  await expectEditedRow();
   expect(await f.read()).toEqual(withPrefix('edited/'));
   const remove = page.getByRole('button', { name: 'Delete multi', exact: true });
   const dialog = page.locator(wrappers.findModal().toSelector());
@@ -62,6 +78,9 @@ test('studio.s3-notification-edit-delete-preserve-settings', async ({ ctx, page 
   await expect(success(page)).toContainText('Event notification deleted');
   await page.reload();
   await expect(page.getByRole('link', { name: 'Edit function-peer' })).toBeVisible();
+  await expect(page.locator(wrappers.findTable().findRows().toSelector()).allTextContents()).resolves.toEqual(
+    expect.arrayContaining([expect.stringContaining(topicArn)]),
+  );
   await expect(edit).toHaveCount(0);
   expect(await f.read()).toEqual(peers);
 });
@@ -76,11 +95,22 @@ test('studio.s3-notification-refused-destination-keeps-draft', async ({ ctx, pag
   await openCreate(page, f.bucket);
   await fillRule(page, 'denied', arn, 'SQS queue', 's3:ObjectCreated:Put');
   await submitCreate(page).click();
-  const alert = page.locator(wrappers.findAlert().toSelector()).filter({ hasText: 'InvalidArgument' });
+  const alert = page
+    .getByRole('main')
+    .locator(wrappers.findAlert('[class*="awsui_type-error"]').findContent().toSelector());
+  await expect(alert).toContainText('InvalidArgument');
   await expect(alert).toContainText('Unable to validate the following destination configurations');
   await expect(alert).toContainText('Check that the queue policy allows S3 to send messages from this bucket');
   await expect(nameField(page)).toHaveValue('denied');
   await expect(page.getByRole('textbox', { name: 'Destination ARN' })).toHaveValue(arn);
+  await expect(nameField(page)).toBeEditable();
+  await expect(page.getByRole('textbox', { name: 'Destination ARN' })).toBeEditable();
+  for (const value of ['SQS queue', 's3:ObjectCreated:Put']) {
+    const selected = page.locator(wrappers.findRadioGroup().findInputByValue(value).toSelector());
+    await expect(selected).toBeChecked();
+    await expect(selected).toBeEnabled();
+  }
+  await expect(submitCreate(page)).toBeEnabled();
   expect(await f.read()).toEqual(initial);
 });
 
@@ -92,8 +122,13 @@ test('studio.s3-notification-cancel-preserves-configuration', async ({ ctx, page
   const initial = await f.read();
   const writes: string[] = [];
   page.on('request', (r) => {
-    if (new URL(r.url()).origin === stack.engine.url && ['PUT', 'DELETE', 'PATCH'].includes(r.method()))
-      writes.push(r.method() + ' ' + new URL(r.url()).pathname);
+    const url = new URL(r.url());
+    if (
+      url.origin === stack.engine.url &&
+      !url.pathname.startsWith('/__emuforge/') &&
+      ['POST', 'PUT', 'DELETE', 'PATCH'].includes(r.method())
+    )
+      writes.push(r.method() + ' ' + url.pathname);
   });
   await page.goto(properties(f.bucket));
   await markPage(page);
@@ -130,6 +165,9 @@ test('studio.s3-notification-editor-follows-emulator-restart', async ({ ctx, pag
   await page.goto(properties(f.bucket));
   await page.getByRole('link', { name: 'Edit before-restart' }).click();
   await expect(nameField(page)).toHaveValue('before-restart');
+  const prefix = page.getByRole('textbox', { name: 'Prefix (optional)' });
+  await prefix.fill('unsaved/');
+  await expect(prefix).toHaveValue('unsaved/');
   await emulator.stop();
   await expectLine(page, notStartedOn(emulator.port));
   await emulator.startAgain();
@@ -138,6 +176,7 @@ test('studio.s3-notification-editor-follows-emulator-restart', async ({ ctx, pag
   await expect(page.getByRole('main')).toContainText(f.bucket);
   await expect(page.getByRole('main')).toContainText('Bucket not found');
   await expect(nameField(page)).toHaveCount(0);
+  await expect(prefix).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Save changes' })).toHaveCount(0);
   const fresh = new LocalNotifications(ctx, emulator.port, 'nx', true);
   expect(await fresh.exists()).toBe(false);
