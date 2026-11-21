@@ -156,7 +156,12 @@ test('engine.compose-databases-answer-on-described-host-ports', async ({ ctx }) 
     expect(port).toBeGreaterThanOrEqual(range.low);
     expect(port).toBeLessThanOrEqual(range.high);
     const adapter = family.includes('postgres') ? 'postgres' : 'mysql';
-    expect(await hostQuery(ctx, adapter, port!, db, password)).toEqual({ db, marker: 578 });
+    const answer = await waitFor(30_000, async () => {
+      const result = await hostQuery(ctx, adapter, port!, db, password);
+      // PostgreSQL can accept connections during startup and answer cannot_connect_now.
+      return result.code === '57P03' ? undefined : result;
+    });
+    expect(answer).toEqual({ db, marker: 578 });
     if (client === engine) {
       const addresses = hostIPv4();
       expect(addresses.length).toBeGreaterThan(0);
