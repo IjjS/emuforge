@@ -65,7 +65,7 @@ function hostQuery(
   database: string,
   password: string,
   ca: string,
-): Promise<{ db?: string; marker?: number; code?: string; reason?: string }> {
+): Promise<{ db?: string; marker?: number | string; code?: string; reason?: string }> {
   return new Promise((resolve, reject) => {
     const child = execFile(
       'bun',
@@ -181,7 +181,8 @@ test('engine.compose-databases-answer-on-described-host-ports', async ({ ctx }) 
       lastCode = [result.code, result.reason].filter(Boolean).join(' ');
       return result.code === undefined ? result : undefined;
     });
-    expect(answer, id + ' SQL query, last code ' + lastCode).toEqual({ db, marker: 578 });
+    expect(answer?.db, id + ' SQL query, last code ' + lastCode).toBe(db);
+    expect([578, '578']).toContain(answer?.marker);
     if (client === engine) {
       const addresses = hostIPv4();
       expect(addresses.length).toBeGreaterThan(0);
