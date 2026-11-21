@@ -73,6 +73,7 @@ export function NotificationPage({ connection, params }: ScreenPageProps) {
   const change = useNotificationChange(
     connection.engineOrigin,
     bucket,
+    connection.result !== undefined && connection.result.kind !== 'connected',
     () => flash.handOver(properties, [{ type: 'success', content: 'Event notification saved' }]),
     (value) => setReadback({ generation, value }),
   );

@@ -43,9 +43,10 @@ function connected(target: string): AreaConnection['result'] {
 class FakeEngine {
   reads: Request[] = [];
   writes: string[] = [];
+  writeRequests: Request[] = [];
   document = EMPTY;
   read = (): Response | Promise<Response> => response(this.document);
-  write = (body: string): Response => {
+  write = (body: string): Response | Promise<Response> => {
     this.document = body;
     return new Response(null, { status: 204 });
   };
@@ -56,6 +57,7 @@ class FakeEngine {
     if (url.pathname === '/__emuforge/session') return Response.json({ token: 'notification-test' });
     if (url.searchParams.has('notification')) {
       if (request.method === 'PUT') {
+        this.writeRequests.push(request);
         const body = await request.text();
         this.writes.push(body);
         return this.write(body);
@@ -153,6 +155,12 @@ afterEach(() => {
 });
 
 const page = createWrapper(document.body);
+
+function notificationFlashes(message: string) {
+  return (page.findFlashbar()?.findItems() ?? []).filter(
+    (item) => item.findContent()?.getElement().textContent === message,
+  );
+}
 
 function field(label: string) {
   const found = page.findAllFormFields().find((candidate) => candidate.findLabel()?.getElement().textContent === label);
@@ -419,7 +427,7 @@ it.each(['failed read', 'missing rule', 'different field'])(
     fireEvent.click(editing ? screen.getByRole('button', { name: 'Save changes' }) : createButton());
     const retry = await screen.findByRole('button', { name: 'Check again' });
     expect(retry).toHaveFocus();
-    expect(screen.queryByText('Event notification saved')).toBeNull();
+    expect(notificationFlashes('Event notification saved')).toHaveLength(0);
     if (mode === 'failed read') expect(screen.getByText(/Verification read failed/)).toBeVisible();
     else expect(screen.getByText('The saved configuration differs from the requested change.')).toBeVisible();
     if (editing) expect(screen.getByText('observed/')).toBeVisible();
@@ -429,7 +437,7 @@ it.each(['failed read', 'missing rule', 'different field'])(
     await waitFor(() => expect(router.state.location.pathname).toBe(PROPERTIES));
     expect(engine.reads.slice(before).every((request) => request.method === 'GET')).toBe(true);
     expect(engine.writes).toHaveLength(1);
-    expect(await screen.findByText('Event notification saved')).toBeVisible();
+    await waitFor(() => expect(notificationFlashes('Event notification saved')).toHaveLength(1));
   },
 );
 
@@ -475,11 +483,11 @@ it.each(['missing rule', 'missing bucket'])(
     expect(engine.reads.slice(beforeRetry).map((request) => request.method)).toEqual(['GET']);
     expect(engine.writes).toHaveLength(1);
     expect(router.state.location.pathname).toBe(path);
-    expect(screen.queryByText('Event notification saved')).toBeNull();
+    expect(notificationFlashes('Event notification saved')).toHaveLength(0);
 
     engine.read = () => response(engine.document);
     fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
-    expect(await screen.findByText('Event notification saved')).toBeVisible();
+    await waitFor(() => expect(notificationFlashes('Event notification saved')).toHaveLength(1));
     expect(router.state.location.pathname).toBe(PROPERTIES);
     expect(engine.writes).toHaveLength(1);
   },
@@ -533,7 +541,73 @@ it('keeps the submitted create settings and read-only recovery after the observa
   await waitFor(() => expect(router.state.location.pathname).toBe(PROPERTIES));
   expect(engine.reads[beforeRetry]?.method).toBe('GET');
   expect(engine.writes).toHaveLength(1);
-  expect(await screen.findByText('Event notification saved')).toBeVisible();
+  await waitFor(() => expect(notificationFlashes('Event notification saved')).toHaveLength(1));
+});
+
+it.each(['pre-write GET', 'transmitted PUT'])('abandons a held save %s across a same-target outage', async (stage) => {
+  const pending = heldResponse();
+  const router = open();
+  await loaded();
+  fill();
+  if (stage === 'pre-write GET') engine.read = () => pending.promise;
+  else {
+    engine.write = (body) => {
+      engine.document = body;
+      return pending.promise;
+    };
+  }
+  fireEvent.click(createButton());
+  await waitFor(() => {
+    expect(engine.reads).toHaveLength(2);
+    expect(engine.writes).toHaveLength(stage === 'pre-write GET' ? 0 : 1);
+  });
+  const abandoned = stage === 'pre-write GET' ? engine.reads.at(-1) : engine.writeRequests.at(-1);
+
+  setConnection({ kind: 'engine-unreachable', checkedAt: 1, lastEmulatorPort: 9305 });
+  expect(abandoned?.signal.aborted).toBe(true);
+  engine.read = () => response();
+  setConnection(connected('first'));
+  await waitFor(() => expect(engine.reads).toHaveLength(3));
+  if (stage === 'pre-write GET') expect(await loaded()).toHaveValue('');
+  else expect(await screen.findByRole('button', { name: 'Check again' })).toBeEnabled();
+
+  await act(async () => {
+    pending.resolve(stage === 'pre-write GET' ? response() : new Response(null, { status: 204 }));
+    await pending.promise;
+  });
+  expect(engine.reads).toHaveLength(3);
+  expect(engine.writes).toHaveLength(stage === 'pre-write GET' ? 0 : 1);
+  expect(notificationFlashes('Event notification saved')).toHaveLength(0);
+  expect(router.state.location.pathname).toBe(CREATE);
+  if (stage === 'pre-write GET') {
+    expect(screen.queryByRole('button', { name: 'Check again' })).toBeNull();
+  } else {
+    engine.read = () => response(engine.document);
+    fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
+    await waitFor(() => expect(notificationFlashes('Event notification saved')).toHaveLength(1));
+    expect(engine.reads[3]?.method).toBe('GET');
+    expect(engine.writes).toHaveLength(1);
+  }
+});
+
+it('names the unavailable verification GET and disables the save recovery action', async () => {
+  open();
+  await loaded();
+  fill();
+  engine.read = () => (engine.writes.length === 0 ? response() : refusal(400, 'InvalidRequest', 'Read unavailable'));
+  fireEvent.click(createButton());
+  const retry = await screen.findByRole('button', { name: 'Check again' });
+  engine.read = () => refusal(501, 'NotImplemented', 'Operation unavailable');
+  fireEvent.click(retry);
+  expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
+  expect(screen.getByText(/501 Not Implemented for GetBucketNotificationConfiguration/)).toBeVisible();
+  const disabled = screen.getByRole('button', { name: 'Check again' });
+  expect(disabled).toBeDisabled();
+  const reads = engine.reads.length;
+  fireEvent.click(disabled);
+  expect(engine.reads).toHaveLength(reads);
+  expect(engine.writes).toHaveLength(1);
+  expect(notificationFlashes('Event notification saved')).toHaveLength(0);
 });
 
 describe.each(['leave', 'switch target'])('while saving, %s', (cause) => {
@@ -563,7 +637,7 @@ describe.each(['leave', 'switch target'])('while saving, %s', (cause) => {
     });
     expect(engine.reads).toHaveLength(after);
     expect(engine.writes).toHaveLength(step === 'pre-write read' ? 0 : 1);
-    expect(screen.queryByText('Event notification saved')).toBeNull();
+    expect(notificationFlashes('Event notification saved')).toHaveLength(0);
     expect(screen.queryByRole('button', { name: 'Check again' })).toBeNull();
     expect(router.state.location.pathname).toBe(cause === 'leave' ? '/' : CREATE);
   });
