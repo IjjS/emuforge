@@ -12,7 +12,15 @@ import { GetQueueUrlCommand, SQSClient } from '@aws-sdk/client-sqs';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { createAwsClient, createS3Client, engineEndpoint } from './client-factory';
-import { RequestError, sendRequest, UNREADABLE_ANSWER, untilAborted, type RequestFailure } from './request';
+import {
+  reportedServiceCode,
+  requestFailure,
+  RequestError,
+  sendRequest,
+  UNREADABLE_ANSWER,
+  untilAborted,
+  type RequestFailure,
+} from './request';
 
 // The shared mapping of a failed request and the wait on its signal (issue 445, requirement R4 to R6). The test plays
 // the engine behind the page's `fetch`: its session route, and every AWS request, answered in the shape the emulator
@@ -183,6 +191,47 @@ const EMULATOR_UNAVAILABLE =
 const EMULATOR_TIMEOUT = 'the emulator at https://127.0.0.1:9545 did not answer within 30 seconds';
 
 describe('the mapping', () => {
+  it('retains classified service codes through a wrapped request without changing its failure', async () => {
+    engine.aws = () => json(REST_JSON, 403, 'AccessDeniedException', 'policy refused');
+    const failed = await failureOf('ListFunctions');
+    expect(failed).toEqual({ kind: 'access-denied', operation: 'ListFunctions', message: 'policy refused' });
+    expect(reportedServiceCode(requestFailure('ListFunctions', new RequestError(failed)))).toBe(
+      'AccessDeniedException',
+    );
+
+    engine.aws = () => json(REST_JSON, 503, 'EmulatorUnavailable', EMULATOR_UNAVAILABLE);
+    expect(reportedServiceCode(await failureOf('ListFunctions'))).toBe('EmulatorUnavailable');
+  });
+
+  it('retains a body Code before the SDK exception name without changing classification', () => {
+    const failed = requestFailure('ListFunctions', {
+      Code: 'AccessDenied',
+      name: 'EmulatorTimeout',
+      $fault: 'client',
+      $metadata: { httpStatusCode: 403 },
+      message: 'policy refused',
+    });
+    expect(failed).toEqual({ kind: 'access-denied', operation: 'ListFunctions', message: 'policy refused' });
+    expect(reportedServiceCode(failed)).toBe('AccessDenied');
+  });
+
+  it('retains only a reported code, excluding synthetic SDK and HTTP fallbacks', async () => {
+    engine.aws = () => ({ status: 404, body: '' });
+    const failed = await failureOf('ListBuckets');
+    expect(failed).toEqual({ kind: 'other', operation: 'ListBuckets', code: 'HTTP 404' });
+    expect(reportedServiceCode(failed)).toBeUndefined();
+
+    engine.aws = () => json(REST_JSON, 404, 'NotFound', 'no such thing');
+    expect(reportedServiceCode(await failureOf('ListFunctions'))).toBe('NotFound');
+  });
+
+  it('keeps 501 as its own state even when the service reports a code', async () => {
+    engine.aws = () => json(REST_JSON, 501, 'NotImplementedException');
+    const failed = await failureOf('ListFunctions');
+    expect(failed).toEqual({ kind: 'not-implemented', operation: 'ListFunctions' });
+    expect(reportedServiceCode(failed)).toBe('NotImplementedException');
+  });
+
   it('is "not implemented", naming ListBuckets, and nothing else, for S3 answered 501 NotImplemented', async () => {
     engine.aws = () =>
       restXml(501, 'NotImplemented', 'operation ListBuckets is scaffolded but not implemented in this emulator');

@@ -18,6 +18,23 @@ export type RequestFailure =
   /** Any other answer: its code, or its status line when it has none, and its message when it has one. */
   | { kind: 'other'; operation: string; code: string; message?: string };
 
+const reportedCodes = new WeakMap<RequestFailure, string>();
+
+/**
+ * The code reported in a service response, when present. Keep the original failure from `requestFailure` or
+ * `RequestError.failure` to read this metadata. It excludes synthesized status lines, decoder errors and session errors.
+ */
+export function reportedServiceCode(failure: RequestFailure): string | undefined {
+  return reportedCodes.get(failure);
+}
+
+function withReportedCode(failure: RequestFailure, code: string | undefined): RequestFailure {
+  if (code !== undefined) {
+    reportedCodes.set(failure, code);
+  }
+  return failure;
+}
+
 /** A request that failed; `name` is 'RequestError', `message` is `<operation> failed: <kind>.` */
 export class RequestError extends Error {
   readonly failure: RequestFailure;
@@ -87,10 +104,10 @@ export function requestFailure(operation: string, error: unknown): RequestFailur
   if (typeof status !== 'number') {
     return { kind: 'engine-did-not-answer', operation };
   }
-  if (status === 501) {
-    return { kind: 'not-implemented', operation };
-  }
   const code = codeOf(answer, status);
+  if (status === 501) {
+    return withReportedCode({ kind: 'not-implemented', operation }, code);
+  }
   if (code === undefined && status >= 200 && status < 300) {
     // A success the SDK could not decode: its status names no failure, the SDK's own message is what went wrong.
     const message = text(answer.message);
@@ -108,12 +125,15 @@ export function requestFailure(operation: string, error: unknown): RequestFailur
   }
   const message = text(answer.message);
   if (ACCESS_DENIED.has(code)) {
-    return { kind: 'access-denied', operation, message: message ?? '' };
+    return withReportedCode({ kind: 'access-denied', operation, message: message ?? '' }, code);
   }
   if (EMULATOR_SILENT.has(code)) {
-    return { kind: 'emulator-did-not-answer', operation, message: message ?? '' };
+    return withReportedCode({ kind: 'emulator-did-not-answer', operation, message: message ?? '' }, code);
   }
-  return message === undefined ? { kind: 'other', operation, code } : { kind: 'other', operation, code, message };
+  return withReportedCode(
+    message === undefined ? { kind: 'other', operation, code } : { kind: 'other', operation, code, message },
+    code,
+  );
 }
 
 /** `pending`, unless `signal` aborts first or has aborted: then its reason, at once (R6.1). */
