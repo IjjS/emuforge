@@ -1670,6 +1670,7 @@ describe('Qualified Test invocations', () => {
     invokeTarget();
     await waitFor(() => expect(submitted()).toHaveLength(2));
     expect(resultPanel()).toHaveTextContent('previous result');
+    expect(announcements.filter((message) => message === 'Succeeded')).toHaveLength(1);
 
     connection.set(notStartedResult());
     expect(screen.queryByText('previous result', { exact: false })).toBeNull();
@@ -1688,6 +1689,7 @@ describe('Qualified Test invocations', () => {
     expect(targetOption('8')).toHaveTextContent('8');
     expect(targetOption('live')).toBeNull();
     const rereads = engine.gets.length;
+    expect(announcements.filter((message) => message === 'Succeeded')).toHaveLength(1);
 
     await act(async () => {
       pending.resolve(result('late result', 'late tail'));
