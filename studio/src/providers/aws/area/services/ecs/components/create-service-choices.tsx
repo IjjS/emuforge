@@ -6,7 +6,7 @@ import Multiselect, { type MultiselectProps } from '@cloudscape-design/component
 import Select, { type SelectProps } from '@cloudscape-design/components/select';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
-import { useId, useImperativeHandle, useRef, type Ref } from 'react';
+import { useId, useImperativeHandle, useLayoutEffect, useRef, type Ref } from 'react';
 
 import type { RequestFailure } from '../../../../../../lib/aws/request';
 import { optional } from '../../../components/choice-select';
@@ -64,7 +64,10 @@ export function CreateServiceChoice<T>(props: ChoiceProps<T> & (SingleChoice<T> 
   } = props;
   const items = listing.choices ?? [];
   const blocked = listing.failure?.kind === 'not-implemented';
+  const continuationBlocked = blocked && listing.choices !== undefined;
   const disabled = unavailable || blocked || source.ready === false;
+  const pickerRef = useRef<HTMLDivElement>(null);
+  const pickerHadFocus = useRef(false);
   const selectRef = useRef<SelectProps.Ref>(null);
   const multiRef = useRef<MultiselectProps.Ref>(null);
   const diagnosticRef = useRef<HTMLDivElement>(null);
@@ -86,6 +89,18 @@ export function CreateServiceChoice<T>(props: ChoiceProps<T> & (SingleChoice<T> 
     }),
     [disabled, multiple],
   );
+  useLayoutEffect(() => {
+    const diagnostic = diagnosticRef.current;
+    if (!continuationBlocked || !pickerHadFocus.current || diagnostic === null) {
+      return;
+    }
+    const { activeElement, body } = diagnostic.ownerDocument;
+    if (activeElement === body || pickerRef.current?.contains(activeElement)) {
+      diagnostic.focus();
+      revealBelowBreadcrumbs(diagnostic, 'if-covered');
+    }
+  }, [continuationBlocked]);
+
   const controls = {
     ...optional({ placeholder, invalid: error === undefined ? undefined : true }),
     disabled,
@@ -93,9 +108,15 @@ export function CreateServiceChoice<T>(props: ChoiceProps<T> & (SingleChoice<T> 
     statusType: listing.loading ? ('loading' as const) : ('finished' as const),
     loadingText: `Loading ${label.toLowerCase()}`,
     renderDropdownFooter: () =>
-      !disabled && listing.more && !listing.failure && !listing.loading ? (
+      !disabled && listing.more && !listing.failure ? (
         <Box padding={{ vertical: 'xs', horizontal: 's' }}>
-          <Button variant="inline-link" formAction="none" onClick={listing.loadMore}>
+          <Button
+            variant="inline-link"
+            formAction="none"
+            loading={listing.loading}
+            loadingText={`Loading more ${choiceNoun(label)}`}
+            onClick={listing.loadMore}
+          >
             Load more
           </Button>
         </Box>
@@ -105,42 +126,55 @@ export function CreateServiceChoice<T>(props: ChoiceProps<T> & (SingleChoice<T> 
 
   return (
     <SpaceBetween size="xs">
-      <FormField label={label} {...optional({ errorText: error, description: unavailable ? empty : description })}>
-        {multiple === true ? (
-          <Multiselect
-            key={disabled ? 'unavailable' : 'available'}
-            {...controls}
-            ref={multiRef}
-            selectedOptions={value.map(source.optionOf)}
-            deselectAriaLabel={(option) => `Remove ${option.label ?? option.value ?? ''}`}
-            onChange={({ detail }) => {
-              if (disabled) return;
-              const known = [...value, ...items];
-              onChange(
-                detail.selectedOptions.flatMap((option) => {
-                  const found = known.find((item) => source.optionOf(item).value === option.value);
-                  return found === undefined ? [] : [found];
-                }),
-              );
-            }}
-          />
-        ) : (
-          <Select
-            key={disabled ? 'unavailable' : 'available'}
-            {...controls}
-            ref={selectRef}
-            dropdownRole="dialog"
-            selectedOption={value === undefined ? null : source.optionOf(value)}
-            onChange={({ detail }) => {
-              if (disabled) return;
-              const found = items.find((item) => source.optionOf(item).value === detail.selectedOption.value);
-              if (found !== undefined) {
-                onChange(found);
-              }
-            }}
-          />
-        )}
-      </FormField>
+      <div
+        ref={pickerRef}
+        onFocus={() => {
+          pickerHadFocus.current = true;
+        }}
+        onBlur={({ currentTarget, relatedTarget }) => {
+          // Removing a focused option can blur to the body without moving focus to another control.
+          if (relatedTarget !== null && !currentTarget.contains(relatedTarget)) {
+            pickerHadFocus.current = false;
+          }
+        }}
+      >
+        <FormField label={label} {...optional({ errorText: error, description: unavailable ? empty : description })}>
+          {multiple === true ? (
+            <Multiselect
+              key={disabled ? 'unavailable' : 'available'}
+              {...controls}
+              ref={multiRef}
+              selectedOptions={value.map(source.optionOf)}
+              deselectAriaLabel={(option) => `Remove ${option.label ?? option.value ?? ''}`}
+              onChange={({ detail }) => {
+                if (disabled) return;
+                const known = [...value, ...items];
+                onChange(
+                  detail.selectedOptions.flatMap((option) => {
+                    const found = known.find((item) => source.optionOf(item).value === option.value);
+                    return found === undefined ? [] : [found];
+                  }),
+                );
+              }}
+            />
+          ) : (
+            <Select
+              key={disabled ? 'unavailable' : 'available'}
+              {...controls}
+              ref={selectRef}
+              dropdownRole="dialog"
+              selectedOption={value === undefined ? null : source.optionOf(value)}
+              onChange={({ detail }) => {
+                if (disabled) return;
+                const found = items.find((item) => source.optionOf(item).value === detail.selectedOption.value);
+                if (found !== undefined) {
+                  onChange(found);
+                }
+              }}
+            />
+          )}
+        </FormField>
+      </div>
       {listing.failure !== undefined ? (
         <div
           ref={diagnosticRef}
@@ -150,7 +184,13 @@ export function CreateServiceChoice<T>(props: ChoiceProps<T> & (SingleChoice<T> 
           aria-describedby={diagnosticId}
         >
           <div id={diagnosticId}>
-            <ChoiceFailure failure={listing.failure} connection={connection} label={label} onRetry={listing.retry} />
+            <ChoiceFailure
+              failure={listing.failure}
+              connection={connection}
+              label={label}
+              continuationBlocked={continuationBlocked}
+              onRetry={listing.retry}
+            />
           </div>
         </div>
       ) : (
@@ -160,20 +200,31 @@ export function CreateServiceChoice<T>(props: ChoiceProps<T> & (SingleChoice<T> 
   );
 }
 
+function choiceNoun(label: string): string {
+  if (label === 'Revision') return 'revisions';
+  if (label === 'Task definition family') return 'task definition families';
+  return label.toLowerCase();
+}
+
 function ChoiceFailure({
   failure,
   connection,
   label,
+  continuationBlocked,
   onRetry,
 }: {
   failure: RequestFailure;
   connection: AreaConnection;
   label: string;
+  continuationBlocked: boolean;
   onRetry: () => void;
 }) {
   const follow = useFollow();
   const status = readFailureState(failure, connection, label.toLowerCase());
   const diagnostic = readFailureState(failure, { ...connection, result: undefined }, label.toLowerCase());
+  const detail = continuationBlocked
+    ? `The emulator answered 501 Not Implemented for ${failure.operation}. Studio cannot load more ${choiceNoun(label)}.`
+    : diagnostic.detail;
   return (
     <SpaceBetween size="xxs">
       <StatusIndicator type={diagnostic.type}>{diagnostic.first}</StatusIndicator>
@@ -182,7 +233,7 @@ function ChoiceFailure({
           <Code>{failure.operation}</Code>
         </Box>
       )}
-      {diagnostic.detail !== undefined && <Box>{diagnostic.detail}</Box>}
+      {detail !== undefined && <Box>{detail}</Box>}
       {status.recovery && (
         <Link href="/" onFollow={follow}>
           Connection status
