@@ -64,6 +64,7 @@ function hostQuery(
   port: number,
   database: string,
   password: string,
+  ca: string,
 ): Promise<{ db?: string; marker?: number; code?: string; reason?: string }> {
   return new Promise((resolve, reject) => {
     const child = execFile(
@@ -82,7 +83,7 @@ function hostQuery(
         }
       },
     );
-    child.stdin!.end(JSON.stringify({ adapter, port, database, password }));
+    child.stdin!.end(JSON.stringify({ adapter, port, database, password, ca }));
   });
 }
 
@@ -97,12 +98,16 @@ test('engine.compose-databases-answer-on-described-host-ports', async ({ ctx }) 
   const dir = emulatorDir(stand.home, stand.port);
   const credentials = readEmulatorFiles(dir);
   if (!credentials) throw new Error('Missing standalone emulator credentials');
+  const standaloneCA = fs.readFileSync(path.join(dir, 'ca.pem'), 'utf8');
+  const productFiles = await product.emulatorFiles();
+  if ('error' in productFiles) throw new Error(productFiles.error);
+  const productCA = productFiles.ca.toString('utf8');
   const direct = new RDSClient({
     endpoint: `https://127.0.0.1:${stand.port}`,
     region: 'us-east-1',
     credentials,
     requestHandler: {
-      httpsAgent: new https.Agent({ ca: fs.readFileSync(path.join(dir, 'ca.pem')) }),
+      httpsAgent: new https.Agent({ ca: standaloneCA }),
       requestTimeout: 10_000,
     },
     maxAttempts: 1,
@@ -169,9 +174,10 @@ test('engine.compose-databases-answer-on-described-host-ports', async ({ ctx }) 
     expect(port).toBeLessThanOrEqual(range.high);
     const adapter = family.includes('postgres') ? 'postgres' : 'mysql';
     // Availability and provisioning of the SQL login are observed through different protocols.
+    const ca = client === engine ? productCA : standaloneCA;
     let lastCode: string | undefined;
     const answer = await waitFor(30_000, async () => {
-      const result = await hostQuery(ctx, adapter, port!, db, password);
+      const result = await hostQuery(ctx, adapter, port!, db, password, ca);
       lastCode = [result.code, result.reason].filter(Boolean).join(' ');
       return result.code === undefined ? result : undefined;
     });
@@ -180,7 +186,7 @@ test('engine.compose-databases-answer-on-described-host-ports', async ({ ctx }) 
       const addresses = hostIPv4();
       expect(addresses.length).toBeGreaterThan(0);
       for (const host of addresses) expect(await probeAt(host, port!)).toBe('refused');
-      const refused = await hostQuery(ctx, adapter, port!, db, password + 'wrong');
+      const refused = await hostQuery(ctx, adapter, port!, db, password + 'wrong', ca);
       expect(refused.code).toBe('28P01');
     }
     return id;

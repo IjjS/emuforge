@@ -1,6 +1,6 @@
 // Run on the Compose machine with Bun's native SQL driver, without a client image.
 import { SQL } from 'bun';
-const { adapter, port, database, password } = JSON.parse(await Bun.stdin.text());
+const { adapter, port, database, password, ca } = JSON.parse(await Bun.stdin.text());
 const client = new SQL({
   adapter,
   hostname: '127.0.0.1',
@@ -8,6 +8,7 @@ const client = new SQL({
   database,
   username: 'dbadmin',
   password,
+  tls: { ca, rejectUnauthorized: true, servername: '127.0.0.1' },
   connectionTimeout: 5,
   max: 1,
 });
