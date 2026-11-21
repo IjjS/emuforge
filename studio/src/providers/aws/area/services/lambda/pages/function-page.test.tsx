@@ -439,13 +439,16 @@ function headingText(): string {
 
 function overview() {
   const container = PAGE.findAllContainers()[0];
-  expect(container?.findHeader()?.findHeader()?.findHeadingText().getElement()).toHaveTextContent('Function overview');
+  if (!container) {
+    throw new Error('Expected the function overview container');
+  }
+  expect(container.findHeader()?.findHeader()?.findHeadingText().getElement()).toHaveTextContent('Function overview');
   return container;
 }
 
 /** The overview's key-value pairs as label and value text, in order. */
 function pairs(): [string, string][] {
-  const found = overview()?.findContent().findKeyValuePairs();
+  const found = overview().findContent().findKeyValuePairs();
   expect(found).toBeTruthy();
   return (found?.findItems() ?? []).map((item) => [
     norm(item.findLabel()?.getElement().textContent),
@@ -871,7 +874,7 @@ describe('loading and failure states', () => {
 
 /** The value element of the overview pair `label`. */
 function valueElement(label: string): HTMLElement {
-  const item = (overview()?.findContent().findKeyValuePairs()?.findItems() ?? []).find(
+  const item = (overview().findContent().findKeyValuePairs()?.findItems() ?? []).find(
     (found) => norm(found.findLabel()?.getElement().textContent) === label,
   );
   expect(item, `the pair "${label}"`).toBeDefined();
