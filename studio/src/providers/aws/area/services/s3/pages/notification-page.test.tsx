@@ -782,6 +782,43 @@ it('sends one configuration PUT when the applied write loses its response and pr
   expect(router.state.location.pathname).toBe(CREATE);
 });
 
+it('rejects a method-preserving redirect at the fetch boundary and recovers with only a GET', async () => {
+  const redirectDestination = `${connection.engineOrigin}/redirect-destination`;
+  const writes: Request[] = [];
+  const relay = new Response(null, { status: 307, headers: { Location: redirectDestination } });
+  function transport(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+    const request = input instanceof Request ? input : new Request(String(input), init);
+    if (request.method !== 'PUT') return engine.fetch(request);
+    writes.push(request);
+    if (request.url === redirectDestination) return Promise.resolve(new Response(null, { status: 204 }));
+    // Model Fetch's handling of a relayed 307, including the method-preserving follow.
+    if (request.redirect === 'follow') return transport(new Request(redirectDestination, { method: request.method }));
+    if (request.redirect === 'error') return Promise.reject(new TypeError('Fetch rejected the redirect'));
+    return Promise.resolve(relay);
+  }
+  vi.stubGlobal('fetch', transport);
+
+  open();
+  await loaded();
+  fill();
+  fireEvent.click(createButton());
+  const retry = await screen.findByRole('button', { name: 'Check again' });
+  expect(writes).toHaveLength(1);
+  expect(writes[0]?.redirect).toBe('error');
+  expect(writes.filter((request) => request.url === redirectDestination)).toHaveLength(0);
+  expect(notificationFlashes('Event notification saved')).toHaveLength(0);
+
+  const priorReads = engine.reads.length;
+  fireEvent.click(retry);
+  await waitFor(() => expect(observedTable()?.getElement()).toBeVisible());
+  expect(engine.reads.slice(priorReads).map((request) => [request.method, request.redirect])).toEqual([
+    ['GET', 'follow'],
+  ]);
+  expect(writes.map((request) => request.method)).toEqual(['PUT']);
+  expect(writes.filter((request) => request.url === redirectDestination)).toHaveLength(0);
+  expect(notificationFlashes('Event notification saved')).toHaveLength(0);
+});
+
 describe.each(['leave', 'switch target'])('while saving, %s', (cause) => {
   it.each(['pre-write read', 'verification success', 'verification failure'])('abandons a held %s', async (step) => {
     const hold = heldResponse();

@@ -127,7 +127,7 @@ export function NotificationChangeStatus({
                     {failure.detail}
                   </div>
                 )}
-                {state.observed === NO_SUCH_BUCKET && 'The bucket was not found during verification.'}
+                {showObserved && state.observed === NO_SUCH_BUCKET && 'The bucket was not found during verification.'}
                 {!unavailable &&
                   (!retryEnabled
                     ? 'Verification can resume when the connection is restored.'
