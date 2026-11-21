@@ -4,6 +4,7 @@ import { FetchHttpHandler } from '@smithy/fetch-http-handler';
 import { acceptedChannel, ENGINE_HOST } from '../engine/engine-base';
 import { SESSION_HEADER } from '../engine/engine-client';
 import { engineSession, type EngineSession } from './engine-session';
+import { assertAwsRequestAuthorized } from './request';
 
 export { EngineSessionError, type EngineSessionFailure } from './engine-session';
 
@@ -142,12 +143,22 @@ type HttpRequest = Parameters<FetchHttpHandler['handle']>[0];
 // no request leaves the channel for another path of Studio's origin (issue 503).
 class EngineRequestHandler extends FetchHttpHandler {
   private readonly address: EngineAddress;
+  private readonly attemptSignals: WeakMap<HttpRequest, AbortSignal>;
 
   constructor(address: EngineAddress) {
+    const attemptSignals = new WeakMap<HttpRequest, AbortSignal>();
     super({
-      requestInit: (request): RequestInit => (UNCACHED_METHODS.has(request.method) ? { cache: 'no-store' } : {}),
+      requestInit: (request): RequestInit => {
+        // Smithy calls this synchronously before constructing the browser request on each attempt.
+        const signal = attemptSignals.get(request);
+        if (signal !== undefined) {
+          assertAwsRequestAuthorized(signal);
+        }
+        return UNCACHED_METHODS.has(request.method) ? { cache: 'no-store' } : {};
+      },
     });
     this.address = address;
+    this.attemptSignals = attemptSignals;
   }
 
   override handle(request: HttpRequest, options?: Parameters<FetchHttpHandler['handle']>[1]) {
@@ -161,6 +172,12 @@ class EngineRequestHandler extends FetchHttpHandler {
     }
     if (path !== '' && !underPath(origin, request.path, path)) {
       return Promise.reject(new RequestRefusedError(origin, request.hostname, request.path));
+    }
+    const signal = options?.abortSignal;
+    if (signal instanceof AbortSignal) {
+      this.attemptSignals.set(request, signal);
+    } else {
+      this.attemptSignals.delete(request);
     }
     return super.handle(request, options);
   }

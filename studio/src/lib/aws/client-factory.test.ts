@@ -1,3 +1,4 @@
+import { DeleteFunctionCommand, LambdaClient } from '@aws-sdk/client-lambda';
 import {
   CreateBucketCommand,
   DeleteObjectCommand,
@@ -25,6 +26,7 @@ import {
   RequestRefusedError,
   SettingRefusedError,
 } from './client-factory';
+import { bindAwsMutationAuthorization, sendRequest } from './request';
 
 // The request as it would leave the client, after every build, signing and finalize step.
 interface BuiltRequest {
@@ -691,6 +693,111 @@ function playEngineTokens(tokens: string[], answer: AwsAnswer) {
   vi.stubGlobal('fetch', played.fetch);
   return played;
 }
+
+describe('browser authorization for destructive AWS attempts', () => {
+  function deleteWithAuthorization(client: LambdaClient) {
+    const controller = new AbortController();
+    const dispose = bindAwsMutationAuthorization(controller);
+    const result = sendRequest(
+      'DeleteFunction',
+      (abortSignal) => client.send(new DeleteFunctionCommand({ FunctionName: 'orders' }), { abortSignal }),
+      controller.signal,
+    ).finally(dispose);
+    return { result, signal: controller.signal };
+  }
+
+  function reconnect() {
+    window.dispatchEvent(new Event('offline'));
+    window.dispatchEvent(new Event('online'));
+  }
+
+  function heldResponse() {
+    let respond!: (answer: Response) => void;
+    const answer = new Promise<Response>((resolve) => {
+      respond = resolve;
+    });
+    return { answer, respond };
+  }
+
+  it('blocks the repeat attempt after held session renewal until a new confirmation', async () => {
+    const renewal = heldResponse();
+    const sent: Request[] = [];
+    const sessionAnswer = (token: string) => Response.json({ token });
+    let sessionRequests = 0;
+    vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init);
+      if (new URL(request.url).pathname === SESSION_PATH) {
+        sessionRequests += 1;
+        return sessionRequests === 1 ? Promise.resolve(sessionAnswer('old-session')) : renewal.answer;
+      }
+      sent.push(request);
+      return Promise.resolve(
+        sent.length === 1
+          ? new Response(JSON.stringify({ message: 'Session refused' }), {
+              status: 401,
+              headers: { 'x-amzn-errortype': 'SessionInvalid', 'www-authenticate': 'EmuForge-Session' },
+            })
+          : new Response(null, { status: 204 }),
+      );
+    });
+    const client = createAwsClient(LambdaClient, { endpoint: freshEndpoint() });
+    const original = deleteWithAuthorization(client);
+    const refused = expect(original.result).rejects.toMatchObject({ name: 'AbortError' });
+    await vi.waitFor(() => expect(sessionRequests).toBe(2));
+    expect(sent.map((request) => request.method)).toEqual(['DELETE']);
+
+    reconnect();
+    renewal.respond(sessionAnswer('replacement-session'));
+    await refused;
+    expect(sent).toHaveLength(1);
+
+    await deleteWithAuthorization(client).result;
+    expect(sent.map((request) => request.headers.get('x-emuforge-session'))).toEqual([
+      'old-session',
+      'replacement-session',
+    ]);
+  });
+
+  it('blocks the SDK retry of a 503 after browser reconnect', async () => {
+    const refusal = heldResponse();
+    let attempts = 0;
+    const engine = playEngine(SESSION_TOKEN, () => {
+      attempts += 1;
+      return attempts === 1 ? refusal.answer : new Response(null, { status: 204 });
+    });
+    const client = createAwsClient(LambdaClient, { endpoint: freshEndpoint() });
+    const original = deleteWithAuthorization(client);
+    const refused = expect(original.result).rejects.toMatchObject({ name: 'AbortError' });
+    await vi.waitFor(() => expect(engine.awsRequests).toHaveLength(1));
+
+    reconnect();
+    refusal.respond(
+      new Response(JSON.stringify({ message: 'Emulator unavailable' }), {
+        status: 503,
+        headers: { 'x-amzn-errortype': 'EmulatorUnavailable' },
+      }),
+    );
+    await refused;
+    expect(engine.awsRequests.map((request) => request.method)).toEqual(['DELETE']);
+
+    await deleteWithAuthorization(client).result;
+    expect(engine.awsRequests).toHaveLength(2);
+  });
+
+  it('keeps the result of an already relayed deletion across browser reconnect', async () => {
+    const held = heldResponse();
+    const engine = playEngine(SESSION_TOKEN, () => held.answer);
+    const client = createAwsClient(LambdaClient, { endpoint: freshEndpoint() });
+    const deletion = deleteWithAuthorization(client);
+    await vi.waitFor(() => expect(engine.awsRequests).toHaveLength(1));
+
+    reconnect();
+    expect(deletion.signal.aborted).toBe(false);
+    held.respond(new Response(null, { status: 204 }));
+    await deletion.result;
+    expect(engine.awsRequests).toHaveLength(1);
+  });
+});
 
 // A plain success for each operation of the general clients, in the shape of its protocol.
 function answerGeneral(request: Request): Response {
