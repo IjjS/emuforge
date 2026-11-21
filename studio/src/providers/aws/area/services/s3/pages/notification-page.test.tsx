@@ -1,6 +1,7 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { useState, useSyncExternalStore } from 'react';
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -413,11 +414,15 @@ it.each(['Create', 'Edit'])('%s keeps the notification-load Retry visible and un
   expect(engine.reads).toHaveLength(1);
 
   engine.read = () => refusal(501, 'NotImplemented', 'Operation unavailable');
-  fireEvent.click(retry);
+  retry.focus();
+  await userEvent.setup().keyboard('{Enter}');
   await waitFor(() => {
     const alert = notificationAlert('Not implemented by the emulator');
     expect(alert?.findContent().getElement()).toHaveTextContent('GetBucketNotificationConfiguration');
   });
+  const information = screen.getByRole('region', { name: 'Not implemented by the emulator' });
+  expect(information).toHaveFocus();
+  expect(information).toHaveAccessibleDescription(/GetBucketNotificationConfiguration/);
   const action = notificationAlert('Not implemented by the emulator')?.findActionSlot()?.getElement();
   if (action === undefined) throw new Error('Missing notification Retry action');
   const unavailable = within(action).getByRole('button', { name: 'Retry' });

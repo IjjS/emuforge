@@ -6,7 +6,7 @@ import KeyValuePairs from '@cloudscape-design/components/key-value-pairs';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Table, { type TableProps } from '@cloudscape-design/components/table';
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 
 import { CopyValue } from '../../../components/copy-value';
 import type { AreaConnection } from '../../../components/emulator-line';
@@ -18,7 +18,7 @@ import { editPropertyPath, encryptionTypeLabel, type EditableProperty } from '..
 import type { BucketRead } from '../queries';
 import type { EditableNotification } from '../notifications';
 import { NotificationLoadUnavailable } from './notification-read-state';
-import { NotificationSection } from './notification-section';
+import { NotificationSection, type DeleteConsentRecovery } from './notification-section';
 import { regionText } from '../regions';
 import { sectionFailure } from './bucket-read';
 import { StateLineText } from './bucket-read-state';
@@ -70,7 +70,15 @@ function SectionHeader({ title, action }: { title: string; action?: SectionActio
 }
 
 /** A section's read that failed (R11.3): its status and first line, the line after it, and "Retry" for it alone. */
-function SectionFailure({ read, connection }: { read: BucketRead<unknown>; connection: AreaConnection }) {
+function SectionFailure({
+  read,
+  connection,
+  onRetry = read.again,
+}: {
+  read: BucketRead<unknown>;
+  connection: AreaConnection;
+  onRetry?: () => void;
+}) {
   if (read.failure === undefined) {
     return null;
   }
@@ -88,7 +96,7 @@ function SectionFailure({ read, connection }: { read: BucketRead<unknown>; conne
         )}
       </SpaceBetween>
       <Box>
-        <Button onClick={read.again}>Retry</Button>
+        <Button onClick={onRetry}>Retry</Button>
       </Box>
     </SpaceBetween>
   );
@@ -221,6 +229,7 @@ interface BucketSectionsProps {
   connection: AreaConnection;
   deleteNotificationDisabled: boolean;
   deleteNotificationFeedback: ReactNode;
+  deleteConsentRecovery: DeleteConsentRecovery | undefined;
   onDeleteNotification: (target: EditableNotification) => void;
 }
 
@@ -234,10 +243,16 @@ export function BucketSections({
   connection,
   deleteNotificationDisabled,
   deleteNotificationFeedback,
+  deleteConsentRecovery,
   onDeleteNotification,
 }: BucketSectionsProps) {
   const { name } = bucket;
   const notificationRead = reads.notifications;
+  const [notificationRetryRequested, setNotificationRetryRequested] = useState(false);
+  function retryNotifications() {
+    setNotificationRetryRequested(true);
+    notificationRead.again();
+  }
   const notificationsUnavailable = notificationRead.failure?.kind === 'not-implemented';
   return (
     <SpaceBetween size="l">
@@ -287,13 +302,14 @@ export function BucketSections({
         loading={notificationRead.loading}
         failure={
           notificationsUnavailable ? (
-            <NotificationLoadUnavailable />
+            <NotificationLoadUnavailable focus={notificationRetryRequested} />
           ) : notificationRead.failure === undefined ? undefined : (
-            <SectionFailure read={notificationRead} connection={connection} />
+            <SectionFailure read={notificationRead} connection={connection} onRetry={retryNotifications} />
           )
         }
         unsupported={notificationsUnavailable}
         feedback={deleteNotificationFeedback}
+        consentRecovery={deleteConsentRecovery}
         deleteDisabled={deleteNotificationDisabled}
         onDelete={onDeleteNotification}
       />
