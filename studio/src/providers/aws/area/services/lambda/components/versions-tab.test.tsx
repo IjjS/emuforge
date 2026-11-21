@@ -157,14 +157,19 @@ function aliasesTable() {
   return within(screen.getByRole('table', { name: 'Aliases' }));
 }
 
-function operationButton(operation: MutationOperation) {
-  const labels: Record<MutationOperation, string> = {
-    PublishVersion: 'Publish version',
-    CreateAlias: 'Create alias',
-    UpdateAlias: 'Edit alias live',
-    DeleteAlias: 'Delete alias live',
-  };
-  return screen.getByRole('button', { name: labels[operation] });
+function aliasActions(name: string) {
+  return screen.getByRole('button', { name: `Actions for alias ${name}` });
+}
+
+function releaseAction(operation: MutationOperation) {
+  if (operation === 'PublishVersion' || operation === 'CreateAlias') {
+    return screen.getByRole('button', { name: operation === 'PublishVersion' ? 'Publish version' : 'Create alias' });
+  }
+  const trigger = aliasActions('live');
+  if (trigger.getAttribute('aria-expanded') !== 'true') {
+    fireEvent.click(trigger);
+  }
+  return screen.getByRole('menuitem', { name: operation === 'UpdateAlias' ? 'Edit alias live' : 'Delete alias live' });
 }
 
 function openTargetSelect(dialog: HTMLElement) {
@@ -178,9 +183,9 @@ function openTargetSelect(dialog: HTMLElement) {
 
 async function prepareAction(operation: MutationOperation, aliasName = 'next') {
   if (operation === 'PublishVersion') {
-    return operationButton(operation);
+    return releaseAction(operation);
   }
-  fireEvent.click(operationButton(operation));
+  fireEvent.click(releaseAction(operation));
   const dialog = await screen.findByRole('dialog');
   if (operation === 'CreateAlias') {
     fireEvent.change(within(dialog).getByRole('textbox', { name: 'Alias name' }), { target: { value: aliasName } });
@@ -267,7 +272,7 @@ describe('Release listings', () => {
       'more-aliases',
     ]);
 
-    fireEvent.click(operationButton('CreateAlias'));
+    fireEvent.click(releaseAction('CreateAlias'));
     expect(
       openTargetSelect(await screen.findByRole('dialog'))
         .findDropdown()
@@ -286,7 +291,7 @@ describe('Release listings', () => {
         .getAllByText('Publish a version before creating an alias.')
         .some((node) => node.closest('[hidden]') === null),
     ).toBe(true);
-    expect(operationButton('CreateAlias')).toHaveAttribute('aria-disabled', 'true');
+    expect(releaseAction('CreateAlias')).toHaveAttribute('aria-disabled', 'true');
   });
 
   it.each([
@@ -352,6 +357,7 @@ describe('Release actions', () => {
       const dialog = screen.getByRole('dialog');
       const inline = within(dialog);
       expect(await inline.findByText('ResourceConflictException')).toBeVisible();
+      expect(screen.getAllByText('ResourceConflictException')).toHaveLength(1);
       const alert = inline.getByRole('alert');
       expect(within(alert).getByText(`${operation} failed`)).toBeVisible();
       expect(alert).toContainElement(document.activeElement as HTMLElement);
@@ -374,6 +380,51 @@ describe('Release actions', () => {
     expect(screen.queryByText('next')).toBeNull();
     expect(screen.queryByText('Source 3')).toBeNull();
     expectAlias('live', '1');
+  });
+
+  it('clears the single announced refusal when correcting the alias draft', async () => {
+    engine.handlers.CreateAlias = () => json({ message: 'Alias exists' }, 409, 'ResourceConflictException');
+    renderTab();
+    await waitForBothLists();
+    fireEvent.click(await prepareAction('CreateAlias', 'live'));
+    const dialog = within(screen.getByRole('dialog'));
+    expect(await dialog.findByText('ResourceConflictException')).toBeVisible();
+    expect(screen.getAllByText('ResourceConflictException')).toHaveLength(1);
+    fireEvent.change(dialog.getByRole('textbox', { name: 'Alias name' }), { target: { value: 'next' } });
+    expect(dialog.queryByRole('alert')).toBeNull();
+    expect(screen.queryByText('ResourceConflictException')).toBeNull();
+
+    engine.handlers.CreateAlias = () => succeed('CreateAlias');
+    fireEvent.click(dialog.getByRole('button', { name: 'Create alias' }));
+    expect(await screen.findByText('Created alias next to version 2.')).toBeVisible();
+    await waitFor(() => expectAlias('next', '2'));
+  });
+
+  it('reports a refusal on the page when the tab closes the submitting dialog', async () => {
+    const response = holdResponse();
+    engine.handlers.CreateAlias = () => response.promise;
+    renderTab();
+    await waitForBothLists();
+    fireEvent.click(await prepareAction('CreateAlias', 'live'));
+    await waitFor(() => expect(engine.count('CreateAlias')).toBe(1));
+    fireEvent.click(screen.getByRole('tab', { name: 'Test' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    await settle(response, json({ message: 'Alias exists' }, 409, 'ResourceConflictException'));
+    expect(await screen.findByText('ResourceConflictException')).toBeVisible();
+    expect(screen.getByText('CreateAlias failed')).toBeVisible();
+  });
+
+  it('places both alias actions behind the labeled leading control beside the full name', async () => {
+    const name = 'candidate-release-stable';
+    engine.aliases = { [name]: '1' };
+    renderTab();
+    const rowHeader = await screen.findByRole('rowheader', { name });
+    const row = rowHeader.closest('tr');
+    expect(row?.cells[0]).toContainElement(aliasActions(name));
+    expect(row?.cells[1]).toBe(rowHeader);
+    fireEvent.click(aliasActions(name));
+    expect(screen.getByRole('menuitem', { name: `Edit alias ${name}` })).toBeVisible();
+    expect(screen.getByRole('menuitem', { name: `Delete alias ${name}` })).toBeVisible();
   });
 
   it('describes the alias name constraints before submission and rejects a numeric name', async () => {
@@ -400,15 +451,15 @@ describe('Release actions', () => {
     expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
     expect(screen.getByText(`The emulator answered 501 Not Implemented for ${operation}.`)).toBeVisible();
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    const unsupported = operationButton(operation);
+    const unsupported = releaseAction(operation);
     expect(unsupported).toBeVisible();
     expect(unsupported).toHaveAttribute('aria-disabled', 'true');
     fireEvent.click(unsupported);
     expect(engine.count(operation)).toBe(1);
     expect(screen.queryByRole('dialog')).toBeNull();
     for (const [other] of actions.filter(([other]) => other !== operation)) {
-      expect(operationButton(other)).not.toHaveAttribute('aria-disabled', 'true');
-      expect(operationButton(other)).not.toBeDisabled();
+      expect(releaseAction(other)).not.toHaveAttribute('aria-disabled', 'true');
+      expect(releaseAction(other)).not.toBeDisabled();
     }
   });
 
