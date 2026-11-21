@@ -382,8 +382,9 @@ it('reports an empty subnet list', async () => {
 
 it('asks for a subnet before any groups can be read', async () => {
   await open();
-  expect(multi(GROUPS).findPlaceholder()?.getElement()).toHaveTextContent(/^Choose a subnet first\.$/);
-  expect(multi(GROUPS).findTrigger().getElement()).toBeDisabled();
+  const trigger = multi(GROUPS).findTrigger().getElement();
+  expect(trigger).toHaveTextContent(/^Choose a subnet first\.$/);
+  expect(trigger).toBeDisabled();
   expect(readGroups).not.toHaveBeenCalled();
 });
 
