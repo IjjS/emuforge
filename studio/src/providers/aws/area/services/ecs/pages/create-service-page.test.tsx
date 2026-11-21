@@ -436,9 +436,9 @@ it('creates with the retained family and eligible revision after a family contin
   const picker = field(FAMILY).findSelect();
   if (!picker) throw new Error('Missing family picker');
   picker.openDropdown();
-  const footer = picker.findDropdown().findFooterRegion()?.getElement();
-  if (!footer) throw new Error('Missing family continuation footer');
-  const loadMore = createWrapper(footer).findButton()?.getElement();
+  const menu = picker.findDropdown().findOpenDropdown()?.getElement();
+  if (!menu) throw new Error('Missing open family menu');
+  const loadMore = createWrapper(menu).findButton()?.getElement();
   if (!loadMore) throw new Error('Missing continuation button');
   expect(loadMore).toHaveTextContent('Load more');
   fireEvent.click(loadMore);
