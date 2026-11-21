@@ -392,9 +392,15 @@ it('focuses the diagnostic when the first invalid choice failed with 501', async
   expect(trigger).toBeDisabled();
   fireEvent.change(nameInput(), { target: { value: 'entered' } });
 
+  fireEvent.change(countInput(), { target: { value: '-1' } });
   fireEvent.click(submitButton());
 
-  expect(labeledField(FAMILY).findError()?.getElement()).toHaveTextContent('Choose a task definition family.');
+  expect(labeledField(FAMILY).findError()?.getElement().textContent ?? '').not.toContain(
+    'Choose a task definition family.',
+  );
+  expect(labeledField(REVISION).findError()?.getElement().textContent ?? '').not.toContain('Choose a revision.');
+  expect(labeledField('Desired tasks').findError()?.getElement()).toHaveTextContent('Enter a whole number, 0 or more.');
+  expect(labeledField(SUBNETS).findError()?.getElement()).toHaveTextContent('Choose at least one subnet.');
   expect(diagnostic).toHaveFocus();
   expect(diagnostic).toHaveAccessibleDescription(/501 Not Implemented for ListTaskDefinitionFamilies/);
   expect(nameInput()).toHaveValue('entered');
