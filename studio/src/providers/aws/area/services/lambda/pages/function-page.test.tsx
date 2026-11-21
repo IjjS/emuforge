@@ -2198,16 +2198,29 @@ describe('"Delete" in the header', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Stand-in invoke' }));
       await waitFor(() => expect(engine.aws.filter(({ url }) => INVOKE_PATH.test(url.pathname))).toHaveLength(1));
 
-      const { input, submit } = await openDialog();
+      const { input, submit, cancel, content } = await openDialog();
+      expect(cancel.getElement()).toBeEnabled();
+      expect(deletionDialog()?.findHeader().findButton()?.getElement()).toHaveAccessibleName('Close modal');
       input.setInputValue('confirm');
       const field = input.findNativeInput().getElement();
+      field.focus();
       act(() => {
         fireEvent.keyDown(field, { key: 'Enter' });
         fireEvent.keyDown(field, { key: 'Enter' });
       });
       await waitFor(() => expect(deleteRequests()).toEqual(['orders']));
+      await waitFor(() => {
+        expect(content.getElement()).toHaveTextContent('Deleting functions…');
+        expect(cancel.getElement()).toBeDisabled();
+        expect(deletionDialog()?.findHeader().findAllButtons()).toHaveLength(0);
+        expect(submit.getElement()).toHaveAttribute('aria-disabled', 'true');
+        expect(submit.getElement()).toHaveFocus();
+      });
+      cancel.click();
+      fireEvent.keyDown(submit.getElement(), { key: 'Escape', keyCode: 27 });
       expect(deletionDialog()).toBeDefined();
-      expect(submit.getElement()).toBeDisabled();
+      expect(submit.getElement()).toHaveFocus();
+      expect(deleteRequests()).toEqual(['orders']);
       const reads = engine.gets.length;
       engine.answerFunction = () => detail.promise;
 
