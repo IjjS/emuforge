@@ -53,6 +53,8 @@ export interface VersionsTabProps {
   versions: ReleaseReading<FunctionVersion>;
   aliases: ReleaseReading<FunctionAlias>;
   mutation: ReturnType<typeof useReleaseMutation>;
+  /** Reports Delete alias openings and ordinary closings. The page classifies and clears a removed tab. */
+  onAliasConfirmationChange?: (open: boolean) => void;
 }
 
 function CollectionFailure<T>({
@@ -232,8 +234,22 @@ function ManageAliasDialog({ dialog, versions, pending, onDismiss, onSubmit }: A
   );
 }
 
-export function VersionsTab({ connection, ready, versions, aliases, mutation }: VersionsTabProps) {
+export function VersionsTab({
+  connection,
+  ready,
+  versions,
+  aliases,
+  mutation,
+  onAliasConfirmationChange,
+}: VersionsTabProps) {
   const [dialog, setDialog] = useState<AliasDialog>();
+  const mounted = useRef(false);
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const narrow = useSyncExternalStore(subscribeToNarrowViewport, isNarrowViewport);
   const published = (versions.items ?? []).filter(({ version }) => /^[1-9]\d*$/.test(version));
   const aliasPrerequisite =
@@ -254,12 +270,19 @@ export function VersionsTab({ connection, ready, versions, aliases, mutation }: 
     return undefined;
   };
 
+  function closeDialog() {
+    setDialog(undefined);
+    if (dialog?.operation === 'DeleteAlias') {
+      onAliasConfirmationChange?.(false);
+    }
+  }
+
   async function handleChange(change: ReleaseChange, showInline?: InlineReleaseRefusal): Promise<void> {
     if (reasonFor(change.operation) !== undefined || mutation.pending !== undefined) {
       return;
     }
-    if (await mutation.submit(change, showInline)) {
-      setDialog(undefined);
+    if ((await mutation.submit(change, showInline)) && mounted.current) {
+      closeDialog();
     }
   }
 
@@ -368,6 +391,9 @@ export function VersionsTab({ connection, ready, versions, aliases, mutation }: 
                   const operation = ALIAS_ROW_ACTIONS.find((action) => action === detail.id);
                   if (operation !== undefined) {
                     setDialog({ operation, alias });
+                    if (operation === 'DeleteAlias') {
+                      onAliasConfirmationChange?.(true);
+                    }
                   }
                 }}
               />
@@ -399,7 +425,7 @@ export function VersionsTab({ connection, ready, versions, aliases, mutation }: 
           pending={mutation.pending !== undefined}
           onDismiss={() => {
             if (mutation.pending === undefined) {
-              setDialog(undefined);
+              closeDialog();
             }
           }}
           onSubmit={handleChange}
