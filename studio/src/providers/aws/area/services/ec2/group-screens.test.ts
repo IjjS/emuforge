@@ -37,6 +37,7 @@ describe("EC2's security group screens", () => {
       expect(screenAt(path).navigation.header).toEqual({ text: 'EC2', href: '/aws/ec2' });
       expect(screenAt(path).navigation.items.map((item) => (item.type === 'link' ? item.text : ''))).toEqual([
         'Instances',
+        'Volumes',
         'Security groups',
         'Key pairs',
       ]);
