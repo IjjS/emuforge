@@ -93,6 +93,7 @@ export interface EnvironmentVariable {
 export interface LambdaFunction extends FunctionSummary {
   arn?: string;
   handler?: string;
+  logGroup?: string;
   architectures?: string[];
   /** `MemorySize`, in MB. */
   memorySize?: number;
@@ -412,6 +413,7 @@ function toFunction(output: GetFunctionCommandOutput, url: FunctionUrl): LambdaF
   const optional: [keyof LambdaFunction, unknown][] = [
     ['arn', configuration.FunctionArn],
     ['handler', configuration.Handler],
+    ['logGroup', configuration.LoggingConfig?.LogGroup],
     ['state', configuration.State],
     ['stateReason', configuration.StateReason],
     ['lastUpdateStatus', configuration.LastUpdateStatus],

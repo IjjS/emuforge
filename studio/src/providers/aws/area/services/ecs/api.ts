@@ -1,4 +1,3 @@
-import { CloudWatchLogsClient } from '@aws-sdk/client-cloudwatch-logs';
 import {
   CreateClusterCommand,
   DeleteClusterCommand,
@@ -13,7 +12,7 @@ import { sendRequest } from '../../../../../lib/aws/request';
 
 // The calls of ECS's cluster screens (issue 575, design tasks 1 and 5), through the engine, mapped to plain typed
 // results, and the one place a client class of ECS's folder meets the factory: ECS's (`sendEcs`) and CloudWatch
-// Logs' (`sendLogs`, for a task's log). Every other API file of the folder sends its commands through these two; the
+// Logs' shared sender (`sendLogs`, for a task's log). Other API files of the folder send their commands through these two; the
 // subnets and groups "Run task" chooses from are read through the area's shared EC2 parts (`lib/ec2-client.ts`).
 // Each command goes through the shared `sendRequest` with its operation's name, so a failed request rejects with its
 // `RequestError` and an aborted one with the signal's reason. Every value is the emulator's, as it came.
@@ -76,7 +75,6 @@ function withCutFractions(client: ECSClient): ECSClient {
 }
 
 const ecsClient = clientsOf((endpoint) => withCutFractions(createAwsClient(ECSClient, { endpoint })));
-const logsClient = clientsOf((endpoint) => createAwsClient(CloudWatchLogsClient, { endpoint }));
 
 /** The sender every API file of the folder uses: `send` is handed the client and the signal to send its command with. */
 type Sender<C> = <T>(
@@ -95,7 +93,7 @@ function senderOf<C>(client: (endpoint: string) => C): Sender<C> {
 export const sendEcs: Sender<ECSClient> = senderOf(ecsClient);
 
 /** One request of `operation` to CloudWatch Logs at the engine `endpoint`. */
-export const sendLogs: Sender<CloudWatchLogsClient> = senderOf(logsClient);
+export { sendLogs } from '../../lib/cloudwatch-logs-client';
 
 /** `value` when it is a text that is not empty. */
 export function text(value: unknown): string | undefined {
