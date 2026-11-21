@@ -1,5 +1,5 @@
 import Box from '@cloudscape-design/components/box';
-import Button from '@cloudscape-design/components/button';
+import Button, { type ButtonProps } from '@cloudscape-design/components/button';
 import Container from '@cloudscape-design/components/container';
 import ContentLayout from '@cloudscape-design/components/content-layout';
 import Header from '@cloudscape-design/components/header';
@@ -7,7 +7,7 @@ import Link from '@cloudscape-design/components/link';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Tabs, { type TabsProps } from '@cloudscape-design/components/tabs';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 
 import { actionFailureItem, Code } from '../../../components/failure-states';
@@ -310,6 +310,22 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
   if (activeDeletion !== deletion) {
     setDeletion(undefined);
   }
+  const refreshButton = useRef<ButtonProps.Ref>(null);
+  const dialogFocus = useRef<Element | null>(null);
+  const dismissedWithFocus = useRef(false);
+  const trackDialogRemoval = useCallback((element: HTMLDivElement | null) => {
+    if (element === null) {
+      // The wrapper's ref detaches before the modal portal restores focus to its opener.
+      dismissedWithFocus.current = dialogFocus.current === document.activeElement;
+      dialogFocus.current = null;
+    }
+  }, []);
+  useLayoutEffect(() => {
+    if (!canDelete && dismissedWithFocus.current) {
+      refreshButton.current?.focus();
+    }
+    dismissedWithFocus.current = false;
+  }, [activeDeletion, canDelete]);
   const handleDeleteClose = useCallback(() => {
     setDeletion(undefined);
   }, []);
@@ -447,7 +463,7 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
             description={status === undefined ? undefined : <FunctionStatusLine status={status} />}
             actions={
               <SpaceBetween direction="horizontal" size="xs">
-                <Button iconName="refresh" ariaLabel="Refresh" onClick={handleRefresh} />
+                <Button ref={refreshButton} iconName="refresh" ariaLabel="Refresh" onClick={handleRefresh} />
                 {fn !== undefined && (
                   <Button
                     disabled={!canDelete}
@@ -473,13 +489,20 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
         </SpaceBetween>
       </ContentLayout>
       {activeDeletion !== undefined && (
-        <DeleteFunctionsDialog
+        <div
           key={sessionScope}
-          names={activeDeletion.names}
-          connection={connection}
-          onClose={handleDeleteClose}
-          onDeleted={handleDeleted}
-        />
+          ref={trackDialogRemoval}
+          onFocusCapture={(event) => {
+            dialogFocus.current = event.target;
+          }}
+        >
+          <DeleteFunctionsDialog
+            names={activeDeletion.names}
+            connection={connection}
+            onClose={handleDeleteClose}
+            onDeleted={handleDeleted}
+          />
+        </div>
       )}
       {announcement}
     </>
