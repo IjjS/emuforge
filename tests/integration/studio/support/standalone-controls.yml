@@ -1,0 +1,6 @@
+services:
+  aws-emulator:
+    ports: !override
+      - "127.0.0.1:${EMULATOR_PORT}:${EMULATOR_PORT}"
+    sysctls: !reset {}
+    entrypoint: !reset null

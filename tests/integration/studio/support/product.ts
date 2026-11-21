@@ -579,6 +579,8 @@ export interface FormOptions {
   env?: Record<string, string>;
   /** The checks' own Compose files given beside the root file. */
   files?: CheckFile[];
+  /** Exercise the shipped database publications instead of the ordinary check overlay. */
+  developerPorts?: boolean;
 }
 
 /** Ports the forms of this process chose, so two forms of one check never get the same one. */
@@ -623,6 +625,7 @@ export class Form {
     home: string | null,
     files: CheckFile[],
     extraEnv: Record<string, string>,
+    private readonly developerPorts: boolean,
   ) {
     this.emulatorPort = ports.emulatorPort;
     this.enginePort = ports.enginePort;
@@ -664,7 +667,7 @@ export class Form {
       deafPort: files.includes('deaf') ? await pick() : null,
     };
     const home = options.home === undefined ? ctx.home : options.home;
-    const form = new Form(ctx, ports, home, files, options.env ?? {});
+    const form = new Form(ctx, ports, home, files, options.env ?? {}, options.developerPorts ?? false);
     ctx.own(form);
     // `run` removes, at its end, what a killed check left of the projects listed here.
     fs.mkdirSync(ctx.tmp, { recursive: true });
@@ -693,6 +696,7 @@ export class Form {
   env(): Record<string, string> {
     const env: Record<string, string> = {
       PATH: productPath(this.ctx),
+      COMPOSE_FILE: this.composeFiles().join(path.delimiter),
       EMULATOR_PORT: String(this.emulatorPort),
       EMUFORGE_ENGINE_PORT: String(this.enginePort),
       EMUFORGE_STUDIO_PORT: String(this.studioPort),
@@ -710,10 +714,15 @@ export class Form {
     return { ...env, ...this.extraEnv };
   }
 
+  private composeFiles(): string[] {
+    const controls = path.join(this.ctx.checkout, 'tests/integration/studio/support/product-controls.yml');
+    return ['docker-compose.yml', ...(this.developerPorts ? [] : [controls]), ...this.files.map((f) => CHECK_FILES[f])];
+  }
+
   /** `line` with the form's own Compose files: `-f docker-compose.yml -f <file>…` after `docker compose`. */
   withFiles(line: string[]): string[] {
     if (this.files.length === 0) return [...line];
-    const files = ['docker-compose.yml', ...this.files.map((f) => CHECK_FILES[f])].flatMap((f) => ['-f', f]);
+    const files = this.composeFiles().flatMap((f) => ['-f', f]);
     return [line[0], line[1], ...files, ...line.slice(2)];
   }
 
