@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: plan
 Issue-Key: studio|rds.modify-instance|not-built
-Issue-Check-Ids:
+Issue-Check-Ids: 580
 Issue-Commit: 4fe827cf353b884942e2cae067a6fb063e5d2f0f
 
 # Change a DB instance from Studio: its class, storage, master password, deletion protection and identifier
