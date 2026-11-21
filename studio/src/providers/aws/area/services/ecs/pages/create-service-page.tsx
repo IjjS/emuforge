@@ -189,6 +189,7 @@ function CreateServiceForm({ cluster, connection }: { cluster: string; connectio
   const noFamilies = familyList.choices?.length === 0 && !familyList.more && !familyList.loading && !familyList.failure;
   const familyUnavailable =
     familyList.failure?.kind === 'not-implemented' && familyList.failure.operation === families.operation;
+  const familySelectionBlocked = familyUnavailable && !form.family;
   const unsupported = unsupportedReason !== undefined;
   const submitReasonId = unsupported ? unsupportedReasonId : noFamilies ? familyReasonId : undefined;
   const nameError = errors.name ?? (duplicateName === form.name.trim() ? RENAME_SERVICE : undefined);
@@ -211,7 +212,7 @@ function CreateServiceForm({ cluster, connection }: { cluster: string; connectio
       return;
     }
     setTried(true);
-    if (familyUnavailable) {
+    if (familySelectionBlocked) {
       setBlockedSubmissions((previous) => previous + 1);
       return;
     }
@@ -345,7 +346,7 @@ function CreateServiceForm({ cluster, connection }: { cluster: string; connectio
                   value={form.family}
                   placeholder={familyUnavailable ? 'Family selection unavailable' : 'Choose a family'}
                   unavailable={noFamilies}
-                  error={noFamilies || familyUnavailable ? undefined : errors.family}
+                  error={noFamilies || familySelectionBlocked ? undefined : errors.family}
                   empty={
                     <span id={familyReasonId}>
                       No task definitions.{' '}
@@ -368,13 +369,13 @@ function CreateServiceForm({ cluster, connection }: { cluster: string; connectio
                   focusRef={revisionRef}
                   value={form.revision}
                   placeholder={
-                    familyUnavailable
+                    familySelectionBlocked
                       ? 'No revision selected'
                       : form.family === undefined
                         ? 'Choose a family first'
                         : 'Choose a revision'
                   }
-                  error={familyUnavailable ? undefined : errors.revision}
+                  error={familySelectionBlocked ? undefined : errors.revision}
                   empty={
                     <>
                       This family has no active Fargate revisions.{' '}
