@@ -12,7 +12,7 @@ import AwsArea from '../../../index';
 import * as instances from '../api';
 import { EC2_KEYS } from '../queries';
 import * as api from '../volume-api';
-import { VOLUME_KEYS, useVolumeListing } from '../volume-queries';
+import { ATTACHMENT_CONFIRMATION_MS, VOLUME_KEYS, useVolumeListing } from '../volume-queries';
 
 vi.mock('../volume-api', async (original) => ({
   ...(await original<typeof api>()),
@@ -70,6 +70,10 @@ const available: api.VolumeRead = {
 const attached: api.VolumeRead = {
   found: true,
   volume: { ...available.volume, state: 'in-use', attachments: [{ ...TARGET, state: 'attached' }] },
+};
+const attaching: api.VolumeRead = {
+  found: true,
+  volume: { ...attached.volume, attachments: [{ ...TARGET, state: 'attaching' }] },
 };
 const missing: api.VolumeRead = { found: false };
 
@@ -130,7 +134,12 @@ function RefreshObservers() {
     queryKey: [...EC2_KEYS.instances(), 'observer'],
     queryFn: ({ signal }) => instances.listInstances(ENDPOINT, {}, undefined, signal),
   });
-  return <span>{list.isFetching || listInstances.isFetching ? 'Refreshing lists' : 'Lists current'}</span>;
+  return (
+    <>
+      <span>{list.isFetching ? 'Refreshing volume list' : 'Volume list current'}</span>
+      <span>{listInstances.isFetching ? 'Refreshing instance list' : 'Instance list current'}</span>
+    </>
+  );
 }
 
 function open(observe = false) {
@@ -167,6 +176,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -191,16 +201,16 @@ function detailMessage() {
   return box === undefined ? undefined : createWrapper(box).findBox()?.getElement();
 }
 
-function expectAvailable() {
+function expectVolumeState(expected: string) {
   const state = detailContainer()?.findContent().findKeyValuePairs()?.findItems()[4];
   const value = state?.findValue()?.getElement();
   expect(state?.findLabel()?.getElement()).toHaveTextContent('State');
   expect(value).toBeVisible();
-  expect(value?.textContent).toBe('available');
+  expect(value?.textContent).toBe(expected);
 }
 
-function button(name: 'Attach volume' | 'Delete volume') {
-  const index = name === 'Attach volume' ? 1 : 2;
+function button(name: 'Refresh' | 'Attach volume' | 'Delete volume') {
+  const index = { Refresh: 0, 'Attach volume': 1, 'Delete volume': 2 }[name];
   const control = pageHeader()?.findActions()?.findAllButtons()[index]?.getElement();
   if (control === undefined) throw new Error(`Missing ${name} action`);
   expect(control).toHaveAccessibleName(name);
@@ -214,6 +224,24 @@ function attachmentCell(column: number) {
 function attachmentLink() {
   const cell = attachmentCell(1);
   return cell === undefined ? undefined : createWrapper(cell).findLink()?.getElement();
+}
+
+function expectAttachment(state: string) {
+  const link = attachmentLink();
+  expect(link).toBeVisible();
+  expect(link).toHaveAccessibleName(TARGET.instanceId);
+  const device = attachmentCell(2);
+  expect(device).toBeVisible();
+  expect(device?.textContent).toBe(TARGET.device);
+  const attachmentState = attachmentCell(3);
+  expect(attachmentState).toBeVisible();
+  expect(attachmentState?.textContent).toBe(state);
+}
+
+function expectNoAttachments() {
+  const empty = page.findTable()?.findEmptySlot()?.getElement();
+  expect(empty).toBeVisible();
+  expect(empty).toHaveTextContent('No attachments');
 }
 
 function detachButton() {
@@ -337,16 +365,8 @@ describe('volume detail', () => {
       ['Availability Zone', 'us-east-1a'],
       ['State', 'in-use'],
     ]);
-    const device = attachmentCell(2);
-    const state = attachmentCell(3);
-    expect(device).toBeVisible();
-    expect(device?.textContent).toBe(TARGET.device);
-    expect(state).toBeVisible();
-    expect(state?.textContent).toBe('attached');
-    const link = attachmentLink();
-    expect(link).toBeVisible();
-    expect(link).toHaveAccessibleName(TARGET.instanceId);
-    expect(link).toHaveAttribute('href', `/aws/ec2/instances/instance/${TARGET.instanceId}`);
+    expectAttachment('attached');
+    expect(attachmentLink()).toHaveAttribute('href', `/aws/ec2/instances/instance/${TARGET.instanceId}`);
   });
 
   it('links back to volumes for a missing ID', async () => {
@@ -444,38 +464,95 @@ describe('attach volume', () => {
     expect(submit).toBeEnabled();
   });
 
-  // Bound: Allow one real three-second poll plus dialog and query rendering on a busy runner.
-  it('preserves the acknowledgment and polls past an unchanged detail while other reads are held', async () => {
+  // Bound: Allow two real three-second polls plus dialog and query rendering on a busy runner.
+  it('preserves the acknowledgment and polls past unchanged and attaching reads while both lists refresh', async () => {
     const list = deferred<{ items: api.Volume[] }>();
     const instanceList = deferred<instances.InstancePage>();
     open(true);
-    await screen.findByText('Lists current');
+    await screen.findByText('Volume list current');
+    await screen.findByText('Instance list current');
     const dialog = await fillAttachDialog();
-    vi.mocked(api.getVolume).mockResolvedValueOnce(available).mockResolvedValue(attached);
+    expect(instanceSelect().findTrigger().getElement()).toHaveTextContent(TARGET.instanceId);
+    expect(dialog.input()).toHaveValue(TARGET.device);
+    vi.mocked(api.getVolume)
+      .mockResolvedValueOnce(available)
+      .mockResolvedValueOnce(attaching)
+      .mockResolvedValue(attached);
     vi.mocked(api.listVolumes).mockReturnValue(list.promise);
     vi.mocked(instances.listInstances).mockReturnValue(instanceList.promise);
 
     fireEvent.click(dialog.button('Attach volume'));
     const acknowledgment = `Attachment requested for ${ID}.`;
     await waitFor(() => expectAcknowledgment(acknowledgment));
+    expect(api.attachVolume).toHaveBeenCalledWith(ENDPOINT, ID, TARGET, expect.any(AbortSignal));
     await waitFor(() => {
       expect(api.getVolume).toHaveBeenCalledTimes(2);
     });
-    expectAvailable();
-    expect(screen.getByText('Refreshing lists')).toBeVisible();
+    expectVolumeState('available');
+    expect(await screen.findByText('Refreshing volume list')).toBeVisible();
+    expect(await screen.findByText('Refreshing instance list')).toBeVisible();
+
+    await waitFor(() => expectAttachment('attaching'), { timeout: 4500 });
     await waitFor(
       () => {
-        expect(attachmentLink()).toBeVisible();
-        expect(attachmentLink()).toHaveAccessibleName(TARGET.instanceId);
+        expectAttachment('attached');
+        expectVolumeState('in-use');
       },
       { timeout: 4500 },
     );
+    expect(screen.getByText('Refreshing volume list')).toBeVisible();
+    expect(screen.getByText('Refreshing instance list')).toBeVisible();
     expectAcknowledgment(acknowledgment);
+
     list.resolve({ items: [] });
+    expect(await screen.findByText('Volume list current')).toBeVisible();
+    expect(screen.getByText('Refreshing instance list')).toBeVisible();
     instanceList.resolve({ instances: [] });
-    expect(await screen.findByText('Lists current')).toBeVisible();
+    expect(await screen.findByText('Instance list current')).toBeVisible();
+    expectAttachment('attached');
+    expectVolumeState('in-use');
     expectAcknowledgment(acknowledgment);
-  }, 7000);
+  }, 10000);
+
+  it('restores allowed actions when an accepted attach is externally detached before Studio sees it', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    open();
+    const dialog = await fillAttachDialog();
+    // An external detach has already returned the volume to available when the first fresh read arrives.
+    fireEvent.click(dialog.button('Attach volume'));
+    const acknowledgment = `Attachment requested for ${ID}.`;
+    await waitFor(() => {
+      expectAcknowledgment(acknowledgment);
+      expect(api.getVolume).toHaveBeenCalledTimes(2);
+    });
+    expect(button('Attach volume')).toBeDisabled();
+    expect(button('Delete volume')).toBeDisabled();
+    expectVolumeState('available');
+    expectNoAttachments();
+
+    fireEvent.click(button('Refresh'));
+    await waitFor(() => {
+      expect(api.getVolume).toHaveBeenCalledTimes(3);
+      expectVolumeState('available');
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ATTACHMENT_CONFIRMATION_MS);
+    });
+    const warning = page.findContentLayout()?.findContent().findAlert();
+    const heading = warning?.findHeader()?.getElement();
+    const message = warning?.findContent().getElement();
+    expect(heading).toBeVisible();
+    expect(heading).toHaveTextContent('Attachment confirmation timed out');
+    expect(message).toBeVisible();
+    expect(message).toHaveTextContent('The details below show the latest state reported by the emulator.');
+    expectVolumeState('available');
+    expectNoAttachments();
+    expect(button('Attach volume')).toBeEnabled();
+    expect(button('Delete volume')).toBeEnabled();
+    expectAcknowledgment(acknowledgment);
+    await openDialog('Delete volume');
+    expect(api.deleteVolume).not.toHaveBeenCalled();
+  });
 
   it('retries a failed instance choice read and offers fresh results', async () => {
     vi.mocked(instances.listInstances).mockRejectedValueOnce(
@@ -520,7 +597,8 @@ describe('detach volume', () => {
     vi.mocked(api.getVolume).mockResolvedValue(attached);
     const detail = deferred<api.VolumeRead>();
     open(true);
-    await screen.findByText('Lists current');
+    await screen.findByText('Volume list current');
+    await screen.findByText('Instance list current');
     const dialog = await openDialog('Detach volume');
     const pairs = dialog.content.findKeyValuePairs()?.findItems();
     expect(pairs?.map((pair) => pair.findLabel()?.getElement().textContent)).toEqual([
@@ -542,17 +620,14 @@ describe('detach volume', () => {
       expect(api.getVolume).toHaveBeenCalledTimes(2);
       expect(instances.listInstances).toHaveBeenCalledTimes(2);
     });
-    expect(screen.getByText('Lists current')).toBeVisible();
+    expect(screen.getByText('Volume list current')).toBeVisible();
+    expect(screen.getByText('Instance list current')).toBeVisible();
     expect(attachmentCell(3)).toBeVisible();
     expect(attachmentCell(3)?.textContent).toBe('attached');
     expect(api.detachVolume).toHaveBeenCalledWith(ENDPOINT, ID, TARGET, expect.any(AbortSignal));
     detail.resolve(available);
-    await waitFor(() => {
-      const empty = page.findTable()?.findEmptySlot()?.getElement();
-      expect(empty).toBeVisible();
-      expect(empty).toHaveTextContent('No attachments');
-    });
-    expectAvailable();
+    await waitFor(expectNoAttachments);
+    expectVolumeState('available');
     expectAcknowledgment(acknowledgment);
   });
 

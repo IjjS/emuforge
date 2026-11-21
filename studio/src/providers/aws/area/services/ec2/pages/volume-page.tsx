@@ -1,3 +1,4 @@
+import Alert from '@cloudscape-design/components/alert';
 import Box from '@cloudscape-design/components/box';
 import Button from '@cloudscape-design/components/button';
 import Container from '@cloudscape-design/components/container';
@@ -8,7 +9,7 @@ import Link from '@cloudscape-design/components/link';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Table from '@cloudscape-design/components/table';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { CopyValue } from '../../../components/copy-value';
 import { actionFailureItem, readFailureState, ReadFailure, useAnnouncer } from '../../../components/failure-states';
@@ -32,7 +33,13 @@ import {
   type VolumeAttachment,
 } from '../volume-api';
 import { VOLUMES_PATH, VOLUMES_WORD, volumeSizeText } from '../volume-format';
-import { attachmentChangePending, useRefreshVolumeData, useVolume, type AttachmentChange } from '../volume-queries';
+import {
+  ATTACHMENT_CONFIRMATION_MS,
+  attachmentChangeConfirmed,
+  useRefreshVolumeData,
+  useVolume,
+  type AttachmentChange,
+} from '../volume-queries';
 import type { RequestFailure } from '../../../../../../lib/aws/request';
 
 type Action = 'attach' | 'detach' | 'delete';
@@ -149,14 +156,24 @@ function VolumeVisit({
   const [dialog, setDialog] = useState<Dialog>();
   const [failure, setFailure] = useState<RequestFailure>();
   const [unavailable, setUnavailable] = useState<Action[]>([]);
-  const [change, setChange] = useState<AttachmentChange>();
+  const [settlement, setSettlement] = useState<{ change: AttachmentChange; expired: boolean }>();
   const [pending, setPending] = useState(false);
   const inFlight = useRef(false);
   const pageSignal = usePageSignal();
   const flash = usePageFlash();
   const refreshData = useRefreshVolumeData();
   const [announcement, announce] = useAnnouncer();
-  const { value: read, failure: readFailure, refresh } = useVolume(endpoint, id, change);
+  const tracking = settlement?.expired === false ? settlement.change : undefined;
+  const { value: read, failure: readFailure, refresh } = useVolume(endpoint, id, tracking);
+  useEffect(() => {
+    if (tracking === undefined) return;
+    const timer = setTimeout(() => {
+      setSettlement((current) => (current?.change === tracking ? { change: tracking, expired: true } : current));
+    }, ATTACHMENT_CONFIRMATION_MS);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [tracking]);
   const volume = read?.found === true ? read.volume : undefined;
   const failureState = readFailure === undefined ? undefined : readFailureState(readFailure, connection, 'volume');
   const [seenFailure, setSeenFailure] = useState<string>();
@@ -165,11 +182,11 @@ function VolumeVisit({
     if (failureState !== undefined) announce(failureState.firstText);
   }
   if (
-    change !== undefined &&
+    settlement !== undefined &&
     read !== undefined &&
-    (volume === undefined || !attachmentChangePending(volume, change))
+    (volume === undefined || attachmentChangeConfirmed(volume, settlement.change))
   ) {
-    setChange(undefined);
+    setSettlement(undefined);
   }
 
   const open = (next: Dialog) => {
@@ -195,7 +212,7 @@ function VolumeVisit({
         const request = operation.action === 'attach' ? attachVolume : detachVolume;
         await request(endpoint, id, operation.target, signal);
         if (signal.aborted) return;
-        setChange(operation);
+        setSettlement({ change: operation, expired: false });
         const result = operation.action === 'attach' ? 'Attachment' : 'Detachment';
         flash.show([{ type: 'success', content: `${result} requested for ${id}.` }]);
         refreshData(id, operation.target.instanceId);
@@ -230,7 +247,7 @@ function VolumeVisit({
       setDialog(undefined);
     },
   };
-  const settling = change !== undefined;
+  const settling = tracking !== undefined;
 
   let content;
   if (failureState !== undefined) {
@@ -252,6 +269,18 @@ function VolumeVisit({
   } else {
     content = (
       <SpaceBetween size="l">
+        {settlement?.expired === true && (
+          <Alert
+            type="warning"
+            header={
+              settlement.change.action === 'attach'
+                ? 'Attachment confirmation timed out'
+                : 'Detachment confirmation timed out'
+            }
+          >
+            The details below show the latest state reported by the emulator.
+          </Alert>
+        )}
         <Details volume={volume} />
         <Attachments
           volume={volume}

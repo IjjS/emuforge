@@ -42,13 +42,15 @@ export interface AttachmentChange {
   target: AttachmentTarget;
 }
 
-export function attachmentChangePending(volume: Volume, { action, target }: AttachmentChange): boolean {
+export const ATTACHMENT_CONFIRMATION_MS = 5 * READ_AGAIN_MS;
+
+export function attachmentChangeConfirmed(volume: Volume, { action, target }: AttachmentChange): boolean {
   const attachment = volume.attachments.find(
     (item) => item.instanceId === target.instanceId && item.device === target.device,
   );
   return action === 'attach'
-    ? volume.state !== 'in-use' || attachment?.state !== 'attached'
-    : attachment !== undefined || volume.state !== (volume.attachments.length === 0 ? 'available' : 'in-use');
+    ? volume.state === 'in-use' && attachment?.state === 'attached'
+    : attachment === undefined && volume.state === (volume.attachments.length === 0 ? 'available' : 'in-use');
 }
 
 let visits = 0;
@@ -72,7 +74,7 @@ export function useVolume(
         volume.state === 'creating' ||
         volume.state === 'deleting' ||
         volume.attachments.some(({ state }) => state === 'attaching' || state === 'detaching');
-      return moving || (change !== undefined && attachmentChangePending(volume, change)) ? READ_AGAIN_MS : false;
+      return moving || (change !== undefined && !attachmentChangeConfirmed(volume, change)) ? READ_AGAIN_MS : false;
     },
     refetchIntervalInBackground: true,
     staleTime: 0,
