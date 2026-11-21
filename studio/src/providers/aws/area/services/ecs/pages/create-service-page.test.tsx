@@ -423,6 +423,18 @@ it('focuses the diagnostic when the first invalid choice failed with 501', async
   expect(calls('CreateService')).toHaveLength(0);
 });
 
+function requestMoreFamilies() {
+  const picker = field(FAMILY).findSelect();
+  if (!picker) throw new Error('Missing family picker');
+  picker.openDropdown();
+  const menu = picker.findDropdown().findOpenDropdown()?.getElement();
+  if (!menu) throw new Error('Missing open family menu');
+  const loadMore = createWrapper(menu).findButton()?.getElement();
+  if (!loadMore) throw new Error('Missing continuation button');
+  expect(loadMore).toHaveTextContent('Load more');
+  fireEvent.click(loadMore);
+}
+
 it('creates with the retained family and eligible revision after a family continuation 501', async () => {
   const operation = 'ListTaskDefinitionFamilies';
   emulator.mockImplementation((op, input) => {
@@ -433,15 +445,7 @@ it('creates with the retained family and eligible revision after a family contin
   });
   const { router } = open();
   await fill();
-  const picker = field(FAMILY).findSelect();
-  if (!picker) throw new Error('Missing family picker');
-  picker.openDropdown();
-  const menu = picker.findDropdown().findOpenDropdown()?.getElement();
-  if (!menu) throw new Error('Missing open family menu');
-  const loadMore = createWrapper(menu).findButton()?.getElement();
-  if (!loadMore) throw new Error('Missing continuation button');
-  expect(loadMore).toHaveTextContent('Load more');
-  fireEvent.click(loadMore);
+  requestMoreFamilies();
 
   const diagnostic = await screen.findByRole('group', { name: `${FAMILY} diagnostic` });
   expect(diagnostic).toHaveTextContent('501 Not Implemented for ListTaskDefinitionFamilies');
@@ -461,6 +465,80 @@ it('creates with the retained family and eligible revision after a family contin
     desiredCount: 0,
     networkConfiguration: SERVICE.networkConfiguration,
   });
+});
+
+it('blocks submit only after the locked family successfully exhausts its eligible revisions', async () => {
+  const pending = deferred<unknown>();
+  let retry = false;
+  emulator.mockImplementation((op, input) => {
+    const nextToken = (input as { nextToken?: string } | undefined)?.nextToken;
+    if (op === 'ListTaskDefinitionFamilies') {
+      return nextToken ? reply({}, 501) : reply({ families: ['web'], nextToken: 'families-more' });
+    }
+    if (op === 'ListTaskDefinitions') {
+      if (!retry) return pending.promise;
+      return nextToken
+        ? reply({ taskDefinitionArns: [DEFINITION.replace(/:2$/, ':1')] })
+        : reply({ taskDefinitionArns: [DEFINITION], nextToken: 'revisions-more' });
+    }
+    if (op === 'DescribeTaskDefinition') {
+      return reply({ taskDefinition: { status: 'ACTIVE', compatibilities: ['EC2'], networkMode: 'bridge' } });
+    }
+    return normal(op);
+  });
+  const { router } = open();
+  await screen.findByRole('textbox', { name: 'Service name' });
+  fireEvent.change(nameInput(), { target: { value: 'entered' } });
+  fireEvent.change(countInput(), { target: { value: '0' } });
+  await choose(FAMILY, 'web');
+  await choose(SUBNETS, 'subnet-a');
+  await choose(GROUPS, 'sg-a');
+  fireEvent.click(publicIp());
+  requestMoreFamilies();
+  const familyDiagnostic = await screen.findByRole('group', { name: `${FAMILY} diagnostic` });
+  const family = field(FAMILY).findSelect()?.findTrigger().getElement();
+  expect(family).toBeDisabled();
+  expect(family).toHaveTextContent('web');
+
+  fireEvent.click(submitButton());
+  const revisionError = () => labeledField(REVISION).findError()?.getElement();
+  expect(revisionError()).toHaveTextContent('Choose a revision.');
+  expect(familyDiagnostic).not.toHaveFocus();
+
+  pending.resolve(
+    Promise.resolve().then(() => reply({ __type: 'ClientException', message: 'revision read failed' }, 400)),
+  );
+  const revisionDiagnostic = await screen.findByRole('group', { name: `${REVISION} diagnostic` });
+  expect(revisionDiagnostic).toHaveTextContent('revision read failed');
+  fireEvent.click(submitButton());
+  expect(revisionError()).toHaveTextContent('Choose a revision.');
+  expect(familyDiagnostic).not.toHaveFocus();
+
+  retry = true;
+  const retryButton = createWrapper(revisionDiagnostic).findButton()?.getElement();
+  if (!retryButton) throw new Error('Missing revision retry action');
+  expect(retryButton).toHaveTextContent('Retry');
+  fireEvent.click(retryButton);
+  const exhausted = await screen.findByText('This family has no active Fargate revisions.');
+  fireEvent.click(submitButton());
+
+  expect(familyDiagnostic).toHaveFocus();
+  expect(familyDiagnostic).toHaveAccessibleDescription(/501 Not Implemented for ListTaskDefinitionFamilies/);
+  expect(revisionError()).toBeUndefined();
+  expect(field(REVISION).findSelect()?.findTrigger().getElement()).toHaveTextContent('No revision selected');
+  expect(exhausted).toBeVisible();
+  expect(nameInput()).toHaveValue('entered');
+  expect(countInput()).toHaveValue(0);
+  expect(field(SUBNETS).findMultiselect()?.findTokens()[0]?.findLabel().getElement()).toHaveTextContent('subnet-a');
+  expect(field(GROUPS).findMultiselect()?.findTokens()[0]?.findLabel().getElement()).toHaveTextContent('frontend');
+  expect(publicIp()).not.toBeChecked();
+  expect(calls('ListTaskDefinitions').map(([, input]) => (input as { nextToken?: string }).nextToken)).toEqual([
+    undefined,
+    undefined,
+    'revisions-more',
+  ]);
+  expect(calls('CreateService')).toHaveLength(0);
+  expect(router.state.location.pathname).toBe(FORM);
 });
 
 it.each(['covered mobile', 'visible mobile', 'desktop'] as const)(

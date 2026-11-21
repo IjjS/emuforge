@@ -189,7 +189,10 @@ function CreateServiceForm({ cluster, connection }: { cluster: string; connectio
   const noFamilies = familyList.choices?.length === 0 && !familyList.more && !familyList.loading && !familyList.failure;
   const familyUnavailable =
     familyList.failure?.kind === 'not-implemented' && familyList.failure.operation === families.operation;
-  const familySelectionBlocked = familyUnavailable && !form.family;
+  const revisionsExhausted =
+    revisionList.choices?.length === 0 && !revisionList.more && !revisionList.loading && !revisionList.failure;
+  const familySelectionBlocked =
+    familyUnavailable && (!form.family || (form.revision === undefined && revisionsExhausted));
   const unsupported = unsupportedReason !== undefined;
   const submitReasonId = unsupported ? unsupportedReasonId : noFamilies ? familyReasonId : undefined;
   const nameError = errors.name ?? (duplicateName === form.name.trim() ? RENAME_SERVICE : undefined);
