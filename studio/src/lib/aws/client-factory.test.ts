@@ -1,4 +1,4 @@
-import { DeleteFunctionCommand, LambdaClient } from '@aws-sdk/client-lambda';
+import { DeleteAliasCommand, DeleteFunctionCommand, InvokeCommand, LambdaClient } from '@aws-sdk/client-lambda';
 import {
   CreateBucketCommand,
   DeleteObjectCommand,
@@ -718,6 +718,70 @@ describe('browser authorization for destructive AWS attempts', () => {
     });
     return { answer, respond };
   }
+
+  it.each([
+    {
+      operation: 'DeleteFunction',
+      method: 'DELETE',
+      path: '/2015-03-31/functions/orders',
+      opaque: true,
+      send: (client: LambdaClient, abortSignal: AbortSignal) =>
+        client.send(new DeleteFunctionCommand({ FunctionName: 'orders' }), { abortSignal }),
+    },
+    {
+      operation: 'DeleteAlias',
+      method: 'DELETE',
+      path: '/2015-03-31/functions/orders/aliases/live',
+      opaque: false,
+      send: (client: LambdaClient, abortSignal: AbortSignal) =>
+        client.send(new DeleteAliasCommand({ FunctionName: 'orders', Name: 'live' }), { abortSignal }),
+    },
+    {
+      operation: 'Invoke',
+      method: 'POST',
+      path: '/2015-03-31/functions/orders/invocations?Qualifier=live',
+      opaque: true,
+      send: (client: LambdaClient, abortSignal: AbortSignal) =>
+        client.send(new InvokeCommand({ FunctionName: 'orders', Qualifier: 'live' }), { abortSignal }),
+    },
+  ])('refuses a relayed redirect for authorized $operation before any destination send', async (test) => {
+    const endpoint = freshEndpoint();
+    const original = new URL(test.path, endpoint).href;
+    const destination = new URL('/redirect-destination', endpoint).href;
+    const sent: [method: string, url: string][] = [];
+    function relay(request: Request) {
+      if (new URL(request.url).pathname === SESSION_PATH) {
+        return Response.json({ token: SESSION_TOKEN });
+      }
+      sent.push([request.method, request.url]);
+      return request.url === original
+        ? new Response(null, { status: 307, headers: { location: destination } })
+        : new Response(null, { status: 204 });
+    }
+    // Model Fetch's handling of the local relay's redirect, including the browser's opaque manual response.
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init);
+      const response = relay(request);
+      if (response.status !== 307) return response;
+      if (request.redirect === 'follow') {
+        return relay(new Request(destination, request));
+      }
+      if (request.redirect === 'error') throw new TypeError('Failed to fetch');
+      return test.opaque ? Object.defineProperty(Response.error(), 'type', { value: 'opaqueredirect' }) : response;
+    });
+    const client = createAwsClient(LambdaClient, { endpoint });
+    const controller = new AbortController();
+    const dispose = bindAwsMutationAuthorization(controller);
+    try {
+      await expect(
+        sendRequest<unknown>(test.operation, (signal) => test.send(client, signal), controller.signal),
+      ).rejects.toMatchObject({ failure: { kind: 'engine-did-not-answer', operation: test.operation } });
+      expect(sent).toEqual([[test.method, original]]);
+      expect(sent.filter(([, url]) => url === destination)).toEqual([]);
+    } finally {
+      dispose();
+    }
+  });
 
   it('blocks the repeat attempt after held session renewal until a new confirmation', async () => {
     const renewal = heldResponse();

@@ -206,10 +206,12 @@ export function bindAwsMutationAuthorization(
   };
 }
 
-/** Check an authorization at dispatch without aborting an already-relayed response on a connectivity event. */
-export function assertAwsRequestAuthorized(signal: AbortSignal): void {
-  mutationAuthorizations.get(signal)?.();
+/** Check the signal at dispatch and report whether the request is bound to a mutation authorization. */
+export function assertAwsRequestAuthorized(signal: AbortSignal): boolean {
+  const authorize = mutationAuthorizations.get(signal);
+  authorize?.();
   signal.throwIfAborted();
+  return authorize !== undefined;
 }
 
 /**
