@@ -16,6 +16,7 @@ import { useNavigate } from 'react-router';
 import { useAreaModalRoot } from '../../../components/area-modal';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { useShowsResources } from '../../../components/page-resources';
+import { usePageFlash } from '../../../components/page-flash';
 import { useFollow } from '../../../components/use-follow';
 import { ValueText } from '../../../components/value-text';
 import type { DeleteResult, FunctionSummary } from '../api';
@@ -48,6 +49,9 @@ const RUNTIME_MIN_WIDTH = '18ch';
 
 const FILTER_LABEL = 'Search by attributes or search by keyword';
 const SELECT_FIRST = 'Select a function first';
+const WAIT_FOR_LIST = 'Wait for the current function list to load.';
+const EXPIRED_DRAFT =
+  'The delete confirmation closed because the browser connection changed. After the current function list loads, reopen Delete from Actions and confirm again.';
 const REFRESHED = 'Function list refreshed';
 const NO_MORE = 'No more functions';
 
@@ -162,6 +166,7 @@ export function FunctionListPage({ connection }: { connection: AreaConnection })
   const navigate = useNavigate();
   const modalRoot = useAreaModalRoot();
   const [announcement, announce] = useAnnouncer();
+  const flash = usePageFlash();
   const actionsRef = useRef<ButtonDropdownProps.Ref>(null);
   const connectionRevision = useRef(0);
   const [network, setNetwork] = useState(() => ({ online: navigator.onLine, revision: 0 }));
@@ -212,9 +217,10 @@ export function FunctionListPage({ connection }: { connection: AreaConnection })
     revision: number;
     endpoint: string | undefined;
   }>();
+  const connectionChanged = deleting !== undefined && deleting.revision !== network.revision;
   const confirmationExpired =
     deleting !== undefined &&
-    (deleting.revision !== network.revision ||
+    (connectionChanged ||
       deleting.endpoint !== connection.engineOrigin ||
       !loaded ||
       listing.failure !== undefined ||
@@ -340,6 +346,11 @@ export function FunctionListPage({ connection }: { connection: AreaConnection })
     },
     [setDeleting],
   );
+  const handleExpiredDraft = useCallback(() => {
+    if (connectionChanged) {
+      flash.show([{ type: 'info', content: EXPIRED_DRAFT }]);
+    }
+  }, [connectionChanged, flash]);
 
   const handleCreate = useCallback(() => {
     void navigate(CREATE_FUNCTION_PATH);
@@ -424,7 +435,7 @@ export function FunctionListPage({ connection }: { connection: AreaConnection })
                   ref={actionsRef}
                   items={[{ id: 'delete', text: 'Delete' }]}
                   disabled={selected.length === 0 || listing.failure !== undefined}
-                  disabledReason={SELECT_FIRST}
+                  disabledReason={state.kind === 'loading' ? WAIT_FOR_LIST : SELECT_FIRST}
                   onItemClick={handleAction}
                 >
                   Actions
@@ -488,6 +499,7 @@ export function FunctionListPage({ connection }: { connection: AreaConnection })
         connection={connection}
         online={network.online}
         confirmationExpired={confirmationExpired}
+        onExpiredDraft={handleExpiredDraft}
         canSubmit={canSubmitDeletion}
         onClose={handleDialogClose}
         reportEmptyInterruption
