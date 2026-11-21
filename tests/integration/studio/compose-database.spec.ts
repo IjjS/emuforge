@@ -15,6 +15,7 @@ import { leaseDatabaseRange, portNumbers } from './support/database-range';
 import { answersOk, emulatorDir, readEmulatorFiles } from './support/emulator';
 import { ensurePortFree, freePortExcept } from './support/net';
 import {
+  dockerRead,
   expectExit,
   Form,
   freshHome,
@@ -229,8 +230,11 @@ test('engine.product-database-range-refuses-private-api', async ({ ctx }) => {
   const log = await form.run(form.compose('logs', '--no-color', 'emuforge'), STOP_BOUND_MS);
   expect(log.stdout + log.stderr).toContain(String(form.emulatorPort));
   expect(log.stdout + log.stderr).toContain(`${range.low}-${range.high}`);
-  const api = await form.byService(['aws-emulator']);
-  for (const service of Object.values(api)) expect(service.running).toBe(false);
+  const listed = await form.run(form.compose('ps', '--all', '--quiet', 'aws-emulator'), STOP_BOUND_MS);
+  expectExit(listed, 'zero');
+  for (const id of listed.stdout.trim().split(/\s+/).filter(Boolean)) {
+    expect(await dockerRead(['inspect', '--format', '{{.State.Running}}', id])).toBe('false');
+  }
   expect(await probeAt('127.0.0.1', form.emulatorPort)).toBe('refused');
 });
 
@@ -310,14 +314,24 @@ test('engine.compose-check-forms-omit-database-publications', async ({ ctx }) =>
     STOP_BOUND_MS,
   );
   expectExit(controls, 'zero');
-  const service = JSON.parse(controls.stdout).services['aws-emulator'];
-  expect(service.ports).toHaveLength(1);
-  expect(service.ports[0]).toMatchObject({
+  type Service = {
+    ports?: { host_ip: string; published: string; target: number; protocol: string }[];
+    sysctls?: Record<string, string>;
+  };
+  const services: Record<string, Service> = JSON.parse(controls.stdout).services;
+  const publications = Object.entries(services).flatMap(([service, config]) =>
+    (config.ports ?? []).map(({ host_ip, published, target, protocol }) => ({
+      service, host_ip, published, target, protocol,
+    })),
+  );
+  expect(publications).toEqual([{
+    service: 'aws-emulator',
     host_ip: '127.0.0.1',
     published: String(standalone.port),
     target: standalone.port,
-  });
-  expect(service.sysctls ?? {}).not.toHaveProperty('net.ipv4.ip_local_port_range');
+    protocol: 'tcp',
+  }]);
+  expect(services['aws-emulator'].sysctls ?? {}).not.toHaveProperty('net.ipv4.ip_local_port_range');
   expectExit(await ordinary.removeVolume(), 'zero');
   await expectDeveloperMappings();
   expect(await waitReachable(developer.enginePort, true)).toMatchObject({ body: { emulator: { reachable: true } } });
