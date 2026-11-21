@@ -14,6 +14,7 @@
 // changed"; requirement R9, rule 1): what the notice, the `h1`'s description and the page say of where the bucket is.
 // Readers of those: `support/screen-rules.ts`.
 
+import createWrapper from '@cloudscape-design/components/test-utils/selectors';
 import { expect, startStack, test } from './support';
 import { connectedAt, crumbLink, crumbs, emulatorLine, endpointPattern, expectLine } from './support/aws-area';
 import { ACTION, addressOf, heading } from './support/frame';
@@ -80,6 +81,10 @@ test.describe(() => {
   test.use({ timezoneId: SEOUL.timeZone });
 
   test('studio.s3-bucket-page-shows-the-bucket-properties', async ({ ctx, page }) => {
+    const notificationHeaders = sectionBox(page, NOTIFICATIONS)
+      .locator(createWrapper(':scope').findTable().findColumnHeaders().toSelector())
+      .filter({ visible: true });
+    const visibleHeaderLabels = async () => (await notificationHeaders.allInnerTexts()).map((label) => label.trim());
     const stack = await startStack(ctx);
     const port = stack.emulatorPort;
     const lines = new Lines(ctx);
@@ -133,12 +138,7 @@ test.describe(() => {
         ctx.log(`direct properties of ${name}: ${JSON.stringify(props)}`);
         const expected = expectedSections(await directBucket(ctx, port, name), props, SEOUL);
         ctx.log(`expected sections: ${JSON.stringify(expected)}`);
-        await expect(
-          sectionBox(page, NOTIFICATIONS).getByRole('columnheader', {
-            name: 'Event name and destination',
-            exact: true,
-          }),
-        ).toBeVisible();
+        await expect.poll(visibleHeaderLabels).toContain('Event name and destination');
         await expectSections(page, expected, 'every section shows what the direct reads return');
       },
     );
@@ -179,9 +179,7 @@ test.describe(() => {
           SEOUL,
         );
         await page.setViewportSize({ width: 1920, height: 900 });
-        await expect(
-          sectionBox(page, NOTIFICATIONS).getByRole('columnheader', { name: 'Destination', exact: true }),
-        ).toBeVisible();
+        await expect.poll(visibleHeaderLabels).toContain('Destination');
         await expectSections(page, expected, 'every section at /properties shows what the direct reads return');
         await expect(page).toHaveURL(addressOf(propertiesPath(name)));
       },
