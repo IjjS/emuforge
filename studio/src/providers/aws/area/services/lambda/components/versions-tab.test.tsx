@@ -167,13 +167,13 @@ function operationButton(operation: MutationOperation) {
   return screen.getByRole('button', { name: labels[operation] });
 }
 
-function versionChoices(dialog: HTMLElement) {
+function openTargetSelect(dialog: HTMLElement) {
   const select = createWrapper(dialog).findSelect();
   if (select === null) {
     throw new Error('Expected a target version selector');
   }
-  fireEvent.click(select.findTrigger().getElement());
-  return select.findDropdown().findOptions();
+  select.openDropdown();
+  return select;
 }
 
 async function prepareAction(operation: MutationOperation) {
@@ -186,11 +186,8 @@ async function prepareAction(operation: MutationOperation) {
     fireEvent.change(within(dialog).getByRole('textbox', { name: 'Alias name' }), { target: { value: 'next' } });
   }
   if (operation === 'CreateAlias' || operation === 'UpdateAlias') {
-    const option = versionChoices(dialog).find((item) => item.getElement().textContent === '2');
-    if (option === undefined) {
-      throw new Error('Expected published version 2');
-    }
-    fireEvent.click(option.getElement());
+    const select = openTargetSelect(dialog);
+    select.selectOptionByValue('2');
   }
   return within(dialog).getByRole('button', {
     name: operation === 'CreateAlias' ? 'Create alias' : operation === 'UpdateAlias' ? 'Save changes' : 'Delete alias',
@@ -271,10 +268,12 @@ describe('Release listings', () => {
     ]);
 
     fireEvent.click(operationButton('CreateAlias'));
-    expect(versionChoices(await screen.findByRole('dialog')).map((item) => item.getElement().textContent)).toEqual([
-      '1',
-      '2',
-    ]);
+    expect(
+      openTargetSelect(await screen.findByRole('dialog'))
+        .findDropdown()
+        .findOptions()
+        .map((item) => item.findLabel().getElement().textContent),
+    ).toEqual(['1', '2']);
   });
 
   it('explains the requirement to publish a version before creating an alias', async () => {

@@ -1235,6 +1235,7 @@ describe('Versions and aliases', () => {
     const reconnect = deferredAnswer();
     engine.answerFunction = () => reconnect.promise;
     connection.set(connectedResult());
+    fireEvent.click(tabLink('Versions and aliases'));
     await waitFor(() => expect(engine.gets).toHaveLength(2));
     expect(screen.queryByText('Release 1')).toBeNull();
     expect(screen.queryByText('old-live')).toBeNull();

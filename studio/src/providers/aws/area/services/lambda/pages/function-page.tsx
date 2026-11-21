@@ -198,6 +198,7 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
     connected,
     disconnected: connection.result !== undefined && connection.result.kind !== 'connected',
     emulatorIdentity: connected ? JSON.stringify([result.emulator.endpoint, result.target]) : undefined,
+    revalidateOnReconnect: active === 'monitor' || active === 'versions',
   });
   const { read, failure, refresh } = reading;
   const fn = read?.found === true ? read.function : undefined;
@@ -210,7 +211,9 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
   const [verification, setVerification] = useState({ scope: releaseScope, found: false });
   // A refresh can read releases in parallel once this connection has verified the function.
   const verified =
-    connected && (read?.found ?? (failure === undefined && verification.scope === releaseScope && verification.found));
+    connected &&
+    reading.sessionVerified &&
+    (read?.found ?? (failure === undefined && verification.scope === releaseScope && verification.found));
   if (verification.scope !== releaseScope || verification.found !== verified) {
     setVerification({ scope: releaseScope, found: verified });
   }
