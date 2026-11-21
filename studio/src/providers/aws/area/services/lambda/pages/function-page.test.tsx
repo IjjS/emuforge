@@ -426,8 +426,9 @@ function headingText(): string {
 
 /** The key-value pairs of the section titled `title`, as label and value text, in order. */
 function section(title: string): HTMLElement {
-  const heading = screen.getByRole('heading', { level: 2, name: title });
-  const container = PAGE.findAllContainers().find((found) => found.getElement().contains(heading));
+  const container = PAGE.findAllContainers().find(
+    (found) => norm(found.findHeader()?.findHeader()?.findHeadingText().getElement().textContent) === title,
+  );
   expect(container).toBeDefined();
   return (container as NonNullable<typeof container>).getElement();
 }
@@ -1291,11 +1292,13 @@ describe('Versions and aliases', () => {
     const reconnect = deferredAnswer();
     engine.answerFunction = () => reconnect.promise;
     connection.set(connectedResult());
-    fireEvent.click(tabLink('Versions and aliases'));
+    const releaseTab = tabs()?.findTabLinkById('versions');
+    expect(releaseTab).toBeTruthy();
+    releaseTab?.click();
     await waitFor(() => expect(engine.gets).toHaveLength(2));
     expect(releaseTable('Versions')).toBeUndefined();
     expect(releaseTable('Aliases')).toBeUndefined();
-    expect(screen.queryByRole('tab', { name: 'Versions and aliases' })).toBeNull();
+    expect(tabs()?.findTabLinkById('versions') ?? null).toBeNull();
     expect(engine.aws.filter(({ url }) => RELEASE_PATH.test(url.pathname))).toHaveLength(2);
 
     await act(async () => {
@@ -1328,7 +1331,9 @@ describe('Versions and aliases', () => {
 
     open(pagePath('orders') + versionsPath);
     await waitFor(() => expect(versionsShown()).toContainEqual(['1', 'Release 1']));
-    fireEvent.click(screen.getByRole('button', { name: 'Publish version' }));
+    const publish = releaseTable('Versions')?.findHeaderSlot()?.findHeader()?.findActions()?.findButton();
+    expect(publish?.getElement()).toHaveTextContent('Publish version');
+    publish?.click();
     await waitFor(() => expect(flashTexts()).toContain('Published version 2.'));
     await waitFor(() => expect(engine.gets).toHaveLength(2));
     await waitFor(() =>
