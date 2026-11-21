@@ -20,6 +20,8 @@ export function NotificationChangeStatus({
   action,
   destination,
   showObserved = true,
+  nextWrite,
+  onViewCurrent,
   onRefresh,
 }: {
   change: NotificationChangeControl;
@@ -27,6 +29,8 @@ export function NotificationChangeStatus({
   action: 'Saving' | 'Deleting';
   destination?: DestinationType;
   showObserved?: boolean;
+  nextWrite?: { label: string; onClick: () => void };
+  onViewCurrent?: () => void;
   onRefresh: () => void;
 }) {
   const { state } = change;
@@ -37,6 +41,15 @@ export function NotificationChangeStatus({
   const verifying = state.kind === 'unconfirmed';
   const unavailable = verifying && state.failure?.kind === 'not-implemented';
   const retryEnabled = verifying && !change.checkAgainDisabled;
+  const refusalRef = useRef<HTMLDivElement>(null);
+  const sessionRefused =
+    state.kind === 'failed' &&
+    state.stage === 'write' &&
+    state.failure.kind === 'other' &&
+    state.failure.sessionRefused === true;
+  useEffect(() => {
+    if (sessionRefused) refusalRef.current?.focus();
+  }, [sessionRefused]);
 
   useEffect(() => {
     if (!verifying) return;
@@ -88,15 +101,22 @@ export function NotificationChangeStatus({
               )
             }
             action={
-              <Button
-                ref={checkAgainRef}
-                formAction="none"
-                ariaDescribedby={messageId}
-                disabled={change.checkAgainDisabled}
-                onClick={change.checkAgain}
-              >
-                Check again
-              </Button>
+              <SpaceBetween size="xs" direction="horizontal">
+                <Button
+                  ref={checkAgainRef}
+                  formAction="none"
+                  ariaDescribedby={messageId}
+                  disabled={change.checkAgainDisabled}
+                  onClick={change.checkAgain}
+                >
+                  Check again
+                </Button>
+                {onViewCurrent !== undefined && retryEnabled && (
+                  <Button formAction="none" onClick={onViewCurrent}>
+                    View current configuration
+                  </Button>
+                )}
+              </SpaceBetween>
             }
           >
             <div id={messageId}>
@@ -146,6 +166,37 @@ export function NotificationChangeStatus({
           view={pageFailure(state.failure, connection, 'The event notifications could not be read')}
           onRetry={onRefresh}
         />
+      );
+    }
+    if (sessionRefused) {
+      const reason = state.failure.kind === 'other' ? state.failure : undefined;
+      return (
+        <div ref={refusalRef} role="region" tabIndex={-1} aria-labelledby={headingId} aria-describedby={messageId}>
+          <Alert
+            type="error"
+            header={<span id={headingId}>The engine refused the write before forwarding it</span>}
+            action={
+              nextWrite === undefined ? undefined : (
+                <Button formAction="none" onClick={nextWrite.onClick}>
+                  {nextWrite.label}
+                </Button>
+              )
+            }
+          >
+            <div id={messageId}>
+              <SpaceBetween size="xxs">
+                <div>
+                  Studio can renew the session when you{' '}
+                  {action === 'Saving' ? 'submit again' : 'select Delete and confirm again'}.
+                </div>
+                <div>
+                  Engine reason: {reason?.code}
+                  {reason?.message === undefined ? '' : `: ${reason.message}`}
+                </div>
+              </SpaceBetween>
+            </div>
+          </Alert>
+        </div>
       );
     }
     const failure = actionFailure(state.failure, `${action} the event notification`, connection.engineOrigin);

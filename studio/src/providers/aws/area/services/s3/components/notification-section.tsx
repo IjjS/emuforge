@@ -13,6 +13,7 @@ import {
   notificationIdCounts,
   notificationRules,
   type EditableNotification,
+  type NotificationRule,
 } from '../notifications';
 import { NotificationTable } from './notification-table';
 import { Quoted } from './quoted';
@@ -31,6 +32,7 @@ export function NotificationSection({
   consentRecovery,
   unsupported,
   deleteDisabled,
+  hideRuleActions,
   onDelete,
 }: {
   bucket: string;
@@ -41,6 +43,7 @@ export function NotificationSection({
   consentRecovery: DeleteConsentRecovery | undefined;
   unsupported: boolean;
   deleteDisabled: boolean;
+  hideRuleActions: boolean;
   onDelete: (target: EditableNotification) => void;
 }) {
   const follow = useFollow();
@@ -78,37 +81,39 @@ export function NotificationSection({
               Event notifications
             </Header>
           )}
-          actions={(rule) => {
-            const id = rule.data.Id;
-            if (!editableNotification(rule, ids) || id === undefined) return <Box>Read only</Box>;
-            const restoreTarget = consentRecovery?.target;
-            const restoreHere =
-              !deleteDisabled &&
-              restoreTarget?.data.Id === id &&
-              restoreTarget.type === rule.type &&
-              restoreTarget.arn === rule.arn;
-            return (
-              <SpaceBetween direction="horizontal" size="xs">
-                <Button
-                  href={editEventNotificationPath(bucket, id)}
-                  onFollow={follow}
-                  wrapText={false}
-                  ariaLabel={`Edit ${id}`}
-                >
-                  Edit
-                </Button>
-                <Button
-                  ref={restoreHere ? recoveredDelete : undefined}
-                  onClick={() => onDelete(rule)}
-                  disabled={deleteDisabled}
-                  wrapText={false}
-                  ariaLabel={`Delete ${id}`}
-                >
-                  Delete
-                </Button>
-              </SpaceBetween>
-            );
-          }}
+          {...(!hideRuleActions && {
+            actions: (rule: NotificationRule) => {
+              const id = rule.data.Id;
+              if (!editableNotification(rule, ids) || id === undefined) return <Box>Read only</Box>;
+              const restoreTarget = consentRecovery?.target;
+              const restoreHere =
+                !deleteDisabled &&
+                restoreTarget?.data.Id === id &&
+                restoreTarget.type === rule.type &&
+                restoreTarget.arn === rule.arn;
+              return (
+                <SpaceBetween direction="horizontal" size="xs">
+                  <Button
+                    href={editEventNotificationPath(bucket, id)}
+                    onFollow={follow}
+                    wrapText={false}
+                    ariaLabel={`Edit ${id}`}
+                  >
+                    Edit
+                  </Button>
+                  <Button
+                    ref={restoreHere ? recoveredDelete : undefined}
+                    onClick={() => onDelete(rule)}
+                    disabled={deleteDisabled}
+                    wrapText={false}
+                    ariaLabel={`Delete ${id}`}
+                  >
+                    Delete
+                  </Button>
+                </SpaceBetween>
+              );
+            },
+          })}
         />
       </SpaceBetween>
     </div>
