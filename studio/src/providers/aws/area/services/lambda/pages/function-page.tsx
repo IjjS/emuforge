@@ -287,7 +287,7 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
       scroll.current.shown = true;
     }
   }, [verificationScope, invocationAnswers, showInvocationFallback]);
-  const [test, setTest] = useState({
+  const [savedTest, setTest] = useState({
     scope: verificationScope,
     functionScope,
     eventText: INITIAL_EVENT,
@@ -295,15 +295,21 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
     targetUnavailable: false,
     targetReset: false,
   });
-  if (test.scope !== verificationScope) {
-    setTest({
-      scope: verificationScope,
-      functionScope,
-      eventText: test.functionScope === functionScope ? test.eventText : INITIAL_EVENT,
-      qualifier: undefined,
-      targetUnavailable: false,
-      targetReset: test.functionScope === functionScope && (test.targetReset || test.qualifier !== undefined),
-    });
+  // Derive the reset in the same render as the network notice so both reach one live-region entry.
+  const test =
+    savedTest.scope === verificationScope
+      ? savedTest
+      : {
+          scope: verificationScope,
+          functionScope,
+          eventText: savedTest.functionScope === functionScope ? savedTest.eventText : INITIAL_EVENT,
+          qualifier: undefined,
+          targetUnavailable: false,
+          targetReset:
+            savedTest.functionScope === functionScope && (savedTest.targetReset || savedTest.qualifier !== undefined),
+        };
+  if (test !== savedTest) {
+    setTest(test);
   }
   const [verification, setVerification] = useState({ scope: verificationScope, found: false });
   // A refresh can read releases in parallel once this connection has verified the function.
@@ -317,17 +323,18 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
   if (verification.scope !== verificationScope || verification.found !== verified) {
     setVerification({ scope: verificationScope, found: verified });
   }
-  const [aliasConfirmation, setAliasConfirmation] = useState<{ functionScope: string; open: boolean }>();
-  if (aliasConfirmation !== undefined) {
-    if (aliasConfirmation.functionScope !== functionScope || active !== 'versions') {
-      setAliasConfirmation(undefined);
-    } else if (aliasConfirmation.open && !verified) {
-      // An ordinary dismissal reports false before the release view unmounts.
-      setAliasConfirmation({ functionScope, open: false });
-    }
+  const [savedAliasConfirmation, setAliasConfirmation] = useState<{ functionScope: string; open: boolean }>();
+  let aliasConfirmation = savedAliasConfirmation;
+  if (aliasConfirmation?.functionScope !== functionScope || active !== 'versions') {
+    aliasConfirmation = undefined;
+  } else if (aliasConfirmation.open && !verified) {
+    // An ordinary dismissal reports false before the release view unmounts.
+    aliasConfirmation = { functionScope, open: false };
   }
-  const aliasInterrupted =
-    active === 'versions' && aliasConfirmation?.functionScope === functionScope && !aliasConfirmation.open;
+  if (aliasConfirmation !== savedAliasConfirmation) {
+    setAliasConfirmation(aliasConfirmation);
+  }
+  const aliasInterrupted = aliasConfirmation?.open === false;
   const handleAliasConfirmationChange = useCallback(
     (open: boolean) => setAliasConfirmation(open ? { functionScope, open: true } : undefined),
     [functionScope],
@@ -457,7 +464,8 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
     removedFocus.current = undefined;
     if (
       document.activeElement === document.body &&
-      ((removed === 'alias' && aliasInterrupted) || (removed === 'test' && active === 'test' && test.targetReset))
+      ((removed === 'alias' && aliasInterrupted) ||
+        (removed === 'test' && active === 'test' && (!network.online || test.targetReset)))
     ) {
       refreshButton.current?.focus();
     }
@@ -499,22 +507,25 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
   const [seenFailureLine, setSeenFailureLine] = useState<string>();
   const failureLine = failureState?.firstText;
   const toSay: string[] = [];
-  const [seenNotice, setSeenNotice] = useState<string>();
-  const [seenAliasInterruption, setSeenAliasInterruption] = useState(false);
-  const [seenTargetReset, setSeenTargetReset] = useState(false);
-  if (seenNotice !== noticeWords) {
-    setSeenNotice(noticeWords);
-    if (noticeWords !== undefined) {
-      toSay.push(noticeWords);
-    }
-  }
-  if (seenAliasInterruption !== aliasInterrupted) {
-    setSeenAliasInterruption(aliasInterrupted);
-    if (aliasInterrupted) toSay.push(ALIAS_CONFIRMATION_INTERRUPTED);
-  }
-  if (seenTargetReset !== test.targetReset) {
-    setSeenTargetReset(test.targetReset);
-    if (test.targetReset) toSay.push(INVOKE_TARGET_RESET);
+  const [seenRecovery, setSeenRecovery] = useState({
+    notice: undefined as string | undefined,
+    aliasInterrupted: false,
+    targetReset: false,
+  });
+  if (
+    seenRecovery.notice !== noticeWords ||
+    seenRecovery.aliasInterrupted !== aliasInterrupted ||
+    seenRecovery.targetReset !== test.targetReset
+  ) {
+    const recovery = [
+      seenRecovery.notice !== noticeWords ? noticeWords : undefined,
+      aliasInterrupted && !seenRecovery.aliasInterrupted ? ALIAS_CONFIRMATION_INTERRUPTED : undefined,
+      test.targetReset && !seenRecovery.targetReset ? INVOKE_TARGET_RESET : undefined,
+    ]
+      .filter(Boolean)
+      .join(' ');
+    setSeenRecovery({ notice: noticeWords, aliasInterrupted, targetReset: test.targetReset });
+    if (recovery !== '') toSay.push(recovery);
   }
   if (refreshing === 'function' && (read !== undefined || failure !== undefined)) {
     setRefreshing(undefined);

@@ -493,15 +493,15 @@ function tabLink(id: FunctionTab): HTMLElement {
   return tab;
 }
 
-/** Every text said in a polite live region from now on, in order. */
-function recordAnnouncements(): string[] {
+/** Every committed entry added to a matching polite region from now on, in order. */
+function recordAnnouncements(selector = '[aria-live="polite"]'): string[] {
   const said: string[] = [];
   const observer = new MutationObserver((mutations) => {
     for (const mutation of mutations) {
       const region =
         mutation.target instanceof Element
-          ? mutation.target.closest('[aria-live="polite"]')
-          : mutation.target.parentElement?.closest('[aria-live="polite"]');
+          ? mutation.target.closest(selector)
+          : mutation.target.parentElement?.closest(selector);
       if (region !== null && region !== undefined) {
         for (const node of mutation.addedNodes) {
           const text = (node.textContent ?? '').trim();
@@ -514,6 +514,16 @@ function recordAnnouncements(): string[] {
   });
   observer.observe(document.body, { subtree: true, childList: true, characterData: true });
   return said;
+}
+
+const OFFLINE_HEADER = 'Browser is offline';
+const OFFLINE_DETAIL = 'Reconnect to verify this function.';
+const OFFLINE_ANNOUNCEMENT = `${OFFLINE_HEADER}. ${OFFLINE_DETAIL}`;
+
+function offlineEntries(announcements: string[], actionGuidance: string): string[] {
+  return announcements.filter((entry) =>
+    [OFFLINE_HEADER, OFFLINE_DETAIL, actionGuidance].some((part) => entry.includes(part)),
+  );
 }
 
 /** The status indicator inside `element`: its Cloudscape type and its text. */
@@ -1245,12 +1255,7 @@ describe('Versions and aliases', () => {
   it('explains a forced alias confirmation dismissal once and leaves ordinary Escape focus restoration intact', async () => {
     const explanation =
       'The Delete alias confirmation closed. After verification, reopen it from the actions menu in the alias row.';
-    const notice = () =>
-      PAGE.findContentLayout()
-        ?.findNotifications()
-        .findAllAlerts()
-        .find((alert) => norm(alert.findContent().getElement().textContent) === explanation)
-        ?.getElement();
+    const notices = () => PAGE.findContentLayout()?.findNotifications().findAllAlerts() ?? [];
     const visibleDialog = () => PAGE.findAllModals().find((modal) => modal.isVisible());
     async function openAliasDelete() {
       const menu = await waitFor(() => {
@@ -1281,8 +1286,8 @@ describe('Versions and aliases', () => {
       return { cancel, menuButton };
     }
 
-    const announcements = recordAnnouncements();
-    const dismissalCount = () => announcements.filter((message) => message.includes(explanation)).length;
+    const announcements = recordAnnouncements('.aws-area-announcer[aria-live="polite"][aria-atomic="true"]');
+    const expected = [`${OFFLINE_ANNOUNCEMENT} ${explanation}`];
     engine.functions = [{ name: 'orders', description: 'Before reconnect' }];
     engine.answerRelease = ({ url }) =>
       url.pathname.endsWith('/versions') ? versionAnswer('2') : aliasAnswer('live', '2');
@@ -1294,8 +1299,8 @@ describe('Versions and aliases', () => {
       fireEvent.keyDown(ordinary.cancel, { key: 'Escape', keyCode: 27 });
       await waitFor(() => expect(ordinary.menuButton).toHaveFocus());
       expect(visibleDialog()).toBeUndefined();
-      expect(notice()).toBeUndefined();
-      expect(dismissalCount()).toBe(0);
+      expect(notices()).toEqual([]);
+      expect(offlineEntries(announcements, explanation)).toEqual([]);
 
       await openAliasDelete();
       const refresh = pageActions()[0]?.getElement();
@@ -1305,23 +1310,30 @@ describe('Versions and aliases', () => {
       await waitFor(() => {
         expect(visibleDialog()).toBeUndefined();
         expect(refresh).toHaveFocus();
-        expect(notice()).toBeVisible();
-        expect(dismissalCount()).toBe(1);
+        const [networkNotice, aliasNotice] = notices();
+        expect(networkNotice?.findHeader()?.getElement()).toHaveTextContent(OFFLINE_HEADER);
+        expect(networkNotice?.findContent().getElement()).toHaveTextContent(OFFLINE_DETAIL);
+        expect(aliasNotice?.findContent().getElement()).toHaveTextContent(explanation);
+        expect(offlineEntries(announcements, explanation)).toEqual(expected);
       });
 
       engine.functions = [{ name: 'orders', description: 'Verified after reconnect' }];
       browserOnline.mockReturnValue(true);
       fireEvent(window, new Event('online'));
       expect(releaseTable('Aliases')).toBeUndefined();
-      expect(notice()).toBeVisible();
+      expect(notices()[1]?.findContent().getElement()).toHaveTextContent(explanation);
+      await waitFor(() =>
+        expect(announcements).toContain('Rechecking the emulator connection. Wait for a new connection check.'),
+      );
+      expect(offlineEntries(announcements, explanation)).toEqual(expected);
       connection.set(connectedResult());
       await waitFor(() => expect(value('Description')).toBe('Verified after reconnect'));
-      expect(notice()).toBeVisible();
+      expect(notices()[0]?.findContent().getElement()).toHaveTextContent(explanation);
       const reopened = await openAliasDelete();
-      expect(notice()).toBeUndefined();
+      expect(notices()).toEqual([]);
       fireEvent.click(reopened.cancel);
       await waitFor(() => expect(reopened.menuButton).toHaveFocus());
-      expect(dismissalCount()).toBe(1);
+      expect(offlineEntries(announcements, explanation)).toEqual(expected);
       expect(engine.aws.filter(({ method, url }) => method === 'DELETE' && ALIAS_PATH.test(url.pathname))).toEqual([]);
     } finally {
       unmount();
@@ -1711,9 +1723,16 @@ describe('Qualified Test invocations', () => {
     },
   );
 
-  it.each(['editor', 'picker', 'tab'] as const)(
-    'explains the Invoke target reset once after native reconnect with focus on the %s',
-    async (focused) => {
+  it.each([
+    ['live', 'editor'],
+    ['live', 'picker'],
+    ['live', 'tab'],
+    ['$LATEST', 'editor'],
+    ['$LATEST', 'picker'],
+    ['$LATEST', 'tab'],
+  ] as const)(
+    'announces offline recovery for Invoke target %s with focus on the %s',
+    async (initialTarget, focused) => {
       const explanation =
         'Invoke target reset to $LATEST. After verification, use Invoke target to select a version or alias for your preserved event draft.';
       const description = () => {
@@ -1723,8 +1742,16 @@ describe('Qualified Test invocations', () => {
         expect(target?.findLabel()?.getElement()).toHaveTextContent('Invoke target');
         return target?.findDescription()?.getElement();
       };
-      const announcements = recordAnnouncements();
-      const resetCount = () => announcements.filter((message) => message.includes(explanation)).length;
+      const announcements = recordAnnouncements('.aws-area-announcer[aria-live="polite"][aria-atomic="true"]');
+      const reset = initialTarget === 'live';
+      const expected = [reset ? `${OFFLINE_ANNOUNCEMENT} ${explanation}` : OFFLINE_ANNOUNCEMENT];
+      const expectTargetDescription = () => {
+        if (reset) {
+          expect(description()).toHaveTextContent(explanation);
+        } else {
+          expect(description()).toBeUndefined();
+        }
+      };
       const event = '{"event":"keep this draft"}';
       const detail = deferredAnswer();
       const { unmount } = open(pagePath('orders'));
@@ -1732,8 +1759,8 @@ describe('Qualified Test invocations', () => {
       const browserOnline = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true);
       try {
         await waitForResult('Not invoked yet');
-        await chooseTarget('live');
-        expect(targets().findTrigger().getElement()).toHaveTextContent('live');
+        if (reset) await chooseTarget(initialTarget);
+        expect(targets().findTrigger().getElement()).toHaveTextContent(initialTarget);
         expect(targets().findTrigger().getElement()).toHaveAccessibleName(/Invoke target/);
         expect(eventField().findNativeTextarea().getElement()).toHaveAccessibleName('Event JSON');
         eventField().setTextareaValue(event);
@@ -1753,20 +1780,29 @@ describe('Qualified Test invocations', () => {
         expect(focused === 'tab' ? control : refresh).toHaveFocus();
         expect(targets().findTrigger().getElement()).toHaveTextContent('$LATEST');
         expect(eventField().getTextareaValue()).toBe(event);
-        expect(description()).toHaveTextContent(explanation);
+        const networkNotice = PAGE.findContentLayout()?.findNotifications().findAlert();
+        expect(networkNotice?.findHeader()?.getElement()).toHaveTextContent(OFFLINE_HEADER);
+        expect(networkNotice?.findContent().getElement()).toHaveTextContent(OFFLINE_DETAIL);
+        expectTargetDescription();
         expect(invokeButton().getElement()).toBeDisabled();
-        await waitFor(() => expect(resetCount()).toBe(1));
+        await waitFor(() => expect(offlineEntries(announcements, explanation)).toEqual(expected));
 
         engine.functions = [{ name: 'orders', description: 'Invocation target verified' }];
         engine.answerFunction = () => detail.promise;
         browserOnline.mockReturnValue(true);
         fireEvent(window, new Event('online'));
-        expect(description()).toHaveTextContent(explanation);
+        expectTargetDescription();
+        await waitFor(() =>
+          expect(announcements).toContain('Rechecking the emulator connection. Wait for a new connection check.'),
+        );
         const reads = engine.gets.length;
         connection.set(connectedResult());
         await waitFor(() => expect(engine.gets.length).toBeGreaterThan(reads));
         expect(tabs()).toBeNull();
-        expect(resetCount()).toBe(1);
+        await waitFor(() =>
+          expect(announcements).toContain('Verifying the function. Wait for current function details.'),
+        );
+        expect(offlineEntries(announcements, explanation)).toEqual(expected);
         await act(async () =>
           detail.resolve(
             engine.emulator({ method: 'GET', url: new URL('/2015-03-31/functions/orders', engineOrigin) }),
@@ -1774,16 +1810,16 @@ describe('Qualified Test invocations', () => {
         );
         await waitFor(() => expect(value('Description')).toBe('Invocation target verified'));
         await waitForResult('Not invoked yet');
-        expect(description()).toHaveTextContent(explanation);
+        expectTargetDescription();
         expect(eventField().getTextareaValue()).toBe(event);
         expect(targets().findTrigger().getElement()).toHaveTextContent('$LATEST');
         expect(invokeButton().getElement()).toBeEnabled();
-        expect(resetCount()).toBe(1);
+        expect(offlineEntries(announcements, explanation)).toEqual(expected);
         await chooseTarget('live');
         expect(targets().findTrigger().getElement()).toHaveTextContent('live');
         expect(description()).toBeUndefined();
         expect(eventField().getTextareaValue()).toBe(event);
-        expect(resetCount()).toBe(1);
+        expect(offlineEntries(announcements, explanation)).toEqual(expected);
         expect(submitted()).toEqual([]);
       } finally {
         unmount();
