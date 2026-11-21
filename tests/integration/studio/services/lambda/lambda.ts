@@ -241,6 +241,16 @@ export function lambdaDirect(
   );
 }
 
+/** The last-hour Sum datapoints for a function, read directly in the CloudWatch JSON protocol. */
+export async function metricSums(caller: Caller, port: number, name: string, metric: string, end: Date): Promise<number[]> {
+  const result = await signed(caller, port, 'monitoring', 'POST', '/', {}, JSON.stringify({
+    Namespace: 'AWS/Lambda', Dimensions: [{ Name: 'FunctionName', Value: name }], MetricName: metric,
+    StartTime: end.getTime() / 1000 - 3600, EndTime: end.getTime() / 1000, Period: 60, Statistics: ['Sum'],
+  }), { 'content-type': 'application/x-amz-json-1.0', 'x-amz-target': 'GraniteServiceVersion20100801.GetMetricStatistics' });
+  const body = answered(result, 200, `direct GetMetricStatistics ${name} ${metric}`);
+  return (JSON.parse(body) as {Datapoints: {Sum: number}[]}).Datapoints.map(point => point.Sum);
+}
+
 /** An IAM action (the query protocol) with its parameters, straight to the emulator. */
 export function iamDirect(
   caller: Caller,

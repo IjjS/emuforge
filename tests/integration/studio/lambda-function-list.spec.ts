@@ -306,12 +306,12 @@ test('studio.lambda-function-list-actions-lead-to-their-routes', async ({ ctx, p
 
   await lines.line(
     // Issue 516 (test-criteria.md, "Rewritten lines of checks on `main`"; the pm's decision of 2026-11-19).
-    'A function\'s name → `/aws/lambda/functions/function/<name>` with `h1` the name and the tabs "Test", "Code", "Configuration", "Test" selected; "Code" → the same path with `?tab=code` and the section "Package"; "Configuration" → `?tab=configuration` and the section "General configuration"; the browser\'s back → "Code" again; a reload at `?tab=configuration` → "Configuration" selected; `?tab=other` → "Test" selected',
+    'A function\'s name → `/aws/lambda/functions/function/<name>` with `h1` the name and the tabs "Test", "Code", "Monitor", "Configuration", "Test" selected; "Code" → the same path with `?tab=code` and the section "Package"; "Configuration" → `?tab=configuration` and the section "General configuration"; the browser\'s back → "Code" again; a reload at `?tab=configuration` → "Configuration" selected; `?tab=other` → "Test" selected',
     async () => {
       const main = page.getByRole('main');
       const tab = (name: string) => main.getByRole('tab', { name, exact: true });
       const section = (name: string) => main.getByRole('heading', { name, exact: true });
-      const [test, code, configuration] = TAB_QUERIES;
+      const [test, code, , configuration] = TAB_QUERIES;
       await openList(page);
       await listed();
       await markPage(page);

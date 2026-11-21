@@ -1,4 +1,5 @@
 import Button from '@cloudscape-design/components/button';
+import ButtonDropdown from '@cloudscape-design/components/button-dropdown';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import { useState } from 'react';
 
@@ -22,13 +23,15 @@ export interface InstanceActionsProps {
   instance: ActionTarget | undefined;
   /** The page's request of an action is in flight: no control acts. */
   pending: boolean;
+  /** Group the detail header's lifecycle actions when the viewport is narrow. */
+  compact?: boolean;
   /** An action chosen, and for "Delete" confirmed, for `target`. */
   onAction: (action: InstanceAction, target: ActionTarget) => void;
 }
 
 const SELECT_ONE = 'Select one DB instance.';
 
-export function InstanceActions({ instance, pending, onAction }: InstanceActionsProps) {
+export function InstanceActions({ instance, pending, compact = false, onAction }: InstanceActionsProps) {
   const [deleteFor, setDeleteFor] = useState<ActionTarget>();
   // Kept from the previous render, as React's own pattern for it: once the request ends, the dialog closes.
   const [wasPending, setWasPending] = useState(pending);
@@ -55,24 +58,43 @@ export function InstanceActions({ instance, pending, onAction }: InstanceActions
 
   return (
     <>
-      <SpaceBetween direction="horizontal" size="xs">
-        {INSTANCE_ACTIONS.map((action) => {
-          const state = allowed(action);
-          const disabled = pending || !state.available;
-          return (
-            <Button
-              key={action}
-              disabled={disabled}
-              {...(state.available ? {} : { disabledReason: state.reason })}
-              onClick={() => {
-                handlePress(action);
-              }}
-            >
-              {ACTION_LABELS[action]}
-            </Button>
-          );
-        })}
-      </SpaceBetween>
+      {compact ? (
+        <ButtonDropdown
+          disabled={pending}
+          items={INSTANCE_ACTIONS.map((action) => {
+            const state = allowed(action);
+            return {
+              id: action,
+              text: ACTION_LABELS[action],
+              ...(state.available ? {} : { disabled: true, disabledReason: state.reason }),
+            };
+          })}
+          onItemClick={({ detail }) => {
+            const action = INSTANCE_ACTIONS.find((candidate) => candidate === detail.id);
+            if (action !== undefined) handlePress(action);
+          }}
+        >
+          Actions
+        </ButtonDropdown>
+      ) : (
+        <SpaceBetween direction="horizontal" size="xs">
+          {INSTANCE_ACTIONS.map((action) => {
+            const state = allowed(action);
+            return (
+              <Button
+                key={action}
+                disabled={pending || !state.available}
+                {...(state.available ? {} : { disabledReason: state.reason })}
+                onClick={() => {
+                  handlePress(action);
+                }}
+              >
+                {ACTION_LABELS[action]}
+              </Button>
+            );
+          })}
+        </SpaceBetween>
+      )}
       <DeleteInstanceDialog
         visible={deleteFor !== undefined}
         id={deleteFor?.id ?? ''}
