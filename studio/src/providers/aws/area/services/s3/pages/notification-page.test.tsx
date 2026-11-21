@@ -172,6 +172,7 @@ it('creates an empty draft and preloads every field and all saved events for dir
   expect(await loaded()).toHaveValue('saved');
   expect(nameField()).toHaveAttribute('readonly');
   expect(arnField()).toHaveValue(QUEUE);
+  expect(screen.getByRole('button', { name: 'Copy saved destination ARN' })).toBeVisible();
   expect(screen.getByRole('textbox', { name: 'Prefix (optional)' })).toHaveValue('logs/');
   expect(screen.getByRole('textbox', { name: 'Suffix (optional)' })).toHaveValue('.txt');
   expect(screen.getByRole('radio', { name: 'Keep existing events' })).toBeChecked();
@@ -201,6 +202,7 @@ it('marks missing names and ARNs, conflicting IDs and malformed or mismatched de
   fireEvent.click(createButton());
   expect(screen.getByText('Enter a notification name.')).toBeVisible();
   expect(screen.getByText('Enter a destination ARN.')).toBeVisible();
+  expect(nameField()).toHaveFocus();
   fill('not-an-arn', 'saved');
   fireEvent.click(createButton());
   expect(screen.getByText('A notification with this name already exists.')).toBeVisible();
@@ -208,6 +210,7 @@ it('marks missing names and ARNs, conflicting IDs and malformed or mismatched de
   fill(FUNCTION);
   fireEvent.click(createButton());
   expect(screen.getByText('Enter a valid standard SQS queue ARN.')).toBeVisible();
+  expect(arnField()).toHaveFocus();
   expect(engine.reads).toHaveLength(1);
   expect(engine.writes).toEqual([]);
 });

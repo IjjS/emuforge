@@ -69,7 +69,7 @@ export function NotificationChangeStatus({
         {state.observed !== undefined && state.observed !== NO_SUCH_BUCKET && (
           <NotificationTable
             configuration={state.observed}
-            header={
+            header={() => (
               <Header
                 variant="h2"
                 description={
@@ -78,7 +78,7 @@ export function NotificationChangeStatus({
               >
                 Observed event notifications
               </Header>
-            }
+            )}
           />
         )}
       </SpaceBetween>

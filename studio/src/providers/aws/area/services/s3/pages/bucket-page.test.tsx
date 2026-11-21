@@ -1894,9 +1894,12 @@ describe('bucket event notifications', () => {
   it('refuses to replace the configuration when the fresh read fails, with read recovery', async () => {
     await openBucket({ notification: () => notificationDocument(queueRule('to-queue')) });
     const dialog = await startDelete();
-    engine.parts.notification = () => errorAnswer(400, 'InvalidRequest', 'Fresh read refused');
+    const preWrite = held();
+    engine.parts.notification = () => preWrite.answer;
     confirmDelete(dialog);
-    expect(await screen.findByText(/Fresh read refused/)).toBeVisible();
+    expect(within(section('Event notifications')).getByText('Deleting event notification')).toBeVisible();
+    preWrite.release(errorAnswer(400, 'InvalidRequest', 'Fresh read refused'));
+    expect(await within(section('Event notifications')).findByText(/Fresh read refused/)).toBeVisible();
     expect(engine.notificationWrites).toEqual([]);
     expect(screen.getByRole('button', { name: 'Delete to-queue' })).toBeDisabled();
     engine.parts.notification = () => notificationDocument(queueRule('to-queue'));

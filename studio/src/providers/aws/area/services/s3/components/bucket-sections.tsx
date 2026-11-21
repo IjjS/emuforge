@@ -219,6 +219,7 @@ interface BucketSectionsProps {
   reads: BucketSectionReads;
   connection: AreaConnection;
   deleteNotificationDisabled: boolean;
+  deleteNotificationFeedback: ReactNode;
   onDeleteNotification: (target: EditableNotification) => void;
 }
 
@@ -231,6 +232,7 @@ export function BucketSections({
   reads,
   connection,
   deleteNotificationDisabled,
+  deleteNotificationFeedback,
   onDeleteNotification,
 }: BucketSectionsProps) {
   const { name } = bucket;
@@ -286,6 +288,7 @@ export function BucketSections({
           )
         }
         unsupported={reads.notifications.failure?.kind === 'not-implemented'}
+        feedback={deleteNotificationFeedback}
         deleteDisabled={deleteNotificationDisabled}
         onDelete={onDeleteNotification}
       />
