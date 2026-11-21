@@ -39,6 +39,7 @@ export interface TestTabProps {
 
 const LATEST = '$LATEST';
 const DEFAULT_TARGET = { label: LATEST, value: LATEST };
+const NOT_IMPLEMENTED = 'Not implemented by the emulator';
 const NOT_JSON = 'Enter the event as one JSON value.';
 
 /** Whether `text` is one JSON value (an empty or white-space text is not). */
@@ -112,7 +113,16 @@ export function InvocationResult({ invoke }: { invoke: Invocation }) {
             <Code>{failure.reportedCode}</Code>
           </Box>
         )}
-        <InvokeResult outcome={outcome} />
+        {failure?.kind === 'not-implemented' && invoke.qualifier !== undefined ? (
+          <SpaceBetween size="xxs">
+            <StatusIndicator type="info">{NOT_IMPLEMENTED}</StatusIndicator>
+            <Box variant="p">
+              The emulator answered 501 Not Implemented for <Code>{failure.operation}</Code>.
+            </Box>
+          </SpaceBetween>
+        ) : (
+          <InvokeResult outcome={outcome} />
+        )}
       </SpaceBetween>
     </Container>
   );
@@ -158,7 +168,8 @@ export function TestTab({
   // A new outcome is also brought into view, focus left where it is, so it is seen beside or below the event.
   const said = useRef(invoke.answers);
   const resultPlace = useRef<HTMLDivElement>(null);
-  const words = outcome?.words;
+  const words =
+    invoke.error?.kind === 'not-implemented' && invoke.qualifier !== undefined ? NOT_IMPLEMENTED : outcome?.words;
   useEffect(() => {
     if (invoke.answers !== said.current) {
       said.current = invoke.answers;
@@ -231,8 +242,7 @@ export function TestTab({
                 (invoke.qualifier === undefined) === (qualifier === undefined)
               ) && (
                 <StatusIndicator type="info">
-                  Not implemented by the emulator. {qualifier === undefined ? 'Invoke' : 'Qualified Invoke'} is
-                  unavailable.
+                  {NOT_IMPLEMENTED}. {qualifier === undefined ? 'Invoke' : 'Qualified Invoke'} is unavailable.
                 </StatusIndicator>
               )}
             <FormField label="Event JSON" stretch errorText={fieldError}>
