@@ -18,8 +18,15 @@ try {
       : await client`SELECT current_database() AS db, 578 AS marker`;
   console.log(JSON.stringify(rows[0]));
 } catch (error) {
-  // Return only the database error code. Credentials never go to the log.
-  console.log(JSON.stringify({ code: error.errno ?? error.code }));
+  // Keep server text and credentials private while distinguishing authorization failures.
+  const reason = /pg_hba.conf/i.test(error.message)
+    ? 'host access rule'
+    : /role .*does not exist/i.test(error.message)
+      ? 'unknown login role'
+      : /password authentication failed/i.test(error.message)
+        ? 'password authentication failed'
+        : undefined;
+  console.log(JSON.stringify({ code: error.errno ?? error.code, reason }));
 } finally {
   await client.close();
 }

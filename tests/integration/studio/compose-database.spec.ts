@@ -64,7 +64,7 @@ function hostQuery(
   port: number,
   database: string,
   password: string,
-): Promise<{ db?: string; marker?: number; code?: string }> {
+): Promise<{ db?: string; marker?: number; code?: string; reason?: string }> {
   return new Promise((resolve, reject) => {
     const child = execFile(
       'bun',
@@ -159,6 +159,10 @@ test('engine.compose-databases-answer-on-described-host-ports', async ({ ctx }) 
         return row?.DBInstanceStatus === 'available' ? row : undefined;
       });
       expect(resource?.DBInstanceIdentifier).toBe(id);
+      if (!cluster) {
+        expect(resource?.MasterUsername).toBe(login.MasterUsername);
+        expect(resource?.DBName).toBe(db);
+      }
       port = resource?.Endpoint?.Port;
     }
     expect(port).toBeGreaterThanOrEqual(range.low);
@@ -168,7 +172,7 @@ test('engine.compose-databases-answer-on-described-host-ports', async ({ ctx }) 
     let lastCode: string | undefined;
     const answer = await waitFor(30_000, async () => {
       const result = await hostQuery(ctx, adapter, port!, db, password);
-      lastCode = result.code;
+      lastCode = [result.code, result.reason].filter(Boolean).join(' ');
       return result.code === undefined ? result : undefined;
     });
     expect(answer, id + ' SQL query, last code ' + lastCode).toEqual({ db, marker: 578 });
