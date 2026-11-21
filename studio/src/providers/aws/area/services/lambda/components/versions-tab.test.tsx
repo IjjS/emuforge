@@ -12,6 +12,7 @@ import { PageFlashContext, type FlashResult } from '../../../components/page-fla
 import { functionTabHref } from '../format';
 import { FunctionPage } from '../pages/function-page';
 import { LIST_ALIASES, LIST_VERSIONS, type ReleaseChange } from '../version-api';
+import { VersionsTab, type VersionsTabProps } from './versions-tab';
 
 type MutationOperation = ReleaseChange['operation'];
 type Operation =
@@ -156,6 +157,31 @@ function renderTab() {
   };
 }
 
+function renderConfirmation(submit: VersionsTabProps['mutation']['submit'] = vi.fn(async () => true)) {
+  const root = { current: null as HTMLDivElement | null };
+  const onAliasConfirmationChange = vi.fn<(open: boolean) => void>();
+  const settled = { failure: undefined, loading: false, refresh: () => undefined };
+  const view = render(
+    <AreaRootContext.Provider value={root}>
+      <div
+        ref={(element) => {
+          root.current = element;
+        }}
+      >
+        <VersionsTab
+          connection={{ engineOrigin: undefined, result: undefined }}
+          ready
+          versions={{ ...settled, items: [{ version: '1' }, { version: '2' }] }}
+          aliases={{ ...settled, items: [{ name: 'live', version: '1' }] }}
+          mutation={{ submit, pending: undefined, unsupported: new Set() }}
+          onAliasConfirmationChange={onAliasConfirmationChange}
+        />
+      </div>
+    </AreaRootContext.Provider>,
+  );
+  return { onAliasConfirmationChange, ...view };
+}
+
 const PAGE = createWrapper(document.body);
 function expectPageFlash(type: 'error' | 'info' | 'success', content: string, header?: string) {
   const flashbar = PAGE.findFlashbar();
@@ -295,15 +321,15 @@ async function prepareAction(operation: MutationOperation, aliasName = 'next') {
   );
 }
 
-function holdResponse() {
-  let resolve!: (response: Response) => void;
-  const promise = new Promise<Response>((done) => {
+function holdResponse<T = Response>() {
+  let resolve!: (response: T) => void;
+  const promise = new Promise<T>((done) => {
     resolve = done;
   });
   return { promise, resolve };
 }
 
-async function settle(response: ReturnType<typeof holdResponse>, value: Response) {
+async function settle(response: ReturnType<typeof holdResponse<Response>>, value: Response) {
   await act(async () => {
     response.resolve(value);
     await response.promise;
@@ -413,6 +439,59 @@ describe('Release listings', () => {
       expect(state).toHaveTextContent(message);
       expect(state).toHaveTextContent(operation);
     });
+  });
+});
+
+describe('Delete alias confirmation tracking', () => {
+  it.each(['Cancel', 'Escape'])('reports ordinary dismissal by %s and restores row-menu focus', async (dismissal) => {
+    const submit = vi.fn(async () => true);
+    const { onAliasConfirmationChange } = renderConfirmation(submit);
+    const trigger = aliasMenu(1).findNativeButton().getElement();
+    trigger.focus();
+    const confirm = await prepareAction('DeleteAlias');
+    expect(onAliasConfirmationChange.mock.calls).toEqual([[true]]);
+
+    if (dismissal === 'Cancel') {
+      fireEvent.click(dialogButton('cancel', 'Cancel'));
+    } else {
+      fireEvent.keyDown(confirm, { key: 'Escape', keyCode: 27 });
+    }
+    expect(PAGE.findModal()).toBeNull();
+    expect(onAliasConfirmationChange.mock.calls).toEqual([[true], [false]]);
+    expect(submit).not.toHaveBeenCalled();
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
+
+  it('reports closure when a deletion settles and closes its confirmation', async () => {
+    const response = holdResponse<boolean>();
+    const submit = vi.fn(() => response.promise);
+    const { onAliasConfirmationChange } = renderConfirmation(submit);
+    fireEvent.click(await prepareAction('DeleteAlias'));
+    expect(submit).toHaveBeenCalledOnce();
+    expect(onAliasConfirmationChange.mock.calls).toEqual([[true]]);
+
+    await act(async () => {
+      response.resolve(true);
+      await response.promise;
+    });
+    expect(PAGE.findModal()).toBeNull();
+    expect(onAliasConfirmationChange.mock.calls).toEqual([[true], [false]]);
+  });
+
+  it('leaves forced dismissal to the page when a pending confirmation unmounts', async () => {
+    const response = holdResponse<boolean>();
+    const { onAliasConfirmationChange, unmount } = renderConfirmation(() => response.promise);
+    fireEvent.click(await prepareAction('DeleteAlias'));
+    expect(onAliasConfirmationChange.mock.calls).toEqual([[true]]);
+
+    unmount();
+    expect(PAGE.findModal()).toBeNull();
+    expect(onAliasConfirmationChange.mock.calls).toEqual([[true]]);
+    await act(async () => {
+      response.resolve(true);
+      await response.promise;
+    });
+    expect(onAliasConfirmationChange.mock.calls).toEqual([[true]]);
   });
 });
 
