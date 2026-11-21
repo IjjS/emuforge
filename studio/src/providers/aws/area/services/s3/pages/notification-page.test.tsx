@@ -544,11 +544,22 @@ it('keeps the submitted create settings and read-only recovery after the observa
   await waitFor(() => expect(notificationFlashes('Event notification saved')).toHaveLength(1));
 });
 
-it.each(['pre-write GET', 'transmitted PUT'])('abandons a held save %s across a same-target outage', async (stage) => {
+it.each([
+  ['Create', 'pre-write GET'],
+  ['Edit', 'pre-write GET'],
+  ['Create', 'transmitted PUT'],
+  ['Edit', 'transmitted PUT'],
+])('%s abandons a held %s across a same-target outage', async (mode, stage) => {
+  const editing = mode === 'Edit';
+  const path = editing ? editEventNotificationPath(BUCKET, 'saved') : CREATE;
+  const initial = editing ? documentOf(SAVED_RULE) : EMPTY;
+  const fresh = editing ? documentOf(SAVED_RULE.replace('logs/', 'current/')) : EMPTY;
+  engine.document = initial;
   const pending = heldResponse();
-  const router = open();
+  const router = open(path);
   await loaded();
-  fill();
+  if (!editing) fill(QUEUE, 'new');
+  changeValue(input('Prefix (optional)'), 'attempted/');
   if (stage === 'pre-write GET') engine.read = () => pending.promise;
   else {
     engine.write = (body) => {
@@ -556,7 +567,7 @@ it.each(['pre-write GET', 'transmitted PUT'])('abandons a held save %s across a 
       return pending.promise;
     };
   }
-  fireEvent.click(createButton());
+  fireEvent.click(editing ? screen.getByRole('button', { name: 'Save changes' }) : createButton());
   await waitFor(() => {
     expect(engine.reads).toHaveLength(2);
     expect(engine.writes).toHaveLength(stage === 'pre-write GET' ? 0 : 1);
@@ -565,20 +576,39 @@ it.each(['pre-write GET', 'transmitted PUT'])('abandons a held save %s across a 
 
   setConnection({ kind: 'engine-unreachable', checkedAt: 1, lastEmulatorPort: 9305 });
   expect(abandoned?.signal.aborted).toBe(true);
-  engine.read = () => response();
+  if (stage === 'transmitted PUT') {
+    const offlineRetry = screen.getByRole('button', { name: 'Check again' });
+    expect(offlineRetry).toBeDisabled();
+    expect(offlineRetry).toHaveAccessibleDescription('Verification can resume when the connection is restored.');
+  }
+  engine.read = () => response(fresh);
   setConnection(connected('first'));
   await waitFor(() => expect(engine.reads).toHaveLength(3));
-  if (stage === 'pre-write GET') expect(await loaded()).toHaveValue('');
-  else expect(await screen.findByRole('button', { name: 'Check again' })).toBeEnabled();
+  if (stage === 'pre-write GET') {
+    expect(await loaded()).toHaveValue(editing ? 'saved' : '');
+    expect(input('Prefix (optional)')).toHaveValue(editing ? 'current/' : '');
+    expect(screen.getByRole('heading', { name: 'Unsubmitted attempt' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Copy attempt' })).toBeEnabled();
+    const reference = page.findKeyValuePairs()?.findItems();
+    expect(reference?.map((item) => item.findValue()?.getElement().textContent)).toEqual(
+      editing
+        ? ['saved', 'SQS queue', QUEUE, 's3:ObjectCreated:Copy, s3:ObjectCreated:Put', 'attempted/', '.txt']
+        : ['new', 'SQS queue', QUEUE, 'All object creation events', 'attempted/', '—'],
+    );
+  } else {
+    const retry = await screen.findByRole('button', { name: 'Check again' });
+    expect(retry).toBeEnabled();
+    expect(retry).toHaveFocus();
+  }
 
   await act(async () => {
-    pending.resolve(stage === 'pre-write GET' ? response() : new Response(null, { status: 204 }));
+    pending.resolve(stage === 'pre-write GET' ? response(initial) : new Response(null, { status: 204 }));
     await pending.promise;
   });
   expect(engine.reads).toHaveLength(3);
   expect(engine.writes).toHaveLength(stage === 'pre-write GET' ? 0 : 1);
   expect(notificationFlashes('Event notification saved')).toHaveLength(0);
-  expect(router.state.location.pathname).toBe(CREATE);
+  expect(router.state.location.pathname).toBe(path);
   if (stage === 'pre-write GET') {
     expect(screen.queryByRole('button', { name: 'Check again' })).toBeNull();
   } else {
@@ -590,17 +620,21 @@ it.each(['pre-write GET', 'transmitted PUT'])('abandons a held save %s across a 
   }
 });
 
-it('names the unavailable verification GET and disables the save recovery action', async () => {
-  open();
+it.each(['Create', 'Edit'])('%s focuses the unavailable verification GET and disables recovery', async (mode) => {
+  const editing = mode === 'Edit';
+  engine.document = editing ? documentOf(SAVED_RULE) : EMPTY;
+  open(editing ? editEventNotificationPath(BUCKET, 'saved') : CREATE);
   await loaded();
-  fill();
-  engine.read = () => (engine.writes.length === 0 ? response() : refusal(400, 'InvalidRequest', 'Read unavailable'));
-  fireEvent.click(createButton());
+  if (!editing) fill();
+  engine.read = () =>
+    engine.writes.length === 0 ? response(engine.document) : refusal(400, 'InvalidRequest', 'Read unavailable');
+  fireEvent.click(editing ? screen.getByRole('button', { name: 'Save changes' }) : createButton());
   const retry = await screen.findByRole('button', { name: 'Check again' });
   engine.read = () => refusal(501, 'NotImplemented', 'Operation unavailable');
   fireEvent.click(retry);
-  expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
-  expect(screen.getByText(/501 Not Implemented for GetBucketNotificationConfiguration/)).toBeVisible();
+  const unavailable = await screen.findByRole('region', { name: 'Not implemented by the emulator' });
+  expect(unavailable).toHaveFocus();
+  expect(unavailable).toHaveAccessibleDescription(/501 Not Implemented for GetBucketNotificationConfiguration/);
   const disabled = screen.getByRole('button', { name: 'Check again' });
   expect(disabled).toBeDisabled();
   const reads = engine.reads.length;

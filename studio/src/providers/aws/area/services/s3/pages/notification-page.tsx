@@ -1,6 +1,7 @@
 import Box from '@cloudscape-design/components/box';
 import Button, { type ButtonProps } from '@cloudscape-design/components/button';
 import Container from '@cloudscape-design/components/container';
+import CopyToClipboard from '@cloudscape-design/components/copy-to-clipboard';
 import Form from '@cloudscape-design/components/form';
 import FormField from '@cloudscape-design/components/form-field';
 import Header from '@cloudscape-design/components/header';
@@ -90,11 +91,10 @@ export function NotificationPage({ connection, params }: ScreenPageProps) {
 
   const changeKind = change.state.kind;
   const feedbackRef = useRef<HTMLDivElement>(null);
-  const checkAgainRef = useRef<ButtonProps.Ref>(null);
   useEffect(() => {
-    if (changeKind === 'idle') return;
-    feedbackRef.current?.scrollIntoView?.({ block: changeKind === 'unconfirmed' ? 'start' : 'center' });
-    if (changeKind === 'unconfirmed') checkAgainRef.current?.focus();
+    if (changeKind !== 'idle' && changeKind !== 'unconfirmed') {
+      feedbackRef.current?.scrollIntoView?.({ block: 'center' });
+    }
   }, [changeKind]);
 
   const showSubmitted =
@@ -159,11 +159,13 @@ export function NotificationPage({ connection, params }: ScreenPageProps) {
             connection={connection}
             action="Saving"
             showObserved={!disconnected && currentReadback !== undefined}
-            checkAgainRef={checkAgainRef}
             {...(submitted === undefined ? {} : { destination: submitted.save.draft.type })}
             onRefresh={handleRefresh}
           />
         </div>
+      )}
+      {changeKind === 'interrupted' && submitted !== undefined && (
+        <NotificationReference save={submitted.save} interrupted />
       )}
       {editing && id === undefined ? (
         <Container>
@@ -206,7 +208,7 @@ export function NotificationPage({ connection, params }: ScreenPageProps) {
           </SpaceBetween>
         </Container>
       ) : showSubmitted ? (
-        <SubmittedNotification save={submitted.save} exit={returnLink} />
+        <NotificationReference save={submitted.save} exit={returnLink} />
       ) : (
         <NotificationForm
           key={generation}
@@ -222,7 +224,15 @@ export function NotificationPage({ connection, params }: ScreenPageProps) {
   );
 }
 
-function SubmittedNotification({ save, exit }: { save: NotificationSave; exit: ReactNode }) {
+function NotificationReference({
+  save,
+  exit,
+  interrupted = false,
+}: {
+  save: NotificationSave;
+  exit?: ReactNode;
+  interrupted?: boolean;
+}) {
   const { draft } = save;
   const events =
     draft.event === KEEP_EVENTS
@@ -230,25 +240,53 @@ function SubmittedNotification({ save, exit }: { save: NotificationSave; exit: R
         ? save.target.data.Events?.join(', ')
         : undefined
       : EVENTS.find(({ value }) => value === draft.event)?.label;
+  const fields = [
+    { label: 'Notification name', value: draft.id, kind: 'name' },
+    { label: 'Destination type', value: draft.type, kind: 'fixed' },
+    { label: 'Destination ARN', value: draft.arn, kind: 'address' },
+    { label: 'Event type', value: events, kind: 'fixed' },
+    { label: 'Prefix', value: draft.prefix, kind: 'text' },
+    { label: 'Suffix', value: draft.suffix, kind: 'text' },
+  ] as const;
   return (
     <Container
       header={
-        <Header variant="h2" actions={exit}>
-          Submitted notification
+        <Header
+          variant="h2"
+          actions={
+            interrupted ? (
+              <CopyToClipboard
+                variant="button"
+                textToCopy={fields.map(({ label, value }) => `${label}: ${value ?? ''}`).join('\n')}
+                copyButtonText="Copy attempt"
+                copySuccessText="Unsubmitted attempt copied"
+                copyErrorText="Could not copy the unsubmitted attempt"
+                popoverRenderWithPortal={false}
+              />
+            ) : (
+              exit
+            )
+          }
+        >
+          {interrupted ? 'Unsubmitted attempt' : 'Submitted notification'}
         </Header>
       }
     >
       <KeyValuePairs
         columns={2}
         minColumnWidth={240}
-        items={[
-          { label: 'Notification name', value: <ValueText kind="name" value={draft.id} /> },
-          { label: 'Destination type', value: draft.type },
-          { label: 'Destination ARN', value: <CopyValue label="submitted destination ARN" value={draft.arn} /> },
-          { label: 'Event type', value: <ValueText kind="fixed" value={events} none="—" /> },
-          { label: 'Prefix', value: <ValueText kind="text" value={draft.prefix} none="—" /> },
-          { label: 'Suffix', value: <ValueText kind="text" value={draft.suffix} none="—" /> },
-        ]}
+        items={fields.map(({ label, kind, value }) => ({
+          label,
+          value:
+            kind === 'address' ? (
+              <CopyValue
+                label={interrupted ? 'unsubmitted destination ARN' : 'submitted destination ARN'}
+                value={value}
+              />
+            ) : (
+              <ValueText kind={kind} value={value} none="—" />
+            ),
+        }))}
       />
     </Container>
   );

@@ -2061,13 +2061,20 @@ describe('bucket event notifications', () => {
 
       connection.set(notStartedResult());
       expect(abandoned?.signal.aborted).toBe(true);
+      if (stage === 'transmitted PUT') {
+        const offlineRetry = screen.getByRole('button', { name: 'Check again' });
+        expect(offlineRetry).toBeDisabled();
+        expect(offlineRetry).toHaveAccessibleDescription('Verification can resume when the connection is restored.');
+      }
       engine.parts.notification = () => (stage === 'pre-write GET' ? original : notificationDocument());
       connection.set(sameTarget);
       await waitFor(() => expect(engine.notificationReads).toHaveLength(3));
       if (stage === 'pre-write GET') {
         expect(await screen.findByRole('button', { name: 'Delete to-queue' })).toBeEnabled();
       } else {
-        expect(await screen.findByRole('button', { name: 'Check again' })).toBeEnabled();
+        const retry = await screen.findByRole('button', { name: 'Check again' });
+        expect(retry).toBeEnabled();
+        await waitFor(() => expect(screen.getByRole('button', { name: 'Check again' })).toHaveFocus());
       }
 
       await act(async () => {
@@ -2142,8 +2149,9 @@ describe('bucket event notifications', () => {
     const retry = await screen.findByRole('button', { name: 'Check again' });
     engine.parts.notification = () => errorAnswer(501, 'NotImplemented', 'Operation unavailable');
     fireEvent.click(retry);
-    expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
-    expect(screen.getByText(/501 Not Implemented for GetBucketNotificationConfiguration/)).toBeVisible();
+    const unavailable = await screen.findByRole('region', { name: 'Not implemented by the emulator' });
+    expect(unavailable).toHaveFocus();
+    expect(unavailable).toHaveAccessibleDescription(/501 Not Implemented for GetBucketNotificationConfiguration/);
     const disabled = screen.getByRole('button', { name: 'Check again' });
     expect(disabled).toBeDisabled();
     const reads = engine.notificationReads.length;
