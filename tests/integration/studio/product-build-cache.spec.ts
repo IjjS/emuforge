@@ -29,6 +29,7 @@ test('engine.product-build-runs-current-worktree-code', async ({ ctx }) => {
     'engine',
     'studio',
     'infra/emuforge',
+    'infra/aws-emulator/compose-db-range.sh',
   ]);
 
   // Buildx keys local source snapshots by context basename. Isolate input snapshots across runs.

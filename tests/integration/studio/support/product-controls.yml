@@ -1,0 +1,8 @@
+# Ordinary checks use only their two private control ports.
+services:
+  emuforge:
+    ports: !override
+      - "127.0.0.1:${EMUFORGE_STUDIO_PORT}:${EMUFORGE_STUDIO_PORT}"
+      - "127.0.0.1:${EMUFORGE_ENGINE_PORT}:${EMUFORGE_ENGINE_PORT}"
+    sysctls: !reset {}
+    entrypoint: !reset null
