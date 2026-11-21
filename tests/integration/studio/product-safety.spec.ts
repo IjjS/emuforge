@@ -37,10 +37,13 @@ import {
 
 type Mount = { Type?: string; Name?: string; Source?: string; Destination?: string; RW?: boolean };
 
+import { leaseDatabaseRange, portNumbers } from './support/database-range';
+
 test('engine.product-ports-are-published-on-loopback-only', async ({ ctx }) => {
   test.setTimeout(productTimeout(1, 2));
   // The Given: a form whose EMULATOR_PORT the check found closed on the host's 127.0.0.1 before the start.
-  const form = await Form.create(ctx);
+  const range = await leaseDatabaseRange(ctx);
+  const form = await Form.create(ctx, { developerPorts: true, env: range.env });
   if ((await probe(form.emulatorPort)) !== 'refused') {
     throw new EnvError(`127.0.0.1:${String(form.emulatorPort)} does not refuse connections before the start`);
   }
@@ -48,7 +51,7 @@ test('engine.product-ports-are-published-on-loopback-only', async ({ ctx }) => {
   const first = await firstHealth(form.enginePort);
   expect('error' in first ? first.error : '', 'the Given: the engine answers on its published port').toBe('');
 
-  // The project's containers' published ports → exactly two, Studio's and the engine's, both on host address
+  // The project's containers' published ports → the control ports and every database port, both on host address
   // 127.0.0.1, both on emuforge's container, each to the same port inside (#484).
   const published: { service: string; hostIp: string; hostPort: string; containerPort: string }[] = [];
   for (const container of await form.containers()) {
@@ -62,7 +65,7 @@ test('engine.product-ports-are-published-on-loopback-only', async ({ ctx }) => {
     published.sort((a, b) => a.hostPort.localeCompare(b.hostPort)),
     `the published ports of ${form.project}`,
   ).toEqual(
-    [form.studioPort, form.enginePort]
+    [form.studioPort, form.enginePort, ...portNumbers(range.low, range.high)]
       .map(String)
       .sort()
       .map((hostPort) => ({ service: 'emuforge', hostIp: '127.0.0.1', hostPort, containerPort: `${hostPort}/tcp` })),
@@ -82,15 +85,13 @@ test('engine.product-ports-are-published-on-loopback-only', async ({ ctx }) => {
   // The two published ports at a non-loopback address of the host → refused.
   const addresses = hostIPv4();
   if (addresses.length === 0) throw new EnvError('the host has no non-loopback IPv4 address to connect from');
-  const accepted: string[] = [];
   for (const address of addresses) {
     for (const port of [form.studioPort, form.enginePort]) {
       const result = await probeAt(address, port);
       ctx.log(`a TCP connection to ${address}:${String(port)}: ${result}`);
-      if (result === 'open') accepted.push(`${address}:${String(port)}`);
+      expect(result, `a TCP connection to ${address}:${port}`).toBe('refused');
     }
   }
-  expect(accepted, 'connections accepted at a non-loopback address').toEqual([]);
 
   // `docker compose logs emuforge` → the warning of --listen-address, naming 0.0.0.0 (#484 R5).
   const logs = await form.run(form.compose('logs', '--no-color', 'emuforge'), STOP_BOUND_MS);

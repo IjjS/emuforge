@@ -1,3 +1,4 @@
+import { portNumbers } from './support/database-range';
 // The product checks that read files and start no form (issues 34, 437 and 484, test-criteria.md): Compose's
 // rendered configuration of the one form; the README's "Start", "Ports" and "Run the
 // emulator" parts against the command lines the product checks run (`LINES` and `KEEP_START_LINE` in
@@ -50,12 +51,15 @@ const PORT_VARIABLES: [string, string][] = [
   ['EMULATOR_PORT', '9297'],
   ['EMUFORGE_ENGINE_PORT', '8297'],
   ['EMUFORGE_STUDIO_PORT', '8296'],
+  ['EMUFORGE_DB_PORT_MIN','28000'],
+  ['EMUFORGE_DB_PORT_MAX','28255'],
 ];
 
 interface Service {
+  sysctls?: Record<string, string>;
   command?: string[] | null;
   environment?: Record<string, string | null>;
-  ports?: { host_ip?: string; published?: string | number; target?: number }[] | null;
+  ports?: { host_ip?: string; published?: string | number; target?: number; protocol?: string }[] | null;
   pull_policy?: string;
   volumes?: { type?: string; source?: string; target?: string; read_only?: boolean }[] | null;
   container_name?: string;
@@ -76,7 +80,7 @@ interface Rendered {
 test('engine.product-configuration-names-loopback-and-the-emulator-only', async ({ ctx }) => {
   test.setTimeout(10 * STOP_BOUND_MS);
   // The ports and names of a form; nothing is started.
-  const form = await Form.create(ctx);
+  const form = await Form.create(ctx, { developerPorts: true });
   const env = form.env();
   const render = async (what: string, args: string[], e: Record<string, string>) => {
     const result = await runAt(ctx, ctx.checkout, args, e, STOP_BOUND_MS);
@@ -139,24 +143,21 @@ test('engine.product-configuration-names-loopback-and-the-emulator-only', async 
     'mounts of type bind',
   ).toEqual([]);
 
-  // The ports → exactly two, on emuforge, host address 127.0.0.1, published and target both EMUFORGE_STUDIO_PORT and
-  // both EMUFORGE_ENGINE_PORT (#484 R8).
-  const ports = Object.entries(services).flatMap(([name, s]) =>
-    (s.ports ?? []).map((p) => ({
-      service: name,
-      host_ip: p.host_ip ?? '',
-      published: String(p.published ?? ''),
-      target: p.target,
-    })),
-  );
-  expect(
-    ports.sort((a, b) => (a.target ?? 0) - (b.target ?? 0)),
-    'the published ports of the rendering',
-  ).toEqual(
-    [form.studioPort, form.enginePort]
-      .sort((a, b) => a - b)
-      .map((port) => ({ service: 'emuforge', host_ip: '127.0.0.1', published: String(port), target: port })),
-  );
+  async function checkMappings(config: Rendered, owner: string, controls: number[], low: number, high: number) {
+    const actual = Object.entries(config.services ?? {}).flatMap(([service, value]) =>
+      (value.ports ?? []).map((port) => [service, port.host_ip, Number(port.published), port.target, port.protocol]));
+    const ports = [...controls, ...portNumbers(low, high)].sort((a, b) => a - b);
+    expect(actual.sort((a, b) => Number(a[3]) - Number(b[3]))).toEqual(
+      ports.map((port) => [owner, '127.0.0.1', port, port, 'tcp']));
+    expect(config.services?.[owner]?.sysctls?.['net.ipv4.ip_local_port_range']).toBe(`${low} ${high}`);
+  }
+  const productControls = [form.studioPort, form.enginePort];
+  await checkMappings(plain, 'emuforge', productControls, 28000, 28255);
+  const standalone = ['docker', 'compose', '-f', 'infra/aws-emulator/docker-compose.yml', 'config', '--format', 'json'];
+  await checkMappings((await render('standalone defaults', standalone, env)).rendered, 'aws-emulator', [form.emulatorPort], 28256, 28511);
+  const custom = { ...env, EMUFORGE_DB_PORT_MIN: '20100', EMUFORGE_DB_PORT_MAX: '20163' };
+  await checkMappings((await render('product custom range', config, custom)).rendered, 'emuforge', productControls, 20100, 20163);
+  await checkMappings((await render('standalone custom range', standalone, custom)).rendered, 'aws-emulator', [form.emulatorPort], 20100, 20163);
 
   // emuforge's command → `serve --listen-address 0.0.0.0 --form compose` (#484 R8, #485).
   expect(services.emuforge?.command ?? null, "emuforge's command").toEqual([
@@ -439,8 +440,8 @@ const RUN_THE_EMULATOR_LINES = [
   'docker compose -f infra/aws-emulator/docker-compose.yml up -d --build',
   "source infra/aws-emulator/env.sh      # point this shell's AWS CLI and SDKs at the emulator",
   'aws sts get-caller-identity           # Account 000000000000 means you reached the emulator',
-  'EMULATOR_PORT=9298 docker compose -f infra/aws-emulator/docker-compose.yml up -d   # a second emulator beside it',
-  'EMULATOR_PORT=9298 docker compose -f infra/aws-emulator/docker-compose.yml down    # stops only that one',
+  'EMULATOR_PORT=9298 EMUFORGE_DB_PORT_MIN=28768 EMUFORGE_DB_PORT_MAX=29023 docker compose -f infra/aws-emulator/docker-compose.yml up -d',
+  'EMULATOR_PORT=9298 EMUFORGE_DB_PORT_MIN=28768 EMUFORGE_DB_PORT_MAX=29023 docker compose -f infra/aws-emulator/docker-compose.yml down',
   'docker compose -f infra/aws-emulator/docker-compose.yml down',
 ];
 
@@ -547,7 +548,7 @@ test('engine.product-readme-gives-the-commands-the-checks-run', async ({ ctx }) 
     const parsed = assignedLine(line);
     return (
       parsed !== null &&
-      [...parsed.names].sort().join(' ') === 'EMUFORGE_ENGINE_PORT EMUFORGE_STUDIO_PORT' &&
+      [...parsed.names].sort().join(' ') === 'EMUFORGE_DB_PORT_MAX EMUFORGE_DB_PORT_MIN EMUFORGE_ENGINE_PORT EMUFORGE_STUDIO_PORT' &&
       parsed.command === command
     );
   };
@@ -558,8 +559,18 @@ test('engine.product-readme-gives-the-commands-the-checks-run', async ({ ctx }) 
     bash ?? null,
     '"Ports": a code block that sets the two published ports for the start line and the stop line',
   ).not.toBeNull();
+  expect(readme).toMatch(/To widen either form's range/);
+  expect(readme).toMatch(/4096-port standalone block took about 231 seconds/);
+  expect(readme).toMatch(/bind error for an occupied port/);
   if (bash) {
     const [up, down] = [bash.find((l) => setsPorts(l, startLine)), bash.find((l) => setsPorts(l, stopLine))];
+    const parsedUp = assignedLine(up ?? '')!;
+    const setting = (key: string) => Number(parsedUp.values[parsedUp.names.indexOf(key)]);
+    const low = setting('EMUFORGE_DB_PORT_MIN');
+    const high = setting('EMUFORGE_DB_PORT_MAX');
+    expect(low).toBeLessThanOrEqual(high);
+    expect(high < 28000 || low > 28255).toBe(true);
+    expect(high < 28768 || low > 29023).toBe(true);
     expect(
       assignedLine(down ?? '')
         ?.names.map((n, i) => `${n}=${assignedLine(down ?? '')?.values[i] ?? ''}`)
