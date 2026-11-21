@@ -86,6 +86,13 @@ export function CreateServiceChoice<T>(props: ChoiceProps<T> & (SingleChoice<T> 
           return;
         }
         (multiple ? multiRef : selectRef).current?.focus();
+        if (reveal) {
+          const picker = pickerRef.current;
+          const trigger = picker?.ownerDocument.activeElement;
+          if (trigger instanceof HTMLElement && picker?.contains(trigger)) {
+            revealBelowBreadcrumbs(trigger, 'if-covered');
+          }
+        }
       },
     }),
     [disabled, multiple],

@@ -596,6 +596,54 @@ it.each(['covered mobile', 'visible mobile', 'desktop'] as const)(
   },
 );
 
+it.each([true, false])(
+  'reveals the enabled revision trigger after validating a failed read (mobile: %s)',
+  async (mobile) => {
+    emulator.mockImplementation((op) =>
+      op === 'DescribeTaskDefinition'
+        ? reply({ __type: 'ClientException', message: 'revision read failed' }, 400)
+        : normal(op),
+    );
+    open();
+    await screen.findByRole('textbox', { name: 'Service name' });
+    fireEvent.change(nameInput(), { target: { value: 'entered' } });
+    await choose(FAMILY, 'web');
+    await choose(SUBNETS, 'subnet-a');
+    const diagnostic = await screen.findByRole('group', { name: `${REVISION} diagnostic` });
+    const retry = createWrapper(diagnostic).findButton()?.getElement();
+    expect(retry).toHaveTextContent('Retry');
+
+    const toolbar = screen.getByRole('navigation', { name: 'Breadcrumbs' }).parentElement;
+    const trigger = field(REVISION).findSelect()?.findTrigger().getElement();
+    if (!toolbar || !trigger) throw new Error('Missing breadcrumb toolbar or Revision trigger');
+    if (mobile) {
+      toolbar.style.position = 'sticky';
+      vi.spyOn(toolbar, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 56, 390, 40));
+    }
+    vi.spyOn(trigger, 'getBoundingClientRect').mockReturnValue(new DOMRect(16, 57, 350, 32));
+    const scrollIntoView = vi.fn(() => {
+      expect(trigger).toHaveFocus();
+      expect(labeledField(REVISION).findError()?.getElement()).toHaveTextContent('Choose a revision.');
+      expect(trigger.style.scrollMarginTop).toBe('calc(40px + var(--space-static-xs-b6kz15))');
+    });
+    Object.defineProperty(trigger, 'scrollIntoView', { value: scrollIntoView });
+    submitButton().focus();
+
+    fireEvent.click(submitButton());
+
+    expect(trigger).toBeEnabled();
+    expect(trigger).toHaveFocus();
+    if (mobile) {
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: 'start', behavior: 'instant' });
+    } else {
+      expect(scrollIntoView).not.toHaveBeenCalled();
+    }
+    expect(diagnostic).toHaveTextContent('revision read failed');
+    expect(retry).toBeVisible();
+    expect(calls('CreateService')).toHaveLength(0);
+  },
+);
+
 it.each([false, true])('cancels immediately while at defaults, after editing = %s', async (changed) => {
   const { router } = open();
   await screen.findByRole('textbox', { name: 'Service name' });
