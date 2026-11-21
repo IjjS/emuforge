@@ -377,15 +377,15 @@ function previousPage(): HTMLElement {
   return screen.getByRole('button', { name: 'Previous page' });
 }
 
-/** Every text said in a polite live region from now on, in order. */
-function recordAnnouncements(): string[] {
+/** Every committed entry added to a matching polite region from now on, in order. */
+function recordAnnouncements(selector = '[aria-live="polite"]'): string[] {
   const said: string[] = [];
   const observer = new MutationObserver((mutations) => {
     for (const mutation of mutations) {
       const region =
         mutation.target instanceof Element
-          ? mutation.target.closest('[aria-live="polite"]')
-          : mutation.target.parentElement?.closest('[aria-live="polite"]');
+          ? mutation.target.closest(selector)
+          : mutation.target.parentElement?.closest(selector);
       if (region !== null && region !== undefined) {
         for (const node of mutation.addedNodes) {
           const text = (node.textContent ?? '').trim();
@@ -983,7 +983,7 @@ describe('loading and empty', () => {
   it('reports an expired offline confirmation once when no deletion was sent', async () => {
     const message =
       'The browser connection changed before any deletion outcome was confirmed. Reopen Delete from Actions and confirm again.';
-    const announcements = recordAnnouncements();
+    const announcements = recordAnnouncements('[role="status"][aria-atomic="true"]');
     const interruptionEntries = () => announcements.filter((entry) => entry.includes(message));
     const { client, unmount } = await openLoaded([NODE, { name: 'payments' }]);
     const wasOnline = onlineManager.isOnline();
@@ -1023,8 +1023,7 @@ describe('loading and empty', () => {
       await expectNames(['orders', 'payments']);
       expect(selectionAt(1, 'orders')).toBeChecked();
       expect(selectionAt(2, 'payments')).toBeChecked();
-      // Flashbar commits the polite update after its announcement delay, outside the dialog.
-      await waitFor(() => expect(interruptionEntries()).toEqual([`Info ${message}`]), { timeout: 2500 });
+      await waitFor(() => expect(interruptionEntries()).toEqual([`Info ${message}`]));
 
       const fresh = await confirmDialog();
       expect(fresh.names).toEqual(['orders', 'payments']);
