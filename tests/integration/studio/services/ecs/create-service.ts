@@ -52,6 +52,12 @@ export function tokens(main: Locator, label: string) {
 
 const wrapper = createWrapper();
 
+export async function expectVisibleResult(page: Page, type: 'success' | 'error', ...messages: string[]) {
+  let items = page.locator(wrapper.findFlashbar().findItemsByType(type).toSelector()).filter({ visible: true });
+  for (const message of messages) items = items.filter({ hasText: message });
+  await expect(items).toBeVisible({ timeout: 30_000 });
+}
+
 export function publicIpInput(main: Locator) {
   return main.locator(wrapper.findCheckbox().findNativeInput().toSelector().replace(/^body /, ''));
 }

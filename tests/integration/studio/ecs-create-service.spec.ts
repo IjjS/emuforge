@@ -1,9 +1,9 @@
 import { expect, startStack, test } from './support';
 import { ACTION, addressOf, BREADCRUMB_ITEMS, heading } from './support/frame';
 import { checkPrefix } from './support/service-screens';
-import { CREATE, createdServiceLink, enterForm, expectService, groupPicker, input, network, publicIpInput, tokens } from './services/ecs/create-service';
+import { CREATE, createdServiceLink, enterForm, expectService, expectVisibleResult, groupPicker, input, network, publicIpInput, tokens } from './services/ecs/create-service';
 import {
-  button, chooseInMultiselect, chooseOption, clusterPath, ecs, EcsSeeded, expectFlash, expectRow,
+  button, chooseInMultiselect, chooseOption, clusterPath, ecs, EcsSeeded, expectRow,
   expectValue, field, selectOf, serviceNamesDirect, servicePath, tableOf,
 } from './services/ecs/ecs';
 
@@ -44,7 +44,7 @@ test('studio.ecs-create-service-opens-the-created-service', async ({ ctx, page }
   await expectValue(page, 'Subnets', subnet);
   await expectValue(page, 'Security groups', group);
   await expectValue(page, 'Public IP', 'Enabled');
-  await expectFlash(page, 'success', 'Service ' + name + ' created.');
+  await expectVisibleResult(page, 'success', 'Service ' + name + ' created.');
   const clusterCrumb = page.locator(BREADCRUMB_ITEMS).and(page.locator('a[href="' + clusterPath(cluster) + '"]'));
   await expect(clusterCrumb).toHaveText(cluster);
   await clusterCrumb.click(ACTION);
@@ -52,6 +52,7 @@ test('studio.ecs-create-service-opens-the-created-service', async ({ ctx, page }
   const services = tableOf(main, 'Services');
   await expectRow(services, 'Name', name);
   const link = createdServiceLink(main);
+  await expect(link).toBeVisible();
   await expect(link).toHaveText(name);
   await expect(link).toHaveAttribute('href', servicePath(cluster, name));
   await expectService(ctx, port, cluster, name, older, 2, subnet, group);
@@ -83,7 +84,7 @@ test('studio.ecs-create-service-keeps-input-on-duplicate-name', async ({ ctx, pa
   await publicIp.uncheck(ACTION);
   await button(main, CREATE).click(ACTION);
 
-  await expectFlash(page, 'error', 'The emulator did not create the service.', 'InvalidParameterException', 'Creation of service was not idempotent.');
+  await expectVisibleResult(page, 'error', 'The emulator did not create the service.', 'InvalidParameterException', 'Creation of service was not idempotent.');
   await expect(page).toHaveURL(addressOf(clusterPath(cluster) + '/services/create'));
   await expect(input(main, 'Service name')).toHaveValue(name);
   await expect(selectOf(field(main, 'Task definition family'))).toContainText(family);
