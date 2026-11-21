@@ -19,7 +19,7 @@ type Verification = {
 };
 
 type ChangeState =
-  | { kind: 'idle' | 'missing' | 'duplicate' | 'changed' }
+  | { kind: 'idle' | 'missing' | 'duplicate' | 'changed' | 'interrupted' }
   | { kind: 'pending'; checkingAgain: boolean }
   | { kind: 'failed'; stage: 'read' | 'write'; failure: RequestFailure }
   | ({ kind: 'unconfirmed' } & Verification);
@@ -28,28 +28,45 @@ type ChangeState =
 export function useNotificationChange(
   endpoint: string | undefined,
   bucket: string,
+  offline: boolean,
   onVerified: () => void,
   onUnconfirmedRead?: (value: NotificationConfiguration | NoSuchBucket) => void,
 ) {
   const [state, setState] = useState<ChangeState>({ kind: 'idle' });
-  const active = useRef<AbortController | undefined>(undefined);
+  const active = useRef<{ cancel: () => void; interrupt: () => void } | undefined>(undefined);
   const client = useQueryClient();
-  useLayoutEffect(
-    () => () => {
-      const operation = active.current;
-      active.current = undefined;
-      operation?.abort();
-    },
-    [endpoint, bucket],
-  );
+  const [wasOffline, setWasOffline] = useState(offline);
+  if (offline !== wasOffline) {
+    setWasOffline(offline);
+    if (offline && state.kind === 'unconfirmed' && state.observed !== undefined) {
+      setState({ kind: 'unconfirmed', expected: state.expected });
+    }
+  }
+
+  useLayoutEffect(() => () => active.current?.cancel(), [endpoint, bucket]);
+  useLayoutEffect(() => {
+    if (offline) active.current?.interrupt();
+  }, [offline]);
 
   async function run(change?: NotificationChange, retry?: Verification) {
-    if (endpoint === undefined || active.current !== undefined) return;
-    const operation = new AbortController();
-    const { signal } = operation;
+    if (offline || endpoint === undefined || active.current !== undefined) return;
+    const controller = new AbortController();
+    const { signal } = controller;
+    let expected = retry?.expected;
+    // Once the PUT starts, its outcome may be unknown even if the browser aborts the request.
+    let attempted = expected;
+    const operation = {
+      cancel() {
+        if (active.current === operation) active.current = undefined;
+        controller.abort();
+      },
+      interrupt() {
+        operation.cancel();
+        setState(attempted === undefined ? { kind: 'interrupted' } : { kind: 'unconfirmed', expected: attempted });
+      },
+    };
     active.current = operation;
     setState({ kind: 'pending', checkingAgain: retry !== undefined });
-    let expected = retry?.expected;
     let stage: 'read' | 'write' = 'read';
 
     try {
@@ -66,13 +83,14 @@ export function useNotificationChange(
           return;
         }
         stage = 'write';
-        const result = await putBucketNotificationConfiguration(endpoint, bucket, replacement.configuration, signal);
+        attempted = replacement.configuration;
+        const result = await putBucketNotificationConfiguration(endpoint, bucket, attempted, signal);
         if (signal.aborted) return;
         if (result === NO_SUCH_BUCKET) {
           setState({ kind: 'missing' });
           return;
         }
-        expected = replacement.configuration;
+        expected = attempted;
         void client.invalidateQueries({
           queryKey: ['aws', 's3', 'bucket', bucket, 'notifications'],
           refetchType: 'none',
@@ -96,6 +114,9 @@ export function useNotificationChange(
           ? OPERATIONS.putBucketNotificationConfiguration
           : OPERATIONS.getBucketNotificationConfiguration;
       const failure = requestFailure(operationName, error);
+      if (failure.kind === 'engine-did-not-answer' || failure.kind === 'emulator-did-not-answer') {
+        expected = attempted;
+      }
       setState(
         expected === undefined ? { kind: 'failed', stage, failure } : { kind: 'unconfirmed', expected, failure },
       );
@@ -104,16 +125,18 @@ export function useNotificationChange(
     }
   }
 
+  const checkAgainDisabled = offline || (state.kind === 'unconfirmed' && state.failure?.kind === 'not-implemented');
   const unsupported = state.kind === 'failed' && state.failure.kind === 'not-implemented';
   return {
     state,
+    checkAgainDisabled,
     pending: state.kind === 'pending',
     unsupported,
     readFailed: state.kind === 'failed' && state.stage === 'read',
     locked: state.kind === 'pending' || state.kind === 'unconfirmed' || unsupported,
     submit: (change: NotificationChange) => void run(change),
     checkAgain: () => {
-      if (state.kind === 'unconfirmed') void run(undefined, state);
+      if (state.kind === 'unconfirmed' && !checkAgainDisabled) void run(undefined, state);
     },
     clear: () => setState({ kind: 'idle' }),
   };

@@ -191,6 +191,7 @@ class FakeEngine {
   readonly aws: URL[] = [];
   readonly notificationReads: Request[] = [];
   readonly notificationWrites: string[] = [];
+  readonly notificationWriteRequests: Request[] = [];
   writeNotifications: (body: string) => EngineAnswer = (body) => {
     this.parts.notification = () => ok(body);
     return { status: 204, body: '' };
@@ -216,7 +217,9 @@ class FakeEngine {
     this.aws.push(url);
     const notification = partOf(url) === 'notification';
     const writing = notification && request.method === 'PUT';
-    if (notification && !writing) this.notificationReads.push(request);
+    if (notification) {
+      (writing ? this.notificationWriteRequests : this.notificationReads).push(request);
+    }
     const response = writing
       ? request.text().then((body) => {
           this.notificationWrites.push(body);
@@ -1707,6 +1710,11 @@ describe('the tab "Objects", its selection and "Copy S3 URI"', () => {
   });
 });
 
+function notificationFlashes(message: string) {
+  return (createWrapper(document.body).findFlashbar()?.findItems() ?? []).filter(
+    (item) => item.findContent()?.getElement().textContent === message,
+  );
+}
 const NOTIFICATION_CREATE = '/aws/s3/bucket/alpha/property/event-notification/create';
 const NOTIFICATION_EDIT = '/aws/s3/bucket/alpha/property/event-notification/~to-queue/edit';
 
@@ -1884,7 +1892,7 @@ describe('bucket event notifications', () => {
     expect(engine.notificationWrites).toHaveLength(0);
     dialog = await startDelete();
     confirmDelete(dialog);
-    expect(await screen.findByText('Event notification deleted')).toBeVisible();
+    await waitFor(() => expect(notificationFlashes('Event notification deleted')).toHaveLength(1));
     expect(engine.notificationWrites).toHaveLength(1);
     expect(engine.notificationWrites[0]).toContain('<Id>keep</Id>');
     expect(engine.notificationWrites[0]).not.toContain('<Id>to-queue</Id>');
@@ -1916,11 +1924,11 @@ describe('bucket event notifications', () => {
       fireEvent.click(screen.getByRole('button', { name: editing ? 'Save changes' : 'Create event notification' }));
       await waitFor(() => expect(engine.notificationReads).toHaveLength(3));
       expect(router.state.location.pathname).toBe(editing ? NOTIFICATION_EDIT : NOTIFICATION_CREATE);
-      expect(screen.queryByText('Event notification saved')).toBeNull();
+      expect(notificationFlashes('Event notification saved')).toHaveLength(0);
       engine.parts.notification = () => notifications.answer;
       engine.parts.versioning = () => versioning.answer;
       verify.release(ok(saved));
-      expect(await screen.findByText('Event notification saved')).toBeVisible();
+      await waitFor(() => expect(notificationFlashes('Event notification saved')).toHaveLength(1));
       expect(router.state.location.pathname).toBe(PROPERTIES);
       await waitFor(() => expect(engine.reads('versioning')).toHaveLength(1));
       const releaseNotifications = async () => {
@@ -1938,7 +1946,7 @@ describe('bucket event notifications', () => {
         await releaseVersioning();
         await releaseNotifications();
       }
-      expect(screen.getAllByText('Event notification saved')).toHaveLength(1);
+      expect(notificationFlashes('Event notification saved')).toHaveLength(1);
     });
   });
 
@@ -1964,13 +1972,13 @@ describe('bucket event notifications', () => {
       };
       if (order === 'other sections first') {
         await releaseVersioning();
-        expect(screen.queryByText('Event notification deleted')).toBeNull();
+        expect(notificationFlashes('Event notification deleted')).toHaveLength(0);
       }
       verify.release(notificationDocument());
-      expect(await screen.findByText('Event notification deleted')).toBeVisible();
+      await waitFor(() => expect(notificationFlashes('Event notification deleted')).toHaveLength(1));
       if (order === 'verification first') await releaseVersioning();
       expect(notificationModal()).toBeNull();
-      expect(screen.getAllByText('Event notification deleted')).toHaveLength(1);
+      expect(notificationFlashes('Event notification deleted')).toHaveLength(1);
       expect(engine.notificationWrites).toHaveLength(1);
       expect(engine.notificationWrites[0]).not.toContain('<QueueConfiguration');
     },
@@ -2000,7 +2008,7 @@ describe('bucket event notifications', () => {
     engine.writeNotifications = () => errorAnswer(status, code, detail);
     confirmDelete(await startDelete());
     expect(await screen.findByText(new RegExp(detail))).toBeVisible();
-    expect(screen.queryByText('Event notification deleted')).toBeNull();
+    expect(notificationFlashes('Event notification deleted')).toHaveLength(0);
     const button = screen.getByRole('button', { name: 'Delete to-queue' });
     if (disabled) {
       expect(button).toBeDisabled();
@@ -2019,7 +2027,7 @@ describe('bucket event notifications', () => {
     };
     confirmDelete(await startDelete());
     const retry = await screen.findByRole('button', { name: 'Check again' });
-    expect(screen.queryByText('Event notification deleted')).toBeNull();
+    expect(notificationFlashes('Event notification deleted')).toHaveLength(0);
     if (mode === 'failure') expect(screen.getByText(/Readback refused/)).toBeVisible();
     else {
       expect(screen.getByText('The saved configuration differs from the requested change.')).toBeVisible();
@@ -2028,9 +2036,121 @@ describe('bucket event notifications', () => {
     const reads = engine.notificationReads.length;
     engine.parts.notification = () => notificationDocument();
     fireEvent.click(retry);
-    expect(await screen.findByText('Event notification deleted')).toBeVisible();
+    await waitFor(() => expect(notificationFlashes('Event notification deleted')).toHaveLength(1));
     expect(engine.notificationReads.length).toBeGreaterThan(reads);
     expect(engine.notificationWrites).toHaveLength(1);
+  });
+
+  it.each(['pre-write GET', 'transmitted PUT'])(
+    'abandons a held delete %s across a same-target outage',
+    async (stage) => {
+      const sameTarget = { ...connectedResult(), target: 'first' };
+      connection.set(sameTarget);
+      const original = notificationDocument(queueRule('to-queue'));
+      const { router } = await openBucket({ notification: () => original });
+      const pending = held();
+      if (stage === 'pre-write GET') engine.parts.notification = () => pending.answer;
+      else engine.writeNotifications = () => pending.answer;
+      confirmDelete(await startDelete());
+      await waitFor(() => {
+        expect(engine.notificationReads).toHaveLength(2);
+        expect(engine.notificationWrites).toHaveLength(stage === 'pre-write GET' ? 0 : 1);
+      });
+      const abandoned =
+        stage === 'pre-write GET' ? engine.notificationReads.at(-1) : engine.notificationWriteRequests.at(-1);
+
+      connection.set(notStartedResult());
+      expect(abandoned?.signal.aborted).toBe(true);
+      engine.parts.notification = () => (stage === 'pre-write GET' ? original : notificationDocument());
+      connection.set(sameTarget);
+      await waitFor(() => expect(engine.notificationReads).toHaveLength(3));
+      if (stage === 'pre-write GET') {
+        expect(await screen.findByRole('button', { name: 'Delete to-queue' })).toBeEnabled();
+      } else {
+        expect(await screen.findByRole('button', { name: 'Check again' })).toBeEnabled();
+      }
+
+      await act(async () => {
+        pending.release(stage === 'pre-write GET' ? original : { status: 204, body: '' });
+        await pending.answer;
+      });
+      expect(engine.notificationReads).toHaveLength(3);
+      expect(engine.notificationWrites).toHaveLength(stage === 'pre-write GET' ? 0 : 1);
+      expect(notificationFlashes('Event notification deleted')).toHaveLength(0);
+      expect(router.state.location.pathname).toBe(PROPERTIES);
+      if (stage === 'pre-write GET') {
+        expect(screen.queryByRole('button', { name: 'Check again' })).toBeNull();
+      } else {
+        fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
+        await waitFor(() => expect(notificationFlashes('Event notification deleted')).toHaveLength(1));
+        expect(engine.notificationReads[3]?.method).toBe('GET');
+        expect(engine.notificationWrites).toHaveLength(1);
+      }
+    },
+  );
+
+  it.each(['present', 'missing'])(
+    'discards the mismatched deletion observation on reconnect with the bucket %s',
+    async (presence) => {
+      const sameTarget = { ...connectedResult(), target: 'first' };
+      connection.set(sameTarget);
+      await openBucket({ notification: () => notificationDocument(queueRule('to-queue')) });
+      engine.writeNotifications = () => {
+        engine.parts.notification = () => notificationDocument(queueRule('old-observed-rule'));
+        return { status: 204, body: '' };
+      };
+      confirmDelete(await startDelete());
+      expect(await screen.findByRole('heading', { name: 'Observed event notifications' })).toBeVisible();
+      expect(screen.getByText('old-observed-rule')).toBeVisible();
+
+      connection.set(notStartedResult());
+      if (presence === 'missing') engine.buckets = [];
+      engine.parts.notification = () =>
+        presence === 'missing' ? errorAnswer(404, 'NoSuchBucket', 'Bucket missing') : notificationDocument();
+      connection.set(sameTarget);
+      expect(
+        await screen.findByText(
+          presence === 'missing' ? 'Bucket not found' : 'This bucket sends no event notifications.',
+        ),
+      ).toBeVisible();
+      expect(screen.queryByRole('heading', { name: 'Observed event notifications' })).toBeNull();
+      expect(screen.queryByText('old-observed-rule')).toBeNull();
+      expect(notificationFlashes('Event notification deleted')).toHaveLength(0);
+
+      const beforeRetry = engine.notificationReads.length;
+      const retry = screen.getByRole('button', { name: 'Check again' });
+      expect(retry).toBeEnabled();
+      fireEvent.click(retry);
+      if (presence === 'missing') {
+        expect(await screen.findByText('The bucket was not found during verification.')).toBeVisible();
+        expect(notificationFlashes('Event notification deleted')).toHaveLength(0);
+      } else {
+        await waitFor(() => expect(notificationFlashes('Event notification deleted')).toHaveLength(1));
+      }
+      expect(engine.notificationReads[beforeRetry]?.method).toBe('GET');
+      expect(engine.notificationWrites).toHaveLength(1);
+    },
+  );
+
+  it('names the unavailable verification GET and disables the deletion recovery action', async () => {
+    await openBucket({ notification: () => notificationDocument(queueRule('to-queue')) });
+    engine.writeNotifications = () => {
+      engine.parts.notification = () => errorAnswer(400, 'InvalidRequest', 'Readback refused');
+      return { status: 204, body: '' };
+    };
+    confirmDelete(await startDelete());
+    const retry = await screen.findByRole('button', { name: 'Check again' });
+    engine.parts.notification = () => errorAnswer(501, 'NotImplemented', 'Operation unavailable');
+    fireEvent.click(retry);
+    expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
+    expect(screen.getByText(/501 Not Implemented for GetBucketNotificationConfiguration/)).toBeVisible();
+    const disabled = screen.getByRole('button', { name: 'Check again' });
+    expect(disabled).toBeDisabled();
+    const reads = engine.notificationReads.length;
+    fireEvent.click(disabled);
+    expect(engine.notificationReads).toHaveLength(reads);
+    expect(engine.notificationWrites).toHaveLength(1);
+    expect(notificationFlashes('Event notification deleted')).toHaveLength(0);
   });
 
   describe.each(['leave', 'switch target'])('while deleting, %s', (cause) => {
@@ -2065,7 +2185,7 @@ describe('bucket event notifications', () => {
       });
       expect(engine.notificationReads).toHaveLength(reads);
       expect(engine.notificationWrites).toHaveLength(step === 'pre-write read' ? 0 : 1);
-      expect(screen.queryByText('Event notification deleted')).toBeNull();
+      expect(notificationFlashes('Event notification deleted')).toHaveLength(0);
       expect(screen.queryByRole('button', { name: 'Check again' })).toBeNull();
       expect(router.state.location.pathname).toBe(cause === 'leave' ? '/' : PROPERTIES);
     });

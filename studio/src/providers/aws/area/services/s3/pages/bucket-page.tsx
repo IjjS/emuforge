@@ -9,7 +9,7 @@ import { usePageFlash } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
 import { ValueText } from '../../../components/value-text';
 import type { ScreenPageProps } from '../../../screens';
-import { connectionStatus, lineText, pageState, type PageState } from '../components/bucket-read';
+import { lineText, pageState, type PageState } from '../components/bucket-read';
 import { BucketLoading, BucketNotFound, BucketReadFailure } from '../components/bucket-read-state';
 import { BucketSections } from '../components/bucket-sections';
 import { NotificationChangeStatus } from '../components/notification-change-status';
@@ -63,7 +63,9 @@ export function BucketPage({ connection, params }: ScreenPageProps) {
   });
   const flash = usePageFlash();
   const [deleting, setDeleting] = useState<EditableNotification>();
-  const deletion = useNotificationChange(connection.engineOrigin, name, () => {
+  const connected = connection.result?.kind === 'connected';
+  const down = connection.result !== undefined && !connected;
+  const deletion = useNotificationChange(connection.engineOrigin, name, down, () => {
     sections.notifications.again();
     flash.show([{ type: 'success', content: 'Event notification deleted' }]);
   });
@@ -72,7 +74,7 @@ export function BucketPage({ connection, params }: ScreenPageProps) {
     deletion.readFailed ||
     deletion.state.kind === 'changed' ||
     deletion.state.kind === 'missing' ||
-    connectionStatus(connection) !== undefined;
+    down;
   const state: PageState<Bucket> =
     found.kind === 'loaded' && tab === PROPERTIES_TAB && anySectionMissing(sections) ? { kind: 'not-found' } : found;
 
@@ -100,11 +102,9 @@ export function BucketPage({ connection, params }: ScreenPageProps) {
   const failureLine = state.kind === 'failure' ? lineText(state.view.first) : undefined;
   const [seenFailureLine, setSeenFailureLine] = useState<string>();
   const [refreshing, setRefreshing] = useState(false);
-  const connected = connection.result?.kind === 'connected';
   const [seenConnected, setSeenConnected] = useState(connected);
   // Whether the connection was not connected (a state other than "Checking") since the page last read: the emulator
   // may have restarted then, so the bucket shown may be gone.
-  const down = connection.result !== undefined && !connected;
   const [wasDown, setWasDown] = useState(down);
   if (down && !wasDown) {
     setWasDown(true);

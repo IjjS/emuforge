@@ -44,7 +44,15 @@ export function NotificationChangeStatus({
       </StatusIndicator>
     );
   }
+  if (state.kind === 'interrupted') {
+    return (
+      <Alert type="info" header="Notification change interrupted">
+        The connection was interrupted before the write. Review the current configuration before trying again.
+      </Alert>
+    );
+  }
   if (state.kind === 'unconfirmed') {
+    const unavailable = state.failure?.kind === 'not-implemented';
     const observed = !showObserved || state.observed === NO_SUCH_BUCKET ? undefined : state.observed;
     const failure =
       state.failure === undefined
@@ -53,14 +61,22 @@ export function NotificationChangeStatus({
     return (
       <SpaceBetween size="s">
         <Alert
-          type="warning"
+          type={unavailable ? 'info' : 'warning'}
           header={
-            failure === undefined
-              ? 'The saved configuration differs from the requested change.'
-              : 'Could not verify the saved configuration'
+            unavailable
+              ? failure?.header
+              : observed !== undefined
+                ? 'The saved configuration differs from the requested change.'
+                : 'Could not verify the saved configuration'
           }
           action={
-            <Button ref={checkAgainRef} formAction="none" ariaDescribedby={messageId} onClick={change.checkAgain}>
+            <Button
+              ref={checkAgainRef}
+              formAction="none"
+              ariaDescribedby={messageId}
+              disabled={change.checkAgainDisabled}
+              onClick={change.checkAgain}
+            >
               Check again
             </Button>
           }
@@ -69,13 +85,15 @@ export function NotificationChangeStatus({
             <SpaceBetween size="xxs">
               {failure !== undefined && (
                 <div>
-                  {failure.header}. {failure.detail}
+                  {!unavailable && <>{failure.header}. </>}
+                  {failure.detail}
                 </div>
               )}
               {state.observed === NO_SUCH_BUCKET && 'The bucket was not found during verification.'}
-              {observed === undefined
-                ? 'Select Check again to read the current configuration.'
-                : 'Review the configuration returned by the emulator.'}
+              {!unavailable &&
+                (observed === undefined
+                  ? 'Select Check again to read the current configuration.'
+                  : 'Review the configuration returned by the emulator.')}
             </SpaceBetween>
           </div>
         </Alert>
