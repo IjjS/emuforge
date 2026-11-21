@@ -468,11 +468,12 @@ describe('the instances list', () => {
     });
     selectRow('i-1');
     choose('Reboot');
-    await waitFor(() => {
+    const firstResult = await waitFor(() => {
       expect(reads).toHaveLength(2);
+      const firstItem = PAGE.findFlashbar()?.findItems()[0];
+      expect(firstItem?.findContent()?.getElement()).toHaveTextContent(/^Rebooting i-1$/);
+      return firstItem?.getElement();
     });
-    const notifications = within(await screen.findByRole('list', { name: 'Notifications' }));
-    const firstResult = notifications.getByText('Rebooting i-1');
     await waitFor(() => {
       expect(isDisabled(stateItem('Reboot'))).toBe(false);
     });
@@ -481,7 +482,10 @@ describe('the instances list', () => {
       choose('Reboot');
       await waitFor(() => {
         expect(reads).toHaveLength(3);
-        expect(notifications.getAllByText('Rebooting i-1').some((result) => result !== firstResult)).toBe(true);
+        const replacement = PAGE.findFlashbar()
+          ?.findItems()
+          .find((item) => item.getElement() !== firstResult);
+        expect(replacement?.findContent()?.getElement()).toHaveTextContent(/^Rebooting i-1$/);
       });
       // Cloudscape Flashbar defers its entering state by 115 ms when motion is enabled.
       expect(scheduleTimeout.mock.calls.map(([, delay]) => delay)).not.toContain(115);
