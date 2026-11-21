@@ -10,7 +10,7 @@ import Pagination from '@cloudscape-design/components/pagination';
 import PropertyFilter, { type PropertyFilterProps } from '@cloudscape-design/components/property-filter';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Table, { type TableProps } from '@cloudscape-design/components/table';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useRef, useState, useSyncExternalStore } from 'react';
 import { useNavigate } from 'react-router';
 
 import { useAreaModalRoot } from '../../../components/area-modal';
@@ -58,6 +58,19 @@ const PAGE_SIZES = [10, 25, 50] as const;
 
 /** No property: the filter takes free text only (R4.7). */
 const NO_PROPERTIES: readonly PropertyFilterProps.FilteringProperty[] = [];
+
+function subscribeToBrowserConnection(onChange: () => void): () => void {
+  window.addEventListener('offline', onChange);
+  window.addEventListener('online', onChange);
+  return () => {
+    window.removeEventListener('offline', onChange);
+    window.removeEventListener('online', onChange);
+  };
+}
+
+function browserOnline(): boolean {
+  return navigator.onLine;
+}
 
 /** What the table's body shows (R10.1), the rows aside. */
 type BodyState =
@@ -161,6 +174,7 @@ export function FunctionListPage({ connection }: { connection: AreaConnection })
   const modalRoot = useAreaModalRoot();
   const [announcement, announce] = useAnnouncer();
   const actionsRef = useRef<ButtonDropdownProps.Ref>(null);
+  const online = useSyncExternalStore(subscribeToBrowserConnection, browserOnline);
 
   const [filter, setFilter] = useState('');
   const [preferences, setPreferences] = useState(START_PREFERENCES);
@@ -439,6 +453,7 @@ export function FunctionListPage({ connection }: { connection: AreaConnection })
       <DeleteFunctionsDialog
         names={deleting}
         connection={connection}
+        online={online}
         onClose={handleDialogClose}
         reportEmptyInterruption
       />
