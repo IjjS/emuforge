@@ -407,6 +407,61 @@ it('focuses the diagnostic when the first invalid choice failed with 501', async
   expect(calls('CreateService')).toHaveLength(0);
 });
 
+it.each(['covered mobile', 'visible mobile', 'desktop'] as const)(
+  'keeps family diagnostic focus and corrects only the covered landing (%s)',
+  async (landing) => {
+    emulator.mockImplementation((op) => (op === 'ListTaskDefinitionFamilies' ? reply({}, 501) : normal(op)));
+    open();
+    const diagnostic = await screen.findByRole('group', { name: `${FAMILY} diagnostic` });
+    const toolbar = screen.getByRole('navigation', { name: 'Breadcrumbs' }).parentElement;
+    if (!toolbar) throw new Error('Missing breadcrumb toolbar');
+    if (landing !== 'desktop') {
+      toolbar.style.position = 'sticky';
+      vi.spyOn(toolbar, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 56, 390, 48));
+    }
+    const filled = landing !== 'visible mobile';
+    if (filled) {
+      fireEvent.change(nameInput(), { target: { value: 'entered' } });
+      fireEvent.change(countInput(), { target: { value: '-1' } });
+      await choose(SUBNETS, 'subnet-a');
+      await choose(GROUPS, 'sg-a');
+      fireEvent.click(publicIp());
+    }
+    vi.spyOn(diagnostic, 'getBoundingClientRect').mockReturnValue(
+      new DOMRect(0, landing === 'visible mobile' ? 120 : 56, 350, 100),
+    );
+    const scrollIntoView = vi.fn(() => {
+      expect(diagnostic).toHaveFocus();
+      expect(labeledField('Desired tasks').findError()?.getElement()).toHaveTextContent(
+        'Enter a whole number, 0 or more.',
+      );
+      expect(diagnostic.style.scrollMarginTop).toBe('calc(48px + var(--space-static-xs-b6kz15))');
+    });
+    Object.defineProperty(diagnostic, 'scrollIntoView', { value: scrollIntoView });
+    submitButton().focus();
+
+    fireEvent.click(submitButton());
+
+    expect(diagnostic).toHaveFocus();
+    if (landing === 'covered mobile') {
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: 'start', behavior: 'instant' });
+    } else {
+      expect(scrollIntoView).not.toHaveBeenCalled();
+    }
+    if (filled) {
+      expect(nameInput()).toHaveValue('entered');
+      expect(countInput()).toHaveValue(-1);
+      expect(field(SUBNETS).findMultiselect()?.findTokens()[0]?.getElement()).toHaveTextContent('subnet-a');
+      expect(field(GROUPS).findMultiselect()?.findTokens()[0]?.getElement()).toHaveTextContent('frontend');
+      expect(publicIp()).not.toBeChecked();
+    } else {
+      expect(labeledField('Service name').findError()?.getElement()).toHaveTextContent('Enter a service name.');
+      expect(labeledField(SUBNETS).findError()?.getElement()).toHaveTextContent('Choose at least one subnet.');
+    }
+    expect(calls('CreateService')).toHaveLength(0);
+  },
+);
+
 it.each([false, true])('cancels immediately while at defaults, after editing = %s', async (changed) => {
   const { router } = open();
   await screen.findByRole('textbox', { name: 'Service name' });

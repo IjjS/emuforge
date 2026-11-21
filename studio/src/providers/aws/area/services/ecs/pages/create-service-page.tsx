@@ -9,7 +9,7 @@ import Input, { type InputProps } from '@cloudscape-design/components/input';
 import Link from '@cloudscape-design/components/link';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
-import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
 
 import type { RequestFailure } from '../../../../../../lib/aws/request';
@@ -148,6 +148,7 @@ function CreateServiceForm({ cluster, connection }: { cluster: string; connectio
 
   const [held, setForm] = useState(CREATE_SERVICE_START);
   const [tried, setTried] = useState(false);
+  const [blockedSubmissions, setBlockedSubmissions] = useState(0);
   const [unsupportedReason, setUnsupportedReason] = useState<ReactNode>();
   const [duplicateName, setDuplicateName] = useState<string>();
   const familyReasonId = useId();
@@ -198,6 +199,12 @@ function CreateServiceForm({ cluster, connection }: { cluster: string; connectio
     }
   }, [kept]);
 
+  useLayoutEffect(() => {
+    if (blockedSubmissions > 0) {
+      familyRef.current?.focus(true);
+    }
+  }, [blockedSubmissions]);
+
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
     if (busy.current || unsupported || noFamilies) {
@@ -205,7 +212,7 @@ function CreateServiceForm({ cluster, connection }: { cluster: string; connectio
     }
     setTried(true);
     if (familyUnavailable) {
-      familyRef.current?.focus();
+      setBlockedSubmissions((previous) => previous + 1);
       return;
     }
     setDuplicateName(undefined);

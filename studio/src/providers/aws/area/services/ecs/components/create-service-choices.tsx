@@ -14,9 +14,10 @@ import type { AreaConnection } from '../../../components/emulator-line';
 import { Code, readFailureState } from '../../../components/failure-states';
 import { useFollow } from '../../../components/use-follow';
 import { usePagedChoices, type ChoiceSource, type PagedChoices } from '../../../components/use-paged-choices';
+import { revealBelowBreadcrumbs } from './reveal-below-breadcrumbs';
 
 export interface CreateServiceChoiceRef {
-  focus(): void;
+  focus(reveal?: boolean): void;
 }
 
 interface ChoiceProps<T> {
@@ -71,9 +72,16 @@ export function CreateServiceChoice<T>(props: ChoiceProps<T> & (SingleChoice<T> 
   useImperativeHandle(
     focusRef,
     () => ({
-      focus() {
-        const target = disabled ? diagnosticRef : multiple ? multiRef : selectRef;
-        target.current?.focus();
+      focus(reveal) {
+        if (disabled) {
+          const diagnostic = diagnosticRef.current;
+          diagnostic?.focus();
+          if (reveal && diagnostic !== null) {
+            revealBelowBreadcrumbs(diagnostic, 'if-covered');
+          }
+          return;
+        }
+        (multiple ? multiRef : selectRef).current?.focus();
       },
     }),
     [disabled, multiple],
