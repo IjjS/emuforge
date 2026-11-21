@@ -4,12 +4,13 @@ import { INSTANCES_NAVIGATION, KEY_PAIRS_NAVIGATION, SECURITY_GROUPS_NAVIGATION 
 
 const ITEMS = [
   { type: 'link', text: 'Instances', href: '/aws/ec2/instances' },
+  { type: 'link', text: 'Volumes', href: '/aws/ec2/volumes' },
   { type: 'link', text: 'Security groups', href: '/aws/ec2/security-groups' },
   { type: 'link', text: 'Key pairs', href: '/aws/ec2/key-pairs' },
 ];
 
 describe("EC2's navigation", () => {
-  it('is "EC2" with "Instances", "Security groups", "Key pairs"; each section\'s entry is the active one', () => {
+  it("includes the Volumes link and each original section's entry is the active one", () => {
     for (const [navigation, active] of [
       [INSTANCES_NAVIGATION, '/aws/ec2/instances'],
       [SECURITY_GROUPS_NAVIGATION, '/aws/ec2/security-groups'],

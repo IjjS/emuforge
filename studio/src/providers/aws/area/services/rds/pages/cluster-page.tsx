@@ -32,6 +32,7 @@ import { CLUSTER_OPERATIONS, type DbCluster } from '../cluster-api';
 import { deleteTarget } from '../cluster-delete';
 import { useClusterDelete, useClusterRound, type MembersRead } from '../cluster-queries';
 import { ClusterDeleteAction } from '../components/cluster-delete-action';
+import { ComposeHostEndpoint } from '../components/compose-host-endpoint';
 import { ProtectionValue } from '../components/protection-value';
 import { StatusValue } from '../components/status';
 import { TagsTable } from '../components/tags-table';
@@ -70,35 +71,38 @@ function portText(port: number | undefined): string | undefined {
 
 function Connection({ cluster }: { cluster: DbCluster }) {
   return (
-    <Container
-      header={
-        <Header variant="h2" description={CONNECTION_DESCRIPTION}>
-          Connection
+    <Container header={<Header variant="h2">Connection</Header>}>
+      <ComposeHostEndpoint kind="cluster" engine={cluster.engine} port={cluster.port} />
+      <SpaceBetween size="s">
+        <Header variant="h3" description={CONNECTION_DESCRIPTION}>
+          Reported by the emulator
         </Header>
-      }
-    >
-      <Pairs
-        label="Connection"
-        items={[
-          {
-            label: 'Writer endpoint',
-            value: <CopyValue label="Writer endpoint" value={cluster.endpoint} kind="address" none={NONE} />,
-          },
-          {
-            label: 'Reader endpoint',
-            value: <CopyValue label="Reader endpoint" value={cluster.readerEndpoint} kind="address" none={NONE} />,
-          },
-          { label: 'Port', value: <CopyValue label="Port" value={portText(cluster.port)} kind="fixed" none={NONE} /> },
-          {
-            label: 'Master user name',
-            value: <CopyValue label="Master user name" value={cluster.masterUsername} kind="name" none={NONE} />,
-          },
-          {
-            label: 'Database name',
-            value: <CopyValue label="Database name" value={cluster.databaseName} kind="name" none={NONE} />,
-          },
-        ]}
-      />
+        <Pairs
+          label="Connection"
+          items={[
+            {
+              label: 'Writer endpoint',
+              value: <CopyValue label="Writer endpoint" value={cluster.endpoint} kind="address" none={NONE} />,
+            },
+            {
+              label: 'Reader endpoint',
+              value: <CopyValue label="Reader endpoint" value={cluster.readerEndpoint} kind="address" none={NONE} />,
+            },
+            {
+              label: 'Port',
+              value: <CopyValue label="Port" value={portText(cluster.port)} kind="fixed" none={NONE} />,
+            },
+            {
+              label: 'Master user name',
+              value: <CopyValue label="Master user name" value={cluster.masterUsername} kind="name" none={NONE} />,
+            },
+            {
+              label: 'Database name',
+              value: <CopyValue label="Database name" value={cluster.databaseName} kind="name" none={NONE} />,
+            },
+          ]}
+        />
+      </SpaceBetween>
     </Container>
   );
 }

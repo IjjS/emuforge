@@ -15,6 +15,7 @@ import { useNavigate, useSearchParams } from 'react-router';
 import { DiscardDialog, type DiscardAnswer } from '../../../components/discard-dialog';
 import { actionFailureItem } from '../../../components/failure-states';
 import { usePageFlash, type FlashItem } from '../../../components/page-flash';
+import { useAvailabilityZones } from '../../../components/use-availability-zones';
 import { useShowsResources } from '../../../components/page-resources';
 import { failureOf } from '../../../components/use-token-listing';
 import type { VpcChoice } from '../../../lib/ec2-network-choices';
@@ -22,7 +23,7 @@ import type { ScreenPageProps } from '../../../screens';
 import { CHOOSE_A_VPC, VpcField } from '../components/vpc-field';
 import { CREATE_SUBNET_TITLE, subnetHref, SUBNETS_PATH, SUBNETS_WORD, VPC_QUERY } from '../format';
 import { blockMessage, NAME_CONSTRAINT, nameMessage, SUBNET_BLOCK } from '../form';
-import { useAvailabilityZones, useCreateSubnet } from '../subnet-changes';
+import { useCreateSubnet } from '../subnet-changes';
 import { SUBNET_CHANGE_OPERATIONS, type NewSubnet } from '../subnet-changes-api';
 
 // S5, "Create subnet" (issue 574, design task 2, step 3): the VPC (the one of `?vpc=` chosen at start), a name, an

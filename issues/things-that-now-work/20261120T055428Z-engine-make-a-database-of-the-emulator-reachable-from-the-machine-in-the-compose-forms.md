@@ -4,7 +4,7 @@ Issue-Module: engine
 Issue-Kind: gap
 Issue-Source: plan
 Issue-Key: engine|compose.rds-endpoint-ports|not-reachable
-Issue-Check-Ids:
+Issue-Check-Ids: engine.compose-databases-answer-on-described-host-ports studio.rds-compose-host-endpoints-match-describe
 Issue-Commit: 08ec9b9ff80a1a3ec4e6fc224bfd03ce6e0cbcfe
 
 # Make a database of the emulator reachable from the machine in the Compose forms

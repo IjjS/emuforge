@@ -187,7 +187,10 @@ test('studio.ecs-task-run-without-a-public-ip-fails-to-start', async ({ ctx, pag
   await expect(page).toHaveURL(aTaskOf(cluster), { timeout: 30_000 });
   const task = taskOf(page);
   await expect(heading(page, `Task ${task}`)).toBeVisible({ timeout: 20_000 });
-  await expectValue(page, 'Last status', 'Stopped');
+  // The emulator's simulated registry timeout can leave this task pending beyond 60 seconds.
+  await expect
+    .poll(() => valueOf(main, 'Last status'), { message: '"Last status" is "Stopped"', timeout: 90_000 })
+    .toBe('Stopped');
   await expectValue(page, 'Stop code', 'TaskFailedToStart');
   await expect(
     logPartOf(main, 'app').getByText(NO_LOG_YET, { exact: true }),

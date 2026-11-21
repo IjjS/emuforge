@@ -2,6 +2,7 @@ import Box from '@cloudscape-design/components/box';
 import Button from '@cloudscape-design/components/button';
 import Container from '@cloudscape-design/components/container';
 import ContentLayout from '@cloudscape-design/components/content-layout';
+import CopyToClipboard from '@cloudscape-design/components/copy-to-clipboard';
 import Header from '@cloudscape-design/components/header';
 import KeyValuePairs from '@cloudscape-design/components/key-value-pairs';
 import Link from '@cloudscape-design/components/link';
@@ -24,6 +25,7 @@ import { InstanceActions } from '../components/instance-actions';
 import { InstanceStateValue } from '../components/instance-state';
 import { instanceHeading, INSTANCES_PATH, INSTANCES_WORD, KEY_PAIRS_PATH, NONE, securityGroupHref } from '../format';
 import { useInstance, useTerminationProtection, type Ec2Read } from '../queries';
+import { volumeHref } from '../volume-format';
 
 // An instance's page, S3 (issue 553, design task 1 and task 3): read by the filter `instance-id`, so an id the
 // emulator does not hold is "Instance not found", and its termination protection by a read of its own, whose failure
@@ -172,14 +174,39 @@ function Groups({ groups }: { groups: InstanceGroup[] }) {
 }
 
 function Volumes({ volumes }: { volumes: BlockDevice[] }) {
+  const handleFollow = useFollow();
   const columns: TableProps.ColumnDefinition<BlockDevice>[] = [
     {
       id: 'device',
       header: 'Device',
       isRowHeader: true,
+      minWidth: 'calc(24ch + 40px)',
       cell: (volume) => <ValueText kind="name" value={volume.device} none={NONE} />,
     },
-    { id: 'volume', header: 'Volume ID', cell: (volume) => <Copy label="Volume ID" value={volume.volumeId} /> },
+    {
+      id: 'volume',
+      header: 'Volume ID',
+      // Leave room for the ID, the inline copy button and the cell padding.
+      minWidth: 'calc(24ch + 64px)',
+      cell: ({ volumeId }) =>
+        volumeId === undefined ? (
+          NONE
+        ) : (
+          <CopyToClipboard
+            variant="inline"
+            textToCopy={volumeId}
+            textToDisplay={
+              <Link href={volumeHref(volumeId)} onFollow={handleFollow}>
+                <ValueText kind="name" value={volumeId} />
+              </Link>
+            }
+            copyButtonAriaLabel="Copy Volume ID"
+            copySuccessText="Volume ID copied"
+            copyErrorText="Volume ID could not be copied"
+            popoverRenderWithPortal={false}
+          />
+        ),
+    },
     {
       id: 'delete',
       header: 'Deleted on termination',

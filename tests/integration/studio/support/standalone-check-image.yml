@@ -1,0 +1,3 @@
+services:
+  aws-emulator:
+    image: ${EMUFORGE_EMULATOR_IMAGE:?the pinned emulator image}

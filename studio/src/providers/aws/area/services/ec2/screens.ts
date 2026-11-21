@@ -6,9 +6,10 @@ import { LAUNCH_SCREENS } from './launch-screens';
 import { INSTANCES_NAVIGATION } from './navigation';
 import { InstanceListPage } from './pages/instance-list-page';
 import { InstancePage } from './pages/instance-page';
+import { VOLUME_SCREENS } from './volume-screens';
 
 // EC2's screens, which the area collects (issue 553, design "Code layout and the cut"): the instance screens here,
-// then those of the launch, the security groups and the key pairs, each from its own file. An id in a path is one
+// then those of the launch, security groups, key pairs and volumes, each from its own file. An id in a path is one
 // segment, decoded once by the area.
 
 /** S1 and S3, the instances (tasks 1, 3). */
@@ -36,4 +37,5 @@ export const SCREENS: readonly ServiceScreen[] = [
   ...LAUNCH_SCREENS,
   ...GROUP_SCREENS,
   ...KEY_PAIR_SCREENS,
+  ...VOLUME_SCREENS,
 ];

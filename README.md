@@ -52,9 +52,9 @@ binary `emuforge`, with Studio in it, is built inside an image build. It was run
 Compose 5.1.4) and on Docker Engine on Linux (Ubuntu, the runner of the checks of `main`). On Windows it was not
 run yet.
 
-Nothing of EmuForge is on the host. The emulator's files, its keys among them, are in a Docker volume of the form,
-`emulator`, which only the emulator and `emuforge` mount (`emuforge` read-only), and the emulator's port is not
-published. `emuforge`'s target settings, `targets.json`, are in a second volume, `settings`, which only `emuforge`
+The emulator's files, including its keys, are in a Docker volume named `emulator`, which only the emulator and
+`emuforge` mount (`emuforge` read-only). The emulator's API port is private to the form. `emuforge`'s target
+settings, `targets.json`, are in a second volume, `settings`, which only `emuforge`
 mounts and which holds no key. The Compose form holds one target, `compose`, its own emulator at
 `https://127.0.0.1:<EMULATOR_PORT>`; `emuforge` writes it at every start and refuses to add another. The stop line
 leaves both volumes, the first then holding no key; `docker compose down -v` removes both.
@@ -85,39 +85,82 @@ which runs Studio and the engine beside an emulator you run, and a released imag
 
 ### Ports
 
-Three variables set the ports, given to the start command and the same values to the stop command:
+Use the same port settings for the start and stop commands.
 
 | Variable | Default | Port of |
 | --- | --- | --- |
 | `EMUFORGE_STUDIO_PORT` | 8296 | Studio, the address you open |
 | `EMUFORGE_ENGINE_PORT` | 8297 | the engine, where Studio and any AWS client send requests |
 | `EMULATOR_PORT` | 9297 | the emulator inside EmuForge; not published; set it only to free the number for one of the other two |
+| `EMUFORGE_DB_PORT_MIN` | 28000 | first published database port, inclusive |
+| `EMUFORGE_DB_PORT_MAX` | 28255 | last published database port, inclusive |
 
 In bash:
 
 ```bash
-EMUFORGE_ENGINE_PORT=8397 EMUFORGE_STUDIO_PORT=8396 docker compose up -d --build
-EMUFORGE_ENGINE_PORT=8397 EMUFORGE_STUDIO_PORT=8396 docker compose down
+EMUFORGE_ENGINE_PORT=8397 EMUFORGE_STUDIO_PORT=8396 EMUFORGE_DB_PORT_MIN=28512 EMUFORGE_DB_PORT_MAX=28767 docker compose up -d --build
+EMUFORGE_ENGINE_PORT=8397 EMUFORGE_STUDIO_PORT=8396 EMUFORGE_DB_PORT_MIN=28512 EMUFORGE_DB_PORT_MAX=28767 docker compose down
 ```
 
 In PowerShell, where a variable set so stays set for the rest of that window, the same two lines and the start
 line that keeps the running containers:
 
 ```powershell
-$env:EMUFORGE_ENGINE_PORT=8397; $env:EMUFORGE_STUDIO_PORT=8396; docker compose up -d --build
-$env:EMUFORGE_ENGINE_PORT=8397; $env:EMUFORGE_STUDIO_PORT=8396; docker compose down
+$env:EMUFORGE_ENGINE_PORT=8397; $env:EMUFORGE_STUDIO_PORT=8396; $env:EMUFORGE_DB_PORT_MIN=28512; $env:EMUFORGE_DB_PORT_MAX=28767; docker compose up -d --build
+$env:EMUFORGE_ENGINE_PORT=8397; $env:EMUFORGE_STUDIO_PORT=8396; $env:EMUFORGE_DB_PORT_MIN=28512; $env:EMUFORGE_DB_PORT_MAX=28767; docker compose down
 $env:BUILDX_NO_DEFAULT_ATTESTATIONS=1; docker compose up -d --build
 ```
 
-Each Studio port is its own Compose project, with its own emulator and its own volume, so two EmuForge instances
-with different Studio and engine ports run side by side. The three ports must differ from each other; no other
-port is reserved. When a port is wrong the message of `emuforge` names its flag and its variable: `--port` for
+Each Studio port is its own Compose project, with its own emulator and volumes. To run two product projects
+side by side, use separate Studio and engine ports and disjoint database ranges, as in the examples above.
+Within a project, all three control ports must differ and lie outside its database range.
+When `emuforge` reports a control port error it names the flag and variable: `--port` for
 `EMUFORGE_ENGINE_PORT`, `--emulator-port` for `EMULATOR_PORT` and `--studio-port` for `EMUFORGE_STUDIO_PORT`.
 
 A start whose Studio or engine port is taken on the host, or whose two ports are equal, exits non-zero and names
 the port. With `EMULATOR_PORT` equal to the engine's or Studio's port `emuforge` refuses to start and the
 emulator is not started: the start exits non-zero, Docker's message names the `emuforge` container, and
 `docker compose logs emuforge` shows the line that names both variables and the number.
+
+If the database range includes the internal `EMULATOR_PORT`, startup fails before the emulator starts.
+`docker compose logs emuforge` identifies the conflicting port and range.
+
+### Connect to an RDS database from the host
+
+Both Compose forms publish the database range on `127.0.0.1` with identical port numbers on the host and in the
+container. The product range defaults to 28000–28255 and the [standalone emulator](#run-the-emulator) defaults to
+28256–28511.
+
+After creating a database, read its current port from `DescribeDBInstances` (`Endpoint.Port`) or
+`DescribeDBClusters` (`Port`). For an Aurora member, use the member's own port and the cluster's database
+credentials. In a SQL client on the machine running Compose, connect by TCP to `127.0.0.1` at that port with
+the current database name and credentials. For example, if PostgreSQL reports port 28123 for your database
+`app` and your user is `app_admin`, run the following and enter its password when prompted.
+
+```bash
+psql -h 127.0.0.1 -p 28123 -U app_admin -d app -W -c 'SELECT current_database();'
+```
+
+For a MySQL-compatible database, use the same host and the port from its own Describe response.
+
+```bash
+mysql --host=127.0.0.1 --port=28123 --user=app_admin --password --database=app --execute='SELECT DATABASE();'
+```
+
+A SQL reply confirms the database is listening and the credentials work. Docker publishes the range at
+startup, and each database listener becomes available when the emulator starts it. Read the port again after
+a database or emulator restart.
+
+To widen either form's range, set `EMUFORGE_DB_PORT_MIN` and `EMUFORGE_DB_PORT_MAX` to ordered decimal values
+from 1024 through 65535 without leading zeroes. SQL listeners, outbound sockets and local services share this
+range, so a busy project may need more ports. Keep fixed listeners outside the range and every host port in it
+free. If Docker reports a bind error for an occupied port, run `down` for the failed project with the same
+settings, then choose another free range and start that project again.
+
+On the macOS Docker Desktop test machine, publishing 256 standalone ports took about 3 seconds, 1024 ports took
+18–23 seconds, and a free 4096-port standalone block took about 231 seconds. Attempts with 16384 ports and the
+whole kernel ephemeral range encountered occupied host ports. Larger ranges reserve more ports on the host
+and increase the chance of a collision.
 
 ### Another device
 
@@ -190,10 +233,13 @@ mkdir -p ~/.aws/emulator              # the emulator's folder, made by you befor
 docker compose -f infra/aws-emulator/docker-compose.yml up -d --build
 source infra/aws-emulator/env.sh      # point this shell's AWS CLI and SDKs at the emulator
 aws sts get-caller-identity           # Account 000000000000 means you reached the emulator
-EMULATOR_PORT=9298 docker compose -f infra/aws-emulator/docker-compose.yml up -d   # a second emulator beside it
-EMULATOR_PORT=9298 docker compose -f infra/aws-emulator/docker-compose.yml down    # stops only that one
+EMULATOR_PORT=9298 EMUFORGE_DB_PORT_MIN=28768 EMUFORGE_DB_PORT_MAX=29023 docker compose -f infra/aws-emulator/docker-compose.yml up -d
+EMULATOR_PORT=9298 EMUFORGE_DB_PORT_MIN=28768 EMUFORGE_DB_PORT_MAX=29023 docker compose -f infra/aws-emulator/docker-compose.yml down
 docker compose -f infra/aws-emulator/docker-compose.yml down
 ```
+
+The second project uses a separate API port and database range. For SQL clients and range settings, see
+[Connect to an RDS database from the host](#connect-to-an-rds-database-from-the-host).
 
 On Docker Engine on Linux the emulator runs as the owner of `~/.aws/emulator`, so the files it writes there are
 yours. A folder that Docker created itself, because it was missing at the first start, belongs to root, and the
