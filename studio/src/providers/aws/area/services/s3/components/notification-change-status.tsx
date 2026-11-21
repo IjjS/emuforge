@@ -48,7 +48,11 @@ export function NotificationChangeStatus({
               ? 'The saved configuration differs from the requested change.'
               : 'Could not verify the saved configuration'
           }
-          action={<Button onClick={change.checkAgain}>Check again</Button>}
+          action={
+            <Button formAction="none" onClick={change.checkAgain}>
+              Check again
+            </Button>
+          }
         >
           {failure === undefined ? (
             state.observed === NO_SUCH_BUCKET ? (
@@ -107,7 +111,14 @@ export function NotificationChangeStatus({
   }
   if (state.kind === 'missing' || state.kind === 'changed') {
     return (
-      <Alert type="warning" action={<Button onClick={onRefresh}>Refresh event notifications</Button>}>
+      <Alert
+        type="warning"
+        action={
+          <Button formAction="none" onClick={onRefresh}>
+            Refresh event notifications
+          </Button>
+        }
+      >
         {state.kind === 'missing'
           ? 'The bucket was not found.'
           : 'The notification changed after you opened it. Refresh event notifications to review the current rule.'}

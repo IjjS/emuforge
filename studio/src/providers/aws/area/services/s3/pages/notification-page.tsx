@@ -227,6 +227,7 @@ function NotificationForm({
           <SpaceBetween direction="horizontal" size="xs">
             <Button
               ref={cancelRef}
+              formAction="none"
               variant="link"
               disabled={change.pending}
               onClick={() => {
