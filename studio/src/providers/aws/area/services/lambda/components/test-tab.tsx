@@ -37,6 +37,8 @@ export interface TestTabProps {
   aliases: ReleaseReading<FunctionAlias>;
   qualifier: string | undefined;
   targetUnavailable: boolean;
+  targetReset?: boolean;
+  invokeInputRef?: Ref<HTMLDivElement>;
   onTargetChange: (qualifier: string | undefined) => void;
 }
 
@@ -44,6 +46,8 @@ const LATEST = '$LATEST';
 const DEFAULT_TARGET = { label: LATEST, value: LATEST };
 const NOT_IMPLEMENTED = 'Not implemented by the emulator';
 const NOT_JSON = 'Enter the event as one JSON value.';
+export const INVOKE_TARGET_RESET =
+  'Invoke target reset to $LATEST. After verification, use Invoke target to select a version or alias for your preserved event draft.';
 
 /** Whether `text` is one JSON value (an empty or white-space text is not). */
 function isOneJsonValue(text: string): boolean {
@@ -155,6 +159,8 @@ export function TestTab({
   aliases,
   qualifier,
   targetUnavailable,
+  targetReset,
+  invokeInputRef,
   onTargetChange,
 }: TestTabProps) {
   const versionOptions = (versions.failure === undefined ? (versions.items ?? []) : [])
@@ -217,19 +223,22 @@ export function TestTab({
         }
       >
         <SpaceBetween size="m">
-          <FormField
-            label="Invoke target"
-            errorText={targetUnavailable ? `${qualifier} is unavailable. Choose another target.` : undefined}
-          >
-            <Select
-              options={options}
-              selectedOption={selectedOption}
-              onChange={({ detail }) => {
-                const value = detail.selectedOption.value;
-                onTargetChange(value === LATEST ? undefined : value);
-              }}
-            />
-          </FormField>
+          <div ref={invokeInputRef}>
+            <FormField
+              label="Invoke target"
+              description={targetReset ? INVOKE_TARGET_RESET : undefined}
+              errorText={targetUnavailable ? `${qualifier} is unavailable. Choose another target.` : undefined}
+            >
+              <Select
+                options={options}
+                selectedOption={selectedOption}
+                onChange={({ detail }) => {
+                  const value = detail.selectedOption.value;
+                  onTargetChange(value === LATEST ? undefined : value);
+                }}
+              />
+            </FormField>
+          </div>
           {loadingTargets && <StatusIndicator type="loading">Loading invoke targets</StatusIndicator>}
           <TargetReadFailure reading={versions} connection={connection} label="published versions" />
           <TargetReadFailure reading={aliases} connection={connection} label="aliases" />
@@ -241,28 +250,30 @@ export function TestTab({
                 {NOT_IMPLEMENTED}. {qualifier === undefined ? 'Invoke' : 'Qualified Invoke'} is unavailable.
               </StatusIndicator>
             )}
-          <FormField
-            label="Event JSON"
-            stretch
-            errorText={fieldError}
-            constraintText={verified ? undefined : 'Event editing is available after the function is verified.'}
-          >
-            <Textarea
-              ref={field}
-              value={eventText}
-              rows={8}
-              spellcheck={false}
-              readOnly={!verified}
-              invalid={fieldError !== undefined}
-              onKeyDown={handleKeyDown}
-              onChange={({ detail }) => {
-                if (verified) {
-                  setFieldError(undefined);
-                  onEventTextChange(detail.value);
-                }
-              }}
-            />
-          </FormField>
+          <div ref={invokeInputRef}>
+            <FormField
+              label="Event JSON"
+              stretch
+              errorText={fieldError}
+              constraintText={verified ? undefined : 'Event editing is available after the function is verified.'}
+            >
+              <Textarea
+                ref={field}
+                value={eventText}
+                rows={8}
+                spellcheck={false}
+                readOnly={!verified}
+                invalid={fieldError !== undefined}
+                onKeyDown={handleKeyDown}
+                onChange={({ detail }) => {
+                  if (verified) {
+                    setFieldError(undefined);
+                    onEventTextChange(detail.value);
+                  }
+                }}
+              />
+            </FormField>
+          </div>
         </SpaceBetween>
       </Container>
       <InvocationResult invoke={invoke} resultRef={resultRef} />
