@@ -80,7 +80,7 @@ function focusServices(target: HTMLElement) {
   }
   const margin = target.style.scrollMarginTop;
   if (row !== null && row !== layout) {
-    target.style.scrollMarginTop = `${row.getBoundingClientRect().height + 8}px`;
+    target.style.scrollMarginTop = `calc(${row.getBoundingClientRect().height}px + var(--space-static-xs-b6kz15))`;
   }
   target.focus({ preventScroll: true });
   target.scrollIntoView({ block: 'start', behavior: 'instant' });

@@ -313,7 +313,7 @@ describe('S3, a cluster', () => {
     toolbar.style.position = 'sticky';
     const height = vi.spyOn(toolbar, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 56, 390, 48));
     const scrollIntoView = vi.fn(() => {
-      expect(section.style.scrollMarginTop).toBe('56px');
+      expect(section.style.scrollMarginTop).toBe('calc(48px + var(--space-static-xs-b6kz15))');
       expect(section).toHaveFocus();
     });
     Object.defineProperty(section, 'scrollIntoView', { value: scrollIntoView });

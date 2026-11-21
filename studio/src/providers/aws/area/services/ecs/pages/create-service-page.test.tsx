@@ -171,12 +171,31 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function field(label: string) {
+function labeledField(label: string) {
   const found = createWrapper(document.body)
     .findAllFormFields()
     .find((part) => part.findLabel()?.getElement().textContent === label);
   if (!found) throw new Error(`Missing ${label}`);
-  return createWrapper(found.getElement());
+  return found;
+}
+
+function field(label: string) {
+  return createWrapper(labeledField(label).getElement());
+}
+
+function flashItems() {
+  return createWrapper(document.body).findFlashbar()?.findItems() ?? [];
+}
+
+function flashWithText(text: string, part: 'header' | 'content' = 'content') {
+  return waitFor(() => {
+    const found = flashItems().find((item) => {
+      const element = part === 'header' ? item.findHeader() : item.findContent();
+      return element?.getElement().textContent?.includes(text);
+    });
+    if (!found) throw new Error(`No flash ${part} contains ${text}`);
+    return found;
+  });
 }
 
 async function choose(label: string, value: string) {
@@ -305,7 +324,7 @@ it('identifies the cluster and launch type and presents the seven initial inputs
   expect(field(FAMILY).findSelect()?.findTrigger().getElement()).toHaveTextContent('Choose a family');
   expect(field(REVISION).findSelect()?.findTrigger().getElement()).toHaveTextContent('Choose a family first');
   expect(countInput()).toHaveValue(1);
-  expect(screen.getByText('A whole number, 0 or more.')).toBeInTheDocument();
+  expect(labeledField('Desired tasks').findConstraint()?.getElement()).toHaveTextContent('A whole number, 0 or more.');
   expect(field(SUBNETS).findMultiselect()?.findTokens()).toHaveLength(0);
   expect(field(GROUPS).findMultiselect()?.findTokens()).toHaveLength(0);
   expect(publicIp()).toBeChecked();
@@ -350,17 +369,35 @@ it('validates each missing or invalid field and focuses the first without sendin
   await screen.findByRole('textbox', { name: 'Service name' });
   fireEvent.change(countInput(), { target: { value: '-1' } });
   fireEvent.click(submitButton());
-  for (const message of [
-    'Enter a service name.',
-    'Choose a task definition family.',
-    'Choose a revision.',
-    'Enter a whole number, 0 or more.',
-    'Choose at least one subnet.',
-    'A whole number, 0 or more.',
-  ]) {
-    expect(screen.getByText(message)).toBeInTheDocument();
+  for (const [label, message] of [
+    ['Service name', 'Enter a service name.'],
+    [FAMILY, 'Choose a task definition family.'],
+    [REVISION, 'Choose a revision.'],
+    ['Desired tasks', 'Enter a whole number, 0 or more.'],
+    [SUBNETS, 'Choose at least one subnet.'],
+  ] as const) {
+    expect(labeledField(label).findError()?.getElement()).toHaveTextContent(message);
   }
+  expect(labeledField('Desired tasks').findConstraint()?.getElement()).toHaveTextContent('A whole number, 0 or more.');
   expect(nameInput()).toHaveFocus();
+  expect(calls('CreateService')).toHaveLength(0);
+});
+
+it('focuses the diagnostic when the first invalid choice failed with 501', async () => {
+  emulator.mockImplementation((op) => (op === 'ListTaskDefinitionFamilies' ? reply({}, 501) : normal(op)));
+  open();
+  await screen.findByRole('textbox', { name: 'Service name' });
+  const diagnostic = await screen.findByRole('group', { name: `${FAMILY} diagnostic` });
+  const trigger = field(FAMILY).findSelect()?.findTrigger().getElement();
+  expect(trigger).toBeDisabled();
+  fireEvent.change(nameInput(), { target: { value: 'entered' } });
+
+  fireEvent.click(submitButton());
+
+  expect(labeledField(FAMILY).findError()?.getElement()).toHaveTextContent('Choose a task definition family.');
+  expect(diagnostic).toHaveFocus();
+  expect(diagnostic).toHaveAccessibleDescription(/501 Not Implemented for ListTaskDefinitionFamilies/);
+  expect(nameInput()).toHaveValue('entered');
   expect(calls('CreateService')).toHaveLength(0);
 });
 
@@ -412,7 +449,9 @@ it('sends no second create during Creating service', async () => {
   fireEvent.submit(form);
   expect(calls('CreateService')).toHaveLength(1);
   held.resolve(reply({ service: SERVICE }));
-  await screen.findByText('Service returned created.');
+  expect((await flashWithText('Service returned created.')).findContent()?.getElement()).toHaveTextContent(
+    'Service returned created.',
+  );
 });
 
 it('hands over to the returned service, keeps the flash through out-of-order refresh, and reads the service on return', async () => {
@@ -466,7 +505,9 @@ it('hands over to the returned service, keeps the flash through out-of-order ref
   await act(async () => refreshGate.resolve(reply(ACTIVE)));
   await waitFor(() => expect(client.isFetching({ queryKey: ECS_KEYS.cluster('dev') })).toBe(0));
   expect(screen.getByRole('heading', { name: 'returned', level: 1 })).toBeInTheDocument();
-  expect(screen.getByText('Service returned created.')).toBeInTheDocument();
+  expect((await flashWithText('Service returned created.')).findContent()?.getElement()).toHaveTextContent(
+    'Service returned created.',
+  );
   const clusterLink = screen
     .getAllByRole('link', { name: 'dev' })
     .find((link) => link.getAttribute('href') === CLUSTER);
@@ -519,34 +560,44 @@ it.each([
     const { router } = open();
     await fill();
     fireEvent.click(submitButton());
-    const message = await screen.findByText(detail, { exact: code === undefined });
-    const flashbar = createWrapper(document.body).findFlashbar();
-    const item = flashbar?.findItems()[0]?.getElement();
-    expect(item).toContainElement(message);
-    await waitFor(() => expect(item).toContainElement(document.activeElement as HTMLElement));
+    const item = await flashWithText(detail, title === undefined ? 'header' : 'content');
+    await waitFor(() => expect(item.getElement()).toContainElement(document.activeElement as HTMLElement));
     if (title !== undefined) {
+      expect(item.findHeader()?.getElement()).toHaveTextContent(title);
+      expect(item.findContent()?.getElement()).toHaveTextContent(code === undefined ? detail : `${code}: ${detail}`);
       expect(document.activeElement).toHaveAccessibleName(title);
       expect(document.activeElement).toHaveAccessibleDescription(expect.stringContaining(detail) as string);
     } else {
-      expect(document.activeElement).toHaveAccessibleName(`The EmuForge engine at ${detail} did not answer`);
+      const header = `The EmuForge engine at ${detail} did not answer`;
+      expect(item.findHeader()?.getElement()).toHaveTextContent(header);
+      expect(document.activeElement).toHaveAccessibleName(header);
     }
-    if (title !== undefined) expect(screen.getByText(title)).toBeInTheDocument();
-    if (code !== undefined) expect(screen.getByText(code)).toBeInTheDocument();
     expect(router.state.location.pathname).toBe(FORM);
     expectKept();
     if (rename) {
+      expect(labeledField('Service name').findError()?.getElement()).toHaveTextContent(
+        'Choose a different service name.',
+      );
       expect(nameInput()).toHaveAccessibleDescription('Choose a different service name.');
     } else {
-      expect(screen.queryByText('Choose a different service name.')).not.toBeInTheDocument();
+      expect(labeledField('Service name').findError()).toBeNull();
     }
     if (unsupported) {
       expect(submitButton()).toBeDisabled();
+      const dismiss = item.findDismissButton();
+      if (!dismiss) throw new Error('Missing Flashbar dismiss button');
+      fireEvent.click(dismiss.getElement());
+      await waitFor(() => expect(flashItems()).toHaveLength(0));
+      expect(submitButton()).toBeDisabled();
+      expect(submitButton()).toHaveAccessibleDescription(detail);
+      expect(within(submitButton().closest('form') as HTMLFormElement).getByText(detail)).toBeVisible();
+      expectKept();
       fireEvent.click(submitButton());
       expect(calls('CreateService')).toHaveLength(1);
     } else {
       refused = false;
       fireEvent.change(nameInput(), { target: { value: 'corrected' } });
-      expect(screen.queryByText('Choose a different service name.')).not.toBeInTheDocument();
+      expect(labeledField('Service name').findError()).toBeNull();
       fireEvent.click(submitButton());
       await waitFor(() => expect(router.state.location.pathname).toBe(DETAIL));
       expect(calls('CreateService')[1]?.[1]).toMatchObject({ serviceName: 'corrected' });
@@ -562,14 +613,16 @@ it('focuses the latest diagnostic after another refused submission', async () =>
   open();
   await fill();
   fireEvent.click(submitButton());
-  await screen.findByText(duplicate, { exact: false });
+  const first = await flashWithText(duplicate);
+  expect(first.getElement()).toContainElement(document.activeElement as HTMLElement);
   expect(document.activeElement).toHaveAccessibleDescription(expect.stringContaining(duplicate) as string);
 
   diagnostic = 'The name contains invalid characters.';
   fireEvent.change(nameInput(), { target: { value: 'corrected' } });
   fireEvent.click(submitButton());
-  await screen.findByText(diagnostic, { exact: false });
+  const next = await flashWithText(diagnostic);
+  expect(next.getElement()).toContainElement(document.activeElement as HTMLElement);
   expect(document.activeElement).toHaveAccessibleDescription(expect.stringContaining(diagnostic) as string);
-  expect(screen.queryByText('Choose a different service name.')).not.toBeInTheDocument();
+  expect(labeledField('Service name').findError()).toBeNull();
   expect(calls('CreateService')).toHaveLength(2);
 });
