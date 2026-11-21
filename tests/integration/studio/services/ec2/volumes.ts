@@ -9,8 +9,7 @@ import {
   ec2,
   Ec2Seeded,
   emptyOf,
-  instanceDirect,
-  expectCell,
+  instancesDirect,
   expectFlash,
   expectValueIs,
   field,
@@ -68,25 +67,36 @@ export async function seedStorage(ctx: Ctx, port: number, secondZone = false) {
   const defaults = await world(ctx, port);
   const prefix = checkPrefix(ctx, ctx.id.split('.').pop()!);
   const bootVolumes = new Set<string>();
-  // Owned resources are disposed in reverse order: terminate the instances before collecting surviving boot volumes.
+  // Register around Ec2Seeded so teardown discovers block devices before termination and removes them afterward.
   ctx.own({
     async dispose() {
-      for (const id of bootVolumes) await removeVolume(ctx, port, id);
+      const failures: string[] = [];
+      for (const id of bootVolumes) {
+        try {
+          await removeVolume(ctx, port, id);
+        } catch (error) {
+          failures.push(id + ': ' + String(error));
+        }
+      }
+      if (failures.length) throw new Error(failures.join('\n'));
     },
   });
   const seeded = new Ec2Seeded(ctx, port, prefix, defaults);
-  async function launch(suffix: string, zone: string) {
-    const id = await seeded.instance({ name: prefix + suffix, subnetId: defaults.subnet[zone]! });
-    const instance = await instanceDirect(ctx, port, id);
-    if (!instance?.volumes.length) throw new EnvError('The seeded instance has no reported block devices');
-    for (const mapping of instance.volumes) {
-      if (!mapping.volumeId) throw new EnvError('The seeded block device has no volume ID');
-      bootVolumes.add(mapping.volumeId);
-    }
-    return id;
-  }
-  const instance = await launch('-same', 'us-east-1a');
-  const other = secondZone ? await launch('-other', 'us-east-1b') : undefined;
+  ctx.own({
+    async dispose() {
+      // RunInstances tags each instance in the creation request, even if setup fails before returning its ID.
+      const instances = await instancesDirect(ctx, port, { 'tag:Name': [prefix + '-same', prefix + '-other'] });
+      for (const instance of instances) {
+        for (const mapping of instance.volumes) {
+          if (mapping.volumeId) bootVolumes.add(mapping.volumeId);
+        }
+      }
+    },
+  });
+  const instance = await seeded.instance({ name: prefix + '-same', subnetId: defaults.subnet['us-east-1a']! });
+  const other = secondZone
+    ? await seeded.instance({ name: prefix + '-other', subnetId: defaults.subnet['us-east-1b']! })
+    : undefined;
   const created = await ec2(ctx, port, 'CreateVolume', { AvailabilityZone: 'us-east-1a', Size: '4' });
   const id = textAt(created.root, 'volumeId');
   if (!id || created.status !== 200) throw new EnvError('CreateVolume did not return the seed volume ID');
@@ -161,7 +171,11 @@ export async function submitAttachment(page: Page, instance: string) {
 export async function expectAttached(page: Page, id: string, instance: string) {
   await expectFlash(page, 'success', 'Attachment requested for ' + id + '.');
   await expectValueIs(page, 'State', 'in-use');
-  const table = tableOf(page.getByRole('main'), 'Attachments');
-  await expectCell(table, 'Device', device, 'State', 'attached');
-  await expect(table.getByRole('link', { name: instance, exact: true })).toBeVisible();
+  // This volume was created empty and the scenario attaches it once. All three values belong to its sole row.
+  const attachments = ui.findTable();
+  await expect(page.locator(attachments.findRows().toSelector())).toHaveCount(1);
+  const cell = (column: number) => page.locator(attachments.findBodyCell(1, column).toSelector());
+  await expect(cell(1).getByRole('link', { name: instance, exact: true })).toBeVisible();
+  await expect(cell(2)).toHaveText(device);
+  await expect(cell(3)).toHaveText('attached');
 }
