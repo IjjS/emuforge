@@ -73,13 +73,16 @@ export function NotificationTable({
   actions,
 }: {
   configuration: NotificationConfiguration | undefined;
-  header: (compact: boolean) => ReactNode;
+  header: (compact: boolean, overflows: boolean) => ReactNode;
   loading?: boolean;
   failure?: ReactNode;
   actions?: (rule: NotificationRule) => ReactNode;
 }) {
   const table = useRef<HTMLDivElement>(null);
   const [compact, setCompact] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+  const items = configuration === undefined ? [] : notificationRules(configuration);
+  const hasRows = items.length > 0;
   useEffect(() => {
     const element = table.current;
     if (element === null || typeof ResizeObserver === 'undefined') return;
@@ -91,6 +94,17 @@ export function NotificationTable({
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
+
+  useEffect(() => {
+    const nativeTable = table.current?.querySelector('table');
+    const viewport = nativeTable?.parentElement;
+    if (!hasRows || !nativeTable || !viewport || typeof ResizeObserver === 'undefined') return;
+    const measure = () => setOverflows(viewport.scrollWidth > viewport.clientWidth);
+    const observer = new ResizeObserver(measure);
+    observer.observe(nativeTable);
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, [hasRows]);
 
   const columns: TableProps.ColumnDefinition<NotificationRule>[] = compact
     ? [
@@ -114,13 +128,12 @@ export function NotificationTable({
     : actions === undefined
       ? COLUMNS
       : [...COLUMNS, { id: 'actions', header: 'Actions', minWidth: 170, cell: actions }];
-  const items = configuration === undefined ? [] : notificationRules(configuration);
 
   return (
     <div ref={table}>
       <Table<NotificationRule>
         variant="container"
-        header={header(compact && items.length > 0)}
+        header={header(compact && hasRows, overflows && hasRows)}
         items={items}
         columnDefinitions={columns}
         wrapLines

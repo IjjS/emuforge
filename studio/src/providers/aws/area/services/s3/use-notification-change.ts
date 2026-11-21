@@ -19,7 +19,8 @@ type Verification = {
 };
 
 type ChangeState =
-  | { kind: 'idle' | 'pending' | 'missing' | 'duplicate' | 'changed' }
+  | { kind: 'idle' | 'missing' | 'duplicate' | 'changed' }
+  | { kind: 'pending'; checkingAgain: boolean }
   | { kind: 'failed'; stage: 'read' | 'write'; failure: RequestFailure }
   | ({ kind: 'unconfirmed' } & Verification);
 
@@ -47,7 +48,7 @@ export function useNotificationChange(
     const operation = new AbortController();
     const { signal } = operation;
     active.current = operation;
-    setState({ kind: 'pending' });
+    setState({ kind: 'pending', checkingAgain: retry !== undefined });
     let expected = retry?.expected;
     let stage: 'read' | 'write' = 'read';
 

@@ -418,6 +418,7 @@ it.each(['failed read', 'missing rule', 'different field'])(
     };
     fireEvent.click(editing ? screen.getByRole('button', { name: 'Save changes' }) : createButton());
     const retry = await screen.findByRole('button', { name: 'Check again' });
+    expect(retry).toHaveFocus();
     expect(screen.queryByText('Event notification saved')).toBeNull();
     if (mode === 'failed read') expect(screen.getByText(/Verification read failed/)).toBeVisible();
     else expect(screen.getByText('The saved configuration differs from the requested change.')).toBeVisible();
@@ -483,6 +484,57 @@ it.each(['missing rule', 'missing bucket'])(
     expect(engine.writes).toHaveLength(1);
   },
 );
+
+it('keeps the submitted create settings and read-only recovery after the observation is invalidated', async () => {
+  const router = open();
+  await loaded();
+  fill(QUEUE, 'send-imports');
+  changeValue(input('Prefix (optional)'), 'incoming/');
+  changeValue(input('Suffix (optional)'), '.csv');
+  // The emulator accepts the write but the verification response omits it.
+  engine.read = () => response();
+  fireEvent.click(createButton());
+  const retry = await screen.findByRole('button', { name: 'Check again' });
+  expect(retry).toHaveFocus();
+  expect(screen.getByText('Review the configuration returned by the emulator.')).toBeVisible();
+
+  setConnection({ kind: 'engine-unreachable', checkedAt: 1, lastEmulatorPort: 9305 });
+  const beforeReconnect = engine.reads.length;
+  setConnection(connected('first'));
+  expect(await screen.findByRole('heading', { name: 'Submitted notification' })).toBeVisible();
+  expect(screen.queryByRole('heading', { name: 'Observed event notifications' })).toBeNull();
+  expect(screen.queryByText('Review the configuration returned by the emulator.')).toBeNull();
+  expect(screen.getByRole('button', { name: 'Check again' })).toHaveAccessibleDescription(
+    'Select Check again to read the current configuration.',
+  );
+  expect(screen.queryByRole('textbox', { name: 'Notification name' })).toBeNull();
+  const settings = page.findKeyValuePairs()?.findItems();
+  expect(
+    settings?.map((item) => [item.findLabel()?.getElement().textContent, item.findValue()?.getElement().textContent]),
+  ).toEqual([
+    ['Notification name', 'send-imports'],
+    ['Destination type', 'SQS queue'],
+    ['Destination ARN', QUEUE],
+    ['Event type', 'All object creation events'],
+    ['Prefix', 'incoming/'],
+    ['Suffix', '.csv'],
+  ]);
+  expect(engine.reads.slice(beforeReconnect).map((request) => request.method)).toEqual(['GET']);
+
+  const verify = heldResponse();
+  engine.read = () => verify.promise;
+  const beforeRetry = engine.reads.length;
+  fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
+  expect(screen.getByRole('status', { name: 'Notification save progress' })).toHaveTextContent(
+    'Checking saved configuration',
+  );
+  expect(screen.getByRole('heading', { name: 'Submitted notification' })).toBeVisible();
+  verify.resolve(response(engine.document));
+  await waitFor(() => expect(router.state.location.pathname).toBe(PROPERTIES));
+  expect(engine.reads[beforeRetry]?.method).toBe('GET');
+  expect(engine.writes).toHaveLength(1);
+  expect(await screen.findByText('Event notification saved')).toBeVisible();
+});
 
 describe.each(['leave', 'switch target'])('while saving, %s', (cause) => {
   it.each(['pre-write read', 'verification success', 'verification failure'])('abandons a held %s', async (step) => {

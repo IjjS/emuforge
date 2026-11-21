@@ -1,8 +1,9 @@
 import Alert from '@cloudscape-design/components/alert';
-import Button from '@cloudscape-design/components/button';
+import Button, { type ButtonProps } from '@cloudscape-design/components/button';
 import Header from '@cloudscape-design/components/header';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
+import { useId, type Ref } from 'react';
 
 import type { AreaConnection } from '../../../components/emulator-line';
 import { NO_SUCH_BUCKET } from '../api';
@@ -19,6 +20,7 @@ export function NotificationChangeStatus({
   action,
   destination,
   showObserved = true,
+  checkAgainRef,
   onRefresh,
 }: {
   change: NotificationChangeControl;
@@ -26,18 +28,24 @@ export function NotificationChangeStatus({
   action: 'Saving' | 'Deleting';
   destination?: DestinationType;
   showObserved?: boolean;
+  checkAgainRef?: Ref<ButtonProps.Ref>;
   onRefresh: () => void;
 }) {
   const { state } = change;
+  const messageId = useId();
   if (state.kind === 'pending') {
     return (
       <StatusIndicator type="loading">
-        {action === 'Saving' ? 'Saving event notification' : 'Deleting event notification'}
+        {state.checkingAgain
+          ? 'Checking saved configuration'
+          : action === 'Saving'
+            ? 'Saving event notification'
+            : 'Deleting event notification'}
       </StatusIndicator>
     );
   }
   if (state.kind === 'unconfirmed') {
-    const observed = state.observed === NO_SUCH_BUCKET ? undefined : state.observed;
+    const observed = !showObserved || state.observed === NO_SUCH_BUCKET ? undefined : state.observed;
     const failure =
       state.failure === undefined
         ? undefined
@@ -52,31 +60,36 @@ export function NotificationChangeStatus({
               : 'Could not verify the saved configuration'
           }
           action={
-            <Button formAction="none" onClick={change.checkAgain}>
+            <Button ref={checkAgainRef} formAction="none" ariaDescribedby={messageId} onClick={change.checkAgain}>
               Check again
             </Button>
           }
         >
-          {failure === undefined ? (
-            state.observed === NO_SUCH_BUCKET ? (
-              'The bucket was not found during verification.'
-            ) : (
-              'Review the configuration returned by the emulator.'
-            )
-          ) : (
-            <>
-              {failure.header}. {failure.detail}
-            </>
-          )}
+          <div id={messageId}>
+            <SpaceBetween size="xxs">
+              {failure !== undefined && (
+                <div>
+                  {failure.header}. {failure.detail}
+                </div>
+              )}
+              {state.observed === NO_SUCH_BUCKET && 'The bucket was not found during verification.'}
+              {observed === undefined
+                ? 'Select Check again to read the current configuration.'
+                : 'Review the configuration returned by the emulator.'}
+            </SpaceBetween>
+          </div>
         </Alert>
-        {showObserved && observed !== undefined && (
+        {observed !== undefined && (
           <NotificationTable
             configuration={observed}
-            header={() => (
+            header={(_, overflows) => (
               <Header
                 variant="h2"
                 description={
-                  observed.EventBridgeConfiguration === undefined ? 'EventBridge disabled' : 'EventBridge enabled'
+                  <>
+                    {observed.EventBridgeConfiguration === undefined ? 'EventBridge disabled.' : 'EventBridge enabled.'}
+                    {overflows && ' Scroll sideways for event types and filters.'}
+                  </>
                 }
               >
                 Observed event notifications

@@ -4,12 +4,13 @@ import Container from '@cloudscape-design/components/container';
 import Form from '@cloudscape-design/components/form';
 import FormField from '@cloudscape-design/components/form-field';
 import Header from '@cloudscape-design/components/header';
+import KeyValuePairs from '@cloudscape-design/components/key-value-pairs';
 import Input, { type InputProps } from '@cloudscape-design/components/input';
 import Link from '@cloudscape-design/components/link';
 import RadioGroup from '@cloudscape-design/components/radio-group';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
 
 import { CopyValue } from '../../../components/copy-value';
@@ -35,6 +36,7 @@ import {
   OBJECT_PUT,
   type EditableNotification,
   type NotificationDraft,
+  type NotificationChange,
 } from '../notifications';
 import { useBucketProperty } from '../queries';
 import { useNotificationChange, type NotificationChangeControl } from '../use-notification-change';
@@ -51,6 +53,8 @@ const EVENTS = [
   { value: OBJECT_PUT, label: 'Object PUTs', description: 'Uploads made with one PUT request.' },
 ];
 
+type NotificationSave = Exclude<NotificationChange, { kind: 'delete' }>;
+
 export function NotificationPage({ connection, params }: ScreenPageProps) {
   const bucket = params.name ?? '';
   const editing = params.id !== undefined;
@@ -60,7 +64,7 @@ export function NotificationPage({ connection, params }: ScreenPageProps) {
   const flash = usePageFlash();
   useShowsResources('buckets');
   const [generation, setGeneration] = useState(0);
-  const [submittedDestination, setSubmittedDestination] = useState<NotificationDraft['type']>();
+  const [submitted, setSubmitted] = useState<{ generation: number; save: NotificationSave }>();
   const read = useBucketProperty(connection.engineOrigin, bucket, 'notifications', { generation, enabled: true });
   const [readback, setReadback] = useState<{
     generation: number;
@@ -81,6 +85,25 @@ export function NotificationPage({ connection, params }: ScreenPageProps) {
     if (!disconnected) {
       setGeneration((current) => current + 1);
     }
+  }
+
+  const changeKind = change.state.kind;
+  const feedbackRef = useRef<HTMLDivElement>(null);
+  const checkAgainRef = useRef<ButtonProps.Ref>(null);
+  useEffect(() => {
+    if (changeKind === 'idle') return;
+    feedbackRef.current?.scrollIntoView?.({ block: changeKind === 'unconfirmed' ? 'start' : 'center' });
+    if (changeKind === 'unconfirmed') checkAgainRef.current?.focus();
+  }, [changeKind]);
+
+  const showSubmitted =
+    submitted !== undefined &&
+    (changeKind === 'unconfirmed' ||
+      (change.state.kind === 'pending' && (change.state.checkingAgain || submitted.generation !== generation)));
+
+  function handleSave(save: NotificationSave) {
+    setSubmitted({ generation, save });
+    change.submit(save);
   }
 
   const id = eventNotificationId(params.id);
@@ -125,14 +148,22 @@ export function NotificationPage({ connection, params }: ScreenPageProps) {
       >
         {editing ? EDIT_TITLE : CREATE_TITLE}
       </Header>
-      <NotificationChangeStatus
-        change={change}
-        connection={connection}
-        action="Saving"
-        showObserved={!disconnected && currentReadback !== undefined}
-        {...(submittedDestination === undefined ? {} : { destination: submittedDestination })}
-        onRefresh={handleRefresh}
-      />
+      {changeKind !== 'idle' && (
+        <div
+          ref={feedbackRef}
+          {...(changeKind === 'pending' ? { role: 'status', 'aria-label': 'Notification save progress' } : {})}
+        >
+          <NotificationChangeStatus
+            change={change}
+            connection={connection}
+            action="Saving"
+            showObserved={!disconnected && currentReadback !== undefined}
+            checkAgainRef={checkAgainRef}
+            {...(submitted === undefined ? {} : { destination: submitted.save.draft.type })}
+            onRefresh={handleRefresh}
+          />
+        </div>
+      )}
       {editing && id === undefined ? (
         <Container>
           <SpaceBetween size="s">
@@ -173,6 +204,8 @@ export function NotificationPage({ connection, params }: ScreenPageProps) {
             {returnLink}
           </SpaceBetween>
         </Container>
+      ) : showSubmitted ? (
+        <SubmittedNotification save={submitted.save} exit={returnLink} />
       ) : (
         <NotificationForm
           key={generation}
@@ -181,10 +214,42 @@ export function NotificationPage({ connection, params }: ScreenPageProps) {
           change={change}
           connection={connection}
           onLeave={() => void navigate(properties)}
-          onSubmitDestination={setSubmittedDestination}
+          onSave={handleSave}
         />
       )}
     </SpaceBetween>
+  );
+}
+
+function SubmittedNotification({ save, exit }: { save: NotificationSave; exit: ReactNode }) {
+  const { draft } = save;
+  const events =
+    draft.event === KEEP_EVENTS
+      ? save.kind === 'edit'
+        ? save.target.data.Events?.join(', ')
+        : undefined
+      : EVENTS.find(({ value }) => value === draft.event)?.label;
+  return (
+    <Container
+      header={
+        <Header variant="h2" actions={exit}>
+          Submitted notification
+        </Header>
+      }
+    >
+      <KeyValuePairs
+        columns={2}
+        minColumnWidth={240}
+        items={[
+          { label: 'Notification name', value: <ValueText kind="name" value={draft.id} /> },
+          { label: 'Destination type', value: draft.type },
+          { label: 'Destination ARN', value: <CopyValue label="submitted destination ARN" value={draft.arn} /> },
+          { label: 'Event type', value: <ValueText kind="fixed" value={events} none="—" /> },
+          { label: 'Prefix', value: <ValueText kind="text" value={draft.prefix} none="—" /> },
+          { label: 'Suffix', value: <ValueText kind="text" value={draft.suffix} none="—" /> },
+        ]}
+      />
+    </Container>
   );
 }
 
@@ -194,14 +259,14 @@ function NotificationForm({
   change,
   connection,
   onLeave,
-  onSubmitDestination,
+  onSave,
 }: {
   configuration: NotificationConfiguration;
   target: EditableNotification | undefined;
   change: NotificationChangeControl;
   connection: AreaConnection;
   onLeave: () => void;
-  onSubmitDestination: (destination: NotificationDraft['type']) => void;
+  onSave: (save: NotificationSave) => void;
 }) {
   const [initial] = useState(() => notificationDraft(target));
   const [draft, setDraft] = useState(initial);
@@ -248,10 +313,7 @@ function NotificationForm({
       return;
     }
     const savedDraft = { ...draft, id, arn };
-    onSubmitDestination(draft.type);
-    change.submit(
-      target === undefined ? { kind: 'create', draft: savedDraft } : { kind: 'edit', target, draft: savedDraft },
-    );
+    onSave(target === undefined ? { kind: 'create', draft: savedDraft } : { kind: 'edit', target, draft: savedDraft });
   }
 
   return (
