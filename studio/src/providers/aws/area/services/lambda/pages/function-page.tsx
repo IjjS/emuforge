@@ -258,7 +258,7 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
       void reread();
       (result.operation === 'PublishVersion' ? releases.versions : releases.aliases).refresh();
     },
-    onFailure: (failure) => {
+    onFailure: (failure, showInline) => {
       const summary = actionFailureItem(failure, failure.operation, connection.engineOrigin);
       const operationInContent = failure.kind === 'engine-did-not-answer' || failure.kind === 'emulator-did-not-answer';
       const item = {
@@ -279,8 +279,9 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
           </>
         ),
       };
-      flash.show([item]);
-      return item;
+      if (!showInline?.(item)) {
+        flash.show([item]);
+      }
     },
   });
   const [deleting, setDeleting] = useState(false);

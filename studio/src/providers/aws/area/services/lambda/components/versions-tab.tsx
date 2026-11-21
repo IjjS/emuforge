@@ -1,22 +1,23 @@
 import Alert, { type AlertProps } from '@cloudscape-design/components/alert';
 import Box from '@cloudscape-design/components/box';
 import Button from '@cloudscape-design/components/button';
+import ButtonDropdown from '@cloudscape-design/components/button-dropdown';
 import FormField from '@cloudscape-design/components/form-field';
 import Header from '@cloudscape-design/components/header';
 import Input from '@cloudscape-design/components/input';
 import Select from '@cloudscape-design/components/select';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Table from '@cloudscape-design/components/table';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { AreaModal } from '../../../components/area-modal';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { Code, ReadFailure, readFailureState } from '../../../components/failure-states';
-import type { FlashItem } from '../../../components/page-flash';
+import { usePageFlash, type FlashItem } from '../../../components/page-flash';
 import { ValueText } from '../../../components/value-text';
 import { valueText } from '../format';
 import type { FunctionAlias, FunctionVersion, ReleaseChange } from '../version-api';
-import type { ReleaseReading, useReleaseMutation } from '../version-queries';
+import type { InlineReleaseRefusal, ReleaseReading, useReleaseMutation } from '../version-queries';
 
 const ALIAS_NAME_MIN_WIDTH = '28ch';
 const ALIAS_NAME_CONSTRAINT =
@@ -30,6 +31,8 @@ const ACTION_LABELS = {
   UpdateAlias: 'Edit alias',
   DeleteAlias: 'Delete alias',
 } satisfies Record<ReleaseAction, string>;
+
+const ALIAS_ROW_ACTIONS = ['UpdateAlias', 'DeleteAlias'] as const;
 
 type AliasDialog = { operation: 'CreateAlias' } | { operation: 'UpdateAlias' | 'DeleteAlias'; alias: FunctionAlias };
 
@@ -85,7 +88,7 @@ interface AliasDialogProps {
   versions: readonly FunctionVersion[];
   pending: boolean;
   onDismiss: () => void;
-  onSubmit: (change: ReleaseChange) => Promise<FlashItem | undefined>;
+  onSubmit: (change: ReleaseChange, showInline: InlineReleaseRefusal) => Promise<void>;
 }
 
 function ManageAliasDialog({ dialog, versions, pending, onDismiss, onSubmit }: AliasDialogProps) {
@@ -97,6 +100,19 @@ function ManageAliasDialog({ dialog, versions, pending, onDismiss, onSubmit }: A
   const [nameError, setNameError] = useState<string>();
   const [refusal, setRefusal] = useState<FlashItem>();
   const refusalRef = useRef<AlertProps.Ref>(null);
+  const { show } = usePageFlash();
+  const feedback = useRef<{ open: boolean; refusal: FlashItem | undefined }>({ open: false, refusal: undefined });
+  useLayoutEffect(() => {
+    const current = feedback.current;
+    current.open = true;
+    return () => {
+      current.open = false;
+      if (current.refusal !== undefined) {
+        show([current.refusal]);
+        current.refusal = undefined;
+      }
+    };
+  }, [show]);
   useEffect(() => {
     if (refusal !== undefined) {
       refusalRef.current?.focus();
@@ -119,7 +135,16 @@ function ManageAliasDialog({ dialog, versions, pending, onDismiss, onSubmit }: A
       return;
     }
     const change = deleting ? { operation, name } : { operation, alias: { name: trimmed, version } };
-    void onSubmit(change).then(setRefusal);
+    feedback.current.refusal = undefined;
+    setRefusal(undefined);
+    void onSubmit(change, (item) => {
+      if (!feedback.current.open) {
+        return false;
+      }
+      feedback.current.refusal = item;
+      setRefusal(item);
+      return true;
+    });
   };
 
   return (
@@ -172,6 +197,8 @@ function ManageAliasDialog({ dialog, versions, pending, onDismiss, onSubmit }: A
                   onChange={({ detail }) => {
                     setName(detail.value);
                     setNameError(undefined);
+                    feedback.current.refusal = undefined;
+                    setRefusal(undefined);
                   }}
                 />
               ) : (
@@ -215,15 +242,13 @@ export function VersionsTab({ connection, ready, versions, aliases, mutation }: 
     return undefined;
   };
 
-  async function handleChange(change: ReleaseChange): Promise<FlashItem | undefined> {
+  async function handleChange(change: ReleaseChange, showInline?: InlineReleaseRefusal): Promise<void> {
     if (reasonFor(change.operation) !== undefined || mutation.pending !== undefined) {
-      return undefined;
+      return;
     }
-    const result = await mutation.submit(change);
-    if (result.kind === 'close') {
+    if (await mutation.submit(change, showInline)) {
       setDialog(undefined);
     }
-    return result.kind === 'refused' ? result.item : undefined;
   }
 
   return (
@@ -305,6 +330,33 @@ export function VersionsTab({ connection, ready, versions, aliases, mutation }: 
         }
         columnDefinitions={[
           {
+            id: 'actions',
+            header: 'Actions',
+            width: '76px',
+            cell: (alias) => (
+              <ButtonDropdown
+                variant="icon"
+                ariaLabel={`Actions for alias ${alias.name}`}
+                disabled={mutation.pending !== undefined}
+                items={ALIAS_ROW_ACTIONS.map((operation) => {
+                  const reason = reasonFor(operation);
+                  return {
+                    id: operation,
+                    text: ACTION_LABELS[operation],
+                    ariaLabel: `${ACTION_LABELS[operation]} ${alias.name}`,
+                    ...(reason === undefined ? {} : { disabled: true, disabledReason: reason }),
+                  };
+                })}
+                onItemClick={({ detail }) => {
+                  const operation = ALIAS_ROW_ACTIONS.find((action) => action === detail.id);
+                  if (operation !== undefined) {
+                    setDialog({ operation, alias });
+                  }
+                }}
+              />
+            ),
+          },
+          {
             id: 'name',
             header: 'Alias name',
             isRowHeader: true,
@@ -312,26 +364,6 @@ export function VersionsTab({ connection, ready, versions, aliases, mutation }: 
             cell: ({ name }) => <ValueText kind="name" value={name} />,
           },
           { id: 'version', header: 'Target version', cell: ({ version }) => <Code>{version}</Code> },
-          {
-            id: 'actions',
-            header: 'Actions',
-            cell: (alias) => (
-              <SpaceBetween direction="horizontal" size="xs">
-                {(['UpdateAlias', 'DeleteAlias'] as const).map((operation) => (
-                  <Button
-                    key={operation}
-                    variant="inline-link"
-                    ariaLabel={`${ACTION_LABELS[operation]} ${alias.name}`}
-                    disabled={reasonFor(operation) !== undefined || mutation.pending !== undefined}
-                    disabledReason={reasonFor(operation)}
-                    onClick={() => setDialog({ operation, alias })}
-                  >
-                    {operation === 'UpdateAlias' ? 'Edit' : 'Delete'}
-                  </Button>
-                ))}
-              </SpaceBetween>
-            ),
-          },
         ]}
       />
       {dialog !== undefined && (

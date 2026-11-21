@@ -92,15 +92,16 @@ export function useReleaseReadings(options: ReleaseOptions) {
 
 type ReleaseOperation = ReleaseChange['operation'];
 
+/** True when the dialog displaying this request takes ownership of its refusal. */
+export type InlineReleaseRefusal = (item: FlashItem) => boolean;
+
 interface ReleaseMutationOptions {
   endpoint: string | undefined;
   name: string;
   scope: string;
   onSuccess: (result: ReleaseResult) => void;
-  onFailure: (failure: ReleaseFailure) => FlashItem;
+  onFailure: (failure: ReleaseFailure, showInline?: InlineReleaseRefusal) => void;
 }
-
-type ReleaseSubmission = { kind: 'ignored' | 'close' } | { kind: 'refused'; item: FlashItem };
 
 export function useReleaseMutation({ endpoint, name, scope, onSuccess, onFailure }: ReleaseMutationOptions) {
   const inFlight = useRef<{ scope: string; controller: AbortController } | undefined>(undefined);
@@ -135,29 +136,31 @@ export function useReleaseMutation({ endpoint, name, scope, onSuccess, onFailure
     }) => changeRelease(endpoint, name, change, signal),
   });
 
-  async function submit(change: ReleaseChange): Promise<ReleaseSubmission> {
+  /** True when the action succeeded or is unsupported, so its dialog can close. */
+  async function submit(change: ReleaseChange, showInline?: InlineReleaseRefusal): Promise<boolean> {
     if (endpoint === undefined || inFlight.current !== undefined || state.unsupported.has(change.operation)) {
-      return { kind: 'ignored' };
+      return false;
     }
     const controller = new AbortController();
     inFlight.current = { scope, controller };
     try {
       const result = await mutation.mutateAsync({ endpoint, name, change, signal: controller.signal, scope });
       if (controller.signal.aborted) {
-        return { kind: 'ignored' };
+        return false;
       }
       onSuccess(result);
-      return { kind: 'close' };
+      return true;
     } catch (error) {
       if (controller.signal.aborted) {
-        return { kind: 'ignored' };
+        return false;
       }
       const failure = releaseFailure(change.operation, error);
-      if (failure.kind === 'not-implemented') {
+      const unsupported = failure.kind === 'not-implemented';
+      if (unsupported) {
         setState((previous) => ({ scope, unsupported: new Set([...previous.unsupported, change.operation]) }));
       }
-      const item = onFailure(failure);
-      return failure.kind === 'not-implemented' ? { kind: 'close' } : { kind: 'refused', item };
+      onFailure(failure, unsupported ? undefined : showInline);
+      return unsupported;
     } finally {
       if (inFlight.current?.controller === controller) {
         inFlight.current = undefined;
