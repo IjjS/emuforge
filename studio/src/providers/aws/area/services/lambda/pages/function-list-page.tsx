@@ -326,17 +326,20 @@ export function FunctionListPage({ connection }: { connection: AreaConnection })
         });
       }
     },
-    [selected, listing.failure, network.revision, connection.engineOrigin],
+    [selected, listing.failure, network.revision, connection.engineOrigin, setDeleting],
   );
 
-  const handleDialogClose = useCallback((result?: DeleteResult) => {
-    if (result?.interrupted) {
-      setSelectedNames((names) => names.filter((name) => !result.deleted.includes(name)));
-    }
-    setDeleting(undefined);
-    // Focus returns to what opened the dialog (R7).
-    actionsRef.current?.focus();
-  }, []);
+  const handleDialogClose = useCallback(
+    (result?: DeleteResult) => {
+      if (result?.interrupted) {
+        setSelectedNames((names) => names.filter((name) => !result.deleted.includes(name)));
+      }
+      setDeleting(undefined);
+      // Focus returns to what opened the dialog (R7).
+      actionsRef.current?.focus();
+    },
+    [setDeleting],
+  );
 
   const handleCreate = useCallback(() => {
     void navigate(CREATE_FUNCTION_PATH);
