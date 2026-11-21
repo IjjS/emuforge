@@ -910,13 +910,18 @@ describe('preferences', () => {
     expect(table().findLoadingText()?.getElement()).toHaveTextContent('Loading functions');
     expect(isDisabled(deletionMenu().findNativeButton().getElement())).toBe(true);
     expect(engine.deletes).toEqual([]);
-    const modal = preferences()?.findModal();
-    expect(modal?.getElement()).toBeVisible();
-    expect(modal?.findHeader().getElement()).toHaveTextContent('Preferences');
-    const [ten] = modal?.findPageSizePreference()?.findOptions() ?? [];
-    expect(ten?.getElement()).toHaveTextContent('10 functions');
-    ten?.click();
-    const confirm = modal?.findConfirmButton();
+    const modal = await waitFor(() => {
+      const found = preferences()?.findModal();
+      if (!found) throw new Error('Expected Preferences while the verifying read is held');
+      expect(found.getElement()).toBeVisible();
+      return found;
+    });
+    expect(modal.findHeader().getElement()).toHaveTextContent('Preferences');
+    const [ten] = modal.findPageSizePreference()?.findOptions() ?? [];
+    if (!ten) throw new Error('Expected the first page-size option');
+    expect(ten.findLabel()?.getElement()).toHaveTextContent('10 functions');
+    fireEvent.click(ten.findNativeInput().getElement());
+    const confirm = modal.findConfirmButton();
     expect(confirm?.getElement()).toHaveAccessibleName('Confirm');
     confirm?.click();
 
@@ -924,6 +929,7 @@ describe('preferences', () => {
     await expectNames(pageOne);
     expect(preferences()?.findModal()).toBeNull();
     expect(engine.lists.at(-1)?.searchParams.get('MaxItems')).toBe('10');
+    expect(isDisabled(deletionMenu().findNativeButton().getElement())).toBe(false);
     const pagination = table().findPagination();
     const next = pagination?.findNextPageButton().getElement();
     if (!next) throw new Error('Expected the next page button');
@@ -935,7 +941,8 @@ describe('preferences', () => {
       expect(engine.lists.at(-1)?.searchParams.get('Marker')).toBe('f-10');
       expect(isDisabled(next)).toBe(true);
     });
-    expect(names()).toEqual(pageOne);
+    await expectNames(pageOne);
+    expect(table().findPagination()?.findCurrentPage().getElement()).toHaveAccessibleName('Page 1');
     const heldRequest = engine.lists[1];
     if (!heldRequest) throw new Error('Expected the held verification read');
     await act(async () => release(engine.emulator({ method: 'GET', url: heldRequest })));

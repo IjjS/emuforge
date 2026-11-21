@@ -198,6 +198,27 @@ export function FunctionListPage({ connection }: { connection: AreaConnection })
   const { functions, refresh } = listing;
   const loaded = functions !== undefined;
   const state = bodyState(listing, filter, connection);
+  const [preliminaryPreferencesEndpoint, setPreliminaryPreferencesEndpoint] = useState<string>();
+  const endpoint = connection.engineOrigin;
+  if (result === undefined && observed.revision === 0 && loaded) {
+    if (preliminaryPreferencesEndpoint !== endpoint) {
+      setPreliminaryPreferencesEndpoint(endpoint);
+    }
+  } else if (
+    preliminaryPreferencesEndpoint !== undefined &&
+    (preliminaryPreferencesEndpoint !== endpoint ||
+      observed.revision > 1 ||
+      (result !== undefined && (!connected || loaded || listing.failure !== undefined)))
+  ) {
+    setPreliminaryPreferencesEndpoint(undefined);
+  }
+  // Cloudscape removes an open Preferences modal when disabled. Keep the local controls available
+  // during the first verified read if the preliminary listing already enabled them.
+  const verifyingPreliminaryListing =
+    connected &&
+    observed.revision === 1 &&
+    preliminaryPreferencesEndpoint !== undefined &&
+    preliminaryPreferencesEndpoint === endpoint;
   useLayoutEffect(() => {
     const offline = () => {
       connectionRevision.current += 1;
@@ -516,7 +537,7 @@ export function FunctionListPage({ connection }: { connection: AreaConnection })
             cancelLabel="Cancel"
             // The dismiss control has its own name, as in the console; Cloudscape would name it "Cancel" too.
             closeAriaLabel="Close modal"
-            disabled={!loaded && starter !== 'preferences'}
+            disabled={!loaded && starter !== 'preferences' && !verifyingPreliminaryListing}
             preferences={preferences}
             pageSizePreference={{
               title: 'Page size',
