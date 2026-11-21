@@ -980,7 +980,65 @@ describe('loading and empty', () => {
     expect(filterInput()).not.toBeDisabled();
     expect(headingText()).toBe('Event Functions (1)');
   });
-  it('reports an expired offline confirmation once when no deletion was sent', async () => {
+  it.each(['Cancel', 'Escape'] as const)(
+    'blocks an exact confirmation while already offline and allows ordinary %s dismissal',
+    async (dismissal) => {
+      const reason = 'The browser is offline. Reconnect before deleting functions.';
+      const { client, unmount } = await openLoaded([NODE, { name: 'payments' }]);
+      const wasOnline = onlineManager.isOnline();
+      const browserOnline = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
+      try {
+        fireEvent(window, new Event('offline'));
+        expect(onlineManager.isOnline()).toBe(false);
+        fireEvent.click(selectionAt(1, 'orders'));
+        fireEvent.click(selectionAt(2, 'payments'));
+        const controls = await confirmDialog();
+        expect(controls.names).toEqual(['orders', 'payments']);
+        const dialog = visibleDialog();
+        const status = dialog?.findContent().findFormField()?.findDescription()?.find('[role="status"]')?.getElement();
+        expect(status).toBeVisible();
+        expect(status).toHaveTextContent(reason);
+        const close = dialog?.findHeader().findButton()?.getElement();
+        expect(close).toHaveAccessibleName('Close modal');
+        expect(close).toBeEnabled();
+        const field = controls.input.findNativeInput().getElement();
+        expect(field).toHaveAccessibleDescription(reason);
+        expect(field).not.toHaveAttribute('readonly');
+        act(() => controls.input.setInputValue('confirm'));
+        expect(field).toHaveValue('confirm');
+        expect(controls.submit.getElement()).toBeDisabled();
+        expect(controls.submit.getElement()).toHaveAccessibleDescription(reason);
+        act(() => controls.submit.click());
+        fireEvent.keyDown(field, { key: 'Enter', keyCode: 13 });
+        expect(client.getMutationCache().getAll()).toEqual([]);
+        expect(engine.deletes).toEqual([]);
+        expect(visibleDialog()?.findContent().getElement()).not.toHaveTextContent('Deleting functions…');
+        expect(controls.cancel.getElement()).toBeEnabled();
+        expect(flashTexts()).toEqual([]);
+
+        if (dismissal === 'Cancel') {
+          act(() => controls.cancel.click());
+        } else {
+          field.focus();
+          fireEvent.keyDown(field, { key: 'Escape', keyCode: 27 });
+        }
+        await waitFor(() => {
+          expect(visibleDialog()).toBeUndefined();
+          expect(controls.menuButton).toHaveFocus();
+        });
+        expect(selectionAt(1, 'orders')).toBeChecked();
+        expect(selectionAt(2, 'payments')).toBeChecked();
+        expect(engine.deletes).toEqual([]);
+        expect(flashTexts()).toEqual([]);
+      } finally {
+        unmount();
+        browserOnline.mockRestore();
+        onlineManager.setOnline(wasOnline);
+      }
+    },
+  );
+
+  it('reports a connection interruption once when online submission was queued before dispatch', async () => {
     const message =
       'The browser connection changed before any deletion outcome was confirmed. Reopen Delete from Actions and confirm again.';
     const announcements = recordAnnouncements('[role="status"][aria-atomic="true"]');
@@ -996,10 +1054,15 @@ describe('loading and empty', () => {
       act(() => original.input.setInputValue('confirm'));
       expect(original.submit.getElement()).toBeEnabled();
 
-      browserOnline.mockReturnValue(false);
-      fireEvent(window, new Event('offline'));
+      expect(onlineManager.isOnline()).toBe(true);
+      act(() => {
+        original.submit.click();
+        expect(client.getMutationCache().getAll()[0]?.state.status).toBe('pending');
+        expect(engine.deletes).toEqual([]);
+        browserOnline.mockReturnValue(false);
+        window.dispatchEvent(new Event('offline'));
+      });
       expect(onlineManager.isOnline()).toBe(false);
-      act(() => original.submit.click());
       await waitFor(() => {
         const [queued] = client.getMutationCache().getAll();
         expect(queued?.state.isPaused).toBe(true);
