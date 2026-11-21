@@ -10,7 +10,7 @@ import Pagination from '@cloudscape-design/components/pagination';
 import PropertyFilter, { type PropertyFilterProps } from '@cloudscape-design/components/property-filter';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Table, { type TableProps } from '@cloudscape-design/components/table';
-import { useCallback, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 
 import { useAreaModalRoot } from '../../../components/area-modal';
@@ -59,18 +59,7 @@ const PAGE_SIZES = [10, 25, 50] as const;
 /** No property: the filter takes free text only (R4.7). */
 const NO_PROPERTIES: readonly PropertyFilterProps.FilteringProperty[] = [];
 
-function subscribeToBrowserConnection(onChange: () => void): () => void {
-  window.addEventListener('offline', onChange);
-  window.addEventListener('online', onChange);
-  return () => {
-    window.removeEventListener('offline', onChange);
-    window.removeEventListener('online', onChange);
-  };
-}
-
-function browserOnline(): boolean {
-  return navigator.onLine;
-}
+const NO_DELETE_TARGETS: readonly string[] = [];
 
 /** What the table's body shows (R10.1), the rows aside. */
 type BodyState =
@@ -174,7 +163,8 @@ export function FunctionListPage({ connection }: { connection: AreaConnection })
   const modalRoot = useAreaModalRoot();
   const [announcement, announce] = useAnnouncer();
   const actionsRef = useRef<ButtonDropdownProps.Ref>(null);
-  const online = useSyncExternalStore(subscribeToBrowserConnection, browserOnline);
+  const connectionRevision = useRef(0);
+  const [network, setNetwork] = useState(() => ({ online: navigator.onLine, revision: 0 }));
 
   const [filter, setFilter] = useState('');
   const [preferences, setPreferences] = useState(START_PREFERENCES);
@@ -189,6 +179,23 @@ export function FunctionListPage({ connection }: { connection: AreaConnection })
   const { functions, refresh } = listing;
   const loaded = functions !== undefined;
   const state = bodyState(listing, filter, connection);
+  useLayoutEffect(() => {
+    const offline = () => {
+      connectionRevision.current += 1;
+      setNetwork({ online: false, revision: connectionRevision.current });
+    };
+    const online = () => {
+      connectionRevision.current += 1;
+      setNetwork({ online: true, revision: connectionRevision.current });
+      refresh();
+    };
+    window.addEventListener('offline', offline, true);
+    window.addEventListener('online', online, true);
+    return () => {
+      window.removeEventListener('offline', offline, true);
+      window.removeEventListener('online', online, true);
+    };
+  }, [refresh]);
 
   // Several rows, by name: a name stays selected while it is on the page shown (R4.3, R4.4).
   const [selectedNames, setSelectedNames] = useState<readonly string[]>([]);
@@ -200,8 +207,22 @@ export function FunctionListPage({ connection }: { connection: AreaConnection })
   }
   const selected = (functions ?? []).filter((fn) => selectedNames.includes(fn.name));
 
-  // The names "Delete functions" is open for; none while it is closed.
-  const [deleting, setDeleting] = useState<readonly string[]>([]);
+  const [deleting, setDeleting] = useState<{
+    names: readonly string[];
+    revision: number;
+    endpoint: string | undefined;
+  }>();
+  const confirmationExpired =
+    deleting !== undefined &&
+    (deleting.revision !== network.revision ||
+      deleting.endpoint !== connection.engineOrigin ||
+      !loaded ||
+      listing.failure !== undefined ||
+      !deleting.names.every((name) => selected.some((fn) => fn.name === name)));
+  const canSubmitDeletion = useCallback(
+    () => !confirmationExpired && deleting?.revision === connectionRevision.current,
+    [confirmationExpired, deleting],
+  );
 
   const startListing = useCallback(() => {
     setStarter(null);
@@ -292,21 +313,33 @@ export function FunctionListPage({ connection }: { connection: AreaConnection })
 
   const handleAction = useCallback(
     ({ detail }: { detail: ButtonDropdownProps.ItemClickDetails }) => {
-      if (detail.id === 'delete' && selected.length > 0) {
-        setDeleting(selected.map((fn) => fn.name));
+      if (
+        detail.id === 'delete' &&
+        selected.length > 0 &&
+        listing.failure === undefined &&
+        network.revision === connectionRevision.current
+      ) {
+        setDeleting({
+          names: selected.map((fn) => fn.name),
+          revision: network.revision,
+          endpoint: connection.engineOrigin,
+        });
       }
     },
-    [selected],
+    [selected, listing.failure, network.revision, connection.engineOrigin, setDeleting],
   );
 
-  const handleDialogClose = useCallback((result?: DeleteResult) => {
-    if (result?.interrupted) {
-      setSelectedNames((names) => names.filter((name) => !result.deleted.includes(name)));
-    }
-    setDeleting([]);
-    // Focus returns to what opened the dialog (R7).
-    actionsRef.current?.focus();
-  }, []);
+  const handleDialogClose = useCallback(
+    (result?: DeleteResult) => {
+      if (result?.interrupted) {
+        setSelectedNames((names) => names.filter((name) => !result.deleted.includes(name)));
+      }
+      setDeleting(undefined);
+      // Focus returns to what opened the dialog (R7).
+      actionsRef.current?.focus();
+    },
+    [setDeleting],
+  );
 
   const handleCreate = useCallback(() => {
     void navigate(CREATE_FUNCTION_PATH);
@@ -390,7 +423,7 @@ export function FunctionListPage({ connection }: { connection: AreaConnection })
                 <ButtonDropdown
                   ref={actionsRef}
                   items={[{ id: 'delete', text: 'Delete' }]}
-                  disabled={selected.length === 0}
+                  disabled={selected.length === 0 || listing.failure !== undefined}
                   disabledReason={SELECT_FIRST}
                   onItemClick={handleAction}
                 >
@@ -451,9 +484,11 @@ export function FunctionListPage({ connection }: { connection: AreaConnection })
         }
       />
       <DeleteFunctionsDialog
-        names={deleting}
+        names={deleting?.names ?? NO_DELETE_TARGETS}
         connection={connection}
-        online={online}
+        online={network.online}
+        confirmationExpired={confirmationExpired}
+        canSubmit={canSubmitDeletion}
         onClose={handleDialogClose}
         reportEmptyInterruption
       />

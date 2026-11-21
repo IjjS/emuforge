@@ -59,6 +59,10 @@ export interface DeleteFunctionsDialogProps {
   onClose: (result?: DeleteResult) => void;
   /** The list can open its dialog offline, so it supplies the browser's connection state. */
   online?: boolean;
+  /** The listing that supplied this confirmation is no longer current. */
+  confirmationExpired?: boolean;
+  /** Checks the list's connection revision before a queued React render can close an expired draft. */
+  canSubmit?: () => boolean;
   /** The list reports interrupted submissions even when no outcome was settled. */
   reportEmptyInterruption?: boolean;
   /** Called before removing a confirmation that contains keyboard focus. */
@@ -80,6 +84,8 @@ export function DeleteFunctionsDialog({
   connection,
   onClose,
   online,
+  confirmationExpired = false,
+  canSubmit,
   reportEmptyInterruption = false,
   onDeleted,
   onFocusedDismissal,
@@ -101,6 +107,12 @@ export function DeleteFunctionsDialog({
   }, [visible, pending]);
 
   const submitting = useRef(false);
+  useLayoutEffect(() => {
+    // A submitted request keeps its dialog and reports its own settlement.
+    if (visible && confirmationExpired && !submitting.current) {
+      onClose();
+    }
+  }, [visible, confirmationExpired, onClose]);
   const mounted = useRef(false);
   useLayoutEffect(() => {
     mounted.current = true;
@@ -132,7 +144,7 @@ export function DeleteFunctionsDialog({
 
   const handleDelete = useCallback(() => {
     const offline = online !== undefined && (!online || !navigator.onLine);
-    if (!visible || !confirmed || offline || pending || submitting.current) {
+    if (!visible || !confirmed || offline || pending || submitting.current || canSubmit?.() === false) {
       return;
     }
     submitting.current = true;
@@ -167,6 +179,7 @@ export function DeleteFunctionsDialog({
     confirmed,
     pending,
     online,
+    canSubmit,
     connection.engineOrigin,
     remove,
     names,
@@ -213,7 +226,7 @@ export function DeleteFunctionsDialog({
             <Button
               ref={deleteButton}
               variant="primary"
-              disabled={!pending && (!confirmed || online === false)}
+              disabled={!pending && (!confirmed || online === false || confirmationExpired)}
               {...(showOfflineReason && { ariaDescribedby: offlineReasonId })}
               loading={pending}
               loadingText={DELETING}
