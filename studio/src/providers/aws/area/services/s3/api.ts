@@ -17,12 +17,12 @@ import {
   ListObjectsV2Command,
   ListObjectVersionsCommand,
   PutBucketEncryptionCommand,
+  PutBucketNotificationConfigurationCommand,
   PutBucketVersioningCommand,
   PutObjectCommand,
   PutPublicAccessBlockCommand,
   UploadPartCommand,
-  type FilterRule,
-  type GetBucketNotificationConfigurationCommandOutput,
+  type NotificationConfiguration,
   type HeadObjectCommandOutput,
   type ListBucketsCommandOutput,
   type ListObjectsV2CommandOutput,
@@ -156,6 +156,7 @@ export const OPERATIONS = {
   getBucketTagging: 'GetBucketTagging',
   getBucketEncryption: 'GetBucketEncryption',
   getBucketNotificationConfiguration: 'GetBucketNotificationConfiguration',
+  putBucketNotificationConfiguration: 'PutBucketNotificationConfiguration',
   getBucketWebsite: 'GetBucketWebsite',
   listObjectsV2: 'ListObjectsV2',
   listObjectVersions: 'ListObjectVersions',
@@ -289,72 +290,43 @@ export function getBucketEncryption(
   );
 }
 
-/** One row of "Event notifications" (R5.3). */
-export interface EventNotification {
-  /** "Event name", `Id`. */
-  name?: string;
-  /** "Event types", `Events` in the answer's order. */
-  events: string[];
-  prefix?: string;
-  suffix?: string;
-  destinationType: 'SNS topic' | 'SQS queue' | 'Lambda function';
-  /** "Destination", the ARN. */
-  destination?: string;
-}
-
-/** "Event notifications". */
-export interface NotificationSettings {
-  notifications: EventNotification[];
-}
-
-interface NotificationConfiguration {
-  Id?: string | undefined;
-  Events?: string[] | undefined;
-  Filter?: { Key?: { FilterRules?: FilterRule[] | undefined } | undefined } | undefined;
-}
-
-function toNotification(
-  { Id, Events, Filter }: NotificationConfiguration,
-  destinationType: EventNotification['destinationType'],
-  arn: string | undefined,
-): EventNotification {
-  const rule = (name: string) =>
-    text(Filter?.Key?.FilterRules?.find((filterRule) => filterRule.Name?.toLowerCase() === name)?.Value);
-  const notification: EventNotification = { events: (Events ?? []).filter((event) => event !== ''), destinationType };
-  const eventName = text(Id);
-  const prefix = rule('prefix');
-  const suffix = rule('suffix');
-  const destination = text(arn);
-  if (eventName !== undefined) notification.name = eventName;
-  if (prefix !== undefined) notification.prefix = prefix;
-  if (suffix !== undefined) notification.suffix = suffix;
-  if (destination !== undefined) notification.destination = destination;
-  return notification;
-}
-
-function toNotifications(output: GetBucketNotificationConfigurationCommandOutput): NotificationSettings {
-  return {
-    notifications: [
-      ...(output.TopicConfigurations ?? []).map((c) => toNotification(c, 'SNS topic', c.TopicArn)),
-      ...(output.QueueConfigurations ?? []).map((c) => toNotification(c, 'SQS queue', c.QueueArn)),
-      ...(output.LambdaFunctionConfigurations ?? []).map((c) =>
-        toNotification(c, 'Lambda function', c.LambdaFunctionArn),
-      ),
-    ],
-  };
-}
+export type { NotificationConfiguration } from '@aws-sdk/client-s3';
 
 export function getBucketNotificationConfiguration(
   endpoint: string,
   bucket: string,
   signal: AbortSignal,
-): Promise<NotificationSettings | NoSuchBucket> {
+): Promise<NotificationConfiguration | NoSuchBucket> {
   return onBucket(
     endpoint,
     OPERATIONS.getBucketNotificationConfiguration,
     (client, abortSignal) =>
       client.send(new GetBucketNotificationConfigurationCommand({ Bucket: bucket }), { abortSignal }),
-    toNotifications,
+    ({ QueueConfigurations, LambdaFunctionConfigurations, TopicConfigurations, EventBridgeConfiguration }) => ({
+      QueueConfigurations,
+      LambdaFunctionConfigurations,
+      TopicConfigurations,
+      EventBridgeConfiguration,
+    }),
+    signal,
+  );
+}
+
+export function putBucketNotificationConfiguration(
+  endpoint: string,
+  bucket: string,
+  configuration: NotificationConfiguration,
+  signal: AbortSignal,
+): Promise<void | NoSuchBucket> {
+  return onBucket(
+    endpoint,
+    OPERATIONS.putBucketNotificationConfiguration,
+    (client, abortSignal) =>
+      client.send(
+        new PutBucketNotificationConfigurationCommand({ Bucket: bucket, NotificationConfiguration: configuration }),
+        { abortSignal },
+      ),
+    () => undefined,
     signal,
   );
 }

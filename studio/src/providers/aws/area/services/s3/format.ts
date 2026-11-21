@@ -64,6 +64,32 @@ export function createEventNotificationPath(name: string): string {
   return `${S3_PATH}/bucket/${segment(name)}/property/event-notification/create`;
 }
 
+export function editEventNotificationPath(name: string, id: string): string {
+  return `${S3_PATH}/bucket/${segment(name)}/property/event-notification/~${segment(id)}/edit`;
+}
+
+/** The area has already decoded the segment once. The marker also protects dot-segment IDs. */
+export function eventNotificationId(segmentValue: string | undefined): string | undefined {
+  return segmentValue?.startsWith('~') ? segmentValue.slice(1) : undefined;
+}
+
+const QUEUE_ARN = /^arn:aws(?:-[a-z0-9-]+)?:sqs:[a-z0-9-]+:\d{12}:([A-Za-z0-9_-]{1,80}(?:\.fifo)?)$/;
+const FUNCTION_ARN =
+  /^arn:aws(?:-[a-z0-9-]+)?:lambda:[a-z0-9-]+:\d{12}:function:([A-Za-z0-9_-]{1,64})(?::[A-Za-z0-9_$-]+)?$/;
+
+export function notificationDestinationPath(type: string, arn: string | undefined): string | undefined {
+  if (arn === undefined) return undefined;
+  if (type === 'SQS queue') {
+    const name = QUEUE_ARN.exec(arn)?.[1];
+    return name === undefined ? undefined : `${AWS_PATH}/sqs/queues/queue/${segment(name)}`;
+  }
+  if (type === 'Lambda function') {
+    const name = FUNCTION_ARN.exec(arn)?.[1];
+    return name === undefined ? undefined : `${AWS_PATH}/lambda/functions/function/${segment(name)}?tab=monitor`;
+  }
+  return undefined;
+}
+
 /** "Empty" for a bucket. */
 export function emptyBucketPath(name: string): string {
   return `${S3_PATH}/bucket/${segment(name)}/empty`;

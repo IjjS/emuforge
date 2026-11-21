@@ -19,8 +19,17 @@ import {
   listObjectVersions,
   NO_SUCH_BUCKET,
   putBucketEncryption,
+  putBucketNotificationConfiguration,
   putPublicAccessBlock,
 } from './api';
+import {
+  filterValue,
+  notificationDraft,
+  notificationRules,
+  OBJECT_PUT,
+  replaceNotification,
+  sameNotifications,
+} from './notifications';
 // @ts-expect-error -- the S3 folder keeps no failure of its own (issue 445, R8): the shared module's is the one.
 import type { ReadFailure as GoneReadFailure, S3ReadError as GoneS3ReadError } from './api';
 
@@ -475,8 +484,8 @@ describe('the reads of a bucket’s page', () => {
 
   it('gives a topic, a queue and a function configuration as three rows, topic first', async () => {
     const filter = (prefix: string, suffix: string) =>
-      `<Filter><S3Key><FilterRule><Name>prefix</Name><Value>${prefix}</Value></FilterRule>` +
-      `<FilterRule><Name>suffix</Name><Value>${suffix}</Value></FilterRule></S3Key></Filter>`;
+      `<Filter><S3Key><FilterRule><Name>Prefix</Name><Value>${prefix}</Value></FilterRule>` +
+      `<FilterRule><Name>Suffix</Name><Value>${suffix}</Value></FilterRule></S3Key></Filter>`;
     engine.aws = () =>
       xml(
         '<NotificationConfiguration>' +
@@ -489,41 +498,130 @@ describe('the reads of a bucket’s page', () => {
           '<EventBridgeConfiguration></EventBridgeConfiguration></NotificationConfiguration>',
       );
 
-    expect(await getBucketNotificationConfiguration(endpoint, 'b', signal())).toEqual({
-      notifications: [
-        {
-          name: 'to-topic',
-          events: ['s3:ObjectCreated:Put', 's3:ObjectCreated:Post'],
-          prefix: 'images/',
-          suffix: '.jpg',
-          destinationType: 'SNS topic',
-          destination: 'arn:aws:sns:us-east-1:000000000000:t',
-        },
-        {
-          name: 'to-queue',
-          events: ['s3:ObjectRemoved:*'],
-          prefix: 'logs/',
-          suffix: '.txt',
-          destinationType: 'SQS queue',
-          destination: 'arn:aws:sqs:us-east-1:000000000000:q',
-        },
-        {
-          name: 'to-function',
-          events: ['s3:ObjectCreated:*'],
-          prefix: 'in/',
-          suffix: '.csv',
-          destinationType: 'Lambda function',
-          destination: 'arn:aws:lambda:us-east-1:000000000000:function:f',
-        },
-      ],
+    const original = await getBucketNotificationConfiguration(endpoint, 'b', signal());
+    if (original === NO_SUCH_BUCKET) throw new Error('Missing fixture bucket');
+    const rules = notificationRules(original);
+    expect(
+      rules.map((rule) => ({
+        id: rule.data.Id,
+        type: rule.type,
+        arn: rule.arn,
+        events: rule.data.Events,
+        prefix: filterValue(rule, 'prefix'),
+        suffix: filterValue(rule, 'suffix'),
+      })),
+    ).toEqual([
+      {
+        id: 'to-topic',
+        type: 'SNS topic',
+        arn: 'arn:aws:sns:us-east-1:000000000000:t',
+        events: ['s3:ObjectCreated:Put', 's3:ObjectCreated:Post'],
+        prefix: 'images/',
+        suffix: '.jpg',
+      },
+      {
+        id: 'to-queue',
+        type: 'SQS queue',
+        arn: 'arn:aws:sqs:us-east-1:000000000000:q',
+        events: ['s3:ObjectRemoved:*'],
+        prefix: 'logs/',
+        suffix: '.txt',
+      },
+      {
+        id: 'to-function',
+        type: 'Lambda function',
+        arn: 'arn:aws:lambda:us-east-1:000000000000:function:f',
+        events: ['s3:ObjectCreated:*'],
+        prefix: 'in/',
+        suffix: '.csv',
+      },
+    ]);
+    expect(original.EventBridgeConfiguration).toEqual({});
+
+    engine.aws = () => ({ status: 204 });
+    for (const target of rules) {
+      if (target.type === 'SNS topic') continue;
+      const edit = replaceNotification(original, {
+        kind: 'edit',
+        target,
+        draft: { ...notificationDraft(target), prefix: 'edited/' },
+      });
+      const deletion = replaceNotification(original, { kind: 'delete', target });
+      if (!('configuration' in edit) || !('configuration' in deletion)) throw new Error('Replacement refused');
+      const edited = notificationRules(edit.configuration);
+      expect(edited.filter((rule) => rule.type !== target.type)).toEqual(
+        rules.filter((rule) => rule.type !== target.type),
+      );
+      expect(edited.find((rule) => rule.type === target.type)?.data.Events).toEqual(target.data.Events);
+      expect(notificationRules(deletion.configuration)).toEqual(rules.filter((rule) => rule.type !== target.type));
+      for (const { configuration } of [edit, deletion]) {
+        expect(configuration.EventBridgeConfiguration).toEqual({});
+        await putBucketNotificationConfiguration(endpoint, 'b', configuration, signal());
+        const request = engine.sent.at(-1);
+        expect(request?.method).toBe('PUT');
+        expect(new URL(request?.url ?? '').searchParams.has('notification')).toBe(true);
+        const body = await request?.text();
+        expect(body).toContain('<EventBridgeConfiguration');
+        expect(body).toContain('<Topic>arn:aws:sns:us-east-1:000000000000:t</Topic>');
+        expect(body).toContain('<Name>Prefix</Name><Value>images/</Value>');
+        expect(body).toContain(target.type === 'SQS queue' ? '<Id>to-function</Id>' : '<Id>to-queue</Id>');
+      }
+    }
+    const create = replaceNotification(original, {
+      kind: 'create',
+      draft: { ...notificationDraft(), id: 'new', arn: 'arn:aws:sqs:us-east-1:000000000000:new' },
     });
+    if (!('configuration' in create)) throw new Error('Creation refused');
+    expect(notificationRules(create.configuration).filter((rule) => rule.data.Id !== 'new')).toEqual(rules);
+    expect(create.configuration.EventBridgeConfiguration).toEqual({});
+    await putBucketNotificationConfiguration(endpoint, 'b', create.configuration, signal());
+    expect(await engine.sent.at(-1)?.text()).toContain('<Id>new</Id>');
   });
 
-  it('gives no notification configuration as no rows', async () => {
+  it('represents an empty notification document without enabling EventBridge', async () => {
     engine.aws = () => xml('<NotificationConfiguration/>');
+    const configuration = await getBucketNotificationConfiguration(endpoint, 'b', signal());
+    expect(configuration).not.toBe(NO_SUCH_BUCKET);
+    if (configuration === NO_SUCH_BUCKET) return;
+    expect(notificationRules(configuration)).toEqual([]);
+    expect(sameNotifications(configuration, {})).toBe(true);
+    expect(sameNotifications(configuration, { EventBridgeConfiguration: {} })).toBe(false);
+  });
 
-    expect(await getBucketNotificationConfiguration(endpoint, 'b', signal())).toEqual({
-      notifications: [],
+  it('preserves external events or explicitly replaces them and refuses a stale or ambiguous target', () => {
+    const queue = {
+      Id: 'q',
+      QueueArn: 'arn:aws:sqs:us-east-1:000000000000:q',
+      Events: ['s3:ObjectCreated:Copy', 's3:ObjectRemoved:Delete'] as (
+        's3:ObjectCreated:Copy' | 's3:ObjectRemoved:Delete'
+      )[],
+      Filter: { Key: { FilterRules: [{ Name: 'prefix' as const, Value: 'before/' }] } },
+    };
+    const configuration = { QueueConfigurations: [queue] };
+    const target = notificationRules(configuration)[0];
+    if (target?.type !== 'SQS queue') throw new Error('Missing queue');
+    const draft = { ...notificationDraft(target), prefix: 'after/' };
+    const sibling = { ...queue, Id: 'external' };
+    const fresh = { QueueConfigurations: [queue, sibling] };
+    const kept = replaceNotification(fresh, { kind: 'edit', target, draft });
+    expect(kept).toMatchObject({
+      configuration: {
+        QueueConfigurations: [
+          { ...queue, Filter: { Key: { FilterRules: [{ Name: 'prefix', Value: 'after/' }] } } },
+          sibling,
+        ],
+      },
+    });
+    expect(replaceNotification(fresh, { kind: 'edit', target, draft: { ...draft, event: OBJECT_PUT } })).toMatchObject({
+      configuration: { QueueConfigurations: [{ Events: [OBJECT_PUT] }, sibling] },
+    });
+    for (const queues of [[], [queue, queue], [{ ...queue, Events: [] }]]) {
+      expect(replaceNotification({ QueueConfigurations: queues }, { kind: 'delete', target })).toEqual({
+        problem: 'changed',
+      });
+    }
+    expect(replaceNotification(configuration, { kind: 'delete', target })).toEqual({
+      configuration: { QueueConfigurations: [] },
     });
   });
 
