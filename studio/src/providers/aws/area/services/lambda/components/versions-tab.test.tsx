@@ -441,23 +441,20 @@ describe('Release actions', () => {
       await waitFor(() => expect(queued?.state.isPaused).toBe(true));
       expect(engine.count('DeleteAlias')).toBe(0);
 
-      browserOnline.mockReturnValue(false);
-      act(() => {
-        window.dispatchEvent(new Event('offline'));
-        const submission = queued?.state.variables as { signal: AbortSignal } | undefined;
-        expect(submission?.signal.aborted).toBe(true);
-      });
-      expect(PAGE.findModal()).toBeNull();
-
-      engine.aliases = { live: '2' };
-      engine.handlers.DeleteAlias = () => succeed('DeleteAlias');
       const detail = holdResponse();
-      engine.handlers.GetFunction = async () => (await detail.promise).clone();
-      browserOnline.mockReturnValue(true);
       await act(async () => {
+        browserOnline.mockReturnValue(false);
+        window.dispatchEvent(new Event('offline'));
+
+        engine.aliases = { live: '2' };
+        engine.handlers.DeleteAlias = () => succeed('DeleteAlias');
+        engine.handlers.GetFunction = async () => (await detail.promise).clone();
+        browserOnline.mockReturnValue(true);
+        // Resume in the same React batch so a newly committed page scope cannot be the only guard.
         window.dispatchEvent(new Event('online'));
         await client.resumePausedMutations();
       });
+      expect(PAGE.findModal()).toBeNull();
       expect(queued?.state.error).toMatchObject({ name: 'AbortError' });
       expect(engine.count('DeleteAlias')).toBe(0);
       expectNoPageFlash();
