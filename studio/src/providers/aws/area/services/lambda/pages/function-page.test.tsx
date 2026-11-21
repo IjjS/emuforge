@@ -1402,14 +1402,26 @@ describe('Qualified Test invocations', () => {
     return { status: 200, body: JSON.stringify({ payload }), headers: { 'x-amz-log-result': btoa(log) } };
   }
 
+  function findResultPanel() {
+    return PAGE.findAllContainers()
+      .find((container) => norm(container.findHeader()?.getElement().textContent) === 'Result')
+      ?.getElement();
+  }
+
   function resultPanel() {
-    const panel = PAGE.findAllContainers().find(
-      (container) => norm(container.findHeader()?.getElement().textContent) === 'Result',
-    );
+    const panel = findResultPanel();
     if (panel === undefined) {
       throw new Error('Expected the invocation result panel');
     }
-    return panel.getElement();
+    return panel;
+  }
+
+  async function waitForResult(text: string) {
+    await waitFor(() => {
+      const panel = resultPanel();
+      expect(panel).toBeVisible();
+      expect(panel).toHaveTextContent(text);
+    });
   }
 
   beforeEach(() => {
@@ -1441,7 +1453,7 @@ describe('Qualified Test invocations', () => {
             : aliasAnswer('live', '2');
 
       open(pagePath('orders'));
-      await screen.findByText('Not invoked yet');
+      await waitForResult('Not invoked yet');
       await chooseTarget('live');
       const event = '{"tag":"kept"}';
       eventField().setTextareaValue(event);
@@ -1453,13 +1465,13 @@ describe('Qualified Test invocations', () => {
 
       reopening = true;
       fireEvent.click(tabLink('Test'));
-      expect(await screen.findByText('Not invoked yet')).toBeVisible();
+      await waitForResult('Not invoked yet');
       expect(eventField().getTextareaValue()).toBe(event);
       expect(targets().findTrigger().getElement()).toHaveTextContent('2');
 
       await act(async () => invoke.resolve(result('from the live alias', 'live tail')));
       await waitFor(() => expect(engine.gets).toHaveLength(2));
-      expect(await screen.findByText('from the live alias', { exact: false })).toBeVisible();
+      await waitForResult('from the live alias');
       expect(resultPanel()).toHaveTextContent('Submitted target live');
       expect(resultPanel()).toHaveTextContent('live tail');
 
@@ -1515,7 +1527,7 @@ describe('Qualified Test invocations', () => {
     const scroll = vi.spyOn(Element.prototype, 'scrollIntoView');
     engine.answerInvoke = () => pending.promise;
     open(pagePath('orders'));
-    await screen.findByText('Not invoked yet');
+    await waitForResult('Not invoked yet');
     await chooseTarget('live');
     invokeTarget();
     await waitFor(() => expect(submitted()).toHaveLength(1));
@@ -1555,7 +1567,7 @@ describe('Qualified Test invocations', () => {
       const scroll = vi.spyOn(Element.prototype, 'scrollIntoView');
       engine.answerInvoke = () => invoke.promise;
       open(pagePath('orders'));
-      await screen.findByText('Not invoked yet');
+      await waitForResult('Not invoked yet');
       await chooseTarget('live');
       invokeTarget();
       await waitFor(() => expect(submitted()[0]?.url.searchParams.get('Qualifier')).toBe('live'));
@@ -1600,7 +1612,7 @@ describe('Qualified Test invocations', () => {
     const announcements = recordAnnouncements();
     engine.answerInvoke = () => answer;
     open(pagePath('orders'));
-    await waitFor(() => expect(resultPanel()).toHaveTextContent('Not invoked yet'));
+    await waitForResult('Not invoked yet');
     await chooseTarget('live');
     invokeTarget();
 
@@ -1616,7 +1628,7 @@ describe('Qualified Test invocations', () => {
   it('shows the reported service code and the access-denied reason for qualified Invoke', async () => {
     engine.answerInvoke = () => errorAnswer(403, 'AccessDeniedException', 'The alias requires invoke permission.');
     open(pagePath('orders'));
-    await screen.findByText('Not invoked yet');
+    await waitForResult('Not invoked yet');
     await chooseTarget('live');
     invokeTarget();
 
@@ -1637,13 +1649,13 @@ describe('Qualified Test invocations', () => {
     };
     engine.answerInvoke = () => result('orders result', 'orders tail');
     const { router } = open(pagePath('orders'));
-    await screen.findByText('Not invoked yet');
+    await waitForResult('Not invoked yet');
     await chooseTarget('live');
     invokeTarget();
-    expect(await screen.findByText('orders result', { exact: false })).toBeVisible();
+    await waitForResult('orders result');
 
     await act(() => router.navigate(pagePath('payments')));
-    expect(await screen.findByText('Not invoked yet')).toBeVisible();
+    await waitForResult('Not invoked yet');
     await waitFor(() => {
       expect(handed.test?.versions.loading).toBe(false);
       expect(handed.test?.aliases.loading).toBe(false);
@@ -1653,7 +1665,7 @@ describe('Qualified Test invocations', () => {
     expect(targetOption('next')).toHaveTextContent('next');
     expect(targetOption('8')).toHaveTextContent('8');
     expect(targetOption('live')).toBeNull();
-    expect(screen.queryByText('orders result', { exact: false })).toBeNull();
+    expect(resultPanel()).not.toHaveTextContent('orders result');
   });
 
   it('verifies a same-name replacement and ignores an old invocation that finishes after reconnect', async () => {
@@ -1662,10 +1674,10 @@ describe('Qualified Test invocations', () => {
     engine.answerInvoke = () =>
       submitted().length === 1 ? result('previous result', 'previous tail') : pending.promise;
     open(pagePath('orders'));
-    await screen.findByText('Not invoked yet');
+    await waitForResult('Not invoked yet');
     await chooseTarget('live');
     invokeTarget();
-    expect(await screen.findByText('previous result', { exact: false })).toBeVisible();
+    await waitForResult('previous result');
     await waitFor(() => expect(invokeButton().getElement()).toBeEnabled());
     invokeTarget();
     await waitFor(() => expect(submitted()).toHaveLength(2));
@@ -1673,12 +1685,12 @@ describe('Qualified Test invocations', () => {
     expect(announcements.filter((message) => message === 'Succeeded')).toHaveLength(1);
 
     connection.set(notStartedResult());
-    expect(screen.queryByText('previous result', { exact: false })).toBeNull();
+    expect(findResultPanel()?.textContent ?? '').not.toContain('previous result');
     engine.answerRelease = ({ url }) =>
       url.pathname.endsWith('/versions') ? versionAnswer('8') : aliasAnswer('replacement', '8');
     connection.set(connectedResult());
 
-    expect(await screen.findByText('Not invoked yet')).toBeVisible();
+    await waitForResult('Not invoked yet');
     await waitFor(() => {
       expect(handed.test?.versions.loading).toBe(false);
       expect(handed.test?.aliases.loading).toBe(false);
@@ -1699,7 +1711,7 @@ describe('Qualified Test invocations', () => {
     expect(engine.gets).toHaveLength(rereads);
     expect(targetOption('replacement')).toHaveTextContent('replacement');
     expect(targets().findTrigger().getElement()).toHaveTextContent('$LATEST');
-    expect(screen.getByText('Not invoked yet')).toBeVisible();
+    expect(resultPanel()).toHaveTextContent('Not invoked yet');
     expect(resultPanel()).not.toHaveTextContent('late result');
     expect(announcements.filter((message) => message === 'Succeeded')).toHaveLength(1);
 
@@ -1713,7 +1725,7 @@ describe('Qualified Test invocations', () => {
 
   it('refreshes targets and keeps a disappeared alias blocked until replaced by an explicit choice', async () => {
     open(pagePath('orders'));
-    await screen.findByText('Not invoked yet');
+    await waitForResult('Not invoked yet');
     await chooseTarget('live');
     engine.answerRelease = ({ url }) =>
       url.pathname.endsWith('/versions') ? versionAnswer('2') : json(200, { Aliases: [] });
