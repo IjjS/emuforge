@@ -53,6 +53,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 const headers = (wrapper: ReturnType<typeof createWrapper>) =>
@@ -63,6 +64,10 @@ describe('the services table', () => {
     vi.mocked(api.listServices).mockResolvedValue({ services: [service('api', { running: 1, pending: 1 })] });
     const wrapper = open();
     const link = await screen.findByRole('link', { name: 'api' });
+    expect(screen.getByRole('link', { name: 'Create service' })).toHaveAttribute(
+      'href',
+      '/aws/ecs/clusters/cluster/dev/services/create',
+    );
     expect(link).toHaveAttribute('href', '/aws/ecs/clusters/cluster/dev/services/service/api');
     expect(screen.getByRole('link', { name: 'web:3' })).toHaveAttribute(
       'href',
@@ -84,11 +89,47 @@ describe('the services table', () => {
     expect(vi.mocked(api.listServices).mock.calls[0]?.slice(0, 3)).toEqual([ENGINE, 'dev', undefined]);
   });
 
-  it('empty → "No services" and its sentence', async () => {
+  it.each([
+    [390, true],
+    [1280, false],
+  ] as const)('announces more columns only when the table overflows at width %s', async (width, overflows) => {
+    vi.spyOn(Element.prototype, 'scrollWidth', 'get').mockImplementation(function (this: Element) {
+      return this.querySelector(':scope > table') ? 760 : 0;
+    });
+    vi.spyOn(Element.prototype, 'clientWidth', 'get').mockImplementation(function (this: Element) {
+      return this.querySelector(':scope > table') ? width : 0;
+    });
+    vi.mocked(api.listServices).mockResolvedValue({ services: [service('api')] });
+    const wrapper = open();
+    await waitFor(() => expect(wrapper.findTable()?.findRows()).toHaveLength(1));
+    const table = wrapper.findTable();
+    const slot = table?.findHeaderSlot()?.getElement();
+    if (!slot) throw new Error('Missing Services header slot');
+    const description = createWrapper(slot).findHeader()?.findDescription()?.getElement();
+    const nativeTable = table?.find('table')?.getElement();
+
+    if (overflows) {
+      expect(description).toBeVisible();
+      expect(description).toHaveTextContent('Scroll sideways for task counts.');
+      expect(nativeTable).toHaveAccessibleName('Services. Scroll sideways for task counts and more columns.');
+    } else {
+      expect(description).toBeUndefined();
+      expect(nativeTable).toHaveAccessibleName(/^Services/);
+    }
+  });
+
+  it('empty → "No services" with the cluster create action', async () => {
     vi.mocked(api.listServices).mockResolvedValue({ services: [] });
-    open();
-    expect(await screen.findByText('No services')).toBeInTheDocument();
-    expect(screen.getByText('A service made with the AWS CLI or an IaC tool is listed here.')).toBeInTheDocument();
+    const wrapper = open();
+    const table = wrapper.findTable();
+    await waitFor(() => expect(table?.findEmptySlot()?.getElement()).toHaveTextContent('No services'));
+    const header = table?.findHeaderSlot()?.getElement();
+    if (!header) throw new Error('Missing Services header slot');
+    const action = createWrapper(header).findHeader()?.findActions()?.getElement();
+    if (!action) throw new Error('Missing Services header actions');
+    const button = createWrapper(action).findButton()?.getElement();
+    expect(button).toHaveTextContent('Create service');
+    expect(button).toHaveAttribute('href', '/aws/ecs/clusters/cluster/dev/services/create');
   });
 
   it('a failed read → the failure state with a retry', async () => {

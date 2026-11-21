@@ -4,6 +4,7 @@ import Container from '@cloudscape-design/components/container';
 import ContentLayout from '@cloudscape-design/components/content-layout';
 import Header from '@cloudscape-design/components/header';
 import KeyValuePairs from '@cloudscape-design/components/key-value-pairs';
+import Link from '@cloudscape-design/components/link';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import { useQueryClient } from '@tanstack/react-query';
@@ -19,6 +20,7 @@ import type { ScreenPageProps } from '../../../screens';
 import type { Cluster } from '../api';
 import { DeleteClusterDialog } from '../components/delete-cluster-dialog';
 import { NotFound } from '../components/not-found';
+import { revealBelowBreadcrumbs } from '../components/reveal-below-breadcrumbs';
 import { ServicesTable } from '../components/services-table';
 import { TasksTable } from '../components/tasks-table';
 import {
@@ -28,6 +30,7 @@ import {
   RUN_TASK_TITLE,
   runTaskHref,
   SERVICES_AND_TASKS_WORD,
+  SERVICES_SECTION_ID,
   statusText,
 } from '../format';
 import { ECS_KEYS, useCluster } from '../queries';
@@ -171,6 +174,24 @@ export function ClusterPage({ connection, params }: ScreenPageProps) {
         header={
           <Header
             variant="h1"
+            description={
+              cluster !== undefined &&
+              clusterFailure === undefined && (
+                <Link
+                  href={`#${SERVICES_SECTION_ID}`}
+                  onFollow={(event) => {
+                    const target = document.getElementById(SERVICES_SECTION_ID);
+                    if (target !== null) {
+                      event.preventDefault();
+                      target.focus({ preventScroll: true });
+                      revealBelowBreadcrumbs(target, 'align');
+                    }
+                  }}
+                >
+                  Jump to Services
+                </Link>
+              )
+            }
             actions={
               <SpaceBetween direction="horizontal" size="xs">
                 <Button iconName="refresh" ariaLabel="Refresh" onClick={readAgain} />

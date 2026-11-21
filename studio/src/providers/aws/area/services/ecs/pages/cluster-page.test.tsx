@@ -281,6 +281,51 @@ describe('S3, a cluster', () => {
     }
   });
 
+  it.each([false, true])(
+    'jumps from the header to Services and its create action (populated: %s)',
+    async (populated) => {
+      vi.mocked(services.listServices).mockResolvedValue({ services: populated ? [service()] : [] });
+      const { router } = open();
+      const jump = await screen.findByRole('link', { name: 'Jump to Services' });
+      const section = screen.getByRole('region', { name: 'Services' });
+      const scrollIntoView = vi.fn();
+      Object.defineProperty(section, 'scrollIntoView', { value: scrollIntoView });
+
+      expect(jump).toHaveAttribute('href', `#${section.id}`);
+      fireEvent.click(jump);
+
+      expect(section).toHaveFocus();
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: 'start', behavior: 'instant' });
+      expect(router.state.location.pathname).toBe(PATH);
+      expect(within(section).getByRole('link', { name: 'Create service' })).toHaveAttribute(
+        'href',
+        '/aws/ecs/clusters/cluster/dev/services/create',
+      );
+    },
+  );
+
+  it('adds the measured sticky breadcrumb row to the in-page scroll offset', async () => {
+    open();
+    const jump = await screen.findByRole('link', { name: 'Jump to Services' });
+    const section = screen.getByRole('region', { name: 'Services' });
+    const toolbar = screen.getByRole('navigation', { name: 'Breadcrumbs' }).parentElement;
+    if (toolbar === null) throw new Error('Missing breadcrumb toolbar');
+    toolbar.style.position = 'sticky';
+    const height = vi.spyOn(toolbar, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 56, 390, 48));
+    const scrollIntoView = vi.fn(() => {
+      expect(section.style.scrollMarginTop).toBe('calc(48px + var(--space-static-xs-b6kz15))');
+      expect(section).toHaveFocus();
+    });
+    Object.defineProperty(section, 'scrollIntoView', { value: scrollIntoView });
+
+    fireEvent.click(jump);
+
+    expect(height).toHaveBeenCalled();
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'start', behavior: 'instant' });
+    expect(section.style.scrollMarginTop).toBe('');
+    height.mockRestore();
+  });
+
   it('while its tasks table is followed → the summary is read again with it and shows the new counts', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.mocked(tasks.listTasks).mockImplementation(() =>

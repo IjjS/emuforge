@@ -1,5 +1,6 @@
 import type { ServiceScreen } from '../../screens';
 import { CLUSTER_PAGE_SCREENS } from './cluster-page-screens';
+import { CREATE_SERVICE_SCREENS } from './create-service-screens';
 import { DEFINITION_SCREENS } from './definition-screens';
 import {
   CLUSTERS_CRUMBS,
@@ -46,6 +47,7 @@ export const SCREENS: readonly ServiceScreen[] = [
   ...CLUSTER_SCREENS,
   ...CLUSTER_PAGE_SCREENS,
   ...SERVICE_SCREENS,
+  ...CREATE_SERVICE_SCREENS,
   ...TASK_SCREENS,
   ...RUN_SCREENS,
   ...DEFINITION_SCREENS,
