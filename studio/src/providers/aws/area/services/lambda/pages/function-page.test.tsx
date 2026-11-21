@@ -1202,16 +1202,16 @@ function aliasAnswer(name: string, version: string) {
   return json(200, { Aliases: [{ Name: name, FunctionVersion: version }] });
 }
 
+function releaseTable(name: 'Versions' | 'Aliases') {
+  const table = tabs()?.findTabContent()?.findAllTables()[name === 'Versions' ? 0 : 1];
+  if (table) {
+    expect(table.findHeaderSlot()?.findHeader()?.findHeadingText().getElement()).toHaveTextContent(name);
+  }
+  return table;
+}
+
 describe('Versions and aliases', () => {
   const versionsPath = '?tab=versions';
-
-  function releaseTable(name: 'Versions' | 'Aliases') {
-    const table = tabs()?.findTabContent()?.findAllTables()[name === 'Versions' ? 0 : 1];
-    if (table) {
-      expect(table.findHeaderSlot()?.findHeader()?.findHeadingText().getElement()).toHaveTextContent(name);
-    }
-    return table;
-  }
 
   function versionsShown() {
     const table = releaseTable('Versions');
@@ -1354,7 +1354,10 @@ describe('Versions and aliases', () => {
     };
 
     open(pagePath('orders') + versionsPath);
-    await waitFor(() => expect(versionsShown()).toContainEqual(['1', 'Release 1']));
+    await waitFor(() => {
+      expect(versionsShown()).toContainEqual(['1', 'Release 1']);
+      expect(aliasesShown()).toEqual([['live', '1']]);
+    });
     const publish = releaseTable('Versions')?.findHeaderSlot()?.findHeader()?.findActions()?.findButton();
     expect(publish?.getElement()).toHaveTextContent('Publish version');
     publish?.click();
@@ -2422,75 +2425,146 @@ describe('"Delete" in the header', () => {
     },
   );
 
-  it('requires a new verified confirmation after native connectivity returns to the same mounted page', async () => {
-    const replacementRead = deferredAnswer();
-    const { client, router, unmount } = await openLoaded();
-    const wasOnline = onlineManager.isOnline();
-    const browserOnline = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true);
-    try {
-      const oldHealth = connection.value.result;
-      const { input, submit } = await openDialog();
-      input.setInputValue('confirm');
-      // Model the query queue pausing before the old page receives its browser event.
-      act(() => onlineManager.setOnline(false));
-      submit.click();
-      await waitFor(() => {
-        expect(client.getMutationCache().getAll()[0]?.state.isPaused).toBe(true);
-      });
-      const queued = client.getMutationCache().getAll()[0];
-      expect(deleteRequests()).toEqual([]);
+  it.each(['test', 'versions'] as const)(
+    'reports reconnect progress and requires a new verified confirmation on %s',
+    async (tab) => {
+      const replacementRead = deferredAnswer();
+      const versions = deferredAnswer();
+      const aliases = deferredAnswer();
+      const { client, router, unmount } = await openLoaded();
+      if (tab === 'versions') {
+        fireEvent.click(tabLink('versions'));
+        await waitFor(() => {
+          expect(releaseTable('Versions')?.findBodyCell(1, 1)?.getElement()).toHaveTextContent('$LATEST');
+        });
+      }
+      const announcements = recordAnnouncements();
+      const notice = () => PAGE.findContentLayout()?.findNotifications()?.findAlert() ?? null;
+      const confirmationHint = 'The delete confirmation closed. Reopen Delete after verification.';
+      async function expectNotice(header: string, detail: string) {
+        expect(notice()?.findHeader()?.getElement()).toHaveTextContent(header);
+        expect(notice()?.findContent().getElement()).toHaveTextContent(detail);
+        await waitFor(() => {
+          expect(announcements.some((message) => message.includes(header) && message.includes(detail))).toBe(true);
+        });
+      }
+      const wasOnline = onlineManager.isOnline();
+      const browserOnline = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true);
+      try {
+        const oldHealth = connection.value.result;
+        const { input, submit } = await openDialog();
+        input.setInputValue('confirm');
+        // Model the query queue pausing before the old page receives its browser event.
+        act(() => onlineManager.setOnline(false));
+        submit.click();
+        await waitFor(() => {
+          expect(client.getMutationCache().getAll()[0]?.state.isPaused).toBe(true);
+        });
+        const queued = client.getMutationCache().getAll()[0];
+        expect(deleteRequests()).toEqual([]);
 
-      browserOnline.mockReturnValue(false);
-      fireEvent(window, new Event('offline'));
-      expect(deletionDialog()).toBeUndefined();
-      engine.functions = [{ ...ORDERS, description: 'Replacement while the browser was offline' }];
-      engine.answerFunction = (request) =>
-        request.method === 'GET' && FUNCTION_PATH.test(request.url.pathname)
-          ? replacementRead.promise
-          : engine.emulator(request);
+        browserOnline.mockReturnValue(false);
+        fireEvent(window, new Event('offline'));
+        expect(deletionDialog()).toBeUndefined();
+        await expectNotice('Browser is offline', confirmationHint);
+        expect(PAGE.find('.aws-area-emulator-line')?.getElement()).toHaveTextContent('Connected at');
+        if (tab === 'versions') {
+          expect(tabs()?.findTabContent()?.findStatusIndicator()?.getElement()).toHaveTextContent(
+            'Versions and aliases are unavailable until the emulator reconnects.',
+          );
+          expect(releaseTable('Versions')).toBeUndefined();
+          expect(releaseTable('Aliases')).toBeUndefined();
+        }
 
-      browserOnline.mockReturnValue(true);
-      await act(async () => {
-        window.dispatchEvent(new Event('online'));
-        await client.resumePausedMutations();
-      });
-      await waitFor(() => {
-        expect(queued?.state.status).toBe('error');
-        expect(queued?.state.error).toMatchObject({ name: 'AbortError' });
-      });
-      expect(onlineManager.isOnline()).toBe(true);
-      expect(connection.value.result).toBe(oldHealth);
-      expect(router.state.location.pathname).toBe(pagePath('orders'));
-      expect(deleteRequests()).toEqual([]);
-      const beforeHealthDelete = pageDeleteAction();
-      expect(beforeHealthDelete?.getElement()).toHaveTextContent('Delete');
-      expect(beforeHealthDelete?.getElement()).toBeDisabled();
-      beforeHealthDelete?.click();
-      expect(deletionDialog()).toBeUndefined();
+        engine.functions = [{ ...ORDERS, description: 'Replacement while the browser was offline' }];
+        engine.answerRelease = ({ url }) => (url.pathname.endsWith('/versions') ? versions.promise : aliases.promise);
+        engine.answerFunction = (request) =>
+          request.method === 'GET' && FUNCTION_PATH.test(request.url.pathname)
+            ? replacementRead.promise
+            : engine.emulator(request);
 
-      const beforeHealthReads = engine.gets.length;
-      connection.set(connectedResult());
-      await waitFor(() => expect(engine.gets.length).toBeGreaterThan(beforeHealthReads));
-      pageDeleteAction()?.click();
-      expect(deletionDialog()).toBeUndefined();
-      expect(deleteRequests()).toEqual([]);
+        browserOnline.mockReturnValue(true);
+        await act(async () => {
+          window.dispatchEvent(new Event('online'));
+          await client.resumePausedMutations();
+        });
+        await waitFor(() => {
+          expect(queued?.state.status).toBe('error');
+          expect(queued?.state.error).toMatchObject({ name: 'AbortError' });
+        });
+        expect(onlineManager.isOnline()).toBe(true);
+        expect(connection.value.result).toBe(oldHealth);
+        await expectNotice('Rechecking the emulator connection', confirmationHint);
+        expect(PAGE.find('.aws-area-emulator-line')?.getElement()).toHaveTextContent('Connected at');
+        if (tab === 'versions') {
+          expect(tabs()?.findTabContent()?.findStatusIndicator()?.getElement()).toHaveTextContent(
+            'Waiting for function verification',
+          );
+          expect(releaseTable('Versions')).toBeUndefined();
+          expect(releaseTable('Aliases')).toBeUndefined();
+        }
+        expect(router.state.location.pathname).toBe(pagePath('orders'));
+        expect(deleteRequests()).toEqual([]);
+        const beforeHealthDelete = pageDeleteAction();
+        expect(beforeHealthDelete?.getElement()).toHaveTextContent('Delete');
+        expect(beforeHealthDelete?.getElement()).toBeDisabled();
+        beforeHealthDelete?.click();
+        expect(deletionDialog()).toBeUndefined();
 
-      const request = { method: 'GET', url: new URL('/2015-03-31/functions/orders', engineOrigin) };
-      await act(async () => replacementRead.resolve(engine.emulator(request)));
-      await waitFor(() => expect(value('Description')).toBe('Replacement while the browser was offline'));
-      await openDialog();
-      expectFreshConfirmation('orders');
-      expect(deleteRequests()).toEqual([]);
+        const beforeHealthReads = engine.gets.length;
+        connection.set(connectedResult());
+        await waitFor(() => expect(engine.gets.length).toBeGreaterThan(beforeHealthReads));
+        await expectNotice('Verifying the function', confirmationHint);
+        expect(tabs()).toBeNull();
+        pageDeleteAction()?.click();
+        expect(deletionDialog()).toBeUndefined();
+        expect(deleteRequests()).toEqual([]);
 
-      deletionControls().submit.click();
-      await waitFor(() => expect(router.state.location.pathname).toBe('/aws/lambda/functions'));
-      expect(deleteRequests()).toEqual(['orders']);
-    } finally {
-      unmount();
-      browserOnline.mockRestore();
-      onlineManager.setOnline(wasOnline);
-    }
-  });
+        const request = { method: 'GET', url: new URL('/2015-03-31/functions/orders', engineOrigin) };
+        await act(async () => replacementRead.resolve(engine.emulator(request)));
+        await waitFor(() => expect(value('Description')).toBe('Replacement while the browser was offline'));
+        await expectNotice('Function verified', 'Reopen Delete to confirm deletion again.');
+        if (tab === 'versions') {
+          const publish = () => releaseTable('Versions')?.findHeaderSlot()?.findHeader()?.findActions()?.findButton();
+          expect(releaseTable('Versions')?.findLoadingText()?.getElement()).toHaveTextContent('Loading versions');
+          expect(releaseTable('Aliases')?.findLoadingText()?.getElement()).toHaveTextContent('Loading aliases');
+          expect(publish()?.getElement()).toHaveTextContent('Publish version');
+          expect(publish()?.isDisabled()).toBe(true);
+          publish()?.click();
+          expect(engine.aws.filter(({ method, url }) => method === 'POST' && RELEASE_PATH.test(url.pathname))).toEqual(
+            [],
+          );
+
+          await act(async () => {
+            versions.resolve(json(200, { Versions: [] }));
+            aliases.resolve(json(200, { Aliases: [] }));
+          });
+          await waitFor(() => {
+            expect(releaseTable('Versions')?.findEmptySlot()?.getElement()).toHaveTextContent('No versions returned.');
+            expect(releaseTable('Aliases')?.findEmptySlot()?.getElement()).toHaveTextContent('No aliases');
+            expect(publish()?.isDisabled()).toBe(false);
+          });
+        } else {
+          await act(async () => {
+            versions.resolve(versionAnswer('2'));
+            aliases.resolve(aliasAnswer('live', '2'));
+          });
+        }
+        await openDialog();
+        expect(notice()).toBeNull();
+        expectFreshConfirmation('orders');
+        expect(deleteRequests()).toEqual([]);
+
+        deletionControls().submit.click();
+        await waitFor(() => expect(router.state.location.pathname).toBe('/aws/lambda/functions'));
+        expect(deleteRequests()).toEqual(['orders']);
+      } finally {
+        unmount();
+        browserOnline.mockRestore();
+        onlineManager.setOnline(wasOnline);
+      }
+    },
+  );
 
   it('delivers an already dispatched delete after a native connectivity cycle within the same session', async () => {
     const deletion = deferredAnswer();

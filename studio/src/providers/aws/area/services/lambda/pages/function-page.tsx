@@ -1,3 +1,4 @@
+import Alert, { type AlertProps } from '@cloudscape-design/components/alert';
 import Box from '@cloudscape-design/components/box';
 import Button, { type ButtonProps } from '@cloudscape-design/components/button';
 import Container from '@cloudscape-design/components/container';
@@ -56,6 +57,7 @@ interface FunctionTabsProps {
   testScope: string;
   test: Omit<TestTabProps, 'functionName' | 'connection' | 'versions' | 'aliases'>;
   releases: Pick<VersionsTabProps, 'versions' | 'aliases' | 'mutation'>;
+  waitingForReleases: boolean;
   active: ReturnType<typeof tabOf>;
   onMonitorRefreshSettled: ((message: string) => void) | undefined;
 }
@@ -72,6 +74,7 @@ function FunctionTabs({
   testScope,
   test,
   releases,
+  waitingForReleases,
   active,
   onMonitorRefreshSettled,
 }: FunctionTabsProps) {
@@ -135,14 +138,23 @@ function FunctionTabs({
       id: 'versions',
       label: 'Versions and aliases',
       href: functionTabHref(name, 'versions'),
-      content:
-        endpoint !== undefined && connection.result?.kind === 'connected' ? (
-          <VersionsTab {...releases} connection={connection} ready={ready} />
-        ) : (
-          <Container>
-            <Box textAlign="center">Versions and aliases are available when the emulator is connected.</Box>
-          </Container>
-        ),
+      content: test.verified ? (
+        <VersionsTab
+          {...releases}
+          connection={connection}
+          ready={ready && !releases.versions.loading && !releases.aliases.loading}
+        />
+      ) : (
+        <Container>
+          <Box textAlign="center">
+            <StatusIndicator type={waitingForReleases ? 'loading' : 'stopped'}>
+              {waitingForReleases
+                ? 'Waiting for function verification'
+                : 'Versions and aliases are unavailable until the emulator reconnects.'}
+            </StatusIndicator>
+          </Box>
+        </Container>
+      ),
     },
   ];
   return (
@@ -232,8 +244,10 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
     };
   }, [result]);
   const reconnect = network.reconnect;
-  const healthCheckedAfterReconnect =
-    reconnect === undefined || (connected && result !== reconnect.previous && startedAtOf(result) >= reconnect.at);
+  const freshHealth =
+    reconnect === undefined ||
+    (result !== undefined && result !== reconnect.previous && startedAtOf(result) >= reconnect.at);
+  const healthCheckedAfterReconnect = reconnect === undefined || (connected && freshHealth);
   const [readNetworkRevision, setReadNetworkRevision] = useState(0);
   if (network.online && healthCheckedAfterReconnect && readNetworkRevision !== network.revision) {
     setReadNetworkRevision(network.revision);
@@ -345,9 +359,49 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
   const [deletion, setDeletion] = useState<{ scope: string; names: readonly [string] }>();
   const canDelete = connection.engineOrigin !== undefined && verified;
   const activeDeletion = canDelete && deletion?.scope === verificationScope ? deletion : undefined;
+  const functionScope = JSON.stringify([connection.engineOrigin, name]);
+  const [closedConfirmationFor, setClosedConfirmationFor] = useState<string>();
+  if (closedConfirmationFor !== undefined && closedConfirmationFor !== functionScope) {
+    setClosedConfirmationFor(undefined);
+  }
   if (activeDeletion !== deletion) {
     setDeletion(undefined);
+    if (deletion?.names[0] === name && (!network.online || !healthCheckedAfterReconnect)) {
+      setClosedConfirmationFor(functionScope);
+    }
   }
+  const reopeningRequired = closedConfirmationFor === functionScope;
+  let networkNotice: { type: AlertProps.Type; header: string; detail: string } | undefined;
+  if (!network.online) {
+    networkNotice = {
+      type: 'warning',
+      header: 'Browser is offline',
+      detail: 'Reconnect to verify this function.',
+    };
+  } else if (!freshHealth) {
+    networkNotice = {
+      type: 'info',
+      header: 'Rechecking the emulator connection',
+      detail: 'Wait for a new connection check.',
+    };
+  } else if (reconnect !== undefined && connected && !verified && read === undefined && failure === undefined) {
+    networkNotice = {
+      type: 'info',
+      header: 'Verifying the function',
+      detail: 'Wait for current function details.',
+    };
+  } else if (reopeningRequired && canDelete) {
+    networkNotice = {
+      type: 'info',
+      header: 'Function verified',
+      detail: 'Reopen Delete to confirm deletion again.',
+    };
+  }
+  const confirmationHint =
+    reopeningRequired && !canDelete ? 'The delete confirmation closed. Reopen Delete after verification.' : undefined;
+  const noticeWords = networkNotice
+    ? [`${networkNotice.header}.`, networkNotice.detail, confirmationHint].filter(Boolean).join(' ')
+    : confirmationHint;
   const refreshButton = useRef<ButtonProps.Ref>(null);
   const dismissedWithFocus = useRef(false);
   const handleFocusedDismissal = useCallback(() => {
@@ -387,6 +441,13 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
   const [seenFailureLine, setSeenFailureLine] = useState<string>();
   const failureLine = failureState?.firstText;
   const toSay: string[] = [];
+  const [seenNotice, setSeenNotice] = useState<string>();
+  if (seenNotice !== noticeWords) {
+    setSeenNotice(noticeWords);
+    if (noticeWords !== undefined) {
+      toSay.push(noticeWords);
+    }
+  }
   if (refreshing === 'function' && (read !== undefined || failure !== undefined)) {
     setRefreshing(undefined);
     if (read !== undefined) {
@@ -480,6 +541,7 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
             onTargetChange: (qualifier) => setTest((current) => ({ ...current, qualifier, targetUnavailable: false })),
           }}
           releases={{ ...releases, mutation: releaseMutation }}
+          waitingForReleases={network.online && (result === undefined || connected)}
           active={active}
           onMonitorRefreshSettled={refreshing === 'monitor' ? handleMonitorRefreshSettled : undefined}
         />
@@ -490,6 +552,15 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
   return (
     <>
       <ContentLayout
+        notifications={
+          networkNotice ? (
+            <Alert type={networkNotice.type} header={networkNotice.header}>
+              {networkNotice.detail} {confirmationHint}
+            </Alert>
+          ) : (
+            confirmationHint && <Alert type="info">{confirmationHint}</Alert>
+          )
+        }
         header={
           <Header
             variant="h1"
@@ -503,6 +574,7 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
                     disabled={!canDelete}
                     onClick={() => {
                       if (canDelete) {
+                        setClosedConfirmationFor(undefined);
                         setDeletion({ scope: verificationScope, names: [name] });
                       }
                     }}
