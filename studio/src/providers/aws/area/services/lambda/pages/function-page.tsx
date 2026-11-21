@@ -41,8 +41,6 @@ import { useReleaseMutation, useReleaseReadings } from '../version-queries';
 // has no description but the status line (issue 467, R3): the area's frame says where the function is.
 
 const REFRESHED = 'Function refreshed';
-/** The dialog's names while it is closed; one array, so the dialog does not take a new render for a new one. */
-const NO_NAMES: readonly string[] = [];
 const READY = 'Function ready';
 
 /** The event text "Test" holds when the page opens. */
@@ -204,7 +202,7 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
     connected,
     disconnected: connection.result !== undefined && connection.result.kind !== 'connected',
     emulatorIdentity: connected ? JSON.stringify([result.emulator.endpoint, result.target]) : undefined,
-    revalidateOnReconnect: active === 'monitor' || active === 'versions' || active === 'test',
+    revalidateOnReconnect: true,
   });
   const { read, failure, refresh } = reading;
   const fn = read?.found === true ? read.function : undefined;
@@ -307,7 +305,8 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
   });
   // A confirmation belongs to the function and connection that opened the dialog.
   const [deletion, setDeletion] = useState<{ scope: string; names: readonly [string] }>();
-  const activeDeletion = deletion?.scope === sessionScope ? deletion : undefined;
+  const canDelete = connection.engineOrigin !== undefined && verified;
+  const activeDeletion = canDelete && deletion?.scope === sessionScope ? deletion : undefined;
   if (activeDeletion !== deletion) {
     setDeletion(undefined);
   }
@@ -451,8 +450,11 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
                 <Button iconName="refresh" ariaLabel="Refresh" onClick={handleRefresh} />
                 {fn !== undefined && (
                   <Button
+                    disabled={!canDelete}
                     onClick={() => {
-                      setDeletion({ scope: sessionScope, names: [name] });
+                      if (canDelete) {
+                        setDeletion({ scope: sessionScope, names: [name] });
+                      }
                     }}
                   >
                     Delete
@@ -470,13 +472,15 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
           {showInvocationFallback && <InvocationResult invoke={invoke} resultRef={invocationPanel} />}
         </SpaceBetween>
       </ContentLayout>
-      <DeleteFunctionsDialog
-        key={sessionScope}
-        names={activeDeletion?.names ?? NO_NAMES}
-        connection={connection}
-        onClose={handleDeleteClose}
-        onDeleted={handleDeleted}
-      />
+      {activeDeletion !== undefined && (
+        <DeleteFunctionsDialog
+          key={sessionScope}
+          names={activeDeletion.names}
+          connection={connection}
+          onClose={handleDeleteClose}
+          onDeleted={handleDeleted}
+        />
+      )}
       {announcement}
     </>
   );
