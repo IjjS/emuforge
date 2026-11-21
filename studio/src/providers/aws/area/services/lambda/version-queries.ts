@@ -2,6 +2,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { useId, useLayoutEffect, useRef, useState } from 'react';
 
 import { requestFailure } from '../../../../../lib/aws/request';
+import type { FlashItem } from '../../components/page-flash';
 import { lambdaKey } from './queries';
 import {
   changeRelease,
@@ -96,8 +97,10 @@ interface ReleaseMutationOptions {
   name: string;
   scope: string;
   onSuccess: (result: ReleaseResult) => void;
-  onFailure: (failure: ReleaseFailure) => void;
+  onFailure: (failure: ReleaseFailure) => FlashItem;
 }
+
+type ReleaseSubmission = { kind: 'ignored' | 'close' } | { kind: 'refused'; item: FlashItem };
 
 export function useReleaseMutation({ endpoint, name, scope, onSuccess, onFailure }: ReleaseMutationOptions) {
   const inFlight = useRef<{ scope: string; controller: AbortController } | undefined>(undefined);
@@ -132,32 +135,34 @@ export function useReleaseMutation({ endpoint, name, scope, onSuccess, onFailure
     }) => changeRelease(endpoint, name, change, signal),
   });
 
-  async function submit(change: ReleaseChange): Promise<boolean> {
+  async function submit(change: ReleaseChange): Promise<ReleaseSubmission> {
     if (endpoint === undefined || inFlight.current !== undefined || state.unsupported.has(change.operation)) {
-      return false;
+      return { kind: 'ignored' };
     }
     const controller = new AbortController();
     inFlight.current = { scope, controller };
     try {
       const result = await mutation.mutateAsync({ endpoint, name, change, signal: controller.signal, scope });
-      if (!controller.signal.aborted) {
-        onSuccess(result);
+      if (controller.signal.aborted) {
+        return { kind: 'ignored' };
       }
+      onSuccess(result);
+      return { kind: 'close' };
     } catch (error) {
       if (controller.signal.aborted) {
-        return false;
+        return { kind: 'ignored' };
       }
       const failure = releaseFailure(change.operation, error);
       if (failure.kind === 'not-implemented') {
         setState((previous) => ({ scope, unsupported: new Set([...previous.unsupported, change.operation]) }));
       }
-      onFailure(failure);
+      const item = onFailure(failure);
+      return failure.kind === 'not-implemented' ? { kind: 'close' } : { kind: 'refused', item };
     } finally {
       if (inFlight.current?.controller === controller) {
         inFlight.current = undefined;
       }
     }
-    return true;
   }
 
   return {

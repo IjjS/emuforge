@@ -1,3 +1,4 @@
+import Alert, { type AlertProps } from '@cloudscape-design/components/alert';
 import Box from '@cloudscape-design/components/box';
 import Button from '@cloudscape-design/components/button';
 import FormField from '@cloudscape-design/components/form-field';
@@ -6,14 +7,20 @@ import Input from '@cloudscape-design/components/input';
 import Select from '@cloudscape-design/components/select';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Table from '@cloudscape-design/components/table';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { AreaModal } from '../../../components/area-modal';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { Code, ReadFailure, readFailureState } from '../../../components/failure-states';
+import type { FlashItem } from '../../../components/page-flash';
+import { ValueText } from '../../../components/value-text';
 import { valueText } from '../format';
 import type { FunctionAlias, FunctionVersion, ReleaseChange } from '../version-api';
 import type { ReleaseReading, useReleaseMutation } from '../version-queries';
+
+const ALIAS_NAME_MIN_WIDTH = '28ch';
+const ALIAS_NAME_CONSTRAINT =
+  'Use 1–128 letters (A–Z, a–z), numbers, hyphens, or underscores. The name cannot be all numbers.';
 
 type ReleaseAction = ReleaseChange['operation'];
 
@@ -78,7 +85,7 @@ interface AliasDialogProps {
   versions: readonly FunctionVersion[];
   pending: boolean;
   onDismiss: () => void;
-  onSubmit: (change: ReleaseChange) => void;
+  onSubmit: (change: ReleaseChange) => Promise<FlashItem | undefined>;
 }
 
 function ManageAliasDialog({ dialog, versions, pending, onDismiss, onSubmit }: AliasDialogProps) {
@@ -88,6 +95,13 @@ function ManageAliasDialog({ dialog, versions, pending, onDismiss, onSubmit }: A
   const [name, setName] = useState(creating ? '' : dialog.alias.name);
   const [version, setVersion] = useState(creating ? '' : dialog.alias.version);
   const [nameError, setNameError] = useState<string>();
+  const [refusal, setRefusal] = useState<FlashItem>();
+  const refusalRef = useRef<AlertProps.Ref>(null);
+  useEffect(() => {
+    if (refusal !== undefined) {
+      refusalRef.current?.focus();
+    }
+  }, [refusal]);
   const options = versions.map(({ version }) => ({ label: version, value: version }));
   const selected = options.find(({ value }) => value === version) ?? null;
   const editingUnchanged = operation === 'UpdateAlias' && dialog.alias.version === version;
@@ -96,11 +110,7 @@ function ManageAliasDialog({ dialog, versions, pending, onDismiss, onSubmit }: A
     if (pending) {
       return;
     }
-    if (deleting) {
-      onSubmit({ operation, name });
-      return;
-    }
-    if (selected === null || editingUnchanged) {
+    if (!deleting && (selected === null || editingUnchanged)) {
       return;
     }
     const trimmed = name.trim();
@@ -108,7 +118,8 @@ function ManageAliasDialog({ dialog, versions, pending, onDismiss, onSubmit }: A
       setNameError('Enter 1–128 letters, numbers, hyphens, or underscores. The name cannot be all numbers.');
       return;
     }
-    onSubmit({ operation, alias: { name: trimmed, version } });
+    const change = deleting ? { operation, name } : { operation, alias: { name: trimmed, version } };
+    void onSubmit(change).then(setRefusal);
   };
 
   return (
@@ -135,37 +146,50 @@ function ManageAliasDialog({ dialog, versions, pending, onDismiss, onSubmit }: A
         </Box>
       }
     >
-      {deleting ? (
-        <Box variant="p">
-          Delete alias <Code>{name}</Code>? Version <Code>{version}</Code> will still be available.
-        </Box>
-      ) : (
-        <SpaceBetween size="m">
-          <FormField label="Alias name" errorText={nameError}>
-            {creating ? (
-              <Input
-                value={name}
+      <SpaceBetween size="m">
+        {refusal !== undefined && (
+          <div role="alert">
+            <Alert ref={refusalRef} type={refusal.type} header={refusal.header}>
+              {refusal.content}
+            </Alert>
+          </div>
+        )}
+        {deleting ? (
+          <Box variant="p">
+            Delete alias <Code>{name}</Code>? Version <Code>{version}</Code> will still be available.
+          </Box>
+        ) : (
+          <SpaceBetween size="m">
+            <FormField
+              label="Alias name"
+              constraintText={creating ? ALIAS_NAME_CONSTRAINT : undefined}
+              errorText={nameError}
+            >
+              {creating ? (
+                <Input
+                  value={name}
+                  disabled={pending}
+                  onChange={({ detail }) => {
+                    setName(detail.value);
+                    setNameError(undefined);
+                  }}
+                />
+              ) : (
+                <Code>{name}</Code>
+              )}
+            </FormField>
+            <FormField label="Target version">
+              <Select
+                options={options}
+                selectedOption={selected}
+                placeholder="Choose a published version"
                 disabled={pending}
-                onChange={({ detail }) => {
-                  setName(detail.value);
-                  setNameError(undefined);
-                }}
+                onChange={({ detail }) => setVersion(detail.selectedOption.value ?? '')}
               />
-            ) : (
-              <Code>{name}</Code>
-            )}
-          </FormField>
-          <FormField label="Target version">
-            <Select
-              options={options}
-              selectedOption={selected}
-              placeholder="Choose a published version"
-              disabled={pending}
-              onChange={({ detail }) => setVersion(detail.selectedOption.value ?? '')}
-            />
-          </FormField>
-        </SpaceBetween>
-      )}
+            </FormField>
+          </SpaceBetween>
+        )}
+      </SpaceBetween>
     </AreaModal>
   );
 }
@@ -191,15 +215,15 @@ export function VersionsTab({ connection, ready, versions, aliases, mutation }: 
     return undefined;
   };
 
-  function handleChange(change: ReleaseChange) {
+  async function handleChange(change: ReleaseChange): Promise<FlashItem | undefined> {
     if (reasonFor(change.operation) !== undefined || mutation.pending !== undefined) {
-      return;
+      return undefined;
     }
-    void mutation.submit(change).then((submitted) => {
-      if (submitted) {
-        setDialog(undefined);
-      }
-    });
+    const result = await mutation.submit(change);
+    if (result.kind === 'close') {
+      setDialog(undefined);
+    }
+    return result.kind === 'refused' ? result.item : undefined;
   }
 
   return (
@@ -217,7 +241,9 @@ export function VersionsTab({ connection, ready, versions, aliases, mutation }: 
                 disabled={reasonFor('PublishVersion') !== undefined || mutation.pending !== undefined}
                 disabledReason={reasonFor('PublishVersion')}
                 loading={mutation.pending === 'PublishVersion'}
-                onClick={() => handleChange({ operation: 'PublishVersion' })}
+                onClick={() => {
+                  void handleChange({ operation: 'PublishVersion' });
+                }}
               >
                 Publish version
               </Button>
@@ -278,7 +304,13 @@ export function VersionsTab({ connection, ready, versions, aliases, mutation }: 
           )
         }
         columnDefinitions={[
-          { id: 'name', header: 'Alias name', cell: ({ name }) => <Code>{name}</Code> },
+          {
+            id: 'name',
+            header: 'Alias name',
+            isRowHeader: true,
+            minWidth: ALIAS_NAME_MIN_WIDTH,
+            cell: ({ name }) => <ValueText kind="name" value={name} />,
+          },
           { id: 'version', header: 'Target version', cell: ({ version }) => <Code>{version}</Code> },
           {
             id: 'actions',
