@@ -1046,6 +1046,11 @@ describe('loading and empty', () => {
   );
 
   it('expires an open offline confirmation and verifies a same-name replacement before a new deletion', async () => {
+    const message =
+      'The delete confirmation closed because the browser connection changed. After the current function list loads, reopen Delete from Actions and confirm again.';
+    const waiting = 'Wait for the current function list to load.';
+    const announcements = recordAnnouncements('[role="status"][aria-atomic="true"]');
+    const expiredDraftEntries = () => announcements.filter((entry) => entry.includes(message));
     let release!: (answer: Answer) => void;
     const heldList = new Promise<Answer>((resolve) => {
       release = resolve;
@@ -1080,6 +1085,11 @@ describe('loading and empty', () => {
       });
       const menu = deletionMenu().findNativeButton().getElement();
       expect(isDisabled(menu)).toBe(true);
+      expect(menu).toHaveFocus();
+      expect(menu).toHaveAccessibleDescription(waiting);
+      expect(PAGE.findFlashbar()?.findItemsByType('info')[0]?.findContent()?.getElement()).toBeVisible();
+      expect(flashTexts()).toEqual([message]);
+      await waitFor(() => expect(expiredDraftEntries()).toEqual([`Info ${message}`]));
       fireEvent.click(menu);
       expect(visibleDialog()).toBeUndefined();
       expect(engine.deletes).toEqual([]);
@@ -1092,6 +1102,9 @@ describe('loading and empty', () => {
       await expectNames(['orders']);
       expect(table().findBodyCell(1, 3)?.getElement()).toHaveTextContent('Replacement orders');
       expect(selectionAt(1, 'orders')).toBeChecked();
+      expect(isDisabled(deletionMenu().findNativeButton().getElement())).toBe(false);
+      expect(deletionMenu().findNativeButton().getElement()).not.toHaveAccessibleDescription(waiting);
+      expect(flashTexts()).toEqual([message]);
       const fresh = await confirmDialog();
       expect(fresh.names).toEqual(['orders']);
       expect(fresh.input.getInputValue()).toBe('');
@@ -1103,6 +1116,7 @@ describe('loading and empty', () => {
       await expectNames([]);
       await waitFor(() => expect(visibleDialog()).toBeUndefined());
       expect(engine.deletes).toEqual(['orders']);
+      expect(expiredDraftEntries()).toEqual([`Info ${message}`]);
     } finally {
       unmount();
       browserOnline.mockRestore();

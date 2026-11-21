@@ -61,6 +61,8 @@ export interface DeleteFunctionsDialogProps {
   online?: boolean;
   /** The listing that supplied this confirmation is no longer current. */
   confirmationExpired?: boolean;
+  /** Called when an expired confirmation contained input and had not been submitted. */
+  onExpiredDraft?: () => void;
   /** Checks the list's connection revision before a queued React render can close an expired draft. */
   canSubmit?: () => boolean;
   /** The list reports interrupted submissions even when no outcome was settled. */
@@ -85,6 +87,7 @@ export function DeleteFunctionsDialog({
   onClose,
   online,
   confirmationExpired = false,
+  onExpiredDraft,
   canSubmit,
   reportEmptyInterruption = false,
   onDeleted,
@@ -110,9 +113,10 @@ export function DeleteFunctionsDialog({
   useLayoutEffect(() => {
     // A submitted request keeps its dialog and reports its own settlement.
     if (visible && confirmationExpired && !submitting.current) {
+      if (typed !== '') onExpiredDraft?.();
       onClose();
     }
-  }, [visible, confirmationExpired, onClose]);
+  }, [visible, confirmationExpired, typed, onExpiredDraft, onClose]);
   const mounted = useRef(false);
   useLayoutEffect(() => {
     mounted.current = true;
