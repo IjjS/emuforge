@@ -1,3 +1,4 @@
+import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState, useSyncExternalStore } from 'react';
@@ -151,8 +152,49 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const nameField = () => screen.getByRole('textbox', { name: 'Notification name' });
-const arnField = () => screen.getByRole('textbox', { name: 'Destination ARN' });
+const page = createWrapper(document.body);
+
+function field(label: string) {
+  const found = page.findAllFormFields().find((candidate) => candidate.findLabel()?.getElement().textContent === label);
+  if (found === undefined) throw new Error(`Missing form field ${label}`);
+  return found;
+}
+
+function input(label: string) {
+  const found = createWrapper(field(label).getElement()).findInput();
+  if (found === null) throw new Error(`Missing input ${label}`);
+  return found.findNativeInput().getElement();
+}
+
+function radioGroup(label: string) {
+  const group = createWrapper(field(label).getElement()).findRadioGroup();
+  if (group === null) throw new Error(`Missing radio group ${label}`);
+  return group;
+}
+
+function radio(label: string, value: string) {
+  const found = radioGroup(label).findInputByValue(value);
+  if (found === null) throw new Error(`Missing radio option ${value}`);
+  return found.getElement();
+}
+
+async function discardDialog() {
+  return waitFor(() => {
+    const dialog = page.findModal();
+    expect(dialog?.findHeader().getElement()).toHaveTextContent('Discard what you entered?');
+    if (dialog === null) throw new Error('Missing discard modal');
+    return dialog;
+  });
+}
+
+function discardAction(dialog: Awaited<ReturnType<typeof discardDialog>>, name: string) {
+  const footer = dialog.findFooter();
+  if (footer === null) throw new Error('Missing discard actions');
+  return within(footer.getElement()).getByRole('button', { name });
+}
+
+const nameField = () => input('Notification name');
+const arnField = () => input('Destination ARN');
 const createButton = () => screen.getByRole('button', { name: 'Create event notification' });
 const cancelButton = () => screen.getByRole('button', { name: 'Cancel' });
 const changeValue = (field: HTMLElement, value: string) => fireEvent.change(field, { target: { value } });
@@ -160,23 +202,27 @@ const fill = (arn = QUEUE, id = 'new') => {
   changeValue(nameField(), id);
   changeValue(arnField(), arn);
 };
-const loaded = () => screen.findByRole('textbox', { name: 'Notification name' });
+const loaded = () => waitFor(nameField);
 
 it('creates an empty draft and preloads every field and all saved events for direct edit', async () => {
   engine.document = documentOf(SAVED_RULE);
   const router = open();
   expect(await loaded()).toHaveValue('');
   expect(arnField()).toHaveValue('');
-  expect(screen.getByRole('radio', { name: 'All object creation events' })).toBeChecked();
+  expect(radio('Event type', 's3:ObjectCreated:*')).toBeChecked();
   await act(() => router.navigate(editEventNotificationPath(BUCKET, 'saved')));
   expect(await loaded()).toHaveValue('saved');
   expect(nameField()).toHaveAttribute('readonly');
   expect(arnField()).toHaveValue(QUEUE);
   expect(screen.getByRole('button', { name: 'Copy saved destination ARN' })).toBeVisible();
-  expect(screen.getByRole('textbox', { name: 'Prefix (optional)' })).toHaveValue('logs/');
-  expect(screen.getByRole('textbox', { name: 'Suffix (optional)' })).toHaveValue('.txt');
-  expect(screen.getByRole('radio', { name: 'Keep existing events' })).toBeChecked();
-  expect(screen.getByText('s3:ObjectCreated:Copy, s3:ObjectCreated:Put')).toBeVisible();
+  expect(input('Prefix (optional)')).toHaveValue('logs/');
+  expect(input('Suffix (optional)')).toHaveValue('.txt');
+  expect(radio('Event type', 'keep')).toBeChecked();
+  const keep = radioGroup('Event type')
+    .findButtons()
+    .find((button) => button.findNativeInput().getElement().value === 'keep');
+  expect(keep?.findLabel().getElement()).toHaveTextContent('Keep existing events');
+  expect(keep?.findDescription()?.getElement()).toHaveTextContent('s3:ObjectCreated:Copy, s3:ObjectCreated:Put');
   fireEvent.click(cancelButton());
   await waitFor(() => expect(router.state.location.pathname).toBe(PROPERTIES));
   expect(engine.writes).toEqual([]);
@@ -195,39 +241,51 @@ it.each([
   expect(engine.writes).toEqual([]);
 });
 
+it('returns to Properties from a direct edit of a missing bucket without writing', async () => {
+  engine.read = () => refusal(404, 'NoSuchBucket', 'Bucket missing');
+  open(editEventNotificationPath(BUCKET, 'saved'));
+  expect(await screen.findByText('Bucket not found')).toBeVisible();
+  expect(screen.getByRole('link', { name: 'Return to Properties' })).toHaveAttribute('href', PROPERTIES);
+  expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
+  expect(engine.reads.map((request) => request.method)).toEqual(['GET']);
+  expect(engine.writes).toEqual([]);
+});
+
 it('marks missing names and ARNs, conflicting IDs and malformed or mismatched destinations before any write', async () => {
   engine.document = documentOf(SAVED_RULE);
   open();
   await loaded();
   fireEvent.click(createButton());
-  expect(screen.getByText('Enter a notification name.')).toBeVisible();
-  expect(screen.getByText('Enter a destination ARN.')).toBeVisible();
+  expect(field('Notification name').findError()?.getElement()).toHaveTextContent('Enter a notification name.');
+  expect(field('Destination ARN').findError()?.getElement()).toHaveTextContent('Enter a destination ARN.');
   expect(nameField()).toHaveFocus();
   fill('not-an-arn', 'saved');
   fireEvent.click(createButton());
-  expect(screen.getByText('A notification with this name already exists.')).toBeVisible();
-  expect(screen.getByText('Enter a valid standard SQS queue ARN.')).toBeVisible();
+  expect(field('Notification name').findError()?.getElement()).toHaveTextContent(
+    'A notification with this name already exists.',
+  );
+  expect(field('Destination ARN').findError()?.getElement()).toHaveTextContent('Enter a valid standard SQS queue ARN.');
   fill(FUNCTION);
   fireEvent.click(createButton());
-  expect(screen.getByText('Enter a valid standard SQS queue ARN.')).toBeVisible();
+  expect(field('Destination ARN').findError()?.getElement()).toHaveTextContent('Enter a valid standard SQS queue ARN.');
   expect(arnField()).toHaveFocus();
   expect(engine.reads).toHaveLength(1);
   expect(engine.writes).toEqual([]);
 });
 
 it.each([
-  ['SQS queue', QUEUE, 'Object PUTs', 's3:ObjectCreated:Put'],
-  ['Lambda function', FUNCTION, 'All object creation events', 's3:ObjectCreated:*'],
-])('submits one %s save while pending and serializes the event and filters', async (type, arn, label, event) => {
+  ['SQS queue', QUEUE, 's3:ObjectCreated:Put'],
+  ['Lambda function', FUNCTION, 's3:ObjectCreated:*'],
+])('submits one %s save while pending and serializes the event and filters', async (type, arn, event) => {
   const hold = heldResponse();
   const router = open();
   await loaded();
   engine.read = () => (engine.writes.length === 0 ? hold.promise : response(engine.document));
-  fireEvent.click(screen.getByRole('radio', { name: type }));
+  fireEvent.click(radio('Destination type', type));
   fill(arn);
-  fireEvent.click(screen.getByRole('radio', { name: label }));
-  changeValue(screen.getByRole('textbox', { name: 'Prefix (optional)' }), 'logs/');
-  changeValue(screen.getByRole('textbox', { name: 'Suffix (optional)' }), '.txt');
+  fireEvent.click(radio('Event type', event));
+  changeValue(input('Prefix (optional)'), 'logs/');
+  changeValue(input('Suffix (optional)'), '.txt');
   fireEvent.click(createButton());
   expect(createButton()).toBeDisabled();
   fireEvent.click(createButton());
@@ -247,9 +305,9 @@ it.each(['clean', 'restored', 'discarded'])('cancels a %s create without writing
   if (mode === 'restored') changeValue(nameField(), '');
   fireEvent.click(cancelButton());
   if (mode === 'discarded') {
-    const dialog = await screen.findByRole('dialog', { name: 'Discard what you entered?' });
-    expect(within(dialog).getByText('What you entered on this page is not kept.')).toBeVisible();
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Discard' }));
+    const dialog = await discardDialog();
+    expect(dialog.findContent().getElement()).toHaveTextContent('What you entered on this page is not kept.');
+    fireEvent.click(discardAction(dialog, 'Discard'));
   }
   await waitFor(() => expect(router.state.location.pathname).toBe(PROPERTIES));
   expect(engine.writes).toEqual([]);
@@ -261,15 +319,15 @@ it.each(['Keep editing', 'Escape', 'Close'])('%s restores the draft and Cancel f
   fill();
   cancelButton().focus();
   fireEvent.click(cancelButton());
-  const dialog = await screen.findByRole('dialog', { name: 'Discard what you entered?' });
+  const dialog = await discardDialog();
   if (answer === 'Escape') {
-    const keepEditing = within(dialog).getByRole('button', { name: 'Keep editing' });
+    const keepEditing = discardAction(dialog, 'Keep editing');
     keepEditing.focus();
     fireEvent.keyDown(keepEditing, { key: 'Escape', code: 'Escape', keyCode: 27 });
   } else {
-    fireEvent.click(within(dialog).getByRole('button', { name: answer }));
+    fireEvent.click(answer === 'Close' ? dialog.findDismissButton().getElement() : discardAction(dialog, answer));
   }
-  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  await waitFor(() => expect(page.findModal()).toBeNull());
   await waitFor(() => expect(cancelButton()).toHaveFocus());
   expect(nameField()).toHaveValue('new');
   expect(arnField()).toHaveValue(QUEUE);
@@ -283,7 +341,7 @@ it.each([
   engine.write = () => refusal(400, 'InvalidArgument', 'Unable to validate destination');
   open();
   await loaded();
-  fireEvent.click(screen.getByRole('radio', { name: type }));
+  fireEvent.click(radio('Destination type', type));
   fill(arn);
   fireEvent.click(createButton());
   expect(await screen.findByText(hint)).toBeVisible();
@@ -350,7 +408,7 @@ it.each(['failed read', 'missing rule', 'different field'])(
     if (editing) engine.document = documentOf(SAVED_RULE);
     const router = open(editing ? editEventNotificationPath(BUCKET, 'saved') : CREATE);
     await loaded();
-    if (editing) changeValue(screen.getByRole('textbox', { name: 'Prefix (optional)' }), 'changed/');
+    if (editing) changeValue(input('Prefix (optional)'), 'changed/');
     else fill();
     engine.read = () => {
       if (engine.writes.length === 0) return response(engine.document);
@@ -371,6 +429,58 @@ it.each(['failed read', 'missing rule', 'different field'])(
     expect(engine.reads.slice(before).every((request) => request.method === 'GET')).toBe(true);
     expect(engine.writes).toHaveLength(1);
     expect(await screen.findByText('Event notification saved')).toBeVisible();
+  },
+);
+
+it.each(['missing rule', 'missing bucket'])(
+  'refreshes an unconfirmed edit on same-target recovery with a %s',
+  async (missing) => {
+    engine.document = documentOf(SAVED_RULE);
+    const path = editEventNotificationPath(BUCKET, 'saved');
+    const router = open(path);
+    await loaded();
+    changeValue(input('Prefix (optional)'), 'changed/');
+    engine.read = () => {
+      if (engine.writes.length === 0) return response(engine.document);
+      return missing === 'missing rule'
+        ? response(documentOf(SAVED_RULE))
+        : refusal(400, 'InvalidRequest', 'Verification read failed');
+    };
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    expect(await screen.findByRole('button', { name: 'Check again' })).toBeVisible();
+    expect(engine.writes).toHaveLength(1);
+    if (missing === 'missing rule') {
+      expect(screen.getByRole('heading', { name: 'Observed event notifications' })).toBeVisible();
+    }
+
+    setConnection({ kind: 'engine-unreachable', checkedAt: 1, lastEmulatorPort: 9305 });
+    const beforeReconnect = engine.reads.length;
+    engine.read = () => (missing === 'missing rule' ? response() : refusal(404, 'NoSuchBucket', 'Bucket missing'));
+    setConnection(connected('first'));
+    expect(
+      await screen.findByText(missing === 'missing rule' ? 'The notification was not found.' : 'Bucket not found'),
+    ).toBeVisible();
+    expect(screen.queryByRole('textbox', { name: 'Notification name' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Observed event notifications' })).toBeNull();
+    expect(screen.getByRole('link', { name: 'Return to Properties' })).toHaveAttribute('href', PROPERTIES);
+    expect(engine.reads.slice(beforeReconnect).map((request) => request.method)).toEqual(['GET']);
+
+    const beforeRetry = engine.reads.length;
+    engine.read = () => refusal(404, 'NoSuchBucket', 'Bucket missing');
+    fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
+    expect(await screen.findByText('The bucket was not found during verification.')).toBeVisible();
+    expect(screen.getByText('Bucket not found')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
+    expect(engine.reads.slice(beforeRetry).map((request) => request.method)).toEqual(['GET']);
+    expect(engine.writes).toHaveLength(1);
+    expect(router.state.location.pathname).toBe(path);
+    expect(screen.queryByText('Event notification saved')).toBeNull();
+
+    engine.read = () => response(engine.document);
+    fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
+    expect(await screen.findByText('Event notification saved')).toBeVisible();
+    expect(router.state.location.pathname).toBe(PROPERTIES);
+    expect(engine.writes).toHaveLength(1);
   },
 );
 

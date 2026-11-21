@@ -482,21 +482,23 @@ describe('the reads of a bucket’s page', () => {
     expect(plain).not.toHaveProperty('kmsKey');
   });
 
-  it('gives a topic, a queue and a function configuration as three rows, topic first', async () => {
-    const filter = (prefix: string, suffix: string) =>
-      `<Filter><S3Key><FilterRule><Name>Prefix</Name><Value>${prefix}</Value></FilterRule>` +
-      `<FilterRule><Name>Suffix</Name><Value>${suffix}</Value></FilterRule></S3Key></Filter>`;
-    engine.aws = () =>
-      xml(
-        '<NotificationConfiguration>' +
-          '<QueueConfiguration><Id>to-queue</Id><Queue>arn:aws:sqs:us-east-1:000000000000:q</Queue>' +
-          `<Event>s3:ObjectRemoved:*</Event>${filter('logs/', '.txt')}</QueueConfiguration>` +
-          '<TopicConfiguration><Id>to-topic</Id><Topic>arn:aws:sns:us-east-1:000000000000:t</Topic>' +
-          `<Event>s3:ObjectCreated:Put</Event><Event>s3:ObjectCreated:Post</Event>${filter('images/', '.jpg')}</TopicConfiguration>` +
-          '<CloudFunctionConfiguration><Id>to-function</Id><CloudFunction>arn:aws:lambda:us-east-1:000000000000:function:f</CloudFunction>' +
-          `<Event>s3:ObjectCreated:*</Event>${filter('in/', '.csv')}</CloudFunctionConfiguration>` +
-          '<EventBridgeConfiguration></EventBridgeConfiguration></NotificationConfiguration>',
-      );
+  it('reads all rule types and preserves the complete wire payload when editing or deleting a queue or function', async () => {
+    const filter = (...rules: [name: string, value: string][]) =>
+      `<Filter><S3Key>${rules.map(([name, value]) => `<FilterRule><Name>${name}</Name><Value>${value}</Value></FilterRule>`).join('')}</S3Key></Filter>`;
+    const queue = (keyFilter: string) =>
+      '<QueueConfiguration><Id>to-queue</Id><Queue>arn:aws:sqs:us-east-1:000000000000:q</Queue>' +
+      `<Event>s3:ObjectRemoved:*</Event>${keyFilter}</QueueConfiguration>`;
+    const lambda = (keyFilter: string) =>
+      '<CloudFunctionConfiguration><Id>to-function</Id><CloudFunction>arn:aws:lambda:us-east-1:000000000000:function:f</CloudFunction>' +
+      `<Event>s3:ObjectCreated:*</Event>${keyFilter}</CloudFunctionConfiguration>`;
+    const topic =
+      '<TopicConfiguration><Id>to-topic</Id><Topic>arn:aws:sns:us-east-1:000000000000:t</Topic>' +
+      `<Event>s3:ObjectCreated:Put</Event><Event>s3:ObjectCreated:Post</Event>${filter(['Prefix', 'images/'], ['Suffix', '.jpg'])}</TopicConfiguration>`;
+    const configurationXml = (...entries: string[]) =>
+      `<NotificationConfiguration>${entries.join('')}<EventBridgeConfiguration/></NotificationConfiguration>`;
+    const originalQueue = queue(filter(['Prefix', 'logs/'], ['Suffix', '.txt']));
+    const originalLambda = lambda(filter(['Prefix', 'in/'], ['Suffix', '.csv']));
+    engine.aws = () => xml(configurationXml(topic, originalQueue, originalLambda));
 
     const original = await getBucketNotificationConfiguration(endpoint, 'b', signal());
     if (original === NO_SUCH_BUCKET) throw new Error('Missing fixture bucket');
@@ -538,33 +540,41 @@ describe('the reads of a bucket’s page', () => {
     ]);
     expect(original.EventBridgeConfiguration).toEqual({});
 
+    // The XML field order can differ between the fixture and Smithy. Keep the order of repeated
+    // fields such as Event while comparing every element, including empty EventBridgeConfiguration.
+    function xmlTree(element: Element): unknown {
+      const children = [...element.children].sort((left, right) => left.localName.localeCompare(right.localName));
+      return [element.localName, children.length === 0 ? element.textContent : children.map(xmlTree)];
+    }
+    const parseXml = (body: string) =>
+      xmlTree(new DOMParser().parseFromString(body, 'application/xml').documentElement);
+    const expected = {
+      'SQS queue': {
+        edit: configurationXml(topic, queue(filter(['Suffix', '.txt'], ['prefix', 'edited/'])), originalLambda),
+        delete: configurationXml(topic, originalLambda),
+      },
+      'Lambda function': {
+        edit: configurationXml(topic, originalQueue, lambda(filter(['Suffix', '.csv'], ['prefix', 'edited/']))),
+        delete: configurationXml(topic, originalQueue),
+      },
+    };
     engine.aws = () => ({ status: 204 });
     for (const target of rules) {
       if (target.type === 'SNS topic') continue;
-      const edit = replaceNotification(original, {
-        kind: 'edit',
-        target,
-        draft: { ...notificationDraft(target), prefix: 'edited/' },
-      });
-      const deletion = replaceNotification(original, { kind: 'delete', target });
-      if (!('configuration' in edit) || !('configuration' in deletion)) throw new Error('Replacement refused');
-      const edited = notificationRules(edit.configuration);
-      expect(edited.filter((rule) => rule.type !== target.type)).toEqual(
-        rules.filter((rule) => rule.type !== target.type),
-      );
-      expect(edited.find((rule) => rule.type === target.type)?.data.Events).toEqual(target.data.Events);
-      expect(notificationRules(deletion.configuration)).toEqual(rules.filter((rule) => rule.type !== target.type));
-      for (const { configuration } of [edit, deletion]) {
-        expect(configuration.EventBridgeConfiguration).toEqual({});
-        await putBucketNotificationConfiguration(endpoint, 'b', configuration, signal());
+      for (const kind of ['edit', 'delete'] as const) {
+        const replacement = replaceNotification(
+          original,
+          kind === 'edit'
+            ? { kind, target, draft: { ...notificationDraft(target), prefix: 'edited/' } }
+            : { kind, target },
+        );
+        if (!('configuration' in replacement)) throw new Error('Replacement refused');
+        await putBucketNotificationConfiguration(endpoint, 'b', replacement.configuration, signal());
         const request = engine.sent.at(-1);
-        expect(request?.method).toBe('PUT');
-        expect(new URL(request?.url ?? '').searchParams.has('notification')).toBe(true);
-        const body = await request?.text();
-        expect(body).toContain('<EventBridgeConfiguration');
-        expect(body).toContain('<Topic>arn:aws:sns:us-east-1:000000000000:t</Topic>');
-        expect(body).toContain('<Name>Prefix</Name><Value>images/</Value>');
-        expect(body).toContain(target.type === 'SQS queue' ? '<Id>to-function</Id>' : '<Id>to-queue</Id>');
+        if (request === undefined) throw new Error('Missing notification request');
+        expect(request.method).toBe('PUT');
+        expect(new URL(request.url).searchParams.has('notification')).toBe(true);
+        expect(parseXml(await request.text()), `${target.type} ${kind}`).toEqual(parseXml(expected[target.type][kind]));
       }
     }
     const create = replaceNotification(original, {

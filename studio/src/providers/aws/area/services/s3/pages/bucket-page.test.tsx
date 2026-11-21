@@ -1718,13 +1718,41 @@ function notificationDocument(...rules: string[]) {
   return ok(`<NotificationConfiguration>${rules.join('')}</NotificationConfiguration>`);
 }
 
-async function startDelete() {
-  fireEvent.click(await screen.findByRole('button', { name: 'Delete to-queue' }));
-  return screen.findByRole('dialog', { name: 'Delete event notification' });
+function notificationTable() {
+  const table = createWrapper(section('Event notifications')).findTable();
+  if (table === null) throw new Error('Missing event notifications table');
+  return table;
 }
 
-function confirmDelete(dialog: HTMLElement) {
-  fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+function notificationRowIndex(ruleName: string) {
+  const table = notificationTable();
+  const index = table
+    .findRows()
+    .findIndex((_, row) => table.findBodyCell(row + 1, 1)?.getElement().textContent === ruleName);
+  if (index === -1) throw new Error(`Missing notification row ${ruleName}`);
+  return index + 1;
+}
+
+const notificationModal = () => createWrapper(document.body).findModal();
+
+async function startDelete() {
+  fireEvent.click(await screen.findByRole('button', { name: 'Delete to-queue' }));
+  return waitFor(() => {
+    const modal = notificationModal();
+    expect(modal?.findHeader().getElement()).toHaveTextContent('Delete event notification');
+    if (modal === null) throw new Error('Missing notification deletion modal');
+    return modal;
+  });
+}
+
+function deleteDialogAction(dialog: Awaited<ReturnType<typeof startDelete>>, name: 'Delete' | 'Cancel') {
+  const footer = dialog.findFooter();
+  if (footer === null) throw new Error('Missing notification deletion actions');
+  fireEvent.click(within(footer.getElement()).getByRole('button', { name }));
+}
+
+function confirmDelete(dialog: Awaited<ReturnType<typeof startDelete>>) {
+  deleteDialogAction(dialog, 'Delete');
 }
 
 describe('bucket event notifications', () => {
@@ -1733,7 +1761,9 @@ describe('bucket event notifications', () => {
     engine.buckets = [ALPHA];
     engine.parts.notification = () => pending.answer;
     open();
-    expect(await screen.findByText('Loading event notifications')).toBeVisible();
+    await waitFor(() =>
+      expect(notificationTable().findLoadingText()?.getElement()).toHaveTextContent('Loading event notifications'),
+    );
     pending.release(
       notificationDocument(
         queueRule('unique'),
@@ -1750,8 +1780,10 @@ describe('bucket event notifications', () => {
     expect(screen.queryByRole('link', { name: 'Edit duplicate' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Delete duplicate' })).toBeNull();
     expect(screen.getAllByText('Read only')).toHaveLength(3);
-    expect(screen.getByText('invalid<')).toBeVisible();
-    expect(screen.getByRole('link', { name: 'Edit fn' }).closest('tr')).toHaveTextContent(
+    const table = notificationTable();
+    const destinations = table.findRows().map((_, index) => table.findBodyCell(index + 1, 6)?.getElement().textContent);
+    expect(destinations).toContain('invalid<');
+    expect(table.findBodyCell(notificationRowIndex('fn'), 2)?.getElement()).toHaveTextContent(
       's3:ObjectCreated:Put, s3:ObjectRemoved:*',
     );
     for (const queue of screen.getAllByRole('link', { name: 'Open queue' })) {
@@ -1770,7 +1802,11 @@ describe('bucket event notifications', () => {
         constructor(private readonly onResize: ResizeObserverCallback) {}
 
         observe(element: Element) {
-          if (element.querySelector('th')?.textContent?.trim() === 'Event name') {
+          if (
+            element instanceof HTMLElement &&
+            createWrapper(element).findTable()?.findColumnHeaders()[0]?.getElement().textContent?.trim() ===
+              'Event name'
+          ) {
             const box = { inlineSize: 348, blockSize: 100 };
             this.onResize(
               [
@@ -1794,9 +1830,8 @@ describe('bucket event notifications', () => {
     );
 
     await openBucket(FULL);
-    const notificationSection = within(section('Event notifications'));
-    const row = notificationSection.getByRole('link', { name: 'Edit to-queue' }).closest('tr');
-    const firstCell = row?.cells[0];
+    const table = notificationTable();
+    const firstCell = table.findBodyCell(1, 1)?.getElement();
     if (firstCell === undefined) throw new Error('Expected the first notification cell');
     const controls = within(firstCell);
     expect(controls.getByRole('link', { name: 'Edit to-queue' })).toBeVisible();
@@ -1804,9 +1839,13 @@ describe('bucket event notifications', () => {
     expect(controls.getByRole('link', { name: 'Open queue' })).toBeVisible();
     expect(controls.getByRole('button', { name: 'Copy Destination ARN' })).toBeVisible();
     expect(firstCell).toHaveTextContent(QUEUE);
-    for (const column of ['Event types', 'Prefix', 'Suffix', 'Destination type']) {
-      expect(notificationSection.getByRole('columnheader', { name: column })).toBeVisible();
-    }
+    expect(table.findColumnHeaders().map((column) => norm(column.getElement().textContent))).toEqual([
+      'Event name and destination',
+      'Event types',
+      'Prefix',
+      'Suffix',
+      'Destination type',
+    ]);
   });
 
   const ids = ['.', '..', '~.', '~..', 'parent/child', 'literal%2F'];
@@ -1840,8 +1879,8 @@ describe('bucket event notifications', () => {
   it('names the delete target, cancels without writing, then removes only the confirmed rule', async () => {
     await openBucket({ notification: () => notificationDocument(queueRule('to-queue'), queueRule('keep')) });
     let dialog = await startDelete();
-    expect(dialog).toHaveTextContent('Stop sending matching events for to-queue?');
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(dialog.findContent().getElement()).toHaveTextContent('Stop sending matching events for to-queue?');
+    deleteDialogAction(dialog, 'Cancel');
     expect(engine.notificationWrites).toHaveLength(0);
     dialog = await startDelete();
     confirmDelete(dialog);
@@ -1930,7 +1969,7 @@ describe('bucket event notifications', () => {
       verify.release(notificationDocument());
       expect(await screen.findByText('Event notification deleted')).toBeVisible();
       if (order === 'verification first') await releaseVersioning();
-      expect(screen.queryByRole('dialog', { name: 'Delete event notification' })).toBeNull();
+      expect(notificationModal()).toBeNull();
       expect(screen.getAllByText('Event notification deleted')).toHaveLength(1);
       expect(engine.notificationWrites).toHaveLength(1);
       expect(engine.notificationWrites[0]).not.toContain('<QueueConfiguration');

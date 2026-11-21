@@ -24,7 +24,12 @@ type ChangeState =
   | ({ kind: 'unconfirmed' } & Verification);
 
 /** The page owns this transaction through the final read, even when its form or section is temporarily absent. */
-export function useNotificationChange(endpoint: string | undefined, bucket: string, onVerified: () => void) {
+export function useNotificationChange(
+  endpoint: string | undefined,
+  bucket: string,
+  onVerified: () => void,
+  onUnconfirmedRead?: (value: NotificationConfiguration | NoSuchBucket) => void,
+) {
   const [state, setState] = useState<ChangeState>({ kind: 'idle' });
   const active = useRef<AbortController | undefined>(undefined);
   const client = useQueryClient();
@@ -78,6 +83,7 @@ export function useNotificationChange(endpoint: string | undefined, bucket: stri
       if (signal.aborted) return;
       if (observed === NO_SUCH_BUCKET || !sameNotifications(expected, observed)) {
         setState({ kind: 'unconfirmed', expected, observed });
+        onUnconfirmedRead?.(observed);
         return;
       }
       setState({ kind: 'idle' });
