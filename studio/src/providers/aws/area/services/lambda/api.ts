@@ -22,7 +22,12 @@ import {
 } from '@aws-sdk/client-lambda';
 
 import { createAwsClient, EngineSessionError } from '../../../../../lib/aws/client-factory';
-import { sendRequest, type RequestFailure } from '../../../../../lib/aws/request';
+import {
+  assertAwsRequestAuthorized,
+  AwsMutationInterrupted,
+  sendRequest,
+  type RequestFailure,
+} from '../../../../../lib/aws/request';
 import { cutAtText, firstPageMarker } from './marker';
 import { starterCode } from './starter-code';
 import { storedZip } from './zip';
@@ -772,12 +777,14 @@ export interface DeleteResult {
   deleted: string[];
   /** The names whose `DeleteFunction` failed, each with its failure. */
   failed: { name: string; failure: LambdaFailure }[];
+  /** A connection change stopped the batch after at least one outcome. */
+  interrupted?: true;
 }
 
 /**
  * Deletes `names` through the engine at `endpoint`: one `DeleteFunction` per name, in their order, each after the
- * previous one's answer; a failure does not stop the ones after it. Rejects only with `signal`'s reason once it
- * aborts.
+ * previous one's answer; a refusal does not stop the ones after it. An expired confirmation returns any settled
+ * outcomes and stops the batch. Other cancellations reject with the signal's reason.
  */
 export async function deleteFunctions(
   endpoint: string,
@@ -789,6 +796,7 @@ export async function deleteFunctions(
   const result: DeleteResult = { deleted: [], failed: [] };
   for (const name of names) {
     try {
+      assertAwsRequestAuthorized(signal);
       await request(
         DELETE_FUNCTION,
         (abortSignal) => client.send(new DeleteFunctionCommand({ FunctionName: name }), { abortSignal }),
@@ -797,6 +805,12 @@ export async function deleteFunctions(
       result.deleted.push(name);
     } catch (error) {
       if (signal.aborted) {
+        if (
+          signal.reason instanceof AwsMutationInterrupted &&
+          (result.deleted.length > 0 || result.failed.length > 0)
+        ) {
+          return { ...result, interrupted: true };
+        }
         throw signal.reason;
       }
       const failure = error instanceof LambdaRequestError ? error.failure : failureOf(DELETE_FUNCTION, error);

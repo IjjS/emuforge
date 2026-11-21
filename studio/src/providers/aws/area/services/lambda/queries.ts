@@ -463,8 +463,8 @@ export function useDeleteFunctions(endpoint: string | undefined) {
       }
       return deleteFunctions(endpoint, names, controller.signal);
     },
-    onSettled: (_result, _error, submission) => {
-      if (!submission.controller.signal.aborted) {
+    onSettled: (result, _error, submission) => {
+      if (!submission.controller.signal.aborted || (result?.deleted.length ?? 0) > 0) {
         return client.invalidateQueries({ queryKey: generationKey(submission.endpoint) });
       }
     },
@@ -681,7 +681,7 @@ export interface Invocation {
 export function useInvoke(endpoint: string | undefined, name: string, session = 0, networkRevision = 0): Invocation {
   const readAgain = useReadAgain(endpoint, name);
   const scope = JSON.stringify([endpoint, name, session, networkRevision]);
-  const request = useRef<AbortController | undefined>(undefined);
+  const request = useRef<{ controller: AbortController; disposeAuthorization: () => void } | undefined>(undefined);
   const [saved, setLast] = useState(() => emptyInvocation(scope));
   const last = saved.scope === scope ? saved : emptyInvocation(scope);
   if (saved !== last) {
@@ -690,7 +690,8 @@ export function useInvoke(endpoint: string | undefined, name: string, session = 
 
   useLayoutEffect(
     () => () => {
-      request.current?.abort();
+      request.current?.controller.abort();
+      request.current?.disposeAuthorization();
       request.current = undefined;
     },
     [scope],
@@ -704,8 +705,13 @@ export function useInvoke(endpoint: string | undefined, name: string, session = 
       qualifier: string | undefined;
       signal: AbortSignal;
       scope: string;
+      disposeAuthorization: () => void;
     }) => invoke(input.endpoint, input.name, input.eventText, input.signal, input.qualifier),
-    onSettled: (data, error, { qualifier, signal, scope }) => {
+    onSettled: (data, error, { qualifier, signal, scope, disposeAuthorization }) => {
+      disposeAuthorization();
+      if (request.current?.controller.signal === signal) {
+        request.current = undefined;
+      }
       if (signal.aborted) {
         return;
       }
@@ -721,7 +727,6 @@ export function useInvoke(endpoint: string | undefined, name: string, session = 
             ? new Set([...current.unsupported, qualifier !== undefined])
             : current.unsupported,
       }));
-      request.current = undefined;
       void readAgain();
     },
   });
@@ -732,8 +737,9 @@ export function useInvoke(endpoint: string | undefined, name: string, session = 
       return;
     }
     const controller = new AbortController();
-    request.current = controller;
-    mutation.mutate({ endpoint, name, eventText, qualifier, signal: controller.signal, scope });
+    const disposeAuthorization = bindAwsMutationAuthorization(controller, { cancelInFlight: true });
+    request.current = { controller, disposeAuthorization };
+    mutation.mutate({ endpoint, name, eventText, qualifier, signal: controller.signal, scope, disposeAuthorization });
   };
 
   return {

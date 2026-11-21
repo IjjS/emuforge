@@ -18,7 +18,7 @@ import type { AreaConnection } from '../../../components/emulator-line';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
 import { ValueText } from '../../../components/value-text';
-import type { FunctionSummary } from '../api';
+import type { DeleteResult, FunctionSummary } from '../api';
 import { DeleteFunctionsDialog } from '../components/delete-functions-dialog';
 import { readFailureState, useAnnouncer, type ReadFailureState } from '../components/failure-states';
 import { ReadFailure } from '../components/failures';
@@ -285,7 +285,10 @@ export function FunctionListPage({ connection }: { connection: AreaConnection })
     [selected],
   );
 
-  const handleDialogClose = useCallback(() => {
+  const handleDialogClose = useCallback((result?: DeleteResult) => {
+    if (result?.interrupted) {
+      setSelectedNames((names) => names.filter((name) => !result.deleted.includes(name)));
+    }
     setDeleting([]);
     // Focus returns to what opened the dialog (R7).
     actionsRef.current?.focus();
