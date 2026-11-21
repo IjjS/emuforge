@@ -24,6 +24,8 @@ import { InvokeResult } from './invoke-result';
 
 export interface TestTabProps {
   functionName: string;
+  /** Whether this function has been verified in the current connected session. */
+  verified: boolean;
   /** The event as typed; `{}` when the page opened. */
   eventText: string;
   onEventTextChange: (text: string) => void;
@@ -143,6 +145,7 @@ export function InvocationResult({
 
 /** "Test": choose an invoke target, send an event and inspect the result. */
 export function TestTab({
+  verified,
   eventText,
   onEventTextChange,
   invoke,
@@ -173,7 +176,7 @@ export function TestTab({
   const loadingTargets = versions.loading || aliases.loading;
   const verifiedTarget = qualifier === undefined || currentTarget !== undefined;
   const unsupported = invoke.isUnsupported(qualifier);
-  const disabled = connection.result?.kind !== 'connected' || targetUnavailable || !verifiedTarget || unsupported;
+  const disabled = !verified || targetUnavailable || !verifiedTarget || unsupported;
   const field = useRef<TextareaProps.Ref>(null);
   const [fieldError, setFieldError] = useState<string | undefined>(undefined);
   const handleInvoke = () => {
@@ -238,17 +241,25 @@ export function TestTab({
                 {NOT_IMPLEMENTED}. {qualifier === undefined ? 'Invoke' : 'Qualified Invoke'} is unavailable.
               </StatusIndicator>
             )}
-          <FormField label="Event JSON" stretch errorText={fieldError}>
+          <FormField
+            label="Event JSON"
+            stretch
+            errorText={fieldError}
+            constraintText={verified ? undefined : 'Event editing is available after the function is verified.'}
+          >
             <Textarea
               ref={field}
               value={eventText}
               rows={8}
               spellcheck={false}
+              readOnly={!verified}
               invalid={fieldError !== undefined}
               onKeyDown={handleKeyDown}
               onChange={({ detail }) => {
-                setFieldError(undefined);
-                onEventTextChange(detail.value);
+                if (verified) {
+                  setFieldError(undefined);
+                  onEventTextChange(detail.value);
+                }
               }}
             />
           </FormField>

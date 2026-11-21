@@ -58,6 +58,7 @@ function Harness({
     <MemoryRouter>
       <TestTab
         functionName="orders"
+        verified
         eventText={eventText}
         onEventTextChange={setEventText}
         invoke={invoke}

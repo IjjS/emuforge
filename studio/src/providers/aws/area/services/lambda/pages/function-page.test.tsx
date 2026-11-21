@@ -1458,6 +1458,62 @@ describe('Qualified Test invocations', () => {
       url.pathname.endsWith('/versions') ? versionAnswer('2') : aliasAnswer('live', '2');
   });
 
+  it('allows Event JSON editing only after the first verified detail and keeps edits through release reads', async () => {
+    const preliminary = deferredAnswer();
+    const verifiedDetail = deferredAnswer();
+    const versions = deferredAnswer();
+    const aliases = deferredAnswer();
+    connection.value = { engineOrigin, result: undefined };
+    engine.answerFunction = () => preliminary.promise;
+    engine.answerRelease = ({ url }) => (url.pathname.endsWith('/versions') ? versions.promise : aliases.promise);
+    open(pagePath('orders'));
+
+    const request = { method: 'GET', url: new URL('/2015-03-31/functions/orders', engineOrigin) };
+    await waitFor(() => expect(engine.gets).toEqual([request.url]));
+    await act(async () => preliminary.resolve(engine.emulator(request)));
+    await waitForResult('Not invoked yet');
+    expect(value('Function overview', 'Description')).toBe('Initial invocation details');
+    const preliminaryEditor = eventField().findNativeTextarea().getElement();
+    expect(preliminaryEditor).toHaveAccessibleName('Event JSON');
+    expect(preliminaryEditor).toHaveAttribute('readonly');
+    fireEvent.change(preliminaryEditor, { target: { value: '{"event":"during checking"}' } });
+    expect(eventField().getTextareaValue()).toBe('{}');
+    expect(invokeButton().getElement()).toBeDisabled();
+    expect(submitted()).toEqual([]);
+
+    engine.functions = [{ name: 'orders', description: 'Verified invocation details' }];
+    engine.answerFunction = () => verifiedDetail.promise;
+    connection.set(connectedResult());
+    await waitFor(() => expect(engine.gets).toEqual([request.url, request.url]));
+    expect(PAGE.findTextarea()).toBeNull();
+    expect(engine.aws.filter(({ url }) => RELEASE_PATH.test(url.pathname))).toEqual([]);
+
+    await act(async () => verifiedDetail.resolve(engine.emulator(request)));
+    await waitFor(() => {
+      expect(value('Function overview', 'Description')).toBe('Verified invocation details');
+      expect(handed.test?.versions.loading).toBe(true);
+      expect(handed.test?.aliases.loading).toBe(true);
+    });
+    const editor = eventField().findNativeTextarea().getElement();
+    expect(editor).not.toHaveAttribute('readonly');
+    expect(eventField().getTextareaValue()).toBe('{}');
+    expect(invokeButton().getElement()).toBeEnabled();
+    const event = '{"event":"verified draft"}';
+    eventField().setTextareaValue(event);
+
+    await act(async () => {
+      versions.resolve(versionAnswer('2'));
+      aliases.resolve(aliasAnswer('live', '2'));
+    });
+    await waitFor(() => {
+      expect(handed.test?.versions.loading).toBe(false);
+      expect(handed.test?.aliases.loading).toBe(false);
+    });
+    expect(eventField().findNativeTextarea().getElement()).toBe(editor);
+    expect(eventField().getTextareaValue()).toBe(event);
+    expect(submitted()).toEqual([]);
+  });
+
   it.each(['detail', 'releases'])(
     'keeps the submitted target and event across tabs when %s settle first',
     async (first) => {
