@@ -1771,7 +1771,19 @@ describe('bucket event notifications', () => {
 
         observe(element: Element) {
           if (element.querySelector('th')?.textContent?.trim() === 'Event name') {
-            this.onResize([{ target: element, contentRect: { width: 348 } } as ResizeObserverEntry], this);
+            const box = { inlineSize: 348, blockSize: 100 };
+            this.onResize(
+              [
+                {
+                  target: element,
+                  contentRect: new DOMRectReadOnly(0, 0, box.inlineSize, box.blockSize),
+                  contentBoxSize: [box],
+                  borderBoxSize: [box],
+                  devicePixelContentBoxSize: [box],
+                },
+              ],
+              this,
+            );
           }
         }
 
