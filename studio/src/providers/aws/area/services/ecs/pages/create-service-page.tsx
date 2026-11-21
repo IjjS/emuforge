@@ -148,7 +148,7 @@ function CreateServiceForm({ cluster, connection }: { cluster: string; connectio
 
   const [held, setForm] = useState(CREATE_SERVICE_START);
   const [tried, setTried] = useState(false);
-  const [blockedSubmissions, setBlockedSubmissions] = useState(0);
+  const [validationReveal, setValidationReveal] = useState<{ field: 'family' | 'revision' }>();
   const [unsupportedReason, setUnsupportedReason] = useState<ReactNode>();
   const [duplicateName, setDuplicateName] = useState<string>();
   const familyReasonId = useId();
@@ -204,10 +204,11 @@ function CreateServiceForm({ cluster, connection }: { cluster: string; connectio
   }, [kept]);
 
   useLayoutEffect(() => {
-    if (blockedSubmissions > 0) {
-      familyRef.current?.focus(true);
+    if (validationReveal !== undefined) {
+      const ref = validationReveal.field === 'family' ? familyRef : revisionRef;
+      ref.current?.focus(true);
     }
-  }, [blockedSubmissions]);
+  }, [validationReveal]);
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -216,7 +217,7 @@ function CreateServiceForm({ cluster, connection }: { cluster: string; connectio
     }
     setTried(true);
     if (familySelectionBlocked) {
-      setBlockedSubmissions((previous) => previous + 1);
+      setValidationReveal({ field: 'family' });
       return;
     }
     setDuplicateName(undefined);
@@ -224,7 +225,9 @@ function CreateServiceForm({ cluster, connection }: { cluster: string; connectio
     if (request === undefined) {
       const messages = createServiceMessages(form);
       const first = (Object.keys(fields) as CreateServiceField[]).find((field) => messages[field] !== undefined);
-      if (first !== undefined) {
+      if (first === 'revision' && revisionList.failure && revisionList.failure.kind !== 'not-implemented') {
+        setValidationReveal({ field: 'revision' });
+      } else if (first !== undefined) {
         fields[first].current?.focus();
       }
       return;
