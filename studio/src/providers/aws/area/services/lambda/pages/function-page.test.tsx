@@ -25,35 +25,43 @@ import type { TestTabProps } from '../components/test-tab';
 /** What each tab was handed at its last render. */
 const handed = vi.hoisted(() => ({
   test: undefined as TestTabProps | undefined,
+  renderTest: false,
   code: undefined as CodeTabProps | undefined,
   configuration: undefined as ConfigurationTabProps | undefined,
 }));
 
-vi.mock('../components/test-tab', () => ({
-  TestTab: (props: TestTabProps) => {
-    handed.test = props;
-    return (
-      <div data-testid="stand-in-test">
-        <button
-          type="button"
-          onClick={() => {
-            props.onEventTextChange('{"tag": "kept"}');
-          }}
-        >
-          Stand-in type event
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            props.invoke.mutate(props.eventText);
-          }}
-        >
-          Stand-in invoke
-        </button>
-      </div>
-    );
-  },
-}));
+vi.mock('../components/test-tab', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../components/test-tab')>();
+  return {
+    ...actual,
+    TestTab: (props: TestTabProps) => {
+      handed.test = props;
+      if (handed.renderTest) {
+        return <actual.TestTab {...props} />;
+      }
+      return (
+        <div data-testid="stand-in-test">
+          <button
+            type="button"
+            onClick={() => {
+              props.onEventTextChange('{"tag": "kept"}');
+            }}
+          >
+            Stand-in type event
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              props.invoke.mutate(props.eventText);
+            }}
+          >
+            Stand-in invoke
+          </button>
+        </div>
+      );
+    },
+  };
+});
 
 vi.mock('../components/code-tab', () => ({
   CodeTab: (props: CodeTabProps) => {
@@ -143,6 +151,7 @@ class FakeEngine {
     json(200, operation === 'FilterLogEvents' ? { events: [] } : { Datapoints: [] });
   /** The answer to `GetFunction`; by default the emulator's. */
   answerFunction: (request: SentRequest) => EngineAnswer = (request) => this.emulator(request);
+  answerInvoke: (request: SentRequest) => Answer | Promise<Answer> = (request) => this.emulator(request);
   answerRelease: (request: SentRequest) => Answer | Promise<Answer> = ({ method, url }) => {
     if (method === 'POST') {
       return json(201, { Version: '1' });
@@ -242,6 +251,10 @@ class FakeEngine {
     this.aws.push(sent);
     if (RELEASE_PATH.test(url.pathname)) {
       const answer = await this.answerRelease(sent);
+      return new Response(answer.body, { status: answer.status, headers: answer.headers ?? {} });
+    }
+    if (INVOKE_PATH.test(url.pathname)) {
+      const answer = await this.answerInvoke(sent);
       return new Response(answer.body, { status: answer.status, headers: answer.headers ?? {} });
     }
     const answer = await Promise.race([
@@ -358,6 +371,7 @@ function matchMedia(query: string): MediaQueryList {
 
 beforeEach(() => {
   handed.test = undefined;
+  handed.renderTest = false;
   handed.code = undefined;
   handed.configuration = undefined;
   engine = new FakeEngine();
@@ -1146,24 +1160,24 @@ describe('Monitor', () => {
   });
 });
 
+function deferredAnswer() {
+  let resolve!: (answer: Answer) => void;
+  const promise = new Promise<Answer>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+function versionAnswer(number: string) {
+  return json(200, { Versions: [{ Version: '$LATEST' }, { Version: number, Description: `Release ${number}` }] });
+}
+
+function aliasAnswer(name: string, version: string) {
+  return json(200, { Aliases: [{ Name: name, FunctionVersion: version }] });
+}
+
 describe('Versions and aliases', () => {
   const versionsPath = '?tab=versions';
-
-  function deferredAnswer() {
-    let resolve!: (answer: Answer) => void;
-    const promise = new Promise<Answer>((done) => {
-      resolve = done;
-    });
-    return { promise, resolve };
-  }
-
-  function versionAnswer(number: string) {
-    return json(200, { Versions: [{ Version: '$LATEST' }, { Version: number, Description: `Release ${number}` }] });
-  }
-
-  function aliasAnswer(name: string, version: string) {
-    return json(200, { Aliases: [{ Name: name, FunctionVersion: version }] });
-  }
 
   it('opens from the tab and reopens the same function on its release address', async () => {
     const { router, unmount } = await openLoaded();
@@ -1292,6 +1306,230 @@ describe('Versions and aliases', () => {
     });
     expect(screen.queryByText('Release 2')).toBeNull();
     expect(screen.getByText('Published version 2.')).toBeVisible();
+  });
+});
+
+describe('Qualified Test invocations', () => {
+  function targets() {
+    const select = PAGE.findSelect();
+    if (select === null) {
+      throw new Error('Expected the Invoke target selector');
+    }
+    return select;
+  }
+
+  function submitted() {
+    return engine.aws.filter(({ url }) => INVOKE_PATH.test(url.pathname));
+  }
+
+  async function chooseTarget(value: string) {
+    await waitFor(() => {
+      expect(handed.test?.aliases.loading).toBe(false);
+      expect(handed.test?.versions.loading).toBe(false);
+    });
+    const select = targets();
+    select.openDropdown();
+    select.selectOptionByValue(value);
+  }
+
+  function invokeTarget() {
+    fireEvent.click(screen.getByRole('button', { name: 'Invoke' }));
+  }
+
+  function result(payload: string, log: string): Answer {
+    return { status: 200, body: JSON.stringify({ payload }), headers: { 'x-amz-log-result': btoa(log) } };
+  }
+
+  function resultPanel() {
+    const heading = screen.getByRole('heading', { name: 'Result', level: 2 });
+    const panel = PAGE.findAllContainers().find((container) => container.getElement().contains(heading));
+    if (panel === undefined) {
+      throw new Error('Expected the invocation result panel');
+    }
+    return panel.getElement();
+  }
+
+  beforeEach(() => {
+    handed.renderTest = true;
+    Element.prototype.scrollIntoView = () => undefined;
+    engine.functions = [{ name: 'orders' }];
+    engine.answerRelease = ({ url }) =>
+      url.pathname.endsWith('/versions') ? versionAnswer('2') : aliasAnswer('live', '2');
+  });
+
+  it.each(['detail', 'releases'])(
+    'keeps the submitted target and event across tabs when %s settle first',
+    async (first) => {
+      const invoke = deferredAnswer();
+      const detail = deferredAnswer();
+      const versions = deferredAnswer();
+      const aliases = deferredAnswer();
+      let reopening = false;
+      engine.answerInvoke = () => invoke.promise;
+      engine.answerFunction = (request) =>
+        reopening && FUNCTION_PATH.test(request.url.pathname) ? detail.promise : engine.emulator(request);
+      engine.answerRelease = ({ url }) =>
+        url.pathname.endsWith('/versions')
+          ? reopening
+            ? versions.promise
+            : versionAnswer('2')
+          : reopening
+            ? aliases.promise
+            : aliasAnswer('live', '2');
+
+      open(pagePath('orders'));
+      await screen.findByText('Not invoked yet');
+      await chooseTarget('live');
+      const event = '{"tag":"kept"}';
+      fireEvent.change(screen.getByRole('textbox', { name: 'Event JSON' }), { target: { value: event } });
+      invokeTarget();
+      await waitFor(() => expect(submitted()[0]?.url.searchParams.get('Qualifier')).toBe('live'));
+      await chooseTarget('2');
+      fireEvent.click(tabLink('Code'));
+      expect(await screen.findByTestId('stand-in-code')).toBeVisible();
+
+      reopening = true;
+      fireEvent.click(tabLink('Test'));
+      expect(await screen.findByText('Not invoked yet')).toBeVisible();
+      expect(screen.getByRole('textbox', { name: 'Event JSON' })).toHaveValue(event);
+      expect(targets().findTrigger().getElement()).toHaveTextContent('2');
+
+      await act(async () => invoke.resolve(result('from the live alias', 'live tail')));
+      await waitFor(() => expect(engine.gets).toHaveLength(2));
+      expect(await screen.findByText('from the live alias', { exact: false })).toBeVisible();
+      expect(resultPanel()).toHaveTextContent('Submitted target live');
+      expect(resultPanel()).toHaveTextContent('live tail');
+
+      const settleDetail = async () => {
+        await act(async () =>
+          detail.resolve(
+            engine.emulator({
+              method: 'GET',
+              url: new URL('/2015-03-31/functions/orders', engineOrigin),
+            }),
+          ),
+        );
+      };
+      const settleReleases = async () => {
+        await act(async () => {
+          versions.resolve(versionAnswer('2'));
+          aliases.resolve(aliasAnswer('live', '2'));
+        });
+        await waitFor(() => expect(handed.test?.aliases.items).toEqual([{ name: 'live', version: '2' }]));
+      };
+      if (first === 'detail') {
+        await settleDetail();
+        await settleReleases();
+      } else {
+        await settleReleases();
+        await settleDetail();
+      }
+      expect(resultPanel()).toHaveTextContent('Submitted target live');
+      expect(resultPanel()).toHaveTextContent('from the live alias');
+      expect(resultPanel()).toHaveTextContent('live tail');
+      expect(screen.getByRole('textbox', { name: 'Event JSON' })).toHaveValue(event);
+    },
+  );
+
+  it('keeps the submitted alias and refusal visible when the detail reread removes Test', async () => {
+    const invoke = deferredAnswer();
+    engine.answerInvoke = () => invoke.promise;
+    open(pagePath('orders'));
+    await screen.findByText('Not invoked yet');
+    await chooseTarget('live');
+    invokeTarget();
+    await waitFor(() => expect(submitted()[0]?.url.searchParams.get('Qualifier')).toBe('live'));
+
+    engine.functions = [];
+    await act(async () => invoke.resolve(errorAnswer(404, 'ResourceNotFoundException', 'Alias no longer exists')));
+    expect(await screen.findByText('Function not found')).toBeVisible();
+    expect(screen.queryByRole('tab', { name: 'Test' })).toBeNull();
+    expect(resultPanel()).toHaveTextContent('Submitted target live');
+    expect(resultPanel()).toHaveTextContent('Invoke failed');
+    expect(resultPanel()).toHaveTextContent('ResourceNotFoundException');
+  });
+
+  it('drops the previous choices, selection and result when navigating to another function', async () => {
+    engine.functions.push({ name: 'payments' });
+    engine.answerRelease = ({ url }) => {
+      const orders = url.pathname.includes('/orders/');
+      if (url.pathname.endsWith('/versions')) {
+        return versionAnswer(orders ? '2' : '8');
+      }
+      return orders ? aliasAnswer('live', '2') : aliasAnswer('next', '8');
+    };
+    engine.answerInvoke = () => result('orders result', 'orders tail');
+    const { router } = open(pagePath('orders'));
+    await screen.findByText('Not invoked yet');
+    await chooseTarget('live');
+    invokeTarget();
+    expect(await screen.findByText('orders result', { exact: false })).toBeVisible();
+
+    await act(() => router.navigate(pagePath('payments')));
+    expect(await screen.findByText('Not invoked yet')).toBeVisible();
+    await waitFor(() => expect(handed.test?.aliases.items).toEqual([{ name: 'next', version: '8' }]));
+    expect(targets().findTrigger().getElement()).toHaveTextContent('$LATEST');
+    targets().openDropdown();
+    expect(screen.getByRole('option', { name: /next/ })).toBeVisible();
+    expect(screen.queryByRole('option', { name: /live/ })).toBeNull();
+    expect(screen.queryByText('orders result', { exact: false })).toBeNull();
+  });
+
+  it('verifies a same-name replacement and ignores an old invocation that finishes after reconnect', async () => {
+    const pending = deferredAnswer();
+    engine.answerInvoke = () =>
+      submitted().length === 1 ? result('previous result', 'previous tail') : pending.promise;
+    open(pagePath('orders'));
+    await screen.findByText('Not invoked yet');
+    await chooseTarget('live');
+    invokeTarget();
+    expect(await screen.findByText('previous result', { exact: false })).toBeVisible();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Invoke' })).toBeEnabled());
+    invokeTarget();
+    await waitFor(() => expect(submitted()).toHaveLength(2));
+    expect(resultPanel()).toHaveTextContent('previous result');
+
+    connection.set(notStartedResult());
+    expect(screen.queryByText('previous result', { exact: false })).toBeNull();
+    engine.answerRelease = ({ url }) =>
+      url.pathname.endsWith('/versions') ? versionAnswer('8') : aliasAnswer('replacement', '8');
+    connection.set(connectedResult());
+
+    expect(await screen.findByText('Not invoked yet')).toBeVisible();
+    await waitFor(() => expect(handed.test?.aliases.items).toEqual([{ name: 'replacement', version: '8' }]));
+    expect(targets().findTrigger().getElement()).toHaveTextContent('$LATEST');
+    targets().openDropdown();
+    expect(screen.getByRole('option', { name: /replacement/ })).toBeVisible();
+    expect(screen.getByRole('option', { name: '8' })).toBeVisible();
+    expect(screen.queryByRole('option', { name: /live/ })).toBeNull();
+    const rereads = engine.gets.length;
+
+    await act(async () => {
+      pending.resolve(result('late result', 'late tail'));
+      await pending.promise;
+    });
+
+    expect(engine.gets).toHaveLength(rereads);
+    expect(screen.getByRole('option', { name: /replacement/ })).toBeVisible();
+    expect(targets().findTrigger().getElement()).toHaveTextContent('$LATEST');
+    expect(screen.getByText('Not invoked yet')).toBeVisible();
+    expect(screen.queryByText('late result', { exact: false })).toBeNull();
+  });
+
+  it('refreshes targets and keeps a disappeared alias blocked until replaced by an explicit choice', async () => {
+    open(pagePath('orders'));
+    await screen.findByText('Not invoked yet');
+    await chooseTarget('live');
+    engine.answerRelease = ({ url }) =>
+      url.pathname.endsWith('/versions') ? versionAnswer('2') : json(200, { Aliases: [] });
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    expect(await screen.findByText('live is unavailable. Choose another target.')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Invoke' })).toBeDisabled();
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Event JSON' }), { key: 'Enter', ctrlKey: true });
+    expect(submitted()).toHaveLength(0);
+    await chooseTarget('2');
+    invokeTarget();
+    await waitFor(() => expect(submitted()[0]?.url.searchParams.get('Qualifier')).toBe('2'));
   });
 });
 
