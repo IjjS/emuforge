@@ -52,6 +52,23 @@ export function tokens(main: Locator, label: string) {
 
 const wrapper = createWrapper();
 
+/** The cluster precedes the service in EmuForge > AWS > ECS > Clusters > cluster > service. */
+export function clusterBreadcrumb(page: Page) {
+  return page.locator(wrapper.findBreadcrumbGroup().findBreadcrumbLink(5).toSelector());
+}
+
+const serviceDetails = wrapper.findKeyValuePairs('[aria-label="Service details"]').findItems();
+
+export async function expectServiceDetail(page: Page, position: number, label: string, value: string) {
+  const pair = serviceDetails.get(position);
+  const key = page.locator(pair.findLabel().toSelector());
+  const detail = page.locator(pair.findValue().toSelector());
+  await expect(key).toBeVisible();
+  await expect(key).toHaveText(label, { useInnerText: true });
+  await expect(detail).toBeVisible();
+  await expect(detail).toHaveText(value, { useInnerText: true });
+}
+
 export async function expectVisibleResult(page: Page, type: 'success' | 'error', ...messages: string[]) {
   let items = page.locator(wrapper.findFlashbar().findItemsByType(type).toSelector()).filter({ visible: true });
   for (const message of messages) items = items.filter({ hasText: message });

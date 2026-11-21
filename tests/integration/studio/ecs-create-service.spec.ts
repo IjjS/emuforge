@@ -1,10 +1,10 @@
 import { expect, startStack, test } from './support';
-import { ACTION, addressOf, BREADCRUMB_ITEMS, heading } from './support/frame';
+import { ACTION, addressOf, heading } from './support/frame';
 import { checkPrefix } from './support/service-screens';
-import { CREATE, createdServiceLink, enterForm, expectService, expectVisibleResult, groupPicker, input, network, publicIpInput, tokens } from './services/ecs/create-service';
+import { CREATE, clusterBreadcrumb, createdServiceLink, enterForm, expectService, expectServiceDetail, expectVisibleResult, groupPicker, input, network, publicIpInput, tokens } from './services/ecs/create-service';
 import {
   button, chooseInMultiselect, chooseOption, clusterPath, ecs, EcsSeeded, expectRow,
-  expectValue, field, selectOf, serviceNamesDirect, servicePath, tableOf,
+  field, selectOf, serviceNamesDirect, servicePath, tableOf,
 } from './services/ecs/ecs';
 
 test('studio.ecs-create-service-opens-the-created-service', async ({ ctx, page }) => {
@@ -37,16 +37,17 @@ test('studio.ecs-create-service-opens-the-created-service', async ({ ctx, page }
 
   await expect(page).toHaveURL(addressOf(servicePath(cluster, name)));
   await expect(heading(page, name)).toBeVisible();
-  await expectValue(page, 'Status', 'Active');
-  await expectValue(page, 'Desired tasks', '2');
-  await expectValue(page, 'Task definition', older);
-  await expectValue(page, 'Launch type', 'FARGATE');
-  await expectValue(page, 'Subnets', subnet);
-  await expectValue(page, 'Security groups', group);
-  await expectValue(page, 'Public IP', 'Enabled');
+  await expectServiceDetail(page, 2, 'Status', 'Active');
+  await expectServiceDetail(page, 3, 'Desired tasks', '2');
+  await expectServiceDetail(page, 6, 'Task definition', older);
+  await expectServiceDetail(page, 7, 'Launch type', 'FARGATE');
+  await expectServiceDetail(page, 9, 'Subnets', subnet);
+  await expectServiceDetail(page, 10, 'Security groups', group);
+  await expectServiceDetail(page, 11, 'Public IP', 'Enabled');
   await expectVisibleResult(page, 'success', 'Service ' + name + ' created.');
-  const clusterCrumb = page.locator(BREADCRUMB_ITEMS).and(page.locator('a[href="' + clusterPath(cluster) + '"]'));
+  const clusterCrumb = clusterBreadcrumb(page);
   await expect(clusterCrumb).toHaveText(cluster);
+  await expect(clusterCrumb).toHaveAttribute('href', clusterPath(cluster));
   await clusterCrumb.click(ACTION);
   await expect(page).toHaveURL(addressOf(clusterPath(cluster)));
   const services = tableOf(main, 'Services');
