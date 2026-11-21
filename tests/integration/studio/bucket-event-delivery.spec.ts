@@ -57,7 +57,7 @@ test('studio.s3-notification-queue-receives-upload', async ({ ctx, page }) => {
   await page.getByRole('tab', { name: 'Messages', exact: true }).click();
   await page.getByRole('button', { name: 'Read messages' }).click();
   const row = page.locator(wrappers.findTable().findRows().toSelector()).filter({ hasText: key });
-  await row.getByRole('link').click();
+  await row.getByRole('button').click({ timeout: 10000 });
   const body = JSON.parse(await page.locator('.aws-sqs-message-body').innerText());
   expect(body.Records).toContainEqual(
     expect.objectContaining({

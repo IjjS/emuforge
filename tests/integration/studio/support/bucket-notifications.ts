@@ -225,7 +225,7 @@ export class LocalNotifications {
 
 export function topicSettings(TopicArn: string): NotificationConfiguration {
   return {
-    TopicConfigurations: [{ Id: 'audit', TopicArn, Events: ['s3:ObjectRemoved:*'] }],
+    TopicConfigurations: [{ Id: 'audit', TopicArn, Events: ['s3:ObjectRemoved:DeleteMarkerCreated'] }],
     EventBridgeConfiguration: {},
   };
 }
