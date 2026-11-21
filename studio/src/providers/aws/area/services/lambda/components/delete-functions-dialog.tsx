@@ -1,9 +1,9 @@
 import Box from '@cloudscape-design/components/box';
-import Button from '@cloudscape-design/components/button';
+import Button, { type ButtonProps } from '@cloudscape-design/components/button';
 import FormField from '@cloudscape-design/components/form-field';
 import Input from '@cloudscape-design/components/input';
 import SpaceBetween from '@cloudscape-design/components/space-between';
-import { useCallback, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { AreaModal } from '../../../components/area-modal';
 import type { AreaConnection } from '../../../components/emulator-line';
@@ -24,6 +24,7 @@ export const DELETE_FUNCTIONS_TITLE = 'Delete functions';
 const CONFIRM_WORD = 'confirm';
 
 const CONFIRM_LABEL = 'To confirm deletion, type "confirm" in the field.';
+const DELETING = 'Deleting functions…';
 
 function deletedText(count: number): string {
   return count === 1
@@ -75,6 +76,14 @@ export function DeleteFunctionsDialog({
   const [typed, setTyped] = useState('');
   const visible = names.length > 0;
   const confirmed = typed === CONFIRM_WORD;
+
+  const deleteButton = useRef<ButtonProps.Ref>(null);
+  useEffect(() => {
+    // Hiding Close changes the modal's autofocus target. Keep focus on the loading action.
+    if (visible && pending) {
+      deleteButton.current?.focus();
+    }
+  }, [visible, pending]);
 
   const submitting = useRef(false);
   const mounted = useRef(false);
@@ -159,14 +168,22 @@ export function DeleteFunctionsDialog({
       visible={visible}
       header={DELETE_FUNCTIONS_TITLE}
       closeAriaLabel="Close modal"
+      hideDismissButton={pending}
       onDismiss={handleDismiss}
       footer={
         <Box float="right">
           <SpaceBetween direction="horizontal" size="xs">
-            <Button variant="link" onClick={handleDismiss}>
+            <Button variant="link" disabled={pending} onClick={handleDismiss}>
               Cancel
             </Button>
-            <Button variant="primary" disabled={!confirmed || pending} loading={pending} onClick={handleDelete}>
+            <Button
+              ref={deleteButton}
+              variant="primary"
+              disabled={!pending && !confirmed}
+              loading={pending}
+              loadingText={DELETING}
+              onClick={handleDelete}
+            >
               Delete
             </Button>
           </SpaceBetween>
@@ -186,6 +203,7 @@ export function DeleteFunctionsDialog({
           <Input
             value={typed}
             placeholder={CONFIRM_WORD}
+            readOnly={pending}
             onChange={({ detail }) => {
               setTyped(detail.value);
             }}
@@ -196,6 +214,7 @@ export function DeleteFunctionsDialog({
             }}
           />
         </FormField>
+        {pending && <Box variant="p">{DELETING}</Box>}
       </SpaceBetween>
     </AreaModal>
   );
