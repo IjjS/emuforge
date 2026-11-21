@@ -226,7 +226,7 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
   }));
   useLayoutEffect(() => {
     const handleOffline = () => {
-      setNetwork((current) => ({ ...current, online: false }));
+      setNetwork((current) => ({ ...current, online: false, revision: current.revision + 1 }));
     };
     const handleOnline = () => {
       const at = Date.now();
@@ -257,16 +257,18 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
   const ready = !isChanging(read);
   const flash = usePageFlash();
   const reread = useReadAgain(connection.engineOrigin, name);
-  const sessionScope = JSON.stringify([connection.engineOrigin, name, reading.session]);
-  const invoke = useInvoke(connection.engineOrigin, name, reading.session);
+  const functionScope = JSON.stringify([connection.engineOrigin, name]);
+  const sessionScope = JSON.stringify([functionScope, reading.session]);
+  const verificationScope = JSON.stringify([sessionScope, network.revision]);
+  const invoke = useInvoke(connection.engineOrigin, name, reading.session, network.revision);
   const invocationPanel = useRef<HTMLDivElement>(null);
-  const scroll = useRef({ scope: sessionScope, answers: 0, shown: false });
+  const scroll = useRef({ scope: verificationScope, answers: 0, shown: false });
   const showInvocationFallback = fn === undefined && invoke.answers > 0;
   const invocationAnswers = invoke.answers;
   useEffect(() => {
-    const completed = scroll.current.scope !== sessionScope || scroll.current.answers !== invocationAnswers;
+    const completed = scroll.current.scope !== verificationScope || scroll.current.answers !== invocationAnswers;
     if (completed) {
-      scroll.current = { scope: sessionScope, answers: invocationAnswers, shown: false };
+      scroll.current = { scope: verificationScope, answers: invocationAnswers, shown: false };
     }
     // If the detail disappears after a completion off Test, its fallback is the first visible result panel.
     if (
@@ -278,17 +280,23 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
       invocationPanel.current.scrollIntoView({ block: 'nearest' });
       scroll.current.shown = true;
     }
-  }, [sessionScope, invocationAnswers, showInvocationFallback]);
+  }, [verificationScope, invocationAnswers, showInvocationFallback]);
   const [test, setTest] = useState({
-    scope: sessionScope,
+    scope: verificationScope,
+    functionScope,
     eventText: INITIAL_EVENT,
     qualifier: undefined as string | undefined,
     targetUnavailable: false,
   });
-  if (test.scope !== sessionScope) {
-    setTest({ scope: sessionScope, eventText: INITIAL_EVENT, qualifier: undefined, targetUnavailable: false });
+  if (test.scope !== verificationScope) {
+    setTest({
+      scope: verificationScope,
+      functionScope,
+      eventText: test.functionScope === functionScope ? test.eventText : INITIAL_EVENT,
+      qualifier: undefined,
+      targetUnavailable: false,
+    });
   }
-  const verificationScope = JSON.stringify([sessionScope, network.revision]);
   const [verification, setVerification] = useState({ scope: verificationScope, found: false });
   // A refresh can read releases in parallel once this connection has verified the function.
   const verified =
@@ -305,7 +313,7 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
     endpoint: connection.engineOrigin,
     name,
     session: reading.session,
-    view: active === 'versions' || active === 'test' ? active : undefined,
+    view: verified && (active === 'versions' || active === 'test') ? active : undefined,
     verified,
   });
   const { qualifier } = test;
@@ -313,7 +321,7 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
     ? releases.versions.items?.some(({ version }) => version === qualifier)
     : releases.aliases.items?.some(({ name }) => name === qualifier);
   if (
-    test.scope === sessionScope &&
+    test.scope === verificationScope &&
     qualifier !== undefined &&
     !test.targetUnavailable &&
     refreshedTargetExists === false
@@ -323,7 +331,7 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
   const releaseMutation = useReleaseMutation({
     endpoint: connection.engineOrigin,
     name,
-    scope: sessionScope,
+    scope: verificationScope,
     onSuccess: (result) => {
       flash.show([{ type: 'success', content: releaseSuccessText(result) }]);
       void reread();
@@ -359,7 +367,6 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
   const [deletion, setDeletion] = useState<{ scope: string; names: readonly [string] }>();
   const canDelete = connection.engineOrigin !== undefined && verified;
   const activeDeletion = canDelete && deletion?.scope === verificationScope ? deletion : undefined;
-  const functionScope = JSON.stringify([connection.engineOrigin, name]);
   const [closedConfirmationFor, setClosedConfirmationFor] = useState<string>();
   if (closedConfirmationFor !== undefined && closedConfirmationFor !== functionScope) {
     setClosedConfirmationFor(undefined);
@@ -476,10 +483,10 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
       toSay.push(failureLine);
     }
   }
-  const [seenInvocation, setSeenInvocation] = useState({ scope: sessionScope, answers: 0 });
-  const invocationScopeChanged = seenInvocation.scope !== sessionScope;
+  const [seenInvocation, setSeenInvocation] = useState({ scope: verificationScope, answers: 0 });
+  const invocationScopeChanged = seenInvocation.scope !== verificationScope;
   if (invocationScopeChanged || seenInvocation.answers !== invocationAnswers) {
-    setSeenInvocation({ scope: sessionScope, answers: invocationAnswers });
+    setSeenInvocation({ scope: verificationScope, answers: invocationAnswers });
     if (invocationAnswers > 0) {
       const words =
         invoke.error?.kind === 'not-implemented' && invoke.qualifier !== undefined
@@ -529,7 +536,7 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
           fn={fn}
           connection={connection}
           ready={ready}
-          testScope={sessionScope}
+          testScope={verificationScope}
           test={{
             invoke,
             verified,

@@ -129,6 +129,7 @@ interface MonitoringRequest {
 const FUNCTION_PATH = /^\/2015-03-31\/functions\/([^/]+)$/;
 const URL_PATH = /^\/2021-10-31\/functions\/([^/]+)\/url$/;
 const RELEASE_PATH = /^\/2015-03-31\/functions\/([^/]+)\/(versions|aliases)$/;
+const ALIAS_PATH = /^\/2015-03-31\/functions\/([^/]+)\/aliases\/([^/]+)$/;
 const INVOKE_PATH = /^\/2015-03-31\/functions\/([^/]+)\/invocations$/;
 
 function json(status: number, body: unknown): Answer {
@@ -152,6 +153,8 @@ class FakeEngine {
   /** Every AWS request, as sent. */
   readonly aws: SentRequest[] = [];
   readonly monitoring: MonitoringRequest[] = [];
+  sessionRequests = 0;
+  answerSession: () => Answer | Promise<Answer> = () => json(200, { token: 'emuforge-test-token-84' });
   answerMonitoring: (request: MonitoringRequest) => Answer | Promise<Answer> = ({ operation }) =>
     json(200, operation === 'FilterLogEvents' ? { events: [] } : { Datapoints: [] });
   /** The answer to `GetFunction`; by default the emulator's. */
@@ -243,7 +246,9 @@ class FakeEngine {
     const request = input instanceof Request ? input : new Request(String(input), init);
     const url = new URL(request.url);
     if (url.pathname === '/__emuforge/session') {
-      return new Response(JSON.stringify({ token: 'emuforge-test-token-84' }), { status: 200 });
+      this.sessionRequests += 1;
+      const answer = await this.answerSession();
+      return new Response(answer.body, { status: answer.status, headers: answer.headers ?? {} });
     }
     const operation = request.headers.get('x-amz-target')?.split('.').at(-1);
     if (operation === 'FilterLogEvents' || operation === 'GetMetricStatistics') {
@@ -255,7 +260,7 @@ class FakeEngine {
     }
     const sent = { method: request.method, url };
     this.aws.push(sent);
-    if (RELEASE_PATH.test(url.pathname)) {
+    if (RELEASE_PATH.test(url.pathname) || ALIAS_PATH.test(url.pathname)) {
       const answer = await this.answerRelease(sent);
       return new Response(answer.body, { status: answer.status, headers: answer.headers ?? {} });
     }
@@ -1618,6 +1623,117 @@ describe('Qualified Test invocations', () => {
     },
   );
 
+  it('discards a held Invoke and paused alias deletion on native reconnect while keeping the event draft', async () => {
+    const priorInvoke = deferredAnswer();
+    const replacement = deferredAnswer();
+    const said = recordAnnouncements();
+    const event = '{"event":"preserved"}';
+    const aliasDeletes = () =>
+      engine.aws.filter(({ method, url }) => method === 'DELETE' && ALIAS_PATH.test(url.pathname));
+    engine.answerInvoke = () => result('prior payload', 'prior log');
+    const { client, unmount } = open(pagePath('orders'));
+    const wasOnline = onlineManager.isOnline();
+    const browserOnline = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true);
+    try {
+      await waitForResult('Not invoked yet');
+      await chooseTarget('live');
+      eventField().setTextareaValue(event);
+      invokeTarget();
+      await waitForResult('prior payload');
+      await waitFor(() => expect(said.filter((message) => message === 'Succeeded')).toHaveLength(1));
+
+      engine.answerInvoke = () => priorInvoke.promise;
+      invokeTarget();
+      await waitFor(() =>
+        expect(submitted().map(({ url }) => url.searchParams.get('Qualifier'))).toEqual(['live', 'live']),
+      );
+      fireEvent.click(tabLink('versions'));
+      const menu = await waitFor(() => {
+        const table = releaseTable('Aliases');
+        expect(table?.findBodyCell(1, 2)?.getElement()).toHaveTextContent('live');
+        const dropdown = table?.findBodyCell(1, 1)?.findButtonDropdown();
+        if (!dropdown) throw new Error('Expected the alias action menu');
+        return dropdown;
+      });
+      menu.openDropdown();
+      const remove = menu.findItemById('DeleteAlias')?.find('[role="menuitem"]')?.getElement();
+      if (!remove) throw new Error('Expected the DeleteAlias action');
+      expect(remove).toHaveAccessibleName('Delete alias live');
+      fireEvent.click(remove);
+      const dialog = PAGE.findAllModals().find((modal) => modal.isVisible());
+      expect(dialog?.findHeader().getElement()).toHaveTextContent('Delete alias');
+      const [cancel, confirm] = dialog?.findFooter()?.findAllButtons() ?? [];
+      expect(cancel?.getElement()).toHaveAccessibleName('Cancel');
+      expect(confirm?.getElement()).toHaveAccessibleName('Delete alias');
+
+      act(() => onlineManager.setOnline(false));
+      confirm?.click();
+      await waitFor(() =>
+        expect(
+          client
+            .getMutationCache()
+            .getAll()
+            .some(({ state }) => state.isPaused),
+        ).toBe(true),
+      );
+      const queued = client
+        .getMutationCache()
+        .getAll()
+        .find(({ state }) => state.isPaused);
+      expect(aliasDeletes()).toEqual([]);
+      const oldHealth = connection.value.result;
+      browserOnline.mockReturnValue(false);
+      fireEvent(window, new Event('offline'));
+      engine.functions = [{ name: 'orders', description: 'Replacement invocation details' }];
+      engine.answerFunction = () => replacement.promise;
+      engine.answerRelease = ({ url }) =>
+        url.pathname.endsWith('/versions') ? versionAnswer('3') : aliasAnswer('next', '3');
+      browserOnline.mockReturnValue(true);
+      await act(async () => {
+        window.dispatchEvent(new Event('online'));
+        await client.resumePausedMutations();
+      });
+      await waitFor(() => expect(queued?.state.error).toMatchObject({ name: 'AbortError' }));
+      expect(connection.value.result).toBe(oldHealth);
+      expect(aliasDeletes()).toEqual([]);
+
+      const reads = engine.gets.length;
+      connection.set(connectedResult());
+      await waitFor(() => expect(engine.gets.length).toBeGreaterThan(reads));
+      await act(async () =>
+        replacement.resolve(
+          engine.emulator({ method: 'GET', url: new URL('/2015-03-31/functions/orders', engineOrigin) }),
+        ),
+      );
+      await waitFor(() => expect(value('Description')).toBe('Replacement invocation details'));
+      fireEvent.click(tabLink('test'));
+      await waitForResult('Not invoked yet');
+      await waitFor(() => expect(handed.test?.aliases.items).toEqual([{ name: 'next', version: '3' }]));
+      expect(targets().findTrigger().getElement()).toHaveTextContent('$LATEST');
+      targets().openDropdown();
+      expect(targetOption('live')).toBeNull();
+      expect(targetOption('next')).toHaveTextContent('Version 3');
+      targets().closeDropdown();
+
+      await act(async () => priorInvoke.resolve(result('late payload', 'late log')));
+      expect(resultPanel()).toHaveTextContent('Not invoked yet');
+      expect(resultPanel()).not.toHaveTextContent(/prior payload|late payload|late log/);
+      expect(targets().findTrigger().getElement()).toHaveTextContent('$LATEST');
+      expect(eventField().getTextareaValue()).toBe(event);
+      expect(said.filter((message) => message === 'Succeeded')).toHaveLength(1);
+      expect(aliasDeletes()).toEqual([]);
+
+      engine.answerInvoke = () => result('replacement payload', 'replacement log');
+      invokeTarget();
+      await waitForResult('replacement payload');
+      expect(submitted().map(({ url }) => url.searchParams.get('Qualifier'))).toEqual(['live', 'live', null]);
+    } finally {
+      unmount();
+      browserOnline.mockRestore();
+      onlineManager.setOnline(wasOnline);
+    }
+  });
+
   it('announces off Test and announces a repeated result once while scrolling the visible panel', async () => {
     const pending = deferredAnswer();
     const announcements = recordAnnouncements();
@@ -2065,14 +2181,14 @@ describe('"Delete" in the header', () => {
     expect(deleteRequests()).toEqual(['orders']);
   });
 
-  function expectFreshConfirmation(target: string) {
+  function expectFreshConfirmation(target: string, priorRequests: readonly string[] = []) {
     const { input, submit, content } = deletionControls();
     expect(norm(content.find('li')?.getElement().textContent)).toBe(target);
     expect(input.getInputValue()).toBe('');
     expect(submit.getElement()).toBeDisabled();
     fireEvent.keyDown(input.findNativeInput().getElement(), { key: 'Enter' });
     submit.click();
-    expect(deleteRequests()).toEqual([]);
+    expect(deleteRequests()).toEqual(priorRequests);
 
     input.setInputValue('confirm');
     expect(submit.getElement()).toBeEnabled();
@@ -2559,6 +2675,116 @@ describe('"Delete" in the header', () => {
         await waitFor(() => expect(router.state.location.pathname).toBe('/aws/lambda/functions'));
         expect(deleteRequests()).toEqual(['orders']);
       } finally {
+        unmount();
+        browserOnline.mockRestore();
+        onlineManager.setOnline(wasOnline);
+      }
+    },
+  );
+
+  it.each(['engine session renewal', 'SDK retry'] as const)(
+    'blocks DeleteFunction after %s crosses a native reconnect and requires fresh confirmation',
+    async (wait) => {
+      const renewal = deferredAnswer();
+      const replacement = deferredAnswer();
+      const renew = wait === 'engine session renewal';
+      const refusal = renew
+        ? errorAnswer(401, 'SessionInvalid', 'The engine session expired')
+        : errorAnswer(503, 'EmulatorUnavailable', 'The engine did not relay the deletion');
+      engine.functions = [ORDERS];
+      engine.answerSession = () =>
+        engine.sessionRequests === 1 ? json(200, { token: 'emuforge-first-session' }) : renewal.promise;
+      engine.answerDelete = (request) =>
+        deleteRequests().length === 1
+          ? {
+              ...refusal,
+              headers: {
+                ...refusal.headers,
+                ...(renew ? { 'www-authenticate': 'EmuForge-Session' } : { 'retry-after': '3' }),
+              },
+            }
+          : engine.emulator(request);
+      const { client, router, unmount } = open(pagePath('orders'));
+      const wasOnline = onlineManager.isOnline();
+      const browserOnline = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true);
+      const schedule = globalThis.setTimeout;
+      let resumeRetry: (() => void) | undefined;
+      // Intercept only the SDK's delay requested by Retry-After, leaving React and query timers running.
+      const retryTimer = renew
+        ? undefined
+        : vi.spyOn(globalThis, 'setTimeout').mockImplementation((callback, delay, ...args) => {
+            if (delay !== undefined && delay >= 2500 && delay <= 3000) {
+              resumeRetry = () => callback(...args);
+              return schedule(() => undefined, 0);
+            }
+            return schedule(callback, delay, ...args);
+          });
+      try {
+        await waitFor(() => expect(value('Description')).toBe(ORDERS.description));
+        await openDialog();
+        expectFreshConfirmation('orders');
+        deletionControls().submit.click();
+        await waitFor(() => {
+          expect(deleteRequests()).toEqual(['orders']);
+          if (renew) {
+            expect(engine.sessionRequests).toBe(2);
+          } else {
+            expect(resumeRetry).toBeDefined();
+          }
+        });
+        const submission = client.getMutationCache().getAll()[0];
+        expect(submission?.state.status).toBe('pending');
+        const oldHealth = connection.value.result;
+        browserOnline.mockReturnValue(false);
+        fireEvent(window, new Event('offline'));
+        expect(deletionDialog()).toBeUndefined();
+        engine.functions = [{ ...ORDERS, description: 'Replacement after an unrelayed deletion' }];
+        engine.answerFunction = () => replacement.promise;
+        browserOnline.mockReturnValue(true);
+        fireEvent(window, new Event('online'));
+        expect(connection.value.result).toBe(oldHealth);
+        expect(pageDeleteAction()?.getElement()).toHaveAccessibleName('Delete');
+        expect(pageDeleteAction()?.getElement()).toBeDisabled();
+        pageDeleteAction()?.click();
+        expect(deletionDialog()).toBeUndefined();
+
+        await act(async () => {
+          if (renew) {
+            renewal.resolve(json(200, { token: 'emuforge-renewed-session' }));
+          } else {
+            resumeRetry?.();
+          }
+        });
+        await waitFor(() => expect(submission?.state.error).toMatchObject({ name: 'AbortError' }));
+        expect(deleteRequests()).toEqual(['orders']);
+        expect(engine.functions.map(({ name }) => name)).toEqual(['orders']);
+        expect(flashTexts()).toEqual([]);
+        expect(router.state.location.pathname).toBe(pagePath('orders'));
+
+        const reads = engine.gets.length;
+        connection.set(connectedResult());
+        await waitFor(() => expect(engine.gets.length).toBeGreaterThan(reads));
+        expect(pageDeleteAction()?.getElement()).toBeDisabled();
+        pageDeleteAction()?.click();
+        expect(deletionDialog()).toBeUndefined();
+        expect(deleteRequests()).toEqual(['orders']);
+        await act(async () =>
+          replacement.resolve(
+            engine.emulator({ method: 'GET', url: new URL('/2015-03-31/functions/orders', engineOrigin) }),
+          ),
+        );
+        await waitFor(() => expect(value('Description')).toBe('Replacement after an unrelayed deletion'));
+        await openDialog();
+        expectFreshConfirmation('orders', ['orders']);
+        deletionControls().submit.click();
+        await waitFor(() => {
+          expect(router.state.location.pathname).toBe('/aws/lambda/functions');
+          expect(flashTexts()).toEqual(['1 function was deleted from the local emulator.']);
+        });
+        expect(deleteRequests()).toEqual(['orders', 'orders']);
+        expect(engine.functions).toEqual([]);
+      } finally {
+        retryTimer?.mockRestore();
         unmount();
         browserOnline.mockRestore();
         onlineManager.setOnline(wasOnline);

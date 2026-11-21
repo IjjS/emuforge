@@ -1,7 +1,12 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
-import { requestFailure, type RequestFailure } from '../../../../../lib/aws/request';
+import {
+  assertAwsRequestAuthorized,
+  bindAwsMutationAuthorization,
+  requestFailure,
+  type RequestFailure,
+} from '../../../../../lib/aws/request';
 import {
   createFunction,
   CreateFunctionError,
@@ -437,21 +442,9 @@ export function useFunctionReading({
 export function useDeleteFunctions(endpoint: string | undefined) {
   const client = useQueryClient();
   const submissions = useRef(new Set<AbortController>());
-  const queued = useRef(new Set<AbortController>());
   useLayoutEffect(() => {
     const pending = submissions.current;
-    const waiting = queued.current;
-    const cancelQueued = () => {
-      for (const submission of waiting) {
-        submission.abort();
-      }
-    };
-    // Invalidate waiting confirmations before TanStack's online listener resumes them.
-    window.addEventListener('offline', cancelQueued, true);
-    window.addEventListener('online', cancelQueued, true);
     return () => {
-      window.removeEventListener('offline', cancelQueued, true);
-      window.removeEventListener('online', cancelQueued, true);
       for (const submission of pending) {
         submission.abort();
       }
@@ -464,14 +457,10 @@ export function useDeleteFunctions(endpoint: string | undefined) {
       controller: AbortController;
     }) => {
       const { endpoint, names, controller } = submission;
-      if (!navigator.onLine) {
-        controller.abort();
-      }
-      controller.signal.throwIfAborted();
+      assertAwsRequestAuthorized(controller.signal);
       if (endpoint === undefined) {
         throw new Error('The engine endpoint is not known yet.');
       }
-      queued.current.delete(controller);
       return deleteFunctions(endpoint, names, controller.signal);
     },
     onSettled: (_result, _error, submission) => {
@@ -485,11 +474,11 @@ export function useDeleteFunctions(endpoint: string | undefined) {
       // TanStack Query can pause before mutationFn runs. Scope the signal when the deletion is confirmed.
       const controller = new AbortController();
       submissions.current.add(controller);
-      queued.current.add(controller);
+      const dispose = bindAwsMutationAuthorization(controller);
       try {
         return await mutateAsync({ endpoint, names, controller });
       } finally {
-        queued.current.delete(controller);
+        dispose();
         submissions.current.delete(controller);
       }
     },
@@ -689,9 +678,9 @@ export interface Invocation {
   isUnsupported: (qualifier: string | undefined) => boolean;
 }
 
-export function useInvoke(endpoint: string | undefined, name: string, session = 0): Invocation {
+export function useInvoke(endpoint: string | undefined, name: string, session = 0, networkRevision = 0): Invocation {
   const readAgain = useReadAgain(endpoint, name);
-  const scope = JSON.stringify([endpoint, name, session]);
+  const scope = JSON.stringify([endpoint, name, session, networkRevision]);
   const request = useRef<AbortController | undefined>(undefined);
   const [saved, setLast] = useState(() => emptyInvocation(scope));
   const last = saved.scope === scope ? saved : emptyInvocation(scope);
