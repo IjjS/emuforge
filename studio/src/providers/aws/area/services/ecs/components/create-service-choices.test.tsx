@@ -547,7 +547,7 @@ it.each(['emulator-did-not-answer', 'engine-did-not-answer'] as const)(
       expect(screen.getByRole('link', { name: 'Connection status' })).toHaveAttribute('href', '/');
     } else {
       expect(indicator).toHaveTextContent(/^The emulator did not answer$/);
-      expect(diagnostic.getElement()).toHaveTextContent('probe timed out');
+      expect(diagnostic.findBox()?.getElement()).toHaveTextContent(/^probe timed out$/);
     }
     expect(screen.getByRole('textbox', { name: 'Service name' })).toHaveValue('entered');
     expect(select(FAMILY).findTrigger().getElement()).toHaveTextContent('web');
