@@ -20,6 +20,7 @@ import type { ScreenPageProps } from '../../../screens';
 import type { Cluster } from '../api';
 import { DeleteClusterDialog } from '../components/delete-cluster-dialog';
 import { NotFound } from '../components/not-found';
+import { revealBelowBreadcrumbs } from '../components/reveal-below-breadcrumbs';
 import { ServicesTable } from '../components/services-table';
 import { TasksTable } from '../components/tasks-table';
 import {
@@ -69,22 +70,6 @@ function Loading({ children }: { children: string }) {
       </Box>
     </Container>
   );
-}
-
-function focusServices(target: HTMLElement) {
-  const layout = target.closest('main');
-  let row = layout?.querySelector<HTMLElement>('nav[aria-label="Breadcrumbs"]') ?? null;
-  // AppLayout's scroll padding already clears Studio's bar. The mobile breadcrumb row adds its own height.
-  while (row !== null && row !== layout && getComputedStyle(row).position !== 'sticky') {
-    row = row.parentElement;
-  }
-  const margin = target.style.scrollMarginTop;
-  if (row !== null && row !== layout) {
-    target.style.scrollMarginTop = `calc(${row.getBoundingClientRect().height}px + var(--space-static-xs-b6kz15))`;
-  }
-  target.focus({ preventScroll: true });
-  target.scrollIntoView({ block: 'start', behavior: 'instant' });
-  target.style.scrollMarginTop = margin;
 }
 
 /** `/aws/ecs/clusters/cluster/{cluster}`. */
@@ -198,7 +183,8 @@ export function ClusterPage({ connection, params }: ScreenPageProps) {
                     const target = document.getElementById(SERVICES_SECTION_ID);
                     if (target !== null) {
                       event.preventDefault();
-                      focusServices(target);
+                      target.focus({ preventScroll: true });
+                      revealBelowBreadcrumbs(target, 'align');
                     }
                   }}
                 >
