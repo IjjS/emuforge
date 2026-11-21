@@ -41,7 +41,7 @@ export interface ServicesTableProps {
 
 /** A name keeps room for 24 characters (`aws-area.md`, entry 4). */
 const NAME_MIN_WIDTH = '28ch';
-const OVERFLOW_HINT = 'Scroll horizontally to see task counts and more columns.';
+const OVERFLOW_HINT = 'Scroll sideways for task counts.';
 
 function counterText(rows: number, openEnd: boolean): string {
   return `(${String(rows)}${openEnd ? '+' : ''})`;
@@ -153,7 +153,9 @@ export function ServicesTable({ connection, cluster, onFollowedRead, refreshKey 
     <div ref={section} id={SERVICES_SECTION_ID} tabIndex={-1} role="region" aria-label="Services">
       <Table<Service>
         variant="container"
-        {...(showOverflow ? { ariaLabels: { tableLabel: `Services. ${OVERFLOW_HINT}` } } : {})}
+        {...(showOverflow
+          ? { ariaLabels: { tableLabel: 'Services. Scroll sideways for task counts and more columns.' } }
+          : {})}
         items={items ?? []}
         trackBy="name"
         columnDefinitions={columns}

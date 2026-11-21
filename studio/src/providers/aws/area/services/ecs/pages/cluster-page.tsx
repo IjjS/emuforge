@@ -71,6 +71,22 @@ function Loading({ children }: { children: string }) {
   );
 }
 
+function focusServices(target: HTMLElement) {
+  const layout = target.closest('main');
+  let row = layout?.querySelector<HTMLElement>('nav[aria-label="Breadcrumbs"]') ?? null;
+  // AppLayout's scroll padding already clears Studio's bar. The mobile breadcrumb row adds its own height.
+  while (row !== null && row !== layout && getComputedStyle(row).position !== 'sticky') {
+    row = row.parentElement;
+  }
+  const margin = target.style.scrollMarginTop;
+  if (row !== null && row !== layout) {
+    target.style.scrollMarginTop = `${row.getBoundingClientRect().height + 8}px`;
+  }
+  target.focus({ preventScroll: true });
+  target.scrollIntoView({ block: 'start', behavior: 'instant' });
+  target.style.scrollMarginTop = margin;
+}
+
 /** `/aws/ecs/clusters/cluster/{cluster}`. */
 export function ClusterPage({ connection, params }: ScreenPageProps) {
   useShowsResources(SERVICES_AND_TASKS_WORD);
@@ -182,8 +198,7 @@ export function ClusterPage({ connection, params }: ScreenPageProps) {
                     const target = document.getElementById(SERVICES_SECTION_ID);
                     if (target !== null) {
                       event.preventDefault();
-                      target.focus({ preventScroll: true });
-                      target.scrollIntoView({ block: 'start' });
+                      focusServices(target);
                     }
                   }}
                 >

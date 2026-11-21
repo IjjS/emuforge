@@ -102,12 +102,12 @@ describe('the services table', () => {
     vi.mocked(api.listServices).mockResolvedValue({ services: [service('api')] });
     open();
     await screen.findByRole('link', { name: 'api' });
-    const hint = 'Scroll horizontally to see task counts and more columns.';
+    const hint = 'Scroll sideways for task counts.';
     const table = screen.getByRole('table');
 
     if (overflows) {
       expect(screen.getByText(hint)).toBeVisible();
-      expect(table).toHaveAccessibleName(`Services. ${hint}`);
+      expect(table).toHaveAccessibleName('Services. Scroll sideways for task counts and more columns.');
     } else {
       expect(screen.queryByText(hint)).not.toBeInTheDocument();
       expect(table).toHaveAccessibleName(/^Services/);
