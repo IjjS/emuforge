@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: bug
 Issue-Source: finder
 Issue-Key: studio|ec2.instance-list-unit|unhandled-transition
-Issue-Check-Ids:
+Issue-Check-Ids: studio-unit:src/providers/aws/area/services/ec2/pages/instance-list-page.test.tsx
 Issue-Commit: b29fc6aa2a4d3d719d50e503a37306073af55401
 
 # Resolve the unhandled transition error reported during the EC2 instance list unit suite
