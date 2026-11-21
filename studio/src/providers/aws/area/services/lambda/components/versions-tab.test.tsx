@@ -187,8 +187,10 @@ async function prepareAction(operation: MutationOperation) {
   }
   if (operation === 'CreateAlias' || operation === 'UpdateAlias') {
     const option = versionChoices(dialog).find((item) => item.getElement().textContent === '2');
-    expect(option).toBeDefined();
-    fireEvent.click(option!.getElement());
+    if (option === undefined) {
+      throw new Error('Expected published version 2');
+    }
+    fireEvent.click(option.getElement());
   }
   return within(dialog).getByRole('button', {
     name: operation === 'CreateAlias' ? 'Create alias' : operation === 'UpdateAlias' ? 'Save changes' : 'Delete alias',
@@ -289,12 +291,12 @@ describe('Release listings', () => {
   });
 
   it.each([
-    [LIST_VERSIONS, 403, 'PolicyRefused'],
+    [LIST_VERSIONS, 403, 'AccessDeniedException'],
     [LIST_VERSIONS, 501, 'Not implemented by the emulator'],
     [LIST_ALIASES, 403, 'PolicyRefused'],
     [LIST_ALIASES, 501, 'Not implemented by the emulator'],
   ] as const)('%s can fail with %s without hiding the other listing', async (operation, status, message) => {
-    engine.handlers[operation] = () => json({ message: 'Operation unavailable' }, status, 'PolicyRefused');
+    engine.handlers[operation] = () => json({ message: 'Operation unavailable' }, status, message);
     renderTab();
     const other = operation === LIST_VERSIONS ? 'live' : 'Source 2';
     expect(await screen.findByText(other)).toBeVisible();
@@ -395,8 +397,18 @@ describe('Release actions', () => {
       expect(engine.count(LIST_ALIASES)).toBe(2);
     });
 
+    const expectCurrentAliases = async () => {
+      if (operation === 'DeleteAlias') {
+        expect(await screen.findByText('No aliases')).toBeVisible();
+        expect(aliasesTable().queryByText('live')).toBeNull();
+      } else {
+        const name = operation === 'CreateAlias' ? 'next' : 'live';
+        await waitFor(() => expectAlias(name, '2'));
+      }
+    };
     if (first === 'aliases') {
       await settle(aliases, aliasAnswer(engine.aliases));
+      await expectCurrentAliases();
       expect(screen.getByText(message)).toBeVisible();
       await settle(detail, functionAnswer());
     } else {
@@ -405,13 +417,7 @@ describe('Release actions', () => {
       expect(screen.getByText(message)).toBeVisible();
       await settle(aliases, aliasAnswer(engine.aliases));
     }
-    if (operation === 'DeleteAlias') {
-      expect(await screen.findByText('No aliases')).toBeVisible();
-      expect(aliasesTable().queryByText('live')).toBeNull();
-    } else {
-      const name = operation === 'CreateAlias' ? 'next' : 'live';
-      await waitFor(() => expectAlias(name, '2'));
-    }
+    await expectCurrentAliases();
     expect(screen.getByText('Source 2')).toBeVisible();
     expect(screen.getByText(message)).toBeVisible();
   });

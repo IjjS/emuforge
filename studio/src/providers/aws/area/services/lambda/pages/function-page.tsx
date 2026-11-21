@@ -10,7 +10,7 @@ import Tabs, { type TabsProps } from '@cloudscape-design/components/tabs';
 import { useCallback, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 
-import { actionFailureItem } from '../../../components/failure-states';
+import { actionFailureItem, Code } from '../../../components/failure-states';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
 import { ValueText } from '../../../components/value-text';
@@ -30,7 +30,7 @@ import { quoting } from '../components/quoting';
 import { TestTab } from '../components/test-tab';
 import { VersionsTab, type VersionsTabProps } from '../components/versions-tab';
 import { FUNCTIONS_PATH, functionTabHref, releaseSuccessText, TAB_PARAMETER, tabOf } from '../format';
-import { isChanging, useFunctionReading, useInvoke, type Invocation } from '../queries';
+import { isChanging, useFunctionReading, useInvoke, useReadAgain, type Invocation } from '../queries';
 import { useReleaseMutation, useReleaseReadings } from '../version-queries';
 
 // A Lambda function's own page (issue 84, requirement R5, R10; issue 516, design "The function's page"): its header
@@ -205,6 +205,7 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
   const [eventText, setEventText] = useState(INITIAL_EVENT);
   const invoke = useInvoke(connection.engineOrigin, name);
   const flash = usePageFlash();
+  const reread = useReadAgain(connection.engineOrigin, name);
   const releaseScope = JSON.stringify([connection.engineOrigin, name, reading.session]);
   const [verification, setVerification] = useState({ scope: releaseScope, found: false });
   // A refresh can read releases in parallel once this connection has verified the function.
@@ -226,11 +227,32 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
     scope: releaseScope,
     onSuccess: (result) => {
       flash.show([{ type: 'success', content: releaseSuccessText(result) }]);
-      refresh();
+      void reread();
       (result.operation === 'PublishVersion' ? releases.versions : releases.aliases).refresh();
     },
     onFailure: (failure) => {
-      flash.show([actionFailureItem(failure, failure.operation, connection.engineOrigin)]);
+      const item = actionFailureItem(failure, failure.operation, connection.engineOrigin);
+      const operationInContent = failure.kind === 'engine-did-not-answer' || failure.kind === 'emulator-did-not-answer';
+      flash.show([
+        {
+          ...item,
+          content: (
+            <>
+              {operationInContent && (
+                <>
+                  <Code>{failure.operation}</Code> failed.{' '}
+                </>
+              )}
+              {failure.reportedCode !== undefined && (
+                <>
+                  <Code>{failure.reportedCode}</Code>.{' '}
+                </>
+              )}
+              {item.content}
+            </>
+          ),
+        },
+      ]);
     },
   });
   const [deleting, setDeleting] = useState(false);

@@ -1,7 +1,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useId, useLayoutEffect, useRef, useState } from 'react';
 
-import { requestFailure, type RequestFailure } from '../../../../../lib/aws/request';
+import { requestFailure } from '../../../../../lib/aws/request';
 import { lambdaKey } from './queries';
 import {
   changeRelease,
@@ -9,13 +9,20 @@ import {
   LIST_ALIASES,
   LIST_VERSIONS,
   listVersions,
+  ReleaseRequestError,
   type ReleaseChange,
+  type ReleaseFailure,
   type ReleaseResult,
 } from './version-api';
 
+function releaseFailure(operation: string, error: unknown): ReleaseFailure {
+  const failure = requestFailure(operation, error);
+  return error instanceof ReleaseRequestError ? { ...failure, reportedCode: error.reportedCode } : failure;
+}
+
 export interface ReleaseReading<T> {
   items: readonly T[] | undefined;
-  failure: RequestFailure | undefined;
+  failure: ReleaseFailure | undefined;
   loading: boolean;
   refresh: () => void;
 }
@@ -68,7 +75,7 @@ function useReleaseReading<T>(
   });
   return {
     items: enabled ? query.data : undefined,
-    failure: enabled && query.isError ? requestFailure(operation, query.error) : undefined,
+    failure: enabled && query.isError ? releaseFailure(operation, query.error) : undefined,
     loading: enabled && query.isPending,
     refresh: () => {
       setRevision((previous) => previous + 1);
@@ -89,7 +96,7 @@ interface ReleaseMutationOptions {
   name: string;
   scope: string;
   onSuccess: (result: ReleaseResult) => void;
-  onFailure: (failure: RequestFailure) => void;
+  onFailure: (failure: ReleaseFailure) => void;
 }
 
 export function useReleaseMutation({ endpoint, name, scope, onSuccess, onFailure }: ReleaseMutationOptions) {
@@ -111,8 +118,18 @@ export function useReleaseMutation({ endpoint, name, scope, onSuccess, onFailure
     [scope],
   );
   const mutation = useMutation({
-    mutationFn: ({ endpoint, change, signal }: { endpoint: string; change: ReleaseChange; signal: AbortSignal }) =>
-      changeRelease(endpoint, name, change, signal),
+    mutationFn: ({
+      endpoint,
+      name,
+      change,
+      signal,
+    }: {
+      endpoint: string;
+      name: string;
+      change: ReleaseChange;
+      signal: AbortSignal;
+      scope: string;
+    }) => changeRelease(endpoint, name, change, signal),
   });
 
   async function submit(change: ReleaseChange): Promise<boolean> {
@@ -122,7 +139,7 @@ export function useReleaseMutation({ endpoint, name, scope, onSuccess, onFailure
     const controller = new AbortController();
     inFlight.current = { scope, controller };
     try {
-      const result = await mutation.mutateAsync({ endpoint, change, signal: controller.signal });
+      const result = await mutation.mutateAsync({ endpoint, name, change, signal: controller.signal, scope });
       if (!controller.signal.aborted) {
         onSuccess(result);
       }
@@ -130,7 +147,7 @@ export function useReleaseMutation({ endpoint, name, scope, onSuccess, onFailure
       if (controller.signal.aborted) {
         return false;
       }
-      const failure = requestFailure(change.operation, error);
+      const failure = releaseFailure(change.operation, error);
       if (failure.kind === 'not-implemented') {
         setState((previous) => ({ scope, unsupported: new Set([...previous.unsupported, change.operation]) }));
       }
@@ -145,7 +162,7 @@ export function useReleaseMutation({ endpoint, name, scope, onSuccess, onFailure
 
   return {
     submit,
-    pending: mutation.isPending && inFlight.current?.scope === scope ? mutation.variables.change.operation : undefined,
+    pending: mutation.isPending && mutation.variables.scope === scope ? mutation.variables.change.operation : undefined,
     unsupported: state.unsupported,
   };
 }

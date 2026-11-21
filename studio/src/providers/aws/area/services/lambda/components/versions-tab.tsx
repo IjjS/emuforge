@@ -52,14 +52,21 @@ function CollectionFailure<T>({
     <ReadFailure
       state={{
         ...state,
-        detail:
-          failure.kind === 'not-implemented' || failure.kind === 'access-denied' ? (
-            state.detail
-          ) : (
-            <>
-              <Code>{failure.operation}</Code> failed. {state.detail}
-            </>
-          ),
+        detail: (
+          <>
+            {failure.kind !== 'not-implemented' && failure.kind !== 'access-denied' && (
+              <>
+                <Code>{failure.operation}</Code> failed.{' '}
+              </>
+            )}
+            {failure.reportedCode !== undefined && (
+              <>
+                <Code>{failure.reportedCode}</Code>.{' '}
+              </>
+            )}
+            {state.detail}
+          </>
+        ),
       }}
       onRetry={reading.refresh}
     />

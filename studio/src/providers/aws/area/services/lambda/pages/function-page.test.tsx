@@ -242,7 +242,7 @@ class FakeEngine {
     this.aws.push(sent);
     if (RELEASE_PATH.test(url.pathname)) {
       const answer = await this.answerRelease(sent);
-      return new Response(answer.body, { status: answer.status, headers: answer.headers });
+      return new Response(answer.body, { status: answer.status, headers: answer.headers ?? {} });
     }
     const answer = await Promise.race([
       Promise.resolve(URL_PATH.test(url.pathname) ? this.answerUrl(sent) : this.answerFunction(sent)),

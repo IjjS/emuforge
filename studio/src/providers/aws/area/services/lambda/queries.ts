@@ -222,7 +222,7 @@ export function useFunctionListing({ endpoint, pageSize, filter, connected }: Fu
       position.page,
       position.visit,
     ],
-    queryFn: ({ signal }) => {
+    queryFn: async ({ signal }) => {
       if (endpoint === undefined) {
         throw new Error('The engine endpoint is not known yet.');
       }
@@ -310,7 +310,7 @@ export interface FunctionReadingOptions {
   name: string;
   connected: boolean;
   disconnected?: boolean;
-  emulatorIdentity?: string;
+  emulatorIdentity?: string | undefined;
 }
 
 export interface FunctionReading {
@@ -359,9 +359,10 @@ export function useFunctionReading({
     });
   }
   /** This reading's re-reads: `quiet` while one is in flight or has failed; `stopped` once one has failed. */
-  const [rereading, setRereading] = useState({ reading: 0, quiet: false, stopped: false });
-  const quiet = rereading.reading === readings && rereading.quiet;
-  const stopped = rereading.reading === readings && rereading.stopped;
+  const [rereading, setRereading] = useState({ reading: 0, epoch: 0, quiet: false, stopped: false });
+  const sameReading = rereading.reading === readings && rereading.epoch === connection.readingEpoch;
+  const quiet = sameReading && rereading.quiet;
+  const stopped = sameReading && rereading.stopped;
 
   const query = useQuery({
     queryKey: [...functionKey(endpoint, name), mount, generation, readings, connection.readingEpoch],
@@ -381,7 +382,7 @@ export function useFunctionReading({
   const data = query.data;
 
   if (quiet && isError && !stopped) {
-    setRereading({ reading: readings, quiet: true, stopped: true });
+    setRereading({ reading: readings, epoch: connection.readingEpoch, quiet: true, stopped: true });
   }
 
   const changing = isChanging(data);
@@ -391,13 +392,13 @@ export function useFunctionReading({
       return;
     }
     const timer = setTimeout(() => {
-      setRereading({ reading: readings, quiet: true, stopped: false });
+      setRereading({ reading: readings, epoch: connection.readingEpoch, quiet: true, stopped: false });
       void refetch();
     }, REREAD_DELAY_MS);
     return () => {
       clearTimeout(timer);
     };
-  }, [changing, isFetching, isError, stopped, updatedAt, readings, refetch]);
+  }, [changing, isFetching, isError, stopped, updatedAt, readings, connection.readingEpoch, refetch]);
 
   const refresh = useCallback(() => {
     setReadings((current) => current + 1);
@@ -603,7 +604,7 @@ export function useRoleList(endpoint: string | undefined): RoleList {
  * Reads the function `name` again where its page shows it, keeping what is shown until the answer arrives: its
  * reading is refetched under its own key.
  */
-function useReadAgain(endpoint: string | undefined, name: string): () => Promise<void> {
+export function useReadAgain(endpoint: string | undefined, name: string): () => Promise<void> {
   const client = useQueryClient();
   return useCallback(
     () => client.invalidateQueries({ queryKey: functionKey(endpoint, name) }),
