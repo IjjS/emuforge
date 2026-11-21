@@ -42,6 +42,7 @@ import { useReleaseMutation, useReleaseReadings } from '../version-queries';
 
 const REFRESHED = 'Function refreshed';
 const READY = 'Function ready';
+const NO_DELETE_TARGETS: readonly string[] = [];
 
 /** The event text "Test" holds when the page opens. */
 export const INITIAL_EVENT = '{}';
@@ -311,14 +312,9 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
     setDeletion(undefined);
   }
   const refreshButton = useRef<ButtonProps.Ref>(null);
-  const dialogFocus = useRef<Element | null>(null);
   const dismissedWithFocus = useRef(false);
-  const trackDialogRemoval = useCallback((element: HTMLDivElement | null) => {
-    if (element === null) {
-      // The wrapper's ref detaches before the modal portal restores focus to its opener.
-      dismissedWithFocus.current = dialogFocus.current === document.activeElement;
-      dialogFocus.current = null;
-    }
+  const handleFocusedDismissal = useCallback(() => {
+    dismissedWithFocus.current = true;
   }, []);
   useLayoutEffect(() => {
     if (!canDelete && dismissedWithFocus.current) {
@@ -488,21 +484,16 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
           {showInvocationFallback && <InvocationResult invoke={invoke} resultRef={invocationPanel} />}
         </SpaceBetween>
       </ContentLayout>
-      {activeDeletion !== undefined && (
-        <div
+      {connected && connection.engineOrigin !== undefined && (
+        // The session owns submitted deletes even when a detail read closes their confirmation.
+        <DeleteFunctionsDialog
           key={sessionScope}
-          ref={trackDialogRemoval}
-          onFocusCapture={(event) => {
-            dialogFocus.current = event.target;
-          }}
-        >
-          <DeleteFunctionsDialog
-            names={activeDeletion.names}
-            connection={connection}
-            onClose={handleDeleteClose}
-            onDeleted={handleDeleted}
-          />
-        </div>
+          names={activeDeletion?.names ?? NO_DELETE_TARGETS}
+          connection={connection}
+          onClose={handleDeleteClose}
+          onDeleted={handleDeleted}
+          onFocusedDismissal={handleFocusedDismissal}
+        />
       )}
       {announcement}
     </>

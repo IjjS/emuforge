@@ -92,7 +92,7 @@ function chooseTarget(value: string) {
 function eventField() {
   return createWrapper(document.body)
     .findAllFormFields()
-    .find((form) => norm(form.findLabel()?.getElement().textContent) === 'Event JSON');
+    .find((form) => form.findControl()?.findTextarea() != null);
 }
 
 function field() {
@@ -101,21 +101,34 @@ function field() {
   return wrapper as NonNullable<typeof wrapper>;
 }
 
+function eventPanel() {
+  const panel = createWrapper(document.body)
+    .findAllContainers()
+    .find((container) => container.findContent().findTextarea() !== null);
+  if (!panel) {
+    throw new Error('Expected the Test event panel');
+  }
+  return panel;
+}
+
 function invokeButton() {
-  const button = createWrapper(document.body)
-    .findAllButtons()
-    .find((found) => /^Invok/.test(norm(found.getElement().textContent)));
-  expect(button).toBeDefined();
-  return button as NonNullable<typeof button>;
+  const header = eventPanel().findHeader()?.findHeader();
+  const button = header?.findActions()?.findButton();
+  if (!button) {
+    throw new Error('Expected the Test event panel action');
+  }
+  expect(header?.findHeadingText().getElement()).toHaveTextContent('Event');
+  expect(button.getElement()).toHaveTextContent(/^Invok(e|ing)$/);
+  return button;
 }
 
 function result(): HTMLElement {
-  const heading = screen.getByRole('heading', { level: 2, name: 'Result' });
-  const container = createWrapper(document.body)
-    .findAllContainers()
-    .find((found) => found.getElement().contains(heading));
-  expect(container).toBeDefined();
-  return (container as NonNullable<typeof container>).getElement();
+  const panel = createWrapper(document.body).findAllContainers()[1];
+  expect(panel?.findHeader()?.findHeader()?.findHeadingText().getElement()).toHaveTextContent('Result');
+  if (!panel) {
+    throw new Error('Expected the invocation result panel');
+  }
+  return panel.getElement();
 }
 
 const ANSWER: InvokeAnswer = { payload: '{"got": {}, "version": "v1"}', log: 'echo-line a\nREPORT RequestId: 1' };
@@ -335,11 +348,9 @@ describe('invoke targets', () => {
         aliasReading={operation === 'ListAliases' ? reading(undefined, failure) : aliases}
       />,
     );
-    const event = createWrapper(document.body)
-      .findAllContainers()
-      .find((container) => container.getElement().contains(targetSelect().getElement()));
-    expect(event?.findContent().getElement()).toHaveTextContent(operation);
-    expect(event?.findContent().getElement()).toHaveTextContent(
+    const content = eventPanel().findContent().getElement();
+    expect(content).toHaveTextContent(operation);
+    expect(content).toHaveTextContent(
       kind === 'other' ? 'ResourceNotFoundException' : 'Not implemented by the emulator',
     );
     invokeButton().click();
@@ -388,7 +399,8 @@ describe('invoke targets', () => {
     rerender(<Harness invoke={invoke} aliasReading={reading([])} targetUnavailable />);
     const targetField = createWrapper(document.body)
       .findAllFormFields()
-      .find((form) => norm(form.findLabel()?.getElement().textContent) === 'Invoke target');
+      .find((form) => form.findControl()?.findSelect() != null);
+    expect(targetField?.findLabel()?.getElement()).toHaveTextContent('Invoke target');
     expect(targetField?.findError()?.getElement()).toHaveTextContent('live is unavailable. Choose another target.');
     const button = invokeButton().getElement();
     expect(button).toBeDisabled();
