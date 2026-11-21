@@ -202,7 +202,7 @@ it('closes an open revision menu on continuation 501 and keeps the chosen revisi
 
 it.each([false, true])('handles focus on a pending continuation 501 (moved away: %s)', async (movedAway) => {
   const operation = 'ListTaskDefinitions';
-  let refuse = (_error: RequestError) => {};
+  let refuse: (error: RequestError) => void = () => undefined;
   const continuation = new Promise((_resolve, rejectPage) => {
     refuse = rejectPage;
   });
