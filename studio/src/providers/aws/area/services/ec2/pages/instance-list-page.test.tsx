@@ -79,7 +79,7 @@ function AreaWithStudioProps() {
 function matchMedia(query: string): MediaQueryList {
   return {
     media: query,
-    matches: false,
+    matches: query === '(prefers-reduced-motion: reduce)',
     onchange: null,
     addEventListener: () => undefined,
     removeEventListener: () => undefined,
@@ -471,13 +471,23 @@ describe('the instances list', () => {
     await waitFor(() => {
       expect(reads).toHaveLength(2);
     });
+    const notifications = within(await screen.findByRole('list', { name: 'Notifications' }));
+    const firstResult = notifications.getByText('Rebooting i-1');
     await waitFor(() => {
       expect(isDisabled(stateItem('Reboot'))).toBe(false);
     });
-    choose('Reboot');
-    await waitFor(() => {
-      expect(reads).toHaveLength(3);
-    });
+    const scheduleTimeout = vi.spyOn(globalThis, 'setTimeout');
+    try {
+      choose('Reboot');
+      await waitFor(() => {
+        expect(reads).toHaveLength(3);
+        expect(notifications.getAllByText('Rebooting i-1').some((result) => result !== firstResult)).toBe(true);
+      });
+      // Cloudscape Flashbar defers its entering state by 115 ms when motion is enabled.
+      expect(scheduleTimeout.mock.calls.map(([, delay]) => delay)).not.toContain(115);
+    } finally {
+      scheduleTimeout.mockRestore();
+    }
     act(() => {
       reads[2]?.resolve({ instances: [instance('i-1', 'running', { privateIp: '10.0.0.2' })] });
     });
