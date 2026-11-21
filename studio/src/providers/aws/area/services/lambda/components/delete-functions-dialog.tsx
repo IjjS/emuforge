@@ -5,6 +5,7 @@ import Input from '@cloudscape-design/components/input';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
+import { AwsMutationInterrupted } from '../../../../../../lib/aws/request';
 import { AreaModal } from '../../../components/area-modal';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { usePageFlash, type FlashItem, type FlashResult } from '../../../components/page-flash';
@@ -40,6 +41,9 @@ function resultItems(result: DeleteResult, engineOrigin: string | undefined): Fl
   if (result.deleted.length > 0) {
     items.push({ type: 'success', content: deletedText(result.deleted.length) });
   }
+  if (result.interrupted) {
+    items.push({ type: 'info', content: 'The browser connection changed. Confirm any remaining deletions again.' });
+  }
   const [first, ...rest] = items;
   return first === undefined ? undefined : [first, ...rest];
 }
@@ -48,8 +52,8 @@ export interface DeleteFunctionsDialogProps {
   /** The functions to delete, in the order they are deleted; the dialog is shown while it holds any. */
   names: readonly string[];
   connection: AreaConnection;
-  /** Called when the dialog closes: by "Cancel" or Esc, or once every request is answered. */
-  onClose: () => void;
+  /** Called on dismissal, or with the settled outcomes when a submission closes the dialog. */
+  onClose: (result?: DeleteResult) => void;
   /** Called before removing a confirmation that contains keyboard focus. */
   onFocusedDismissal?: () => void;
   /**
@@ -128,16 +132,19 @@ export function DeleteFunctionsDialog({
           return;
         }
         const items = resultItems(result, engineOrigin);
-        if (items !== undefined && onDeleted !== undefined && result.failed.length === 0) {
+        if (items !== undefined && onDeleted !== undefined && result.failed.length === 0 && !result.interrupted) {
           onDeleted(items);
         } else if (items !== undefined) {
           flash.show(items);
         }
-        onClose();
+        onClose(result);
       },
-      // The screen was left first: nothing is shown.
-      () => {
+      (error: unknown) => {
         submitting.current = false;
+        if (mounted.current && error instanceof AwsMutationInterrupted) {
+          setTyped('');
+          onClose();
+        }
       },
     );
   }, [visible, confirmed, pending, connection.engineOrigin, remove, names, flash, onClose, onDeleted]);

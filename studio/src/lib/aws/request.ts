@@ -163,20 +163,32 @@ export function untilAborted<T>(pending: Promise<T>, signal: AbortSignal): Promi
 
 const mutationAuthorizations = new WeakMap<AbortSignal, () => void>();
 
+/** The browser connection ended before a mutation could finish sending its requests. */
+export class AwsMutationInterrupted extends DOMException {
+  constructor() {
+    super('The browser connection changed.', 'AbortError');
+  }
+}
+
 /**
- * Bind a mutation to the browser connection before it can queue. Losing browser connectivity invalidates future attempts without
- * interrupting a response already relayed to the engine. The caller still owns cancellation on session teardown.
+ * Bind a mutation to the browser connection before it can queue. Mutations normally keep already-relayed replies,
+ * but a caller can also discard in-flight replies on native connectivity events. The caller owns session teardown.
  */
-export function bindAwsMutationAuthorization(controller: AbortController): () => void {
+export function bindAwsMutationAuthorization(
+  controller: AbortController,
+  { cancelInFlight = false }: { cancelInFlight?: boolean } = {},
+): () => void {
   let interrupted = !navigator.onLine;
+  const cancel = () => controller.abort(new AwsMutationInterrupted());
   const interrupt = () => {
     interrupted = true;
+    if (cancelInFlight) cancel();
   };
   window.addEventListener('offline', interrupt, true);
   window.addEventListener('online', interrupt, true);
   mutationAuthorizations.set(controller.signal, () => {
     if (interrupted || !navigator.onLine) {
-      controller.abort();
+      cancel();
     }
   });
   return () => {

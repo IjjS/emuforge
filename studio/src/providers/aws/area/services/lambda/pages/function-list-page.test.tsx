@@ -1,6 +1,6 @@
 /// <reference types="node" />
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { onlineManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState, useSyncExternalStore } from 'react';
@@ -936,6 +936,143 @@ describe('loading and empty', () => {
     expect(filterInput()).not.toBeDisabled();
     expect(headingText()).toBe('Event Functions (1)');
   });
+  it.each(['success', 'refusal'] as const)(
+    'keeps the first bulk deletion %s after native reconnect and requires a fresh confirmation for the rest',
+    async (outcome) => {
+      const success = outcome === 'success';
+      const interruption = 'The browser connection changed. Confirm any remaining deletions again.';
+      const reported = success
+        ? '1 function was deleted from the local emulator.'
+        : 'Deleting orders failed ResourceConflictException: Function is in use';
+      const visibleDialog = () => PAGE.findAllModals().find((dialog) => dialog.isVisible());
+      const flashTexts = () =>
+        (PAGE.findFlashbar()?.findItems() ?? []).map((item) =>
+          norm(
+            `${item.findHeader()?.getElement().textContent ?? ''} ${item.findContent()?.getElement().textContent ?? ''}`,
+          ),
+        );
+      function selectionAt(index: number, label: string) {
+        const selection = table().findRowSelectionArea(index)?.find('input[type="checkbox"]')?.getElement();
+        if (!selection) throw new Error('Expected a function selection control');
+        expect(selection).toHaveAccessibleName(label);
+        return selection;
+      }
+      async function confirmDialog() {
+        const menu = table().findHeaderSlot()?.findHeader()?.findActions()?.findButtonDropdown();
+        if (!menu) throw new Error('Expected the function list action menu');
+        const menuButton = menu.findNativeButton().getElement();
+        expect(menuButton).toHaveAccessibleName('Actions');
+        menuButton.focus();
+        act(() => menu.openDropdown());
+        const entry = menu.findItemById('delete')?.find('[role="menuitem"]')?.getElement();
+        if (!entry) throw new Error('Expected the Delete menu action');
+        expect(entry).toHaveAccessibleName('Delete');
+        fireEvent.click(entry);
+        return waitFor(() => {
+          const dialog = visibleDialog();
+          if (!dialog) throw new Error('Expected the bulk deletion confirmation');
+          expect(dialog.findHeader().getElement()).toHaveTextContent('Delete functions');
+          const content = dialog.findContent();
+          const field = content.findFormField();
+          const input = field?.findControl()?.findInput();
+          const [cancel, submit] = dialog.findFooter()?.findAllButtons() ?? [];
+          if (!input || !submit || !cancel) throw new Error('Expected the confirmation controls');
+          expect(field?.findLabel()?.getElement()).toHaveTextContent(
+            'To confirm deletion, type "confirm" in the field.',
+          );
+          expect(cancel.getElement()).toHaveAccessibleName('Cancel');
+          expect(submit.getElement()).toHaveAccessibleName('Delete');
+          return {
+            input,
+            cancel,
+            submit,
+            menuButton,
+            names: content.findAll('li').map((item) => norm(item.getElement().textContent)),
+          };
+        });
+      }
+
+      let firstRequest: SentRequest | undefined;
+      let release!: (answer: Answer) => void;
+      const held = new Promise<Answer>((resolve) => {
+        release = resolve;
+      });
+      engine.answer = (request) => {
+        if (request.method === 'DELETE' && engine.deletes.length === 1) {
+          firstRequest = request;
+          return held;
+        }
+        return engine.emulator(request);
+      };
+      const { unmount } = await openLoaded([NODE, { name: 'payments' }]);
+      const wasOnline = onlineManager.isOnline();
+      const browserOnline = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true);
+      try {
+        fireEvent.click(selectionAt(1, 'orders'));
+        fireEvent.click(selectionAt(2, 'payments'));
+        const original = await confirmDialog();
+        expect(original.names).toEqual(['orders', 'payments']);
+        expect(original.submit.getElement()).toBeDisabled();
+        act(() => original.input.setInputValue('confirm'));
+        act(() => original.submit.click());
+        await waitFor(() => {
+          expect(engine.deletes).toEqual(['orders']);
+          expect(original.cancel.getElement()).toBeDisabled();
+          expect(original.submit.getElement()).toHaveFocus();
+        });
+
+        browserOnline.mockReturnValue(false);
+        fireEvent(window, new Event('offline'));
+        browserOnline.mockReturnValue(true);
+        fireEvent(window, new Event('online'));
+        expect(engine.deletes).toEqual(['orders']);
+        expect(flashTexts()).toEqual([]);
+        const listsBeforeSettlement = engine.lists.length;
+        if (!firstRequest) throw new Error('Expected the held first DeleteFunction');
+        const answer = success
+          ? engine.emulator(firstRequest)
+          : errorAnswer(409, 'ResourceConflictException', 'Function is in use');
+        await act(async () => release(answer));
+
+        await waitFor(() => {
+          expect(visibleDialog()).toBeUndefined();
+          expect(flashTexts()).toEqual([reported, interruption]);
+          expect(original.menuButton).toHaveFocus();
+        });
+        expect(engine.deletes).toEqual(['orders']);
+        if (success) {
+          await expectNames(['payments']);
+          expect(engine.lists.length).toBeGreaterThan(listsBeforeSettlement);
+        } else {
+          await expectNames(['orders', 'payments']);
+          fireEvent.click(selectionAt(1, 'orders'));
+        }
+        expect(selectionAt(success ? 1 : 2, 'payments')).toBeChecked();
+
+        const fresh = await confirmDialog();
+        expect(fresh.names).toEqual(['payments']);
+        expect(fresh.input.getInputValue()).toBe('');
+        expect(fresh.submit.getElement()).toBeDisabled();
+        fireEvent.keyDown(fresh.input.findNativeInput().getElement(), { key: 'Enter' });
+        expect(engine.deletes).toEqual(['orders']);
+        expect(flashTexts()).toEqual([reported, interruption]);
+        act(() => fresh.input.setInputValue('confirm'));
+        expect(fresh.submit.getElement()).toBeEnabled();
+        act(() => fresh.submit.click());
+        await expectNames(success ? [] : ['orders']);
+        await waitFor(() => {
+          expect(visibleDialog()).toBeUndefined();
+          expect(flashTexts()).toEqual(['1 function was deleted from the local emulator.']);
+        });
+        expect(engine.deletes).toEqual(['orders', 'payments']);
+      } finally {
+        unmount();
+        browserOnline.mockRestore();
+        onlineManager.setOnline(wasOnline);
+      }
+    },
+  );
+
   it('a filter applied, then a delete: while the listing after the delete is awaited, the filter is disabled too', async () => {
     await openLoaded();
     applyFilter('o');

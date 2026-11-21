@@ -153,6 +153,7 @@ class FakeEngine {
   /** Every AWS request, as sent. */
   readonly aws: SentRequest[] = [];
   readonly monitoring: MonitoringRequest[] = [];
+  readonly invocationBodies: string[] = [];
   sessionRequests = 0;
   answerSession: () => Answer | Promise<Answer> = () => json(200, { token: 'emuforge-test-token-84' });
   answerMonitoring: (request: MonitoringRequest) => Answer | Promise<Answer> = ({ operation }) =>
@@ -265,6 +266,7 @@ class FakeEngine {
       return new Response(answer.body, { status: answer.status, headers: answer.headers ?? {} });
     }
     if (INVOKE_PATH.test(url.pathname)) {
+      this.invocationBodies.push(await request.text());
       const answer = await this.answerInvoke(sent);
       if (answer === 'network-error') {
         throw new TypeError('Failed to fetch');
@@ -1828,6 +1830,98 @@ describe('Qualified Test invocations', () => {
       }
     },
   );
+
+  it('blocks a paused qualified Invoke resumed before the native reconnect renders', async () => {
+    const replacement = deferredAnswer();
+    const announcements = recordAnnouncements();
+    const draft = '{"event":"preserved through reconnect"}';
+    const { client, unmount } = open(pagePath('orders'));
+    const wasOnline = onlineManager.isOnline();
+    const browserOnline = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true);
+    try {
+      await waitForResult('Not invoked yet');
+      await chooseTarget('live');
+      expect(targets().findTrigger().getElement()).toHaveAccessibleName(/Invoke target/);
+      expect(targets().findTrigger().getElement()).toHaveTextContent('live');
+      eventField().setTextareaValue(draft);
+      const originalEditor = eventField().findNativeTextarea().getElement();
+      expect(originalEditor).toHaveAccessibleName('Event JSON');
+
+      act(() => onlineManager.setOnline(false));
+      invokeTarget();
+      const cache = client.getMutationCache();
+      const [queued] = cache.getAll();
+      await waitFor(() => expect(queued?.state.isPaused).toBe(true));
+      const settled = new Promise<void>((resolve) => {
+        const unsubscribe = cache.subscribe((event) => {
+          if (
+            event.type === 'updated' &&
+            event.mutation === queued &&
+            (event.action.type === 'success' || event.action.type === 'error')
+          ) {
+            unsubscribe();
+            resolve();
+          }
+        });
+      });
+      expect(submitted()).toEqual([]);
+      const oldHealth = connection.value.result;
+      engine.answerInvoke = () => result('stale invocation payload', 'stale invocation log');
+
+      await act(async () => {
+        browserOnline.mockReturnValue(false);
+        window.dispatchEvent(new Event('offline'));
+        engine.functions = [{ name: 'orders', description: 'Replacement before Invoke resumes' }];
+        engine.answerFunction = () => replacement.promise;
+        browserOnline.mockReturnValue(true);
+        window.dispatchEvent(new Event('online'));
+        await client.resumePausedMutations();
+        await settled;
+
+        // The queued mutation has settled while the original Test controls are still committed.
+        expect(eventField().findNativeTextarea().getElement()).toBe(originalEditor);
+        expect(targets().findTrigger().getElement()).toHaveTextContent('live');
+        expect(queued?.state.error).toMatchObject({ name: 'AbortError' });
+        expect(submitted()).toEqual([]);
+      });
+      expect(connection.value.result).toBe(oldHealth);
+      expect(invokeButton().getElement()).toBeDisabled();
+      expect(targets().findTrigger().getElement()).toHaveTextContent('$LATEST');
+      expect(eventField().getTextareaValue()).toBe(draft);
+      await waitForResult('Not invoked yet');
+      expect(announcements).not.toContain('Succeeded');
+
+      const reads = engine.gets.length;
+      connection.set(connectedResult());
+      await waitFor(() => expect(engine.gets.length).toBeGreaterThan(reads));
+      expect(tabs()).toBeNull();
+      expect(submitted()).toEqual([]);
+      await act(async () =>
+        replacement.resolve(
+          engine.emulator({ method: 'GET', url: new URL('/2015-03-31/functions/orders', engineOrigin) }),
+        ),
+      );
+      await waitFor(() => expect(value('Description')).toBe('Replacement before Invoke resumes'));
+      expect(eventField().getTextareaValue()).toBe(draft);
+      expect(resultPanel()).toHaveTextContent('Not invoked yet');
+      expect(resultPanel()).not.toHaveTextContent(/stale invocation payload|stale invocation log/);
+
+      engine.answerInvoke = () => result('fresh invocation payload', 'fresh invocation log');
+      await chooseTarget('live');
+      invokeTarget();
+      await waitForResult('fresh invocation payload');
+      expect(resultPanel()).toHaveTextContent('fresh invocation log');
+      expect(submitted().map(({ method, url }) => [method, url.searchParams.get('Qualifier')])).toEqual([
+        ['POST', 'live'],
+      ]);
+      expect(engine.invocationBodies).toEqual([draft]);
+      await waitFor(() => expect(announcements.filter((message) => message === 'Succeeded')).toHaveLength(1));
+    } finally {
+      unmount();
+      browserOnline.mockRestore();
+      onlineManager.setOnline(wasOnline);
+    }
+  });
 
   it('discards a held Invoke and paused alias deletion on native reconnect while keeping the event draft', async () => {
     const priorInvoke = deferredAnswer();
