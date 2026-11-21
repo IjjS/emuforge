@@ -47,8 +47,7 @@ test('studio.rds-compose-host-endpoints-match-describe', async ({ ctx, page }) =
     await open(page, row.url, row.id);
     await expectValueIs(page, row.label, row.address!);
     await expectValueIs(page, 'Port', row.port!);
-    const main = page.getByRole('main');
-    const connection = main.locator(CONTAINER).filter({
+    const connection = page.locator(CONTAINER).filter({
       has: page.getByRole('heading', { name: 'Connection', exact: true, level: 2 }),
     });
     await expect(connection.getByRole('button', { name: 'Copy Compose host endpoint' })).toBeVisible();
