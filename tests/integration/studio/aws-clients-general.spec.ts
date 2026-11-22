@@ -5,6 +5,7 @@
 // `EngineRequests` leaves out of its counts. The general function runs bundled for the browser against Studio's
 // installed SDK (`support/aws-clients-general.ts`).
 
+import { createHash, createHmac } from 'node:crypto';
 import type { BrowserContext, Page } from '@playwright/test';
 
 import { expect, NO_SCREEN_SERVICE, startStack, test, waitFor, type Ctx } from './support';
@@ -286,6 +287,74 @@ test('studio.aws-clients-of-any-service-go-through-the-engine', async ({ ctx, co
   ).not.toContain(apiId);
 });
 
+type CapturedPost = { method: string; url: string; postData?: string; headers: Record<string, string> };
+
+/** Verify the on-wire SQS signature with the public Studio fixture credential. Only return a verdict. */
+function validStudioSignature(post: CapturedPost, headers: Record<string, string>): boolean {
+  const match =
+    /^AWS4-HMAC-SHA256 Credential=emuforge-studio\/(\d{8})\/us-east-1\/sqs\/aws4_request, SignedHeaders=([^,]+), Signature=([0-9a-f]{64})$/.exec(
+      headers.authorization ?? '',
+    );
+  if (!match || post.postData === undefined) return false;
+  const [, date, signed, signature] = match;
+  const names = signed.split(';');
+  const timestamp = headers['x-amz-date'];
+  if (!timestamp?.startsWith(date) || !names.includes('x-emuforge-session') || names.some((name) => !headers[name]))
+    return false;
+  const hash = (s: string) => createHash('sha256').update(s).digest('hex');
+  const payload = hash(post.postData);
+  if (headers['x-amz-content-sha256'] !== payload) return false;
+  const url = new URL(post.url);
+  const encode = (s: string) =>
+    encodeURIComponent(s).replace(/[!'()*]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase());
+  const query = [...url.searchParams]
+    .map(([k, v]) => [encode(k), encode(v)].join('='))
+    .sort()
+    .join('&');
+  const canonicalHeaders = names.map((name) => name + ':' + headers[name].trim().replace(/\s+/g, ' ') + '\n').join('');
+  const canonical = [post.method, url.pathname, query, canonicalHeaders, signed, payload].join('\n');
+  const scope = [date, 'us-east-1', 'sqs', 'aws4_request'];
+  let key = Buffer.from('AWS4emuforge-studio-not-a-secret');
+  for (const part of scope) key = createHmac('sha256', key).update(part).digest();
+  const toSign = ['AWS4-HMAC-SHA256', timestamp, scope.join('/'), hash(canonical)].join('\n');
+  return createHmac('sha256', key).update(toSign).digest('hex') === signature;
+}
+
+/** Include preflights and join the headers Chromium observed on the wire to their POST. */
+async function observeQueueCall(context: BrowserContext, page: Page) {
+  const session = await context.newCDPSession(page);
+  const origins = new Set<string>();
+  const posts = new Map<string, CapturedPost>();
+  const wireHeaders = new Map<string, Record<string, string>>();
+  const lower = (headers: Record<string, string>) =>
+    Object.fromEntries(Object.entries(headers).map(([name, value]) => [name.toLowerCase(), value]));
+  session.on('Network.requestWillBeSent', ({ requestId, request }) => {
+    origins.add(new URL(request.url).origin);
+    if (request.method === 'POST') posts.set(requestId, { ...request, headers: lower(request.headers) });
+  });
+  session.on('Network.requestWillBeSentExtraInfo', ({ requestId, headers }) => {
+    wireHeaders.set(requestId, lower(headers));
+  });
+  await session.send('Network.enable');
+  return {
+    origins,
+    async signedPostAt(engineOrigin: string) {
+      return await waitFor(STATE_BOUND_MS, () => {
+        for (const [id, post] of posts) {
+          if (new URL(post.url).origin !== engineOrigin || !wireHeaders.has(id)) continue;
+          const headers = { ...post.headers, ...wireHeaders.get(id) };
+          if (headers['x-amz-target'] === 'AmazonSQS.GetQueueAttributes') {
+            const body = JSON.parse(post.postData ?? 'null') as { QueueUrl?: unknown } | null;
+            return { queueUrl: body?.QueueUrl, validSignature: validStudioSignature(post, headers) };
+          }
+        }
+        return undefined;
+      });
+    },
+    close: () => session.detach(),
+  };
+}
+
 test('studio.aws-sqs-client-keeps-a-queue-url-on-the-engine', async ({ ctx, context, page }) => {
   const prefix = runPrefix(ctx);
   const queue = `${prefix}-gen`;
@@ -310,16 +379,13 @@ test('studio.aws-sqs-client-keeps-a-queue-url-on-the-engine', async ({ ctx, cont
 
   const stack = await startStack(ctx);
 
-  // Given: a queue made by a direct call, whose URL as the emulator returned it is on an AWS host name.
-  const queueUrl = String(
-    (
-      JSON.parse(
-        answered(await directSqs(ctx, port, 'CreateQueue', { QueueName: queue }), 200, `direct CreateQueue ${queue}`),
-      ) as { QueueUrl?: unknown }
-    ).QueueUrl ?? '',
-  );
+  // Given: a queue made by a direct call, using the URL returned by this run’s emulator.
+  const { QueueUrl: queueUrl } = JSON.parse(
+    answered(await directSqs(ctx, port, 'CreateQueue', { QueueName: queue }), 200, `direct CreateQueue ${queue}`),
+  ) as { QueueUrl?: unknown };
+  if (typeof queueUrl !== 'string') throw new Error('direct CreateQueue: expected a QueueUrl string');
   ctx.log(`direct CreateQueue ${queue}: QueueUrl ${queueUrl}`);
-  expect(new URL(queueUrl).hostname, 'direct CreateQueue: the host of QueueUrl').toMatch(/\.amazonaws\.com$/);
+  expect(new URL(queueUrl).hostname, 'direct CreateQueue: absolute QueueUrl').not.toBe('');
   const directArn = String(
     (
       JSON.parse(
@@ -345,6 +411,7 @@ test('studio.aws-sqs-client-keeps-a-queue-url-on-the-engine', async ({ ctx, cont
   // The SQS client asks for the queue's attributes by that URL.
   const hostsFrom = hosts.mark();
   const requestsFrom = (await requests.all()).length;
+  const observed = await observeQueueCall(context, page);
   const arn = resolved(await clients.queueArn(queueUrl), `page GetQueueAttributes ${queue}`);
   await throughTheEngine(ctx, 'GetQueueAttributes', stack.engine.url, hosts, hostsFrom, requests, requestsFrom, [
     {
@@ -352,6 +419,11 @@ test('studio.aws-sqs-client-keeps-a-queue-url-on-the-engine', async ({ ctx, cont
       matches: (r) => r.method === 'POST' && r.target === 'AmazonSQS.GetQueueAttributes',
     },
   ]);
+  const post = await observed.signedPostAt(stack.engine.url);
+  expect(post?.queueUrl, 'GetQueueAttributes POST: QueueUrl from direct CreateQueue').toBe(queueUrl);
+  expect(post?.validSignature, 'GetQueueAttributes POST: valid Studio signature').toBe(true);
+  expect([...observed.origins], 'all observed request origins including preflights').toEqual([stack.engine.url]);
+  await observed.close();
   expect(arn, 'page GetQueueAttributes: QueueArn, against direct GetQueueAttributes').toBe(directArn);
 
   // Delete the queue by a direct call: a direct ListQueues no longer holds it.

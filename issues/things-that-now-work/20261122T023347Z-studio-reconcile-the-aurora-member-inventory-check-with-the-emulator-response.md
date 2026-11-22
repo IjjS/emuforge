@@ -19,6 +19,8 @@ The inventory scenario compares Aurora member sign-in fields to direct emulator 
 
 Ubuntu push run https://github.com/IjjS/emuforge/actions/runs/44974046336 selected every service because the shared Studio client factory changed. Emulator 1.0.565. Failed output: .pm/run/ci-0c8fc6884.log. The local branch check passed against 1.0.556.
 
+On emulator 1.0.569, the Ubuntu push run for `54f5f5c1b` selected every service. The Aurora inventory check failed one of its eight criteria. See `.pm/run/ci-54f5f5c1b.log` and the [GitHub Actions run](https://github.com/IjjS/emuforge/actions/runs/45045315186). The local main reproduction is recorded in `output/checks/2026-11-23T015520.json` and `.pm/run/main-image-1.0.569.log`.
+
 ## Steps to Reproduce
 
 1. Use the loopback emulator version and integration IDs identified above.
