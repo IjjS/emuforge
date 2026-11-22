@@ -1127,6 +1127,7 @@ describe('object copy requests', () => {
     expires,
     'x-amz-website-redirect-location': '/home',
     'x-amz-meta-owner': 'build',
+    'x-amz-meta-__proto__': 'keep this metadata',
   };
 
   it('encodes the source path once, sends the exact destination key and uses the default directives', async () => {

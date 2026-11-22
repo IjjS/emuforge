@@ -2,7 +2,7 @@ import createWrapper, { type FormFieldWrapper, type ModalWrapper } from '@clouds
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState, useSyncExternalStore } from 'react';
-import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
+import { createMemoryRouter, RouterProvider, useLocation, type LoaderFunction } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { engineEndpoint } from '../../../../../../lib/aws/client-factory';
@@ -319,11 +319,15 @@ function objectAddress(key: string, bucket = 'alpha'): string {
   return `/aws/s3/buckets/${bucket}/object?${new URLSearchParams({ key }).toString()}`;
 }
 
-function open(key: string, bucket = 'alpha') {
+function open(key: string, bucket = 'alpha', loader?: LoaderFunction) {
   const router = createMemoryRouter(
     [
       { path: '/', element: <p>Studio&apos;s Home</p> },
-      { path: '/aws/*', element: <AreaWithStudioProps /> },
+      {
+        path: '/aws/*',
+        element: <AreaWithStudioProps />,
+        ...(loader === undefined ? {} : { loader, hydrateFallbackElement: <p>Loading the route</p> }),
+      },
     ],
     { initialEntries: [objectAddress(key, bucket)] },
   );
@@ -833,6 +837,10 @@ function dialogBody(dialog: ModalWrapper) {
   return dialog.findContent().getElement();
 }
 
+function dialogAlertContent(dialog: ModalWrapper) {
+  return createWrapper(dialogBody(dialog)).findAlert()?.findContent().getElement();
+}
+
 function formField(dialog: ModalWrapper, name: string) {
   const field = createWrapper(dialogBody(dialog))
     .findAllFormFields()
@@ -973,7 +981,7 @@ describe('changing an object from its detail', () => {
     const dialog = await changeDialog('copy');
     changeInput(dialog, 'Destination key', DESTINATION_KEY);
     fireEvent.click(dialogButton(dialog, 'Copy object'));
-    expect(await within(dialogBody(dialog)).findByText(/HTTP 403/)).toBeInTheDocument();
+    await waitFor(() => expect(dialogAlertContent(dialog)).toHaveTextContent(/HTTP 403/));
     expectNoWrites();
   });
 
@@ -1111,8 +1119,8 @@ describe('changing an object from its detail', () => {
     const dialog = await renameConfirmation(false);
     changeInput(dialog, 'Enter original key to confirm', ORIGINAL_KEY);
     fireEvent.click(dialogButton(dialog, 'Rename object'));
-    expect(await within(dialogBody(dialog)).findByText('ValidationException')).toBeInTheDocument();
-    expect(dialogBody(dialog)).toHaveTextContent(message);
+    await waitFor(() => expect(dialogAlertContent(dialog)).toHaveTextContent('ValidationException'));
+    expect(dialogAlertContent(dialog)).toHaveTextContent(message);
     expect(engine.requests('DELETE')).toHaveLength(0);
     expect(engine.objects.map(({ key }) => key)).toEqual([ORIGINAL_KEY]);
   });
@@ -1197,6 +1205,22 @@ describe('changing an object from its detail', () => {
     expect(flash('success').findContent()?.getElement()).toHaveTextContent('Object properties updated.');
   });
 
+  it('preserves every returned metadata key when changing only the content type', async () => {
+    const metadata = { ['__proto__']: 'retained', owner: 'ci' };
+    engine.objects = [{ ...APP_JSON, metadata }];
+    open(ORIGINAL_KEY);
+    await shown();
+    expect(tableRows('User-defined metadata')).toEqual(Object.entries(metadata));
+    const dialog = await changeDialog('edit');
+    changeInput(dialog, 'Content type', 'text/plain');
+    fireEvent.click(dialogButton(dialog, 'Save changes'));
+
+    await waitFor(() => expect(overviewValue('Content type')).toBe('text/plain'));
+    expect(tableRows('User-defined metadata')).toEqual(Object.entries(metadata));
+    expect(engine.requests('PUT').map(({ headers }) => headers.get('x-amz-meta-__proto__'))).toEqual(['retained']);
+    expect(flash('success').findContent()?.getElement()).toHaveTextContent('Object properties updated.');
+  });
+
   it('sends only one write when Save changes is clicked repeatedly', async () => {
     const copy = delayed<undefined>();
     engine.beforeCopy = () => copy.promise;
@@ -1248,8 +1272,8 @@ describe('changing an object from its detail', () => {
     const dialog = await changeDialog('edit');
     changeInput(dialog, 'Content type', 'text/plain');
     fireEvent.click(dialogButton(dialog, 'Save changes'));
-    expect(await within(dialogBody(dialog)).findByText('NoSuchKey')).toBeInTheDocument();
-    expect(dialogBody(dialog)).toHaveTextContent('The specified key does not exist.');
+    await waitFor(() => expect(dialogAlertContent(dialog)).toHaveTextContent('NoSuchKey'));
+    expect(dialogAlertContent(dialog)).toHaveTextContent('The specified key does not exist.');
     expect(dialogBody(dialog).contains(document.activeElement)).toBe(true);
     expect(document.activeElement).toHaveTextContent('The specified key does not exist.');
     expect(fieldInput(formField(dialog, 'Content type'))).toHaveValue('text/plain');
@@ -1302,7 +1326,7 @@ describe('changing an object from its detail', () => {
       await act(async () =>
         tags.finish(ok('<Tagging><TagSet><Tag><Key>phase</Key><Value>copy</Value></Tag></TagSet></Tagging>')),
       );
-      await waitFor(() => expect(within(section('Tags')).getByText('copy')).toBeInTheDocument());
+      await waitFor(() => expect(tableRows('Tags')).toEqual([['phase', 'copy']]));
     };
     const finishPreview = async () => {
       await act(async () => preview.finish({ status: 200, body: APP_JSON.body }));
@@ -1319,23 +1343,26 @@ describe('changing an object from its detail', () => {
 
   it('keeps the rename result when the original recheck responds missing before the destination loads', async () => {
     const destination = delayed<Answer>();
-    let sawMissingOriginal = false;
-    engine.head = (key) => {
-      if (key === ORIGINAL_KEY && !engine.objects.some((object) => object.key === key)) {
-        sawMissingOriginal = true;
-        return { status: 404 };
-      }
-      return key === DESTINATION_KEY && engine.objects.some((object) => object.key === key)
-        ? destination.promise
-        : undefined;
-    };
-    const router = open(ORIGINAL_KEY);
+    const destinationRoute = delayed<null>();
+    engine.head = (key) =>
+      key === DESTINATION_KEY && engine.objects.some((object) => object.key === key) ? destination.promise : undefined;
+    // Keep the original page mounted while the route transition waits, so its actual recheck can settle.
+    const router = open(ORIGINAL_KEY, 'alpha', ({ request }) =>
+      new URL(request.url).searchParams.get('key') === DESTINATION_KEY ? destinationRoute.promise : null,
+    );
     await shown();
     const dialog = await renameConfirmation(false);
     changeInput(dialog, 'Enter original key to confirm', ORIGINAL_KEY);
     fireEvent.click(dialogButton(dialog, 'Rename object'));
+    await findOnPage(`No object ${ORIGINAL_KEY}`);
+    expectAddress(router, ORIGINAL_KEY);
+    await act(async () => destinationRoute.finish(null));
     await waitFor(() => expectAddress(router, DESTINATION_KEY));
-    expect(sawMissingOriginal).toBe(true);
+    await waitFor(() =>
+      expect(
+        engine.requests('HEAD', ({ url }) => decodeURIComponent(url.pathname) === `/alpha/${DESTINATION_KEY}`),
+      ).toHaveLength(2),
+    );
     expect(flash('success').findHeader()?.getElement()).toHaveTextContent('Object renamed.');
     await act(async () =>
       destination.finish({
@@ -1355,7 +1382,7 @@ describe('changing an object from its detail', () => {
       open(ORIGINAL_KEY);
       await shown();
       await waitFor(() => expect(previewText()).toHaveTextContent('"name":"app"'));
-      await waitFor(() => expect(within(section('Tags')).getByText('dev')).toBeInTheDocument());
+      await waitFor(() => expect(tableRows('Tags')).toEqual([['env', 'dev']]));
       engine.tagging = () => tags.promise;
       engine.get = () => preview.promise;
       const dialog = await changeDialog('edit');
@@ -1373,7 +1400,7 @@ describe('changing an object from its detail', () => {
         await act(async () =>
           tags.finish(ok('<Tagging><TagSet><Tag><Key>env</Key><Value>dev</Value></Tag></TagSet></Tagging>')),
         );
-        await waitFor(() => expect(within(section('Tags')).getByText('dev')).toBeInTheDocument());
+        await waitFor(() => expect(tableRows('Tags')).toEqual([['env', 'dev']]));
       };
       const finishPreview = async () => {
         await act(async () => preview.finish({ status: 200, body: APP_JSON.body }));

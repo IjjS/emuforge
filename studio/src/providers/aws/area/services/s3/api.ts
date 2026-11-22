@@ -869,10 +869,28 @@ export async function headObject(
   key: string,
   signal: AbortSignal,
 ): Promise<ObjectHead | NotFound> {
+  const command = new HeadObjectCommand({ Bucket: bucket, Key: key });
+  command.middlewareStack.add(
+    (next) => async (args) => {
+      const result = await next(args);
+      const { headers } = result.response as { headers: Record<string, string> };
+      const prefix = 'x-amz-meta-';
+      // Smithy's header-map decoder assigns into a plain object, which drops the __proto__ suffix.
+      const metadata = Object.entries(headers).filter(([name]) => name.startsWith(prefix));
+      return {
+        ...result,
+        output: {
+          ...result.output,
+          Metadata: Object.fromEntries(metadata.map(([name, value]) => [name.slice(prefix.length), value])),
+        },
+      };
+    },
+    { name: 'readHeadObjectUserMetadata', step: 'deserialize', priority: 'high' },
+  );
   try {
     const output = await sendRequest(
       OPERATIONS.headObject,
-      (abortSignal) => s3Client(endpoint).send(new HeadObjectCommand({ Bucket: bucket, Key: key }), { abortSignal }),
+      (abortSignal) => s3Client(endpoint).send(command, { abortSignal }),
       signal,
     );
     return toHead(key, output);
