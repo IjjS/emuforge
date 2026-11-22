@@ -18,6 +18,7 @@ import { EmptyBucketPage } from './pages/empty-bucket-page';
 import { CREATE_TITLE, EDIT_TITLE, NotificationPage } from './pages/notification-page';
 import { ObjectPage } from './pages/object-page';
 import { UploadPage } from './pages/upload-page';
+import { VERSIONING_TITLE, VersioningPage } from './pages/versioning-page';
 import { withAbandonedUploads } from './components/upload-abandoned-flash';
 
 /** S3's own side navigation, "General purpose buckets" current on every screen of a general purpose bucket. */
@@ -105,6 +106,17 @@ const OWN_SCREENS: readonly ServiceScreen[] = [
     crumbs: ({ name }, query) => bucketCrumbs(name ?? '', query),
     navigation: NAVIGATION,
     Page: BucketPage,
+  },
+  {
+    paths: [`${S3_PATH}/bucket/{name}/property/versioning/edit`],
+    title: VERSIONING_TITLE,
+    crumbs: ({ name }) => [
+      BUCKETS_CRUMB,
+      { text: name ?? '', href: bucketPropertiesPath(name ?? '') },
+      { text: VERSIONING_TITLE },
+    ],
+    navigation: NAVIGATION,
+    Page: VersioningPage,
   },
   ...[
     { path: 'create', title: CREATE_TITLE },
