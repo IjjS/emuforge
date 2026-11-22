@@ -23,6 +23,8 @@ import { NONE } from '../format';
 
 type Sources = ReturnType<typeof useEventSources>;
 type Dialog = { kind: 'add' } | { kind: 'delete'; mapping: EventSourceMapping };
+type FocusAfterAction =
+  { kind: 'dialog'; opener: Dialog['kind']; deleted: boolean } | { kind: 'update'; button: HTMLButtonElement };
 
 const NARROW_VIEWPORT = '(width < 688px)';
 
@@ -126,7 +128,7 @@ function MappingDialog({
           >
             <Input
               value={arn}
-              disabled={pending}
+              readOnly={pending}
               onChange={({ detail }) => {
                 setArn(detail.value);
                 setInvalid(false);
@@ -238,46 +240,63 @@ export function EventSourcesTab({
   const refreshSupported = sources.failure?.kind !== 'not-implemented';
   const canAdd = !busy && !sources.unsupported.has('CreateEventSourceMapping');
   const canDelete = !busy && selected !== undefined && !sources.unsupported.has('DeleteEventSourceMapping');
-  const canUpdate =
-    !busy && (toEnable || selected?.state === 'Enabled') && !sources.unsupported.has('UpdateEventSourceMapping');
+  const updateUnsupported = sources.unsupported.has('UpdateEventSourceMapping');
+  const canUpdate = !busy && (toEnable || selected?.state === 'Enabled') && !updateUnsupported;
   const canRefresh = refreshSupported && !sources.refreshing;
   const toolbar = useRef<HTMLDivElement>(null);
   const addButton = useRef<ButtonProps.Ref>(null);
   const deleteButton = useRef<ButtonProps.Ref>(null);
   const refreshButton = useRef<ButtonProps.Ref>(null);
-  const updateButton = useRef<ButtonProps.Ref>(null);
-  const restoreFocus = useRef<{ opener: Dialog['kind']; deleted: boolean } | undefined>(undefined);
+  const updateButton = useRef<HTMLButtonElement>(null);
+  const restoreFocus = useRef<FocusAfterAction | undefined>(undefined);
 
   useLayoutEffect(() => {
     const closed = restoreFocus.current;
     if (closed === undefined || dialog !== undefined || sources.pending !== undefined) {
       return;
     }
+    if (closed.kind === 'update' && !updateUnsupported) {
+      return;
+    }
     restoreFocus.current = undefined;
-    if (closed.opener === 'delete' && canDelete && !closed.deleted) {
+    if (
+      closed.kind === 'update' &&
+      document.activeElement !== closed.button &&
+      document.activeElement !== document.body
+    ) {
+      return;
+    }
+    const deleted = closed.kind === 'dialog' && closed.deleted;
+    if (closed.kind === 'dialog' && closed.opener === 'delete' && canDelete && !deleted) {
       deleteButton.current?.focus();
     } else if (canAdd) {
       addButton.current?.focus();
     } else if (canRefresh) {
       refreshButton.current?.focus();
-    } else if (canUpdate && !closed.deleted) {
+    } else if (canUpdate && !deleted) {
       updateButton.current?.focus();
-    } else if (canDelete && !closed.deleted) {
+    } else if (canDelete && !deleted) {
       deleteButton.current?.focus();
     } else {
       toolbar.current?.focus();
     }
-  }, [dialog, sources.pending, canAdd, canDelete, canRefresh, canUpdate]);
+  }, [dialog, sources.pending, canAdd, canDelete, canRefresh, canUpdate, updateUnsupported]);
 
   function closeDialog(deleted = false) {
     if (dialog !== undefined) {
-      restoreFocus.current = { opener: dialog.kind, deleted };
+      restoreFocus.current = { kind: 'dialog', opener: dialog.kind, deleted };
       setDialog(undefined);
     }
   }
 
   async function handleSubmit(change: EventSourceChange) {
-    const result = await sources.submit(change);
+    const result = await sources.submit(change, () => {
+      // Read focus before unsupported state disables the native button.
+      const button = updateButton.current;
+      if (change.operation === 'UpdateEventSourceMapping' && button !== null && document.activeElement === button) {
+        restoreFocus.current = { kind: 'update', button };
+      }
+    });
     if (result === undefined) {
       return;
     }
@@ -372,7 +391,7 @@ export function EventSourcesTab({
                       onClick={sources.refresh}
                     />
                     <Button
-                      ref={updateButton}
+                      nativeButtonAttributes={{ ref: updateButton }}
                       disabled={!updating && !canUpdate}
                       loading={updating}
                       loadingText="Updating event source mapping"

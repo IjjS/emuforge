@@ -62,7 +62,10 @@ export function useEventSources({ endpoint, name, scope, active }: EventSourcesO
     }) => changeEventSource(input.endpoint, input.name, input.change, input.signal),
   });
 
-  async function submit(change: EventSourceChange): Promise<{ failure?: RequestFailure } | undefined> {
+  async function submit(
+    change: EventSourceChange,
+    beforeUnsupported?: () => void,
+  ): Promise<{ failure?: RequestFailure } | undefined> {
     if (
       !active ||
       endpoint === undefined ||
@@ -93,6 +96,7 @@ export function useEventSources({ endpoint, name, scope, active }: EventSourcesO
       }
       const refusal = requestFailure(change.operation, error);
       if (refusal.kind === 'not-implemented') {
+        beforeUnsupported?.();
         setSupport((current) => ({ scope, unsupported: new Set([...current.unsupported, change.operation]) }));
       }
       return { failure: refusal };

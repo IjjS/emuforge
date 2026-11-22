@@ -2,6 +2,7 @@ import Flashbar from '@cloudscape-design/components/flashbar';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { useRef, useState } from 'react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -22,7 +23,16 @@ const calls: { method: string; path: string; body: unknown }[] = [];
 let endpoint: string;
 let nextPort = 9600;
 let list: () => Response;
-let write: (method: string) => Response;
+let write: (method: string) => Response | Promise<Response>;
+
+function holdWrite() {
+  let respond!: (answer: Response) => void;
+  const pending = new Promise<Response>((resolve) => {
+    respond = resolve;
+  });
+  write = () => pending;
+  return respond;
+}
 
 function refusal(message: string, status = 400, code = 'InvalidParameterValueException') {
   return Response.json({ message }, { status, headers: { 'x-amzn-errortype': code } });
@@ -261,6 +271,29 @@ it('U5: reports a creation refusal unrelated to the execution role', async () =>
   });
 });
 
+it('keeps the ARN read-only and focused during Enter submission, then restores the Add button', async () => {
+  const respond = holdWrite();
+  const user = userEvent.setup();
+  open();
+  const { input } = await add(SOURCE_ARN);
+  input.focus();
+  await user.keyboard('{Enter}');
+
+  await waitFor(() => expect(input).toHaveAttribute('readonly'));
+  expect(input).toBeEnabled();
+  expect(input).toHaveFocus();
+  await user.keyboard('{Enter}{Enter}x');
+  expect(input).toHaveFocus();
+  expect(input).toHaveValue(SOURCE_ARN);
+  await waitFor(() => expect(calls.filter(({ method }) => method === 'POST')).toHaveLength(1));
+
+  respond(Response.json(MAPPING, { status: 202 }));
+  await waitFor(() => expect(flashContent()).toHaveTextContent(`Added the event source mapping for ${SOURCE_ARN}.`));
+  expect(wrapper.findModal()).toBeNull();
+  await waitFor(() => expect(button('Add event source')).toHaveFocus());
+  expect(calls.filter(({ method }) => method === 'POST')).toHaveLength(1);
+});
+
 it('prefills the refused ARN for retry and clears it after a successful create', async () => {
   open();
   (await add(SOURCE_ARN)).submit();
@@ -318,17 +351,47 @@ it('U9: leaves Add event source visible and disabled when creation is unsupporte
   await waitFor(() => expect(refresh()).toHaveFocus());
 });
 
-it('U10: disables both directions of a state change after an unsupported update', async () => {
-  write = () => refusal('Not supported', 501);
+it('U10: disables both update directions and moves focus when a keyboard update is unsupported', async () => {
+  const respond = holdWrite();
+  const user = userEvent.setup();
   open();
   await select();
-  fireEvent.click(button('Disable'));
+  const disable = button('Disable');
+  disable.focus();
+  await user.keyboard('{Enter}');
+
+  await waitFor(() => expect(disable).toHaveAttribute('aria-disabled', 'true'));
+  expect(disable).toHaveFocus();
+  respond(refusal('Not supported', 501));
+
   await waitFor(() => expect(flash().findHeader()?.getElement()).toHaveTextContent('Not implemented by the emulator'));
   expect(flashContent()).toHaveTextContent('UpdateEventSourceMapping');
-  expect(button('Disable')).toBeDisabled();
+  expect(disable).toBeDisabled();
+  await waitFor(() => expect(button('Add event source')).toHaveFocus());
   list = () => mappings({ ...MAPPING, State: 'Disabled' });
   fireEvent.click(refresh());
   await waitFor(() => expect(button('Enable')).toBeDisabled());
+});
+
+it('leaves focus where the user moved it while waiting for an unsupported keyboard update', async () => {
+  const respond = holdWrite();
+  const user = userEvent.setup();
+  list = () => mappings({ ...MAPPING, State: 'Disabled' });
+  open();
+  await select();
+  const enable = button('Enable');
+  enable.focus();
+  await user.keyboard('{Enter}');
+  await waitFor(() => expect(enable).toHaveAttribute('aria-disabled', 'true'));
+  expect(enable).toHaveFocus();
+
+  await user.tab({ shift: true });
+  expect(refresh()).toHaveFocus();
+  respond(refusal('Not supported', 501));
+
+  await waitFor(() => expect(enable).toBeDisabled());
+  expect(flashContent()).toHaveTextContent('UpdateEventSourceMapping');
+  expect(refresh()).toHaveFocus();
 });
 
 it('U11: leaves Delete visible and disabled when deletion is unsupported', async () => {
