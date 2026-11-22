@@ -1295,8 +1295,8 @@ describe('Function URL lifecycle', () => {
 
     const detail = deferredAnswer();
     const url = deferredAnswer();
-    const functionRequest = { method: 'GET', url: engine.gets[0]! };
-    const urlRequest = { method: 'GET', url: engine.urlGets[0]! };
+    const functionRequest = { method: 'GET', url: new URL('/2015-03-31/functions/orders', engineOrigin) };
+    const urlRequest = { method: 'GET', url: new URL('/2021-10-31/functions/orders/url', engineOrigin) };
     engine.answerFunction = () => detail.promise;
     engine.answerUrl = (request) => (request.method === 'GET' ? url.promise : engine.emulator(request));
 

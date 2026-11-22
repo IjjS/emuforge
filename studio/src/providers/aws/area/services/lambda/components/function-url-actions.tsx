@@ -89,26 +89,28 @@ export function FunctionUrlActions({ url, name, engineOrigin, ready, changes }: 
   };
 
   return (
-    <Container
-      header={
-        <Header
-          variant="h2"
-          actions={
-            <Button
-              disabled={!available && !create.isPending}
-              disabledReason={unsupported ? 'Not implemented by the emulator' : ready ? undefined : NOT_READY}
-              loading={create.isPending}
-              loadingText="Creating function URL"
-              onClick={exists ? () => setConfirming(true) : handleChange}
-            >
-              {action}
-            </Button>
-          }
-        >
-          Function URL
-        </Header>
-      }
-    >
+    <>
+      <Container
+        disableContentPaddings
+        header={
+          <Header
+            variant="h2"
+            actions={
+              <Button
+                disabled={!available && !pending}
+                disabledReason={unsupported ? 'Not implemented by the emulator' : ready ? undefined : NOT_READY}
+                loading={pending}
+                loadingText={remove.isPending ? 'Deleting function URL' : 'Creating function URL'}
+                onClick={exists ? () => setConfirming(true) : handleChange}
+              >
+                {action}
+              </Button>
+            }
+          >
+            Function URL
+          </Header>
+        }
+      />
       <AreaModal
         visible={confirming && (exists || remove.isPending)}
         header={DELETE}
@@ -139,6 +141,6 @@ export function FunctionUrlActions({ url, name, engineOrigin, ready, changes }: 
           function.
         </Box>
       </AreaModal>
-    </Container>
+    </>
   );
 }
