@@ -64,8 +64,10 @@ export async function openChange(page: Page, action: 'copy' | 'rename' | 'edit')
   return modal;
 }
 
+export const metadataEditor = wrapper.findAttributeEditor();
+
 export function metadataInput(page: Page, row: number, column: number) {
-  const field = wrapper.findAttributeEditor().findRow(row).findField(column);
+  const field = metadataEditor.findRow(row).findField(column);
   return page.locator(field.findControl().findInput().findNativeInput().toSelector());
 }
 

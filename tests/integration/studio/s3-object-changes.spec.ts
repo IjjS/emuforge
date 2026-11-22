@@ -2,6 +2,7 @@ import { expect, test } from './support';
 import { ACTION, addressOf } from './support/frame';
 import {
   changeAlert,
+  metadataEditor,
   metadataInput,
   openChange,
   openSource,
@@ -94,9 +95,10 @@ test('studio.s3-edit-object-properties-in-place', async ({ ctx, page }) => {
   expect(before).toMatchObject(headers);
   await openSource(page, bucket);
   let modal = await openChange(page, 'edit');
-  await modal.getByRole('button', { name: 'Remove metadata drop' }).click();
+  await expect(metadataInput(page, 1, 1)).toHaveValue('drop');
+  await page.locator(metadataEditor.findRow(1).findRemoveButton().toSelector()).click();
   await metadataInput(page, 1, 2).fill('qa');
-  await modal.getByRole('button', { name: 'Add metadata' }).click();
+  await page.locator(metadataEditor.findAddButton().toSelector()).click();
   await metadataInput(page, 2, 1).fill('purpose');
   await metadataInput(page, 2, 2).fill('test');
   async function save(type: string) {
