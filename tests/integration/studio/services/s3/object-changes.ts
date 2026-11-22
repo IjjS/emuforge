@@ -60,7 +60,9 @@ function heading(page: Page, title: string) {
 }
 
 function actionsTrigger(page: Page) {
-  return page.getByRole('main').locator(relative(wrapper.findButtonDropdown().findTriggerButton()));
+  return page
+    .locator(wrapper.findHeader().findActions().toSelector())
+    .locator(relative(wrapper.findButtonDropdown().findTriggerButton()));
 }
 
 export async function overviewValues(page: Page) {
