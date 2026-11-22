@@ -666,14 +666,25 @@ export async function putPublicAccessBlock(
   );
 }
 
-/** `PutBucketVersioning` with the status `Enabled`. */
-export async function enableBucketVersioning(endpoint: string, bucket: string, signal: AbortSignal): Promise<void> {
-  const command = new PutBucketVersioningCommand({ Bucket: bucket, VersioningConfiguration: { Status: 'Enabled' } });
+export type BucketVersioningChange = 'Enabled' | 'Suspended';
+
+export async function putBucketVersioning(
+  endpoint: string,
+  bucket: string,
+  status: BucketVersioningChange,
+  signal: AbortSignal,
+): Promise<void> {
+  const command = new PutBucketVersioningCommand({ Bucket: bucket, VersioningConfiguration: { Status: status } });
   await sendRequest(
     OPERATIONS.putBucketVersioning,
     (abortSignal) => s3Client(endpoint).send(command, { abortSignal }),
     signal,
   );
+}
+
+/** Enable versioning as part of bucket creation. */
+export function enableBucketVersioning(endpoint: string, bucket: string, signal: AbortSignal): Promise<void> {
+  return putBucketVersioning(endpoint, bucket, 'Enabled', signal);
 }
 
 /** A default encryption with a KMS key (R6.4 step 3); `bucketKey` is sent only for SSE-KMS. */
