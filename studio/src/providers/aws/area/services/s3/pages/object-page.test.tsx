@@ -819,6 +819,16 @@ async function changeDialog(id: keyof typeof ACTION_TITLES) {
   return findDialog(ACTION_TITLES[id]);
 }
 
+function expectUnavailableAction(id: keyof typeof ACTION_TITLES) {
+  const dropdown = actionsDropdown();
+  fireEvent.click(dropdown.findNativeButton().getElement());
+  const unavailable = dropdown.findItemById(id, { disabled: true });
+  if (unavailable === null) throw new Error(`Expected an unavailable ${id} action`);
+  expect(unavailable.getElement()).toHaveTextContent(ACTION_TITLES[id]);
+  fireEvent.click(unavailable.getElement());
+  expect(modal()).toBeNull();
+}
+
 function dialogBody(dialog: ModalWrapper) {
   return dialog.findContent().getElement();
 }
@@ -1110,6 +1120,7 @@ describe('changing an object from its detail', () => {
   it.each([
     { status: 403, code: 'AccessDeniedException', message: 'This policy denies deleting the original.' },
     { status: 503, code: 'ServiceUnavailable', message: 'Deletion temporarily unavailable.' },
+    { status: 501, code: 'NotImplemented', message: 'Deleting this source is unavailable.' },
   ])('reports a $status deletion refusal once and leaves both objects', async ({ status, code, message }) => {
     engine.remove = () => errorAnswer(status, code, message);
     const router = open(ORIGINAL_KEY);
@@ -1129,6 +1140,11 @@ describe('changing an object from its detail', () => {
     expect(content).toHaveTextContent(`s3://alpha/${DESTINATION_KEY}`);
     expect(content).toHaveTextContent(`s3://alpha/${ORIGINAL_KEY}`);
     expectAddress(router, ORIGINAL_KEY);
+    if (status === 501) {
+      expect(content).toHaveTextContent('Not implemented by the emulator');
+      expect(content).toHaveTextContent('The emulator answered 501 Not Implemented for DeleteObject.');
+      expectUnavailableAction('rename');
+    }
     expect(engine.requests('DELETE').map(({ url }) => url.pathname)).toEqual([`/alpha/${ORIGINAL_KEY}`]);
     expect(engine.objects.map(({ key }) => key)).toEqual([ORIGINAL_KEY, DESTINATION_KEY]);
   });
@@ -1143,18 +1159,14 @@ describe('changing an object from its detail', () => {
     await waitFor(() =>
       expect(flash('info').findHeader()?.getElement()).toHaveTextContent('Not implemented by the emulator'),
     );
-    expect(flash('info').findContent()?.getElement()).toHaveTextContent(
-      'The emulator answered 501 Not Implemented for CopyObject.',
-    );
+    const content = flash('info').findContent()?.getElement();
+    expect(content).toHaveTextContent('NotImplemented');
+    expect(content).toHaveTextContent('The emulator answered 501 Not Implemented for CopyObject.');
+    expect(content).toHaveTextContent('Copy is unavailable.');
 
-    const dropdown = actionsDropdown();
-    fireEvent.click(dropdown.findNativeButton().getElement());
-    const unavailable = dropdown.findItemById('copy', { disabled: true });
-    if (unavailable === null) throw new Error('Expected an unavailable copy action');
-    expect(unavailable.getElement()).toHaveTextContent('Copy object');
-    fireEvent.click(unavailable.getElement());
-    expect(modal()).toBeNull();
+    expectUnavailableAction('copy');
     expect(engine.requests('PUT')).toHaveLength(1);
+    expect(engine.requests('DELETE')).toHaveLength(0);
   });
 
   it('prefills the property editor and saves added, changed and removed metadata rows', async () => {

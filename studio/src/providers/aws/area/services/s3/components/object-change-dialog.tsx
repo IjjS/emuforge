@@ -7,7 +7,12 @@ import KeyValuePairs from '@cloudscape-design/components/key-value-pairs';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
-import { reportedServiceCode, requestFailure, type RequestFailure } from '../../../../../../lib/aws/request';
+import {
+  reportedNotImplementedMessage,
+  reportedServiceCode,
+  requestFailure,
+  type RequestFailure,
+} from '../../../../../../lib/aws/request';
 import { AreaModal } from '../../../components/area-modal';
 import { usePageFlash } from '../../../components/page-flash';
 import { ValueText } from '../../../components/value-text';
@@ -59,15 +64,26 @@ function Locations({ source, destination }: { source: ObjectLocation; destinatio
 function failureView(failure: RequestFailure, label: string, endpoint: string | undefined) {
   const view = actionFailure(failure, label, endpoint);
   const code = failure.kind === 'other' ? undefined : reportedServiceCode(failure);
-  if (code === undefined) return view;
+  const message = reportedNotImplementedMessage(failure);
+  if (code === undefined && message === undefined) return view;
   return {
     ...view,
     detail: (
       <>
-        <Box variant="code" display="inline">
-          <ValueText kind="name" value={code} />
-        </Box>{' '}
+        {code !== undefined && (
+          <>
+            <Box variant="code" display="inline">
+              <ValueText kind="name" value={code} />
+            </Box>{' '}
+          </>
+        )}
         {view.detail}
+        {message !== undefined && (
+          <>
+            {' '}
+            <ValueText kind="text" value={message} />
+          </>
+        )}
       </>
     ),
   };
