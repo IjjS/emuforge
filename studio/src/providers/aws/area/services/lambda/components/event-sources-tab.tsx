@@ -8,8 +8,9 @@ import Link from '@cloudscape-design/components/link';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Table from '@cloudscape-design/components/table';
-import { useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useContext, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 
+import { AreaRootContext } from '../../../area-root';
 import { AreaModal } from '../../../components/area-modal';
 import { CopyValue } from '../../../components/copy-value';
 import type { AreaConnection } from '../../../components/emulator-line';
@@ -24,7 +25,8 @@ import { NONE } from '../format';
 type Sources = ReturnType<typeof useEventSources>;
 type Dialog = { kind: 'add' } | { kind: 'delete'; mapping: EventSourceMapping };
 type FocusAfterAction =
-  { kind: 'dialog'; opener: Dialog['kind']; deleted: boolean } | { kind: 'update'; button: HTMLButtonElement };
+  | { kind: 'dialog'; opener: Dialog['kind']; deleted: boolean }
+  | { kind: 'update' | 'reveal-refresh'; button: HTMLButtonElement };
 
 const NARROW_VIEWPORT = '(width < 688px)';
 
@@ -36,6 +38,28 @@ function subscribeToNarrowViewport(onChange: () => void) {
 
 function isNarrowViewport() {
   return window.matchMedia?.(NARROW_VIEWPORT).matches ?? false;
+}
+
+function revealBelowStickyBreadcrumbs(button: HTMLButtonElement, area: HTMLElement) {
+  for (const breadcrumb of area.querySelectorAll<HTMLElement>('nav[aria-label="Breadcrumbs"]')) {
+    let row: HTMLElement | null = breadcrumb;
+    while (row !== null && row !== area && getComputedStyle(row).position !== 'sticky') {
+      row = row.parentElement;
+    }
+    if (row === null || row === area) {
+      continue;
+    }
+    const bounds = row.getBoundingClientRect();
+    if (bounds.height === 0) {
+      continue;
+    }
+    const ringClearance = Number.parseFloat(getComputedStyle(button).getPropertyValue('--space-static-xs-b6kz15')) || 8;
+    const overlap = bounds.bottom + ringClearance - button.getBoundingClientRect().top;
+    if (overlap > 0) {
+      window.scrollBy({ top: -Math.ceil(overlap), behavior: 'instant' });
+    }
+    return;
+  }
 }
 
 const ARN_HELP = 'Enter an SQS queue ARN, DynamoDB stream ARN, or Kinesis stream ARN.';
@@ -229,6 +253,7 @@ export function EventSourcesTab({
   onCreateArnChange: (arn: string) => void;
 }) {
   const flash = usePageFlash();
+  const area = useContext(AreaRootContext);
   const actionsLabel = useId();
   const narrow = useSyncExternalStore(subscribeToNarrowViewport, isNarrowViewport);
   const [selectedId, setSelectedId] = useState<string>();
@@ -246,7 +271,7 @@ export function EventSourcesTab({
   const toolbar = useRef<HTMLDivElement>(null);
   const addButton = useRef<ButtonProps.Ref>(null);
   const deleteButton = useRef<ButtonProps.Ref>(null);
-  const refreshButton = useRef<ButtonProps.Ref>(null);
+  const refreshButton = useRef<HTMLButtonElement>(null);
   const updateButton = useRef<HTMLButtonElement>(null);
   const restoreFocus = useRef<FocusAfterAction | undefined>(undefined);
 
@@ -255,10 +280,21 @@ export function EventSourcesTab({
     if (closed === undefined || dialog !== undefined || sources.pending !== undefined) {
       return;
     }
-    if (closed.kind === 'update' && !updateUnsupported) {
+    if (closed.kind !== 'dialog' && !updateUnsupported) {
       return;
     }
     restoreFocus.current = undefined;
+    if (closed.kind === 'reveal-refresh') {
+      if (narrow) {
+        // The page flash has been committed. Wait for its layout and any scroll anchoring before measuring.
+        requestAnimationFrame(() => {
+          if (document.activeElement === closed.button && area.current !== null) {
+            revealBelowStickyBreadcrumbs(closed.button, area.current);
+          }
+        });
+      }
+      return;
+    }
     if (
       closed.kind === 'update' &&
       document.activeElement !== closed.button &&
@@ -280,7 +316,7 @@ export function EventSourcesTab({
     } else {
       toolbar.current?.focus();
     }
-  }, [dialog, sources.pending, canAdd, canDelete, canRefresh, canUpdate, updateUnsupported]);
+  }, [area, dialog, sources.pending, canAdd, canDelete, canRefresh, canUpdate, narrow, updateUnsupported]);
 
   function closeDialog(deleted = false) {
     if (dialog !== undefined) {
@@ -291,10 +327,16 @@ export function EventSourcesTab({
 
   async function handleSubmit(change: EventSourceChange) {
     const result = await sources.submit(change, () => {
+      if (change.operation !== 'UpdateEventSourceMapping') {
+        return;
+      }
       // Read focus before unsupported state disables the native button.
-      const button = updateButton.current;
-      if (change.operation === 'UpdateEventSourceMapping' && button !== null && document.activeElement === button) {
-        restoreFocus.current = { kind: 'update', button };
+      const update = updateButton.current;
+      const refresh = refreshButton.current;
+      if (update !== null && document.activeElement === update) {
+        restoreFocus.current = { kind: 'update', button: update };
+      } else if (refresh !== null && document.activeElement === refresh) {
+        restoreFocus.current = { kind: 'reveal-refresh', button: refresh };
       }
     });
     if (result === undefined) {
@@ -382,7 +424,7 @@ export function EventSourcesTab({
                   </Box>
                   <SpaceBetween direction="horizontal" size="xs">
                     <Button
-                      ref={refreshButton}
+                      nativeButtonAttributes={{ ref: refreshButton }}
                       iconName="refresh"
                       ariaLabel="Refresh"
                       disabled={!refreshSupported}
