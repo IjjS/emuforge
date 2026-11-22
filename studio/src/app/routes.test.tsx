@@ -561,7 +561,7 @@ describe('routes', () => {
   // Bound: waits up to AREA_LOAD_MS (10 s) for the h1, so the find reports what is missing before the case ends (issue 57 t1, 9249783).
   it.each([
     '/aws/s3/buckets/my-bucket/metrics',
-    '/aws/s3/bucket/my-bucket/property/versioning/edit',
+    '/aws/s3/bucket/my-bucket/property/tags/edit',
     '/aws/s3/directory-buckets',
   ])(
     'opens %s as the "no screen yet" page for that part of Amazon Simple Storage Service, with no request for an AWS operation',
@@ -604,7 +604,7 @@ describe('routes', () => {
       ],
     ],
     [
-      '/aws/s3/bucket/my-bucket/property/versioning/edit',
+      '/aws/s3/bucket/my-bucket/property/tags/edit',
       [
         ['Buckets', '/aws/s3/buckets'],
         ['my-bucket', '/aws/s3/buckets/my-bucket'],
