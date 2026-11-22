@@ -21,6 +21,8 @@ Ubuntu push run https://github.com/IjjS/emuforge/actions/runs/44974046336 select
 
 The main check at `8544099f786c92303d86c2504f1b331da9b8107b` also failed both SQS check IDs on emulator 1.0.569. The main checkout records the failed integration step in `output/checks/2026-11-23T015520.json` and lists both IDs and the emulator version in `.pm/run/main-image-1.0.569.log`.
 
+The every-service Ubuntu push on emulator 1.0.569 reproduced both failures at commit `54f5f5c1b`. The engine check failed on the CreateQueue body comparison and the Studio check failed on the QueueUrl hostname. The main checkout holds `.pm/run/ci-54f5f5c1b.log`. [Ubuntu push run 45045315186](https://github.com/IjjS/emuforge/actions/runs/45045315186)
+
 ## Steps to Reproduce
 
 1. Use the loopback emulator version and integration IDs identified above.
