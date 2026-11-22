@@ -152,12 +152,12 @@ it('reads the actual status when Retry succeeds after a load failure', async () 
 });
 
 it('shows the refusal code and message on the editor without reporting success', async () => {
-  engine.saveVersioning = () => refusal(400, 'InvalidBucketState', 'Versioning is locked');
+  engine.saveVersioning = () => refusal(403, 'AccessDenied', 'Versioning updates are denied');
   const router = open();
   fireEvent.click(await screen.findByRole('radio', { name: 'Enable' }));
   fireEvent.click(saveButton());
-  expect(await screen.findByText('InvalidBucketState')).toBeVisible();
-  expect(screen.getByText('Versioning is locked', { exact: false })).toBeVisible();
+  expect(await screen.findByText('AccessDenied')).toBeVisible();
+  expect(screen.getByText('Versioning updates are denied', { exact: false })).toBeVisible();
   expect(screen.queryByText(SUCCESS)).toBeNull();
   expect(router.state.location.pathname).toBe(EDIT);
   expect(engine.writes).toHaveLength(1);

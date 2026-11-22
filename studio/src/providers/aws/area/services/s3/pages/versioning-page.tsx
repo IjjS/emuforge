@@ -1,4 +1,5 @@
 import Alert from '@cloudscape-design/components/alert';
+import Box from '@cloudscape-design/components/box';
 import Button from '@cloudscape-design/components/button';
 import Container from '@cloudscape-design/components/container';
 import Form from '@cloudscape-design/components/form';
@@ -10,7 +11,7 @@ import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router';
 
-import { RequestError } from '../../../../../../lib/aws/request';
+import { reportedServiceCode, RequestError } from '../../../../../../lib/aws/request';
 import { usePageFlash } from '../../../components/page-flash';
 import { useShowsResources } from '../../../components/page-resources';
 import { ValueText } from '../../../components/value-text';
@@ -92,7 +93,24 @@ function VersioningForm({
     } catch (error) {
       if (controller.signal.aborted) return;
       if (!(error instanceof RequestError)) throw error;
-      setFailure(actionFailure(error.failure, 'Updating bucket versioning', endpoint));
+      const shown = actionFailure(error.failure, 'Updating bucket versioning', endpoint);
+      const code = error.failure.kind === 'access-denied' ? reportedServiceCode(error.failure) : undefined;
+      setFailure(
+        code === undefined
+          ? shown
+          : {
+              ...shown,
+              detail: (
+                <>
+                  <Box variant="code" display="inline">
+                    <ValueText kind="name" value={code} />
+                  </Box>
+                  {' — '}
+                  {shown.detail}
+                </>
+              ),
+            },
+      );
     } finally {
       if (!controller.signal.aborted) {
         inFlight.current = null;
