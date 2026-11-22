@@ -1,6 +1,7 @@
 import Flashbar from '@cloudscape-design/components/flashbar';
+import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, waitFor } from '@testing-library/react';
 import { useRef, useState } from 'react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -86,37 +87,83 @@ function open() {
   );
 }
 
-function button(name: string) {
-  return screen.getByRole('button', { name });
+const wrapper = createWrapper(document.body);
+const actionIndex = { Refresh: 0, Disable: 1, Enable: 1, Delete: 2, 'Add event source': 3 };
+
+function required<T>(value: T | null | undefined): T {
+  if (value == null) {
+    throw new Error('Expected the Cloudscape element');
+  }
+  return value;
+}
+
+function button(name: keyof typeof actionIndex) {
+  const actions = wrapper.findTable()?.findHeaderSlot()?.findHeader()?.findActions();
+  const element = required(actions?.findAllButtons()[actionIndex[name]]).getElement();
+  expect(element).toHaveAccessibleName(name);
+  return element;
 }
 
 function refresh() {
   return button('Refresh');
 }
 
+function row(index = 0) {
+  return required(wrapper.findTable()?.findRows()[index]);
+}
+
+function emptyList() {
+  return wrapper.findTable()?.findEmptySlot()?.getElement();
+}
+
+function flash() {
+  return required(wrapper.findFlashbar()?.findItems()[0]);
+}
+
+function flashContent() {
+  return flash().findContent()?.getElement();
+}
+
 async function select() {
-  const radio = await screen.findByRole('radio', { name: (name) => name.endsWith(SOURCE_ARN) });
+  const radio = await waitFor(() =>
+    required(wrapper.findTable()?.findRowSelectionArea(1)?.find('input[type="radio"]')).getElement(),
+  );
+  expect(radio.getAttribute('aria-label')).toContain(SOURCE_ARN);
   fireEvent.click(radio);
+  return radio;
+}
+
+async function openDialog(name: 'Add event source' | 'Delete', title: string = name) {
+  const opener = button(name);
+  opener.focus();
+  fireEvent.click(opener);
+  const dialog = await waitFor(() => required(wrapper.findModal()));
+  expect(dialog.findHeader().getElement()).toHaveTextContent(title);
+  return dialog;
 }
 
 async function add(arn?: string) {
-  fireEvent.click(button('Add event source'));
-  const dialog = await screen.findByRole('dialog', { name: 'Add event source' });
-  const input = within(dialog).getByRole('textbox', { name: 'Event source ARN' });
+  const dialog = await openDialog('Add event source');
+  const field = required(dialog.findContent().findFormField());
+  expect(field.findLabel()?.getElement()).toHaveTextContent('Event source ARN');
+  const input = required(field.findControl()?.findInput()).findNativeInput().getElement();
   if (arn !== undefined) {
     fireEvent.change(input, { target: { value: arn } });
   }
-  return {
-    dialog,
-    input,
-    submit: () => fireEvent.click(within(dialog).getByRole('button', { name: 'Add event source' })),
-  };
+  const submit = required(dialog.findFooter()?.findAllButtons()[1]).getElement();
+  expect(submit).toHaveAccessibleName('Add event source');
+  return { dialog, field, input, submit: () => fireEvent.click(submit) };
 }
 
 async function confirmDelete() {
   await select();
-  fireEvent.click(button('Delete'));
-  return within(await screen.findByRole('dialog', { name: 'Delete event source mapping?' }));
+  const dialog = await openDialog('Delete', 'Delete event source mapping?');
+  const buttons = required(dialog.findFooter()).findAllButtons();
+  const cancel = required(buttons[0]).getElement();
+  const confirm = required(buttons[1]).getElement();
+  expect(cancel).toHaveAccessibleName('Cancel');
+  expect(confirm).toHaveAccessibleName('Delete');
+  return { cancel, confirm };
 }
 
 it('U1: shows an absent result and preserves a reported result in its own row', async () => {
@@ -128,10 +175,14 @@ it('U1: shows an absent result and preserves a reported result in its own row', 
       LastProcessingResult: 'No records processed',
     });
   open();
-  const first = await screen.findByRole('row', { name: /orders/ });
-  const second = await screen.findByRole('row', { name: /stream\/other/ });
-  expect(within(first).getByText('Not reported')).toBeVisible();
-  expect(within(second).getByText('No records processed')).toBeVisible();
+  const first = await waitFor(() => row().getElement());
+  const second = row(1).getElement();
+  expect(first).toBeVisible();
+  expect(first).toHaveTextContent(SOURCE_ARN);
+  expect(first).toHaveTextContent('Not reported');
+  expect(second).toBeVisible();
+  expect(second).toHaveTextContent(OTHER_SOURCE_ARN);
+  expect(second).toHaveTextContent('No records processed');
 });
 
 it('keeps the full ARN, selection, state and processing result together in a narrow row', async () => {
@@ -145,38 +196,41 @@ it('keeps the full ARN, selection, state and processing result together in a nar
   list = () => mappings({ ...MAPPING, LastProcessingResult: 'No records processed' });
   open();
 
-  const row = await screen.findByRole('row', { name: /orders/ });
-  expect(row).toHaveTextContent(SOURCE_ARN);
-  expect(within(row).getByText('State')).toBeVisible();
-  expect(within(row).getByText('Enabled')).toBeVisible();
-  expect(within(row).getByText('Last processing result')).toBeVisible();
-  expect(within(row).getByText('No records processed')).toBeVisible();
-  fireEvent.click(within(row).getByRole('button', { name: 'Copy Source ARN' }));
+  const mapping = await waitFor(() => row());
+  expect(mapping.getElement()).toHaveTextContent(SOURCE_ARN);
+  const pairs = required(mapping.findKeyValuePairs()).findItems();
+  const state = required(pairs[0]);
+  const result = required(pairs[1]);
+  expect(state.findLabel()?.getElement()).toHaveTextContent('State');
+  expect(state.findValue()?.getElement()).toHaveTextContent('Enabled');
+  expect(result.findLabel()?.getElement()).toHaveTextContent('Last processing result');
+  expect(result.findValue()?.getElement()).toHaveTextContent('No records processed');
+  const copy = required(mapping.findCopyToClipboard()).findCopyButton().getElement();
+  expect(copy).toHaveAccessibleName('Copy Source ARN');
+  fireEvent.click(copy);
   await waitFor(() => expect(writeText).toHaveBeenCalledExactlyOnceWith(SOURCE_ARN));
 
-  const radio = within(row).getByRole('radio');
-  fireEvent.click(radio);
-  expect(radio).toBeChecked();
+  expect(await select()).toBeChecked();
   expect(button('Disable')).toBeEnabled();
 });
 
 it('U2: shows a list refusal and refreshes successfully', async () => {
   list = () => refusal('The list could not be read.');
   open();
-  expect(await screen.findByText(/The list could not be read/)).toBeVisible();
+  await waitFor(() => expect(emptyList()).toHaveTextContent('The list could not be read.'));
   expect(refresh()).toBeEnabled();
   list = () => mappings(MAPPING);
   fireEvent.click(refresh());
-  expect(await screen.findByRole('row', { name: /orders/ })).toBeVisible();
-  expect(screen.queryByText(/The list could not be read/)).not.toBeInTheDocument();
+  await waitFor(() => expect(row().getElement()).toHaveTextContent(SOURCE_ARN));
+  expect(emptyList()).toBeUndefined();
   expect(calls).toHaveLength(2);
 });
 
 it('U3: leaves list Refresh visible and disabled when the list is unsupported', async () => {
   list = () => refusal('Not supported', 501);
   open();
-  expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
-  expect(screen.getByText(/ListEventSourceMappings/)).toBeVisible();
+  await waitFor(() => expect(emptyList()).toHaveTextContent('Not implemented by the emulator'));
+  expect(emptyList()).toHaveTextContent('ListEventSourceMappings');
   expect(refresh()).toBeDisabled();
   fireEvent.click(refresh());
   expect(calls).toHaveLength(1);
@@ -184,9 +238,9 @@ it('U3: leaves list Refresh visible and disabled when the list is unsupported', 
 
 it('U4: keeps an unsupported ARN editable and does not submit it', async () => {
   open();
-  const { dialog, input, submit } = await add('arn:aws:sns:us-east-1:000000000000:orders');
+  const { field, input, submit } = await add('arn:aws:sns:us-east-1:000000000000:orders');
   submit();
-  expect(within(dialog).getByText('Use a supported event source ARN.')).toBeVisible();
+  expect(field.findError()?.getElement()).toHaveTextContent('Use a supported event source ARN.');
   expect(input).toBeEnabled();
   fireEvent.change(input, { target: { value: SOURCE_ARN } });
   expect(input).toHaveValue(SOURCE_ARN);
@@ -197,9 +251,9 @@ it('U5: reports a creation refusal unrelated to the execution role', async () =>
   open();
   const { submit } = await add(SOURCE_ARN);
   submit();
-  expect(await screen.findByText(/The mapping request was refused/)).toBeVisible();
-  expect(screen.getByText('InvalidParameterValueException')).toBeVisible();
-  expect(screen.queryByText(ROLE_HINT)).not.toBeInTheDocument();
+  await waitFor(() => expect(flashContent()).toHaveTextContent('The mapping request was refused.'));
+  expect(flashContent()).toHaveTextContent('InvalidParameterValueException');
+  expect(flashContent()).not.toHaveTextContent(ROLE_HINT);
   expect(calls).toContainEqual({
     method: 'POST',
     path: PATH,
@@ -210,13 +264,13 @@ it('U5: reports a creation refusal unrelated to the execution role', async () =>
 it('prefills the refused ARN for retry and clears it after a successful create', async () => {
   open();
   (await add(SOURCE_ARN)).submit();
-  expect(await screen.findByText(/The mapping request was refused/)).toBeVisible();
+  await waitFor(() => expect(flashContent()).toHaveTextContent('The mapping request was refused.'));
 
   const retry = await add();
   expect(retry.input).toHaveValue(SOURCE_ARN);
   write = () => Response.json(MAPPING, { status: 202 });
   retry.submit();
-  expect(await screen.findByText(/Added the event source mapping/)).toBeVisible();
+  await waitFor(() => expect(flashContent()).toHaveTextContent(`Added the event source mapping for ${SOURCE_ARN}.`));
   expect(calls.filter(({ method }) => method === 'POST').map(({ body }) => body)).toEqual([
     { FunctionName: 'orders', EventSourceArn: SOURCE_ARN },
     { FunctionName: 'orders', EventSourceArn: SOURCE_ARN },
@@ -228,37 +282,40 @@ it('U6: shows a state change refusal and keeps the last state read from the list
   open();
   await select();
   fireEvent.click(button('Disable'));
-  expect(await screen.findByText(/The mapping request was refused/)).toBeVisible();
-  expect(screen.getByText('Enabled')).toBeVisible();
+  await waitFor(() => expect(flashContent()).toHaveTextContent('The mapping request was refused.'));
+  expect(row().getElement()).toHaveTextContent('Enabled');
   expect(calls).toContainEqual({ method: 'PUT', path: `${PATH}/mapping-id`, body: { Enabled: false } });
 });
 
 it('U7: keeps the row and sends no delete when the confirmation is canceled', async () => {
   open();
-  const dialog = await confirmDelete();
-  fireEvent.click(dialog.getByRole('button', { name: 'Cancel' }));
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  expect(screen.getByRole('row', { name: /orders/ })).toBeVisible();
+  const { cancel } = await confirmDelete();
+  fireEvent.click(cancel);
+  expect(wrapper.findModal()).toBeNull();
+  expect(row().getElement()).toHaveTextContent(SOURCE_ARN);
+  expect(button('Delete')).toHaveFocus();
   expect(calls.filter(({ method }) => method === 'DELETE')).toEqual([]);
 });
 
 it('U8: shows a delete refusal and keeps the row', async () => {
   open();
-  const dialog = await confirmDelete();
-  fireEvent.click(dialog.getByRole('button', { name: 'Delete' }));
-  expect(await screen.findByText(/The mapping request was refused/)).toBeVisible();
-  expect(screen.getByRole('row', { name: /orders/ })).toBeVisible();
+  const { confirm } = await confirmDelete();
+  fireEvent.click(confirm);
+  await waitFor(() => expect(flashContent()).toHaveTextContent('The mapping request was refused.'));
+  expect(row().getElement()).toHaveTextContent(SOURCE_ARN);
   expect(calls).toContainEqual({ method: 'DELETE', path: `${PATH}/mapping-id`, body: undefined });
 });
 
 it('U9: leaves Add event source visible and disabled when creation is unsupported', async () => {
   write = () => refusal('Not supported', 501);
   open();
+  await waitFor(() => row());
   const { submit } = await add(SOURCE_ARN);
   submit();
-  expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
-  expect(screen.getByText(/CreateEventSourceMapping/)).toBeVisible();
+  await waitFor(() => expect(flash().findHeader()?.getElement()).toHaveTextContent('Not implemented by the emulator'));
+  expect(flashContent()).toHaveTextContent('CreateEventSourceMapping');
   expect(button('Add event source')).toBeDisabled();
+  await waitFor(() => expect(refresh()).toHaveFocus());
 });
 
 it('U10: disables both directions of a state change after an unsupported update', async () => {
@@ -266,22 +323,23 @@ it('U10: disables both directions of a state change after an unsupported update'
   open();
   await select();
   fireEvent.click(button('Disable'));
-  expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
-  expect(screen.getByText(/UpdateEventSourceMapping/)).toBeVisible();
+  await waitFor(() => expect(flash().findHeader()?.getElement()).toHaveTextContent('Not implemented by the emulator'));
+  expect(flashContent()).toHaveTextContent('UpdateEventSourceMapping');
   expect(button('Disable')).toBeDisabled();
   list = () => mappings({ ...MAPPING, State: 'Disabled' });
   fireEvent.click(refresh());
-  expect(await screen.findByRole('button', { name: 'Enable' })).toBeDisabled();
+  await waitFor(() => expect(button('Enable')).toBeDisabled());
 });
 
 it('U11: leaves Delete visible and disabled when deletion is unsupported', async () => {
   write = () => refusal('Not supported', 501);
   open();
-  const dialog = await confirmDelete();
-  fireEvent.click(dialog.getByRole('button', { name: 'Delete' }));
-  expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
-  expect(screen.getByText(/DeleteEventSourceMapping/)).toBeVisible();
+  const { confirm } = await confirmDelete();
+  fireEvent.click(confirm);
+  await waitFor(() => expect(flash().findHeader()?.getElement()).toHaveTextContent('Not implemented by the emulator'));
+  expect(flashContent()).toHaveTextContent('DeleteEventSourceMapping');
   expect(button('Delete')).toBeDisabled();
+  await waitFor(() => expect(button('Add event source')).toHaveFocus());
 });
 
 it.each([
@@ -289,25 +347,27 @@ it.each([
     id: 'U12',
     service: 'DynamoDB',
     arn: 'arn:aws:dynamodb:us-east-1:000000000000:table/probe/stream/2026-11-22T16:43:19.257',
-    required: 'the GetRecords, GetShardIterator, DescribeStream, and ListStreams Actions on your stream in IAM.',
+    permissionHelp: 'the GetRecords, GetShardIterator, DescribeStream, and ListStreams Actions on your stream in IAM.',
   },
   {
     id: 'U13',
     service: 'Kinesis',
     arn: 'arn:aws:kinesis:us-east-1:000000000000:stream/probe',
-    required:
+    permissionHelp:
       'the GetRecords, GetShardIterator, DescribeStream, DescribeStreamSummary, ListShards, and ListStreams Actions on your stream.',
   },
-])('$id: shows the full $service stream refusal and the execution role hint', async ({ arn, required }) => {
-  const message = `Cannot access stream ${arn}. Please ensure the role can perform ${required}`;
+])('$id: shows the full $service stream refusal and the execution role hint', async ({ arn, permissionHelp }) => {
+  const message = `Cannot access stream ${arn}. Please ensure the role can perform ${permissionHelp}`;
   write = () => refusal(message);
   open();
   const { dialog, submit } = await add(arn);
-  expect(within(dialog).getByText('LATEST')).toBeVisible();
+  const startingPosition = required(dialog.findContent().findAllFormFields()[1]);
+  expect(startingPosition.findLabel()?.getElement()).toHaveTextContent('Starting position');
+  expect(startingPosition.findControl()?.getElement()).toHaveTextContent('LATEST');
   submit();
-  expect(await screen.findByText(ROLE_HINT)).toBeVisible();
-  expect(screen.getByText('InvalidParameterValueException')).toBeVisible();
-  expect(screen.getByText(`: ${message}`)).toBeVisible();
+  await waitFor(() => expect(flashContent()).toHaveTextContent(ROLE_HINT));
+  expect(flashContent()).toHaveTextContent('InvalidParameterValueException');
+  expect(flashContent()).toHaveTextContent(message);
   expect(calls).toContainEqual({
     method: 'POST',
     path: PATH,
