@@ -138,7 +138,7 @@ function renderTab(fn: LambdaFunction = ORDERS, ready = true) {
         name={shown.name}
         connection={CONNECTION}
         ready={available}
-        urlChanges={{ create: change, remove: change }}
+        urlChanges={{ create: change, remove: change, onDeleteSettled: vi.fn() }}
       />,
     );
   const result = render(view(fn, ready));

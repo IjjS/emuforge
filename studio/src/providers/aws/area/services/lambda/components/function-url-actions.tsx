@@ -8,7 +8,7 @@ import { useRef, useState } from 'react';
 import { reportedServiceCode } from '../../../../../../lib/aws/request';
 import { AreaModal } from '../../../components/area-modal';
 import { actionFailureItem, Code } from '../../../components/failure-states';
-import { usePageFlash } from '../../../components/page-flash';
+import { usePageFlash, type FlashResult } from '../../../components/page-flash';
 import { ValueText } from '../../../components/value-text';
 import type { FunctionUrl } from '../api';
 import { NOT_READY } from '../configuration-form';
@@ -20,6 +20,7 @@ const DELETE = 'Delete function URL';
 export interface FunctionUrlChanges {
   create: FunctionChange<void>;
   remove: FunctionChange<void>;
+  onDeleteSettled: () => void;
 }
 
 interface FunctionUrlActionsProps {
@@ -58,21 +59,23 @@ export function FunctionUrlActions({ url, name, engineOrigin, ready, changes }: 
     }
     submitting.current = true;
 
-    const finish = () => {
+    const showResult = (result: FlashResult) => {
       submitting.current = false;
       setConfirming(false);
+      flash.show(result);
+      if (exists) {
+        changes.onDeleteSettled();
+      }
     };
     change.mutate(undefined, {
       onSuccess: () => {
-        finish();
-        flash.show([{ type: 'success', content: exists ? 'Function URL deleted.' : 'Function URL created.' }]);
+        showResult([{ type: 'success', content: exists ? 'Function URL deleted.' : 'Function URL created.' }]);
       },
       onError: (failure) => {
-        finish();
         const item = actionFailureItem(failure, action, engineOrigin);
         const code =
           failure.kind === 'other' || failure.kind === 'not-implemented' ? undefined : reportedServiceCode(failure);
-        flash.show([
+        showResult([
           code === undefined
             ? item
             : {
@@ -137,8 +140,7 @@ export function FunctionUrlActions({ url, name, engineOrigin, ready, changes }: 
         }
       >
         <Box variant="p">
-          Delete the URL for <ValueText kind="name" value={name} />? Requests to this URL will stop reaching the
-          function.
+          Delete the function URL for <ValueText kind="name" value={name} />? The function itself will remain.
         </Box>
       </AreaModal>
     </>

@@ -1250,6 +1250,32 @@ describe('Function URL lifecycle', () => {
   const remove = 'Delete function URL';
   const changedUrl = 'http://127.0.0.1:9981/';
   const changes = () => engine.aws.filter(({ method, url }) => method !== 'GET' && URL_PATH.test(url.pathname));
+  const scrollIntoView = vi.fn();
+  const originalScrollIntoView = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollIntoView');
+
+  beforeEach(() => {
+    scrollIntoView.mockClear();
+    Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView });
+  });
+
+  afterEach(() => {
+    if (originalScrollIntoView === undefined) {
+      Reflect.deleteProperty(Element.prototype, 'scrollIntoView');
+    } else {
+      Object.defineProperty(Element.prototype, 'scrollIntoView', originalScrollIntoView);
+    }
+  });
+
+  async function expectFlashRevealed() {
+    await waitFor(() =>
+      expect(scrollIntoView).toHaveBeenCalledExactlyOnceWith({
+        block: 'center',
+        inline: 'nearest',
+        behavior: 'instant',
+      }),
+    );
+    expect(scrollIntoView.mock.contexts[0]).toBe(screen.getByRole('list', { name: 'Notifications' }));
+  }
 
   async function openConfiguration(fn: FakeFunction) {
     handed.renderConfiguration = true;
@@ -1319,6 +1345,7 @@ describe('Function URL lifecycle', () => {
     const [first, second] = order === 'function first' ? [finishDetail, finishUrl] : [finishUrl, finishDetail];
     await act(async () => first());
     expect(value('Function URL')).toBe(creating ? '-' : ORDERS.url);
+    expect(scrollIntoView).not.toHaveBeenCalled();
 
     await act(async () => second());
     await waitFor(() => expect(flashTexts()).toEqual([creating ? 'Function URL created.' : 'Function URL deleted.']));
@@ -1327,17 +1354,25 @@ describe('Function URL lifecycle', () => {
     expect(headingText()).toBe('orders');
     expect(value('Function URL')).toBe(creating ? changedUrl : '-');
     expect(screen.queryByRole('button', { name: 'Copy Function URL' }) !== null).toBe(creating);
+    if (!creating) {
+      await expectFlashRevealed();
+    }
   });
 
   it('keeps the URL and sends no changes on opening or cancelling deletion', async () => {
     await openConfiguration(ORDERS);
+    const trigger = screen.getByRole('button', { name: remove });
+    trigger.focus();
     const dialog = await openDeleteDialog();
+    expect(dialog).toHaveTextContent('Delete the function URL for orders? The function itself will remain.');
     expect(changes()).toEqual([]);
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
 
     expect(screen.queryByRole('dialog', { name: remove })).toBeNull();
+    expect(trigger).toHaveFocus();
     expect(changes()).toEqual([]);
     expect(value('Function URL')).toBe(ORDERS.url);
+    expect(scrollIntoView).not.toHaveBeenCalled();
   });
 
   it.each(['ResourceConflictException', 'ResourceNotFoundException'])(
@@ -1370,6 +1405,7 @@ describe('Function URL lifecycle', () => {
     expect(screen.queryByText('Function URL deleted.')).toBeNull();
     expect(headingText()).toBe('orders');
     expect(value('Function URL')).toBe('-');
+    await expectFlashRevealed();
   });
 
   it.each([
