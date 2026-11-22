@@ -19,6 +19,8 @@ The direct ListBuckets request signed with the test key receives HTTP 403 from e
 
 The main check for 8544099f7 records the failure in output/checks/2026-11-23T015520.json. See .pm/run/main-image-1.0.569.log and output/integration/logs/engine.relay-signs-with-emulator-key.log. The status assertion passed and the refusal-body assertion failed in tests/integration/engine/tests/relay_safety.rs.
 
+The [GitHub Actions run for 54f5f5c1b](https://github.com/IjjS/emuforge/actions/runs/45045315186) covered every service with emulator 1.0.569. The local CI log is `.pm/run/ci-54f5f5c1b.log`.
+
 ## Steps to Reproduce
 
 1. Use the local loopback emulator 1.0.569 and select engine.relay-signs-with-emulator-key with pm-check.
