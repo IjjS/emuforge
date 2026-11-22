@@ -21,10 +21,10 @@
 # repository is put into a `run:` line.
 #
 # Time, as the first trial run took it (run 43861083645, nothing cached): preparing 1.2 minutes, the engine
-# steps 0.6, the Studio steps 0.7, integration 8.7. The bounds stay above every figure with room for a slower
-# runner: 80 minutes for the job, 30 for the integration step and 15 for each other step of the nine, so one
-# hung step cannot use up the job's time. Every other step has a bound too (10 for checkout and node, as for the
-# other preparing steps), so that `full.yml` holds the same text for them.
+# steps 0.6, the Studio steps 0.7, integration 8.7. The integration step took 22m 19s with every service selected
+# in run 44893383185, so its 45-minute bound is at least twice that measured time. The job has 80 minutes and
+# each other step of the nine has 15, so one hung step cannot use up the job's time. Every preparing step has
+# a bound too (10 for checkout and node), so that `full.yml` holds the same text for the steps it shares.
 name: main
 
 on:
@@ -167,6 +167,6 @@ jobs:
 
       - name: integration
         if: ${{ !cancelled() }}
-        timeout-minutes: 30
+        timeout-minutes: 45
         working-directory: tests/integration
         run: ../../.github/ci run --tails -- ./run --not-run ../../.github/not-run.json --services ../../output/ci/services.json

@@ -4,7 +4,7 @@ Issue-Module: harness
 Issue-Kind: bug
 Issue-Source: finder
 Issue-Key: harness|push-integration-time-bound|insufficient-headroom
-Issue-Check-Ids:
+Issue-Check-Ids: none (harness issue, no kept guard shows it)
 Issue-Commit: 937800f4b95269cc656bae24c490b0c2125ce3b8
 
 # Raise the push integration time bound from the measured all-service run
