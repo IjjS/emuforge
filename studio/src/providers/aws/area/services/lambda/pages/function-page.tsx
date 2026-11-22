@@ -8,10 +8,11 @@ import Link from '@cloudscape-design/components/link';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Tabs, { type TabsProps } from '@cloudscape-design/components/tabs';
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Ref } from 'react';
+import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type Ref } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 
 import { startedAtOf } from '../../../../../../lib/engine/engine-client';
+import { AreaRootContext } from '../../../area-root';
 import { actionFailureItem, Code } from '../../../components/failure-states';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
@@ -309,6 +310,20 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
   const reread = useReadAgain(connection.engineOrigin, name);
   const createUrl = useCreateFunctionUrl(connection.engineOrigin, name);
   const removeUrl = useDeleteFunctionUrl(connection.engineOrigin, name);
+  const areaRoot = useContext(AreaRootContext);
+  const [settledUrlDeletes, setSettledUrlDeletes] = useState(0);
+  useEffect(() => {
+    if (settledUrlDeletes === 0) {
+      return;
+    }
+    // Scroll after the modal has restored focus. Centering keeps the Flashbar below the sticky header.
+    const frame = requestAnimationFrame(() => {
+      areaRoot.current
+        ?.querySelector('ul[aria-label="Notifications"]')
+        ?.scrollIntoView?.({ block: 'center', inline: 'nearest', behavior: 'instant' });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [areaRoot, settledUrlDeletes]);
   const functionScope = JSON.stringify([connection.engineOrigin, name]);
   // The area remounts this page on a target change. Keep a refused ARN across tabs on this function's page.
   const [eventSourceDraft, setEventSourceDraft] = useState({ scope: functionScope, arn: '' });
@@ -665,7 +680,11 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
           fn={fn}
           connection={connection}
           ready={ready}
-          urlChanges={{ create: createUrl, remove: removeUrl }}
+          urlChanges={{
+            create: createUrl,
+            remove: removeUrl,
+            onDeleteSettled: () => setSettledUrlDeletes((count) => count + 1),
+          }}
           testScope={verificationScope}
           test={{
             invoke,
