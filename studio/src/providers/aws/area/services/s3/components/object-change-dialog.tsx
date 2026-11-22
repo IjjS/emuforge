@@ -36,6 +36,11 @@ const LABELS = {
   edit: 'Edit object properties',
 } as const;
 
+function hasDotSegments(key: string): boolean {
+  // The browser resolves these segments before sending an object URL.
+  return key.split('/').some((segment) => segment === '.' || segment === '..');
+}
+
 function Location({ bucket, objectKey }: { bucket: string; objectKey: string }) {
   return <ValueText kind="address" value={s3Uri(bucket, objectKey)} />;
 }
@@ -111,11 +116,11 @@ export function ObjectChangeDialog({
   const active = useRef<AbortController | undefined>(undefined);
   useLayoutEffect(() => () => active.current?.abort(), []);
   const [pending, setPending] = useState(false);
-  const [failure, setFailure] = useState<RequestFailure>();
+  const [feedback, setFeedback] = useState<{ failure: RequestFailure; focus: boolean }>();
   const refusal = useRef<AlertProps.Ref>(null);
   useLayoutEffect(() => {
-    if (failure !== undefined) refusal.current?.focus();
-  }, [failure]);
+    if (feedback?.focus) refusal.current?.focus();
+  }, [feedback]);
   const [destinationBucket, setDestinationBucket] = useState(bucket);
   const [destinationKey, setDestinationKey] = useState('');
   const [confirmation, setConfirmation] = useState<'replace' | 'rename'>();
@@ -126,16 +131,25 @@ export function ObjectChangeDialog({
   const source = { bucket, key: head.key };
   const destination = action === 'edit' ? source : { bucket: destinationBucket, key: destinationKey };
   const sameLocation = destinationBucket === bucket && destinationKey === head.key;
+  const sourceKeyError = action !== 'copy' && hasDotSegments(source.key);
+  const bucketPathError = destinationBucket === '.' || destinationBucket === '..';
+  const destinationKeyError = hasDotSegments(destinationKey)
+    ? 'Use a key without . or .. path segments.'
+    : sameLocation
+      ? 'Choose a different location.'
+      : undefined;
   const expectedKey = confirmation === 'replace' ? destinationKey : head.key;
   const keyMatches = confirmsName(typed, expectedKey);
   const keyErrors = metadataKeyErrors(metadata);
   const valid =
-    action === 'edit'
+    !sourceKeyError &&
+    !bucketPathError &&
+    (action === 'edit'
       ? keyErrors.every((error) => error === undefined)
       : destinationBucket.trim() !== '' &&
         destinationKey !== '' &&
-        !sameLocation &&
-        (confirmation === undefined || keyMatches);
+        destinationKeyError === undefined &&
+        (confirmation === undefined || keyMatches));
 
   async function submit() {
     if (!valid || active.current !== undefined || changes === undefined) return;
@@ -143,8 +157,9 @@ export function ObjectChangeDialog({
     const { signal } = controller;
     active.current = controller;
     setPending(true);
-    setFailure(undefined);
+    setFeedback(undefined);
     let operation: string = OPERATIONS.headObject;
+    const onlyIfMissing = action !== 'edit' && confirmation !== 'replace';
 
     try {
       if (action !== 'edit' && confirmation === undefined) {
@@ -165,7 +180,10 @@ export function ObjectChangeDialog({
               headers: head.copyHeaders,
             }
           : undefined;
-      await changes.copy(source, destination, signal, edit);
+      await changes.copy(source, destination, signal, {
+        ...(edit === undefined ? {} : { edit }),
+        onlyIfMissing,
+      });
       if (signal.aborted) return;
 
       if (action === 'rename') {
@@ -190,6 +208,16 @@ export function ObjectChangeDialog({
     } catch (error) {
       if (signal.aborted) return;
       const refused = requestFailure(operation, error);
+      if (
+        onlyIfMissing &&
+        operation === OPERATIONS.copyObject &&
+        reportedServiceCode(refused) === 'PreconditionFailed'
+      ) {
+        setConfirmation('replace');
+        setTyped('');
+        setFeedback({ failure: refused, focus: false });
+        return;
+      }
       const view = failureView(refused, label, endpoint);
       if (refused.kind === 'not-implemented') onUnsupported(refused.operation);
 
@@ -222,7 +250,7 @@ export function ObjectChangeDialog({
           },
         ]);
       } else {
-        setFailure(refused);
+        setFeedback({ failure: refused, focus: true });
       }
     } finally {
       if (!signal.aborted) {
@@ -236,7 +264,7 @@ export function ObjectChangeDialog({
     if (active.current === undefined) onClose();
   };
 
-  const view = failure === undefined ? undefined : failureView(failure, label, endpoint);
+  const view = feedback === undefined ? undefined : failureView(feedback.failure, label, endpoint);
   return (
     <AreaModal
       visible
@@ -264,6 +292,7 @@ export function ObjectChangeDialog({
       }
     >
       <SpaceBetween size="m">
+        {sourceKeyError && <Alert type="error">This object key contains a . or .. path segment.</Alert>}
         {view !== undefined && (
           <Alert ref={refusal} type={view.type} header={view.header}>
             {view.detail}
@@ -294,7 +323,7 @@ export function ObjectChangeDialog({
               errorText={typed !== '' && !keyMatches ? 'Enter the exact key shown above.' : undefined}
             >
               <Input
-                key="confirmation"
+                key={confirmation}
                 autoFocus
                 value={typed}
                 onChange={({ detail }) => setTyped(detail.value)}
@@ -318,7 +347,10 @@ export function ObjectChangeDialog({
               items={[{ label: 'Original object', value: <Location bucket={source.bucket} objectKey={source.key} /> }]}
             />
             {action === 'copy' && (
-              <FormField label="Destination bucket">
+              <FormField
+                label="Destination bucket"
+                errorText={bucketPathError ? 'Use a bucket name other than . or ..' : undefined}
+              >
                 <Input
                   value={destinationBucket}
                   onChange={({ detail }) => setDestinationBucket(detail.value)}
@@ -327,10 +359,7 @@ export function ObjectChangeDialog({
                 />
               </FormField>
             )}
-            <FormField
-              label={action === 'copy' ? 'Destination key' : 'New key'}
-              errorText={sameLocation ? 'Choose a different location.' : undefined}
-            >
+            <FormField label={action === 'copy' ? 'Destination key' : 'New key'} errorText={destinationKeyError}>
               <Input
                 value={destinationKey}
                 onChange={({ detail }) => setDestinationKey(detail.value)}

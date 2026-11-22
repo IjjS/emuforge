@@ -74,11 +74,11 @@ export interface BucketPageRequest {
 export const LIST_BUCKETS = 'ListBuckets';
 
 const clients = new Map<string, S3Client>();
-const notificationWriteClients = new Map<string, S3Client>();
+const singleAttemptClients = new Map<string, S3Client>();
 
 /** Cache the regular client and the single-attempt client for each engine separately. */
 function s3Client(endpoint: string, singleAttempt = false): S3Client {
-  const cache = singleAttempt ? notificationWriteClients : clients;
+  const cache = singleAttempt ? singleAttemptClients : clients;
   let client = cache.get(endpoint);
   if (client === undefined) {
     client = createS3Client({ endpoint, singleAttempt });
@@ -758,6 +758,11 @@ export interface ObjectPropertyEdit {
   headers: CopyHeaders | undefined;
 }
 
+export interface ObjectCopyOptions {
+  edit?: ObjectPropertyEdit;
+  onlyIfMissing?: boolean;
+}
+
 /** The code with which a call on a key says the emulator holds no object of that key. */
 const NO_SUCH_KEY_CODE = 'NoSuchKey';
 
@@ -812,7 +817,7 @@ export async function copyObject(
   source: ObjectLocation,
   destination: ObjectLocation,
   signal: AbortSignal,
-  edit?: ObjectPropertyEdit,
+  { edit, onlyIfMissing = false }: ObjectCopyOptions = {},
 ): Promise<void> {
   // Separate the bucket from the key before encoding. A literal percent or question mark belongs to the key.
   const copySource = `${source.bucket}/${source.key.split('/').map(encodeURIComponent).join('/')}`;
@@ -824,6 +829,7 @@ export async function copyObject(
           Bucket: destination.bucket,
           Key: destination.key,
           CopySource: copySource,
+          ...(onlyIfMissing && { IfNoneMatch: '*' }),
           ...(edit === undefined
             ? {}
             : {
@@ -847,7 +853,8 @@ export async function deleteObject(
 ): Promise<void> {
   await sendRequest(
     OPERATIONS.deleteObject,
-    (abortSignal) => s3Client(endpoint).send(new DeleteObjectCommand({ Bucket: bucket, Key: key }), { abortSignal }),
+    (abortSignal) =>
+      s3Client(endpoint, true).send(new DeleteObjectCommand({ Bucket: bucket, Key: key }), { abortSignal }),
     signal,
   );
 }
