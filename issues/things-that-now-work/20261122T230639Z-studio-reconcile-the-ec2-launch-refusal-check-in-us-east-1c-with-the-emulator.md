@@ -19,6 +19,9 @@ One of the eight EC2 launch criteria failed on Ubuntu with emulator 1.0.578. The
 
 https://github.com/IjjS/emuforge/actions/runs/45078111137 selected every service because of shared integration paths, including tests/integration/engine/Cargo.lock. Saved output: .pm/run/ci-1c616a14.log (the refusal in the form; expected visible; element not found). This was the only failed check. The run completed its integration step in 20 minutes 55 seconds.
 
+- [Ubuntu push run 45080373243](https://github.com/IjjS/emuforge/actions/runs/45080373243) at `50518a8f27de5dcab6e463ebe04648f0ff92a4b7` selected all services because the shared `studio/src/lib/aws/request.ts` changed. Only `studio.ec2-launch-an-instance-reaches-the-emulator` failed. The main checkout holds the log at `.pm/run/ci-50518a8f2.log`.
+- The local main check at `9fbd9c5b502a4089b16fdae9dd368b309d79b152` on emulator 1.0.578 also failed only that check. The main checkout holds the record at `output/checks/2026-11-23T083612.json` and the log at `.pm/run/main-image-1.0.578.log`.
+
 ## Steps to Reproduce
 
 1. On a fresh loopback emulator matching the failed run, inspect the result of launching t3.micro into the default subnet in us-east-1c.
