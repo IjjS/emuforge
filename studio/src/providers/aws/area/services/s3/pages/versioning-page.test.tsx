@@ -191,8 +191,10 @@ it('keeps the success message and the state read from Properties after the paral
   fireEvent.click(await screen.findByRole('radio', { name: 'Enable' }));
   engine.saveVersioning = () => heldSave;
   const save = saveButton();
+  const form = save.closest('form');
+  if (form === null) throw new Error('Save changes must submit the versioning form');
   fireEvent.click(save);
-  fireEvent.submit(save.closest('form')!);
+  fireEvent.submit(form);
   await waitFor(() => expect(engine.writes).toHaveLength(1));
   expect(engine.writes[0]).toContain('<Status>Enabled</Status>');
   const priorReads = engine.reads.length;
