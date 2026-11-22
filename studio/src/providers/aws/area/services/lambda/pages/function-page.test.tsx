@@ -321,6 +321,7 @@ class FakeEngine {
 
 /** The connection Studio hands the area, as a case sets it; each change re-renders the area as the frame does. */
 class Connection {
+  targetGeneration = 0;
   value: AreaConnection = { result: undefined, engineOrigin: undefined };
   private readonly listeners = new Set<() => void>();
 
@@ -385,6 +386,7 @@ function AreaWithStudioProps() {
       onContentTarget={() => undefined}
       routeChanges={changes}
       connection={current}
+      targetGeneration={connection.targetGeneration}
     />
   );
 }
@@ -1249,6 +1251,61 @@ describe('Event sources', () => {
       expect(topRefresh).toBeEnabled();
     });
     expect(listRequests()).toHaveLength(1);
+  });
+
+  it('groups mapping actions without changing the names or scope of either toolbar', async () => {
+    engine.functions = [ORDERS];
+    open(route);
+
+    const actions = await screen.findByRole('group', { name: 'Event source mapping actions' });
+    expect(within(actions).getByText('Event source mapping actions')).toBeVisible();
+    for (const name of ['Refresh', 'Delete', 'Disable', 'Add event source']) {
+      expect(within(actions).getByRole('button', { name })).toBeVisible();
+    }
+    for (const name of ['Refresh', 'Delete']) {
+      const buttons = screen.getAllByRole('button', { name });
+      expect(buttons).toHaveLength(2);
+      expect(actions).not.toContainElement(buttons[0] ?? null);
+      expect(buttons[0]).toBeEnabled();
+    }
+  });
+
+  it('keeps the refused ARN across tabs and clears it when the function or target changes', async () => {
+    engine.functions = [ORDERS, { ...ORDERS, name: 'other' }];
+    engine.answerEventSources = ({ method }) =>
+      method === 'POST' ? errorAnswer(400, 'InvalidParameterValueException', 'Mapping was refused.') : empty;
+    const { router } = open(route);
+
+    async function openAddDialog() {
+      fireEvent.click(await screen.findByRole('button', { name: 'Add event source' }));
+      return within(await screen.findByRole('dialog', { name: 'Add event source' }));
+    }
+    async function refuseCreate() {
+      const dialog = await openAddDialog();
+      fireEvent.change(dialog.getByRole('textbox', { name: 'Event source ARN' }), { target: { value: source } });
+      fireEvent.click(dialog.getByRole('button', { name: 'Add event source' }));
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add event source' })).not.toBeInTheDocument());
+      expect(screen.getByText(/Mapping was refused/)).toBeVisible();
+    }
+
+    await refuseCreate();
+    fireEvent.click(tabLink('code'));
+    fireEvent.click(tabLink('event-sources'));
+    const retry = await openAddDialog();
+    expect(retry.getByRole('textbox', { name: 'Event source ARN' })).toHaveValue(source);
+    fireEvent.click(retry.getByRole('button', { name: 'Add event source' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add event source' })).not.toBeInTheDocument());
+
+    await act(() => router.navigate(`${pagePath('other')}?tab=event-sources`));
+    const other = await openAddDialog();
+    expect(other.getByRole('textbox', { name: 'Event source ARN' })).toHaveValue('');
+    fireEvent.click(other.getByRole('button', { name: 'Cancel' }));
+    await refuseCreate();
+
+    connection.targetGeneration += 1;
+    connection.set(connectedResult());
+    const newTarget = await openAddDialog();
+    expect(newTarget.getByRole('textbox', { name: 'Event source ARN' })).toHaveValue('');
   });
 
   it('P2: keeps the refreshed empty list and page flash after an older read answers', async () => {
