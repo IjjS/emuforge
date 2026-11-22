@@ -409,7 +409,10 @@ test('studio.ec2-launch-an-instance-reaches-the-emulator', async ({ ctx, page })
       await expect(selectOf(type()), 'the type as chosen').toContainText(w.type);
       await expect(selectOf(keyPair()), 'the key pair default').toContainText('No key pair');
       await expect(selectOf(subnet()), 'the subnet as chosen').toContainText(subnetId);
-      await expect(multiselectOf(groups()).tokens, 'the group as chosen').toHaveText([groupName]);
+      const selectedGroups = multiselectOf(groups()).tokens;
+      await expect(selectedGroups, 'only the chosen group').toHaveCount(1);
+      await expect(selectedGroups).toContainText(groupName);
+      await expect(selectedGroups).toContainText(groupId);
       expect(await instancesNamed(ctx, port, instanceName), 'instances of that name, directly').toEqual([]);
     },
   );
