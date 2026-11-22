@@ -42,7 +42,9 @@ class FakeEngine {
         `<ListAllMyBucketsResult><Buckets><Bucket><Name>${BUCKET}</Name></Bucket></Buckets></ListAllMyBucketsResult>`,
       );
     }
-    if (url.pathname !== `/${BUCKET}`) throw new Error(`Unexpected request path ${url.pathname}`);
+    if (url.pathname !== `/${BUCKET}` && url.pathname !== `/${BUCKET}/`) {
+      throw new Error(`Unexpected request path ${url.pathname}`);
+    }
     if (url.searchParams.has('versioning')) {
       if (request.method === 'PUT') {
         this.writes.push(await request.text());
