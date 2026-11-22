@@ -9,6 +9,7 @@ import type { MetadataEntry } from '../api';
 interface ObjectChangePropertiesProps {
   contentType: string;
   metadata: MetadataEntry[];
+  keyErrors: (string | undefined)[];
   pending: boolean;
   onContentType: (value: string) => void;
   onMetadata: (rows: MetadataEntry[]) => void;
@@ -17,6 +18,7 @@ interface ObjectChangePropertiesProps {
 export function ObjectChangeProperties({
   contentType,
   metadata,
+  keyErrors,
   pending,
   onContentType,
   onMetadata,
@@ -51,7 +53,7 @@ export function ObjectChangeProperties({
           definition={[
             {
               label: 'Key',
-              errorText: ({ key }) => (key === '' ? 'Enter a metadata key.' : undefined),
+              errorText: (_, index) => keyErrors[index],
               control: ({ key }, index) => (
                 <Input
                   value={key}
