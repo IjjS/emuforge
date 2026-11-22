@@ -30,6 +30,7 @@ import {
   dialogOf,
   DISCARD,
   DISCARD_HEADER,
+  ec2,
   Ec2Seeded,
   emptyOf,
   errorOf,
@@ -68,6 +69,7 @@ import {
   ONLY_RUNNING_STOPS,
   ONLY_STOPPED_STARTS,
   open,
+  parseXml,
   PROTECTION_IS_ON,
   REFRESH,
   reportsState,
@@ -77,6 +79,7 @@ import {
   TABLE,
   tableOf,
   TERMINATE,
+  textAt,
   typeInMultiselect,
   valuePartsOf,
   VIEW_INSTANCES,
@@ -373,21 +376,41 @@ test('studio.ec2-launch-an-instance-reaches-the-emulator', async ({ ctx, page })
   );
 
   await lines.line(
-    'S2, the name `<prefix>-1c`, an image, `t3.micro`, the default subnet of `us-east-1c`, "Launch instance" → the form stays with the emulator\'s `Unsupported` and its message, every entry as it was; the emulator reports no instance of that name',
+    'S2, select a security group, delete it outside Studio and launch → the form shows InvalidGroup.NotFound and its message, keeps every entry, and the emulator holds no instance of that name',
     async () => {
+      const instanceName = `${p}-refused`;
+      const groupName = `${p}-removed`;
+      const groupId = await seeded.group(groupName, 'Group removed before launch');
+      const subnetId = w.subnet['us-east-1c']!;
       await open(page, LAUNCH_PATH, LAUNCH);
-      await name().fill(`${p}-1c`, ACTION);
+      await name().fill(instanceName, ACTION);
       await chooseImageAndType();
-      await chooseOption(subnet(), w.subnet['us-east-1c']!);
-      await submit().click(ACTION);
-      await expect(alertWith(main, 'Unsupported'), 'the refusal in the form').toBeVisible({ timeout: 20_000 });
-      await expect(alertWith(main, 'us-east-1c'), "the emulator's message").toBeVisible();
+      await chooseOption(subnet(), subnetId);
+      await chooseInMultiselect(groups(), groupId, groupName);
+      const deleted = await ec2(ctx, port, 'DeleteSecurityGroup', { GroupId: groupId });
+      expect(deleted.status, 'the selected group was deleted').toBe(200);
+
+      const [response] = await Promise.all([
+        page.waitForResponse((r) => new URLSearchParams(r.request().postData() ?? '').get('Action') === 'RunInstances'),
+        submit().click(ACTION),
+      ]);
+      const body = parseXml(await response.text());
+      const code = 'InvalidGroup.NotFound';
+      const message = `The security group '${groupId}' does not exist`;
+      expect(response.status(), 'the refused launch').toBe(400);
+      expect(textAt(body, 'Errors', 'Error', 'Code')).toBe(code);
+      expect(textAt(body, 'Errors', 'Error', 'Message')).toBe(message);
+      const refusal = alertWith(main, code);
+      await expect(refusal, 'the refusal in the form').toBeVisible();
+      await expect(refusal, "the emulator's message").toContainText(message);
       await expect(page).toHaveURL(addressOf(LAUNCH_PATH));
-      await expect(name(), 'the name as typed').toHaveValue(`${p}-1c`);
+      await expect(name(), 'the name as typed').toHaveValue(instanceName);
       await expect(selectOf(image()), 'the image as chosen').toContainText(w.image.name);
       await expect(selectOf(type()), 'the type as chosen').toContainText(w.type);
-      await expect(selectOf(subnet()), 'the subnet as chosen').toContainText(w.subnet['us-east-1c']!);
-      expect(await instancesNamed(ctx, port, `${p}-1c`), 'instances of that name, directly').toEqual([]);
+      await expect(selectOf(keyPair()), 'the key pair default').toContainText('No key pair');
+      await expect(selectOf(subnet()), 'the subnet as chosen').toContainText(subnetId);
+      await expect(multiselectOf(groups()).tokens, 'the group as chosen').toHaveText([groupName]);
+      expect(await instancesNamed(ctx, port, instanceName), 'instances of that name, directly').toEqual([]);
     },
   );
 
