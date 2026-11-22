@@ -39,12 +39,14 @@ function errorAnswer(status: number, code: string, message: string): Answer {
 
 /** An object the emulator holds. */
 interface FakeObject {
+  bucket?: string;
   key: string;
   body: Uint8Array;
   contentType?: string;
   metadata?: Record<string, string>;
   tags?: [string, string][];
   cacheControl?: string;
+  redirect?: string;
 }
 
 /** One request as the engine saw it. */
@@ -53,6 +55,8 @@ interface Seen {
   url: URL;
   range: string | null;
   body: string;
+  signal: AbortSignal;
+  headers: Headers;
 }
 
 const LAST_MODIFIED = 'Wed, 18 Nov 2026 10:00:00 GMT';
@@ -62,6 +66,8 @@ class FakeEngine {
   objects: FakeObject[] = [];
   readonly seen: Seen[] = [];
   /** A case's own answers, tried before the emulator's. */
+  beforeCopy: (() => Answer | undefined | Promise<Answer | undefined>) | undefined;
+  remove: ((key: string) => Answer | undefined) | undefined;
   head: ((key: string) => EngineAnswer | undefined) | undefined;
   tagging: ((key: string) => EngineAnswer | undefined) | undefined;
   get: ((key: string, range: string | null) => EngineAnswer | undefined) | undefined;
@@ -73,9 +79,16 @@ class FakeEngine {
       return new Response(JSON.stringify({ token: 'token-1' }), { status: 200 });
     }
     const body = request.method === 'GET' || request.method === 'HEAD' ? '' : await request.text();
-    this.seen.push({ method: request.method, url, range: request.headers.get('range'), body });
+    this.seen.push({
+      method: request.method,
+      url,
+      range: request.headers.get('range'),
+      body,
+      signal: request.signal,
+      headers: request.headers,
+    });
     const answer = await Promise.race([
-      Promise.resolve(this.answer(request.method, url, request.headers.get('range'), body)),
+      Promise.resolve(this.answer(request.method, url, request.headers, body)),
       new Promise<never>((_, reject) => {
         request.signal.addEventListener('abort', () => {
           reject(new DOMException('The operation was aborted.', 'AbortError'));
@@ -91,8 +104,8 @@ class FakeEngine {
     });
   };
 
-  private object(key: string): FakeObject | undefined {
-    return this.objects.find((object) => object.key === key);
+  private object(bucket: string, key: string): FakeObject | undefined {
+    return this.objects.find((object) => (object.bucket ?? 'alpha') === bucket && object.key === key);
   }
 
   private headers(object: FakeObject): Record<string, string> {
@@ -102,11 +115,38 @@ class FakeEngine {
       etag: '"0123456789abcdef0123456789abcdef"',
       'last-modified': LAST_MODIFIED,
       ...(object.cacheControl === undefined ? {} : { 'cache-control': object.cacheControl }),
+      ...(object.redirect === undefined ? {} : { 'x-amz-website-redirect-location': object.redirect }),
       ...Object.fromEntries(Object.entries(object.metadata ?? {}).map(([k, v]) => [`x-amz-meta-${k}`, v])),
     };
   }
 
-  private answer(method: string, url: URL, range: string | null, body: string): EngineAnswer {
+  private async copy(bucket: string, key: string, headers: Headers): Promise<Answer> {
+    const refusal = await this.beforeCopy?.();
+    if (refusal !== undefined) return refusal;
+    if (!this.buckets.includes(bucket)) return errorAnswer(404, 'NoSuchBucket', 'The specified bucket does not exist.');
+    const copySource = headers.get('x-amz-copy-source') ?? '';
+    const [sourceBucket = '', ...sourceParts] = decodeURIComponent(copySource).split('/');
+    const source = this.object(sourceBucket, sourceParts.join('/'));
+    if (source === undefined) return errorAnswer(404, 'NoSuchKey', 'The specified key does not exist.');
+    const existing = this.object(bucket, key);
+    const copy: FakeObject = { ...source, bucket, key };
+    delete copy.redirect;
+    if (headers.get('x-amz-metadata-directive') === 'REPLACE') {
+      copy.contentType = headers.get('content-type') ?? '';
+      copy.metadata = Object.fromEntries(
+        [...headers.entries()]
+          .filter(([name]) => name.startsWith('x-amz-meta-'))
+          .map(([name, value]) => [name.slice('x-amz-meta-'.length), value]),
+      );
+      const redirect = headers.get('x-amz-website-redirect-location');
+      if (redirect !== null) copy.redirect = redirect;
+    }
+    this.objects = [...this.objects.filter((object) => object !== existing), copy];
+    return ok('<CopyObjectResult><ETag>"copied"</ETag></CopyObjectResult>');
+  }
+
+  private answer(method: string, url: URL, headers: Headers, body: string): EngineAnswer {
+    const range = headers.get('range');
     if (url.pathname === '/' && url.searchParams.get('x-id') === 'ListBuckets') {
       const prefix = url.searchParams.get('prefix') ?? '';
       const names = this.buckets.filter((name) => name.startsWith(prefix)).slice(0, 1);
@@ -119,6 +159,13 @@ class FakeEngine {
     const [, bucket = '', ...rest] = url.pathname.split('/');
     const key = rest.map((part) => decodeURIComponent(part)).join('/');
     const known = this.buckets.includes(bucket);
+    if (method === 'PUT' && headers.has('x-amz-copy-source')) return this.copy(bucket, key, headers);
+    if (method === 'DELETE') {
+      const refusal = this.remove?.(key);
+      if (refusal !== undefined) return refusal;
+      this.objects = this.objects.filter((object) => object !== this.object(bucket, key));
+      return { status: 204 };
+    }
     if (url.searchParams.has('versioning')) {
       return ok('<VersioningConfiguration/>');
     }
@@ -133,7 +180,7 @@ class FakeEngine {
     if (url.searchParams.has('tagging')) {
       const own = this.tagging?.(key);
       if (own !== undefined) return own;
-      const object = this.object(key);
+      const object = this.object(bucket, key);
       if (!known) return errorAnswer(404, 'NoSuchBucket', 'The specified bucket does not exist');
       if (object === undefined) return errorAnswer(404, 'NoSuchKey', 'The specified key does not exist.');
       return ok(
@@ -145,13 +192,13 @@ class FakeEngine {
     if (method === 'HEAD') {
       const own = this.head?.(key);
       if (own !== undefined) return own;
-      const object = known ? this.object(key) : undefined;
+      const object = known ? this.object(bucket, key) : undefined;
       return object === undefined ? { status: 404 } : { status: 200, headers: this.headers(object) };
     }
     if (method === 'GET') {
       const own = this.get?.(key, range);
       if (own !== undefined) return own;
-      const object = known ? this.object(key) : undefined;
+      const object = known ? this.object(bucket, key) : undefined;
       if (object === undefined) return errorAnswer(404, 'NoSuchKey', 'The specified key does not exist.');
       const match = range === null ? null : /^bytes=(\d+)-(\d+)$/.exec(range);
       if (match === null) {
@@ -194,6 +241,14 @@ class Connection {
   };
 
   readonly get = () => this.value;
+
+  generation = 0;
+
+  switchTarget() {
+    this.generation += 1;
+    this.value = { ...this.value };
+    for (const listener of this.listeners) listener();
+  }
 }
 
 const EMULATOR_PORT = 9305;
@@ -225,6 +280,7 @@ function AreaWithStudioProps() {
       onPageTitle={() => undefined}
       onContentTarget={() => undefined}
       routeChanges={changes}
+      targetGeneration={connection.generation}
       connection={current}
     />
   );
@@ -706,4 +762,421 @@ describe('the object page, "Delete"', () => {
     expect(engine.requests('POST')[0]?.body).toContain('<Key>cfg/app.json</Key>');
     expect(await screen.findByText('Deleted 1 object.')).toBeInTheDocument();
   });
+});
+
+const ORIGINAL_KEY = APP_JSON.key;
+const DESTINATION_KEY = 'cfg/copy app.json';
+
+function delayed<T>() {
+  let finish!: (value: T) => void;
+  const promise = new Promise<T>((resolve) => {
+    finish = resolve;
+  });
+  return { promise, finish };
+}
+
+async function changeDialog(name: string) {
+  fireEvent.click(action('Actions'));
+  fireEvent.click(await screen.findByRole('menuitem', { name }));
+  return screen.findByRole('dialog', { name });
+}
+
+function changeInput(dialog: HTMLElement, name: string, value: string) {
+  fireEvent.change(within(dialog).getByRole('textbox', { name }), { target: { value } });
+}
+
+function dialogButton(dialog: HTMLElement, name: string) {
+  return within(dialog).getByRole('button', { name });
+}
+
+async function renameConfirmation(occupied: boolean, destination = DESTINATION_KEY) {
+  const form = await changeDialog('Rename object');
+  changeInput(form, 'New key', destination);
+  fireEvent.click(dialogButton(form, 'Rename object'));
+  return screen.findByRole('dialog', { name: occupied ? 'Replace existing object?' : 'Rename object?' });
+}
+
+function expectNoWrites() {
+  expect(engine.requests('PUT')).toHaveLength(0);
+  expect(engine.requests('DELETE')).toHaveLength(0);
+}
+
+function expectAddress(router: ReturnType<typeof open>, key: string, bucket = 'alpha') {
+  expect(router.state.location.pathname + router.state.location.search).toBe(objectAddress(key, bucket));
+}
+
+function previewText() {
+  return within(section('Preview')).getByRole('region', { name: 'Object preview' });
+}
+
+function visibleResult(text: string) {
+  return onPage(text);
+}
+
+describe('changing an object from its detail', () => {
+  beforeEach(() => {
+    engine.objects = [APP_JSON];
+  });
+
+  it('offers all three actions for an empty regular object', async () => {
+    engine.objects = [{ ...APP_JSON, body: new Uint8Array() }];
+    open(ORIGINAL_KEY);
+    await shown();
+    for (const name of ['Copy object', 'Rename object', 'Edit object properties']) {
+      const dialog = await changeDialog(name);
+      fireEvent.click(dialogButton(dialog, 'Cancel'));
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    }
+    expectNoWrites();
+  });
+
+  it('opens a copied object under a new key in the same bucket', async () => {
+    const router = open(ORIGINAL_KEY);
+    await shown();
+    const dialog = await changeDialog('Copy object');
+    expect(within(dialog).getByRole('textbox', { name: 'Destination bucket' })).toHaveValue('alpha');
+    changeInput(dialog, 'Destination key', DESTINATION_KEY);
+    fireEvent.click(dialogButton(dialog, 'Copy object'));
+
+    await waitFor(() => expectAddress(router, DESTINATION_KEY));
+    await waitFor(() => expect(previewText()).toHaveTextContent('"name":"app"'));
+    expect(visibleResult('Object copied.')).toBeInTheDocument();
+    expect(engine.objects.map(({ key }) => key)).toEqual([ORIGINAL_KEY, DESTINATION_KEY]);
+  });
+
+  it.each([
+    { label: 'Copy object', field: 'Destination key' },
+    { label: 'Rename object', field: 'New key' },
+  ])('blocks $label with an empty key or the original location', async ({ label, field }) => {
+    open(ORIGINAL_KEY);
+    await shown();
+    const dialog = await changeDialog(label);
+    expect(dialogButton(dialog, label)).toBeDisabled();
+    changeInput(dialog, field, ORIGINAL_KEY);
+    expect(dialogButton(dialog, label)).toBeDisabled();
+    expectNoWrites();
+  });
+
+  it('shows a bodyless destination HEAD refusal and does not write', async () => {
+    engine.head = (key) => (key === DESTINATION_KEY ? { status: 403 } : undefined);
+    open(ORIGINAL_KEY);
+    await shown();
+    const dialog = await changeDialog('Copy object');
+    changeInput(dialog, 'Destination key', DESTINATION_KEY);
+    fireEvent.click(dialogButton(dialog, 'Copy object'));
+    expect(await within(dialog).findByText(/HTTP 403/)).toBeInTheDocument();
+    expectNoWrites();
+  });
+
+  it('requires the whole destination key for replacement and can cancel a copy without writing', async () => {
+    engine.buckets.push('beta');
+    engine.objects.push({ ...APP_JSON, bucket: 'beta', key: DESTINATION_KEY, body: encoder.encode('old') });
+    open(ORIGINAL_KEY);
+    await shown();
+    const form = await changeDialog('Copy object');
+    changeInput(form, 'Destination bucket', 'beta');
+    changeInput(form, 'Destination key', DESTINATION_KEY);
+    fireEvent.click(dialogButton(form, 'Copy object'));
+    const dialog = await screen.findByRole('dialog', { name: 'Replace existing object?' });
+    expect(dialog).toHaveTextContent(`s3://beta/${DESTINATION_KEY}`);
+    changeInput(dialog, 'Enter destination key to confirm', 'copy app.json');
+    expect(dialogButton(dialog, 'Replace object')).toBeDisabled();
+    changeInput(dialog, 'Enter destination key to confirm', DESTINATION_KEY);
+    expect(dialogButton(dialog, 'Replace object')).toBeEnabled();
+    fireEvent.click(dialogButton(dialog, 'Cancel'));
+    expectNoWrites();
+    expect(engine.objects.map(({ body }) => new TextDecoder().decode(body))).toEqual([
+      '{"name":"app","debug":true}',
+      'old',
+    ]);
+  });
+
+  it.each([true, false])('warns about deletion and redirect loss before a rename (occupied: %s)', async (occupied) => {
+    engine.objects = [{ ...APP_JSON, redirect: '/home' }];
+    if (occupied) engine.objects.push({ ...APP_JSON, key: DESTINATION_KEY });
+    open(ORIGINAL_KEY);
+    await shown();
+    const dialog = await renameConfirmation(occupied);
+    expect(dialog).toHaveTextContent(`s3://alpha/${ORIGINAL_KEY}`);
+    expect(dialog).toHaveTextContent(`s3://alpha/${DESTINATION_KEY}`);
+    expect(dialog).toHaveTextContent('The original key will be deleted');
+    expect(dialog).toHaveTextContent('The renamed object will lose its website redirect.');
+    const input = occupied ? 'Enter destination key to confirm' : 'Enter original key to confirm';
+    const submit = occupied ? 'Replace object' : 'Rename object';
+    changeInput(dialog, input, occupied ? 'copy app.json' : 'app.json');
+    expect(dialogButton(dialog, submit)).toBeDisabled();
+    changeInput(dialog, input, occupied ? DESTINATION_KEY : ORIGINAL_KEY);
+    expect(dialogButton(dialog, submit)).toBeEnabled();
+    fireEvent.click(dialogButton(dialog, 'Cancel'));
+    expectNoWrites();
+  });
+
+  it('replaces the destination before deleting the source and opens the copied body', async () => {
+    engine.objects.push({ ...APP_JSON, key: DESTINATION_KEY, body: encoder.encode('old') });
+    const copy = delayed<undefined>();
+    engine.beforeCopy = () => copy.promise;
+    const router = open(ORIGINAL_KEY);
+    await shown();
+    const dialog = await renameConfirmation(true);
+    changeInput(dialog, 'Enter destination key to confirm', DESTINATION_KEY);
+    fireEvent.click(dialogButton(dialog, 'Replace object'));
+    await waitFor(() => expect(engine.requests('PUT')).toHaveLength(1));
+    expect(engine.requests('PUT').map(({ url }) => decodeURIComponent(url.pathname))).toEqual([
+      `/alpha/${DESTINATION_KEY}`,
+    ]);
+    expect(engine.requests('DELETE')).toHaveLength(0);
+    await act(async () => copy.finish(undefined));
+
+    await waitFor(() => expectAddress(router, DESTINATION_KEY));
+    expect(engine.requests('DELETE').map(({ url }) => url.pathname)).toEqual([`/alpha/${ORIGINAL_KEY}`]);
+    await waitFor(() => expect(previewText()).toHaveTextContent('"name":"app"'));
+    expect(visibleResult('Object renamed.')).toBeInTheDocument();
+  });
+
+  it('omits the redirect warning if the original has no redirect', async () => {
+    open(ORIGINAL_KEY);
+    await shown();
+    const dialog = await renameConfirmation(false);
+    expect(dialog).not.toHaveTextContent('website redirect');
+  });
+
+  it.each([
+    'Bucket alpha can hold at most 1000 objects.',
+    'Bucket alpha can hold at most 67108864 bytes. Copy would use 67123368 bytes.',
+  ])('shows the original limit rejection and keeps the source: %s', async (message) => {
+    engine.beforeCopy = () => errorAnswer(400, 'ValidationException', message);
+    open(ORIGINAL_KEY);
+    await shown();
+    const dialog = await renameConfirmation(false);
+    changeInput(dialog, 'Enter original key to confirm', ORIGINAL_KEY);
+    fireEvent.click(dialogButton(dialog, 'Rename object'));
+    expect(await within(dialog).findByText('ValidationException')).toBeInTheDocument();
+    expect(dialog).toHaveTextContent(message);
+    expect(engine.requests('DELETE')).toHaveLength(0);
+    expect(engine.objects.map(({ key }) => key)).toEqual([ORIGINAL_KEY]);
+  });
+
+  it('reports partial success with both locations and the exact deletion refusal and leaves both objects', async () => {
+    engine.remove = () => errorAnswer(403, 'AccessDeniedException', 'This policy denies deleting the original.');
+    const router = open(ORIGINAL_KEY);
+    await shown();
+    const dialog = await renameConfirmation(false);
+    changeInput(dialog, 'Enter original key to confirm', ORIGINAL_KEY);
+    fireEvent.click(dialogButton(dialog, 'Rename object'));
+
+    await waitFor(() =>
+      expect(visibleResult('Object copied, but the original could not be deleted.')).toBeInTheDocument(),
+    );
+    expect(screen.getByText('AccessDeniedException')).toBeInTheDocument();
+    expect(screen.getByText('DeleteObject was refused: This policy denies deleting the original.')).toBeInTheDocument();
+    expect(screen.getByText(byWholeText(`s3://alpha/${DESTINATION_KEY}`))).toBeInTheDocument();
+    expect(screen.getAllByText(byWholeText(`s3://alpha/${ORIGINAL_KEY}`)).length).toBeGreaterThan(1);
+    expectAddress(router, ORIGINAL_KEY);
+    expect(engine.requests('DELETE').map(({ url }) => url.pathname)).toEqual([`/alpha/${ORIGINAL_KEY}`]);
+    expect(engine.objects.map(({ key }) => key)).toEqual([ORIGINAL_KEY, DESTINATION_KEY]);
+  });
+
+  it('identifies a 501 and keeps the action visible but disabled', async () => {
+    engine.beforeCopy = () => errorAnswer(501, 'NotImplemented', 'Copy is unavailable.');
+    open(ORIGINAL_KEY);
+    await shown();
+    const dialog = await changeDialog('Copy object');
+    changeInput(dialog, 'Destination key', DESTINATION_KEY);
+    fireEvent.click(dialogButton(dialog, 'Copy object'));
+    await waitFor(() => expect(visibleResult('Not implemented by the emulator')).toBeInTheDocument());
+    expect(onPage('The emulator answered 501 Not Implemented for CopyObject.')).toBeInTheDocument();
+
+    fireEvent.click(action('Actions'));
+    const unavailable = await screen.findByRole('menuitem', { name: /Copy object/ });
+    expect(unavailable).toHaveAttribute('aria-disabled', 'true');
+    fireEvent.click(unavailable);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(engine.requests('PUT')).toHaveLength(1);
+  });
+
+  it('prefills the property editor and saves added, changed and removed metadata rows', async () => {
+    engine.objects = [{ ...APP_JSON, metadata: { owner: 'ci', remove: 'old' } }];
+    const router = open(ORIGINAL_KEY);
+    await shown();
+    const dialog = await changeDialog('Edit object properties');
+    expect(within(dialog).getByRole('textbox', { name: 'Content type' })).toHaveValue('application/json');
+    expect(within(dialog).getByDisplayValue('ci')).toBeInTheDocument();
+    expect(within(dialog).getByDisplayValue('old')).toBeInTheDocument();
+    fireEvent.change(within(dialog).getByDisplayValue('ci'), { target: { value: 'qa' } });
+    fireEvent.click(dialogButton(dialog, 'Remove metadata remove'));
+    fireEvent.click(dialogButton(dialog, 'Add metadata'));
+    const keys = within(dialog).getAllByRole('textbox', { name: 'Key' });
+    const values = within(dialog).getAllByRole('textbox', { name: 'Value' });
+    const newKey = keys[1];
+    const newValue = values[1];
+    if (newKey === undefined || newValue === undefined) throw new Error('Expected a new metadata row');
+    fireEvent.change(newKey, { target: { value: 'stage' } });
+    fireEvent.change(newValue, { target: { value: 'test' } });
+    changeInput(dialog, 'Content type', 'text/plain');
+    fireEvent.click(dialogButton(dialog, 'Save changes'));
+
+    await waitFor(() => expect(overviewValue('Content type')).toBe('text/plain'));
+    expect(tableRows('User-defined metadata')).toEqual([
+      ['owner', 'qa'],
+      ['stage', 'test'],
+    ]);
+    expectAddress(router, ORIGINAL_KEY);
+    expect(visibleResult('Object properties updated.')).toBeInTheDocument();
+  });
+
+  it('sends only one write when Save changes is clicked repeatedly', async () => {
+    const copy = delayed<undefined>();
+    engine.beforeCopy = () => copy.promise;
+    open(ORIGINAL_KEY);
+    await shown();
+    const dialog = await changeDialog('Edit object properties');
+    changeInput(dialog, 'Content type', 'text/plain');
+    const save = dialogButton(dialog, 'Save changes');
+    fireEvent.click(save);
+    fireEvent.click(save);
+    await waitFor(() => expect(engine.requests('PUT')).toHaveLength(1));
+    await act(async () => copy.finish(undefined));
+    await waitFor(() => expect(visibleResult('Object properties updated.')).toBeInTheDocument());
+    expect(engine.requests('PUT')).toHaveLength(1);
+  });
+
+  it('keeps an edit refusal in the dialog without a success result', async () => {
+    engine.beforeCopy = () => errorAnswer(404, 'NoSuchKey', 'The specified key does not exist.');
+    open(ORIGINAL_KEY);
+    await shown();
+    const dialog = await changeDialog('Edit object properties');
+    changeInput(dialog, 'Content type', 'text/plain');
+    fireEvent.click(dialogButton(dialog, 'Save changes'));
+    expect(await within(dialog).findByText('NoSuchKey')).toBeInTheDocument();
+    expect(dialog).toHaveTextContent('The specified key does not exist.');
+    expect(screen.queryByText('Object properties updated.')).not.toBeInTheDocument();
+  });
+
+  it('aborts an old target rename and suppresses its delete, readback, navigation and flash', async () => {
+    const copy = delayed<Answer>();
+    engine.beforeCopy = () => copy.promise;
+    const router = open(ORIGINAL_KEY);
+    await shown();
+    const dialog = await renameConfirmation(false);
+    changeInput(dialog, 'Enter original key to confirm', ORIGINAL_KEY);
+    fireEvent.click(dialogButton(dialog, 'Rename object'));
+    await waitFor(() => expect(engine.requests('PUT')).toHaveLength(1));
+    const [write] = engine.requests('PUT');
+    if (write === undefined) throw new Error('Expected a copy request');
+
+    await act(async () => connection.switchTarget());
+    expect(write.signal.aborted).toBe(true);
+    await waitFor(() => expect(previewText()).toHaveTextContent('"name":"app"'));
+    const observed = engine.seen.length;
+    await act(async () => copy.finish(ok('<CopyObjectResult><ETag>"old-target"</ETag></CopyObjectResult>')));
+
+    expect(engine.seen).toHaveLength(observed);
+    expect(engine.requests('DELETE')).toHaveLength(0);
+    expectAddress(router, ORIGINAL_KEY);
+    expect(screen.queryByText('Object renamed.')).not.toBeInTheDocument();
+  });
+
+  it.each(['tags', 'preview'])('keeps the cross-bucket copy result when %s returns first', async (first) => {
+    engine.buckets.push('beta');
+    const tags = delayed<Answer>();
+    const preview = delayed<Answer>();
+    engine.tagging = (key) => (key === DESTINATION_KEY ? tags.promise : undefined);
+    engine.get = (key) => (key === DESTINATION_KEY ? preview.promise : undefined);
+    const router = open(ORIGINAL_KEY);
+    await shown();
+    const dialog = await changeDialog('Copy object');
+    changeInput(dialog, 'Destination bucket', 'beta');
+    changeInput(dialog, 'Destination key', DESTINATION_KEY);
+    fireEvent.click(dialogButton(dialog, 'Copy object'));
+    await waitFor(() => expectAddress(router, DESTINATION_KEY, 'beta'));
+    await waitFor(() => expect(overviewValue('Content type')).toBe('application/json'));
+
+    const finishTags = async () => {
+      await act(async () =>
+        tags.finish(ok('<Tagging><TagSet><Tag><Key>phase</Key><Value>copy</Value></Tag></TagSet></Tagging>')),
+      );
+      await waitFor(() => expect(within(section('Tags')).getByText('copy')).toBeInTheDocument());
+    };
+    const finishPreview = async () => {
+      await act(async () => preview.finish({ status: 200, body: APP_JSON.body }));
+      await waitFor(() => expect(previewText()).toHaveTextContent('"name":"app"'));
+    };
+
+    await (first === 'tags' ? finishTags() : finishPreview());
+    expect(visibleResult('Object copied.')).toBeInTheDocument();
+    await (first === 'tags' ? finishPreview() : finishTags());
+    expectAddress(router, DESTINATION_KEY, 'beta');
+    expect(visibleResult('Object copied.')).toBeInTheDocument();
+    expect(h1()).toHaveTextContent('copy app.json');
+  });
+
+  it('keeps the rename result when the original recheck responds missing before the destination loads', async () => {
+    const destination = delayed<Answer>();
+    let sawMissingOriginal = false;
+    engine.head = (key) => {
+      if (key === ORIGINAL_KEY && !engine.objects.some((object) => object.key === key)) {
+        sawMissingOriginal = true;
+        return { status: 404 };
+      }
+      return key === DESTINATION_KEY && engine.objects.some((object) => object.key === key)
+        ? destination.promise
+        : undefined;
+    };
+    const router = open(ORIGINAL_KEY);
+    await shown();
+    const dialog = await renameConfirmation(false);
+    changeInput(dialog, 'Enter original key to confirm', ORIGINAL_KEY);
+    fireEvent.click(dialogButton(dialog, 'Rename object'));
+    await waitFor(() => expectAddress(router, DESTINATION_KEY));
+    expect(sawMissingOriginal).toBe(true);
+    expect(visibleResult('Object renamed.')).toBeInTheDocument();
+    await act(async () =>
+      destination.finish({
+        status: 200,
+        headers: { 'content-type': 'application/json', 'content-length': String(APP_JSON.body.length) },
+      }),
+    );
+    await waitFor(() => expect(previewText()).toHaveTextContent('"name":"app"'));
+    expect(visibleResult('Object renamed.')).toBeInTheDocument();
+  });
+
+  it.each(['tags', 'preview'])(
+    'keeps saved properties and success when the refreshed %s returns first',
+    async (first) => {
+      const tags = delayed<Answer>();
+      const preview = delayed<Answer>();
+      open(ORIGINAL_KEY);
+      await shown();
+      await waitFor(() => expect(previewText()).toHaveTextContent('"name":"app"'));
+      await waitFor(() => expect(within(section('Tags')).getByText('dev')).toBeInTheDocument());
+      engine.tagging = () => tags.promise;
+      engine.get = () => preview.promise;
+      const dialog = await changeDialog('Edit object properties');
+      changeInput(dialog, 'Content type', 'text/plain');
+      fireEvent.change(within(dialog).getByDisplayValue('ci'), { target: { value: 'qa' } });
+      fireEvent.click(dialogButton(dialog, 'Save changes'));
+
+      function assertSaved() {
+        expect(overviewValue('Content type')).toBe('text/plain');
+        expect(tableRows('User-defined metadata')).toEqual([['owner', 'qa']]);
+        expect(visibleResult('Object properties updated.')).toBeInTheDocument();
+      }
+      await waitFor(assertSaved);
+      const finishTags = async () => {
+        await act(async () =>
+          tags.finish(ok('<Tagging><TagSet><Tag><Key>env</Key><Value>dev</Value></Tag></TagSet></Tagging>')),
+        );
+        await waitFor(() => expect(within(section('Tags')).getByText('dev')).toBeInTheDocument());
+      };
+      const finishPreview = async () => {
+        await act(async () => preview.finish({ status: 200, body: APP_JSON.body }));
+        await waitFor(() => expect(previewText()).toHaveTextContent('"name":"app"'));
+      };
+
+      await (first === 'tags' ? finishTags() : finishPreview());
+      assertSaved();
+      await (first === 'tags' ? finishPreview() : finishTags());
+      assertSaved();
+    },
+  );
 });
