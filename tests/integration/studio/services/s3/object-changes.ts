@@ -73,3 +73,5 @@ export function changeAlert(page: Page) {
   const modal = page.locator(wrapper.findModal().toSelector());
   return modal.locator(wrapper.findAlert().toSelector().replace(/^body /, ''));
 }
+
+export const successItems = wrapper.findFlashbar().findItemsByType('success');

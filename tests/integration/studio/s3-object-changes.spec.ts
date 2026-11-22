@@ -8,6 +8,7 @@ import {
   seedSource,
   sourceBody,
   sourceKey,
+  successItems,
   verifyObject,
 } from './services/s3/object-changes';
 import { expectFlash } from './services/s3/s3-bucket-actions';
@@ -38,7 +39,9 @@ test('studio.s3-copy-object-to-another-bucket', async ({ ctx, page }) => {
     await expect(modal.getByRole('textbox', { name: 'Enter destination key to confirm' })).toBeVisible();
     return modal;
   }
-  await (await confirmCopy()).getByRole('button', { name: 'Cancel' }).click();
+  const cancelled = await confirmCopy();
+  await cancelled.getByRole('button', { name: 'Cancel' }).click();
+  await expect(cancelled).toBeHidden();
   expect(await getObjectDirect(ctx, port, bucket, sourceKey)).toEqual(Buffer.from(sourceBody));
   expect(await getObjectDirect(ctx, port, destination, key)).toEqual(Buffer.from('previous'));
   const modal = await confirmCopy();
@@ -62,7 +65,9 @@ test('studio.s3-rename-object-to-another-key', async ({ ctx, page }) => {
     await expect(modal.getByRole('textbox', { name: 'Enter original key to confirm' })).toBeVisible();
     return modal;
   }
-  await (await confirmRename()).getByRole('button', { name: 'Cancel' }).click();
+  const cancelled = await confirmRename();
+  await cancelled.getByRole('button', { name: 'Cancel' }).click();
+  await expect(cancelled).toBeHidden();
   const keys = async () => (await listObjectsDirect(ctx, port, bucket)).objects.map((item) => item.key);
   expect(await keys()).toEqual([sourceKey]);
   const modal = await confirmRename();
@@ -111,6 +116,8 @@ test('studio.s3-edit-object-properties-in-place', async ({ ctx, page }) => {
     expect(head).toMatchObject(headers);
   }
   await save('text/plain');
+  await page.locator(successItems.get(1).findDismissButton().toSelector()).click();
+  await expect(page.locator(successItems.toSelector())).toHaveCount(0);
   modal = await openChange(page, 'edit');
   await modal.getByRole('textbox', { name: 'Content type' }).fill('text/markdown');
   await save('text/markdown');
@@ -148,6 +155,6 @@ test('studio.s3-edit-object-after-source-removed', async ({ ctx, page }) => {
   await modal.getByRole('button', { name: 'Save changes' }).click();
   await expect(changeAlert(page)).toContainText('NoSuchKey');
   await expect(changeAlert(page)).toContainText('The specified key does not exist.');
-  await expect(page.getByText('Object properties updated.', { exact: true })).toHaveCount(0);
+  await expect(page.locator(successItems.toSelector())).toHaveCount(0);
   expect((await listObjectsDirect(ctx, port, bucket)).objects).toEqual([]);
 });
