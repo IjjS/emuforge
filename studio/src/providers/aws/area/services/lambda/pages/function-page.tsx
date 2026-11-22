@@ -64,6 +64,8 @@ interface FunctionTabsProps {
   releaseViewRef: Ref<HTMLDivElement>;
   waitingForVerification: boolean;
   eventSources: ReturnType<typeof useEventSources>;
+  createEventSourceArn: string;
+  onCreateEventSourceArnChange: (arn: string) => void;
   active: ReturnType<typeof tabOf>;
   onMonitorRefreshSettled: ((message: string) => void) | undefined;
 }
@@ -83,6 +85,8 @@ function FunctionTabs({
   releaseViewRef,
   waitingForVerification,
   eventSources,
+  createEventSourceArn,
+  onCreateEventSourceArnChange,
   active,
   onMonitorRefreshSettled,
 }: FunctionTabsProps) {
@@ -171,7 +175,15 @@ function FunctionTabs({
       label: 'Event sources',
       href: functionTabHref(name, 'event-sources'),
       content: test.verified ? (
-        <EventSourcesTab key={testScope} name={name} sources={eventSources} connection={connection} ready={ready} />
+        <EventSourcesTab
+          key={testScope}
+          name={name}
+          sources={eventSources}
+          connection={connection}
+          ready={ready}
+          createArn={createEventSourceArn}
+          onCreateArnChange={onCreateEventSourceArnChange}
+        />
       ) : (
         <Container>
           <Box textAlign="center">
@@ -286,6 +298,11 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
   const flash = usePageFlash();
   const reread = useReadAgain(connection.engineOrigin, name);
   const functionScope = JSON.stringify([connection.engineOrigin, name]);
+  // The area remounts this page on a target change. Keep a refused ARN across tabs on this function's page.
+  const [eventSourceDraft, setEventSourceDraft] = useState({ scope: functionScope, arn: '' });
+  if (eventSourceDraft.scope !== functionScope) {
+    setEventSourceDraft({ scope: functionScope, arn: '' });
+  }
   const sessionScope = JSON.stringify([functionScope, reading.session]);
   const verificationScope = JSON.stringify([sessionScope, network.revision]);
   const invoke = useInvoke(connection.engineOrigin, name, reading.session, network.revision);
@@ -658,6 +675,8 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
           releaseViewRef={captureAliasFocus}
           waitingForVerification={network.online && (result === undefined || connected)}
           eventSources={eventSources}
+          createEventSourceArn={eventSourceDraft.scope === functionScope ? eventSourceDraft.arn : ''}
+          onCreateEventSourceArnChange={(arn) => setEventSourceDraft({ scope: functionScope, arn })}
           active={active}
           onMonitorRefreshSettled={refreshing === 'monitor' ? handleMonitorRefreshSettled : undefined}
         />

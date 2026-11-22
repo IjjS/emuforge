@@ -3,13 +3,15 @@ import Button from '@cloudscape-design/components/button';
 import FormField from '@cloudscape-design/components/form-field';
 import Header from '@cloudscape-design/components/header';
 import Input from '@cloudscape-design/components/input';
+import KeyValuePairs from '@cloudscape-design/components/key-value-pairs';
 import Link from '@cloudscape-design/components/link';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Table from '@cloudscape-design/components/table';
-import { useState } from 'react';
+import { useId, useState, useSyncExternalStore } from 'react';
 
 import { AreaModal } from '../../../components/area-modal';
+import { CopyValue } from '../../../components/copy-value';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { actionFailureItem, readFailureState } from '../../../components/failure-states';
 import { usePageFlash } from '../../../components/page-flash';
@@ -21,6 +23,18 @@ import { NONE } from '../format';
 
 type Sources = ReturnType<typeof useEventSources>;
 type Dialog = { kind: 'add' } | { kind: 'delete'; mapping: EventSourceMapping };
+
+const NARROW_VIEWPORT = '(width < 688px)';
+
+function subscribeToNarrowViewport(onChange: () => void) {
+  const media = window.matchMedia?.(NARROW_VIEWPORT);
+  media?.addEventListener('change', onChange);
+  return () => media?.removeEventListener('change', onChange);
+}
+
+function isNarrowViewport() {
+  return window.matchMedia?.(NARROW_VIEWPORT).matches ?? false;
+}
 
 const ARN_HELP = 'Enter an SQS queue ARN, DynamoDB stream ARN, or Kinesis stream ARN.';
 const ARN = /^arn:[a-z0-9-]+:(sqs|dynamodb|kinesis):[a-z0-9-]+:\d{12}:(\S+)$/;
@@ -43,16 +57,18 @@ function MappingDialog({
   dialog,
   name,
   pending,
+  initialArn,
   onDismiss,
   onSubmit,
 }: {
   dialog: Dialog;
   name: string;
   pending: boolean;
+  initialArn: string;
   onDismiss: () => void;
   onSubmit: (change: EventSourceChange) => void;
 }) {
-  const [arn, setArn] = useState('');
+  const [arn, setArn] = useState(initialArn);
   const [invalid, setInvalid] = useState(false);
   const source = sourceType(arn.trim());
   const deleting = dialog.kind === 'delete';
@@ -157,22 +173,41 @@ function ListFailure({
   );
 }
 
+function sourceArn(item: EventSourceMapping) {
+  return <CopyValue label="Source ARN" value={item.sourceArn} none={NONE} />;
+}
+
+function mappingState(item: EventSourceMapping) {
+  return <ValueText kind="fixed" value={item.state} none={NONE} />;
+}
+
+function processingResult(item: EventSourceMapping) {
+  return <ValueText kind="text" value={item.lastProcessingResult} none="Not reported" />;
+}
+
 const columns = [
+  { id: 'source', header: 'Source ARN', cell: sourceArn, isRowHeader: true },
+  { id: 'state', header: 'State', cell: mappingState },
+  { id: 'result', header: 'Last processing result', cell: processingResult },
+];
+
+const narrowColumns = [
   {
     id: 'source',
     header: 'Source ARN',
-    cell: (item: EventSourceMapping) => <ValueText kind="address" value={item.sourceArn} none={NONE} />,
-    isRowHeader: true,
-  },
-  {
-    id: 'state',
-    header: 'State',
-    cell: (item: EventSourceMapping) => <ValueText kind="fixed" value={item.state} none={NONE} />,
-  },
-  {
-    id: 'result',
-    header: 'Last processing result',
-    cell: (item: EventSourceMapping) => <ValueText kind="text" value={item.lastProcessingResult} none="Not reported" />,
+    cell: (item: EventSourceMapping) => (
+      <SpaceBetween size="xs">
+        {sourceArn(item)}
+        <KeyValuePairs
+          columns={2}
+          minColumnWidth={96}
+          items={[
+            { label: 'State', value: mappingState(item) },
+            { label: 'Last processing result', value: processingResult(item) },
+          ]}
+        />
+      </SpaceBetween>
+    ),
   },
 ];
 
@@ -181,13 +216,19 @@ export function EventSourcesTab({
   sources,
   connection,
   ready,
+  createArn,
+  onCreateArnChange,
 }: {
   name: string;
   sources: Sources;
   connection: AreaConnection;
   ready: boolean;
+  createArn: string;
+  onCreateArnChange: (arn: string) => void;
 }) {
   const flash = usePageFlash();
+  const actionsLabel = useId();
+  const narrow = useSyncExternalStore(subscribeToNarrowViewport, isNarrowViewport);
   const [selectedId, setSelectedId] = useState<string>();
   const [dialog, setDialog] = useState<Dialog>();
   const selected = sources.items.find(({ uuid }) => uuid === selectedId);
@@ -203,6 +244,9 @@ export function EventSourcesTab({
     }
     setDialog(undefined);
     const { failure } = result;
+    if (change.operation === 'CreateEventSourceMapping') {
+      onCreateArnChange(failure !== undefined && failure.kind !== 'not-implemented' ? change.sourceArn : '');
+    }
     if (failure !== undefined) {
       const item = actionFailureItem(failure, failure.operation, connection.engineOrigin);
       const roleRefused =
@@ -262,7 +306,7 @@ export function EventSourcesTab({
         selectionType="single"
         selectedItems={selected === undefined ? [] : [selected]}
         onSelectionChange={({ detail }) => setSelectedId(detail.selectedItems[0]?.uuid)}
-        columnDefinitions={columns}
+        columnDefinitions={narrow ? narrowColumns : columns}
         items={sources.items}
         loading={sources.loading}
         loadingText="Loading event sources"
@@ -272,49 +316,58 @@ export function EventSourcesTab({
           <Header
             variant="h2"
             actions={
-              <SpaceBetween direction="horizontal" size="xs">
-                <Button
-                  iconName="refresh"
-                  ariaLabel="Refresh"
-                  disabled={sources.failure?.kind === 'not-implemented'}
-                  loading={sources.refreshing}
-                  loadingText="Refreshing event sources"
-                  onClick={sources.refresh}
-                />
-                <Button
-                  disabled={!updating && (busy || !canUpdate || sources.unsupported.has('UpdateEventSourceMapping'))}
-                  loading={updating}
-                  loadingText="Updating event source mapping"
-                  onClick={() => {
-                    if (selected !== undefined) {
-                      void handleSubmit({
-                        operation: 'UpdateEventSourceMapping',
-                        mapping: selected,
-                        enabled: toEnable,
-                      });
-                    }
-                  }}
-                >
-                  {toEnable ? 'Enable' : 'Disable'}
-                </Button>
-                <Button
-                  disabled={busy || selected === undefined || sources.unsupported.has('DeleteEventSourceMapping')}
-                  onClick={() => {
-                    if (selected !== undefined) {
-                      setDialog({ kind: 'delete', mapping: selected });
-                    }
-                  }}
-                >
-                  Delete
-                </Button>
-                <Button
-                  variant="primary"
-                  disabled={busy || sources.unsupported.has('CreateEventSourceMapping')}
-                  onClick={() => setDialog({ kind: 'add' })}
-                >
-                  Add event source
-                </Button>
-              </SpaceBetween>
+              <div role="group" aria-labelledby={actionsLabel}>
+                <SpaceBetween size="xxs">
+                  <Box fontSize="body-s" fontWeight="bold">
+                    <span id={actionsLabel}>Event source mapping actions</span>
+                  </Box>
+                  <SpaceBetween direction="horizontal" size="xs">
+                    <Button
+                      iconName="refresh"
+                      ariaLabel="Refresh"
+                      disabled={sources.failure?.kind === 'not-implemented'}
+                      loading={sources.refreshing}
+                      loadingText="Refreshing event sources"
+                      onClick={sources.refresh}
+                    />
+                    <Button
+                      disabled={
+                        !updating && (busy || !canUpdate || sources.unsupported.has('UpdateEventSourceMapping'))
+                      }
+                      loading={updating}
+                      loadingText="Updating event source mapping"
+                      onClick={() => {
+                        if (selected !== undefined) {
+                          void handleSubmit({
+                            operation: 'UpdateEventSourceMapping',
+                            mapping: selected,
+                            enabled: toEnable,
+                          });
+                        }
+                      }}
+                    >
+                      {toEnable ? 'Enable' : 'Disable'}
+                    </Button>
+                    <Button
+                      disabled={busy || selected === undefined || sources.unsupported.has('DeleteEventSourceMapping')}
+                      onClick={() => {
+                        if (selected !== undefined) {
+                          setDialog({ kind: 'delete', mapping: selected });
+                        }
+                      }}
+                    >
+                      Delete
+                    </Button>
+                    <Button
+                      variant="primary"
+                      disabled={busy || sources.unsupported.has('CreateEventSourceMapping')}
+                      onClick={() => setDialog({ kind: 'add' })}
+                    >
+                      Add event source
+                    </Button>
+                  </SpaceBetween>
+                </SpaceBetween>
+              </div>
             }
           >
             Event sources
@@ -326,7 +379,13 @@ export function EventSourcesTab({
           dialog={dialog}
           name={name}
           pending={sources.pending !== undefined}
-          onDismiss={() => setDialog(undefined)}
+          initialArn={createArn}
+          onDismiss={() => {
+            if (dialog.kind === 'add') {
+              onCreateArnChange('');
+            }
+            setDialog(undefined);
+          }}
           onSubmit={(change) => void handleSubmit(change)}
         />
       )}

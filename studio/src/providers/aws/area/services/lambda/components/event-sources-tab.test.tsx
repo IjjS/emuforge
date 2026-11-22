@@ -1,6 +1,6 @@
 import Flashbar from '@cloudscape-design/components/flashbar';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useRef, useState } from 'react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -53,6 +53,7 @@ afterEach(() => vi.unstubAllGlobals());
 function Page() {
   const root = useRef<HTMLDivElement>(null);
   const [messages, show] = useState<FlashResult>();
+  const [createArn, setCreateArn] = useState('');
   const connection: AreaConnection = { engineOrigin: endpoint, result: undefined };
   const sources = useEventSources({ endpoint, name: 'orders', scope: 'test-scope', active: true });
   return (
@@ -60,7 +61,14 @@ function Page() {
       <PageFlashContext.Provider value={{ show, handOver: () => undefined }}>
         <div ref={root}>
           <Flashbar items={messages ?? []} />
-          <EventSourcesTab name="orders" sources={sources} connection={connection} ready />
+          <EventSourcesTab
+            name="orders"
+            sources={sources}
+            connection={connection}
+            ready
+            createArn={createArn}
+            onCreateArnChange={setCreateArn}
+          />
         </div>
       </PageFlashContext.Provider>
     </AreaRootContext.Provider>
@@ -91,11 +99,13 @@ async function select() {
   fireEvent.click(radio);
 }
 
-async function add(arn: string) {
+async function add(arn?: string) {
   fireEvent.click(button('Add event source'));
   const dialog = await screen.findByRole('dialog', { name: 'Add event source' });
   const input = within(dialog).getByRole('textbox', { name: 'Event source ARN' });
-  fireEvent.change(input, { target: { value: arn } });
+  if (arn !== undefined) {
+    fireEvent.change(input, { target: { value: arn } });
+  }
   return {
     dialog,
     input,
@@ -122,6 +132,32 @@ it('U1: shows an absent result and preserves a reported result in its own row', 
   const second = await screen.findByRole('row', { name: /stream\/other/ });
   expect(within(first).getByText('Not reported')).toBeVisible();
   expect(within(second).getByText('No records processed')).toBeVisible();
+});
+
+it('keeps the full ARN, selection, state and processing result together in a narrow row', async () => {
+  vi.stubGlobal('matchMedia', () => ({
+    matches: true,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  }));
+  const writeText = vi.fn<(value: string) => Promise<void>>().mockResolvedValue(undefined);
+  vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+  list = () => mappings({ ...MAPPING, LastProcessingResult: 'No records processed' });
+  open();
+
+  const row = await screen.findByRole('row', { name: /orders/ });
+  expect(row).toHaveTextContent(SOURCE_ARN);
+  expect(within(row).getByText('State')).toBeVisible();
+  expect(within(row).getByText('Enabled')).toBeVisible();
+  expect(within(row).getByText('Last processing result')).toBeVisible();
+  expect(within(row).getByText('No records processed')).toBeVisible();
+  fireEvent.click(within(row).getByRole('button', { name: 'Copy Source ARN' }));
+  await waitFor(() => expect(writeText).toHaveBeenCalledExactlyOnceWith(SOURCE_ARN));
+
+  const radio = within(row).getByRole('radio');
+  fireEvent.click(radio);
+  expect(radio).toBeChecked();
+  expect(button('Disable')).toBeEnabled();
 });
 
 it('U2: shows a list refusal and refreshes successfully', async () => {
@@ -169,6 +205,23 @@ it('U5: reports a creation refusal unrelated to the execution role', async () =>
     path: PATH,
     body: { FunctionName: 'orders', EventSourceArn: SOURCE_ARN },
   });
+});
+
+it('prefills the refused ARN for retry and clears it after a successful create', async () => {
+  open();
+  (await add(SOURCE_ARN)).submit();
+  expect(await screen.findByText(/The mapping request was refused/)).toBeVisible();
+
+  const retry = await add();
+  expect(retry.input).toHaveValue(SOURCE_ARN);
+  write = () => Response.json(MAPPING, { status: 202 });
+  retry.submit();
+  expect(await screen.findByText(/Added the event source mapping/)).toBeVisible();
+  expect(calls.filter(({ method }) => method === 'POST').map(({ body }) => body)).toEqual([
+    { FunctionName: 'orders', EventSourceArn: SOURCE_ARN },
+    { FunctionName: 'orders', EventSourceArn: SOURCE_ARN },
+  ]);
+  expect((await add()).input).toHaveValue('');
 });
 
 it('U6: shows a state change refusal and keeps the last state read from the list', async () => {
