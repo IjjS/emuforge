@@ -131,10 +131,16 @@ function VersioningForm({
         }
         actions={
           <SpaceBetween size="xs" direction="horizontal">
-            <Button disabled={pending} onClick={() => void navigate(properties)}>
+            <Button formAction="none" variant="link" disabled={pending} onClick={() => void navigate(properties)}>
               Cancel
             </Button>
-            <Button variant="primary" formAction="submit" loading={pending} disabled={!canSave}>
+            <Button
+              variant="primary"
+              formAction="submit"
+              loading={pending}
+              loadingText="Saving bucket versioning"
+              disabled={!canSave}
+            >
               Save changes
             </Button>
           </SpaceBetween>
