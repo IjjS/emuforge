@@ -83,9 +83,10 @@ export function useEventSources({ endpoint, name, scope, active }: EventSourcesO
       // Invalidate only this function's list. Cancel even the initial read, which has no cached answer to refetch.
       const filter = { queryKey, exact: true };
       await client.cancelQueries(filter);
-      if (!controller.signal.aborted) {
-        void client.invalidateQueries(filter);
+      if (controller.signal.aborted) {
+        return undefined;
       }
+      void client.invalidateQueries(filter);
     } catch (error) {
       if (controller.signal.aborted) {
         return undefined;
@@ -115,7 +116,7 @@ export function useEventSources({ endpoint, name, scope, active }: EventSourcesO
       }
     },
     submit,
-    pending: mutation.isPending && mutation.variables.scope === scope,
+    pending: mutation.isPending && mutation.variables.scope === scope ? mutation.variables.change.operation : undefined,
     unsupported: support.unsupported,
   };
 }

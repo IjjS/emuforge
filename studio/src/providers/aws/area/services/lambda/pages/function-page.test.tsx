@@ -1239,7 +1239,10 @@ describe('Event sources', () => {
     expect(screen.getByRole('tab', { name: 'Event sources', selected: true })).toBeVisible();
     expect(listRequests().map(({ url }) => url.searchParams.get('FunctionName'))).toEqual(['orders']);
 
-    const topRefresh = screen.getAllByRole('button', { name: 'Refresh', exact: true })[0]!;
+    const [topRefresh] = screen.getAllByRole('button', { name: 'Refresh' });
+    if (topRefresh === undefined) {
+      throw new Error('Expected the function Refresh button');
+    }
     fireEvent.click(topRefresh);
     await waitFor(() => {
       expect(engine.gets).toHaveLength(2);
@@ -1262,17 +1265,17 @@ describe('Event sources', () => {
     };
     open(route);
 
-    fireEvent.click(await screen.findByRole('radio', { name: source, exact: true }));
-    const tab = screen.getByRole('tabpanel');
-    fireEvent.click(within(tab).getByRole('button', { name: 'Refresh', exact: true }));
+    fireEvent.click(await screen.findByRole('radio', { name: (name) => name.endsWith(source) }));
+    const tab = screen.getByRole('tabpanel', { name: 'Event sources' });
+    fireEvent.click(within(tab).getByRole('button', { name: 'Refresh' }));
     await waitFor(() => expect(listRequests()).toHaveLength(2));
 
-    fireEvent.click(within(tab).getByRole('button', { name: 'Delete', exact: true }));
+    fireEvent.click(within(tab).getByRole('button', { name: 'Delete' }));
     const dialog = await screen.findByRole('dialog', { name: 'Delete event source mapping?' });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete', exact: true }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
     expect(await screen.findByText('No event sources')).toBeVisible();
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-    expect(screen.getByText(/Requested deletion of the mapping for/)).toHaveTextContent(source);
+    expect(flashTexts()).toContain(`Requested deletion of the mapping for ${source}.`);
     expect(listRequests()).toHaveLength(3);
 
     await act(async () => {
@@ -1280,8 +1283,8 @@ describe('Event sources', () => {
       await old.promise;
     });
     expect(screen.getByText('No event sources')).toBeVisible();
-    expect(screen.queryByRole('radio', { name: source })).not.toBeInTheDocument();
-    expect(screen.getByText(/Requested deletion of the mapping for/)).toHaveTextContent(source);
+    expect(screen.queryByRole('radio', { name: (name) => name.endsWith(source) })).not.toBeInTheDocument();
+    expect(flashTexts()).toContain(`Requested deletion of the mapping for ${source}.`);
   });
 });
 

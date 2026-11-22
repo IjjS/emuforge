@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: plan
 Issue-Key: studio|lambda.event-source-mappings|task
-Issue-Check-Ids:
+Issue-Check-Ids: studio.lambda-event-source-queue, studio.lambda-event-source-dynamodb, studio.lambda-event-source-kinesis, studio.lambda-event-source-role-refused, studio.lambda-event-source-lifecycle
 Issue-Commit: 7b260c508348edd256975ce57d7da11104dc8891
 
 # Build Lambda's task 9: wire a queue or a stream to a function and see it run

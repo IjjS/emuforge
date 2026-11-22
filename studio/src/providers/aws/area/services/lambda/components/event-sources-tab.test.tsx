@@ -1,6 +1,6 @@
 import Flashbar from '@cloudscape-design/components/flashbar';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { useRef, useState } from 'react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -79,7 +79,7 @@ function open() {
 }
 
 function button(name: string) {
-  return screen.getByRole('button', { name, exact: true });
+  return screen.getByRole('button', { name });
 }
 
 function refresh() {
@@ -87,7 +87,7 @@ function refresh() {
 }
 
 async function select() {
-  const radio = await screen.findByRole('radio', { name: SOURCE_ARN, exact: true });
+  const radio = await screen.findByRole('radio', { name: (name) => name.endsWith(SOURCE_ARN) });
   fireEvent.click(radio);
 }
 
@@ -218,7 +218,7 @@ it('U10: disables both directions of a state change after an unsupported update'
   expect(button('Disable')).toBeDisabled();
   list = () => mappings({ ...MAPPING, State: 'Disabled' });
   fireEvent.click(refresh());
-  expect(await screen.findByRole('button', { name: 'Enable', exact: true })).toBeDisabled();
+  expect(await screen.findByRole('button', { name: 'Enable' })).toBeDisabled();
 });
 
 it('U11: leaves Delete visible and disabled when deletion is unsupported', async () => {
@@ -255,11 +255,9 @@ it.each([
   expect(await screen.findByText(ROLE_HINT)).toBeVisible();
   expect(screen.getByText('InvalidParameterValueException')).toBeVisible();
   expect(screen.getByText(`: ${message}`)).toBeVisible();
-  await waitFor(() => {
-    expect(calls).toContainEqual({
-      method: 'POST',
-      path: PATH,
-      body: { FunctionName: 'orders', EventSourceArn: arn, StartingPosition: 'LATEST' },
-    });
+  expect(calls).toContainEqual({
+    method: 'POST',
+    path: PATH,
+    body: { FunctionName: 'orders', EventSourceArn: arn, StartingPosition: 'LATEST' },
   });
 });

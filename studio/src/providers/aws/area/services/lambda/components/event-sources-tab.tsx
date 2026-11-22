@@ -193,7 +193,8 @@ export function EventSourcesTab({
   const selected = sources.items.find(({ uuid }) => uuid === selectedId);
   const toEnable = selected?.state === 'Disabled';
   const canUpdate = toEnable || selected?.state === 'Enabled';
-  const busy = !ready || sources.pending;
+  const busy = !ready || sources.pending !== undefined;
+  const updating = sources.pending === 'UpdateEventSourceMapping';
 
   async function handleSubmit(change: EventSourceChange) {
     const result = await sources.submit(change);
@@ -277,10 +278,13 @@ export function EventSourcesTab({
                   ariaLabel="Refresh"
                   disabled={sources.failure?.kind === 'not-implemented'}
                   loading={sources.refreshing}
+                  loadingText="Refreshing event sources"
                   onClick={sources.refresh}
                 />
                 <Button
-                  disabled={busy || !canUpdate || sources.unsupported.has('UpdateEventSourceMapping')}
+                  disabled={!updating && (busy || !canUpdate || sources.unsupported.has('UpdateEventSourceMapping'))}
+                  loading={updating}
+                  loadingText="Updating event source mapping"
                   onClick={() => {
                     if (selected !== undefined) {
                       void handleSubmit({
@@ -321,7 +325,7 @@ export function EventSourcesTab({
         <MappingDialog
           dialog={dialog}
           name={name}
-          pending={sources.pending}
+          pending={sources.pending !== undefined}
           onDismiss={() => setDialog(undefined)}
           onSubmit={(change) => void handleSubmit(change)}
         />
