@@ -71,6 +71,9 @@ function Page() {
     <AreaRootContext.Provider value={root}>
       <PageFlashContext.Provider value={{ show, handOver: () => undefined }}>
         <div ref={root}>
+          <div style={{ position: 'sticky' }}>
+            <nav aria-label="Breadcrumbs" />
+          </div>
           <Flashbar items={messages ?? []} />
           <EventSourcesTab
             name="orders"
@@ -392,6 +395,40 @@ it('leaves focus where the user moved it while waiting for an unsupported keyboa
   await waitFor(() => expect(enable).toBeDisabled());
   expect(flashContent()).toHaveTextContent('UpdateEventSourceMapping');
   expect(refresh()).toHaveFocus();
+});
+
+it('reveals the focused mapping Refresh below a sticky breadcrumb after a narrow Disable refusal', async () => {
+  vi.stubGlobal('matchMedia', () => ({
+    matches: true,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  }));
+  const scrollBy = vi.fn();
+  vi.stubGlobal('scrollBy', scrollBy);
+  const respond = holdWrite();
+  const user = userEvent.setup();
+  open();
+  const breadcrumbs = required(wrapper.find('nav[aria-label="Breadcrumbs"]')).getElement();
+  const stickyRow = required(breadcrumbs.parentElement);
+  vi.spyOn(stickyRow, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 56, 390, 40));
+
+  await select();
+  const disable = button('Disable');
+  disable.focus();
+  await user.keyboard('{Enter}');
+  await waitFor(() => expect(disable).toHaveAttribute('aria-disabled', 'true'));
+  await user.tab({ shift: true });
+  const focusedRefresh = refresh();
+  expect(focusedRefresh).toHaveFocus();
+  focusedRefresh.style.setProperty('--space-static-xs-b6kz15', '8px');
+  vi.spyOn(focusedRefresh, 'getBoundingClientRect').mockReturnValue(new DOMRect(16, 83, 40, 32));
+  expect(scrollBy).not.toHaveBeenCalled();
+
+  respond(refusal('Not supported', 501));
+  await waitFor(() => expect(scrollBy).toHaveBeenCalledExactlyOnceWith({ top: -21, behavior: 'instant' }));
+  expect(focusedRefresh).toHaveFocus();
+  expect(disable).toBeDisabled();
+  expect(flashContent()).toHaveTextContent('UpdateEventSourceMapping');
 });
 
 it('U11: leaves Delete visible and disabled when deletion is unsupported', async () => {
