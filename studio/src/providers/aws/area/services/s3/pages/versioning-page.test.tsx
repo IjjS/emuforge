@@ -1,3 +1,4 @@
+import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
@@ -158,8 +159,12 @@ it('shows the refusal code and message on the editor without reporting success',
   const router = open();
   fireEvent.click(await screen.findByRole('radio', { name: 'Enable' }));
   fireEvent.click(saveButton());
-  expect(await screen.findByText('AccessDenied')).toBeVisible();
-  expect(screen.getByText('Versioning updates are denied', { exact: false })).toBeVisible();
+  await waitFor(() => {
+    const error = createWrapper(screen.getByRole('main')).findForm()?.findError()?.getElement();
+    expect(error).toBeVisible();
+    expect(error).toHaveTextContent('AccessDenied');
+    expect(error).toHaveTextContent('Versioning updates are denied');
+  });
   expect(screen.queryByText(SUCCESS)).toBeNull();
   expect(router.state.location.pathname).toBe(EDIT);
   expect(engine.writes).toHaveLength(1);
@@ -186,7 +191,15 @@ it('keeps the success message and the state read from Properties after the paral
     releaseTags = resolve;
   });
   const router = open(PROPERTIES);
-  await screen.findByText('Disabled');
+  const versioningSection = () =>
+    createWrapper(screen.getByRole('main'))
+      .findAllContainers()
+      .find(
+        (container) => container.findHeader()?.getElement().querySelector('h2')?.textContent === 'Bucket Versioning',
+      )
+      ?.findContent()
+      .getElement();
+  await waitFor(() => expect(versioningSection()).toHaveTextContent('Disabled'));
   const edit = screen.getAllByRole('link', { name: 'Edit' }).find((link) => link.getAttribute('href') === EDIT);
   if (edit === undefined) throw new Error('Properties must link to versioning edit');
   fireEvent.click(edit);
@@ -206,12 +219,12 @@ it('keeps the success message and the state read from Properties after the paral
   releaseSave(new Response(null, { status: 204 }));
 
   await waitFor(() => expect(router.state.location.pathname).toBe(PROPERTIES));
-  expect(await screen.findByText('Suspended')).toBeVisible();
+  await waitFor(() => expect(versioningSection()).toHaveTextContent('Suspended'));
   expect(engine.reads[priorReads]).toBe('bucket');
   expect(engine.reads.slice(priorReads + 1)).toEqual(expect.arrayContaining(['versioning', 'tags']));
   releaseTags(new Response('<Tagging><TagSet><Tag><Key>team</Key><Value>storage</Value></Tag></TagSet></Tagging>'));
   expect(await screen.findByText('storage')).toBeVisible();
-  expect(screen.getByText('Suspended')).toBeVisible();
+  expect(versioningSection()).toHaveTextContent('Suspended');
   expect(await screen.findByText(SUCCESS)).toBeVisible();
   expect(engine.writes).toHaveLength(1);
 });
