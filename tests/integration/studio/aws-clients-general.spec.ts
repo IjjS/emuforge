@@ -343,7 +343,10 @@ async function observeQueueCall(context: BrowserContext, page: Page) {
         for (const [id, post] of posts) {
           if (new URL(post.url).origin !== engineOrigin || !wireHeaders.has(id)) continue;
           const headers = { ...post.headers, ...wireHeaders.get(id) };
-          if (headers['x-amz-target'] === 'AmazonSQS.GetQueueAttributes') return validStudioSignature(post, headers);
+          if (headers['x-amz-target'] === 'AmazonSQS.GetQueueAttributes') {
+            const body = JSON.parse(post.postData ?? 'null') as { QueueUrl?: unknown } | null;
+            return { queueUrl: body?.QueueUrl, validSignature: validStudioSignature(post, headers) };
+          }
         }
         return undefined;
       });
@@ -377,13 +380,10 @@ test('studio.aws-sqs-client-keeps-a-queue-url-on-the-engine', async ({ ctx, cont
   const stack = await startStack(ctx);
 
   // Given: a queue made by a direct call, using the URL returned by this run’s emulator.
-  const queueUrl = String(
-    (
-      JSON.parse(
-        answered(await directSqs(ctx, port, 'CreateQueue', { QueueName: queue }), 200, `direct CreateQueue ${queue}`),
-      ) as { QueueUrl?: unknown }
-    ).QueueUrl ?? '',
-  );
+  const { QueueUrl: queueUrl } = JSON.parse(
+    answered(await directSqs(ctx, port, 'CreateQueue', { QueueName: queue }), 200, `direct CreateQueue ${queue}`),
+  ) as { QueueUrl?: unknown };
+  if (typeof queueUrl !== 'string') throw new Error('direct CreateQueue: expected a QueueUrl string');
   ctx.log(`direct CreateQueue ${queue}: QueueUrl ${queueUrl}`);
   expect(new URL(queueUrl).hostname, 'direct CreateQueue: absolute QueueUrl').not.toBe('');
   const directArn = String(
@@ -419,7 +419,9 @@ test('studio.aws-sqs-client-keeps-a-queue-url-on-the-engine', async ({ ctx, cont
       matches: (r) => r.method === 'POST' && r.target === 'AmazonSQS.GetQueueAttributes',
     },
   ]);
-  expect(await observed.signedPostAt(stack.engine.url), 'GetQueueAttributes POST: valid Studio signature').toBe(true);
+  const post = await observed.signedPostAt(stack.engine.url);
+  expect(post?.queueUrl, 'GetQueueAttributes POST: QueueUrl from direct CreateQueue').toBe(queueUrl);
+  expect(post?.validSignature, 'GetQueueAttributes POST: valid Studio signature').toBe(true);
   expect([...observed.origins], 'all observed request origins including preflights').toEqual([stack.engine.url]);
   await observed.close();
   expect(arn, 'page GetQueueAttributes: QueueArn, against direct GetQueueAttributes').toBe(directArn);

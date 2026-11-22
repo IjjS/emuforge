@@ -517,8 +517,16 @@ fn relay_sqs_queue_url_follow_up_reaches_engine() {
                 &serde_json::json!({"QueueUrl": url, "MaxNumberOfMessages": 10}).to_string(),
             );
             let received = wait_for(RECEIVE_BOUND, || {
-                let answer = direct.send("ReceiveMessage", &receive).ok()?;
-                let body: serde_json::Value = serde_json::from_slice(&answer.body).ok()?;
+                let answer = direct
+                    .send("ReceiveMessage", &receive)
+                    .unwrap_or_else(|Env(message)| panic!("{message}"));
+                assert_eq!(
+                    answer.status,
+                    200,
+                    "direct ReceiveMessage: {}",
+                    answer.text()
+                );
+                let body = answer.json();
                 body["Messages"]
                     .as_array()?
                     .iter()

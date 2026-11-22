@@ -223,7 +223,9 @@ impl<'a> Queue<'a> {
 
     fn remove(&self) -> Result<(), Env> {
         let mut query = serde_json::json!({"QueueNamePrefix": self.name, "MaxResults": 1000});
-        loop {
+        // The prefix is unique to this run. Bound pagination even if the emulator repeats a token.
+        const MAX_PAGES: usize = 10;
+        for _ in 0..MAX_PAGES {
             let response = self.direct.ok(
                 "cleanup ListQueues",
                 &Call::json("sqs", "AmazonSQS.ListQueues", &query.to_string()),
@@ -250,6 +252,10 @@ impl<'a> Queue<'a> {
             };
             query["NextToken"] = serde_json::Value::String(next.to_owned());
         }
+        Err(Env::new(format!(
+            "cleanup ListQueues exceeded {MAX_PAGES} pages for {}",
+            self.name
+        )))
     }
 }
 
