@@ -25,6 +25,7 @@ rustls = { version = "=0.23.46", default-features = false, features = ["ring", "
 rustls-pki-types = { version = "=1.16.0", features = ["std"] }
 # CRC32 of response bodies, compared with x-amz-crc32, and of aws-chunked trailers.
 crc32fast = "=1.5.5"
+roxmltree = "=0.20.0"
 
 [lints.rust]
 unsafe_code = "forbid"

@@ -93,13 +93,27 @@ fn relay_signs_with_emulator_key() {
             "ListBuckets signed with the check key, sent directly: status, body {}",
             snippet(&refused)
         );
+        let xml = std::str::from_utf8(&refused.body).expect("direct ListBuckets error is UTF-8");
+        let document = roxmltree::Document::parse(xml).expect("direct ListBuckets error is XML");
+        let error = document.root_element();
+        assert!(error.has_tag_name("Error"), "expected an S3 Error response");
+        let codes: Vec<_> = error
+            .children()
+            .filter(|node| node.has_tag_name("Code"))
+            .collect();
+        let [code] = codes.as_slice() else {
+            panic!("expected one Code element in the direct ListBuckets error");
+        };
         assert!(
-            refused
-                .text()
-                .contains("Sign the request with the emulator credentials"),
-            "ListBuckets signed with the check key, sent directly: body {}",
-            snippet(&refused)
+            !code.children().any(|node| node.is_element()),
+            "expected a text value in the direct ListBuckets error Code"
         );
+        let value: String = code
+            .children()
+            .filter(|node| node.is_text())
+            .filter_map(|node| node.text())
+            .collect();
+        assert_eq!(value, "InvalidAccessKeyId", "direct ListBuckets error Code");
 
         let listed = pair(ctx, "ListBuckets", &list_buckets())?;
         assert_eq!(
