@@ -772,8 +772,8 @@ function isNotFound(error: unknown): boolean {
   return code !== undefined && (code === 'NotFound' || code === NO_SUCH_KEY_CODE || /^HTTP 404( |$)/.test(code));
 }
 
-function toHead(key: string, output: HeadObjectCommandOutput): ObjectHead {
-  const head: ObjectHead = { key, system: [], user: [] };
+function toHead(key: string, output: HeadObjectCommandOutput, user: MetadataEntry[]): ObjectHead {
+  const head: ObjectHead = { key, system: [], user };
   const size = number(output.ContentLength);
   const contentType = text(output.ContentType);
   const etag = text(output.ETag);
@@ -807,7 +807,6 @@ function toHead(key: string, output: HeadObjectCommandOutput): ObjectHead {
     ['Expires', expires],
   ];
   head.system = system.flatMap(([entry, value]) => (value === undefined ? [] : [{ key: entry, value }]));
-  head.user = Object.entries(output.Metadata ?? {}).map(([entry, value]) => ({ key: entry, value }));
   return head;
 }
 
@@ -869,6 +868,7 @@ export async function headObject(
   key: string,
   signal: AbortSignal,
 ): Promise<ObjectHead | NotFound> {
+  let user: MetadataEntry[] = [];
   const command = new HeadObjectCommand({ Bucket: bucket, Key: key });
   command.middlewareStack.add(
     (next) => async (args) => {
@@ -876,14 +876,10 @@ export async function headObject(
       const { headers } = result.response as { headers: Record<string, string> };
       const prefix = 'x-amz-meta-';
       // Smithy's header-map decoder assigns into a plain object, which drops the __proto__ suffix.
-      const metadata = Object.entries(headers).filter(([name]) => name.startsWith(prefix));
-      return {
-        ...result,
-        output: {
-          ...result.output,
-          Metadata: Object.fromEntries(metadata.map(([name, value]) => [name.slice(prefix.length), value])),
-        },
-      };
+      user = Object.entries(headers).flatMap(([name, value]) =>
+        name.startsWith(prefix) ? [{ key: name.slice(prefix.length), value }] : [],
+      );
+      return result;
     },
     { name: 'readHeadObjectUserMetadata', step: 'deserialize', priority: 'high' },
   );
@@ -893,7 +889,7 @@ export async function headObject(
       (abortSignal) => s3Client(endpoint).send(command, { abortSignal }),
       signal,
     );
-    return toHead(key, output);
+    return toHead(key, output, user);
   } catch (error) {
     if (isNotFound(error)) {
       return NOT_FOUND;
