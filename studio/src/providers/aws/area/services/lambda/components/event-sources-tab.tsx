@@ -1,5 +1,5 @@
 import Box from '@cloudscape-design/components/box';
-import Button from '@cloudscape-design/components/button';
+import Button, { type ButtonProps } from '@cloudscape-design/components/button';
 import FormField from '@cloudscape-design/components/form-field';
 import Header from '@cloudscape-design/components/header';
 import Input from '@cloudscape-design/components/input';
@@ -8,7 +8,7 @@ import Link from '@cloudscape-design/components/link';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Table from '@cloudscape-design/components/table';
-import { useId, useState, useSyncExternalStore } from 'react';
+import { useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 
 import { AreaModal } from '../../../components/area-modal';
 import { CopyValue } from '../../../components/copy-value';
@@ -233,17 +233,57 @@ export function EventSourcesTab({
   const [dialog, setDialog] = useState<Dialog>();
   const selected = sources.items.find(({ uuid }) => uuid === selectedId);
   const toEnable = selected?.state === 'Disabled';
-  const canUpdate = toEnable || selected?.state === 'Enabled';
   const busy = !ready || sources.pending !== undefined;
   const updating = sources.pending === 'UpdateEventSourceMapping';
+  const refreshSupported = sources.failure?.kind !== 'not-implemented';
+  const canAdd = !busy && !sources.unsupported.has('CreateEventSourceMapping');
+  const canDelete = !busy && selected !== undefined && !sources.unsupported.has('DeleteEventSourceMapping');
+  const canUpdate =
+    !busy && (toEnable || selected?.state === 'Enabled') && !sources.unsupported.has('UpdateEventSourceMapping');
+  const canRefresh = refreshSupported && !sources.refreshing;
+  const toolbar = useRef<HTMLDivElement>(null);
+  const addButton = useRef<ButtonProps.Ref>(null);
+  const deleteButton = useRef<ButtonProps.Ref>(null);
+  const refreshButton = useRef<ButtonProps.Ref>(null);
+  const updateButton = useRef<ButtonProps.Ref>(null);
+  const restoreFocus = useRef<{ opener: Dialog['kind']; deleted: boolean } | undefined>(undefined);
+
+  useLayoutEffect(() => {
+    const closed = restoreFocus.current;
+    if (closed === undefined || dialog !== undefined || sources.pending !== undefined) {
+      return;
+    }
+    restoreFocus.current = undefined;
+    if (closed.opener === 'delete' && canDelete && !closed.deleted) {
+      deleteButton.current?.focus();
+    } else if (canAdd) {
+      addButton.current?.focus();
+    } else if (canRefresh) {
+      refreshButton.current?.focus();
+    } else if (canUpdate && !closed.deleted) {
+      updateButton.current?.focus();
+    } else if (canDelete && !closed.deleted) {
+      deleteButton.current?.focus();
+    } else {
+      toolbar.current?.focus();
+    }
+  }, [dialog, sources.pending, canAdd, canDelete, canRefresh, canUpdate]);
+
+  function closeDialog(deleted = false) {
+    if (dialog !== undefined) {
+      restoreFocus.current = { opener: dialog.kind, deleted };
+      setDialog(undefined);
+    }
+  }
 
   async function handleSubmit(change: EventSourceChange) {
     const result = await sources.submit(change);
     if (result === undefined) {
       return;
     }
-    setDialog(undefined);
     const { failure } = result;
+    // An accepted deletion can remove the opener's selection when the refreshed list arrives.
+    closeDialog(change.operation === 'DeleteEventSourceMapping' && failure === undefined);
     if (change.operation === 'CreateEventSourceMapping') {
       onCreateArnChange(failure !== undefined && failure.kind !== 'not-implemented' ? change.sourceArn : '');
     }
@@ -316,24 +356,24 @@ export function EventSourcesTab({
           <Header
             variant="h2"
             actions={
-              <div role="group" aria-labelledby={actionsLabel}>
+              <div ref={toolbar} role="group" aria-labelledby={actionsLabel} tabIndex={-1}>
                 <SpaceBetween size="xxs">
                   <Box fontSize="body-s" fontWeight="bold">
                     <span id={actionsLabel}>Event source mapping actions</span>
                   </Box>
                   <SpaceBetween direction="horizontal" size="xs">
                     <Button
+                      ref={refreshButton}
                       iconName="refresh"
                       ariaLabel="Refresh"
-                      disabled={sources.failure?.kind === 'not-implemented'}
+                      disabled={!refreshSupported}
                       loading={sources.refreshing}
                       loadingText="Refreshing event sources"
                       onClick={sources.refresh}
                     />
                     <Button
-                      disabled={
-                        !updating && (busy || !canUpdate || sources.unsupported.has('UpdateEventSourceMapping'))
-                      }
+                      ref={updateButton}
+                      disabled={!updating && !canUpdate}
                       loading={updating}
                       loadingText="Updating event source mapping"
                       onClick={() => {
@@ -349,7 +389,8 @@ export function EventSourcesTab({
                       {toEnable ? 'Enable' : 'Disable'}
                     </Button>
                     <Button
-                      disabled={busy || selected === undefined || sources.unsupported.has('DeleteEventSourceMapping')}
+                      ref={deleteButton}
+                      disabled={!canDelete}
                       onClick={() => {
                         if (selected !== undefined) {
                           setDialog({ kind: 'delete', mapping: selected });
@@ -359,8 +400,9 @@ export function EventSourcesTab({
                       Delete
                     </Button>
                     <Button
+                      ref={addButton}
                       variant="primary"
-                      disabled={busy || sources.unsupported.has('CreateEventSourceMapping')}
+                      disabled={!canAdd}
                       onClick={() => setDialog({ kind: 'add' })}
                     >
                       Add event source
@@ -384,7 +426,7 @@ export function EventSourcesTab({
             if (dialog.kind === 'add') {
               onCreateArnChange('');
             }
-            setDialog(undefined);
+            closeDialog();
           }}
           onSubmit={(change) => void handleSubmit(change)}
         />

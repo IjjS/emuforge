@@ -1228,23 +1228,45 @@ describe('Event sources', () => {
   const empty = json(200, { EventSourceMappings: [] });
   const route = `${pagePath('orders')}?tab=event-sources`;
   const listRequests = () => engine.aws.filter(({ url }) => url.pathname === EVENT_SOURCE_PATH);
+  const table = () => tabs()?.findTabContent()?.findTable();
+  const emptySlot = () => table()?.findEmptySlot()?.getElement();
+  const toolbar = () => table()?.findHeaderSlot()?.findHeader()?.findActions()?.find('[role="group"]');
+  const actionIndex = { Refresh: 0, Disable: 1, Delete: 2, 'Add event source': 3 };
+
+  function required<T>(value: T | null | undefined): T {
+    if (value == null) {
+      throw new Error('Expected a Cloudscape element on the Event sources tab');
+    }
+    return value;
+  }
+
+  function mappingAction(name: keyof typeof actionIndex) {
+    const button = required(toolbar()?.findAllButtons()[actionIndex[name]]).getElement();
+    expect(button).toHaveAccessibleName(name);
+    return button;
+  }
+
+  async function mappingDialog(title: string) {
+    const dialog = await waitFor(() => required(PAGE.findModal()));
+    expect(dialog.findHeader().getElement()).toHaveTextContent(title);
+    return dialog;
+  }
 
   it('P1: opens the directly addressed tab and reads mappings for the current function', async () => {
     engine.functions = [ORDERS];
     engine.answerEventSources = () => listed;
     open(route);
 
-    const row = await screen.findByRole('row', { name: /orders-mapping|sqs/ });
-    expect(within(row).getByText('OK')).toBeVisible();
-    expect(within(row).getByText('Enabled')).toBeVisible();
+    const row = await waitFor(() => required(table()?.findRows()[0]).getElement());
+    expect(row).toBeVisible();
     expect(row).toHaveTextContent(source);
-    expect(screen.getByRole('tab', { name: 'Event sources', selected: true })).toBeVisible();
+    expect(row).toHaveTextContent('Enabled');
+    expect(row).toHaveTextContent('OK');
+    expect(tabs()?.findActiveTab()?.getElement()).toHaveTextContent('Event sources');
     expect(listRequests().map(({ url }) => url.searchParams.get('FunctionName'))).toEqual(['orders']);
 
-    const [topRefresh] = screen.getAllByRole('button', { name: 'Refresh' });
-    if (topRefresh === undefined) {
-      throw new Error('Expected the function Refresh button');
-    }
+    const topRefresh = required(pageActions()[0]).getElement();
+    expect(topRefresh).toHaveAccessibleName('Refresh');
     fireEvent.click(topRefresh);
     await waitFor(() => {
       expect(engine.gets).toHaveLength(2);
@@ -1257,16 +1279,19 @@ describe('Event sources', () => {
     engine.functions = [ORDERS];
     open(route);
 
-    const actions = await screen.findByRole('group', { name: 'Event source mapping actions' });
-    expect(within(actions).getByText('Event source mapping actions')).toBeVisible();
-    for (const name of ['Refresh', 'Delete', 'Disable', 'Add event source']) {
-      expect(within(actions).getByRole('button', { name })).toBeVisible();
+    const actions = await waitFor(() => required(toolbar()).getElement());
+    expect(actions).toBeVisible();
+    expect(actions).toHaveAccessibleName('Event source mapping actions');
+    expect(actions).toHaveTextContent('Event source mapping actions');
+    for (const name of ['Refresh', 'Delete', 'Disable', 'Add event source'] as const) {
+      expect(mappingAction(name)).toBeVisible();
     }
-    for (const name of ['Refresh', 'Delete']) {
-      const buttons = screen.getAllByRole('button', { name });
-      expect(buttons).toHaveLength(2);
-      expect(actions).not.toContainElement(buttons[0] ?? null);
-      expect(buttons[0]).toBeEnabled();
+    const topButtons = pageActions();
+    for (const [index, name] of ['Refresh', 'Delete'].entries()) {
+      const button = required(topButtons[index]).getElement();
+      expect(button).toHaveAccessibleName(name);
+      expect(button).toBeEnabled();
+      expect(actions).not.toContainElement(button);
     }
   });
 
@@ -1277,35 +1302,47 @@ describe('Event sources', () => {
     const { router } = open(route);
 
     async function openAddDialog() {
-      fireEvent.click(await screen.findByRole('button', { name: 'Add event source' }));
-      return within(await screen.findByRole('dialog', { name: 'Add event source' }));
+      const add = await waitFor(() => mappingAction('Add event source'));
+      fireEvent.click(add);
+      const dialog = await mappingDialog('Add event source');
+      const field = required(dialog.findContent().findFormField());
+      expect(field.findLabel()?.getElement()).toHaveTextContent('Event source ARN');
+      const input = required(field.findControl()?.findInput()).findNativeInput().getElement();
+      const buttons = required(dialog.findFooter()).findAllButtons();
+      const cancel = required(buttons[0]).getElement();
+      const submit = required(buttons[1]).getElement();
+      expect(cancel).toHaveAccessibleName('Cancel');
+      expect(submit).toHaveAccessibleName('Add event source');
+      return { input, cancel, submit };
     }
+
     async function refuseCreate() {
-      const dialog = await openAddDialog();
-      fireEvent.change(dialog.getByRole('textbox', { name: 'Event source ARN' }), { target: { value: source } });
-      fireEvent.click(dialog.getByRole('button', { name: 'Add event source' }));
-      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add event source' })).not.toBeInTheDocument());
-      expect(screen.getByText(/Mapping was refused/)).toBeVisible();
+      const { input, submit } = await openAddDialog();
+      fireEvent.change(input, { target: { value: source } });
+      fireEvent.click(submit);
+      await waitFor(() => expect(PAGE.findModal()).toBeNull());
+      expect(flashTexts()).toContainEqual(expect.stringContaining('Mapping was refused.'));
     }
 
     await refuseCreate();
     fireEvent.click(tabLink('code'));
+    await waitFor(() => expect(activeTab()).toBe('Code'));
     fireEvent.click(tabLink('event-sources'));
     const retry = await openAddDialog();
-    expect(retry.getByRole('textbox', { name: 'Event source ARN' })).toHaveValue(source);
-    fireEvent.click(retry.getByRole('button', { name: 'Add event source' }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add event source' })).not.toBeInTheDocument());
+    expect(retry.input).toHaveValue(source);
+    fireEvent.click(retry.submit);
+    await waitFor(() => expect(PAGE.findModal()).toBeNull());
 
     await act(() => router.navigate(`${pagePath('other')}?tab=event-sources`));
     const other = await openAddDialog();
-    expect(other.getByRole('textbox', { name: 'Event source ARN' })).toHaveValue('');
-    fireEvent.click(other.getByRole('button', { name: 'Cancel' }));
+    expect(other.input).toHaveValue('');
+    fireEvent.click(other.cancel);
     await refuseCreate();
 
     connection.targetGeneration += 1;
     connection.set(connectedResult());
     const newTarget = await openAddDialog();
-    expect(newTarget.getByRole('textbox', { name: 'Event source ARN' })).toHaveValue('');
+    expect(newTarget.input).toHaveValue('');
   });
 
   it('P2: keeps the refreshed empty list and page flash after an older read answers', async () => {
@@ -1322,25 +1359,38 @@ describe('Event sources', () => {
     };
     open(route);
 
-    fireEvent.click(await screen.findByRole('radio', { name: (name) => name.endsWith(source) }));
-    const tab = screen.getByRole('tabpanel', { name: 'Event sources' });
-    fireEvent.click(within(tab).getByRole('button', { name: 'Refresh' }));
+    const selection = await waitFor(() =>
+      required(table()?.findRowSelectionArea(1)?.find('input[type="radio"]')).getElement(),
+    );
+    expect(selection.getAttribute('aria-label')).toContain(source);
+    fireEvent.click(selection);
+    fireEvent.click(mappingAction('Refresh'));
     await waitFor(() => expect(listRequests()).toHaveLength(2));
 
-    fireEvent.click(within(tab).getByRole('button', { name: 'Delete' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Delete event source mapping?' });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
-    expect(await screen.findByText('No event sources')).toBeVisible();
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    const deleteButton = mappingAction('Delete');
+    deleteButton.focus();
+    fireEvent.click(deleteButton);
+    const dialog = await mappingDialog('Delete event source mapping?');
+    expect(dialog.findContent().getElement()).toHaveTextContent(source);
+    const confirm = required(dialog.findFooter()?.findAllButtons()[1]).getElement();
+    expect(confirm).toHaveAccessibleName('Delete');
+    fireEvent.click(confirm);
+    await waitFor(() => expect(emptySlot()).toHaveTextContent('No event sources'));
+    expect(emptySlot()).toBeVisible();
+    expect(PAGE.findModal()).toBeNull();
     expect(flashTexts()).toContain(`Requested deletion of the mapping for ${source}.`);
+    expect(deleteButton).toBeDisabled();
+    await waitFor(() => expect(mappingAction('Add event source')).toHaveFocus());
     expect(listRequests()).toHaveLength(3);
 
     await act(async () => {
       old.resolve(listed);
       await old.promise;
     });
-    expect(screen.getByText('No event sources')).toBeVisible();
-    expect(screen.queryByRole('radio', { name: (name) => name.endsWith(source) })).not.toBeInTheDocument();
+    expect(emptySlot()).toBeVisible();
+    expect(emptySlot()).toHaveTextContent('No event sources');
+    expect(table()?.findRowSelectionArea(1)).toBeNull();
+    expect(mappingAction('Add event source')).toHaveFocus();
     expect(flashTexts()).toContain(`Requested deletion of the mapping for ${source}.`);
   });
 });
