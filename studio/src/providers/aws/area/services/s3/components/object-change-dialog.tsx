@@ -1,17 +1,17 @@
-import Alert from '@cloudscape-design/components/alert';
+import Alert, { type AlertProps } from '@cloudscape-design/components/alert';
 import Box from '@cloudscape-design/components/box';
 import Button from '@cloudscape-design/components/button';
 import FormField from '@cloudscape-design/components/form-field';
 import Input from '@cloudscape-design/components/input';
 import KeyValuePairs from '@cloudscape-design/components/key-value-pairs';
 import SpaceBetween from '@cloudscape-design/components/space-between';
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { reportedServiceCode, requestFailure, type RequestFailure } from '../../../../../../lib/aws/request';
 import { AreaModal } from '../../../components/area-modal';
 import { usePageFlash } from '../../../components/page-flash';
 import { ValueText } from '../../../components/value-text';
-import { OPERATIONS, type ObjectHead, type ObjectLocation } from '../api';
+import { OPERATIONS, type MetadataEntry, type ObjectHead, type ObjectLocation } from '../api';
 import { objectPath, s3Uri } from '../format';
 import { useObjectChanges } from '../queries';
 import { actionFailure } from './action-failure';
@@ -68,6 +68,35 @@ function failureView(failure: RequestFailure, label: string, endpoint: string | 
   };
 }
 
+function metadataKeyErrors(metadata: MetadataEntry[]): (string | undefined)[] {
+  // S3 user metadata is carried in case-insensitive HTTP headers.
+  const keys = metadata.map(({ key }) => key.toLowerCase());
+  const counts = new Map<string, number>();
+  for (const key of keys) counts.set(key, (counts.get(key) ?? 0) + 1);
+  return keys.map((key) => {
+    if (key === '') return 'Enter a metadata key.';
+    return (counts.get(key) ?? 0) > 1 ? 'Use a different metadata key.' : undefined;
+  });
+}
+
+function PartialRenameHeading() {
+  const heading = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    // Wait for the dialog to release scroll and restore its trigger before focusing the result.
+    const frame = requestAnimationFrame(() => {
+      heading.current?.focus({ preventScroll: true });
+      heading.current?.scrollIntoView?.({ block: 'center' });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
+  return (
+    <span ref={heading} tabIndex={-1}>
+      Object copied, but the original could not be deleted.
+    </span>
+  );
+}
+
 export function ObjectChangeDialog({
   action,
   endpoint,
@@ -83,6 +112,10 @@ export function ObjectChangeDialog({
   useLayoutEffect(() => () => active.current?.abort(), []);
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<RequestFailure>();
+  const refusal = useRef<AlertProps.Ref>(null);
+  useLayoutEffect(() => {
+    if (failure !== undefined) refusal.current?.focus();
+  }, [failure]);
   const [destinationBucket, setDestinationBucket] = useState(bucket);
   const [destinationKey, setDestinationKey] = useState('');
   const [confirmation, setConfirmation] = useState<'replace' | 'rename'>();
@@ -94,14 +127,15 @@ export function ObjectChangeDialog({
   const destination = action === 'edit' ? source : { bucket: destinationBucket, key: destinationKey };
   const sameLocation = destinationBucket === bucket && destinationKey === head.key;
   const expectedKey = confirmation === 'replace' ? destinationKey : head.key;
-  const metadataError = metadata.some(({ key }) => key === '');
+  const keyMatches = confirmsName(typed, expectedKey);
+  const keyErrors = metadataKeyErrors(metadata);
   const valid =
     action === 'edit'
-      ? !metadataError
+      ? keyErrors.every((error) => error === undefined)
       : destinationBucket.trim() !== '' &&
         destinationKey !== '' &&
         !sameLocation &&
-        (confirmation === undefined || confirmsName(typed, expectedKey));
+        (confirmation === undefined || keyMatches);
 
   async function submit() {
     if (!valid || active.current !== undefined || changes === undefined) return;
@@ -164,7 +198,7 @@ export function ObjectChangeDialog({
         flash.show([
           {
             type: 'warning',
-            header: 'Object copied, but the original could not be deleted.',
+            header: <PartialRenameHeading />,
             content: (
               <SpaceBetween size="s">
                 <Locations source={source} destination={destination} />
@@ -231,42 +265,55 @@ export function ObjectChangeDialog({
     >
       <SpaceBetween size="m">
         {view !== undefined && (
-          <Alert type={view.type} header={view.header}>
+          <Alert ref={refusal} type={view.type} header={view.header}>
             {view.detail}
           </Alert>
         )}
         {confirmation !== undefined ? (
-          <>
+          <SpaceBetween size="m">
             <Locations source={source} destination={destination} />
-            <Alert type="warning">
-              {confirmation === 'replace' && <div>The existing destination object will be replaced.</div>}
-              {action === 'rename' && <div>The original key will be deleted after the copy succeeds.</div>}
-              {action === 'rename' && head.copyHeaders?.WebsiteRedirectLocation !== undefined && (
-                <div>The renamed object will lose its website redirect.</div>
-              )}
-            </Alert>
             <FormField
               label={confirmation === 'replace' ? 'Enter destination key to confirm' : 'Enter original key to confirm'}
+              description={
+                <SpaceBetween size="xs">
+                  <Alert type="warning">
+                    {confirmation === 'replace' && <div>The existing destination object will be replaced.</div>}
+                    {action === 'rename' && <div>The original key will be deleted after the copy succeeds.</div>}
+                    {action === 'rename' && head.copyHeaders?.WebsiteRedirectLocation !== undefined && (
+                      <div>The renamed object will lose its website redirect.</div>
+                    )}
+                  </Alert>
+                  <div>
+                    Expected key{' '}
+                    <Box variant="code" display="inline" nativeAttributes={{ style: { whiteSpace: 'break-spaces' } }}>
+                      <ValueText kind="name" value={expectedKey} />
+                    </Box>
+                  </div>
+                </SpaceBetween>
+              }
+              errorText={typed !== '' && !keyMatches ? 'Enter the exact key shown above.' : undefined}
             >
               <Input
                 key="confirmation"
+                autoFocus
                 value={typed}
                 onChange={({ detail }) => setTyped(detail.value)}
                 disabled={pending}
                 spellcheck={false}
               />
             </FormField>
-          </>
+          </SpaceBetween>
         ) : action === 'edit' ? (
           <ObjectChangeProperties
             contentType={contentType}
             metadata={metadata}
+            keyErrors={keyErrors}
             pending={pending}
             onContentType={setContentType}
             onMetadata={setMetadata}
           />
         ) : (
-          <>
+          <SpaceBetween size="m">
             <KeyValuePairs
               items={[{ label: 'Original object', value: <Location bucket={source.bucket} objectKey={source.key} /> }]}
             />
@@ -291,7 +338,7 @@ export function ObjectChangeDialog({
                 spellcheck={false}
               />
             </FormField>
-          </>
+          </SpaceBetween>
         )}
       </SpaceBetween>
     </AreaModal>

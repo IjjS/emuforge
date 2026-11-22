@@ -879,8 +879,14 @@ describe('changing an object from its detail', () => {
     fireEvent.click(dialogButton(form, 'Copy object'));
     const dialog = await screen.findByRole('dialog', { name: 'Replace existing object?' });
     expect(dialog).toHaveTextContent(`s3://beta/${DESTINATION_KEY}`);
-    changeInput(dialog, 'Enter destination key to confirm', 'copy app.json');
+    const confirmation = within(dialog).getByRole('textbox', { name: 'Enter destination key to confirm' });
+    expect(confirmation).toHaveFocus();
+    expect(confirmation).toHaveAccessibleDescription(/existing destination object will be replaced/);
+    expect(confirmation).toHaveAccessibleDescription(/Expected key cfg\/copy app\.json/);
+    expect(confirmation).not.toHaveAccessibleDescription(/Enter the exact key shown above/);
+    changeInput(dialog, 'Enter destination key to confirm', `s3://beta/${DESTINATION_KEY}`);
     expect(dialogButton(dialog, 'Replace object')).toBeDisabled();
+    expect(confirmation).toHaveAccessibleDescription(/Enter the exact key shown above/);
     changeInput(dialog, 'Enter destination key to confirm', DESTINATION_KEY);
     expect(dialogButton(dialog, 'Replace object')).toBeEnabled();
     fireEvent.click(dialogButton(dialog, 'Cancel'));
@@ -903,6 +909,10 @@ describe('changing an object from its detail', () => {
     expect(dialog).toHaveTextContent('The renamed object will lose its website redirect.');
     const input = occupied ? 'Enter destination key to confirm' : 'Enter original key to confirm';
     const submit = occupied ? 'Replace object' : 'Rename object';
+    const confirmation = within(dialog).getByRole('textbox', { name: input });
+    expect(confirmation).toHaveFocus();
+    expect(confirmation).toHaveAccessibleDescription(/original key will be deleted/);
+    expect(confirmation).toHaveAccessibleDescription(/renamed object will lose its website redirect/);
     changeInput(dialog, input, occupied ? 'copy app.json' : 'app.json');
     expect(dialogButton(dialog, submit)).toBeDisabled();
     changeInput(dialog, input, occupied ? DESTINATION_KEY : ORIGINAL_KEY);
@@ -964,9 +974,7 @@ describe('changing an object from its detail', () => {
     changeInput(dialog, 'Enter original key to confirm', ORIGINAL_KEY);
     fireEvent.click(dialogButton(dialog, 'Rename object'));
 
-    await waitFor(() =>
-      expect(visibleResult('Object copied, but the original could not be deleted.')).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(visibleResult('Object copied, but the original could not be deleted.')).toHaveFocus());
     expect(screen.getByText('AccessDeniedException')).toBeInTheDocument();
     expect(screen.getByText('DeleteObject was refused: This policy denies deleting the original.')).toBeInTheDocument();
     expect(screen.getByText(byWholeText(`s3://alpha/${DESTINATION_KEY}`))).toBeInTheDocument();
@@ -1040,16 +1048,48 @@ describe('changing an object from its detail', () => {
     expect(engine.requests('PUT')).toHaveLength(1);
   });
 
+  it('marks both metadata keys that would produce the same header and blocks the save', async () => {
+    open(ORIGINAL_KEY);
+    await shown();
+    const dialog = await changeDialog('Edit object properties');
+    const save = dialogButton(dialog, 'Save changes');
+    fireEvent.click(dialogButton(dialog, 'Add metadata'));
+    const [original, added] = within(dialog).getAllByRole('textbox', { name: 'Key' });
+    if (original === undefined || added === undefined) throw new Error('Expected two metadata rows');
+
+    for (const key of ['owner', 'OWNER']) {
+      fireEvent.change(added, { target: { value: key } });
+      expect(original).toHaveAccessibleDescription('Use a different metadata key.');
+      expect(added).toHaveAccessibleDescription('Use a different metadata key.');
+      expect(save).toBeDisabled();
+      fireEvent.click(save);
+      expectNoWrites();
+    }
+
+    fireEvent.change(added, { target: { value: 'stage' } });
+    expect(original).not.toHaveAccessibleDescription(/Use a different metadata key/);
+    expect(added).not.toHaveAccessibleDescription(/Use a different metadata key/);
+    expect(save).toBeEnabled();
+  });
+
   it('keeps an edit refusal in the dialog without a success result', async () => {
     engine.beforeCopy = () => errorAnswer(404, 'NoSuchKey', 'The specified key does not exist.');
     open(ORIGINAL_KEY);
     await shown();
+    const trigger = action('Actions');
+    trigger.focus();
     const dialog = await changeDialog('Edit object properties');
     changeInput(dialog, 'Content type', 'text/plain');
     fireEvent.click(dialogButton(dialog, 'Save changes'));
     expect(await within(dialog).findByText('NoSuchKey')).toBeInTheDocument();
     expect(dialog).toHaveTextContent('The specified key does not exist.');
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    expect(document.activeElement).toHaveTextContent('The specified key does not exist.');
+    expect(within(dialog).getByRole('textbox', { name: 'Content type' })).toHaveValue('text/plain');
     expect(screen.queryByText('Object properties updated.')).not.toBeInTheDocument();
+    fireEvent.keyDown(document.activeElement ?? dialog, { key: 'Escape', code: 'Escape', keyCode: 27 });
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(trigger).toHaveFocus();
   });
 
   it('aborts an old target rename and suppresses its delete, readback, navigation and flash', async () => {
