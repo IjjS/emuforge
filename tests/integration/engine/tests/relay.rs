@@ -438,7 +438,6 @@ fn relay_sqs_queue_url_follow_up_reaches_engine() {
             let ctx: &Ctx = ctx;
             let direct = Direct::new(ctx)?;
             let name = format!("{}-q", prefix(ctx, "sqs"));
-            let url = format!("https://sqs.us-east-1.amazonaws.com/000000000000/{name}");
             let recorder = CountingListener::start()?;
             let r = format!("http://127.0.0.1:{}", recorder.port);
             let _engine = Engine::start(
@@ -450,7 +449,7 @@ fn relay_sqs_queue_url_follow_up_reaches_engine() {
                     .env("AWS_ENDPOINT_URL", r.clone()),
             )?;
 
-            let _queue = Queue::track(&direct, &url);
+            let _queue = Queue::track(&direct, &name);
             let created = through_engine(
                 ctx,
                 "CreateQueue",
@@ -466,13 +465,7 @@ fn relay_sqs_queue_url_follow_up_reaches_engine() {
                 "CreateQueue through the engine: status, body {}",
                 created.text()
             );
-            let expected = format!(r#"{{"QueueUrl":"{url}"}}"#);
-            assert_eq!(
-                created.text(),
-                expected,
-                "CreateQueue through the engine: body"
-            );
-            let looked_up = direct.ok(
+            let looked_up = direct.send(
                 "GetQueueUrl",
                 &Call::json(
                     "sqs",
@@ -481,10 +474,21 @@ fn relay_sqs_queue_url_follow_up_reaches_engine() {
                 ),
             )?;
             assert_eq!(
+                looked_up.status,
+                200,
+                "direct GetQueueUrl: {}",
+                looked_up.text()
+            );
+            assert_eq!(
                 created.body, looked_up.body,
                 "CreateQueue through the engine against GetQueueUrl sent directly: body"
             );
 
+            let body = created.json();
+            let url = body["QueueUrl"]
+                .as_str()
+                .filter(|url| !url.is_empty())
+                .expect("CreateQueue must return a nonempty QueueUrl");
             let message = format!("{name}-message");
             let sent = through_engine(
                 ctx,
@@ -492,7 +496,7 @@ fn relay_sqs_queue_url_follow_up_reaches_engine() {
                 &Call::json(
                     "sqs",
                     "AmazonSQS.SendMessage",
-                    &format!(r#"{{"QueueUrl":"{url}","MessageBody":"{message}"}}"#),
+                    &serde_json::json!({"QueueUrl": url, "MessageBody": message}).to_string(),
                 ),
             );
             assert_eq!(
@@ -510,7 +514,7 @@ fn relay_sqs_queue_url_follow_up_reaches_engine() {
             let receive = Call::json(
                 "sqs",
                 "AmazonSQS.ReceiveMessage",
-                &format!(r#"{{"QueueUrl":"{url}","MaxNumberOfMessages":10}}"#),
+                &serde_json::json!({"QueueUrl": url, "MaxNumberOfMessages": 10}).to_string(),
             );
             let received = wait_for(RECEIVE_BOUND, || {
                 let answer = direct.send("ReceiveMessage", &receive).ok()?;

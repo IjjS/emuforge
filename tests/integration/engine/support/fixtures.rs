@@ -207,28 +207,57 @@ impl Drop for Table<'_> {
     }
 }
 
-/// An SQS queue, by URL, whoever creates it. Deleted on drop.
+/// Tracks the run's queue before CreateQueue, so cleanup also works after a bad relay response.
 pub struct Queue<'a> {
     direct: Direct<'a>,
-    pub url: String,
+    name: String,
 }
 
 impl<'a> Queue<'a> {
-    pub fn track(direct: &Direct<'a>, url: &str) -> Queue<'a> {
+    pub fn track(direct: &Direct<'a>, name: &str) -> Queue<'a> {
         Queue {
             direct: direct.clone(),
-            url: url.to_owned(),
+            name: name.to_owned(),
+        }
+    }
+
+    fn remove(&self) -> Result<(), Env> {
+        let mut query = serde_json::json!({"QueueNamePrefix": self.name, "MaxResults": 1000});
+        loop {
+            let response = self.direct.ok(
+                "cleanup ListQueues",
+                &Call::json("sqs", "AmazonSQS.ListQueues", &query.to_string()),
+            )?;
+            let page: serde_json::Value = serde_json::from_slice(&response.body)
+                .map_err(|e| Env::new(format!("cleanup ListQueues: {e}")))?;
+            if let Some(urls) = page["QueueUrls"].as_array() {
+                for url in urls.iter().filter_map(|value| value.as_str()) {
+                    if url
+                        .rsplit_once('/')
+                        .is_some_and(|(_, name)| name == self.name)
+                    {
+                        let body = serde_json::json!({"QueueUrl": url});
+                        self.direct.cleanup(
+                            "DeleteQueue",
+                            &Call::json("sqs", "AmazonSQS.DeleteQueue", &body.to_string()),
+                        );
+                        return Ok(());
+                    }
+                }
+            }
+            let Some(next) = page["NextToken"].as_str().filter(|s| !s.is_empty()) else {
+                return Ok(());
+            };
+            query["NextToken"] = serde_json::Value::String(next.to_owned());
         }
     }
 }
 
 impl Drop for Queue<'_> {
     fn drop(&mut self) {
-        let body = format!(r#"{{"QueueUrl":"{}"}}"#, self.url);
-        self.direct.cleanup(
-            &format!("DeleteQueue {}", self.url),
-            &Call::json("sqs", "AmazonSQS.DeleteQueue", &body),
-        );
+        if let Err(Env(message)) = self.remove() {
+            self.direct.ctx.log(message);
+        }
     }
 }
 
