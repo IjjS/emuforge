@@ -1338,7 +1338,10 @@ describe('changing an object from its detail', () => {
     await (first === 'tags' ? finishPreview() : finishTags());
     expectAddress(router, DESTINATION_KEY, 'beta');
     expect(flash('success').findHeader()?.getElement()).toHaveTextContent('Object copied.');
-    expect(h1()).toHaveTextContent('copy app.json');
+    const header = createWrapper(document.body)
+      .findAllHeaders()
+      .find((found) => found.findHeadingText().getElement().closest('h1') !== null);
+    expect(header?.findHeadingText().getElement()).toHaveTextContent('copy app.json');
   });
 
   it('keeps the rename result when the original recheck responds missing before the destination loads', async () => {
@@ -1388,6 +1391,7 @@ describe('changing an object from its detail', () => {
       const dialog = await changeDialog('edit');
       changeInput(dialog, 'Content type', 'text/plain');
       fireEvent.change(fieldInput(metadataField(dialog, 1, 2)), { target: { value: 'qa' } });
+      const beforeSave = engine.seen.length;
       fireEvent.click(dialogButton(dialog, 'Save changes'));
 
       function assertSaved() {
@@ -1396,15 +1400,23 @@ describe('changing an object from its detail', () => {
         expect(flash('success').findContent()?.getElement()).toHaveTextContent('Object properties updated.');
       }
       await waitFor(assertSaved);
+      await waitFor(() => {
+        const freshReads = engine.seen
+          .slice(beforeSave)
+          .filter(({ method, url }) => method === 'GET' && url.pathname === `/alpha/${ORIGINAL_KEY}`);
+        expect(freshReads.some(({ url }) => url.searchParams.has('tagging'))).toBe(true);
+        expect(freshReads.some((request) => isGetObject(request) && request.range !== null)).toBe(true);
+      });
+
       const finishTags = async () => {
         await act(async () =>
-          tags.finish(ok('<Tagging><TagSet><Tag><Key>env</Key><Value>dev</Value></Tag></TagSet></Tagging>')),
+          tags.finish(ok('<Tagging><TagSet><Tag><Key>env</Key><Value>qa</Value></Tag></TagSet></Tagging>')),
         );
-        await waitFor(() => expect(tableRows('Tags')).toEqual([['env', 'dev']]));
+        await waitFor(() => expect(tableRows('Tags')).toEqual([['env', 'qa']]));
       };
       const finishPreview = async () => {
-        await act(async () => preview.finish({ status: 200, body: APP_JSON.body }));
-        await waitFor(() => expect(previewText()).toHaveTextContent('"name":"app"'));
+        await act(async () => preview.finish({ status: 200, body: encoder.encode('{"name":"new","debug":true}') }));
+        await waitFor(() => expect(previewText()).toHaveTextContent('"name":"new"'));
       };
 
       await (first === 'tags' ? finishTags() : finishPreview());
