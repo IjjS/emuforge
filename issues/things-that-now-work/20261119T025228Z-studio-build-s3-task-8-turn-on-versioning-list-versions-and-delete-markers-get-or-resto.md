@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: plan
 Issue-Key: studio|s3|bucket-versions
-Issue-Check-Ids:
+Issue-Check-Ids: studio.s3-edit-bucket-versioning studio.s3-download-historical-version studio.s3-restore-enabled-version studio.s3-restore-suspended-version studio.s3-remove-delete-marker studio.s3-version-download-refused
 Issue-Commit: 5dca87cc1f4351f4e61bff199ef41f16ef2210ef
 
 # Build S3 task 8: turn on versioning, list versions and delete markers, get or restore an old one
