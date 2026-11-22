@@ -5,7 +5,7 @@ import { expect, startStack, type Ctx } from '../../support';
 import { ACTION } from '../../support/frame';
 import { checkPrefix } from '../../support/service-screens';
 import { objectPath, s3Direct, Seeded } from './s3';
-import { getObjectDirect, headObjectDirect, objectAddress } from './s3-object-page';
+import { getObjectDirect, headObjectDirect, objectAddress, OVERVIEW, USER_METADATA } from './s3-object-page';
 
 const wrapper = createWrapper();
 export const sourceKey = 'settings.txt';
@@ -51,13 +51,54 @@ export async function verifyObject(
   return head;
 }
 
+function relative(selector: { toSelector(): string }) {
+  return selector.toSelector().replace(/^body /, '');
+}
+
+function heading(page: Page, title: string) {
+  return page.locator(relative(wrapper.findHeader().findHeadingText())).filter({ hasText: title });
+}
+
+function actionsTrigger(page: Page) {
+  return page.getByRole('main').locator(relative(wrapper.findButtonDropdown().findTriggerButton()));
+}
+
+export async function overviewValues(page: Page) {
+  const container = page.locator(wrapper.findContainer().toSelector()).filter({ has: heading(page, OVERVIEW) });
+  const items = wrapper.findKeyValuePairs().findItems();
+  const count = await container.locator(relative(items)).count();
+  const values: Record<string, string> = {};
+  for (let index = 1; index <= count; index++) {
+    const item = items.get(index);
+    const label = await container.locator(relative(item.findLabel())).innerText(ACTION);
+    values[label.trim()] = (await container.locator(relative(item.findValue())).innerText(ACTION)).trim();
+  }
+  return values;
+}
+
+export async function metadataRows(page: Page) {
+  const table = wrapper.findTable();
+  const section = page.locator(table.toSelector()).filter({ has: heading(page, USER_METADATA) });
+  // The table locator already selects the wrapper's root.
+  const withinTable = (selector: { toSelector(): string }) =>
+    section.locator(':scope' + selector.toSelector().slice(table.toSelector().length));
+  const count = await withinTable(table.findRows()).count();
+  const rows: string[][] = [];
+  for (let index = 1; index <= count; index++) {
+    const key = await withinTable(table.findBodyCell(index, 1)).innerText(ACTION);
+    const value = await withinTable(table.findBodyCell(index, 2)).innerText(ACTION);
+    rows.push([key.trim(), value.trim()]);
+  }
+  return rows;
+}
+
 export async function openSource(page: Page, bucket: string) {
   await page.goto(objectAddress(bucket, sourceKey));
-  await expect(page.getByRole('button', { name: 'Actions', exact: true })).toBeVisible(ACTION);
+  await expect(actionsTrigger(page)).toBeVisible(ACTION);
 }
 
 export async function openChange(page: Page, action: 'copy' | 'rename' | 'edit') {
-  await page.getByRole('button', { name: 'Actions', exact: true }).click();
+  await actionsTrigger(page).click();
   await page.locator(wrapper.findButtonDropdown().findItemById(action).toSelector()).click();
   const modal = page.locator(wrapper.findModal().toSelector());
   await expect(modal).toBeVisible(ACTION);
@@ -73,7 +114,12 @@ export function metadataInput(page: Page, row: number, column: number) {
 
 export function changeAlert(page: Page) {
   const modal = page.locator(wrapper.findModal().toSelector());
-  return modal.locator(wrapper.findAlert().toSelector().replace(/^body /, ''));
+  return modal.locator(
+    wrapper
+      .findAlert()
+      .toSelector()
+      .replace(/^body /, ''),
+  );
 }
 
 export const successItems = wrapper.findFlashbar().findItemsByType('success');

@@ -4,6 +4,8 @@ import {
   changeAlert,
   metadataEditor,
   metadataInput,
+  metadataRows,
+  overviewValues,
   openChange,
   openSource,
   seedSource,
@@ -13,16 +15,7 @@ import {
   verifyObject,
 } from './services/s3/object-changes';
 import { expectFlash } from './services/s3/s3-bucket-actions';
-import {
-  deleteObjectDirect,
-  entryRows,
-  getObjectDirect,
-  headObjectDirect,
-  objectAddress,
-  OVERVIEW,
-  sectionPairs,
-  USER_METADATA,
-} from './services/s3/s3-object-page';
+import { deleteObjectDirect, getObjectDirect, headObjectDirect, objectAddress } from './services/s3/s3-object-page';
 import { listObjectsDirect } from './services/s3/s3-objects';
 
 test('studio.s3-copy-object-to-another-bucket', async ({ ctx, page }) => {
@@ -50,7 +43,7 @@ test('studio.s3-copy-object-to-another-bucket', async ({ ctx, page }) => {
   await modal.getByRole('button', { name: 'Replace object' }).click();
   await expect(page).toHaveURL(addressOf(objectAddress(destination, key)));
   await expectFlash(page, 'success', 'Object copied.');
-  await expect.poll(() => sectionPairs(page, OVERVIEW), ACTION).toMatchObject({ Key: key });
+  await expect.poll(() => overviewValues(page), ACTION).toMatchObject({ Key: key });
   await verifyObject(ctx, port, bucket, sourceKey);
   await verifyObject(ctx, port, destination, key);
 });
@@ -76,7 +69,7 @@ test('studio.s3-rename-object-to-another-key', async ({ ctx, page }) => {
   await modal.getByRole('button', { name: 'Rename object' }).click();
   await expect(page).toHaveURL(addressOf(objectAddress(bucket, key)));
   await expectFlash(page, 'success', 'Object renamed.');
-  await expect.poll(() => sectionPairs(page, OVERVIEW), ACTION).toMatchObject({ Key: key });
+  await expect.poll(() => overviewValues(page), ACTION).toMatchObject({ Key: key });
   expect(await keys()).toEqual([key]);
   await verifyObject(ctx, port, bucket, key);
 });
@@ -105,11 +98,9 @@ test('studio.s3-edit-object-properties-in-place', async ({ ctx, page }) => {
     await modal.getByRole('button', { name: 'Save changes' }).click();
     await expect(modal).toBeHidden();
     await expectFlash(page, 'success', 'Object properties updated.');
+    await expect.poll(() => overviewValues(page), ACTION).toMatchObject({ Key: sourceKey, 'Content type': type });
     await expect
-      .poll(() => sectionPairs(page, OVERVIEW), ACTION)
-      .toMatchObject({ Key: sourceKey, 'Content type': type });
-    await expect
-      .poll(() => entryRows(page, USER_METADATA), ACTION)
+      .poll(() => metadataRows(page), ACTION)
       .toEqual([
         ['owner', 'qa'],
         ['purpose', 'test'],
