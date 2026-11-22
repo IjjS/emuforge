@@ -183,7 +183,7 @@ async function select(id: string) {
 }
 
 function action(name: string) {
-  return screen.getByRole('button', { name, exact: true });
+  return screen.getByRole('button', { name });
 }
 
 async function confirmDialog(label: string) {
@@ -206,11 +206,13 @@ function expectDisabled(button: HTMLElement) {
 
 async function expectVersion(id: string, kind: string, latest: boolean) {
   const radio = await screen.findByRole('radio', { name: `Select ${KEY} version ${id}` });
-  const item = within(radio.closest('tr')!);
+  const tableRow = radio.closest('tr');
+  if (tableRow === null) throw new Error('Expected a table row');
+  const item = within(tableRow);
   expect(item.getByRole('rowheader', { name: KEY })).toBeVisible();
-  expect(item.getByRole('cell', { name: id, exact: true })).toBeVisible();
-  expect(item.getByRole('cell', { name: kind, exact: true })).toBeVisible();
-  expect(item.getByRole('cell', { name: latest ? 'Yes' : 'No', exact: true })).toBeVisible();
+  expect(item.getByRole('cell', { name: id })).toBeVisible();
+  expect(item.getByRole('cell', { name: kind })).toBeVisible();
+  expect(item.getByRole('cell', { name: latest ? 'Yes' : 'No' })).toBeVisible();
 }
 
 function expectCursor(query: URLSearchParams | undefined, key: string | null, version: string | null) {
@@ -253,6 +255,27 @@ it('shows a history refusal and retries the read', async () => {
   engine.readHistory = () => history(row('v1', true));
   fireEvent.click(action('Retry'));
   await expectVersion('v1', 'Version', true);
+});
+
+it('keeps the refreshed history and its cursors when a previous page request finishes late', async () => {
+  const oldSecondPage = heldResponse();
+  engine.readHistory = (query) =>
+    query.has('key-marker') ? oldSecondPage.promise : history(row('old-cursor', true), [KEY, 'old-cursor']);
+  open();
+  await toggleVersions();
+  await expectVersion('old-cursor', 'Version', true);
+  fireEvent.click(action('Next page'));
+  await waitFor(() => expectCursor(engine.histories[1], KEY, 'old-cursor'));
+
+  engine.readHistory = (query) =>
+    query.has('key-marker') ? history(row('next')) : history(row('new-cursor', true), [KEY, 'new-cursor']);
+  fireEvent.click(action('Refresh'));
+  await expectVersion('new-cursor', 'Version', true);
+  await act(async () => oldSecondPage.resolve(history(row('obsolete'), [KEY, 'obsolete'])));
+  expect(screen.queryByRole('radio', { name: `Select ${KEY} version obsolete` })).toBeNull();
+  fireEvent.click(action('Next page'));
+  await expectVersion('next', 'Version', false);
+  expectCursor(engine.histories[3], KEY, 'new-cursor');
 });
 
 it('offers the appropriate actions by row type and saves no file when a download is refused', async () => {
@@ -368,7 +391,8 @@ it('shows the area state for an unimplemented history read', async () => {
 async function expectCurrentDetails(body: string) {
   fireEvent.click(await screen.findByRole('link', { name: 'history.txt' }));
   expect(await screen.findByRole('region', { name: 'Object preview' })).toHaveTextContent(body);
-  expect(screen.getByRole('heading', { level: 1, name: KEY })).toBeVisible();
+  expect(screen.getByRole('heading', { level: 1, name: 'history.txt' })).toBeVisible();
+  expect(await screen.findByRole('row', { name: `state ${body}` })).toBeVisible();
   await waitFor(() => expect(engine.reads).toEqual(expect.arrayContaining(['head', 'tags', 'body'])));
 }
 

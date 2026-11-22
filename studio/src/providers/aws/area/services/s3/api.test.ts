@@ -902,10 +902,12 @@ describe('object version history', () => {
         `<ListVersionsResult><IsTruncated>false</IsTruncated><Version><Key>${key}</Key><VersionId>v1</VersionId>` +
           '<IsLatest>false</IsLatest></Version></ListVersionsResult>',
       );
+    const { nextKeyMarker: keyMarker, nextVersionIdMarker: versionIdMarker } = first;
+    if (keyMarker === undefined || versionIdMarker === undefined) throw new Error('Expected both cursors');
     const second = await listObjectHistory(
       endpoint,
       'bucket',
-      { prefix: 'logs/', maxKeys: 1, keyMarker: first.nextKeyMarker!, versionIdMarker: first.nextVersionIdMarker! },
+      { prefix: 'logs/', maxKeys: 1, keyMarker, versionIdMarker },
       signal(),
     );
     expect(second).toEqual({ items: [{ key, versionId: 'v1', latest: false, kind: 'version' }], truncated: false });
@@ -922,8 +924,9 @@ describe('object version history', () => {
     const object = { bucket: 'bucket', key };
     await copyObject(endpoint, object, object, signal(), { sourceVersionId: 'v%? +' });
     const request = engine.sent[0];
-    expect(request?.method).toBe('PUT');
-    expect(decodeURIComponent(new URL(request!.url).pathname)).toBe('/bucket/' + key);
+    if (request === undefined) throw new Error('Expected a copy request');
+    expect(request.method).toBe('PUT');
+    expect(decodeURIComponent(new URL(request.url).pathname)).toBe('/bucket/' + key);
     expect(request?.headers.get('x-amz-copy-source')).toBe(
       'bucket/logs/%ED%95%9C%EA%B8%80%20space%25%3F.txt?versionId=v%25%3F%20%2B',
     );

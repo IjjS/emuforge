@@ -15,13 +15,8 @@ import { NO_SUCH_BUCKET, OPERATIONS, type ObjectBody, type ObjectVersion } from 
 import { keyName, NO_VALUE } from '../format';
 import { useChangeObjectVersion, useDownloadObject, useObjectHistory } from '../queries';
 import { NAME_COLUMN_MIN_WIDTH } from './name-column';
-import {
-  ObjectVersionsDialog,
-  REMOVE_MARKER,
-  RESTORE_VERSION,
-  versionFailure,
-  type VersionTarget,
-} from './object-versions-dialog';
+import { ObjectVersionsDialog, REMOVE_MARKER, RESTORE_VERSION, type VersionTarget } from './object-versions-dialog';
+import { versionFailure } from './object-versions-failure';
 import { ObjectsBucketGone } from './objects-states';
 
 const columns: TableProps.ColumnDefinition<ObjectVersion>[] = [

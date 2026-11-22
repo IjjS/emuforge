@@ -8,46 +8,14 @@ import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import { useState } from 'react';
 
-import {
-  reportedNotImplementedMessage,
-  reportedServiceCode,
-  type RequestFailure,
-} from '../../../../../../lib/aws/request';
 import { AreaModal } from '../../../components/area-modal';
 import { ValueText } from '../../../components/value-text';
 import { NO_SUCH_BUCKET, type ObjectVersion } from '../api';
 import { useBucketProperty } from '../queries';
-import { actionFailure } from './action-failure';
+import { versionFailure } from './object-versions-failure';
 import { confirmsName } from './confirms-name';
 
 export type VersionTarget = ObjectVersion & { versionId: string };
-
-export function versionFailure(failure: RequestFailure, label: string, endpoint: string | undefined) {
-  const view = actionFailure(failure, label, endpoint);
-  const code = failure.kind === 'other' ? undefined : reportedServiceCode(failure);
-  const message = reportedNotImplementedMessage(failure);
-  return {
-    ...view,
-    detail: (
-      <>
-        {code !== undefined && (
-          <>
-            <Box variant="code" display="inline">
-              <ValueText kind="name" value={code} />
-            </Box>{' '}
-          </>
-        )}
-        {view.detail}
-        {message !== undefined && (
-          <>
-            {' '}
-            <ValueText kind="text" value={message} />
-          </>
-        )}
-      </>
-    ),
-  };
-}
 
 export const RESTORE_VERSION = 'Restore version';
 export const REMOVE_MARKER = 'Remove delete marker';
@@ -101,7 +69,14 @@ export function ObjectVersionsDialog({
       <SpaceBetween size="m">
         <KeyValuePairs
           items={[
-            { label: 'Key', value: <ValueText kind="name" value={target.key} /> },
+            {
+              label: 'Key',
+              value: (
+                <Box nativeAttributes={{ style: { whiteSpace: 'break-spaces' } }}>
+                  <ValueText kind="name" value={target.key} />
+                </Box>
+              ),
+            },
             {
               label: restoring ? 'Source version ID' : 'Delete marker version ID',
               value: <ValueText kind="name" value={target.versionId} />,

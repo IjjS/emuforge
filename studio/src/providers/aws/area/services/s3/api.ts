@@ -523,8 +523,12 @@ export function listObjectHistory(
   signal: AbortSignal,
 ): Promise<ObjectVersionPage<ObjectVersion> | NoSuchBucket> {
   return readVersionPage<ObjectVersion>(endpoint, bucket, request, signal, (output) => [
-    ...(output.Versions ?? []).map((item) => ({ ...toItem(item), latest: item.IsLatest === true, kind: 'version' })),
-    ...(output.DeleteMarkers ?? []).map((item) => ({
+    ...(output.Versions ?? []).map((item): ObjectVersion => ({
+      ...toItem(item),
+      latest: item.IsLatest === true,
+      kind: 'version',
+    })),
+    ...(output.DeleteMarkers ?? []).map((item): ObjectVersion => ({
       ...toItem(item),
       latest: item.IsLatest === true,
       kind: 'delete-marker',
