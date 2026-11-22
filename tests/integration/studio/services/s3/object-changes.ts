@@ -70,5 +70,6 @@ export function metadataInput(page: Page, row: number, column: number) {
 }
 
 export function changeAlert(page: Page) {
-  return page.locator(wrapper.findModal().findAlert().toSelector());
+  const modal = page.locator(wrapper.findModal().toSelector());
+  return modal.locator(wrapper.findAlert().toSelector().replace(/^body /, ''));
 }
