@@ -1,8 +1,10 @@
+import { CopyObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 
 import { engineEndpoint } from '../../../../../lib/aws/client-factory';
 import { RequestError, type RequestFailure } from '../../../../../lib/aws/request';
 import {
+  copyObject,
   createBucket,
   deleteBucket,
   deleteObjects,
@@ -13,11 +15,13 @@ import {
   getBucketTagging,
   getBucketVersioning,
   getBucketWebsite,
+  headObject,
   isBucketEmpty,
   listBuckets,
   listObjects,
   listObjectVersions,
   NO_SUCH_BUCKET,
+  NOT_FOUND,
   putBucketEncryption,
   putBucketNotificationConfiguration,
   putPublicAccessBlock,
@@ -40,6 +44,7 @@ interface Answer {
   status: number;
   statusText?: string;
   body?: string;
+  headers?: Record<string, string>;
 }
 
 type EngineAnswer = Answer | 'network-error' | 'hold';
@@ -83,8 +88,9 @@ class FakeEngine {
       });
     }
     // A 204 answer has no body at all.
-    return new Response(answer.status === 204 ? null : (answer.body ?? ''), {
+    return new Response(answer.status === 204 || request.method === 'HEAD' ? null : (answer.body ?? ''), {
       status: answer.status,
+      ...(answer.headers === undefined ? {} : { headers: answer.headers }),
       ...(answer.statusText === undefined ? {} : { statusText: answer.statusText }),
     });
   };
@@ -1097,4 +1103,109 @@ describe('the caller’s abort signal', () => {
       });
     },
   );
+});
+
+describe('object copy requests', () => {
+  const expires = 'Tue, 01 Jan 2030 00:00:00 GMT';
+  const copyResult = {
+    status: 200,
+    body: '<CopyObjectResult><ETag>"copy"</ETag></CopyObjectResult>',
+  };
+  const object = { bucket: 'source-bucket', key: 'object.txt' };
+  function sentCopy(index: number) {
+    const request = engine.sent[index];
+    if (request === undefined) throw new Error('Expected a copy request');
+    return request;
+  }
+
+  const originalHeaders = {
+    'content-type': 'text/plain',
+    'cache-control': 'max-age=3600',
+    'content-encoding': 'identity',
+    'content-disposition': 'inline',
+    'content-language': 'en',
+    expires,
+    'x-amz-website-redirect-location': '/home',
+    'x-amz-meta-owner': 'build',
+    'x-amz-meta-__proto__': 'keep this metadata',
+  };
+
+  it('encodes the source path once, sends the exact destination key and uses the default directives', async () => {
+    engine.aws = () => copyResult;
+    const key = 'inbox/한글 space%?.txt';
+    await copyObject(
+      endpoint,
+      { bucket: 'source-bucket', key },
+      { bucket: 'destination-bucket', key },
+      new AbortController().signal,
+    );
+    const request = sentCopy(0);
+    expect(request.method).toBe('PUT');
+    expect(request.headers.get('x-amz-copy-source')).toBe('source-bucket/inbox/%ED%95%9C%EA%B8%80%20space%25%3F.txt');
+    expect(decodeURIComponent(new URL(request.url).pathname)).toBe('/destination-bucket/' + key);
+    expect(request.headers.has('x-amz-metadata-directive')).toBe(false);
+    expect(request.headers.has('x-amz-tagging-directive')).toBe(false);
+  });
+
+  it('conditions a copy on the destination being absent while leaving the source unconditional', async () => {
+    engine.aws = () => copyResult;
+    await copyObject(endpoint, object, { bucket: 'destination-bucket', key: 'target' }, new AbortController().signal, {
+      onlyIfMissing: true,
+    });
+    const request = sentCopy(0);
+    expect(request.headers.get('if-none-match')).toBe('*');
+    expect(request.headers.has('x-amz-copy-source-if-none-match')).toBe(false);
+    expect(request.headers.has('x-amz-copy-source-if-match')).toBe(false);
+  });
+
+  it('changes only the media type and retains the six existing headers, metadata and default tagging', async () => {
+    const signal = new AbortController().signal;
+    engine.aws = () => ({ status: 200, headers: originalHeaders });
+    const original = await headObject(endpoint, object.bucket, object.key, signal);
+    if (original === NOT_FOUND) throw new Error('Expected an existing object');
+    engine.aws = () => copyResult;
+    await copyObject(endpoint, object, object, signal, {
+      edit: {
+        contentType: 'application/json',
+        metadata: Object.fromEntries(original.user.map(({ key, value }) => [key, value])),
+        headers: original.copyHeaders,
+      },
+    });
+
+    const request = sentCopy(1);
+    expect(request.headers.get('x-amz-copy-source')).toBe('source-bucket/object.txt');
+    expect(request.headers.get('x-amz-metadata-directive')).toBe('REPLACE');
+    expect(request.headers.has('x-amz-tagging-directive')).toBe(false);
+    for (const [name, value] of Object.entries({ ...originalHeaders, 'content-type': 'application/json' })) {
+      expect(request.headers.get(name), name).toBe(value);
+    }
+  });
+
+  it('sends an empty metadata map and keeps the content type without adding absent headers', async () => {
+    const signal = new AbortController().signal;
+    engine.aws = () => ({ status: 200, headers: { 'content-type': 'text/plain', 'x-amz-meta-remove': 'old' } });
+    const original = await headObject(endpoint, object.bucket, object.key, signal);
+    if (original === NOT_FOUND || original.contentType === undefined)
+      throw new Error('Expected an existing object with a content type');
+    engine.aws = () => copyResult;
+    const send = vi.spyOn(S3Client.prototype, 'send');
+    try {
+      await copyObject(endpoint, object, object, signal, {
+        edit: { contentType: original.contentType, metadata: {}, headers: original.copyHeaders },
+      });
+      const command = send.mock.calls[0]?.[0];
+      expect(command).toBeInstanceOf(CopyObjectCommand);
+      expect(command).toMatchObject({ input: { Metadata: {} } });
+    } finally {
+      send.mockRestore();
+    }
+
+    const request = sentCopy(1);
+    expect(request.headers.get('content-type')).toBe('text/plain');
+    expect(request.headers.get('x-amz-metadata-directive')).toBe('REPLACE');
+    for (const name of Object.keys(originalHeaders).filter((name) => name !== 'content-type')) {
+      expect(request.headers.has(name), name).toBe(false);
+    }
+    expect([...request.headers.keys()].some((name) => name.startsWith('x-amz-meta-'))).toBe(false);
+  });
 });

@@ -19,6 +19,7 @@ export type RequestFailure =
   | { kind: 'other'; operation: string; code: string; message?: string; sessionRefused?: true };
 
 const reportedCodes = new WeakMap<RequestFailure, string>();
+const reportedNotImplementedMessages = new WeakMap<RequestFailure, string>();
 
 /**
  * The code reported in a service response, when present. Keep the original failure from `requestFailure` or
@@ -26,6 +27,11 @@ const reportedCodes = new WeakMap<RequestFailure, string>();
  */
 export function reportedServiceCode(failure: RequestFailure): string | undefined {
   return reportedCodes.get(failure);
+}
+
+/** The service's optional 501 message, kept separately so the failure shape remains unchanged. */
+export function reportedNotImplementedMessage(failure: RequestFailure): string | undefined {
+  return reportedNotImplementedMessages.get(failure);
 }
 
 function withReportedCode(failure: RequestFailure, code: string | undefined): RequestFailure {
@@ -112,7 +118,12 @@ export function requestFailure(operation: string, error: unknown): RequestFailur
   }
   const code = codeOf(answer, status);
   if (status === 501) {
-    return withReportedCode({ kind: 'not-implemented', operation }, code);
+    const failure = withReportedCode({ kind: 'not-implemented', operation }, code);
+    const message = text(answer.message);
+    if (typeof answer.$fault === 'string' && message !== undefined && !NO_MESSAGE.has(message)) {
+      reportedNotImplementedMessages.set(failure, message);
+    }
+    return failure;
   }
   if (code === undefined && status >= 200 && status < 300) {
     // A success the SDK could not decode: its status names no failure, the SDK's own message is what went wrong.

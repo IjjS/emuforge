@@ -1,4 +1,5 @@
 import Button from '@cloudscape-design/components/button';
+import ButtonDropdown from '@cloudscape-design/components/button-dropdown';
 import Header from '@cloudscape-design/components/header';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -15,6 +16,7 @@ import { actionFailure } from '../components/action-failure';
 import { lineText, pageFailure, type FailureView } from '../components/bucket-read';
 import { BucketReadFailure } from '../components/bucket-read-state';
 import { DeleteObjectsDialog } from '../components/delete-objects-dialog';
+import { ObjectChangeDialog, type ObjectChange } from '../components/object-change-dialog';
 import { ObjectMetadata, ObjectOverview, ObjectPreview, ObjectTags } from '../components/object-sections';
 import { ObjectGone, ObjectLoading } from '../components/object-states';
 import { ObjectsBucketGone } from '../components/objects-states';
@@ -65,13 +67,20 @@ function saveFile(bytes: Uint8Array, contentType: string | undefined, fileName: 
   }, 0);
 }
 
-/** The page: one view per key, so a new key starts afresh. */
+/** A new object or engine address starts a fresh view. */
 export function ObjectPage({ connection, params }: ScreenPageProps) {
   const name = params.name ?? '';
   const [search] = useSearchParams();
   const objectKey = search.get('key') ?? '';
   useShowsResources('objects');
-  return <ObjectView key={objectKey} bucket={name} objectKey={objectKey} connection={connection} />;
+  return (
+    <ObjectView
+      key={JSON.stringify([connection.engineOrigin, name, objectKey])}
+      bucket={name}
+      objectKey={objectKey}
+      connection={connection}
+    />
+  );
 }
 
 interface ObjectViewProps {
@@ -92,6 +101,17 @@ function ObjectView({ bucket, objectKey, connection }: ObjectViewProps) {
   const tags = useObjectTags(connection.engineOrigin, bucket, objectKey, { generation, enabled: head !== undefined });
   const preview = useObjectPreview(connection.engineOrigin, bucket, head, { generation });
   const download = useDownloadObject(connection.engineOrigin, bucket);
+  const [change, setChange] = useState<{ action: ObjectChange; head: ObjectHead }>();
+  const [unavailable, setUnavailable] = useState<Partial<Record<ObjectChange, string>>>({});
+
+  function changeItem(id: ObjectChange, text: string) {
+    const operation = unavailable[id];
+    return {
+      id,
+      text,
+      ...(operation === undefined ? {} : { disabled: true, disabledReason: notImplemented(operation) }),
+    };
+  }
 
   const failure = lookup.failure === undefined ? undefined : headFailure(lookup.failure, connection);
 
@@ -214,6 +234,21 @@ function ObjectView({ bucket, objectKey, connection }: ObjectViewProps) {
             <Button iconName="refresh" onClick={handleRefresh}>
               Refresh
             </Button>
+            {!isFolderKey && head !== undefined && (
+              <ButtonDropdown
+                items={[
+                  changeItem('copy', 'Copy object'),
+                  changeItem('rename', 'Rename object'),
+                  changeItem('edit', 'Edit object properties'),
+                ]}
+                onItemClick={({ detail }) => {
+                  const action = detail.id;
+                  if (action === 'copy' || action === 'rename' || action === 'edit') setChange({ action, head });
+                }}
+              >
+                Actions
+              </ButtonDropdown>
+            )}
             {showActions && (
               <Button
                 disabled={deleteReason !== undefined}
@@ -263,6 +298,17 @@ function ObjectView({ bucket, objectKey, connection }: ObjectViewProps) {
         after={objectsPath(bucket, keyPrefix(objectKey))}
         onClose={handleDeleteClose}
       />
+      {change !== undefined && (
+        <ObjectChangeDialog
+          action={change.action}
+          endpoint={connection.engineOrigin}
+          bucket={bucket}
+          head={change.head}
+          onClose={() => setChange(undefined)}
+          onUnsupported={(operation) => setUnavailable((current) => ({ ...current, [change.action]: operation }))}
+          onPropertiesSaved={refresh}
+        />
+      )}
       {announcement}
     </SpaceBetween>
   );

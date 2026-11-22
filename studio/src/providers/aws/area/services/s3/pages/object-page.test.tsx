@@ -1,8 +1,8 @@
-import createWrapper from '@cloudscape-design/components/test-utils/dom';
+import createWrapper, { type FormFieldWrapper, type ModalWrapper } from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState, useSyncExternalStore } from 'react';
-import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
+import { createMemoryRouter, RouterProvider, useLocation, type LoaderFunction } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { engineEndpoint } from '../../../../../../lib/aws/client-factory';
@@ -39,12 +39,14 @@ function errorAnswer(status: number, code: string, message: string): Answer {
 
 /** An object the emulator holds. */
 interface FakeObject {
+  bucket?: string;
   key: string;
   body: Uint8Array;
   contentType?: string;
   metadata?: Record<string, string>;
   tags?: [string, string][];
   cacheControl?: string;
+  redirect?: string;
 }
 
 /** One request as the engine saw it. */
@@ -53,6 +55,8 @@ interface Seen {
   url: URL;
   range: string | null;
   body: string;
+  signal: AbortSignal;
+  headers: Headers;
 }
 
 const LAST_MODIFIED = 'Wed, 18 Nov 2026 10:00:00 GMT';
@@ -62,6 +66,8 @@ class FakeEngine {
   objects: FakeObject[] = [];
   readonly seen: Seen[] = [];
   /** A case's own answers, tried before the emulator's. */
+  beforeCopy: (() => Answer | undefined | Promise<Answer | undefined>) | undefined;
+  remove: ((key: string) => Answer | undefined) | undefined;
   head: ((key: string) => EngineAnswer | undefined) | undefined;
   tagging: ((key: string) => EngineAnswer | undefined) | undefined;
   get: ((key: string, range: string | null) => EngineAnswer | undefined) | undefined;
@@ -73,9 +79,16 @@ class FakeEngine {
       return new Response(JSON.stringify({ token: 'token-1' }), { status: 200 });
     }
     const body = request.method === 'GET' || request.method === 'HEAD' ? '' : await request.text();
-    this.seen.push({ method: request.method, url, range: request.headers.get('range'), body });
+    this.seen.push({
+      method: request.method,
+      url,
+      range: request.headers.get('range'),
+      body,
+      signal: request.signal,
+      headers: request.headers,
+    });
     const answer = await Promise.race([
-      Promise.resolve(this.answer(request.method, url, request.headers.get('range'), body)),
+      Promise.resolve(this.answer(request.method, url, request.headers, body)),
       new Promise<never>((_, reject) => {
         request.signal.addEventListener('abort', () => {
           reject(new DOMException('The operation was aborted.', 'AbortError'));
@@ -91,8 +104,8 @@ class FakeEngine {
     });
   };
 
-  private object(key: string): FakeObject | undefined {
-    return this.objects.find((object) => object.key === key);
+  private object(bucket: string, key: string): FakeObject | undefined {
+    return this.objects.find((object) => (object.bucket ?? 'alpha') === bucket && object.key === key);
   }
 
   private headers(object: FakeObject): Record<string, string> {
@@ -102,11 +115,41 @@ class FakeEngine {
       etag: '"0123456789abcdef0123456789abcdef"',
       'last-modified': LAST_MODIFIED,
       ...(object.cacheControl === undefined ? {} : { 'cache-control': object.cacheControl }),
+      ...(object.redirect === undefined ? {} : { 'x-amz-website-redirect-location': object.redirect }),
       ...Object.fromEntries(Object.entries(object.metadata ?? {}).map(([k, v]) => [`x-amz-meta-${k}`, v])),
     };
   }
 
-  private answer(method: string, url: URL, range: string | null, body: string): EngineAnswer {
+  private async copy(bucket: string, key: string, headers: Headers): Promise<Answer> {
+    const refusal = await this.beforeCopy?.();
+    if (refusal !== undefined) return refusal;
+    if (!this.buckets.includes(bucket)) return errorAnswer(404, 'NoSuchBucket', 'The specified bucket does not exist.');
+    const copySource = headers.get('x-amz-copy-source') ?? '';
+    const [sourceBucket = '', ...sourceParts] = decodeURIComponent(copySource).split('/');
+    const source = this.object(sourceBucket, sourceParts.join('/'));
+    if (source === undefined) return errorAnswer(404, 'NoSuchKey', 'The specified key does not exist.');
+    const existing = this.object(bucket, key);
+    if (existing !== undefined && headers.get('if-none-match') === '*') {
+      return errorAnswer(412, 'PreconditionFailed', 'At least one of the pre-conditions you specified did not hold');
+    }
+    const copy: FakeObject = { ...source, bucket, key };
+    delete copy.redirect;
+    if (headers.get('x-amz-metadata-directive') === 'REPLACE') {
+      copy.contentType = headers.get('content-type') ?? '';
+      copy.metadata = Object.fromEntries(
+        [...headers.entries()]
+          .filter(([name]) => name.startsWith('x-amz-meta-'))
+          .map(([name, value]) => [name.slice('x-amz-meta-'.length), value]),
+      );
+      const redirect = headers.get('x-amz-website-redirect-location');
+      if (redirect !== null) copy.redirect = redirect;
+    }
+    this.objects = [...this.objects.filter((object) => object !== existing), copy];
+    return ok('<CopyObjectResult><ETag>"copied"</ETag></CopyObjectResult>');
+  }
+
+  private answer(method: string, url: URL, headers: Headers, body: string): EngineAnswer {
+    const range = headers.get('range');
     if (url.pathname === '/' && url.searchParams.get('x-id') === 'ListBuckets') {
       const prefix = url.searchParams.get('prefix') ?? '';
       const names = this.buckets.filter((name) => name.startsWith(prefix)).slice(0, 1);
@@ -119,6 +162,13 @@ class FakeEngine {
     const [, bucket = '', ...rest] = url.pathname.split('/');
     const key = rest.map((part) => decodeURIComponent(part)).join('/');
     const known = this.buckets.includes(bucket);
+    if (method === 'PUT' && headers.has('x-amz-copy-source')) return this.copy(bucket, key, headers);
+    if (method === 'DELETE') {
+      const refusal = this.remove?.(key);
+      if (refusal !== undefined) return refusal;
+      this.objects = this.objects.filter((object) => object !== this.object(bucket, key));
+      return { status: 204 };
+    }
     if (url.searchParams.has('versioning')) {
       return ok('<VersioningConfiguration/>');
     }
@@ -133,7 +183,7 @@ class FakeEngine {
     if (url.searchParams.has('tagging')) {
       const own = this.tagging?.(key);
       if (own !== undefined) return own;
-      const object = this.object(key);
+      const object = this.object(bucket, key);
       if (!known) return errorAnswer(404, 'NoSuchBucket', 'The specified bucket does not exist');
       if (object === undefined) return errorAnswer(404, 'NoSuchKey', 'The specified key does not exist.');
       return ok(
@@ -145,13 +195,13 @@ class FakeEngine {
     if (method === 'HEAD') {
       const own = this.head?.(key);
       if (own !== undefined) return own;
-      const object = known ? this.object(key) : undefined;
+      const object = known ? this.object(bucket, key) : undefined;
       return object === undefined ? { status: 404 } : { status: 200, headers: this.headers(object) };
     }
     if (method === 'GET') {
       const own = this.get?.(key, range);
       if (own !== undefined) return own;
-      const object = known ? this.object(key) : undefined;
+      const object = known ? this.object(bucket, key) : undefined;
       if (object === undefined) return errorAnswer(404, 'NoSuchKey', 'The specified key does not exist.');
       const match = range === null ? null : /^bytes=(\d+)-(\d+)$/.exec(range);
       if (match === null) {
@@ -194,6 +244,14 @@ class Connection {
   };
 
   readonly get = () => this.value;
+
+  generation = 0;
+
+  switchTarget() {
+    this.generation += 1;
+    this.value = { ...this.value };
+    for (const listener of this.listeners) listener();
+  }
 }
 
 const EMULATOR_PORT = 9305;
@@ -225,6 +283,7 @@ function AreaWithStudioProps() {
       onPageTitle={() => undefined}
       onContentTarget={() => undefined}
       routeChanges={changes}
+      targetGeneration={connection.generation}
       connection={current}
     />
   );
@@ -260,11 +319,15 @@ function objectAddress(key: string, bucket = 'alpha'): string {
   return `/aws/s3/buckets/${bucket}/object?${new URLSearchParams({ key }).toString()}`;
 }
 
-function open(key: string, bucket = 'alpha') {
+function open(key: string, bucket = 'alpha', loader?: LoaderFunction) {
   const router = createMemoryRouter(
     [
       { path: '/', element: <p>Studio&apos;s Home</p> },
-      { path: '/aws/*', element: <AreaWithStudioProps /> },
+      {
+        path: '/aws/*',
+        element: <AreaWithStudioProps />,
+        ...(loader === undefined ? {} : { loader, hydrateFallbackElement: <p>Loading the route</p> }),
+      },
     ],
     { initialEntries: [objectAddress(key, bucket)] },
   );
@@ -294,17 +357,20 @@ function h1(): HTMLElement {
   return screen.getByRole('heading', { level: 1 });
 }
 
+function objectTable(title: string) {
+  return createWrapper(document.body)
+    .findAllTables()
+    .find((table) => table.findHeaderSlot()?.getElement().textContent?.trim().startsWith(title));
+}
+
 /** The section headed `title`: a container or a table, its h2 starting with the title. */
 function section(title: string): HTMLElement {
   const wrapper = createWrapper(document.body);
-  const heads = (element: HTMLElement) =>
-    [...element.querySelectorAll('h2')].some((h2) => (h2.textContent ?? '').trim().startsWith(title));
-  const table = wrapper.findAllTables().find((found) => heads(found.getElement()));
+  const table = objectTable(title);
   if (table !== undefined) return table.getElement();
-  const container = wrapper.findAllContainers().find((found) => {
-    const header = found.findHeader();
-    return header !== null && heads(header.getElement());
-  });
+  const container = wrapper
+    .findAllContainers()
+    .find((found) => found.findHeader()?.getElement().textContent?.trim().startsWith(title));
   if (container === undefined) throw new Error(`No section ${title}`);
   return container.getElement();
 }
@@ -318,9 +384,17 @@ function overviewValue(label: string): string {
 
 /** The rows of the table headed `title`, each its cells' texts. */
 function tableRows(title: string): string[][] {
-  return [...section(title).querySelectorAll('tbody tr')]
-    .map((row) => [...row.querySelectorAll('td, th')].map((cell) => (cell.textContent ?? '').trim()))
-    .filter((cells) => cells.length > 1);
+  const table = objectTable(title);
+  if (table === undefined) throw new Error(`No table ${title}`);
+  return table.findRows().map((_, index) =>
+    table.findColumnHeaders().map(
+      (_, column) =>
+        table
+          .findBodyCell(index + 1, column + 1)
+          ?.getElement()
+          .textContent?.trim() ?? '',
+    ),
+  );
 }
 
 function isGetObject(seen: Seen): boolean {
@@ -706,4 +780,649 @@ describe('the object page, "Delete"', () => {
     expect(engine.requests('POST')[0]?.body).toContain('<Key>cfg/app.json</Key>');
     expect(await screen.findByText('Deleted 1 object.')).toBeInTheDocument();
   });
+});
+
+const ORIGINAL_KEY = APP_JSON.key;
+const DESTINATION_KEY = 'cfg/copy app.json';
+
+function delayed<T>() {
+  let finish!: (value: T) => void;
+  const promise = new Promise<T>((resolve) => {
+    finish = resolve;
+  });
+  return { promise, finish };
+}
+
+const ACTION_TITLES = { copy: 'Copy object', rename: 'Rename object', edit: 'Edit object properties' } as const;
+const modal = () => createWrapper(document.body).findModal();
+
+function actionsDropdown() {
+  const dropdown = createWrapper(document.body)
+    .findAllButtonDropdowns()
+    .find((found) => found.findNativeButton().getElement().textContent?.trim() === 'Actions');
+  if (dropdown === undefined) throw new Error('No object actions dropdown');
+  return dropdown;
+}
+
+async function findDialog(title: string) {
+  return waitFor(() => {
+    const dialog = modal();
+    if (dialog === null) throw new Error(`No dialog titled ${title}`);
+    expect(dialog.findHeader().getElement()).toHaveTextContent(title);
+    return dialog;
+  });
+}
+
+async function changeDialog(id: keyof typeof ACTION_TITLES) {
+  const dropdown = actionsDropdown();
+  fireEvent.click(dropdown.findNativeButton().getElement());
+  const item = dropdown.findItemById(id, { disabled: false });
+  if (item === null) throw new Error(`No enabled action ${id}`);
+  expect(item.getElement()).toHaveTextContent(ACTION_TITLES[id]);
+  fireEvent.click(item.getElement());
+  return findDialog(ACTION_TITLES[id]);
+}
+
+function expectUnavailableAction(id: keyof typeof ACTION_TITLES) {
+  const dropdown = actionsDropdown();
+  fireEvent.click(dropdown.findNativeButton().getElement());
+  const unavailable = dropdown.findItemById(id, { disabled: true });
+  if (unavailable === null) throw new Error(`Expected an unavailable ${id} action`);
+  expect(unavailable.getElement()).toHaveTextContent(ACTION_TITLES[id]);
+  fireEvent.click(unavailable.getElement());
+  expect(modal()).toBeNull();
+}
+
+function dialogBody(dialog: ModalWrapper) {
+  return dialog.findContent().getElement();
+}
+
+function dialogAlertContent(dialog: ModalWrapper) {
+  return createWrapper(dialogBody(dialog)).findAlert()?.findContent().getElement();
+}
+
+function formField(dialog: ModalWrapper, name: string) {
+  const field = createWrapper(dialogBody(dialog))
+    .findAllFormFields()
+    .find((found) => found.findLabel()?.getElement().textContent?.trim() === name);
+  if (field === undefined) throw new Error(`No form field ${name}`);
+  return field;
+}
+
+function fieldInput(field: FormFieldWrapper) {
+  const input = createWrapper(field.getElement()).findInput();
+  if (input === null) throw new Error('No input for the field');
+  return input.findNativeInput().getElement();
+}
+
+function changeInput(dialog: ModalWrapper, name: string, value: string) {
+  fireEvent.change(fieldInput(formField(dialog, name)), { target: { value } });
+}
+
+function dialogButton(dialog: ModalWrapper, name: string) {
+  const footer = dialog.findFooter();
+  if (footer === null) throw new Error('No dialog footer');
+  return within(footer.getElement()).getByRole('button', { name });
+}
+
+function metadataEditor(dialog: ModalWrapper) {
+  const editor = createWrapper(dialogBody(dialog)).findAttributeEditor();
+  if (editor === null) throw new Error('No user metadata editor');
+  return editor;
+}
+
+function metadataField(dialog: ModalWrapper, row: number, column: number) {
+  const field = metadataEditor(dialog).findRow(row)?.findField(column);
+  if (field == null) throw new Error(`No metadata field at row ${row}, column ${column}`);
+  return field;
+}
+
+async function renameConfirmation(occupied: boolean, destination = DESTINATION_KEY) {
+  const form = await changeDialog('rename');
+  changeInput(form, 'New key', destination);
+  fireEvent.click(dialogButton(form, 'Rename object'));
+  return findDialog(occupied ? 'Replace existing object?' : 'Rename object?');
+}
+
+function expectNoWrites() {
+  expect(engine.requests('PUT')).toHaveLength(0);
+  expect(engine.requests('DELETE')).toHaveLength(0);
+}
+
+function expectAddress(router: ReturnType<typeof open>, key: string, bucket = 'alpha') {
+  expect(router.state.location.pathname + router.state.location.search).toBe(objectAddress(key, bucket));
+}
+
+function previewText() {
+  return within(section('Preview')).getByRole('region', { name: 'Object preview' });
+}
+
+type FlashType = 'success' | 'warning' | 'info';
+
+function flashes(type: FlashType) {
+  return createWrapper(document.body).findFlashbar()?.findItemsByType(type) ?? [];
+}
+
+function flash(type: FlashType) {
+  const [item] = flashes(type);
+  if (item === undefined) throw new Error(`No ${type} flash item`);
+  return item;
+}
+
+describe('changing an object from its detail', () => {
+  beforeEach(() => {
+    engine.objects = [APP_JSON];
+  });
+
+  it('offers all three actions for an empty regular object', async () => {
+    engine.objects = [{ ...APP_JSON, body: new Uint8Array() }];
+    open(ORIGINAL_KEY);
+    await shown();
+    for (const id of ['copy', 'rename', 'edit'] as const) {
+      const dialog = await changeDialog(id);
+      fireEvent.click(dialogButton(dialog, 'Cancel'));
+      await waitFor(() => expect(modal()).toBeNull());
+    }
+    expectNoWrites();
+  });
+
+  it('opens a copied object under a new key in the same bucket', async () => {
+    const router = open(ORIGINAL_KEY);
+    await shown();
+    const dialog = await changeDialog('copy');
+    expect(fieldInput(formField(dialog, 'Destination bucket'))).toHaveValue('alpha');
+    changeInput(dialog, 'Destination key', DESTINATION_KEY);
+    fireEvent.click(dialogButton(dialog, 'Copy object'));
+
+    await waitFor(() => expectAddress(router, DESTINATION_KEY));
+    await waitFor(() => expect(previewText()).toHaveTextContent('"name":"app"'));
+    expect(flash('success').findHeader()?.getElement()).toHaveTextContent('Object copied.');
+    expect(engine.objects.map(({ key }) => key)).toEqual([ORIGINAL_KEY, DESTINATION_KEY]);
+  });
+
+  it.each([
+    { id: 'copy', label: 'Copy object', field: 'Destination key' },
+    { id: 'rename', label: 'Rename object', field: 'New key' },
+  ] as const)('blocks $label with an empty key or the original location', async ({ id, label, field }) => {
+    open(ORIGINAL_KEY);
+    await shown();
+    const dialog = await changeDialog(id);
+    expect(dialogButton(dialog, label)).toBeDisabled();
+    changeInput(dialog, field, ORIGINAL_KEY);
+    expect(dialogButton(dialog, label)).toBeDisabled();
+    expectNoWrites();
+  });
+
+  it.each([
+    { id: 'copy', field: 'Destination key', alias: 'cfg/./app.json' },
+    { id: 'rename', field: 'New key', alias: 'cfg/other/../app.json' },
+  ] as const)('blocks a destination that would normalize to the original for $id', async ({ id, field, alias }) => {
+    const router = open(ORIGINAL_KEY);
+    await shown();
+    const initialHeads = engine.requests('HEAD').length;
+    const dialog = await changeDialog(id);
+    changeInput(dialog, field, alias);
+    expect(formField(dialog, field).findError()?.getElement()).toHaveTextContent(
+      'Use a key without . or .. path segments.',
+    );
+    const submit = dialogButton(dialog, ACTION_TITLES[id]);
+    expect(submit).toBeDisabled();
+    fireEvent.click(submit);
+    expect(engine.requests('HEAD')).toHaveLength(initialHeads);
+    expectNoWrites();
+    expectAddress(router, ORIGINAL_KEY);
+    expect(engine.objects).toEqual([APP_JSON]);
+  });
+
+  it('shows a bodyless destination HEAD refusal and does not write', async () => {
+    engine.head = (key) => (key === DESTINATION_KEY ? { status: 403 } : undefined);
+    open(ORIGINAL_KEY);
+    await shown();
+    const dialog = await changeDialog('copy');
+    changeInput(dialog, 'Destination key', DESTINATION_KEY);
+    fireEvent.click(dialogButton(dialog, 'Copy object'));
+    await waitFor(() => expect(dialogAlertContent(dialog)).toHaveTextContent(/HTTP 403/));
+    expectNoWrites();
+  });
+
+  it('requires the whole destination key for replacement and can cancel a copy without writing', async () => {
+    engine.buckets.push('beta');
+    engine.objects.push({ ...APP_JSON, bucket: 'beta', key: DESTINATION_KEY, body: encoder.encode('old') });
+    open(ORIGINAL_KEY);
+    await shown();
+    const form = await changeDialog('copy');
+    changeInput(form, 'Destination bucket', 'beta');
+    changeInput(form, 'Destination key', DESTINATION_KEY);
+    fireEvent.click(dialogButton(form, 'Copy object'));
+    const dialog = await findDialog('Replace existing object?');
+    expect(dialogBody(dialog)).toHaveTextContent(`s3://beta/${DESTINATION_KEY}`);
+    const confirmation = fieldInput(formField(dialog, 'Enter destination key to confirm'));
+    expect(confirmation).toHaveFocus();
+    expect(confirmation).toHaveAccessibleDescription(/existing destination object will be replaced/);
+    expect(confirmation).toHaveAccessibleDescription(/Expected key cfg\/copy app\.json/);
+    expect(confirmation).not.toHaveAccessibleDescription(/Enter the exact key shown above/);
+    changeInput(dialog, 'Enter destination key to confirm', `s3://beta/${DESTINATION_KEY}`);
+    expect(dialogButton(dialog, 'Replace object')).toBeDisabled();
+    expect(confirmation).toHaveAccessibleDescription(/Enter the exact key shown above/);
+    changeInput(dialog, 'Enter destination key to confirm', DESTINATION_KEY);
+    expect(dialogButton(dialog, 'Replace object')).toBeEnabled();
+    fireEvent.click(dialogButton(dialog, 'Cancel'));
+    expectNoWrites();
+    expect(engine.objects.map(({ body }) => new TextDecoder().decode(body))).toEqual([
+      '{"name":"app","debug":true}',
+      'old',
+    ]);
+  });
+
+  it.each([true, false])('warns about deletion and redirect loss before a rename (occupied: %s)', async (occupied) => {
+    engine.objects = [{ ...APP_JSON, redirect: '/home' }];
+    if (occupied) engine.objects.push({ ...APP_JSON, key: DESTINATION_KEY });
+    open(ORIGINAL_KEY);
+    await shown();
+    const dialog = await renameConfirmation(occupied);
+    expect(dialogBody(dialog)).toHaveTextContent(`s3://alpha/${ORIGINAL_KEY}`);
+    expect(dialogBody(dialog)).toHaveTextContent(`s3://alpha/${DESTINATION_KEY}`);
+    expect(dialogBody(dialog)).toHaveTextContent('The original key will be deleted');
+    expect(dialogBody(dialog)).toHaveTextContent('The renamed object will lose its website redirect.');
+    const input = occupied ? 'Enter destination key to confirm' : 'Enter original key to confirm';
+    const submit = occupied ? 'Replace object' : 'Rename object';
+    const confirmation = fieldInput(formField(dialog, input));
+    expect(confirmation).toHaveFocus();
+    expect(confirmation).toHaveAccessibleDescription(/original key will be deleted/);
+    expect(confirmation).toHaveAccessibleDescription(/renamed object will lose its website redirect/);
+    changeInput(dialog, input, occupied ? 'copy app.json' : 'app.json');
+    expect(dialogButton(dialog, submit)).toBeDisabled();
+    changeInput(dialog, input, occupied ? DESTINATION_KEY : ORIGINAL_KEY);
+    expect(dialogButton(dialog, submit)).toBeEnabled();
+    fireEvent.click(dialogButton(dialog, 'Cancel'));
+    expectNoWrites();
+  });
+
+  it('replaces the destination before deleting the source and opens the copied body', async () => {
+    engine.objects.push({ ...APP_JSON, key: DESTINATION_KEY, body: encoder.encode('old') });
+    const copy = delayed<undefined>();
+    engine.beforeCopy = () => copy.promise;
+    const router = open(ORIGINAL_KEY);
+    await shown();
+    const dialog = await renameConfirmation(true);
+    changeInput(dialog, 'Enter destination key to confirm', DESTINATION_KEY);
+    fireEvent.click(dialogButton(dialog, 'Replace object'));
+    await waitFor(() => expect(engine.requests('PUT')).toHaveLength(1));
+    expect(engine.requests('PUT').map(({ url }) => decodeURIComponent(url.pathname))).toEqual([
+      `/alpha/${DESTINATION_KEY}`,
+    ]);
+    expect(engine.requests('DELETE')).toHaveLength(0);
+    await act(async () => copy.finish(undefined));
+
+    await waitFor(() => expectAddress(router, DESTINATION_KEY));
+    expect(engine.requests('DELETE').map(({ url }) => url.pathname)).toEqual([`/alpha/${ORIGINAL_KEY}`]);
+    await waitFor(() => expect(previewText()).toHaveTextContent('"name":"app"'));
+    expect(flash('success').findHeader()?.getElement()).toHaveTextContent('Object renamed.');
+  });
+
+  it('omits the redirect warning if the original has no redirect', async () => {
+    open(ORIGINAL_KEY);
+    await shown();
+    const dialog = await renameConfirmation(false);
+    expect(dialogBody(dialog)).not.toHaveTextContent('website redirect');
+  });
+
+  it.each(['copy', 'rename'] as const)(
+    'requires replacement confirmation when a destination appears during %s',
+    async (id) => {
+      const competitor = { ...APP_JSON, key: DESTINATION_KEY, body: encoder.encode('another client') };
+      const router = open(ORIGINAL_KEY);
+      await shown();
+      if (id === 'copy') {
+        const form = await changeDialog('copy');
+        changeInput(form, 'Destination key', DESTINATION_KEY);
+        engine.beforeCopy = () => {
+          engine.beforeCopy = undefined;
+          engine.objects.push(competitor);
+          return undefined;
+        };
+        fireEvent.click(dialogButton(form, 'Copy object'));
+      } else {
+        const confirmation = await renameConfirmation(false);
+        engine.objects.push(competitor);
+        changeInput(confirmation, 'Enter original key to confirm', ORIGINAL_KEY);
+        fireEvent.click(dialogButton(confirmation, 'Rename object'));
+      }
+
+      const replacement = await findDialog('Replace existing object?');
+      expect(dialogBody(replacement)).toHaveTextContent('PreconditionFailed');
+      expect(engine.requests('PUT').map(({ headers }) => headers.get('if-none-match'))).toEqual(['*']);
+      expect(engine.requests('DELETE')).toHaveLength(0);
+      expect(engine.objects).toEqual([APP_JSON, competitor]);
+      expectAddress(router, ORIGINAL_KEY);
+
+      const field = fieldInput(formField(replacement, 'Enter destination key to confirm'));
+      expect(field).toHaveFocus();
+      expect(field).toHaveValue('');
+      expect(dialogButton(replacement, 'Replace object')).toBeDisabled();
+      changeInput(replacement, 'Enter destination key to confirm', DESTINATION_KEY);
+      fireEvent.click(dialogButton(replacement, 'Replace object'));
+      await waitFor(() => expectAddress(router, DESTINATION_KEY));
+      expect(engine.requests('PUT').map(({ headers }) => headers.get('if-none-match'))).toEqual(['*', null]);
+      expect(engine.requests('DELETE')).toHaveLength(id === 'copy' ? 0 : 1);
+      await waitFor(() => expect(previewText()).toHaveTextContent('"name":"app"'));
+    },
+  );
+
+  it.each([
+    'Bucket alpha can hold at most 1000 objects.',
+    'Bucket alpha can hold at most 67108864 bytes. Copy would use 67123368 bytes.',
+  ])('shows the original limit rejection and keeps the source: %s', async (message) => {
+    engine.beforeCopy = () => errorAnswer(400, 'ValidationException', message);
+    open(ORIGINAL_KEY);
+    await shown();
+    const dialog = await renameConfirmation(false);
+    changeInput(dialog, 'Enter original key to confirm', ORIGINAL_KEY);
+    fireEvent.click(dialogButton(dialog, 'Rename object'));
+    await waitFor(() => expect(dialogAlertContent(dialog)).toHaveTextContent('ValidationException'));
+    expect(dialogAlertContent(dialog)).toHaveTextContent(message);
+    expect(engine.requests('DELETE')).toHaveLength(0);
+    expect(engine.objects.map(({ key }) => key)).toEqual([ORIGINAL_KEY]);
+  });
+
+  it.each([
+    { status: 403, code: 'AccessDeniedException', message: 'This policy denies deleting the original.' },
+    { status: 503, code: 'ServiceUnavailable', message: 'Deletion temporarily unavailable.' },
+    { status: 501, code: 'NotImplemented', message: 'Deleting this source is unavailable.' },
+  ])('reports a $status deletion refusal once and leaves both objects', async ({ status, code, message }) => {
+    engine.remove = () => errorAnswer(status, code, message);
+    const router = open(ORIGINAL_KEY);
+    await shown();
+    const dialog = await renameConfirmation(false);
+    changeInput(dialog, 'Enter original key to confirm', ORIGINAL_KEY);
+    fireEvent.click(dialogButton(dialog, 'Rename object'));
+
+    await waitFor(() => {
+      const heading = flash('warning').findHeader()?.getElement();
+      expect(heading).toHaveTextContent('Object copied, but the original could not be deleted.');
+      expect(heading?.contains(document.activeElement)).toBe(true);
+    });
+    const content = flash('warning').findContent()?.getElement();
+    expect(content).toHaveTextContent(code);
+    expect(content).toHaveTextContent(message);
+    expect(content).toHaveTextContent(`s3://alpha/${DESTINATION_KEY}`);
+    expect(content).toHaveTextContent(`s3://alpha/${ORIGINAL_KEY}`);
+    expectAddress(router, ORIGINAL_KEY);
+    if (status === 501) {
+      expect(content).toHaveTextContent('Not implemented by the emulator');
+      expect(content).toHaveTextContent('The emulator answered 501 Not Implemented for DeleteObject.');
+      expectUnavailableAction('rename');
+    }
+    expect(engine.requests('DELETE').map(({ url }) => url.pathname)).toEqual([`/alpha/${ORIGINAL_KEY}`]);
+    expect(engine.objects.map(({ key }) => key)).toEqual([ORIGINAL_KEY, DESTINATION_KEY]);
+  });
+
+  it('identifies a 501 and keeps the action visible but disabled', async () => {
+    engine.beforeCopy = () => errorAnswer(501, 'NotImplemented', 'Copy is unavailable.');
+    open(ORIGINAL_KEY);
+    await shown();
+    const dialog = await changeDialog('copy');
+    changeInput(dialog, 'Destination key', DESTINATION_KEY);
+    fireEvent.click(dialogButton(dialog, 'Copy object'));
+    await waitFor(() =>
+      expect(flash('info').findHeader()?.getElement()).toHaveTextContent('Not implemented by the emulator'),
+    );
+    const content = flash('info').findContent()?.getElement();
+    expect(content).toHaveTextContent('NotImplemented');
+    expect(content).toHaveTextContent('The emulator answered 501 Not Implemented for CopyObject.');
+    expect(content).toHaveTextContent('Copy is unavailable.');
+
+    expectUnavailableAction('copy');
+    expect(engine.requests('PUT')).toHaveLength(1);
+    expect(engine.requests('DELETE')).toHaveLength(0);
+  });
+
+  it('prefills the property editor and saves added, changed and removed metadata rows', async () => {
+    engine.objects = [{ ...APP_JSON, metadata: { owner: 'ci', remove: 'old' } }];
+    const router = open(ORIGINAL_KEY);
+    await shown();
+    const dialog = await changeDialog('edit');
+    expect(fieldInput(formField(dialog, 'Content type'))).toHaveValue('application/json');
+    const originalValue = fieldInput(metadataField(dialog, 1, 2));
+    expect(originalValue).toHaveValue('ci');
+    expect(fieldInput(metadataField(dialog, 2, 2))).toHaveValue('old');
+    fireEvent.change(originalValue, { target: { value: 'qa' } });
+    const remove = metadataEditor(dialog).findRow(2)?.findRemoveButton();
+    if (remove == null) throw new Error('Expected a remove control on the second metadata row');
+    fireEvent.click(remove.getElement());
+    fireEvent.click(metadataEditor(dialog).findAddButton().getElement());
+    fireEvent.change(fieldInput(metadataField(dialog, 2, 1)), { target: { value: 'stage' } });
+    fireEvent.change(fieldInput(metadataField(dialog, 2, 2)), { target: { value: 'test' } });
+    changeInput(dialog, 'Content type', 'text/plain');
+    fireEvent.click(dialogButton(dialog, 'Save changes'));
+
+    await waitFor(() => expect(overviewValue('Content type')).toBe('text/plain'));
+    expect(tableRows('User-defined metadata')).toEqual([
+      ['owner', 'qa'],
+      ['stage', 'test'],
+    ]);
+    expectAddress(router, ORIGINAL_KEY);
+    expect(flash('success').findContent()?.getElement()).toHaveTextContent('Object properties updated.');
+  });
+
+  it('preserves every returned metadata key when changing only the content type', async () => {
+    const metadata = { ['__proto__']: 'retained', owner: 'ci' };
+    engine.objects = [{ ...APP_JSON, metadata }];
+    open(ORIGINAL_KEY);
+    await shown();
+    expect(tableRows('User-defined metadata')).toEqual(Object.entries(metadata));
+    const dialog = await changeDialog('edit');
+    changeInput(dialog, 'Content type', 'text/plain');
+    fireEvent.click(dialogButton(dialog, 'Save changes'));
+
+    await waitFor(() => expect(overviewValue('Content type')).toBe('text/plain'));
+    expect(tableRows('User-defined metadata')).toEqual(Object.entries(metadata));
+    expect(engine.requests('PUT').map(({ headers }) => headers.get('x-amz-meta-__proto__'))).toEqual(['retained']);
+    expect(flash('success').findContent()?.getElement()).toHaveTextContent('Object properties updated.');
+  });
+
+  it('sends only one write when Save changes is clicked repeatedly', async () => {
+    const copy = delayed<undefined>();
+    engine.beforeCopy = () => copy.promise;
+    open(ORIGINAL_KEY);
+    await shown();
+    const dialog = await changeDialog('edit');
+    changeInput(dialog, 'Content type', 'text/plain');
+    const save = dialogButton(dialog, 'Save changes');
+    fireEvent.click(save);
+    fireEvent.click(save);
+    await waitFor(() => expect(engine.requests('PUT')).toHaveLength(1));
+    await act(async () => copy.finish(undefined));
+    await waitFor(() =>
+      expect(flash('success').findContent()?.getElement()).toHaveTextContent('Object properties updated.'),
+    );
+    expect(engine.requests('PUT')).toHaveLength(1);
+  });
+
+  it('marks both metadata keys that would produce the same header and blocks the save', async () => {
+    open(ORIGINAL_KEY);
+    await shown();
+    const dialog = await changeDialog('edit');
+    const save = dialogButton(dialog, 'Save changes');
+    fireEvent.click(metadataEditor(dialog).findAddButton().getElement());
+    const original = fieldInput(metadataField(dialog, 1, 1));
+    const added = fieldInput(metadataField(dialog, 2, 1));
+
+    for (const key of ['owner', 'OWNER']) {
+      fireEvent.change(added, { target: { value: key } });
+      expect(original).toHaveAccessibleDescription('Use a different metadata key.');
+      expect(added).toHaveAccessibleDescription('Use a different metadata key.');
+      expect(save).toBeDisabled();
+      fireEvent.click(save);
+      expectNoWrites();
+    }
+
+    fireEvent.change(added, { target: { value: 'stage' } });
+    expect(original).not.toHaveAccessibleDescription(/Use a different metadata key/);
+    expect(added).not.toHaveAccessibleDescription(/Use a different metadata key/);
+    expect(save).toBeEnabled();
+  });
+
+  it('keeps an edit refusal in the dialog without a success result', async () => {
+    engine.beforeCopy = () => errorAnswer(404, 'NoSuchKey', 'The specified key does not exist.');
+    open(ORIGINAL_KEY);
+    await shown();
+    const trigger = action('Actions');
+    trigger.focus();
+    const dialog = await changeDialog('edit');
+    changeInput(dialog, 'Content type', 'text/plain');
+    fireEvent.click(dialogButton(dialog, 'Save changes'));
+    await waitFor(() => expect(dialogAlertContent(dialog)).toHaveTextContent('NoSuchKey'));
+    expect(dialogAlertContent(dialog)).toHaveTextContent('The specified key does not exist.');
+    expect(dialogBody(dialog).contains(document.activeElement)).toBe(true);
+    expect(document.activeElement).toHaveTextContent('The specified key does not exist.');
+    expect(fieldInput(formField(dialog, 'Content type'))).toHaveValue('text/plain');
+    expect(flashes('success')).toHaveLength(0);
+    fireEvent.keyDown(document.activeElement ?? dialogBody(dialog), { key: 'Escape', code: 'Escape', keyCode: 27 });
+    await waitFor(() => expect(modal()).toBeNull());
+    expect(trigger).toHaveFocus();
+  });
+
+  it('aborts an old target rename and suppresses its delete, readback, navigation and flash', async () => {
+    const copy = delayed<Answer>();
+    engine.beforeCopy = () => copy.promise;
+    const router = open(ORIGINAL_KEY);
+    await shown();
+    const dialog = await renameConfirmation(false);
+    changeInput(dialog, 'Enter original key to confirm', ORIGINAL_KEY);
+    fireEvent.click(dialogButton(dialog, 'Rename object'));
+    await waitFor(() => expect(engine.requests('PUT')).toHaveLength(1));
+    const [write] = engine.requests('PUT');
+    if (write === undefined) throw new Error('Expected a copy request');
+
+    await act(async () => connection.switchTarget());
+    expect(write.signal.aborted).toBe(true);
+    await waitFor(() => expect(previewText()).toHaveTextContent('"name":"app"'));
+    const observed = engine.seen.length;
+    await act(async () => copy.finish(ok('<CopyObjectResult><ETag>"old-target"</ETag></CopyObjectResult>')));
+
+    expect(engine.seen).toHaveLength(observed);
+    expect(engine.requests('DELETE')).toHaveLength(0);
+    expectAddress(router, ORIGINAL_KEY);
+    expect(flashes('success')).toHaveLength(0);
+  });
+
+  it.each(['tags', 'preview'])('keeps the cross-bucket copy result when %s returns first', async (first) => {
+    engine.buckets.push('beta');
+    const tags = delayed<Answer>();
+    const preview = delayed<Answer>();
+    engine.tagging = (key) => (key === DESTINATION_KEY ? tags.promise : undefined);
+    engine.get = (key) => (key === DESTINATION_KEY ? preview.promise : undefined);
+    const router = open(ORIGINAL_KEY);
+    await shown();
+    const dialog = await changeDialog('copy');
+    changeInput(dialog, 'Destination bucket', 'beta');
+    changeInput(dialog, 'Destination key', DESTINATION_KEY);
+    fireEvent.click(dialogButton(dialog, 'Copy object'));
+    await waitFor(() => expectAddress(router, DESTINATION_KEY, 'beta'));
+    await waitFor(() => expect(overviewValue('Content type')).toBe('application/json'));
+
+    const finishTags = async () => {
+      await act(async () =>
+        tags.finish(ok('<Tagging><TagSet><Tag><Key>phase</Key><Value>copy</Value></Tag></TagSet></Tagging>')),
+      );
+      await waitFor(() => expect(tableRows('Tags')).toEqual([['phase', 'copy']]));
+    };
+    const finishPreview = async () => {
+      await act(async () => preview.finish({ status: 200, body: APP_JSON.body }));
+      await waitFor(() => expect(previewText()).toHaveTextContent('"name":"app"'));
+    };
+
+    await (first === 'tags' ? finishTags() : finishPreview());
+    expect(flash('success').findHeader()?.getElement()).toHaveTextContent('Object copied.');
+    await (first === 'tags' ? finishPreview() : finishTags());
+    expectAddress(router, DESTINATION_KEY, 'beta');
+    expect(flash('success').findHeader()?.getElement()).toHaveTextContent('Object copied.');
+    const header = createWrapper(document.body)
+      .findAllHeaders()
+      .find((found) => found.findHeadingText().getElement().closest('h1') !== null);
+    expect(header?.findHeadingText().getElement()).toHaveTextContent('copy app.json');
+  });
+
+  it('keeps the rename result when the original recheck responds missing before the destination loads', async () => {
+    const destination = delayed<Answer>();
+    const destinationRoute = delayed<null>();
+    engine.head = (key) =>
+      key === DESTINATION_KEY && engine.objects.some((object) => object.key === key) ? destination.promise : undefined;
+    // Keep the original page mounted while the route transition waits, so its actual recheck can settle.
+    const router = open(ORIGINAL_KEY, 'alpha', ({ request }) =>
+      new URL(request.url).searchParams.get('key') === DESTINATION_KEY ? destinationRoute.promise : null,
+    );
+    await shown();
+    const dialog = await renameConfirmation(false);
+    changeInput(dialog, 'Enter original key to confirm', ORIGINAL_KEY);
+    fireEvent.click(dialogButton(dialog, 'Rename object'));
+    await findOnPage(`No object ${ORIGINAL_KEY}`);
+    expectAddress(router, ORIGINAL_KEY);
+    await act(async () => destinationRoute.finish(null));
+    await waitFor(() => expectAddress(router, DESTINATION_KEY));
+    await waitFor(() =>
+      expect(
+        engine.requests('HEAD', ({ url }) => decodeURIComponent(url.pathname) === `/alpha/${DESTINATION_KEY}`),
+      ).toHaveLength(2),
+    );
+    expect(flash('success').findHeader()?.getElement()).toHaveTextContent('Object renamed.');
+    await act(async () =>
+      destination.finish({
+        status: 200,
+        headers: { 'content-type': 'application/json', 'content-length': String(APP_JSON.body.length) },
+      }),
+    );
+    await waitFor(() => expect(previewText()).toHaveTextContent('"name":"app"'));
+    expect(flash('success').findHeader()?.getElement()).toHaveTextContent('Object renamed.');
+  });
+
+  it.each(['tags', 'preview'])(
+    'keeps saved properties and success when the refreshed %s returns first',
+    async (first) => {
+      const tags = delayed<Answer>();
+      const preview = delayed<Answer>();
+      open(ORIGINAL_KEY);
+      await shown();
+      await waitFor(() => expect(previewText()).toHaveTextContent('"name":"app"'));
+      await waitFor(() => expect(tableRows('Tags')).toEqual([['env', 'dev']]));
+      engine.tagging = () => tags.promise;
+      engine.get = () => preview.promise;
+      const dialog = await changeDialog('edit');
+      changeInput(dialog, 'Content type', 'text/plain');
+      fireEvent.change(fieldInput(metadataField(dialog, 1, 2)), { target: { value: 'qa' } });
+      const beforeSave = engine.seen.length;
+      fireEvent.click(dialogButton(dialog, 'Save changes'));
+
+      function assertSaved() {
+        expect(overviewValue('Content type')).toBe('text/plain');
+        expect(tableRows('User-defined metadata')).toEqual([['owner', 'qa']]);
+        expect(flash('success').findContent()?.getElement()).toHaveTextContent('Object properties updated.');
+      }
+      await waitFor(assertSaved);
+      await waitFor(() => {
+        const freshReads = engine.seen
+          .slice(beforeSave)
+          .filter(({ method, url }) => method === 'GET' && url.pathname === `/alpha/${ORIGINAL_KEY}`);
+        expect(freshReads.some(({ url }) => url.searchParams.has('tagging'))).toBe(true);
+        expect(freshReads.some((request) => isGetObject(request) && request.range !== null)).toBe(true);
+      });
+
+      const finishTags = async () => {
+        await act(async () =>
+          tags.finish(ok('<Tagging><TagSet><Tag><Key>env</Key><Value>qa</Value></Tag></TagSet></Tagging>')),
+        );
+        await waitFor(() => expect(tableRows('Tags')).toEqual([['env', 'qa']]));
+      };
+      const finishPreview = async () => {
+        await act(async () => preview.finish({ status: 200, body: encoder.encode('{"name":"new","debug":true}') }));
+        await waitFor(() => expect(previewText()).toHaveTextContent('"name":"new"'));
+      };
+
+      await (first === 'tags' ? finishTags() : finishPreview());
+      assertSaved();
+      await (first === 'tags' ? finishPreview() : finishTags());
+      assertSaved();
+    },
+  );
 });

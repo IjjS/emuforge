@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: plan
 Issue-Key: studio|s3|object-copy-rename
-Issue-Check-Ids:
+Issue-Check-Ids: studio.s3-copy-object-to-another-bucket studio.s3-rename-object-to-another-key studio.s3-edit-object-properties-in-place studio.s3-copy-object-bucket-limit studio.s3-edit-object-after-source-removed
 Issue-Commit: 5dca87cc1f4351f4e61bff199ef41f16ef2210ef
 
 # Build S3 task 7: copy, rename or retype an object

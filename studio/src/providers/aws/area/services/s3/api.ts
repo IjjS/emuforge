@@ -1,9 +1,11 @@
 import {
   AbortMultipartUploadCommand,
   CompleteMultipartUploadCommand,
+  CopyObjectCommand,
   CreateBucketCommand,
   CreateMultipartUploadCommand,
   DeleteBucketCommand,
+  DeleteObjectCommand,
   DeleteObjectsCommand,
   GetBucketEncryptionCommand,
   GetBucketNotificationConfigurationCommand,
@@ -22,6 +24,7 @@ import {
   PutObjectCommand,
   PutPublicAccessBlockCommand,
   UploadPartCommand,
+  type CopyObjectCommandInput,
   type NotificationConfiguration,
   type HeadObjectCommandOutput,
   type ListBucketsCommandOutput,
@@ -71,11 +74,11 @@ export interface BucketPageRequest {
 export const LIST_BUCKETS = 'ListBuckets';
 
 const clients = new Map<string, S3Client>();
-const notificationWriteClients = new Map<string, S3Client>();
+const singleAttemptClients = new Map<string, S3Client>();
 
 /** Cache the regular client and the single-attempt client for each engine separately. */
 function s3Client(endpoint: string, singleAttempt = false): S3Client {
-  const cache = singleAttempt ? notificationWriteClients : clients;
+  const cache = singleAttempt ? singleAttemptClients : clients;
   let client = cache.get(endpoint);
   if (client === undefined) {
     client = createS3Client({ endpoint, singleAttempt });
@@ -169,6 +172,8 @@ export const OPERATIONS = {
   putBucketVersioning: 'PutBucketVersioning',
   putBucketEncryption: 'PutBucketEncryption',
   headObject: 'HeadObject',
+  copyObject: 'CopyObject',
+  deleteObject: 'DeleteObject',
   getObjectTagging: 'GetObjectTagging',
   getObject: 'GetObject',
   putObject: 'PutObject',
@@ -733,6 +738,29 @@ export interface ObjectHead {
   system: MetadataEntry[];
   /** The user metadata (`x-amz-meta-*`), its key without the prefix, in the answer's order. */
   user: MetadataEntry[];
+  /** Headers to keep when replacing the object's metadata in place. */
+  copyHeaders?: CopyHeaders;
+}
+
+type CopyHeaders = Pick<
+  CopyObjectCommandInput,
+  'CacheControl' | 'ContentDisposition' | 'ContentEncoding' | 'ContentLanguage' | 'Expires' | 'WebsiteRedirectLocation'
+>;
+
+export interface ObjectLocation {
+  bucket: string;
+  key: string;
+}
+
+export interface ObjectPropertyEdit {
+  contentType: string;
+  metadata: Record<string, string>;
+  headers: CopyHeaders | undefined;
+}
+
+export interface ObjectCopyOptions {
+  edit?: ObjectPropertyEdit;
+  onlyIfMissing?: boolean;
 }
 
 /** The code with which a call on a key says the emulator holds no object of that key. */
@@ -744,8 +772,8 @@ function isNotFound(error: unknown): boolean {
   return code !== undefined && (code === 'NotFound' || code === NO_SUCH_KEY_CODE || /^HTTP 404( |$)/.test(code));
 }
 
-function toHead(key: string, output: HeadObjectCommandOutput): ObjectHead {
-  const head: ObjectHead = { key, system: [], user: [] };
+function toHead(key: string, output: HeadObjectCommandOutput, user: MetadataEntry[]): ObjectHead {
+  const head: ObjectHead = { key, system: [], user };
   const size = number(output.ContentLength);
   const contentType = text(output.ContentType);
   const etag = text(output.ETag);
@@ -759,21 +787,75 @@ function toHead(key: string, output: HeadObjectCommandOutput): ObjectHead {
   if (etag !== undefined) head.etag = etag;
   if (storageClass !== undefined) head.storageClass = storageClass;
   if (versionId !== undefined) head.versionId = versionId;
-  const expires =
-    text(output.ExpiresString) ??
-    (output.Expires instanceof Date && !Number.isNaN(output.Expires.getTime())
-      ? output.Expires.toUTCString()
-      : undefined);
+  const expiresDate =
+    output.Expires instanceof Date && !Number.isNaN(output.Expires.getTime()) ? output.Expires : undefined;
+  const expires = text(output.ExpiresString) ?? expiresDate?.toUTCString();
+  const copyHeaders: CopyHeaders = {
+    CacheControl: text(output.CacheControl),
+    ContentEncoding: text(output.ContentEncoding),
+    ContentDisposition: text(output.ContentDisposition),
+    ContentLanguage: text(output.ContentLanguage),
+    Expires: expiresDate,
+    WebsiteRedirectLocation: text(output.WebsiteRedirectLocation),
+  };
+  if (Object.values(copyHeaders).some((value) => value !== undefined)) head.copyHeaders = copyHeaders;
   const system: [string, string | undefined][] = [
     ['Content-Type', contentType],
-    ['Cache-Control', text(output.CacheControl)],
-    ['Content-Encoding', text(output.ContentEncoding)],
-    ['Content-Disposition', text(output.ContentDisposition)],
+    ['Cache-Control', copyHeaders.CacheControl],
+    ['Content-Encoding', copyHeaders.ContentEncoding],
+    ['Content-Disposition', copyHeaders.ContentDisposition],
     ['Expires', expires],
   ];
   head.system = system.flatMap(([entry, value]) => (value === undefined ? [] : [{ key: entry, value }]));
-  head.user = Object.entries(output.Metadata ?? {}).map(([entry, value]) => ({ key: entry, value }));
   return head;
+}
+
+/** Copies an object using S3's defaults, or replaces its content type and metadata in place. */
+export async function copyObject(
+  endpoint: string,
+  source: ObjectLocation,
+  destination: ObjectLocation,
+  signal: AbortSignal,
+  { edit, onlyIfMissing = false }: ObjectCopyOptions = {},
+): Promise<void> {
+  // Separate the bucket from the key before encoding. A literal percent or question mark belongs to the key.
+  const copySource = `${source.bucket}/${source.key.split('/').map(encodeURIComponent).join('/')}`;
+  await sendRequest(
+    OPERATIONS.copyObject,
+    (abortSignal) =>
+      s3Client(endpoint).send(
+        new CopyObjectCommand({
+          Bucket: destination.bucket,
+          Key: destination.key,
+          CopySource: copySource,
+          ...(onlyIfMissing && { IfNoneMatch: '*' }),
+          ...(edit === undefined
+            ? {}
+            : {
+                ...edit.headers,
+                MetadataDirective: 'REPLACE',
+                ContentType: edit.contentType,
+                Metadata: edit.metadata,
+              }),
+        }),
+        { abortSignal },
+      ),
+    signal,
+  );
+}
+
+/** Removes the original key after a rename's copy succeeds. */
+export async function deleteObject(
+  endpoint: string,
+  { bucket, key }: ObjectLocation,
+  signal: AbortSignal,
+): Promise<void> {
+  await sendRequest(
+    OPERATIONS.deleteObject,
+    (abortSignal) =>
+      s3Client(endpoint, true).send(new DeleteObjectCommand({ Bucket: bucket, Key: key }), { abortSignal }),
+    signal,
+  );
 }
 
 /**
@@ -786,13 +868,28 @@ export async function headObject(
   key: string,
   signal: AbortSignal,
 ): Promise<ObjectHead | NotFound> {
+  let user: MetadataEntry[] = [];
+  const command = new HeadObjectCommand({ Bucket: bucket, Key: key });
+  command.middlewareStack.add(
+    (next) => async (args) => {
+      const result = await next(args);
+      const { headers } = result.response as { headers: Record<string, string> };
+      const prefix = 'x-amz-meta-';
+      // Smithy's header-map decoder assigns into a plain object, which drops the __proto__ suffix.
+      user = Object.entries(headers).flatMap(([name, value]) =>
+        name.startsWith(prefix) ? [{ key: name.slice(prefix.length), value }] : [],
+      );
+      return result;
+    },
+    { name: 'readHeadObjectUserMetadata', step: 'deserialize', priority: 'high' },
+  );
   try {
     const output = await sendRequest(
       OPERATIONS.headObject,
-      (abortSignal) => s3Client(endpoint).send(new HeadObjectCommand({ Bucket: bucket, Key: key }), { abortSignal }),
+      (abortSignal) => s3Client(endpoint).send(command, { abortSignal }),
       signal,
     );
-    return toHead(key, output);
+    return toHead(key, output, user);
   } catch (error) {
     if (isNotFound(error)) {
       return NOT_FOUND;

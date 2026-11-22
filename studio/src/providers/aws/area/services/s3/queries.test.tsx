@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { engineEndpoint } from '../../../../../lib/aws/client-factory';
-import { NO_SUCH_BUCKET } from './api';
+import { NO_SUCH_BUCKET, NO_SUCH_KEY } from './api';
 import { initialBucketForm } from './bucket-form';
 import {
   FILTER_DELAY_MS,
@@ -15,6 +15,8 @@ import {
   useCreateBucket,
   useDeleteBucket,
   useEmptyingOperations,
+  useObjectChanges,
+  useObjectHead,
   useObjectListing,
   type BucketListingOptions,
   type ObjectListingOptions,
@@ -35,6 +37,7 @@ interface SentRequest {
 
 class FakeEngine {
   readonly sent: SentRequest[] = [];
+  answerObjectRequest?: (request: Request, url: URL) => Response;
 
   readonly fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const request = input instanceof Request ? input : new Request(String(input), init);
@@ -42,6 +45,7 @@ class FakeEngine {
     if (url.pathname === '/__emuforge/session') {
       return Promise.resolve(new Response(JSON.stringify({ token: 'emuforge-test-token-56' }), { status: 200 }));
     }
+    if (this.answerObjectRequest !== undefined) return Promise.resolve(this.answerObjectRequest(request, url));
     return new Promise((resolve) => {
       this.sent.push({
         url,
@@ -806,6 +810,178 @@ describe('what an action makes stale', () => {
     await afterAction(
       ({ remove }) => remove('b', signal()),
       answerFrom(5, [(sent) => sent.respond(409, errorBody('BucketNotEmpty', 'not empty'))]),
+    );
+  });
+});
+
+describe('readback after object changes', () => {
+  const original = { bucket: 'alpha', key: 'original' };
+  const destination = { bucket: 'alpha', key: 'copy' };
+  const addresses = {
+    original: '/alpha/original',
+  };
+
+  function useObjectReads(copyBucket: string) {
+    return {
+      original: useObjectHead(endpoint, original.bucket, original.key),
+      destination: useObjectHead(endpoint, copyBucket, destination.key),
+      originalBucket: useObjectListing({ endpoint, bucket: original.bucket, prefix: '', filter: '', pageSize: 100 }),
+      destinationBucket: useObjectListing({ endpoint, bucket: copyBucket, prefix: '', filter: '', pageSize: 100 }),
+    };
+  }
+
+  beforeEach(() => {
+    const stored = new Map<string, Record<string, string>>([
+      [addresses.original, { 'content-type': 'text/plain', 'x-amz-meta-phase': 'before' }],
+    ]);
+    engine.answerObjectRequest = (request, url) => {
+      const address = decodeURIComponent(url.pathname);
+      switch (request.method) {
+        case 'HEAD': {
+          const headers = stored.get(address);
+          return headers === undefined ? new Response(null, { status: 404 }) : new Response(null, { headers });
+        }
+        case 'PUT': {
+          const source = stored.get('/' + decodeURIComponent(request.headers.get('x-amz-copy-source') ?? ''));
+          if (source === undefined) return new Response(errorBody('NoSuchKey', 'Missing source'), { status: 404 });
+          const headers =
+            request.headers.get('x-amz-metadata-directive') === 'REPLACE'
+              ? Object.fromEntries(
+                  [...request.headers].filter(([name]) => name === 'content-type' || name.startsWith('x-amz-meta-')),
+                )
+              : source;
+          stored.set(address, headers);
+          return new Response('<CopyObjectResult><ETag>"copy"</ETag></CopyObjectResult>');
+        }
+        case 'DELETE':
+          if (denyDelete) {
+            return new Response(errorBody('AccessDenied', 'Deletion was refused'), { status: 403 });
+          }
+          stored.delete(address);
+          return new Response(null, { status: 204 });
+        default: {
+          if (url.searchParams.get('x-id') === 'ListBuckets') {
+            return new Response(listAnswer([url.searchParams.get('prefix') ?? '']));
+          }
+          const bucketPrefix = address.endsWith('/') ? address : address + '/';
+          return new Response(
+            objectsAnswer(
+              '',
+              [...stored.keys()]
+                .filter((key) => key.startsWith(bucketPrefix))
+                .map((key) => key.slice(bucketPrefix.length)),
+            ),
+          );
+        }
+      }
+    };
+    denyDelete = false;
+  });
+  let denyDelete: boolean;
+
+  it.each([
+    {
+      action: 'copy across buckets',
+      bucket: 'beta',
+      deleteSource: false,
+      denied: false,
+      originalKeys: ['original'],
+      destinationKeys: ['copy'],
+    },
+    {
+      action: 'rename',
+      bucket: 'alpha',
+      deleteSource: true,
+      denied: false,
+      originalKeys: ['copy'],
+      destinationKeys: ['copy'],
+    },
+    {
+      action: 'rename with a refused deletion',
+      bucket: 'alpha',
+      deleteSource: true,
+      denied: true,
+      originalKeys: ['original', 'copy'],
+      destinationKeys: ['original', 'copy'],
+    },
+  ])(
+    'reads the actual details and listings again after $action',
+    async ({ bucket, deleteSource, denied, originalKeys, destinationKeys }) => {
+      denyDelete = denied;
+      const reads = renderHook(() => useObjectReads(bucket), { wrapper });
+      const writing = renderHook(() => useObjectChanges(endpoint), { wrapper });
+      await waitFor(() => {
+        expect(reads.result.current.original.value).toMatchObject({ key: 'original' });
+        expect(reads.result.current.destination.value).toBe(NO_SUCH_KEY);
+        expect(keysOf(reads.result.current.originalBucket.page)).toEqual(['original']);
+        expect(keysOf(reads.result.current.destinationBucket.page)).toEqual(bucket === 'alpha' ? ['original'] : []);
+      });
+
+      const changes = writing.result.current;
+      if (changes === undefined) throw new Error('Expected object changes for the engine');
+      const signal = new AbortController().signal;
+      await act(async () => {
+        await changes.copy(original, { ...destination, bucket }, signal);
+        if (deleteSource) {
+          const deleting = changes.removeSource(original, signal);
+          if (denied) await expect(deleting).rejects.toMatchObject({ failure: { kind: 'access-denied' } });
+          else await deleting;
+        }
+      });
+      expect(
+        s3Queries().some(
+          (query) => query.queryKey.slice(2, 4).join('/') === `objects/${bucket}` && query.state.isInvalidated,
+        ),
+      ).toBe(true);
+      expect(
+        s3Queries().some(
+          (query) =>
+            query.queryKey.slice(2, 7).join('/') === `bucket/${bucket}/object/copy/head` && query.state.isInvalidated,
+        ),
+      ).toBe(true);
+      reads.unmount();
+
+      const reopened = renderHook(() => useObjectReads(bucket), { wrapper });
+      await waitFor(() => {
+        if (deleteSource && !denied) expect(reopened.result.current.original.value).toBe(NO_SUCH_KEY);
+        else expect(reopened.result.current.original.value).toMatchObject({ key: 'original' });
+        expect(reopened.result.current.destination.value).toMatchObject({
+          key: 'copy',
+          contentType: 'text/plain',
+          user: [{ key: 'phase', value: 'before' }],
+        });
+        expect(keysOf(reopened.result.current.originalBucket.page)).toEqual(originalKeys);
+        expect(keysOf(reopened.result.current.destinationBucket.page)).toEqual(destinationKeys);
+      });
+    },
+  );
+
+  it('reopens the edited object with its stored content type and metadata', async () => {
+    const read = renderHook(() => useObjectHead(endpoint, original.bucket, original.key), { wrapper });
+    const writing = renderHook(() => useObjectChanges(endpoint), { wrapper });
+    await waitFor(() =>
+      expect(read.result.current.value).toMatchObject({
+        contentType: 'text/plain',
+        user: [{ key: 'phase', value: 'before' }],
+      }),
+    );
+    const changes = writing.result.current;
+    if (changes === undefined) throw new Error('Expected object changes for the engine');
+    await act(() =>
+      changes.copy(original, original, new AbortController().signal, {
+        edit: { contentType: 'application/json', metadata: { phase: 'after' }, headers: undefined },
+      }),
+    );
+    expect(s3Queries().some((query) => query.state.isInvalidated)).toBe(true);
+    read.unmount();
+
+    const reopened = renderHook(() => useObjectHead(endpoint, original.bucket, original.key), { wrapper });
+    await waitFor(() =>
+      expect(reopened.result.current.value).toMatchObject({
+        key: original.key,
+        contentType: 'application/json',
+        user: [{ key: 'phase', value: 'after' }],
+      }),
     );
   });
 });
