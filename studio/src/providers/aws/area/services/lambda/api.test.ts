@@ -1092,21 +1092,24 @@ function base64(text: string): string {
 }
 
 describe('invoking a function', () => {
-  it('sends one Invoke to the function with RequestResponse, LogType Tail and the event text’s bytes unchanged', async () => {
-    engine.answer = () => invokeAnswer('{}');
-    const event = '{ "z": 1,\n\t"a" : [ 2 , "é" ] }  ';
+  it.each([undefined, '2', 'live'])(
+    'sends Invoke with qualifier %s and preserves the synchronous tail request',
+    async (qualifier) => {
+      engine.answer = () => invokeAnswer('{}');
+      const event = '{ "z": 1,\n\t"a" : [ 2 , "é" ] }  ';
 
-    await invoke(endpoint, 'orders', event, signal());
+      await invoke(endpoint, 'orders', event, signal(), qualifier);
 
-    expect(engine.operations()).toEqual(['Invoke']);
-    const [sent] = engine.sent;
-    expect(sent?.method).toBe('POST');
-    expect(sent?.url.pathname).toBe('/2015-03-31/functions/orders/invocations');
-    expect(sent?.headers.get('x-amz-invocation-type')).toBe('RequestResponse');
-    expect(sent?.headers.get('x-amz-log-type')).toBe('Tail');
-    expect(sent?.url.searchParams.has('Qualifier')).toBe(false);
-    expect(sent?.body).toBe(event);
-  });
+      expect(engine.operations()).toEqual(['Invoke']);
+      const [sent] = engine.sent;
+      expect(sent?.method).toBe('POST');
+      expect(sent?.url.pathname).toBe('/2015-03-31/functions/orders/invocations');
+      expect(sent?.headers.get('x-amz-invocation-type')).toBe('RequestResponse');
+      expect(sent?.headers.get('x-amz-log-type')).toBe('Tail');
+      expect(sent?.url.searchParams.getAll('Qualifier')).toEqual(qualifier === undefined ? [] : [qualifier]);
+      expect(sent?.body).toBe(event);
+    },
+  );
 
   it('gives the payload as text and the log decoded from base64 as UTF-8, a multi-byte character kept', async () => {
     const log = 'START RequestId: 1\necho-line ünïcødé ✓ 🐍\nEND RequestId: 1\nREPORT RequestId: 1\n';

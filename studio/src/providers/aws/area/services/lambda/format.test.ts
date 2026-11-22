@@ -97,6 +97,7 @@ describe('the address of a function’s tab', () => {
   it('is the function’s path without a query for "Test", with ?tab=code for "Code", ?tab=configuration for "Configuration"', () => {
     expect(functionTabHref('orders', 'test')).toBe('/aws/lambda/functions/function/orders');
     expect(functionTabHref('orders', 'code')).toBe('/aws/lambda/functions/function/orders?tab=code');
+    expect(functionTabHref('orders', 'versions')).toBe('/aws/lambda/functions/function/orders?tab=versions');
     expect(functionTabHref('orders', 'configuration')).toBe('/aws/lambda/functions/function/orders?tab=configuration');
   });
 
@@ -108,6 +109,7 @@ describe('the address of a function’s tab', () => {
   it('is named by ?tab=: code and configuration their tabs, none or any other value "Test"', () => {
     expect(tabOf('code')).toBe('code');
     expect(tabOf('configuration')).toBe('configuration');
+    expect(tabOf('versions')).toBe('versions');
     expect(tabOf(null)).toBe('test');
     expect(tabOf('')).toBe('test');
     expect(tabOf('nonsense')).toBe('test');

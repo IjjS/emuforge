@@ -1,17 +1,22 @@
+import Flashbar from '@cloudscape-design/components/flashbar';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { onlineManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState, useSyncExternalStore } from 'react';
-import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
+import { createMemoryRouter, MemoryRouter, RouterProvider, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { engineEndpoint } from '../../../../../../lib/aws/client-factory';
 import type { CheckResult } from '../../../../../../lib/engine/engine-client';
+import { AreaRootContext } from '../../../area-root';
 import type { AreaConnection } from '../../../components/emulator-line';
+import { PageFlashContext, type FlashResult, type PageFlash } from '../../../components/page-flash';
 import AwsArea from '../../../index';
 import type { CodeTabProps } from '../components/code-tab';
 import type { ConfigurationTabProps } from '../components/configuration-tab';
 import type { TestTabProps } from '../components/test-tab';
+import type { FunctionTab } from '../format';
+import { FunctionPage } from './function-page';
 
 // A function's page rendered inside the area's layout, as Studio's frame renders the area, against a fake engine
 // behind the page's `fetch` (test-criteria.md, issue 84, "Unit — services/lambda/pages/function-page.test.tsx";
@@ -25,35 +30,43 @@ import type { TestTabProps } from '../components/test-tab';
 /** What each tab was handed at its last render. */
 const handed = vi.hoisted(() => ({
   test: undefined as TestTabProps | undefined,
+  renderTest: false,
   code: undefined as CodeTabProps | undefined,
   configuration: undefined as ConfigurationTabProps | undefined,
 }));
 
-vi.mock('../components/test-tab', () => ({
-  TestTab: (props: TestTabProps) => {
-    handed.test = props;
-    return (
-      <div data-testid="stand-in-test">
-        <button
-          type="button"
-          onClick={() => {
-            props.onEventTextChange('{"tag": "kept"}');
-          }}
-        >
-          Stand-in type event
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            props.invoke.mutate(props.eventText);
-          }}
-        >
-          Stand-in invoke
-        </button>
-      </div>
-    );
-  },
-}));
+vi.mock('../components/test-tab', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../components/test-tab')>();
+  return {
+    ...actual,
+    TestTab: (props: TestTabProps) => {
+      handed.test = props;
+      if (handed.renderTest) {
+        return <actual.TestTab {...props} />;
+      }
+      return (
+        <div data-testid="stand-in-test">
+          <button
+            type="button"
+            onClick={() => {
+              props.onEventTextChange('{"tag": "kept"}');
+            }}
+          >
+            Stand-in type event
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              props.invoke.mutate(props.eventText);
+            }}
+          >
+            Stand-in invoke
+          </button>
+        </div>
+      );
+    },
+  };
+});
 
 vi.mock('../components/code-tab', () => ({
   CodeTab: (props: CodeTabProps) => {
@@ -115,6 +128,8 @@ interface MonitoringRequest {
 
 const FUNCTION_PATH = /^\/2015-03-31\/functions\/([^/]+)$/;
 const URL_PATH = /^\/2021-10-31\/functions\/([^/]+)\/url$/;
+const RELEASE_PATH = /^\/2015-03-31\/functions\/([^/]+)\/(versions|aliases)$/;
+const ALIAS_PATH = /^\/2015-03-31\/functions\/([^/]+)\/aliases\/([^/]+)$/;
 const INVOKE_PATH = /^\/2015-03-31\/functions\/([^/]+)\/invocations$/;
 
 function json(status: number, body: unknown): Answer {
@@ -138,10 +153,21 @@ class FakeEngine {
   /** Every AWS request, as sent. */
   readonly aws: SentRequest[] = [];
   readonly monitoring: MonitoringRequest[] = [];
+  readonly invocationBodies: string[] = [];
+  sessionRequests = 0;
+  answerSession: () => Answer | Promise<Answer> = () => json(200, { token: 'emuforge-test-token-84' });
   answerMonitoring: (request: MonitoringRequest) => Answer | Promise<Answer> = ({ operation }) =>
     json(200, operation === 'FilterLogEvents' ? { events: [] } : { Datapoints: [] });
   /** The answer to `GetFunction`; by default the emulator's. */
   answerFunction: (request: SentRequest) => EngineAnswer = (request) => this.emulator(request);
+  answerInvoke: (request: SentRequest) => EngineAnswer = (request) => this.emulator(request);
+  answerDelete: (request: SentRequest) => Answer | Promise<Answer> = (request) => this.emulator(request);
+  answerRelease: (request: SentRequest) => Answer | Promise<Answer> = ({ method, url }) => {
+    if (method === 'POST') {
+      return json(201, { Version: '1' });
+    }
+    return json(200, url.pathname.endsWith('/versions') ? { Versions: [{ Version: '$LATEST' }] } : { Aliases: [] });
+  };
   /** The invocations answered so far. */
   invocations = 0;
   /** The answer to `GetFunctionUrlConfig`; by default the emulator's. */
@@ -221,7 +247,9 @@ class FakeEngine {
     const request = input instanceof Request ? input : new Request(String(input), init);
     const url = new URL(request.url);
     if (url.pathname === '/__emuforge/session') {
-      return new Response(JSON.stringify({ token: 'emuforge-test-token-84' }), { status: 200 });
+      this.sessionRequests += 1;
+      const answer = await this.answerSession();
+      return new Response(answer.body, { status: answer.status, headers: answer.headers ?? {} });
     }
     const operation = request.headers.get('x-amz-target')?.split('.').at(-1);
     if (operation === 'FilterLogEvents' || operation === 'GetMetricStatistics') {
@@ -233,6 +261,25 @@ class FakeEngine {
     }
     const sent = { method: request.method, url };
     this.aws.push(sent);
+    if (RELEASE_PATH.test(url.pathname) || ALIAS_PATH.test(url.pathname)) {
+      const answer = await this.answerRelease(sent);
+      return new Response(answer.body, { status: answer.status, headers: answer.headers ?? {} });
+    }
+    if (INVOKE_PATH.test(url.pathname)) {
+      this.invocationBodies.push(await request.text());
+      const answer = await this.answerInvoke(sent);
+      if (answer === 'network-error') {
+        throw new TypeError('Failed to fetch');
+      }
+      return new Response(answer.body, { status: answer.status, headers: answer.headers ?? {} });
+    }
+    if (sent.method === 'DELETE' && FUNCTION_PATH.test(url.pathname)) {
+      const answer = await this.answerDelete(sent);
+      return new Response(answer.status === 204 ? null : answer.body, {
+        status: answer.status,
+        headers: answer.headers ?? {},
+      });
+    }
     const answer = await Promise.race([
       Promise.resolve(URL_PATH.test(url.pathname) ? this.answerUrl(sent) : this.answerFunction(sent)),
       new Promise<never>((_, reject) => {
@@ -347,6 +394,7 @@ function matchMedia(query: string): MediaQueryList {
 
 beforeEach(() => {
   handed.test = undefined;
+  handed.renderTest = false;
   handed.code = undefined;
   handed.configuration = undefined;
   engine = new FakeEngine();
@@ -381,7 +429,7 @@ function open(path: string) {
       <RouterProvider router={router} />
     </QueryClientProvider>,
   );
-  return { ...result, router };
+  return { ...result, router, client };
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -396,25 +444,27 @@ function headingText(): string {
   return norm(screen.getByRole('heading', { level: 1 }).textContent);
 }
 
-/** The key-value pairs of the section titled `title`, as label and value text, in order. */
-function section(title: string): HTMLElement {
-  const heading = screen.getByRole('heading', { level: 2, name: title });
-  const container = PAGE.findAllContainers().find((found) => found.getElement().contains(heading));
-  expect(container).toBeDefined();
-  return (container as NonNullable<typeof container>).getElement();
+function overview() {
+  const container = PAGE.findAllContainers()[0];
+  if (!container) {
+    throw new Error('Expected the function overview container');
+  }
+  expect(container.findHeader()?.findHeader()?.findHeadingText().getElement()).toHaveTextContent('Function overview');
+  return container;
 }
 
-function pairs(title: string): [string, string][] {
-  const found = createWrapper(section(title)).findKeyValuePairs();
-  expect(found).not.toBeNull();
+/** The overview's key-value pairs as label and value text, in order. */
+function pairs(): [string, string][] {
+  const found = overview().findContent().findKeyValuePairs();
+  expect(found).toBeTruthy();
   return (found?.findItems() ?? []).map((item) => [
     norm(item.findLabel()?.getElement().textContent),
     norm(item.findValue()?.getElement().textContent),
   ]);
 }
 
-function value(title: string, label: string): string | undefined {
-  return pairs(title).find(([key]) => key === label)?.[1];
+function value(label: string): string | undefined {
+  return pairs().find(([key]) => key === label)?.[1];
 }
 
 function tabs() {
@@ -429,21 +479,31 @@ function activeTab(): string {
   return norm(tabs()?.findActiveTab()?.getElement().textContent);
 }
 
-function tabLink(label: string): HTMLElement {
-  const found = (tabs()?.findTabLinks() ?? []).find((tab) => norm(tab.getElement().textContent) === label);
-  expect(found).toBeDefined();
-  return (found as NonNullable<typeof found>).getElement();
+function tabLink(id: FunctionTab): HTMLElement {
+  const labels: Record<FunctionTab, string> = {
+    test: 'Test',
+    code: 'Code',
+    monitor: 'Monitor',
+    configuration: 'Configuration',
+    versions: 'Versions and aliases',
+  };
+  const tab = tabs()?.findTabLinkById(id)?.getElement();
+  if (!tab) {
+    throw new Error(`Expected the ${id} tab`);
+  }
+  expect(tab).toHaveTextContent(labels[id]);
+  return tab;
 }
 
-/** Every text said in a polite live region from now on, in order. */
-function recordAnnouncements(): string[] {
+/** Every committed entry added to a matching polite region from now on, in order. */
+function recordAnnouncements(selector = '[aria-live="polite"]'): string[] {
   const said: string[] = [];
   const observer = new MutationObserver((mutations) => {
     for (const mutation of mutations) {
       const region =
         mutation.target instanceof Element
-          ? mutation.target.closest('[aria-live="polite"]')
-          : mutation.target.parentElement?.closest('[aria-live="polite"]');
+          ? mutation.target.closest(selector)
+          : mutation.target.parentElement?.closest(selector);
       if (region !== null && region !== undefined) {
         for (const node of mutation.addedNodes) {
           const text = (node.textContent ?? '').trim();
@@ -456,6 +516,16 @@ function recordAnnouncements(): string[] {
   });
   observer.observe(document.body, { subtree: true, childList: true, characterData: true });
   return said;
+}
+
+const OFFLINE_HEADER = 'Browser is offline';
+const OFFLINE_DETAIL = 'Reconnect to verify this function.';
+const OFFLINE_ANNOUNCEMENT = `${OFFLINE_HEADER}. ${OFFLINE_DETAIL}`;
+
+function offlineEntries(announcements: string[], actionGuidance: string): string[] {
+  return announcements.filter((entry) =>
+    [OFFLINE_HEADER, OFFLINE_DETAIL, actionGuidance].some((part) => entry.includes(part)),
+  );
 }
 
 /** The status indicator inside `element`: its Cloudscape type and its text. */
@@ -475,6 +545,11 @@ function header(): HTMLElement {
   const found = PAGE.findAllHeaders().find((candidate) => candidate.getElement().contains(h1));
   expect(found).toBeDefined();
   return (found as NonNullable<typeof found>).getElement();
+}
+
+function pageActions() {
+  const pageHeader = PAGE.findAllHeaders().find((candidate) => candidate.findHeadingText().getElement().closest('h1'));
+  return pageHeader?.findActions()?.findAllButtons() ?? [];
 }
 
 /** The `h1`'s description element, or `null` when the `h1` has none. */
@@ -518,25 +593,18 @@ async function openLoaded(fn: FakeFunction = ORDERS) {
 // ---------------------------------------------------------------------------------------------------------------
 
 describe('a function loaded', () => {
-  it('the h1 its name, "Refresh", "Delete", "Function overview" with its fields in order, and the tabs "Test", "Code", "Monitor", "Configuration" and no other, "Test" selected', async () => {
+  it('the h1 its name, "Refresh", "Delete", "Function overview" with its fields in order, and the tabs "Test", "Code", "Monitor", "Configuration", "Versions and aliases" and no other, "Test" selected', async () => {
     await openLoaded();
 
     expect(headingText()).toBe('orders');
     expect(within(header()).getByRole('button', { name: 'Refresh' })).toBeInTheDocument();
     expect(within(header()).getByRole('button', { name: 'Delete' })).toBeInTheDocument();
-    expect(tabLabels()).toEqual(['Test', 'Code', 'Monitor', 'Configuration']);
+    expect(tabLabels()).toEqual(['Test', 'Code', 'Monitor', 'Configuration', 'Versions and aliases']);
     expect(activeTab()).toBe('Test');
-    expect(pairs('Function overview').map(([label]) => label)).toEqual([
-      'Description',
-      'Last modified',
-      'Function ARN',
-      'Function URL',
-    ]);
-    expect(value('Function overview', 'Description')).toBe('Takes the orders');
-    expect(value('Function overview', 'Last modified')).toMatch(
-      /^November \d{1,2}, 2026, \d{2}:\d{2}:\d{2} \(UTC[+-]\d{2}:\d{2}\)$/,
-    );
-    expect(value('Function overview', 'Function ARN')).toBe(`${ACCOUNT_ARN}:orders`);
+    expect(pairs().map(([label]) => label)).toEqual(['Description', 'Last modified', 'Function ARN', 'Function URL']);
+    expect(value('Description')).toBe('Takes the orders');
+    expect(value('Last modified')).toMatch(/^November \d{1,2}, 2026, \d{2}:\d{2}:\d{2} \(UTC[+-]\d{2}:\d{2}\)$/);
+    expect(value('Function ARN')).toBe(`${ACCOUNT_ARN}:orders`);
     expect(tabs()?.findTabContent()?.getElement()).toContainElement(screen.getByTestId('stand-in-test'));
     expect(screen.queryByRole('heading', { name: 'Code source' })).toBeNull();
   });
@@ -564,26 +632,26 @@ describe('a function loaded', () => {
 
   it('"Function URL": the URL as text and not a link; "-" without one; "Not read" when it failed; "Not implemented by the emulator" on 501; the other values shown each time', async () => {
     const first = await openLoaded();
-    expect(value('Function overview', 'Function URL')).toBe(ORDERS.url);
-    expect(within(section('Function overview')).queryByRole('link')).toBeNull();
+    expect(value('Function URL')).toBe(ORDERS.url);
+    expect(within(overview().getElement()).queryByRole('link')).toBeNull();
     first.unmount();
 
     const second = await openLoaded(withoutUrl(ORDERS));
-    expect(value('Function overview', 'Function URL')).toBe('-');
+    expect(value('Function URL')).toBe('-');
     second.unmount();
 
     engine.answerUrl = () => errorAnswer(500, 'ServiceException', 'broken');
     const third = await openLoaded();
     // The one status indicator of the section is the URL's.
-    expect(statusIn(section('Function overview'))).toEqual({ type: 'warning', text: 'Not read' });
-    expect(value('Function overview', 'Function URL')).toBe('Not read');
-    expect(value('Function overview', 'Function ARN')).toBe(`${ACCOUNT_ARN}:orders`);
+    expect(statusIn(overview().getElement())).toEqual({ type: 'warning', text: 'Not read' });
+    expect(value('Function URL')).toBe('Not read');
+    expect(value('Function ARN')).toBe(`${ACCOUNT_ARN}:orders`);
     third.unmount();
 
     engine.answerUrl = () => errorAnswer(501, 'NotImplemented', 'GetFunctionUrlConfig is not implemented');
     await openLoaded();
-    expect(value('Function overview', 'Function URL')).toBe('Not implemented by the emulator');
-    expect(value('Function overview', 'Description')).toBe('Takes the orders');
+    expect(value('Function URL')).toBe('Not implemented by the emulator');
+    expect(value('Description')).toBe('Takes the orders');
   });
 
   it('the page as it opens, on "Test", shows neither the signed URL of the code nor an environment variable of the answer', async () => {
@@ -598,7 +666,7 @@ describe('a function loaded', () => {
   it('a description `<b id="injected">x</b>` is shown as that text, no element made from it', async () => {
     await openLoaded({ ...ORDERS, description: '<b id="injected">x</b>' });
 
-    expect(value('Function overview', 'Description')).toBe('<b id="injected">x</b>');
+    expect(value('Description')).toBe('<b id="injected">x</b>');
     expect(document.getElementById('injected')).toBeNull();
   });
 });
@@ -676,7 +744,7 @@ describe('"Refresh"', () => {
     fn.description = 'Takes more orders';
     fireEvent.click(within(header()).getByRole('button', { name: 'Refresh' }));
     await waitFor(() => {
-      expect(value('Function overview', 'Description')).toBe('Takes more orders');
+      expect(value('Description')).toBe('Takes more orders');
     });
     expect(engine.gets).toHaveLength(2);
     expect(engine.urlGets).toHaveLength(2);
@@ -821,9 +889,9 @@ describe('loading and failure states', () => {
 // Issue 467: the `h1`'s description (R3), the copy controls (R5), each value as its kind (R6).
 // ---------------------------------------------------------------------------------------------------------------
 
-/** The value element of the pair `label` of the section `title`. */
-function valueElement(title: string, label: string): HTMLElement {
-  const item = (createWrapper(section(title)).findKeyValuePairs()?.findItems() ?? []).find(
+/** The value element of the overview pair `label`. */
+function valueElement(label: string): HTMLElement {
+  const item = (overview().findContent().findKeyValuePairs()?.findItems() ?? []).find(
     (found) => norm(found.findLabel()?.getElement().textContent) === label,
   );
   expect(item, `the pair "${label}"`).toBeDefined();
@@ -881,16 +949,16 @@ describe('issue 467', () => {
   it('"Function overview" of a function with a URL: "Copy Function ARN" before the ARN and "Copy Function URL" before the URL, both addresses; "Description" free text', async () => {
     await openLoaded();
 
-    const arn = valueElement('Function overview', 'Function ARN');
+    const arn = valueElement('Function ARN');
     expect(copyBefore(arn, 'Function ARN')).not.toBeNull();
     expect(kindsIn(arn)).toEqual(['address']);
     expect(norm(arn.querySelector('.aws-area-value-address')?.textContent)).toBe(`${ACCOUNT_ARN}:orders`);
-    const url = valueElement('Function overview', 'Function URL');
+    const url = valueElement('Function URL');
     expect(copyBefore(url, 'Function URL')).not.toBeNull();
     expect(kindsIn(url)).toEqual(['address']);
     expect(norm(url.querySelector('.aws-area-value-address')?.textContent)).toBe(ORDERS.url);
-    expect(kindsIn(valueElement('Function overview', 'Description'))).toEqual(['text']);
-    expect(kindsIn(valueElement('Function overview', 'Last modified'))).toEqual(['fixed']);
+    expect(kindsIn(valueElement('Description'))).toEqual(['text']);
+    expect(kindsIn(valueElement('Last modified'))).toEqual(['fixed']);
   });
 
   it('without a URL, a URL the emulator answers 501 for and a URL that was not read: no "Copy Function URL"; the field shows what it did', async () => {
@@ -914,10 +982,10 @@ describe('issue 467', () => {
     for (const [arrange, fn, shown] of cases) {
       arrange();
       const opened = await openLoaded(fn);
-      const url = valueElement('Function overview', 'Function URL');
+      const url = valueElement('Function URL');
       expect(within(url).queryByRole('button')).toBeNull();
       expect(norm(url.textContent)).toBe(shown);
-      expect(copyBefore(valueElement('Function overview', 'Function ARN'), 'Function ARN')).not.toBeNull();
+      expect(copyBefore(valueElement('Function ARN'), 'Function ARN')).not.toBeNull();
       opened.unmount();
     }
   });
@@ -982,7 +1050,7 @@ describe('Monitor', () => {
 
   it('opens from its tab and restores the same function’s Monitor on reload', async () => {
     const { router, unmount } = await openLoaded();
-    fireEvent.click(tabLink('Monitor'));
+    fireEvent.click(tabLink('monitor'));
     await waitFor(() => expect(lastHourHeader()?.findHeadingText().getElement()).toBeVisible());
     expect(activeTab()).toBe('Monitor');
     expect(router.state.location).toMatchObject({ pathname: pagePath('orders'), search: '?tab=monitor' });
@@ -1111,10 +1179,10 @@ describe('Monitor', () => {
     engine.functions = [ORDERS];
     engine.answerMonitoring = ({ operation }) =>
       operation === 'FilterLogEvents' ? logAnswer('events from the previous account') : metricAnswer(98);
-    open(`${pagePath('orders')}?tab=monitor`);
+    const { router } = open(`${pagePath('orders')}?tab=monitor`);
     await waitFor(() => expect(logMessages()).toContain('events from the previous account'));
     if (tab === 'Code') {
-      fireEvent.click(tabLink('Code'));
+      fireEvent.click(tabLink('code'));
       await screen.findByTestId('stand-in-code');
     }
 
@@ -1123,7 +1191,7 @@ describe('Monitor', () => {
     engine.functions = [];
     connection.set(connectedResult());
     if (tab === 'Code') {
-      fireEvent.click(tabLink('Monitor'));
+      await act(() => router.navigate(`${pagePath('orders')}?tab=monitor`));
     }
 
     expect(await screen.findByText('Function not found')).toBeVisible();
@@ -1132,6 +1200,1066 @@ describe('Monitor', () => {
     expect(logMessages()).toEqual([]);
     expect(metric('Invocations')).toBeUndefined();
     expect(metric('Errors')).toBeUndefined();
+  });
+});
+
+function deferredAnswer() {
+  let resolve!: (answer: Answer) => void;
+  const promise = new Promise<Answer>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+function versionAnswer(number: string) {
+  return json(200, { Versions: [{ Version: '$LATEST' }, { Version: number, Description: `Release ${number}` }] });
+}
+
+function aliasAnswer(name: string, version: string) {
+  return json(200, { Aliases: [{ Name: name, FunctionVersion: version }] });
+}
+
+function releaseTable(name: 'Versions' | 'Aliases') {
+  const table = tabs()?.findTabContent()?.findAllTables()[name === 'Versions' ? 0 : 1];
+  if (table) {
+    expect(table.findHeaderSlot()?.findHeader()?.findHeadingText().getElement()).toHaveTextContent(name);
+  }
+  return table;
+}
+
+describe('Versions and aliases', () => {
+  const versionsPath = '?tab=versions';
+
+  function versionsShown() {
+    const table = releaseTable('Versions');
+    return (
+      table
+        ?.findRows()
+        .map((_, index) => [
+          norm(table.findBodyCell(index + 1, 1)?.getElement().textContent),
+          norm(table.findBodyCell(index + 1, 3)?.getElement().textContent),
+        ]) ?? []
+    );
+  }
+
+  function aliasesShown() {
+    const table = releaseTable('Aliases');
+    return (
+      table
+        ?.findRows()
+        .map((_, index) => [
+          norm(table.findBodyCell(index + 1, 2)?.getElement().textContent),
+          norm(table.findBodyCell(index + 1, 3)?.getElement().textContent),
+        ]) ?? []
+    );
+  }
+
+  it('explains a forced alias confirmation dismissal once and leaves ordinary Escape focus restoration intact', async () => {
+    const explanation =
+      'The Delete alias confirmation closed. After verification, reopen it from the actions menu in the alias row.';
+    const notices = () => PAGE.findContentLayout()?.findNotifications().findAllAlerts() ?? [];
+    const visibleDialog = () => PAGE.findAllModals().find((modal) => modal.isVisible());
+    async function openAliasDelete() {
+      const menu = await waitFor(() => {
+        expect(aliasesShown()).toEqual([['live', '2']]);
+        const dropdown = releaseTable('Aliases')?.findBodyCell(1, 1)?.findButtonDropdown();
+        if (!dropdown) throw new Error('Expected the alias row menu');
+        return dropdown;
+      });
+      const menuButton = menu.findNativeButton().getElement();
+      expect(menuButton).toHaveAccessibleName('Actions for alias live');
+      menuButton.focus();
+      act(() => menu.openDropdown());
+      const item = menu.findItemById('DeleteAlias')?.find('[role="menuitem"]')?.getElement();
+      if (!item) throw new Error('Expected the DeleteAlias action');
+      expect(item).toHaveAccessibleName('Delete alias live');
+      fireEvent.click(item);
+      const cancel = await waitFor(() => {
+        const dialog = visibleDialog();
+        expect(dialog?.findHeader().getElement()).toHaveTextContent('Delete alias');
+        const [cancel, submit] = dialog?.findFooter()?.findAllButtons() ?? [];
+        if (!cancel) throw new Error('Expected the dialog Cancel action');
+        expect(cancel.getElement()).toHaveAccessibleName('Cancel');
+        expect(submit?.getElement()).toHaveAccessibleName('Delete alias');
+        return cancel.getElement();
+      });
+      cancel.focus();
+      expect(cancel).toHaveFocus();
+      return { cancel, menuButton };
+    }
+
+    const announcements = recordAnnouncements('.aws-area-announcer[aria-live="polite"][aria-atomic="true"]');
+    const expected = [`${OFFLINE_ANNOUNCEMENT} ${explanation}`];
+    engine.functions = [{ name: 'orders', description: 'Before reconnect' }];
+    engine.answerRelease = ({ url }) =>
+      url.pathname.endsWith('/versions') ? versionAnswer('2') : aliasAnswer('live', '2');
+    const { unmount } = open(pagePath('orders') + versionsPath);
+    const wasOnline = onlineManager.isOnline();
+    const browserOnline = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true);
+    try {
+      const ordinary = await openAliasDelete();
+      fireEvent.keyDown(ordinary.cancel, { key: 'Escape', keyCode: 27 });
+      await waitFor(() => expect(ordinary.menuButton).toHaveFocus());
+      expect(visibleDialog()).toBeUndefined();
+      expect(notices()).toEqual([]);
+      expect(offlineEntries(announcements, explanation)).toEqual([]);
+
+      await openAliasDelete();
+      const refresh = pageActions()[0]?.getElement();
+      expect(refresh).toHaveAccessibleName('Refresh');
+      browserOnline.mockReturnValue(false);
+      fireEvent(window, new Event('offline'));
+      await waitFor(() => {
+        expect(visibleDialog()).toBeUndefined();
+        expect(refresh).toHaveFocus();
+        const [networkNotice, aliasNotice] = notices();
+        expect(networkNotice?.findHeader()?.getElement()).toHaveTextContent(OFFLINE_HEADER);
+        expect(networkNotice?.findContent().getElement()).toHaveTextContent(OFFLINE_DETAIL);
+        expect(aliasNotice?.findContent().getElement()).toHaveTextContent(explanation);
+        expect(offlineEntries(announcements, explanation)).toEqual(expected);
+      });
+
+      engine.functions = [{ name: 'orders', description: 'Verified after reconnect' }];
+      browserOnline.mockReturnValue(true);
+      fireEvent(window, new Event('online'));
+      expect(releaseTable('Aliases')).toBeUndefined();
+      expect(notices()[1]?.findContent().getElement()).toHaveTextContent(explanation);
+      await waitFor(() =>
+        expect(announcements).toContain('Rechecking the emulator connection. Wait for a new connection check.'),
+      );
+      expect(offlineEntries(announcements, explanation)).toEqual(expected);
+      connection.set(connectedResult());
+      await waitFor(() => expect(value('Description')).toBe('Verified after reconnect'));
+      expect(notices()[0]?.findContent().getElement()).toHaveTextContent(explanation);
+      const reopened = await openAliasDelete();
+      expect(notices()).toEqual([]);
+      fireEvent.click(reopened.cancel);
+      await waitFor(() => expect(reopened.menuButton).toHaveFocus());
+      expect(offlineEntries(announcements, explanation)).toEqual(expected);
+      expect(engine.aws.filter(({ method, url }) => method === 'DELETE' && ALIAS_PATH.test(url.pathname))).toEqual([]);
+    } finally {
+      unmount();
+      browserOnline.mockRestore();
+      onlineManager.setOnline(wasOnline);
+    }
+  });
+
+  it('opens from the tab and reopens the same function on its release address', async () => {
+    const { router, unmount } = await openLoaded();
+    fireEvent.click(tabLink('versions'));
+    await waitFor(() => expect(versionsShown()).toContainEqual(['$LATEST', '-']));
+    expect(activeTab()).toBe('Versions and aliases');
+    expect(router.state.location).toMatchObject({ pathname: pagePath('orders'), search: versionsPath });
+    const { pathname, search } = router.state.location;
+
+    unmount();
+    open(pathname + search);
+    await waitFor(() => expect(versionsShown()).toContainEqual(['$LATEST', '-']));
+    expect(activeTab()).toBe('Versions and aliases');
+    expect(headingText()).toBe('orders');
+    expect(
+      engine.aws
+        .filter(({ url }) => RELEASE_PATH.test(url.pathname))
+        .every(({ url }) => RELEASE_PATH.exec(url.pathname)?.[1] === 'orders'),
+    ).toBe(true);
+  });
+
+  it('keeps refreshed releases when the older reads finish after them', async () => {
+    engine.functions = [{ name: 'orders' }];
+    const oldVersions = deferredAnswer();
+    const oldAliases = deferredAnswer();
+    let current = false;
+    engine.answerRelease = ({ url }) =>
+      url.pathname.endsWith('/versions')
+        ? current
+          ? versionAnswer('2')
+          : oldVersions.promise
+        : current
+          ? aliasAnswer('current-live', '2')
+          : oldAliases.promise;
+
+    open(pagePath('orders') + versionsPath);
+    await waitFor(() => {
+      expect(engine.aws.filter(({ url }) => RELEASE_PATH.test(url.pathname))).toHaveLength(2);
+    });
+    current = true;
+    engine.functions = [{ name: 'orders', description: 'Refreshed function details' }];
+    const refresh = pageActions()[0];
+    expect(refresh?.getElement()).toHaveAccessibleName('Refresh');
+    refresh?.click();
+    await waitFor(() => {
+      expect(pairs()).toContainEqual(['Description', 'Refreshed function details']);
+      expect(versionsShown()).toEqual([
+        ['$LATEST', '-'],
+        ['2', 'Release 2'],
+      ]);
+      expect(aliasesShown()).toEqual([['current-live', '2']]);
+    });
+
+    await act(async () => {
+      oldVersions.resolve(versionAnswer('1'));
+      oldAliases.resolve(aliasAnswer('old-live', '1'));
+      await Promise.all([oldVersions.promise, oldAliases.promise]);
+    });
+    expect(versionsShown()).toEqual([
+      ['$LATEST', '-'],
+      ['2', 'Release 2'],
+    ]);
+    expect(aliasesShown()).toEqual([['current-live', '2']]);
+  });
+
+  it('verifies the function on reconnect from another tab before displaying release data', async () => {
+    engine.functions = [{ name: 'orders' }];
+    engine.answerRelease = ({ url }) =>
+      url.pathname.endsWith('/versions') ? versionAnswer('1') : aliasAnswer('old-live', '1');
+
+    const { router } = open(pagePath('orders') + versionsPath);
+    await waitFor(() => {
+      expect(versionsShown()).toContainEqual(['1', 'Release 1']);
+      expect(aliasesShown()).toEqual([['old-live', '1']]);
+    });
+    fireEvent.click(tabLink('code'));
+    expect(activeTab()).toBe('Code');
+    connection.set(notStartedResult());
+    engine.functions = [];
+    const reconnect = deferredAnswer();
+    engine.answerFunction = () => reconnect.promise;
+    connection.set(connectedResult());
+    await act(() => router.navigate(pagePath('orders') + versionsPath));
+    await waitFor(() => expect(engine.gets).toHaveLength(2));
+    expect(releaseTable('Versions')).toBeUndefined();
+    expect(releaseTable('Aliases')).toBeUndefined();
+    expect(tabs()?.findTabLinkById('versions') ?? null).toBeNull();
+    expect(engine.aws.filter(({ url }) => RELEASE_PATH.test(url.pathname))).toHaveLength(2);
+
+    await act(async () => {
+      reconnect.resolve(errorAnswer(404, 'ResourceNotFoundException', 'Function not found'));
+      await reconnect.promise;
+    });
+    expect(await screen.findByText('Function not found')).toBeVisible();
+    expect(releaseTable('Versions')).toBeUndefined();
+    expect(releaseTable('Aliases')).toBeUndefined();
+    expect(engine.aws.filter(({ url }) => RELEASE_PATH.test(url.pathname))).toHaveLength(2);
+  });
+
+  it('keeps the published number visible when the detail reread removes the tab before the release reread', async () => {
+    engine.functions = [{ name: 'orders' }];
+    const detail = deferredAnswer();
+    const releases = deferredAnswer();
+    let published = false;
+    engine.answerFunction = (request) => (published ? detail.promise : engine.emulator(request));
+    engine.answerRelease = ({ method, url }) => {
+      if (method === 'POST') {
+        published = true;
+        return json(201, { Version: '2' });
+      }
+      return url.pathname.endsWith('/aliases')
+        ? aliasAnswer('live', '1')
+        : published
+          ? releases.promise
+          : versionAnswer('1');
+    };
+
+    open(pagePath('orders') + versionsPath);
+    await waitFor(() => {
+      expect(versionsShown()).toContainEqual(['1', 'Release 1']);
+      expect(aliasesShown()).toEqual([['live', '1']]);
+    });
+    const publish = releaseTable('Versions')?.findHeaderSlot()?.findHeader()?.findActions()?.findButton();
+    expect(publish?.getElement()).toHaveTextContent('Publish version');
+    publish?.click();
+    await waitFor(() => expect(flashTexts()).toContain('Published version 2.'));
+    await waitFor(() => expect(engine.gets).toHaveLength(2));
+    await waitFor(() =>
+      expect(
+        engine.aws.filter(({ method, url }) => method === 'GET' && url.pathname.endsWith('/versions')),
+      ).toHaveLength(2),
+    );
+    await act(async () => {
+      detail.resolve(errorAnswer(404, 'ResourceNotFoundException', 'Function not found'));
+      await detail.promise;
+    });
+    expect(await screen.findByText('Function not found')).toBeVisible();
+    expect(flashTexts()).toContain('Published version 2.');
+    await act(async () => {
+      releases.resolve(versionAnswer('2'));
+      await releases.promise;
+    });
+    expect(releaseTable('Versions')).toBeUndefined();
+    expect(flashTexts()).toContain('Published version 2.');
+  });
+});
+
+describe('Qualified Test invocations', () => {
+  function targets() {
+    const select = PAGE.findSelect();
+    if (select === null) {
+      throw new Error('Expected the Invoke target selector');
+    }
+    return select;
+  }
+
+  function submitted() {
+    return engine.aws.filter(({ url }) => INVOKE_PATH.test(url.pathname));
+  }
+
+  async function chooseTarget(value: string) {
+    await waitFor(() => {
+      expect(handed.test?.aliases.loading).toBe(false);
+      expect(handed.test?.versions.loading).toBe(false);
+    });
+    const select = targets();
+    select.openDropdown();
+    select.selectOptionByValue(value);
+  }
+
+  function invokeButton() {
+    const event = PAGE.findAllContainers().find((container) => container.findContent().findTextarea() !== null);
+    const header = event?.findHeader()?.findHeader();
+    const button = header?.findActions()?.findButton();
+    if (!button) {
+      throw new Error('Expected the Test event panel action');
+    }
+    expect(header?.findHeadingText().getElement()).toHaveTextContent('Event');
+    expect(button.getElement()).toHaveTextContent(/^Invok(e|ing)$/);
+    return button;
+  }
+
+  function invokeTarget() {
+    invokeButton().click();
+  }
+
+  function eventField() {
+    const field = PAGE.findTextarea();
+    if (field === null) {
+      throw new Error('Expected the Event JSON textarea');
+    }
+    return field;
+  }
+
+  function targetOption(value: string) {
+    return targets().findDropdown().findOptionByValue(value)?.getElement() ?? null;
+  }
+
+  function result(payload: string, log: string): Answer {
+    return { status: 200, body: JSON.stringify({ payload }), headers: { 'x-amz-log-result': btoa(log) } };
+  }
+
+  function findResultPanel() {
+    const tabSet = tabs();
+    const panel = tabSet
+      ? tabSet.findTabContent()?.findGrid()?.findColumn(2)?.findContainer()
+      : PAGE.findAllContainers()[1];
+    if (panel) {
+      expect(panel.findHeader()?.findHeader()?.findHeadingText().getElement()).toHaveTextContent('Result');
+    }
+    return panel?.getElement();
+  }
+
+  function resultPanel() {
+    const panel = findResultPanel();
+    if (panel === undefined) {
+      throw new Error('Expected the invocation result panel');
+    }
+    return panel;
+  }
+
+  async function waitForResult(text: string) {
+    await waitFor(() => {
+      const panel = resultPanel();
+      expect(panel).toBeVisible();
+      expect(panel).toHaveTextContent(text);
+    });
+  }
+
+  beforeEach(() => {
+    handed.renderTest = true;
+    Element.prototype.scrollIntoView = () => undefined;
+    engine.functions = [{ name: 'orders', description: 'Initial invocation details' }];
+    engine.answerRelease = ({ url }) =>
+      url.pathname.endsWith('/versions') ? versionAnswer('2') : aliasAnswer('live', '2');
+  });
+
+  it('allows Event JSON editing only after the first verified detail and keeps edits through release reads', async () => {
+    const preliminary = deferredAnswer();
+    const verifiedDetail = deferredAnswer();
+    const versions = deferredAnswer();
+    const aliases = deferredAnswer();
+    connection.value = { engineOrigin, result: undefined };
+    engine.answerFunction = () => preliminary.promise;
+    engine.answerRelease = ({ url }) => (url.pathname.endsWith('/versions') ? versions.promise : aliases.promise);
+    open(pagePath('orders'));
+
+    const request = { method: 'GET', url: new URL('/2015-03-31/functions/orders', engineOrigin) };
+    await waitFor(() => expect(engine.gets).toEqual([request.url]));
+    await act(async () => preliminary.resolve(engine.emulator(request)));
+    await waitForResult('Not invoked yet');
+    expect(value('Description')).toBe('Initial invocation details');
+    const preliminaryEditor = eventField().findNativeTextarea().getElement();
+    expect(preliminaryEditor).toHaveAccessibleName('Event JSON');
+    expect(preliminaryEditor).toHaveAttribute('readonly');
+    fireEvent.change(preliminaryEditor, { target: { value: '{"event":"during checking"}' } });
+    expect(eventField().getTextareaValue()).toBe('{}');
+    expect(invokeButton().getElement()).toBeDisabled();
+    expect(submitted()).toEqual([]);
+
+    engine.functions = [{ name: 'orders', description: 'Verified invocation details' }];
+    engine.answerFunction = () => verifiedDetail.promise;
+    connection.set(connectedResult());
+    await waitFor(() => expect(engine.gets).toEqual([request.url, request.url]));
+    expect(PAGE.findTextarea()).toBeNull();
+    expect(engine.aws.filter(({ url }) => RELEASE_PATH.test(url.pathname))).toEqual([]);
+
+    await act(async () => verifiedDetail.resolve(engine.emulator(request)));
+    await waitFor(() => {
+      expect(value('Description')).toBe('Verified invocation details');
+      expect(handed.test?.versions.loading).toBe(true);
+      expect(handed.test?.aliases.loading).toBe(true);
+    });
+    const editor = eventField().findNativeTextarea().getElement();
+    expect(editor).not.toHaveAttribute('readonly');
+    expect(eventField().getTextareaValue()).toBe('{}');
+    expect(invokeButton().getElement()).toBeEnabled();
+    const event = '{"event":"verified draft"}';
+    eventField().setTextareaValue(event);
+
+    await act(async () => {
+      versions.resolve(versionAnswer('2'));
+      aliases.resolve(aliasAnswer('live', '2'));
+    });
+    await waitFor(() => {
+      expect(handed.test?.versions.loading).toBe(false);
+      expect(handed.test?.aliases.loading).toBe(false);
+    });
+    expect(eventField().findNativeTextarea().getElement()).toBe(editor);
+    expect(eventField().getTextareaValue()).toBe(event);
+    expect(submitted()).toEqual([]);
+  });
+
+  it.each(['detail', 'releases'])(
+    'keeps the submitted target and event across tabs when %s settle first',
+    async (first) => {
+      const invoke = deferredAnswer();
+      const detail = deferredAnswer();
+      const versions = deferredAnswer();
+      const aliases = deferredAnswer();
+      let reopening = false;
+      engine.answerInvoke = () => invoke.promise;
+      engine.answerFunction = (request) =>
+        reopening && FUNCTION_PATH.test(request.url.pathname) ? detail.promise : engine.emulator(request);
+      engine.answerRelease = ({ url }) =>
+        url.pathname.endsWith('/versions')
+          ? reopening
+            ? versions.promise
+            : versionAnswer('2')
+          : reopening
+            ? aliases.promise
+            : aliasAnswer('live', '2');
+
+      open(pagePath('orders'));
+      await waitForResult('Not invoked yet');
+      await chooseTarget('live');
+      const event = '{"tag":"kept"}';
+      eventField().setTextareaValue(event);
+      invokeTarget();
+      await waitFor(() => expect(submitted()[0]?.url.searchParams.get('Qualifier')).toBe('live'));
+      await chooseTarget('2');
+      fireEvent.click(tabLink('code'));
+      expect(await screen.findByTestId('stand-in-code')).toBeVisible();
+
+      reopening = true;
+      fireEvent.click(tabLink('test'));
+      await waitForResult('Not invoked yet');
+      expect(eventField().getTextareaValue()).toBe(event);
+      expect(targets().findTrigger().getElement()).toHaveTextContent('2');
+
+      await act(async () => invoke.resolve(result('from the live alias', 'live tail')));
+      await waitFor(() => expect(engine.gets).toHaveLength(2));
+      await waitForResult('from the live alias');
+      expect(resultPanel()).toHaveTextContent('Submitted target live');
+      expect(resultPanel()).toHaveTextContent('live tail');
+
+      const settleDetail = async () => {
+        engine.functions = [{ name: 'orders', description: 'Details after qualified Invoke' }];
+        await act(async () =>
+          detail.resolve(
+            engine.emulator({
+              method: 'GET',
+              url: new URL('/2015-03-31/functions/orders', engineOrigin),
+            }),
+          ),
+        );
+        await waitFor(() => {
+          expect(value('Description')).toBe('Details after qualified Invoke');
+        });
+      };
+      const settleReleases = async () => {
+        await act(async () => {
+          versions.resolve(json(200, { Versions: [{ Version: '2' }, { Version: '3' }] }));
+          aliases.resolve(aliasAnswer('live', '3'));
+        });
+        await waitFor(() => {
+          expect(handed.test?.versions.loading).toBe(false);
+          expect(handed.test?.aliases.loading).toBe(false);
+        });
+      };
+      if (first === 'detail') {
+        await settleDetail();
+        expect(handed.test?.aliases.loading).toBe(true);
+        await settleReleases();
+      } else {
+        await settleReleases();
+        expect(value('Description')).toBe('Initial invocation details');
+        await settleDetail();
+      }
+      expect(value('Description')).toBe('Details after qualified Invoke');
+      expect(targets().findTrigger().getElement()).toHaveTextContent('2');
+      targets().openDropdown();
+      expect(targetOption('3')).toHaveTextContent('3');
+      expect(targetOption('live')).toHaveTextContent('Version 3');
+      targets().closeDropdown();
+      expect(resultPanel()).toHaveTextContent('Submitted target live');
+      expect(resultPanel()).toHaveTextContent('from the live alias');
+      expect(resultPanel()).toHaveTextContent('live tail');
+      expect(eventField().getTextareaValue()).toBe(event);
+    },
+  );
+
+  it.each([
+    ['live', 'editor'],
+    ['live', 'picker'],
+    ['live', 'tab'],
+    ['$LATEST', 'editor'],
+    ['$LATEST', 'picker'],
+    ['$LATEST', 'tab'],
+  ] as const)(
+    'announces offline recovery for Invoke target %s with focus on the %s',
+    async (initialTarget, focused) => {
+      const explanation =
+        'Invoke target reset to $LATEST. After verification, use Invoke target to select a version or alias for your preserved event draft.';
+      const description = () => {
+        const event = tabs()?.findTabContent()?.findGrid()?.findColumn(1)?.findContainer();
+        expect(event?.findHeader()?.findHeader()?.findHeadingText().getElement()).toHaveTextContent('Event');
+        const [target] = event?.findContent().findAllFormFields() ?? [];
+        expect(target?.findLabel()?.getElement()).toHaveTextContent('Invoke target');
+        return target?.findDescription()?.getElement();
+      };
+      const announcements = recordAnnouncements('.aws-area-announcer[aria-live="polite"][aria-atomic="true"]');
+      const reset = initialTarget === 'live';
+      const expected = [reset ? `${OFFLINE_ANNOUNCEMENT} ${explanation}` : OFFLINE_ANNOUNCEMENT];
+      const expectTargetDescription = () => {
+        if (reset) {
+          expect(description()).toHaveTextContent(explanation);
+        } else {
+          expect(description()).toBeUndefined();
+        }
+      };
+      const event = '{"event":"keep this draft"}';
+      const detail = deferredAnswer();
+      const { unmount } = open(pagePath('orders'));
+      const wasOnline = onlineManager.isOnline();
+      const browserOnline = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true);
+      try {
+        await waitForResult('Not invoked yet');
+        if (reset) await chooseTarget(initialTarget);
+        expect(targets().findTrigger().getElement()).toHaveTextContent(initialTarget);
+        expect(targets().findTrigger().getElement()).toHaveAccessibleName(/Invoke target/);
+        expect(eventField().findNativeTextarea().getElement()).toHaveAccessibleName('Event JSON');
+        eventField().setTextareaValue(event);
+        const control = {
+          editor: eventField().findNativeTextarea().getElement(),
+          picker: targets().findTrigger().getElement(),
+          tab: tabLink('test'),
+        }[focused];
+        const refresh = pageActions()[0]?.getElement();
+        expect(refresh).toHaveAccessibleName('Refresh');
+        control.focus();
+        expect(control).toHaveFocus();
+        expect(description()).toBeUndefined();
+
+        browserOnline.mockReturnValue(false);
+        fireEvent(window, new Event('offline'));
+        expect(focused === 'tab' ? control : refresh).toHaveFocus();
+        expect(targets().findTrigger().getElement()).toHaveTextContent('$LATEST');
+        expect(eventField().getTextareaValue()).toBe(event);
+        const networkNotice = PAGE.findContentLayout()?.findNotifications().findAlert();
+        expect(networkNotice?.findHeader()?.getElement()).toHaveTextContent(OFFLINE_HEADER);
+        expect(networkNotice?.findContent().getElement()).toHaveTextContent(OFFLINE_DETAIL);
+        expectTargetDescription();
+        expect(invokeButton().getElement()).toBeDisabled();
+        await waitFor(() => expect(offlineEntries(announcements, explanation)).toEqual(expected));
+
+        engine.functions = [{ name: 'orders', description: 'Invocation target verified' }];
+        engine.answerFunction = () => detail.promise;
+        browserOnline.mockReturnValue(true);
+        fireEvent(window, new Event('online'));
+        expectTargetDescription();
+        await waitFor(() =>
+          expect(announcements).toContain('Rechecking the emulator connection. Wait for a new connection check.'),
+        );
+        const reads = engine.gets.length;
+        connection.set(connectedResult());
+        await waitFor(() => expect(engine.gets.length).toBeGreaterThan(reads));
+        expect(tabs()).toBeNull();
+        await waitFor(() =>
+          expect(announcements).toContain('Verifying the function. Wait for current function details.'),
+        );
+        expect(offlineEntries(announcements, explanation)).toEqual(expected);
+        await act(async () =>
+          detail.resolve(
+            engine.emulator({ method: 'GET', url: new URL('/2015-03-31/functions/orders', engineOrigin) }),
+          ),
+        );
+        await waitFor(() => expect(value('Description')).toBe('Invocation target verified'));
+        await waitForResult('Not invoked yet');
+        expectTargetDescription();
+        expect(eventField().getTextareaValue()).toBe(event);
+        expect(targets().findTrigger().getElement()).toHaveTextContent('$LATEST');
+        expect(invokeButton().getElement()).toBeEnabled();
+        expect(offlineEntries(announcements, explanation)).toEqual(expected);
+        await chooseTarget('live');
+        expect(targets().findTrigger().getElement()).toHaveTextContent('live');
+        expect(description()).toBeUndefined();
+        expect(eventField().getTextareaValue()).toBe(event);
+        expect(offlineEntries(announcements, explanation)).toEqual(expected);
+        expect(submitted()).toEqual([]);
+      } finally {
+        unmount();
+        browserOnline.mockRestore();
+        onlineManager.setOnline(wasOnline);
+      }
+    },
+  );
+
+  it('blocks a paused qualified Invoke resumed before the native reconnect renders', async () => {
+    const replacement = deferredAnswer();
+    const announcements = recordAnnouncements();
+    const draft = '{"event":"preserved through reconnect"}';
+    const { client, unmount } = open(pagePath('orders'));
+    const wasOnline = onlineManager.isOnline();
+    const browserOnline = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true);
+    try {
+      await waitForResult('Not invoked yet');
+      await chooseTarget('live');
+      expect(targets().findTrigger().getElement()).toHaveAccessibleName(/Invoke target/);
+      expect(targets().findTrigger().getElement()).toHaveTextContent('live');
+      eventField().setTextareaValue(draft);
+      const originalEditor = eventField().findNativeTextarea().getElement();
+      expect(originalEditor).toHaveAccessibleName('Event JSON');
+
+      act(() => onlineManager.setOnline(false));
+      invokeTarget();
+      const cache = client.getMutationCache();
+      const [queued] = cache.getAll();
+      await waitFor(() => expect(queued?.state.isPaused).toBe(true));
+      const settled = new Promise<void>((resolve) => {
+        const unsubscribe = cache.subscribe((event) => {
+          if (
+            event.type === 'updated' &&
+            event.mutation === queued &&
+            (event.action.type === 'success' || event.action.type === 'error')
+          ) {
+            unsubscribe();
+            resolve();
+          }
+        });
+      });
+      expect(submitted()).toEqual([]);
+      const oldHealth = connection.value.result;
+      engine.answerInvoke = () => result('stale invocation payload', 'stale invocation log');
+
+      await act(async () => {
+        browserOnline.mockReturnValue(false);
+        window.dispatchEvent(new Event('offline'));
+        engine.functions = [{ name: 'orders', description: 'Replacement before Invoke resumes' }];
+        engine.answerFunction = () => replacement.promise;
+        browserOnline.mockReturnValue(true);
+        window.dispatchEvent(new Event('online'));
+        await client.resumePausedMutations();
+        await settled;
+
+        // The queued mutation has settled while the original Test controls are still committed.
+        expect(eventField().findNativeTextarea().getElement()).toBe(originalEditor);
+        expect(targets().findTrigger().getElement()).toHaveTextContent('live');
+        expect(queued?.state.error).toMatchObject({ name: 'AbortError' });
+        expect(submitted()).toEqual([]);
+      });
+      expect(connection.value.result).toBe(oldHealth);
+      expect(invokeButton().getElement()).toBeDisabled();
+      expect(targets().findTrigger().getElement()).toHaveTextContent('$LATEST');
+      expect(eventField().getTextareaValue()).toBe(draft);
+      await waitForResult('Not invoked yet');
+      expect(announcements).not.toContain('Succeeded');
+
+      const reads = engine.gets.length;
+      connection.set(connectedResult());
+      await waitFor(() => expect(engine.gets.length).toBeGreaterThan(reads));
+      expect(tabs()).toBeNull();
+      expect(submitted()).toEqual([]);
+      await act(async () =>
+        replacement.resolve(
+          engine.emulator({ method: 'GET', url: new URL('/2015-03-31/functions/orders', engineOrigin) }),
+        ),
+      );
+      await waitFor(() => expect(value('Description')).toBe('Replacement before Invoke resumes'));
+      expect(eventField().getTextareaValue()).toBe(draft);
+      expect(resultPanel()).toHaveTextContent('Not invoked yet');
+      expect(resultPanel()).not.toHaveTextContent(/stale invocation payload|stale invocation log/);
+
+      engine.answerInvoke = () => result('fresh invocation payload', 'fresh invocation log');
+      await chooseTarget('live');
+      invokeTarget();
+      await waitForResult('fresh invocation payload');
+      expect(resultPanel()).toHaveTextContent('fresh invocation log');
+      expect(submitted().map(({ method, url }) => [method, url.searchParams.get('Qualifier')])).toEqual([
+        ['POST', 'live'],
+      ]);
+      expect(engine.invocationBodies).toEqual([draft]);
+      await waitFor(() => expect(announcements.filter((message) => message === 'Succeeded')).toHaveLength(1));
+    } finally {
+      unmount();
+      browserOnline.mockRestore();
+      onlineManager.setOnline(wasOnline);
+    }
+  });
+
+  it('discards a held Invoke and paused alias deletion on native reconnect while keeping the event draft', async () => {
+    const priorInvoke = deferredAnswer();
+    const replacement = deferredAnswer();
+    const said = recordAnnouncements();
+    const event = '{"event":"preserved"}';
+    const aliasDeletes = () =>
+      engine.aws.filter(({ method, url }) => method === 'DELETE' && ALIAS_PATH.test(url.pathname));
+    engine.answerInvoke = () => result('prior payload', 'prior log');
+    const { client, unmount } = open(pagePath('orders'));
+    const wasOnline = onlineManager.isOnline();
+    const browserOnline = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true);
+    try {
+      await waitForResult('Not invoked yet');
+      await chooseTarget('live');
+      eventField().setTextareaValue(event);
+      invokeTarget();
+      await waitForResult('prior payload');
+      await waitFor(() => expect(said.filter((message) => message === 'Succeeded')).toHaveLength(1));
+
+      engine.answerInvoke = () => priorInvoke.promise;
+      invokeTarget();
+      await waitFor(() =>
+        expect(submitted().map(({ url }) => url.searchParams.get('Qualifier'))).toEqual(['live', 'live']),
+      );
+      fireEvent.click(tabLink('versions'));
+      const menu = await waitFor(() => {
+        const table = releaseTable('Aliases');
+        expect(table?.findBodyCell(1, 2)?.getElement()).toHaveTextContent('live');
+        const dropdown = table?.findBodyCell(1, 1)?.findButtonDropdown();
+        if (!dropdown) throw new Error('Expected the alias action menu');
+        return dropdown;
+      });
+      menu.openDropdown();
+      const remove = menu.findItemById('DeleteAlias')?.find('[role="menuitem"]')?.getElement();
+      if (!remove) throw new Error('Expected the DeleteAlias action');
+      expect(remove).toHaveAccessibleName('Delete alias live');
+      fireEvent.click(remove);
+      const dialog = await waitFor(() => {
+        const visible = PAGE.findAllModals().find((modal) => modal.isVisible());
+        if (!visible) throw new Error('Expected the alias deletion dialog');
+        return visible;
+      });
+      expect(dialog.findHeader().getElement()).toHaveTextContent('Delete alias');
+      const [cancel, confirm] = dialog.findFooter()?.findAllButtons() ?? [];
+      expect(cancel?.getElement()).toHaveAccessibleName('Cancel');
+      expect(confirm?.getElement()).toHaveAccessibleName('Delete alias');
+
+      act(() => onlineManager.setOnline(false));
+      confirm?.click();
+      await waitFor(() =>
+        expect(
+          client
+            .getMutationCache()
+            .getAll()
+            .some(({ state }) => state.isPaused),
+        ).toBe(true),
+      );
+      const queued = client
+        .getMutationCache()
+        .getAll()
+        .find(({ state }) => state.isPaused);
+      expect(aliasDeletes()).toEqual([]);
+      const oldHealth = connection.value.result;
+      browserOnline.mockReturnValue(false);
+      fireEvent(window, new Event('offline'));
+      engine.functions = [{ name: 'orders', description: 'Replacement invocation details' }];
+      engine.answerFunction = () => replacement.promise;
+      engine.answerRelease = ({ url }) =>
+        url.pathname.endsWith('/versions') ? versionAnswer('3') : aliasAnswer('next', '3');
+      browserOnline.mockReturnValue(true);
+      await act(async () => {
+        window.dispatchEvent(new Event('online'));
+        await client.resumePausedMutations();
+      });
+      await waitFor(() => expect(queued?.state.error).toMatchObject({ name: 'AbortError' }));
+      expect(connection.value.result).toBe(oldHealth);
+      expect(aliasDeletes()).toEqual([]);
+
+      const reads = engine.gets.length;
+      connection.set(connectedResult());
+      await waitFor(() => expect(engine.gets.length).toBeGreaterThan(reads));
+      await act(async () =>
+        replacement.resolve(
+          engine.emulator({ method: 'GET', url: new URL('/2015-03-31/functions/orders', engineOrigin) }),
+        ),
+      );
+      await waitFor(() => expect(value('Description')).toBe('Replacement invocation details'));
+      fireEvent.click(tabLink('test'));
+      await waitForResult('Not invoked yet');
+      await waitFor(() => expect(handed.test?.aliases.items).toEqual([{ name: 'next', version: '3' }]));
+      expect(targets().findTrigger().getElement()).toHaveTextContent('$LATEST');
+      targets().openDropdown();
+      expect(targetOption('live')).toBeNull();
+      expect(targetOption('next')).toHaveTextContent('Version 3');
+      targets().closeDropdown();
+
+      await act(async () => priorInvoke.resolve(result('late payload', 'late log')));
+      expect(resultPanel()).toHaveTextContent('Not invoked yet');
+      expect(resultPanel()).not.toHaveTextContent(/prior payload|late payload|late log/);
+      expect(targets().findTrigger().getElement()).toHaveTextContent('$LATEST');
+      expect(eventField().getTextareaValue()).toBe(event);
+      expect(said.filter((message) => message === 'Succeeded')).toHaveLength(1);
+      expect(aliasDeletes()).toEqual([]);
+
+      engine.answerInvoke = () => result('replacement payload', 'replacement log');
+      invokeTarget();
+      await waitForResult('replacement payload');
+      expect(submitted().map(({ url }) => url.searchParams.get('Qualifier'))).toEqual(['live', 'live', null]);
+    } finally {
+      unmount();
+      browserOnline.mockRestore();
+      onlineManager.setOnline(wasOnline);
+    }
+  });
+
+  it('announces off Test and announces a repeated result once while scrolling the visible panel', async () => {
+    const pending = deferredAnswer();
+    const announcements = recordAnnouncements();
+    const scroll = vi.spyOn(Element.prototype, 'scrollIntoView');
+    engine.answerInvoke = () => pending.promise;
+    open(pagePath('orders'));
+    await waitForResult('Not invoked yet');
+    await chooseTarget('live');
+    invokeTarget();
+    await waitFor(() => expect(submitted()).toHaveLength(1));
+
+    fireEvent.click(tabLink('code'));
+    expect(await screen.findByTestId('stand-in-code')).toBeVisible();
+    await act(async () => pending.resolve(result('first reply', 'first tail')));
+    await waitFor(() => expect(announcements.filter((message) => message === 'Succeeded')).toHaveLength(1));
+    expect(PAGE.findTextarea()).toBeNull();
+    expect(scroll).not.toHaveBeenCalled();
+
+    fireEvent.click(tabLink('test'));
+    await waitFor(() => expect(resultPanel()).toHaveTextContent('first reply'));
+    expect(announcements.filter((message) => message === 'Succeeded')).toHaveLength(1);
+    expect(scroll).not.toHaveBeenCalled();
+
+    await chooseTarget('live');
+    const field = eventField().findNativeTextarea().getElement();
+    field.focus();
+    engine.answerInvoke = () => result('second reply', 'second tail');
+    fireEvent.keyDown(field, { key: 'Enter', ctrlKey: true });
+
+    await waitFor(() => expect(announcements.filter((message) => message === 'Succeeded')).toHaveLength(2));
+    expect(resultPanel()).toHaveTextContent('second reply');
+    expect(scroll).toHaveBeenCalledTimes(1);
+    expect(scroll).toHaveBeenCalledWith({ block: 'nearest' });
+    expect(scroll.mock.contexts[0]).toContainElement(resultPanel());
+    expect(field).toHaveFocus();
+    scroll.mockRestore();
+  });
+
+  it.each(['Test', 'Code'])(
+    'keeps the submitted alias and an announced refusal when the detail reread removes %s',
+    async (tab) => {
+      const invoke = deferredAnswer();
+      const announcements = recordAnnouncements();
+      const scroll = vi.spyOn(Element.prototype, 'scrollIntoView');
+      engine.answerInvoke = () => invoke.promise;
+      open(pagePath('orders'));
+      await waitForResult('Not invoked yet');
+      await chooseTarget('live');
+      invokeTarget();
+      await waitFor(() => expect(submitted()[0]?.url.searchParams.get('Qualifier')).toBe('live'));
+      if (tab === 'Code') {
+        fireEvent.click(tabLink('code'));
+        expect(await screen.findByTestId('stand-in-code')).toBeVisible();
+      }
+
+      engine.functions = [];
+      await act(async () => invoke.resolve(errorAnswer(404, 'ResourceNotFoundException', 'Alias no longer exists')));
+      expect(await screen.findByText('Function not found')).toBeVisible();
+      expect(tabs()).toBeNull();
+      expect(resultPanel()).toHaveTextContent('Submitted target live');
+      expect(resultPanel()).toHaveTextContent('Invoke failed');
+      expect(resultPanel()).toHaveTextContent('ResourceNotFoundException');
+      expect(announcements.filter((message) => message === 'The invocation was refused')).toHaveLength(1);
+      expect(scroll).toHaveBeenCalledTimes(1);
+      if (tab === 'Code') {
+        expect(scroll.mock.contexts[0]).toContainElement(resultPanel());
+      }
+      scroll.mockRestore();
+    },
+  );
+
+  it.each([
+    [
+      'a function error',
+      {
+        status: 200,
+        body: '{"errorMessage":"handler failed"}',
+        headers: { 'x-amz-function-error': 'Unhandled' },
+      },
+      'The function returned an error',
+    ],
+    ['an absent engine answer', 'network-error', 'The invocation got no answer'],
+    [
+      'an unimplemented qualified Invoke',
+      errorAnswer(501, 'NotImplemented', 'Invoke qualifiers are unsupported.'),
+      'Not implemented by the emulator',
+    ],
+  ] as const)('announces %s once from the page', async (_case, answer, words) => {
+    const announcements = recordAnnouncements();
+    engine.answerInvoke = () => answer;
+    open(pagePath('orders'));
+    await waitForResult('Not invoked yet');
+    await chooseTarget('live');
+    invokeTarget();
+
+    await waitFor(() => expect(announcements.filter((message) => message === words)).toHaveLength(1));
+    expect(resultPanel()).toHaveTextContent(words);
+    fireEvent.click(tabLink('code'));
+    expect(await screen.findByTestId('stand-in-code')).toBeVisible();
+    fireEvent.click(tabLink('test'));
+    await waitFor(() => expect(resultPanel()).toHaveTextContent(words));
+    expect(announcements.filter((message) => message === words)).toHaveLength(1);
+  });
+
+  it('shows the reported service code and the access-denied reason for qualified Invoke', async () => {
+    engine.answerInvoke = () => errorAnswer(403, 'AccessDeniedException', 'The alias requires invoke permission.');
+    open(pagePath('orders'));
+    await waitForResult('Not invoked yet');
+    await chooseTarget('live');
+    invokeTarget();
+
+    await waitFor(() => expect(resultPanel()).toHaveTextContent('AccessDeniedException'));
+    expect(resultPanel()).toHaveTextContent('Submitted target live');
+    expect(resultPanel()).toHaveTextContent('Access denied: Invoke was refused.');
+    expect(resultPanel()).toHaveTextContent('The alias requires invoke permission.');
+  });
+
+  it('drops the previous choices, selection and result when navigating to another function', async () => {
+    engine.functions.push({ name: 'payments' });
+    engine.answerRelease = ({ url }) => {
+      const orders = url.pathname.includes('/orders/');
+      if (url.pathname.endsWith('/versions')) {
+        return versionAnswer(orders ? '2' : '8');
+      }
+      return orders ? aliasAnswer('live', '2') : aliasAnswer('next', '8');
+    };
+    engine.answerInvoke = () => result('orders result', 'orders tail');
+    const { router } = open(pagePath('orders'));
+    await waitForResult('Not invoked yet');
+    await chooseTarget('live');
+    invokeTarget();
+    await waitForResult('orders result');
+
+    await act(() => router.navigate(pagePath('payments')));
+    await waitForResult('Not invoked yet');
+    await waitFor(() => {
+      expect(handed.test?.versions.loading).toBe(false);
+      expect(handed.test?.aliases.loading).toBe(false);
+    });
+    expect(targets().findTrigger().getElement()).toHaveTextContent('$LATEST');
+    targets().openDropdown();
+    expect(targetOption('next')).toHaveTextContent('next');
+    expect(targetOption('8')).toHaveTextContent('8');
+    expect(targetOption('live')).toBeNull();
+    expect(resultPanel()).not.toHaveTextContent('orders result');
+  });
+
+  it('verifies a same-name replacement and ignores an old invocation that finishes after reconnect', async () => {
+    const pending = deferredAnswer();
+    const announcements = recordAnnouncements();
+    engine.answerInvoke = () =>
+      submitted().length === 1 ? result('previous result', 'previous tail') : pending.promise;
+    open(pagePath('orders'));
+    await waitForResult('Not invoked yet');
+    await chooseTarget('live');
+    invokeTarget();
+    await waitForResult('previous result');
+    await waitFor(() => expect(invokeButton().getElement()).toBeEnabled());
+    invokeTarget();
+    await waitFor(() => expect(submitted()).toHaveLength(2));
+    expect(resultPanel()).toHaveTextContent('previous result');
+    expect(announcements.filter((message) => message === 'Succeeded')).toHaveLength(1);
+
+    connection.set(notStartedResult());
+    expect(findResultPanel()?.textContent ?? '').not.toContain('previous result');
+    engine.answerRelease = ({ url }) =>
+      url.pathname.endsWith('/versions') ? versionAnswer('8') : aliasAnswer('replacement', '8');
+    connection.set(connectedResult());
+
+    await waitForResult('Not invoked yet');
+    await waitFor(() => {
+      expect(handed.test?.versions.loading).toBe(false);
+      expect(handed.test?.aliases.loading).toBe(false);
+    });
+    expect(targets().findTrigger().getElement()).toHaveTextContent('$LATEST');
+    targets().openDropdown();
+    expect(targetOption('replacement')).toHaveTextContent('replacement');
+    expect(targetOption('8')).toHaveTextContent('8');
+    expect(targetOption('live')).toBeNull();
+    const rereads = engine.gets.length;
+    expect(announcements.filter((message) => message === 'Succeeded')).toHaveLength(1);
+
+    await act(async () => {
+      pending.resolve(result('late result', 'late tail'));
+      await pending.promise;
+    });
+
+    expect(engine.gets).toHaveLength(rereads);
+    expect(targetOption('replacement')).toHaveTextContent('replacement');
+    expect(targets().findTrigger().getElement()).toHaveTextContent('$LATEST');
+    expect(resultPanel()).toHaveTextContent('Not invoked yet');
+    expect(resultPanel()).not.toHaveTextContent('late result');
+    expect(announcements.filter((message) => message === 'Succeeded')).toHaveLength(1);
+
+    targets().selectOptionByValue('replacement');
+    engine.answerInvoke = () => result('replacement result', 'replacement tail');
+    invokeTarget();
+    await waitFor(() => expect(announcements.filter((message) => message === 'Succeeded')).toHaveLength(2));
+    expect(resultPanel()).toHaveTextContent('Submitted target replacement');
+    expect(resultPanel()).toHaveTextContent('replacement result');
+  });
+
+  it('refreshes targets and keeps a disappeared alias blocked until replaced by an explicit choice', async () => {
+    open(pagePath('orders'));
+    await waitForResult('Not invoked yet');
+    await chooseTarget('live');
+    engine.answerRelease = ({ url }) =>
+      url.pathname.endsWith('/versions') ? versionAnswer('2') : json(200, { Aliases: [] });
+    const refresh = pageActions()[0];
+    expect(refresh?.getElement()).toHaveAccessibleName('Refresh');
+    refresh?.click();
+    await waitFor(() => {
+      const targetField = PAGE.findAllFormFields().find((field) => field.findControl()?.findSelect() != null);
+      expect(targetField?.findLabel()?.getElement()).toHaveTextContent('Invoke target');
+      expect(targetField?.findError()?.getElement()).toHaveTextContent('live is unavailable. Choose another target.');
+    });
+    expect(invokeButton().getElement()).toBeDisabled();
+    fireEvent.keyDown(eventField().findNativeTextarea().getElement(), { key: 'Enter', ctrlKey: true });
+    expect(submitted()).toHaveLength(0);
+    await chooseTarget('2');
+    invokeTarget();
+    await waitFor(() => expect(submitted()[0]?.url.searchParams.get('Qualifier')).toBe('2'));
   });
 });
 
@@ -1147,7 +2275,7 @@ describe('the tabs by ?tab=', () => {
     open(`${pagePath('orders')}${query}`);
     await screen.findByRole('heading', { level: 2, name: 'Function overview' });
 
-    expect(tabLabels()).toEqual(['Test', 'Code', 'Monitor', 'Configuration']);
+    expect(tabLabels()).toEqual(['Test', 'Code', 'Monitor', 'Configuration', 'Versions and aliases']);
     expect(activeTab()).toBe(label);
     expect(tabs()?.findTabContent()?.getElement()).toContainElement(screen.getByTestId(testId));
   });
@@ -1155,9 +2283,9 @@ describe('the tabs by ?tab=', () => {
   it('each tab links to its address: the function’s path, ?tab=code, ?tab=configuration', async () => {
     await openLoaded();
 
-    expect(tabLink('Test')).toHaveAttribute('href', pagePath('orders'));
-    expect(tabLink('Code')).toHaveAttribute('href', `${pagePath('orders')}?tab=code`);
-    expect(tabLink('Configuration')).toHaveAttribute('href', `${pagePath('orders')}?tab=configuration`);
+    expect(tabLink('test')).toHaveAttribute('href', pagePath('orders'));
+    expect(tabLink('code')).toHaveAttribute('href', `${pagePath('orders')}?tab=code`);
+    expect(tabLink('configuration')).toHaveAttribute('href', `${pagePath('orders')}?tab=configuration`);
   });
 
   it('choosing a tab changes the address’s query and not its path, adds an entry to the history, and reads nothing again', async () => {
@@ -1165,7 +2293,7 @@ describe('the tabs by ?tab=', () => {
     const reads = engine.gets.length;
     const overview = screen.getByRole('heading', { level: 2, name: 'Function overview' });
 
-    fireEvent.click(tabLink('Code'));
+    fireEvent.click(tabLink('code'));
     await waitFor(() => {
       expect(router.state.location.search).toBe('?tab=code');
     });
@@ -1173,7 +2301,7 @@ describe('the tabs by ?tab=', () => {
     expect(router.state.historyAction).toBe('PUSH');
     expect(activeTab()).toBe('Code');
 
-    fireEvent.click(tabLink('Configuration'));
+    fireEvent.click(tabLink('configuration'));
     await waitFor(() => {
       expect(router.state.location.search).toBe('?tab=configuration');
     });
@@ -1196,7 +2324,7 @@ describe('the tabs by ?tab=', () => {
     expect(handed.test?.invoke).toMatchObject({ isPending: false, data: undefined, error: undefined });
     expect(typeof handed.test?.invoke.mutate).toBe('function');
 
-    fireEvent.click(tabLink('Code'));
+    fireEvent.click(tabLink('code'));
     await waitFor(() => {
       expect(router.state.location.search).toBe('?tab=code');
     });
@@ -1210,7 +2338,7 @@ describe('the tabs by ?tab=', () => {
       environment: [{ key: 'SECRET', value: 'orders-secret-value' }],
     });
 
-    fireEvent.click(tabLink('Configuration'));
+    fireEvent.click(tabLink('configuration'));
     await waitFor(() => {
       expect(router.state.location.search).toBe('?tab=configuration');
     });
@@ -1233,12 +2361,12 @@ describe('the tabs by ?tab=', () => {
     });
     const invoke = handed.test?.invoke;
 
-    fireEvent.click(tabLink('Code'));
+    fireEvent.click(tabLink('code'));
     await waitFor(() => {
       expect(router.state.location.search).toBe('?tab=code');
     });
     expect(screen.queryByTestId('stand-in-test')).toBeNull();
-    fireEvent.click(tabLink('Test'));
+    fireEvent.click(tabLink('test'));
     await screen.findByTestId('stand-in-test');
 
     expect(handed.test?.eventText).toBe('{"tag": "kept"}');
@@ -1281,31 +2409,245 @@ describe('the tabs by ?tab=', () => {
 });
 
 describe('"Delete" in the header', () => {
-  async function openDialog(): Promise<HTMLElement> {
-    fireEvent.click(within(header()).getByRole('button', { name: 'Delete' }));
-    return screen.findByRole('dialog', { name: 'Delete functions' });
+  function pageDeleteAction() {
+    return pageActions()[1];
   }
 
-  function confirmAndDelete(dialog: HTMLElement) {
-    fireEvent.change(within(dialog).getByLabelText('To confirm deletion, type "confirm" in the field.'), {
-      target: { value: 'confirm' },
-    });
-    const button = within(dialog)
-      .getAllByRole('button', { name: 'Delete' })
-      .find((found) => norm(found.textContent) === 'Delete');
-    fireEvent.click(button as HTMLElement);
+  async function openDialog() {
+    const action = pageDeleteAction();
+    expect(action?.getElement()).toHaveTextContent('Delete');
+    action?.click();
+    return waitFor(() => deletionControls());
   }
+
+  function deletionDialog() {
+    return PAGE.findAllModals().find((dialog) => dialog.isVisible());
+  }
+
+  function deletionControls() {
+    const dialog = deletionDialog();
+    const input = dialog?.findContent().findInput();
+    const [cancel, submit] = dialog?.findFooter()?.findAllButtons() ?? [];
+    if (!dialog || !input || !submit || !cancel) {
+      throw new Error('Expected the visible deletion dialog and its controls');
+    }
+    expect(dialog.findHeader().getElement()).toHaveTextContent('Delete functions');
+    expect(cancel.getElement()).toHaveTextContent('Cancel');
+    expect(submit.getElement()).toHaveTextContent('Delete');
+    return { input, submit, cancel, content: dialog.findContent() };
+  }
+
+  function deleteRequests() {
+    return engine.aws
+      .filter(({ method, url }) => method === 'DELETE' && FUNCTION_PATH.test(url.pathname))
+      .map(({ url }) => FUNCTION_PATH.exec(url.pathname)?.[1]);
+  }
+
+  it('keeps deletion confirmation while the Test release reads finish independently', async () => {
+    const versions = deferredAnswer();
+    const aliases = deferredAnswer();
+    engine.answerRelease = ({ url }) => (url.pathname.endsWith('/versions') ? versions.promise : aliases.promise);
+    const { router } = await openLoaded();
+    await waitFor(() => {
+      expect(handed.test?.versions.loading).toBe(true);
+      expect(handed.test?.aliases.loading).toBe(true);
+      expect(engine.aws.filter(({ url }) => RELEASE_PATH.test(url.pathname))).toHaveLength(2);
+    });
+
+    await openDialog();
+    const { input, submit } = deletionControls();
+    const field = input.findNativeInput().getElement();
+    field.focus();
+    expect(submit.getElement()).toBeDisabled();
+    input.setInputValue('confirm');
+    expect(submit.getElement()).toBeEnabled();
+
+    await act(async () => versions.resolve(versionAnswer('2')));
+    await waitFor(() => {
+      expect(handed.test?.versions.items).toContainEqual({ version: '2', description: 'Release 2' });
+      expect(handed.test?.aliases.loading).toBe(true);
+    });
+    expect(deletionControls().input.getInputValue()).toBe('confirm');
+    expect(field).toHaveFocus();
+    expect(deletionControls().submit.getElement()).toBeEnabled();
+
+    await act(async () => aliases.resolve(aliasAnswer('live', '2')));
+    await waitFor(() => {
+      expect(handed.test?.aliases.items).toEqual([{ name: 'live', version: '2' }]);
+    });
+    expect(deletionControls().input.getInputValue()).toBe('confirm');
+    expect(field).toHaveFocus();
+    expect(deletionControls().submit.getElement()).toBeEnabled();
+    expect(deleteRequests()).toEqual([]);
+
+    deletionControls().submit.click();
+    await waitFor(() => expect(router.state.location.pathname).toBe('/aws/lambda/functions'));
+    expect(deleteRequests()).toEqual(['orders']);
+  });
+
+  function expectFreshConfirmation(target: string, priorRequests: readonly string[] = []) {
+    const { input, submit, content } = deletionControls();
+    expect(norm(content.find('li')?.getElement().textContent)).toBe(target);
+    expect(input.getInputValue()).toBe('');
+    expect(submit.getElement()).toBeDisabled();
+    fireEvent.keyDown(input.findNativeInput().getElement(), { key: 'Enter' });
+    submit.click();
+    expect(deleteRequests()).toEqual(priorRequests);
+
+    input.setInputValue('confirm');
+    expect(submit.getElement()).toBeEnabled();
+  }
+
+  it.each(['another function', 'Cancel', 'Escape'] as const)(
+    'requires fresh confirmation after %s',
+    async (boundary) => {
+      const { router } = await openLoaded();
+      engine.functions.push({ name: 'payments' });
+      const opener = pageDeleteAction()?.getElement();
+      opener?.focus();
+      const { input, submit, cancel } = await openDialog();
+      const field = input.findNativeInput().getElement();
+      field.focus();
+      expect(field).toHaveFocus();
+      input.setInputValue('confirm');
+      expect(submit.getElement()).toBeEnabled();
+
+      if (boundary === 'another function') {
+        await act(() => router.navigate(pagePath('payments')));
+        await screen.findByTestId('stand-in-test');
+      } else {
+        if (boundary === 'Cancel') {
+          cancel.click();
+        } else {
+          fireEvent.keyDown(field, { key: 'Escape', keyCode: 27 });
+        }
+        expect(opener).toHaveFocus();
+      }
+
+      expect(deletionDialog()).toBeUndefined();
+      await openDialog();
+      expectFreshConfirmation(boundary === 'another function' ? 'payments' : 'orders');
+    },
+  );
+
+  it('requires a fresh detail read and explicit confirmation after the first connected status', async () => {
+    const beforeConnection = deferredAnswer();
+    const afterConnection = deferredAnswer();
+    connection.value = { engineOrigin, result: undefined };
+    engine.functions = [{ ...ORDERS, description: 'Read while checking the connection' }];
+    engine.answerFunction = () => beforeConnection.promise;
+    const { router } = open(pagePath('orders'));
+
+    const functionRequest = { method: 'GET', url: new URL('/2015-03-31/functions/orders', engineOrigin) };
+    await waitFor(() => expect(engine.gets).toHaveLength(1));
+    await act(async () => beforeConnection.resolve(engine.emulator(functionRequest)));
+    await waitFor(() => {
+      expect(value('Description')).toBe('Read while checking the connection');
+    });
+    const checkingDelete = pageDeleteAction();
+    expect(checkingDelete?.getElement()).toHaveTextContent('Delete');
+    expect(checkingDelete?.getElement()).toBeDisabled();
+    checkingDelete?.click();
+    expect(deletionDialog()).toBeUndefined();
+    expect(deleteRequests()).toEqual([]);
+
+    engine.functions = [{ ...ORDERS, description: 'Verified in the first connected session' }];
+    engine.answerFunction = () => afterConnection.promise;
+    connection.set(connectedResult());
+    await waitFor(() => expect(engine.gets).toHaveLength(2));
+    const pendingDelete = pageDeleteAction();
+    pendingDelete?.click();
+    expect(pendingDelete).toBeUndefined();
+    expect(deletionDialog()).toBeUndefined();
+    expect(deleteRequests()).toEqual([]);
+
+    engine.answerFunction = (request) => engine.emulator(request);
+    await act(async () => afterConnection.resolve(engine.emulator(functionRequest)));
+    await waitFor(() => {
+      expect(value('Description')).toBe('Verified in the first connected session');
+    });
+    await openDialog();
+    expectFreshConfirmation('orders');
+    expect(deleteRequests()).toEqual([]);
+
+    deletionControls().submit.click();
+    await waitFor(() => expect(router.state.location.pathname).toBe('/aws/lambda/functions'));
+    expect(deleteRequests()).toEqual(['orders']);
+  });
+
+  it.each(['Test', 'Code'] as const)(
+    'blocks deletion from %s until a same-endpoint, same-name replacement is verified',
+    async (tab) => {
+      const replacement = deferredAnswer();
+      const { router } = await openLoaded();
+      if (tab === 'Code') {
+        await act(() => router.navigate(`${pagePath('orders')}?tab=code`));
+        await screen.findByTestId('stand-in-code');
+      }
+      pageDeleteAction()?.getElement().focus();
+      const refresh = pageActions()[0]?.getElement();
+      expect(refresh).toHaveAccessibleName('Refresh');
+      const { input, submit } = await openDialog();
+      const field = input.findNativeInput().getElement();
+      field.focus();
+      expect(field).toHaveFocus();
+      input.setInputValue('confirm');
+      expect(submit.getElement()).toBeEnabled();
+      const reads = engine.gets.length;
+
+      connection.set(notStartedResult());
+      expect(deletionDialog()).toBeUndefined();
+      expect(refresh).toHaveFocus();
+      expect(refresh).toBeEnabled();
+      const disconnectedDelete = pageDeleteAction();
+      expect(disconnectedDelete?.getElement()).toHaveTextContent('Delete');
+      expect(disconnectedDelete?.getElement()).toBeDisabled();
+      disconnectedDelete?.click();
+      submit.click();
+      expect(deletionDialog()).toBeUndefined();
+      expect(deleteRequests()).toEqual([]);
+
+      engine.functions = [{ ...ORDERS, description: 'Replacement at the same endpoint' }];
+      engine.answerFunction = (request) =>
+        request.method === 'GET' && FUNCTION_PATH.test(request.url.pathname)
+          ? replacement.promise
+          : engine.emulator(request);
+      connection.set(connectedResult());
+      await waitFor(() => expect(engine.gets).toHaveLength(reads + 1));
+      expect(await screen.findByText('Loading function')).toBeVisible();
+      const pendingDelete = pageDeleteAction();
+      pendingDelete?.click();
+      submit.click();
+      fireEvent.keyDown(input.findNativeInput().getElement(), { key: 'Enter' });
+      expect(pendingDelete).toBeUndefined();
+      expect(deletionDialog()).toBeUndefined();
+      expect(deleteRequests()).toEqual([]);
+
+      await act(async () => {
+        replacement.resolve(
+          engine.emulator({ method: 'GET', url: new URL('/2015-03-31/functions/orders', engineOrigin) }),
+        );
+      });
+      await waitFor(() => {
+        expect(value('Description')).toBe('Replacement at the same endpoint');
+      });
+      await openDialog();
+      expectFreshConfirmation('orders');
+      expect(deleteRequests()).toEqual([]);
+
+      deletionControls().submit.click();
+      await waitFor(() => expect(router.state.location.pathname).toBe('/aws/lambda/functions'));
+      expect(deleteRequests()).toEqual(['orders']);
+    },
+  );
 
   it('opens main’s dialog holding this one function; deleted: the list’s route with the result in its Flashbar', async () => {
     const { router } = await openLoaded();
 
-    const dialog = await openDialog();
-    expect(
-      within(dialog)
-        .getAllByRole('listitem')
-        .map((item) => norm(item.textContent)),
-    ).toEqual(['orders']);
-    confirmAndDelete(dialog);
+    const { input, submit, content } = await openDialog();
+    expect(content.findAll('li').map((item) => norm(item.getElement().textContent))).toEqual(['orders']);
+    input.setInputValue('confirm');
+    submit.click();
 
     await waitFor(() => {
       expect(router.state.location.pathname).toBe('/aws/lambda/functions');
@@ -1318,12 +2660,13 @@ describe('"Delete" in the header', () => {
 
   it('failed: the page stays, shows the failure and reads the function again, which is then not found', async () => {
     const { router } = await openLoaded();
-    const dialog = await openDialog();
+    const { input, submit } = await openDialog();
     // Deleted elsewhere meanwhile.
     engine.functions = [];
     const reads = engine.gets.length;
 
-    confirmAndDelete(dialog);
+    input.setInputValue('confirm');
+    submit.click();
 
     await waitFor(() => {
       expect(flashTexts()).toEqual([
@@ -1335,11 +2678,503 @@ describe('"Delete" in the header', () => {
     expect(engine.gets.length).toBeGreaterThan(reads);
   });
 
+  function openWithRecordedDeleteOutcomes() {
+    const shown = vi.fn<PageFlash['show']>();
+    const handedOver = vi.fn<PageFlash['handOver']>();
+    const root = { current: null as HTMLDivElement | null };
+
+    function Page() {
+      const [items, setItems] = useState<FlashResult>();
+      const current = useSyncExternalStore(connection.subscribe, connection.get);
+      return (
+        <AreaRootContext.Provider value={root}>
+          <PageFlashContext.Provider
+            value={{
+              show: (result) => {
+                shown(result);
+                setItems(result);
+              },
+              handOver: handedOver,
+            }}
+          >
+            <div
+              ref={(element) => {
+                root.current = element;
+              }}
+            >
+              {items !== undefined && <Flashbar items={[...items]} />}
+              <FunctionPage connection={current} params={{ name: 'orders' }} />
+            </div>
+          </PageFlashContext.Provider>
+        </AreaRootContext.Provider>
+      );
+    }
+
+    engine.functions = [ORDERS];
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter initialEntries={[pagePath('orders')]}>
+          <Page />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    return { shown, handedOver };
+  }
+
+  it.each(['success', 'refusal'] as const)(
+    'delivers one delete %s after an Invoke reread removes the confirmation in the same session',
+    async (outcome) => {
+      const invoke = deferredAnswer();
+      const deletion = deferredAnswer();
+      const detail = deferredAnswer();
+      engine.answerInvoke = () => invoke.promise;
+      engine.answerDelete = () => deletion.promise;
+      const { shown, handedOver } = openWithRecordedDeleteOutcomes();
+      await screen.findByTestId('stand-in-test');
+      fireEvent.click(screen.getByRole('button', { name: 'Stand-in invoke' }));
+      await waitFor(() => expect(engine.aws.filter(({ url }) => INVOKE_PATH.test(url.pathname))).toHaveLength(1));
+
+      const { input, submit, cancel, content } = await openDialog();
+      expect(cancel.getElement()).toBeEnabled();
+      expect(deletionDialog()?.findHeader().findButton()?.getElement()).toHaveAccessibleName('Close modal');
+      input.setInputValue('confirm');
+      const field = input.findNativeInput().getElement();
+      field.focus();
+      act(() => {
+        fireEvent.keyDown(field, { key: 'Enter' });
+        fireEvent.keyDown(field, { key: 'Enter' });
+      });
+      await waitFor(() => expect(deleteRequests()).toEqual(['orders']));
+      await waitFor(() => {
+        expect(content.getElement()).toHaveTextContent('Deleting functions…');
+        expect(cancel.getElement()).toBeDisabled();
+        expect(deletionDialog()?.findHeader().findAllButtons()).toHaveLength(0);
+        expect(submit.getElement()).toHaveAttribute('aria-disabled', 'true');
+        expect(submit.getElement()).toHaveFocus();
+      });
+      cancel.click();
+      fireEvent.keyDown(submit.getElement(), { key: 'Escape', keyCode: 27 });
+      expect(deletionDialog()).toBeDefined();
+      expect(submit.getElement()).toHaveFocus();
+      expect(deleteRequests()).toEqual(['orders']);
+      const reads = engine.gets.length;
+      engine.answerFunction = () => detail.promise;
+
+      await act(async () => invoke.resolve(json(200, { invoked: true })));
+      await waitFor(() => expect(engine.gets).toHaveLength(reads + 1));
+      engine.functions = [];
+      engine.answerFunction = (request) => engine.emulator(request);
+      await act(async () => detail.resolve(errorAnswer(404, 'ResourceNotFoundException', 'Function not found')));
+
+      expect(await screen.findByText('Function not found')).toBeVisible();
+      expect(deletionDialog()).toBeUndefined();
+      expect(shown).not.toHaveBeenCalled();
+      expect(handedOver).not.toHaveBeenCalled();
+
+      await act(async () => {
+        deletion.resolve(
+          outcome === 'success'
+            ? { status: 204, body: '' }
+            : errorAnswer(404, 'ResourceNotFoundException', 'Already removed'),
+        );
+      });
+      if (outcome === 'success') {
+        await waitFor(() => expect(handedOver).toHaveBeenCalledTimes(1));
+        expect(handedOver).toHaveBeenCalledWith('/aws/lambda/functions', [
+          { type: 'success', content: '1 function was deleted from the local emulator.' },
+        ]);
+        expect(shown).not.toHaveBeenCalled();
+      } else {
+        await waitFor(() => expect(shown).toHaveBeenCalledTimes(1));
+        expect(flashTexts()).toEqual(['Deleting orders failed ResourceNotFoundException: Already removed']);
+        expect(handedOver).not.toHaveBeenCalled();
+      }
+      expect(deleteRequests()).toEqual(['orders']);
+    },
+  );
+
+  it.each(['leaving the page', 'replacing the session'] as const)(
+    'does not dispatch an offline deletion after %s',
+    async (boundary) => {
+      const { client, router, unmount } = await openLoaded();
+      const wasOnline = onlineManager.isOnline();
+      try {
+        act(() => onlineManager.setOnline(false));
+        const { input, submit } = await openDialog();
+        input.setInputValue('confirm');
+        submit.click();
+        await waitFor(() => {
+          expect(client.getMutationCache().getAll()).toHaveLength(1);
+          expect(client.getMutationCache().getAll()[0]?.state.isPaused).toBe(true);
+        });
+        const queued = client.getMutationCache().getAll()[0];
+        expect(deleteRequests()).toEqual([]);
+
+        if (boundary === 'leaving the page') {
+          await act(() => router.navigate('/'));
+        } else {
+          connection.set(notStartedResult());
+        }
+        expect(deletionDialog()).toBeUndefined();
+        engine.functions = [{ ...ORDERS, description: 'Replacement before the queued deletion resumes' }];
+        if (boundary === 'replacing the session') {
+          connection.set(connectedResult());
+        }
+
+        await act(async () => {
+          onlineManager.setOnline(true);
+          await client.resumePausedMutations();
+        });
+        await waitFor(() => {
+          expect(queued?.state.status).toBe('error');
+          expect(queued?.state.error).toMatchObject({ name: 'AbortError' });
+        });
+        expect(deleteRequests()).toEqual([]);
+
+        if (boundary === 'leaving the page') {
+          await act(() => router.navigate(pagePath('orders')));
+        }
+        await waitFor(() => {
+          expect(value('Description')).toBe('Replacement before the queued deletion resumes');
+        });
+        expect(deleteRequests()).toEqual([]);
+      } finally {
+        unmount();
+        onlineManager.setOnline(wasOnline);
+      }
+    },
+  );
+
+  it.each(['test', 'versions'] as const)(
+    'reports reconnect progress and requires a new verified confirmation on %s',
+    async (tab) => {
+      const replacementRead = deferredAnswer();
+      const versions = deferredAnswer();
+      const aliases = deferredAnswer();
+      const { client, router, unmount } = await openLoaded();
+      if (tab === 'versions') {
+        fireEvent.click(tabLink('versions'));
+        await waitFor(() => {
+          expect(releaseTable('Versions')?.findBodyCell(1, 1)?.getElement()).toHaveTextContent('$LATEST');
+        });
+      }
+      const announcements = recordAnnouncements();
+      const notice = () => PAGE.findContentLayout()?.findNotifications()?.findAlert() ?? null;
+      const confirmationHint = 'The delete confirmation closed. Reopen Delete after verification.';
+      async function expectNotice(header: string, detail: string) {
+        expect(notice()?.findHeader()?.getElement()).toHaveTextContent(header);
+        expect(notice()?.findContent().getElement()).toHaveTextContent(detail);
+        await waitFor(() => {
+          expect(announcements.some((message) => message.includes(header) && message.includes(detail))).toBe(true);
+        });
+      }
+      const wasOnline = onlineManager.isOnline();
+      const browserOnline = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true);
+      try {
+        const oldHealth = connection.value.result;
+        const { input, submit } = await openDialog();
+        input.setInputValue('confirm');
+        // Model the query queue pausing before the old page receives its browser event.
+        act(() => onlineManager.setOnline(false));
+        submit.click();
+        await waitFor(() => {
+          expect(client.getMutationCache().getAll()[0]?.state.isPaused).toBe(true);
+        });
+        const queued = client.getMutationCache().getAll()[0];
+        expect(deleteRequests()).toEqual([]);
+
+        browserOnline.mockReturnValue(false);
+        fireEvent(window, new Event('offline'));
+        expect(deletionDialog()).toBeUndefined();
+        await expectNotice('Browser is offline', confirmationHint);
+        expect(PAGE.find('.aws-area-emulator-line')?.getElement()).toHaveTextContent('Connected at');
+        if (tab === 'versions') {
+          expect(tabs()?.findTabContent()?.findStatusIndicator()?.getElement()).toHaveTextContent(
+            'Versions and aliases are unavailable until the emulator reconnects.',
+          );
+          expect(releaseTable('Versions')).toBeUndefined();
+          expect(releaseTable('Aliases')).toBeUndefined();
+        }
+
+        engine.functions = [{ ...ORDERS, description: 'Replacement while the browser was offline' }];
+        engine.answerRelease = ({ url }) => (url.pathname.endsWith('/versions') ? versions.promise : aliases.promise);
+        engine.answerFunction = (request) =>
+          request.method === 'GET' && FUNCTION_PATH.test(request.url.pathname)
+            ? replacementRead.promise
+            : engine.emulator(request);
+
+        browserOnline.mockReturnValue(true);
+        await act(async () => {
+          window.dispatchEvent(new Event('online'));
+          await client.resumePausedMutations();
+        });
+        await waitFor(() => {
+          expect(queued?.state.status).toBe('error');
+          expect(queued?.state.error).toMatchObject({ name: 'AbortError' });
+        });
+        expect(onlineManager.isOnline()).toBe(true);
+        expect(connection.value.result).toBe(oldHealth);
+        await expectNotice('Rechecking the emulator connection', confirmationHint);
+        expect(PAGE.find('.aws-area-emulator-line')?.getElement()).toHaveTextContent('Connected at');
+        if (tab === 'versions') {
+          expect(tabs()?.findTabContent()?.findStatusIndicator()?.getElement()).toHaveTextContent(
+            'Waiting for function verification',
+          );
+          expect(releaseTable('Versions')).toBeUndefined();
+          expect(releaseTable('Aliases')).toBeUndefined();
+        }
+        expect(router.state.location.pathname).toBe(pagePath('orders'));
+        expect(deleteRequests()).toEqual([]);
+        const beforeHealthDelete = pageDeleteAction();
+        expect(beforeHealthDelete?.getElement()).toHaveTextContent('Delete');
+        expect(beforeHealthDelete?.getElement()).toBeDisabled();
+        beforeHealthDelete?.click();
+        expect(deletionDialog()).toBeUndefined();
+
+        const beforeHealthReads = engine.gets.length;
+        connection.set(connectedResult());
+        await waitFor(() => expect(engine.gets.length).toBeGreaterThan(beforeHealthReads));
+        await expectNotice('Verifying the function', confirmationHint);
+        expect(tabs()).toBeNull();
+        pageDeleteAction()?.click();
+        expect(deletionDialog()).toBeUndefined();
+        expect(deleteRequests()).toEqual([]);
+
+        const request = { method: 'GET', url: new URL('/2015-03-31/functions/orders', engineOrigin) };
+        await act(async () => replacementRead.resolve(engine.emulator(request)));
+        await waitFor(() => expect(value('Description')).toBe('Replacement while the browser was offline'));
+        await expectNotice('Function verified', 'Reopen Delete to confirm deletion again.');
+        if (tab === 'versions') {
+          const publish = () => releaseTable('Versions')?.findHeaderSlot()?.findHeader()?.findActions()?.findButton();
+          expect(releaseTable('Versions')?.findLoadingText()?.getElement()).toHaveTextContent('Loading versions');
+          expect(releaseTable('Aliases')?.findLoadingText()?.getElement()).toHaveTextContent('Loading aliases');
+          expect(publish()?.getElement()).toHaveTextContent('Publish version');
+          expect(publish()?.isDisabled()).toBe(true);
+          publish()?.click();
+          expect(engine.aws.filter(({ method, url }) => method === 'POST' && RELEASE_PATH.test(url.pathname))).toEqual(
+            [],
+          );
+
+          await act(async () => {
+            versions.resolve(json(200, { Versions: [] }));
+            aliases.resolve(json(200, { Aliases: [] }));
+          });
+          await waitFor(() => {
+            expect(releaseTable('Versions')?.findEmptySlot()?.getElement()).toHaveTextContent('No versions returned.');
+            expect(releaseTable('Aliases')?.findEmptySlot()?.getElement()).toHaveTextContent('No aliases');
+            expect(publish()?.isDisabled()).toBe(false);
+          });
+        } else {
+          await act(async () => {
+            versions.resolve(versionAnswer('2'));
+            aliases.resolve(aliasAnswer('live', '2'));
+          });
+        }
+        await openDialog();
+        expect(notice()).toBeNull();
+        expectFreshConfirmation('orders');
+        expect(deleteRequests()).toEqual([]);
+
+        deletionControls().submit.click();
+        await waitFor(() => expect(router.state.location.pathname).toBe('/aws/lambda/functions'));
+        expect(deleteRequests()).toEqual(['orders']);
+      } finally {
+        unmount();
+        browserOnline.mockRestore();
+        onlineManager.setOnline(wasOnline);
+      }
+    },
+  );
+
+  it.each(['engine session renewal', 'SDK retry'] as const)(
+    'blocks DeleteFunction after %s crosses a native reconnect and requires fresh confirmation',
+    async (wait) => {
+      const renewal = deferredAnswer();
+      const replacement = deferredAnswer();
+      const renew = wait === 'engine session renewal';
+      const refusal = renew
+        ? errorAnswer(401, 'SessionInvalid', 'The engine session expired')
+        : errorAnswer(503, 'EmulatorUnavailable', 'The engine did not relay the deletion');
+      engine.functions = [ORDERS];
+      engine.answerSession = () =>
+        engine.sessionRequests === 1 ? json(200, { token: 'emuforge-first-session' }) : renewal.promise;
+      engine.answerDelete = (request) =>
+        deleteRequests().length === 1
+          ? {
+              ...refusal,
+              headers: {
+                ...refusal.headers,
+                ...(renew ? { 'www-authenticate': 'EmuForge-Session' } : { 'retry-after': '3' }),
+              },
+            }
+          : engine.emulator(request);
+      const { client, router, unmount } = open(pagePath('orders'));
+      const wasOnline = onlineManager.isOnline();
+      const browserOnline = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true);
+      const schedule = globalThis.setTimeout;
+      let resumeRetry: (() => void) | undefined;
+      // Intercept only the SDK's delay requested by Retry-After, leaving React and query timers running.
+      const retryTimer = renew
+        ? undefined
+        : vi.spyOn(globalThis, 'setTimeout').mockImplementation((callback, delay, ...args) => {
+            if (delay !== undefined && delay >= 2500 && delay <= 3000) {
+              resumeRetry = () => callback(...args);
+              return schedule(() => undefined, 0);
+            }
+            return schedule(callback, delay, ...args);
+          });
+      try {
+        await waitFor(() => expect(value('Description')).toBe(ORDERS.description));
+        await openDialog();
+        expectFreshConfirmation('orders');
+        deletionControls().submit.click();
+        await waitFor(() => {
+          expect(deleteRequests()).toEqual(['orders']);
+          if (renew) {
+            expect(engine.sessionRequests).toBe(2);
+          } else {
+            expect(resumeRetry).toBeDefined();
+          }
+        });
+        const submission = client.getMutationCache().getAll()[0];
+        expect(submission?.state.status).toBe('pending');
+        const oldHealth = connection.value.result;
+        browserOnline.mockReturnValue(false);
+        fireEvent(window, new Event('offline'));
+        expect(deletionDialog()).toBeUndefined();
+        engine.functions = [{ ...ORDERS, description: 'Replacement after an unrelayed deletion' }];
+        engine.answerFunction = () => replacement.promise;
+        browserOnline.mockReturnValue(true);
+        fireEvent(window, new Event('online'));
+        expect(connection.value.result).toBe(oldHealth);
+        expect(pageDeleteAction()?.getElement()).toHaveAccessibleName('Delete');
+        expect(pageDeleteAction()?.getElement()).toBeDisabled();
+        pageDeleteAction()?.click();
+        expect(deletionDialog()).toBeUndefined();
+
+        await act(async () => {
+          if (renew) {
+            renewal.resolve(json(200, { token: 'emuforge-renewed-session' }));
+          } else {
+            resumeRetry?.();
+          }
+        });
+        await waitFor(() => expect(submission?.state.error).toMatchObject({ name: 'AbortError' }));
+        expect(deleteRequests()).toEqual(['orders']);
+        expect(engine.functions.map(({ name }) => name)).toEqual(['orders']);
+        expect(flashTexts()).toEqual([]);
+        expect(router.state.location.pathname).toBe(pagePath('orders'));
+
+        const reads = engine.gets.length;
+        connection.set(connectedResult());
+        await waitFor(() => expect(engine.gets.length).toBeGreaterThan(reads));
+        expect(pageActions()[0]?.getElement()).toHaveAccessibleName('Refresh');
+        expect(pageDeleteAction()).toBeUndefined();
+        expect(deletionDialog()).toBeUndefined();
+        expect(deleteRequests()).toEqual(['orders']);
+        await act(async () =>
+          replacement.resolve(
+            engine.emulator({ method: 'GET', url: new URL('/2015-03-31/functions/orders', engineOrigin) }),
+          ),
+        );
+        await waitFor(() => expect(value('Description')).toBe('Replacement after an unrelayed deletion'));
+        await openDialog();
+        expectFreshConfirmation('orders', ['orders']);
+        deletionControls().submit.click();
+        await waitFor(() => {
+          expect(router.state.location.pathname).toBe('/aws/lambda/functions');
+          expect(flashTexts()).toEqual(['1 function was deleted from the local emulator.']);
+        });
+        expect(deleteRequests()).toEqual(['orders', 'orders']);
+        expect(engine.functions).toEqual([]);
+      } finally {
+        retryTimer?.mockRestore();
+        unmount();
+        browserOnline.mockRestore();
+        onlineManager.setOnline(wasOnline);
+      }
+    },
+  );
+
+  it.each(['success', 'refusal'] as const)(
+    'delivers an already dispatched delete %s once after a native connectivity cycle within the same session',
+    async (outcome) => {
+      const deletion = deferredAnswer();
+      engine.answerDelete = () => deletion.promise;
+      const { shown, handedOver } = openWithRecordedDeleteOutcomes();
+      await waitFor(() => expect(value('Description')).toBe(ORDERS.description));
+      const wasOnline = onlineManager.isOnline();
+      const browserOnline = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true);
+      try {
+        const { input, submit } = await openDialog();
+        input.setInputValue('confirm');
+        submit.click();
+        await waitFor(() => expect(deleteRequests()).toEqual(['orders']));
+
+        browserOnline.mockReturnValue(false);
+        fireEvent(window, new Event('offline'));
+        expect(deletionDialog()).toBeUndefined();
+        browserOnline.mockReturnValue(true);
+        fireEvent(window, new Event('online'));
+
+        await act(async () => {
+          deletion.resolve(
+            outcome === 'success'
+              ? { status: 204, body: '' }
+              : errorAnswer(409, 'ResourceConflictException', 'Function is in use'),
+          );
+        });
+        if (outcome === 'success') {
+          await waitFor(() => expect(handedOver).toHaveBeenCalledTimes(1));
+          expect(shown).not.toHaveBeenCalled();
+        } else {
+          await waitFor(() => expect(shown).toHaveBeenCalledTimes(1));
+          expect(flashTexts()).toEqual(['Deleting orders failed ResourceConflictException: Function is in use']);
+          expect(handedOver).not.toHaveBeenCalled();
+        }
+        expect(deleteRequests()).toEqual(['orders']);
+      } finally {
+        browserOnline.mockRestore();
+        onlineManager.setOnline(wasOnline);
+      }
+    },
+  );
+
+  it('ignores a submitted deletion that settles after the same-name function reconnects', async () => {
+    const deletion = deferredAnswer();
+    engine.answerDelete = () => deletion.promise;
+    const { shown, handedOver } = openWithRecordedDeleteOutcomes();
+    await screen.findByTestId('stand-in-test');
+    const { input, submit } = await openDialog();
+    input.setInputValue('confirm');
+    submit.click();
+    await waitFor(() => expect(deleteRequests()).toEqual(['orders']));
+
+    connection.set(notStartedResult());
+    expect(deletionDialog()).toBeUndefined();
+    engine.functions = [{ ...ORDERS, description: 'Replacement after submitted deletion' }];
+    connection.set(connectedResult());
+    await waitFor(() => {
+      expect(value('Description')).toBe('Replacement after submitted deletion');
+    });
+
+    await act(async () => {
+      deletion.resolve({ status: 204, body: '' });
+      await deletion.promise;
+    });
+    expect(shown).not.toHaveBeenCalled();
+    expect(handedOver).not.toHaveBeenCalled();
+    expect(deleteRequests()).toEqual(['orders']);
+    const reopened = await openDialog();
+    expect(reopened.input.getInputValue()).toBe('');
+    expect(reopened.submit.getElement()).toBeDisabled();
+  });
+
   it('is not offered while the function is not found', async () => {
     open(pagePath('gone'));
 
     await screen.findByText('Function not found');
-    expect(within(header()).queryByRole('button', { name: 'Delete' })).toBeNull();
+    expect(pageDeleteAction()).toBeUndefined();
   });
 });
 

@@ -1,10 +1,11 @@
 import Box from '@cloudscape-design/components/box';
-import Button from '@cloudscape-design/components/button';
+import Button, { type ButtonProps } from '@cloudscape-design/components/button';
 import FormField from '@cloudscape-design/components/form-field';
 import Input from '@cloudscape-design/components/input';
 import SpaceBetween from '@cloudscape-design/components/space-between';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 
+import { AwsMutationInterrupted } from '../../../../../../lib/aws/request';
 import { AreaModal } from '../../../components/area-modal';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { usePageFlash, type FlashItem, type FlashResult } from '../../../components/page-flash';
@@ -24,6 +25,9 @@ export const DELETE_FUNCTIONS_TITLE = 'Delete functions';
 const CONFIRM_WORD = 'confirm';
 
 const CONFIRM_LABEL = 'To confirm deletion, type "confirm" in the field.';
+const DELETING = 'Deleting functions…';
+const OFFLINE_REASON = 'The browser is offline. Reconnect before deleting functions.';
+const EMULATOR_REASON = 'Wait for the emulator to connect before deleting functions.';
 
 function deletedText(count: number): string {
   return count === 1
@@ -39,6 +43,12 @@ function resultItems(result: DeleteResult, engineOrigin: string | undefined): Fl
   if (result.deleted.length > 0) {
     items.push({ type: 'success', content: deletedText(result.deleted.length) });
   }
+  if (result.interrupted) {
+    items.push({
+      type: 'info',
+      content: `The ${result.interrupted} connection changed. Confirm any remaining deletions again.`,
+    });
+  }
   const [first, ...rest] = items;
   return first === undefined ? undefined : [first, ...rest];
 }
@@ -47,8 +57,22 @@ export interface DeleteFunctionsDialogProps {
   /** The functions to delete, in the order they are deleted; the dialog is shown while it holds any. */
   names: readonly string[];
   connection: AreaConnection;
-  /** Called when the dialog closes: by "Cancel" or Esc, or once every request is answered. */
-  onClose: () => void;
+  /** Called on dismissal, or with the settled outcomes when a submission closes the dialog. */
+  onClose: (result?: DeleteResult) => void;
+  /** The list can open its dialog offline, so it supplies the browser's connection state. */
+  online?: boolean;
+  /** The listing that supplied this confirmation is no longer current. */
+  confirmationExpired?: boolean;
+  /** Called when an expired confirmation contained input and had not been submitted. */
+  onExpiredDraft?: () => void;
+  /** Checks the list's connection revision before a queued React render can close an expired draft. */
+  canSubmit?: () => boolean;
+  /** Captures the emulator session authorized by a list confirmation for every attempt in the batch. */
+  isEmulatorCurrent?: () => boolean;
+  /** The list reports interrupted submissions even when no outcome was settled. */
+  reportEmptyInterruption?: boolean;
+  /** Called before removing a confirmation that contains keyboard focus. */
+  onFocusedDismissal?: () => void;
   /**
    * Called once, before `onClose`, when every function was deleted, with the result the Flashbar would show; the
    * dialog then shows nothing itself, so the caller can hand the result to the page it leads to (issue 516, task 6).
@@ -61,12 +85,65 @@ export interface DeleteFunctionsDialogProps {
  * The dialog that deletes `names` from the emulator, one `DeleteFunction` after another, once the field holds
  * exactly "confirm". It stays mounted with the list, so leaving the screen is what aborts its requests.
  */
-export function DeleteFunctionsDialog({ names, connection, onClose, onDeleted }: DeleteFunctionsDialogProps) {
+export function DeleteFunctionsDialog({
+  names,
+  connection,
+  onClose,
+  online,
+  confirmationExpired = false,
+  onExpiredDraft,
+  canSubmit,
+  isEmulatorCurrent,
+  reportEmptyInterruption = false,
+  onDeleted,
+  onFocusedDismissal,
+}: DeleteFunctionsDialogProps) {
   const flash = usePageFlash();
   const { remove, pending } = useDeleteFunctions(connection.engineOrigin);
   const [typed, setTyped] = useState('');
+  const connectionReasonId = useId();
+  const emulatorUnavailable = online !== undefined && connection.result?.kind !== 'connected';
+  const connectionReason = online === false ? OFFLINE_REASON : emulatorUnavailable ? EMULATOR_REASON : undefined;
   const visible = names.length > 0;
   const confirmed = typed === CONFIRM_WORD;
+
+  const deleteButton = useRef<ButtonProps.Ref>(null);
+  useEffect(() => {
+    // Hiding Close changes the modal's autofocus target. Keep focus on the loading action.
+    if (visible && pending) {
+      deleteButton.current?.focus();
+    }
+  }, [visible, pending]);
+
+  const submitting = useRef(false);
+  useLayoutEffect(() => {
+    // A submitted request keeps its dialog and reports its own settlement.
+    if (visible && confirmationExpired && !submitting.current) {
+      if (typed !== '') onExpiredDraft?.();
+      onClose();
+    }
+  }, [visible, confirmationExpired, typed, onExpiredDraft, onClose]);
+  const mounted = useRef(false);
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  const focused = useRef<Element | null>(null);
+  const trackDialogRemoval = useCallback(
+    (element: HTMLDivElement | null) => {
+      if (element === null) {
+        // The ref detaches before the modal portal restores focus to its opener.
+        if (focused.current === document.activeElement) {
+          onFocusedDismissal?.();
+        }
+        focused.current = null;
+      }
+    },
+    [onFocusedDismissal],
+  );
 
   // The field starts empty each time the dialog opens.
   const [shownFor, setShownFor] = useState(names);
@@ -76,27 +153,60 @@ export function DeleteFunctionsDialog({ names, connection, onClose, onDeleted }:
   }
 
   const handleDelete = useCallback(() => {
-    if (!confirmed || pending) {
+    const offline = online !== undefined && (!online || !navigator.onLine);
+    if (!visible || !confirmed || offline || pending || submitting.current || canSubmit?.() === false) {
       return;
     }
+    submitting.current = true;
     const engineOrigin = connection.engineOrigin;
-    remove(names).then(
+    void remove(names, isEmulatorCurrent).then(
       (result) => {
+        submitting.current = false;
+        if (!mounted.current) {
+          return;
+        }
         const items = resultItems(result, engineOrigin);
-        if (items !== undefined && onDeleted !== undefined && result.failed.length === 0) {
+        if (items !== undefined && onDeleted !== undefined && result.failed.length === 0 && !result.interrupted) {
           onDeleted(items);
         } else if (items !== undefined) {
           flash.show(items);
         }
-        onClose();
+        onClose(result);
       },
-      // The screen was left first: nothing is shown.
-      () => undefined,
+      (error: unknown) => {
+        submitting.current = false;
+        if (mounted.current && error instanceof AwsMutationInterrupted) {
+          setTyped('');
+          if (reportEmptyInterruption) {
+            flash.show([
+              {
+                type: 'info',
+                content: `The ${error.connection} connection changed before any deletion outcome was confirmed. Reopen Delete from Actions and confirm again.`,
+              },
+            ]);
+          }
+          onClose();
+        }
+      },
     );
-  }, [confirmed, pending, connection.engineOrigin, remove, names, flash, onClose, onDeleted]);
+  }, [
+    visible,
+    confirmed,
+    pending,
+    online,
+    canSubmit,
+    isEmulatorCurrent,
+    connection.engineOrigin,
+    remove,
+    names,
+    flash,
+    onClose,
+    onDeleted,
+    reportEmptyInterruption,
+  ]);
 
   const handleDismiss = useCallback(() => {
-    if (!pending) {
+    if (!pending && !submitting.current) {
       onClose();
     }
   }, [pending, onClose]);
@@ -112,19 +222,32 @@ export function DeleteFunctionsDialog({ names, connection, onClose, onDeleted }:
       'They will be deleted from your local emulator, with their code and settings. This cannot be undone.'
     );
 
-  return (
+  if (!visible) {
+    return null;
+  }
+
+  const modal = (
     <AreaModal
       visible={visible}
       header={DELETE_FUNCTIONS_TITLE}
       closeAriaLabel="Close modal"
+      hideDismissButton={pending}
       onDismiss={handleDismiss}
       footer={
         <Box float="right">
           <SpaceBetween direction="horizontal" size="xs">
-            <Button variant="link" onClick={handleDismiss}>
+            <Button variant="link" disabled={pending} onClick={handleDismiss}>
               Cancel
             </Button>
-            <Button variant="primary" disabled={!confirmed || pending} loading={pending} onClick={handleDelete}>
+            <Button
+              ref={deleteButton}
+              variant="primary"
+              disabled={!pending && (!confirmed || connectionReason !== undefined || confirmationExpired)}
+              {...(!pending && connectionReason !== undefined && { ariaDescribedby: connectionReasonId })}
+              loading={pending}
+              loadingText={DELETING}
+              onClick={handleDelete}
+            >
               Delete
             </Button>
           </SpaceBetween>
@@ -140,10 +263,20 @@ export function DeleteFunctionsDialog({ names, connection, onClose, onDeleted }:
           ))}
         </ul>
         <Box variant="p">{sentence}</Box>
-        <FormField label={CONFIRM_LABEL}>
+        <FormField
+          label={CONFIRM_LABEL}
+          description={
+            online !== undefined && (
+              <span id={connectionReasonId} role="status">
+                {pending ? '' : connectionReason}
+              </span>
+            )
+          }
+        >
           <Input
             value={typed}
             placeholder={CONFIRM_WORD}
+            readOnly={pending}
             onChange={({ detail }) => {
               setTyped(detail.value);
             }}
@@ -154,7 +287,21 @@ export function DeleteFunctionsDialog({ names, connection, onClose, onDeleted }:
             }}
           />
         </FormField>
+        {pending && <Box variant="p">{DELETING}</Box>}
       </SpaceBetween>
     </AreaModal>
+  );
+  if (onFocusedDismissal === undefined) {
+    return modal;
+  }
+  return (
+    <div
+      ref={trackDialogRemoval}
+      onFocusCapture={(event) => {
+        focused.current = event.target;
+      }}
+    >
+      {modal}
+    </div>
   );
 }

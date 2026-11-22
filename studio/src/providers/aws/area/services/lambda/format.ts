@@ -1,6 +1,8 @@
 import { creationDateText, NO_DATE } from '../../components/format-date';
 import { CREATE_FUNCTION_PATH, FUNCTIONS_PATH, LAMBDA_PATH, functionPath } from '../../components/resource-paths';
 
+import type { ReleaseResult } from './version-api';
+
 export { CREATE_FUNCTION_PATH, FUNCTIONS_PATH, LAMBDA_PATH, functionPath };
 
 // How the Lambda screens write a function's values (issue 84, requirement R4.2, R5.3, R5.5), and the routes their
@@ -11,14 +13,14 @@ export { CREATE_FUNCTION_PATH, FUNCTIONS_PATH, LAMBDA_PATH, functionPath };
 export const NONE = '-';
 
 /** The tabs of a function's page, each addressed by the query of the function's one address (issue 516, design). */
-export type FunctionTab = 'test' | 'code' | 'monitor' | 'configuration';
+export type FunctionTab = 'test' | 'code' | 'monitor' | 'configuration' | 'versions';
 
 /** The query parameter that names a function's tab. */
 export const TAB_PARAMETER = 'tab';
 
 /** The tab a value of `?tab=` names, defaulting to Test. */
 export function tabOf(value: string | null | undefined): FunctionTab {
-  return value === 'code' || value === 'monitor' || value === 'configuration' ? value : 'test';
+  return value === 'code' || value === 'monitor' || value === 'configuration' || value === 'versions' ? value : 'test';
 }
 
 /** The address of a function's tab: "Test" is the function's path itself, the others add `?tab=`. */
@@ -111,4 +113,18 @@ export function timeoutText(seconds: number | undefined): string {
     return NONE;
   }
   return seconds === 1 ? '1 second' : `${String(seconds)} seconds`;
+}
+
+/** The outcome of a release change, using the release returned by the emulator. */
+export function releaseSuccessText(result: ReleaseResult): string {
+  switch (result.operation) {
+    case 'PublishVersion':
+      return `Published version ${result.version}.`;
+    case 'DeleteAlias':
+      return `Deleted alias ${result.name}.`;
+    case 'CreateAlias':
+      return `Created alias ${result.alias.name} to version ${result.alias.version}.`;
+    case 'UpdateAlias':
+      return `Updated alias ${result.alias.name} to version ${result.alias.version}.`;
+  }
 }

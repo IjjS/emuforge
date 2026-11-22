@@ -1,5 +1,6 @@
+import Alert, { type AlertProps } from '@cloudscape-design/components/alert';
 import Box from '@cloudscape-design/components/box';
-import Button from '@cloudscape-design/components/button';
+import Button, { type ButtonProps } from '@cloudscape-design/components/button';
 import Container from '@cloudscape-design/components/container';
 import ContentLayout from '@cloudscape-design/components/content-layout';
 import Header from '@cloudscape-design/components/header';
@@ -7,9 +8,11 @@ import Link from '@cloudscape-design/components/link';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Tabs, { type TabsProps } from '@cloudscape-design/components/tabs';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Ref } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 
+import { startedAtOf } from '../../../../../../lib/engine/engine-client';
+import { actionFailureItem, Code } from '../../../components/failure-states';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
 import { ValueText } from '../../../components/value-text';
@@ -26,9 +29,12 @@ import { FunctionOverview, FunctionStatusLine } from '../components/function-sec
 import { functionStatus } from '../components/function-status';
 import { MonitorTab } from '../components/monitor-tab';
 import { quoting } from '../components/quoting';
-import { TestTab } from '../components/test-tab';
-import { FUNCTIONS_PATH, functionTabHref, TAB_PARAMETER, tabOf } from '../format';
-import { isChanging, useFunctionReading, useInvoke, type Invocation } from '../queries';
+import { INVOKE_TARGET_RESET, InvocationResult, TestTab, type TestTabProps } from '../components/test-tab';
+import { VersionsTab, type VersionsTabProps } from '../components/versions-tab';
+import { FUNCTIONS_PATH, functionTabHref, releaseSuccessText, TAB_PARAMETER, tabOf } from '../format';
+import { invokeOutcome } from '../invoke-result';
+import { isChanging, useFunctionReading, useInvoke, useReadAgain } from '../queries';
+import { useReleaseMutation, useReleaseReadings } from '../version-queries';
 
 // A Lambda function's own page (issue 84, requirement R5, R10; issue 516, design "The function's page"): its header
 // with "Refresh" and "Delete", "Function overview", then the tabs, each addressed
@@ -37,9 +43,10 @@ import { isChanging, useFunctionReading, useInvoke, type Invocation } from '../q
 // has no description but the status line (issue 467, R3): the area's frame says where the function is.
 
 const REFRESHED = 'Function refreshed';
-/** The dialog's names while it is closed; one array, so the dialog does not take a new render for a new one. */
-const NO_NAMES: readonly string[] = [];
 const READY = 'Function ready';
+const NO_DELETE_TARGETS: readonly string[] = [];
+const ALIAS_CONFIRMATION_INTERRUPTED =
+  'The Delete alias confirmation closed. After verification, reopen it from the actions menu in the alias row.';
 
 /** The event text "Test" holds when the page opens. */
 export const INITIAL_EVENT = '{}';
@@ -49,9 +56,11 @@ interface FunctionTabsProps {
   fn: LambdaFunction;
   connection: AreaConnection;
   ready: boolean;
-  eventText: string;
-  onEventTextChange: (text: string) => void;
-  invoke: Invocation;
+  testScope: string;
+  test: Omit<TestTabProps, 'functionName' | 'connection' | 'versions' | 'aliases'>;
+  releases: Pick<VersionsTabProps, 'versions' | 'aliases' | 'mutation' | 'onAliasConfirmationChange'>;
+  releaseViewRef: Ref<HTMLDivElement>;
+  waitingForReleases: boolean;
   active: ReturnType<typeof tabOf>;
   onMonitorRefreshSettled: ((message: string) => void) | undefined;
 }
@@ -65,9 +74,11 @@ function FunctionTabs({
   fn,
   connection,
   ready,
-  eventText,
-  onEventTextChange,
-  invoke,
+  testScope,
+  test,
+  releases,
+  releaseViewRef,
+  waitingForReleases,
   active,
   onMonitorRefreshSettled,
 }: FunctionTabsProps) {
@@ -87,7 +98,14 @@ function FunctionTabs({
       label: 'Test',
       href: functionTabHref(name, 'test'),
       content: (
-        <TestTab functionName={name} eventText={eventText} onEventTextChange={onEventTextChange} invoke={invoke} />
+        <TestTab
+          key={testScope}
+          {...test}
+          functionName={name}
+          connection={connection}
+          versions={releases.versions}
+          aliases={releases.aliases}
+        />
       ),
     },
     {
@@ -119,6 +137,30 @@ function FunctionTabs({
       label: 'Configuration',
       href: functionTabHref(name, 'configuration'),
       content: <ConfigurationTab fn={fn} name={name} connection={connection} ready={ready} />,
+    },
+    {
+      id: 'versions',
+      label: 'Versions and aliases',
+      href: functionTabHref(name, 'versions'),
+      content: test.verified ? (
+        <div ref={releaseViewRef}>
+          <VersionsTab
+            {...releases}
+            connection={connection}
+            ready={ready && !releases.versions.loading && !releases.aliases.loading}
+          />
+        </div>
+      ) : (
+        <Container>
+          <Box textAlign="center">
+            <StatusIndicator type={waitingForReleases ? 'loading' : 'stopped'}>
+              {waitingForReleases
+                ? 'Waiting for function verification'
+                : 'Versions and aliases are unavailable until the emulator reconnects.'}
+            </StatusIndicator>
+          </Box>
+        </Container>
+      ),
     },
   ];
   return (
@@ -172,23 +214,273 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
   const [searchParams] = useSearchParams();
   const active = tabOf(searchParams.get(TAB_PARAMETER));
   const [announcement, announce] = useAnnouncer();
-  const connected = connection.result?.kind === 'connected';
+  const result = connection.result;
+  const connected = result?.kind === 'connected';
   const reading = useFunctionReading({
     endpoint: connection.engineOrigin,
     name,
     connected,
     disconnected: connection.result !== undefined && connection.result.kind !== 'connected',
-    monitorActive: active === 'monitor',
+    emulatorIdentity: connected ? JSON.stringify([result.emulator.endpoint, result.target]) : undefined,
+    revalidateOnReconnect: true,
   });
   const { read, failure, refresh } = reading;
+  const [network, setNetwork] = useState(() => ({
+    online: navigator.onLine,
+    revision: 0,
+    reconnect: undefined as { at: number; previous: typeof result } | undefined,
+  }));
+  useLayoutEffect(() => {
+    const handleOffline = () => {
+      setNetwork((current) => ({ ...current, online: false, revision: current.revision + 1 }));
+    };
+    const handleOnline = () => {
+      const at = Date.now();
+      setNetwork((current) => ({
+        online: true,
+        revision: current.revision + 1,
+        reconnect: { at, previous: result },
+      }));
+    };
+    window.addEventListener('offline', handleOffline, true);
+    window.addEventListener('online', handleOnline, true);
+    return () => {
+      window.removeEventListener('offline', handleOffline, true);
+      window.removeEventListener('online', handleOnline, true);
+    };
+  }, [result]);
+  const reconnect = network.reconnect;
+  const freshHealth =
+    reconnect === undefined ||
+    (result !== undefined && result !== reconnect.previous && startedAtOf(result) >= reconnect.at);
+  const healthCheckedAfterReconnect = reconnect === undefined || (connected && freshHealth);
+  const [readNetworkRevision, setReadNetworkRevision] = useState(0);
+  if (network.online && healthCheckedAfterReconnect && readNetworkRevision !== network.revision) {
+    setReadNetworkRevision(network.revision);
+    refresh();
+  }
   const fn = read?.found === true ? read.function : undefined;
   const ready = !isChanging(read);
-  const [eventText, setEventText] = useState(INITIAL_EVENT);
-  const invoke = useInvoke(connection.engineOrigin, name);
   const flash = usePageFlash();
-  const [deleting, setDeleting] = useState(false);
+  const reread = useReadAgain(connection.engineOrigin, name);
+  const functionScope = JSON.stringify([connection.engineOrigin, name]);
+  const sessionScope = JSON.stringify([functionScope, reading.session]);
+  const verificationScope = JSON.stringify([sessionScope, network.revision]);
+  const invoke = useInvoke(connection.engineOrigin, name, reading.session, network.revision);
+  const invocationPanel = useRef<HTMLDivElement>(null);
+  const scroll = useRef({ scope: verificationScope, answers: 0, shown: false });
+  const showInvocationFallback = fn === undefined && invoke.answers > 0;
+  const invocationAnswers = invoke.answers;
+  useEffect(() => {
+    const completed = scroll.current.scope !== verificationScope || scroll.current.answers !== invocationAnswers;
+    if (completed) {
+      scroll.current = { scope: verificationScope, answers: invocationAnswers, shown: false };
+    }
+    // If the detail disappears after a completion off Test, its fallback is the first visible result panel.
+    if (
+      invocationAnswers > 0 &&
+      (completed || showInvocationFallback) &&
+      !scroll.current.shown &&
+      invocationPanel.current !== null
+    ) {
+      invocationPanel.current.scrollIntoView({ block: 'nearest' });
+      scroll.current.shown = true;
+    }
+  }, [verificationScope, invocationAnswers, showInvocationFallback]);
+  const [savedTest, setTest] = useState({
+    scope: verificationScope,
+    functionScope,
+    eventText: INITIAL_EVENT,
+    qualifier: undefined as string | undefined,
+    targetUnavailable: false,
+    targetReset: false,
+  });
+  // Derive the reset in the same render as the network notice so both reach one live-region entry.
+  const test =
+    savedTest.scope === verificationScope
+      ? savedTest
+      : {
+          scope: verificationScope,
+          functionScope,
+          eventText: savedTest.functionScope === functionScope ? savedTest.eventText : INITIAL_EVENT,
+          qualifier: undefined,
+          targetUnavailable: false,
+          targetReset:
+            savedTest.functionScope === functionScope && (savedTest.targetReset || savedTest.qualifier !== undefined),
+        };
+  if (test !== savedTest) {
+    setTest(test);
+  }
+  const [verification, setVerification] = useState({ scope: verificationScope, found: false });
+  // A refresh can read releases in parallel once this connection has verified the function.
+  const verified =
+    connected &&
+    network.online &&
+    healthCheckedAfterReconnect &&
+    readNetworkRevision === network.revision &&
+    reading.sessionVerified &&
+    (read?.found ?? (failure === undefined && verification.scope === verificationScope && verification.found));
+  if (verification.scope !== verificationScope || verification.found !== verified) {
+    setVerification({ scope: verificationScope, found: verified });
+  }
+  const [savedAliasConfirmation, setAliasConfirmation] = useState<{ functionScope: string; open: boolean }>();
+  let aliasConfirmation = savedAliasConfirmation;
+  if (aliasConfirmation?.functionScope !== functionScope || active !== 'versions') {
+    aliasConfirmation = undefined;
+  } else if (aliasConfirmation.open && !verified) {
+    // An ordinary dismissal reports false before the release view unmounts.
+    aliasConfirmation = { functionScope, open: false };
+  }
+  if (aliasConfirmation !== savedAliasConfirmation) {
+    setAliasConfirmation(aliasConfirmation);
+  }
+  const aliasInterrupted = aliasConfirmation?.open === false;
+  const handleAliasConfirmationChange = useCallback(
+    (open: boolean) => setAliasConfirmation(open ? { functionScope, open: true } : undefined),
+    [functionScope],
+  );
+  const releases = useReleaseReadings({
+    endpoint: connection.engineOrigin,
+    name,
+    session: reading.session,
+    view: verified && (active === 'versions' || active === 'test') ? active : undefined,
+    verified,
+  });
+  const { qualifier } = test;
+  const refreshedTargetExists = /^\d+$/.test(qualifier ?? '')
+    ? releases.versions.items?.some(({ version }) => version === qualifier)
+    : releases.aliases.items?.some(({ name }) => name === qualifier);
+  if (
+    test.scope === verificationScope &&
+    qualifier !== undefined &&
+    !test.targetUnavailable &&
+    refreshedTargetExists === false
+  ) {
+    setTest({ ...test, targetUnavailable: true });
+  }
+  const releaseMutation = useReleaseMutation({
+    endpoint: connection.engineOrigin,
+    name,
+    scope: verificationScope,
+    onSuccess: (result) => {
+      flash.show([{ type: 'success', content: releaseSuccessText(result) }]);
+      void reread();
+      (result.operation === 'PublishVersion' ? releases.versions : releases.aliases).refresh();
+    },
+    onFailure: (failure, showInline) => {
+      const summary = actionFailureItem(failure, failure.operation, connection.engineOrigin);
+      const operationInContent = failure.kind === 'engine-did-not-answer' || failure.kind === 'emulator-did-not-answer';
+      const item = {
+        ...summary,
+        content: (
+          <>
+            {operationInContent && (
+              <>
+                <Code>{failure.operation}</Code> failed.{' '}
+              </>
+            )}
+            {failure.reportedCode !== undefined && (
+              <>
+                <Code>{failure.reportedCode}</Code>.{' '}
+              </>
+            )}
+            {summary.content}
+          </>
+        ),
+      };
+      if (!showInline?.(item)) {
+        flash.show([item]);
+      }
+    },
+  });
+  // A confirmation belongs to the function and connection that opened the dialog.
+  const [deletion, setDeletion] = useState<{ scope: string; names: readonly [string] }>();
+  const canDelete = connection.engineOrigin !== undefined && verified;
+  const activeDeletion = canDelete && deletion?.scope === verificationScope ? deletion : undefined;
+  const [closedConfirmationFor, setClosedConfirmationFor] = useState<string>();
+  if (closedConfirmationFor !== undefined && closedConfirmationFor !== functionScope) {
+    setClosedConfirmationFor(undefined);
+  }
+  if (activeDeletion !== deletion) {
+    setDeletion(undefined);
+    if (deletion?.names[0] === name && (!network.online || !healthCheckedAfterReconnect)) {
+      setClosedConfirmationFor(functionScope);
+    }
+  }
+  const reopeningRequired = closedConfirmationFor === functionScope;
+  let networkNotice: { type: AlertProps.Type; header: string; detail: string } | undefined;
+  if (!network.online) {
+    networkNotice = {
+      type: 'warning',
+      header: 'Browser is offline',
+      detail: 'Reconnect to verify this function.',
+    };
+  } else if (!freshHealth) {
+    networkNotice = {
+      type: 'info',
+      header: 'Rechecking the emulator connection',
+      detail: 'Wait for a new connection check.',
+    };
+  } else if (reconnect !== undefined && connected && !verified && read === undefined && failure === undefined) {
+    networkNotice = {
+      type: 'info',
+      header: 'Verifying the function',
+      detail: 'Wait for current function details.',
+    };
+  } else if (reopeningRequired && canDelete) {
+    networkNotice = {
+      type: 'info',
+      header: 'Function verified',
+      detail: 'Reopen Delete to confirm deletion again.',
+    };
+  }
+  const confirmationHint =
+    reopeningRequired && !canDelete ? 'The delete confirmation closed. Reopen Delete after verification.' : undefined;
+  const noticeWords = networkNotice
+    ? [`${networkNotice.header}.`, networkNotice.detail, confirmationHint].filter(Boolean).join(' ')
+    : confirmationHint;
+  const refreshButton = useRef<ButtonProps.Ref>(null);
+  const dismissedWithFocus = useRef(false);
+  const removedFocus = useRef<'alias' | 'test' | undefined>(undefined);
+  const captureAliasFocus = useCallback((element: HTMLDivElement | null) => {
+    if (element === null) return;
+    return () => {
+      // The alias dialog is portaled outside the release view.
+      if (document.activeElement?.closest('[role="dialog"]')) {
+        removedFocus.current = 'alias';
+      }
+    };
+  }, []);
+  const captureTestFocus = useCallback((element: HTMLDivElement | null) => {
+    if (element === null) return;
+    return () => {
+      if (element.contains(document.activeElement)) {
+        removedFocus.current = 'test';
+      }
+    };
+  }, []);
+  useLayoutEffect(() => {
+    const removed = removedFocus.current;
+    removedFocus.current = undefined;
+    if (
+      document.activeElement === document.body &&
+      ((removed === 'alias' && aliasInterrupted) ||
+        (removed === 'test' && active === 'test' && (!network.online || test.targetReset)))
+    ) {
+      refreshButton.current?.focus();
+    }
+  });
+  const handleFocusedDismissal = useCallback(() => {
+    dismissedWithFocus.current = true;
+  }, []);
+  useLayoutEffect(() => {
+    if (!canDelete && dismissedWithFocus.current) {
+      refreshButton.current?.focus();
+    }
+    dismissedWithFocus.current = false;
+  }, [activeDeletion, canDelete]);
   const handleDeleteClose = useCallback(() => {
-    setDeleting(false);
+    setDeletion(undefined);
   }, []);
   // Deleted: the list opens with the result. A failed delete stays here, its result in the Flashbar, and the delete
   // reads the function again, so one already gone shows "Function not found".
@@ -215,6 +507,26 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
   const [seenFailureLine, setSeenFailureLine] = useState<string>();
   const failureLine = failureState?.firstText;
   const toSay: string[] = [];
+  const [seenRecovery, setSeenRecovery] = useState({
+    notice: undefined as string | undefined,
+    aliasInterrupted: false,
+    targetReset: false,
+  });
+  if (
+    seenRecovery.notice !== noticeWords ||
+    seenRecovery.aliasInterrupted !== aliasInterrupted ||
+    seenRecovery.targetReset !== test.targetReset
+  ) {
+    const recovery = [
+      seenRecovery.notice !== noticeWords ? noticeWords : undefined,
+      aliasInterrupted && !seenRecovery.aliasInterrupted ? ALIAS_CONFIRMATION_INTERRUPTED : undefined,
+      test.targetReset && !seenRecovery.targetReset ? INVOKE_TARGET_RESET : undefined,
+    ]
+      .filter(Boolean)
+      .join(' ');
+    setSeenRecovery({ notice: noticeWords, aliasInterrupted, targetReset: test.targetReset });
+    if (recovery !== '') toSay.push(recovery);
+  }
   if (refreshing === 'function' && (read !== undefined || failure !== undefined)) {
     setRefreshing(undefined);
     if (read !== undefined) {
@@ -243,13 +555,31 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
       toSay.push(failureLine);
     }
   }
-  if (toSay.length > 0) {
+  const [seenInvocation, setSeenInvocation] = useState({ scope: verificationScope, answers: 0 });
+  const invocationScopeChanged = seenInvocation.scope !== verificationScope;
+  if (invocationScopeChanged || seenInvocation.answers !== invocationAnswers) {
+    setSeenInvocation({ scope: verificationScope, answers: invocationAnswers });
+    if (invocationAnswers > 0) {
+      const words =
+        invoke.error?.kind === 'not-implemented' && invoke.qualifier !== undefined
+          ? 'Not implemented by the emulator'
+          : invokeOutcome(invoke.data, invoke.error)?.words;
+      if (words !== undefined) {
+        toSay.push(words);
+      }
+    }
+  }
+  if (toSay.length > 0 || invocationScopeChanged) {
     announce(toSay.join('. '));
   }
 
   const handleRefresh = () => {
     setRefreshing(active === 'monitor' ? 'monitor' : 'function');
     refresh();
+    if (active === 'versions' || active === 'test') {
+      releases.versions.refresh();
+      releases.aliases.refresh();
+    }
   };
 
   let content;
@@ -278,9 +608,27 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
           fn={fn}
           connection={connection}
           ready={ready}
-          eventText={eventText}
-          onEventTextChange={setEventText}
-          invoke={invoke}
+          testScope={verificationScope}
+          test={{
+            invoke,
+            verified,
+            resultRef: invocationPanel,
+            eventText: test.eventText,
+            onEventTextChange: (eventText) => setTest((current) => ({ ...current, eventText })),
+            qualifier,
+            targetUnavailable: test.targetUnavailable,
+            targetReset: test.targetReset,
+            invokeInputRef: captureTestFocus,
+            onTargetChange: (qualifier) =>
+              setTest((current) => ({ ...current, qualifier, targetUnavailable: false, targetReset: false })),
+          }}
+          releases={{
+            ...releases,
+            mutation: releaseMutation,
+            onAliasConfirmationChange: handleAliasConfirmationChange,
+          }}
+          releaseViewRef={captureAliasFocus}
+          waitingForReleases={network.online && (result === undefined || connected)}
           active={active}
           onMonitorRefreshSettled={refreshing === 'monitor' ? handleMonitorRefreshSettled : undefined}
         />
@@ -291,6 +639,18 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
   return (
     <>
       <ContentLayout
+        notifications={
+          <>
+            {networkNotice ? (
+              <Alert type={networkNotice.type} header={networkNotice.header}>
+                {networkNotice.detail} {confirmationHint}
+              </Alert>
+            ) : (
+              confirmationHint && <Alert type="info">{confirmationHint}</Alert>
+            )}
+            {aliasInterrupted && <Alert type="info">{ALIAS_CONFIRMATION_INTERRUPTED}</Alert>}
+          </>
+        }
         header={
           <Header
             variant="h1"
@@ -298,11 +658,15 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
             description={status === undefined ? undefined : <FunctionStatusLine status={status} />}
             actions={
               <SpaceBetween direction="horizontal" size="xs">
-                <Button iconName="refresh" ariaLabel="Refresh" onClick={handleRefresh} />
+                <Button ref={refreshButton} iconName="refresh" ariaLabel="Refresh" onClick={handleRefresh} />
                 {fn !== undefined && (
                   <Button
+                    disabled={!canDelete}
                     onClick={() => {
-                      setDeleting(true);
+                      if (canDelete) {
+                        setClosedConfirmationFor(undefined);
+                        setDeletion({ scope: verificationScope, names: [name] });
+                      }
                     }}
                   >
                     Delete
@@ -315,14 +679,22 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
           </Header>
         }
       >
-        {content}
+        <SpaceBetween size="l">
+          {content}
+          {showInvocationFallback && <InvocationResult invoke={invoke} resultRef={invocationPanel} />}
+        </SpaceBetween>
       </ContentLayout>
-      <DeleteFunctionsDialog
-        names={deleting ? [name] : NO_NAMES}
-        connection={connection}
-        onClose={handleDeleteClose}
-        onDeleted={handleDeleted}
-      />
+      {connected && connection.engineOrigin !== undefined && (
+        // The session owns submitted deletes even when a detail read closes their confirmation.
+        <DeleteFunctionsDialog
+          key={sessionScope}
+          names={activeDeletion?.names ?? NO_DELETE_TARGETS}
+          connection={connection}
+          onClose={handleDeleteClose}
+          onDeleted={handleDeleted}
+          onFocusedDismissal={handleFocusedDismissal}
+        />
+      )}
       {announcement}
     </>
   );

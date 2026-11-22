@@ -18,6 +18,23 @@ export type RequestFailure =
   /** Any other answer: its code, or its status line when it has none, and its message when it has one. */
   | { kind: 'other'; operation: string; code: string; message?: string; sessionRefused?: true };
 
+const reportedCodes = new WeakMap<RequestFailure, string>();
+
+/**
+ * The code reported in a service response, when present. Keep the original failure from `requestFailure` or
+ * `RequestError.failure` to read this metadata. It excludes synthesized status lines, decoder errors and session errors.
+ */
+export function reportedServiceCode(failure: RequestFailure): string | undefined {
+  return reportedCodes.get(failure);
+}
+
+function withReportedCode(failure: RequestFailure, code: string | undefined): RequestFailure {
+  if (code !== undefined) {
+    reportedCodes.set(failure, code);
+  }
+  return failure;
+}
+
 /** A request that failed; `name` is 'RequestError', `message` is `<operation> failed: <kind>.` */
 export class RequestError extends Error {
   readonly failure: RequestFailure;
@@ -93,10 +110,10 @@ export function requestFailure(operation: string, error: unknown): RequestFailur
   if (typeof status !== 'number') {
     return { kind: 'engine-did-not-answer', operation };
   }
-  if (status === 501) {
-    return { kind: 'not-implemented', operation };
-  }
   const code = codeOf(answer, status);
+  if (status === 501) {
+    return withReportedCode({ kind: 'not-implemented', operation }, code);
+  }
   if (code === undefined && status >= 200 && status < 300) {
     // A success the SDK could not decode: its status names no failure, the SDK's own message is what went wrong.
     const message = text(answer.message);
@@ -114,12 +131,15 @@ export function requestFailure(operation: string, error: unknown): RequestFailur
   }
   const message = text(answer.message);
   if (ACCESS_DENIED.has(code)) {
-    return { kind: 'access-denied', operation, message: message ?? '' };
+    return withReportedCode({ kind: 'access-denied', operation, message: message ?? '' }, code);
   }
   if (EMULATOR_SILENT.has(code)) {
-    return { kind: 'emulator-did-not-answer', operation, message: message ?? '' };
+    return withReportedCode({ kind: 'emulator-did-not-answer', operation, message: message ?? '' }, code);
   }
-  return message === undefined ? { kind: 'other', operation, code } : { kind: 'other', operation, code, message };
+  return withReportedCode(
+    message === undefined ? { kind: 'other', operation, code } : { kind: 'other', operation, code, message },
+    code,
+  );
 }
 
 /** `pending`, unless `signal` aborts first or has aborted: then its reason, at once (R6.1). */
@@ -147,6 +167,53 @@ export function untilAborted<T>(pending: Promise<T>, signal: AbortSignal): Promi
   });
 }
 
+const mutationAuthorizations = new WeakMap<AbortSignal, () => void>();
+
+/** The connection ended before a mutation could finish sending its requests. */
+export class AwsMutationInterrupted extends DOMException {
+  constructor(readonly connection: 'browser' | 'emulator' = 'browser') {
+    super(`The ${connection} connection changed.`, 'AbortError');
+  }
+}
+
+/**
+ * Bind a mutation to the browser connection before it can queue. Mutations normally keep already-relayed replies,
+ * but a caller can also discard in-flight replies on native connectivity events. The caller owns session teardown.
+ */
+export function bindAwsMutationAuthorization(
+  controller: AbortController,
+  { cancelInFlight = false, isEmulatorCurrent }: { cancelInFlight?: boolean; isEmulatorCurrent?: () => boolean } = {},
+): () => void {
+  let interrupted = !navigator.onLine;
+  const cancel = () => controller.abort(new AwsMutationInterrupted());
+  const interrupt = () => {
+    interrupted = true;
+    if (cancelInFlight) cancel();
+  };
+  window.addEventListener('offline', interrupt, true);
+  window.addEventListener('online', interrupt, true);
+  mutationAuthorizations.set(controller.signal, () => {
+    if (interrupted || !navigator.onLine) {
+      cancel();
+    } else if (isEmulatorCurrent?.() === false) {
+      controller.abort(new AwsMutationInterrupted('emulator'));
+    }
+  });
+  return () => {
+    mutationAuthorizations.delete(controller.signal);
+    window.removeEventListener('offline', interrupt, true);
+    window.removeEventListener('online', interrupt, true);
+  };
+}
+
+/** Check the signal at dispatch and report whether the request is bound to a mutation authorization. */
+export function assertAwsRequestAuthorized(signal: AbortSignal): boolean {
+  const authorize = mutationAuthorizations.get(signal);
+  authorize?.();
+  signal.throwIfAborted();
+  return authorize !== undefined;
+}
+
 /**
  * One request of `operation`, sent by `send` with `signal` (R6.2). Rejects with a `RequestError` for a failed
  * request, and with `signal`'s reason, and nothing else, once it aborts.
@@ -156,7 +223,7 @@ export async function sendRequest<T>(
   send: (signal: AbortSignal) => Promise<T>,
   signal: AbortSignal,
 ): Promise<T> {
-  signal.throwIfAborted();
+  assertAwsRequestAuthorized(signal);
   let sent: Promise<T>;
   try {
     sent = send(signal);

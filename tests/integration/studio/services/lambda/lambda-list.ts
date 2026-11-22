@@ -123,6 +123,7 @@ export const TAB_QUERIES: { tab: string; query: string; section: string }[] = [
   { tab: 'Code', query: '?tab=code', section: 'Package' },
   { tab: 'Monitor', query: '?tab=monitor', section: 'Log events' },
   { tab: 'Configuration', query: '?tab=configuration', section: 'General configuration' },
+  { tab: 'Versions and aliases', query: '?tab=versions', section: 'Versions' },
 ];
 
 /** The last segments below a function's address that are no screen (issue 516): no tab is a path. */

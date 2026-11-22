@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: plan
 Issue-Key: studio|lambda.versions-and-aliases|task
-Issue-Check-Ids:
+Issue-Check-Ids: studio.lambda-publishes-function-version studio.lambda-manages-function-alias studio.lambda-reports-duplicate-alias studio.lambda-invokes-selected-release studio.lambda-reports-deleted-invoke-target studio.lambda-release-view-reconnects studio.lambda-release-test-reconnects
 Issue-Commit: 7b260c508348edd256975ce57d7da11104dc8891
 
 # Build Lambda's task 8: publish a version, point an alias at one, invoke by qualifier

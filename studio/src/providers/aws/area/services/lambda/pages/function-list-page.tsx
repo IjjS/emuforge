@@ -10,15 +10,16 @@ import Pagination from '@cloudscape-design/components/pagination';
 import PropertyFilter, { type PropertyFilterProps } from '@cloudscape-design/components/property-filter';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import Table, { type TableProps } from '@cloudscape-design/components/table';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 
 import { useAreaModalRoot } from '../../../components/area-modal';
 import type { AreaConnection } from '../../../components/emulator-line';
 import { useShowsResources } from '../../../components/page-resources';
+import { usePageFlash } from '../../../components/page-flash';
 import { useFollow } from '../../../components/use-follow';
 import { ValueText } from '../../../components/value-text';
-import type { FunctionSummary } from '../api';
+import type { DeleteResult, FunctionSummary } from '../api';
 import { DeleteFunctionsDialog } from '../components/delete-functions-dialog';
 import { readFailureState, useAnnouncer, type ReadFailureState } from '../components/failure-states';
 import { ReadFailure } from '../components/failures';
@@ -48,6 +49,7 @@ const RUNTIME_MIN_WIDTH = '18ch';
 
 const FILTER_LABEL = 'Search by attributes or search by keyword';
 const SELECT_FIRST = 'Select a function first';
+const WAIT_FOR_LIST = 'Wait for the current function list to load.';
 const REFRESHED = 'Function list refreshed';
 const NO_MORE = 'No more functions';
 
@@ -58,6 +60,8 @@ const PAGE_SIZES = [10, 25, 50] as const;
 
 /** No property: the filter takes free text only (R4.7). */
 const NO_PROPERTIES: readonly PropertyFilterProps.FilteringProperty[] = [];
+
+const NO_DELETE_TARGETS: readonly string[] = [];
 
 /** What the table's body shows (R10.1), the rows aside. */
 type BodyState =
@@ -160,21 +164,79 @@ export function FunctionListPage({ connection }: { connection: AreaConnection })
   const navigate = useNavigate();
   const modalRoot = useAreaModalRoot();
   const [announcement, announce] = useAnnouncer();
+  const flash = usePageFlash();
   const actionsRef = useRef<ButtonDropdownProps.Ref>(null);
+  const connectionRevision = useRef(0);
+  const [network, setNetwork] = useState(() => ({ online: navigator.onLine, revision: 0 }));
 
   const [filter, setFilter] = useState('');
   const [preferences, setPreferences] = useState(START_PREFERENCES);
   const [starter, setStarter] = useState<Starter>(null);
-  const connected = connection.result?.kind === 'connected';
+  const result = connection.result;
+  const connected = result?.kind === 'connected';
+  const identity = connected
+    ? JSON.stringify([connection.engineOrigin, result.emulator.endpoint, result.target])
+    : undefined;
+  const [observed, setObserved] = useState({ identity, revision: 0, readingEpoch: 0 });
+  if (observed.identity !== identity) {
+    const revision = observed.revision + 1;
+    setObserved({ identity, revision, readingEpoch: connected ? revision : observed.readingEpoch });
+  }
+  const emulatorRevision = useRef(observed.revision);
+  useLayoutEffect(() => {
+    emulatorRevision.current = observed.revision;
+  }, [observed.revision]);
+  const isEmulatorCurrent = useCallback(() => observed.revision === emulatorRevision.current, [observed.revision]);
+
   const listing = useFunctionListing({
     endpoint: connection.engineOrigin,
     pageSize: preferences.pageSize,
     filter,
     connected,
+    emulatorReadingEpoch: observed.readingEpoch,
   });
   const { functions, refresh } = listing;
   const loaded = functions !== undefined;
   const state = bodyState(listing, filter, connection);
+  const [preliminaryPreferencesEndpoint, setPreliminaryPreferencesEndpoint] = useState<string>();
+  const endpoint = connection.engineOrigin;
+  if (result === undefined && observed.revision === 0 && loaded) {
+    if (preliminaryPreferencesEndpoint !== endpoint) {
+      setPreliminaryPreferencesEndpoint(endpoint);
+    }
+  } else if (
+    preliminaryPreferencesEndpoint !== undefined &&
+    (preliminaryPreferencesEndpoint !== endpoint ||
+      observed.revision > 1 ||
+      (result !== undefined &&
+        (!connected || (observed.identity === identity && (loaded || listing.failure !== undefined)))))
+  ) {
+    setPreliminaryPreferencesEndpoint(undefined);
+  }
+  // Cloudscape removes an open Preferences modal when disabled. Keep the local controls available
+  // during the first verified read if the preliminary listing already enabled them.
+  const verifyingPreliminaryListing =
+    connected &&
+    observed.revision === 1 &&
+    preliminaryPreferencesEndpoint !== undefined &&
+    preliminaryPreferencesEndpoint === endpoint;
+  useLayoutEffect(() => {
+    const offline = () => {
+      connectionRevision.current += 1;
+      setNetwork({ online: false, revision: connectionRevision.current });
+    };
+    const online = () => {
+      connectionRevision.current += 1;
+      setNetwork({ online: true, revision: connectionRevision.current });
+      refresh();
+    };
+    window.addEventListener('offline', offline, true);
+    window.addEventListener('online', online, true);
+    return () => {
+      window.removeEventListener('offline', offline, true);
+      window.removeEventListener('online', online, true);
+    };
+  }, [refresh]);
 
   // Several rows, by name: a name stays selected while it is on the page shown (R4.3, R4.4).
   const [selectedNames, setSelectedNames] = useState<readonly string[]>([]);
@@ -186,8 +248,26 @@ export function FunctionListPage({ connection }: { connection: AreaConnection })
   }
   const selected = (functions ?? []).filter((fn) => selectedNames.includes(fn.name));
 
-  // The names "Delete functions" is open for; none while it is closed.
-  const [deleting, setDeleting] = useState<readonly string[]>([]);
+  const [deleting, setDeleting] = useState<{
+    names: readonly string[];
+    revision: number;
+    emulatorRevision: number;
+    endpoint: string | undefined;
+  }>();
+  const connectionChanged = deleting !== undefined && deleting.revision !== network.revision;
+  const emulatorChanged = deleting !== undefined && deleting.emulatorRevision !== observed.revision;
+  const confirmationExpired =
+    deleting !== undefined &&
+    (connectionChanged ||
+      emulatorChanged ||
+      deleting.endpoint !== connection.engineOrigin ||
+      !loaded ||
+      listing.failure !== undefined ||
+      !deleting.names.every((name) => selected.some((fn) => fn.name === name)));
+  const canSubmitDeletion = useCallback(
+    () => connected && !confirmationExpired && deleting?.revision === connectionRevision.current && isEmulatorCurrent(),
+    [connected, confirmationExpired, deleting, isEmulatorCurrent],
+  );
 
   const startListing = useCallback(() => {
     setStarter(null);
@@ -278,18 +358,54 @@ export function FunctionListPage({ connection }: { connection: AreaConnection })
 
   const handleAction = useCallback(
     ({ detail }: { detail: ButtonDropdownProps.ItemClickDetails }) => {
-      if (detail.id === 'delete' && selected.length > 0) {
-        setDeleting(selected.map((fn) => fn.name));
+      if (
+        detail.id === 'delete' &&
+        selected.length > 0 &&
+        listing.failure === undefined &&
+        network.revision === connectionRevision.current &&
+        isEmulatorCurrent()
+      ) {
+        setDeleting({
+          names: selected.map((fn) => fn.name),
+          revision: network.revision,
+          emulatorRevision: observed.revision,
+          endpoint: connection.engineOrigin,
+        });
       }
     },
-    [selected],
+    [
+      selected,
+      listing.failure,
+      network.revision,
+      isEmulatorCurrent,
+      observed.revision,
+      connection.engineOrigin,
+      setDeleting,
+    ],
   );
 
-  const handleDialogClose = useCallback(() => {
-    setDeleting([]);
-    // Focus returns to what opened the dialog (R7).
-    actionsRef.current?.focus();
-  }, []);
+  const handleDialogClose = useCallback(
+    (result?: DeleteResult) => {
+      if (result?.interrupted) {
+        setSelectedNames((names) => names.filter((name) => !result.deleted.includes(name)));
+      }
+      setDeleting(undefined);
+      // Focus returns to what opened the dialog (R7).
+      actionsRef.current?.focus();
+    },
+    [setDeleting],
+  );
+  const handleExpiredDraft = useCallback(() => {
+    if (connectionChanged || emulatorChanged) {
+      const source = connectionChanged ? 'browser' : 'emulator';
+      flash.show([
+        {
+          type: 'info',
+          content: `The delete confirmation closed because the ${source} connection changed. After the current function list loads, reopen Delete from Actions and confirm again.`,
+        },
+      ]);
+    }
+  }, [connectionChanged, emulatorChanged, flash]);
 
   const handleCreate = useCallback(() => {
     void navigate(CREATE_FUNCTION_PATH);
@@ -373,8 +489,8 @@ export function FunctionListPage({ connection }: { connection: AreaConnection })
                 <ButtonDropdown
                   ref={actionsRef}
                   items={[{ id: 'delete', text: 'Delete' }]}
-                  disabled={selected.length === 0}
-                  disabledReason={SELECT_FIRST}
+                  disabled={selected.length === 0 || listing.failure !== undefined}
+                  disabledReason={state.kind === 'loading' ? WAIT_FOR_LIST : SELECT_FIRST}
                   onItemClick={handleAction}
                 >
                   Actions
@@ -422,7 +538,7 @@ export function FunctionListPage({ connection }: { connection: AreaConnection })
             cancelLabel="Cancel"
             // The dismiss control has its own name, as in the console; Cloudscape would name it "Cancel" too.
             closeAriaLabel="Close modal"
-            disabled={!loaded && starter !== 'preferences'}
+            disabled={!loaded && starter !== 'preferences' && !verifyingPreliminaryListing}
             preferences={preferences}
             pageSizePreference={{
               title: 'Page size',
@@ -433,7 +549,17 @@ export function FunctionListPage({ connection }: { connection: AreaConnection })
           />
         }
       />
-      <DeleteFunctionsDialog names={deleting} connection={connection} onClose={handleDialogClose} />
+      <DeleteFunctionsDialog
+        names={deleting?.names ?? NO_DELETE_TARGETS}
+        connection={connection}
+        online={network.online}
+        confirmationExpired={confirmationExpired}
+        onExpiredDraft={handleExpiredDraft}
+        canSubmit={canSubmitDeletion}
+        isEmulatorCurrent={isEmulatorCurrent}
+        onClose={handleDialogClose}
+        reportEmptyInterruption
+      />
       {announcement}
     </>
   );

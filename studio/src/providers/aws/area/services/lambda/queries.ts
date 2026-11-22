@@ -1,7 +1,12 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
-import { requestFailure, type RequestFailure } from '../../../../../lib/aws/request';
+import {
+  assertAwsRequestAuthorized,
+  bindAwsMutationAuthorization,
+  requestFailure,
+  type RequestFailure,
+} from '../../../../../lib/aws/request';
 import {
   createFunction,
   CreateFunctionError,
@@ -21,7 +26,6 @@ import {
   type CreatedFunction,
   type CreatedRole,
   type CreateFunctionRequest,
-  type DeleteResult,
   type FunctionPage,
   type FunctionRead,
   type FunctionSummary,
@@ -116,6 +120,8 @@ export interface FunctionListingOptions {
   filter: string;
   /** The connection is connected: a failed reading is made again when it becomes so (R10.2). */
   connected: boolean;
+  /** Identifies the emulator session whose rows can authorize deletion. */
+  emulatorReadingEpoch?: number;
 }
 
 /** The counter after the title (R4.5): the functions of the pages read, with "+" while more remain. */
@@ -202,11 +208,17 @@ function answered(at: Position, page: number, answer: FunctionPage): Position {
  * The function list of the emulator behind the engine at `endpoint`, one page at a time, following the API's own
  * markers. It reads nothing again by itself while connected (R4.9).
  */
-export function useFunctionListing({ endpoint, pageSize, filter, connected }: FunctionListingOptions): FunctionListing {
+export function useFunctionListing({
+  endpoint,
+  pageSize,
+  filter,
+  connected,
+  emulatorReadingEpoch = 0,
+}: FunctionListingOptions): FunctionListing {
   const [mount] = useState(() => (mounts += 1));
   const [refreshes, setRefreshes] = useState(0);
   const generation = useListingGeneration(endpoint);
-  const listing = JSON.stringify([endpoint ?? null, generation, refreshes, pageSize, filter]);
+  const listing = JSON.stringify([endpoint ?? null, generation, refreshes, pageSize, filter, emulatorReadingEpoch]);
 
   const [stored, setPosition] = useState<Position>(() => fresh(listing));
   // A change of listing starts at page 1 with no marker.
@@ -219,6 +231,7 @@ export function useFunctionListing({ endpoint, pageSize, filter, connected }: Fu
       mount,
       generation,
       refreshes,
+      emulatorReadingEpoch,
       position.page,
       position.visit,
     ],
@@ -310,7 +323,9 @@ export interface FunctionReadingOptions {
   name: string;
   connected: boolean;
   disconnected?: boolean;
-  monitorActive?: boolean;
+  emulatorIdentity?: string | undefined;
+  /** Read the function anew when a confirmed session replaces another session or the initial check. */
+  revalidateOnReconnect?: boolean;
 }
 
 export interface FunctionReading {
@@ -320,6 +335,10 @@ export interface FunctionReading {
   failure: LambdaFailure | undefined;
   /** The reading's first answer has not arrived. */
   loading: boolean;
+  /** Changes when a connected session ends or the emulator target changes. */
+  session: number;
+  /** The detail query belongs to the current session. */
+  sessionVerified: boolean;
   /** Reads the function again, from nothing shown. */
   refresh: () => void;
 }
@@ -334,30 +353,48 @@ export function useFunctionReading({
   name,
   connected,
   disconnected = false,
-  monitorActive = false,
+  emulatorIdentity,
+  revalidateOnReconnect = false,
 }: FunctionReadingOptions): FunctionReading {
   const [mount] = useState(() => (mounts += 1));
   const [readings, setReadings] = useState(0);
   const generation = useListingGeneration(endpoint);
-  const [connection, setConnection] = useState({ disconnected: false, epoch: 0 });
-  const [monitorEpoch, setMonitorEpoch] = useState(0);
-  if (connection.disconnected !== disconnected) {
-    setConnection({ disconnected, epoch: connection.epoch + Number(disconnected) });
+  const [connection, setConnection] = useState({
+    connected,
+    disconnected,
+    emulatorIdentity,
+    epoch: Number(disconnected),
+    readingEpoch: 0,
+  });
+  const changedTarget =
+    connected && connection.emulatorIdentity !== undefined && connection.emulatorIdentity !== emulatorIdentity;
+  // A detail fetched while the connection check was pending belongs to no confirmed session.
+  const connectedFromChecking = connected && !connection.connected && !connection.disconnected;
+  const epoch =
+    connection.epoch + Number((disconnected && !connection.disconnected) || changedTarget || connectedFromChecking);
+  const readingEpoch = connected && revalidateOnReconnect ? epoch : connection.readingEpoch;
+  const identity = connected ? emulatorIdentity : connection.emulatorIdentity;
+  if (
+    connection.connected !== connected ||
+    connection.disconnected !== disconnected ||
+    identity !== connection.emulatorIdentity ||
+    readingEpoch !== connection.readingEpoch
+  ) {
+    setConnection({ connected, disconnected, emulatorIdentity: identity, epoch, readingEpoch });
   }
-  // A detail read that started before or during an observed disconnect cannot authorize Monitor after it.
-  const requestEpoch = connected || connection.epoch === 0 ? connection.epoch : undefined;
   /** This reading's re-reads: `quiet` while one is in flight or has failed; `stopped` once one has failed. */
-  const [rereading, setRereading] = useState({ reading: 0, quiet: false, stopped: false });
-  const quiet = rereading.reading === readings && rereading.quiet;
-  const stopped = rereading.reading === readings && rereading.stopped;
+  const [rereading, setRereading] = useState({ reading: 0, epoch: 0, quiet: false, stopped: false });
+  const sameReading = rereading.reading === readings && rereading.epoch === readingEpoch;
+  const quiet = sameReading && rereading.quiet;
+  const stopped = sameReading && rereading.stopped;
 
   const query = useQuery({
-    queryKey: [...functionKey(endpoint, name), mount, generation, readings],
-    queryFn: async ({ signal }) => {
+    queryKey: [...functionKey(endpoint, name), mount, generation, readings, readingEpoch],
+    queryFn: ({ signal }) => {
       if (endpoint === undefined) {
         throw new Error('The engine endpoint is not known yet.');
       }
-      return { read: await readFunction(endpoint, name, signal), epoch: requestEpoch };
+      return readFunction(endpoint, name, signal);
     },
     enabled: endpoint !== undefined,
     staleTime: 0,
@@ -366,10 +403,10 @@ export function useFunctionReading({
     structuralSharing: false,
   });
   const { refetch, isError, isFetching } = query;
-  const data = query.data?.read;
+  const data = query.data;
 
   if (quiet && isError && !stopped) {
-    setRereading({ reading: readings, quiet: true, stopped: true });
+    setRereading({ reading: readings, epoch: readingEpoch, quiet: true, stopped: true });
   }
 
   const changing = isChanging(data);
@@ -379,31 +416,27 @@ export function useFunctionReading({
       return;
     }
     const timer = setTimeout(() => {
-      setRereading({ reading: readings, quiet: true, stopped: false });
+      setRereading({ reading: readings, epoch: readingEpoch, quiet: true, stopped: false });
       void refetch();
     }, REREAD_DELAY_MS);
     return () => {
       clearTimeout(timer);
     };
-  }, [changing, isFetching, isError, stopped, updatedAt, readings, refetch]);
+  }, [changing, isFetching, isError, stopped, updatedAt, readings, readingEpoch, refetch]);
 
   const refresh = useCallback(() => {
     setReadings((current) => current + 1);
   }, []);
 
   const failed = isError && !quiet;
-  const needsMonitorRead =
-    monitorActive && connected && connection.epoch !== monitorEpoch && query.data?.epoch !== connection.epoch;
-  if (needsMonitorRead) {
-    setMonitorEpoch(connection.epoch);
-    refresh();
-  }
-  useReconnect(connected, failed && !needsMonitorRead, refresh);
+  useReconnect(connected, failed, refresh);
 
   return {
-    read: failed || needsMonitorRead ? undefined : data,
+    read: failed ? undefined : data,
     failure: failed ? failureOf(query.error, 'GetFunction') : undefined,
     loading: data === undefined && (isFetching || endpoint === undefined),
+    session: epoch,
+    sessionVerified: connected && readingEpoch === epoch,
     refresh,
   };
 }
@@ -417,28 +450,50 @@ export function useFunctionReading({
  */
 export function useDeleteFunctions(endpoint: string | undefined) {
   const client = useQueryClient();
-  const controller = useRef<AbortController | undefined>(undefined);
-  useEffect(
-    () => () => {
-      controller.current?.abort();
-    },
-    [],
-  );
-  const mutation = useMutation<DeleteResult, unknown, readonly string[]>({
-    mutationFn: (names) => {
+  const submissions = useRef(new Set<AbortController>());
+  useLayoutEffect(() => {
+    const pending = submissions.current;
+    return () => {
+      for (const submission of pending) {
+        submission.abort();
+      }
+    };
+  }, [endpoint]);
+  const { mutateAsync, isPending } = useMutation({
+    mutationFn: (submission: {
+      endpoint: string | undefined;
+      names: readonly string[];
+      controller: AbortController;
+    }) => {
+      const { endpoint, names, controller } = submission;
+      assertAwsRequestAuthorized(controller.signal);
       if (endpoint === undefined) {
         throw new Error('The engine endpoint is not known yet.');
       }
-      controller.current = new AbortController();
-      return deleteFunctions(endpoint, names, controller.current.signal);
+      return deleteFunctions(endpoint, names, controller.signal);
     },
-    onSettled: () => client.invalidateQueries({ queryKey: generationKey(endpoint) }),
+    onSettled: (result, _error, submission) => {
+      if (!submission.controller.signal.aborted || result?.interrupted) {
+        return client.invalidateQueries({ queryKey: generationKey(submission.endpoint) });
+      }
+    },
   });
-  return {
-    /** Resolves with the result of every `DeleteFunction`; rejects only when the screen left first. */
-    remove: mutation.mutateAsync,
-    pending: mutation.isPending,
-  };
+  const remove = useCallback(
+    async (names: readonly string[], isEmulatorCurrent?: () => boolean) => {
+      // TanStack Query can pause before mutationFn runs. Scope the signal when the deletion is confirmed.
+      const controller = new AbortController();
+      submissions.current.add(controller);
+      const dispose = bindAwsMutationAuthorization(controller, isEmulatorCurrent ? { isEmulatorCurrent } : undefined);
+      try {
+        return await mutateAsync({ endpoint, names, controller });
+      } finally {
+        dispose();
+        submissions.current.delete(controller);
+      }
+    },
+    [endpoint, mutateAsync],
+  );
+  return { remove, pending: isPending };
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -596,7 +651,7 @@ export function useRoleList(endpoint: string | undefined): RoleList {
  * Reads the function `name` again where its page shows it, keeping what is shown until the answer arrives: its
  * reading is refetched under its own key.
  */
-function useReadAgain(endpoint: string | undefined, name: string): () => Promise<void> {
+export function useReadAgain(endpoint: string | undefined, name: string): () => Promise<void> {
   const client = useQueryClient();
   return useCallback(
     () => client.invalidateQueries({ queryKey: functionKey(endpoint, name) }),
@@ -619,65 +674,103 @@ function useAbortOnUnmount(): () => AbortSignal {
   }, []);
 }
 
-/** An invoke of the function's page: the mutation's `mutate` and `isPending`, and the last answer or failure. */
+/** The invocation state kept by the function page while its Test tab comes and goes. */
 export interface Invocation {
-  /** Sends one `Invoke` with the event text as typed; a call while one is in flight sends nothing. */
-  mutate: (eventText: string) => void;
-  /** An invoke is in flight. */
+  mutate: (eventText: string, qualifier?: string) => void;
   isPending: boolean;
-  /** The last answer, kept until the next answer or failure replaces it (an invoke in flight does not). */
+  /** The last completed request, kept until the next answer or failure replaces it. */
   data: InvokeAnswer | undefined;
-  /** The last failure, kept as `data` is; never both. */
   error: RequestFailure | undefined;
+  qualifier: string | undefined;
   /** One more per answer or failure, so a screen says each outcome once. */
   answers: number;
+  isUnsupported: (qualifier: string | undefined) => boolean;
 }
 
-/**
- * Invokes the function `name` through the engine at `endpoint` (task 2). After any answer, the function's own
- * failure and a refusal of the emulator included, the function is read again; leaving the page aborts the request.
- */
-export function useInvoke(endpoint: string | undefined, name: string): Invocation {
+export function useInvoke(endpoint: string | undefined, name: string, session = 0, networkRevision = 0): Invocation {
   const readAgain = useReadAgain(endpoint, name);
-  const nextSignal = useAbortOnUnmount();
-  const [last, setLast] = useState<{
-    data: InvokeAnswer | undefined;
-    error: RequestFailure | undefined;
-    answers: number;
-  }>({ data: undefined, error: undefined, answers: 0 });
-  const mutation = useMutation<InvokeAnswer, unknown, { eventText: string; signal: AbortSignal }>({
-    mutationFn: ({ eventText, signal }) => {
-      if (endpoint === undefined) {
-        throw new Error('The engine endpoint is not known yet.');
+  const scope = JSON.stringify([endpoint, name, session, networkRevision]);
+  const request = useRef<{ controller: AbortController; disposeAuthorization: () => void } | undefined>(undefined);
+  const [saved, setLast] = useState(() => emptyInvocation(scope));
+  const last = saved.scope === scope ? saved : emptyInvocation(scope);
+  if (saved !== last) {
+    setLast(last);
+  }
+
+  useLayoutEffect(
+    () => () => {
+      request.current?.controller.abort();
+      request.current?.disposeAuthorization();
+      request.current = undefined;
+    },
+    [scope],
+  );
+
+  const mutation = useMutation({
+    mutationFn: (input: {
+      endpoint: string;
+      name: string;
+      eventText: string;
+      qualifier: string | undefined;
+      signal: AbortSignal;
+      scope: string;
+      disposeAuthorization: () => void;
+    }) => invoke(input.endpoint, input.name, input.eventText, input.signal, input.qualifier),
+    onSettled: (data, error, { qualifier, signal, scope, disposeAuthorization }) => {
+      disposeAuthorization();
+      if (request.current?.controller.signal === signal) {
+        request.current = undefined;
       }
-      return invoke(endpoint, name, eventText, signal);
-    },
-    onSuccess: (data) => {
-      setLast((current) => ({ data, error: undefined, answers: current.answers + 1 }));
-      return readAgain();
-    },
-    onError: (error, { signal }) => {
       if (signal.aborted) {
         return;
       }
+      const failure = error === null ? undefined : requestFailure(INVOKE, error);
       setLast((current) => ({
-        data: undefined,
-        error: requestFailure(INVOKE, error),
+        scope,
+        data,
+        error: failure,
+        qualifier,
         answers: current.answers + 1,
+        unsupported:
+          failure?.kind === 'not-implemented'
+            ? new Set([...current.unsupported, qualifier !== undefined])
+            : current.unsupported,
       }));
-      return readAgain();
+      void readAgain();
     },
   });
-  const { mutate: send, isPending } = mutation;
-  const mutate = useCallback(
-    (eventText: string) => {
-      if (!isPending) {
-        send({ eventText, signal: nextSignal() });
-      }
-    },
-    [isPending, send, nextSignal],
-  );
-  return { mutate, isPending, data: last.data, error: last.error, answers: last.answers };
+
+  const isUnsupported = (qualifier: string | undefined) => last.unsupported.has(qualifier !== undefined);
+  const mutate = (eventText: string, qualifier?: string) => {
+    if (endpoint === undefined || request.current !== undefined || isUnsupported(qualifier)) {
+      return;
+    }
+    const controller = new AbortController();
+    const disposeAuthorization = bindAwsMutationAuthorization(controller, { cancelInFlight: true });
+    request.current = { controller, disposeAuthorization };
+    mutation.mutate({ endpoint, name, eventText, qualifier, signal: controller.signal, scope, disposeAuthorization });
+  };
+
+  return {
+    mutate,
+    isPending: mutation.isPending && mutation.variables.scope === scope && !mutation.variables.signal.aborted,
+    data: last.data,
+    error: last.error,
+    qualifier: last.qualifier,
+    answers: last.answers,
+    isUnsupported,
+  };
+}
+
+function emptyInvocation(scope: string) {
+  return {
+    scope,
+    data: undefined as InvokeAnswer | undefined,
+    error: undefined as RequestFailure | undefined,
+    qualifier: undefined as string | undefined,
+    answers: 0,
+    unsupported: new Set<boolean>(),
+  };
 }
 
 /** What a change of the function asks of the screen that sends it. */
