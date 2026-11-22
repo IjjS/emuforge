@@ -859,7 +859,7 @@ describe('readback after object changes', () => {
           }
           stored.delete(address);
           return new Response(null, { status: 204 });
-        default:
+        default: {
           if (url.searchParams.get('x-id') === 'ListBuckets') {
             return new Response(listAnswer([url.searchParams.get('prefix') ?? '']));
           }
@@ -872,6 +872,7 @@ describe('readback after object changes', () => {
                 .map((key) => key.slice(bucketPrefix.length)),
             ),
           );
+        }
       }
     };
     denyDelete = false;
