@@ -9,8 +9,12 @@ import {
 } from '../../../../../lib/aws/request';
 import {
   createFunction,
+  createFunctionUrl,
+  CREATE_FUNCTION_URL_CONFIG,
   CreateFunctionError,
   deleteFunctions,
+  deleteFunctionUrl,
+  DELETE_FUNCTION_URL_CONFIG,
   INVOKE,
   invoke,
   isFunctionNotFound,
@@ -799,6 +803,7 @@ function useFunctionChange<Input>(
   operation: string,
   send: (endpoint: string, input: Input, signal: AbortSignal) => Promise<void>,
 ): FunctionChange<Input> {
+  const client = useQueryClient();
   const readAgain = useReadAgain(endpoint, name);
   const nextSignal = useAbortOnUnmount();
   const mutation = useMutation<unknown, unknown, { input: Input; signal: AbortSignal }>({
@@ -808,10 +813,24 @@ function useFunctionChange<Input>(
       }
       return send(endpoint, input, signal);
     },
-    onSuccess: () => readAgain(),
+    onSuccess: async () => {
+      if (operation === CREATE_FUNCTION_URL_CONFIG || operation === DELETE_FUNCTION_URL_CONFIG) {
+        await Promise.all([
+          readAgain(),
+          client.invalidateQueries({ queryKey: [...lambdaKey(endpoint), 'list-functions'] }),
+        ]);
+      } else {
+        await readAgain();
+      }
+    },
     onError: (error, { signal }) => {
-      // A function deleted elsewhere: its page then shows "Function not found".
-      if (!signal.aborted && isFunctionNotFound(requestFailure(operation, error))) {
+      const failure = requestFailure(operation, error);
+      // A refused URL deletion can follow an external change, so reread to show the current configuration.
+      if (
+        !signal.aborted &&
+        (isFunctionNotFound(failure) ||
+          (operation === DELETE_FUNCTION_URL_CONFIG && failure.kind !== 'not-implemented'))
+      ) {
         return readAgain();
       }
       return undefined;
@@ -860,5 +879,17 @@ export function useUpdateFunctionConfiguration(
 ): FunctionChange<ConfigurationChange> {
   return useFunctionChange(endpoint, name, UPDATE_FUNCTION_CONFIGURATION, (at, change: ConfigurationChange, signal) =>
     updateFunctionConfiguration(at, name, change, signal),
+  );
+}
+
+export function useCreateFunctionUrl(endpoint: string | undefined, name: string): FunctionChange<void> {
+  return useFunctionChange(endpoint, name, CREATE_FUNCTION_URL_CONFIG, (at, _, signal) =>
+    createFunctionUrl(at, name, signal),
+  );
+}
+
+export function useDeleteFunctionUrl(endpoint: string | undefined, name: string): FunctionChange<void> {
+  return useFunctionChange(endpoint, name, DELETE_FUNCTION_URL_CONFIG, (at, _, signal) =>
+    deleteFunctionUrl(at, name, signal),
   );
 }

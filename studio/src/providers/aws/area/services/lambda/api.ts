@@ -7,7 +7,9 @@ import {
 } from '@aws-sdk/client-iam';
 import {
   CreateFunctionCommand,
+  CreateFunctionUrlConfigCommand,
   DeleteFunctionCommand,
+  DeleteFunctionUrlConfigCommand,
   GetFunctionCommand,
   type GetFunctionCommandOutput,
   GetFunctionUrlConfigCommand,
@@ -167,6 +169,8 @@ export class LambdaRequestError extends Error {
 export const LIST_FUNCTIONS = 'ListFunctions';
 export const GET_FUNCTION = 'GetFunction';
 export const GET_FUNCTION_URL_CONFIG = 'GetFunctionUrlConfig';
+export const CREATE_FUNCTION_URL_CONFIG = 'CreateFunctionUrlConfig';
+export const DELETE_FUNCTION_URL_CONFIG = 'DeleteFunctionUrlConfig';
 export const CREATE_FUNCTION = 'CreateFunction';
 export const DELETE_FUNCTION = 'DeleteFunction';
 export const LIST_ROLES = 'ListRoles';
@@ -513,6 +517,23 @@ export async function readFunction(endpoint: string, name: string, signal: Abort
     found: true,
     function: toFunction(read.value, urlRead.status === 'fulfilled' ? urlRead.value : { kind: 'not-read' }),
   };
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Function URL mutations (issue 527)
+
+/** Creates the unqualified function's URL with IAM authentication. */
+export async function createFunctionUrl(endpoint: string, name: string, signal: AbortSignal): Promise<void> {
+  const client = lambdaClient(endpoint);
+  const command = new CreateFunctionUrlConfigCommand({ FunctionName: name, AuthType: 'AWS_IAM' });
+  await sendRequest(CREATE_FUNCTION_URL_CONFIG, (abortSignal) => client.send(command, { abortSignal }), signal);
+}
+
+/** Removes the unqualified function's URL. */
+export async function deleteFunctionUrl(endpoint: string, name: string, signal: AbortSignal): Promise<void> {
+  const client = lambdaClient(endpoint);
+  const command = new DeleteFunctionUrlConfigCommand({ FunctionName: name });
+  await sendRequest(DELETE_FUNCTION_URL_CONFIG, (abortSignal) => client.send(command, { abortSignal }), signal);
 }
 
 // ---------------------------------------------------------------------------------------------------------------

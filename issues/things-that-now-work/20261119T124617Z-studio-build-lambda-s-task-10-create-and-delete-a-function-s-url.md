@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: plan
 Issue-Key: studio|lambda.function-url|task
-Issue-Check-Ids:
+Issue-Check-Ids: studio.lambda-function-url-create,studio.lambda-function-url-delete,studio.lambda-function-url-create-conflict,studio.lambda-function-url-delete-missing
 Issue-Commit: 7b260c508348edd256975ce57d7da11104dc8891
 
 # Build Lambda's task 10: create and delete a function's URL
