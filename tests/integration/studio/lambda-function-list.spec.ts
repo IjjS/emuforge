@@ -56,6 +56,7 @@ import {
   TAB_QUERIES,
   tokenTexts,
 } from './services/lambda/lambda-list';
+import { PAGE_TABS } from './services/lambda/lambda-page';
 import { Lines } from './support/lines';
 import { expectNoScreenPart } from './support/no-screen-part';
 import { checkPrefix, SEOUL } from './support/service-screens';
@@ -306,7 +307,7 @@ test('studio.lambda-function-list-actions-lead-to-their-routes', async ({ ctx, p
 
   await lines.line(
     // Issue 516 (test-criteria.md, "Rewritten lines of checks on `main`"; the pm's decision of 2026-11-19).
-    'A function\'s name → `/aws/lambda/functions/function/<name>` with `h1` the name and the tabs "Test", "Code", "Monitor", "Configuration", "Versions and aliases", "Test" selected; "Code" → the same path with `?tab=code` and the section "Package"; "Configuration" → `?tab=configuration` and the section "General configuration"; the browser\'s back → "Code" again; a reload at `?tab=configuration` → "Configuration" selected; `?tab=other` → "Test" selected',
+    'A function\'s name → `/aws/lambda/functions/function/<name>` with `h1` the name and the tabs "Test", "Code", "Monitor", "Configuration", "Versions and aliases", "Event sources", "Test" selected; "Code" → the same path with `?tab=code` and the section "Package"; "Configuration" → `?tab=configuration` and the section "General configuration"; the browser\'s back → "Code" again; a reload at `?tab=configuration` → "Configuration" selected; `?tab=other` → "Test" selected',
     async () => {
       const main = page.getByRole('main');
       const tab = (name: string) => main.getByRole('tab', { name, exact: true });
@@ -322,7 +323,7 @@ test('studio.lambda-function-list-actions-lead-to-their-routes', async ({ ctx, p
       expect(
         (await main.getByRole('tab').allInnerTexts()).map((t) => t.replace(/\s+/g, ' ').trim()),
         'the tabs',
-      ).toEqual(TAB_QUERIES.map((t) => t.tab));
+      ).toEqual(PAGE_TABS);
       await expect(section(test.section), `the section "${test.section}"`).toBeVisible();
       for (const { tab: name, query, section: title } of [code, configuration]) {
         await tab(name).click(ACTION);
