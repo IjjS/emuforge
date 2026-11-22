@@ -39,10 +39,10 @@ import {
   type NoSuchBucket,
   type NoSuchKey,
   type ObjectBody,
+  type ObjectCopyOptions,
   type ObjectHead,
   type ObjectLocation,
   type ObjectPage,
-  type ObjectPropertyEdit,
   type Tag,
 } from './api';
 import { createOperations, submitBucketForm, type BucketForm, type CreateOutcome } from './bucket-form';
@@ -734,9 +734,9 @@ export function useObjectChanges(endpoint: string | undefined) {
         source: ObjectLocation,
         destination: ObjectLocation,
         signal: AbortSignal,
-        edit?: ObjectPropertyEdit,
+        options?: ObjectCopyOptions,
       ) => {
-        await copyObject(endpoint, source, destination, signal, edit);
+        await copyObject(endpoint, source, destination, signal, options);
         if (!signal.aborted) invalidate(destination);
       },
       removeSource: async (source: ObjectLocation, signal: AbortSignal) => {

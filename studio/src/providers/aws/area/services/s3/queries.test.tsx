@@ -969,9 +969,7 @@ describe('readback after object changes', () => {
     if (changes === undefined) throw new Error('Expected object changes for the engine');
     await act(() =>
       changes.copy(original, original, new AbortController().signal, {
-        contentType: 'application/json',
-        metadata: { phase: 'after' },
-        headers: undefined,
+        edit: { contentType: 'application/json', metadata: { phase: 'after' }, headers: undefined },
       }),
     );
     expect(s3Queries().some((query) => query.state.isInvalidated)).toBe(true);

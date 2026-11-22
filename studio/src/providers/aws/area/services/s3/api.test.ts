@@ -1146,6 +1146,17 @@ describe('object copy requests', () => {
     expect(request.headers.has('x-amz-tagging-directive')).toBe(false);
   });
 
+  it('conditions a copy on the destination being absent while leaving the source unconditional', async () => {
+    engine.aws = () => copyResult;
+    await copyObject(endpoint, object, { bucket: 'destination-bucket', key: 'target' }, new AbortController().signal, {
+      onlyIfMissing: true,
+    });
+    const request = sentCopy(0);
+    expect(request.headers.get('if-none-match')).toBe('*');
+    expect(request.headers.has('x-amz-copy-source-if-none-match')).toBe(false);
+    expect(request.headers.has('x-amz-copy-source-if-match')).toBe(false);
+  });
+
   it('changes only the media type and retains the six existing headers, metadata and default tagging', async () => {
     const signal = new AbortController().signal;
     engine.aws = () => ({ status: 200, headers: originalHeaders });
@@ -1153,9 +1164,11 @@ describe('object copy requests', () => {
     if (original === NOT_FOUND) throw new Error('Expected an existing object');
     engine.aws = () => copyResult;
     await copyObject(endpoint, object, object, signal, {
-      contentType: 'application/json',
-      metadata: Object.fromEntries(original.user.map(({ key, value }) => [key, value])),
-      headers: original.copyHeaders,
+      edit: {
+        contentType: 'application/json',
+        metadata: Object.fromEntries(original.user.map(({ key, value }) => [key, value])),
+        headers: original.copyHeaders,
+      },
     });
 
     const request = sentCopy(1);
@@ -1177,9 +1190,7 @@ describe('object copy requests', () => {
     const send = vi.spyOn(S3Client.prototype, 'send');
     try {
       await copyObject(endpoint, object, object, signal, {
-        contentType: original.contentType,
-        metadata: {},
-        headers: original.copyHeaders,
+        edit: { contentType: original.contentType, metadata: {}, headers: original.copyHeaders },
       });
       const command = send.mock.calls[0]?.[0];
       expect(command).toBeInstanceOf(CopyObjectCommand);

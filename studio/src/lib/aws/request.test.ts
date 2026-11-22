@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 
 import { createAwsClient, createS3Client, engineEndpoint } from './client-factory';
 import {
+  reportedNotImplementedMessage,
   reportedServiceCode,
   requestFailure,
   RequestError,
@@ -230,13 +231,17 @@ describe('the mapping', () => {
     const failed = await failureOf('ListFunctions');
     expect(failed).toEqual({ kind: 'not-implemented', operation: 'ListFunctions' });
     expect(reportedServiceCode(failed)).toBe('NotImplementedException');
+    expect(reportedNotImplementedMessage(failed)).toBeUndefined();
   });
 
-  it('is "not implemented", naming ListBuckets, and nothing else, for S3 answered 501 NotImplemented', async () => {
-    engine.aws = () =>
-      restXml(501, 'NotImplemented', 'operation ListBuckets is scaffolded but not implemented in this emulator');
-
-    expect(await failureOf('ListBuckets')).toEqual({ kind: 'not-implemented', operation: 'ListBuckets' });
+  it('retains the returned 501 message alongside the code without changing the mapped failure', async () => {
+    const message = 'operation ListBuckets is scaffolded but not implemented in this emulator';
+    engine.aws = () => restXml(501, 'NotImplemented', message);
+    const failed = await failureOf('ListBuckets');
+    expect(failed).toEqual({ kind: 'not-implemented', operation: 'ListBuckets' });
+    const wrapped = requestFailure('ListBuckets', new RequestError(failed));
+    expect(reportedServiceCode(wrapped)).toBe('NotImplemented');
+    expect(reportedNotImplementedMessage(wrapped)).toBe(message);
   });
 
   it('is "not implemented", naming DescribeVpcs, for EC2 answered 501 NotImplemented in its own shape', async () => {
@@ -249,7 +254,9 @@ describe('the mapping', () => {
   it('is "not implemented", naming ListFunctions, for Lambda answered 501 with a body that is not JSON', async () => {
     engine.aws = () => ({ status: 501, statusText: 'Not Implemented', body: 'not json' });
 
-    expect(await failureOf('ListFunctions')).toEqual({ kind: 'not-implemented', operation: 'ListFunctions' });
+    const failed = await failureOf('ListFunctions');
+    expect(failed).toEqual({ kind: 'not-implemented', operation: 'ListFunctions' });
+    expect(reportedNotImplementedMessage(failed)).toBeUndefined();
   });
 
   it('is "access denied" with the operation and the message for S3 answered 403 AccessDenied', async () => {

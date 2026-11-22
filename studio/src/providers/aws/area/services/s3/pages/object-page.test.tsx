@@ -1,4 +1,4 @@
-import createWrapper from '@cloudscape-design/components/test-utils/dom';
+import createWrapper, { type FormFieldWrapper, type ModalWrapper } from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState, useSyncExternalStore } from 'react';
@@ -129,6 +129,9 @@ class FakeEngine {
     const source = this.object(sourceBucket, sourceParts.join('/'));
     if (source === undefined) return errorAnswer(404, 'NoSuchKey', 'The specified key does not exist.');
     const existing = this.object(bucket, key);
+    if (existing !== undefined && headers.get('if-none-match') === '*') {
+      return errorAnswer(412, 'PreconditionFailed', 'At least one of the pre-conditions you specified did not hold');
+    }
     const copy: FakeObject = { ...source, bucket, key };
     delete copy.redirect;
     if (headers.get('x-amz-metadata-directive') === 'REPLACE') {
@@ -350,17 +353,20 @@ function h1(): HTMLElement {
   return screen.getByRole('heading', { level: 1 });
 }
 
+function objectTable(title: string) {
+  return createWrapper(document.body)
+    .findAllTables()
+    .find((table) => table.findHeaderSlot()?.getElement().textContent?.trim().startsWith(title));
+}
+
 /** The section headed `title`: a container or a table, its h2 starting with the title. */
 function section(title: string): HTMLElement {
   const wrapper = createWrapper(document.body);
-  const heads = (element: HTMLElement) =>
-    [...element.querySelectorAll('h2')].some((h2) => (h2.textContent ?? '').trim().startsWith(title));
-  const table = wrapper.findAllTables().find((found) => heads(found.getElement()));
+  const table = objectTable(title);
   if (table !== undefined) return table.getElement();
-  const container = wrapper.findAllContainers().find((found) => {
-    const header = found.findHeader();
-    return header !== null && heads(header.getElement());
-  });
+  const container = wrapper
+    .findAllContainers()
+    .find((found) => found.findHeader()?.getElement().textContent?.trim().startsWith(title));
   if (container === undefined) throw new Error(`No section ${title}`);
   return container.getElement();
 }
@@ -374,9 +380,17 @@ function overviewValue(label: string): string {
 
 /** The rows of the table headed `title`, each its cells' texts. */
 function tableRows(title: string): string[][] {
-  return [...section(title).querySelectorAll('tbody tr')]
-    .map((row) => [...row.querySelectorAll('td, th')].map((cell) => (cell.textContent ?? '').trim()))
-    .filter((cells) => cells.length > 1);
+  const table = objectTable(title);
+  if (table === undefined) throw new Error(`No table ${title}`);
+  return table.findRows().map((_, index) =>
+    table.findColumnHeaders().map(
+      (_, column) =>
+        table
+          .findBodyCell(index + 1, column + 1)
+          ?.getElement()
+          .textContent?.trim() ?? '',
+    ),
+  );
 }
 
 function isGetObject(seen: Seen): boolean {
@@ -775,25 +789,91 @@ function delayed<T>() {
   return { promise, finish };
 }
 
-async function changeDialog(name: string) {
-  fireEvent.click(action('Actions'));
-  fireEvent.click(await screen.findByRole('menuitem', { name }));
-  return screen.findByRole('dialog', { name });
+const ACTION_TITLES = { copy: 'Copy object', rename: 'Rename object', edit: 'Edit object properties' } as const;
+const modal = () => createWrapper(document.body).findModal();
+
+function actionsDropdown() {
+  const dropdown = createWrapper(document.body)
+    .findAllButtonDropdowns()
+    .find((found) => found.findNativeButton().getElement().textContent?.trim() === 'Actions');
+  if (dropdown === undefined) throw new Error('No object actions dropdown');
+  return dropdown;
 }
 
-function changeInput(dialog: HTMLElement, name: string, value: string) {
-  fireEvent.change(within(dialog).getByRole('textbox', { name }), { target: { value } });
+async function findDialog(title: string) {
+  return waitFor(() => {
+    const dialog = modal();
+    if (dialog === null) throw new Error(`No dialog titled ${title}`);
+    expect(dialog.findHeader().getElement()).toHaveTextContent(title);
+    return dialog;
+  });
 }
 
-function dialogButton(dialog: HTMLElement, name: string) {
-  return within(dialog).getByRole('button', { name });
+async function changeDialog(id: keyof typeof ACTION_TITLES) {
+  const dropdown = actionsDropdown();
+  fireEvent.click(dropdown.findNativeButton().getElement());
+  const item = dropdown.findItemById(id, { disabled: false });
+  if (item === null) throw new Error(`No enabled action ${id}`);
+  expect(item.getElement()).toHaveTextContent(ACTION_TITLES[id]);
+  fireEvent.click(item.getElement());
+  return findDialog(ACTION_TITLES[id]);
+}
+
+function expectUnavailableAction(id: keyof typeof ACTION_TITLES) {
+  const dropdown = actionsDropdown();
+  fireEvent.click(dropdown.findNativeButton().getElement());
+  const unavailable = dropdown.findItemById(id, { disabled: true });
+  if (unavailable === null) throw new Error(`Expected an unavailable ${id} action`);
+  expect(unavailable.getElement()).toHaveTextContent(ACTION_TITLES[id]);
+  fireEvent.click(unavailable.getElement());
+  expect(modal()).toBeNull();
+}
+
+function dialogBody(dialog: ModalWrapper) {
+  return dialog.findContent().getElement();
+}
+
+function formField(dialog: ModalWrapper, name: string) {
+  const field = createWrapper(dialogBody(dialog))
+    .findAllFormFields()
+    .find((found) => found.findLabel()?.getElement().textContent?.trim() === name);
+  if (field === undefined) throw new Error(`No form field ${name}`);
+  return field;
+}
+
+function fieldInput(field: FormFieldWrapper) {
+  const input = createWrapper(field.getElement()).findInput();
+  if (input === null) throw new Error('No input for the field');
+  return input.findNativeInput().getElement();
+}
+
+function changeInput(dialog: ModalWrapper, name: string, value: string) {
+  fireEvent.change(fieldInput(formField(dialog, name)), { target: { value } });
+}
+
+function dialogButton(dialog: ModalWrapper, name: string) {
+  const footer = dialog.findFooter();
+  if (footer === null) throw new Error('No dialog footer');
+  return within(footer.getElement()).getByRole('button', { name });
+}
+
+function metadataEditor(dialog: ModalWrapper) {
+  const editor = createWrapper(dialogBody(dialog)).findAttributeEditor();
+  if (editor === null) throw new Error('No user metadata editor');
+  return editor;
+}
+
+function metadataField(dialog: ModalWrapper, row: number, column: number) {
+  const field = metadataEditor(dialog).findRow(row)?.findField(column);
+  if (field == null) throw new Error(`No metadata field at row ${row}, column ${column}`);
+  return field;
 }
 
 async function renameConfirmation(occupied: boolean, destination = DESTINATION_KEY) {
-  const form = await changeDialog('Rename object');
+  const form = await changeDialog('rename');
   changeInput(form, 'New key', destination);
   fireEvent.click(dialogButton(form, 'Rename object'));
-  return screen.findByRole('dialog', { name: occupied ? 'Replace existing object?' : 'Rename object?' });
+  return findDialog(occupied ? 'Replace existing object?' : 'Rename object?');
 }
 
 function expectNoWrites() {
@@ -809,8 +889,16 @@ function previewText() {
   return within(section('Preview')).getByRole('region', { name: 'Object preview' });
 }
 
-function visibleResult(text: string) {
-  return onPage(text);
+type FlashType = 'success' | 'warning' | 'info';
+
+function flashes(type: FlashType) {
+  return createWrapper(document.body).findFlashbar()?.findItemsByType(type) ?? [];
+}
+
+function flash(type: FlashType) {
+  const [item] = flashes(type);
+  if (item === undefined) throw new Error(`No ${type} flash item`);
+  return item;
 }
 
 describe('changing an object from its detail', () => {
@@ -822,10 +910,10 @@ describe('changing an object from its detail', () => {
     engine.objects = [{ ...APP_JSON, body: new Uint8Array() }];
     open(ORIGINAL_KEY);
     await shown();
-    for (const name of ['Copy object', 'Rename object', 'Edit object properties']) {
-      const dialog = await changeDialog(name);
+    for (const id of ['copy', 'rename', 'edit'] as const) {
+      const dialog = await changeDialog(id);
       fireEvent.click(dialogButton(dialog, 'Cancel'));
-      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+      await waitFor(() => expect(modal()).toBeNull());
     }
     expectNoWrites();
   });
@@ -833,38 +921,59 @@ describe('changing an object from its detail', () => {
   it('opens a copied object under a new key in the same bucket', async () => {
     const router = open(ORIGINAL_KEY);
     await shown();
-    const dialog = await changeDialog('Copy object');
-    expect(within(dialog).getByRole('textbox', { name: 'Destination bucket' })).toHaveValue('alpha');
+    const dialog = await changeDialog('copy');
+    expect(fieldInput(formField(dialog, 'Destination bucket'))).toHaveValue('alpha');
     changeInput(dialog, 'Destination key', DESTINATION_KEY);
     fireEvent.click(dialogButton(dialog, 'Copy object'));
 
     await waitFor(() => expectAddress(router, DESTINATION_KEY));
     await waitFor(() => expect(previewText()).toHaveTextContent('"name":"app"'));
-    expect(visibleResult('Object copied.')).toBeInTheDocument();
+    expect(flash('success').findHeader()?.getElement()).toHaveTextContent('Object copied.');
     expect(engine.objects.map(({ key }) => key)).toEqual([ORIGINAL_KEY, DESTINATION_KEY]);
   });
 
   it.each([
-    { label: 'Copy object', field: 'Destination key' },
-    { label: 'Rename object', field: 'New key' },
-  ])('blocks $label with an empty key or the original location', async ({ label, field }) => {
+    { id: 'copy', label: 'Copy object', field: 'Destination key' },
+    { id: 'rename', label: 'Rename object', field: 'New key' },
+  ] as const)('blocks $label with an empty key or the original location', async ({ id, label, field }) => {
     open(ORIGINAL_KEY);
     await shown();
-    const dialog = await changeDialog(label);
+    const dialog = await changeDialog(id);
     expect(dialogButton(dialog, label)).toBeDisabled();
     changeInput(dialog, field, ORIGINAL_KEY);
     expect(dialogButton(dialog, label)).toBeDisabled();
     expectNoWrites();
   });
 
+  it.each([
+    { id: 'copy', field: 'Destination key', alias: 'cfg/./app.json' },
+    { id: 'rename', field: 'New key', alias: 'cfg/other/../app.json' },
+  ] as const)('blocks a destination that would normalize to the original for $id', async ({ id, field, alias }) => {
+    const router = open(ORIGINAL_KEY);
+    await shown();
+    const initialHeads = engine.requests('HEAD').length;
+    const dialog = await changeDialog(id);
+    changeInput(dialog, field, alias);
+    expect(formField(dialog, field).findError()?.getElement()).toHaveTextContent(
+      'Use a key without . or .. path segments.',
+    );
+    const submit = dialogButton(dialog, ACTION_TITLES[id]);
+    expect(submit).toBeDisabled();
+    fireEvent.click(submit);
+    expect(engine.requests('HEAD')).toHaveLength(initialHeads);
+    expectNoWrites();
+    expectAddress(router, ORIGINAL_KEY);
+    expect(engine.objects).toEqual([APP_JSON]);
+  });
+
   it('shows a bodyless destination HEAD refusal and does not write', async () => {
     engine.head = (key) => (key === DESTINATION_KEY ? { status: 403 } : undefined);
     open(ORIGINAL_KEY);
     await shown();
-    const dialog = await changeDialog('Copy object');
+    const dialog = await changeDialog('copy');
     changeInput(dialog, 'Destination key', DESTINATION_KEY);
     fireEvent.click(dialogButton(dialog, 'Copy object'));
-    expect(await within(dialog).findByText(/HTTP 403/)).toBeInTheDocument();
+    expect(await within(dialogBody(dialog)).findByText(/HTTP 403/)).toBeInTheDocument();
     expectNoWrites();
   });
 
@@ -873,13 +982,13 @@ describe('changing an object from its detail', () => {
     engine.objects.push({ ...APP_JSON, bucket: 'beta', key: DESTINATION_KEY, body: encoder.encode('old') });
     open(ORIGINAL_KEY);
     await shown();
-    const form = await changeDialog('Copy object');
+    const form = await changeDialog('copy');
     changeInput(form, 'Destination bucket', 'beta');
     changeInput(form, 'Destination key', DESTINATION_KEY);
     fireEvent.click(dialogButton(form, 'Copy object'));
-    const dialog = await screen.findByRole('dialog', { name: 'Replace existing object?' });
-    expect(dialog).toHaveTextContent(`s3://beta/${DESTINATION_KEY}`);
-    const confirmation = within(dialog).getByRole('textbox', { name: 'Enter destination key to confirm' });
+    const dialog = await findDialog('Replace existing object?');
+    expect(dialogBody(dialog)).toHaveTextContent(`s3://beta/${DESTINATION_KEY}`);
+    const confirmation = fieldInput(formField(dialog, 'Enter destination key to confirm'));
     expect(confirmation).toHaveFocus();
     expect(confirmation).toHaveAccessibleDescription(/existing destination object will be replaced/);
     expect(confirmation).toHaveAccessibleDescription(/Expected key cfg\/copy app\.json/);
@@ -903,13 +1012,13 @@ describe('changing an object from its detail', () => {
     open(ORIGINAL_KEY);
     await shown();
     const dialog = await renameConfirmation(occupied);
-    expect(dialog).toHaveTextContent(`s3://alpha/${ORIGINAL_KEY}`);
-    expect(dialog).toHaveTextContent(`s3://alpha/${DESTINATION_KEY}`);
-    expect(dialog).toHaveTextContent('The original key will be deleted');
-    expect(dialog).toHaveTextContent('The renamed object will lose its website redirect.');
+    expect(dialogBody(dialog)).toHaveTextContent(`s3://alpha/${ORIGINAL_KEY}`);
+    expect(dialogBody(dialog)).toHaveTextContent(`s3://alpha/${DESTINATION_KEY}`);
+    expect(dialogBody(dialog)).toHaveTextContent('The original key will be deleted');
+    expect(dialogBody(dialog)).toHaveTextContent('The renamed object will lose its website redirect.');
     const input = occupied ? 'Enter destination key to confirm' : 'Enter original key to confirm';
     const submit = occupied ? 'Replace object' : 'Rename object';
-    const confirmation = within(dialog).getByRole('textbox', { name: input });
+    const confirmation = fieldInput(formField(dialog, input));
     expect(confirmation).toHaveFocus();
     expect(confirmation).toHaveAccessibleDescription(/original key will be deleted/);
     expect(confirmation).toHaveAccessibleDescription(/renamed object will lose its website redirect/);
@@ -940,15 +1049,57 @@ describe('changing an object from its detail', () => {
     await waitFor(() => expectAddress(router, DESTINATION_KEY));
     expect(engine.requests('DELETE').map(({ url }) => url.pathname)).toEqual([`/alpha/${ORIGINAL_KEY}`]);
     await waitFor(() => expect(previewText()).toHaveTextContent('"name":"app"'));
-    expect(visibleResult('Object renamed.')).toBeInTheDocument();
+    expect(flash('success').findHeader()?.getElement()).toHaveTextContent('Object renamed.');
   });
 
   it('omits the redirect warning if the original has no redirect', async () => {
     open(ORIGINAL_KEY);
     await shown();
     const dialog = await renameConfirmation(false);
-    expect(dialog).not.toHaveTextContent('website redirect');
+    expect(dialogBody(dialog)).not.toHaveTextContent('website redirect');
   });
+
+  it.each(['copy', 'rename'] as const)(
+    'requires replacement confirmation when a destination appears during %s',
+    async (id) => {
+      const competitor = { ...APP_JSON, key: DESTINATION_KEY, body: encoder.encode('another client') };
+      const router = open(ORIGINAL_KEY);
+      await shown();
+      if (id === 'copy') {
+        const form = await changeDialog('copy');
+        changeInput(form, 'Destination key', DESTINATION_KEY);
+        engine.beforeCopy = () => {
+          engine.beforeCopy = undefined;
+          engine.objects.push(competitor);
+          return undefined;
+        };
+        fireEvent.click(dialogButton(form, 'Copy object'));
+      } else {
+        const confirmation = await renameConfirmation(false);
+        engine.objects.push(competitor);
+        changeInput(confirmation, 'Enter original key to confirm', ORIGINAL_KEY);
+        fireEvent.click(dialogButton(confirmation, 'Rename object'));
+      }
+
+      const replacement = await findDialog('Replace existing object?');
+      expect(dialogBody(replacement)).toHaveTextContent('PreconditionFailed');
+      expect(engine.requests('PUT').map(({ headers }) => headers.get('if-none-match'))).toEqual(['*']);
+      expect(engine.requests('DELETE')).toHaveLength(0);
+      expect(engine.objects).toEqual([APP_JSON, competitor]);
+      expectAddress(router, ORIGINAL_KEY);
+
+      const field = fieldInput(formField(replacement, 'Enter destination key to confirm'));
+      expect(field).toHaveFocus();
+      expect(field).toHaveValue('');
+      expect(dialogButton(replacement, 'Replace object')).toBeDisabled();
+      changeInput(replacement, 'Enter destination key to confirm', DESTINATION_KEY);
+      fireEvent.click(dialogButton(replacement, 'Replace object'));
+      await waitFor(() => expectAddress(router, DESTINATION_KEY));
+      expect(engine.requests('PUT').map(({ headers }) => headers.get('if-none-match'))).toEqual(['*', null]);
+      expect(engine.requests('DELETE')).toHaveLength(id === 'copy' ? 0 : 1);
+      await waitFor(() => expect(previewText()).toHaveTextContent('"name":"app"'));
+    },
+  );
 
   it.each([
     'Bucket alpha can hold at most 1000 objects.',
@@ -960,26 +1111,40 @@ describe('changing an object from its detail', () => {
     const dialog = await renameConfirmation(false);
     changeInput(dialog, 'Enter original key to confirm', ORIGINAL_KEY);
     fireEvent.click(dialogButton(dialog, 'Rename object'));
-    expect(await within(dialog).findByText('ValidationException')).toBeInTheDocument();
-    expect(dialog).toHaveTextContent(message);
+    expect(await within(dialogBody(dialog)).findByText('ValidationException')).toBeInTheDocument();
+    expect(dialogBody(dialog)).toHaveTextContent(message);
     expect(engine.requests('DELETE')).toHaveLength(0);
     expect(engine.objects.map(({ key }) => key)).toEqual([ORIGINAL_KEY]);
   });
 
-  it('reports partial success with both locations and the exact deletion refusal and leaves both objects', async () => {
-    engine.remove = () => errorAnswer(403, 'AccessDeniedException', 'This policy denies deleting the original.');
+  it.each([
+    { status: 403, code: 'AccessDeniedException', message: 'This policy denies deleting the original.' },
+    { status: 503, code: 'ServiceUnavailable', message: 'Deletion temporarily unavailable.' },
+    { status: 501, code: 'NotImplemented', message: 'Deleting this source is unavailable.' },
+  ])('reports a $status deletion refusal once and leaves both objects', async ({ status, code, message }) => {
+    engine.remove = () => errorAnswer(status, code, message);
     const router = open(ORIGINAL_KEY);
     await shown();
     const dialog = await renameConfirmation(false);
     changeInput(dialog, 'Enter original key to confirm', ORIGINAL_KEY);
     fireEvent.click(dialogButton(dialog, 'Rename object'));
 
-    await waitFor(() => expect(visibleResult('Object copied, but the original could not be deleted.')).toHaveFocus());
-    expect(screen.getByText('AccessDeniedException')).toBeInTheDocument();
-    expect(screen.getByText('DeleteObject was refused: This policy denies deleting the original.')).toBeInTheDocument();
-    expect(screen.getByText(byWholeText(`s3://alpha/${DESTINATION_KEY}`))).toBeInTheDocument();
-    expect(screen.getAllByText(byWholeText(`s3://alpha/${ORIGINAL_KEY}`)).length).toBeGreaterThan(1);
+    await waitFor(() => {
+      const heading = flash('warning').findHeader()?.getElement();
+      expect(heading).toHaveTextContent('Object copied, but the original could not be deleted.');
+      expect(heading?.contains(document.activeElement)).toBe(true);
+    });
+    const content = flash('warning').findContent()?.getElement();
+    expect(content).toHaveTextContent(code);
+    expect(content).toHaveTextContent(message);
+    expect(content).toHaveTextContent(`s3://alpha/${DESTINATION_KEY}`);
+    expect(content).toHaveTextContent(`s3://alpha/${ORIGINAL_KEY}`);
     expectAddress(router, ORIGINAL_KEY);
+    if (status === 501) {
+      expect(content).toHaveTextContent('Not implemented by the emulator');
+      expect(content).toHaveTextContent('The emulator answered 501 Not Implemented for DeleteObject.');
+      expectUnavailableAction('rename');
+    }
     expect(engine.requests('DELETE').map(({ url }) => url.pathname)).toEqual([`/alpha/${ORIGINAL_KEY}`]);
     expect(engine.objects.map(({ key }) => key)).toEqual([ORIGINAL_KEY, DESTINATION_KEY]);
   });
@@ -988,38 +1153,38 @@ describe('changing an object from its detail', () => {
     engine.beforeCopy = () => errorAnswer(501, 'NotImplemented', 'Copy is unavailable.');
     open(ORIGINAL_KEY);
     await shown();
-    const dialog = await changeDialog('Copy object');
+    const dialog = await changeDialog('copy');
     changeInput(dialog, 'Destination key', DESTINATION_KEY);
     fireEvent.click(dialogButton(dialog, 'Copy object'));
-    await waitFor(() => expect(visibleResult('Not implemented by the emulator')).toBeInTheDocument());
-    expect(onPage('The emulator answered 501 Not Implemented for CopyObject.')).toBeInTheDocument();
+    await waitFor(() =>
+      expect(flash('info').findHeader()?.getElement()).toHaveTextContent('Not implemented by the emulator'),
+    );
+    const content = flash('info').findContent()?.getElement();
+    expect(content).toHaveTextContent('NotImplemented');
+    expect(content).toHaveTextContent('The emulator answered 501 Not Implemented for CopyObject.');
+    expect(content).toHaveTextContent('Copy is unavailable.');
 
-    fireEvent.click(action('Actions'));
-    const unavailable = await screen.findByRole('menuitem', { name: /Copy object/ });
-    expect(unavailable).toHaveAttribute('aria-disabled', 'true');
-    fireEvent.click(unavailable);
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expectUnavailableAction('copy');
     expect(engine.requests('PUT')).toHaveLength(1);
+    expect(engine.requests('DELETE')).toHaveLength(0);
   });
 
   it('prefills the property editor and saves added, changed and removed metadata rows', async () => {
     engine.objects = [{ ...APP_JSON, metadata: { owner: 'ci', remove: 'old' } }];
     const router = open(ORIGINAL_KEY);
     await shown();
-    const dialog = await changeDialog('Edit object properties');
-    expect(within(dialog).getByRole('textbox', { name: 'Content type' })).toHaveValue('application/json');
-    expect(within(dialog).getByDisplayValue('ci')).toBeInTheDocument();
-    expect(within(dialog).getByDisplayValue('old')).toBeInTheDocument();
-    fireEvent.change(within(dialog).getByDisplayValue('ci'), { target: { value: 'qa' } });
-    fireEvent.click(dialogButton(dialog, 'Remove metadata remove'));
-    fireEvent.click(dialogButton(dialog, 'Add metadata'));
-    const keys = within(dialog).getAllByRole('textbox', { name: 'Key' });
-    const values = within(dialog).getAllByRole('textbox', { name: 'Value' });
-    const newKey = keys[1];
-    const newValue = values[1];
-    if (newKey === undefined || newValue === undefined) throw new Error('Expected a new metadata row');
-    fireEvent.change(newKey, { target: { value: 'stage' } });
-    fireEvent.change(newValue, { target: { value: 'test' } });
+    const dialog = await changeDialog('edit');
+    expect(fieldInput(formField(dialog, 'Content type'))).toHaveValue('application/json');
+    const originalValue = fieldInput(metadataField(dialog, 1, 2));
+    expect(originalValue).toHaveValue('ci');
+    expect(fieldInput(metadataField(dialog, 2, 2))).toHaveValue('old');
+    fireEvent.change(originalValue, { target: { value: 'qa' } });
+    const remove = metadataEditor(dialog).findRow(2)?.findRemoveButton();
+    if (remove == null) throw new Error('Expected a remove control on the second metadata row');
+    fireEvent.click(remove.getElement());
+    fireEvent.click(metadataEditor(dialog).findAddButton().getElement());
+    fireEvent.change(fieldInput(metadataField(dialog, 2, 1)), { target: { value: 'stage' } });
+    fireEvent.change(fieldInput(metadataField(dialog, 2, 2)), { target: { value: 'test' } });
     changeInput(dialog, 'Content type', 'text/plain');
     fireEvent.click(dialogButton(dialog, 'Save changes'));
 
@@ -1029,7 +1194,7 @@ describe('changing an object from its detail', () => {
       ['stage', 'test'],
     ]);
     expectAddress(router, ORIGINAL_KEY);
-    expect(visibleResult('Object properties updated.')).toBeInTheDocument();
+    expect(flash('success').findContent()?.getElement()).toHaveTextContent('Object properties updated.');
   });
 
   it('sends only one write when Save changes is clicked repeatedly', async () => {
@@ -1037,25 +1202,27 @@ describe('changing an object from its detail', () => {
     engine.beforeCopy = () => copy.promise;
     open(ORIGINAL_KEY);
     await shown();
-    const dialog = await changeDialog('Edit object properties');
+    const dialog = await changeDialog('edit');
     changeInput(dialog, 'Content type', 'text/plain');
     const save = dialogButton(dialog, 'Save changes');
     fireEvent.click(save);
     fireEvent.click(save);
     await waitFor(() => expect(engine.requests('PUT')).toHaveLength(1));
     await act(async () => copy.finish(undefined));
-    await waitFor(() => expect(visibleResult('Object properties updated.')).toBeInTheDocument());
+    await waitFor(() =>
+      expect(flash('success').findContent()?.getElement()).toHaveTextContent('Object properties updated.'),
+    );
     expect(engine.requests('PUT')).toHaveLength(1);
   });
 
   it('marks both metadata keys that would produce the same header and blocks the save', async () => {
     open(ORIGINAL_KEY);
     await shown();
-    const dialog = await changeDialog('Edit object properties');
+    const dialog = await changeDialog('edit');
     const save = dialogButton(dialog, 'Save changes');
-    fireEvent.click(dialogButton(dialog, 'Add metadata'));
-    const [original, added] = within(dialog).getAllByRole('textbox', { name: 'Key' });
-    if (original === undefined || added === undefined) throw new Error('Expected two metadata rows');
+    fireEvent.click(metadataEditor(dialog).findAddButton().getElement());
+    const original = fieldInput(metadataField(dialog, 1, 1));
+    const added = fieldInput(metadataField(dialog, 2, 1));
 
     for (const key of ['owner', 'OWNER']) {
       fireEvent.change(added, { target: { value: key } });
@@ -1078,17 +1245,17 @@ describe('changing an object from its detail', () => {
     await shown();
     const trigger = action('Actions');
     trigger.focus();
-    const dialog = await changeDialog('Edit object properties');
+    const dialog = await changeDialog('edit');
     changeInput(dialog, 'Content type', 'text/plain');
     fireEvent.click(dialogButton(dialog, 'Save changes'));
-    expect(await within(dialog).findByText('NoSuchKey')).toBeInTheDocument();
-    expect(dialog).toHaveTextContent('The specified key does not exist.');
-    expect(dialog.contains(document.activeElement)).toBe(true);
+    expect(await within(dialogBody(dialog)).findByText('NoSuchKey')).toBeInTheDocument();
+    expect(dialogBody(dialog)).toHaveTextContent('The specified key does not exist.');
+    expect(dialogBody(dialog).contains(document.activeElement)).toBe(true);
     expect(document.activeElement).toHaveTextContent('The specified key does not exist.');
-    expect(within(dialog).getByRole('textbox', { name: 'Content type' })).toHaveValue('text/plain');
-    expect(screen.queryByText('Object properties updated.')).not.toBeInTheDocument();
-    fireEvent.keyDown(document.activeElement ?? dialog, { key: 'Escape', code: 'Escape', keyCode: 27 });
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(fieldInput(formField(dialog, 'Content type'))).toHaveValue('text/plain');
+    expect(flashes('success')).toHaveLength(0);
+    fireEvent.keyDown(document.activeElement ?? dialogBody(dialog), { key: 'Escape', code: 'Escape', keyCode: 27 });
+    await waitFor(() => expect(modal()).toBeNull());
     expect(trigger).toHaveFocus();
   });
 
@@ -1113,7 +1280,7 @@ describe('changing an object from its detail', () => {
     expect(engine.seen).toHaveLength(observed);
     expect(engine.requests('DELETE')).toHaveLength(0);
     expectAddress(router, ORIGINAL_KEY);
-    expect(screen.queryByText('Object renamed.')).not.toBeInTheDocument();
+    expect(flashes('success')).toHaveLength(0);
   });
 
   it.each(['tags', 'preview'])('keeps the cross-bucket copy result when %s returns first', async (first) => {
@@ -1124,7 +1291,7 @@ describe('changing an object from its detail', () => {
     engine.get = (key) => (key === DESTINATION_KEY ? preview.promise : undefined);
     const router = open(ORIGINAL_KEY);
     await shown();
-    const dialog = await changeDialog('Copy object');
+    const dialog = await changeDialog('copy');
     changeInput(dialog, 'Destination bucket', 'beta');
     changeInput(dialog, 'Destination key', DESTINATION_KEY);
     fireEvent.click(dialogButton(dialog, 'Copy object'));
@@ -1143,10 +1310,10 @@ describe('changing an object from its detail', () => {
     };
 
     await (first === 'tags' ? finishTags() : finishPreview());
-    expect(visibleResult('Object copied.')).toBeInTheDocument();
+    expect(flash('success').findHeader()?.getElement()).toHaveTextContent('Object copied.');
     await (first === 'tags' ? finishPreview() : finishTags());
     expectAddress(router, DESTINATION_KEY, 'beta');
-    expect(visibleResult('Object copied.')).toBeInTheDocument();
+    expect(flash('success').findHeader()?.getElement()).toHaveTextContent('Object copied.');
     expect(h1()).toHaveTextContent('copy app.json');
   });
 
@@ -1169,7 +1336,7 @@ describe('changing an object from its detail', () => {
     fireEvent.click(dialogButton(dialog, 'Rename object'));
     await waitFor(() => expectAddress(router, DESTINATION_KEY));
     expect(sawMissingOriginal).toBe(true);
-    expect(visibleResult('Object renamed.')).toBeInTheDocument();
+    expect(flash('success').findHeader()?.getElement()).toHaveTextContent('Object renamed.');
     await act(async () =>
       destination.finish({
         status: 200,
@@ -1177,7 +1344,7 @@ describe('changing an object from its detail', () => {
       }),
     );
     await waitFor(() => expect(previewText()).toHaveTextContent('"name":"app"'));
-    expect(visibleResult('Object renamed.')).toBeInTheDocument();
+    expect(flash('success').findHeader()?.getElement()).toHaveTextContent('Object renamed.');
   });
 
   it.each(['tags', 'preview'])(
@@ -1191,15 +1358,15 @@ describe('changing an object from its detail', () => {
       await waitFor(() => expect(within(section('Tags')).getByText('dev')).toBeInTheDocument());
       engine.tagging = () => tags.promise;
       engine.get = () => preview.promise;
-      const dialog = await changeDialog('Edit object properties');
+      const dialog = await changeDialog('edit');
       changeInput(dialog, 'Content type', 'text/plain');
-      fireEvent.change(within(dialog).getByDisplayValue('ci'), { target: { value: 'qa' } });
+      fireEvent.change(fieldInput(metadataField(dialog, 1, 2)), { target: { value: 'qa' } });
       fireEvent.click(dialogButton(dialog, 'Save changes'));
 
       function assertSaved() {
         expect(overviewValue('Content type')).toBe('text/plain');
         expect(tableRows('User-defined metadata')).toEqual([['owner', 'qa']]);
-        expect(visibleResult('Object properties updated.')).toBeInTheDocument();
+        expect(flash('success').findContent()?.getElement()).toHaveTextContent('Object properties updated.');
       }
       await waitFor(assertSaved);
       const finishTags = async () => {
