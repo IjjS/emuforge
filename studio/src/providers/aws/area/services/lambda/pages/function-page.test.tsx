@@ -1274,7 +1274,10 @@ describe('Function URL lifecycle', () => {
         behavior: 'instant',
       }),
     );
-    expect(scrollIntoView.mock.contexts[0]).toBe(screen.getByRole('list', { name: 'Notifications' }));
+    const result = screen.getByRole('list', { name: 'Notifications' });
+    expect(scrollIntoView.mock.contexts[0]).toBe(result);
+    expect(result).toHaveFocus();
+    expect(result).toHaveAttribute('tabindex', '-1');
   }
 
   async function openConfiguration(fn: FakeFunction) {

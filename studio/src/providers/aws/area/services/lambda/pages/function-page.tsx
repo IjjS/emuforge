@@ -316,11 +316,15 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
     if (settledUrlDeletes === 0) {
       return;
     }
-    // Scroll after the modal has restored focus. Centering keeps the Flashbar below the sticky header.
+    // Move focus after the modal has restored it. Centering keeps the focused result below the sticky header.
     const frame = requestAnimationFrame(() => {
-      areaRoot.current
-        ?.querySelector('ul[aria-label="Notifications"]')
-        ?.scrollIntoView?.({ block: 'center', inline: 'nearest', behavior: 'instant' });
+      const result = areaRoot.current?.querySelector<HTMLUListElement>('ul[aria-label="Notifications"]');
+      if (result == null) {
+        return;
+      }
+      result.tabIndex = -1;
+      result.focus({ preventScroll: true });
+      result.scrollIntoView?.({ block: 'center', inline: 'nearest', behavior: 'instant' });
     });
     return () => cancelAnimationFrame(frame);
   }, [areaRoot, settledUrlDeletes]);
