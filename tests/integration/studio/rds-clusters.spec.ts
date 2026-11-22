@@ -432,7 +432,7 @@ test('studio.rds-clusters-made-elsewhere-are-shown', async ({ ctx, page }) => {
   );
 
   await lines.line(
-    'S3 of `<prefix>-c-1` → "Start" and "Stop" are unavailable ("An Aurora DB instance starts and stops only with its DB cluster."), "Reboot" available; a `StopDBInstance` of it made directly is refused by the emulator, which still reports it `available`; "Connection" shows C\'s master user name and `cdb`, each with "From DB cluster <prefix>-c", which leads to S6 of C; the two values are the ones the emulator reports for C, and none for the member itself',
+    'S3 of `<prefix>-c-1` → "Start" and "Stop" are unavailable ("An Aurora DB instance starts and stops only with its DB cluster."), "Reboot" available; a `StopDBInstance` of it made directly is refused by the emulator, which still reports it `available`; "Connection" shows each sign-in value from the direct member read when present, otherwise from C with a "From DB cluster <prefix>-c" link to S6 of C',
     async () => {
       await open(page, instancePath(c1), c1);
       await expectValueIs(page, 'Status', 'available');
@@ -447,29 +447,32 @@ test('studio.rds-clusters-made-elsewhere-are-shown', async ({ ctx, page }) => {
 
       const cluster = (await clusterDirect(ctx, port, c))!;
       const own = (await instanceDirect(ctx, port, c1))!;
-      expect([own.masterUsername, own.dbName], "the member's own sign-in values, directly").toEqual([
-        undefined,
-        undefined,
-      ]);
       expect([cluster.masterUsername, cluster.databaseName], "C's sign-in values, directly").toEqual([
         'cadmin',
         'cdb',
       ]);
       const from = `From DB cluster ${c}`;
-      for (const [label, value] of [
-        ['Master user name', cluster.masterUsername!],
-        ['Database name', cluster.databaseName!],
+      for (const [label, memberValue, clusterValue] of [
+        ['Master user name', own.masterUsername, cluster.masterUsername!],
+        ['Database name', own.dbName, cluster.databaseName!],
       ] as const) {
         const shown = valueLocator(main, label);
-        await expect(shown.getByText(value, { exact: true }), `"${label}" shows C's value`).toBeVisible({
+        await expect(shown.getByText(memberValue ?? clusterValue, { exact: true }), label).toBeVisible({
           timeout: 30_000,
         });
-        await expect(shown.getByText(from, { exact: true }), `"${from}" at "${label}"`).toBeVisible();
+        if (memberValue === undefined) {
+          await expect(shown.getByText(from, { exact: true })).toBeVisible();
+          const link = shown.getByRole('link', { name: `DB cluster ${c}`, exact: true });
+          await expect(link).toHaveAttribute('href', clusterPath(c));
+          await link.click(ACTION);
+          await expect(page).toHaveURL(addressOf(clusterPath(c)));
+          await expect(heading(page, c)).toBeVisible({ timeout: 15_000 });
+          await open(page, instancePath(c1), c1);
+        } else {
+          await expect(shown).not.toContainText('From DB cluster');
+          await expect(shown.getByRole('link')).toHaveCount(0);
+        }
       }
-      // The line's link is the cluster ("From" is the text before it).
-      await valueLocator(main, 'Master user name').getByRole('link', { name: `DB cluster ${c}`, exact: true }).click(ACTION);
-      await expect(page).toHaveURL(addressOf(clusterPath(c)));
-      await expect(heading(page, c)).toBeVisible({ timeout: 15_000 });
     },
   );
 
