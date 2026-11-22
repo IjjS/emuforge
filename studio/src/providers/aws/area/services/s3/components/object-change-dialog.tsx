@@ -1,0 +1,299 @@
+import Alert from '@cloudscape-design/components/alert';
+import Box from '@cloudscape-design/components/box';
+import Button from '@cloudscape-design/components/button';
+import FormField from '@cloudscape-design/components/form-field';
+import Input from '@cloudscape-design/components/input';
+import KeyValuePairs from '@cloudscape-design/components/key-value-pairs';
+import SpaceBetween from '@cloudscape-design/components/space-between';
+import { useLayoutEffect, useRef, useState } from 'react';
+
+import { reportedServiceCode, requestFailure, type RequestFailure } from '../../../../../../lib/aws/request';
+import { AreaModal } from '../../../components/area-modal';
+import { usePageFlash } from '../../../components/page-flash';
+import { ValueText } from '../../../components/value-text';
+import { OPERATIONS, type ObjectHead, type ObjectLocation } from '../api';
+import { objectPath, s3Uri } from '../format';
+import { useObjectChanges } from '../queries';
+import { actionFailure } from './action-failure';
+import { confirmsName } from './confirms-name';
+import { ObjectChangeProperties } from './object-change-properties';
+
+export type ObjectChange = 'copy' | 'rename' | 'edit';
+
+interface ObjectChangeDialogProps {
+  action: ObjectChange;
+  endpoint: string | undefined;
+  bucket: string;
+  head: ObjectHead;
+  onClose: () => void;
+  onUnsupported: (operation: string) => void;
+  onPropertiesSaved: () => void;
+}
+
+const LABELS = {
+  copy: 'Copy object',
+  rename: 'Rename object',
+  edit: 'Edit object properties',
+} as const;
+
+function Location({ bucket, objectKey }: { bucket: string; objectKey: string }) {
+  return <ValueText kind="address" value={s3Uri(bucket, objectKey)} />;
+}
+
+function Locations({ source, destination }: { source: ObjectLocation; destination: ObjectLocation }) {
+  return (
+    <KeyValuePairs
+      items={[
+        { label: 'Original object', value: <Location bucket={source.bucket} objectKey={source.key} /> },
+        { label: 'Destination object', value: <Location bucket={destination.bucket} objectKey={destination.key} /> },
+      ]}
+    />
+  );
+}
+
+function failureView(failure: RequestFailure, label: string, endpoint: string | undefined) {
+  const view = actionFailure(failure, label, endpoint);
+  const code = failure.kind === 'other' ? undefined : reportedServiceCode(failure);
+  if (code === undefined) return view;
+  return {
+    ...view,
+    detail: (
+      <>
+        <Box variant="code" display="inline">
+          <ValueText kind="name" value={code} />
+        </Box>{' '}
+        {view.detail}
+      </>
+    ),
+  };
+}
+
+export function ObjectChangeDialog({
+  action,
+  endpoint,
+  bucket,
+  head,
+  onClose,
+  onUnsupported,
+  onPropertiesSaved,
+}: ObjectChangeDialogProps) {
+  const flash = usePageFlash();
+  const changes = useObjectChanges(endpoint);
+  const active = useRef<AbortController | undefined>(undefined);
+  useLayoutEffect(() => () => active.current?.abort(), []);
+  const [pending, setPending] = useState(false);
+  const [failure, setFailure] = useState<RequestFailure>();
+  const [destinationBucket, setDestinationBucket] = useState(bucket);
+  const [destinationKey, setDestinationKey] = useState('');
+  const [confirmation, setConfirmation] = useState<'replace' | 'rename'>();
+  const [typed, setTyped] = useState('');
+  const [contentType, setContentType] = useState(head.contentType ?? '');
+  const [metadata, setMetadata] = useState(head.user);
+  const label = LABELS[action];
+  const source = { bucket, key: head.key };
+  const destination = action === 'edit' ? source : { bucket: destinationBucket, key: destinationKey };
+  const sameLocation = destinationBucket === bucket && destinationKey === head.key;
+  const expectedKey = confirmation === 'replace' ? destinationKey : head.key;
+  const metadataError = metadata.some(({ key }) => key === '');
+  const valid =
+    action === 'edit'
+      ? !metadataError
+      : destinationBucket.trim() !== '' &&
+        destinationKey !== '' &&
+        !sameLocation &&
+        (confirmation === undefined || confirmsName(typed, expectedKey));
+
+  async function submit() {
+    if (!valid || active.current !== undefined || changes === undefined) return;
+    const controller = new AbortController();
+    const { signal } = controller;
+    active.current = controller;
+    setPending(true);
+    setFailure(undefined);
+    let operation: string = OPERATIONS.headObject;
+
+    try {
+      if (action !== 'edit' && confirmation === undefined) {
+        const exists = await changes.destinationExists(destination, signal);
+        if (signal.aborted) return;
+        if (exists || action === 'rename') {
+          setConfirmation(exists ? 'replace' : 'rename');
+          return;
+        }
+      }
+
+      operation = OPERATIONS.copyObject;
+      const edit =
+        action === 'edit'
+          ? {
+              contentType,
+              metadata: Object.fromEntries(metadata.map(({ key, value }) => [key, value])),
+              headers: head.copyHeaders,
+            }
+          : undefined;
+      await changes.copy(source, destination, signal, edit);
+      if (signal.aborted) return;
+
+      if (action === 'rename') {
+        operation = OPERATIONS.deleteObject;
+        await changes.removeSource(source, signal);
+        if (signal.aborted) return;
+      }
+
+      onClose();
+      if (action === 'edit') {
+        onPropertiesSaved();
+        flash.show([{ type: 'success', content: 'Object properties updated.' }]);
+      } else {
+        flash.handOver(objectPath(destination.bucket, destination.key), [
+          {
+            type: 'success',
+            header: action === 'copy' ? 'Object copied.' : 'Object renamed.',
+            content: <Location bucket={destination.bucket} objectKey={destination.key} />,
+          },
+        ]);
+      }
+    } catch (error) {
+      if (signal.aborted) return;
+      const refused = requestFailure(operation, error);
+      const view = failureView(refused, label, endpoint);
+      if (refused.kind === 'not-implemented') onUnsupported(refused.operation);
+
+      if (operation === OPERATIONS.deleteObject) {
+        onClose();
+        flash.show([
+          {
+            type: 'warning',
+            header: 'Object copied, but the original could not be deleted.',
+            content: (
+              <SpaceBetween size="s">
+                <Locations source={source} destination={destination} />
+                <Box variant="strong">{view.header}</Box>
+                {view.detail}
+              </SpaceBetween>
+            ),
+          },
+        ]);
+      } else if (refused.kind === 'not-implemented') {
+        onClose();
+        flash.show([
+          {
+            type: view.type,
+            header: view.header,
+            content: (
+              <>
+                {label}. {view.detail}
+              </>
+            ),
+          },
+        ]);
+      } else {
+        setFailure(refused);
+      }
+    } finally {
+      if (!signal.aborted) {
+        active.current = undefined;
+        setPending(false);
+      }
+    }
+  }
+
+  const handleClose = () => {
+    if (active.current === undefined) onClose();
+  };
+
+  const view = failure === undefined ? undefined : failureView(failure, label, endpoint);
+  return (
+    <AreaModal
+      visible
+      header={
+        confirmation === 'replace' ? 'Replace existing object?' : confirmation === 'rename' ? 'Rename object?' : label
+      }
+      closeAriaLabel="Close"
+      onDismiss={handleClose}
+      footer={
+        <Box float="right">
+          <SpaceBetween direction="horizontal" size="xs">
+            <Button variant="link" disabled={pending} onClick={handleClose}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              loading={pending}
+              disabled={!valid || changes === undefined}
+              onClick={() => void submit()}
+            >
+              {confirmation === 'replace' ? 'Replace object' : action === 'edit' ? 'Save changes' : label}
+            </Button>
+          </SpaceBetween>
+        </Box>
+      }
+    >
+      <SpaceBetween size="m">
+        {view !== undefined && (
+          <Alert type={view.type} header={view.header}>
+            {view.detail}
+          </Alert>
+        )}
+        {confirmation !== undefined ? (
+          <>
+            <Locations source={source} destination={destination} />
+            <Alert type="warning">
+              {confirmation === 'replace' && <div>The existing destination object will be replaced.</div>}
+              {action === 'rename' && <div>The original key will be deleted after the copy succeeds.</div>}
+              {action === 'rename' && head.copyHeaders?.WebsiteRedirectLocation !== undefined && (
+                <div>The renamed object will lose its website redirect.</div>
+              )}
+            </Alert>
+            <FormField
+              label={confirmation === 'replace' ? 'Enter destination key to confirm' : 'Enter original key to confirm'}
+            >
+              <Input
+                key="confirmation"
+                value={typed}
+                onChange={({ detail }) => setTyped(detail.value)}
+                disabled={pending}
+                spellcheck={false}
+              />
+            </FormField>
+          </>
+        ) : action === 'edit' ? (
+          <ObjectChangeProperties
+            contentType={contentType}
+            metadata={metadata}
+            pending={pending}
+            onContentType={setContentType}
+            onMetadata={setMetadata}
+          />
+        ) : (
+          <>
+            <KeyValuePairs
+              items={[{ label: 'Original object', value: <Location bucket={source.bucket} objectKey={source.key} /> }]}
+            />
+            {action === 'copy' && (
+              <FormField label="Destination bucket">
+                <Input
+                  value={destinationBucket}
+                  onChange={({ detail }) => setDestinationBucket(detail.value)}
+                  disabled={pending}
+                  spellcheck={false}
+                />
+              </FormField>
+            )}
+            <FormField
+              label={action === 'copy' ? 'Destination key' : 'New key'}
+              errorText={sameLocation ? 'Choose a different location.' : undefined}
+            >
+              <Input
+                value={destinationKey}
+                onChange={({ detail }) => setDestinationKey(detail.value)}
+                disabled={pending}
+                spellcheck={false}
+              />
+            </FormField>
+          </>
+        )}
+      </SpaceBetween>
+    </AreaModal>
+  );
+}

@@ -5,12 +5,14 @@ import { RequestError, type RequestFailure } from '../../../../../lib/aws/reques
 import {
   abortMultipartUpload,
   completeMultipartUpload,
+  copyObject,
   createMultipartUpload,
   holdsAnyUnder,
   putObject,
   uploadPart,
   deleteBucket,
   deleteKeys,
+  deleteObject,
   deleteObjects,
   findBucket,
   getObject,
@@ -38,7 +40,9 @@ import {
   type NoSuchKey,
   type ObjectBody,
   type ObjectHead,
+  type ObjectLocation,
   type ObjectPage,
+  type ObjectPropertyEdit,
   type Tag,
 } from './api';
 import { createOperations, submitBucketForm, type BucketForm, type CreateOutcome } from './bucket-form';
@@ -407,7 +411,7 @@ export interface BucketRead<T> {
 function useFreshRead<T>(
   endpoint: string | undefined,
   name: string,
-  part: string,
+  part: string | readonly string[],
   operation: string,
   generation: number,
   read: (endpoint: string, signal: AbortSignal) => Promise<T>,
@@ -416,7 +420,16 @@ function useFreshRead<T>(
   const [mount] = useState(() => (mounts += 1));
   const [attempt, setAttempt] = useState(0);
   const query = useQuery({
-    queryKey: [...S3_KEY, 'bucket', name, part, endpoint, mount, generation, attempt],
+    queryKey: [
+      ...S3_KEY,
+      'bucket',
+      name,
+      ...(typeof part === 'string' ? [part] : part),
+      endpoint,
+      mount,
+      generation,
+      attempt,
+    ],
     queryFn: ({ signal }) => {
       if (endpoint === undefined) {
         throw new Error('The engine endpoint is not known yet.');
@@ -631,7 +644,7 @@ export function useObjectHead(endpoint: string | undefined, bucket: string, key:
   const read = useFreshRead<ObjectHead | NoSuchKey | NoSuchBucket>(
     endpoint,
     bucket,
-    `object:${key}:head`,
+    ['object', key, 'head'],
     OPERATIONS.headObject,
     generation,
     async (at, signal) => {
@@ -659,7 +672,7 @@ export function useObjectTags(
   return useFreshRead(
     endpoint,
     bucket,
-    `object:${key}:tags`,
+    ['object', key, 'tags'],
     OPERATIONS.getObjectTagging,
     generation,
     (at, signal) => getObjectTagging(at, bucket, key, signal),
@@ -681,7 +694,7 @@ export function useObjectPreview(
   return useFreshRead(
     endpoint,
     bucket,
-    `object:${key}:preview:${head?.contentType ?? ''}:${String(head?.size ?? '')}`,
+    ['object', key, 'preview', head?.contentType ?? '', String(head?.size ?? '')],
     OPERATIONS.getObject,
     generation,
     (at, signal) =>
@@ -694,6 +707,48 @@ export function useObjectPreview(
       ),
     head !== undefined,
   );
+}
+
+/** The writes of the object detail, with their affected reads marked stale after each successful write. */
+export function useObjectChanges(endpoint: string | undefined) {
+  const client = useQueryClient();
+
+  return useMemo(() => {
+    if (endpoint === undefined) return undefined;
+
+    function invalidate({ bucket, key }: ObjectLocation) {
+      void client.invalidateQueries({
+        queryKey: [...S3_KEY, 'objects', bucket, endpoint],
+        refetchType: 'none',
+      });
+      void client.invalidateQueries({
+        queryKey: [...S3_KEY, 'bucket', bucket, 'object', key],
+        refetchType: 'none',
+      });
+    }
+
+    return {
+      destinationExists: async ({ bucket, key }: ObjectLocation, signal: AbortSignal) =>
+        (await headObject(endpoint, bucket, key, signal)) !== NOT_FOUND,
+      copy: async (
+        source: ObjectLocation,
+        destination: ObjectLocation,
+        signal: AbortSignal,
+        edit?: ObjectPropertyEdit,
+      ) => {
+        await copyObject(endpoint, source, destination, signal, edit);
+        if (!signal.aborted) invalidate(destination);
+      },
+      removeSource: async (source: ObjectLocation, signal: AbortSignal) => {
+        await deleteObject(endpoint, source, signal);
+        if (signal.aborted) return;
+        invalidate(source);
+        void client.invalidateQueries({
+          queryKey: [...S3_KEY, 'bucket', source.bucket, 'object', source.key, 'head', endpoint],
+        });
+      },
+    };
+  }, [client, endpoint]);
 }
 
 /** "Download" of the object page: `GetObject` of the whole body. */
