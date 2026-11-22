@@ -53,7 +53,10 @@ function revealBelowStickyBreadcrumbs(button: HTMLButtonElement, area: HTMLEleme
     if (bounds.height === 0) {
       continue;
     }
-    const ringClearance = Number.parseFloat(getComputedStyle(button).getPropertyValue('--space-static-xs-b6kz15')) || 8;
+    const ringClearance = Number.parseFloat(getComputedStyle(button).getPropertyValue('--space-static-xs-b6kz15'));
+    if (!Number.isFinite(ringClearance)) {
+      return;
+    }
     const overlap = bounds.bottom + ringClearance - button.getBoundingClientRect().top;
     if (overlap > 0) {
       window.scrollBy({ top: -Math.ceil(overlap), behavior: 'instant' });
