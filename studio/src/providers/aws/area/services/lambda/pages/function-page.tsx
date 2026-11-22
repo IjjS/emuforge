@@ -23,6 +23,7 @@ import type { LambdaFunction } from '../api';
 import { CodeTab } from '../components/code-tab';
 import { ConfigurationTab } from '../components/configuration-tab';
 import { DeleteFunctionsDialog } from '../components/delete-functions-dialog';
+import { EventSourcesTab } from '../components/event-sources-tab';
 import { readFailureState, useAnnouncer } from '../components/failure-states';
 import { ReadFailure } from '../components/failures';
 import { FunctionOverview, FunctionStatusLine } from '../components/function-sections';
@@ -31,6 +32,7 @@ import { MonitorTab } from '../components/monitor-tab';
 import { quoting } from '../components/quoting';
 import { INVOKE_TARGET_RESET, InvocationResult, TestTab, type TestTabProps } from '../components/test-tab';
 import { VersionsTab, type VersionsTabProps } from '../components/versions-tab';
+import { useEventSources } from '../event-source-queries';
 import { FUNCTIONS_PATH, functionTabHref, releaseSuccessText, TAB_PARAMETER, tabOf } from '../format';
 import { invokeOutcome } from '../invoke-result';
 import { isChanging, useFunctionReading, useInvoke, useReadAgain } from '../queries';
@@ -60,7 +62,8 @@ interface FunctionTabsProps {
   test: Omit<TestTabProps, 'functionName' | 'connection' | 'versions' | 'aliases'>;
   releases: Pick<VersionsTabProps, 'versions' | 'aliases' | 'mutation' | 'onAliasConfirmationChange'>;
   releaseViewRef: Ref<HTMLDivElement>;
-  waitingForReleases: boolean;
+  waitingForVerification: boolean;
+  eventSources: ReturnType<typeof useEventSources>;
   active: ReturnType<typeof tabOf>;
   onMonitorRefreshSettled: ((message: string) => void) | undefined;
 }
@@ -78,7 +81,8 @@ function FunctionTabs({
   test,
   releases,
   releaseViewRef,
-  waitingForReleases,
+  waitingForVerification,
+  eventSources,
   active,
   onMonitorRefreshSettled,
 }: FunctionTabsProps) {
@@ -153,10 +157,28 @@ function FunctionTabs({
       ) : (
         <Container>
           <Box textAlign="center">
-            <StatusIndicator type={waitingForReleases ? 'loading' : 'stopped'}>
-              {waitingForReleases
+            <StatusIndicator type={waitingForVerification ? 'loading' : 'stopped'}>
+              {waitingForVerification
                 ? 'Waiting for function verification'
                 : 'Versions and aliases are unavailable until the emulator reconnects.'}
+            </StatusIndicator>
+          </Box>
+        </Container>
+      ),
+    },
+    {
+      id: 'event-sources',
+      label: 'Event sources',
+      href: functionTabHref(name, 'event-sources'),
+      content: test.verified ? (
+        <EventSourcesTab key={testScope} name={name} sources={eventSources} connection={connection} ready={ready} />
+      ) : (
+        <Container>
+          <Box textAlign="center">
+            <StatusIndicator type={waitingForVerification ? 'loading' : 'stopped'}>
+              {waitingForVerification
+                ? 'Waiting for function verification'
+                : 'Event sources are unavailable until the emulator reconnects.'}
             </StatusIndicator>
           </Box>
         </Container>
@@ -323,6 +345,12 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
   if (verification.scope !== verificationScope || verification.found !== verified) {
     setVerification({ scope: verificationScope, found: verified });
   }
+  const eventSources = useEventSources({
+    endpoint: connection.engineOrigin,
+    name,
+    scope: verificationScope,
+    active: active === 'event-sources' && verified,
+  });
   const [savedAliasConfirmation, setAliasConfirmation] = useState<{ functionScope: string; open: boolean }>();
   let aliasConfirmation = savedAliasConfirmation;
   if (aliasConfirmation?.functionScope !== functionScope || active !== 'versions') {
@@ -628,7 +656,8 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
             onAliasConfirmationChange: handleAliasConfirmationChange,
           }}
           releaseViewRef={captureAliasFocus}
-          waitingForReleases={network.online && (result === undefined || connected)}
+          waitingForVerification={network.online && (result === undefined || connected)}
+          eventSources={eventSources}
           active={active}
           onMonitorRefreshSettled={refreshing === 'monitor' ? handleMonitorRefreshSettled : undefined}
         />

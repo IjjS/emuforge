@@ -29,7 +29,11 @@ export async function listEventSources(
   let marker: string | undefined;
   do {
     const command = new ListEventSourceMappingsCommand({ FunctionName: name, Marker: marker });
-    const answer = await sendRequest(LIST_EVENT_SOURCES, (abortSignal) => client.send(command, { abortSignal }), signal);
+    const answer = await sendRequest(
+      LIST_EVENT_SOURCES,
+      (abortSignal) => client.send(command, { abortSignal }),
+      signal,
+    );
     for (const { UUID, EventSourceArn, State, LastProcessingResult } of answer.EventSourceMappings ?? []) {
       if (!UUID) {
         throw new RequestError({
@@ -76,7 +80,11 @@ export async function changeEventSource(
       if (change.startingPosition !== undefined) {
         input.StartingPosition = change.startingPosition;
       }
-      await sendRequest(operation, (abortSignal) => client.send(new CreateEventSourceMappingCommand(input), { abortSignal }), signal);
+      await sendRequest(
+        operation,
+        (abortSignal) => client.send(new CreateEventSourceMappingCommand(input), { abortSignal }),
+        signal,
+      );
       break;
     }
     case 'UpdateEventSourceMapping': {
