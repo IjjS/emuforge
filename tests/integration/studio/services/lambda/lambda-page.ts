@@ -25,7 +25,7 @@ import { CREATE, CREATE_PATH, functionPath } from './lambda-list';
 // ---------------------------------------------------------------------------------------------------------------
 
 /** The tabs, in order; "Test" is the page itself, selected as it opens (issue 516). */
-export const PAGE_TABS = ['Test', 'Code', 'Monitor', 'Configuration', 'Versions and aliases'];
+export const PAGE_TABS = ['Test', 'Code', 'Monitor', 'Configuration', 'Versions and aliases', 'Event sources'];
 
 /** The sections and their fields, in order (R5.3, R5.5). */
 export const OVERVIEW = 'Function overview';

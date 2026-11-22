@@ -63,7 +63,7 @@ test('studio.lambda-function-page-shows-the-function', async ({ ctx, page }) => 
 
   await lines.line(
     // Issue 516 (test-criteria.md, "Rewritten lines of checks on `main`"; the pm's decision of 2026-11-19).
-    'With a function made directly (`nodejs22.x`, `arm64`, a description, a function URL) → its page shows the description, last modified time, ARN and URL (as text, not a link) that the emulator reports, and exactly the tabs "Test", "Code", "Monitor", "Configuration", "Versions and aliases"; on "Code" the runtime\'s name, the handler and the architecture the emulator reports',
+    'With a function made directly (`nodejs22.x`, `arm64`, a description, a function URL) → its page shows the description, last modified time, ARN and URL (as text, not a link) that the emulator reports, and exactly the tabs "Test", "Code", "Monitor", "Configuration", "Versions and aliases", "Event sources"; on "Code" the runtime\'s name, the handler and the architecture the emulator reports',
     async () => {
       const read = await getFunctionDirect(ctx, port, withUrl);
       expect(read.found, `a direct GetFunction ${withUrl}`).toBe(true);
