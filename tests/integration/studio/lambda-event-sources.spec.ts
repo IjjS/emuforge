@@ -51,20 +51,21 @@ test('studio.lambda-event-source-lifecycle', async ({ ctx, page }) => {
   const peer = await f.makeFunction('peer');
   const targetId = await f.connect(f.fn.name);
   const peerId = await f.connect(peer.name);
-  const peerEnabled = () => expect.poll(() => f.mappings(peer.name), directWait).toEqual([
+  const expectedPeer = [
     expect.objectContaining({ UUID: peerId, FunctionArn: peer.arn, EventSourceArn: f.arn, State: 'Enabled' }),
-  ]);
-  await peerEnabled();
+  ];
+  await expect.poll(() => f.mappings(peer.name), directWait).toEqual(expectedPeer);
   await openSources(page, f.fn.name);
   await settledList(page, f.fn.name, f.arn, 'Enabled');
   await chooseMapping(page);
   for (const [label, state] of [['Disable', 'Disabled'], ['Enable', 'Enabled']]) {
     await action(page, label).click();
+    await expect(success(page)).toContainText(label === 'Disable' ? 'Requested disabling' : 'Requested enabling');
     await settledList(page, f.fn.name, f.arn, state);
     await expect.poll(() => f.mappings(f.fn.name), directWait).toEqual([
       expect.objectContaining({ UUID: targetId, FunctionArn: f.fn.arn, EventSourceArn: f.arn, State: state }),
     ]);
-    await peerEnabled();
+    expect(await f.mappings(peer.name)).toEqual(expectedPeer);
   }
   await action(page, 'Delete').click();
   await expect(page.locator(createWrapper().findModal().findContent().toSelector())).toContainText(f.arn);
@@ -72,7 +73,7 @@ test('studio.lambda-event-source-lifecycle', async ({ ctx, page }) => {
   await expect(success(page)).toContainText('Requested deletion');
   await settledList(page, f.fn.name, f.arn, 'absent');
   await expect.poll(() => f.mappings(f.fn.name), directWait).toEqual([]);
-  await peerEnabled();
+  expect(await f.mappings(peer.name)).toEqual(expectedPeer);
   expect(await f.queueArn()).toBe(f.arn);
   for (const name of [f.fn.name, peer.name]) expect((await getFunctionDirect(ctx, f.port, name)).found).toBe(true);
 });

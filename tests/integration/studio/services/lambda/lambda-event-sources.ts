@@ -126,16 +126,30 @@ export async function addSource(page: Page, arn: string, stream = false) {
 
 export async function settledList(page: Page, name: string, arn: string, state: string, result?: string) {
   await expect(async () => {
-    const [response] = await Promise.all([
-      page.waitForResponse(r => {
-        const url = new URL(r.url());
-        return r.request().method() === 'GET' && url.pathname.replace(/\/$/, '').endsWith('/event-source-mappings') &&
+    const refresh = action(page, 'Refresh');
+    const loading = page.locator(table.findLoadingText().toSelector());
+    await expect(loading).toBeHidden();
+    await expect(refresh).toBeEnabled();
+    const [request] = await Promise.all([
+      page.waitForRequest(request => {
+        const url = new URL(request.url());
+        return request.method() === 'GET' && url.pathname.replace(/\/$/, '').endsWith('/event-source-mappings') &&
           url.searchParams.get('FunctionName') === name;
       }, { timeout: 4000 }),
-      action(page, 'Refresh').click({ timeout: 4000 }),
+      refresh.click({ timeout: 4000 }),
     ]);
-    expect(response.ok()).toBe(true);
-    await response.finished();
+    const response = await request.response();
+    if (!response?.ok()) throw Error('Mapping Refresh did not return the list');
+    expect(await response.finished()).toBeNull();
+    const list: { EventSourceMappings: Mapping[] } = await response.json();
+    const observed = list.EventSourceMappings.find(row => row.EventSourceArn === arn);
+    if (state === 'absent') expect(observed).toBeUndefined();
+    else {
+      expect(observed?.State).toBe(state);
+      if (result !== undefined) expect(observed?.LastProcessingResult).toBe(result);
+    }
+    await expect(refresh).toBeEnabled();
+    await expect(loading).toBeHidden();
     if (state === 'absent') {
       await expect(page.locator(table.findEmptySlot().toSelector())).toHaveText('No event sources', { timeout: 1000 });
     } else {
