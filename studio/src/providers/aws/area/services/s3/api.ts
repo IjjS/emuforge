@@ -1,9 +1,11 @@
 import {
   AbortMultipartUploadCommand,
   CompleteMultipartUploadCommand,
+  CopyObjectCommand,
   CreateBucketCommand,
   CreateMultipartUploadCommand,
   DeleteBucketCommand,
+  DeleteObjectCommand,
   DeleteObjectsCommand,
   GetBucketEncryptionCommand,
   GetBucketNotificationConfigurationCommand,
@@ -22,6 +24,7 @@ import {
   PutObjectCommand,
   PutPublicAccessBlockCommand,
   UploadPartCommand,
+  type CopyObjectCommandInput,
   type NotificationConfiguration,
   type HeadObjectCommandOutput,
   type ListBucketsCommandOutput,
@@ -169,6 +172,8 @@ export const OPERATIONS = {
   putBucketVersioning: 'PutBucketVersioning',
   putBucketEncryption: 'PutBucketEncryption',
   headObject: 'HeadObject',
+  copyObject: 'CopyObject',
+  deleteObject: 'DeleteObject',
   getObjectTagging: 'GetObjectTagging',
   getObject: 'GetObject',
   putObject: 'PutObject',
@@ -733,6 +738,24 @@ export interface ObjectHead {
   system: MetadataEntry[];
   /** The user metadata (`x-amz-meta-*`), its key without the prefix, in the answer's order. */
   user: MetadataEntry[];
+  /** Headers to keep when replacing the object's metadata in place. */
+  copyHeaders?: CopyHeaders;
+}
+
+type CopyHeaders = Pick<
+  CopyObjectCommandInput,
+  'CacheControl' | 'ContentDisposition' | 'ContentEncoding' | 'ContentLanguage' | 'Expires' | 'WebsiteRedirectLocation'
+>;
+
+export interface ObjectLocation {
+  bucket: string;
+  key: string;
+}
+
+export interface ObjectPropertyEdit {
+  contentType: string;
+  metadata: Record<string, string>;
+  headers: CopyHeaders | undefined;
 }
 
 /** The code with which a call on a key says the emulator holds no object of that key. */
@@ -759,21 +782,74 @@ function toHead(key: string, output: HeadObjectCommandOutput): ObjectHead {
   if (etag !== undefined) head.etag = etag;
   if (storageClass !== undefined) head.storageClass = storageClass;
   if (versionId !== undefined) head.versionId = versionId;
-  const expires =
-    text(output.ExpiresString) ??
-    (output.Expires instanceof Date && !Number.isNaN(output.Expires.getTime())
-      ? output.Expires.toUTCString()
-      : undefined);
+  const expiresDate =
+    output.Expires instanceof Date && !Number.isNaN(output.Expires.getTime()) ? output.Expires : undefined;
+  const expires = text(output.ExpiresString) ?? expiresDate?.toUTCString();
+  const copyHeaders: CopyHeaders = {
+    CacheControl: text(output.CacheControl),
+    ContentEncoding: text(output.ContentEncoding),
+    ContentDisposition: text(output.ContentDisposition),
+    ContentLanguage: text(output.ContentLanguage),
+    Expires: expiresDate,
+    WebsiteRedirectLocation: text(output.WebsiteRedirectLocation),
+  };
+  if (Object.values(copyHeaders).some((value) => value !== undefined)) head.copyHeaders = copyHeaders;
   const system: [string, string | undefined][] = [
     ['Content-Type', contentType],
-    ['Cache-Control', text(output.CacheControl)],
-    ['Content-Encoding', text(output.ContentEncoding)],
-    ['Content-Disposition', text(output.ContentDisposition)],
+    ['Cache-Control', copyHeaders.CacheControl],
+    ['Content-Encoding', copyHeaders.ContentEncoding],
+    ['Content-Disposition', copyHeaders.ContentDisposition],
     ['Expires', expires],
   ];
   head.system = system.flatMap(([entry, value]) => (value === undefined ? [] : [{ key: entry, value }]));
   head.user = Object.entries(output.Metadata ?? {}).map(([entry, value]) => ({ key: entry, value }));
   return head;
+}
+
+/** Copies an object using S3's defaults, or replaces its content type and metadata in place. */
+export async function copyObject(
+  endpoint: string,
+  source: ObjectLocation,
+  destination: ObjectLocation,
+  signal: AbortSignal,
+  edit?: ObjectPropertyEdit,
+): Promise<void> {
+  // Separate the bucket from the key before encoding. A literal percent or question mark belongs to the key.
+  const copySource = `${source.bucket}/${source.key.split('/').map(encodeURIComponent).join('/')}`;
+  await sendRequest(
+    OPERATIONS.copyObject,
+    (abortSignal) =>
+      s3Client(endpoint).send(
+        new CopyObjectCommand({
+          Bucket: destination.bucket,
+          Key: destination.key,
+          CopySource: copySource,
+          ...(edit === undefined
+            ? {}
+            : {
+                ...edit.headers,
+                MetadataDirective: 'REPLACE',
+                ContentType: edit.contentType,
+                Metadata: edit.metadata,
+              }),
+        }),
+        { abortSignal },
+      ),
+    signal,
+  );
+}
+
+/** Removes the original key after a rename's copy succeeds. */
+export async function deleteObject(
+  endpoint: string,
+  { bucket, key }: ObjectLocation,
+  signal: AbortSignal,
+): Promise<void> {
+  await sendRequest(
+    OPERATIONS.deleteObject,
+    (abortSignal) => s3Client(endpoint).send(new DeleteObjectCommand({ Bucket: bucket, Key: key }), { abortSignal }),
+    signal,
+  );
 }
 
 /**
