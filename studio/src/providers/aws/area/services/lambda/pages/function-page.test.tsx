@@ -130,6 +130,7 @@ const FUNCTION_PATH = /^\/2015-03-31\/functions\/([^/]+)$/;
 const URL_PATH = /^\/2021-10-31\/functions\/([^/]+)\/url$/;
 const RELEASE_PATH = /^\/2015-03-31\/functions\/([^/]+)\/(versions|aliases)$/;
 const ALIAS_PATH = /^\/2015-03-31\/functions\/([^/]+)\/aliases\/([^/]+)$/;
+const EVENT_SOURCE_PATH = '/2015-03-31/event-source-mappings';
 const INVOKE_PATH = /^\/2015-03-31\/functions\/([^/]+)\/invocations$/;
 
 function json(status: number, body: unknown): Answer {
@@ -168,6 +169,7 @@ class FakeEngine {
     }
     return json(200, url.pathname.endsWith('/versions') ? { Versions: [{ Version: '$LATEST' }] } : { Aliases: [] });
   };
+  answerEventSources: (request: SentRequest) => Answer | Promise<Answer> = () => json(200, { EventSourceMappings: [] });
   /** The invocations answered so far. */
   invocations = 0;
   /** The answer to `GetFunctionUrlConfig`; by default the emulator's. */
@@ -261,6 +263,11 @@ class FakeEngine {
     }
     const sent = { method: request.method, url };
     this.aws.push(sent);
+    if (url.pathname === EVENT_SOURCE_PATH || url.pathname.startsWith(`${EVENT_SOURCE_PATH}/`)) {
+      // An old read can answer even after the browser has canceled it.
+      const answer = await this.answerEventSources(sent);
+      return new Response(answer.body, { status: answer.status, headers: answer.headers ?? {} });
+    }
     if (RELEASE_PATH.test(url.pathname) || ALIAS_PATH.test(url.pathname)) {
       const answer = await this.answerRelease(sent);
       return new Response(answer.body, { status: answer.status, headers: answer.headers ?? {} });
@@ -486,6 +493,7 @@ function tabLink(id: FunctionTab): HTMLElement {
     monitor: 'Monitor',
     configuration: 'Configuration',
     versions: 'Versions and aliases',
+    'event-sources': 'Event sources',
   };
   const tab = tabs()?.findTabLinkById(id)?.getElement();
   if (!tab) {
@@ -593,13 +601,13 @@ async function openLoaded(fn: FakeFunction = ORDERS) {
 // ---------------------------------------------------------------------------------------------------------------
 
 describe('a function loaded', () => {
-  it('the h1 its name, "Refresh", "Delete", "Function overview" with its fields in order, and the tabs "Test", "Code", "Monitor", "Configuration", "Versions and aliases" and no other, "Test" selected', async () => {
+  it('the h1 its name, "Refresh", "Delete", "Function overview" with its fields in order, and the tabs "Test", "Code", "Monitor", "Configuration", "Versions and aliases", and "Event sources", "Test" selected', async () => {
     await openLoaded();
 
     expect(headingText()).toBe('orders');
     expect(within(header()).getByRole('button', { name: 'Refresh' })).toBeInTheDocument();
     expect(within(header()).getByRole('button', { name: 'Delete' })).toBeInTheDocument();
-    expect(tabLabels()).toEqual(['Test', 'Code', 'Monitor', 'Configuration', 'Versions and aliases']);
+    expect(tabLabels()).toEqual(['Test', 'Code', 'Monitor', 'Configuration', 'Versions and aliases', 'Event sources']);
     expect(activeTab()).toBe('Test');
     expect(pairs().map(([label]) => label)).toEqual(['Description', 'Last modified', 'Function ARN', 'Function URL']);
     expect(value('Description')).toBe('Takes the orders');
@@ -1210,6 +1218,75 @@ function deferredAnswer() {
   });
   return { promise, resolve };
 }
+
+describe('Event sources', () => {
+  const source = 'arn:aws:sqs:us-east-1:000000000000:orders';
+  const mapping = { UUID: 'orders-mapping', EventSourceArn: source, State: 'Enabled', LastProcessingResult: 'OK' };
+  const listed = json(200, { EventSourceMappings: [mapping] });
+  const empty = json(200, { EventSourceMappings: [] });
+  const route = `${pagePath('orders')}?tab=event-sources`;
+  const listRequests = () => engine.aws.filter(({ url }) => url.pathname === EVENT_SOURCE_PATH);
+
+  it('P1: opens the directly addressed tab and reads mappings for the current function', async () => {
+    engine.functions = [ORDERS];
+    engine.answerEventSources = () => listed;
+    open(route);
+
+    const row = await screen.findByRole('row', { name: /orders-mapping|sqs/ });
+    expect(within(row).getByText('OK')).toBeVisible();
+    expect(within(row).getByText('Enabled')).toBeVisible();
+    expect(row).toHaveTextContent(source);
+    expect(screen.getByRole('tab', { name: 'Event sources', selected: true })).toBeVisible();
+    expect(listRequests().map(({ url }) => url.searchParams.get('FunctionName'))).toEqual(['orders']);
+
+    const [topRefresh] = screen.getAllByRole('button', { name: 'Refresh' });
+    if (topRefresh === undefined) {
+      throw new Error('Expected the function Refresh button');
+    }
+    fireEvent.click(topRefresh);
+    await waitFor(() => {
+      expect(engine.gets).toHaveLength(2);
+      expect(topRefresh).toBeEnabled();
+    });
+    expect(listRequests()).toHaveLength(1);
+  });
+
+  it('P2: keeps the refreshed empty list and page flash after an older read answers', async () => {
+    engine.functions = [ORDERS];
+    const old = deferredAnswer();
+    let deleted = false;
+    engine.answerEventSources = ({ method, url }) => {
+      if (method === 'DELETE') {
+        expect(url.pathname).toBe(`${EVENT_SOURCE_PATH}/${mapping.UUID}`);
+        deleted = true;
+        return json(202, mapping);
+      }
+      return deleted ? empty : listRequests().length === 1 ? listed : old.promise;
+    };
+    open(route);
+
+    fireEvent.click(await screen.findByRole('radio', { name: (name) => name.endsWith(source) }));
+    const tab = screen.getByRole('tabpanel', { name: 'Event sources' });
+    fireEvent.click(within(tab).getByRole('button', { name: 'Refresh' }));
+    await waitFor(() => expect(listRequests()).toHaveLength(2));
+
+    fireEvent.click(within(tab).getByRole('button', { name: 'Delete' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Delete event source mapping?' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+    expect(await screen.findByText('No event sources')).toBeVisible();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(flashTexts()).toContain(`Requested deletion of the mapping for ${source}.`);
+    expect(listRequests()).toHaveLength(3);
+
+    await act(async () => {
+      old.resolve(listed);
+      await old.promise;
+    });
+    expect(screen.getByText('No event sources')).toBeVisible();
+    expect(screen.queryByRole('radio', { name: (name) => name.endsWith(source) })).not.toBeInTheDocument();
+    expect(flashTexts()).toContain(`Requested deletion of the mapping for ${source}.`);
+  });
+});
 
 function versionAnswer(number: string) {
   return json(200, { Versions: [{ Version: '$LATEST' }, { Version: number, Description: `Release ${number}` }] });
@@ -2275,7 +2352,7 @@ describe('the tabs by ?tab=', () => {
     open(`${pagePath('orders')}${query}`);
     await screen.findByRole('heading', { level: 2, name: 'Function overview' });
 
-    expect(tabLabels()).toEqual(['Test', 'Code', 'Monitor', 'Configuration', 'Versions and aliases']);
+    expect(tabLabels()).toEqual(['Test', 'Code', 'Monitor', 'Configuration', 'Versions and aliases', 'Event sources']);
     expect(activeTab()).toBe(label);
     expect(tabs()?.findTabContent()?.getElement()).toContainElement(screen.getByTestId(testId));
   });
