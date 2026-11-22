@@ -452,7 +452,6 @@ test('studio.rds-clusters-made-elsewhere-are-shown', async ({ ctx, page }) => {
         'cdb',
       ]);
       const from = `From DB cluster ${c}`;
-      let fallbackLabel: string | undefined;
       for (const [label, memberValue, clusterValue] of [
         ['Master user name', own.masterUsername, cluster.masterUsername!],
         ['Database name', own.dbName, cluster.databaseName!],
@@ -465,16 +464,14 @@ test('studio.rds-clusters-made-elsewhere-are-shown', async ({ ctx, page }) => {
           await expect(shown.getByText(from, { exact: true })).toBeVisible();
           const link = shown.getByRole('link', { name: `DB cluster ${c}`, exact: true });
           await expect(link).toHaveAttribute('href', clusterPath(c));
-          fallbackLabel = label;
+          await link.click(ACTION);
+          await expect(page).toHaveURL(addressOf(clusterPath(c)));
+          await expect(heading(page, c)).toBeVisible({ timeout: 15_000 });
+          await open(page, instancePath(c1), c1);
         } else {
           await expect(shown).not.toContainText('From DB cluster');
           await expect(shown.getByRole('link')).toHaveCount(0);
         }
-      }
-      if (fallbackLabel !== undefined) {
-        await valueLocator(main, fallbackLabel).getByRole('link', { name: `DB cluster ${c}`, exact: true }).click(ACTION);
-        await expect(page).toHaveURL(addressOf(clusterPath(c)));
-        await expect(heading(page, c)).toBeVisible({ timeout: 15_000 });
       }
     },
   );
