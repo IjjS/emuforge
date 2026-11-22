@@ -130,6 +130,7 @@ const FUNCTION_PATH = /^\/2015-03-31\/functions\/([^/]+)$/;
 const URL_PATH = /^\/2021-10-31\/functions\/([^/]+)\/url$/;
 const RELEASE_PATH = /^\/2015-03-31\/functions\/([^/]+)\/(versions|aliases)$/;
 const ALIAS_PATH = /^\/2015-03-31\/functions\/([^/]+)\/aliases\/([^/]+)$/;
+const EVENT_SOURCE_PATH = '/2015-03-31/event-source-mappings';
 const INVOKE_PATH = /^\/2015-03-31\/functions\/([^/]+)\/invocations$/;
 
 function json(status: number, body: unknown): Answer {
@@ -168,6 +169,7 @@ class FakeEngine {
     }
     return json(200, url.pathname.endsWith('/versions') ? { Versions: [{ Version: '$LATEST' }] } : { Aliases: [] });
   };
+  answerEventSources: (request: SentRequest) => Answer | Promise<Answer> = () => json(200, { EventSourceMappings: [] });
   /** The invocations answered so far. */
   invocations = 0;
   /** The answer to `GetFunctionUrlConfig`; by default the emulator's. */
@@ -261,6 +263,11 @@ class FakeEngine {
     }
     const sent = { method: request.method, url };
     this.aws.push(sent);
+    if (url.pathname === EVENT_SOURCE_PATH || url.pathname.startsWith(`${EVENT_SOURCE_PATH}/`)) {
+      // An old read can answer even after the browser has canceled it.
+      const answer = await this.answerEventSources(sent);
+      return new Response(answer.body, { status: answer.status, headers: answer.headers ?? {} });
+    }
     if (RELEASE_PATH.test(url.pathname) || ALIAS_PATH.test(url.pathname)) {
       const answer = await this.answerRelease(sent);
       return new Response(answer.body, { status: answer.status, headers: answer.headers ?? {} });
@@ -314,6 +321,7 @@ class FakeEngine {
 
 /** The connection Studio hands the area, as a case sets it; each change re-renders the area as the frame does. */
 class Connection {
+  targetGeneration = 0;
   value: AreaConnection = { result: undefined, engineOrigin: undefined };
   private readonly listeners = new Set<() => void>();
 
@@ -378,6 +386,7 @@ function AreaWithStudioProps() {
       onContentTarget={() => undefined}
       routeChanges={changes}
       connection={current}
+      targetGeneration={connection.targetGeneration}
     />
   );
 }
@@ -486,6 +495,7 @@ function tabLink(id: FunctionTab): HTMLElement {
     monitor: 'Monitor',
     configuration: 'Configuration',
     versions: 'Versions and aliases',
+    'event-sources': 'Event sources',
   };
   const tab = tabs()?.findTabLinkById(id)?.getElement();
   if (!tab) {
@@ -593,13 +603,13 @@ async function openLoaded(fn: FakeFunction = ORDERS) {
 // ---------------------------------------------------------------------------------------------------------------
 
 describe('a function loaded', () => {
-  it('the h1 its name, "Refresh", "Delete", "Function overview" with its fields in order, and the tabs "Test", "Code", "Monitor", "Configuration", "Versions and aliases" and no other, "Test" selected', async () => {
+  it('the h1 its name, "Refresh", "Delete", "Function overview" with its fields in order, and the tabs "Test", "Code", "Monitor", "Configuration", "Versions and aliases", and "Event sources", "Test" selected', async () => {
     await openLoaded();
 
     expect(headingText()).toBe('orders');
     expect(within(header()).getByRole('button', { name: 'Refresh' })).toBeInTheDocument();
     expect(within(header()).getByRole('button', { name: 'Delete' })).toBeInTheDocument();
-    expect(tabLabels()).toEqual(['Test', 'Code', 'Monitor', 'Configuration', 'Versions and aliases']);
+    expect(tabLabels()).toEqual(['Test', 'Code', 'Monitor', 'Configuration', 'Versions and aliases', 'Event sources']);
     expect(activeTab()).toBe('Test');
     expect(pairs().map(([label]) => label)).toEqual(['Description', 'Last modified', 'Function ARN', 'Function URL']);
     expect(value('Description')).toBe('Takes the orders');
@@ -1210,6 +1220,180 @@ function deferredAnswer() {
   });
   return { promise, resolve };
 }
+
+describe('Event sources', () => {
+  const source = 'arn:aws:sqs:us-east-1:000000000000:orders';
+  const mapping = { UUID: 'orders-mapping', EventSourceArn: source, State: 'Enabled', LastProcessingResult: 'OK' };
+  const listed = json(200, { EventSourceMappings: [mapping] });
+  const empty = json(200, { EventSourceMappings: [] });
+  const route = `${pagePath('orders')}?tab=event-sources`;
+  const listRequests = () => engine.aws.filter(({ url }) => url.pathname === EVENT_SOURCE_PATH);
+  const table = () => tabs()?.findTabContent()?.findTable();
+  const emptySlot = () => table()?.findEmptySlot()?.getElement();
+  const toolbar = () => table()?.findHeaderSlot()?.findHeader()?.findActions()?.find('[role="group"]');
+  const actionIndex = { Refresh: 0, Disable: 1, Delete: 2, 'Add event source': 3 };
+
+  function required<T>(value: T | null | undefined): T {
+    if (value == null) {
+      throw new Error('Expected a Cloudscape element on the Event sources tab');
+    }
+    return value;
+  }
+
+  function mappingAction(name: keyof typeof actionIndex) {
+    const button = required(toolbar()?.findAllButtons()[actionIndex[name]]).getElement();
+    expect(button).toHaveAccessibleName(name);
+    return button;
+  }
+
+  async function mappingDialog(title: string) {
+    const dialog = await waitFor(() => required(PAGE.findModal()));
+    expect(dialog.findHeader().getElement()).toHaveTextContent(title);
+    return dialog;
+  }
+
+  it('P1: opens the directly addressed tab and reads mappings for the current function', async () => {
+    engine.functions = [ORDERS];
+    engine.answerEventSources = () => listed;
+    open(route);
+
+    const row = await waitFor(() => required(table()?.findRows()[0]).getElement());
+    expect(row).toBeVisible();
+    expect(row).toHaveTextContent(source);
+    expect(row).toHaveTextContent('Enabled');
+    expect(row).toHaveTextContent('OK');
+    expect(tabs()?.findActiveTab()?.getElement()).toHaveTextContent('Event sources');
+    expect(listRequests().map(({ url }) => url.searchParams.get('FunctionName'))).toEqual(['orders']);
+
+    const topRefresh = required(pageActions()[0]).getElement();
+    expect(topRefresh).toHaveAccessibleName('Refresh');
+    fireEvent.click(topRefresh);
+    await waitFor(() => {
+      expect(engine.gets).toHaveLength(2);
+      expect(topRefresh).toBeEnabled();
+    });
+    expect(listRequests()).toHaveLength(1);
+  });
+
+  it('groups mapping actions without changing the names or scope of either toolbar', async () => {
+    engine.functions = [ORDERS];
+    open(route);
+
+    const actions = await waitFor(() => required(toolbar()).getElement());
+    expect(actions).toBeVisible();
+    expect(actions).toHaveAccessibleName('Event source mapping actions');
+    expect(actions).toHaveTextContent('Event source mapping actions');
+    for (const name of ['Refresh', 'Delete', 'Disable', 'Add event source'] as const) {
+      expect(mappingAction(name)).toBeVisible();
+    }
+    const topButtons = pageActions();
+    for (const [index, name] of ['Refresh', 'Delete'].entries()) {
+      const button = required(topButtons[index]).getElement();
+      expect(button).toHaveAccessibleName(name);
+      expect(button).toBeEnabled();
+      expect(actions).not.toContainElement(button);
+    }
+  });
+
+  it('keeps the refused ARN across tabs and clears it when the function or target changes', async () => {
+    engine.functions = [ORDERS, { ...ORDERS, name: 'other' }];
+    engine.answerEventSources = ({ method }) =>
+      method === 'POST' ? errorAnswer(400, 'InvalidParameterValueException', 'Mapping was refused.') : empty;
+    const { router } = open(route);
+
+    async function openAddDialog() {
+      const add = await waitFor(() => mappingAction('Add event source'));
+      fireEvent.click(add);
+      const dialog = await mappingDialog('Add event source');
+      const field = required(dialog.findContent().findFormField());
+      expect(field.findLabel()?.getElement()).toHaveTextContent('Event source ARN');
+      const input = required(field.findControl()?.findInput()).findNativeInput().getElement();
+      const buttons = required(dialog.findFooter()).findAllButtons();
+      const cancel = required(buttons[0]).getElement();
+      const submit = required(buttons[1]).getElement();
+      expect(cancel).toHaveAccessibleName('Cancel');
+      expect(submit).toHaveAccessibleName('Add event source');
+      return { input, cancel, submit };
+    }
+
+    async function refuseCreate() {
+      const { input, submit } = await openAddDialog();
+      fireEvent.change(input, { target: { value: source } });
+      fireEvent.click(submit);
+      await waitFor(() => expect(PAGE.findModal()).toBeNull());
+      expect(flashTexts()).toContainEqual(expect.stringContaining('Mapping was refused.'));
+    }
+
+    await refuseCreate();
+    fireEvent.click(tabLink('code'));
+    await waitFor(() => expect(activeTab()).toBe('Code'));
+    fireEvent.click(tabLink('event-sources'));
+    const retry = await openAddDialog();
+    expect(retry.input).toHaveValue(source);
+    fireEvent.click(retry.submit);
+    await waitFor(() => expect(PAGE.findModal()).toBeNull());
+
+    await act(() => router.navigate(`${pagePath('other')}?tab=event-sources`));
+    const other = await openAddDialog();
+    expect(other.input).toHaveValue('');
+    fireEvent.click(other.cancel);
+    await refuseCreate();
+
+    connection.targetGeneration += 1;
+    connection.set(connectedResult());
+    const newTarget = await openAddDialog();
+    expect(newTarget.input).toHaveValue('');
+  });
+
+  it('P2: keeps the refreshed empty list and page flash after an older read answers', async () => {
+    engine.functions = [ORDERS];
+    const old = deferredAnswer();
+    let deleted = false;
+    engine.answerEventSources = ({ method, url }) => {
+      if (method === 'DELETE') {
+        expect(url.pathname).toBe(`${EVENT_SOURCE_PATH}/${mapping.UUID}`);
+        deleted = true;
+        return json(202, mapping);
+      }
+      return deleted ? empty : listRequests().length === 1 ? listed : old.promise;
+    };
+    open(route);
+
+    const selection = await waitFor(() =>
+      required(table()?.findRowSelectionArea(1)?.find('input[type="radio"]')).getElement(),
+    );
+    expect(selection.getAttribute('aria-label')).toContain(source);
+    fireEvent.click(selection);
+    fireEvent.click(mappingAction('Refresh'));
+    await waitFor(() => expect(listRequests()).toHaveLength(2));
+
+    const deleteButton = mappingAction('Delete');
+    deleteButton.focus();
+    fireEvent.click(deleteButton);
+    const dialog = await mappingDialog('Delete event source mapping?');
+    expect(dialog.findContent().getElement()).toHaveTextContent(source);
+    const confirm = required(dialog.findFooter()?.findAllButtons()[1]).getElement();
+    expect(confirm).toHaveAccessibleName('Delete');
+    fireEvent.click(confirm);
+    await waitFor(() => expect(emptySlot()).toHaveTextContent('No event sources'));
+    expect(emptySlot()).toBeVisible();
+    expect(PAGE.findModal()).toBeNull();
+    expect(flashTexts()).toContain(`Requested deletion of the mapping for ${source}.`);
+    expect(deleteButton).toBeDisabled();
+    await waitFor(() => expect(mappingAction('Add event source')).toHaveFocus());
+    expect(listRequests()).toHaveLength(3);
+
+    await act(async () => {
+      old.resolve(listed);
+      await old.promise;
+    });
+    expect(emptySlot()).toBeVisible();
+    expect(emptySlot()).toHaveTextContent('No event sources');
+    expect(table()?.findRowSelectionArea(1)).toBeNull();
+    expect(mappingAction('Add event source')).toHaveFocus();
+    expect(flashTexts()).toContain(`Requested deletion of the mapping for ${source}.`);
+  });
+});
 
 function versionAnswer(number: string) {
   return json(200, { Versions: [{ Version: '$LATEST' }, { Version: number, Description: `Release ${number}` }] });
@@ -2275,7 +2459,7 @@ describe('the tabs by ?tab=', () => {
     open(`${pagePath('orders')}${query}`);
     await screen.findByRole('heading', { level: 2, name: 'Function overview' });
 
-    expect(tabLabels()).toEqual(['Test', 'Code', 'Monitor', 'Configuration', 'Versions and aliases']);
+    expect(tabLabels()).toEqual(['Test', 'Code', 'Monitor', 'Configuration', 'Versions and aliases', 'Event sources']);
     expect(activeTab()).toBe(label);
     expect(tabs()?.findTabContent()?.getElement()).toContainElement(screen.getByTestId(testId));
   });

@@ -243,6 +243,14 @@ export function lambdaDirect(
   );
 }
 
+/** Kinesis JSON 1.1 request used by Lambda stream-mapping fixtures. */
+export function kinesisDirect(caller: Caller, port: number, action: string, input: object) {
+  return signed(caller, port, 'kinesis', 'POST', '/', {}, JSON.stringify(input), {
+    'content-type': 'application/x-amz-json-1.1',
+    'x-amz-target': 'Kinesis_20131202.' + action,
+  });
+}
+
 /** Invoke one qualifier directly with a synchronous response and the tail of that invocation. */
 export async function qualifiedInvocation(caller: Caller, port: number, name: string, target: string, event: object) {
   const response = await signed(caller, port, 'lambda', 'POST', encodedPath(['2015-03-31', 'functions', name, 'invocations']),
