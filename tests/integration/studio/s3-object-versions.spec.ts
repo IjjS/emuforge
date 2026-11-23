@@ -5,7 +5,6 @@ import { ACTION } from "./support/frame";
 import {
   chooseVersion,
   expectHistory,
-  key,
   showHistory,
   versionDialog,
   versionFixture,
@@ -13,6 +12,7 @@ import {
 import { deleteObjectDirect, s3Direct } from "./services/s3/s3";
 import { expectFlash } from "./services/s3/s3-bucket-actions";
 import {
+  expectBucketPage,
   openBucketPage,
   readSection,
   sectionButton,
@@ -34,8 +34,18 @@ test("studio.s3-edit-bucket-versioning", async ({ ctx, page }) => {
       )
       .check();
     await page.getByRole("button", { name: "Save changes" }).click();
-    await expectFlash(page, "success", "Bucket versioning updated.");
+    await expectBucketPage(page, f.bucket);
     await expect.poll(status, ACTION).toBe(mode);
+    await expectFlash(page, "success", "Bucket versioning updated.");
+    if (mode === "Enabled") {
+      const successes = createWrapper()
+        .findFlashbar()
+        .findItemsByType("success");
+      await page
+        .locator(successes.get(1).findDismissButton().toSelector())
+        .click();
+      await expect(page.locator(successes.toSelector())).toHaveCount(0);
+    }
     const result = await s3Direct(ctx, f.port, {
       method: "GET",
       pathname: "/" + f.bucket,
@@ -51,19 +61,33 @@ test("studio.s3-download-historical-version", async ({ ctx, page }) => {
   const f = await versionFixture(ctx, "download500");
   await f.mode("Enabled");
   await f.mode("Suspended");
-  await f.put("older body");
+  const older = await f.put("older body");
   await f.mode("Enabled");
-  await f.put("newer body");
-  await f.seeded.deleteMarker(f.bucket, key);
-  await f.seeded.object(f.bucket, "outside.txt", "outside prefix");
+  const newer = await f.put("newer body");
+  const marker = await f.seeded.deleteMarker(f.bucket, f.key);
+  const outside = "other/" + f.filename;
+  const outsideId = await f.seeded.object(f.bucket, outside, "outside prefix");
+  expect(older).toBe("null");
+  expect(marker).toBeTruthy();
+  expect(newer).not.toBe(older);
+  const all = await f.history();
+  expect(all).toHaveLength(4);
+  expect(all).toEqual(
+    expect.arrayContaining([
+      { key: f.key, versionId: older, kind: "version", isLatest: false },
+      { key: f.key, versionId: newer, kind: "version", isLatest: false },
+      { key: f.key, versionId: marker, kind: "delete-marker", isLatest: true },
+      { key: outside, versionId: outsideId, kind: "version", isLatest: true },
+    ]),
+  );
   await showHistory(page, f.bucket, "reports/");
   await expectHistory(
     page,
-    (await f.history()).filter((row) => row.key.startsWith("reports/")),
+    all.filter((row) => row.key.startsWith("reports/")),
   );
-  await chooseVersion(page, "null");
+  await chooseVersion(page, f.key, "null");
   expect(await download(page)).toEqual({
-    name: "history.txt",
+    name: f.filename,
     bytes: Buffer.from("older body"),
   });
 });
@@ -77,9 +101,9 @@ test("studio.s3-restore-enabled-version", async ({ ctx, page }) => {
   const newer = await f.put("newer body");
   await showHistory(page, f.bucket);
   await expectHistory(page, await f.history());
-  await chooseVersion(page, "null");
+  await chooseVersion(page, f.key, "null");
   const modal = await versionDialog(page, "Restore version");
-  await modal.input.fill(key);
+  await modal.input.fill(f.key);
   await modal.submit.click();
   await expectFlash(page, "success", "Version restored.");
   const after = await f.history();
@@ -105,16 +129,16 @@ test("studio.s3-restore-suspended-version", async ({ ctx, page }) => {
   await f.put("current null body");
   await showHistory(page, f.bucket);
   await expectHistory(page, await f.history());
-  await chooseVersion(page, older);
+  await chooseVersion(page, f.key, older);
   const modal = await versionDialog(page, "Restore version");
   await expect(modal.dialog).toContainText(
     "replaces any existing null version",
   );
-  await expect(modal.dialog).toContainText(key);
+  await expect(modal.dialog).toContainText(f.key);
   await modal.input.fill("wrong key");
   await expect(modal.submit).toBeDisabled();
   expect(await f.current()).toEqual(Buffer.from("current null body"));
-  await modal.input.fill(key);
+  await modal.input.fill(f.key);
   await modal.submit.click();
   await expectFlash(page, "success", "Version restored.");
   const after = await f.history();
@@ -136,13 +160,13 @@ test("studio.s3-remove-delete-marker", async ({ ctx, page }) => {
   await f.mode("Enabled");
   const older = await f.put("older body");
   const newer = await f.put("newer body");
-  const marker = await f.seeded.deleteMarker(f.bucket, key);
+  const marker = await f.seeded.deleteMarker(f.bucket, f.key);
   if (!marker) throw new Error("Expected a versioned delete marker");
   await showHistory(page, f.bucket);
   await expectHistory(page, await f.history());
-  await chooseVersion(page, marker);
+  await chooseVersion(page, f.key, marker);
   const modal = await versionDialog(page, "Remove delete marker");
-  await modal.input.fill(key);
+  await modal.input.fill(f.key);
   await modal.submit.click();
   await expectFlash(page, "success", "Delete marker removed.");
   const after = await f.history();
@@ -161,8 +185,8 @@ test("studio.s3-version-download-refused", async ({ ctx, page }) => {
   const newer = await f.put("newer body");
   await showHistory(page, f.bucket);
   await expectHistory(page, await f.history());
-  await chooseVersion(page, older);
-  const removed = await deleteObjectDirect(ctx, f.port, f.bucket, key, older);
+  await chooseVersion(page, f.key, older);
+  const removed = await deleteObjectDirect(ctx, f.port, f.bucket, f.key, older);
   if ("error" in removed) throw new Error(removed.error);
   expect(removed.status).toBe(204);
   await page.getByRole("button", { name: "Download", exact: true }).click();

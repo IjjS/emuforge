@@ -10,15 +10,18 @@ import { getObjectDirect } from "./s3-object-page";
 
 const wrapper = createWrapper();
 const table = wrapper.findTable();
-export const key = "reports/history.txt";
 
 export async function versionFixture(ctx: Ctx, tag: string) {
   const { emulatorPort: port } = await startStack(ctx);
   const bucket = checkPrefix(ctx, tag);
+  const filename = bucket + "-history.txt";
+  const key = "reports/" + filename;
   const seeded = new Seeded(ctx, port);
   await seeded.bucket(bucket);
   return {
     bucket,
+    key,
+    filename,
     port,
     seeded,
     mode: (versioning: "Enabled" | "Suspended") =>
@@ -45,39 +48,37 @@ function visible(page: Page, selector: { toSelector(): string }) {
   return page.locator(selector.toSelector() + ":visible");
 }
 
-async function readRows(page: Page): Promise<DirectItem[]> {
-  const count = await visible(page, table.findRows()).count();
-  const rows: DirectItem[] = [];
-  for (let row = 1; row <= count; row++) {
-    const cell = (column: number) =>
-      visible(page, table.findBodyCell(row, column)).innerText(ACTION);
-    const [name, id, kind, latest] = await Promise.all([
-      cell(2),
-      cell(3),
-      cell(4),
-      cell(5),
-    ]);
-    expect(["Version", "Delete marker"]).toContain(kind);
-    expect(["Yes", "No"]).toContain(latest);
-    rows.push({
-      key: name,
-      versionId: id.split(/\s/)[0],
-      kind: kind === "Version" ? "version" : "delete-marker",
-      isLatest: latest === "Yes",
-    });
-  }
-  return rows;
+function readRows(page: Page) {
+  return visible(page, table.findRows()).evaluateAll((elements) =>
+    elements.map((element) => {
+      const cells = (element as HTMLTableRowElement).cells;
+      return {
+        key: cells[1]?.innerText,
+        versionId: cells[2]?.innerText.split(/\s/)[0] ?? "",
+        type: cells[3]?.innerText,
+        latest: cells[4]?.innerText,
+      };
+    }),
+  );
 }
 
 export async function expectHistory(page: Page, expected: DirectItem[]) {
-  const byId = (rows: DirectItem[]) =>
-    [...rows].sort((a, b) => a.versionId.localeCompare(b.versionId));
+  const byId = (a: { versionId: string }, b: { versionId: string }) =>
+    a.versionId.localeCompare(b.versionId);
+  const wanted = expected
+    .map((row) => ({
+      key: row.key,
+      versionId: row.versionId,
+      type: row.kind === "version" ? "Version" : "Delete marker",
+      latest: row.isLatest ? "Yes" : "No",
+    }))
+    .sort(byId);
   await expect
-    .poll(async () => byId(await readRows(page)), ACTION)
-    .toEqual(byId(expected));
+    .poll(async () => (await readRows(page)).sort(byId), ACTION)
+    .toEqual(wanted);
 }
 
-export async function chooseVersion(page: Page, id: string) {
+export async function chooseVersion(page: Page, key: string, id: string) {
   const rows = await readRows(page);
   const index = rows.findIndex(
     (row) => row.versionId === id && row.key === key,
