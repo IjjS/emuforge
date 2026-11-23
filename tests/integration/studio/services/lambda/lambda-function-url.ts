@@ -61,18 +61,22 @@ export async function confirmUrlDeletion(page: Page, name: string) {
   await expect(page.locator(modal.findContent().toSelector())).toContainText(name);
   const fn = encodeURIComponent(name);
   const urlPath = '/2021-10-31/functions/' + fn + '/url';
-  const observeRead = async (path: string, status: number) => {
-    const request = await page.waitForRequest(
-      (request) => request.method() === 'GET' && new URL(request.url()).pathname === path,
-    );
-    const response = await request.response();
-    if (!response) throw Error('Missing detail response for ' + path);
+  const requestFor = (method: string, path: string) => page.waitForRequest(
+    (request) => request.method() === method && new URL(request.url()).pathname === path,
+    { timeout: 15_000 },
+  );
+  const [deletion, functionRead, urlRead] = await Promise.all([
+    requestFor('DELETE', urlPath),
+    requestFor('GET', '/2015-03-31/functions/' + fn),
+    requestFor('GET', urlPath),
+    submitDialog(page, 'Delete'),
+  ]);
+  for (const [read, status] of [[functionRead, 200], [urlRead, 404]] as const) {
+    const response = await read.response();
+    if (!response) throw Error('Missing detail response for ' + read.url());
+    expect(read.timing().startTime).toBeGreaterThanOrEqual(deletion.timing().startTime);
     expect(response.status()).toBe(status);
     expect(await response.finished()).toBeNull();
-  };
-  const rereads = page.waitForResponse(
-    (response) => response.request().method() === 'DELETE' && new URL(response.url()).pathname === urlPath,
-  ).then(() => Promise.all([observeRead('/2015-03-31/functions/' + fn, 200), observeRead(urlPath, 404)]));
-  await Promise.all([rereads, submitDialog(page, 'Delete')]);
+  }
   await expect(page.locator(modal.toSelector())).toBeHidden();
 }
