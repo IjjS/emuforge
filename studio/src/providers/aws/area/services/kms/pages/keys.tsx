@@ -13,9 +13,10 @@ import { useFollow } from '../../../components/use-follow';
 import { ValueText } from '../../../components/value-text';
 import type { ScreenPageProps } from '../../../screens';
 import { KMS_OPERATIONS, type CustomerKey } from '../api';
+import { KeyState } from '../components/lifecycle/key-state';
 import { keyPath, KEYS_TITLE } from '../paths';
-import { KEY_CREATE_PATH } from './create';
 import { connectionFailure, useCustomerKeys } from '../queries';
+import { KEY_CREATE_PATH } from './create';
 
 function KeysVisit({ connection }: Pick<ScreenPageProps, 'connection'>) {
   const handleFollow = useFollow();
@@ -58,7 +59,7 @@ function KeysVisit({ connection }: Pick<ScreenPageProps, 'connection'>) {
             </Link>
           ),
         },
-        { id: 'status', header: 'Status', cell: ({ state }) => <ValueText kind="fixed" value={state} none="–" /> },
+        { id: 'status', header: 'Status', cell: ({ state }) => <KeyState state={state} /> },
         {
           id: 'description',
           header: 'Description',
