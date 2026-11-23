@@ -14,6 +14,7 @@ import { ValueText } from '../../../components/value-text';
 import type { ScreenPageProps } from '../../../screens';
 import { KMS_OPERATIONS, type CustomerKey } from '../api';
 import { keyPath, KEYS_TITLE } from '../paths';
+import { KEY_CREATE_PATH } from './create';
 import { connectionFailure, useCustomerKeys } from '../queries';
 
 function KeysVisit({ connection }: Pick<ScreenPageProps, 'connection'>) {
@@ -83,7 +84,14 @@ function KeysVisit({ connection }: Pick<ScreenPageProps, 'connection'>) {
       header={
         <Header
           variant="awsui-h1-sticky"
-          actions={<Button iconName="refresh" ariaLabel="Refresh" onClick={handleRefresh} />}
+          actions={
+            <SpaceBetween direction="horizontal" size="xs">
+              <Button iconName="refresh" ariaLabel="Refresh" onClick={handleRefresh} />
+              <Button variant="primary" href={KEY_CREATE_PATH} onFollow={handleFollow}>
+                Create key
+              </Button>
+            </SpaceBetween>
+          }
         >
           {KEYS_TITLE}
         </Header>
