@@ -101,7 +101,7 @@ function KeyVisit({ connection, keyId }: Pick<ScreenPageProps, 'connection'> & {
 
 export function KeyPage({ connection, params }: ScreenPageProps) {
   useShowsResources('keys');
-  const keyId = params.keyId ?? '';
+  const keyId = params.keyid ?? '';
   const connected = connection.result === undefined || connection.result.kind === 'connected';
   return (
     <KeyVisit key={JSON.stringify([keyId, connection.engineOrigin, connected])} connection={connection} keyId={keyId} />

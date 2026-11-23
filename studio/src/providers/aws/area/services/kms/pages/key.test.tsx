@@ -1,10 +1,11 @@
 import { DescribeKeyCommand, type KeyMetadata } from '@aws-sdk/client-kms';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen } from '@testing-library/react';
-import { MemoryRouter, Route, Routes, useParams } from 'react-router';
+import { MemoryRouter, useLocation } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AreaConnection } from '../../../components/emulator-line';
+import { patternParams } from '../../../screen-paths';
 import { KEY_PATH, keyPath, KEYS_PATH } from '../paths';
 import { KeyPage } from './key';
 
@@ -26,8 +27,12 @@ const metadata = {
 } satisfies KeyMetadata;
 
 function CurrentKey({ connection }: { connection: AreaConnection }) {
-  const { keyId = '' } = useParams();
-  return <KeyPage connection={connection} params={{ keyId }} />;
+  const { pathname } = useLocation();
+  if (pathname === KEYS_PATH) return <h1>Customer managed keys</h1>;
+
+  const params = patternParams(KEY_PATH, pathname);
+  if (params === undefined) throw new Error(`Expected a key detail path, received ${pathname}`);
+  return <KeyPage connection={connection} params={params} />;
 }
 
 function open(keyId: string, connection: AreaConnection = online) {
@@ -35,10 +40,7 @@ function open(keyId: string, connection: AreaConnection = online) {
   const at = (current: AreaConnection) => (
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[keyPath(keyId)]}>
-        <Routes>
-          <Route path={KEY_PATH} element={<CurrentKey connection={current} />} />
-          <Route path={KEYS_PATH} element={<h1>Customer managed keys</h1>} />
-        </Routes>
+        <CurrentKey connection={current} />
       </MemoryRouter>
     </QueryClientProvider>
   );

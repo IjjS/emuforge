@@ -19,8 +19,8 @@ export const SCREENS: readonly ServiceScreen[] = [
   },
   {
     paths: [KEY_PATH],
-    title: ({ keyId }) => keyId ?? 'Key details',
-    crumbs: ({ keyId }) => [{ text: KEYS_TITLE, href: KEYS_PATH }, { text: keyId ?? 'Key details' }],
+    title: ({ keyid }) => keyid ?? 'Key details',
+    crumbs: ({ keyid }) => [{ text: KEYS_TITLE, href: KEYS_PATH }, { text: keyid ?? 'Key details' }],
     navigation,
     Page: KeyPage,
   },
