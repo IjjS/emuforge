@@ -436,30 +436,59 @@ it.each([true, false])(
     await expectStack('Old first page');
     fireEvent.click(next());
     await screen.findByText(recoveryHelp);
+    const retryButton = retry();
+    act(() => retryButton.focus());
     const outageCalls = tokens();
     expect(outageCalls.length).toBeGreaterThan(1);
     expect(outageCalls.slice(1)).toEqual(Array.from({ length: outageCalls.length - 1 }, () => 'old-token'));
 
     const firstRestartCheck = { ...connected, checkedAt: 2 };
     if (!firstRestartSucceeds) {
+      const pending = heldResponse();
+      const diagnostic = 'The emulator is still unavailable';
+      engine.answer
+        .mockReturnValueOnce(pending.promise)
+        .mockImplementation(() => refused(503, 'EmulatorUnavailable', diagnostic));
       connection.setConnection(firstRestartCheck);
-      await screen.findByText(recoveryHelp);
+      await waitFor(() => {
+        expect(tokens()).toEqual([...outageCalls, null]);
+      });
+      expect(screen.getByText(recoveryHelp)).toBeVisible();
+      expect(retry()).toBe(retryButton);
+      expect(retryButton).toBeEnabled();
+      expect(retryButton).toHaveFocus();
+      expect(screen.queryByText('Loading stacks')).not.toBeInTheDocument();
+
+      pending.resolve(refused(503, 'EmulatorUnavailable', diagnostic));
+      await screen.findByText(diagnostic);
       const recoveryCalls = tokens().slice(outageCalls.length);
       expect(recoveryCalls.length).toBeGreaterThan(0);
       expect(recoveryCalls.every((token) => token === null)).toBe(true);
-      expect(retry()).toBeEnabled();
+      expect(retry()).toBe(retryButton);
+      expect(retryButton).toHaveFocus();
     }
 
     const latestCheck = firstRestartSucceeds ? connected : firstRestartCheck;
     const callsBeforeSuccess = tokens();
-    engine.answer.mockReturnValueOnce(page([summary('id-2', 'New first page')]));
+    const pendingSuccess = heldResponse();
+    engine.answer.mockReturnValueOnce(pendingSuccess.promise);
     connection.setConnection({ ...latestCheck });
     expect(screen.getByText(recoveryHelp)).toBeVisible();
     expect(tokens()).toEqual(callsBeforeSuccess);
 
     const recoveryCheck = { ...latestCheck, checkedAt: latestCheck.checkedAt + 1 };
     connection.setConnection(recoveryCheck);
+    await waitFor(() => {
+      expect(tokens()).toEqual([...callsBeforeSuccess, null]);
+    });
+    expect(retry()).toBe(retryButton);
+    expect(retryButton).toHaveFocus();
+    if (firstRestartSucceeds) act(() => refresh().focus());
+    pendingSuccess.resolve(page([summary('id-2', 'New first page')]));
+
     await expectStack('New first page');
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+    expect(firstRestartSucceeds ? refresh() : filter()).toHaveFocus();
     expect(tokens()).toEqual([...callsBeforeSuccess, null]);
     expectNoPagination();
 
