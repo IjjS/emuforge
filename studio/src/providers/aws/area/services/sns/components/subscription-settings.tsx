@@ -123,6 +123,7 @@ function SettingsFields({ settings, arn, disabled, saving, onSave }: SettingsFie
     <SpaceBetween size="l">
       <SpaceBetween size="xs">
         <FormField
+          data-testid="subscription-filter-policy"
           label="Filter policy"
           constraintText="Enter a JSON filter policy."
           errorText={policyError}
@@ -169,6 +170,7 @@ function SettingsFields({ settings, arn, disabled, saving, onSave }: SettingsFie
       </SpaceBetween>
       <SpaceBetween size="xs">
         <FormField
+          data-testid="subscription-filter-policy-scope"
           label="Filter policy scope"
           constraintText={hasPolicy ? undefined : 'Save a filter policy to edit its scope.'}
         >
@@ -195,7 +197,7 @@ function SettingsFields({ settings, arn, disabled, saving, onSave }: SettingsFie
         </Button>
       </SpaceBetween>
       <SpaceBetween size="xs">
-        <FormField label="Raw message delivery">
+        <FormField data-testid="subscription-raw-message-delivery" label="Raw message delivery">
           <Select
             options={RAW_OPTIONS}
             selectedOption={raw ?? null}
@@ -287,6 +289,7 @@ export function SubscriptionSettings({
 
   return (
     <Container
+      data-testid="subscription-settings"
       header={
         <Header
           variant="h2"
@@ -312,17 +315,21 @@ export function SubscriptionSettings({
             { label: 'Endpoint', value: <CopyValue label="Endpoint" value={endpoint} kind="address" /> },
           ]}
         />
-        {loading && <StatusIndicator type="loading">Loading subscription settings</StatusIndicator>}
-        {!loading &&
-          failureState !== undefined &&
-          (readUnavailable ? (
-            <SpaceBetween size="xxs">
-              <StatusIndicator type={failureState.type}>{failureState.first}</StatusIndicator>
-              <Box variant="p">{failureState.detail}</Box>
-            </SpaceBetween>
-          ) : (
-            <ReadFailure state={failureState} onRetry={refresh} />
-          ))}
+        {(loading || failureState !== undefined) && (
+          <div data-testid="subscription-settings-read-status">
+            {loading && <StatusIndicator type="loading">Loading subscription settings</StatusIndicator>}
+            {!loading &&
+              failureState !== undefined &&
+              (readUnavailable ? (
+                <SpaceBetween size="xxs">
+                  <StatusIndicator type={failureState.type}>{failureState.first}</StatusIndicator>
+                  <Box variant="p">{failureState.detail}</Box>
+                </SpaceBetween>
+              ) : (
+                <ReadFailure state={failureState} onRetry={refresh} />
+              ))}
+          </div>
+        )}
         {value !== undefined && (
           <SettingsFields
             settings={value}
