@@ -143,6 +143,7 @@ function KeyVisit({ connection, keyId }: Pick<ScreenPageProps, 'connection'> & {
             {
               id: 'labels',
               label: 'Labels',
+              contentRenderStrategy: 'eager',
               content: <Labels connection={connection} keyId={keyId} />,
             },
             {
