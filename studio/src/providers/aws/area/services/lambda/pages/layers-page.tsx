@@ -37,13 +37,18 @@ const LAYER_COLUMNS: TableProps.ColumnDefinition<LayerSummary>[] = [
     id: 'name',
     header: 'Layer name',
     isRowHeader: true,
-    // Leave room for the selection control and latest version on narrow screens.
-    minWidth: 'min(28ch, 40vw)',
-    cell: ({ name }) => <ValueText kind="name" value={name} />,
+    minWidth: '28ch',
+    cell: ({ name }) => (
+      // A short name contributes its full width, including names with wider glyphs.
+      <span style={name.length <= 24 ? { display: 'inline-block', minWidth: 'max-content' } : undefined}>
+        <ValueText kind="name" value={name} />
+      </span>
+    ),
   },
   {
     id: 'latestVersion',
     header: 'Latest version',
+    minWidth: '16ch',
     cell: ({ latestVersion }) => <ValueText kind="fixed" value={latestVersion?.toString()} none="-" />,
   },
 ];
@@ -256,10 +261,10 @@ function LayerWorkspace({ connection, scope }: { connection: AreaConnection; sco
           }}
           onFailure={(failure) => {
             const item = failureItem(failure, 'Could not publish layer version.', connection, 'layer version');
+            flash.show([item]);
             if (failure.kind === 'not-implemented') {
               setPublishUnavailable(true);
               setPublishOpen(false);
-              flash.show([item]);
             }
             return item;
           }}
@@ -290,20 +295,14 @@ function PublishDialog({
   const [reading, setReading] = useState(false);
   const active = useRef<AbortController>(undefined);
   const file = files[0];
-  const flash = usePageFlash();
   const publish = usePublishLayerVersion({ endpoint: connection.engineOrigin, scope });
   const busy = reading || publish.isPending;
   useLayoutEffect(() => () => active.current?.abort(), []);
 
-  function close() {
-    if (failure !== undefined) flash.show([failure]);
-    onClose();
-  }
-
   function handleDismiss() {
     if (busy) return;
     if (name !== '' || file !== undefined) setAsking(true);
-    else close();
+    else onClose();
   }
 
   async function handlePublish() {
@@ -399,7 +398,7 @@ function PublishDialog({
           visible
           onAnswer={(answer) => {
             setAsking(false);
-            if (answer === 'discard') close();
+            if (answer === 'discard') onClose();
           }}
         />
       )}
