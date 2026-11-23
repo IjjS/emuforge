@@ -42,7 +42,13 @@ function latestValue(row: ObjectVersion) {
 function HistoryKey({ value }: { value: string }) {
   const controls = Array.from(value).flatMap((character, index) => {
     if (character !== '\r' && character !== '\n') return [];
-    return [`${character === '\r' ? 'CR' : 'LF'} at character ${String(index + 1)}`];
+    const position = `at character ${String(index + 1)}`;
+    return [
+      {
+        cue: `${character === '\r' ? 'CR' : 'LF'} ${position}`,
+        meaning: `${character === '\r' ? 'Carriage return' : 'Line feed'} ${position}`,
+      },
+    ];
   });
 
   return (
@@ -55,9 +61,13 @@ function HistoryKey({ value }: { value: string }) {
           variant="small"
           display="block"
           color="text-body-secondary"
-          nativeAttributes={{ 'aria-hidden': true, style: { userSelect: 'none' } }}
+          nativeAttributes={{
+            role: 'note',
+            'aria-label': controls.map(({ meaning }) => meaning).join(', '),
+            style: { userSelect: 'none' },
+          }}
         >
-          {controls.join(' · ')}
+          {controls.map(({ cue }) => cue).join(' · ')}
         </Box>
       )}
     </>
