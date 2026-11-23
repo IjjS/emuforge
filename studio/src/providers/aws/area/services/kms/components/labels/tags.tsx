@@ -83,7 +83,7 @@ export function Tags({ connection, keyId }: { connection: AreaConnection; keyId:
           {
             id: 'actions',
             header: 'Actions',
-            minWidth: 180,
+            minWidth: 216,
             cell: (tag) => (
               <LabelRowActions>
                 <Button

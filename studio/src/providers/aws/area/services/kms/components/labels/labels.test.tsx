@@ -242,7 +242,8 @@ describe('key labels', () => {
 
     expect(submit).toHaveFocus();
     expect(submit).toHaveAttribute('aria-disabled', 'true');
-    await user.keyboard('{Enter}{Escape}');
+    await user.keyboard('{Enter}');
+    fireEvent.keyDown(submit, { key: 'Escape', keyCode: 27 });
     expect(modal).toBeVisible();
     expect(send.mock.calls.filter(([command]) => command instanceof CreateAliasCommand)).toHaveLength(1);
 
@@ -257,7 +258,7 @@ describe('key labels', () => {
     const refusal = await dialog.findByRole('alert');
     expect(refusal).toHaveFocus();
     expect(name).toHaveValue('events');
-    await user.keyboard('{Escape}');
+    fireEvent.keyDown(refusal, { key: 'Escape', keyCode: 27 });
     expect(modal).not.toBeInTheDocument();
     expect(opener).toHaveFocus();
   });

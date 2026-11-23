@@ -66,7 +66,7 @@ export function Aliases({ connection, keyId }: { connection: AreaConnection; key
   const handleClose = () => setEdit(undefined);
   const aliasName = name.startsWith('alias/') ? name : `alias/${name}`;
   const targetOptions = (targets.items ?? []).flatMap(({ id, description, aliases }) =>
-    id === keyId ? [] : [{ label: id, value: id, description, tags: aliases }],
+    id === keyId ? [] : [{ label: id, value: id, ...(description ? { description } : {}), tags: aliases }],
   );
 
   return (
@@ -106,7 +106,7 @@ export function Aliases({ connection, keyId }: { connection: AreaConnection; key
           {
             id: 'actions',
             header: 'Actions',
-            minWidth: 180,
+            minWidth: 240,
             cell: (alias) => (
               <LabelRowActions>
                 <Button
