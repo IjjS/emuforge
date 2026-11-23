@@ -27,6 +27,7 @@ test('studio.lambda-layer-publish', async ({ ctx, page }) => {
   await expectVersions(page, [first.LayerVersionArn]);
   await publishForm(page, fresh, layers.archive('new'));
   await expect(success(page)).toContainText('Published ' + fresh + ' version 1.');
+  await selectLayer(page, fresh, 1);
   const [newVersion] = await layers.versions(fresh);
   await expectVersions(page, [newVersion.LayerVersionArn]);
   await publishForm(page, external, layers.archive('second'));
@@ -40,7 +41,10 @@ test('studio.lambda-layer-publish', async ({ ctx, page }) => {
     published.map((v) => v.LayerVersionArn),
   );
   expect(published[1].LayerVersionArn).toBe(first.LayerVersionArn);
-  expect(await layers.versions(fresh)).toEqual([newVersion]);
+  const freshVersions = await layers.versions(fresh);
+  expect(freshVersions.map(({ Version, LayerVersionArn }) => ({ Version, LayerVersionArn }))).toEqual([
+    { Version: 1, LayerVersionArn: newVersion.LayerVersionArn },
+  ]);
 });
 
 test('studio.lambda-layer-publish-refused', async ({ ctx, page }) => {
@@ -105,6 +109,10 @@ test('studio.lambda-layer-function-refused', async ({ ctx, page }) => {
   await submitDialog(page, 'Add layer version');
   await expect(functionPage(page, layers.prefix).notFoundSentence).toBeVisible();
   await expect(errorFlash(page)).toContainText('ResourceNotFoundException');
-  expect(await getFunctionDirect(ctx, emulatorPort, layers.prefix)).toMatchObject({ found: false });
+  expect(await getFunctionDirect(ctx, emulatorPort, layers.prefix)).toMatchObject({
+    found: false,
+    status: 404,
+    errorType: 'ResourceNotFoundException',
+  });
   expect((await layers.versions(name)).map((v) => v.LayerVersionArn)).toEqual([version.LayerVersionArn]);
 });
