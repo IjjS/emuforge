@@ -7,7 +7,13 @@ import { functionPage } from './services/lambda/lambda-page';
 import { submitDialog, success } from './services/lambda/lambda-releases';
 import { invokeWith, outputText, RESPONSE, toConfiguration, toTest } from './services/lambda/lambda-tasks';
 import {
-  attachedTable, inlinePublicationError, layerFixture, publishForm, selectAttachment, selectLayer, versionsTable,
+  attachedTable,
+  inlinePublicationError,
+  layerFixture,
+  publishForm,
+  selectAttachment,
+  selectLayer,
+  expectVersions,
 } from './services/lambda/lambda-layers';
 
 test('studio.lambda-layer-publish', async ({ ctx, page }) => {
@@ -18,18 +24,21 @@ test('studio.lambda-layer-publish', async ({ ctx, page }) => {
   const first = await layers.publish(external, 'external');
   await page.goto('/aws/lambda/layers');
   await selectLayer(page, external, 1);
-  await expect(versionsTable(page)).toContainText([first.LayerVersionArn]);
+  await expectVersions(page, [first.LayerVersionArn]);
   await publishForm(page, fresh, layers.archive('new'));
   await expect(success(page)).toContainText('Published ' + fresh + ' version 1.');
   const [newVersion] = await layers.versions(fresh);
-  await expect(versionsTable(page)).toContainText([newVersion.LayerVersionArn]);
+  await expectVersions(page, [newVersion.LayerVersionArn]);
   await publishForm(page, external, layers.archive('second'));
   await expect(success(page)).toContainText('Published ' + external + ' version 2.');
   await page.reload();
   await selectLayer(page, external, 2);
   const published = await layers.versions(external);
-  expect(published.map(v => v.Version)).toEqual([2, 1]);
-  await expect(versionsTable(page)).toContainText(published.map(v => v.LayerVersionArn));
+  expect(published.map((v) => v.Version)).toEqual([2, 1]);
+  await expectVersions(
+    page,
+    published.map((v) => v.LayerVersionArn),
+  );
   expect(published[1].LayerVersionArn).toBe(first.LayerVersionArn);
   expect(await layers.versions(fresh)).toEqual([newVersion]);
 });
@@ -61,21 +70,27 @@ test('studio.lambda-layer-function-lifecycle', async ({ ctx, page }) => {
   await selectAttachment(page, name, historical.LayerVersionArn);
   await submitDialog(page, 'Add layer version');
   await expect(success(page)).toContainText('Layer version added.');
-  await expect(page.locator(inner.findRows().toSelector()).and(table.getByRole('row'))).toContainText([historical.LayerVersionArn]);
-  expect(await layers.attachments()).toEqual([historical.LayerVersionArn]);
+  await expect(page.locator(inner.findBodyCell(1, 1).toSelector()).and(table.locator('*'))).toHaveText(
+    historical.LayerVersionArn,
+  );
+  await layers.settledAttachments([historical.LayerVersionArn]);
   await toTest(page, layers.prefix);
   await invokeWith(page, layers.prefix, '{}');
   await expect.poll(() => outputText(page, RESPONSE)).toBe('"historical"');
   await toConfiguration(page, layers.prefix);
-  await table.getByRole('button', {name: 'Remove layer version ' + historical.LayerVersionArn}).click();
+  await table.getByRole('button', { name: 'Remove layer version ' + historical.LayerVersionArn }).click();
   await submitDialog(page, 'Remove layer version');
   await expect(success(page)).toContainText('Layer version removed.');
   await expect(empty).toHaveText('No layers attached');
+  await layers.settledAttachments([]);
   await toTest(page, layers.prefix);
   await invokeWith(page, layers.prefix, '{}');
   await expect.poll(() => outputText(page, RESPONSE)).toBe('"absent"');
-  expect(await layers.attachments()).toEqual([]);
-  expect((await layers.versions(name)).map(v => v.LayerVersionArn)).toEqual([latest.LayerVersionArn, historical.LayerVersionArn]);
+  await layers.settledAttachments([]);
+  expect((await layers.versions(name)).map((v) => v.LayerVersionArn)).toEqual([
+    latest.LayerVersionArn,
+    historical.LayerVersionArn,
+  ]);
 });
 
 test('studio.lambda-layer-function-refused', async ({ ctx, page }) => {
@@ -86,10 +101,10 @@ test('studio.lambda-layer-function-refused', async ({ ctx, page }) => {
   await layers.createFunction();
   await openUrlConfiguration(page, layers.prefix);
   await selectAttachment(page, name, version.LayerVersionArn);
-  expect(await deleteFunctionDirect(ctx, emulatorPort, layers.prefix)).toMatchObject({status: 204});
+  expect(await deleteFunctionDirect(ctx, emulatorPort, layers.prefix)).toMatchObject({ status: 204 });
   await submitDialog(page, 'Add layer version');
   await expect(functionPage(page, layers.prefix).notFoundSentence).toBeVisible();
   await expect(errorFlash(page)).toContainText('ResourceNotFoundException');
-  expect(await getFunctionDirect(ctx, emulatorPort, layers.prefix)).toMatchObject({found: false});
-  expect((await layers.versions(name)).map(v => v.LayerVersionArn)).toEqual([version.LayerVersionArn]);
+  expect(await getFunctionDirect(ctx, emulatorPort, layers.prefix)).toMatchObject({ found: false });
+  expect((await layers.versions(name)).map((v) => v.LayerVersionArn)).toEqual([version.LayerVersionArn]);
 });
