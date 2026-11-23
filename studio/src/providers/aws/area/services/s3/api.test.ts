@@ -883,24 +883,33 @@ describe('the listing and deleting of a bucket’s items', () => {
 });
 
 describe('object version history', () => {
-  it('follows both cursors under the same prefix and distinguishes versions from delete markers', async () => {
-    const key = 'logs/same key';
+  it.each([
+    ['logs/line\rbreak.csv', 'logs/line%0Dbreak.csv'],
+    ['logs/line\nbreak.csv', 'logs/line%0Abreak.csv'],
+    ['logs/line%0Dbreak.csv', 'logs/line%250Dbreak.csv'],
+    ['logs/line%0Abreak.csv', 'logs/line%250Abreak.csv'],
+    ['logs/plus+ percentage%.csv', 'logs/plus%2B+percentage%25.csv'],
+  ])('decodes the history key and key cursor once for %j', async (key, wireKey) => {
+    const markerId = 'marker%0D+%25';
+    const versionId = 'body%0A+%25';
     engine.aws = () =>
       xml(
-        `<ListVersionsResult><IsTruncated>true</IsTruncated><NextKeyMarker>${key}</NextKeyMarker><NextVersionIdMarker>m1</NextVersionIdMarker>` +
-          `<DeleteMarker><Key>${key}</Key><VersionId>m1</VersionId><IsLatest>true</IsLatest></DeleteMarker></ListVersionsResult>`,
+        `<ListVersionsResult><EncodingType>url</EncodingType><IsTruncated>true</IsTruncated><NextKeyMarker>${wireKey}</NextKeyMarker><NextVersionIdMarker>${markerId}</NextVersionIdMarker>` +
+          `<DeleteMarker><Key>${wireKey}</Key><VersionId>${markerId}</VersionId><IsLatest>true</IsLatest></DeleteMarker></ListVersionsResult>`,
       );
     const first = await listObjectHistory(endpoint, 'bucket', { prefix: 'logs/', maxKeys: 1 }, signal());
     if (first === NO_SUCH_BUCKET) throw new Error('Expected a version history page');
     expect(first).toEqual({
-      items: [{ key, versionId: 'm1', latest: true, kind: 'delete-marker' }],
+      items: [{ key, versionId: markerId, latest: true, kind: 'delete-marker' }],
       truncated: true,
       nextKeyMarker: key,
-      nextVersionIdMarker: 'm1',
+      nextVersionIdMarker: markerId,
     });
+
+    // The history request determines decoding even when the response omits the encoding echo.
     engine.aws = () =>
       xml(
-        `<ListVersionsResult><IsTruncated>false</IsTruncated><Version><Key>${key}</Key><VersionId>v1</VersionId>` +
+        `<ListVersionsResult><IsTruncated>false</IsTruncated><Version><Key>${wireKey}</Key><VersionId>${versionId}</VersionId>` +
           '<IsLatest>false</IsLatest></Version></ListVersionsResult>',
       );
     const { nextKeyMarker: keyMarker, nextVersionIdMarker: versionIdMarker } = first;
@@ -911,12 +920,31 @@ describe('object version history', () => {
       { prefix: 'logs/', maxKeys: 1, keyMarker, versionIdMarker },
       signal(),
     );
-    expect(second).toEqual({ items: [{ key, versionId: 'v1', latest: false, kind: 'version' }], truncated: false });
+    expect(second).toEqual({ items: [{ key, versionId, latest: false, kind: 'version' }], truncated: false });
     const [firstQuery, secondQuery] = engine.awsRequests.map((request) => new URL(request).searchParams);
+    expect(firstQuery?.get('encoding-type')).toBe('url');
     expect(firstQuery?.get('prefix')).toBe('logs/');
+    expect(secondQuery?.get('encoding-type')).toBe('url');
     expect(secondQuery?.get('prefix')).toBe('logs/');
     expect(secondQuery?.get('key-marker')).toBe(key);
-    expect(secondQuery?.get('version-id-marker')).toBe('m1');
+    expect(secondQuery?.get('version-id-marker')).toBe(markerId);
+  });
+
+  it('leaves unencoded keys and markers intact for the bucket emptying caller', async () => {
+    const key = 'logs/line%0Dbreak+.csv';
+    const versionId = 'version%0D+%25';
+    engine.aws = () =>
+      xml(
+        `<ListVersionsResult><IsTruncated>true</IsTruncated><NextKeyMarker>${key}</NextKeyMarker><NextVersionIdMarker>${versionId}</NextVersionIdMarker>` +
+          `<Version><Key>${key}</Key><VersionId>${versionId}</VersionId></Version></ListVersionsResult>`,
+      );
+    expect(await listObjectVersions(endpoint, 'bucket', { maxKeys: 1 }, signal())).toEqual({
+      items: [{ key, versionId }],
+      truncated: true,
+      nextKeyMarker: key,
+      nextVersionIdMarker: versionId,
+    });
+    expect(new URL(engine.awsRequests[0] ?? '').searchParams.has('encoding-type')).toBe(false);
   });
 
   it('encodes the source key and version ID independently when restoring to the same key', async () => {

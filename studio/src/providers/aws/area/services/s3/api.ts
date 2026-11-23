@@ -535,7 +535,7 @@ export function listObjectHistory(
   request: ObjectVersionPageRequest & { prefix: string },
   signal: AbortSignal,
 ): Promise<ObjectVersionPage<ObjectVersion> | NoSuchBucket> {
-  return readVersionPage<ObjectVersion>(endpoint, bucket, request, signal, (output) => [
+  return readVersionPage<ObjectVersion>(endpoint, bucket, { ...request, encoding: 'url' }, signal, (output) => [
     ...(output.Versions ?? []).map((item): ObjectVersion => ({
       ...toItem(item),
       latest: item.IsLatest === true,
@@ -549,10 +549,24 @@ export function listObjectHistory(
   ]);
 }
 
-function readVersionPage<Item>(
+function decodeVersionKey(key: string): string {
+  // The emulator uses + for spaces and %2B for literal plus in its URL-encoded key fields.
+  return decodeURIComponent(key.replaceAll('+', ' '));
+}
+
+function readVersionPage<Item extends ObjectVersionId>(
   endpoint: string,
   bucket: string,
-  { maxKeys, keyMarker, versionIdMarker, prefix = '' }: ObjectVersionPageRequest & { prefix?: string },
+  {
+    maxKeys,
+    keyMarker,
+    versionIdMarker,
+    prefix = '',
+    encoding,
+  }: ObjectVersionPageRequest & {
+    prefix?: string;
+    encoding?: 'url';
+  },
   signal: AbortSignal,
   items: (output: ListObjectVersionsCommandOutput) => Item[],
 ): Promise<ObjectVersionPage<Item> | NoSuchBucket> {
@@ -564,6 +578,7 @@ function readVersionPage<Item>(
         new ListObjectVersionsCommand({
           Bucket: bucket,
           MaxKeys: maxKeys,
+          ...(encoding === undefined ? {} : { EncodingType: encoding }),
           ...(prefix === '' ? {} : { Prefix: prefix }),
           ...(keyMarker === undefined ? {} : { KeyMarker: keyMarker }),
           ...(versionIdMarker === undefined ? {} : { VersionIdMarker: versionIdMarker }),
@@ -571,13 +586,17 @@ function readVersionPage<Item>(
         { abortSignal },
       ),
     (output): ObjectVersionPage<Item> => {
+      // The SDK leaves encoded keys untouched. Decode once, including the key cursor, and keep version IDs opaque.
+      const rows = items(output);
       const page: ObjectVersionPage<Item> = {
-        items: items(output),
+        items: encoding === 'url' ? rows.map((row) => ({ ...row, key: decodeVersionKey(row.key) })) : rows,
         truncated: output.IsTruncated === true,
       };
       const nextKeyMarker = text(output.NextKeyMarker);
       const nextVersionIdMarker = text(output.NextVersionIdMarker);
-      if (nextKeyMarker !== undefined) page.nextKeyMarker = nextKeyMarker;
+      if (nextKeyMarker !== undefined) {
+        page.nextKeyMarker = encoding === 'url' ? decodeVersionKey(nextKeyMarker) : nextKeyMarker;
+      }
       if (nextVersionIdMarker !== undefined) page.nextVersionIdMarker = nextVersionIdMarker;
       return page;
     },
