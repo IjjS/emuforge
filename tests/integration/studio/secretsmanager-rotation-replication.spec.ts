@@ -67,10 +67,19 @@ test('studio.secretsmanager-rotation-refused', async ({ ctx, page }) => {
   });
   expect(response.ok()).toBe(false);
   const failure = await response.json();
+  const serviceError = response.headers()['x-amzn-errortype'] ?? failure.__type ?? failure.code ?? failure.Code;
+  expect(serviceError?.split('#').at(-1)?.split(':')[0]).toBe('AccessDeniedException');
   const reason = failure.Message ?? failure.message;
   expect(reason).toEqual(expect.stringMatching(/\S/));
-  await expect(modal(page)).toBeVisible();
-  await expect(modal(page)).toContainText(reason);
+  const error = modal(page).locator(
+    ui
+      .findAlert()
+      .findContent()
+      .toSelector()
+      .replace(/^body /, ''),
+  );
+  await expect(error).toBeVisible();
+  await expect(error).toContainText(reason, { useInnerText: true });
   await expect(success(page)).toHaveCount(0);
   expect((await f.describe()).RotationEnabled).not.toBe(true);
 });

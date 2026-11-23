@@ -73,11 +73,13 @@ test('studio.secretsmanager-duplicate-name', async ({ ctx, page }) => {
   expect(response.request().postDataJSON()).toMatchObject({ Name: f.name, SecretString: 'Another value' });
   expect(response.status()).toBe(400);
   const failure = await response.json();
+  const serviceError = response.headers()['x-amzn-errortype'] ?? failure.__type ?? failure.code ?? failure.Code;
+  expect(serviceError?.split('#').at(-1)?.split(':')[0]).toBe('ResourceExistsException');
   const reason = failure.Message ?? failure.message;
   expect(reason).toEqual(expect.stringMatching(/\S/));
-  const alert = page.locator(ui.findAlert().toSelector()).filter({ hasText: reason });
+  const alert = page.locator(ui.findAlert().findContent().toSelector()).filter({ hasText: reason });
   await expect(alert).toBeVisible();
-  await expect(alert).toContainText(reason);
+  await expect(alert).toContainText(reason, { useInnerText: true });
   for (const [label, value] of [
     ['Secret name', f.name],
     ['Secret value', 'Another value'],

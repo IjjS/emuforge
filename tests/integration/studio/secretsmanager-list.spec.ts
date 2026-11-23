@@ -1,3 +1,4 @@
+import type { Page } from '@playwright/test';
 import { expect, test } from './support';
 import { ABOUT_CONTROL, connectedAt, crumbLink, expectLine, notStartedOn } from './support/aws-area';
 import { direct, fixture, waitForPurge } from './services/secretsmanager/fixture';
@@ -62,8 +63,16 @@ test('studio.secretsmanager-notice', async ({ ctx, page }) => {
   await button(notice, 'Close the local emulator notice').click();
   await expect(notice).toBeHidden();
   await button(page, ABOUT_CONTROL).click();
-  await expect(notice).toContainText('These secrets are in your local emulator');
+  await expect(notice.getByText('These secrets are in your local emulator', { exact: true })).toBeVisible();
 });
+
+async function expectMissingSecret(page: Page, name: string) {
+  await expect(page.getByText('Secret not found', { exact: true })).toBeVisible({ timeout: 60000 });
+  await expect(page.getByText('Your local emulator could not find ' + name + '.', { exact: true })).toBeVisible();
+  const back = page.getByRole('link', { name: 'Back to secrets', exact: true });
+  await expect(back).toBeVisible();
+  await expect(back).toHaveAttribute('href', listPath);
+}
 
 test('studio.secretsmanager-missing-secret', async ({ ctx, page }) => {
   const f = await fixture(ctx);
@@ -71,9 +80,7 @@ test('studio.secretsmanager-missing-secret', async ({ ctx, page }) => {
   await f.client.deleteSecret({ SecretId: f.name, ForceDeleteWithoutRecovery: true });
   await waitForPurge(f);
   await page.goto(detailPath(f.name));
-  await expect(page.getByText('Secret not found', { exact: true })).toBeVisible();
-  await expect(page.getByText('Your local emulator could not find ' + f.name + '.')).toBeVisible();
-  await expect(page.getByRole('link', { name: 'Back to secrets' })).toHaveAttribute('href', listPath);
+  await expectMissingSecret(page, f.name);
 });
 
 test('studio.secretsmanager-restart-clears-secrets', async ({ ctx, page }) => {
@@ -120,8 +127,7 @@ test('studio.secretsmanager-restart-clears-detail', async ({ ctx, page }) => {
   await expect(shown).toBeHidden();
   await f.emulator!.startAgain();
   await expectLine(page, connectedAt(f.emulatorPort), 60000);
-  await expect(page.getByText('Secret not found', { exact: true })).toBeVisible({ timeout: 60000 });
-  await expect(page.getByRole('link', { name: 'Back to secrets' })).toBeVisible();
+  await expectMissingSecret(page, f.name);
   await expect(page.getByText('Previous instance metadata')).toBeHidden();
   await expect(oldArn).toBeHidden();
   await expect(shown).toBeHidden();

@@ -66,7 +66,7 @@ test('studio.secretsmanager-policy-save', async ({ ctx, page }) => {
   await f.seed();
   await detail(page, f.name);
   const section = await openSection(page, 'Resource policy');
-  await expect(section).toContainText('This secret has no resource policy.');
+  await expect(section.getByText('This secret has no resource policy.', { exact: true })).toBeVisible();
   await button(section, 'Edit resource policy').click();
   await textbox(modal(page), 'Policy document').fill(POLICY);
   const [validation] = await Promise.all([
@@ -107,9 +107,11 @@ test('studio.secretsmanager-policy-remove', async ({ ctx, page }) => {
   const section = await openSection(page, 'Resource policy');
   const stored = (await f.client.getResourcePolicy({ SecretId: f.name })).ResourcePolicy!;
   expect(JSON.parse(stored)).toEqual(JSON.parse(POLICY));
-  await expect(section).toContainText(stored);
+  const oldDocument = section.getByText(stored, { exact: true });
+  await expect(oldDocument).toBeVisible();
   await button(section, 'Remove resource policy').click();
   await submit(page, 'Remove resource policy');
-  await expect(section).toContainText('This secret has no resource policy.');
+  await expect(section.getByText('This secret has no resource policy.', { exact: true })).toBeVisible();
+  await expect(oldDocument).toBeHidden();
   expect((await f.client.getResourcePolicy({ SecretId: f.name })).ResourcePolicy).toBeUndefined();
 });
