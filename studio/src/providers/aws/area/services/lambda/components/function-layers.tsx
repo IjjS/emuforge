@@ -96,6 +96,7 @@ function LayerSelect<T>({
   connection,
   reading,
   selection,
+  placeholder = `Choose a ${label.toLowerCase()}`,
   options,
   disabled,
   onSelect,
@@ -105,6 +106,7 @@ function LayerSelect<T>({
   connection: AreaConnection;
   reading: LayerReading<T>;
   selection: SelectProps.Option | null;
+  placeholder?: string;
   options: SelectProps.Options;
   disabled: boolean;
   onSelect: (option: SelectProps.Option) => void;
@@ -118,7 +120,7 @@ function LayerSelect<T>({
           disabled={disabled || reading.loading || reading.failure !== undefined || !options.length}
           statusType={reading.loading ? 'loading' : 'finished'}
           loadingText={`Loading ${resource}…`}
-          placeholder={`Choose a ${label.toLowerCase()}`}
+          placeholder={placeholder}
           empty={`No ${resource}`}
           onChange={({ detail }) => onSelect(detail.selectedOption)}
         />
@@ -254,6 +256,7 @@ function AddLayerDialog({
           connection={connection}
           reading={versions}
           selection={version}
+          placeholder={layer === null ? 'Select a layer first' : 'Choose a version'}
           options={
             versions.items?.map(({ arn, version }) => ({ label: String(version), value: arn, description: arn })) ?? []
           }
@@ -320,9 +323,11 @@ export function FunctionLayers({
           {
             id: 'remove',
             header: 'Actions',
+            minWidth: '9rem',
             cell: ({ arn, index }) => (
               <Button
                 ariaLabel={`${REMOVE} ${arn}`}
+                wrapText={false}
                 disabled={disabled || pending}
                 disabledReason={disabledReason}
                 onClick={() => setRemoving({ arn, index })}

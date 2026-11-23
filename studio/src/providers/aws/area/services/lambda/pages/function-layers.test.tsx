@@ -245,6 +245,8 @@ it('appends an older version from later pages and keeps the existing order', asy
     );
   open();
   const dialog = await openAdd();
+  expect(picker('Version').findTrigger().getElement()).toBeDisabled();
+  expect(picker('Version').findPlaceholder()?.getElement()).toHaveTextContent('Select a layer first');
   const layerPages = within(await dialog.findByRole('list', { name: 'Layer name pages' }));
   fireEvent.click(layerPages.getByRole('button', { name: 'Next page' }));
   await choose('Layer name', 'tools');
