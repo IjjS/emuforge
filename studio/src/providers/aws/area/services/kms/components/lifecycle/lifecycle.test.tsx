@@ -254,7 +254,7 @@ describe('Key lifecycle', () => {
 
     await opened('Disable key');
     expect(dialog()).toHaveTextContent(KEY_ID);
-    expect(dialog()).toHaveTextContent('your local emulator refuses every cryptographic operation that uses this key');
+    expect(dialog()).toHaveTextContent("The key's state becomes Disabled in your local emulator.");
     confirm('Cancel');
 
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
