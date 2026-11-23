@@ -3,6 +3,7 @@ import Box from '@cloudscape-design/components/box';
 import ButtonDropdown from '@cloudscape-design/components/button-dropdown';
 import ExpandableSection from '@cloudscape-design/components/expandable-section';
 import Pagination from '@cloudscape-design/components/pagination';
+import SpaceBetween from '@cloudscape-design/components/space-between';
 import Table from '@cloudscape-design/components/table';
 import { useState } from 'react';
 
@@ -49,6 +50,24 @@ export function VersionHistory({
   const selectedStages = selectedVersion?.VersionStages ?? [];
   const movable = Object.entries(stagesByVersion).flatMap(([source, stages]) =>
     source === selected ? [] : stages.map((label) => ({ label, source })),
+  );
+
+  const pagination = (listing.openEnd || listing.pagesCount > 1) && (
+    <Pagination
+      currentPageIndex={listing.currentPage}
+      pagesCount={listing.pagesCount}
+      openEnd={listing.openEnd}
+      disabled={listing.loading || listing.failure?.kind === 'not-implemented'}
+      ariaLabels={{
+        nextPageLabel: 'Next version page',
+        previousPageLabel: 'Previous version page',
+        pageLabel: (page) => `Version page ${String(page)}`,
+      }}
+      onChange={({ detail }) => {
+        onSelect(undefined);
+        listing.goToPage(detail.currentPageIndex);
+      }}
+    />
   );
 
   return (
@@ -137,33 +156,18 @@ export function VersionHistory({
                 {listing.pastEnd ? 'No versions on this page.' : 'No versions found for this secret.'}
               </Box>
             }
-            pagination={
-              (listing.openEnd || listing.pagesCount > 1) && (
-                <Pagination
-                  currentPageIndex={listing.currentPage}
-                  pagesCount={listing.pagesCount}
-                  openEnd={listing.openEnd}
-                  disabled={listing.loading}
-                  ariaLabels={{
-                    nextPageLabel: 'Next version page',
-                    previousPageLabel: 'Previous version page',
-                    pageLabel: (page) => `Version page ${String(page)}`,
-                  }}
-                  onChange={({ detail }) => {
-                    onSelect(undefined);
-                    listing.goToPage(detail.currentPageIndex);
-                  }}
-                />
-              )
-            }
+            pagination={pagination}
           />
         ) : (
-          <SectionReadFailure
-            failure={listing.failure}
-            connection={connection}
-            resource="version history"
-            onRetry={listing.refresh}
-          />
+          <SpaceBetween size="s">
+            <SectionReadFailure
+              failure={listing.failure}
+              connection={connection}
+              resource="version history"
+              onRetry={listing.refresh}
+            />
+            {listing.failure.kind === 'not-implemented' && pagination}
+          </SpaceBetween>
         ))}
       {open && edit !== undefined && (
         <StageDialog

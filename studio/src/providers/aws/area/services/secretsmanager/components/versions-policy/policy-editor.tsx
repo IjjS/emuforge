@@ -9,6 +9,7 @@ import { useState } from 'react';
 import { AreaModal } from '../../../../components/area-modal';
 import { DiscardDialog } from '../../../../components/discard-dialog';
 import { DocumentField } from '../../../../components/document-field';
+import { actionFailureItem } from '../../../../components/failure-states';
 import type { AreaConnection } from '../../../../components/emulator-line';
 import {
   PUT_RESOURCE_POLICY,
@@ -125,7 +126,23 @@ export function PolicyEditor({
                 </SpaceBetween>
               </Alert>
             ))}
-          <LifecycleFeedback action={action} connection={connection} what="Updating the resource policy" />
+          {[VALIDATE_RESOURCE_POLICY, PUT_RESOURCE_POLICY]
+            .filter((operation) => action.unavailable.has(operation))
+            .map((operation) => {
+              const { header, content } = actionFailureItem(
+                { kind: 'not-implemented', operation },
+                'Updating the resource policy',
+                connection.engineOrigin,
+              );
+              return (
+                <Alert key={operation} type="info" header={header}>
+                  {content}
+                </Alert>
+              );
+            })}
+          {action.failure?.kind !== 'not-implemented' && (
+            <LifecycleFeedback action={action} connection={connection} what="Updating the resource policy" />
+          )}
         </SpaceBetween>
       </AreaModal>
       {discard && (

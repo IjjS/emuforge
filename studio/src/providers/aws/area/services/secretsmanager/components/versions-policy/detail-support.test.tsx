@@ -1,3 +1,4 @@
+import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider, useIsFetching } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { createMemoryRouter, RouterProvider } from 'react-router';
@@ -107,7 +108,11 @@ export function openSecret({
       <RouterProvider router={router} />
     </QueryClientProvider>,
   );
-  return { calls };
+  return {
+    calls,
+    waitForRead: (operation: string, fetching: boolean) =>
+      waitFor(() => expect(client.isFetching({ queryKey: ['aws', 'secretsmanager', operation] }) > 0).toBe(fetching)),
+  };
 }
 
 export function versionRows(stages: Record<string, string[]>) {
@@ -116,6 +121,75 @@ export function versionRows(stages: Record<string, string[]>) {
 
 export async function click(name: string) {
   fireEvent.click(await screen.findByRole('button', { name }));
+}
+
+export const page = () => createWrapper(document.body);
+
+export function required<T>(element: T | undefined | null, description: string): T {
+  if (element == null) throw new Error(`Missing ${description}`);
+  return element;
+}
+
+export function findSection(name: string) {
+  return page()
+    .findAllExpandableSections()
+    .find((entry) => entry.findHeaderText()?.getElement().textContent === name);
+}
+
+export async function section(name: string) {
+  return waitFor(() => required(findSection(name), name));
+}
+
+export async function findDialog(name: string) {
+  return waitFor(() =>
+    required(
+      page()
+        .findAllModals()
+        .find((modal) => modal.isVisible() && modal.findHeader().getElement().textContent === name),
+      name,
+    ),
+  );
+}
+
+type Dialog = Awaited<ReturnType<typeof findDialog>>;
+
+export function dialogButton(dialog: Dialog, name: string) {
+  const footer = required(dialog.findFooter(), 'dialog footer');
+  return required(
+    createWrapper(footer.getElement())
+      .findAllButtons()
+      .find((button) => button.findTextRegion()?.getElement().textContent === name),
+    name,
+  );
+}
+
+export function press(dialog: Dialog, name: string) {
+  fireEvent.click(dialogButton(dialog, name).getElement());
+}
+
+export function dialogContent(dialog: Dialog) {
+  return createWrapper(dialog.findContent().getElement());
+}
+
+export async function expectAlert(container: ReturnType<typeof page>, message: string) {
+  await waitFor(() =>
+    expect(
+      container
+        .findAllAlerts()
+        .find((alert) => alert.findContent().getElement().textContent?.includes(message))
+        ?.findContent()
+        .getElement(),
+    ).toBeVisible(),
+  );
+}
+
+export function successFlashes() {
+  return (
+    page()
+      .findFlashbar()
+      ?.findItemsByType('success')
+      .map((item) => item.findContent()?.getElement()) ?? []
+  );
 }
 
 export const ORDERS = ['list first', 'section first'] as const;
@@ -152,8 +226,29 @@ export function delayedRefresh(
     for (const index of indexes) {
       await act(() => deferred[index].resolve(replies[index]));
       await waitFor(() => expect(screen.getByLabelText(operations[index])).toHaveAttribute('aria-busy', 'false'));
-      expect(screen.getByText(success)).toBeVisible();
+      const result = successFlashes().find((content) => content?.textContent === success);
+      expect(result).toBeVisible();
     }
   }
   return { operations, handler, complete };
+}
+
+export function refusalReread(operation: string, read: string, original: Reply) {
+  const followUp = deferredReply();
+  let refused = false;
+  const handler: Handler = (called) => {
+    if (called === operation) {
+      refused = true;
+      return denied();
+    }
+    if (called === read) return refused ? followUp.promise : original;
+  };
+  async function complete(subject: ReturnType<typeof openSecret>) {
+    await waitFor(() => expect(subject.calls.mock.calls.filter(([called]) => called === read)).toHaveLength(2));
+    await subject.waitForRead(read, true);
+    await act(() => followUp.resolve(original));
+    await subject.waitForRead(read, false);
+    expect(successFlashes()).toHaveLength(0);
+  }
+  return { handler, complete };
 }

@@ -1,7 +1,25 @@
-import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { click, CURRENT, delayedRefresh, denied, NAME, openSecret, ORDERS, REFUSAL } from './detail-support.test';
+import {
+  click,
+  CURRENT,
+  delayedRefresh,
+  denied,
+  dialogButton,
+  dialogContent,
+  expectAlert,
+  findDialog,
+  NAME,
+  openSecret,
+  ORDERS,
+  page,
+  press,
+  REFUSAL,
+  refusalReread,
+  required,
+  section,
+} from './detail-support.test';
 
 const ORIGINAL =
   '{"Version":"2012-10-17","Statement":[{"Sid":"Original","Effect":"Deny","Principal":"*","Action":"secretsmanager:GetSecretValue","Resource":"*"}]}';
@@ -16,32 +34,53 @@ const VALID = { body: { PolicyValidationPassed: true } };
 afterEach(() => vi.unstubAllGlobals());
 
 async function openPolicy() {
-  await click('Resource policy');
+  fireEvent.click((await section('Resource policy')).findExpandButton().getElement());
 }
 
 async function editPolicy() {
   await click('Edit resource policy');
-  return within(await screen.findByRole('dialog', { name: 'Edit resource policy' }));
+  return findDialog('Edit resource policy');
 }
 
 async function removePolicy() {
   await click('Remove resource policy');
-  return within(await screen.findByRole('dialog', { name: 'Remove resource policy' }));
+  return findDialog('Remove resource policy');
 }
 
-function enter(dialog: ReturnType<typeof within>, document: string) {
-  fireEvent.change(dialog.getByRole('textbox', { name: 'Policy document' }), { target: { value: document } });
+type PolicyDialog = Awaited<ReturnType<typeof findDialog>>;
+
+function policyField(dialog: PolicyDialog) {
+  return required(dialogContent(dialog).findTextarea(), 'policy document');
 }
 
-async function validate(dialog: ReturnType<typeof within>) {
-  fireEvent.click(dialog.getByRole('button', { name: 'Validate policy' }));
-  expect(await dialog.findByText('Policy validation passed.')).toBeVisible();
+function enter(dialog: PolicyDialog, document: string) {
+  fireEvent.change(policyField(dialog).findNativeTextarea().getElement(), { target: { value: document } });
+}
+
+function validationStatus(dialog: PolicyDialog) {
+  return dialogContent(dialog).findStatusIndicator()?.getElement();
+}
+
+async function validate(dialog: PolicyDialog) {
+  press(dialog, 'Validate policy');
+  await waitFor(() => expect(validationStatus(dialog)).toHaveTextContent('Policy validation passed.'));
+}
+
+async function discardDraft(dialog: PolicyDialog) {
+  press(dialog, 'Cancel');
+  press(await findDialog('Discard what you entered?'), 'Discard');
 }
 
 describe('Secret resource policy', () => {
   it('reads the policy on opening and shows the empty state for a response without a document', async () => {
     const { calls } = openSecret();
-    await screen.findByRole('heading', { name: NAME, level: 1 });
+    await waitFor(() =>
+      expect(
+        page()
+          .findAllHeaders()
+          .some((header) => header.findHeadingText().getElement().textContent === NAME),
+      ).toBe(true),
+    );
     expect(calls.mock.calls.some(([operation]) => operation === GET)).toBe(false);
     await openPolicy();
     expect(await screen.findByText(NO_POLICY)).toBeVisible();
@@ -53,7 +92,7 @@ describe('Secret resource policy', () => {
     await openPolicy();
     expect(await screen.findByText(ORIGINAL)).toBeVisible();
     const dialog = await editPolicy();
-    expect(dialog.getByRole('textbox', { name: 'Policy document' })).toHaveValue(ORIGINAL);
+    expect(policyField(dialog).getTextareaValue()).toBe(ORIGINAL);
   });
 
   it('shows a read denial and can retry instead of showing the empty state', async () => {
@@ -85,11 +124,11 @@ describe('Secret resource policy', () => {
     await openPolicy();
     const dialog = await editPolicy();
     enter(dialog, '{}');
-    fireEvent.click(dialog.getByRole('button', { name: 'Validate policy' }));
-    expect(await dialog.findByText('Policy syntax: Missing Statement.')).toBeVisible();
-    const save = dialog.getByRole('button', { name: 'Save policy' });
-    expect(save).toBeDisabled();
-    fireEvent.click(save);
+    press(dialog, 'Validate policy');
+    await expectAlert(dialogContent(dialog), 'Policy syntax: Missing Statement.');
+    const save = dialogButton(dialog, 'Save policy');
+    expect(save.isDisabled()).toBe(true);
+    fireEvent.click(save.getElement());
     expect(calls).toHaveBeenCalledWith(VALIDATE, { SecretId: NAME, ResourcePolicy: '{}' });
     expect(calls.mock.calls.some(([operation]) => operation === PUT)).toBe(false);
   });
@@ -100,13 +139,13 @@ describe('Secret resource policy', () => {
     const dialog = await editPolicy();
     enter(dialog, ORIGINAL);
     await validate(dialog);
-    const save = dialog.getByRole('button', { name: 'Save policy' });
-    expect(save).toBeEnabled();
+    const save = dialogButton(dialog, 'Save policy');
+    expect(save.isDisabled()).toBe(false);
     enter(dialog, UPDATED);
-    expect(save).toBeDisabled();
-    expect(dialog.queryByText('Policy validation passed.')).not.toBeInTheDocument();
+    expect(save.isDisabled()).toBe(true);
+    expect(validationStatus(dialog)).toBeUndefined();
     await validate(dialog);
-    expect(save).toBeEnabled();
+    expect(save.isDisabled()).toBe(false);
     expect(calls).toHaveBeenCalledWith(VALIDATE, { SecretId: NAME, ResourcePolicy: UPDATED });
   });
 
@@ -116,51 +155,46 @@ describe('Secret resource policy', () => {
     });
     await openPolicy();
     const dialog = await removePolicy();
-    expect(dialog.getByText(`Remove the resource policy from ${NAME} in your local emulator?`)).toBeVisible();
-    fireEvent.click(dialog.getByRole('button', { name: 'Cancel' }));
+    expect(dialog.findContent().getElement()).toHaveTextContent(
+      `Remove the resource policy from ${NAME} in your local emulator?`,
+    );
+    press(dialog, 'Cancel');
     expect(screen.getByText(ORIGINAL)).toBeVisible();
     expect(calls.mock.calls.some(([operation]) => operation === DELETE)).toBe(false);
   });
 
   it('keeps the editor draft after a save refusal and rereads the original policy', async () => {
-    const { calls } = openSecret({
-      handler: (operation) => {
-        if (operation === GET) return { body: { ResourcePolicy: ORIGINAL } };
-        if (operation === VALIDATE) return VALID;
-        if (operation === PUT) return denied();
-      },
+    const refused = refusalReread(PUT, GET, { body: { ResourcePolicy: ORIGINAL } });
+    const subject = openSecret({
+      handler: (operation, input, request) =>
+        operation === VALIDATE ? VALID : refused.handler(operation, input, request),
     });
     await openPolicy();
     const dialog = await editPolicy();
     enter(dialog, UPDATED);
     await validate(dialog);
-    fireEvent.click(dialog.getByRole('button', { name: 'Save policy' }));
-    expect(await dialog.findByText(`${PUT} was refused: ${REFUSAL}`)).toBeVisible();
-    expect(dialog.getByRole('textbox', { name: 'Policy document' })).toHaveValue(UPDATED);
-    fireEvent.click(dialog.getByRole('button', { name: 'Cancel' }));
-    await click('Discard');
+    press(dialog, 'Save policy');
+    await expectAlert(dialogContent(dialog), `${PUT} was refused: ${REFUSAL}`);
+    expect(policyField(dialog).getTextareaValue()).toBe(UPDATED);
+    await discardDraft(dialog);
     await openPolicy();
     await openPolicy();
-    await waitFor(() => expect(calls.mock.calls.filter(([operation]) => operation === GET)).toHaveLength(2));
+    await refused.complete(subject);
     expect(screen.getByText(ORIGINAL)).toBeVisible();
     expect(screen.queryByText(UPDATED)).not.toBeInTheDocument();
   });
 
   it('shows a removal refusal and rereads the original policy', async () => {
-    const { calls } = openSecret({
-      handler: (operation) => {
-        if (operation === GET) return { body: { ResourcePolicy: ORIGINAL } };
-        if (operation === DELETE) return denied();
-      },
-    });
+    const refused = refusalReread(DELETE, GET, { body: { ResourcePolicy: ORIGINAL } });
+    const subject = openSecret({ handler: refused.handler });
     await openPolicy();
     const dialog = await removePolicy();
-    fireEvent.click(dialog.getByRole('button', { name: 'Remove resource policy' }));
-    expect(await dialog.findByText(`${DELETE} was refused: ${REFUSAL}`)).toBeVisible();
-    fireEvent.click(dialog.getByRole('button', { name: 'Cancel' }));
+    press(dialog, 'Remove resource policy');
+    await expectAlert(dialogContent(dialog), `${DELETE} was refused: ${REFUSAL}`);
+    press(dialog, 'Cancel');
     await openPolicy();
     await openPolicy();
-    await waitFor(() => expect(calls.mock.calls.filter(([operation]) => operation === GET)).toHaveLength(2));
+    await refused.complete(subject);
     expect(screen.getByText(ORIGINAL)).toBeVisible();
   });
 
@@ -173,13 +207,45 @@ describe('Secret resource policy', () => {
     });
     await openPolicy();
     const dialog = await removePolicy();
-    fireEvent.click(dialog.getByRole('button', { name: 'Remove resource policy' }));
-    expect(await dialog.findByText(`The emulator answered 501 Not Implemented for ${DELETE}.`)).toBeVisible();
-    expect(dialog.getByRole('button', { name: 'Remove resource policy' })).toBeDisabled();
-    fireEvent.click(dialog.getByRole('button', { name: 'Cancel' }));
+    press(dialog, 'Remove resource policy');
+    await expectAlert(dialogContent(dialog), `The emulator answered 501 Not Implemented for ${DELETE}.`);
+    expect(dialogButton(dialog, 'Remove resource policy').isDisabled()).toBe(true);
+    press(dialog, 'Cancel');
     expect(screen.getByRole('button', { name: 'Remove resource policy' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Edit resource policy' })).toBeEnabled();
   });
+  it.each([VALIDATE, PUT])(
+    'keeps the %s 501 explanation in the editor after edits and reopening',
+    async (operation) => {
+      const { calls } = openSecret({
+        handler: (called) => {
+          if (called === GET) return { body: { ResourcePolicy: ORIGINAL } };
+          if (called === operation) return { body: { __type: 'NotImplemented' }, status: 501 };
+          if (called === VALIDATE) return VALID;
+        },
+      });
+      await openPolicy();
+      const dialog = await editPolicy();
+      if (operation === PUT) await validate(dialog);
+      const unavailable = operation === VALIDATE ? 'Validate policy' : 'Save policy';
+      const message = `The emulator answered 501 Not Implemented for ${operation}.`;
+      press(dialog, unavailable);
+      await expectAlert(dialogContent(dialog), message);
+      expect(dialogButton(dialog, unavailable).isDisabled()).toBe(true);
+
+      enter(dialog, UPDATED);
+      await expectAlert(dialogContent(dialog), message);
+      expect(dialogButton(dialog, unavailable).isDisabled()).toBe(true);
+      await discardDraft(dialog);
+
+      const reopened = await editPolicy();
+      await expectAlert(dialogContent(reopened), message);
+      if (operation === PUT) await validate(reopened);
+      expect(dialogButton(reopened, unavailable).isDisabled()).toBe(true);
+      press(reopened, unavailable);
+      expect(calls.mock.calls.filter(([called]) => called === operation)).toHaveLength(1);
+    },
+  );
 });
 
 describe.each(ORDERS)('Policy refresh with %s', (order) => {
@@ -195,7 +261,7 @@ describe.each(ORDERS)('Policy refresh with %s', (order) => {
     const dialog = await editPolicy();
     enter(dialog, UPDATED);
     await validate(dialog);
-    fireEvent.click(dialog.getByRole('button', { name: 'Save policy' }));
+    press(dialog, 'Save policy');
     await refresh.complete(order, 'Resource policy saved.');
     expect(screen.getByText(UPDATED)).toBeVisible();
     expect(calls).toHaveBeenCalledWith(PUT, { SecretId: NAME, ResourcePolicy: UPDATED });
@@ -211,7 +277,7 @@ describe.each(ORDERS)('Policy refresh with %s', (order) => {
     });
     await openPolicy();
     const dialog = await removePolicy();
-    fireEvent.click(dialog.getByRole('button', { name: 'Remove resource policy' }));
+    press(dialog, 'Remove resource policy');
     await refresh.complete(order, 'Resource policy removed.');
     expect(screen.getByText(NO_POLICY)).toBeVisible();
     expect(screen.queryByText(ORIGINAL)).not.toBeInTheDocument();
