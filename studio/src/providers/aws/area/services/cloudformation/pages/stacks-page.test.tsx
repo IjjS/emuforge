@@ -173,6 +173,12 @@ function expectNoStack(name: string) {
   expect(screen.queryByRole('rowheader', { name })).not.toBeInTheDocument();
 }
 
+function expectNoPagination() {
+  expect(screen.queryByRole('button', { name: 'Previous page' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Next page' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Page 1' })).not.toBeInTheDocument();
+}
+
 it.each(['/aws/cloudformation', '/aws/cloudformation/stacks'])(
   'shows the Stacks frame and notice at %s',
   async (path) => {
@@ -214,6 +220,7 @@ it('shows loading, a genuinely empty page with an active filter, and distinct sa
   first.resolve(page([]));
   expect(await screen.findByText('No stacks')).toBeInTheDocument();
   expect(screen.getByText('Stacks created in this emulator will appear here.')).toBeInTheDocument();
+  expectNoPagination();
 
   fireEvent.click(refresh());
   const names = await screen.findAllByRole('rowheader', { name: 'App' });
@@ -225,7 +232,19 @@ it('shows loading, a genuinely empty page with an active filter, and distinct sa
   expect(rows[0]?.getByRole('cell', { name: creationDateText(new Date(CREATED)) })).toBeInTheDocument();
   expect(rows[0]?.getByRole('cell', { name: 'Local deployment' })).toBeInTheDocument();
   expect(rows[1]?.getByRole('cell', { name: '-' })).toBeInTheDocument();
+  expectNoPagination();
   expect(tokens()).toEqual([null, null]);
+});
+
+it('shows a scroll cue in the table header when its columns overflow', async () => {
+  vi.spyOn(Element.prototype, 'clientWidth', 'get').mockReturnValue(350);
+  vi.spyOn(Element.prototype, 'scrollWidth', 'get').mockImplementation(function (this: Element) {
+    return this.querySelector(':scope > table') === null ? 350 : 640;
+  });
+  engine.answer.mockReturnValueOnce(page([summary('id-1', 'Local stack')]));
+  open();
+  await expectStack('Local stack');
+  expect(screen.getByText('Scroll sideways to see more columns.')).toBeVisible();
 });
 
 it('rejects a partial page and shows the complete page on retry', async () => {
@@ -252,8 +271,20 @@ it('filters by case-insensitive substring on the current page without adding rea
 
   changeFilter('wEb');
   expect(screen.getByRole('rowheader', { name: 'DevWebApp' })).toBeInTheDocument();
+  expect(filter()).toHaveAccessibleDescription(/1 match on this page/);
   expectNoStack('DevWorkers');
-  changeFilter('missing');
+  filter().focus();
+  vi.useFakeTimers();
+  try {
+    changeFilter('missing');
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_100);
+    });
+    expect(screen.getByText(/^0 matches on this page\.?$/, { selector: '[aria-live="polite"]' })).toBeInTheDocument();
+  } finally {
+    vi.useRealTimers();
+  }
+  expect(filter()).toHaveFocus();
   expect(screen.getByText('No matching stacks')).toBeInTheDocument();
   expect(screen.getByText('Filters this page only.')).toBeInTheDocument();
   expect(next()).not.toHaveAttribute('aria-disabled', 'true');
@@ -281,7 +312,7 @@ it('reads a continuation on demand and rereads the previous page from its origin
   fireEvent.click(previous());
   await expectStack('Updated first');
   expect(tokens()).toEqual([null, 'more', null]);
-  expect(next()).toHaveAttribute('aria-disabled', 'true');
+  expectNoPagination();
 });
 
 it('resets the page and preserves the name filter on refresh and ignores a late response', async () => {
@@ -328,8 +359,7 @@ it('discards visible rows and the token on disconnect and starts at the first pa
   expect(await screen.findByText('No stacks')).toBeInTheDocument();
   expectNoStack('Current follow-up');
   expect(tokens()).toEqual([null, 'old-token', null]);
-  expect(next()).toHaveAttribute('aria-disabled', 'true');
-  expect(previous()).toHaveAttribute('aria-disabled', 'true');
+  expectNoPagination();
 });
 
 it.each([
