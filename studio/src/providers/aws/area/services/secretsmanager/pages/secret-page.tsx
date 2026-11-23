@@ -1,0 +1,271 @@
+import type { DescribeSecretCommandOutput } from '@aws-sdk/client-secrets-manager';
+import Alert from '@cloudscape-design/components/alert';
+import Box from '@cloudscape-design/components/box';
+import Button from '@cloudscape-design/components/button';
+import Container from '@cloudscape-design/components/container';
+import CopyToClipboard from '@cloudscape-design/components/copy-to-clipboard';
+import Header from '@cloudscape-design/components/header';
+import KeyValuePairs from '@cloudscape-design/components/key-value-pairs';
+import Link from '@cloudscape-design/components/link';
+import SpaceBetween from '@cloudscape-design/components/space-between';
+import StatusIndicator from '@cloudscape-design/components/status-indicator';
+import Table from '@cloudscape-design/components/table';
+import { useLayoutEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router';
+
+import type { RequestFailure } from '../../../../../../lib/aws/request';
+import { CopyValue } from '../../../components/copy-value';
+import type { AreaConnection } from '../../../components/emulator-line';
+import { ReadFailure, readFailureState } from '../../../components/failure-states';
+import { creationDateText } from '../../../components/format-date';
+import { useShowsResources } from '../../../components/page-resources';
+import { useFollow } from '../../../components/use-follow';
+import { failureOf } from '../../../components/use-token-listing';
+import { ValueText } from '../../../components/value-text';
+import { GET_SECRET_VALUE, getSecretValue } from '../api';
+import { SECRETS_PATH, secretName } from '../paths';
+import { useSecretDetail } from '../queries';
+
+type ValueState =
+  | { kind: 'hidden' }
+  | { kind: 'loading' }
+  | { kind: 'shown'; format: 'String' | 'Base64'; text: string }
+  | { kind: 'failure'; failure: RequestFailure };
+
+function SecretValue({
+  connection,
+  endpoint,
+  name,
+  versionId,
+}: {
+  connection: AreaConnection;
+  endpoint: string;
+  name: string;
+  versionId?: string;
+}) {
+  const [state, setState] = useState<ValueState>({ kind: 'hidden' });
+  const request = useRef<AbortController | null>(null);
+  useLayoutEffect(() => () => request.current?.abort(), []);
+
+  const failure = state.kind === 'failure' ? state.failure : undefined;
+  const error = failure === undefined ? undefined : readFailureState(failure, connection, 'secret value');
+  const open = state.kind === 'loading' || state.kind === 'shown';
+
+  const handleHide = () => {
+    request.current?.abort();
+    request.current = null;
+    setState({ kind: 'hidden' });
+  };
+
+  const handleRetrieve = async () => {
+    if (request.current !== null || failure?.kind === 'not-implemented') return;
+    const controller = new AbortController();
+    request.current = controller;
+    setState({ kind: 'loading' });
+    try {
+      const result = await getSecretValue(endpoint, { SecretId: name, VersionId: versionId }, controller.signal);
+      if (controller.signal.aborted) return;
+      if (result.SecretString !== undefined) {
+        setState({ kind: 'shown', format: 'String', text: result.SecretString });
+      } else if (result.SecretBinary !== undefined) {
+        setState({
+          kind: 'shown',
+          format: 'Base64',
+          text: btoa(Array.from(result.SecretBinary, (byte) => String.fromCharCode(byte)).join('')),
+        });
+      } else {
+        setState({
+          kind: 'failure',
+          failure: { kind: 'other', operation: GET_SECRET_VALUE, code: 'No secret value returned' },
+        });
+      }
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        setState({ kind: 'failure', failure: failureOf(error, GET_SECRET_VALUE) });
+      }
+    } finally {
+      if (request.current === controller) request.current = null;
+    }
+  };
+
+  return (
+    <Container
+      header={
+        <Header
+          variant="h2"
+          actions={
+            <Button
+              disabled={failure?.kind === 'not-implemented'}
+              onClick={open ? handleHide : () => void handleRetrieve()}
+            >
+              {open ? 'Hide secret value' : 'Retrieve secret value'}
+            </Button>
+          }
+        >
+          Secret value
+        </Header>
+      }
+    >
+      <SpaceBetween size="s">
+        {error !== undefined && (
+          <Alert type={failure?.kind === 'not-implemented' ? 'info' : 'error'} header={error.first}>
+            {error.detail}
+          </Alert>
+        )}
+        {state.kind === 'loading' ? (
+          <StatusIndicator type="loading">Retrieving secret value</StatusIndicator>
+        ) : state.kind === 'shown' ? (
+          <SpaceBetween size="xs">
+            <Box variant="strong">{state.format}</Box>
+            <Box nativeAttributes={{ style: { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } }}>{state.text}</Box>
+            <CopyToClipboard
+              copyButtonText="Copy secret value"
+              copyButtonAriaLabel="Copy secret value"
+              copySuccessText="Secret value copied"
+              copyErrorText="Secret value could not be copied"
+              textToCopy={state.text}
+              popoverRenderWithPortal={false}
+            />
+          </SpaceBetween>
+        ) : (
+          <Box color="text-body-secondary">Secret value is hidden.</Box>
+        )}
+      </SpaceBetween>
+    </Container>
+  );
+}
+
+function SecretMetadata({
+  details,
+  currentVersion,
+}: {
+  details: DescribeSecretCommandOutput;
+  currentVersion: string | undefined;
+}) {
+  const date = (value: Date | undefined) => <ValueText kind="fixed" value={creationDateText(value)} />;
+  return (
+    <Container header={<Header variant="h2">Secret details</Header>}>
+      <KeyValuePairs
+        columns={2}
+        items={[
+          {
+            type: 'group',
+            items: [
+              { label: 'ARN', value: <CopyValue label="ARN" value={details.ARN} none="-" /> },
+              { label: 'Description', value: <ValueText kind="text" value={details.Description} none="-" /> },
+              {
+                label: 'Encryption key',
+                value: <CopyValue label="Encryption key" value={details.KmsKeyId} none="-" />,
+              },
+              {
+                label: 'Current version ID',
+                value: <CopyValue label="Current version ID" kind="name" value={currentVersion} none="-" />,
+              },
+            ],
+          },
+          {
+            type: 'group',
+            items: [
+              { label: 'Created', value: date(details.CreatedDate) },
+              { label: 'Last changed', value: date(details.LastChangedDate) },
+              { label: 'Last accessed', value: date(details.LastAccessedDate) },
+              ...(details.DeletedDate === undefined
+                ? []
+                : [{ label: 'Scheduled deletion', value: date(details.DeletedDate) }]),
+            ],
+          },
+        ]}
+      />
+    </Container>
+  );
+}
+
+function SecretDetails({ connection, name }: { connection: AreaConnection; name: string }) {
+  const handleFollow = useFollow();
+  const { details, failure, connectionFailure, loading, refresh } = useSecretDetail(connection, name);
+  const readFailure = connectionFailure ?? failure;
+  const unavailable = readFailure?.kind === 'not-implemented';
+  const missing = name === '' || (readFailure?.kind === 'other' && readFailure.code === 'ResourceNotFoundException');
+  const state = readFailure === undefined ? undefined : readFailureState(readFailure, connection, 'secret details');
+  const currentVersion = Object.entries(details?.VersionIdsToStages ?? {}).find(([, stages]) =>
+    stages.includes('AWSCURRENT'),
+  )?.[0];
+  const endpoint = connection.engineOrigin;
+
+  return (
+    <SpaceBetween size="m">
+      <Header
+        variant="h1"
+        actions={
+          !missing && (
+            <Button
+              iconName="refresh"
+              ariaLabel="Refresh"
+              disabled={unavailable || loading || connectionFailure !== undefined}
+              onClick={refresh}
+            />
+          )
+        }
+      >
+        <ValueText kind="name" value={name} none="Secret details" />
+      </Header>
+      {missing ? (
+        <Alert type="error" header="Secret not found">
+          <SpaceBetween size="xs">
+            <Box>{name === '' ? 'Choose a secret from the list.' : `Your local emulator could not find ${name}.`}</Box>
+            <Link href={SECRETS_PATH} onFollow={handleFollow}>
+              Back to secrets
+            </Link>
+          </SpaceBetween>
+        </Alert>
+      ) : unavailable && state !== undefined ? (
+        <Alert type="info" header={state.first} action={<Button disabled>Retry</Button>}>
+          {state.detail}
+        </Alert>
+      ) : state !== undefined ? (
+        <Container>
+          <ReadFailure state={state} onRetry={refresh} />
+        </Container>
+      ) : details === undefined ? (
+        <StatusIndicator type="loading">Loading secret details</StatusIndicator>
+      ) : (
+        <>
+          <SecretMetadata details={details} currentVersion={currentVersion} />
+          {endpoint !== undefined && (
+            <SecretValue
+              key={JSON.stringify([endpoint, currentVersion])}
+              endpoint={endpoint}
+              name={name}
+              connection={connection}
+            />
+          )}
+          <Table
+            variant="container"
+            header={<Header variant="h2">Tags</Header>}
+            columnDefinitions={[
+              {
+                id: 'key',
+                header: 'Key',
+                isRowHeader: true,
+                minWidth: '24ch',
+                cell: ({ Key }) => <ValueText kind="name" value={Key} />,
+              },
+              { id: 'value', header: 'Value', cell: ({ Value }) => <ValueText kind="text" value={Value} /> },
+            ]}
+            items={details.Tags ?? []}
+            trackBy="Key"
+            empty={<Box textAlign="center">No tags</Box>}
+            wrapLines
+          />
+        </>
+      )}
+    </SpaceBetween>
+  );
+}
+
+export function SecretPage({ connection }: { connection: AreaConnection }) {
+  useShowsResources('secrets');
+  const [query] = useSearchParams();
+  const name = secretName(query);
+  return <SecretDetails key={name} name={name} connection={connection} />;
+}
