@@ -1,4 +1,4 @@
-import type { SecretListEntry } from '@aws-sdk/client-secrets-manager';
+import type { SecretListEntry, SecretVersionsListEntry } from '@aws-sdk/client-secrets-manager';
 import { useQuery, useQueryClient, type QueryFilters } from '@tanstack/react-query';
 import { useState } from 'react';
 
@@ -6,6 +6,12 @@ import type { RequestFailure } from '../../../../../lib/aws/request';
 import type { AreaConnection } from '../../components/emulator-line';
 import { failureOf, noEndpoint, useTokenListing } from '../../components/use-token-listing';
 import { DESCRIBE_SECRET, describeSecret, LIST_SECRETS, listSecrets } from './api';
+import {
+  GET_RESOURCE_POLICY,
+  getResourcePolicy,
+  LIST_SECRET_VERSION_IDS,
+  listSecretVersionIds,
+} from './versions-policy-api';
 
 const SERVICE_KEY = ['aws', 'secretsmanager'] as const;
 const PAGE_SIZE = 50;
@@ -73,6 +79,43 @@ export function useSecretDetail(connection: AreaConnection, name: string) {
   };
 }
 
+export function useVersionListing(endpoint: string, name: string, opened: boolean) {
+  const [unsupported, setUnsupported] = useState<RequestFailure>();
+  const listing = useTokenListing<SecretVersionsListEntry>({
+    key: [...SERVICE_KEY, LIST_SECRET_VERSION_IDS, name, true, PAGE_SIZE],
+    endpoint,
+    enabled: opened && unsupported === undefined,
+    operation: LIST_SECRET_VERSION_IDS,
+    read: async (origin, token, signal) => {
+      const { Versions, NextToken } = await listSecretVersionIds(
+        origin,
+        { SecretId: name, IncludeDeprecated: true, MaxResults: PAGE_SIZE, NextToken: token },
+        signal,
+      );
+      signal.throwIfAborted();
+      return { items: Versions ?? [], ...(NextToken ? { next: NextToken } : {}) };
+    },
+  });
+  if (unsupported === undefined && listing.failure?.kind === 'not-implemented') setUnsupported(listing.failure);
+  return { ...listing, failure: unsupported ?? listing.failure };
+}
+
+export function useResourcePolicy(endpoint: string, name: string, opened: boolean) {
+  const query = useQuery({
+    queryKey: [...SERVICE_KEY, GET_RESOURCE_POLICY, endpoint, name],
+    queryFn: ({ signal }) => getResourcePolicy(endpoint, name, signal),
+    enabled: (query) => opened && failureOf(query.state.error, GET_RESOURCE_POLICY).kind !== 'not-implemented',
+    retry: false,
+    gcTime: 0,
+  });
+  return {
+    document: query.isError ? undefined : query.data?.ResourcePolicy,
+    failure: query.isError ? failureOf(query.error, GET_RESOURCE_POLICY) : undefined,
+    loading: query.isPending,
+    refresh: () => void query.refetch(),
+  };
+}
+
 /** Refresh any mounted reads for this target and mark the other affected reads stale. */
 export function useRefreshSecretReads() {
   const client = useQueryClient();
@@ -81,7 +124,7 @@ export function useRefreshSecretReads() {
     void client.cancelQueries({ ...filters, fetchStatus: 'fetching' });
     void client.invalidateQueries(filters);
   };
-  return (endpoint: string, name: string, versions = false) => {
+  return (endpoint: string, name: string, section?: 'versions' | 'policy') => {
     refresh({
       queryKey: [...SERVICE_KEY, LIST_SECRETS],
       // The listing appends endpoint before its mount and pagination fields.
@@ -92,8 +135,19 @@ export function useRefreshSecretReads() {
       queryKey: [...SERVICE_KEY, DESCRIBE_SECRET, endpoint, name],
       predicate: (query) => failureOf(query.state.error, DESCRIBE_SECRET).kind !== 'not-implemented',
     });
-    if (versions) {
-      refresh({ queryKey: [...SERVICE_KEY, 'ListSecretVersionIds', endpoint, name] });
+    if (section === 'versions') {
+      refresh({
+        queryKey: [...SERVICE_KEY, LIST_SECRET_VERSION_IDS, name],
+        predicate: (query) =>
+          query.queryKey.at(-5) === endpoint &&
+          failureOf(query.state.error, LIST_SECRET_VERSION_IDS).kind !== 'not-implemented',
+      });
+    }
+    if (section === 'policy') {
+      refresh({
+        queryKey: [...SERVICE_KEY, GET_RESOURCE_POLICY, endpoint, name],
+        predicate: (query) => failureOf(query.state.error, GET_RESOURCE_POLICY).kind !== 'not-implemented',
+      });
     }
   };
 }
