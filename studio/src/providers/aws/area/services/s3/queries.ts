@@ -804,6 +804,9 @@ function invalidateObjectReads(client: QueryClient, endpoint: string, { bucket, 
   });
 }
 
+export const NULL_MARKER_REMOVAL_REASON =
+  'This null delete marker cannot be removed safely because its version ID can also refer to an object body.';
+
 /** Write to the current key by copying a version or by removing one specific delete marker. */
 export function useChangeObjectVersion(endpoint: string | undefined, bucket: string) {
   const client = useQueryClient();
@@ -817,6 +820,14 @@ export function useChangeObjectVersion(endpoint: string | undefined, bucket: str
           ...(etag !== undefined && { sourceETag: etag }),
         });
       } else {
+        if (versionId === 'null') {
+          throw new RequestError({
+            kind: 'other',
+            operation: OPERATIONS.deleteObject,
+            code: 'ReusableDeleteMarkerId',
+            message: NULL_MARKER_REMOVAL_REASON,
+          });
+        }
         await deleteObject(endpoint, object, signal, versionId);
       }
       if (!signal.aborted) invalidateObjectReads(client, endpoint, object);
