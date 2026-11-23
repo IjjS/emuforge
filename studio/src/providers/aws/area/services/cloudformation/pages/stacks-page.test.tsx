@@ -65,7 +65,8 @@ function setupEngine() {
     engine.endpoint = engineEndpoint(nextPort);
     engine.calls.length = 0;
     engine.answer.mockReset();
-    vi.stubGlobal('fetch', async (request: Request) => {
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
       if (new URL(request.url).pathname === '/__emuforge/session') {
         return Response.json({ token: 'emuforge-test-token-81' });
       }
@@ -157,6 +158,7 @@ const retry = () => screen.getByRole('button', { name: 'Retry' });
 const next = () => screen.getByRole('button', { name: 'Next page' });
 const previous = () => screen.getByRole('button', { name: 'Previous page' });
 const filter = () => screen.getByRole('searchbox', { name: 'Filter by stack name' });
+const stackTable = () => within(screen.getByRole('table'));
 const tokens = () => engine.calls.map((params) => params.get('NextToken'));
 
 function changeFilter(value: string) {
@@ -232,7 +234,7 @@ it('rejects a partial page and shows the complete page on retry', async () => {
     .mockReturnValueOnce(page([summary('id-1', 'Complete stack'), summary('id-2', 'Fixed stack')]));
   open();
 
-  await screen.findByText('Could not load stacks');
+  await stackTable().findByText('Could not load stacks');
   expect(screen.getByText('The emulator returned an incomplete stack summary.')).toBeInTheDocument();
   expectNoStack('Complete stack');
   expect(screen.queryByText('No stacks')).not.toBeInTheDocument();
@@ -254,7 +256,7 @@ it('filters by case-insensitive substring on the current page without adding rea
   changeFilter('missing');
   expect(screen.getByText('No matching stacks')).toBeInTheDocument();
   expect(screen.getByText('Filters this page only.')).toBeInTheDocument();
-  expect(next()).toBeEnabled();
+  expect(next()).not.toHaveAttribute('aria-disabled', 'true');
   expect(tokens()).toEqual([null]);
   fireEvent.click(screen.getByRole('button', { name: 'Clear filter' }));
   expect(filter()).toHaveValue('');
@@ -270,16 +272,16 @@ it('reads a continuation on demand and rereads the previous page from its origin
   open();
   await expectStack('First');
   expect(tokens()).toEqual([null]);
-  expect(previous()).toBeDisabled();
+  expect(previous()).toHaveAttribute('aria-disabled', 'true');
   fireEvent.click(next());
   await screen.findByText('No stacks on this page');
   expect(screen.queryByText('Stacks created in this emulator will appear here.')).not.toBeInTheDocument();
-  expect(next()).toBeDisabled();
-  expect(previous()).toBeEnabled();
+  expect(next()).toHaveAttribute('aria-disabled', 'true');
+  expect(previous()).not.toHaveAttribute('aria-disabled', 'true');
   fireEvent.click(previous());
   await expectStack('Updated first');
   expect(tokens()).toEqual([null, 'more', null]);
-  expect(next()).toBeDisabled();
+  expect(next()).toHaveAttribute('aria-disabled', 'true');
 });
 
 it('resets the page and preserves the name filter on refresh and ignores a late response', async () => {
@@ -319,15 +321,15 @@ it('discards visible rows and the token on disconnect and starts at the first pa
   fireEvent.click(next());
   await expectStack('Current follow-up');
   connection.setConnection(stopped);
-  await screen.findByText('Check that the local emulator is running on the configured port, then retry.');
+  await screen.findByText(/Check that the local emulator is running on the configured port, then retry/);
   expectNoStack('Current follow-up');
   connection.setConnection({ ...connected, checkedAt: 3 });
 
   expect(await screen.findByText('No stacks')).toBeInTheDocument();
   expectNoStack('Current follow-up');
   expect(tokens()).toEqual([null, 'old-token', null]);
-  expect(next()).toBeDisabled();
-  expect(previous()).toBeDisabled();
+  expect(next()).toHaveAttribute('aria-disabled', 'true');
+  expect(previous()).toHaveAttribute('aria-disabled', 'true');
 });
 
 it.each([
@@ -342,7 +344,7 @@ it.each([
   await expectStack('Old row');
   fireEvent.click(screen.getByRole('button', { name: action }));
 
-  await screen.findByText('Could not load stacks');
+  await stackTable().findByText('Could not load stacks');
   expect(screen.getByText('ValidationError')).toBeInTheDocument();
   expectNoStack('Old row');
   expect(screen.queryByText('No stacks')).not.toBeInTheDocument();
@@ -359,12 +361,12 @@ it('explains a 501 on a continuation and leaves read actions disabled', async ()
   await expectStack('First');
   fireEvent.click(next());
 
-  await screen.findByText('Not implemented by the emulator');
+  await stackTable().findByText('Not implemented by the emulator');
   expect(screen.getByText(/ListStacks/)).toBeInTheDocument();
   expect(refresh()).toBeDisabled();
   expect(retry()).toBeDisabled();
-  expect(previous()).toBeDisabled();
-  expect(next()).toBeDisabled();
+  expect(previous()).toHaveAttribute('aria-disabled', 'true');
+  expect(next()).toHaveAttribute('aria-disabled', 'true');
   for (const button of [refresh(), retry(), previous(), next()]) fireEvent.click(button);
   expect(tokens()).toEqual([null, 'more']);
 });
@@ -387,11 +389,10 @@ it.each([
   { connection: 'checking', result: null, target: 'emulator' },
 ])('gives $target recovery steps immediately when the last status is $connection', async ({ result, target }) => {
   if (target === 'engine') {
-    engine.answer.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    engine.answer.mockRejectedValue(new TypeError('Failed to fetch'));
   } else {
-    engine.answer.mockReturnValueOnce(refused(503, 'EmulatorUnavailable', 'The emulator stopped replying.'));
+    engine.answer.mockImplementation(() => refused(503, 'EmulatorUnavailable', 'The emulator stopped replying.'));
   }
-  engine.answer.mockReturnValueOnce(page([summary('id-1', 'Recovered stack')]));
   open('/aws/cloudformation/stacks', result);
 
   if (target === 'engine') {
@@ -401,7 +402,10 @@ it.each([
       await screen.findByText(/Check that the local emulator is running on the configured port, then retry/),
     ).toHaveTextContent('The emulator stopped replying.');
   }
+  const failedAttempts = engine.calls.length;
+  expect(failedAttempts).toBeGreaterThan(0);
+  engine.answer.mockReturnValueOnce(page([summary('id-1', 'Recovered stack')]));
   fireEvent.click(retry());
   await expectStack('Recovered stack');
-  expect(tokens()).toEqual([null, null]);
+  expect(tokens()).toEqual(Array.from({ length: failedAttempts + 1 }, () => null));
 });

@@ -212,6 +212,7 @@ export function StacksPage({ connection }: { connection: AreaConnection }) {
               filteringText={filter}
               filteringPlaceholder={FILTER_LABEL}
               filteringAriaLabel={FILTER_LABEL}
+              filteringClearAriaLabel="Clear stack name filter"
               onChange={({ detail }) => {
                 setFilter(detail.filteringText);
               }}
