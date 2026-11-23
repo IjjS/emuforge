@@ -65,34 +65,43 @@ const NO_MESSAGE: ReadonlySet<string> = new Set(['UnknownError', 'Unknown']);
 
 interface ErrorAnswer {
   Code?: unknown;
+  code?: unknown;
+  __type?: unknown;
   name?: unknown;
   message?: unknown;
   $fault?: unknown;
   $metadata?: { httpStatusCode?: unknown };
-  $response?: { reason?: unknown };
+  $response?: { reason?: unknown; statusCode?: unknown; headers?: Record<string, unknown> };
 }
 
 function text(value: unknown): string | undefined {
   return typeof value === 'string' && value !== '' ? value : undefined;
 }
 
-/**
- * The code the answer wrote (R5.1), never a name the SDK made up: `Code`, else the `name` of the SDK's service
- * exception unless it is the SDK's name for an answer without a code, else none.
- */
+function headerCode(headers: ErrorAnswer['$response']): string | undefined {
+  const entry = Object.entries(headers?.headers ?? {}).find(([key]) => key.toLowerCase() === 'x-amzn-errortype');
+  const code = text(entry?.[1])?.split(/[,:]/, 1)[0]?.split('#').at(-1);
+  return text(code?.trim());
+}
+
+/** Keep the protocol's decoded exception name when it identifies a service code. */
 function codeOf(answer: ErrorAnswer, status: number): string | undefined {
   const code = text(answer.Code);
   if (code !== undefined) {
     return code;
   }
   const name = text(answer.name);
-  if (name === undefined || typeof answer.$fault !== 'string' || name === 'Unknown') {
-    return undefined;
+  if (name === 'SyntaxError') {
+    return headerCode(answer.$response);
   }
-  if (name === 'NotFound' && status === 404 && typeof answer.message === 'string' && NO_MESSAGE.has(answer.message)) {
-    return undefined;
+  if (typeof answer.$fault === 'string') {
+    const syntheticNotFound = name === 'NotFound' && status === 404 && NO_MESSAGE.has(text(answer.message) ?? '');
+    if (name !== undefined && name !== 'Unknown' && !syntheticNotFound) {
+      return name;
+    }
+    return text(answer.code) ?? text(answer.__type) ?? headerCode(answer.$response);
   }
-  return name;
+  return undefined;
 }
 
 /** The failure of `operation` that `error`, a rejection of the SDK or of the session, stands for (R5). */
@@ -112,7 +121,7 @@ export function requestFailure(operation: string, error: unknown): RequestFailur
       : { kind: 'other', operation, code: error.code ?? `HTTP ${String(error.status)}` };
   }
   const answer = (typeof error === 'object' && error !== null ? error : {}) as ErrorAnswer;
-  const status = answer.$metadata?.httpStatusCode;
+  const status = answer.$metadata?.httpStatusCode ?? answer.$response?.statusCode;
   if (typeof status !== 'number') {
     return { kind: 'engine-did-not-answer', operation };
   }
@@ -140,7 +149,11 @@ export function requestFailure(operation: string, error: unknown): RequestFailur
       code: reason === undefined ? `HTTP ${String(status)}` : `HTTP ${String(status)} ${reason}`,
     };
   }
-  const message = text(answer.message);
+  const rawMessage = text(answer.message);
+  const message =
+    answer.name === 'SyntaxError' || (code === 'NotFound' && status === 404 && NO_MESSAGE.has(rawMessage ?? ''))
+      ? undefined
+      : rawMessage;
   if (ACCESS_DENIED.has(code)) {
     return withReportedCode({ kind: 'access-denied', operation, message: message ?? '' }, code);
   }
