@@ -82,9 +82,14 @@ describe('Key rotation', () => {
     click('Next page');
     expect(await screen.findByRole('row', { name: `${creationDateText(earlier)} Automatic` })).toBeVisible();
     expect(screen.queryByText('On-demand')).toBeNull();
-    expect(send).toHaveBeenCalledWith(new ListKeyRotationsCommand({ KeyId: keyId, Marker: 'older-rotations' }), {
-      abortSignal: expect.any(AbortSignal),
-    });
+    expect(
+      send.mock.calls.find(
+        ([command]) => command instanceof ListKeyRotationsCommand && command.input.Marker === 'older-rotations',
+      ),
+    ).toEqual([
+      expect.objectContaining({ input: { KeyId: keyId, Marker: 'older-rotations' } }),
+      { abortSignal: expect.any(AbortSignal) },
+    ]);
   });
 
   it('keeps the refreshed history and success notice when settings arrive later', async () => {
@@ -110,9 +115,10 @@ describe('Key rotation', () => {
       expect(send.mock.calls.filter(([command]) => command instanceof GetKeyRotationStatusCommand)).toHaveLength(2);
       expect(send.mock.calls.filter(([command]) => command instanceof ListKeyRotationsCommand)).toHaveLength(2);
     });
-    expect(send).toHaveBeenCalledWith(new RotateKeyOnDemandCommand({ KeyId: keyId }), {
-      abortSignal: expect.any(AbortSignal),
-    });
+    expect(send.mock.calls.find(([command]) => command instanceof RotateKeyOnDemandCommand)).toEqual([
+      expect.objectContaining({ input: { KeyId: keyId } }),
+      { abortSignal: expect.any(AbortSignal) },
+    ]);
 
     await act(() =>
       history.resolve({ $metadata: {}, Rotations: [{ RotationDate: rotationDate, RotationType: 'ON_DEMAND' }] }),
@@ -172,12 +178,14 @@ describe('Key rotation', () => {
     click('Disable automatic rotation');
     expect(await screen.findByText('Automatic rotation disabled.')).toBeVisible();
     expect(await screen.findByText('Disabled')).toBeVisible();
-    expect(send).toHaveBeenCalledWith(new EnableKeyRotationCommand({ KeyId: keyId }), {
-      abortSignal: expect.any(AbortSignal),
-    });
-    expect(send).toHaveBeenCalledWith(new DisableKeyRotationCommand({ KeyId: keyId }), {
-      abortSignal: expect.any(AbortSignal),
-    });
+    expect(send.mock.calls.find(([command]) => command instanceof EnableKeyRotationCommand)).toEqual([
+      expect.objectContaining({ input: { KeyId: keyId } }),
+      { abortSignal: expect.any(AbortSignal) },
+    ]);
+    expect(send.mock.calls.find(([command]) => command instanceof DisableKeyRotationCommand)).toEqual([
+      expect.objectContaining({ input: { KeyId: keyId } }),
+      { abortSignal: expect.any(AbortSignal) },
+    ]);
   });
 
   it('leaves an unimplemented action visible and disables it without disabling other operations', async () => {
