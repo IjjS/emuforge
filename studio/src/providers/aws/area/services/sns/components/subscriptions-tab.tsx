@@ -1,12 +1,12 @@
 import Box from '@cloudscape-design/components/box';
-import Button from '@cloudscape-design/components/button';
+import Button, { type ButtonProps } from '@cloudscape-design/components/button';
 import Header from '@cloudscape-design/components/header';
 import Link from '@cloudscape-design/components/link';
 import Pagination from '@cloudscape-design/components/pagination';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Table, { type TableProps } from '@cloudscape-design/components/table';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { AreaConnection } from '../../../components/emulator-line';
 import { actionFailureItem, readFailureState, ReadFailure } from '../../../components/failure-states';
@@ -45,7 +45,7 @@ export interface SubscriptionsTabProps {
   connection: AreaConnection;
   /** Reads the topic again, after a change of its subscriptions. */
   onTopicChanged: () => void;
-  onSaveSetting: (arn: string, setting: SubscriptionSetting) => Promise<void>;
+  onSaveSetting: (arn: string, setting: SubscriptionSetting) => Promise<boolean>;
   settingsSave: {
     pending: { arn: string; setting: SubscriptionSetting } | undefined;
     unavailableArns: ReadonlySet<string>;
@@ -167,6 +167,7 @@ export function SubscriptionsTab({
   const unsubscribe = useUnsubscribe(connection.engineOrigin);
   const [selectedKey, setSelectedKey] = useState<string>();
   const [settingsFor, setSettingsFor] = useState<Subscription>();
+  const settingsButton = useRef<ButtonProps.Ref>(null);
   const [views, setViews] = useState<Readonly<Record<string, DeliveryView>>>({});
   const [allowing, setAllowing] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -396,6 +397,7 @@ export function SubscriptionsTab({
             actions={
               <SpaceBetween direction="horizontal" size="xs">
                 <Button
+                  ref={settingsButton}
                   disabled={!canOpenSettings}
                   disabledReason={
                     settingsTarget === undefined ? 'Select a subscription.' : 'A pending subscription has no ARN.'
@@ -452,6 +454,7 @@ export function SubscriptionsTab({
           saveUnavailable={settingsSave.unavailableArns.has(settingsFor.arn)}
           onClose={() => {
             setSettingsFor(undefined);
+            settingsButton.current?.focus();
           }}
         />
       )}

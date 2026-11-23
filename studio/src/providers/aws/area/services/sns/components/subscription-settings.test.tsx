@@ -146,10 +146,27 @@ describe('subscription settings', () => {
     expect(screen.getByText('Loading subscription settings')).toBeVisible();
     read.resolve({});
     expect(await screen.findByText('No filter policy')).toBeVisible();
+    expect(screen.getByText('Enter a JSON filter policy.')).toBeVisible();
+    expect(screen.getByText('Save a filter policy to edit its scope.')).toBeVisible();
+    changePolicy(REPLACEMENT);
     expectValue('Filter policy scope', 'Not set');
     expectValue('Raw message delivery', 'Not set');
     expect(disabled(fieldSelect('Filter policy scope').findTrigger().getElement())).toBe(true);
     expect(disabled(button('Save scope'))).toBe(true);
+  });
+
+  it('focuses the settings heading on open and restores focus to the opener on Close', async () => {
+    const read = hold<api.SubscriptionSettingsAttributes>();
+    vi.mocked(api.getSubscriptionSettings).mockReturnValueOnce(read.promise);
+    await openSettings();
+    const heading = screen.getByRole('heading', { name: 'Subscription settings' });
+    expect(heading).toHaveFocus();
+    read.resolve(SETTINGS);
+    await screen.findByDisplayValue(POLICY);
+    expect(heading).toHaveFocus();
+    click('Close');
+    expect(heading).not.toBeInTheDocument();
+    expect(button('Subscription settings')).toHaveFocus();
   });
 
   it('sets raw delivery on without a policy and shows the readback', async () => {
@@ -229,6 +246,69 @@ describe('subscription settings', () => {
     );
     write.resolve(undefined);
     expect(await screen.findByText('Subscription settings updated')).toBeVisible();
+  });
+
+  it('preserves the policy and scope drafts through Refresh and raw delivery readback', async () => {
+    const externalPolicy = '{"color":["green"]}';
+    const refreshed = { ...SETTINGS, FilterPolicy: externalPolicy, RawMessageDelivery: 'true' };
+    const readback = hold<api.SubscriptionSettingsAttributes>();
+    vi.mocked(api.getSubscriptionSettings)
+      .mockResolvedValueOnce(SETTINGS)
+      .mockResolvedValueOnce(refreshed)
+      .mockReturnValueOnce(readback.promise)
+      .mockResolvedValueOnce({ ...refreshed });
+    await openSettings();
+    await screen.findByDisplayValue(POLICY);
+    changePolicy(REPLACEMENT);
+    choose('Filter policy scope', 'MessageAttributes');
+
+    fireEvent.click(refreshSettings());
+    expect(await screen.findByText(externalPolicy)).toBeVisible();
+    expect(screen.getByDisplayValue(REPLACEMENT)).toBeVisible();
+    expectValue('Filter policy scope', 'Message attributes');
+    expectValue('Raw message delivery', 'On');
+
+    choose('Raw message delivery', 'false');
+    click('Save raw message delivery');
+    expect(await screen.findByText('Subscription settings updated')).toBeVisible();
+    expect(screen.getByDisplayValue(REPLACEMENT)).toBeVisible();
+    expectValue('Raw message delivery', 'Off');
+    readback.resolve({ ...refreshed, RawMessageDelivery: 'false' });
+    await waitFor(() => {
+      expect(disabled(button('Save filter policy'))).toBe(false);
+      expect(disabled(button('Save scope'))).toBe(false);
+    });
+    expect(screen.getByDisplayValue(REPLACEMENT)).toBeVisible();
+    expectValue('Filter policy scope', 'Message attributes');
+    expectValue('Raw message delivery', 'Off');
+    expect(disabled(button('Save raw message delivery'))).toBe(true);
+    expect(api.setSubscriptionSetting).toHaveBeenCalledExactlyOnceWith(
+      ENGINE,
+      ARN,
+      { name: 'RawMessageDelivery', value: 'false' },
+      expect.any(AbortSignal),
+    );
+
+    fireEvent.click(refreshSettings());
+    await waitFor(() => expectValue('Raw message delivery', 'On'));
+    expect(screen.getByDisplayValue(REPLACEMENT)).toBeVisible();
+    expectValue('Filter policy scope', 'Message attributes');
+  });
+
+  it('reconciles a saved policy to the emulator readback and preserves the raw delivery draft', async () => {
+    const submitted = '{ "color" : ["blue"] }';
+    vi.mocked(api.getSubscriptionSettings)
+      .mockResolvedValueOnce(SETTINGS)
+      .mockResolvedValueOnce({ ...SETTINGS, FilterPolicy: REPLACEMENT });
+    await openSettings();
+    await screen.findByDisplayValue(POLICY);
+    changePolicy(submitted);
+    choose('Raw message delivery', 'true');
+    click('Save filter policy');
+    expect(await screen.findByDisplayValue(REPLACEMENT)).toBeVisible();
+    expect(disabled(button('Save filter policy'))).toBe(true);
+    expect(disabled(button('Save raw message delivery'))).toBe(false);
+    expectValue('Raw message delivery', 'On');
   });
 
   it('keeps the write result alongside a failed readback and retries the read', async () => {

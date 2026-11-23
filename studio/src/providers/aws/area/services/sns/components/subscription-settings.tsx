@@ -8,7 +8,7 @@ import Select from '@cloudscape-design/components/select';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Textarea from '@cloudscape-design/components/textarea';
-import { useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 
 import { AreaModal } from '../../../components/area-modal';
 import { CopyValue } from '../../../components/copy-value';
@@ -33,7 +33,7 @@ interface SubscriptionSettingsProps {
   connection: AreaConnection;
   pending: { arn: string; setting: SubscriptionSetting } | undefined;
   saveUnavailable: boolean;
-  onSave: (arn: string, setting: SubscriptionSetting) => Promise<void>;
+  onSave: (arn: string, setting: SubscriptionSetting) => Promise<boolean>;
   onClose: () => void;
 }
 
@@ -42,33 +42,69 @@ interface SettingsFieldsProps {
   arn: string;
   disabled: boolean;
   saving: SubscriptionSetting | undefined;
-  onSave: (setting: SubscriptionSetting) => void;
+  onSave: (setting: SubscriptionSetting) => Promise<boolean>;
 }
+
+type Drafts = Record<SubscriptionSetting['name'], string | undefined>;
 
 function SettingsFields({ settings, arn, disabled, saving, onSave }: SettingsFieldsProps) {
   const [read, setRead] = useState(settings);
-  const [policyDraft, setPolicyDraft] = useState<string>();
-  const [scopeDraft, setScopeDraft] = useState<(typeof SCOPE_OPTIONS)[number]>();
-  const [rawDraft, setRawDraft] = useState<(typeof RAW_OPTIONS)[number]>();
+  const [drafts, setDrafts] = useState<Drafts>({
+    FilterPolicy: undefined,
+    FilterPolicyScope: undefined,
+    RawMessageDelivery: undefined,
+  });
   const [clearOpen, setClearOpen] = useState(false);
-  if (settings !== read) {
-    setRead(settings);
-    setPolicyDraft(undefined);
-    setScopeDraft(undefined);
-    setRawDraft(undefined);
-    setClearOpen(false);
-  }
-  const policy = policyDraft ?? settings.FilterPolicy ?? '';
+  const [submitted, setSubmitted] = useState<{
+    name: SubscriptionSetting['name'];
+    before: SubscriptionSettingsAttributes;
+  }>();
+  const savedPolicy = settings.FilterPolicy ?? '';
   const hasPolicy = settings.FilterPolicy !== undefined;
   const currentScope = hasPolicy ? settings.FilterPolicyScope : undefined;
-  const scope = scopeDraft ?? SCOPE_OPTIONS.find(({ value }) => value === currentScope);
-  const raw = rawDraft ?? RAW_OPTIONS.find(({ value }) => value === settings.RawMessageDelivery);
+  const savedName = submitted !== undefined && submitted.before !== settings ? submitted.name : undefined;
+  if (settings !== read || savedName !== undefined) {
+    setRead(settings);
+    setDrafts({
+      FilterPolicy:
+        savedName === 'FilterPolicy' || drafts.FilterPolicy === savedPolicy ? undefined : drafts.FilterPolicy,
+      FilterPolicyScope:
+        savedName === 'FilterPolicyScope' || drafts.FilterPolicyScope === currentScope
+          ? undefined
+          : drafts.FilterPolicyScope,
+      RawMessageDelivery:
+        savedName === 'RawMessageDelivery' || drafts.RawMessageDelivery === settings.RawMessageDelivery
+          ? undefined
+          : drafts.RawMessageDelivery,
+    });
+    if (savedName !== undefined) {
+      setSubmitted(undefined);
+    }
+    setClearOpen(false);
+  }
+  const policy = drafts.FilterPolicy ?? savedPolicy;
+  const scope = SCOPE_OPTIONS.find(
+    ({ value }) => value === (hasPolicy ? (drafts.FilterPolicyScope ?? currentScope) : undefined),
+  );
+  const raw = RAW_OPTIONS.find(({ value }) => value === (drafts.RawMessageDelivery ?? settings.RawMessageDelivery));
+
+  const handleDraft = (name: SubscriptionSetting['name'], value: string | undefined) => {
+    const saved = name === 'FilterPolicy' ? savedPolicy : settings[name];
+    setDrafts((current) => ({ ...current, [name]: value === saved ? undefined : value }));
+  };
+
+  const handleSave = async (setting: SubscriptionSetting) => {
+    if (await onSave(setting)) {
+      setSubmitted({ name: setting.name, before: settings });
+    }
+  };
 
   return (
     <SpaceBetween size="l">
       <SpaceBetween size="xs">
         <FormField
           label="Filter policy"
+          constraintText="Enter a JSON filter policy."
           description={
             !hasPolicy ? (
               'No filter policy'
@@ -83,7 +119,7 @@ function SettingsFields({ settings, arn, disabled, saving, onSave }: SettingsFie
             value={policy}
             disabled={disabled}
             onChange={({ detail }) => {
-              setPolicyDraft(detail.value);
+              handleDraft('FilterPolicy', detail.value);
             }}
           />
         </FormField>
@@ -92,7 +128,7 @@ function SettingsFields({ settings, arn, disabled, saving, onSave }: SettingsFie
             disabled={disabled || policy === '' || policy === settings.FilterPolicy}
             loading={saving?.name === 'FilterPolicy' && saving.value !== ''}
             onClick={() => {
-              onSave({ name: 'FilterPolicy', value: policy });
+              void handleSave({ name: 'FilterPolicy', value: policy });
             }}
           >
             Save filter policy
@@ -109,14 +145,17 @@ function SettingsFields({ settings, arn, disabled, saving, onSave }: SettingsFie
         </SpaceBetween>
       </SpaceBetween>
       <SpaceBetween size="xs">
-        <FormField label="Filter policy scope">
+        <FormField
+          label="Filter policy scope"
+          constraintText={hasPolicy ? undefined : 'Save a filter policy to edit its scope.'}
+        >
           <Select
             options={SCOPE_OPTIONS}
             selectedOption={scope ?? null}
             placeholder={currentScope ?? 'Not set'}
             disabled={disabled || !hasPolicy}
             onChange={({ detail }) => {
-              setScopeDraft(SCOPE_OPTIONS.find(({ value }) => value === detail.selectedOption.value));
+              handleDraft('FilterPolicyScope', detail.selectedOption.value);
             }}
           />
         </FormField>
@@ -125,7 +164,7 @@ function SettingsFields({ settings, arn, disabled, saving, onSave }: SettingsFie
           loading={saving?.name === 'FilterPolicyScope'}
           onClick={() => {
             if (scope !== undefined) {
-              onSave({ name: 'FilterPolicyScope', value: scope.value });
+              void handleSave({ name: 'FilterPolicyScope', value: scope.value });
             }
           }}
         >
@@ -140,7 +179,7 @@ function SettingsFields({ settings, arn, disabled, saving, onSave }: SettingsFie
             placeholder={settings.RawMessageDelivery ?? 'Not set'}
             disabled={disabled}
             onChange={({ detail }) => {
-              setRawDraft(RAW_OPTIONS.find(({ value }) => value === detail.selectedOption.value));
+              handleDraft('RawMessageDelivery', detail.selectedOption.value);
             }}
           />
         </FormField>
@@ -149,7 +188,7 @@ function SettingsFields({ settings, arn, disabled, saving, onSave }: SettingsFie
           loading={saving?.name === 'RawMessageDelivery'}
           onClick={() => {
             if (raw !== undefined) {
-              onSave({ name: 'RawMessageDelivery', value: raw.value });
+              void handleSave({ name: 'RawMessageDelivery', value: raw.value });
             }
           }}
         >
@@ -179,7 +218,7 @@ function SettingsFields({ settings, arn, disabled, saving, onSave }: SettingsFie
                 disabled={disabled}
                 onClick={() => {
                   setClearOpen(false);
-                  onSave({ name: 'FilterPolicy', value: '' });
+                  void handleSave({ name: 'FilterPolicy', value: '' });
                 }}
               >
                 Clear filter policy
@@ -212,6 +251,15 @@ export function SubscriptionSettings({
   const failureState =
     failure === undefined ? undefined : readFailureState(failure, connection, 'subscription settings');
   const readUnavailable = failure?.kind === 'not-implemented';
+  const headingText = useRef<HTMLSpanElement>(null);
+  useLayoutEffect(() => {
+    const heading = headingText.current?.closest('h2');
+    if (heading !== undefined && heading !== null) {
+      heading.tabIndex = -1;
+      heading.focus({ preventScroll: true });
+      heading.scrollIntoView?.({ block: 'center' });
+    }
+  }, []);
   const disabled = loading || failure !== undefined || pending !== undefined || saveUnavailable;
 
   return (
@@ -228,7 +276,7 @@ export function SubscriptionSettings({
             </SpaceBetween>
           }
         >
-          Subscription settings
+          <span ref={headingText}>Subscription settings</span>
         </Header>
       }
     >
@@ -258,11 +306,7 @@ export function SubscriptionSettings({
             arn={arn}
             disabled={disabled}
             saving={pending?.arn === arn ? pending.setting : undefined}
-            onSave={(setting) => {
-              if (!disabled) {
-                void onSave(arn, setting);
-              }
-            }}
+            onSave={(setting) => (disabled ? Promise.resolve(false) : onSave(arn, setting))}
           />
         )}
       </SpaceBetween>

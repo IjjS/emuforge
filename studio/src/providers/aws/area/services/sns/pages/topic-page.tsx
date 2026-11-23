@@ -240,7 +240,7 @@ export function TopicPage({ connection, params }: ScreenPageProps) {
 
   const handleSaveSetting = async (subscriptionArn: string, setting: SubscriptionSetting) => {
     if (savingSetting.current || unavailableArns.has(subscriptionArn)) {
-      return;
+      return false;
     }
     const signal = pageSignal();
     savingSetting.current = true;
@@ -256,6 +256,7 @@ export function TopicPage({ connection, params }: ScreenPageProps) {
           },
         ]);
       }
+      return !signal.aborted;
     } catch (error) {
       if (!signal.aborted) {
         const failure = failureOf(error, OPERATIONS.setSubscriptionAttributes);
@@ -275,6 +276,7 @@ export function TopicPage({ connection, params }: ScreenPageProps) {
           },
         ]);
       }
+      return false;
     } finally {
       savingSetting.current = false;
       if (!signal.aborted) {
