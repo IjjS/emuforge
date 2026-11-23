@@ -4,7 +4,6 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  click,
   CURRENT,
   deferredReply,
   delayedRefresh,
@@ -12,6 +11,7 @@ import {
   dialogButton,
   dialogContent,
   expectAlert,
+  findButton,
   findDialog,
   findSection,
   NAME,
@@ -24,6 +24,7 @@ import {
   refusalReread,
   required,
   section,
+  sectionContentButton,
   versionRows,
 } from './detail-support.test';
 
@@ -75,6 +76,20 @@ async function selectVersion(id: string) {
 async function versionPagination() {
   const history = await section('Version history');
   return waitFor(() => required(createWrapper(history.getElement()).findPagination(), 'version pagination'));
+}
+
+async function secretValueAction(name: string) {
+  return waitFor(() => {
+    const header = page()
+      .findAllContainers()
+      .map((container) => {
+        const slot = container.findHeader();
+        return slot && createWrapper(slot.getElement()).findHeader();
+      })
+      .find((entry) => entry?.findHeadingText().getElement().textContent === 'Secret value');
+    const actions = header?.findActions();
+    return required(actions && findButton(createWrapper(actions.getElement()), name), name).getElement();
+  });
 }
 
 const stageTitles = { add: 'Add staging label', move: 'Move staging label', remove: 'Remove staging label' };
@@ -157,7 +172,7 @@ describe('Secret version history', () => {
       });
       await openVersions();
       const next = (await versionPagination()).findNextPageButton().getElement();
-      const elsewhere = screen.getByRole('button', { name: 'Retrieve secret value' });
+      const elsewhere = await secretValueAction('Retrieve secret value');
       next.focus();
       expect(next).toHaveFocus();
       await userEvent.setup().keyboard('{Enter}');
@@ -212,7 +227,7 @@ describe('Secret version history', () => {
     await openVersions();
     expect(await screen.findByText(`${LIST} was refused: ${reason}`)).toBeVisible();
     expect(screen.queryByText('No versions found for this secret.')).not.toBeInTheDocument();
-    await click('Retry');
+    fireEvent.click((await sectionContentButton('Version history', 'Retry')).getElement());
     await findVersion(OLDER);
   });
 
@@ -233,7 +248,7 @@ describe('Secret version history', () => {
     });
     await openVersions();
     await selectVersion(OLDER);
-    await click('Retrieve secret value');
+    fireEvent.click(await secretValueAction('Retrieve secret value'));
     expect(await screen.findByText('older test value')).toBeVisible();
     expect(screen.queryByText('current test value')).not.toBeInTheDocument();
     expect(calls).toHaveBeenCalledWith('GetSecretValue', { SecretId: NAME, VersionId: OLDER });
@@ -246,7 +261,7 @@ describe('Secret version history', () => {
     });
     await openVersions();
     await selectVersion(CURRENT);
-    await click('Retrieve secret value');
+    fireEvent.click(await secretValueAction('Retrieve secret value'));
     expect(await screen.findByText('shown test value')).toBeVisible();
     await selectVersion(OLDER);
     expect(screen.queryByText('shown test value')).not.toBeInTheDocument();
@@ -268,11 +283,11 @@ describe('Secret version history', () => {
     });
     await openVersions();
     await selectVersion(CURRENT);
-    await click('Retrieve secret value');
+    fireEvent.click(await secretValueAction('Retrieve secret value'));
     await waitFor(() => expect(requests).toHaveBeenCalledOnce());
     await selectVersion(OLDER);
     expect(requests.mock.calls[0]?.[0].signal.aborted).toBe(true);
-    await click('Retrieve secret value');
+    fireEvent.click(await secretValueAction('Retrieve secret value'));
     expect(await screen.findByText('selected test value')).toBeVisible();
     await act(() => late.resolve({ body: { SecretString: 'late test value' } }));
     expect(screen.queryByText('late test value')).not.toBeInTheDocument();
@@ -311,7 +326,7 @@ describe('Secret version history', () => {
     expect(dialogButton(dialog, 'Add staging label').isDisabled()).toBe(true);
     press(dialog, 'Cancel');
     expect((await stageMenu()).findNativeButton().getElement()).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Retrieve secret value' })).toBeEnabled();
+    expect(await secretValueAction('Retrieve secret value')).toBeEnabled();
   });
 });
 
@@ -322,7 +337,7 @@ describe.each(ORDERS)('Version refresh with %s', (order) => {
     const { calls } = openSecret({ handler: refresh.handler, observe: refresh.operations });
     await openVersions();
     await findVersion(CURRENT);
-    await click('Store new version');
+    fireEvent.click(await secretValueAction('Store new version'));
     const dialog = await findDialog('Store new version');
     const value = required(dialogContent(dialog).findTextarea(), 'secret value');
     fireEvent.change(value.findNativeTextarea().getElement(), { target: { value: 'new test value' } });
