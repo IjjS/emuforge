@@ -15,10 +15,12 @@ import {
   getBucketTagging,
   getBucketVersioning,
   getBucketWebsite,
+  getObject,
   headObject,
   isBucketEmpty,
   listBuckets,
   listObjects,
+  listObjectHistory,
   listObjectVersions,
   NO_SUCH_BUCKET,
   NOT_FOUND,
@@ -876,6 +878,65 @@ describe('the listing and deleting of a bucket’s items', () => {
     expect(body).toContain('<Quiet>true</Quiet>');
     expect(body).toContain('<Object><Key>a b</Key><VersionId>null</VersionId></Object>');
     expect(body).toContain('<Object><Key>held</Key><VersionId>v2</VersionId></Object>');
+  });
+});
+
+describe('object version history', () => {
+  it('follows both cursors under the same prefix and distinguishes versions from delete markers', async () => {
+    const key = 'logs/same key';
+    engine.aws = () =>
+      xml(
+        `<ListVersionsResult><IsTruncated>true</IsTruncated><NextKeyMarker>${key}</NextKeyMarker><NextVersionIdMarker>m1</NextVersionIdMarker>` +
+          `<DeleteMarker><Key>${key}</Key><VersionId>m1</VersionId><IsLatest>true</IsLatest></DeleteMarker></ListVersionsResult>`,
+      );
+    const first = await listObjectHistory(endpoint, 'bucket', { prefix: 'logs/', maxKeys: 1 }, signal());
+    if (first === NO_SUCH_BUCKET) throw new Error('Expected a version history page');
+    expect(first).toEqual({
+      items: [{ key, versionId: 'm1', latest: true, kind: 'delete-marker' }],
+      truncated: true,
+      nextKeyMarker: key,
+      nextVersionIdMarker: 'm1',
+    });
+    engine.aws = () =>
+      xml(
+        `<ListVersionsResult><IsTruncated>false</IsTruncated><Version><Key>${key}</Key><VersionId>v1</VersionId>` +
+          '<IsLatest>false</IsLatest></Version></ListVersionsResult>',
+      );
+    const { nextKeyMarker: keyMarker, nextVersionIdMarker: versionIdMarker } = first;
+    if (keyMarker === undefined || versionIdMarker === undefined) throw new Error('Expected both cursors');
+    const second = await listObjectHistory(
+      endpoint,
+      'bucket',
+      { prefix: 'logs/', maxKeys: 1, keyMarker, versionIdMarker },
+      signal(),
+    );
+    expect(second).toEqual({ items: [{ key, versionId: 'v1', latest: false, kind: 'version' }], truncated: false });
+    const [firstQuery, secondQuery] = engine.awsRequests.map((request) => new URL(request).searchParams);
+    expect(firstQuery?.get('prefix')).toBe('logs/');
+    expect(secondQuery?.get('prefix')).toBe('logs/');
+    expect(secondQuery?.get('key-marker')).toBe(key);
+    expect(secondQuery?.get('version-id-marker')).toBe('m1');
+  });
+
+  it('encodes the source key and version ID independently when restoring to the same key', async () => {
+    engine.aws = () => xml('<CopyObjectResult><ETag>copy</ETag></CopyObjectResult>');
+    const key = 'logs/한글 space%?.txt';
+    const object = { bucket: 'bucket', key };
+    await copyObject(endpoint, object, object, signal(), { sourceVersionId: 'v%? +' });
+    const request = engine.sent[0];
+    if (request === undefined) throw new Error('Expected a copy request');
+    expect(request.method).toBe('PUT');
+    expect(decodeURIComponent(new URL(request.url).pathname)).toBe('/bucket/' + key);
+    expect(request?.headers.get('x-amz-copy-source')).toBe(
+      'bucket/logs/%ED%95%9C%EA%B8%80%20space%25%3F.txt?versionId=v%25%3F%20%2B',
+    );
+  });
+
+  it('downloads the bytes addressed by the literal null version ID', async () => {
+    engine.aws = () => ({ status: 200, body: 'from null', headers: { 'content-type': 'text/plain' } });
+    const result = await getObject(endpoint, 'bucket', 'logs/history.txt', signal(), undefined, 'null');
+    expect(new TextDecoder().decode(result.bytes)).toBe('from null');
+    expect(new URL(engine.awsRequests[0] ?? '').searchParams.get('versionId')).toBe('null');
   });
 });
 

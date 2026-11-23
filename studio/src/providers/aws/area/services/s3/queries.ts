@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { RequestError, type RequestFailure } from '../../../../../lib/aws/request';
@@ -30,6 +30,7 @@ import {
   LIST_BUCKETS,
   listBuckets,
   listObjects,
+  listObjectHistory,
   listObjectVersions,
   NO_SUCH_BUCKET,
   OPERATIONS,
@@ -43,6 +44,9 @@ import {
   type ObjectHead,
   type ObjectLocation,
   type ObjectPage,
+  type ObjectVersion,
+  type ObjectVersionPage,
+  type ObjectVersionPageRequest,
   type Tag,
 } from './api';
 import { createOperations, submitBucketForm, type BucketForm, type CreateOutcome } from './bucket-form';
@@ -212,6 +216,7 @@ function useTokenListing<Answer>({
       // Kept as this page's last read only while the user is still on it in the same listing.
       if (learnt !== undefined) {
         setPosition((current) => {
+          if (signal.aborted) return current;
           const at = current.listing === listing ? current : fresh(listing);
           return at.page === page ? { ...at, reads: withRead(at.reads, page, learnt) } : current;
         });
@@ -385,6 +390,33 @@ export function useObjectListing({
     goToPage: listing.goToPage,
     refresh,
   };
+}
+
+/** The history of a prefix, using the key and version ID markers together as one cursor. */
+export function useObjectHistory(endpoint: string | undefined, bucket: string, prefix: string) {
+  const [generation, setGeneration] = useState(0);
+  const listing = useTokenListing<ObjectVersionPage<ObjectVersion> | NoSuchBucket>({
+    key: [...S3_KEY, 'object-history', bucket],
+    parts: [generation, prefix],
+    endpoint,
+    operation: OPERATIONS.listObjectVersions,
+    read: (at, token, signal) => {
+      const cursor = token === undefined ? {} : (JSON.parse(token) as Partial<ObjectVersionPageRequest>);
+      return listObjectHistory(at, bucket, { ...cursor, prefix, maxKeys: 100 }, signal);
+    },
+    pageRead: (page) =>
+      page === NO_SUCH_BUCKET
+        ? undefined
+        : {
+            count: page.items.length,
+            next:
+              page.truncated && page.nextKeyMarker !== undefined
+                ? JSON.stringify({ keyMarker: page.nextKeyMarker, versionIdMarker: page.nextVersionIdMarker })
+                : undefined,
+          },
+  });
+  const refresh = useCallback(() => setGeneration((current) => current + 1), []);
+  return { ...listing, refresh };
 }
 
 // Issue 256 (requirement R5.1, R6.8, R7.1, R8.1, R11): the reads of a bucket's page, of its sections and of the
@@ -716,17 +748,6 @@ export function useObjectChanges(endpoint: string | undefined) {
   return useMemo(() => {
     if (endpoint === undefined) return undefined;
 
-    function invalidate({ bucket, key }: ObjectLocation) {
-      void client.invalidateQueries({
-        queryKey: [...S3_KEY, 'objects', bucket, endpoint],
-        refetchType: 'none',
-      });
-      void client.invalidateQueries({
-        queryKey: [...S3_KEY, 'bucket', bucket, 'object', key],
-        refetchType: 'none',
-      });
-    }
-
     return {
       destinationExists: async ({ bucket, key }: ObjectLocation, signal: AbortSignal) =>
         (await headObject(endpoint, bucket, key, signal)) !== NOT_FOUND,
@@ -737,12 +758,12 @@ export function useObjectChanges(endpoint: string | undefined) {
         options?: ObjectCopyOptions,
       ) => {
         await copyObject(endpoint, source, destination, signal, options);
-        if (!signal.aborted) invalidate(destination);
+        if (!signal.aborted) invalidateObjectReads(client, endpoint, destination);
       },
       removeSource: async (source: ObjectLocation, signal: AbortSignal) => {
         await deleteObject(endpoint, source, signal);
         if (signal.aborted) return;
-        invalidate(source);
+        invalidateObjectReads(client, endpoint, source);
         void client.invalidateQueries({
           queryKey: [...S3_KEY, 'bucket', source.bucket, 'object', source.key, 'head', endpoint],
         });
@@ -751,17 +772,46 @@ export function useObjectChanges(endpoint: string | undefined) {
   }, [client, endpoint]);
 }
 
+function invalidateObjectReads(client: QueryClient, endpoint: string, { bucket, key }: ObjectLocation) {
+  void client.invalidateQueries({
+    queryKey: [...S3_KEY, 'objects', bucket, endpoint],
+    refetchType: 'none',
+  });
+  void client.invalidateQueries({
+    queryKey: [...S3_KEY, 'bucket', bucket, 'object', key],
+    refetchType: 'none',
+  });
+}
+
+/** Write to the current key by copying a version or by removing one specific delete marker. */
+export function useChangeObjectVersion(endpoint: string | undefined, bucket: string) {
+  const client = useQueryClient();
+  return useCallback(
+    async (kind: ObjectVersion['kind'], key: string, versionId: string, signal: AbortSignal) => {
+      if (endpoint === undefined) throw new Error('The engine endpoint is not known yet.');
+      const object = { bucket, key };
+      if (kind === 'version') {
+        await copyObject(endpoint, object, object, signal, { sourceVersionId: versionId });
+      } else {
+        await deleteObject(endpoint, object, signal, versionId);
+      }
+      if (!signal.aborted) invalidateObjectReads(client, endpoint, object);
+    },
+    [bucket, client, endpoint],
+  );
+}
+
 /** "Download" of the object page: `GetObject` of the whole body. */
 export function useDownloadObject(
   endpoint: string | undefined,
   bucket: string,
-): (key: string, signal: AbortSignal) => Promise<ObjectBody> {
+): (key: string, signal: AbortSignal, versionId?: string) => Promise<ObjectBody> {
   return useCallback(
-    (key, signal) => {
+    (key, signal, versionId) => {
       if (endpoint === undefined) {
         return Promise.reject(new Error('The engine endpoint is not known yet.'));
       }
-      return getObject(endpoint, bucket, key, signal);
+      return getObject(endpoint, bucket, key, signal, undefined, versionId);
     },
     [endpoint, bucket],
   );

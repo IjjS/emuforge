@@ -28,6 +28,7 @@ import {
   type NotificationConfiguration,
   type HeadObjectCommandOutput,
   type ListBucketsCommandOutput,
+  type ListObjectVersionsCommandOutput,
   type ListObjectsV2CommandOutput,
   type S3Client,
 } from '@aws-sdk/client-s3';
@@ -478,8 +479,8 @@ export interface ObjectVersionId {
 }
 
 /** One page of `ListObjectVersions`: its versions, then its delete markers. */
-export interface ObjectVersionPage {
-  items: ObjectVersionId[];
+export interface ObjectVersionPage<Item = ObjectVersionId> {
+  items: Item[];
   truncated: boolean;
   nextKeyMarker?: string;
   nextVersionIdMarker?: string;
@@ -492,6 +493,11 @@ export interface ObjectVersionPageRequest {
   versionIdMarker?: string;
 }
 
+export interface ObjectVersion extends ObjectVersionId {
+  kind: 'version' | 'delete-marker';
+  latest: boolean;
+}
+
 function toItem({ Key, VersionId }: { Key?: string | undefined; VersionId?: string | undefined }): ObjectVersionId {
   return VersionId === undefined ? { key: Key ?? '' } : { key: Key ?? '', versionId: VersionId };
 }
@@ -500,9 +506,43 @@ function toItem({ Key, VersionId }: { Key?: string | undefined; VersionId?: stri
 export function listObjectVersions(
   endpoint: string,
   bucket: string,
-  { maxKeys, keyMarker, versionIdMarker }: ObjectVersionPageRequest,
+  request: ObjectVersionPageRequest,
   signal: AbortSignal,
 ): Promise<ObjectVersionPage | NoSuchBucket> {
+  return readVersionPage(endpoint, bucket, request, signal, (output) => [
+    ...(output.Versions ?? []).map(toItem),
+    ...(output.DeleteMarkers ?? []).map(toItem),
+  ]);
+}
+
+/** The version history of all keys under the prefix, including keys hidden by delete markers. */
+export function listObjectHistory(
+  endpoint: string,
+  bucket: string,
+  request: ObjectVersionPageRequest & { prefix: string },
+  signal: AbortSignal,
+): Promise<ObjectVersionPage<ObjectVersion> | NoSuchBucket> {
+  return readVersionPage<ObjectVersion>(endpoint, bucket, request, signal, (output) => [
+    ...(output.Versions ?? []).map((item): ObjectVersion => ({
+      ...toItem(item),
+      latest: item.IsLatest === true,
+      kind: 'version',
+    })),
+    ...(output.DeleteMarkers ?? []).map((item): ObjectVersion => ({
+      ...toItem(item),
+      latest: item.IsLatest === true,
+      kind: 'delete-marker',
+    })),
+  ]);
+}
+
+function readVersionPage<Item>(
+  endpoint: string,
+  bucket: string,
+  { maxKeys, keyMarker, versionIdMarker, prefix = '' }: ObjectVersionPageRequest & { prefix?: string },
+  signal: AbortSignal,
+  items: (output: ListObjectVersionsCommandOutput) => Item[],
+): Promise<ObjectVersionPage<Item> | NoSuchBucket> {
   return onBucket(
     endpoint,
     OPERATIONS.listObjectVersions,
@@ -511,14 +551,15 @@ export function listObjectVersions(
         new ListObjectVersionsCommand({
           Bucket: bucket,
           MaxKeys: maxKeys,
+          ...(prefix === '' ? {} : { Prefix: prefix }),
           ...(keyMarker === undefined ? {} : { KeyMarker: keyMarker }),
           ...(versionIdMarker === undefined ? {} : { VersionIdMarker: versionIdMarker }),
         }),
         { abortSignal },
       ),
-    (output): ObjectVersionPage => {
-      const page: ObjectVersionPage = {
-        items: [...(output.Versions ?? []).map(toItem), ...(output.DeleteMarkers ?? []).map(toItem)],
+    (output): ObjectVersionPage<Item> => {
+      const page: ObjectVersionPage<Item> = {
+        items: items(output),
         truncated: output.IsTruncated === true,
       };
       const nextKeyMarker = text(output.NextKeyMarker);
@@ -772,6 +813,7 @@ export interface ObjectPropertyEdit {
 export interface ObjectCopyOptions {
   edit?: ObjectPropertyEdit;
   onlyIfMissing?: boolean;
+  sourceVersionId?: string;
 }
 
 /** The code with which a call on a key says the emulator holds no object of that key. */
@@ -827,14 +869,16 @@ export async function copyObject(
   source: ObjectLocation,
   destination: ObjectLocation,
   signal: AbortSignal,
-  { edit, onlyIfMissing = false }: ObjectCopyOptions = {},
+  { edit, onlyIfMissing = false, sourceVersionId }: ObjectCopyOptions = {},
 ): Promise<void> {
   // Separate the bucket from the key before encoding. A literal percent or question mark belongs to the key.
-  const copySource = `${source.bucket}/${source.key.split('/').map(encodeURIComponent).join('/')}`;
+  const sourcePath = `${source.bucket}/${source.key.split('/').map(encodeURIComponent).join('/')}`;
+  const copySource =
+    sourceVersionId === undefined ? sourcePath : `${sourcePath}?versionId=${encodeURIComponent(sourceVersionId)}`;
   await sendRequest(
     OPERATIONS.copyObject,
     (abortSignal) =>
-      s3Client(endpoint).send(
+      s3Client(endpoint, sourceVersionId !== undefined).send(
         new CopyObjectCommand({
           Bucket: destination.bucket,
           Key: destination.key,
@@ -860,11 +904,14 @@ export async function deleteObject(
   endpoint: string,
   { bucket, key }: ObjectLocation,
   signal: AbortSignal,
+  versionId?: string,
 ): Promise<void> {
   await sendRequest(
     OPERATIONS.deleteObject,
     (abortSignal) =>
-      s3Client(endpoint, true).send(new DeleteObjectCommand({ Bucket: bucket, Key: key }), { abortSignal }),
+      s3Client(endpoint, true).send(new DeleteObjectCommand({ Bucket: bucket, Key: key, VersionId: versionId }), {
+        abortSignal,
+      }),
     signal,
   );
 }
@@ -948,12 +995,13 @@ export async function getObject(
   key: string,
   signal: AbortSignal,
   range?: string,
+  versionId?: string,
 ): Promise<ObjectBody> {
   return sendRequest(
     OPERATIONS.getObject,
     async (abortSignal) => {
       const output = await s3Client(endpoint).send(
-        new GetObjectCommand({ Bucket: bucket, Key: key, ...(range === undefined ? {} : { Range: range }) }),
+        new GetObjectCommand({ Bucket: bucket, Key: key, Range: range, VersionId: versionId }),
         { abortSignal },
       );
       const bytes = output.Body === undefined ? new Uint8Array() : await output.Body.transformToByteArray();
