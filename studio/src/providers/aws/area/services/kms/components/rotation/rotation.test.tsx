@@ -55,6 +55,12 @@ function expectField(label: string, value: string) {
   expect(screen.getByText(label).closest('dt')?.nextElementSibling).toHaveTextContent(value);
 }
 
+async function expectRotation(type: string, date: Date) {
+  const cell = await screen.findByRole('cell', { name: type });
+  expect(cell).toBeVisible();
+  expect(cell.closest('tr')).toHaveTextContent(creationDateText(date));
+}
+
 function pendingAnswer<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((done) => {
@@ -83,14 +89,14 @@ describe('Key rotation', () => {
     });
     open();
 
-    expect(await screen.findByText(creationDateText(nextDate))).toBeVisible();
+    expect(await screen.findByText('Enabled')).toBeVisible();
     expectField('Automatic rotation', 'Enabled');
     expectField('Rotation period', '90 days');
     expectField('Next rotation date', creationDateText(nextDate));
-    expect(await screen.findByRole('row', { name: `${creationDateText(rotationDate)} On-demand` })).toBeVisible();
+    await expectRotation('On-demand', rotationDate);
 
     click('Next page');
-    expect(await screen.findByRole('row', { name: `${creationDateText(earlier)} Automatic` })).toBeVisible();
+    await expectRotation('Automatic', earlier);
     expect(screen.queryByText('On-demand')).toBeNull();
     expect(
       send.mock.calls.find(
@@ -133,7 +139,7 @@ describe('Key rotation', () => {
     await act(() =>
       history.resolve({ $metadata: {}, Rotations: [{ RotationDate: rotationDate, RotationType: 'ON_DEMAND' }] }),
     );
-    expect(await screen.findByRole('row', { name: `${creationDateText(rotationDate)} On-demand` })).toBeVisible();
+    await expectRotation('On-demand', rotationDate);
     expect(screen.getByText('Loading rotation settings…')).toBeVisible();
     expect(screen.getByText('On-demand rotation requested.')).toBeVisible();
 
