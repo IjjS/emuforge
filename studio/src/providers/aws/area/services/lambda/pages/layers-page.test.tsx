@@ -330,6 +330,46 @@ it.each([
   expect(page.findFlashbar()?.findItemsByType('success') ?? []).toHaveLength(0);
 });
 
+it('replaces an earlier publication success with a refusal while the draft remains editable', async () => {
+  publish.mockResolvedValueOnce({ name: 'beta', version: 2 }).mockRejectedValueOnce(
+    new RequestError({
+      kind: 'other',
+      operation: PUBLISH_LAYER_VERSION,
+      code: 'InvalidParameterValueException',
+      message: 'Invalid layer name.',
+    }),
+  );
+  renderPage();
+  await submitPublication('beta');
+  await waitFor(() => {
+    expectPublication();
+    expect(page.findModal()).toBeNull();
+  });
+
+  const dialog = await submitPublication('invalid.name');
+  const refusal = 'PublishLayerVersion returned InvalidParameterValueException. Invalid layer name.';
+  await waitFor(() => {
+    const flash = required(page.findFlashbar());
+    const error = flash.findItemsByType('error')[0];
+    expect(error?.findHeader()?.getElement()).toHaveTextContent('Could not publish layer version.');
+    expect(error?.findContent()?.getElement().textContent).toBe(refusal);
+    expect(flash.findItemsByType('success')).toHaveLength(0);
+    const inline = required(dialog.findContent().findAlert());
+    expect(inline.findHeader()?.getElement()).toHaveTextContent('Could not publish layer version.');
+    expect(inline.findContent().getElement().textContent).toBe(refusal);
+  });
+  expect(page.findModal()?.getElement()).toBe(dialog.getElement());
+  const name = nameInput(dialog);
+  expect(name).toHaveValue('invalid.name');
+  fireEvent.change(name, { target: { value: 'valid-name' } });
+  expect(name).toHaveValue('valid-name');
+  const upload = required(dialog.findContent().findFileUpload());
+  expect(upload.findFileTokens()[0]?.findFileName().getElement()).toHaveTextContent('layer.zip');
+  expect(upload.findNativeInput().getElement()).toBeEnabled();
+  expect(submitButton(dialog)).toBeEnabled();
+  expect(publish).toHaveBeenCalledTimes(2);
+});
+
 it('shows the service code alone for an empty Lambda publication rejection', async () => {
   const api = await vi.importActual<typeof import('../layer-api')>('../layer-api');
   publish.mockImplementationOnce(api.publishLayerVersion);
