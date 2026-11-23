@@ -287,10 +287,11 @@ function expectDisabled(button: HTMLElement) {
   expect(button.matches(':disabled') || button.getAttribute('aria-disabled') === 'true').toBe(true);
 }
 
-async function expectVersion(id: string, kind: string, latest: boolean) {
-  const { control, index } = await waitFor(() => required(selection(id)));
+async function expectVersion(id: string, kind: string, latest: boolean, etag?: string) {
+  const { control, index } = await waitFor(() => required(selection(id, etag)));
   const latestText = latest ? 'Yes' : 'No';
-  expect(control).toHaveAccessibleName(`Select ${KEY} version ${id}, Type: ${kind}, Latest: ${latestText}`);
+  const etagLabel = etag === undefined ? '' : `, ETag: ${etag}`;
+  expect(control).toHaveAccessibleName(`Select ${KEY} version ${id}, Type: ${kind}, Latest: ${latestText}${etagLabel}`);
   [KEY, id, kind, latestText].forEach((text, column) => {
     expect(
       table()
@@ -537,7 +538,7 @@ it('warns using Enabled even when the bucket is later suspended and writes once 
   await waitFor(() => expect(engine.copies).toEqual([`${BUCKET}/${KEY}?versionId=old`]));
   copyResponse.resolve(new Response('<CopyObjectResult><ETag>copy</ETag></CopyObjectResult>'));
   await waitFor(() => expect(flashContent('success')).toHaveTextContent(RESTORED));
-  await expectVersion('null', 'Version', true);
+  await expectVersion('null', 'Version', true, NULL_ETAG);
 });
 
 it.each([
