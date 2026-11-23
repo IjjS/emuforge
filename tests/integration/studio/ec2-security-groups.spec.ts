@@ -28,6 +28,7 @@ import {
   DELETE,
   dialogOf,
   type DirectRule,
+  ec2,
   Ec2Seeded,
   errorOf,
   expectFlash,
@@ -505,8 +506,11 @@ test('studio.ec2-security-groups-made-elsewhere-and-in-use', async ({ ctx, page 
   await lines.line(
     'Open S6 at an ID the emulator does not hold → "Security group not found" with "View security groups", which leads to S4',
     async () => {
-      const missing = 'sg-0123456789abcdef0';
-      expect(await groupDirect(ctx, port, missing), 'the emulator holds no such group').toBeNull();
+      const missing = await seeded.group(`${p}-deleted`, 'Deleted group for the missing detail page');
+      const deletion = await ec2(ctx, port, 'DeleteSecurityGroup', { GroupId: missing });
+      expect(deletion.status, 'the emulator deleted the group').toBe(200);
+      const lookup = await ec2(ctx, port, 'DescribeSecurityGroups', { 'GroupId.1': missing });
+      expect(lookup.code, 'the emulator reports the deleted group as missing').toBe('InvalidGroup.NotFound');
       await page.goto(groupPath(missing));
       await expect(main.getByText(GROUP_NOT_FOUND, { exact: true })).toBeVisible({ timeout: 15_000 });
       await expect(main.locator(TABLE), 'the rules of a group').toHaveCount(0);

@@ -193,14 +193,14 @@ test('studio.ec2-key-pair-create-import-delete', async ({ ctx, page }) => {
   );
 
   await lines.line(
-    'S9, "Import a public key", the name `<prefix>-bad`, the text `not a key` → the form stays with the emulator\'s `InvalidKeyPair.Format`; the emulator reports no key pair of that name',
+    'S9, "Import a public key", the name `<prefix>-bad`, the text `not a key` → the form stays with the emulator\'s `InvalidKey.Format`; the emulator reports no key pair of that name',
     async () => {
       await open(page, CREATE_KEY_PAIR_PATH, CREATE_KEY_PAIR);
       await tile(main, 'import').click(ACTION);
       await keyName().fill(bad, ACTION);
       await field(main, 'Public key').getByRole('textbox').fill('not a key', ACTION);
       await button(main, IMPORT_KEY_PAIR).click(ACTION);
-      await expect(alertWith(main, 'InvalidKeyPair.Format'), 'the refusal in the form').toBeVisible({
+      await expect(alertWith(main, 'InvalidKey.Format'), 'the refusal in the form').toBeVisible({
         timeout: 20_000,
       });
       await expect(page).toHaveURL(addressOf(CREATE_KEY_PAIR_PATH));
