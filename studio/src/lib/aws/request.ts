@@ -20,7 +20,8 @@ export type RequestFailure =
 
 const reportedCodes = new WeakMap<RequestFailure, string>();
 const reportedNotImplementedMessages = new WeakMap<RequestFailure, string>();
-const sdkPlaceholderFailures = new WeakSet<RequestFailure>();
+const jsonResponseMessages = new WeakMap<object, string | null>();
+const refusalMessages = new WeakMap<RequestFailure, string | null>();
 
 /**
  * The code reported in a service response, when present. Keep the original failure from `requestFailure` or
@@ -37,7 +38,9 @@ export function reportedNotImplementedMessage(failure: RequestFailure): string |
 
 /** Message for a refusal detail that omits the SDK's default message. */
 export function refusalMessage(failure: RequestFailure): string | undefined {
-  return 'message' in failure && !sdkPlaceholderFailures.has(failure) ? failure.message : undefined;
+  const supplied = refusalMessages.get(failure);
+  if (supplied !== undefined) return supplied ?? undefined;
+  return 'message' in failure ? failure.message : undefined;
 }
 
 function withReportedCode(failure: RequestFailure, code: string | undefined, sdkPlaceholder = false): RequestFailure {
@@ -45,7 +48,7 @@ function withReportedCode(failure: RequestFailure, code: string | undefined, sdk
     reportedCodes.set(failure, code);
   }
   if (sdkPlaceholder) {
-    sdkPlaceholderFailures.add(failure);
+    refusalMessages.set(failure, null);
   }
   return failure;
 }
@@ -87,6 +90,21 @@ function text(value: unknown): string | undefined {
   return typeof value === 'string' && value !== '' ? value : undefined;
 }
 
+/** Record the message before the Lambda SDK fills in its default, and leave the SDK a copy of the body. */
+export async function recordJsonResponseMessage(response: { body?: unknown }): Promise<void> {
+  let decoded: unknown;
+  try {
+    const original = new Response(response.body as BodyInit | undefined);
+    const copy = original.clone();
+    response.body = original.body;
+    decoded = await copy.json();
+  } catch {
+    // An empty or unreadable JSON body supplies no message. The SDK still decodes its own copy.
+  }
+  const fields = typeof decoded === 'object' && decoded !== null ? (decoded as Record<string, unknown>) : {};
+  jsonResponseMessages.set(response, text(fields.message ?? fields.Message) ?? null);
+}
+
 function headerCode(headers: ErrorAnswer['$response']): string | undefined {
   const entry = Object.entries(headers?.headers ?? {}).find(([key]) => key.toLowerCase() === 'x-amzn-errortype');
   const code = text(entry?.[1])?.split(/[,:]/, 1)[0]?.split('#').at(-1);
@@ -118,6 +136,16 @@ export function requestFailure(operation: string, error: unknown): RequestFailur
   if (error instanceof RequestError) {
     return error.failure;
   }
+  const failure = mapRequestFailure(operation, error);
+  if (typeof error === 'object' && error !== null) {
+    const response = (error as ErrorAnswer).$response;
+    const supplied = response && jsonResponseMessages.get(response);
+    if (supplied !== undefined) refusalMessages.set(failure, supplied);
+  }
+  return failure;
+}
+
+function mapRequestFailure(operation: string, error: unknown): RequestFailure {
   if (error instanceof EngineCommandSessionRefusal) {
     const answer = error.cause as ErrorAnswer;
     const code = codeOf(answer, 401) ?? 'HTTP 401';
