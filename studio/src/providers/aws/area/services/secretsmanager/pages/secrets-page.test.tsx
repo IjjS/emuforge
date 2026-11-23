@@ -98,6 +98,11 @@ function expectSecret(name: string) {
 }
 
 const ENGINE_DOWN = { kind: 'engine-unreachable', checkedAt: 1, lastEmulatorPort: undefined } as const;
+const ENGINE_UP = {
+  kind: 'connected',
+  checkedAt: 2,
+  emulator: { port: 9308, endpoint: 'https://127.0.0.1:9308' },
+} as const;
 
 describe('Secrets list', () => {
   it('shows the initial loading message while ListSecrets is pending', () => {
@@ -254,6 +259,44 @@ describe('Secrets list', () => {
     expect(lists).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps continuation controls visible and disabled after a 501 through disconnect and reconnect', async () => {
+    lists.mockImplementation(({ NextToken }) =>
+      NextToken === undefined
+        ? page('first', 'next-page')
+        : answer({ __type: 'NotImplemented', message: 'Continuation unavailable' }, 501),
+    );
+    const { updateHealth } = open({ ...ENGINE_UP, checkedAt: 0 });
+    await expectSecret('first');
+    move('next');
+    await waitFor(() =>
+      expect(empty()?.getElement()).toHaveTextContent('The emulator answered 501 Not Implemented for ListSecrets'),
+    );
+
+    const expectUnavailablePagination = () => {
+      expect(empty()?.getElement()).toHaveTextContent('Not implemented by the emulator');
+      expect(table().findPagination()?.findCurrentPage().getElement()).toHaveTextContent('2');
+      for (const direction of ['previous', 'next'] as const) {
+        const button = pageButton(direction);
+        expect(button?.getElement()).toBeVisible();
+        expect(button?.isDisabled()).toBe(true);
+      }
+      expect(refreshButton()).toBeDisabled();
+      expect(retryButton()).toBeDisabled();
+    };
+    expectUnavailablePagination();
+    updateHealth(ENGINE_DOWN);
+    expectUnavailablePagination();
+    updateHealth(ENGINE_UP);
+    expectUnavailablePagination();
+    move('previous');
+    move('next');
+    await act(async () => {
+      refreshButton()?.click();
+      retryButton()?.click();
+    });
+    expect(lists.mock.calls.map(([input]) => input.NextToken)).toEqual([undefined, 'next-page']);
+  });
+
   it('retries an ordinary error and displays the returned row', async () => {
     lists.mockImplementationOnce(() =>
       answer({ __type: 'InvalidRequestException', message: 'Temporary failure' }, 400),
@@ -266,6 +309,25 @@ describe('Secrets list', () => {
     fireEvent.click(retry);
     await expectSecret('recovered');
     expect(lists).toHaveBeenCalledTimes(2);
+  });
+
+  it('automatically reads the first page after reconnecting from an ordinary continuation failure', async () => {
+    lists.mockImplementation(({ NextToken }) =>
+      NextToken === undefined
+        ? page('first', 'next-page')
+        : answer({ __type: 'InvalidRequestException', message: 'Temporary failure' }, 400),
+    );
+    const { updateHealth } = open({ ...ENGINE_UP, checkedAt: 0 });
+    await expectSecret('first');
+    move('next');
+    await waitFor(() => expect(empty()?.getElement()).toHaveTextContent('Temporary failure'));
+
+    updateHealth(ENGINE_DOWN);
+    lists.mockImplementation(() => page('recovered'));
+    updateHealth(ENGINE_UP);
+    await expectSecret('recovered');
+    expect(table().findPagination()).toBeNull();
+    expect(lists.mock.calls.map(([input]) => input.NextToken)).toEqual([undefined, 'next-page', undefined]);
   });
 
   it.each(['Retry', 'Refresh'] as const)('recovers with %s before the next health poll', async (action) => {
@@ -290,11 +352,7 @@ describe('Secrets list', () => {
     await waitFor(() =>
       expect(empty()?.getElement()).toHaveTextContent('The emulator answered 501 Not Implemented for ListSecrets'),
     );
-    updateHealth({
-      kind: 'connected',
-      checkedAt: 2,
-      emulator: { port: 9308, endpoint: 'https://127.0.0.1:9308' },
-    });
+    updateHealth(ENGINE_UP);
     expect(refreshButton()).toBeDisabled();
     expect(retryButton()).toBeDisabled();
     expect(lists).toHaveBeenCalledTimes(1);
