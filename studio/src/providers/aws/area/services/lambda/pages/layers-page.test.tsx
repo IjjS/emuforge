@@ -191,7 +191,8 @@ it('keeps the reported publication result after versions and then the listing re
       ],
     }),
   );
-  const beta = within(await screen.findByRole('row', { name: /beta.*2/ }));
+  const listingTable = within(screen.getByRole('table', { name: 'Layers' }));
+  const beta = within(await listingTable.findByRole('row', { name: /beta.*2/ }));
   expect(beta.getByRole('cell', { name: '2' })).toBeInTheDocument();
   expect(table.getByRole('cell', { name: arn('beta', 2) })).toBeInTheDocument();
   expect(screen.getByText('Published beta version 2.')).toBeInTheDocument();
