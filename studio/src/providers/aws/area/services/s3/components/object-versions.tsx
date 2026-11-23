@@ -39,13 +39,25 @@ function latestValue(row: ObjectVersion) {
   return row.latest ? 'Yes' : 'No';
 }
 
+// Escape literal backslashes first so a key containing the text "\\r" or "\\n" has its own spelling.
+function displayHistoryKey(key: string) {
+  return key.replaceAll('\\', '\\\\').replaceAll('\r', '\\r').replaceAll('\n', '\\n');
+}
+
+function describeHistoryKey(key: string) {
+  return key
+    .replaceAll('\\', ' \\\\ (literal backslash) ')
+    .replaceAll('\r', ' \\r (carriage return) ')
+    .replaceAll('\n', ' \\n (line feed) ');
+}
+
 const columns: TableProps.ColumnDefinition<ObjectVersion>[] = [
   {
     id: 'key',
     header: 'Key',
     isRowHeader: true,
     minWidth: NAME_COLUMN_MIN_WIDTH,
-    cell: (row) => <ValueText kind="name" value={row.key} />,
+    cell: (row) => <ValueText kind="name" value={displayHistoryKey(row.key)} />,
   },
   {
     id: 'version-id',
@@ -63,7 +75,7 @@ const narrowColumns: TableProps.ColumnDefinition<ObjectVersion>[] = [
     isRowHeader: true,
     cell: (row) => (
       <SpaceBetween size="xxs">
-        <ValueText kind="name" value={row.key} />
+        <ValueText kind="name" value={displayHistoryKey(row.key)} />
         <Box variant="small">
           Type: {versionType(row)} · Latest: {latestValue(row)}
         </Box>
@@ -201,7 +213,7 @@ export function ObjectVersions({ name, prefix, endpoint, onChanged }: ObjectVers
         ariaLabels={{
           selectionGroupLabel: 'Version selection',
           itemSelectionLabel: (_, row) =>
-            `Select ${row.key} version ${row.versionId ?? NO_VALUE}, Type: ${versionType(row)}, Latest: ${latestValue(row)}`,
+            `Select ${describeHistoryKey(row.key)} version ${row.versionId ?? NO_VALUE}, Type: ${versionType(row)}, Latest: ${latestValue(row)}`,
         }}
         wrapLines
         loading={listing.loading}
