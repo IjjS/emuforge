@@ -11,13 +11,12 @@ import { requestFailure } from '../../../../../../lib/aws/request';
 import { usePageFlash } from '../../../components/page-flash';
 import { usePageSignal } from '../../../components/use-token-listing';
 import { ValueText } from '../../../components/value-text';
-import { NO_SUCH_BUCKET, OPERATIONS, type ObjectBody, type ObjectVersion } from '../api';
+import { OPERATIONS, type ObjectBody, type ObjectVersion } from '../api';
 import { keyName, NO_VALUE } from '../format';
 import { useChangeObjectVersion, useDownloadObject, useObjectHistory } from '../queries';
 import { NAME_COLUMN_MIN_WIDTH } from './name-column';
 import { ObjectVersionsDialog, REMOVE_MARKER, RESTORE_VERSION, type VersionTarget } from './object-versions-dialog';
 import { versionFailure } from './object-versions-failure';
-import { ObjectsBucketGone } from './objects-states';
 
 const NARROW_HISTORY = '(max-width: 688px)';
 
@@ -166,7 +165,7 @@ export function ObjectVersions({ name, prefix, endpoint, onChanged }: ObjectVers
   }, [changing]);
 
   const page = listing.answer;
-  const items = page === NO_SUCH_BUCKET || listing.failure !== undefined ? [] : (page?.items ?? []);
+  const items = listing.failure !== undefined ? [] : (page?.items ?? []);
   const selected = selection?.view === listing.view ? items.find((row) => rowId(row) === selection.id) : undefined;
   const target: VersionTarget | undefined =
     selected?.versionId === undefined ? undefined : { ...selected, versionId: selected.versionId };
@@ -190,7 +189,20 @@ export function ObjectVersions({ name, prefix, endpoint, onChanged }: ObjectVers
         setUnsupported((current) => new Set([...current, operation]));
       }
       const view = versionFailure(failure, label, endpoint);
-      flash.show([{ type: view.type, header: view.header, content: view.detail }]);
+      const refreshNeeded =
+        failure.kind === 'other' && (failure.code === 'PreconditionFailed' || failure.code === 'UnverifiedVersionBody');
+      flash.show([
+        {
+          type: view.type,
+          header: view.header,
+          content: (
+            <>
+              {view.detail}
+              {refreshNeeded && <Box variant="p">Refresh the version history and reselect the version.</Box>}
+            </>
+          ),
+        },
+      ]);
     } finally {
       if (!signal.aborted) {
         active.current = false;
@@ -203,7 +215,7 @@ export function ObjectVersions({ name, prefix, endpoint, onChanged }: ObjectVers
   function handleDownload() {
     if (target?.kind !== 'version') return;
     void run(OPERATIONS.getObject, 'Download', async (signal) => {
-      const body = await download(target.key, signal, target.versionId);
+      const body = await download(target.key, signal, target.versionId, target.etag);
       if (!signal.aborted) saveVersion(body, target.key);
     });
   }
@@ -213,15 +225,13 @@ export function ObjectVersions({ name, prefix, endpoint, onChanged }: ObjectVers
     const restores = changing.kind === 'version';
     const operation = restores ? OPERATIONS.copyObject : OPERATIONS.deleteObject;
     void run(operation, restores ? RESTORE_VERSION : REMOVE_MARKER, async (signal) => {
-      await change(changing.kind, changing.key, changing.versionId, signal);
+      await change(changing, signal);
       if (signal.aborted) return;
       listing.refresh();
       onChanged();
       flash.show([{ type: 'success', content: restores ? 'Version restored.' : 'Delete marker removed.' }]);
     });
   }
-
-  if (page === NO_SUCH_BUCKET) return <ObjectsBucketGone name={name} />;
 
   const failure =
     listing.failure === undefined ? undefined : versionFailure(listing.failure, 'Reading versions', endpoint);

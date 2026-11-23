@@ -10,8 +10,8 @@ import { useState } from 'react';
 
 import { AreaModal } from '../../../components/area-modal';
 import { ValueText } from '../../../components/value-text';
-import { NO_SUCH_BUCKET, type ObjectVersion } from '../api';
-import { useBucketProperty } from '../queries';
+import type { ObjectVersion } from '../api';
+import { useRestoreVersioning } from '../queries';
 import { versionFailure } from './object-versions-failure';
 import { confirmsName } from './confirms-name';
 
@@ -19,6 +19,8 @@ export type VersionTarget = ObjectVersion & { versionId: string };
 
 export const RESTORE_VERSION = 'Restore version';
 export const REMOVE_MARKER = 'Remove delete marker';
+
+const JSON_KEY_PREFIX = 'JSON ';
 
 interface ObjectVersionsDialogProps {
   endpoint: string | undefined;
@@ -39,15 +41,15 @@ export function ObjectVersionsDialog({
 }: ObjectVersionsDialogProps) {
   const restoring = target.kind === 'version';
   const label = restoring ? RESTORE_VERSION : REMOVE_MARKER;
-  const read = useBucketProperty(endpoint, bucket, 'versioning', { generation: 0, enabled: restoring });
-  const status = read.value === NO_SUCH_BUCKET ? undefined : read.value?.status;
+  const read = useRestoreVersioning(endpoint, bucket, restoring);
+  const status = read.value?.status;
   const ready = !restoring || (!read.loading && read.failure === undefined && status !== undefined);
   const failure =
     read.failure === undefined ? undefined : versionFailure(read.failure, 'Reading bucket versioning', endpoint);
   const [typed, setTyped] = useState('');
-  // A textarea preserves LF, but the browser normalizes CR. Show the lossless JSON string for those keys.
-  const escaped = target.key.includes('\r');
-  const expected = escaped ? JSON.stringify(target.key) : target.key;
+  // A textarea normalizes CR. Reserve a prefix for the escaped form so it cannot also be a raw confirmation.
+  const escaped = target.key.includes('\r') || target.key.startsWith(JSON_KEY_PREFIX);
+  const expected = escaped ? JSON_KEY_PREFIX + JSON.stringify(target.key) : target.key;
   const matches = typed !== '' && confirmsName(typed, expected);
 
   return (
@@ -108,16 +110,9 @@ export function ObjectVersionsDialog({
             {failure.detail}
           </Alert>
         )}
-        {read.value === NO_SUCH_BUCKET && (
-          <Alert type="error" header="NoSuchBucket" action={<Button onClick={read.again}>Retry</Button>}>
-            The local emulator holds no bucket of this name.
-          </Alert>
-        )}
         <FormField
           label="Enter the full key to confirm"
-          description={
-            escaped ? 'Enter the key as shown, including the quotation marks and escape sequences.' : undefined
-          }
+          description={escaped ? 'Enter the JSON prefix and quoted key exactly as shown.' : undefined}
           errorText={typed !== '' && !matches ? 'Enter the exact key shown above.' : undefined}
         >
           <Textarea

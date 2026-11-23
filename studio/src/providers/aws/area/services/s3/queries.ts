@@ -399,7 +399,7 @@ export function useObjectListing({
 /** The history of a prefix, using the key and version ID markers together as one cursor. */
 export function useObjectHistory(endpoint: string | undefined, bucket: string, prefix: string) {
   const [generation, setGeneration] = useState(0);
-  const listing = useTokenListing<ObjectVersionPage<ObjectVersion> | NoSuchBucket>({
+  const listing = useTokenListing<ObjectVersionPage<ObjectVersion>>({
     key: [...S3_KEY, 'object-history', bucket],
     parts: [generation, prefix],
     endpoint,
@@ -408,19 +408,29 @@ export function useObjectHistory(endpoint: string | undefined, bucket: string, p
       const cursor = token === undefined ? {} : (JSON.parse(token) as Partial<ObjectVersionPageRequest>);
       return listObjectHistory(at, bucket, { ...cursor, prefix, maxKeys: 100 }, signal);
     },
-    pageRead: (page) =>
-      page === NO_SUCH_BUCKET
-        ? undefined
-        : {
-            count: page.items.length,
-            next:
-              page.truncated && page.nextKeyMarker !== undefined
-                ? JSON.stringify({ keyMarker: page.nextKeyMarker, versionIdMarker: page.nextVersionIdMarker })
-                : undefined,
-          },
+    pageRead: (page) => ({
+      count: page.items.length,
+      next:
+        page.truncated && page.nextKeyMarker !== undefined
+          ? JSON.stringify({ keyMarker: page.nextKeyMarker, versionIdMarker: page.nextVersionIdMarker })
+          : undefined,
+    }),
   });
   const refresh = useCallback(() => setGeneration((current) => current + 1), []);
   return { ...listing, refresh };
+}
+
+/** Read on opening Restore, retaining the response when the bucket has disappeared. */
+export function useRestoreVersioning(endpoint: string | undefined, bucket: string, enabled: boolean) {
+  return useFreshRead(
+    endpoint,
+    bucket,
+    'versioning',
+    OPERATIONS.getBucketVersioning,
+    0,
+    (at, signal) => readBucketVersioning(at, bucket, signal),
+    enabled,
+  );
 }
 
 // Issue 256 (requirement R5.1, R6.8, R7.1, R8.1, R11): the reads of a bucket's page, of its sections and of the
@@ -798,11 +808,14 @@ function invalidateObjectReads(client: QueryClient, endpoint: string, { bucket, 
 export function useChangeObjectVersion(endpoint: string | undefined, bucket: string) {
   const client = useQueryClient();
   return useCallback(
-    async (kind: ObjectVersion['kind'], key: string, versionId: string, signal: AbortSignal) => {
+    async ({ kind, key, versionId, etag }: ObjectVersion & { versionId: string }, signal: AbortSignal) => {
       if (endpoint === undefined) throw new Error('The engine endpoint is not known yet.');
       const object = { bucket, key };
       if (kind === 'version') {
-        await copyObject(endpoint, object, object, signal, { sourceVersionId: versionId });
+        await copyObject(endpoint, object, object, signal, {
+          sourceVersionId: versionId,
+          ...(etag !== undefined && { sourceETag: etag }),
+        });
       } else {
         await deleteObject(endpoint, object, signal, versionId);
       }
@@ -816,13 +829,13 @@ export function useChangeObjectVersion(endpoint: string | undefined, bucket: str
 export function useDownloadObject(
   endpoint: string | undefined,
   bucket: string,
-): (key: string, signal: AbortSignal, versionId?: string) => Promise<ObjectBody> {
+): (key: string, signal: AbortSignal, versionId?: string, etag?: string) => Promise<ObjectBody> {
   return useCallback(
-    (key, signal, versionId) => {
+    (key, signal, versionId, etag) => {
       if (endpoint === undefined) {
         return Promise.reject(new Error('The engine endpoint is not known yet.'));
       }
-      return getObject(endpoint, bucket, key, signal, undefined, versionId);
+      return getObject(endpoint, bucket, key, signal, undefined, versionId, etag);
     },
     [endpoint, bucket],
   );

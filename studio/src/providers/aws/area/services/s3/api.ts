@@ -509,6 +509,7 @@ export interface ObjectVersionPageRequest {
 export interface ObjectVersion extends ObjectVersionId {
   kind: 'version' | 'delete-marker';
   latest: boolean;
+  etag?: string;
 }
 
 function toItem({ Key, VersionId }: { Key?: string | undefined; VersionId?: string | undefined }): ObjectVersionId {
@@ -516,16 +517,21 @@ function toItem({ Key, VersionId }: { Key?: string | undefined; VersionId?: stri
 }
 
 /** One page of the bucket's object versions and delete markers. */
-export function listObjectVersions(
+export async function listObjectVersions(
   endpoint: string,
   bucket: string,
   request: ObjectVersionPageRequest,
   signal: AbortSignal,
 ): Promise<ObjectVersionPage | NoSuchBucket> {
-  return readVersionPage(endpoint, bucket, request, signal, (output) => [
-    ...(output.Versions ?? []).map(toItem),
-    ...(output.DeleteMarkers ?? []).map(toItem),
-  ]);
+  try {
+    return await readVersionPage(endpoint, bucket, request, signal, (output) => [
+      ...(output.Versions ?? []).map(toItem),
+      ...(output.DeleteMarkers ?? []).map(toItem),
+    ]);
+  } catch (error) {
+    if (answeredCode(error) === NO_SUCH_BUCKET_CODE) return NO_SUCH_BUCKET;
+    throw error;
+  }
 }
 
 /** The version history of all keys under the prefix, including keys hidden by delete markers. */
@@ -534,13 +540,17 @@ export function listObjectHistory(
   bucket: string,
   request: ObjectVersionPageRequest & { prefix: string },
   signal: AbortSignal,
-): Promise<ObjectVersionPage<ObjectVersion> | NoSuchBucket> {
+): Promise<ObjectVersionPage<ObjectVersion>> {
   return readVersionPage<ObjectVersion>(endpoint, bucket, { ...request, encoding: 'url' }, signal, (output) => [
-    ...(output.Versions ?? []).map((item): ObjectVersion => ({
-      ...toItem(item),
-      latest: item.IsLatest === true,
-      kind: 'version',
-    })),
+    ...(output.Versions ?? []).map((item): ObjectVersion => {
+      const etag = text(item.ETag);
+      return {
+        ...toItem(item),
+        latest: item.IsLatest === true,
+        kind: 'version',
+        ...(etag !== undefined && { etag }),
+      };
+    }),
     ...(output.DeleteMarkers ?? []).map((item): ObjectVersion => ({
       ...toItem(item),
       latest: item.IsLatest === true,
@@ -554,7 +564,7 @@ function decodeVersionKey(key: string): string {
   return decodeURIComponent(key.replaceAll('+', ' '));
 }
 
-function readVersionPage<Item extends ObjectVersionId>(
+async function readVersionPage<Item extends ObjectVersionId>(
   endpoint: string,
   bucket: string,
   {
@@ -569,12 +579,11 @@ function readVersionPage<Item extends ObjectVersionId>(
   },
   signal: AbortSignal,
   items: (output: ListObjectVersionsCommandOutput) => Item[],
-): Promise<ObjectVersionPage<Item> | NoSuchBucket> {
-  return onBucket(
-    endpoint,
+): Promise<ObjectVersionPage<Item>> {
+  const output = await sendRequest(
     OPERATIONS.listObjectVersions,
-    (client, abortSignal) =>
-      client.send(
+    (abortSignal) =>
+      s3Client(endpoint).send(
         new ListObjectVersionsCommand({
           Bucket: bucket,
           MaxKeys: maxKeys,
@@ -585,23 +594,21 @@ function readVersionPage<Item extends ObjectVersionId>(
         }),
         { abortSignal },
       ),
-    (output): ObjectVersionPage<Item> => {
-      // The SDK leaves encoded keys untouched. Decode once, including the key cursor, and keep version IDs opaque.
-      const rows = items(output);
-      const page: ObjectVersionPage<Item> = {
-        items: encoding === 'url' ? rows.map((row) => ({ ...row, key: decodeVersionKey(row.key) })) : rows,
-        truncated: output.IsTruncated === true,
-      };
-      const nextKeyMarker = text(output.NextKeyMarker);
-      const nextVersionIdMarker = text(output.NextVersionIdMarker);
-      if (nextKeyMarker !== undefined) {
-        page.nextKeyMarker = encoding === 'url' ? decodeVersionKey(nextKeyMarker) : nextKeyMarker;
-      }
-      if (nextVersionIdMarker !== undefined) page.nextVersionIdMarker = nextVersionIdMarker;
-      return page;
-    },
     signal,
   );
+  // The SDK leaves encoded keys untouched. Decode once, including the key cursor, and keep version IDs opaque.
+  const rows = items(output);
+  const page: ObjectVersionPage<Item> = {
+    items: encoding === 'url' ? rows.map((row) => ({ ...row, key: decodeVersionKey(row.key) })) : rows,
+    truncated: output.IsTruncated === true,
+  };
+  const nextKeyMarker = text(output.NextKeyMarker);
+  const nextVersionIdMarker = text(output.NextVersionIdMarker);
+  if (nextKeyMarker !== undefined) {
+    page.nextKeyMarker = encoding === 'url' ? decodeVersionKey(nextKeyMarker) : nextKeyMarker;
+  }
+  if (nextVersionIdMarker !== undefined) page.nextVersionIdMarker = nextVersionIdMarker;
+  return page;
 }
 
 /** Whether the bucket holds no object version and no delete marker (R7.1): one item at most is asked for. */
@@ -846,6 +853,7 @@ export interface ObjectCopyOptions {
   edit?: ObjectPropertyEdit;
   onlyIfMissing?: boolean;
   sourceVersionId?: string;
+  sourceETag?: string;
 }
 
 /** The code with which a call on a key says the emulator holds no object of that key. */
@@ -907,15 +915,31 @@ function requireAddressableVersionKey(key: string, operation: string): void {
   }
 }
 
+/** A suspended bucket can replace the body of the null version while the history row is open. */
+function nullVersionCondition(versionId: string | undefined, etag: string | undefined, operation: string) {
+  if (versionId !== 'null') return undefined;
+  // Accept one strong entity tag. A wildcard, weak tag or list of tags cannot identify the selected body.
+  if (etag === undefined || !/^"[^"\r\n]+"$/.test(etag)) {
+    throw new RequestError({
+      kind: 'other',
+      operation,
+      code: 'UnverifiedVersionBody',
+      message: 'The selected null version has no usable ETag.',
+    });
+  }
+  return etag;
+}
+
 /** Copies an object using S3's defaults, or replaces its content type and metadata in place. */
 export async function copyObject(
   endpoint: string,
   source: ObjectLocation,
   destination: ObjectLocation,
   signal: AbortSignal,
-  { edit, onlyIfMissing = false, sourceVersionId }: ObjectCopyOptions = {},
+  { edit, onlyIfMissing = false, sourceVersionId, sourceETag }: ObjectCopyOptions = {},
 ): Promise<void> {
   if (sourceVersionId !== undefined) requireAddressableVersionKey(destination.key, OPERATIONS.copyObject);
+  const condition = nullVersionCondition(sourceVersionId, sourceETag, OPERATIONS.copyObject);
   // Separate the bucket from the key before encoding. A literal percent or question mark belongs to the key.
   const sourcePath = `${source.bucket}/${source.key.split('/').map(encodeURIComponent).join('/')}`;
   const copySource =
@@ -928,6 +952,7 @@ export async function copyObject(
           Bucket: destination.bucket,
           Key: destination.key,
           CopySource: copySource,
+          ...(condition !== undefined && { CopySourceIfMatch: condition }),
           ...(onlyIfMissing && { IfNoneMatch: '*' }),
           ...(edit === undefined
             ? {}
@@ -1042,13 +1067,15 @@ export async function getObject(
   signal: AbortSignal,
   range?: string,
   versionId?: string,
+  versionETag?: string,
 ): Promise<ObjectBody> {
   if (versionId !== undefined) requireAddressableVersionKey(key, OPERATIONS.getObject);
+  const condition = nullVersionCondition(versionId, versionETag, OPERATIONS.getObject);
   return sendRequest(
     OPERATIONS.getObject,
     async (abortSignal) => {
       const output = await s3Client(endpoint).send(
-        new GetObjectCommand({ Bucket: bucket, Key: key, Range: range, VersionId: versionId }),
+        new GetObjectCommand({ Bucket: bucket, Key: key, Range: range, VersionId: versionId, IfMatch: condition }),
         { abortSignal },
       );
       const bytes = output.Body === undefined ? new Uint8Array() : await output.Body.transformToByteArray();

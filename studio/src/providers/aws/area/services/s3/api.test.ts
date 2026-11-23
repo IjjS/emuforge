@@ -898,7 +898,6 @@ describe('object version history', () => {
           `<DeleteMarker><Key>${wireKey}</Key><VersionId>${markerId}</VersionId><IsLatest>true</IsLatest></DeleteMarker></ListVersionsResult>`,
       );
     const first = await listObjectHistory(endpoint, 'bucket', { prefix: 'logs/', maxKeys: 1 }, signal());
-    if (first === NO_SUCH_BUCKET) throw new Error('Expected a version history page');
     expect(first).toEqual({
       items: [{ key, versionId: markerId, latest: true, kind: 'delete-marker' }],
       truncated: true,
@@ -910,7 +909,7 @@ describe('object version history', () => {
     engine.aws = () =>
       xml(
         `<ListVersionsResult><IsTruncated>false</IsTruncated><Version><Key>${wireKey}</Key><VersionId>${versionId}</VersionId>` +
-          '<IsLatest>false</IsLatest></Version></ListVersionsResult>',
+          '<IsLatest>false</IsLatest><ETag>"observed-etag"</ETag></Version></ListVersionsResult>',
       );
     const { nextKeyMarker: keyMarker, nextVersionIdMarker: versionIdMarker } = first;
     if (keyMarker === undefined || versionIdMarker === undefined) throw new Error('Expected both cursors');
@@ -920,7 +919,10 @@ describe('object version history', () => {
       { prefix: 'logs/', maxKeys: 1, keyMarker, versionIdMarker },
       signal(),
     );
-    expect(second).toEqual({ items: [{ key, versionId, latest: false, kind: 'version' }], truncated: false });
+    expect(second).toEqual({
+      items: [{ key, versionId, latest: false, kind: 'version', etag: '"observed-etag"' }],
+      truncated: false,
+    });
     const [firstQuery, secondQuery] = engine.awsRequests.map((request) => new URL(request).searchParams);
     expect(firstQuery?.get('encoding-type')).toBe('url');
     expect(firstQuery?.get('prefix')).toBe('logs/');
@@ -984,9 +986,45 @@ describe('object version history', () => {
 
   it('downloads the bytes addressed by the literal null version ID', async () => {
     engine.aws = () => ({ status: 200, body: 'from null', headers: { 'content-type': 'text/plain' } });
-    const result = await getObject(endpoint, 'bucket', 'logs/history.txt', signal(), undefined, 'null');
+    const etag = '"observed-etag"';
+    const result = await getObject(endpoint, 'bucket', 'logs/history.txt', signal(), undefined, 'null', etag);
     expect(new TextDecoder().decode(result.bytes)).toBe('from null');
     expect(new URL(engine.awsRequests[0] ?? '').searchParams.get('versionId')).toBe('null');
+    expect(engine.sent[0]?.headers.get('if-match')).toBe(etag);
+  });
+
+  it.each([undefined, '*', 'W/"weak"', '"one", "two"'])(
+    'rejects null body operations before transport when the ETag is %j',
+    async (etag) => {
+      const transport = vi.fn(engine.fetch);
+      vi.stubGlobal('fetch', transport);
+      const object = { bucket: 'bucket', key: 'logs/history.txt' };
+      await expect(
+        getObject(endpoint, object.bucket, object.key, signal(), undefined, 'null', etag),
+      ).rejects.toMatchObject({
+        failure: { code: 'UnverifiedVersionBody' },
+      });
+      await expect(
+        copyObject(endpoint, object, object, signal(), {
+          sourceVersionId: 'null',
+          ...(etag !== undefined && { sourceETag: etag }),
+        }),
+      ).rejects.toMatchObject({ failure: { code: 'UnverifiedVersionBody' } });
+      expect(transport).not.toHaveBeenCalled();
+    },
+  );
+
+  it('preserves the history refusal while retaining the legacy missing-bucket result', async () => {
+    engine.aws = () => ({
+      status: 404,
+      body: '<Error><Code>NoSuchBucket</Code><Message>Bucket no longer exists.</Message></Error>',
+    });
+    await expect(
+      listObjectHistory(endpoint, 'bucket', { prefix: 'logs/', maxKeys: 1 }, signal()),
+    ).rejects.toMatchObject({
+      failure: { kind: 'other', code: 'NoSuchBucket', message: 'Bucket no longer exists.' },
+    });
+    expect(await listObjectVersions(endpoint, 'bucket', { maxKeys: 1 }, signal())).toBe(NO_SUCH_BUCKET);
   });
 });
 

@@ -17,6 +17,8 @@ const RESTORE = 'Restore version';
 const REMOVE = 'Remove delete marker';
 const RESTORED = 'Version restored.';
 const REMOVED = 'Delete marker removed.';
+const NULL_ETAG = '"observed-null-body"';
+const RESELECT = 'Refresh the version history and reselect the version.';
 const WARNING =
   'If versioning is suspended when you restore, the restored version replaces any existing null version of this key.';
 
@@ -25,7 +27,8 @@ function encodedKey(key: string): string {
 }
 
 function row(version: string, latest = false, kind = 'Version', key = KEY): string {
-  return `<${kind}><Key>${encodedKey(key)}</Key><VersionId>${version}</VersionId><IsLatest>${String(latest)}</IsLatest></${kind}>`;
+  const etag = kind === 'Version' && version === 'null' ? `<ETag>${NULL_ETAG}</ETag>` : '';
+  return `<${kind}><Key>${encodedKey(key)}</Key><VersionId>${version}</VersionId><IsLatest>${String(latest)}</IsLatest>${etag}</${kind}>`;
 }
 
 function history(items: string, cursor?: [string, string]): Response {
@@ -67,17 +70,20 @@ class FakeEngine {
   lists: URLSearchParams[] = [];
   histories: URLSearchParams[] = [];
   copies: (string | null)[] = [];
+  copyConditions: (string | null)[] = [];
   markerDeletes: (string | null)[] = [];
   versionDownloads: string[] = [];
+  downloadConditions: (string | null)[] = [];
   reads: string[] = [];
   readCurrent: ReadList = () => objects(this.hasCurrent ? [KEY] : []);
   readHistory: ReadList = () => history(row('new', true) + row('old'));
   readStatus: () => Response | Promise<Response> = () =>
     new Response(`<VersioningConfiguration><Status>${this.status}</Status></VersioningConfiguration>`);
-  writeCopy: () => Response | Promise<Response> = () =>
+  writeCopy: (condition: string | null) => Response | Promise<Response> = () =>
     new Response('<CopyObjectResult><ETag>copy</ETag></CopyObjectResult>');
   writeDelete: () => Response = () => new Response(null, { status: 204 });
-  getVersion: () => Response = () => new Response('historical body', { headers: { 'content-type': 'text/plain' } });
+  getVersion: (condition: string | null) => Response = () =>
+    new Response('historical body', { headers: { 'content-type': 'text/plain' } });
 
   fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const request = input instanceof Request ? input : new Request(input.toString(), init);
@@ -104,7 +110,9 @@ class FakeEngine {
     if (request.method === 'PUT') {
       this.destinations.push(decodeURIComponent(url.pathname));
       this.copies.push(request.headers.get('x-amz-copy-source'));
-      return this.writeCopy();
+      const condition = request.headers.get('x-amz-copy-source-if-match');
+      this.copyConditions.push(condition);
+      return this.writeCopy(condition);
     }
     const version = query.get('versionId');
     if (request.method === 'DELETE') {
@@ -124,7 +132,9 @@ class FakeEngine {
     }
     if (version !== null) {
       this.versionDownloads.push(version);
-      return this.getVersion();
+      const condition = request.headers.get('if-match');
+      this.downloadConditions.push(condition);
+      return this.getVersion(condition);
     }
     this.reads.push('body');
     return new Response(this.body, { headers: { 'content-type': 'text/plain' } });
@@ -153,8 +163,8 @@ function Area() {
   );
 }
 
-function open() {
-  const router = createMemoryRouter([{ path: '/aws/*', element: <Area /> }], { initialEntries: [PATH] });
+function open(initialPath = PATH) {
+  const router = createMemoryRouter([{ path: '/aws/*', element: <Area /> }], { initialEntries: [initialPath] });
   client = new QueryClient({ defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } } });
   render(
     <QueryClientProvider client={client}>
@@ -205,10 +215,13 @@ async function toggleVersions() {
 
 function selection(id: string) {
   const list = main().findTable();
-  const rows = list?.findRows() ?? [];
-  for (let index = 1; index <= rows.length; index += 1) {
-    const control = list?.findRowSelectionArea(index)?.find('input[type="radio"]')?.getElement();
-    if (control?.getAttribute('aria-label')?.includes(` version ${id},`)) return { control, index };
+  for (let index = 1; index <= (list?.findRows().length ?? 0); index += 1) {
+    const desktopId = list?.findBodyCell(index, 3)?.getElement();
+    const mobileId = list?.findBodyCell(index, 2)?.findAll('.aws-area-value-name')[1]?.getElement();
+    if ((desktopId ?? mobileId)?.textContent === id) {
+      const control = list?.findRowSelectionArea(index)?.find('input[type="radio"]')?.getElement();
+      if (control !== undefined) return { control, index };
+    }
   }
   return undefined;
 }
@@ -576,7 +589,7 @@ it.each([
   if (restoring) {
     await waitFor(() => expect(dialogValue(content, 'Bucket versioning')).toHaveTextContent('Enabled'));
   }
-  const expected = key.includes('\r') ? JSON.stringify(key) : key;
+  const expected = key.includes('\r') ? 'JSON ' + JSON.stringify(key) : key;
   expect(dialogValue(content, 'Key').textContent).toBe(expected);
   enter(input, wrongKey);
   expectDisabled(confirm);
@@ -590,6 +603,112 @@ it.each([
   } else {
     expect(engine.markerDeletes).toEqual([selectedId]);
   }
+});
+
+it.each([
+  { label: RESTORE, kind: 'Version' },
+  { label: REMOVE, kind: 'DeleteMarker' },
+])('keeps CR and the literal quoted escape key distinct for $label', async ({ label, kind }) => {
+  const crKey = 'a\rb';
+  const literalKey = '"a\\rb"';
+  const restoring = label === RESTORE;
+  engine.readHistory = () =>
+    history(row('cr-body', !restoring, kind, crKey) + row('literal-body', !restoring, kind, literalKey));
+  open('/aws/s3/buckets/alpha/objects');
+  await toggleVersions();
+  for (const [id, key, spelling, otherSpelling] of [
+    ['cr-body', crKey, 'JSON ' + literalKey, literalKey],
+    ['literal-body', literalKey, literalKey, 'JSON ' + literalKey],
+  ] as const) {
+    engine.objectKey = key;
+    await select(id);
+    const { content, input, confirm } = await confirmDialog(label);
+    if (restoring) {
+      await waitFor(() => expect(dialogValue(content, 'Bucket versioning')).toHaveTextContent('Enabled'));
+    }
+    expect(dialogValue(content, 'Key').textContent).toBe(spelling);
+    enter(input, otherSpelling);
+    expectDisabled(confirm);
+    const priorWrites = engine.destinations.length;
+    fireEvent.click(confirm);
+    expect(engine.destinations).toHaveLength(priorWrites);
+    enter(input, spelling);
+    fireEvent.click(confirm);
+    await waitFor(() => expect(engine.destinations.at(-1)).toBe('/' + BUCKET + '/' + key));
+    await waitFor(() => expect(createWrapper().findModal()).toBeNull());
+  }
+});
+
+it('rejects a download after the selected null body changes and guides the user back to history', async () => {
+  engine.readHistory = () => history(row('null'));
+  let liveETag = NULL_ETAG;
+  engine.getVersion = (condition) =>
+    condition !== null && condition !== liveETag
+      ? refusal(412, 'PreconditionFailed', 'The specified ETag no longer matches.')
+      : new Response('replacement bytes');
+  const save = vi.spyOn(URL, 'createObjectURL');
+  open();
+  await toggleVersions();
+  await select('null');
+  liveETag = '"replacement-null-body"';
+  fireEvent.click(action('Download'));
+  await waitFor(() => expect(flashContent('error')).toHaveTextContent('PreconditionFailed'));
+  expect(flashContent('error')).toHaveTextContent('The specified ETag no longer matches.');
+  expect(flashContent('error')).toHaveTextContent(RESELECT);
+  expect(engine.downloadConditions).toEqual([NULL_ETAG]);
+  expect(save).not.toHaveBeenCalled();
+});
+
+it('rejects a restore after the selected null body changes and keeps the current object', async () => {
+  engine.readHistory = () => history(row('current', true) + row('null'));
+  let liveETag = NULL_ETAG;
+  engine.writeCopy = (condition) => {
+    if (condition !== null && condition !== liveETag) {
+      return refusal(412, 'PreconditionFailed', 'The specified copy source ETag no longer matches.');
+    }
+    engine.body = 'replacement body';
+    return new Response('<CopyObjectResult><ETag>copy</ETag></CopyObjectResult>');
+  };
+  open();
+  await toggleVersions();
+  await select('null');
+  const { content, input, confirm } = await confirmDialog(RESTORE);
+  await waitFor(() => expect(dialogValue(content, 'Bucket versioning')).toHaveTextContent('Enabled'));
+  liveETag = '"replacement-null-body"';
+  enter(input, KEY);
+  fireEvent.click(confirm);
+  await waitFor(() => expect(flashContent('error')).toHaveTextContent('PreconditionFailed'));
+  expect(flashContent('error')).toHaveTextContent('The specified copy source ETag no longer matches.');
+  expect(flashContent('error')).toHaveTextContent(RESELECT);
+  expect(engine.copyConditions).toEqual([NULL_ETAG]);
+  expect(flashContent('success')).toBeUndefined();
+  await expectVersion('current', 'Version', true);
+  await toggleVersions();
+  await expectCurrentDetails('before change');
+});
+
+it('preserves the reported code and message when the bucket disappears before reading history', async () => {
+  engine.readHistory = () => refusal(404, 'NoSuchBucket', 'History could not be read because alpha disappeared.');
+  open();
+  await currentObjectLink();
+  await toggleVersions();
+  await waitFor(() => expect(table().findEmptySlot()?.getElement()).toHaveTextContent('NoSuchBucket'));
+  expect(table().findEmptySlot()?.getElement()).toHaveTextContent(
+    'History could not be read because alpha disappeared.',
+  );
+});
+
+it('preserves the reported code and message when the bucket disappears before reading restore status', async () => {
+  engine.readStatus = () => refusal(404, 'NoSuchBucket', 'Versioning could not be read because alpha disappeared.');
+  open();
+  await toggleVersions();
+  await select('old');
+  const { content, input, confirm } = await confirmDialog(RESTORE);
+  await waitFor(() => expect(content.getElement()).toHaveTextContent('NoSuchBucket'));
+  expect(content.getElement()).toHaveTextContent('Versioning could not be read because alpha disappeared.');
+  enter(input, KEY);
+  expectDisabled(confirm);
+  expect(engine.copies).toEqual([]);
 });
 
 it('prevents a restore when reading versioning fails or the confirmation is canceled', async () => {
@@ -725,6 +844,7 @@ it('restores from page two and shows refreshed history and current reads when th
   await expectVersion('restored', 'Version', true);
   expect(flashContent('success')).toHaveTextContent(RESTORED);
   expect(engine.copies).toEqual([`${BUCKET}/${KEY}?versionId=null`]);
+  expect(engine.copyConditions).toEqual([NULL_ETAG]);
   await toggleVersions();
   const retained = await openObjectPreferences();
   expect(pageSizeOption(retained, 50)).toBeChecked();
