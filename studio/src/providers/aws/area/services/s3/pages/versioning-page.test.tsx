@@ -119,7 +119,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 const page = () => createWrapper(screen.getByRole('main'));
 const form = () => page().findForm();
-const statusDescription = () => form()?.findFormField()?.findDescription()?.getElement();
+const statusDescription = () => form()?.findContent()?.findFormField()?.findDescription()?.getElement();
 const successFlash = () => page().findFlashbar()?.findItemsByType('success')[0]?.findContent()?.getElement();
 
 function button(label: string) {
@@ -132,7 +132,7 @@ function button(label: string) {
 
 function statusOption(value: BucketVersioningChange, label: string) {
   return waitFor(() => {
-    const group = form()?.findRadioGroup();
+    const group = form()?.findContent()?.findRadioGroup();
     const option = group?.findInputByValue(value)?.getElement();
     if (option === undefined) throw new Error(`Could not find versioning option ${value}`);
     const radio = group?.findButtons().find((candidate) => candidate.findNativeInput().getElement() === option);
@@ -144,7 +144,7 @@ function statusOption(value: BucketVersioningChange, label: string) {
 const readState = (label: string) =>
   page()
     .findAllContainers()
-    .find((container) => container.findStatusIndicator()?.getElement().textContent === label);
+    .find((container) => container.findContent().findStatusIndicator()?.getElement().textContent === label);
 
 it('shows Disabled when Status is absent and lets the user choose Enable', async () => {
   open();
@@ -216,6 +216,7 @@ it('shows the emulator’s unavailable state and refusal details for a 501 write
   fireEvent.click(button('Save changes'));
   await waitFor(() => {
     const unavailable = form()
+      ?.findContent()
       ?.findAllAlerts()
       .find((alert) => alert.findHeader()?.getElement().textContent === 'Not implemented by the emulator');
     expect(unavailable?.getElement()).toBeVisible();
