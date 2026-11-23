@@ -1,6 +1,7 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -41,6 +42,7 @@ const connection: AreaConnection = {
 
 const POLICY = '{"color":["red"]}';
 const REPLACEMENT = '{"color":["blue"]}';
+const REFUSAL = 'Filter policy could not be parsed as JSON';
 const SETTINGS: api.SubscriptionSettingsAttributes = {
   FilterPolicy: POLICY,
   FilterPolicyScope: 'MessageBody',
@@ -48,6 +50,13 @@ const SETTINGS: api.SubscriptionSettingsAttributes = {
 };
 const notFound = (operation: string) =>
   new RequestError({ kind: 'other', operation, code: 'NotFound', message: 'Subscription does not exist' });
+const invalidPolicy = () =>
+  new RequestError({
+    kind: 'other',
+    operation: 'SetSubscriptionAttributes',
+    code: 'InvalidParameter',
+    message: REFUSAL,
+  });
 const PAGE = createWrapper(document.body);
 
 beforeEach(() => {
@@ -140,12 +149,33 @@ function policyDescription() {
   return field('Filter policy')?.findDescription()?.getElement();
 }
 
-function changePolicy(value: string) {
+function policyTextarea() {
   const textarea = field('Filter policy')?.findControl()?.findTextarea()?.findNativeTextarea().getElement();
   if (!textarea) {
     throw new Error('Filter policy textarea is missing');
   }
-  fireEvent.change(textarea, { target: { value } });
+  return textarea;
+}
+
+function changePolicy(value: string) {
+  fireEvent.change(policyTextarea(), { target: { value } });
+}
+
+function wrapperButton(name: string, scope = PAGE) {
+  return scope.findAllButtons().find((candidate) => candidate.getElement().textContent?.trim() === name);
+}
+
+function clickWrapped(name: string) {
+  const control = wrapperButton(name);
+  if (!control) {
+    throw new Error(`Button ${name} is missing`);
+  }
+  control.click();
+}
+
+function returnToPolicy() {
+  const content = flash('error')?.findContent();
+  return content && wrapperButton('Return to filter policy', content)?.getElement();
 }
 
 async function openSettings() {
@@ -390,6 +420,87 @@ describe('subscription settings', () => {
     click('Retry');
     await waitFor(() => expect(api.getSubscriptionSettings).toHaveBeenCalledTimes(2));
   });
+
+  it('returns keyboard focus from the refusal to the draft and clears the field error on correction', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.getSubscriptionSettings)
+      .mockResolvedValueOnce(SETTINGS)
+      .mockResolvedValueOnce({ ...SETTINGS, FilterPolicy: REPLACEMENT });
+    vi.mocked(api.setSubscriptionSetting).mockRejectedValueOnce(invalidPolicy());
+    await openSettings();
+    await waitFor(() => expect(policyTextarea()).toHaveValue(POLICY));
+    changePolicy('{{');
+    clickWrapped('Save filter policy');
+    await waitFor(() => {
+      expect(flash('error')?.findContent()?.getElement()).toHaveTextContent(`InvalidParameter: ${REFUSAL}`);
+      expect(field('Filter policy')?.findError()?.getElement()).toHaveTextContent(`InvalidParameter: ${REFUSAL}`);
+    });
+    expect(flash('error')?.findContent()?.getElement()).toHaveTextContent(ARN);
+    const action = returnToPolicy();
+    expect(action).toBeVisible();
+    action?.focus();
+    await user.keyboard('{Enter}');
+    expect(policyTextarea()).toHaveFocus();
+    expect(policyTextarea()).toHaveValue('{{');
+
+    changePolicy(REPLACEMENT);
+    expect(field('Filter policy')?.findError()).toBeNull();
+    clickWrapped('Save filter policy');
+    await expectWriteSuccess();
+    await waitFor(() => expect(wrapperButton('Save filter policy')?.isDisabled()).toBe(true));
+    expect(policyTextarea()).toHaveValue(REPLACEMENT);
+    expect(api.setSubscriptionSetting).toHaveBeenNthCalledWith(
+      2,
+      ENGINE,
+      ARN,
+      { name: 'FilterPolicy', value: REPLACEMENT },
+      expect.any(AbortSignal),
+    );
+  });
+
+  it.each(['before', 'after'])(
+    'keeps a refusal tied to its submission when the editor switches %s it arrives',
+    async (when) => {
+      const otherArn = `${TOPIC}:other-subscription`;
+      vi.mocked(api.listSubscriptions).mockResolvedValue({
+        subscriptions: [
+          { arn: ARN, endpoint: ENDPOINT, protocol: 'sqs', pending: false },
+          { arn: otherArn, endpoint: `${ENDPOINT}-other`, protocol: 'sqs', pending: false },
+        ],
+      });
+      vi.mocked(api.getSubscriptionSettings).mockImplementation(async (_, arn) =>
+        arn === ARN ? SETTINGS : { ...SETTINGS, FilterPolicy: REPLACEMENT },
+      );
+      const write = hold<undefined>();
+      vi.mocked(api.setSubscriptionSetting).mockReturnValueOnce(
+        write.promise.then(() => {
+          throw invalidPolicy();
+        }),
+      );
+      await openSettings();
+      await waitFor(() => expect(policyTextarea()).toHaveValue(POLICY));
+      changePolicy('{{');
+      clickWrapped('Save filter policy');
+      if (when === 'after') {
+        write.resolve(undefined);
+        await waitFor(() => expect(returnToPolicy()).toBeVisible());
+      }
+      PAGE.findTable()?.findRowSelectionArea(2)?.find('input[type="radio"]')?.click();
+      clickWrapped('Subscription settings');
+      await waitFor(() => expect(policyTextarea()).toHaveValue(REPLACEMENT));
+      if (when === 'before') {
+        write.resolve(undefined);
+      }
+      await waitFor(() => {
+        const content = flash('error')?.findContent()?.getElement();
+        expect(content).toHaveTextContent(`InvalidParameter: ${REFUSAL}`);
+        expect(content).toHaveTextContent(ARN);
+        expect(content).not.toHaveTextContent(otherArn);
+        expect(returnToPolicy()).toBeUndefined();
+        expect(field('Filter policy')?.findError()).toBeNull();
+      });
+    },
+  );
 
   it.each([
     ['Filter policy scope', 'MessageAttributes', 'Save scope', 'FilterPolicyScope'],
