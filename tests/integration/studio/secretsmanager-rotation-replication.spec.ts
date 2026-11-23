@@ -74,7 +74,13 @@ for (const mode of ['rotate-now', 'rotation-cancel'] as const) {
     await detail(page, f.name);
     if (mode === 'rotate-now') {
       await button(page, 'Rotate now').click();
-      await submit(page, 'Request rotation');
+      const [response] = await Promise.all([
+        page.waitForResponse((r) => r.request().headers()['x-amz-target']?.endsWith('.RotateSecret') === true),
+        submit(page, 'Request rotation'),
+      ]);
+      expect(response.ok()).toBe(true);
+      expect(response.request().postDataJSON()).toMatchObject({ SecretId: f.name, RotateImmediately: true });
+      expect(await response.json()).toMatchObject({ Name: f.name, VersionId: expect.any(String) });
       await expect(success(page)).toContainText('Rotation request accepted.');
       await expectSchedule(page, f, arn);
     } else {

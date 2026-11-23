@@ -1,10 +1,11 @@
 import { expect, test } from './support';
-import { ABOUT_CONTROL, crumbLink, expectLine, notStartedOn } from './support/aws-area';
+import { ABOUT_CONTROL, connectedAt, crumbLink, expectLine, notStartedOn } from './support/aws-area';
 import { direct, fixture, waitForPurge } from './services/secretsmanager/fixture';
 import {
   button,
   detail,
   detailPath,
+  expectSettledList,
   listPath,
   secretLink,
   secretValue,
@@ -44,7 +45,7 @@ test('studio.secretsmanager-refresh', async ({ ctx, page }) => {
 test('studio.secretsmanager-reentry', async ({ ctx, page }) => {
   const f = await fixture(ctx);
   await page.goto(listPath);
-  await expect(page.locator(ui.findTable().findLoadingText().toSelector())).toBeHidden();
+  await expectSettledList(page);
   const original = await page.evaluateHandle(() => document);
   await crumbLink(page, 'AWS').click();
   await expect(page).toHaveURL(/\/aws$/);
@@ -81,12 +82,19 @@ test('studio.secretsmanager-restart-clears-secrets', async ({ ctx, page }) => {
   await f.seed();
   await page.goto(listPath);
   await expect(secretLink(page, f.name)).toBeVisible();
+  const documentBeforeStop = await page.evaluateHandle(() => document);
+  const originalUrl = page.url();
   await f.emulator!.stop();
   await expectLine(page, notStartedOn(f.emulatorPort));
   await f.emulator!.startAgain();
+  await expectLine(page, connectedAt(f.emulatorPort), 60000);
   const empty = page.locator(ui.findTable().findEmptySlot().toSelector());
   await expect(empty).toContainText('No secrets', { timeout: 60000 });
   await expect(secretLink(page, f.name)).toHaveCount(0);
+  await expect(empty).toContainText('Secrets stored in this emulator will appear here.');
+  await expect(page).toHaveURL(originalUrl);
+  expect(await page.evaluate((doc) => doc === document, documentBeforeStop)).toBe(true);
+  await documentBeforeStop.dispose();
   expect((await direct(ctx, f.emulatorPort).listSecrets({})).SecretList).toEqual([]);
 });
 
@@ -95,18 +103,25 @@ test('studio.secretsmanager-restart-clears-detail', async ({ ctx, page }) => {
   const reads = valueRequests(page);
   await f.seed({ Description: 'Previous instance metadata' });
   await detail(page, f.name);
+  await expect(page.getByText('Previous instance metadata', { exact: true })).toBeVisible();
   await button(page, 'Retrieve secret value').click();
   await expect(secretValue(page)).toContainText('fixture text');
   expect(reads).toEqual(['GetSecretValue']);
+  const documentBeforeStop = await page.evaluateHandle(() => document);
+  const originalUrl = page.url();
   await f.emulator!.stop();
   await expectLine(page, notStartedOn(f.emulatorPort));
   await expect(page.getByText('fixture text', { exact: true })).toBeHidden();
   await f.emulator!.startAgain();
+  await expectLine(page, connectedAt(f.emulatorPort), 60000);
   await expect(page.getByText('Secret not found', { exact: true })).toBeVisible({ timeout: 60000 });
   await expect(page.getByRole('link', { name: 'Back to secrets' })).toBeVisible();
   await expect(page.getByText('Previous instance metadata')).toBeHidden();
   await expect(page.getByText('fixture text', { exact: true })).toBeHidden();
   expect(reads).toEqual(['GetSecretValue']);
+  await expect(page).toHaveURL(originalUrl);
+  expect(await page.evaluate((doc) => doc === document, documentBeforeStop)).toBe(true);
+  await documentBeforeStop.dispose();
   await expect(direct(ctx, f.emulatorPort).describeSecret({ SecretId: f.name })).rejects.toMatchObject({
     name: 'ResourceNotFoundException',
   });

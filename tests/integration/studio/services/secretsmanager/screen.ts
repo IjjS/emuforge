@@ -60,10 +60,36 @@ export const versionRadio = (page: Page, id: string) =>
     .locator(ui.findTable().findRows().toSelector())
     .getByRole('radio', { name: 'Select version ' + id, exact: true });
 
-export function versionRow(page: Page, id: string) {
-  return page.locator(ui.findTable().findRows().toSelector()).filter({
-    has: page.getByRole('radio', { name: 'Select version ' + id, exact: true }),
-  });
+export async function expectVersionRows(page: Page, versions: { VersionId?: string; VersionStages?: string[] }[]) {
+  const table = ui.findTable();
+  const section = page
+    .locator(ui.findExpandableSection().toSelector())
+    .filter({ has: button(page, 'Version history') });
+  const inside = (selector: string) => section.locator(selector.replace(/^body /, ''));
+  const expected = versions
+    .map((v) => [v.VersionId, v.VersionStages?.join(', ') || 'No labels'])
+    .sort(([a], [b]) => a!.localeCompare(b!));
+  await expect(inside(table.findRows().toSelector())).toHaveCount(expected.length);
+  await expect
+    .poll(async () => {
+      const rows = await Promise.all(
+        expected.map(async (_, index) => {
+          // Column one is the row's selection control.
+          const id = await inside(table.findBodyCell(index + 1, 2).toSelector()).innerText();
+          const labels = await inside(table.findBodyCell(index + 1, 3).toSelector()).innerText();
+          return [id, labels];
+        }),
+      );
+      return rows.sort(([a], [b]) => a.localeCompare(b));
+    })
+    .toEqual(expected);
+}
+
+export async function expectSettledList(page: Page) {
+  const table = ui.findTable();
+  const empty = page.locator(table.findEmptySlot().toSelector()).getByText('No secrets', { exact: true });
+  await expect(page.locator(table.findRows().toSelector()).first().or(empty)).toBeVisible();
+  await expect(page.locator(table.findLoadingText().toSelector())).toBeHidden();
 }
 
 export async function chooseStage(page: Page, kind: 'add' | 'move' | 'remove', version: string, label: string) {

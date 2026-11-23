@@ -4,6 +4,7 @@ import { fixture, localKey, waitForPurge } from './services/secretsmanager/fixtu
 import {
   button,
   detail,
+  expectSettledList,
   listPath,
   modal,
   secretLink,
@@ -138,7 +139,13 @@ for (const mode of ['add', 'edit', 'remove'] as const) {
     const tag = tags.find((item) => item.Key === 'purpose');
     if (mode === 'remove') {
       expect(tag).toBeUndefined();
-      await expect(button(page, 'Edit tag purpose')).toHaveCount(0);
+      const table = page.locator(ui.findTable().toSelector()).filter({ has: button(page, 'Add tag') });
+      await expect(table.getByText('No tags', { exact: true })).toBeVisible();
+      await expect(
+        page
+          .locator(ui.findTable().findRows().toSelector())
+          .filter({ has: page.getByRole('rowheader', { name: 'purpose', exact: true }) }),
+      ).toHaveCount(0);
     } else {
       expect(tag?.Value).toBe('revised');
       const rows = page.locator(ui.findTable().findRows().toSelector());
@@ -178,12 +185,19 @@ test('studio.secretsmanager-schedule-delete', async ({ ctx, page }) => {
   const deleted = (await f.describe()).DeletedDate!;
   expect(Math.abs(recoveryEnd - before - 7 * 86400000)).toBeLessThan(60000);
   await expect(page).toHaveURL((url) => url.pathname === listPath);
+  await expectSettledList(page);
   await expect(secretLink(page, f.name)).toHaveCount(0);
   await page.getByRole('checkbox', { name: 'Include secrets scheduled for deletion' }).check();
   const row = page
     .locator(ui.findTable().findRows().toSelector())
     .filter({ has: page.getByRole('link', { name: f.name }) });
-  await expect(row).toContainText(creationDateText(deleted.toISOString(), SEOUL));
+  await expect(row).toBeVisible();
+  const rowIndex = await row.evaluate((el) => (el as HTMLTableRowElement).sectionRowIndex + 1);
+  const table = ui.findTable();
+  await expect(page.locator(table.findColumnHeaders().get(4).toSelector())).toContainText('Scheduled deletion');
+  await expect(page.locator(table.findBodyCell(rowIndex, 4).toSelector())).toHaveText(
+    creationDateText(deleted.toISOString(), SEOUL),
+  );
 });
 
 test('studio.secretsmanager-restore', async ({ ctx, page }) => {

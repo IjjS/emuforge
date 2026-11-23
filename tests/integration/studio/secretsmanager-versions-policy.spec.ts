@@ -11,7 +11,8 @@ import {
   textbox,
   valueRequests,
   versionRadio,
-  versionRow,
+  expectVersionRows,
+  ui,
 } from './services/secretsmanager/screen';
 
 test('studio.secretsmanager-version-history', async ({ ctx, page }) => {
@@ -22,12 +23,8 @@ test('studio.secretsmanager-version-history', async ({ ctx, page }) => {
   expect(Versions).toHaveLength(3);
   await detail(page, f.name);
   await openSection(page, 'Version history');
-  for (const version of Versions!) {
-    const row = versionRow(page, version.VersionId!);
-    await expect(row).toContainText(version.VersionId!);
-    await expect(row).toContainText(version.VersionStages?.join(', ') || 'No labels');
-  }
-  await expect(versionRow(page, first.VersionId!)).toContainText('No labels');
+  expect(Versions!.find((v) => v.VersionId === first.VersionId)?.VersionStages ?? []).toEqual([]);
+  await expectVersionRows(page, Versions!);
 });
 
 test('studio.secretsmanager-version-value', async ({ ctx, page }) => {
@@ -48,7 +45,7 @@ for (const mode of ['add', 'move', 'remove'] as const) {
     const f = await fixture(ctx);
     const first = (await f.seed()).VersionId!;
     const second = (await f.client.putSecretValue({ SecretId: f.name, SecretString: 'second' })).VersionId!;
-    await f.client.putSecretValue({ SecretId: f.name, SecretString: 'third' });
+    if (mode !== 'move') await f.client.putSecretValue({ SecretId: f.name, SecretString: 'third' });
     const label = 'local-stage';
     if (mode !== 'add')
       await f.client.updateSecretVersionStage({ SecretId: f.name, VersionStage: label, MoveToVersionId: first });
@@ -58,11 +55,7 @@ for (const mode of ['add', 'move', 'remove'] as const) {
     const { Versions } = await f.versions();
     const labelled = Versions!.filter((v) => v.VersionStages?.includes(label)).map((v) => v.VersionId);
     expect(labelled).toEqual(mode === 'remove' ? [] : [mode === 'add' ? first : second]);
-    for (const version of Versions!) {
-      await expect(versionRow(page, version.VersionId!)).toContainText(
-        version.VersionStages?.join(', ') || 'No labels',
-      );
-    }
+    await expectVersionRows(page, Versions!);
   });
 }
 
@@ -74,12 +67,34 @@ test('studio.secretsmanager-policy-save', async ({ ctx, page }) => {
   await expect(section).toContainText('This secret has no resource policy.');
   await button(section, 'Edit resource policy').click();
   await textbox(modal(page), 'Policy document').fill(POLICY);
-  await button(modal(page), 'Validate policy').click();
+  const [validation] = await Promise.all([
+    page.waitForResponse((r) => r.request().headers()['x-amz-target']?.endsWith('.ValidateResourcePolicy') === true),
+    button(modal(page), 'Validate policy').click(),
+  ]);
+  expect(validation.ok()).toBe(true);
+  expect(validation.request().postDataJSON()).toMatchObject({ SecretId: f.name, ResourcePolicy: POLICY });
+  expect(await validation.json()).toMatchObject({ PolicyValidationPassed: true });
   await expect(modal(page)).toContainText('Policy validation passed.');
   await submit(page, 'Save policy');
   const { ResourcePolicy } = await f.client.getResourcePolicy({ SecretId: f.name });
   expect(JSON.parse(ResourcePolicy!)).toEqual(JSON.parse(POLICY));
-  await expect(section).toContainText(ResourcePolicy!);
+  const content = section.locator(
+    ui
+      .findExpandableSection()
+      .findContent()
+      .toSelector()
+      .replace(/^body [^ ]+ /, ''),
+  );
+  await expect
+    .poll(async () => {
+      const text = (await content.innerText()).trim();
+      try {
+        return JSON.parse(text);
+      } catch {
+        return null;
+      }
+    })
+    .toEqual(JSON.parse(ResourcePolicy!));
 });
 
 test('studio.secretsmanager-policy-remove', async ({ ctx, page }) => {
