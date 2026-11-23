@@ -1,13 +1,16 @@
-import Flashbar from '@cloudscape-design/components/flashbar';
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, waitFor } from '@testing-library/react';
-import { useRef, useState } from 'react';
+import userEvent from '@testing-library/user-event';
+import { useRef } from 'react';
+import { MemoryRouter } from 'react-router';
 import { beforeEach, expect, it, onTestFinished, vi } from 'vitest';
 
 import { RequestError } from '../../../../../../lib/aws/request';
 import { AreaRootContext } from '../../../area-root';
-import { PageFlashContext, type FlashResult } from '../../../components/page-flash';
+import { AreaFlash } from '../../../components/area-flash';
+import { PageFlashContext } from '../../../components/page-flash';
+import { useAreaFlash } from '../../../components/use-area-flash';
 import {
   LIST_LAYERS,
   LIST_LAYER_VERSIONS,
@@ -61,12 +64,12 @@ function renderPage() {
   const client = new QueryClient();
   function Area() {
     const root = useRef<HTMLDivElement>(null);
-    const [flash, show] = useState<FlashResult>();
+    const flash = useAreaFlash('/aws/lambda/layers', 0, true);
     return (
       <AreaRootContext.Provider value={root}>
-        <PageFlashContext.Provider value={{ show, handOver: () => undefined }}>
+        <PageFlashContext.Provider value={flash.pageFlash}>
           <div ref={root}>
-            {flash !== undefined && <Flashbar items={[...flash]} />}
+            {flash.shown && <AreaFlash result={flash.shown} onDismiss={flash.dismiss} onAnnounce={flash.announce} />}
             <LayersPage
               connection={{
                 engineOrigin,
@@ -84,7 +87,9 @@ function renderPage() {
   }
   return render(
     <QueryClientProvider client={client}>
-      <Area />
+      <MemoryRouter>
+        <Area />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
 }
@@ -331,6 +336,7 @@ it.each([
 });
 
 it('replaces an earlier publication success with a refusal while the draft remains editable', async () => {
+  const user = userEvent.setup();
   publish.mockResolvedValueOnce({ name: 'beta', version: 2 }).mockRejectedValueOnce(
     new RequestError({
       kind: 'other',
@@ -346,20 +352,36 @@ it('replaces an earlier publication success with a refusal while the draft remai
     expect(page.findModal()).toBeNull();
   });
 
-  const dialog = await submitPublication('invalid.name');
+  const dialog = await openPublish();
+  const name = nameInput(dialog);
+  fireEvent.change(name, { target: { value: 'invalid.name' } });
+  chooseZip(dialog);
+  const submit = submitButton(dialog);
+  act(() => submit.focus());
+  await user.keyboard('{Enter}');
   const refusal = 'PublishLayerVersion returned InvalidParameterValueException. Invalid layer name.';
   await waitFor(() => {
     const flash = required(page.findFlashbar());
     const error = flash.findItemsByType('error')[0];
     expect(error?.findHeader()?.getElement()).toHaveTextContent('Could not publish layer version.');
     expect(error?.findContent()?.getElement().textContent).toBe(refusal);
+    expect(error?.getElement()).not.toHaveAttribute('role', 'alert');
     expect(flash.findItemsByType('success')).toHaveLength(0);
     const inline = required(dialog.findContent().findAlert());
     expect(inline.findHeader()?.getElement()).toHaveTextContent('Could not publish layer version.');
     expect(inline.findContent().getElement().textContent).toBe(refusal);
+    const announcement = required(dialog.findContent().find('[role="alert"]')).getElement();
+    expect(announcement).toHaveTextContent(refusal);
+    expect(announcement).toHaveAttribute('aria-atomic', 'true');
   });
   expect(page.findModal()?.getElement()).toBe(dialog.getElement());
-  const name = nameInput(dialog);
+  expect(submit).toHaveFocus();
+  await user.tab();
+  expect(dialog.getElement()).toContainElement(document.activeElement as HTMLElement);
+  await user.tab();
+  expect(dialog.getElement()).toContainElement(document.activeElement as HTMLElement);
+  await user.tab({ shift: true });
+  expect(dialog.getElement()).toContainElement(document.activeElement as HTMLElement);
   expect(name).toHaveValue('invalid.name');
   fireEvent.change(name, { target: { value: 'valid-name' } });
   expect(name).toHaveValue('valid-name');

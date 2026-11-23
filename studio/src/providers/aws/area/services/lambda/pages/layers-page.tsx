@@ -37,7 +37,6 @@ const LAYER_COLUMNS: TableProps.ColumnDefinition<LayerSummary>[] = [
     id: 'name',
     header: 'Layer name',
     isRowHeader: true,
-    minWidth: '28ch',
     cell: ({ name }) => (
       // A short name contributes its full width, including names with wider glyphs.
       <span style={name.length <= 24 ? { display: 'inline-block', minWidth: 'max-content' } : undefined}>
@@ -48,7 +47,6 @@ const LAYER_COLUMNS: TableProps.ColumnDefinition<LayerSummary>[] = [
   {
     id: 'latestVersion',
     header: 'Latest version',
-    minWidth: '16ch',
     cell: ({ latestVersion }) => <ValueText kind="fixed" value={latestVersion?.toString()} none="-" />,
   },
 ];
@@ -261,10 +259,12 @@ function LayerWorkspace({ connection, scope }: { connection: AreaConnection; sco
           }}
           onFailure={(failure) => {
             const item = failureItem(failure, 'Could not publish layer version.', connection, 'layer version');
-            flash.show([item]);
             if (failure.kind === 'not-implemented') {
               setPublishUnavailable(true);
               setPublishOpen(false);
+              flash.show([item]);
+            } else {
+              flash.show([{ ...item, announcedInDialog: true }]);
             }
             return item;
           }}
@@ -349,7 +349,7 @@ function PublishDialog({
               </Button>
               <Button
                 variant="primary"
-                disabled={name.trim() === '' || file === undefined || busy}
+                disabled={name.trim() === '' || file === undefined}
                 loading={busy}
                 onClick={() => {
                   void handlePublish();
@@ -361,12 +361,16 @@ function PublishDialog({
           </Box>
         }
       >
-        <SpaceBetween size="m">
+        <div role="alert" aria-atomic="true">
           {failure !== undefined && (
-            <Alert type={failure.type} header={failure.header}>
-              {failure.content}
-            </Alert>
+            <Box margin={{ bottom: 'm' }}>
+              <Alert type={failure.type} header={failure.header}>
+                {failure.content}
+              </Alert>
+            </Box>
           )}
+        </div>
+        <SpaceBetween size="m">
           <FormField label="Layer name" description="Reuse an existing layer name to publish a new version.">
             <Input value={name} onChange={({ detail }) => setName(detail.value)} disabled={busy} />
           </FormField>
