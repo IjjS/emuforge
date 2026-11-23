@@ -327,7 +327,7 @@ it('shows the type, latest state and full ID with the key at narrow widths', asy
 it.each([
   { layout: 'desktop', narrow: false },
   { layout: 'mobile', narrow: true },
-])('distinguishes history keys in the $layout key cells and selection names', async ({ narrow }) => {
+])('preserves native key selection and distinguishes history keys in the $layout layout', async ({ narrow }) => {
   vi.stubGlobal('matchMedia', (media: string) => ({
     media,
     matches: narrow && media === '(max-width: 688px)',
@@ -338,44 +338,39 @@ it.each([
     {
       id: 'cr',
       key: 'logs/line\rbreak.csv',
-      visible: 'logs/line\\rbreak.csv',
+      indicator: 'CR at character 10',
       spoken: 'logs/line \\r (carriage return) break.csv',
     },
     {
       id: 'lf',
       key: 'logs/line\nbreak.csv',
-      visible: 'logs/line\\nbreak.csv',
+      indicator: 'LF at character 10',
       spoken: 'logs/line \\n (line feed) break.csv',
     },
-    { id: 'space', key: 'logs/line break.csv', visible: 'logs/line break.csv', spoken: 'logs/line break.csv' },
+    { id: 'space', key: 'logs/line break.csv', spoken: 'logs/line break.csv' },
     {
       id: 'percent-cr',
       key: 'logs/line%0Dbreak.csv',
-      visible: 'logs/line%0Dbreak.csv',
       spoken: 'logs/line%0Dbreak.csv',
     },
     {
       id: 'percent-lf',
       key: 'logs/line%0Abreak.csv',
-      visible: 'logs/line%0Abreak.csv',
       spoken: 'logs/line%0Abreak.csv',
     },
     {
       id: 'literal-r',
       key: 'logs/line\\rbreak.csv',
-      visible: 'logs/line\\\\rbreak.csv',
       spoken: 'logs/line \\\\ (literal backslash) rbreak.csv',
     },
     {
       id: 'literal-n',
       key: 'logs/line\\nbreak.csv',
-      visible: 'logs/line\\\\nbreak.csv',
       spoken: 'logs/line \\\\ (literal backslash) nbreak.csv',
     },
     {
       id: 'literal-label',
       key: 'logs/line (carriage return) break.csv',
-      visible: 'logs/line (carriage return) break.csv',
       spoken: 'logs/line (carriage return) break.csv',
     },
   ];
@@ -384,11 +379,23 @@ it.each([
   open();
   await toggleVersions();
 
-  for (const { id, visible, spoken } of keys) {
+  const nativeSelection = required(window.getSelection());
+  for (const { id, key, indicator, spoken } of keys) {
     const { control, index } = await waitFor(() => required(selection(id)));
-    const key = required(table().findBodyCell(index, 2)?.find('.aws-area-value-name')).getElement();
-    expect(key).toBeVisible();
-    expect(key.textContent).toBe(visible);
+    const cell = required(table().findBodyCell(index, 2));
+    const value = required(cell.find('.aws-area-value-name')).getElement();
+    expect(value).toBeVisible();
+    expect(value.textContent).toBe(key);
+    const range = document.createRange();
+    range.selectNodeContents(value);
+    nativeSelection.removeAllRanges();
+    nativeSelection.addRange(range);
+    expect(nativeSelection.toString()).toBe(key);
+    nativeSelection.removeAllRanges();
+
+    const indicatorElement = cell.find('[aria-hidden="true"]')?.getElement();
+    expect(indicatorElement?.textContent).toBe(indicator);
+    if (indicator !== undefined) expect(indicatorElement).toHaveStyle({ userSelect: 'none' });
     expect(control).toHaveAccessibleName('Select ' + spoken + ' version ' + id + ', Type: Version, Latest: No');
     expect(control).not.toBeChecked();
   }
