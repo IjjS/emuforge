@@ -3,7 +3,7 @@ import type { Page } from '@playwright/test';
 import { expect, type Ctx } from '../../support';
 import { checkPrefix } from '../../support/service-screens';
 import { lambdaDirect, LambdaSeeded, storedZip, type Direct } from './lambda';
-import { inCollection, submitDialog } from './lambda-releases';
+import { submitDialog } from './lambda-releases';
 import { pythonZip, PYTHON, PYTHON_HANDLER, zipFile } from './lambda-tasks';
 
 const base = ['2018-10-31', 'layers'];
@@ -110,9 +110,10 @@ const modal = createWrapper(wrap.findModal().toSelector());
 const table = wrap.findTable();
 
 export async function expectVersions(page: Page, expectedArns: string[]) {
-  await expect(inCollection(page, 'Versions', table.findRows())).toHaveCount(expectedArns.length);
+  const versions = page.getByRole('table', { name: 'Versions', exact: true }).locator('*');
+  await expect(page.locator(table.findRows().toSelector()).and(versions)).toHaveCount(expectedArns.length);
   for (const [index, arn] of expectedArns.entries()) {
-    await expect(inCollection(page, 'Versions', table.findBodyCell(index + 1, 2))).toHaveText(arn);
+    await expect(page.locator(table.findBodyCell(index + 1, 2).toSelector()).and(versions)).toHaveText(arn);
   }
 }
 export const attachedTable = (page: Page) =>
