@@ -299,7 +299,9 @@ it('keeps a single status beside each name in a narrow table and retains the scr
   expect(columnHeaders()).toEqual(['Stack name and status', 'Created', 'Description']);
   expect(stackCell(2, 2)).toHaveTextContent(creationDateText(new Date(CREATED)));
   expect(stackCell(2, 3)).toHaveTextContent('Recovery test');
-  expect(screen.getByText('Scroll sideways to see more columns.')).toBeVisible();
+  const description = stackTable().findHeaderSlot()?.findHeader()?.findDescription()?.getElement();
+  expect(description).toBeVisible();
+  expect(description).toHaveTextContent(/^Scroll sideways to see more columns\.$/);
 });
 
 it('rejects a partial page and shows the complete page on retry', async () => {
@@ -330,17 +332,12 @@ it('filters by case-insensitive substring on the current page without adding rea
   expect(stackNames()).toEqual(['DevWebApp']);
   expect(filter()).toHaveAccessibleDescription(/1 match on this page/);
   expectNoStack('DevWorkers');
-  filter().focus();
-  vi.useFakeTimers();
-  try {
-    changeFilter('missing');
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(2_100);
-    });
-    expect(screen.getByText(/^0 matches on this page\.?$/, { selector: '[aria-live="polite"]' })).toBeInTheDocument();
-  } finally {
-    vi.useRealTimers();
-  }
+  act(() => filter().focus());
+  changeFilter('missing');
+  const results = stackTable().findTextFilter()?.findResultsCount().getElement();
+  expect(results).toBeVisible();
+  expect(results).toHaveTextContent(/^0 matches on this page$/);
+  expect(filter()).toHaveAccessibleDescription(/0 matches on this page/);
   expect(filter()).toHaveFocus();
   expect(screen.getByText('No matching stacks')).toBeInTheDocument();
   expect(screen.getByText('Filters this page only.')).toBeInTheDocument();
