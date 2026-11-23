@@ -1,4 +1,5 @@
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import createWrapper from '@cloudscape-design/components/test-utils/dom';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { QueryClient, QueryClientProvider, useIsFetching } from '@tanstack/react-query';
@@ -14,6 +15,8 @@ const NAME = 'dev/key';
 const STRING_VALUE = '  synthetic value\nwith whitespace  ';
 const NEW_KEY = 'arn:aws:kms:us-east-1:000000000000:key/replacement';
 const REFUSED = 'Local policy refused this operation.';
+const STORED = `Secret ${NAME} was stored.`;
+const PAGE = createWrapper(document.body);
 let nextPort = 8750;
 
 type Reply = { body: unknown; status?: number };
@@ -100,17 +103,84 @@ function openCreate({ handler, observe = false }: { handler?: Handler; observe?:
   };
 }
 
+function field(label: string) {
+  const found = PAGE.findAllFormFields().find((item) => item.findLabel()?.getElement().textContent === label);
+  if (!found) throw new Error(`Missing field ${label}`);
+  return found;
+}
+
+function input(label: string) {
+  const found = field(label);
+  const control =
+    found.findControl()?.findInput()?.findNativeInput() ?? found.findControl()?.findTextarea()?.findNativeTextarea();
+  if (!control) throw new Error(`Missing input for ${label}`);
+  return control.getElement();
+}
+
 function enter(label: string, value: string) {
-  fireEvent.change(screen.getByRole('textbox', { name: label }), { target: { value } });
+  fireEvent.change(input(label), { target: { value } });
+}
+
+function chooseValueType(value: 'string' | 'binary') {
+  const option = field('Value type').findControl()?.findRadioGroup()?.findInputByValue(value);
+  if (!option) throw new Error(`Missing value type ${value}`);
+  fireEvent.click(option.getElement());
+}
+
+function upload(file: File) {
+  const control = field('Secret file').findControl()?.findFileUpload()?.findNativeInput();
+  if (!control) throw new Error('Missing secret file selector');
+  fireEvent.change(control.getElement(), { target: { files: [file] } });
+}
+
+function button(name: string, root = PAGE) {
+  return root
+    .findAllButtons()
+    .find((item) => {
+      const element = item.getElement();
+      return (element.getAttribute('aria-label') ?? item.findTextRegion()?.getElement().textContent) === name;
+    })
+    ?.getElement();
 }
 
 async function click(name: string) {
-  fireEvent.click(await screen.findByRole('button', { name }));
+  const control = await waitFor(() => {
+    const root = PAGE.findModal()?.findFooter() ?? PAGE;
+    const found = button(name, root);
+    if (!found) throw new Error(`Missing button ${name}`);
+    return found;
+  });
+  fireEvent.click(control);
+}
+
+function heading(name: string) {
+  return PAGE.findAllHeaders().find((header) => header.findHeadingText().getElement().textContent === name);
 }
 
 async function expectList(router: ReturnType<typeof openCreate>['router']) {
-  await screen.findByRole('heading', { name: 'Secrets', level: 1 });
+  await waitFor(() => expect(heading('Secrets')?.findHeadingText().getElement()).toBeVisible());
   expect(router.state.location.pathname).toBe(SECRETS_PATH);
+}
+
+function area() {
+  return PAGE.findAppLayout()?.findContentRegion();
+}
+
+function successFlash() {
+  return area()
+    ?.findFlashbar()
+    ?.findItemsByType('success')
+    .find((item) => item.findContent()?.getElement().textContent === STORED)
+    ?.findContent()
+    ?.getElement();
+}
+
+function errorContent(title: string) {
+  return area()
+    ?.findAllAlerts()
+    .find((item) => item.findHeader()?.getElement().textContent === title)
+    ?.findContent()
+    .getElement();
 }
 
 function deferredReply() {
@@ -129,7 +199,7 @@ function fill() {
 }
 
 function expectNoSuccess() {
-  expect(screen.queryByText(`Secret ${NAME} was stored.`)).not.toBeInTheDocument();
+  expect(successFlash()).toBeUndefined();
 }
 
 describe('Store a secret', () => {
@@ -145,8 +215,8 @@ describe('Store a secret', () => {
     fill();
     await click('Cancel');
     await click('Keep editing');
-    expect(screen.getByRole('textbox', { name: 'Secret value' })).toHaveValue(STRING_VALUE);
-    expect(screen.getByRole('textbox', { name: 'Secret name' })).toHaveValue(NAME);
+    expect(input('Secret value')).toHaveValue(STRING_VALUE);
+    expect(input('Secret name')).toHaveValue(NAME);
     expect(router.state.location.pathname).toBe(SECRET_CREATE_PATH);
   });
 
@@ -164,7 +234,9 @@ describe('Store a secret', () => {
     fill();
     enter('Description', 'Development credentials');
     enter('KMS key ARN', NEW_KEY);
-    await click('Add tag');
+    const tagEditor = PAGE.findAttributeEditor();
+    if (!tagEditor) throw new Error('Missing tags editor');
+    fireEvent.click(tagEditor.findAddButton().getElement());
     enter('Key', 'project');
     enter('Value', 'local');
     await click('Store a secret');
@@ -179,15 +251,15 @@ describe('Store a secret', () => {
       }),
     );
     expect(count('CreateSecret')).toBe(1);
+    await waitFor(() => expect(successFlash()).toBeVisible());
   });
 
   it('stores the original file bytes through the binary field only', async () => {
     const { calls } = openCreate();
     enter('Secret name', NAME);
-    fireEvent.click(screen.getByRole('radio', { name: 'Binary file' }));
-    const input = screen.getByLabelText('Secret file', { selector: 'input' });
+    chooseValueType('binary');
     const bytes = [0, 20, 160, 255];
-    fireEvent.change(input, { target: { files: [new File([new Uint8Array(bytes)], 'secret.bin')] } });
+    upload(new File([new Uint8Array(bytes)], 'secret.bin'));
     await click('Store a secret');
     await waitFor(() =>
       expect(calls).toHaveBeenCalledWith('CreateSecret', {
@@ -196,22 +268,21 @@ describe('Store a secret', () => {
         ClientRequestToken: expect.any(String),
       }),
     );
+    await waitFor(() => expect(successFlash()).toBeVisible());
   });
 
   it('keeps both drafts when switching value types and submits only the selected draft', async () => {
     const { calls } = openCreate();
     fill();
-    const stringOption = screen.getByRole('radio', { name: 'String' });
-    const fileOption = screen.getByRole('radio', { name: 'Binary file' });
-    fireEvent.click(fileOption);
-    const input = screen.getByLabelText('Secret file', { selector: 'input' });
-    const file = new File(['synthetic bytes'], 'draft.bin');
-    fireEvent.change(input, { target: { files: [file] } });
-    fireEvent.click(stringOption);
-    expect(screen.getByRole('textbox', { name: 'Secret value' })).toHaveValue(STRING_VALUE);
-    fireEvent.click(fileOption);
-    expect(screen.getByText('draft.bin')).toBeVisible();
-    fireEvent.click(stringOption);
+    chooseValueType('binary');
+    upload(new File(['synthetic bytes'], 'draft.bin'));
+    chooseValueType('string');
+    expect(input('Secret value')).toHaveValue(STRING_VALUE);
+    chooseValueType('binary');
+    expect(
+      field('Secret file').findControl()?.findFileUpload()?.findFileToken(1)?.findFileName().getElement(),
+    ).toHaveTextContent('draft.bin');
+    chooseValueType('string');
     await click('Store a secret');
     await waitFor(() =>
       expect(calls).toHaveBeenCalledWith('CreateSecret', {
@@ -220,6 +291,7 @@ describe('Store a secret', () => {
         ClientRequestToken: expect.any(String),
       }),
     );
+    await waitFor(() => expect(successFlash()).toBeVisible());
   });
 
   it('generates a password only on request and fills the string field', async () => {
@@ -228,10 +300,12 @@ describe('Store a secret', () => {
       handler: (operation) => (operation === 'GetRandomPassword' ? { body: { RandomPassword: generated } } : undefined),
     });
     fill();
-    expect(screen.getByText('Generating a password replaces the value entered here.')).toBeVisible();
+    const notice = field('Secret value').findDescription()?.getElement();
+    expect(notice).toBeVisible();
+    expect(notice).toHaveTextContent('Generating a password replaces the value entered here.');
     expect(count('GetRandomPassword')).toBe(0);
     await click('Generate password');
-    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Secret value' })).toHaveValue(generated));
+    await waitFor(() => expect(input('Secret value')).toHaveValue(generated));
     expect(count('GetRandomPassword')).toBe(1);
     expect(count('CreateSecret')).toBe(0);
   });
@@ -248,9 +322,10 @@ describe('Store a secret', () => {
     });
     fill();
     await click('Store a secret');
-    expect(await screen.findByText('A secret with this name already exists.', { exact: false })).toBeVisible();
-    expect(screen.getByRole('textbox', { name: 'Secret name' })).toHaveValue(NAME);
-    expect(screen.getByRole('textbox', { name: 'Secret value' })).toHaveValue(STRING_VALUE);
+    await waitFor(() => expect(errorContent('Secret operation failed')).toBeVisible());
+    expect(errorContent('Secret operation failed')).toHaveTextContent('A secret with this name already exists.');
+    expect(input('Secret name')).toHaveValue(NAME);
+    expect(input('Secret value')).toHaveValue(STRING_VALUE);
     expect(router.state.location.pathname).toBe(SECRET_CREATE_PATH);
     expectNoSuccess();
   });
@@ -264,8 +339,9 @@ describe('Store a secret', () => {
     });
     fill();
     await click('Generate password');
-    expect(await screen.findByText(REFUSED, { exact: false })).toBeVisible();
-    expect(screen.getByRole('textbox', { name: 'Secret value' })).toHaveValue(STRING_VALUE);
+    await waitFor(() => expect(errorContent('Access denied')).toBeVisible());
+    expect(errorContent('Access denied')).toHaveTextContent(REFUSED);
+    expect(input('Secret value')).toHaveValue(STRING_VALUE);
     expectNoSuccess();
   });
 
@@ -292,9 +368,9 @@ describe('Store a secret', () => {
     await waitFor(() => expect(screen.getByLabelText('List read')).toHaveAttribute('aria-busy', 'false'));
     fill();
     await click('Store a secret');
-    await screen.findByRole('heading', { name: NAME, level: 1 });
+    await waitFor(() => expect(heading(NAME)?.findHeadingText().getElement()).toBeVisible());
     const assertResult = () => {
-      expect(within(screen.getByRole('main')).getByText(`Secret ${NAME} was stored.`)).toBeVisible();
+      expect(successFlash()).toBeVisible();
     };
     const reads = [
       { source: list, label: 'List read', reply: { body: { SecretList: [{ Name: NAME }] } } },
@@ -311,11 +387,16 @@ describe('Store a secret', () => {
       await waitFor(() => expect(screen.getByLabelText(label)).toHaveAttribute('aria-busy', 'false'));
       assertResult();
     }
-    expect(await within(screen.getByRole('main')).findByText('Stored by Studio')).toBeVisible();
+    const metadata = area()
+      ?.findKeyValuePairs()
+      ?.findItems()
+      .flatMap((item) => item.findGroupPairs() ?? []);
+    const description = metadata?.find((item) => item.findLabel()?.getElement().textContent === 'Description');
+    expect(description?.findValue()?.getElement()).toHaveTextContent('Stored by Studio');
     expect(router.state.location.pathname + router.state.location.search).toBe(secretPath(NAME));
     expect(screen.getByLabelText('List read')).toHaveTextContent(NAME);
     expect(count('GetSecretValue')).toBe(0);
-    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await click('Refresh');
     await waitFor(() => expect(count('DescribeSecret')).toBeGreaterThan(2));
     assertResult();
   });
