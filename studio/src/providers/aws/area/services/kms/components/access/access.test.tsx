@@ -158,8 +158,8 @@ describe('KMS key access', () => {
 
     await editPolicy();
 
-    expect(await screen.findByText(NEW_POLICY)).toBeVisible();
-    expect(screen.getByText('Key policy saved.')).toBeVisible();
+    expect(await screen.findByText('Key policy saved.')).toBeVisible();
+    expect(await screen.findByText(NEW_POLICY, { selector: ':not(textarea)' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'Edit key policy' })).toBeDisabled();
     await act(async () => names.resolve({ PolicyNames: ['default'] }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Edit key policy' })).toBeEnabled());
