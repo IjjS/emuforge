@@ -88,7 +88,9 @@ test('studio.secretsmanager-policy-remove', async ({ ctx, page }) => {
   await f.client.putResourcePolicy({ SecretId: f.name, ResourcePolicy: POLICY });
   await detail(page, f.name);
   const section = await openSection(page, 'Resource policy');
-  await expect(section).toContainText(POLICY);
+  const stored = (await f.client.getResourcePolicy({ SecretId: f.name })).ResourcePolicy!;
+  expect(JSON.parse(stored)).toEqual(JSON.parse(POLICY));
+  await expect(section).toContainText(stored);
   await button(section, 'Remove resource policy').click();
   await submit(page, 'Remove resource policy');
   await expect(section).toContainText('This secret has no resource policy.');

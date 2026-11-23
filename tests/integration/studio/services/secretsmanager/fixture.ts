@@ -5,7 +5,7 @@ import { Lambda } from '@aws-sdk/client-lambda';
 import { zipSync, strToU8 } from 'fflate';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { EnvError, type Ctx } from '../../support/check';
+import { EnvError, expect, type Ctx } from '../../support/check';
 import { emulatorDir, readEmulatorFiles } from '../../support/emulator';
 import { checkPrefix } from '../../support/service-screens';
 import { startStack } from '../../support/stack';
@@ -113,4 +113,21 @@ export async function rotationFunction(ctx: Ctx, port: number, permitted: boolea
     iam.destroy();
     lambda.destroy();
   }
+}
+
+export async function waitForPurge(f: Awaited<ReturnType<typeof fixture>>) {
+  await expect
+    .poll(
+      async () => {
+        try {
+          await f.describe();
+          return false;
+        } catch (error) {
+          if (error instanceof Error && error.name === 'ResourceNotFoundException') return true;
+          throw error;
+        }
+      },
+      { timeout: 30000, message: 'DescribeSecret reports ResourceNotFoundException after permanent deletion' },
+    )
+    .toBe(true);
 }

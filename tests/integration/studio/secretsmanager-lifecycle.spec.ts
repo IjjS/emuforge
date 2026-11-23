@@ -1,6 +1,6 @@
 import { test, expect } from './support';
 import { creationDateText, SEOUL } from './support/service-screens';
-import { fixture, localKey } from './services/secretsmanager/fixture';
+import { fixture, localKey, waitForPurge } from './services/secretsmanager/fixture';
 import {
   button,
   detail,
@@ -35,10 +35,10 @@ test('studio.secretsmanager-store-generated', async ({ ctx, page }) => {
         tags
           .findRow(1)
           .findField(i + 1)
-          .findInput()
-          .findNativeInput()
+          .findControl()
           .toSelector(),
       )
+      .getByRole('textbox')
       .fill(value);
   }
   await button(page, 'Store a secret').click();
@@ -169,9 +169,14 @@ test('studio.secretsmanager-schedule-delete', async ({ ctx, page }) => {
   await button(page, 'Schedule deletion').click();
   await modal(page).getByRole('spinbutton').fill('7');
   const before = Date.now();
-  await submit(page, 'Schedule deletion');
+  const [response] = await Promise.all([
+    page.waitForResponse((r) => r.request().headers()['x-amz-target']?.endsWith('.DeleteSecret') === true),
+    submit(page, 'Schedule deletion'),
+  ]);
+  expect(response.request().postDataJSON().RecoveryWindowInDays).toBe(7);
+  const recoveryEnd = (await response.json()).DeletionDate * 1000;
   const deleted = (await f.describe()).DeletedDate!;
-  expect(Math.abs(deleted.getTime() - before - 7 * 86400000)).toBeLessThan(60000);
+  expect(Math.abs(recoveryEnd - before - 7 * 86400000)).toBeLessThan(60000);
   await expect(page).toHaveURL((url) => url.pathname === listPath);
   await expect(secretLink(page, f.name)).toHaveCount(0);
   await page.getByRole('checkbox', { name: 'Include secrets scheduled for deletion' }).check();
@@ -205,5 +210,5 @@ test('studio.secretsmanager-permanent-delete', async ({ ctx, page }) => {
   await submit(page, 'Permanently delete');
   await expect(page).toHaveURL((url) => url.pathname === listPath);
   await expect(success(page)).toContainText(f.name);
-  await expect(f.describe()).rejects.toMatchObject({ name: 'ResourceNotFoundException' });
+  await waitForPurge(f);
 });

@@ -1,6 +1,6 @@
 import { expect, test } from './support';
 import { ABOUT_CONTROL, crumbLink, expectLine, notStartedOn } from './support/aws-area';
-import { direct, fixture } from './services/secretsmanager/fixture';
+import { direct, fixture, waitForPurge } from './services/secretsmanager/fixture';
 import {
   button,
   detail,
@@ -69,7 +69,7 @@ test('studio.secretsmanager-missing-secret', async ({ ctx, page }) => {
   const f = await fixture(ctx);
   await f.seed();
   await f.client.deleteSecret({ SecretId: f.name, ForceDeleteWithoutRecovery: true });
-  await expect(f.describe()).rejects.toMatchObject({ name: 'ResourceNotFoundException' });
+  await waitForPurge(f);
   await page.goto(detailPath(f.name));
   await expect(page.getByText('Secret not found', { exact: true })).toBeVisible();
   await expect(page.getByText('Your local emulator could not find ' + f.name + '.')).toBeVisible();
