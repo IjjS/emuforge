@@ -72,7 +72,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const button = (name: string) => screen.getByRole('button', { name, exact: true });
+const button = (name: string) => screen.getByRole('button', { name });
 const click = (name: string) => fireEvent.click(button(name));
 const disabled = (element: HTMLElement) =>
   (element instanceof HTMLButtonElement && element.disabled) || element.getAttribute('aria-disabled') === 'true';
@@ -131,7 +131,7 @@ async function openSettings() {
 }
 
 function refreshSettings() {
-  const refresh = screen.getAllByRole('button', { name: 'Refresh', exact: true }).at(-1);
+  const refresh = screen.getAllByRole('button', { name: 'Refresh' }).at(-1);
   if (refresh === undefined) {
     throw new Error('Settings refresh is missing');
   }
@@ -208,7 +208,7 @@ describe('subscription settings', () => {
   });
 
   it('submits only the edited policy when raw delivery also has a draft and prevents duplicate writes', async () => {
-    const write = hold<void>();
+    const write = hold<undefined>();
     vi.mocked(api.setSubscriptionSetting).mockReturnValueOnce(write.promise);
     vi.mocked(api.getSubscriptionSettings)
       .mockResolvedValueOnce(SETTINGS)
@@ -227,7 +227,7 @@ describe('subscription settings', () => {
       { name: 'FilterPolicy', value: REPLACEMENT },
       expect.any(AbortSignal),
     );
-    write.resolve();
+    write.resolve(undefined);
     expect(await screen.findByText('Subscription settings updated')).toBeVisible();
   });
 

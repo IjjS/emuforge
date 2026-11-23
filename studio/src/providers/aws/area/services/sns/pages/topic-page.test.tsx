@@ -436,7 +436,7 @@ describe("a topic's page", () => {
 });
 
 it('reports a successful settings write after a refresh finds the topic missing', async () => {
-  const write = hold<void>();
+  const write = hold<undefined>();
   vi.mocked(api.setSubscriptionSetting).mockReturnValueOnce(write.promise);
   vi.mocked(api.getTopic).mockResolvedValueOnce(standard()).mockResolvedValueOnce({ found: false });
   open(pathOf(ARN));
@@ -451,7 +451,7 @@ it('reports a successful settings write after a refresh finds the topic missing'
   expect(await screen.findByText('Topic not found')).toBeVisible();
   expect(screen.queryByTestId('stand-in-subscriptions')).not.toBeInTheDocument();
   expect(vi.mocked(api.setSubscriptionSetting).mock.calls[0]?.[3].aborted).toBe(false);
-  write.resolve();
+  write.resolve(undefined);
   expect(await screen.findByText('Subscription settings updated')).toBeVisible();
   expect(screen.getByText(`${ARN}:subscription`)).toBeVisible();
 });
