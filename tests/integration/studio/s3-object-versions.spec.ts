@@ -5,6 +5,7 @@ import { ACTION } from "./support/frame";
 import {
   chooseVersion,
   expectHistory,
+  expectNullETag,
   showHistory,
   versionDialog,
   versionFixture,
@@ -159,27 +160,21 @@ test("studio.s3-restore-suspended-version", async ({ ctx, page }) => {
   ).toEqual([older, newer].sort());
   await expectHistory(page, after);
   // The current null ID survives this write. Its displayed ETag witnesses the new body.
-  const head = await s3Direct(ctx, f.port, {
-    method: "HEAD",
+  const current = await s3Direct(ctx, f.port, {
+    method: "GET",
     pathname: "/" + f.bucket + "/" + f.key,
   });
-  if ("error" in head) throw new Error(head.error);
-  expect(head.status).toBe(200);
-  const etag = head.headers.etag;
-  expect(etag).toBeTruthy();
-  await expect(
-    page
-      .locator(createWrapper().findTable().findRows().toSelector() + ":visible")
-      .filter({ hasText: etag }),
-  ).toHaveCount(1);
-
+  if ("error" in current) throw new Error(current.error);
+  expect(current.status).toBe(200);
+  expect(current.bytes).toEqual(Buffer.from("older body"));
+  expect(current.headers.etag).toBeTruthy();
+  await expectNullETag(page, f.key, current.headers.etag);
   await expectFlash(page, "success", "Version restored.");
   await expect(
     page.locator(
       createWrapper().findFlashbar().findItemsByType("success").toSelector(),
     ),
   ).toBeVisible();
-  expect(await f.current()).toEqual(Buffer.from("older body"));
 });
 
 test("studio.s3-remove-delete-marker", async ({ ctx, page }) => {

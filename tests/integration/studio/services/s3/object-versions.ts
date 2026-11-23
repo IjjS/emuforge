@@ -63,7 +63,13 @@ function readRows(page: Page) {
               selector.replace(String(rowSlot), String(index + 1)),
             )?.innerText,
         );
-        return { key, versionId: id?.split(/\s/)[0] ?? "", type, latest };
+        return {
+          key,
+          idText: id,
+          versionId: id?.split(/\s/)[0] ?? "",
+          type,
+          latest,
+        };
       }),
     { columns, rowSlot },
   );
@@ -81,8 +87,33 @@ export async function expectHistory(page: Page, expected: DirectItem[]) {
     }))
     .sort(byId);
   await expect
-    .poll(async () => (await readRows(page)).sort(byId), ACTION)
+    .poll(
+      async () =>
+        (await readRows(page))
+          .map(({ key, versionId, type, latest }) => ({
+            key,
+            versionId,
+            type,
+            latest,
+          }))
+          .sort(byId),
+      ACTION,
+    )
     .toEqual(wanted);
+}
+
+export function expectNullETag(page: Page, key: string, etag: string) {
+  return expect
+    .poll(async () => {
+      const row = (await readRows(page)).find(
+        (entry) =>
+          entry.key === key &&
+          entry.versionId === "null" &&
+          entry.latest === "Yes",
+      );
+      return row?.idText;
+    }, ACTION)
+    .toContain(etag);
 }
 
 export async function chooseVersion(page: Page, key: string, id: string) {
