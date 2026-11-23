@@ -914,7 +914,7 @@ export function useDeleteFunctionUrl(endpoint: string | undefined, name: string)
 
 export function useFunctionLayersReading(endpoint: string | undefined, name: string, scope: string, active: boolean) {
   const [revision, setRevision] = useState(0);
-  const query = useQuery({
+  const query = useQuery<string[]>({
     queryKey: [...lambdaKey(endpoint), 'attached-layers', name, scope, revision],
     enabled: (query) =>
       active &&

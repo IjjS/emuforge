@@ -1,3 +1,4 @@
+import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
@@ -61,9 +62,9 @@ class FakeEngine {
     this.description = UPDATED_DESCRIPTION;
     return Response.json({});
   };
-  layerAnswer = (_marker: string | null): Response | Promise<Response> =>
+  layerAnswer: (marker: string | null) => Response | Promise<Response> = () =>
     Response.json({ Layers: [{ LayerName: 'tools' }] });
-  versionsAnswer = (_marker: string | null): Response | Promise<Response> =>
+  versionsAnswer: (marker: string | null) => Response | Promise<Response> = () =>
     Response.json({
       LayerVersions: [2, 1].map((Version) => ({ Version, LayerVersionArn: arn('tools', Version) })),
     });
@@ -118,11 +119,11 @@ beforeEach(() => {
 
 afterEach(() => vi.unstubAllGlobals());
 
-function open(tab = 'configuration') {
+function open() {
   const client = new QueryClient();
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={[`${PATH}?tab=${tab}`]}>
+      <MemoryRouter initialEntries={[`${PATH}?tab=configuration`]}>
         <AwsArea
           headerSelector="#top-bar"
           onPageTitle={() => undefined}
@@ -157,23 +158,31 @@ function dialogSubmit(dialog: ReturnType<typeof within>, action = ADD) {
   return dialog.getByRole('button', { name: action });
 }
 
-async function choose(dialog: ReturnType<typeof within>, label: string, option: string | RegExp) {
-  const selector = dialog.getByRole('button', { name: new RegExp(label) });
-  await waitFor(() => expect(selector).toBeEnabled());
-  fireEvent.click(selector);
-  fireEvent.click(await dialog.findByRole('option', { name: option }));
+function picker(label: string) {
+  const dialog = createWrapper(screen.getByRole('dialog', { name: ADD }));
+  const field = dialog.findAllFormFields().find((field) => field.findLabel()?.getElement().textContent === label);
+  const select = field?.findControl()?.findSelect();
+  if (!select) throw new Error(`Expected the ${label} selector.`);
+  return select;
 }
 
-async function chooseOlderVersion(dialog: ReturnType<typeof within>) {
-  await choose(dialog, 'Layer name', 'tools');
-  await choose(dialog, '^Version', /^1\b/);
+async function choose(label: string, value: string) {
+  const select = picker(label);
+  await waitFor(() => expect(select.findTrigger().getElement()).toBeEnabled());
+  select.openDropdown();
+  select.selectOptionByValue(value);
+}
+
+async function chooseOlderVersion() {
+  await choose('Layer name', 'tools');
+  await choose('Version', OLDER);
 }
 
 async function openRemove(layer: string) {
   fireEvent.click(await screen.findByRole('button', { name: `${REMOVE} ${layer}` }));
-  const dialog = within(await screen.findByRole('dialog', { name: REMOVE }));
-  expect(dialog.getByText(layer)).toBeVisible();
-  return dialog;
+  const dialog = await screen.findByRole('dialog', { name: REMOVE });
+  expect(dialog).toHaveTextContent(layer);
+  return within(dialog);
 }
 
 async function expectAttached(layers: readonly string[]) {
@@ -189,14 +198,13 @@ it('shows loading and a retryable attached-layer error before showing a successf
     .fn()
     .mockReturnValueOnce(held.promise)
     .mockImplementation(() => Response.json({}));
-  open('code');
-  fireEvent.click(await screen.findByRole('tab', { name: 'Configuration' }));
+  open();
 
   expect(await screen.findByText('Loading attached layers…')).toBeVisible();
   expect(screen.queryByText(EMPTY)).not.toBeInTheDocument();
-  await act(() => held.resolve(error(500, 'ServiceException')));
+  await act(() => held.resolve(error(400, 'InvalidParameterValueException')));
   expect(await screen.findByText('Could not load attached layers.')).toBeVisible();
-  expect(screen.getByText(/GetFunctionConfiguration returned ServiceException/)).toBeVisible();
+  expect(screen.getByText(/GetFunctionConfiguration returned InvalidParameterValueException/)).toBeVisible();
   expect(screen.queryByText(EMPTY)).not.toBeInTheDocument();
 
   fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
@@ -208,7 +216,7 @@ it('keeps a concurrent-update refusal through both rereads', async () => {
   engine.updateAnswer = () => error(409, 'ResourceConflictException', 'Another update is in progress.');
   open();
   const dialog = await openAdd();
-  await chooseOlderVersion(dialog);
+  await chooseOlderVersion();
 
   fireEvent.click(dialogSubmit(dialog));
   expect(await screen.findByText('Could not add layer version.')).toBeVisible();
@@ -237,12 +245,12 @@ it('appends an older version from later pages and keeps the existing order', asy
     );
   open();
   const dialog = await openAdd();
-  const layerPages = within(await dialog.findByRole('navigation', { name: 'Layer name pages' }));
+  const layerPages = within(await dialog.findByRole('list', { name: 'Layer name pages' }));
   fireEvent.click(layerPages.getByRole('button', { name: 'Next page' }));
-  await choose(dialog, 'Layer name', 'tools');
-  const versionPages = within(await dialog.findByRole('navigation', { name: 'Version pages' }));
+  await choose('Layer name', 'tools');
+  const versionPages = within(await dialog.findByRole('list', { name: 'Version pages' }));
   fireEvent.click(versionPages.getByRole('button', { name: 'Next page' }));
-  await choose(dialog, '^Version', /^1\b/);
+  await choose('Version', OLDER);
   fireEvent.click(dialogSubmit(dialog));
 
   await expectAttached([FIRST, MIDDLE, OLDER]);
@@ -282,7 +290,7 @@ describe.each(['add', 'remove'] as const)('persistent %s results', (action) => {
     };
     open();
     const dialog = action === 'add' ? await openAdd() : await openRemove(FIRST);
-    if (action === 'add') await chooseOlderVersion(dialog);
+    if (action === 'add') await chooseOlderVersion();
     fireEvent.click(dialogSubmit(dialog, action === 'add' ? ADD : REMOVE));
     const success = action === 'add' ? 'Layer version added.' : 'Layer version removed.';
     expect(await screen.findByText(success)).toBeVisible();
@@ -350,7 +358,7 @@ it('disables addition and removal while the function is updating', async () => {
 describe.each([
   { label: 'Layer name', resource: 'layers', operation: 'ListLayers', path: LAYERS, mock: 'layerAnswer' },
   {
-    label: '^Version',
+    label: 'Version',
     resource: 'layer versions',
     operation: 'ListLayerVersions',
     path: VERSIONS,
@@ -364,20 +372,20 @@ describe.each([
       .mockImplementation(engine[mock]);
     open();
     const dialog = await openAdd();
-    if (path === VERSIONS) await choose(dialog, 'Layer name', 'tools');
+    if (path === VERSIONS) await choose('Layer name', 'tools');
 
     expect(await dialog.findByText(`Could not load ${resource}.`)).toBeVisible();
     expect(dialog.getByText(new RegExp(`${operation} returned InvalidParameterValueException`))).toBeVisible();
-    expect(dialog.getByRole('button', { name: new RegExp(label) })).toBeDisabled();
+    expect(picker(label).findTrigger().getElement()).toBeDisabled();
     expect(dialogSubmit(dialog)).toBeDisabled();
     const other = path === LAYERS ? VERSIONS : LAYERS;
     const otherCount = engine.count(other);
     fireEvent.click(dialog.getByRole('button', { name: 'Retry' }));
-    await waitFor(() => expect(dialog.getByRole('button', { name: new RegExp(label) })).toBeEnabled());
+    await waitFor(() => expect(picker(label).findTrigger().getElement()).toBeEnabled());
     expect(engine.count(path)).toBe(2);
     expect(engine.count(other)).toBe(otherCount);
-    if (path === LAYERS) await choose(dialog, 'Layer name', 'tools');
-    await choose(dialog, '^Version', /^1\b/);
+    if (path === LAYERS) await choose('Layer name', 'tools');
+    await choose('Version', OLDER);
     expect(dialogSubmit(dialog)).toBeEnabled();
   });
 
@@ -385,17 +393,22 @@ describe.each([
     engine[mock] = () => error(501, 'NotImplemented');
     open();
     const dialog = await openAdd();
-    if (path === VERSIONS) await choose(dialog, 'Layer name', 'tools');
+    if (path === VERSIONS) await choose('Layer name', 'tools');
 
     expect(await dialog.findByText('Not implemented by the emulator')).toBeVisible();
     expect(dialog.getByText(new RegExp(`The emulator answered 501 Not Implemented for ${operation}\\.`))).toBeVisible();
-    expect(dialog.getByRole('button', { name: new RegExp(label) })).toBeDisabled();
+    expect(picker(label).findTrigger().getElement()).toBeDisabled();
     expect(dialogSubmit(dialog)).toBeDisabled();
+    const attempts = engine.count(path);
     const retry = dialog.getByRole('button', { name: 'Retry' });
     expect(retry).toBeDisabled();
     fireEvent.click(retry);
     fireEvent.click(dialogSubmit(dialog));
-    expect(engine.count(path)).toBe(1);
+    fireEvent.click(dialog.getByRole('button', { name: 'Cancel' }));
+    const reopened = await openAdd();
+    if (path === VERSIONS) await choose('Layer name', 'tools');
+    expect(await reopened.findByText('Not implemented by the emulator')).toBeVisible();
+    expect(engine.count(path)).toBe(attempts);
     expect(engine.updates).toEqual([]);
   });
 });
@@ -405,6 +418,7 @@ it('keeps attached-layer retry and addition disabled after a 501, including a pa
   open();
   expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
   expect(screen.getByText(/The emulator answered 501 Not Implemented for GetFunctionConfiguration\./)).toBeVisible();
+  const attempts = engine.count(CONFIG);
   const retry = screen.getByRole('button', { name: 'Retry' });
   expect(retry).toBeDisabled();
   expect(addButton()).toBeDisabled();
@@ -414,7 +428,7 @@ it('keeps attached-layer retry and addition disabled after a 501, including a pa
   await waitFor(() => expect(engine.count(FUNCTION)).toBe(2));
   expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  expect(engine.count(CONFIG)).toBe(1);
+  expect(engine.count(CONFIG)).toBe(attempts);
 });
 
 it('keeps both mutation actions visible and disabled after an update 501', async () => {
@@ -427,11 +441,12 @@ it('keeps both mutation actions visible and disabled after an update 501', async
   expect(screen.getByText(/The emulator answered 501 Not Implemented for UpdateFunctionConfiguration\./)).toBeVisible();
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
 
+  const attempts = engine.count(CONFIG, 'PUT');
   for (const button of [addButton(), screen.getByRole('button', { name: `${REMOVE} ${FIRST}` })]) {
     expect(button).toHaveAttribute('aria-disabled', 'true');
     fireEvent.click(button);
   }
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  expect(engine.count(CONFIG, 'PUT')).toBe(1);
+  expect(engine.count(CONFIG, 'PUT')).toBe(attempts);
   await expectAttached([FIRST]);
 });

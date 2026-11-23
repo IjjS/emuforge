@@ -28,7 +28,7 @@ const REMOVE = 'Remove layer version';
 const LOADING = 'Loading attached layers…';
 const UNSUPPORTED = 'Not implemented by the emulator';
 
-export type LayerChange = { kind: 'add'; arn: string } | { kind: 'remove'; index: number };
+type LayerChange = { kind: 'add'; arn: string } | { kind: 'remove'; index: number };
 
 export interface FunctionLayerChanges {
   scope: string;
@@ -166,12 +166,30 @@ function AddLayerDialog({
   disabled: boolean;
   pending: boolean;
   onClose: () => void;
-  onAdd: (arn: string) => void;
+  onAdd: (arn: string) => Promise<void>;
 }) {
   const [layer, setLayer] = useState<SelectProps.Option | null>(null);
   const [version, setVersion] = useState<SelectProps.Option | null>(null);
-  const layers = useLayerListing({ endpoint: connection.engineOrigin, scope });
-  const versions = useLayerVersions({ endpoint: connection.engineOrigin, scope }, layer?.value);
+  const [unsupported, setUnsupported] = useState<{
+    listing?: RequestFailure;
+    versions?: RequestFailure;
+  }>({});
+  const endpoint = visible ? connection.engineOrigin : undefined;
+  const listing = useLayerListing({ endpoint: unsupported.listing ? undefined : endpoint, scope });
+  const versionList = useLayerVersions({ endpoint: unsupported.versions ? undefined : endpoint, scope }, layer?.value);
+  const listingFailure = unsupported.listing ?? listing.failure;
+  const versionsFailure = unsupported.versions ?? versionList.failure;
+  if (
+    (listingFailure?.kind === 'not-implemented' && unsupported.listing === undefined) ||
+    (versionsFailure?.kind === 'not-implemented' && unsupported.versions === undefined)
+  ) {
+    setUnsupported({
+      ...(listingFailure?.kind === 'not-implemented' ? { listing: listingFailure } : {}),
+      ...(versionsFailure?.kind === 'not-implemented' ? { versions: versionsFailure } : {}),
+    });
+  }
+  const layers = { ...listing, failure: listingFailure };
+  const versions = { ...versionList, failure: layer === null ? undefined : versionsFailure };
   const versionArn = version?.value;
   const canAdd =
     !disabled &&
@@ -207,7 +225,7 @@ function AddLayerDialog({
               disabled={!canAdd}
               loading={pending}
               onClick={() => {
-                if (canAdd) onAdd(versionArn);
+                if (canAdd) void onAdd(versionArn).then(close);
               }}
             >
               {ADD}
@@ -254,7 +272,7 @@ export function FunctionLayers({
 }: {
   connection: AreaConnection;
   ready: boolean;
-  changes?: FunctionLayerChanges;
+  changes?: FunctionLayerChanges | undefined;
 }) {
   const [adding, setAdding] = useState(false);
   const [removing, setRemoving] = useState<{ arn: string; index: number }>();
@@ -265,13 +283,10 @@ export function FunctionLayers({
   const items = layers?.map((arn, index) => ({ arn, index })) ?? [];
   const removalMatches = removing !== undefined && layers?.[removing.index] === removing.arn;
 
-  function submit(change: LayerChange) {
+  async function submit(change: LayerChange) {
     if (changes === undefined || layers === undefined || disabled || pending) return;
     const next = change.kind === 'add' ? [...layers, change.arn] : layers.filter((_, index) => index !== change.index);
-    void changes.submit(change.kind, next).then(() => {
-      setAdding(false);
-      setRemoving(undefined);
-    });
+    await changes.submit(change.kind, next);
   }
 
   return (
@@ -331,11 +346,11 @@ export function FunctionLayers({
           )
         }
       />
-      {adding && changes && (
+      {changes && (
         <AddLayerDialog
           connection={connection}
           scope={changes.scope}
-          visible
+          visible={adding}
           disabled={disabled}
           pending={pending}
           onClose={() => setAdding(false)}
@@ -361,7 +376,8 @@ export function FunctionLayers({
                   disabled={disabled || pending || !removalMatches}
                   loading={pending}
                   onClick={() => {
-                    if (removalMatches) submit({ kind: 'remove', index: removing.index });
+                    if (removalMatches)
+                      void submit({ kind: 'remove', index: removing.index }).then(() => setRemoving(undefined));
                   }}
                 >
                   {REMOVE}
