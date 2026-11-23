@@ -14,7 +14,13 @@ import { usePageFlash, type FlashItem } from '../../../components/page-flash';
 import { functionPath, queuePath } from '../../../components/resource-paths';
 import { useFollow } from '../../../components/use-follow';
 import { ValueText } from '../../../components/value-text';
-import { OPERATIONS, type AllowOutcome, type DeliveryProtocol, type Subscription } from '../api';
+import {
+  OPERATIONS,
+  type AllowOutcome,
+  type DeliveryProtocol,
+  type Subscription,
+  type SubscriptionSetting,
+} from '../api';
 import { endpointName, subscribeHref } from '../format';
 import {
   failureOf,
@@ -26,6 +32,7 @@ import {
 } from '../queries';
 import { DeleteSubscriptionDialog } from './delete-subscription-dialog';
 import { DELIVERY_LABELS, DeliveryStatus, deliveryView, type DeliveryView } from './delivery-status';
+import { SubscriptionSettings } from './subscription-settings';
 
 // S3's "Subscriptions" tab (issue 536, design task 1 steps 3 to 5 and task 5 step 1): the topic's subscriptions, a
 // page of `ListSubscriptionsByTopic` at a time on its own tokens, each with whether the policy of its queue or
@@ -38,6 +45,11 @@ export interface SubscriptionsTabProps {
   connection: AreaConnection;
   /** Reads the topic again, after a change of its subscriptions. */
   onTopicChanged: () => void;
+  onSaveSetting: (arn: string, setting: SubscriptionSetting) => Promise<void>;
+  settingsSave: {
+    pending: { arn: string; setting: SubscriptionSetting } | undefined;
+    unavailableArns: ReadonlySet<string>;
+  };
 }
 
 const DESCRIPTION =
@@ -141,13 +153,20 @@ function RowDelivery({ row, topicArn, connection, onView }: RowDeliveryProps) {
   return <DeliveryStatus view={view} connection={connection} />;
 }
 
-export function SubscriptionsTab({ topicArn, topicName, connection }: SubscriptionsTabProps) {
+export function SubscriptionsTab({
+  topicArn,
+  topicName,
+  connection,
+  onSaveSetting,
+  settingsSave,
+}: SubscriptionsTabProps) {
   const handleFollow = useFollow();
   const flash = usePageFlash();
   const pageSignal = usePageSignal();
   const allow = useAllowDelivery(connection.engineOrigin);
   const unsubscribe = useUnsubscribe(connection.engineOrigin);
   const [selectedKey, setSelectedKey] = useState<string>();
+  const [settingsFor, setSettingsFor] = useState<Subscription>();
   const [views, setViews] = useState<Readonly<Record<string, DeliveryView>>>({});
   const [allowing, setAllowing] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -158,6 +177,15 @@ export function SubscriptionsTab({ topicArn, topicName, connection }: Subscripti
   const loaded = items !== undefined && !listing.loading;
   const rows = rowsOf(items ?? []);
   const selected = loaded ? rows.find((row) => row.key === selectedKey) : undefined;
+  if (
+    settingsFor !== undefined &&
+    loaded &&
+    listing.failure === undefined &&
+    !rows.some((row) => row.subscription.arn === settingsFor.arn)
+  ) {
+    setSettingsFor(undefined);
+    setSelectedKey(undefined);
+  }
   const selectedView = selected === undefined ? undefined : views[selected.deliveryKey];
   const canAllow = selectedView?.kind === 'read' && selectedView.delivery.kind === 'none';
   const allowReason =
@@ -252,6 +280,7 @@ export function SubscriptionsTab({ topicArn, topicName, connection }: Subscripti
   };
 
   const handlePageChange = ({ detail }: { detail: { currentPageIndex: number } }) => {
+    setSettingsFor(undefined);
     setSelectedKey(undefined);
     goToPage(detail.currentPageIndex);
   };
@@ -333,15 +362,22 @@ export function SubscriptionsTab({ topicArn, topicName, connection }: Subscripti
     deleteReason = PENDING_REASON;
   }
 
+  const settingsTarget = selected?.subscription;
+  const canOpenSettings = settingsTarget !== undefined && !settingsTarget.pending && settingsTarget.arn !== '';
+
   return (
-    <>
+    <SpaceBetween size="l">
       <Table<Row>
         items={rows}
         trackBy="key"
         selectionType="single"
         selectedItems={selected === undefined ? [] : [selected]}
         onSelectionChange={({ detail }) => {
-          setSelectedKey(detail.selectedItems[0]?.key);
+          const key = detail.selectedItems[0]?.key;
+          if (key !== selectedKey) {
+            setSettingsFor(undefined);
+            setSelectedKey(key);
+          }
         }}
         ariaLabels={{
           selectionGroupLabel: 'Subscription selection',
@@ -359,6 +395,19 @@ export function SubscriptionsTab({ topicArn, topicName, connection }: Subscripti
             description={DESCRIPTION}
             actions={
               <SpaceBetween direction="horizontal" size="xs">
+                <Button
+                  disabled={!canOpenSettings}
+                  disabledReason={
+                    settingsTarget === undefined ? 'Select a subscription.' : 'A pending subscription has no ARN.'
+                  }
+                  onClick={() => {
+                    if (canOpenSettings) {
+                      setSettingsFor(settingsTarget);
+                    }
+                  }}
+                >
+                  Subscription settings
+                </Button>
                 <Button disabled={!canAllow} disabledReason={allowReason} loading={allowing} onClick={handleAllow}>
                   Allow delivery
                 </Button>
@@ -393,6 +442,19 @@ export function SubscriptionsTab({ topicArn, topicName, connection }: Subscripti
           />
         }
       />
+      {settingsFor !== undefined && (
+        <SubscriptionSettings
+          key={settingsFor.arn}
+          subscription={settingsFor}
+          connection={connection}
+          onSave={onSaveSetting}
+          pending={settingsSave.pending}
+          saveUnavailable={settingsSave.unavailableArns.has(settingsFor.arn)}
+          onClose={() => {
+            setSettingsFor(undefined);
+          }}
+        />
+      )}
       {selected !== undefined && (
         <DeleteSubscriptionDialog
           visible={deleteOpen}
@@ -405,6 +467,6 @@ export function SubscriptionsTab({ topicArn, topicName, connection }: Subscripti
           }}
         />
       )}
-    </>
+    </SpaceBetween>
   );
 }

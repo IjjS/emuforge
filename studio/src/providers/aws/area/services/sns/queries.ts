@@ -6,6 +6,7 @@ import {
   allowDelivery,
   createTopic,
   deleteTopic,
+  getSubscriptionSettings,
   getTopic,
   listFunctionChoices,
   listQueueChoices,
@@ -15,6 +16,7 @@ import {
   publish,
   readDelivery,
   readQueue,
+  setSubscriptionSetting,
   subscribe,
   unsubscribe,
   type AllowOutcome,
@@ -30,6 +32,8 @@ import {
   type QueueChoice,
   type QueuePolicy,
   type Subscription,
+  type SubscriptionSetting,
+  type SubscriptionSettingsAttributes,
   type TopicRead,
 } from './api';
 
@@ -283,6 +287,35 @@ export function useTopic(endpoint: string | undefined, arn: string): SnsRead<Top
   };
 }
 
+function subscriptionSettingsKey(endpoint: string | undefined, arn: string) {
+  return [...SNS_KEY, 'subscription-settings', endpoint, arn];
+}
+
+export function useSubscriptionSettings(
+  endpoint: string | undefined,
+  arn: string,
+): SnsRead<SubscriptionSettingsAttributes> {
+  const query = useQuery({
+    queryKey: subscriptionSettingsKey(endpoint, arn),
+    queryFn: ({ signal }) => (endpoint === undefined ? noEndpoint() : getSubscriptionSettings(endpoint, arn, signal)),
+    enabled: endpoint !== undefined,
+    staleTime: 0,
+    gcTime: 0,
+    retry: false,
+    structuralSharing: false,
+  });
+  const { refetch } = query;
+  const refresh = useCallback(() => {
+    void refetch();
+  }, [refetch]);
+  return {
+    value: query.data,
+    failure: query.isError ? failureOf(query.error, OPERATIONS.getSubscriptionAttributes) : undefined,
+    loading: query.isFetching || endpoint === undefined,
+    refresh,
+  };
+}
+
 /**
  * The delivery of one subscription's endpoint for a topic, keyed by the topic, the protocol and the endpoint, so two
  * rows of one endpoint share one read. Not read while `enabled` is false (a row of another protocol).
@@ -467,6 +500,28 @@ export function useSubscribe(
   endpoint: string | undefined,
 ): (subscription: NewSubscription, signal: AbortSignal) => Promise<string | undefined> {
   return useAction(endpoint, subscribe);
+}
+
+/** Saves one attribute, then starts fresh reads of that subscription and its topic's subscription list. */
+export function useSetSubscriptionSetting(endpoint: string | undefined, topicArn: string) {
+  const client = useQueryClient();
+  const save = useAction(endpoint, setSubscriptionSetting, false);
+  return useCallback(
+    async (arn: string, setting: SubscriptionSetting, signal: AbortSignal) => {
+      await save(arn, setting, signal);
+      if (signal.aborted) {
+        return;
+      }
+      const detail = { queryKey: subscriptionSettingsKey(endpoint, arn) };
+      const list = { queryKey: [...SNS_KEY, 'subscriptions', topicArn, endpoint] };
+      // An initial read can otherwise be reused when invalidated while it is still in flight.
+      void client.cancelQueries(detail);
+      void client.cancelQueries(list);
+      void client.invalidateQueries(detail);
+      void client.invalidateQueries(list);
+    },
+    [client, endpoint, save, topicArn],
+  );
 }
 
 /** "Delete" of a subscription. */
