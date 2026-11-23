@@ -109,8 +109,15 @@ test('studio.lambda-layer-function-refused', async ({ ctx, page }) => {
   expect(await deleteFunctionDirect(ctx, emulatorPort, layers.prefix)).toMatchObject({ status: 204 });
   await submitDialog(page, 'Add layer version');
   await expect(functionPage(page, layers.prefix).notFoundSentence).toBeVisible();
-  const addFailure = errorFlash(page).filter({ hasText: 'Could not add layer version.' });
-  await expect(addFailure).toContainText('ResourceNotFoundException');
+  const errors = errorFlash(page);
+  await expect
+    .poll(
+      async () => (await errors.allInnerTexts()).some(
+        (item) => item.includes('Could not add layer version.') && item.includes('ResourceNotFoundException'),
+      ),
+      { timeout: 10_000, message: 'One error flash identifies the refused add-layer action and its service code' },
+    )
+    .toBe(true);
   expect(await getFunctionDirect(ctx, emulatorPort, layers.prefix)).toMatchObject({
     found: false,
     status: 404,
