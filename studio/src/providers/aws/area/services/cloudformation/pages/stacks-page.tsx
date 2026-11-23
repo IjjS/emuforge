@@ -7,7 +7,7 @@ import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Table, { type TableProps } from '@cloudscape-design/components/table';
 import TextFilter, { type TextFilterProps } from '@cloudscape-design/components/text-filter';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import type { RequestFailure } from '../../../../../../lib/aws/request';
 import type { AreaConnection } from '../../../components/emulator-line';
@@ -27,7 +27,8 @@ const COLUMNS: TableProps.ColumnDefinition<StackRow>[] = [
     id: 'name',
     header: 'Stack name',
     isRowHeader: true,
-    minWidth: '20ch',
+    // A 24-character name can use wide letters such as W. Include the cell's horizontal padding.
+    minWidth: 'calc(22.5em + 36px)',
     cell: ({ name }) => <ValueText kind="name" value={name} />,
   },
   {
@@ -138,11 +139,28 @@ function StackListEmpty({
 
 export function StacksPage({ connection }: { connection: AreaConnection }) {
   useShowsResources('stacks');
+  const tableSection = useRef<HTMLDivElement>(null);
+  const [tableOverflows, setTableOverflows] = useState(false);
   const [filter, setFilter] = useState('');
   const filterRef = useRef<TextFilterProps.Ref>(null);
   const [generation, setGeneration] = useState(0);
   const listing = useStackListing(connection.engineOrigin, generation);
   const [announcement, announce] = useAnnouncer();
+
+  useEffect(() => {
+    const table = tableSection.current?.querySelector('table');
+    const scrollPane = table?.parentElement;
+    if (!table || !scrollPane) return;
+
+    const measure = () => setTableOverflows(scrollPane.scrollWidth > scrollPane.clientWidth);
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+
+    const observer = new ResizeObserver(measure);
+    observer.observe(table);
+    observer.observe(scrollPane);
+    return () => observer.disconnect();
+  }, []);
 
   const disconnected = connectionFailure(connection);
   const connectionKind = connection.result?.kind;
@@ -169,6 +187,9 @@ export function StacksPage({ connection }: { connection: AreaConnection }) {
   const stacks = failure === undefined ? listing.items : undefined;
   const term = filter.toLowerCase();
   const rows = (stacks ?? []).filter(({ name }) => name.toLowerCase().includes(term));
+  const matchCount =
+    stacks === undefined ? '' : `${String(rows.length)} ${rows.length === 1 ? 'match' : 'matches'} on this page`;
+  const hasPagination = listing.openEnd || listing.pagesCount > 1;
 
   const handleRefresh = () => {
     setGeneration((current) => current + 1);
@@ -179,7 +200,7 @@ export function StacksPage({ connection }: { connection: AreaConnection }) {
   };
 
   return (
-    <>
+    <div ref={tableSection}>
       <Table<StackRow>
         variant="full-page"
         columnDefinitions={COLUMNS}
@@ -200,6 +221,7 @@ export function StacksPage({ connection }: { connection: AreaConnection }) {
         header={
           <Header
             variant="awsui-h1-sticky"
+            description={tableOverflows ? 'Scroll sideways to see more columns.' : undefined}
             actions={<Button iconName="refresh" ariaLabel="Refresh" disabled={unavailable} onClick={handleRefresh} />}
           >
             {STACKS_TITLE}
@@ -213,6 +235,7 @@ export function StacksPage({ connection }: { connection: AreaConnection }) {
               filteringPlaceholder={FILTER_LABEL}
               filteringAriaLabel={FILTER_LABEL}
               filteringClearAriaLabel="Clear stack name filter"
+              countText={matchCount}
               onChange={({ detail }) => {
                 setFilter(detail.filteringText);
               }}
@@ -220,23 +243,25 @@ export function StacksPage({ connection }: { connection: AreaConnection }) {
           </FormField>
         }
         pagination={
-          <Pagination
-            currentPageIndex={listing.currentPage}
-            pagesCount={listing.pagesCount}
-            openEnd={listing.openEnd}
-            disabled={unavailable || disconnected !== undefined || listing.loading}
-            ariaLabels={{
-              nextPageLabel: 'Next page',
-              previousPageLabel: 'Previous page',
-              pageLabel: (page) => `Page ${String(page)}`,
-            }}
-            onChange={({ detail }) => {
-              listing.goToPage(detail.currentPageIndex);
-            }}
-          />
+          hasPagination && (
+            <Pagination
+              currentPageIndex={listing.currentPage}
+              pagesCount={listing.pagesCount}
+              openEnd={listing.openEnd}
+              disabled={unavailable || disconnected !== undefined || listing.loading}
+              ariaLabels={{
+                nextPageLabel: 'Next page',
+                previousPageLabel: 'Previous page',
+                pageLabel: (page) => `Page ${String(page)}`,
+              }}
+              onChange={({ detail }) => {
+                listing.goToPage(detail.currentPageIndex);
+              }}
+            />
+          )
         }
       />
       {announcement}
-    </>
+    </div>
   );
 }
