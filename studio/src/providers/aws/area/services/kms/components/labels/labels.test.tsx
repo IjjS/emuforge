@@ -263,6 +263,48 @@ describe('key labels', () => {
     expect(opener).toHaveFocus();
   });
 
+  it.each([
+    { visibleWidth: 348, scrollWidth: 404, compact: true, overflows: true },
+    { visibleWidth: 348, scrollWidth: 348, compact: true, overflows: false },
+    { visibleWidth: 949, scrollWidth: 949, compact: false, overflows: false },
+  ])(
+    'prioritizes tag actions and reports actual overflow at table width $visibleWidth/$scrollWidth',
+    async ({ visibleWidth, scrollWidth, compact, overflows }) => {
+      vi.spyOn(Element.prototype, 'clientWidth', 'get').mockImplementation(function (this: Element) {
+        return this.querySelector(':scope > table') ? visibleWidth : 0;
+      });
+      vi.spyOn(Element.prototype, 'scrollWidth', 'get').mockImplementation(function (this: Element) {
+        return this.querySelector(':scope > table') ? scrollWidth : 0;
+      });
+      send.mockImplementation(async (command: unknown) =>
+        command instanceof ListResourceTagsCommand ? tagPage('environment', 'local development') : {},
+      );
+      open();
+
+      const value = await screen.findByRole('cell', { name: 'local development' });
+      const table = screen.getByRole('table', { name: /^Tags/ });
+      const hint = 'Scroll sideways to see more of the table.';
+      expect(table).toHaveAccessibleName(overflows ? `Tags. ${hint}` : 'Tags');
+      if (overflows) {
+        expect(screen.getByText(hint)).toBeVisible();
+      } else {
+        expect(screen.queryByText(hint)).not.toBeInTheDocument();
+      }
+      expect(
+        within(table)
+          .getAllByRole('columnheader')
+          .map((header) => header.textContent),
+      ).toEqual(compact ? ['Tag name', 'Actions', 'Value'] : ['Tag name', 'Value', 'Actions']);
+      expect(value).toHaveTextContent(/^local development$/);
+
+      const edit = within(table).getByRole('button', { name: 'Edit tag environment' });
+      edit.focus();
+      await userEvent.keyboard('{Enter}');
+      const dialog = within(await screen.findByRole('dialog', { name: 'Edit tag' }));
+      expect(dialog.getByRole('textbox', { name: 'Value' })).toHaveValue('local development');
+    },
+  );
+
   it('shows aliases on the corresponding reassignment target option', async () => {
     send.mockImplementation(async (command: unknown) => {
       if (command instanceof ListKeysCommand) return { Keys: [{ KeyId: keyId }, { KeyId: targetId }] };
