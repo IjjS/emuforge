@@ -60,7 +60,7 @@ beforeEach(() => send.mockReset());
 describe('Key rotation', () => {
   it('shows the returned settings and follows the next marker in rotation history', async () => {
     const earlier = new Date('2026-01-14T10:00:00Z');
-    send.mockImplementation((command: GetKeyRotationStatusCommand | ListKeyRotationsCommand) => {
+    send.mockImplementation(async (command: GetKeyRotationStatusCommand | ListKeyRotationsCommand) => {
       if (command instanceof GetKeyRotationStatusCommand) return enabledSettings;
       if (command.input.Marker === 'older-rotations') {
         return { Rotations: [{ RotationDate: earlier, RotationType: 'AUTOMATIC' }], Truncated: false };
@@ -91,7 +91,7 @@ describe('Key rotation', () => {
     const settings = Promise.withResolvers<GetKeyRotationStatusCommandOutput>();
     const history = Promise.withResolvers<ListKeyRotationsCommandOutput>();
     let requested = false;
-    send.mockImplementation((command: unknown) => {
+    send.mockImplementation(async (command: unknown) => {
       if (command instanceof GetKeyRotationStatusCommand) return requested ? settings.promise : enabledSettings;
       if (command instanceof ListKeyRotationsCommand) return requested ? history.promise : { Rotations: [] };
       if (command instanceof RotateKeyOnDemandCommand) {
@@ -129,7 +129,7 @@ describe('Key rotation', () => {
 
   it('preserves the settings and shows the reason when rotation is refused for the key state', async () => {
     const reason = 'On-demand rotation requires the key to be enabled.';
-    send.mockImplementation((command: unknown) => {
+    send.mockImplementation(async (command: unknown) => {
       if (command instanceof GetKeyRotationStatusCommand) return enabledSettings;
       if (command instanceof ListKeyRotationsCommand) return { Rotations: [] };
       throw {
@@ -154,7 +154,7 @@ describe('Key rotation', () => {
 
   it('enables and disables automatic rotation and shows the settings returned after each action', async () => {
     let automatic = false;
-    send.mockImplementation((command: unknown) => {
+    send.mockImplementation(async (command: unknown) => {
       if (command instanceof GetKeyRotationStatusCommand) {
         return automatic ? enabledSettings : { KeyRotationEnabled: false };
       }
@@ -181,7 +181,7 @@ describe('Key rotation', () => {
   });
 
   it('leaves an unimplemented action visible and disables it without disabling other operations', async () => {
-    send.mockImplementation((command: unknown) => {
+    send.mockImplementation(async (command: unknown) => {
       if (command instanceof GetKeyRotationStatusCommand) return enabledSettings;
       if (command instanceof ListKeyRotationsCommand) return { Rotations: [] };
       throw { $metadata: { httpStatusCode: 501 } };
