@@ -8,10 +8,11 @@ import Link from '@cloudscape-design/components/link';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Tabs, { type TabsProps } from '@cloudscape-design/components/tabs';
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Ref } from 'react';
+import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type Ref } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 
 import { startedAtOf } from '../../../../../../lib/engine/engine-client';
+import { AreaRootContext } from '../../../area-root';
 import { actionFailureItem, Code } from '../../../components/failure-states';
 import { useShowsResources } from '../../../components/page-resources';
 import { useFollow } from '../../../components/use-follow';
@@ -27,6 +28,7 @@ import { EventSourcesTab } from '../components/event-sources-tab';
 import { readFailureState, useAnnouncer } from '../components/failure-states';
 import { ReadFailure } from '../components/failures';
 import { FunctionOverview, FunctionStatusLine } from '../components/function-sections';
+import type { FunctionUrlChanges } from '../components/function-url-actions';
 import { functionStatus } from '../components/function-status';
 import { MonitorTab } from '../components/monitor-tab';
 import { quoting } from '../components/quoting';
@@ -35,7 +37,14 @@ import { VersionsTab, type VersionsTabProps } from '../components/versions-tab';
 import { useEventSources } from '../event-source-queries';
 import { FUNCTIONS_PATH, functionTabHref, releaseSuccessText, TAB_PARAMETER, tabOf } from '../format';
 import { invokeOutcome } from '../invoke-result';
-import { isChanging, useFunctionReading, useInvoke, useReadAgain } from '../queries';
+import {
+  isChanging,
+  useCreateFunctionUrl,
+  useDeleteFunctionUrl,
+  useFunctionReading,
+  useInvoke,
+  useReadAgain,
+} from '../queries';
 import { useReleaseMutation, useReleaseReadings } from '../version-queries';
 
 // A Lambda function's own page (issue 84, requirement R5, R10; issue 516, design "The function's page"): its header
@@ -58,6 +67,7 @@ interface FunctionTabsProps {
   fn: LambdaFunction;
   connection: AreaConnection;
   ready: boolean;
+  urlChanges: FunctionUrlChanges;
   testScope: string;
   test: Omit<TestTabProps, 'functionName' | 'connection' | 'versions' | 'aliases'>;
   releases: Pick<VersionsTabProps, 'versions' | 'aliases' | 'mutation' | 'onAliasConfirmationChange'>;
@@ -79,6 +89,7 @@ function FunctionTabs({
   fn,
   connection,
   ready,
+  urlChanges,
   testScope,
   test,
   releases,
@@ -144,7 +155,7 @@ function FunctionTabs({
       id: 'configuration',
       label: 'Configuration',
       href: functionTabHref(name, 'configuration'),
-      content: <ConfigurationTab fn={fn} name={name} connection={connection} ready={ready} />,
+      content: <ConfigurationTab fn={fn} name={name} connection={connection} ready={ready} urlChanges={urlChanges} />,
     },
     {
       id: 'versions',
@@ -297,6 +308,26 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
   const ready = !isChanging(read);
   const flash = usePageFlash();
   const reread = useReadAgain(connection.engineOrigin, name);
+  const createUrl = useCreateFunctionUrl(connection.engineOrigin, name);
+  const removeUrl = useDeleteFunctionUrl(connection.engineOrigin, name);
+  const areaRoot = useContext(AreaRootContext);
+  const [settledUrlDeletes, setSettledUrlDeletes] = useState(0);
+  useEffect(() => {
+    if (settledUrlDeletes === 0) {
+      return;
+    }
+    // Move focus after the modal has restored it. Centering keeps the focused result below the sticky header.
+    const frame = requestAnimationFrame(() => {
+      const result = areaRoot.current?.querySelector<HTMLUListElement>('ul[aria-label="Notifications"]');
+      if (result == null) {
+        return;
+      }
+      result.tabIndex = -1;
+      result.focus({ preventScroll: true });
+      result.scrollIntoView?.({ block: 'center', inline: 'nearest', behavior: 'instant' });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [areaRoot, settledUrlDeletes]);
   const functionScope = JSON.stringify([connection.engineOrigin, name]);
   // The area remounts this page on a target change. Keep a refused ARN across tabs on this function's page.
   const [eventSourceDraft, setEventSourceDraft] = useState({ scope: functionScope, arn: '' });
@@ -653,6 +684,11 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
           fn={fn}
           connection={connection}
           ready={ready}
+          urlChanges={{
+            create: createUrl,
+            remove: removeUrl,
+            onDeleteSettled: () => setSettledUrlDeletes((count) => count + 1),
+          }}
           testScope={verificationScope}
           test={{
             invoke,

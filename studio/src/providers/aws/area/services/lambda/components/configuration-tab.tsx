@@ -16,6 +16,7 @@ import { memoryText, NONE, timeoutText } from '../format';
 import { EditGeneralDialog } from './edit-general-dialog';
 import type { EditDialogProps } from './edit-runtime-dialog';
 import { EditVariablesDialog } from './edit-variables-dialog';
+import { FunctionUrlActions, type FunctionUrlChanges } from './function-url-actions';
 
 // The tab "Configuration" of a function's page (issue 516, design "Task 1", "Task 5"): "General configuration" and
 // "Environment variables", each value as the emulator reports it, rendered as text, each with its "Edit" (task 5).
@@ -29,6 +30,7 @@ export interface ConfigurationTabProps {
   connection: AreaConnection;
   /** False while the function is being created or updated: an action that changes it is unavailable. */
   ready: boolean;
+  urlChanges: FunctionUrlChanges;
 }
 
 const EXECUTION_ROLE = 'Execution role';
@@ -150,12 +152,19 @@ function EnvironmentVariables(props: SectionProps) {
   );
 }
 
-/** "Configuration": "General configuration", then "Environment variables". */
+/** "Configuration": "General configuration", "Environment variables", and "Function URL". */
 export function ConfigurationTab(props: ConfigurationTabProps) {
   return (
     <SpaceBetween size="l">
       <GeneralConfiguration {...props} />
       <EnvironmentVariables {...props} />
+      <FunctionUrlActions
+        url={props.fn.url}
+        name={props.name}
+        engineOrigin={props.connection.engineOrigin}
+        ready={props.ready}
+        changes={props.urlChanges}
+      />
     </SpaceBetween>
   );
 }

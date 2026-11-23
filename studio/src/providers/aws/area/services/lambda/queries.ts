@@ -3,14 +3,19 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 
 import {
   assertAwsRequestAuthorized,
+  AwsMutationInterrupted,
   bindAwsMutationAuthorization,
   requestFailure,
   type RequestFailure,
 } from '../../../../../lib/aws/request';
 import {
   createFunction,
+  createFunctionUrl,
+  CREATE_FUNCTION_URL_CONFIG,
   CreateFunctionError,
   deleteFunctions,
+  deleteFunctionUrl,
+  DELETE_FUNCTION_URL_CONFIG,
   INVOKE,
   invoke,
   isFunctionNotFound,
@@ -651,16 +656,20 @@ export function useRoleList(endpoint: string | undefined): RoleList {
  * Reads the function `name` again where its page shows it, keeping what is shown until the answer arrives: its
  * reading is refetched under its own key.
  */
-export function useReadAgain(endpoint: string | undefined, name: string): () => Promise<void> {
+export function useReadAgain(endpoint: string | undefined, name: string, cancelPending = false): () => Promise<void> {
   const client = useQueryClient();
-  return useCallback(
-    () => client.invalidateQueries({ queryKey: functionKey(endpoint, name) }),
-    [client, endpoint, name],
-  );
+  return useCallback(async () => {
+    const filter = { queryKey: functionKey(endpoint, name) };
+    // Invalidation can reuse an in-flight Refresh that has no cached data yet.
+    if (cancelPending) {
+      await client.cancelQueries(filter);
+    }
+    await client.invalidateQueries(filter);
+  }, [client, endpoint, name, cancelPending]);
 }
 
-/** A new signal per request; the last one aborts when the screen unmounts. */
-function useAbortOnUnmount(): () => AbortSignal {
+/** A new controller per request; the last one aborts when the screen unmounts. */
+function useAbortOnUnmount(): () => AbortController {
   const controller = useRef<AbortController | undefined>(undefined);
   useEffect(
     () => () => {
@@ -670,7 +679,7 @@ function useAbortOnUnmount(): () => AbortSignal {
   );
   return useCallback(() => {
     controller.current = new AbortController();
-    return controller.current.signal;
+    return controller.current;
   }, []);
 }
 
@@ -799,22 +808,45 @@ function useFunctionChange<Input>(
   operation: string,
   send: (endpoint: string, input: Input, signal: AbortSignal) => Promise<void>,
 ): FunctionChange<Input> {
-  const readAgain = useReadAgain(endpoint, name);
-  const nextSignal = useAbortOnUnmount();
-  const mutation = useMutation<unknown, unknown, { input: Input; signal: AbortSignal }>({
+  const client = useQueryClient();
+  const changesUrl = operation === CREATE_FUNCTION_URL_CONFIG || operation === DELETE_FUNCTION_URL_CONFIG;
+  const readAgain = useReadAgain(endpoint, name, changesUrl);
+  const nextController = useAbortOnUnmount();
+  const mutation = useMutation<
+    unknown,
+    unknown,
+    { input: Input; signal: AbortSignal; disposeAuthorization: (() => void) | undefined }
+  >({
     mutationFn: ({ input, signal }) => {
       if (endpoint === undefined) {
         throw new Error('The engine endpoint is not known yet.');
       }
       return send(endpoint, input, signal);
     },
-    onSuccess: () => readAgain(),
+    onSuccess: async () => {
+      if (changesUrl) {
+        await Promise.all([
+          readAgain(),
+          client.invalidateQueries({ queryKey: [...lambdaKey(endpoint), 'list-functions'] }),
+        ]);
+      } else {
+        await readAgain();
+      }
+    },
     onError: (error, { signal }) => {
-      // A function deleted elsewhere: its page then shows "Function not found".
-      if (!signal.aborted && isFunctionNotFound(requestFailure(operation, error))) {
+      const failure = requestFailure(operation, error);
+      // A refused URL deletion can follow an external change, so reread to show the current configuration.
+      if (
+        !signal.aborted &&
+        (isFunctionNotFound(failure) ||
+          (operation === DELETE_FUNCTION_URL_CONFIG && failure.kind !== 'not-implemented'))
+      ) {
         return readAgain();
       }
       return undefined;
+    },
+    onSettled: (_data, _error, { disposeAuthorization }) => {
+      disposeAuthorization?.();
     },
   });
   const { mutate: run, isPending, error, reset } = mutation;
@@ -823,20 +855,23 @@ function useFunctionChange<Input>(
       if (isPending) {
         return;
       }
-      const signal = nextSignal();
+      const controller = nextController();
+      const { signal } = controller;
+      // Bind at activation, before TanStack Query can pause the URL submission.
+      const disposeAuthorization = changesUrl ? bindAwsMutationAuthorization(controller) : undefined;
       run(
-        { input, signal },
+        { input, signal, disposeAuthorization },
         {
           onSuccess: () => callbacks?.onSuccess?.(),
           onError: (failed) => {
-            if (!signal.aborted) {
+            if (!signal.aborted || signal.reason instanceof AwsMutationInterrupted) {
               callbacks?.onError?.(requestFailure(operation, failed));
             }
           },
         },
       );
     },
-    [isPending, run, nextSignal, operation],
+    [isPending, run, nextController, changesUrl, operation],
   );
   return {
     mutate,
@@ -860,5 +895,17 @@ export function useUpdateFunctionConfiguration(
 ): FunctionChange<ConfigurationChange> {
   return useFunctionChange(endpoint, name, UPDATE_FUNCTION_CONFIGURATION, (at, change: ConfigurationChange, signal) =>
     updateFunctionConfiguration(at, name, change, signal),
+  );
+}
+
+export function useCreateFunctionUrl(endpoint: string | undefined, name: string): FunctionChange<void> {
+  return useFunctionChange(endpoint, name, CREATE_FUNCTION_URL_CONFIG, (at, _, signal) =>
+    createFunctionUrl(at, name, signal),
+  );
+}
+
+export function useDeleteFunctionUrl(endpoint: string | undefined, name: string): FunctionChange<void> {
+  return useFunctionChange(endpoint, name, DELETE_FUNCTION_URL_CONFIG, (at, _, signal) =>
+    deleteFunctionUrl(at, name, signal),
   );
 }

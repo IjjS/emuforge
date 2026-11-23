@@ -33,6 +33,7 @@ const handed = vi.hoisted(() => ({
   renderTest: false,
   code: undefined as CodeTabProps | undefined,
   configuration: undefined as ConfigurationTabProps | undefined,
+  renderConfiguration: false,
 }));
 
 vi.mock('../components/test-tab', async (importOriginal) => {
@@ -75,12 +76,19 @@ vi.mock('../components/code-tab', () => ({
   },
 }));
 
-vi.mock('../components/configuration-tab', () => ({
-  ConfigurationTab: (props: ConfigurationTabProps) => {
-    handed.configuration = props;
-    return <div data-testid="stand-in-configuration" />;
-  },
-}));
+vi.mock('../components/configuration-tab', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../components/configuration-tab')>();
+  return {
+    ConfigurationTab: (props: ConfigurationTabProps) => {
+      handed.configuration = props;
+      return handed.renderConfiguration ? (
+        <actual.ConfigurationTab {...props} />
+      ) : (
+        <div data-testid="stand-in-configuration" />
+      );
+    },
+  };
+});
 
 // ---------------------------------------------------------------------------------------------------------------
 // The fake engine.
@@ -155,6 +163,8 @@ class FakeEngine {
   readonly aws: SentRequest[] = [];
   readonly monitoring: MonitoringRequest[] = [];
   readonly invocationBodies: string[] = [];
+  readonly urlCreateBodies: unknown[] = [];
+  readonly urlMutationRedirects: RequestRedirect[] = [];
   sessionRequests = 0;
   answerSession: () => Answer | Promise<Answer> = () => json(200, { token: 'emuforge-test-token-84' });
   answerMonitoring: (request: MonitoringRequest) => Answer | Promise<Answer> = ({ operation }) =>
@@ -172,7 +182,7 @@ class FakeEngine {
   answerEventSources: (request: SentRequest) => Answer | Promise<Answer> = () => json(200, { EventSourceMappings: [] });
   /** The invocations answered so far. */
   invocations = 0;
-  /** The answer to `GetFunctionUrlConfig`; by default the emulator's. */
+  /** The answers to function URL operations, by default the emulator's. */
   answerUrl: (request: SentRequest) => EngineAnswer = (request) => this.emulator(request);
 
   private find(pattern: RegExp, url: URL): FakeFunction | undefined {
@@ -229,10 +239,21 @@ class FakeEngine {
       this.invocations += 1;
       return json(200, { invocation: this.invocations });
     }
-    if (method === 'GET' && URL_PATH.test(url.pathname)) {
+    if (URL_PATH.test(url.pathname)) {
       const fn = this.find(URL_PATH, url);
+      if (method === 'POST' && fn !== undefined) {
+        if (fn.url !== undefined) {
+          return errorAnswer(409, 'ResourceConflictException', 'The function URL already exists.');
+        }
+        fn.url = 'http://127.0.0.1:9981/';
+        return json(201, { FunctionUrl: fn.url, AuthType: 'AWS_IAM' });
+      }
       if (fn?.url === undefined) {
         return errorAnswer(404, 'ResourceNotFoundException', 'The resource you requested does not exist.');
+      }
+      if (method === 'DELETE') {
+        delete fn.url;
+        return { status: 204, body: '' };
       }
       return json(200, {
         FunctionUrl: fn.url,
@@ -286,6 +307,12 @@ class FakeEngine {
         status: answer.status,
         headers: answer.headers ?? {},
       });
+    }
+    if (URL_PATH.test(url.pathname) && sent.method !== 'GET') {
+      this.urlMutationRedirects.push(request.redirect);
+      if (sent.method === 'POST') {
+        this.urlCreateBodies.push(await request.json());
+      }
     }
     const answer = await Promise.race([
       Promise.resolve(URL_PATH.test(url.pathname) ? this.answerUrl(sent) : this.answerFunction(sent)),
@@ -406,6 +433,7 @@ beforeEach(() => {
   handed.renderTest = false;
   handed.code = undefined;
   handed.configuration = undefined;
+  handed.renderConfiguration = false;
   engine = new FakeEngine();
   vi.stubGlobal('fetch', engine.fetch);
   vi.stubGlobal('matchMedia', matchMedia);
@@ -1220,6 +1248,272 @@ function deferredAnswer() {
   });
   return { promise, resolve };
 }
+
+describe('Function URL lifecycle', () => {
+  const create = 'Create function URL';
+  const remove = 'Delete function URL';
+  const changedUrl = 'http://127.0.0.1:9981/';
+  const changes = () => engine.aws.filter(({ method, url }) => method !== 'GET' && URL_PATH.test(url.pathname));
+  const scrollIntoView = vi.fn();
+  const originalScrollIntoView = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollIntoView');
+
+  beforeEach(() => {
+    scrollIntoView.mockClear();
+    Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView });
+  });
+
+  afterEach(() => {
+    if (originalScrollIntoView === undefined) {
+      Reflect.deleteProperty(Element.prototype, 'scrollIntoView');
+    } else {
+      Object.defineProperty(Element.prototype, 'scrollIntoView', originalScrollIntoView);
+    }
+  });
+
+  async function expectFlashRevealed() {
+    await waitFor(() =>
+      expect(scrollIntoView).toHaveBeenCalledExactlyOnceWith({
+        block: 'center',
+        inline: 'nearest',
+        behavior: 'instant',
+      }),
+    );
+    const result = document.activeElement;
+    if (!(result instanceof HTMLElement)) {
+      throw new Error('Expected a focused HTML element in the Flashbar.');
+    }
+    expect(PAGE.findFlashbar()?.getElement()).toContainElement(result);
+    expect(result).toHaveAccessibleName('Notifications');
+    expect(scrollIntoView.mock.contexts[0]).toBe(result);
+    expect(result).toHaveAttribute('tabindex', '-1');
+  }
+
+  async function openConfiguration(fn: FakeFunction) {
+    handed.renderConfiguration = true;
+    engine.functions = [{ ...fn }];
+    open(`${pagePath(fn.name)}?tab=configuration`);
+    await waitFor(() => overview());
+  }
+
+  async function openDeleteDialog() {
+    fireEvent.click(screen.getByRole('button', { name: remove }));
+    const dialog = await waitFor(() => {
+      const modal = PAGE.findModal();
+      if (modal === null) {
+        throw new Error('Expected a function URL deletion modal.');
+      }
+      return modal;
+    });
+    expect(dialog.getElement()).toHaveAccessibleName(remove);
+    const [cancel, confirm] =
+      dialog
+        .findFooter()
+        ?.findAllButtons()
+        .map((button) => button.getElement()) ?? [];
+    if (cancel === undefined || confirm === undefined) {
+      throw new Error('Expected Cancel and Delete in the modal footer.');
+    }
+    expect(cancel).toHaveAccessibleName('Cancel');
+    expect(confirm).toHaveAccessibleName('Delete');
+    return { dialog, cancel, confirm };
+  }
+
+  async function confirmDelete() {
+    const { confirm } = await openDeleteDialog();
+    fireEvent.click(confirm);
+  }
+
+  it.each([
+    ['no URL', undefined, '-', create],
+    ['an existing URL', undefined, ORDERS.url, remove],
+    ['a 501 read', errorAnswer(501, 'NotImplemented', ''), 'Not implemented by the emulator', undefined],
+    ['a failed read', errorAnswer(403, 'AccessDeniedException', ''), 'Not read', undefined],
+  ] as const)('shows the overview and Configuration actions for %s', async (_, answer, shown, action) => {
+    if (answer !== undefined) {
+      engine.answerUrl = () => answer;
+    }
+    await openConfiguration(action === create ? withoutUrl(ORDERS) : ORDERS);
+
+    expect(value('Function URL')).toBe(shown);
+    expect(screen.queryByRole('button', { name: 'Copy Function URL' }) !== null).toBe(action === remove);
+    expect(screen.queryByRole('button', { name: create }) !== null).toBe(action === create);
+    expect(screen.queryByRole('button', { name: remove }) !== null).toBe(action === remove);
+  });
+
+  it.each([
+    ['create', 'function first'],
+    ['create', 'URL first'],
+    ['delete', 'function first'],
+    ['delete', 'URL first'],
+  ] as const)('can %s a URL when the reread returns %s', async (action, order) => {
+    const creating = action === 'create';
+    await openConfiguration(creating ? withoutUrl(ORDERS) : ORDERS);
+
+    const detail = deferredAnswer();
+    const url = deferredAnswer();
+    const functionRequest = { method: 'GET', url: new URL('/2015-03-31/functions/orders', engineOrigin) };
+    const urlRequest = { method: 'GET', url: new URL('/2021-10-31/functions/orders/url', engineOrigin) };
+    engine.answerFunction = () => detail.promise;
+    engine.answerUrl = (request) => (request.method === 'GET' ? url.promise : engine.emulator(request));
+
+    if (creating) {
+      fireEvent.click(screen.getByRole('button', { name: create }));
+    } else {
+      await confirmDelete();
+    }
+    await waitFor(() => {
+      expect(engine.gets).toHaveLength(2);
+      expect(engine.urlGets).toHaveLength(2);
+    });
+    expect(changes().map(({ method, url }) => [method, url.pathname, url.search])).toEqual([
+      [creating ? 'POST' : 'DELETE', '/2021-10-31/functions/orders/url', ''],
+    ]);
+    expect(engine.urlCreateBodies).toEqual(creating ? [{ AuthType: 'AWS_IAM' }] : []);
+    expect(engine.urlMutationRedirects).toEqual(['manual']);
+
+    const finishDetail = () => detail.resolve(engine.emulator(functionRequest));
+    const finishUrl = () => url.resolve(engine.emulator(urlRequest));
+    const [first, second] = order === 'function first' ? [finishDetail, finishUrl] : [finishUrl, finishDetail];
+    await act(async () => first());
+    await act(async () => second());
+    await waitFor(() => expect(flashTexts()).toEqual([creating ? 'Function URL created.' : 'Function URL deleted.']));
+    expect(screen.getByRole('button', { name: creating ? remove : create })).toBeInTheDocument();
+    expect(PAGE.findModal()).toBeNull();
+    const pageHeader = PAGE.findAllHeaders().find((candidate) =>
+      candidate.findHeadingText().getElement().closest('h1'),
+    );
+    expect(norm(pageHeader?.findHeadingText().getElement().textContent)).toBe('orders');
+    expect(value('Function URL')).toBe(creating ? changedUrl : '-');
+    expect(screen.queryByRole('button', { name: 'Copy Function URL' }) !== null).toBe(creating);
+    if (!creating) {
+      await expectFlashRevealed();
+    }
+  });
+
+  it('rereads the URL when creation supersedes a pending Refresh', async () => {
+    await openConfiguration(withoutUrl(ORDERS));
+
+    const write = deferredAnswer();
+    const refresh = deferredAnswer();
+    let refreshAnswer: Answer | undefined;
+    engine.answerUrl = (request) => {
+      if (request.method !== 'GET') {
+        return write.promise;
+      }
+      const answer = engine.emulator(request);
+      if (refreshAnswer === undefined) {
+        refreshAnswer = answer;
+        return refresh.promise;
+      }
+      return answer;
+    };
+
+    fireEvent.click(screen.getByRole('button', { name: create }));
+    await waitFor(() => expect(changes()).toHaveLength(1));
+    const [writeRequest] = changes();
+    if (writeRequest === undefined) {
+      throw new Error('Expected a pending function URL write.');
+    }
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await waitFor(() => {
+      expect(engine.gets).toHaveLength(2);
+      expect(refreshAnswer?.status).toBe(404);
+    });
+
+    await act(async () => write.resolve(engine.emulator(writeRequest)));
+    await waitFor(() => {
+      expect(engine.gets).toHaveLength(3);
+      expect(engine.urlGets).toHaveLength(3);
+      expect(flashTexts()).toEqual(['Function URL created.']);
+    });
+
+    const stale = refreshAnswer;
+    if (stale === undefined) {
+      throw new Error('Expected a stale URL reply from Refresh.');
+    }
+    await act(async () => refresh.resolve(stale));
+    expect(value('Function URL')).toBe(changedUrl);
+    expect(screen.getByRole('button', { name: remove })).toBeInTheDocument();
+    expect(flashTexts()).toEqual(['Function URL created.']);
+  });
+
+  it('keeps the URL and sends no changes on opening or cancelling deletion', async () => {
+    await openConfiguration(ORDERS);
+    const trigger = screen.getByRole('button', { name: remove });
+    trigger.focus();
+    const { dialog, cancel } = await openDeleteDialog();
+    expect(dialog.findContent().getElement()).toHaveTextContent(
+      'Delete the function URL for orders? The function itself will remain.',
+    );
+    expect(changes()).toEqual([]);
+    fireEvent.click(cancel);
+
+    expect(PAGE.findModal()).toBeNull();
+    expect(trigger).toHaveFocus();
+    expect(changes()).toEqual([]);
+    expect(value('Function URL')).toBe(ORDERS.url);
+    expect(scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  it.each(['ResourceConflictException', 'ResourceNotFoundException'])(
+    'shows the actual %s returned by a refused creation',
+    async (code) => {
+      await openConfiguration(withoutUrl(ORDERS));
+      engine.functions = code === 'ResourceConflictException' ? [{ ...ORDERS }] : [];
+      fireEvent.click(screen.getByRole('button', { name: create }));
+
+      await waitFor(() => expect(flashTexts()).toEqual([expect.stringContaining(code)]));
+      expect(PAGE.findFlashbar()?.findItemsByType('success')).toEqual([]);
+      if (code === 'ResourceConflictException') {
+        fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+        await screen.findByRole('button', { name: remove });
+        expect(value('Function URL')).toBe(ORDERS.url);
+      }
+    },
+  );
+
+  it('keeps the refusal in the page Flashbar after the deletion dialog closes and the detail is reread', async () => {
+    await openConfiguration(ORDERS);
+    engine.functions = [withoutUrl(ORDERS)];
+    await confirmDelete();
+
+    await waitFor(() => expect(flashTexts()).toEqual([expect.stringContaining('ResourceNotFoundException')]));
+    expect(screen.getByRole('button', { name: create })).toBeInTheDocument();
+    expect(PAGE.findModal()).toBeNull();
+    expect(engine.gets).toHaveLength(2);
+    expect(engine.urlGets).toHaveLength(2);
+    expect(PAGE.findFlashbar()?.findItemsByType('success')).toEqual([]);
+    const pageHeader = PAGE.findAllHeaders().find((candidate) =>
+      candidate.findHeadingText().getElement().closest('h1'),
+    );
+    expect(norm(pageHeader?.findHeadingText().getElement().textContent)).toBe('orders');
+    expect(value('Function URL')).toBe('-');
+    await expectFlashRevealed();
+  });
+
+  it.each([
+    [create, 'POST', 'CreateFunctionUrlConfig'],
+    [remove, 'DELETE', 'DeleteFunctionUrlConfig'],
+  ] as const)('disables %s after its operation returns 501', async (action, method, operation) => {
+    await openConfiguration(method === 'POST' ? withoutUrl(ORDERS) : ORDERS);
+    engine.answerUrl = (request) =>
+      request.method === method ? errorAnswer(501, 'NotImplemented', '') : engine.emulator(request);
+    if (method === 'POST') {
+      fireEvent.click(screen.getByRole('button', { name: action }));
+    } else {
+      await confirmDelete();
+    }
+
+    await waitFor(() => {
+      expect(flashTexts()).toEqual([expect.stringContaining('Not implemented by the emulator')]);
+    });
+    expect(flashTexts()[0]).toContain(operation);
+    expect(PAGE.findModal()).toBeNull();
+    expect(screen.getByRole('button', { name: action })).toHaveAttribute('aria-disabled', 'true');
+    expect(PAGE.findFlashbar()?.findItemsByType('success')).toEqual([]);
+  });
+});
 
 describe('Event sources', () => {
   const source = 'arn:aws:sqs:us-east-1:000000000000:orders';

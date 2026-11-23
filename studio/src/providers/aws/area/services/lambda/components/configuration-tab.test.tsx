@@ -130,11 +130,22 @@ function variableRows(): string[][] {
 }
 
 function renderTab(fn: LambdaFunction = ORDERS, ready = true) {
-  const result = render(inArea(<ConfigurationTab fn={fn} name={fn.name} connection={CONNECTION} ready={ready} />));
+  const change: FunctionChange<void> = { isPending: false, error: undefined, mutate: vi.fn(), reset: vi.fn() };
+  const view = (shown: LambdaFunction, available: boolean) =>
+    inArea(
+      <ConfigurationTab
+        fn={shown}
+        name={shown.name}
+        connection={CONNECTION}
+        ready={available}
+        urlChanges={{ create: change, remove: change, onDeleteSettled: vi.fn() }}
+      />,
+    );
+  const result = render(view(fn, ready));
   return {
     ...result,
     reread: (next: LambdaFunction) => {
-      result.rerender(inArea(<ConfigurationTab fn={next} name={next.name} connection={CONNECTION} ready />));
+      result.rerender(view(next, true));
     },
   };
 }
@@ -205,6 +216,34 @@ describe('the tab "Configuration"', () => {
 
 describe('the actions of "Configuration"', () => {
   const EDITS = ['Edit general configuration', 'Edit environment variables'];
+
+  it('offers URL actions after the two edit controls and omits them when the URL state is unknown', () => {
+    const { reread } = renderTab();
+    const headers = createWrapper(document.body).findAllHeaders();
+    expect(headers.map((header) => norm(header.findHeadingText().getElement().textContent))).toEqual([
+      'General configuration',
+      'Environment variables',
+      'Function URL',
+    ]);
+    const create = screen.getByRole('button', { name: 'Create function URL' });
+    ensureAfterEdits(create);
+
+    reread({ ...ORDERS, url: { kind: 'url', url: 'http://127.0.0.1:9981/' } });
+    const remove = screen.getByRole('button', { name: 'Delete function URL' });
+    ensureAfterEdits(remove);
+
+    for (const kind of ['not-read', 'not-implemented'] as const) {
+      reread({ ...ORDERS, url: { kind } });
+      expect(screen.queryByRole('button', { name: /^(Create|Delete) function URL$/ })).toBeNull();
+    }
+  });
+
+  function ensureAfterEdits(action: HTMLElement) {
+    for (const name of EDITS) {
+      const edit = screen.getByRole('button', { name });
+      expect(edit.compareDocumentPosition(action) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+  }
 
   it('not ready: each "Edit" is unavailable with "Wait until the function is ready."; ready: available', () => {
     const { reread } = renderTab(ORDERS, false);
