@@ -1,5 +1,7 @@
+import createWrapper from '@cloudscape-design/components/test-utils/dom';
+import type ModalWrapper from '@cloudscape-design/components/test-utils/dom/modal';
 import { QueryClient, QueryClientProvider, useIsFetching } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import { createMemoryRouter, RouterProvider } from 'react-router';
 import { expect, vi } from 'vitest';
 
@@ -19,13 +21,101 @@ type Handler = (operation: string, input: Input) => Reply | Promise<Reply> | und
 type Metadata = Record<string, unknown>;
 
 let port = 8950;
+export const page = createWrapper(document.body);
+
+export function required<T>(value: T | null | undefined, label: string): T {
+  if (value == null) throw new Error(`Missing ${label}`);
+  return value;
+}
 
 export function denied(message = REFUSAL): Reply {
   return { body: { __type: 'AccessDeniedException', message }, status: 403 };
 }
 
+export function buttons(scope = page) {
+  return scope.findAllButtons().map((button) => ({
+    button,
+    name: button.getElement().getAttribute('aria-label') || button.findTextRegion()?.getElement().textContent?.trim(),
+  }));
+}
+
+export function buttonNamed(name: string, scope = page) {
+  return required(buttons(scope).find((entry) => entry.name === name)?.button, `button "${name}"`);
+}
+
 export async function click(name: string) {
-  fireEvent.click(await screen.findByRole('button', { name }));
+  (await waitFor(() => buttonNamed(name))).click();
+}
+
+export function dialogNamed(title: string) {
+  return waitFor(() =>
+    required(
+      page.findAllModals().find((modal) => modal.findHeader().getElement().textContent?.trim() === title),
+      `dialog "${title}"`,
+    ),
+  );
+}
+
+export function dialogButton(dialog: ModalWrapper, name: string) {
+  return buttonNamed(name, createWrapper(required(dialog.findFooter(), 'dialog footer').getElement()));
+}
+
+export function dialogInput(dialog: ModalWrapper, label: string) {
+  const field = required(
+    createWrapper(dialog.findContent().getElement())
+      .findAllFormFields()
+      .find((item) => item.findLabel()?.getElement().textContent?.trim() === label),
+    `field "${label}"`,
+  );
+  const control = required(field.findControl(), `control for "${label}"`);
+  return required(createWrapper(control.getElement()).findInput(), `input for "${label}"`);
+}
+
+export function dialogAlert(dialog: ModalWrapper) {
+  return required(createWrapper(dialog.findContent().getElement()).findAlert(), 'dialog alert');
+}
+
+export function expectDialogAlert(dialog: ModalWrapper, message: string) {
+  const content = required(dialogAlert(dialog).findContent(), 'dialog alert content').getElement();
+  expect(within(content).getByText(message)).toBeVisible();
+}
+
+export function tableNamed(title: string) {
+  return required(
+    page.findAllTables().find((table) => {
+      const slot = table.findHeaderSlot();
+      return (
+        slot &&
+        createWrapper(slot.getElement()).findHeader()?.findHeadingText().getElement().textContent?.trim() === title
+      );
+    }),
+    `table "${title}"`,
+  );
+}
+
+export function findRow(title: string, label: string) {
+  const table = tableNamed(title);
+  return table.findRows().find((_, index) => {
+    const identity = required(table.findBodyCell(index + 1, 1), 'row identity cell');
+    return within(identity.getElement()).queryByText(label) !== null;
+  });
+}
+
+export function flashContents() {
+  return (
+    page
+      .findFlashbar()
+      ?.findItems()
+      .map((item) => item.findContent()?.getElement().textContent?.trim()) ?? []
+  );
+}
+
+export function expectSuccess(message: string) {
+  const flash = page
+    .findFlashbar()
+    ?.findItemsByType('success')
+    .find((item) => item.findContent()?.getElement().textContent?.trim() === message);
+  expect(required(flash, `success flash "${message}"`).getElement()).toBeVisible();
 }
 
 function ActiveReads({ connection }: { connection: AreaConnection }) {
@@ -126,12 +216,12 @@ export function delayedRefresh(operation: string, metadata: Metadata) {
     await waitFor(() => {
       for (const read of [LIST, DETAIL]) expect(screen.getByLabelText(read)).toHaveAttribute('aria-busy', 'true');
     });
-    expect(screen.getByText(success)).toBeVisible();
+    expectSuccess(success);
     const ordered = order === 'list first' ? ([LIST, DETAIL] as const) : ([DETAIL, LIST] as const);
     for (const read of ordered) {
       reads[read].resolve({ body: reads[read].body });
       await waitFor(() => expect(screen.getByLabelText(read)).toHaveAttribute('aria-busy', 'false'));
-      expect(screen.getByText(success)).toBeVisible();
+      expectSuccess(success);
       if (read === DETAIL) await waitFor(assertDetail);
     }
     assertDetail();

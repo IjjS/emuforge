@@ -1,8 +1,25 @@
-import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { creationDateText } from '../../../../components/format-date';
-import { click, delayedRefresh, denied, NAME, openSecret, ORDERS, REFUSAL } from './detail-support.test';
+import {
+  buttonNamed,
+  click,
+  delayedRefresh,
+  denied,
+  dialogButton,
+  dialogInput,
+  dialogNamed,
+  expectDialogAlert,
+  expectSuccess,
+  flashContents,
+  NAME,
+  openSecret,
+  ORDERS,
+  page,
+  REFUSAL,
+  required,
+} from './detail-support.test';
 
 const ROTATE = 'RotateSecret';
 const CANCEL = 'CancelRotateSecret';
@@ -24,35 +41,38 @@ afterEach(() => vi.unstubAllGlobals());
 
 async function enterSchedule() {
   await click('Configure rotation');
-  const dialog = within(await screen.findByRole('dialog', { name: 'Configure rotation' }));
-  fireEvent.change(dialog.getByRole('textbox', { name: 'Rotation Lambda function ARN' }), {
-    target: { value: FUNCTION },
-  });
-  fireEvent.change(dialog.getByRole('spinbutton', { name: 'Rotation interval (days)' }), {
-    target: { value: '30' },
-  });
+  const dialog = await dialogNamed('Configure rotation');
+  dialogInput(dialog, 'Rotation Lambda function ARN').setInputValue(FUNCTION);
+  dialogInput(dialog, 'Rotation interval (days)').setInputValue('30');
   return dialog;
 }
 
 async function openRotationAction(title: string, submit: string) {
   await click(title);
-  const dialog = within(await screen.findByRole('dialog', { name: title }));
-  fireEvent.click(dialog.getByRole('button', { name: submit }));
+  const dialog = await dialogNamed(title);
+  dialogButton(dialog, submit).click();
   return dialog;
 }
 
 function expectField(label: string, value: string) {
-  const field = screen.getByText(label).closest('dt')?.nextElementSibling;
-  expect(field).toBeVisible();
-  expect(field).toHaveTextContent(value);
+  const pairs = page.findAllKeyValuePairs().flatMap((group) => group.findItems());
+  const field = pairs
+    .flatMap((item) => {
+      const group = item.findGroupPairs();
+      return group?.length ? group : [item];
+    })
+    .find((pair) => pair.findLabel()?.getElement().textContent?.trim() === label);
+  const fieldValue = required(field?.findValue(), `value for "${label}"`).getElement();
+  expect(fieldValue).toBeVisible();
+  expect(fieldValue).toHaveTextContent(value);
 }
 
 describe('Secret rotation', () => {
   it('sends the function and interval with immediate rotation disabled', async () => {
     const { calls } = openSecret({ handler: (operation) => (operation === ROTATE ? { body: {} } : undefined) });
     const dialog = await enterSchedule();
-    fireEvent.click(dialog.getByRole('button', { name: 'Save schedule' }));
-    expect(await screen.findByText(SAVED)).toBeVisible();
+    dialogButton(dialog, 'Save schedule').click();
+    await waitFor(() => expectSuccess(SAVED));
     expect(calls).toHaveBeenCalledWith(ROTATE, {
       ClientRequestToken: expect.any(String),
       SecretId: NAME,
@@ -68,8 +88,10 @@ describe('Secret rotation', () => {
       handler: (operation) => (operation === ROTATE ? { body: { VersionId: 'pending-rotation' } } : undefined),
     });
     await openRotationAction('Rotate now', 'Request rotation');
-    expect(await screen.findByText(ACCEPTED)).toBeVisible();
-    expect(screen.queryByText(/rotation (completed|succeeded)/i)).not.toBeInTheDocument();
+    await waitFor(() => expectSuccess(ACCEPTED));
+    expect(flashContents()).not.toEqual(
+      expect.arrayContaining([expect.stringMatching(/rotation (completed|succeeded)/i)]),
+    );
     expect(calls).toHaveBeenCalledWith(ROTATE, {
       ClientRequestToken: expect.any(String),
       SecretId: NAME,
@@ -90,8 +112,8 @@ describe('Secret rotation', () => {
       },
     });
     await openRotationAction('Cancel rotation', 'Cancel rotation');
-    expect(await screen.findByText('Disabled')).toBeVisible();
-    expect(screen.getByText(NO_NEXT)).toBeVisible();
+    await waitFor(() => expectField('Rotation status', 'Disabled'));
+    expectField('Next rotation date', NO_NEXT);
     expectField('Rotation interval', '7 days');
     expectField('Rotation Lambda function', FUNCTION);
     expect(calls).toHaveBeenCalledWith(CANCEL, { SecretId: NAME });
@@ -106,11 +128,11 @@ describe('Secret rotation', () => {
     });
     openSecret({ handler: refresh.handler, observe: true });
     const dialog = await enterSchedule();
-    fireEvent.click(dialog.getByRole('button', { name: 'Save schedule' }));
+    dialogButton(dialog, 'Save schedule').click();
     await refresh.complete(order, SAVED, () => {
       expectField('Rotation interval', '30 days');
       expectField('Next rotation date', creationDateText(new Date(next * 1000)));
-      expect(screen.getByText('Enabled')).toBeVisible();
+      expectField('Rotation status', 'Enabled');
     });
   });
 
@@ -120,7 +142,7 @@ describe('Secret rotation', () => {
     openSecret({ metadata: ACTIVE, handler: refresh.handler, observe: true });
     await openRotationAction('Rotate now', 'Request rotation');
     await refresh.complete(order, ACCEPTED, () => {
-      expect(screen.getByText('Enabled')).toBeVisible();
+      expectField('Rotation status', 'Enabled');
       expectField('Next rotation date', creationDateText(new Date(next * 1000)));
     });
   });
@@ -132,7 +154,7 @@ describe('Secret rotation', () => {
       openSecret({ metadata: ACTIVE, handler: refresh.handler, observe: true });
       await openRotationAction('Cancel rotation', 'Cancel rotation');
       await refresh.complete(order, STOPPED, () => {
-        expect(screen.getByText('Disabled')).toBeVisible();
+        expectField('Rotation status', 'Disabled');
       });
     },
   );
@@ -141,12 +163,12 @@ describe('Secret rotation', () => {
     const reason = 'Secrets Manager is not allowed to invoke the selected Lambda function.';
     openSecret({ handler: (operation) => (operation === ROTATE ? denied(reason) : undefined) });
     const dialog = await enterSchedule();
-    fireEvent.click(dialog.getByRole('button', { name: 'Save schedule' }));
-    expect(await dialog.findByText(`${ROTATE} was refused: ${reason}`)).toBeVisible();
-    expect(dialog.getByRole('textbox', { name: 'Rotation Lambda function ARN' })).toHaveValue(FUNCTION);
-    expect(screen.queryByText(SAVED)).not.toBeInTheDocument();
-    fireEvent.click(dialog.getByRole('button', { name: 'Cancel' }));
-    expect(screen.getByText('Disabled')).toBeVisible();
+    dialogButton(dialog, 'Save schedule').click();
+    await waitFor(() => expectDialogAlert(dialog, `${ROTATE} was refused: ${reason}`));
+    expect(dialogInput(dialog, 'Rotation Lambda function ARN').getInputValue()).toBe(FUNCTION);
+    expect(flashContents()).not.toContain(SAVED);
+    dialogButton(dialog, 'Cancel').click();
+    expectField('Rotation status', 'Disabled');
   });
 
   it('shows why immediate rotation was refused without claiming acceptance', async () => {
@@ -155,8 +177,8 @@ describe('Secret rotation', () => {
       handler: (operation) => (operation === ROTATE ? denied() : undefined),
     });
     const dialog = await openRotationAction('Rotate now', 'Request rotation');
-    expect(await dialog.findByText(`${ROTATE} was refused: ${REFUSAL}`)).toBeVisible();
-    expect(screen.queryByText(ACCEPTED)).not.toBeInTheDocument();
+    await waitFor(() => expectDialogAlert(dialog, `${ROTATE} was refused: ${REFUSAL}`));
+    expect(flashContents()).not.toContain(ACCEPTED);
   });
 
   it('shows the cancel refusal and still shows active rotation after refresh', async () => {
@@ -165,15 +187,15 @@ describe('Secret rotation', () => {
       handler: (operation) => (operation === CANCEL ? denied() : undefined),
     });
     const dialog = await openRotationAction('Cancel rotation', 'Cancel rotation');
-    expect(await dialog.findByText(`${CANCEL} was refused: ${REFUSAL}`)).toBeVisible();
-    expect(screen.queryByText(STOPPED)).not.toBeInTheDocument();
-    fireEvent.click(dialog.getByRole('button', { name: 'Keep rotation' }));
+    await waitFor(() => expectDialogAlert(dialog, `${CANCEL} was refused: ${REFUSAL}`));
+    expect(flashContents()).not.toContain(STOPPED);
+    dialogButton(dialog, 'Keep rotation').click();
     await click('Refresh');
     await waitFor(() =>
       expect(calls.mock.calls.filter(([operation]) => operation === 'DescribeSecret')).toHaveLength(2),
     );
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled());
-    expect(await screen.findByText('Enabled')).toBeVisible();
+    await waitFor(() => expect(buttonNamed('Refresh').getElement()).toBeEnabled());
+    await waitFor(() => expectField('Rotation status', 'Enabled'));
     expectField('Next rotation date', creationDateText(new Date(NEXT * 1000)));
   });
 });
