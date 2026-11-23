@@ -55,7 +55,9 @@ function expectField(label: string, value: string) {
   expect(screen.getByText(label).closest('dt')?.nextElementSibling).toHaveTextContent(value);
 }
 
-beforeEach(() => send.mockReset());
+beforeEach(() => {
+  send.mockReset();
+});
 
 describe('Key rotation', () => {
   it('shows the returned settings and follows the next marker in rotation history', async () => {
