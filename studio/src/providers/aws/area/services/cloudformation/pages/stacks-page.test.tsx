@@ -406,8 +406,14 @@ it('discards visible rows and the token on disconnect and starts at the first pa
   await expectStack('Old first');
   fireEvent.click(next());
   await expectStack('Current follow-up');
-  connection.setConnection(stopped);
-  await screen.findByText(/Check that the local emulator is running on the configured port, then retry/);
+  const diagnostic = 'Start the emulator on port 9302';
+  connection.setConnection({ ...stopped, message: diagnostic });
+  const instruction = await screen.findByText(
+    'Check that the local emulator is running on the configured port, then retry.',
+  );
+  const lineBreak = instruction.previousElementSibling;
+  expect(lineBreak?.tagName).toBe('BR');
+  expect(lineBreak?.previousElementSibling).toBe(emptySlot().getByText(diagnostic));
   expectNoStack('Current follow-up');
   connection.setConnection({ ...connected, checkedAt: 3 });
 
@@ -551,16 +557,15 @@ it.each([
   if (target === 'engine') {
     engine.answer.mockRejectedValue(new TypeError('Failed to fetch'));
   } else {
-    engine.answer.mockImplementation(() => refused(503, 'EmulatorUnavailable', 'The emulator stopped replying.'));
+    engine.answer.mockImplementation(() => refused(503, 'EmulatorUnavailable', 'The emulator stopped replying'));
   }
   open('/aws/cloudformation/stacks', result);
 
   if (target === 'engine') {
     expect(await screen.findByText('Check that the EmuForge engine is running, then retry.')).toBeInTheDocument();
   } else {
-    expect(
-      await screen.findByText(/Check that the local emulator is running on the configured port, then retry/),
-    ).toHaveTextContent('The emulator stopped replying.');
+    await screen.findByText('Check that the local emulator is running on the configured port, then retry.');
+    expect(emptySlot().getByText('The emulator stopped replying')).toBeVisible();
   }
   const failedAttempts = engine.calls.length;
   expect(failedAttempts).toBeGreaterThan(0);
