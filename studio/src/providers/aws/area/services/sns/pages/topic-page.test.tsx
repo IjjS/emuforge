@@ -447,7 +447,7 @@ it('reports a successful settings write after a refresh finds the topic missing'
     { name: 'RawMessageDelivery', value: 'true' },
     expect.any(AbortSignal),
   );
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  PAGE.findContentLayout()?.findHeader()?.findHeader()?.findActions()?.findButton()?.click();
   expect(await screen.findByText('Topic not found')).toBeVisible();
   expect(screen.queryByTestId('stand-in-subscriptions')).not.toBeInTheDocument();
   expect(vi.mocked(api.setSubscriptionSetting).mock.calls[0]?.[3].aborted).toBe(false);
