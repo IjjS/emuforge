@@ -120,20 +120,18 @@ function KeysVisit({ connection }: Pick<ScreenPageProps, 'connection'>) {
           </Header>
         }
         pagination={
-          listing.openEnd || listing.pagesCount > 1 ? (
-            <Pagination
-              currentPageIndex={listing.currentPage}
-              pagesCount={listing.pagesCount}
-              openEnd={listing.openEnd}
-              disabled={listing.loading}
-              ariaLabels={{
-                nextPageLabel: 'Next page',
-                previousPageLabel: 'Previous page',
-                pageLabel: (page) => `Page ${String(page)}`,
-              }}
-              onChange={({ detail }) => listing.goToPage(detail.currentPageIndex)}
-            />
-          ) : undefined
+          <Pagination
+            currentPageIndex={listing.currentPage}
+            pagesCount={listing.pagesCount}
+            openEnd={listing.openEnd}
+            disabled={listing.loading}
+            ariaLabels={{
+              nextPageLabel: 'Next page',
+              previousPageLabel: 'Previous page',
+              pageLabel: (page) => `Page ${String(page)}`,
+            }}
+            onChange={({ detail }) => listing.goToPage(detail.currentPageIndex)}
+          />
         }
       />
     </div>
