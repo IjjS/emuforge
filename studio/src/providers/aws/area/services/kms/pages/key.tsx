@@ -30,7 +30,9 @@ type ReadKey = KeyMetadata & { KeyId: string };
 
 function KeyDetails({ connection, metadata }: { connection: ScreenPageProps['connection']; metadata: ReadKey }) {
   const deletion =
-    metadata.DeletionDate === undefined ? [] : [{ label: 'Deletion date', value: creationDateText(metadata.DeletionDate) }];
+    metadata.DeletionDate === undefined
+      ? []
+      : [{ label: 'Deletion date', value: creationDateText(metadata.DeletionDate) }];
   return (
     <Container
       header={
