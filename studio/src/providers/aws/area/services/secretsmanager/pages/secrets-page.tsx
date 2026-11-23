@@ -73,7 +73,7 @@ export function SecretsPage({ connection }: { connection: AreaConnection }) {
   const compact = useSyncExternalStore(subscribeToNarrowViewport, isNarrowViewport);
   const [includePlannedDeletion, setIncludePlannedDeletion] = useState(false);
   const listing = useSecretListing(connection, includePlannedDeletion);
-  const failure = listing.connectionFailure ?? listing.failure;
+  const { failure } = listing;
   const unavailable = failure?.kind === 'not-implemented';
   const readState = failure === undefined ? undefined : readFailureState(failure, connection, 'secrets list');
   const recoveryHint =

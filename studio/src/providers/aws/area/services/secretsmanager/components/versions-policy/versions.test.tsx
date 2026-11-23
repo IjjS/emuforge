@@ -1,5 +1,5 @@
-import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import createWrapper from '@cloudscape-design/components/test-utils/dom';
+import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -8,11 +8,21 @@ import {
   deferredReply,
   delayedRefresh,
   denied,
+  dialogButton,
+  dialogContent,
+  expectAlert,
+  findDialog,
+  findSection,
   NAME,
   OLDER,
   openSecret,
   ORDERS,
+  page,
+  press,
   REFUSAL,
+  refusalReread,
+  required,
+  section,
   versionRows,
 } from './detail-support.test';
 
@@ -22,37 +32,90 @@ const UPDATE = 'UpdateSecretVersionStage';
 afterEach(() => vi.unstubAllGlobals());
 
 async function openVersions() {
-  await click('Version history');
+  const wrapper = await section('Version history');
+  fireEvent.click(wrapper.findExpandButton().getElement());
 }
 
-function versionRow(id: string) {
-  return within(screen.getByRole('table', { name: 'Version history' })).getByRole('row', { name: new RegExp(id) });
+function historyTable() {
+  const history = findSection('Version history');
+  return history === undefined ? null : createWrapper(history.getElement()).findTable();
+}
+
+function versionIndex(id: string) {
+  const table = historyTable();
+  return (
+    table?.findRows().findIndex((_, index) => table.findBodyCell(index + 1, 2)?.getElement().textContent === id) ?? -1
+  );
+}
+
+async function findVersion(id: string) {
+  return waitFor(() => {
+    const index = versionIndex(id);
+    expect(index).toBeGreaterThanOrEqual(0);
+    return index + 1;
+  });
+}
+
+function expectLabels(id: string, labels: string) {
+  const cell = historyTable()
+    ?.findBodyCell(versionIndex(id) + 1, 3)
+    ?.getElement();
+  expect(cell).toBeVisible();
+  expect(cell?.textContent).toBe(labels);
 }
 
 async function selectVersion(id: string) {
-  fireEvent.click(await screen.findByRole('radio', { name: `Select version ${id}` }));
+  const row = await findVersion(id);
+  const control = required(historyTable()?.findRowSelectionArea(row), 'version selection');
+  const radio = required(createWrapper(control.getElement()).findRadioButton(), 'version radio');
+  fireEvent.click(radio.findNativeInput().getElement());
 }
 
-async function openStageDialog(menuItem: string, title = menuItem) {
-  await click('Manage staging labels');
-  fireEvent.click(await screen.findByRole('menuitem', { name: menuItem }));
-  return within(await screen.findByRole('dialog', { name: title }));
+async function versionPagination() {
+  const history = await section('Version history');
+  return waitFor(() => required(createWrapper(history.getElement()).findPagination(), 'version pagination'));
 }
 
-async function chooseLabel(dialog: ReturnType<typeof within>, label: string) {
-  const user = userEvent.setup();
-  await user.click(dialog.getByRole('button', { name: /Choose a staging label/ }));
-  await user.click(await screen.findByRole('option', { name: new RegExp(label) }));
+const stageTitles = { add: 'Add staging label', move: 'Move staging label', remove: 'Remove staging label' };
+
+async function stageMenu() {
+  const history = await section('Version history');
+  return required(createWrapper(history.findHeader().getElement()).findButtonDropdown(), 'Manage staging labels');
+}
+
+async function openStageDialog(operation: keyof typeof stageTitles) {
+  const dropdown = await stageMenu();
+  expect(dropdown.findNativeButton().getElement()).toHaveAccessibleName('Manage staging labels');
+  await act(() => dropdown.openDropdown());
+  const item = required(dropdown.findItemById(operation, { disabled: false }), operation);
+  fireEvent.click(item.getElement());
+  return findDialog(stageTitles[operation]);
+}
+
+function stageInput(dialog: Awaited<ReturnType<typeof findDialog>>) {
+  return required(dialogContent(dialog).findInput(), 'staging label');
+}
+
+async function chooseLabel(dialog: Awaited<ReturnType<typeof findDialog>>, label: string) {
+  const select = required(dialogContent(dialog).findSelect(), 'label selector');
+  await act(() => select.openDropdown());
+  await act(() => select.selectOptionByValue(label));
 }
 
 describe('Secret version history', () => {
   it('reads history on opening, including versions with no staging labels', async () => {
     const { calls } = openSecret();
-    await screen.findByRole('heading', { name: NAME, level: 1 });
+    await waitFor(() =>
+      expect(
+        page()
+          .findAllHeaders()
+          .some((header) => header.findHeadingText().getElement().textContent === NAME),
+      ).toBe(true),
+    );
     expect(calls.mock.calls.some(([operation]) => operation === LIST)).toBe(false);
     await openVersions();
-    await screen.findByRole('radio', { name: `Select version ${OLDER}` });
-    expect(within(versionRow(OLDER)).getByText('No labels')).toBeVisible();
+    await findVersion(OLDER);
+    expectLabels(OLDER, 'No labels');
     expect(calls).toHaveBeenCalledWith(LIST, { SecretId: NAME, IncludeDeprecated: true, MaxResults: 50 });
   });
 
@@ -67,9 +130,9 @@ describe('Secret version history', () => {
       },
     });
     await openVersions();
-    await click('Next version page');
-    expect(await screen.findByRole('radio', { name: `Select version ${OLDER}` })).toBeVisible();
-    expect(screen.queryByRole('radio', { name: `Select version ${CURRENT}` })).not.toBeInTheDocument();
+    fireEvent.click((await versionPagination()).findNextPageButton().getElement());
+    await findVersion(OLDER);
+    expect(versionIndex(CURRENT)).toBe(-1);
     expect(calls).toHaveBeenCalledWith(LIST, {
       SecretId: NAME,
       IncludeDeprecated: true,
@@ -78,10 +141,40 @@ describe('Secret version history', () => {
     });
   });
 
+  it('leaves version pagination and Retry visible and disabled after a later page returns 501', async () => {
+    const { calls } = openSecret({
+      handler: (operation, input) => {
+        if (operation === LIST) {
+          return input.NextToken === 'next-token'
+            ? { body: { __type: 'NotImplemented' }, status: 501 }
+            : { body: { Versions: versionRows({ [CURRENT]: ['AWSCURRENT'] }), NextToken: 'next-token' } };
+        }
+      },
+    });
+    await openVersions();
+    fireEvent.click((await versionPagination()).findNextPageButton().getElement());
+    const history = createWrapper((await section('Version history')).getElement());
+    await expectAlert(history, `The emulator answered 501 Not Implemented for ${LIST}`);
+    const pagination = await versionPagination();
+    expect(pagination.getElement()).toBeVisible();
+    expect(pagination.isDisabled()).toBe(true);
+    expect(pagination.findPreviousPageButton().isDisabled()).toBe(true);
+    expect(pagination.findNextPageButton().isDisabled()).toBe(true);
+    const retry = required(history.findAlert()?.findActionSlot(), 'unavailable Retry');
+    const retryButton = required(createWrapper(retry.getElement()).findButton(), 'Retry');
+    expect(retryButton.getElement()).toBeVisible();
+    expect(retryButton.isDisabled()).toBe(true);
+    fireEvent.click(pagination.findPreviousPageButton().getElement());
+    fireEvent.click(retryButton.getElement());
+    expect(calls.mock.calls.filter(([operation]) => operation === LIST)).toHaveLength(2);
+  });
+
   it('shows the empty history message after an empty response', async () => {
     openSecret({ handler: (operation) => (operation === LIST ? { body: {} } : undefined) });
     await openVersions();
-    expect(await screen.findByText('No versions found for this secret.')).toBeVisible();
+    await waitFor(() =>
+      expect(historyTable()?.findEmptySlot()?.getElement()).toHaveTextContent('No versions found for this secret.'),
+    );
   });
 
   it('shows the denial reason and retries reading history', async () => {
@@ -92,7 +185,7 @@ describe('Secret version history', () => {
     expect(await screen.findByText(`${LIST} was refused: ${reason}`)).toBeVisible();
     expect(screen.queryByText('No versions found for this secret.')).not.toBeInTheDocument();
     await click('Retry');
-    expect(await screen.findByRole('radio', { name: `Select version ${OLDER}` })).toBeVisible();
+    await findVersion(OLDER);
   });
 
   it('selects a version without reading its secret value', async () => {
@@ -158,20 +251,23 @@ describe('Secret version history', () => {
   });
 
   it('shows a denied write and reads the same mapping again', async () => {
-    const { calls } = openSecret({ handler: (operation) => (operation === UPDATE ? denied() : undefined) });
+    const refused = refusalReread(UPDATE, LIST, {
+      body: { Versions: versionRows({ [CURRENT]: ['AWSCURRENT'], [OLDER]: [] }) },
+    });
+    const subject = openSecret({ handler: refused.handler });
     await openVersions();
     await selectVersion(OLDER);
-    const dialog = await openStageDialog('Add staging label');
-    fireEvent.change(dialog.getByRole('textbox', { name: 'Staging label' }), { target: { value: 'review' } });
-    fireEvent.click(dialog.getByRole('button', { name: 'Add staging label' }));
-    expect(await dialog.findByText(`${UPDATE} was refused: ${REFUSAL}`)).toBeVisible();
-    expect(dialog.getByRole('textbox', { name: 'Staging label' })).toHaveValue('review');
-    fireEvent.click(dialog.getByRole('button', { name: 'Cancel' }));
-    await click('Version history');
+    const dialog = await openStageDialog('add');
+    fireEvent.change(stageInput(dialog).findNativeInput().getElement(), { target: { value: 'review' } });
+    press(dialog, 'Add staging label');
+    await expectAlert(dialogContent(dialog), `${UPDATE} was refused: ${REFUSAL}`);
+    expect(stageInput(dialog).getInputValue()).toBe('review');
+    press(dialog, 'Cancel');
     await openVersions();
-    await waitFor(() => expect(calls.mock.calls.filter(([operation]) => operation === LIST)).toHaveLength(2));
-    expect(within(versionRow(OLDER)).getByText('No labels')).toBeVisible();
-    expect(within(versionRow(CURRENT)).getByText('AWSCURRENT')).toBeVisible();
+    await openVersions();
+    await refused.complete(subject);
+    expectLabels(OLDER, 'No labels');
+    expectLabels(CURRENT, 'AWSCURRENT');
   });
 
   it('disables the staging operation after a 501 while keeping value retrieval available', async () => {
@@ -180,13 +276,13 @@ describe('Secret version history', () => {
     });
     await openVersions();
     await selectVersion(OLDER);
-    const dialog = await openStageDialog('Add staging label');
-    fireEvent.change(dialog.getByRole('textbox', { name: 'Staging label' }), { target: { value: 'review' } });
-    fireEvent.click(dialog.getByRole('button', { name: 'Add staging label' }));
-    expect(await dialog.findByText('Not implemented by the emulator')).toBeVisible();
-    expect(dialog.getByRole('button', { name: 'Add staging label' })).toBeDisabled();
-    fireEvent.click(dialog.getByRole('button', { name: 'Cancel' }));
-    expect(screen.getByRole('button', { name: 'Manage staging labels' })).toBeDisabled();
+    const dialog = await openStageDialog('add');
+    fireEvent.change(stageInput(dialog).findNativeInput().getElement(), { target: { value: 'review' } });
+    press(dialog, 'Add staging label');
+    await expectAlert(dialogContent(dialog), `The emulator answered 501 Not Implemented for ${UPDATE}.`);
+    expect(dialogButton(dialog, 'Add staging label').isDisabled()).toBe(true);
+    press(dialog, 'Cancel');
+    expect((await stageMenu()).findNativeButton().getElement()).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Retrieve secret value' })).toBeEnabled();
   });
 });
@@ -197,18 +293,19 @@ describe.each(ORDERS)('Version refresh with %s', (order) => {
     const refresh = delayedRefresh('PutSecretValue', LIST, stages, { body: { Versions: versionRows(stages) } });
     const { calls } = openSecret({ handler: refresh.handler, observe: refresh.operations });
     await openVersions();
-    await screen.findByRole('radio', { name: `Select version ${CURRENT}` });
-    fireEvent.click(await screen.findByRole('button', { name: /^(Edit secret value|Store new version)$/ }));
-    const dialog = within(await screen.findByRole('dialog', { name: 'Store new version' }));
-    fireEvent.change(dialog.getByRole('textbox', { name: 'Secret value' }), { target: { value: 'new test value' } });
-    fireEvent.click(dialog.getByRole('button', { name: 'Store new version' }));
+    await findVersion(CURRENT);
+    await click('Store new version');
+    const dialog = await findDialog('Store new version');
+    const value = required(dialogContent(dialog).findTextarea(), 'secret value');
+    fireEvent.change(value.findNativeTextarea().getElement(), { target: { value: 'new test value' } });
+    press(dialog, 'Store new version');
     await refresh.complete(order, 'New secret version stored.');
     expect(calls).toHaveBeenCalledWith(
       'PutSecretValue',
       expect.objectContaining({ SecretId: NAME, SecretString: 'new test value' }),
     );
-    expect(within(versionRow('new-current-version')).getByText('AWSCURRENT')).toBeVisible();
-    expect(within(versionRow(CURRENT)).getByText('AWSPREVIOUS')).toBeVisible();
+    expectLabels('new-current-version', 'AWSCURRENT');
+    expectLabels(CURRENT, 'AWSPREVIOUS');
   });
 
   it('reads the new label after adding it and retains the area success result', async () => {
@@ -217,11 +314,11 @@ describe.each(ORDERS)('Version refresh with %s', (order) => {
     const { calls } = openSecret({ handler: refresh.handler, observe: refresh.operations });
     await openVersions();
     await selectVersion(OLDER);
-    const dialog = await openStageDialog('Add staging label');
-    fireEvent.change(dialog.getByRole('textbox', { name: 'Staging label' }), { target: { value: 'review' } });
-    fireEvent.click(dialog.getByRole('button', { name: 'Add staging label' }));
+    const dialog = await openStageDialog('add');
+    fireEvent.change(stageInput(dialog).findNativeInput().getElement(), { target: { value: 'review' } });
+    press(dialog, 'Add staging label');
     await refresh.complete(order, 'Staging label added.');
-    expect(within(versionRow(OLDER)).getByText('review')).toBeVisible();
+    expectLabels(OLDER, 'review');
     expect(calls).toHaveBeenCalledWith(UPDATE, { SecretId: NAME, VersionStage: 'review', MoveToVersionId: OLDER });
   });
 
@@ -235,12 +332,12 @@ describe.each(ORDERS)('Version refresh with %s', (order) => {
     });
     await openVersions();
     await selectVersion(OLDER);
-    const dialog = await openStageDialog('Move staging label here', 'Move staging label');
+    const dialog = await openStageDialog('move');
     await chooseLabel(dialog, 'review');
-    fireEvent.click(dialog.getByRole('button', { name: 'Move staging label' }));
+    press(dialog, 'Move staging label');
     await refresh.complete(order, 'Staging label moved.');
-    expect(within(versionRow(CURRENT)).getByText('AWSCURRENT')).toBeVisible();
-    expect(within(versionRow(OLDER)).getByText('review')).toBeVisible();
+    expectLabels(CURRENT, 'AWSCURRENT');
+    expectLabels(OLDER, 'review');
     expect(calls).toHaveBeenCalledWith(UPDATE, {
       SecretId: NAME,
       VersionStage: 'review',
@@ -259,11 +356,11 @@ describe.each(ORDERS)('Version refresh with %s', (order) => {
     });
     await openVersions();
     await selectVersion(OLDER);
-    const dialog = await openStageDialog('Remove staging label');
+    const dialog = await openStageDialog('remove');
     await chooseLabel(dialog, 'review');
-    fireEvent.click(dialog.getByRole('button', { name: 'Remove staging label' }));
+    press(dialog, 'Remove staging label');
     await refresh.complete(order, 'Staging label removed.');
-    expect(within(versionRow(OLDER)).getByText('No labels')).toBeVisible();
+    expectLabels(OLDER, 'No labels');
     expect(calls).toHaveBeenCalledWith(UPDATE, { SecretId: NAME, VersionStage: 'review', RemoveFromVersionId: OLDER });
   });
 });
