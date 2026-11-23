@@ -171,7 +171,8 @@ function field(dialog: Dialog, label: string) {
 
 function input(dialog: Dialog, label: string) {
   const found = field(dialog, label);
-  const control = found.findInput()?.findNativeInput() ?? found.findTextarea()?.findNativeTextarea();
+  const control =
+    found.findControl()?.findInput()?.findNativeInput() ?? found.findControl()?.findTextarea()?.findNativeTextarea();
   if (!control) throw new Error(`Missing dialog input ${label}`);
   return control.getElement();
 }
@@ -181,10 +182,10 @@ function enter(dialog: Dialog, label: string, value: string) {
 }
 
 function chooseBinary(dialog: Dialog) {
-  const choice = field(dialog, 'Value type').findRadioGroup()?.findInputByValue('binary');
+  const choice = field(dialog, 'Value type').findControl()?.findRadioGroup()?.findInputByValue('binary');
   if (!choice) throw new Error('Missing binary option');
   fireEvent.click(choice.getElement());
-  const upload = field(dialog, 'Secret file').findFileUpload()?.findNativeInput();
+  const upload = field(dialog, 'Secret file').findControl()?.findFileUpload()?.findNativeInput();
   if (!upload) throw new Error('Missing secret file selector');
   fireEvent.change(upload.getElement(), { target: { files: [new File([new Uint8Array(BYTES)], 'secret.bin')] } });
 }

@@ -111,7 +111,8 @@ function field(label: string) {
 
 function input(label: string) {
   const found = field(label);
-  const control = found.findInput()?.findNativeInput() ?? found.findTextarea()?.findNativeTextarea();
+  const control =
+    found.findControl()?.findInput()?.findNativeInput() ?? found.findControl()?.findTextarea()?.findNativeTextarea();
   if (!control) throw new Error(`Missing input for ${label}`);
   return control.getElement();
 }
@@ -121,13 +122,13 @@ function enter(label: string, value: string) {
 }
 
 function chooseValueType(value: 'string' | 'binary') {
-  const option = field('Value type').findRadioGroup()?.findInputByValue(value);
+  const option = field('Value type').findControl()?.findRadioGroup()?.findInputByValue(value);
   if (!option) throw new Error(`Missing value type ${value}`);
   fireEvent.click(option.getElement());
 }
 
 function upload(file: File) {
-  const control = field('Secret file').findFileUpload()?.findNativeInput();
+  const control = field('Secret file').findControl()?.findFileUpload()?.findNativeInput();
   if (!control) throw new Error('Missing secret file selector');
   fireEvent.change(control.getElement(), { target: { files: [file] } });
 }
@@ -278,9 +279,9 @@ describe('Store a secret', () => {
     chooseValueType('string');
     expect(input('Secret value')).toHaveValue(STRING_VALUE);
     chooseValueType('binary');
-    expect(field('Secret file').findFileUpload()?.findFileToken(1)?.findFileName().getElement()).toHaveTextContent(
-      'draft.bin',
-    );
+    expect(
+      field('Secret file').findControl()?.findFileUpload()?.findFileToken(1)?.findFileName().getElement(),
+    ).toHaveTextContent('draft.bin');
     chooseValueType('string');
     await click('Store a secret');
     await waitFor(() =>
