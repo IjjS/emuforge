@@ -324,6 +324,82 @@ it('shows the type, latest state and full ID with the key at narrow widths', asy
   expect(keyCell).toHaveTextContent(id);
 });
 
+it.each([
+  { layout: 'desktop', narrow: false },
+  { layout: 'mobile', narrow: true },
+])('distinguishes history keys in the $layout key cells and selection names', async ({ narrow }) => {
+  vi.stubGlobal('matchMedia', (media: string) => ({
+    media,
+    matches: narrow && media === '(max-width: 688px)',
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+  }));
+  const keys = [
+    {
+      id: 'cr',
+      key: 'logs/line\rbreak.csv',
+      visible: 'logs/line\\rbreak.csv',
+      spoken: 'logs/line \\r (carriage return) break.csv',
+    },
+    {
+      id: 'lf',
+      key: 'logs/line\nbreak.csv',
+      visible: 'logs/line\\nbreak.csv',
+      spoken: 'logs/line \\n (line feed) break.csv',
+    },
+    { id: 'space', key: 'logs/line break.csv', visible: 'logs/line break.csv', spoken: 'logs/line break.csv' },
+    {
+      id: 'percent-cr',
+      key: 'logs/line%0Dbreak.csv',
+      visible: 'logs/line%0Dbreak.csv',
+      spoken: 'logs/line%0Dbreak.csv',
+    },
+    {
+      id: 'percent-lf',
+      key: 'logs/line%0Abreak.csv',
+      visible: 'logs/line%0Abreak.csv',
+      spoken: 'logs/line%0Abreak.csv',
+    },
+    {
+      id: 'literal-r',
+      key: 'logs/line\\rbreak.csv',
+      visible: 'logs/line\\\\rbreak.csv',
+      spoken: 'logs/line \\\\ (literal backslash) rbreak.csv',
+    },
+    {
+      id: 'literal-n',
+      key: 'logs/line\\nbreak.csv',
+      visible: 'logs/line\\\\nbreak.csv',
+      spoken: 'logs/line \\\\ (literal backslash) nbreak.csv',
+    },
+    {
+      id: 'literal-label',
+      key: 'logs/line (carriage return) break.csv',
+      visible: 'logs/line (carriage return) break.csv',
+      spoken: 'logs/line (carriage return) break.csv',
+    },
+  ];
+  engine.readHistory = () => history(keys.map(({ id, key }) => row(id, false, 'Version', key)).join(''));
+  engine.getVersion = () => refusal(404, 'NoSuchVersion', 'The version is unavailable.');
+  open();
+  await toggleVersions();
+
+  for (const { id, visible, spoken } of keys) {
+    const { control, index } = await waitFor(() => required(selection(id)));
+    const key = required(table().findBodyCell(index, 2)?.find('.aws-area-value-name')).getElement();
+    expect(key).toBeVisible();
+    expect(key.textContent).toBe(visible);
+    expect(control).toHaveAccessibleName('Select ' + spoken + ' version ' + id + ', Type: Version, Latest: No');
+    expect(control).not.toBeChecked();
+  }
+
+  // Download acts on the selected row immediately. The mock transport accepts only the raw CR key.
+  engine.objectKey = required(keys[0]).key;
+  await select('cr');
+  fireEvent.click(action('Download'));
+  await waitFor(() => expect(engine.versionDownloads).toEqual(['cr']));
+});
+
 it('selects a different ID of the same key on the next page and returns to the ordinary listing of the folder', async () => {
   engine.readHistory = (query) =>
     query.has('key-marker') ? history(row('v2')) : history(row('v1', true), [KEY, 'v1']);
