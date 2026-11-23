@@ -32,7 +32,8 @@ interface AreaFlashProps {
 
 /**
  * The area's flash region (R5.1, R5.4): a Cloudscape `Flashbar` of the result's items in the order given, each with
- * its control "Dismiss" that removes it alone. An `error` item is an alert (Cloudscape's `ariaRole`); every other
+ * its control "Dismiss" that removes it alone. An `error` item is an alert (Cloudscape's `ariaRole`) unless the
+ * open dialog announces it. Every other
  * item is announced once by the area's status announcer (`FlashAnnouncer`), not by Cloudscape's own live region,
  * which Cloudscape appends to the document's `body`, outside the area's root. Header and content are rendered as the
  * page gave them, so text is text.
@@ -61,7 +62,7 @@ export function AreaFlash({ result, onDismiss, onAnnounce }: AreaFlashProps) {
     statusIconAriaLabel: TYPE_NAMES[item.type],
     ...(item.header !== undefined && { header: <span data-flash-text="">{item.header}</span> }),
     content: <span data-flash-text="">{item.content}</span>,
-    ...(item.type === 'error' && { ariaRole: 'alert' as const }),
+    ...(item.type === 'error' && !item.announcedInDialog && { ariaRole: 'alert' as const }),
     dismissible: true,
     dismissLabel: DISMISS_NAME,
     onDismiss: () => {
