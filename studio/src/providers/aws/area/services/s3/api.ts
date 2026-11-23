@@ -863,6 +863,18 @@ function toHead(key: string, output: HeadObjectCommandOutput, user: MetadataEntr
   return head;
 }
 
+function requireAddressableVersionKey(key: string, operation: string): void {
+  // Fetch normalizes standalone dot segments, even when the dots are percent-encoded.
+  if (key.split('/').some((segment) => segment === '.' || segment === '..')) {
+    throw new RequestError({
+      kind: 'other',
+      operation,
+      code: 'UnaddressableObjectKey',
+      message: 'Studio cannot send this request for an object key containing a standalone . or .. segment.',
+    });
+  }
+}
+
 /** Copies an object using S3's defaults, or replaces its content type and metadata in place. */
 export async function copyObject(
   endpoint: string,
@@ -871,6 +883,7 @@ export async function copyObject(
   signal: AbortSignal,
   { edit, onlyIfMissing = false, sourceVersionId }: ObjectCopyOptions = {},
 ): Promise<void> {
+  if (sourceVersionId !== undefined) requireAddressableVersionKey(destination.key, OPERATIONS.copyObject);
   // Separate the bucket from the key before encoding. A literal percent or question mark belongs to the key.
   const sourcePath = `${source.bucket}/${source.key.split('/').map(encodeURIComponent).join('/')}`;
   const copySource =
@@ -906,6 +919,7 @@ export async function deleteObject(
   signal: AbortSignal,
   versionId?: string,
 ): Promise<void> {
+  if (versionId !== undefined) requireAddressableVersionKey(key, OPERATIONS.deleteObject);
   await sendRequest(
     OPERATIONS.deleteObject,
     (abortSignal) =>
@@ -997,6 +1011,7 @@ export async function getObject(
   range?: string,
   versionId?: string,
 ): Promise<ObjectBody> {
+  if (versionId !== undefined) requireAddressableVersionKey(key, OPERATIONS.getObject);
   return sendRequest(
     OPERATIONS.getObject,
     async (abortSignal) => {

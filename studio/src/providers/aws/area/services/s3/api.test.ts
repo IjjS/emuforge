@@ -7,6 +7,7 @@ import {
   copyObject,
   createBucket,
   deleteBucket,
+  deleteObject,
   deleteObjects,
   enableBucketVersioning,
   findBucket,
@@ -931,6 +932,27 @@ describe('object version history', () => {
       'bucket/logs/%ED%95%9C%EA%B8%80%20space%25%3F.txt?versionId=v%25%3F%20%2B',
     );
   });
+
+  it.each(['reports/./ledger.csv', 'reports/archive/../ledger.csv'])(
+    'rejects all version actions before the transport can normalize %s',
+    async (key) => {
+      const transport = vi.fn(engine.fetch);
+      vi.stubGlobal('fetch', transport);
+      const object = { bucket: 'bucket', key };
+      const actions = [
+        ['CopyObject', () => copyObject(endpoint, object, object, signal(), { sourceVersionId: 'null' })],
+        ['DeleteObject', () => deleteObject(endpoint, object, signal(), 'marker')],
+        ['GetObject', () => getObject(endpoint, object.bucket, object.key, signal(), undefined, 'null')],
+      ] as const;
+      for (const [operation, action] of actions) {
+        await expect(action()).rejects.toMatchObject({
+          failure: { kind: 'other', operation, code: 'UnaddressableObjectKey' },
+        });
+      }
+      expect(transport).not.toHaveBeenCalled();
+      expect(engine.sent).toEqual([]);
+    },
+  );
 
   it('downloads the bytes addressed by the literal null version ID', async () => {
     engine.aws = () => ({ status: 200, body: 'from null', headers: { 'content-type': 'text/plain' } });

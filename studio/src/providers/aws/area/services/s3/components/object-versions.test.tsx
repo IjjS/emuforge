@@ -1,5 +1,6 @@
+import createWrapper, { type ElementWrapper } from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -54,6 +55,8 @@ function heldResponse() {
 type ReadList = (query: URLSearchParams) => Response | Promise<Response>;
 
 class FakeEngine {
+  objectKey = KEY;
+  destinations: string[] = [];
   status = 'Enabled';
   body = 'before change';
   hasCurrent = true;
@@ -91,15 +94,17 @@ class FakeEngine {
       return this.readCurrent(query);
     }
     if (query.has('versioning')) return this.readStatus();
-    if (decodeURIComponent(url.pathname) !== `/${BUCKET}/${KEY}`) {
+    if (decodeURIComponent(url.pathname) !== `/${BUCKET}/${this.objectKey}`) {
       throw new Error(`Unexpected request ${request.method} ${url.pathname}`);
     }
     if (request.method === 'PUT') {
+      this.destinations.push(decodeURIComponent(url.pathname));
       this.copies.push(request.headers.get('x-amz-copy-source'));
       return this.writeCopy();
     }
     const version = query.get('versionId');
     if (request.method === 'DELETE') {
+      this.destinations.push(decodeURIComponent(url.pathname));
       this.markerDeletes.push(version);
       return this.writeDelete();
     }
@@ -123,6 +128,7 @@ class FakeEngine {
 }
 
 let engine: FakeEngine;
+let client: QueryClient;
 let connection: AreaConnection;
 let nextPort = 8820;
 
@@ -145,7 +151,7 @@ function Area() {
 
 function open() {
   const router = createMemoryRouter([{ path: '/aws/*', element: <Area /> }], { initialEntries: [PATH] });
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } } });
+  client = new QueryClient({ defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } } });
   render(
     <QueryClientProvider client={client}>
       <RouterProvider router={router} />
@@ -174,30 +180,77 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-async function toggleVersions() {
-  fireEvent.click(await screen.findByRole('checkbox', { name: 'Show versions' }));
+function required<T>(item: T | null | undefined): T {
+  if (item === null || item === undefined) throw new Error('Expected a Cloudscape element');
+  return item;
 }
 
-function selectionName(id: string) {
-  return (label: string) => label.startsWith(`Select ${KEY} version ${id},`);
+function main() {
+  return createWrapper(screen.getByRole('main'));
+}
+
+function table() {
+  return required(main().findTable());
+}
+
+async function toggleVersions() {
+  const toggle = await waitFor(() => required(main().findToggle()));
+  expect(toggle.findLabel().getElement()).toHaveTextContent('Show versions');
+  fireEvent.click(toggle.findNativeInput().getElement());
+}
+
+function selection(id: string) {
+  const list = main().findTable();
+  const rows = list?.findRows() ?? [];
+  for (let index = 1; index <= rows.length; index += 1) {
+    const control = list?.findRowSelectionArea(index)?.find('input[type="radio"]')?.getElement();
+    if (control?.getAttribute('aria-label')?.includes(` version ${id},`)) return { control, index };
+  }
+  return undefined;
 }
 
 async function select(id: string) {
-  fireEvent.click(await screen.findByRole('radio', { name: selectionName(id) }));
+  fireEvent.click((await waitFor(() => required(selection(id)))).control);
+}
+
+function findButton(scope: ElementWrapper, label: string) {
+  return scope.findAllButtons().find((button) => button.findTextRegion()?.getElement().textContent === label);
+}
+
+function historyButton(name: string) {
+  return findButton(required(table().findHeaderSlot()), name);
 }
 
 function action(name: string) {
-  return screen.getByRole('button', { name });
+  if (name === 'Next page') return required(table().findPagination()).findNextPageButton().getElement();
+  if (name === 'Retry') return required(findButton(required(table().findEmptySlot()), name)).getElement();
+  return required(historyButton(name)).getElement();
 }
 
 async function confirmDialog(label: string) {
+  action(label).focus();
   fireEvent.click(action(label));
-  const dialog = await screen.findByRole('dialog', { name: label });
-  return {
-    dialog,
-    input: within(dialog).getByRole('textbox', { name: 'Enter the full key to confirm' }),
-    confirm: within(dialog).getByRole('button', { name: label }),
-  };
+  const dialog = await waitFor(() => required(createWrapper().findModal()));
+  expect(dialog.findHeader().getElement()).toHaveTextContent(label);
+  const content = dialog.findContent();
+  const field = required(content.findFormField());
+  expect(field.findLabel()?.getElement()).toHaveTextContent('Enter the full key to confirm');
+  const input = required(field.findTextarea()).findNativeTextarea().getElement();
+  const footer = required(dialog.findFooter());
+  const confirm = required(findButton(footer, label)).getElement();
+  return { content, footer, input, confirm };
+}
+
+function dialogValue(content: ElementWrapper, label: string) {
+  const pair = content
+    .findKeyValuePairs()
+    ?.findItems()
+    .find((item) => item.findLabel()?.getElement().textContent === label);
+  return required(pair?.findValue()).getElement();
+}
+
+function flashContent(type: 'success' | 'error') {
+  return main().findFlashbar()?.findItemsByType(type)[0]?.findContent()?.getElement();
 }
 
 function enter(input: HTMLElement, value: string) {
@@ -209,16 +262,24 @@ function expectDisabled(button: HTMLElement) {
 }
 
 async function expectVersion(id: string, kind: string, latest: boolean) {
-  const radio = await screen.findByRole('radio', {
-    name: `Select ${KEY} version ${id}, Type: ${kind}, Latest: ${latest ? 'Yes' : 'No'}`,
+  const { control, index } = await waitFor(() => required(selection(id)));
+  const latestText = latest ? 'Yes' : 'No';
+  expect(control).toHaveAccessibleName(`Select ${KEY} version ${id}, Type: ${kind}, Latest: ${latestText}`);
+  [KEY, id, kind, latestText].forEach((text, column) => {
+    expect(
+      table()
+        .findBodyCell(index, column + 2)
+        ?.getElement(),
+    ).toHaveTextContent(text);
   });
-  const tableRow = radio.closest('tr');
-  if (tableRow === null) throw new Error('Expected a table row');
-  const item = within(tableRow);
-  expect(item.getByRole('rowheader', { name: KEY })).toBeVisible();
-  expect(item.getByRole('cell', { name: id })).toBeVisible();
-  expect(item.getByRole('cell', { name: kind })).toBeVisible();
-  expect(item.getByRole('cell', { name: latest ? 'Yes' : 'No' })).toBeVisible();
+}
+
+async function currentObjectLink() {
+  return waitFor(() => required(table().findBodyCell(1, 2)?.findLink()).getElement());
+}
+
+async function ordinaryReadSettled() {
+  await waitFor(() => expect(client.isFetching({ queryKey: ['aws', 's3', 'objects', BUCKET] })).toBe(0));
 }
 
 function expectCursor(query: URLSearchParams | undefined, key: string | null, version: string | null) {
@@ -232,10 +293,10 @@ it('shows loading until the history response and then the empty state', async ()
   engine.readHistory = () => response.promise;
   open();
   await toggleVersions();
-  expect(screen.getByText('Loading versions')).toBeVisible();
+  expect(table().findLoadingText()?.getElement()).toHaveTextContent('Loading versions');
   response.resolve(history(''));
-  expect(await screen.findByText('No versions found')).toBeVisible();
-  expect(screen.getByText(/This listing covers keys/)).toHaveTextContent(
+  await waitFor(() => expect(table().findEmptySlot()?.getElement()).toHaveTextContent('No versions found'));
+  expect(table().findEmptySlot()?.getElement()).toHaveTextContent(
     'This listing covers keys that start with logs/ in bucket alpha.',
   );
 });
@@ -251,30 +312,27 @@ it('shows the type, latest state and full ID with the key at narrow widths', asy
   engine.readHistory = () => history(row(id, true, 'DeleteMarker'));
   open();
   await toggleVersions();
-  const radio = await screen.findByRole('radio', {
-    name: `Select ${KEY} version ${id}, Type: Delete marker, Latest: Yes`,
-  });
-  const tableRow = radio.closest('tr');
-  if (tableRow === null) throw new Error('Expected a table row');
-  const keyCell = within(tableRow).getByRole('rowheader');
-  expect(within(keyCell).getByText(KEY)).toBeVisible();
-  expect(within(keyCell).getByText('Type: Delete marker · Latest: Yes')).toBeVisible();
-  expect(within(keyCell).getByText(id)).toBeVisible();
+  const { control, index } = await waitFor(() => required(selection(id)));
+  expect(control).toHaveAccessibleName(`Select ${KEY} version ${id}, Type: Delete marker, Latest: Yes`);
+  const keyCell = required(table().findBodyCell(index, 2)).getElement();
+  expect(keyCell).toHaveTextContent(KEY);
+  expect(keyCell).toHaveTextContent('Type: Delete marker · Latest: Yes');
+  expect(keyCell).toHaveTextContent(id);
 });
 
 it('selects a different ID of the same key on the next page and returns to the ordinary listing of the folder', async () => {
   engine.readHistory = (query) =>
     query.has('key-marker') ? history(row('v2')) : history(row('v1', true), [KEY, 'v1']);
   open();
-  expect(await screen.findByRole('link', { name: 'history.txt' })).toBeVisible();
+  expect(await currentObjectLink()).toBeVisible();
   await toggleVersions();
   await select('v1');
   fireEvent.click(action('Next page'));
   await select('v2');
-  expect(screen.getByRole('radio', { name: selectionName('v2') })).toBeChecked();
+  expect(selection('v2')?.control).toBeChecked();
   expectCursor(engine.histories[1], KEY, 'v1');
   await toggleVersions();
-  expect(screen.getByRole('link', { name: 'history.txt' })).toBeVisible();
+  expect(await currentObjectLink()).toHaveTextContent('history.txt');
   expect(engine.lists[0]?.get('prefix')).toBe(FOLDER);
 });
 
@@ -282,7 +340,7 @@ it('shows a history refusal and retries the read', async () => {
   engine.readHistory = () => refusal(403, 'AccessDenied', 'Version history is forbidden');
   open();
   await toggleVersions();
-  expect(await screen.findByText(/Version history is forbidden/)).toBeVisible();
+  await waitFor(() => expect(table().findEmptySlot()?.getElement()).toHaveTextContent('Version history is forbidden'));
   engine.readHistory = () => history(row('v1', true));
   fireEvent.click(action('Retry'));
   await expectVersion('v1', 'Version', true);
@@ -303,7 +361,7 @@ it('keeps the refreshed history and its cursors when a previous page request fin
   fireEvent.click(action('Refresh'));
   await expectVersion('new-cursor', 'Version', true);
   await act(async () => oldSecondPage.resolve(history(row('obsolete'), [KEY, 'obsolete'])));
-  expect(screen.queryByRole('radio', { name: selectionName('obsolete') })).toBeNull();
+  expect(selection('obsolete')).toBeUndefined();
   fireEvent.click(action('Next page'));
   await expectVersion('next', 'Version', false);
   expectCursor(engine.histories[3], KEY, 'new-cursor');
@@ -319,17 +377,17 @@ it('offers the appropriate actions by row type and saves no file when a download
   await select('null');
   expect(action('Download')).toBeEnabled();
   expect(action(RESTORE)).toBeEnabled();
-  expect(screen.queryByRole('button', { name: REMOVE })).toBeNull();
+  expect(historyButton(REMOVE)).toBeUndefined();
   fireEvent.click(action('Download'));
-  expect(await screen.findByText('NoSuchVersion')).toBeVisible();
-  expect(screen.getByText(/The specified version does not exist/)).toBeVisible();
+  await waitFor(() => expect(flashContent('error')).toHaveTextContent('NoSuchVersion'));
+  expect(flashContent('error')).toHaveTextContent('The specified version does not exist.');
   expect(engine.versionDownloads).toEqual(['null']);
   expect(save).not.toHaveBeenCalled();
   expect(click).not.toHaveBeenCalled();
   await select('marker');
   expect(action(REMOVE)).toBeEnabled();
-  expect(screen.queryByRole('button', { name: 'Download' })).toBeNull();
-  expect(screen.queryByRole('button', { name: RESTORE })).toBeNull();
+  expect(historyButton('Download')).toBeUndefined();
+  expect(historyButton(RESTORE)).toBeUndefined();
 });
 
 it('warns using Enabled even when the bucket is later suspended and writes once after exact confirmation', async () => {
@@ -341,13 +399,13 @@ it('warns using Enabled even when the bucket is later suspended and writes once 
   open();
   await toggleVersions();
   await select('old');
-  const { dialog, input, confirm } = await confirmDialog(RESTORE);
-  expect(await within(dialog).findByText('Enabled')).toBeVisible();
-  expect(within(dialog).getByText(KEY)).toBeVisible();
-  expect(within(dialog).getByText('old')).toBeVisible();
+  const { content, input, confirm } = await confirmDialog(RESTORE);
+  await waitFor(() => expect(dialogValue(content, 'Bucket versioning')).toHaveTextContent('Enabled'));
+  expect(dialogValue(content, 'Key')).toHaveTextContent(KEY);
+  expect(dialogValue(content, 'Source version ID')).toHaveTextContent('old');
   engine.status = 'Suspended';
-  expect(within(dialog).getByText(WARNING)).toBeVisible();
-  expect(within(dialog).getByText('The selected version’s contents will become the current object.')).toBeVisible();
+  expect(content.findAlert()?.findContent()?.getElement()).toHaveTextContent(WARNING);
+  expect(content.getElement()).toHaveTextContent('The selected version’s contents will become the current object.');
   expectDisabled(confirm);
   fireEvent.click(confirm);
   enter(input, 'history.txt');
@@ -360,8 +418,37 @@ it('warns using Enabled even when the bucket is later suspended and writes once 
   fireEvent.click(confirm);
   await waitFor(() => expect(engine.copies).toEqual([`${BUCKET}/${KEY}?versionId=old`]));
   copyResponse.resolve(new Response('<CopyObjectResult><ETag>copy</ETag></CopyObjectResult>'));
-  expect(await screen.findByText(RESTORED)).toBeVisible();
+  await waitFor(() => expect(flashContent('success')).toHaveTextContent(RESTORED));
   await expectVersion('null', 'Version', true);
+});
+
+it.each([
+  { label: RESTORE, kind: 'Version', latest: false },
+  { label: REMOVE, kind: 'DeleteMarker', latest: true },
+])('confirms the exact multiline key for $label', async ({ label, kind, latest }) => {
+  const key = 'logs/first line\nsecond line.txt';
+  engine.objectKey = key;
+  engine.readHistory = () => history(row('selected', latest, kind, key));
+  open();
+  await toggleVersions();
+  await select('selected');
+  const { content, input, confirm } = await confirmDialog(label);
+  if (label === RESTORE) {
+    await waitFor(() => expect(dialogValue(content, 'Bucket versioning')).toHaveTextContent('Enabled'));
+  }
+  expect(dialogValue(content, 'Key').textContent).toBe(key);
+  enter(input, 'logs/first linesecond line.txt');
+  expectDisabled(confirm);
+  expect(engine.destinations).toEqual([]);
+  enter(input, key);
+  expect(confirm).toBeEnabled();
+  fireEvent.click(confirm);
+  await waitFor(() => expect(engine.destinations).toEqual([`/${BUCKET}/${key}`]));
+  if (label === RESTORE) {
+    expect(engine.copies).toEqual([`${BUCKET}/logs/first%20line%0Asecond%20line.txt?versionId=selected`]);
+  } else {
+    expect(engine.markerDeletes).toEqual(['selected']);
+  }
 });
 
 it('prevents a restore when reading versioning fails or the confirmation is canceled', async () => {
@@ -369,13 +456,21 @@ it('prevents a restore when reading versioning fails or the confirmation is canc
   open();
   await toggleVersions();
   await select('old');
-  const { dialog, input, confirm } = await confirmDialog(RESTORE);
-  expect(await within(dialog).findByText(/Versioning could not be read/)).toBeVisible();
+  const { content, footer, input, confirm } = await confirmDialog(RESTORE);
+  await waitFor(() =>
+    expect(
+      content
+        .findAllAlerts()
+        .map((alert) => alert.findContent()?.getElement().textContent)
+        .join(' '),
+    ).toContain('Versioning could not be read'),
+  );
   enter(input, KEY);
   expectDisabled(confirm);
   fireEvent.click(confirm);
-  fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
-  expect(screen.queryByRole('dialog')).toBeNull();
+  fireEvent.click(required(findButton(footer, 'Cancel')).getElement());
+  expect(createWrapper().findModal()).toBeNull();
+  await waitFor(() => expect(action(RESTORE)).toHaveFocus());
   expect(engine.copies).toEqual([]);
 });
 
@@ -384,14 +479,14 @@ it('retains the original latest row and shows the restore refusal', async () => 
   open();
   await toggleVersions();
   await select('old');
-  const { dialog, input, confirm } = await confirmDialog(RESTORE);
-  await within(dialog).findByText('Enabled');
+  const { content, input, confirm } = await confirmDialog(RESTORE);
+  await waitFor(() => expect(dialogValue(content, 'Bucket versioning')).toHaveTextContent('Enabled'));
   enter(input, KEY);
   fireEvent.click(confirm);
-  expect(await screen.findByText('AccessDenied')).toBeVisible();
-  expect(screen.getByText(/Restore was refused/)).toBeVisible();
+  await waitFor(() => expect(flashContent('error')).toHaveTextContent('AccessDenied'));
+  expect(flashContent('error')).toHaveTextContent('Restore was refused');
   await expectVersion('new', 'Version', true);
-  expect(screen.queryByText(RESTORED)).toBeNull();
+  expect(flashContent('success')).toBeUndefined();
 });
 
 it('retains the marker and shows the marker removal refusal', async () => {
@@ -400,42 +495,67 @@ it('retains the marker and shows the marker removal refusal', async () => {
   open();
   await toggleVersions();
   await select('marker');
-  const { dialog, input, confirm } = await confirmDialog(REMOVE);
-  expect(within(dialog).getByText(KEY)).toBeVisible();
-  expect(within(dialog).getByText('marker')).toBeVisible();
-  expect(
-    within(dialog).getByText('Removing this marker can make an earlier version visible as the current object.'),
-  ).toBeVisible();
+  const { content, input, confirm } = await confirmDialog(REMOVE);
+  expect(dialogValue(content, 'Key')).toHaveTextContent(KEY);
+  expect(dialogValue(content, 'Delete marker version ID')).toHaveTextContent('marker');
+  expect(content.getElement()).toHaveTextContent(
+    'Removing this marker can make an earlier version visible as the current object.',
+  );
   enter(input, KEY);
   fireEvent.click(confirm);
-  expect(await screen.findByText('AccessDenied')).toBeVisible();
-  expect(screen.getByText(/Marker removal was refused/)).toBeVisible();
+  await waitFor(() => expect(flashContent('error')).toHaveTextContent('AccessDenied'));
+  expect(flashContent('error')).toHaveTextContent('Marker removal was refused');
   expect(engine.markerDeletes).toEqual(['marker']);
   await expectVersion('marker', 'Delete marker', true);
-  expect(screen.queryByText(REMOVED)).toBeNull();
+  expect(flashContent('success')).toBeUndefined();
 });
 
 it('shows the area state for an unimplemented history read', async () => {
   engine.readHistory = () => refusal(501, 'NotImplemented', 'Version history is unavailable');
   open();
   await toggleVersions();
-  expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
-  expect(screen.getByText(/501 Not Implemented for ListObjectVersions/)).toBeVisible();
+  await waitFor(() =>
+    expect(table().findEmptySlot()?.getElement()).toHaveTextContent('Not implemented by the emulator'),
+  );
+  expect(table().findEmptySlot()?.getElement()).toHaveTextContent('501 Not Implemented for ListObjectVersions');
 });
 
 async function expectCurrentDetails(body: string) {
-  fireEvent.click(await screen.findByRole('link', { name: 'history.txt' }));
+  fireEvent.click(await currentObjectLink());
   expect(await screen.findByRole('region', { name: 'Object preview' })).toHaveTextContent(body);
-  expect(screen.getByRole('heading', { level: 1, name: 'history.txt' })).toBeVisible();
-  expect(await screen.findByRole('row', { name: `state ${body}` })).toBeVisible();
+  expect(main().findHeader()?.findHeadingText().getElement()).toHaveTextContent('history.txt');
+  await waitFor(() => {
+    const rows = main()
+      .findAllTables()
+      .flatMap((table) => table.findRows());
+    expect(rows.some((row) => row.getElement().textContent === `state${body}`)).toBe(true);
+  });
   await waitFor(() => expect(engine.reads).toEqual(expect.arrayContaining(['head', 'tags', 'body'])));
+}
+
+async function openObjectPreferences() {
+  const preferences = required(table().findCollectionPreferences());
+  fireEvent.click(preferences.findTriggerButton().getElement());
+  return waitFor(() => required(preferences.findModal()));
+}
+
+function pageSizeOption(preferences: Awaited<ReturnType<typeof openObjectPreferences>>, size: number) {
+  const options = required(preferences.findPageSizePreference()).findOptions();
+  return required(
+    options.map((option) => option.findNativeInput().getElement()).find((input) => input.value === String(size)),
+  );
 }
 
 it('restores from page two and shows refreshed history and current reads when the ordinary list answers first', async () => {
   const router = open();
   await expectCurrentDetails('before change');
   await act(async () => router.navigate(PATH));
-  await screen.findByRole('link', { name: 'history.txt' });
+  await currentObjectLink();
+  const preferences = await openObjectPreferences();
+  fireEvent.click(pageSizeOption(preferences, 50));
+  fireEvent.click(required(preferences.findWrapLinesPreference()).findNativeInput().getElement());
+  fireEvent.click(required(preferences.findConfirmButton()).getElement());
+  await ordinaryReadSettled();
   await toggleVersionsForRestore();
 
   const refreshedHistory = heldResponse();
@@ -446,23 +566,29 @@ it('restores from page two and shows refreshed history and current reads when th
     engine.readHistory = () => refreshedHistory.promise;
     return new Response('<CopyObjectResult><ETag>copy</ETag></CopyObjectResult>');
   };
-  const { dialog, input, confirm } = await confirmDialog(RESTORE);
-  await within(dialog).findByText('Enabled');
+  const { content, input, confirm } = await confirmDialog(RESTORE);
+  await waitFor(() => expect(dialogValue(content, 'Bucket versioning')).toHaveTextContent('Enabled'));
   enter(input, KEY);
   const listsBefore = engine.lists.length;
   fireEvent.click(confirm);
   await waitFor(() => expect(engine.lists).toHaveLength(listsBefore + 1));
   await waitFor(() => expect(engine.histories).toHaveLength(3));
   expect(engine.lists.at(-1)?.get('prefix')).toBe(FOLDER);
+  expect(engine.lists.at(-1)?.get('max-keys')).toBe('50');
   expect(engine.lists.at(-1)?.get('continuation-token')).toBeNull();
   expectCursor(engine.histories[2], null, null);
-  await act(async () => refreshedObjects.resolve(objects([KEY])));
-  expect(screen.getByText('Loading versions')).toBeVisible();
+  refreshedObjects.resolve(objects([KEY]));
+  await ordinaryReadSettled();
+  expect(table().findLoadingText()?.getElement()).toHaveTextContent('Loading versions');
   refreshedHistory.resolve(history(row('restored', true) + row('new') + row('null')));
   await expectVersion('restored', 'Version', true);
-  expect(screen.getByText(RESTORED)).toBeVisible();
+  expect(flashContent('success')).toHaveTextContent(RESTORED);
   expect(engine.copies).toEqual([`${BUCKET}/${KEY}?versionId=null`]);
   await toggleVersions();
+  const retained = await openObjectPreferences();
+  expect(pageSizeOption(retained, 50)).toBeChecked();
+  expect(required(retained.findWrapLinesPreference()).findNativeInput().getElement()).not.toBeChecked();
+  fireEvent.click(required(retained.findCancelButton()).getElement());
   engine.reads = [];
   await expectCurrentDetails('restored body');
 });
@@ -483,7 +609,7 @@ it('removes a marker from page two and uses the new cursor when history answers 
       ? history(row('marker', true, 'DeleteMarker'))
       : history(row('archived'), [KEY, 'archived']);
   open();
-  await screen.findByText('No objects');
+  await waitFor(() => expect(table().findEmptySlot()?.getElement()).toHaveTextContent('No objects'));
   await toggleVersions();
   await expectVersion('archived', 'Version', false);
   fireEvent.click(action('Next page'));
@@ -504,17 +630,19 @@ it('removes a marker from page two and uses the new cursor when history answers 
   enter(input, KEY);
   fireEvent.click(confirm);
   await expectVersion('current-cursor', 'Version', false);
+  await waitFor(() => expect(action('Refresh')).toHaveFocus());
   expectCursor(engine.histories[2], null, null);
   await waitFor(() => expect(engine.lists).toHaveLength(2));
   expect(engine.lists[1]?.get('prefix')).toBe(FOLDER);
   expect(engine.lists[1]?.get('continuation-token')).toBeNull();
   refreshedObjects.resolve(objects([KEY]));
-  expect(screen.getByText(REMOVED)).toBeVisible();
+  await ordinaryReadSettled();
+  expect(flashContent('success')).toHaveTextContent(REMOVED);
   fireEvent.click(action('Next page'));
   await expectVersion('previous', 'Version', true);
   expectCursor(engine.histories[3], KEY, 'current-cursor');
-  expect(screen.queryByRole('radio', { name: selectionName('marker') })).toBeNull();
-  expect(screen.getByText(REMOVED)).toBeVisible();
+  expect(selection('marker')).toBeUndefined();
+  expect(flashContent('success')).toHaveTextContent(REMOVED);
   expect(engine.markerDeletes).toEqual(['marker']);
   await toggleVersions();
   await expectCurrentDetails('revealed body');

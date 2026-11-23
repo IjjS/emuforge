@@ -311,6 +311,8 @@ export interface ObjectListingOptions {
   /** `MaxKeys` of every page. */
   pageSize: number;
   enabled?: boolean;
+  /** Starts again at page one after a change in version history. */
+  revision?: number;
 }
 
 /** The tab "Objects"' listing, as the tab shows it. */
@@ -345,13 +347,14 @@ export function useObjectListing({
   filter,
   pageSize,
   enabled = true,
+  revision = 0,
 }: ObjectListingOptions): ObjectListing {
   const [generation, setGeneration] = useState(0);
   // The tab is mounted anew for each folder, so a text typed in one folder is never sent in another.
   const text = useSettled(filter, FILTER_DELAY_MS);
   const listing = useTokenListing<ObjectPage | NoSuchBucket>({
     key: [...S3_KEY, 'objects', bucket],
-    parts: [bucket, generation, pageSize, prefix, text],
+    parts: [bucket, generation, revision, pageSize, prefix, text],
     endpoint,
     operation: OPERATIONS.listObjectsV2,
     read: (at, token, signal) =>
