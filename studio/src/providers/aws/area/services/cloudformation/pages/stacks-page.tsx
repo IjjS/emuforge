@@ -7,7 +7,7 @@ import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Table, { type TableProps } from '@cloudscape-design/components/table';
 import TextFilter, { type TextFilterProps } from '@cloudscape-design/components/text-filter';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import type { RequestFailure } from '../../../../../../lib/aws/request';
 import type { AreaConnection } from '../../../components/emulator-line';
@@ -169,11 +169,13 @@ function StackListEmpty({
 export function StacksPage({ connection }: { connection: AreaConnection }) {
   useShowsResources('stacks');
   const tableSection = useRef<HTMLDivElement>(null);
+  const tableEmpty = useRef<HTMLDivElement>(null);
   const [compact, setCompact] = useState(false);
   const [tableOverflows, setTableOverflows] = useState(false);
   const [filter, setFilter] = useState('');
   const filterRef = useRef<TextFilterProps.Ref>(null);
   const [generation, setGeneration] = useState(0);
+  const [recoveryFailure, setRecoveryFailure] = useState<ReadFailureState>();
   const listing = useStackListing(connection.engineOrigin, generation);
   const [announcement, announce] = useAnnouncer();
 
@@ -206,12 +208,29 @@ export function StacksPage({ connection }: { connection: AreaConnection }) {
     setPreviousCheck(check);
     const wasDisconnected = previousCheck !== undefined && previousCheck.kind !== 'connected';
     if (check?.kind === 'connected' && (wasDisconnected || readLostConnection)) {
+      const previousConnection = { ...connection, result: previousCheck };
+      const previousFailure = connectionFailure(previousConnection) ?? listing.failure;
+      if (previousFailure !== undefined) {
+        setRecoveryFailure(stackReadFailure(previousFailure, previousConnection));
+      }
       setGeneration((current) => current + 1);
     }
   }
 
   const failure = disconnected ?? listing.failure;
-  const state = failure === undefined ? undefined : stackReadFailure(failure, connection);
+  const state = failure === undefined ? recoveryFailure : stackReadFailure(failure, connection);
+  const recovered = failure === undefined && listing.items !== undefined;
+  useLayoutEffect(() => {
+    if (recoveryFailure === undefined || listing.loading) return;
+
+    // Move focus while Retry is still mounted. The empty slot contains only one button in a failure state.
+    if (recovered && tableEmpty.current?.querySelector('button') === document.activeElement) {
+      filterRef.current?.focus();
+    }
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Release the held panel after the focus handoff, before paint.
+    setRecoveryFailure(undefined);
+  }, [listing.loading, recovered, recoveryFailure]);
+
   const failureText = state?.firstText;
   const [previousFailureText, setPreviousFailureText] = useState(failureText);
   if (failureText !== previousFailureText) {
@@ -220,7 +239,7 @@ export function StacksPage({ connection }: { connection: AreaConnection }) {
   }
 
   const unavailable = failure?.kind === 'not-implemented';
-  const stacks = failure === undefined ? listing.items : undefined;
+  const stacks = state === undefined ? listing.items : undefined;
   const term = filter.toLowerCase();
   const rows = (stacks ?? []).filter(({ name }) => name.toLowerCase().includes(term));
   const matchCount =
@@ -228,7 +247,12 @@ export function StacksPage({ connection }: { connection: AreaConnection }) {
   const hasPagination = listing.openEnd || listing.pagesCount > 1;
 
   const handleRefresh = () => {
+    setRecoveryFailure(undefined);
     setGeneration((current) => current + 1);
+  };
+  const handleRetry = () => {
+    setRecoveryFailure(undefined);
+    listing.refresh();
   };
   const handleClearFilter = () => {
     setFilter('');
@@ -243,16 +267,18 @@ export function StacksPage({ connection }: { connection: AreaConnection }) {
         items={rows}
         trackBy="id"
         wrapLines
-        loading={failure === undefined && listing.loading}
+        loading={state === undefined && listing.loading}
         loadingText="Loading stacks"
         empty={
-          <StackListEmpty
-            failure={state}
-            onRetry={listing.refresh}
-            hasStacks={(stacks?.length ?? 0) > 0}
-            firstPage={listing.currentPage === 1}
-            onClearFilter={handleClearFilter}
-          />
+          <div ref={tableEmpty}>
+            <StackListEmpty
+              failure={state}
+              onRetry={handleRetry}
+              hasStacks={(stacks?.length ?? 0) > 0}
+              firstPage={listing.currentPage === 1}
+              onClearFilter={handleClearFilter}
+            />
+          </div>
         }
         header={
           <Header
