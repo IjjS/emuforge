@@ -219,7 +219,8 @@ describe('the actions of "Configuration"', () => {
 
   it('offers URL actions after the two edit controls and omits them when the URL state is unknown', () => {
     const { reread } = renderTab();
-    expect(screen.getAllByRole('heading', { level: 2 }).map((heading) => heading.textContent)).toEqual([
+    const headers = createWrapper(document.body).findAllHeaders();
+    expect(headers.map((header) => norm(header.findHeadingText().getElement().textContent))).toEqual([
       'General configuration',
       'Environment variables',
       'Function URL',

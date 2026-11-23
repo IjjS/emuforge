@@ -656,12 +656,16 @@ export function useRoleList(endpoint: string | undefined): RoleList {
  * Reads the function `name` again where its page shows it, keeping what is shown until the answer arrives: its
  * reading is refetched under its own key.
  */
-export function useReadAgain(endpoint: string | undefined, name: string): () => Promise<void> {
+export function useReadAgain(endpoint: string | undefined, name: string, cancelPending = false): () => Promise<void> {
   const client = useQueryClient();
-  return useCallback(
-    () => client.invalidateQueries({ queryKey: functionKey(endpoint, name) }),
-    [client, endpoint, name],
-  );
+  return useCallback(async () => {
+    const filter = { queryKey: functionKey(endpoint, name) };
+    // Invalidation can reuse an in-flight Refresh that has no cached data yet.
+    if (cancelPending) {
+      await client.cancelQueries(filter);
+    }
+    await client.invalidateQueries(filter);
+  }, [client, endpoint, name, cancelPending]);
 }
 
 /** A new controller per request; the last one aborts when the screen unmounts. */
@@ -805,9 +809,9 @@ function useFunctionChange<Input>(
   send: (endpoint: string, input: Input, signal: AbortSignal) => Promise<void>,
 ): FunctionChange<Input> {
   const client = useQueryClient();
-  const readAgain = useReadAgain(endpoint, name);
-  const nextController = useAbortOnUnmount();
   const changesUrl = operation === CREATE_FUNCTION_URL_CONFIG || operation === DELETE_FUNCTION_URL_CONFIG;
+  const readAgain = useReadAgain(endpoint, name, changesUrl);
+  const nextController = useAbortOnUnmount();
   const mutation = useMutation<
     unknown,
     unknown,
