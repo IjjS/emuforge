@@ -545,7 +545,7 @@ describe('routes', () => {
 
   // Issue 57 (test-criteria.md, "Unit — app/routes.test.tsx", rewritten).
   // Bound: waits up to AREA_LOAD_MS (10 s) for the h1, so the find reports what is missing before the case ends (issue 57 t1, 9249783).
-  it.each(['/aws/lambda/functions/function/orders/test', '/aws/lambda/layers'])(
+  it.each(['/aws/lambda/functions/function/orders/test', '/aws/lambda/code-signing-configurations'])(
     'opens %s as the "no screen yet" page for that part of AWS Lambda',
     async (path) => {
       open(path);

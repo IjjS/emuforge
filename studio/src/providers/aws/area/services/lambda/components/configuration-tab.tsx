@@ -16,6 +16,7 @@ import { memoryText, NONE, timeoutText } from '../format';
 import { EditGeneralDialog } from './edit-general-dialog';
 import type { EditDialogProps } from './edit-runtime-dialog';
 import { EditVariablesDialog } from './edit-variables-dialog';
+import { FunctionLayers, type FunctionLayerChanges } from './function-layers';
 import { FunctionUrlActions, type FunctionUrlChanges } from './function-url-actions';
 
 // The tab "Configuration" of a function's page (issue 516, design "Task 1", "Task 5"): "General configuration" and
@@ -31,6 +32,7 @@ export interface ConfigurationTabProps {
   /** False while the function is being created or updated: an action that changes it is unavailable. */
   ready: boolean;
   urlChanges: FunctionUrlChanges;
+  layerChanges?: FunctionLayerChanges | undefined;
 }
 
 const EXECUTION_ROLE = 'Execution role';
@@ -152,7 +154,7 @@ function EnvironmentVariables(props: SectionProps) {
   );
 }
 
-/** "Configuration": "General configuration", "Environment variables", and "Function URL". */
+/** The function’s Configuration sections, in display order. */
 export function ConfigurationTab(props: ConfigurationTabProps) {
   return (
     <SpaceBetween size="l">
@@ -164,6 +166,12 @@ export function ConfigurationTab(props: ConfigurationTabProps) {
         engineOrigin={props.connection.engineOrigin}
         ready={props.ready}
         changes={props.urlChanges}
+      />
+      <FunctionLayers
+        key={props.layerChanges?.scope}
+        connection={props.connection}
+        ready={props.ready}
+        changes={props.layerChanges}
       />
     </SpaceBetween>
   );

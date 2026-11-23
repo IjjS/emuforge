@@ -4,7 +4,7 @@ Issue-Module: studio
 Issue-Kind: feature
 Issue-Source: plan
 Issue-Key: studio|lambda.layers|task
-Issue-Check-Ids:
+Issue-Check-Ids: studio.lambda-layer-publish studio.lambda-layer-publish-refused studio.lambda-layer-function-lifecycle studio.lambda-layer-function-refused
 Issue-Commit: 7b260c508348edd256975ce57d7da11104dc8891
 
 # Build Lambda's task 12: publish a layer and give a function its layers

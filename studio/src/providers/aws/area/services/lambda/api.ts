@@ -11,6 +11,7 @@ import {
   DeleteFunctionCommand,
   DeleteFunctionUrlConfigCommand,
   GetFunctionCommand,
+  GetFunctionConfigurationCommand,
   type GetFunctionCommandOutput,
   GetFunctionUrlConfigCommand,
   type GetFunctionUrlConfigCommandOutput,
@@ -178,6 +179,7 @@ export const CREATE_ROLE = 'CreateRole';
 export const ATTACH_ROLE_POLICY = 'AttachRolePolicy';
 export const INVOKE = 'Invoke';
 export const UPDATE_FUNCTION_CODE = 'UpdateFunctionCode';
+export const GET_FUNCTION_CONFIGURATION = 'GetFunctionConfiguration';
 export const UPDATE_FUNCTION_CONFIGURATION = 'UpdateFunctionConfiguration';
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -923,6 +925,18 @@ export async function updateFunctionCode(
   await sendRequest(UPDATE_FUNCTION_CODE, (abortSignal) => client.send(command, { abortSignal }), signal);
 }
 
+/** Reads the version ARNs in the order the function uses them. */
+export async function readFunctionLayers(endpoint: string, name: string, signal: AbortSignal): Promise<string[]> {
+  const client = lambdaClient(endpoint);
+  const command = new GetFunctionConfigurationCommand({ FunctionName: name });
+  const answer = await sendRequest(
+    GET_FUNCTION_CONFIGURATION,
+    (abortSignal) => client.send(command, { abortSignal }),
+    signal,
+  );
+  return (answer.Layers ?? []).flatMap(({ Arn }) => (Arn ? [Arn] : []));
+}
+
 /** The fields one "Save" changes; a field left out is not sent. */
 export interface ConfigurationChange {
   runtime?: string;
@@ -932,6 +946,8 @@ export interface ConfigurationChange {
   timeout?: number;
   /** The whole map of variables, in this order; an empty list removes them all. */
   variables?: readonly EnvironmentVariable[];
+  /** The whole ordered list of version ARNs; an empty list detaches them all. */
+  layers?: readonly string[];
 }
 
 /**
@@ -962,6 +978,9 @@ export async function updateFunctionConfiguration(
   }
   if (change.variables !== undefined) {
     input.Environment = { Variables: Object.fromEntries(change.variables.map(({ key, value }) => [key, value])) };
+  }
+  if (change.layers !== undefined) {
+    input.Layers = [...change.layers];
   }
   const client = lambdaClient(endpoint);
   const command = new UpdateFunctionConfigurationCommand(input);

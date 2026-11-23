@@ -20,6 +20,8 @@ export type RequestFailure =
 
 const reportedCodes = new WeakMap<RequestFailure, string>();
 const reportedNotImplementedMessages = new WeakMap<RequestFailure, string>();
+const jsonResponseMessages = new WeakMap<object, string | null>();
+const refusalMessages = new WeakMap<RequestFailure, string | null>();
 
 /**
  * The code reported in a service response, when present. Keep the original failure from `requestFailure` or
@@ -34,9 +36,19 @@ export function reportedNotImplementedMessage(failure: RequestFailure): string |
   return reportedNotImplementedMessages.get(failure);
 }
 
-function withReportedCode(failure: RequestFailure, code: string | undefined): RequestFailure {
+/** Message for a refusal detail that omits the SDK's default message. */
+export function refusalMessage(failure: RequestFailure): string | undefined {
+  const supplied = refusalMessages.get(failure);
+  if (supplied !== undefined) return supplied ?? undefined;
+  return 'message' in failure ? failure.message : undefined;
+}
+
+function withReportedCode(failure: RequestFailure, code: string | undefined, sdkPlaceholder = false): RequestFailure {
   if (code !== undefined) {
     reportedCodes.set(failure, code);
+  }
+  if (sdkPlaceholder) {
+    refusalMessages.set(failure, null);
   }
   return failure;
 }
@@ -65,34 +77,58 @@ const NO_MESSAGE: ReadonlySet<string> = new Set(['UnknownError', 'Unknown']);
 
 interface ErrorAnswer {
   Code?: unknown;
+  code?: unknown;
+  __type?: unknown;
   name?: unknown;
   message?: unknown;
   $fault?: unknown;
   $metadata?: { httpStatusCode?: unknown };
-  $response?: { reason?: unknown };
+  $response?: { reason?: unknown; statusCode?: unknown; headers?: Record<string, unknown> };
 }
 
 function text(value: unknown): string | undefined {
   return typeof value === 'string' && value !== '' ? value : undefined;
 }
 
-/**
- * The code the answer wrote (R5.1), never a name the SDK made up: `Code`, else the `name` of the SDK's service
- * exception unless it is the SDK's name for an answer without a code, else none.
- */
+/** Record the message before the Lambda SDK fills in its default, and leave the SDK a copy of the body. */
+export async function recordJsonResponseMessage(response: { body?: unknown }): Promise<void> {
+  let decoded: unknown;
+  try {
+    const original = new Response(response.body as BodyInit | undefined);
+    const copy = original.clone();
+    response.body = original.body;
+    decoded = await copy.json();
+  } catch {
+    // An empty or unreadable JSON body supplies no message. The SDK still decodes its own copy.
+  }
+  const fields = typeof decoded === 'object' && decoded !== null ? (decoded as Record<string, unknown>) : {};
+  jsonResponseMessages.set(response, text(fields.message ?? fields.Message) ?? null);
+}
+
+function headerCode(headers: ErrorAnswer['$response']): string | undefined {
+  const entry = Object.entries(headers?.headers ?? {}).find(([key]) => key.toLowerCase() === 'x-amzn-errortype');
+  const code = text(entry?.[1])?.split(/[,:]/, 1)[0]?.split('#').at(-1);
+  return text(code?.trim());
+}
+
+/** Keep the protocol's decoded exception name when it identifies a service code. */
 function codeOf(answer: ErrorAnswer, status: number): string | undefined {
   const code = text(answer.Code);
   if (code !== undefined) {
     return code;
   }
   const name = text(answer.name);
-  if (name === undefined || typeof answer.$fault !== 'string' || name === 'Unknown') {
-    return undefined;
+  if (name === 'SyntaxError') {
+    return headerCode(answer.$response);
   }
-  if (name === 'NotFound' && status === 404 && typeof answer.message === 'string' && NO_MESSAGE.has(answer.message)) {
-    return undefined;
+  if (typeof answer.$fault === 'string') {
+    const syntheticNotFound = name === 'NotFound' && status === 404 && NO_MESSAGE.has(text(answer.message) ?? '');
+    if (name !== undefined && name !== 'Unknown' && !syntheticNotFound) {
+      return name;
+    }
+    return text(answer.code) ?? text(answer.__type) ?? headerCode(answer.$response);
   }
-  return name;
+  return undefined;
 }
 
 /** The failure of `operation` that `error`, a rejection of the SDK or of the session, stands for (R5). */
@@ -100,6 +136,16 @@ export function requestFailure(operation: string, error: unknown): RequestFailur
   if (error instanceof RequestError) {
     return error.failure;
   }
+  const failure = mapRequestFailure(operation, error);
+  if (typeof error === 'object' && error !== null) {
+    const response = (error as ErrorAnswer).$response;
+    const supplied = response && jsonResponseMessages.get(response);
+    if (supplied !== undefined) refusalMessages.set(failure, supplied);
+  }
+  return failure;
+}
+
+function mapRequestFailure(operation: string, error: unknown): RequestFailure {
   if (error instanceof EngineCommandSessionRefusal) {
     const answer = error.cause as ErrorAnswer;
     const code = codeOf(answer, 401) ?? 'HTTP 401';
@@ -112,7 +158,7 @@ export function requestFailure(operation: string, error: unknown): RequestFailur
       : { kind: 'other', operation, code: error.code ?? `HTTP ${String(error.status)}` };
   }
   const answer = (typeof error === 'object' && error !== null ? error : {}) as ErrorAnswer;
-  const status = answer.$metadata?.httpStatusCode;
+  const status = answer.$metadata?.httpStatusCode ?? answer.$response?.statusCode;
   if (typeof status !== 'number') {
     return { kind: 'engine-did-not-answer', operation };
   }
@@ -134,22 +180,41 @@ export function requestFailure(operation: string, error: unknown): RequestFailur
   }
   if (code === undefined) {
     const reason = text(answer.$response?.reason);
+    const message = text(answer.message);
+    const serviceMessage =
+      typeof answer.$fault === 'string' &&
+      answer.name !== 'SyntaxError' &&
+      message !== undefined &&
+      !NO_MESSAGE.has(message)
+        ? message
+        : undefined;
     return {
       kind: 'other',
       operation,
       code: reason === undefined ? `HTTP ${String(status)}` : `HTTP ${String(status)} ${reason}`,
+      ...(serviceMessage === undefined ? {} : { message: serviceMessage }),
     };
   }
-  const message = text(answer.message);
+  const rawMessage = text(answer.message);
+  const message =
+    answer.name === 'SyntaxError' || (code === 'NotFound' && status === 404 && NO_MESSAGE.has(rawMessage ?? ''))
+      ? undefined
+      : rawMessage;
+  const sdkPlaceholder = typeof answer.$fault === 'string' && message !== undefined && NO_MESSAGE.has(message);
   if (ACCESS_DENIED.has(code)) {
-    return withReportedCode({ kind: 'access-denied', operation, message: message ?? '' }, code);
+    return withReportedCode({ kind: 'access-denied', operation, message: message ?? '' }, code, sdkPlaceholder);
   }
   if (EMULATOR_SILENT.has(code)) {
-    return withReportedCode({ kind: 'emulator-did-not-answer', operation, message: message ?? '' }, code);
+    return withReportedCode(
+      { kind: 'emulator-did-not-answer', operation, message: message ?? '' },
+      code,
+      sdkPlaceholder,
+    );
   }
   return withReportedCode(
     message === undefined ? { kind: 'other', operation, code } : { kind: 'other', operation, code, message },
     code,
+    sdkPlaceholder,
   );
 }
 

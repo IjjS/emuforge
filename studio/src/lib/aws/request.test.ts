@@ -5,7 +5,12 @@ import process from 'node:process';
 import { DescribeTableCommand, DynamoDBClient, DynamoDBServiceException } from '@aws-sdk/client-dynamodb';
 import { DescribeVpcsCommand, EC2Client } from '@aws-sdk/client-ec2';
 import { GetRoleCommand, IAMClient, ListRolesCommand } from '@aws-sdk/client-iam';
-import { GetFunctionCommand, LambdaClient, ListFunctionsCommand } from '@aws-sdk/client-lambda';
+import {
+  GetFunctionCommand,
+  LambdaClient,
+  ListFunctionsCommand,
+  PublishLayerVersionCommand,
+} from '@aws-sdk/client-lambda';
 import { ListHostedZonesCommand, Route53Client } from '@aws-sdk/client-route-53';
 import { ListBucketsCommand, S3ServiceException } from '@aws-sdk/client-s3';
 import { GetQueueUrlCommand, SQSClient } from '@aws-sdk/client-sqs';
@@ -15,6 +20,7 @@ import { createAwsClient, createS3Client, engineEndpoint } from './client-factor
 import {
   reportedNotImplementedMessage,
   reportedServiceCode,
+  refusalMessage,
   requestFailure,
   RequestError,
   sendRequest,
@@ -148,6 +154,11 @@ const REQUESTS = {
     createAwsClient(LambdaClient, { endpoint }).send(new GetFunctionCommand({ FunctionName: 'p445-missing' }), {
       abortSignal: signal,
     }),
+  PublishLayerVersion: (signal) =>
+    createAwsClient(LambdaClient, { endpoint }).send(
+      new PublishLayerVersionCommand({ LayerName: 'tools', Content: { ZipFile: new Uint8Array([80, 75]) } }),
+      { abortSignal: signal },
+    ),
   ListRoles: (signal) =>
     createAwsClient(IAMClient, { endpoint }).send(new ListRolesCommand({}), { abortSignal: signal }),
   GetRole: (signal) =>
@@ -535,6 +546,77 @@ describe('the code and the message', () => {
     engine.aws = () => ({ status: 404, body: '' });
 
     expect(await failureOf('ListFunctions')).toEqual({ kind: 'other', operation: 'ListFunctions', code: 'HTTP 404' });
+  });
+
+  it.each([
+    { headers: { 'X-Amzn-ErrorType': 'NotFound' }, body: '', code: 'NotFound' },
+    { headers: {}, body: '', code: 'HTTP 404' },
+    { headers: {}, body: '{"__type":"NotFound"}', code: 'NotFound' },
+  ])('distinguishes an explicit Lambda 404 code from an empty 404: $code', async ({ headers, body, code }) => {
+    engine.aws = () => ({ status: 404, body, headers: { 'content-type': REST_JSON, ...headers } });
+
+    const failure = await failureOf('PublishLayerVersion');
+    expect(failure).toEqual({ kind: 'other', operation: 'PublishLayerVersion', code });
+    expect(reportedServiceCode(failure)).toBe(code === 'HTTP 404' ? undefined : code);
+  });
+
+  it('keeps the Lambda error header when the SDK cannot parse the body', async () => {
+    engine.aws = () => ({
+      status: 400,
+      body: 'invalid JSON',
+      headers: { 'content-type': REST_JSON, 'X-Amzn-ErrorType': 'LayerError' },
+    });
+
+    const failure = await failureOf('PublishLayerVersion');
+    expect(failure).toEqual({ kind: 'other', operation: 'PublishLayerVersion', code: 'LayerError' });
+    expect(reportedServiceCode(failure)).toBe('LayerError');
+  });
+
+  it.each([
+    { body: '', message: undefined },
+    { body: '{"message":"UnknownError"}', message: 'UnknownError' },
+    { body: '{"message":"Layer publication was refused"}', message: 'Layer publication was refused' },
+  ])('exposes only the service message for a Lambda header-code rejection ($body)', async ({ body, message }) => {
+    engine.aws = () => ({
+      status: 400,
+      body,
+      headers: { 'content-type': REST_JSON, 'x-amzn-errortype': 'LayerError' },
+    });
+
+    const failure = await failureOf('PublishLayerVersion');
+    expect(failure).toEqual({
+      kind: 'other',
+      operation: 'PublishLayerVersion',
+      code: 'LayerError',
+      message: message ?? 'UnknownError',
+    });
+    expect(reportedServiceCode(failure)).toBe('LayerError');
+    expect(refusalMessage(failure)).toBe(message);
+  });
+
+  it('keeps HTTP 413 for a layer publication refusal with no body or error code', async () => {
+    engine.aws = () => ({ status: 413 });
+
+    const failure = await failureOf('PublishLayerVersion');
+    expect(failure).toEqual({ kind: 'other', operation: 'PublishLayerVersion', code: 'HTTP 413' });
+    expect(reportedServiceCode(failure)).toBeUndefined();
+  });
+
+  it('keeps the service message with HTTP 413 when Lambda supplies no service code', async () => {
+    engine.aws = () => ({
+      status: 413,
+      body: '{"message":"ZIP request is too large"}',
+      headers: { 'content-type': REST_JSON },
+    });
+
+    const failure = await failureOf('PublishLayerVersion');
+    expect(failure).toEqual({
+      kind: 'other',
+      operation: 'PublishLayerVersion',
+      code: 'HTTP 413',
+      message: 'ZIP request is too large',
+    });
+    expect(reportedServiceCode(failure)).toBeUndefined();
   });
 
   it.each<Operation>(['ListBuckets', 'ListRoles'])(

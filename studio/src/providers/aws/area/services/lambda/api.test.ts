@@ -18,6 +18,7 @@ import {
   listFunctions,
   listRoles,
   readFunction,
+  readFunctionLayers,
   updateFunctionCode,
   updateFunctionConfiguration,
   type ConfigurationChange,
@@ -61,7 +62,7 @@ function lambdaOperation(method: string, path: string): string {
     return 'UpdateFunctionCode';
   }
   if (/^\/2015-03-31\/functions\/[^/]+\/configuration$/.test(path)) {
-    return 'UpdateFunctionConfiguration';
+    return method === 'GET' ? 'GetFunctionConfiguration' : 'UpdateFunctionConfiguration';
   }
   return `${method} ${path}`;
 }
@@ -1156,6 +1157,26 @@ describe('changing a function’s code', () => {
   });
 });
 
+describe('reading a function’s layers', () => {
+  const arns = [
+    'arn:aws:lambda:us-east-1:000000000000:layer:zeta:2',
+    'arn:aws:lambda:us-east-1:000000000000:layer:alpha:1',
+  ];
+  it.each([
+    { configuration: { Layers: arns.map((Arn) => ({ Arn })) }, expected: arns },
+    { configuration: {}, expected: [] },
+  ])(
+    'reads attached version ARNs from the function configuration in response order',
+    async ({ configuration, expected }) => {
+      engine.answer = () => json(200, configuration);
+      await expect(readFunctionLayers(endpoint, 'orders', signal())).resolves.toEqual(expected);
+      expect(engine.operations()).toEqual(['GetFunctionConfiguration']);
+      expect(engine.sent[0]?.method).toBe('GET');
+      expect(engine.sent[0]?.url.pathname).toBe('/2015-03-31/functions/orders/configuration');
+    },
+  );
+});
+
 describe('changing a function’s configuration', () => {
   it.each<[string, ConfigurationChange, Record<string, unknown>]>([
     [
@@ -1180,6 +1201,22 @@ describe('changing a function’s configuration', () => {
     ],
     ['an empty list of variables', { variables: [] }, { Environment: { Variables: {} } }],
     ['an empty description', { description: '' }, { Description: '' }],
+    [
+      'ordered layer version ARNs',
+      {
+        layers: [
+          'arn:aws:lambda:us-east-1:000000000000:layer:zeta:2',
+          'arn:aws:lambda:us-east-1:000000000000:layer:alpha:1',
+        ],
+      },
+      {
+        Layers: [
+          'arn:aws:lambda:us-east-1:000000000000:layer:zeta:2',
+          'arn:aws:lambda:us-east-1:000000000000:layer:alpha:1',
+        ],
+      },
+    ],
+    ['the last layer removal', { layers: [] }, { Layers: [] }],
   ])('sends one request holding exactly the fields of %s', async (_, change, body) => {
     engine.answer = () => json(200, functionItem('orders', { LastUpdateStatus: 'InProgress' }));
 

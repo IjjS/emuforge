@@ -11,6 +11,8 @@ export interface FlashItem {
   type: FlashType;
   header?: ReactNode;
   content: ReactNode;
+  /** The open dialog announces this error and keeps keyboard focus. */
+  announcedInDialog?: true;
 }
 
 /** What a page shows at once (R5.3): one item, or several items of one action, in the order they are shown. */
