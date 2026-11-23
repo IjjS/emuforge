@@ -1,6 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { createMemoryRouter, RouterProvider } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -48,6 +48,7 @@ const SETTINGS: api.SubscriptionSettingsAttributes = {
 };
 const notFound = (operation: string) =>
   new RequestError({ kind: 'other', operation, code: 'NotFound', message: 'Subscription does not exist' });
+const PAGE = createWrapper(document.body);
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -77,11 +78,12 @@ const click = (name: string) => fireEvent.click(button(name));
 const disabled = (element: HTMLElement) =>
   (element instanceof HTMLButtonElement && element.disabled) || element.getAttribute('aria-disabled') === 'true';
 
+function field(label: string) {
+  return PAGE.findAllFormFields().find((formField) => formField.findLabel()?.getElement().textContent === label);
+}
+
 function fieldSelect(label: string) {
-  const field = createWrapper(document.body)
-    .findAllFormFields()
-    .find((formField) => formField.findLabel()?.getElement().textContent === label);
-  const select = field?.findControl()?.findSelect();
+  const select = field(label)?.findControl()?.findSelect();
   if (!select) {
     throw new Error(`Select for ${label} is missing`);
   }
@@ -98,8 +100,52 @@ function expectValue(label: string, value: string) {
   expect(fieldSelect(label).findTrigger().getElement()).toHaveTextContent(value);
 }
 
+function flash(type: 'success' | 'error' | 'info') {
+  return PAGE.findFlashbar()?.findItemsByType(type)[0];
+}
+
+function expectWriteSuccess() {
+  return waitFor(() => {
+    const header = flash('success')?.findHeader()?.getElement();
+    expect(header).toBeVisible();
+    expect(header).toHaveTextContent('Subscription settings updated');
+  });
+}
+
+async function clearModal() {
+  return waitFor(() => {
+    const modal = PAGE.findModal();
+    if (!modal) {
+      throw new Error('Clear policy modal is missing');
+    }
+    expect(modal.getElement()).toBeVisible();
+    expect(modal.findHeader().getElement()).toHaveTextContent('Clear filter policy?');
+    return modal;
+  });
+}
+
+function status(text: string) {
+  return PAGE.findAllStatusIndicators()
+    .map((indicator) => indicator.getElement())
+    .find((element) => element.textContent?.trim() === text);
+}
+
+function readErrorDetail(text: string) {
+  return PAGE.findAllBoxes()
+    .map((box) => box.getElement())
+    .find((element) => element.tagName === 'P' && element.textContent === text);
+}
+
+function policyDescription() {
+  return field('Filter policy')?.findDescription()?.getElement();
+}
+
 function changePolicy(value: string) {
-  fireEvent.change(screen.getByRole('textbox', { name: 'Filter policy' }), { target: { value } });
+  const textarea = field('Filter policy')?.findControl()?.findTextarea()?.findNativeTextarea().getElement();
+  if (!textarea) {
+    throw new Error('Filter policy textarea is missing');
+  }
+  fireEvent.change(textarea, { target: { value } });
 }
 
 async function openSettings() {
@@ -143,11 +189,13 @@ describe('subscription settings', () => {
     const read = hold<api.SubscriptionSettingsAttributes>();
     vi.mocked(api.getSubscriptionSettings).mockReturnValueOnce(read.promise);
     await openSettings();
-    expect(screen.getByText('Loading subscription settings')).toBeVisible();
+    expect(status('Loading subscription settings')).toBeVisible();
     read.resolve({});
-    expect(await screen.findByText('No filter policy')).toBeVisible();
-    expect(screen.getByText('Enter a JSON filter policy.')).toBeVisible();
-    expect(screen.getByText('Save a filter policy to edit its scope.')).toBeVisible();
+    await waitFor(() => expect(policyDescription()).toHaveTextContent('No filter policy'));
+    expect(field('Filter policy')?.findConstraint()?.getElement()).toHaveTextContent('Enter a JSON filter policy.');
+    expect(field('Filter policy scope')?.findConstraint()?.getElement()).toHaveTextContent(
+      'Save a filter policy to edit its scope.',
+    );
     changePolicy(REPLACEMENT);
     expectValue('Filter policy scope', 'Not set');
     expectValue('Raw message delivery', 'Not set');
@@ -159,7 +207,10 @@ describe('subscription settings', () => {
     const read = hold<api.SubscriptionSettingsAttributes>();
     vi.mocked(api.getSubscriptionSettings).mockReturnValueOnce(read.promise);
     await openSettings();
-    const heading = screen.getByRole('heading', { name: 'Subscription settings' });
+    const heading = PAGE.findAllHeaders()
+      .map((header) => header.findHeadingText().getElement())
+      .find((text) => text.textContent === 'Subscription settings')
+      ?.closest('h2');
     expect(heading).toHaveFocus();
     read.resolve(SETTINGS);
     await screen.findByDisplayValue(POLICY);
@@ -174,7 +225,7 @@ describe('subscription settings', () => {
       .mockResolvedValueOnce({ RawMessageDelivery: 'false' })
       .mockResolvedValueOnce({ RawMessageDelivery: 'true' });
     await openSettings();
-    await screen.findByText('No filter policy');
+    await waitFor(() => expect(policyDescription()).toHaveTextContent('No filter policy'));
     expectValue('Raw message delivery', 'Off');
     choose('Raw message delivery', 'true');
     click('Save raw message delivery');
@@ -184,13 +235,13 @@ describe('subscription settings', () => {
       { name: 'RawMessageDelivery', value: 'true' },
       expect.any(AbortSignal),
     );
-    await screen.findByText('Subscription settings updated');
+    await expectWriteSuccess();
     await waitFor(() => {
       expect(api.getSubscriptionSettings).toHaveBeenCalledTimes(2);
-      expect(screen.queryByText('Loading subscription settings')).not.toBeInTheDocument();
+      expect(status('Loading subscription settings')).toBeUndefined();
     });
     expectValue('Raw message delivery', 'On');
-    expect(screen.getByText('No filter policy')).toBeVisible();
+    expect(policyDescription()).toHaveTextContent('No filter policy');
     expectValue('Filter policy scope', 'Not set');
   });
 
@@ -245,7 +296,7 @@ describe('subscription settings', () => {
       expect.any(AbortSignal),
     );
     write.resolve(undefined);
-    expect(await screen.findByText('Subscription settings updated')).toBeVisible();
+    await expectWriteSuccess();
   });
 
   it('preserves the policy and scope drafts through Refresh and raw delivery readback', async () => {
@@ -263,14 +314,14 @@ describe('subscription settings', () => {
     choose('Filter policy scope', 'MessageAttributes');
 
     fireEvent.click(refreshSettings());
-    expect(await screen.findByText(externalPolicy)).toBeVisible();
+    await waitFor(() => expect(policyDescription()).toHaveTextContent(externalPolicy));
     expect(screen.getByDisplayValue(REPLACEMENT)).toBeVisible();
     expectValue('Filter policy scope', 'Message attributes');
     expectValue('Raw message delivery', 'On');
 
     choose('Raw message delivery', 'false');
     click('Save raw message delivery');
-    expect(await screen.findByText('Subscription settings updated')).toBeVisible();
+    await expectWriteSuccess();
     expect(screen.getByDisplayValue(REPLACEMENT)).toBeVisible();
     expectValue('Raw message delivery', 'Off');
     readback.resolve({ ...refreshed, RawMessageDelivery: 'false' });
@@ -320,12 +371,13 @@ describe('subscription settings', () => {
     await screen.findByDisplayValue(POLICY);
     changePolicy(REPLACEMENT);
     click('Save filter policy');
-    expect(await screen.findByText('Subscription settings updated')).toBeVisible();
-    expect(await screen.findByText('NotFound')).toBeVisible();
+    await expectWriteSuccess();
+    await waitFor(() => expect(status('The subscription settings could not be read')).toBeVisible());
+    expect(readErrorDetail('NotFound: Subscription does not exist')).toBeVisible();
     click('Retry');
     await waitFor(() => {
-      expect(screen.queryByText('NotFound')).not.toBeInTheDocument();
-      expect(screen.queryByText('Loading subscription settings')).not.toBeInTheDocument();
+      expect(status('The subscription settings could not be read')).toBeUndefined();
+      expect(status('Loading subscription settings')).toBeUndefined();
     });
     expect(screen.getByDisplayValue(REPLACEMENT)).toBeVisible();
     expect(api.setSubscriptionSetting).toHaveBeenCalledTimes(1);
@@ -334,8 +386,7 @@ describe('subscription settings', () => {
   it('shows the original error when reading a deleted subscription and lets the user retry', async () => {
     vi.mocked(api.getSubscriptionSettings).mockRejectedValue(notFound('GetSubscriptionAttributes'));
     await openSettings();
-    expect(await screen.findByText('NotFound')).toBeVisible();
-    expect(screen.getByText(/Subscription does not exist/)).toBeVisible();
+    await waitFor(() => expect(readErrorDetail('NotFound: Subscription does not exist')).toBeVisible());
     click('Retry');
     await waitFor(() => expect(api.getSubscriptionSettings).toHaveBeenCalledTimes(2));
   });
@@ -350,9 +401,13 @@ describe('subscription settings', () => {
     await screen.findByDisplayValue(POLICY);
     choose(label, value);
     click(save);
-    expect(await screen.findByText('NotFound')).toBeVisible();
-    expect(screen.getByText(/Subscription does not exist/)).toBeVisible();
-    expect(screen.queryByText('Subscription settings updated')).not.toBeInTheDocument();
+    await waitFor(() => {
+      const content = flash('error')?.findContent()?.getElement();
+      expect(content).toBeVisible();
+      expect(content).toHaveTextContent('NotFound');
+      expect(content).toHaveTextContent('Subscription does not exist');
+    });
+    expect(flash('success')).toBeUndefined();
     expect(api.setSubscriptionSetting).toHaveBeenCalledExactlyOnceWith(
       ENGINE,
       ARN,
@@ -367,8 +422,12 @@ describe('subscription settings', () => {
       new RequestError({ kind: 'not-implemented', operation: 'GetSubscriptionAttributes' }),
     );
     await openSettings();
-    expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
-    expect(screen.getByText(/GetSubscriptionAttributes/)).toBeVisible();
+    await waitFor(() => expect(status('Not implemented by the emulator')).toBeVisible());
+    expect(
+      readErrorDetail(
+        'The emulator answered 501 Not Implemented for GetSubscriptionAttributes, so Studio cannot show the subscription settings.',
+      ),
+    ).toBeVisible();
     expect(disabled(refreshSettings())).toBe(true);
   });
 
@@ -381,8 +440,14 @@ describe('subscription settings', () => {
     await screen.findByDisplayValue(POLICY);
     changePolicy(REPLACEMENT);
     click('Save filter policy');
-    expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
-    expect(screen.getByText('The emulator answered 501 Not Implemented for SetSubscriptionAttributes.')).toBeVisible();
+    await waitFor(() => {
+      const item = flash('info');
+      expect(item?.getElement()).toBeVisible();
+      expect(item?.findHeader()?.getElement()).toHaveTextContent('Not implemented by the emulator');
+      expect(item?.findContent()?.getElement()).toHaveTextContent(
+        'The emulator answered 501 Not Implemented for SetSubscriptionAttributes.',
+      );
+    });
     for (const name of ['Save filter policy', 'Clear filter policy', 'Save scope', 'Save raw message delivery']) {
       expect(button(name)).toBeVisible();
       expect(disabled(button(name))).toBe(true);
@@ -392,32 +457,67 @@ describe('subscription settings', () => {
     await waitFor(() => expect(api.getSubscriptionSettings).toHaveBeenCalledTimes(2));
   });
 
-  it('clears the policy only after confirmation and displays the remaining raw delivery setting', async () => {
+  it('clears only after confirmation and uses the new scope on recreation while preserving the raw delivery draft', async () => {
     vi.mocked(api.getSubscriptionSettings)
-      .mockResolvedValueOnce({ ...SETTINGS, RawMessageDelivery: 'true' })
-      .mockResolvedValueOnce({ RawMessageDelivery: 'true' });
+      .mockResolvedValueOnce({ ...SETTINGS, FilterPolicyScope: 'MessageAttributes' })
+      .mockResolvedValueOnce({ RawMessageDelivery: 'false' })
+      .mockResolvedValueOnce({ ...SETTINGS, FilterPolicy: REPLACEMENT, FilterPolicyScope: 'MessageAttributes' });
     await openSettings();
     await screen.findByDisplayValue(POLICY);
     click('Clear filter policy');
-    const dialog = await screen.findByRole('dialog', { name: 'Clear filter policy?' });
-    expect(
-      within(dialog).getByText((_, element) => element?.textContent === ARN, { selector: '.aws-area-value-address' }),
-    ).toBeVisible();
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    const dialog = await clearModal();
+    expect(dialog.findContent().find('.aws-area-value-address')?.getElement()).toHaveTextContent(ARN);
+    const cancel = dialog
+      .findFooter()
+      ?.findAllButtons()
+      .find((button) => button.getElement().textContent === 'Cancel');
+    expect(cancel?.getElement()).toBeVisible();
+    if (cancel) {
+      fireEvent.click(cancel.getElement());
+    }
     expect(api.setSubscriptionSetting).not.toHaveBeenCalled();
     expect(screen.getByDisplayValue(POLICY)).toBeVisible();
+    expectValue('Filter policy scope', 'Message attributes');
+    choose('Filter policy scope', 'MessageBody');
+    choose('Raw message delivery', 'true');
     expectValue('Filter policy scope', 'Message body');
     click('Clear filter policy');
-    const reopened = await screen.findByRole('dialog', { name: 'Clear filter policy?' });
-    fireEvent.click(within(reopened).getByRole('button', { name: 'Clear filter policy' }));
+    const reopened = await clearModal();
+    const confirm = reopened
+      .findFooter()
+      ?.findAllButtons()
+      .find((button) => button.getElement().textContent === 'Clear filter policy');
+    expect(confirm?.getElement()).toBeVisible();
+    if (confirm) {
+      fireEvent.click(confirm.getElement());
+    }
     expect(api.setSubscriptionSetting).toHaveBeenCalledExactlyOnceWith(
       ENGINE,
       ARN,
       { name: 'FilterPolicy', value: '' },
       expect.any(AbortSignal),
     );
-    expect(await screen.findByText('No filter policy')).toBeVisible();
+    await waitFor(() => {
+      expect(policyDescription()).toHaveTextContent('No filter policy');
+      expect(disabled(button('Save raw message delivery'))).toBe(false);
+    });
     expectValue('Filter policy scope', 'Not set');
+    expectValue('Raw message delivery', 'On');
+    changePolicy(REPLACEMENT);
+    click('Save filter policy');
+    expect(api.setSubscriptionSetting).toHaveBeenNthCalledWith(
+      2,
+      ENGINE,
+      ARN,
+      { name: 'FilterPolicy', value: REPLACEMENT },
+      expect.any(AbortSignal),
+    );
+    await waitFor(() => {
+      expect(disabled(button('Save raw message delivery'))).toBe(false);
+      expectValue('Filter policy scope', 'Message attributes');
+    });
+    expect(disabled(button('Save filter policy'))).toBe(true);
+    expect(disabled(button('Save scope'))).toBe(true);
     expectValue('Raw message delivery', 'On');
   });
 });

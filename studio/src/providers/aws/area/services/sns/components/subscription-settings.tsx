@@ -69,7 +69,7 @@ function SettingsFields({ settings, arn, disabled, saving, onSave }: SettingsFie
       FilterPolicy:
         savedName === 'FilterPolicy' || drafts.FilterPolicy === savedPolicy ? undefined : drafts.FilterPolicy,
       FilterPolicyScope:
-        savedName === 'FilterPolicyScope' || drafts.FilterPolicyScope === currentScope
+        !hasPolicy || savedName === 'FilterPolicyScope' || drafts.FilterPolicyScope === currentScope
           ? undefined
           : drafts.FilterPolicyScope,
       RawMessageDelivery:
