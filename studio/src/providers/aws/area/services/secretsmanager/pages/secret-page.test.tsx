@@ -146,7 +146,7 @@ describe('Secret details and value', () => {
     open('/aws/secretsmanager/secrets/detail?name=app%2Fcredentials');
     expect(await screen.findByRole('heading', { name: NAME, level: 1 })).toBeVisible();
     const crumbs = screen.getByRole('navigation', { name: 'Breadcrumbs' });
-    expect(within(crumbs).getByText(NAME)).toHaveAttribute('aria-current', 'page');
+    expect(within(crumbs).getByRole('link', { name: NAME, current: 'page' })).toBeVisible();
     await screen.findByText(DESCRIPTION);
     expect(describeSecret).toHaveBeenCalledExactlyOnceWith({ SecretId: NAME });
   });
