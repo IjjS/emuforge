@@ -1,5 +1,6 @@
 import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { act, fireEvent, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -141,33 +142,60 @@ describe('Secret version history', () => {
     });
   });
 
-  it('leaves version pagination and Retry visible and disabled after a later page returns 501', async () => {
-    const { calls } = openSecret({
-      handler: (operation, input) => {
-        if (operation === LIST) {
-          return input.NextToken === 'next-token'
-            ? { body: { __type: 'NotImplemented' }, status: 501 }
-            : { body: { Versions: versionRows({ [CURRENT]: ['AWSCURRENT'] }), NextToken: 'next-token' } };
-        }
-      },
-    });
-    await openVersions();
-    fireEvent.click((await versionPagination()).findNextPageButton().getElement());
-    const history = createWrapper((await section('Version history')).getElement());
-    await expectAlert(history, `The emulator answered 501 Not Implemented for ${LIST}`);
-    const pagination = await versionPagination();
-    expect(pagination.getElement()).toBeVisible();
-    expect(pagination.isDisabled()).toBe(true);
-    expect(pagination.findPreviousPageButton().isDisabled()).toBe(true);
-    expect(pagination.findNextPageButton().isDisabled()).toBe(true);
-    const retry = required(history.findAlert()?.findActionSlot(), 'unavailable Retry');
-    const retryButton = required(createWrapper(retry.getElement()).findButton(), 'Retry');
-    expect(retryButton.getElement()).toBeVisible();
-    expect(retryButton.isDisabled()).toBe(true);
-    fireEvent.click(pagination.findPreviousPageButton().getElement());
-    fireEvent.click(retryButton.getElement());
-    expect(calls.mock.calls.filter(([operation]) => operation === LIST)).toHaveLength(2);
-  });
+  it.each(['stays on pagination', 'moves away', 'moves away and then blurs'] as const)(
+    'keeps a later-page 501 accessible when focus %s',
+    async (focus) => {
+      const late = deferredReply();
+      const { calls } = openSecret({
+        handler: (operation, input) => {
+          if (operation === LIST) {
+            return input.NextToken === 'next-token'
+              ? late.promise
+              : { body: { Versions: versionRows({ [CURRENT]: ['AWSCURRENT'] }), NextToken: 'next-token' } };
+          }
+        },
+      });
+      await openVersions();
+      const next = (await versionPagination()).findNextPageButton().getElement();
+      const elsewhere = screen.getByRole('button', { name: 'Retrieve secret value' });
+      next.focus();
+      expect(next).toHaveFocus();
+      await userEvent.setup().keyboard('{Enter}');
+      await waitFor(() =>
+        expect(calls).toHaveBeenCalledWith(LIST, expect.objectContaining({ NextToken: 'next-token' })),
+      );
+
+      // Browsers can drop focus when the pending pagination control becomes disabled.
+      next.blur();
+      if (focus !== 'stays on pagination') elsewhere.focus();
+      if (focus === 'moves away and then blurs') elsewhere.blur();
+      await act(() => late.resolve({ body: { __type: 'NotImplemented' }, status: 501 }));
+      const history = createWrapper((await section('Version history')).getElement());
+      await expectAlert(history, `The emulator answered 501 Not Implemented for ${LIST}`);
+      const notice = screen.getByRole('region', { name: 'Not implemented by the emulator' });
+      expect(notice).toHaveAccessibleDescription(
+        `The emulator answered 501 Not Implemented for ${LIST}, so Studio cannot show the version history.`,
+      );
+      const expectedFocus = {
+        'stays on pagination': notice,
+        'moves away': elsewhere,
+        'moves away and then blurs': document.body,
+      };
+      expect(expectedFocus[focus]).toHaveFocus();
+      const pagination = await versionPagination();
+      expect(pagination.getElement()).toBeVisible();
+      expect(pagination.isDisabled()).toBe(true);
+      expect(pagination.findPreviousPageButton().isDisabled()).toBe(true);
+      expect(pagination.findNextPageButton().isDisabled()).toBe(true);
+      const retry = required(history.findAlert()?.findActionSlot(), 'unavailable Retry');
+      const retryButton = required(createWrapper(retry.getElement()).findButton(), 'Retry');
+      expect(retryButton.getElement()).toBeVisible();
+      expect(retryButton.isDisabled()).toBe(true);
+      fireEvent.click(pagination.findPreviousPageButton().getElement());
+      fireEvent.click(retryButton.getElement());
+      expect(calls.mock.calls.filter(([operation]) => operation === LIST)).toHaveLength(2);
+    },
+  );
 
   it('shows the empty history message after an empty response', async () => {
     openSecret({ handler: (operation) => (operation === LIST ? { body: {} } : undefined) });
