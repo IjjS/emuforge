@@ -124,35 +124,39 @@ function KeyVisit({ connection, keyId }: Pick<ScreenPageProps, 'connection'> & {
           </Box>
         </Container>
       ) : (
-        <SpaceBetween size="l">
-          {read.key === undefined ? (
-            <Container>
-              <StatusIndicator type="loading">Loading key…</StatusIndicator>
-            </Container>
-          ) : (
-            <KeyDetails connection={connection} metadata={read.key as ReadKey} />
-          )}
-          <Tabs
-            ariaLabel="Key settings"
-            tabs={[
-              {
-                id: 'labels',
-                label: 'Aliases and tags',
-                content: <Labels connection={connection} keyId={keyId} />,
-              },
-              {
-                id: 'access',
-                label: 'Key policy and grants',
-                content: <Access connection={connection} keyId={keyId} />,
-              },
-              {
-                id: 'rotation',
-                label: 'Key rotation',
-                content: <Rotation connection={connection} keyId={keyId} keySpec={read.key?.KeySpec} />,
-              },
-            ]}
-          />
-        </SpaceBetween>
+        <Tabs
+          ariaLabel="Key settings"
+          tabs={[
+            {
+              id: 'details',
+              label: 'Details',
+              contentRenderStrategy: 'lazy',
+              content:
+                read.key === undefined ? (
+                  <Container>
+                    <StatusIndicator type="loading">Loading key…</StatusIndicator>
+                  </Container>
+                ) : (
+                  <KeyDetails connection={connection} metadata={read.key as ReadKey} />
+                ),
+            },
+            {
+              id: 'labels',
+              label: 'Labels',
+              content: <Labels connection={connection} keyId={keyId} />,
+            },
+            {
+              id: 'access',
+              label: 'Access',
+              content: <Access connection={connection} keyId={keyId} />,
+            },
+            {
+              id: 'rotation',
+              label: 'Rotation',
+              content: <Rotation connection={connection} keyId={keyId} keySpec={read.key?.KeySpec} />,
+            },
+          ]}
+        />
       )}
     </ContentLayout>
   );
