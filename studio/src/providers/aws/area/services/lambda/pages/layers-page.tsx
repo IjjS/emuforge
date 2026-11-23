@@ -12,6 +12,7 @@ import { useLayoutEffect, useRef, useState } from 'react';
 
 import {
   bindAwsMutationAuthorization,
+  refusalMessage,
   reportedNotImplementedMessage,
   reportedServiceCode,
   requestFailure,
@@ -77,7 +78,7 @@ function failureItem(failure: RequestFailure, header: string, connection: AreaCo
       ),
     };
   }
-  const message = 'message' in failure ? failure.message : undefined;
+  const message = refusalMessage(failure);
   return {
     type: 'error',
     header,
