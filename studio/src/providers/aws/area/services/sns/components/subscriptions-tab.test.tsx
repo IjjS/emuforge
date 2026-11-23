@@ -588,6 +588,20 @@ describe('the selected subscription settings', () => {
   const policy = '{"color":["red"]}';
   const replacement = '{"color":["blue"]}';
 
+  function editor() {
+    return PAGE.findAllContainers().find(
+      (container) =>
+        container.findHeader()?.findHeader()?.findHeadingText().getElement().textContent === 'Subscription settings',
+    );
+  }
+
+  function expectSettingsFlash() {
+    const item = PAGE.findFlashbar()?.findItemsByType('success')[0];
+    expect(item?.getElement()).toBeVisible();
+    expect(item?.findHeader()?.getElement()).toHaveTextContent('Subscription settings updated');
+    expect(item?.findContent()?.getElement()).toHaveTextContent(first.arn);
+  }
+
   function openSettings(row: api.Subscription) {
     select(`${row.protocol} ${row.endpoint}`);
     fireEvent.click(action('Subscription settings'));
@@ -608,7 +622,7 @@ describe('the selected subscription settings', () => {
     expect(disabledReason(button)).toBe('A pending subscription has no ARN.');
     expect(api.getSubscriptionSettings).not.toHaveBeenCalled();
     openSettings(first);
-    expect(await screen.findByRole('heading', { name: 'Subscription settings' })).toBeVisible();
+    expect(editor()?.getElement()).toBeVisible();
     expect(
       screen.getByText((_, element) => element?.textContent === first.arn, { selector: '.aws-area-value-address' }),
     ).toBeVisible();
@@ -630,9 +644,12 @@ describe('the selected subscription settings', () => {
     open();
     await screen.findByRole('radio', { name: `sqs ${first.endpoint}` });
     openSettings(first);
-    await screen.findByText('Loading subscription settings');
+    await waitFor(() => {
+      const loading = editor()?.findContent().findStatusIndicator()?.getElement();
+      expect(loading).toHaveTextContent('Loading subscription settings');
+    });
     select(`sqs ${second.endpoint}`);
-    expect(screen.queryByRole('heading', { name: 'Subscription settings' })).not.toBeInTheDocument();
+    expect(editor()).toBeUndefined();
     fireEvent.click(action('Subscription settings'));
     readSecond.resolve({ FilterPolicy: replacement });
     expect(await screen.findByDisplayValue(replacement)).toBeVisible();
@@ -662,24 +679,30 @@ describe('the selected subscription settings', () => {
       open();
       await screen.findByRole('radio', { name: `sqs ${first.endpoint}` });
       openSettings(first);
-      const editor = await screen.findByDisplayValue(policy);
-      fireEvent.change(editor, { target: { value: replacement } });
+      const policyInput = await screen.findByDisplayValue(policy);
+      fireEvent.change(policyInput, { target: { value: replacement } });
       fireEvent.click(screen.getByRole('button', { name: 'Save filter policy' }));
-      expect(await screen.findByText('Subscription settings updated')).toBeVisible();
+      await waitFor(expectSettingsFlash);
       await waitFor(() => {
         expect(api.getSubscriptionSettings).toHaveBeenCalledTimes(2);
         expect(api.listSubscriptions).toHaveBeenCalledTimes(2);
       });
-      expect(screen.getByRole('heading', { name: 'Subscription settings' })).toBeVisible();
+      expect(editor()?.getElement()).toBeVisible();
       if (order === 'detail first') {
         refreshedDetails.resolve({ FilterPolicy: replacement, RawMessageDelivery: 'true' });
-        expect(await screen.findByText('On', { exact: true })).toBeVisible();
+        await waitFor(() => {
+          const rawDelivery = editor()
+            ?.findContent()
+            .findAllFormFields()
+            .find((field) => field.findLabel()?.getElement().textContent === 'Raw message delivery');
+          expect(rawDelivery?.findControl()?.findSelect()?.findTrigger().getElement()).toHaveTextContent('On');
+        });
         expect(screen.getByDisplayValue(replacement)).toBeVisible();
         refreshedList.resolve({ subscriptions: [first] });
         await waitFor(() => {
           expect(isDisabled(action('Subscription settings'))).toBe(false);
         });
-        expect(screen.getByRole('heading', { name: 'Subscription settings' })).toBeVisible();
+        expect(editor()?.getElement()).toBeVisible();
         expect(
           screen.getAllByText((_, element) => element?.textContent === first.arn, {
             selector: '.aws-area-value-address',
@@ -688,15 +711,12 @@ describe('the selected subscription settings', () => {
       } else {
         refreshedList.resolve({ subscriptions: [] });
         await waitFor(() => {
-          expect(screen.queryByRole('heading', { name: 'Subscription settings' })).not.toBeInTheDocument();
+          expect(editor()).toBeUndefined();
         });
         await act(async () => {
           refreshedDetails.resolve({ FilterPolicy: replacement });
         });
-        expect(screen.getByText('Subscription settings updated')).toBeVisible();
-        expect(
-          screen.getByText((_, element) => element?.textContent === first.arn, { selector: '.aws-area-value-address' }),
-        ).toBeVisible();
+        expectSettingsFlash();
       }
     },
   );
