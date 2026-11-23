@@ -6,13 +6,19 @@ import SpaceBetween from '@cloudscape-design/components/space-between';
 import Table from '@cloudscape-design/components/table';
 import { useState } from 'react';
 
-import { ConfirmDialog } from '../../../../components/confirm-dialog';
 import type { AreaConnection } from '../../../../components/emulator-line';
 import { useTokenListing } from '../../../../components/use-token-listing';
 import { ValueText } from '../../../../components/value-text';
 import { LABEL_OPERATIONS, listKeyTags, tagKey, untagKey, type KeyTag } from '../../labels-api';
 import { LabelActionError } from './label-action-error';
-import { LabelDialog, LabelListEmpty, LabelPagination, UnavailableActions } from './label-controls';
+import {
+  ConfirmLabelRemoval,
+  LabelDialog,
+  LabelListEmpty,
+  LabelPagination,
+  LabelRowActions,
+  UnavailableActions,
+} from './label-controls';
 import { useLabelAction } from './use-label-action';
 
 type TagEdit = { kind: 'add' } | { kind: 'edit' | 'remove'; tag: KeyTag };
@@ -77,10 +83,12 @@ export function Tags({ connection, keyId }: { connection: AreaConnection; keyId:
           {
             id: 'actions',
             header: 'Actions',
+            minWidth: 180,
             cell: (tag) => (
-              <SpaceBetween direction="horizontal" size="xs">
+              <LabelRowActions>
                 <Button
                   ariaLabel={`Edit tag ${tag.name}`}
+                  wrapText={false}
                   disabled={action.disabled(LABEL_OPERATIONS.tag)}
                   onClick={() => handleOpen({ kind: 'edit', tag })}
                 >
@@ -88,12 +96,13 @@ export function Tags({ connection, keyId }: { connection: AreaConnection; keyId:
                 </Button>
                 <Button
                   ariaLabel={`Remove tag ${tag.name}`}
+                  wrapText={false}
                   disabled={action.disabled(LABEL_OPERATIONS.untag)}
                   onClick={() => handleOpen({ kind: 'remove', tag })}
                 >
                   Remove
                 </Button>
-              </SpaceBetween>
+              </LabelRowActions>
             ),
           },
         ]}
@@ -129,16 +138,14 @@ export function Tags({ connection, keyId }: { connection: AreaConnection; keyId:
         </LabelDialog>
       )}
       {edit?.kind === 'remove' && (
-        <ConfirmDialog
-          visible
-          header="Remove tag"
+        <ConfirmLabelRemoval
+          title="Remove tag"
           body={
             <>
               Remove <ValueText kind="name" value={edit.tag.name} /> from this key.
             </>
           }
           word="remove"
-          action="Remove tag"
           pending={action.pending}
           onDismiss={handleClose}
           onConfirm={() => {

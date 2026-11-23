@@ -9,7 +9,6 @@ import Table from '@cloudscape-design/components/table';
 import { useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
-import { ConfirmDialog } from '../../../../components/confirm-dialog';
 import type { AreaConnection } from '../../../../components/emulator-line';
 import { useTokenListing } from '../../../../components/use-token-listing';
 import { ValueText } from '../../../../components/value-text';
@@ -17,7 +16,14 @@ import { KMS_OPERATIONS, listKeyAliases } from '../../api';
 import { createAlias, deleteAlias, LABEL_OPERATIONS, updateAlias } from '../../labels-api';
 import { KMS_KEYS, useCustomerKeys } from '../../queries';
 import { LabelActionError } from './label-action-error';
-import { LabelDialog, LabelListEmpty, LabelPagination, UnavailableActions } from './label-controls';
+import {
+  ConfirmLabelRemoval,
+  LabelDialog,
+  LabelListEmpty,
+  LabelPagination,
+  LabelRowActions,
+  UnavailableActions,
+} from './label-controls';
 import { useLabelAction } from './use-label-action';
 
 type AliasEdit = { kind: 'create' } | { kind: 'reassign' | 'delete'; alias: string };
@@ -59,8 +65,8 @@ export function Aliases({ connection, keyId }: { connection: AreaConnection; key
   };
   const handleClose = () => setEdit(undefined);
   const aliasName = name.startsWith('alias/') ? name : `alias/${name}`;
-  const targetOptions = (targets.items ?? []).flatMap(({ id, description }) =>
-    id === keyId ? [] : [{ label: id, value: id, ...(description ? { description } : {}) }],
+  const targetOptions = (targets.items ?? []).flatMap(({ id, description, aliases }) =>
+    id === keyId ? [] : [{ label: id, value: id, description, tags: aliases }],
   );
 
   return (
@@ -100,10 +106,12 @@ export function Aliases({ connection, keyId }: { connection: AreaConnection; key
           {
             id: 'actions',
             header: 'Actions',
+            minWidth: 180,
             cell: (alias) => (
-              <SpaceBetween direction="horizontal" size="xs">
+              <LabelRowActions>
                 <Button
                   ariaLabel={`Reassign alias ${alias}`}
+                  wrapText={false}
                   disabled={action.disabled(LABEL_OPERATIONS.updateAlias)}
                   onClick={() => handleOpen({ kind: 'reassign', alias })}
                 >
@@ -111,12 +119,13 @@ export function Aliases({ connection, keyId }: { connection: AreaConnection; key
                 </Button>
                 <Button
                   ariaLabel={`Delete alias ${alias}`}
+                  wrapText={false}
                   disabled={action.disabled(LABEL_OPERATIONS.deleteAlias)}
                   onClick={() => handleOpen({ kind: 'delete', alias })}
                 >
                   Delete
                 </Button>
-              </SpaceBetween>
+              </LabelRowActions>
             ),
           },
         ]}
@@ -138,7 +147,11 @@ export function Aliases({ connection, keyId }: { connection: AreaConnection; key
           }}
         >
           <LabelActionError failure={action.failure} />
-          <FormField label="Alias name" description="Studio adds the alias/ prefix if you omit it.">
+          <FormField
+            label="Alias name"
+            description="Studio adds the alias/ prefix if you omit it."
+            constraintText="Use letters, numbers, slashes (/), underscores (_), hyphens (-), or colons (:). The prefix alias/aws/ is reserved."
+          >
             <Input value={name} disabled={action.pending} onChange={({ detail }) => setName(detail.value)} />
           </FormField>
         </LabelDialog>
@@ -164,7 +177,7 @@ export function Aliases({ connection, keyId }: { connection: AreaConnection; key
           <Box>
             Move <ValueText kind="address" value={edit.alias} /> to another customer managed key.
           </Box>
-          <FormField label="Target key" description="Choose the key ID that should receive this alias.">
+          <FormField label="Target key" description="Choose the key that should receive this alias.">
             <Select
               options={targetOptions}
               selectedOption={targetId === undefined ? null : { label: targetId, value: targetId }}
@@ -183,16 +196,14 @@ export function Aliases({ connection, keyId }: { connection: AreaConnection; key
         </LabelDialog>
       )}
       {edit?.kind === 'delete' && (
-        <ConfirmDialog
-          visible
-          header="Delete alias"
+        <ConfirmLabelRemoval
+          title="Delete alias"
           body={
             <>
               Delete <ValueText kind="address" value={edit.alias} /> from this key.
             </>
           }
           word="delete"
-          action="Delete alias"
           pending={action.pending}
           onDismiss={handleClose}
           onConfirm={() => {
