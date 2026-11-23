@@ -32,19 +32,33 @@ function useReadScope(connection: AreaConnection, operation: string) {
       break;
   }
   const disconnected = failure !== undefined;
-  const [scope, setScope] = useState({ disconnected, generation: 0 });
-  if (disconnected !== scope.disconnected) {
+  const checkedAt = result?.checkedAt;
+  const [scope, setScope] = useState<{ disconnected: boolean; generation: number; retriedAt?: number }>({
+    disconnected,
+    generation: 0,
+  });
+  if (disconnected !== scope.disconnected || (scope.retriedAt !== undefined && scope.retriedAt !== checkedAt)) {
     setScope({ disconnected, generation: scope.generation + 1 });
   }
-  return { connectionFailure: failure, generation: scope.generation };
+  return {
+    connectionFailure: scope.retriedAt === undefined ? failure : undefined,
+    generation: scope.generation,
+    retryBeforeHealthPoll: () => {
+      // The explicit read supplies its own outcome while the last health result is stale.
+      if (disconnected && checkedAt !== undefined) {
+        setScope({ ...scope, retriedAt: checkedAt });
+      }
+    },
+  };
 }
 
 export function useSecretListing(connection: AreaConnection, includePlannedDeletion: boolean) {
-  const { connectionFailure, generation } = useReadScope(connection, LIST_SECRETS);
+  const { connectionFailure, generation, retryBeforeHealthPoll } = useReadScope(connection, LIST_SECRETS);
+  const [unsupported, setUnsupported] = useState<RequestFailure>();
   const listing = useTokenListing<SecretListEntry>({
     key: [...SERVICE_KEY, LIST_SECRETS, includePlannedDeletion, PAGE_SIZE, generation],
     endpoint: connection.engineOrigin,
-    enabled: connectionFailure === undefined,
+    enabled: connectionFailure === undefined && unsupported === undefined,
     operation: LIST_SECRETS,
     read: async (endpoint, token, signal) => {
       const { SecretList, NextToken } = await listSecrets(
@@ -56,26 +70,45 @@ export function useSecretListing(connection: AreaConnection, includePlannedDelet
       return { items: SecretList ?? [], ...(NextToken ? { next: NextToken } : {}) };
     },
   });
-  return { ...listing, connectionFailure };
+  if (unsupported === undefined && listing.failure?.kind === 'not-implemented') setUnsupported(listing.failure);
+  return {
+    ...listing,
+    failure: unsupported ?? connectionFailure ?? listing.failure,
+    refresh: () => {
+      if (unsupported !== undefined) return;
+      if (connectionFailure !== undefined) retryBeforeHealthPoll();
+      listing.refresh();
+    },
+  };
 }
 
 export function useSecretDetail(connection: AreaConnection, name: string) {
-  const { connectionFailure, generation } = useReadScope(connection, DESCRIBE_SECRET);
+  const { connectionFailure, generation, retryBeforeHealthPoll } = useReadScope(connection, DESCRIBE_SECRET);
+  const [unsupported, setUnsupported] = useState<RequestFailure>();
   const endpoint = connection.engineOrigin;
   const query = useQuery({
     queryKey: [...SERVICE_KEY, DESCRIBE_SECRET, endpoint, name, generation],
     queryFn: ({ signal }) => describeSecret(endpoint ?? noEndpoint(), name, signal),
-    enabled: endpoint !== undefined && name !== '' && connectionFailure === undefined,
+    enabled: endpoint !== undefined && name !== '' && connectionFailure === undefined && unsupported === undefined,
     retry: false,
     gcTime: 0,
     refetchOnMount: 'always',
   });
+  const failure = query.isError ? failureOf(query.error, DESCRIBE_SECRET) : undefined;
+  if (unsupported === undefined && failure?.kind === 'not-implemented') setUnsupported(failure);
   return {
     details: query.isError ? undefined : query.data,
-    failure: query.isError ? failureOf(query.error, DESCRIBE_SECRET) : undefined,
+    failure: unsupported ?? connectionFailure ?? failure,
     connectionFailure,
     loading: query.isFetching || (endpoint === undefined && connectionFailure === undefined),
-    refresh: () => void query.refetch(),
+    refresh: () => {
+      if (unsupported !== undefined) return;
+      if (connectionFailure !== undefined) {
+        retryBeforeHealthPoll();
+      } else {
+        void query.refetch();
+      }
+    },
   };
 }
 

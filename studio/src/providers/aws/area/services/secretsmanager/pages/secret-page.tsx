@@ -248,8 +248,7 @@ function SecretDetails({ connection, name }: { connection: AreaConnection; name:
   const [policyOpen, setPolicyOpen] = useState(false);
   const [selectedVersion, setSelectedVersion] = useState<string>();
   const [valueUnavailable, setValueUnavailable] = useState(false);
-  const { details, failure, connectionFailure, loading, refresh } = useSecretDetail(connection, name);
-  const readFailure = connectionFailure ?? failure;
+  const { details, failure: readFailure, connectionFailure, loading, refresh } = useSecretDetail(connection, name);
   const unavailable = readFailure?.kind === 'not-implemented';
   const missing = name === '' || (readFailure?.kind === 'other' && readFailure.code === 'ResourceNotFoundException');
   const state = readFailure === undefined ? undefined : readFailureState(readFailure, connection, 'secret details');
@@ -299,12 +298,7 @@ function SecretDetails({ connection, name }: { connection: AreaConnection; name:
         actions={
           !missing && (
             <SpaceBetween direction="horizontal" size="xs">
-              <Button
-                iconName="refresh"
-                ariaLabel="Refresh"
-                disabled={unavailable || loading || connectionFailure !== undefined}
-                onClick={refresh}
-              />
+              <Button iconName="refresh" ariaLabel="Refresh" disabled={unavailable || loading} onClick={refresh} />
               {details !== undefined &&
                 readFailure === undefined &&
                 (scheduled
