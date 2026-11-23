@@ -1,4 +1,5 @@
 import type { DescribeSecretCommandOutput } from '@aws-sdk/client-secrets-manager';
+import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider, useIsFetching } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
@@ -12,8 +13,9 @@ import { SECRETS_PATH, secretPath } from '../../paths';
 import { useSecretDetail, useSecretListing } from '../../queries';
 
 const NAME = 'dev/key';
-const VERSION_ACTION = /^(Edit secret value|Store new version)$/;
 const NEW_VERSION_LABEL = 'Store new version';
+const PAGE = createWrapper(document.body);
+type Dialog = NonNullable<ReturnType<typeof PAGE.findModal>>;
 const ORIGINAL_KEY = 'arn:aws:kms:us-east-1:000000000000:key/original';
 const NEW_KEY = 'arn:aws:kms:us-east-1:000000000000:key/replacement';
 const DELETION_DATE = 1_800_000_000;
@@ -154,19 +156,92 @@ function openLifecycle({
   };
 }
 
-function enter(label: string, value: string, root: Pick<typeof screen, 'getByLabelText'> = screen) {
-  fireEvent.change(root.getByLabelText(label), { target: { value } });
+function area() {
+  return PAGE.findAppLayout()?.findContentRegion();
 }
 
-function chooseBinary(root: HTMLElement) {
-  fireEvent.click(screen.getByRole('radio', { name: 'Binary file' }));
-  const upload = root.querySelector('input[type="file"]');
-  if (upload === null) throw new Error('Missing file input');
-  fireEvent.change(upload, { target: { files: [new File([new Uint8Array(BYTES)], 'secret.bin')] } });
+function field(dialog: Dialog, label: string) {
+  const found = dialog
+    .findContent()
+    .findAllFormFields()
+    .find((item) => item.findLabel()?.getElement().textContent === label);
+  if (!found) throw new Error(`Missing dialog field ${label}`);
+  return found;
 }
 
-async function click(name: string | RegExp) {
-  fireEvent.click(await screen.findByRole('button', { name }));
+function input(dialog: Dialog, label: string) {
+  const found = field(dialog, label);
+  const control = found.findInput()?.findNativeInput() ?? found.findTextarea()?.findNativeTextarea();
+  if (!control) throw new Error(`Missing dialog input ${label}`);
+  return control.getElement();
+}
+
+function enter(dialog: Dialog, label: string, value: string) {
+  fireEvent.change(input(dialog, label), { target: { value } });
+}
+
+function chooseBinary(dialog: Dialog) {
+  const choice = field(dialog, 'Value type').findRadioGroup()?.findInputByValue('binary');
+  if (!choice) throw new Error('Missing binary option');
+  fireEvent.click(choice.getElement());
+  const upload = field(dialog, 'Secret file').findFileUpload()?.findNativeInput();
+  if (!upload) throw new Error('Missing secret file selector');
+  fireEvent.change(upload.getElement(), { target: { files: [new File([new Uint8Array(BYTES)], 'secret.bin')] } });
+}
+
+function namedButton(root: ReturnType<typeof area>, name: string) {
+  return root
+    ?.findAllButtons()
+    .find((item) => {
+      const element = item.getElement();
+      return (element.getAttribute('aria-label') ?? item.findTextRegion()?.getElement().textContent) === name;
+    })
+    ?.getElement();
+}
+
+function pageButton(name: string) {
+  return namedButton(area(), name);
+}
+
+async function click(name: string) {
+  const control = await waitFor(() => {
+    const found = pageButton(name);
+    if (!found) throw new Error(`Missing button ${name}`);
+    return found;
+  });
+  fireEvent.click(control);
+}
+
+function metadataValue(label: string) {
+  return area()
+    ?.findKeyValuePairs()
+    ?.findItems()
+    .flatMap((group) => group.findGroupPairs() ?? [])
+    .find((pair) => pair.findLabel()?.getElement().textContent === label)
+    ?.findValue()
+    ?.getElement();
+}
+
+function table(title: string) {
+  return area()
+    ?.findAllTables()
+    .find((item) => item.findHeaderSlot()?.findHeader()?.findHeadingText().getElement().textContent === title);
+}
+
+function tagValue(key: string) {
+  const tags = table('Tags');
+  if (!tags) return undefined;
+  const index = tags.findRows().findIndex((_, at) => tags.findBodyCell(at + 1, 1)?.getElement().textContent === key);
+  return index < 0 ? undefined : tags.findBodyCell(index + 1, 2)?.getElement();
+}
+
+function dialogAlert(dialog: Dialog, title: string) {
+  return dialog
+    .findContent()
+    .findAllAlerts()
+    .find((item) => item.findHeader()?.getElement().textContent === title)
+    ?.findContent()
+    .getElement();
 }
 
 function deferredReply() {
@@ -222,33 +297,54 @@ function delayedReads(operation: string, detailAnswer: Reply, listAnswer: Reply)
 }
 
 async function expectList(router: ReturnType<typeof openLifecycle>['router']) {
-  await screen.findByRole('heading', { name: 'Secrets', level: 1 });
+  await waitFor(() => {
+    expect(table('Secrets')?.findHeaderSlot()?.findHeader()?.findHeadingText().getElement()).toBeVisible();
+  });
   expect(router.state.location.pathname).toBe(SECRETS_PATH);
 }
 
-async function openDialog(button: string | RegExp, name = button) {
+async function openDialog(button: string, title = button) {
   await click(button);
-  return screen.findByRole('dialog', { name });
+  return waitFor(() => {
+    const dialog = PAGE.findModal();
+    if (!dialog?.isVisible()) throw new Error(`Missing dialog ${title}`);
+    expect(dialog.findHeader().getElement().textContent).toBe(title);
+    return dialog;
+  });
 }
 
-function submit(dialog: HTMLElement, name: string) {
-  fireEvent.click(within(dialog).getByRole('button', { name }));
+function dialogButton(dialog: Dialog, name: string) {
+  return namedButton(dialog.findFooter() ?? undefined, name);
+}
+
+function submit(dialog: Dialog, name: string) {
+  const control = dialogButton(dialog, name);
+  if (!control) throw new Error(`Missing dialog button ${name}`);
+  fireEvent.click(control);
+}
+
+function dialogContent(dialog: Dialog) {
+  return within(dialog.findContent().getElement());
+}
+
+async function expectDialogClosed() {
+  await waitFor(() => expect(PAGE.findModal()).toBeNull());
 }
 
 describe('Secret lifecycle', () => {
   it('does not retrieve the existing secret when opening the value editor', async () => {
     const { count } = openLifecycle();
-    const dialog = await openDialog(VERSION_ACTION, NEW_VERSION_LABEL);
-    expect(within(dialog).getByRole('textbox', { name: 'Secret value' })).toHaveValue('');
+    const dialog = await openDialog(NEW_VERSION_LABEL);
+    expect(input(dialog, 'Secret value')).toHaveValue('');
     expect(
-      within(dialog).getByText('The new version becomes current. Existing versions keep their original values.'),
+      dialogContent(dialog).getByText('The new version becomes current. Existing versions keep their original values.'),
     ).toBeVisible();
     expect(count('GetSecretValue')).toBe(0);
   });
 
   it('sends only the binary file bytes when replacing a value with a file', async () => {
     const { calls } = openLifecycle();
-    const dialog = await openDialog(VERSION_ACTION, NEW_VERSION_LABEL);
+    const dialog = await openDialog(NEW_VERSION_LABEL);
     chooseBinary(dialog);
     submit(dialog, NEW_VERSION_LABEL);
     await waitFor(() =>
@@ -258,12 +354,13 @@ describe('Secret lifecycle', () => {
         ClientRequestToken: expect.any(String),
       }),
     );
+    await waitFor(() => expect(successFlash('New secret version stored.')).toBeVisible());
   });
 
   it('sends only the entered string when replacing a value with text', async () => {
     const { calls } = openLifecycle();
-    const dialog = await openDialog(VERSION_ACTION, NEW_VERSION_LABEL);
-    enter('Secret value', STRING_VALUE, within(dialog));
+    const dialog = await openDialog(NEW_VERSION_LABEL);
+    enter(dialog, 'Secret value', STRING_VALUE);
     submit(dialog, NEW_VERSION_LABEL);
     await waitFor(() =>
       expect(calls).toHaveBeenCalledWith('PutSecretValue', {
@@ -272,40 +369,45 @@ describe('Secret lifecycle', () => {
         ClientRequestToken: expect.any(String),
       }),
     );
+    await waitFor(() => expect(successFlash('New secret version stored.')).toBeVisible());
   });
 
   it('sends only the selected recovery window when scheduling deletion', async () => {
     const { calls, router } = openLifecycle();
     const dialog = await openDialog('Schedule deletion');
-    enter('Recovery window (days)', '12', within(dialog));
+    enter(dialog, 'Recovery window (days)', '12');
     submit(dialog, 'Schedule deletion');
     await expectList(router);
     expect(calls).toHaveBeenCalledWith('DeleteSecret', { SecretId: NAME, RecoveryWindowInDays: 12 });
+    expect(successFlash(`Deletion scheduled for ${NAME}.`)).toBeVisible();
   });
 
   it('sends only the force deletion option when permanently deleting', async () => {
     const { calls, router } = openLifecycle();
     const dialog = await openDialog('Permanently delete', 'Permanently delete secret');
-    enter(`Type ${NAME} to confirm.`, NAME, within(dialog));
+    enter(dialog, `Type ${NAME} to confirm.`, NAME);
     submit(dialog, 'Permanently delete');
     await expectList(router);
     expect(calls).toHaveBeenCalledWith('DeleteSecret', { SecretId: NAME, ForceDeleteWithoutRecovery: true });
+    expect(successFlash(`Secret ${NAME} was permanently deleted.`)).toBeVisible();
   });
 
   it('names the resource and explains permanent local deletion', async () => {
     openLifecycle();
     const dialog = await openDialog('Permanently delete', 'Permanently delete secret');
-    expect(within(dialog).getByText(NAME)).toBeVisible();
+    expect(dialogContent(dialog).getByText(NAME)).toBeVisible();
     expect(
-      within(dialog).getByText('Permanently delete this secret from your local emulator? This cannot be undone.'),
+      dialogContent(dialog).getByText(
+        'Permanently delete this secret from your local emulator? This cannot be undone.',
+      ),
     ).toBeVisible();
   });
 
   it('requires the entire exact name for permanent deletion', async () => {
     const { count } = openLifecycle();
     const dialog = await openDialog('Permanently delete', 'Permanently delete secret');
-    enter(`Type ${NAME} to confirm.`, `${NAME} `, within(dialog));
-    expect(within(dialog).getByRole('button', { name: 'Permanently delete' })).toBeDisabled();
+    enter(dialog, `Type ${NAME} to confirm.`, `${NAME} `);
+    expect(dialogButton(dialog, 'Permanently delete')).toBeDisabled();
     submit(dialog, 'Permanently delete');
     expect(count('DeleteSecret')).toBe(0);
   });
@@ -313,10 +415,10 @@ describe('Secret lifecycle', () => {
   it('leaves the secret in place when permanent deletion is canceled', async () => {
     const { count } = openLifecycle();
     const dialog = await openDialog('Permanently delete', 'Permanently delete secret');
-    enter(`Type ${NAME} to confirm.`, NAME, within(dialog));
+    enter(dialog, `Type ${NAME} to confirm.`, NAME);
     submit(dialog, 'Cancel');
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-    expect(screen.getByText(ORIGINAL_DESCRIPTION)).toBeVisible();
+    await expectDialogClosed();
+    expect(metadataValue('Description')).toHaveTextContent(ORIGINAL_DESCRIPTION);
     expect(count('DeleteSecret')).toBe(0);
   });
 });
@@ -336,7 +438,9 @@ const CHANGES = [
     inputs: { Description: NEXT_DESCRIPTION },
     command: { Description: NEXT_DESCRIPTION },
     changes: { Description: NEXT_DESCRIPTION },
+    original: () => metadataValue('Description'),
     oldText: ORIGINAL_DESCRIPTION,
+    changed: () => metadataValue('Description'),
     newText: NEXT_DESCRIPTION,
     result: 'Description updated.',
   },
@@ -348,7 +452,9 @@ const CHANGES = [
     inputs: { 'KMS key ARN': NEW_KEY },
     command: { KmsKeyId: NEW_KEY },
     changes: { KmsKeyId: NEW_KEY },
+    original: () => metadataValue('Encryption key'),
     oldText: ORIGINAL_KEY,
+    changed: () => metadataValue('Encryption key'),
     newText: NEW_KEY,
     result: 'Encryption key updated.',
   },
@@ -360,8 +466,10 @@ const CHANGES = [
     inputs: { 'Tag key': ADDED_TAG.Key, 'Tag value': ADDED_TAG.Value },
     command: { Tags: [ADDED_TAG] },
     changes: { Tags: [ORIGINAL_TAG, ADDED_TAG] },
+    original: () => tagValue(ORIGINAL_TAG.Key),
     oldText: ORIGINAL_TAG.Value,
-    newText: ADDED_TAG.Key,
+    changed: () => tagValue(ADDED_TAG.Key),
+    newText: ADDED_TAG.Value,
     result: 'Tag added.',
   },
   {
@@ -373,7 +481,9 @@ const CHANGES = [
     inputs: { 'Tag value': NEXT_TAG_VALUE },
     command: { Tags: [{ Key: ORIGINAL_TAG.Key, Value: NEXT_TAG_VALUE }] },
     changes: { Tags: [{ Key: ORIGINAL_TAG.Key, Value: NEXT_TAG_VALUE }] },
+    original: () => tagValue(ORIGINAL_TAG.Key),
     oldText: ORIGINAL_TAG.Value,
+    changed: () => tagValue(ORIGINAL_TAG.Key),
     newText: NEXT_TAG_VALUE,
     result: 'Tag updated.',
   },
@@ -385,20 +495,24 @@ const CHANGES = [
     submit: 'Remove tag',
     command: { TagKeys: [ORIGINAL_TAG.Key] },
     changes: { Tags: [] },
+    original: () => tagValue(ORIGINAL_TAG.Key),
     oldText: ORIGINAL_TAG.Value,
+    changed: () => table('Tags')?.findEmptySlot()?.getElement(),
     newText: 'No tags',
     result: 'Tag removed.',
   },
   {
     scenario: 'value editing',
     operation: 'PutSecretValue',
-    button: VERSION_ACTION,
+    button: NEW_VERSION_LABEL,
     title: NEW_VERSION_LABEL,
     submit: NEW_VERSION_LABEL,
     inputs: { 'Secret value': STRING_VALUE },
     command: { SecretString: STRING_VALUE },
     changes: { VersionIdsToStages: { [NEXT_VERSION]: ['AWSCURRENT'], [ORIGINAL_VERSION]: ['AWSPREVIOUS'] } },
+    original: () => metadataValue('Current version ID'),
     oldText: ORIGINAL_VERSION,
+    changed: () => metadataValue('Current version ID'),
     newText: NEXT_VERSION,
     result: 'New secret version stored.',
   },
@@ -410,7 +524,9 @@ const CHANGES = [
     command: {},
     initial: { DeletedDate: DELETION_DATE },
     changes: {},
+    original: () => metadataValue('Scheduled deletion'),
     oldText: SCHEDULED_DATE,
+    changed: undefined,
     newText: undefined,
     result: 'Secret restored.',
   },
@@ -423,7 +539,9 @@ const DELETION = {
   submit: 'Schedule deletion',
   command: { RecoveryWindowInDays: 7 },
   changes: { DeletedDate: DELETION_DATE },
+  original: () => metadataValue('Description'),
   oldText: ORIGINAL_DESCRIPTION,
+  changed: undefined,
   newText: undefined,
   result: `Deletion scheduled for ${NAME}.`,
 };
@@ -440,7 +558,7 @@ const PERMANENT = {
 };
 
 interface EditFlow {
-  button: string | RegExp;
+  button: string;
   title?: string;
   submit: string;
   inputs?: Record<string, string>;
@@ -448,7 +566,7 @@ interface EditFlow {
 
 async function submitEdit({ button, title, inputs, submit: label }: EditFlow) {
   const dialog = await openDialog(button, title);
-  for (const [field, value] of Object.entries(inputs ?? {})) enter(field, value, within(dialog));
+  for (const [label, value] of Object.entries(inputs ?? {})) enter(dialog, label, value);
   submit(dialog, label);
   return dialog;
 }
@@ -461,9 +579,13 @@ function commandInput(operation: string, input: object) {
   };
 }
 
-function exactVisibleText(text: string) {
-  return (_content: string, element: Element | null) =>
-    element?.textContent === text && !Array.from(element.children).some((child) => child.textContent === text);
+function successFlash(result: string) {
+  return area()
+    ?.findFlashbar()
+    ?.findItemsByType('success')
+    .find((item) => item.findContent()?.getElement().textContent === result)
+    ?.findContent()
+    ?.getElement();
 }
 
 describe.each([...CHANGES, DELETION])('$scenario', (flow) => {
@@ -474,26 +596,29 @@ describe.each([...CHANGES, DELETION])('$scenario', (flow) => {
       handler: (operation) => (operation === flow.operation ? denied() : undefined),
     });
     const dialog = await submitEdit(flow);
-    expect(await within(dialog).findByText(REFUSED, { exact: false })).toBeVisible();
+    await waitFor(() => expect(dialogAlert(dialog, 'Access denied')).toBeVisible());
+    expect(dialogAlert(dialog, 'Access denied')).toHaveTextContent(REFUSED);
     expect(calls).toHaveBeenCalledWith(flow.operation, commandInput(flow.operation, flow.command));
-    expect(screen.queryByText(flow.result)).not.toBeInTheDocument();
+    expect(successFlash(flow.result)).toBeUndefined();
     submit(dialog, 'Cancel');
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    await expectDialogClosed();
     const reads = count('DescribeSecret');
     await click('Refresh');
     await waitFor(() => {
       expect(count('DescribeSecret')).toBeGreaterThan(reads);
-      expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled();
+      expect(pageButton('Refresh')).toBeEnabled();
     });
-    expect(screen.getByText(exactVisibleText(flow.oldText))).toBeVisible();
-    if (flow.newText !== undefined) expect(screen.queryByText(exactVisibleText(flow.newText))).not.toBeInTheDocument();
-    if (flow === DELETION) expect(screen.queryByText('Scheduled deletion')).not.toBeInTheDocument();
+    expect(flow.original()).toBeVisible();
+    expect(flow.original()).toHaveTextContent(flow.oldText);
+    if (flow.scenario === 'tag addition' || flow.scenario === 'tag removal') {
+      expect(flow.changed?.()).toBeUndefined();
+    } else if (flow.newText !== undefined) {
+      expect(flow.changed?.()).toBeVisible();
+      expect(flow.changed?.()).not.toHaveTextContent(flow.newText);
+    }
+    if (flow === DELETION) expect(metadataValue('Scheduled deletion')).toBeUndefined();
   });
 });
-
-function assertFlash(result: string) {
-  expect(within(screen.getByRole('main')).getByText(result)).toBeVisible();
-}
 
 describe.each(CHANGES)('$scenario', (flow) => {
   it.each(ORDERS)('keeps the result and fresh detail when %s', async (order) => {
@@ -503,14 +628,21 @@ describe.each(CHANGES)('$scenario', (flow) => {
     const { calls } = openLifecycle({ initial, handler: reads.handler, observe: true });
     await waitFor(() => expect(screen.getByLabelText('List read')).toHaveAttribute('aria-busy', 'false'));
     await submitEdit(flow);
-    await screen.findByText(flow.result);
-    await reads.complete(order, () => assertFlash(flow.result));
+    await waitFor(() => expect(successFlash(flow.result)).toBeVisible());
+    await reads.complete(order, () => expect(successFlash(flow.result)).toBeVisible());
     expect(calls).toHaveBeenCalledWith(flow.operation, commandInput(flow.operation, flow.command));
-    if (flow.newText !== undefined) expect(await screen.findByText(exactVisibleText(flow.newText))).toBeVisible();
-    if (flow.scenario === 'restoring')
-      expect(await screen.findByRole('button', { name: 'Schedule deletion' })).toBeEnabled();
-    if (flow.scenario !== 'tag addition')
-      expect(screen.queryByText(exactVisibleText(flow.oldText))).not.toBeInTheDocument();
+    await waitFor(() => {
+      if (flow.newText !== undefined) {
+        expect(flow.changed?.()).toBeVisible();
+        expect(flow.changed?.()).toHaveTextContent(flow.newText);
+      }
+      if (flow.scenario === 'restoring') expect(pageButton('Schedule deletion')).toBeEnabled();
+      if (flow.scenario === 'tag removal' || flow.scenario === 'restoring') {
+        expect(flow.original()).toBeUndefined();
+      } else if (flow.scenario !== 'tag addition') {
+        expect(flow.original()).not.toHaveTextContent(flow.oldText);
+      }
+    });
     expect(screen.getByLabelText('List read')).toHaveTextContent(NAME);
   });
 });
@@ -523,9 +655,11 @@ describe.each([DELETION, PERMANENT])('$scenario', (flow) => {
     await waitFor(() => expect(screen.getByLabelText('List read')).toHaveTextContent(NAME));
     await submitEdit(flow);
     await expectList(router);
-    await reads.complete(order, () => assertFlash(flow.result));
-    expect(await screen.findByText('No secrets')).toBeVisible();
-    expect(screen.queryByRole('link', { name: NAME })).not.toBeInTheDocument();
+    await reads.complete(order, () => expect(successFlash(flow.result)).toBeVisible());
+    const secrets = table('Secrets');
+    expect(secrets?.findEmptySlot()?.getElement()).toBeVisible();
+    expect(secrets?.findEmptySlot()?.getElement()).toHaveTextContent('No secrets');
+    expect(secrets?.findRows()).toHaveLength(0);
     expect(calls).toHaveBeenCalledWith('DeleteSecret', commandInput(flow.operation, flow.command));
     expect(screen.getByLabelText('Detail read')).toHaveTextContent(
       flow === PERMANENT ? 'ResourceNotFoundException' : new Date(DELETION_DATE * 1000).toISOString(),
@@ -540,12 +674,12 @@ it('disables both DeleteSecret entry points after a 501 and keeps other operatio
   });
   const dialog = await openDialog('Schedule deletion');
   submit(dialog, 'Schedule deletion');
-  expect(await within(dialog).findByText('Not implemented by the emulator')).toBeVisible();
-  expect(within(dialog).getByText(/for DeleteSecret/)).toBeVisible();
-  expect(within(dialog).getByRole('button', { name: 'Schedule deletion' })).toBeDisabled();
+  await waitFor(() => expect(dialogAlert(dialog, 'Not implemented by the emulator')).toBeVisible());
+  expect(dialogAlert(dialog, 'Not implemented by the emulator')).toHaveTextContent(/for DeleteSecret/);
+  expect(dialogButton(dialog, 'Schedule deletion')).toBeDisabled();
   submit(dialog, 'Cancel');
-  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-  expect(screen.getByRole('button', { name: 'Schedule deletion' })).toBeDisabled();
-  expect(screen.getByRole('button', { name: 'Permanently delete' })).toBeDisabled();
-  expect(screen.getByRole('button', { name: VERSION_ACTION })).toBeEnabled();
+  await expectDialogClosed();
+  expect(pageButton('Schedule deletion')).toBeDisabled();
+  expect(pageButton('Permanently delete')).toBeDisabled();
+  expect(pageButton(NEW_VERSION_LABEL)).toBeEnabled();
 });
