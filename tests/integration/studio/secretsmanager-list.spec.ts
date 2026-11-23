@@ -90,6 +90,10 @@ test('studio.secretsmanager-restart-clears-secrets', async ({ ctx, page }) => {
   await expect(secretLink(page, f.name)).toBeVisible();
   const documentBeforeStop = await page.evaluateHandle(() => document);
   const originalUrl = page.url();
+  const departures: string[] = [];
+  page.on('framenavigated', (frame) => {
+    if (frame === page.mainFrame() && frame.url() !== originalUrl) departures.push(frame.url());
+  });
   await f.emulator!.stop();
   await expectLine(page, notStartedOn(f.emulatorPort));
   await f.emulator!.startAgain();
@@ -99,6 +103,7 @@ test('studio.secretsmanager-restart-clears-secrets', async ({ ctx, page }) => {
   await expect(secretLink(page, f.name)).toHaveCount(0);
   await expect(empty.getByText('Secrets stored in this emulator will appear here.', { exact: true })).toBeVisible();
   await expect(page).toHaveURL(originalUrl);
+  expect(departures).toEqual([]);
   expect(await page.evaluate((doc) => doc === document, documentBeforeStop)).toBe(true);
   await documentBeforeStop.dispose();
   expect((await direct(ctx, f.emulatorPort).listSecrets({})).SecretList).toEqual([]);
