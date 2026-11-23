@@ -26,9 +26,10 @@ test('studio.lambda-function-url-create', async ({ ctx, page, context }) => {
 test('studio.lambda-function-url-delete', async ({ ctx, page }) => {
   const { emulatorPort } = await startStack(ctx);
   const fn = await urlFixture(ctx, emulatorPort, 'url-delete');
-  const url = await fn.createOutside();
+  await fn.createOutside();
+  const config = await fn.readConfig();
   await openUrlConfiguration(page, fn.name);
-  await expectOverviewUrl(page, url);
+  await expectOverviewUrl(page, config.FunctionUrl);
   await confirmUrlDeletion(page, fn.name);
   await expectOverviewUrl(page, '-');
   await expect(createUrl(page)).toBeEnabled();

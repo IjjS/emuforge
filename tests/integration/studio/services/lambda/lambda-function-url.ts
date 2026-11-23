@@ -5,7 +5,7 @@ import { expect, type Ctx } from '../../support';
 import { checkPrefix } from '../../support/service-screens';
 import { getFunctionDirect, lambdaDirect, LambdaSeeded } from './lambda';
 import { functionPath } from './lambda-list';
-import { FUNCTION_URL, OVERVIEW, pairValue } from './lambda-page';
+import { FUNCTION_URL, OVERVIEW } from './lambda-page';
 import { submitDialog } from './lambda-releases';
 
 export async function urlFixture(ctx: Ctx, port: number, tag: string) {
@@ -41,17 +41,38 @@ export async function openUrlConfiguration(page: Page, name: string) {
   await page.goto(functionPath(name) + '?tab=configuration');
 }
 
-export const createUrl = (page: Page) => page.getByRole('button', { name: 'Create function URL' });
-export const deleteUrl = (page: Page) => page.getByRole('button', { name: 'Delete function URL' });
+const configuration = (page: Page) => page.getByRole('tabpanel', { name: 'Configuration', exact: true });
+export const createUrl = (page: Page) => configuration(page).getByRole('button', { name: 'Create function URL' });
+export const deleteUrl = (page: Page) => configuration(page).getByRole('button', { name: 'Delete function URL' });
 
 export async function expectOverviewUrl(page: Page, url: string) {
-  await expect.poll(() => pairValue(page, OVERVIEW, FUNCTION_URL)).toBe(url);
+  const wrapper = createWrapper();
+  const content = page.locator(wrapper.findContentLayout().findContent().toSelector());
+  const overview = content.locator(wrapper.findContainer().toSelector()).first();
+  await expect(overview.locator(wrapper.findHeader().findHeadingText().toSelector()).first()).toHaveText(OVERVIEW);
+  const field = wrapper.findKeyValuePairs().findItems().get(4);
+  await expect(overview.locator(field.findLabel().toSelector())).toHaveText(FUNCTION_URL);
+  await expect(overview.locator(field.findValue().toSelector())).toHaveText(url, { useInnerText: true });
 }
 
 export async function confirmUrlDeletion(page: Page, name: string) {
   await deleteUrl(page).click();
   const modal = createWrapper().findModal();
   await expect(page.locator(modal.findContent().toSelector())).toContainText(name);
-  await submitDialog(page, 'Delete');
+  const fn = encodeURIComponent(name);
+  const urlPath = '/2021-10-31/functions/' + fn + '/url';
+  const observeRead = async (path: string, status: number) => {
+    const request = await page.waitForRequest(
+      (request) => request.method() === 'GET' && new URL(request.url()).pathname === path,
+    );
+    const response = await request.response();
+    if (!response) throw Error('Missing detail response for ' + path);
+    expect(response.status()).toBe(status);
+    expect(await response.finished()).toBeNull();
+  };
+  const rereads = page.waitForResponse(
+    (response) => response.request().method() === 'DELETE' && new URL(response.url()).pathname === urlPath,
+  ).then(() => Promise.all([observeRead('/2015-03-31/functions/' + fn, 200), observeRead(urlPath, 404)]));
+  await Promise.all([rereads, submitDialog(page, 'Delete')]);
   await expect(page.locator(modal.toSelector())).toBeHidden();
 }
