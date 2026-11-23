@@ -250,6 +250,37 @@ function refreshSettings() {
   return refresh;
 }
 
+async function confirmClearWhilePending() {
+  const user = userEvent.setup();
+  const opener = writeButton('clear-policy').getElement();
+  opener.focus();
+  await user.keyboard('{Enter}');
+  const dialog = await clearModal();
+  const confirm = dialog.findFooter()?.findAllButtons()[1];
+  if (!confirm) {
+    throw new Error('Clear policy confirmation is missing');
+  }
+  const target = confirm.getElement();
+  expect(target).toHaveTextContent('Clear filter policy');
+  target.focus();
+  await user.keyboard('{Enter}');
+  expect(api.setSubscriptionSetting).toHaveBeenCalledTimes(1);
+  expect(target).toHaveFocus();
+  expect(target).not.toBeDisabled();
+  expect(target).toHaveAttribute('aria-disabled', 'true');
+  expect(confirm.findLoadingIndicator()?.getElement()).toBeVisible();
+  expect(dialog.findFooter()?.findAllButtons()[0]?.getElement()).toBeDisabled();
+  await user.keyboard('{Enter} {Escape}');
+  expect(dialog.getElement()).toBeVisible();
+  expect(target).toHaveFocus();
+  expect(api.setSubscriptionSetting).toHaveBeenCalledExactlyOnceWith(
+    ENGINE,
+    ARN,
+    { name: 'FilterPolicy', value: '' },
+    expect.any(AbortSignal),
+  );
+}
+
 describe('subscription settings', () => {
   it('shows loading, then missing values and an unavailable scope', async () => {
     const read = hold<api.SubscriptionSettingsAttributes>();
@@ -629,10 +660,38 @@ describe('subscription settings', () => {
     await waitFor(() => expect(api.getSubscriptionSettings).toHaveBeenCalledTimes(2));
   });
 
-  it('clears only after confirmation and uses the new scope on recreation while preserving the raw delivery draft', async () => {
+  it('keeps a clear confirmation focused and restores focus to its opener when the write is refused', async () => {
+    const write = hold<undefined>();
+    vi.mocked(api.setSubscriptionSetting).mockReturnValueOnce(
+      write.promise.then(() => {
+        throw notFound('SetSubscriptionAttributes');
+      }),
+    );
+    vi.mocked(api.getSubscriptionSettings).mockResolvedValue(SETTINGS);
+    await openSettings();
+    await waitFor(() => expectPolicy(POLICY));
+    await confirmClearWhilePending();
+
+    write.resolve(undefined);
+    await waitFor(() => {
+      expect(PAGE.findModal()).toBeNull();
+      expect(flash('error')?.findContent()?.getElement()).toHaveTextContent('NotFound: Subscription does not exist');
+      const opener = writeButton('clear-policy').getElement();
+      expect(opener).toHaveFocus();
+      expect(opener).toBeEnabled();
+    });
+    expect(api.setSubscriptionSetting).toHaveBeenCalledTimes(1);
+    expect(api.getSubscriptionSettings).toHaveBeenCalledTimes(1);
+    expectPolicy(POLICY);
+  });
+
+  it('keeps a clear confirmation focused, restores focus through readback, and uses the new scope on recreation', async () => {
+    const write = hold<undefined>();
+    const readback = hold<api.SubscriptionSettingsAttributes>();
+    vi.mocked(api.setSubscriptionSetting).mockReturnValueOnce(write.promise);
     vi.mocked(api.getSubscriptionSettings)
       .mockResolvedValueOnce({ ...SETTINGS, FilterPolicyScope: 'MessageAttributes' })
-      .mockResolvedValueOnce({ RawMessageDelivery: 'false' })
+      .mockReturnValueOnce(readback.promise)
       .mockResolvedValueOnce({ ...SETTINGS, FilterPolicy: REPLACEMENT, FilterPolicyScope: 'MessageAttributes' });
     await openSettings();
     await waitFor(() => expectPolicy(POLICY));
@@ -649,22 +708,26 @@ describe('subscription settings', () => {
     choose('filter-policy-scope', 'MessageBody');
     choose('raw-message-delivery', 'true');
     expectValue('filter-policy-scope', 'Message body');
-    writeButton('clear-policy').click();
-    const reopened = await clearModal();
-    const confirm = reopened.findFooter()?.findAllButtons()[1];
-    expect(confirm?.getElement()).toBeVisible();
-    expect(confirm?.getElement()).toHaveTextContent('Clear filter policy');
-    confirm?.click();
-    expect(api.setSubscriptionSetting).toHaveBeenCalledExactlyOnceWith(
-      ENGINE,
-      ARN,
-      { name: 'FilterPolicy', value: '' },
-      expect.any(AbortSignal),
-    );
+    await confirmClearWhilePending();
+    write.resolve(undefined);
+    await expectWriteSuccess();
+    const close = headerButton(1).getElement();
+    expect(close).toHaveTextContent('Close');
+    await waitFor(() => {
+      expect(PAGE.findModal()).toBeNull();
+      expect(close).toHaveFocus();
+      expect(close).toBeEnabled();
+      expectReadStatus('Loading subscription settings');
+    });
+    readback.resolve({ RawMessageDelivery: 'false' });
     await waitFor(() => {
       expect(policyDescription()).toHaveTextContent('No filter policy');
       expect(writeButton('save-raw-delivery').isDisabled()).toBe(false);
     });
+    expect(close).toHaveFocus();
+    expect(close).toBeEnabled();
+    expect(writeButton('clear-policy').isDisabled()).toBe(true);
+    expect(api.setSubscriptionSetting).toHaveBeenCalledTimes(1);
     expectValue('filter-policy-scope', 'Not set');
     expectValue('raw-message-delivery', 'On');
     changePolicy(REPLACEMENT);
