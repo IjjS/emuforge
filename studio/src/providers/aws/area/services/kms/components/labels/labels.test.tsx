@@ -9,6 +9,7 @@ import {
 } from '@aws-sdk/client-kms';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { useRef } from 'react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -153,8 +154,9 @@ describe('key labels', () => {
     await screen.findByText(aliasCell(alias));
     clickButton(`Reassign alias ${alias}`);
     const dialog = within(await screen.findByRole('dialog', { name: 'Reassign alias' }));
-    fireEvent.click(dialog.getByRole('button', { name: /Target key/ }));
-    fireEvent.click(await dialog.findByRole('option', { name: targetId }));
+    const user = userEvent.setup();
+    await user.click(dialog.getByRole('button', { name: /Target key/ }));
+    await user.click(await dialog.findByRole('option', { name: targetId }));
     fireEvent.click(dialog.getByRole('button', { name: 'Reassign alias' }));
 
     expect(await screen.findByText('No aliases')).toBeVisible();
