@@ -8,6 +8,7 @@ import {
   RevokeGrantCommand,
 } from '@aws-sdk/client-kms';
 import Flashbar, { type FlashbarProps } from '@cloudscape-design/components/flashbar';
+import createWrapper from '@cloudscape-design/components/test-utils/dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useRef, useState } from 'react';
@@ -230,11 +231,15 @@ describe('KMS key access', () => {
     });
     open();
     fireEvent.click(screen.getByRole('button', { name: 'Create grant' }));
-    const dialog = within(await screen.findByRole('dialog', { name: 'Create grant' }));
+    const modal = await screen.findByRole('dialog', { name: 'Create grant' });
+    const dialog = within(modal);
     const grantee = dialog.getByRole('textbox', { name: 'Grantee principal ARN' });
     fireEvent.change(grantee, { target: { value: GRANTEE } });
-    fireEvent.click(dialog.getByRole('button', { name: /Allowed operations|Choose operations/ }));
-    fireEvent.click(await dialog.findByRole('option', { name: 'Encrypt' }));
+    const operations = createWrapper(modal).findMultiselect();
+    if (operations === null) throw new Error('Expected the allowed operations field.');
+    operations.openDropdown();
+    await waitFor(() => expect(operations.findDropdown().findOptionByValue('Encrypt')).not.toBeNull());
+    operations.selectOptionByValue('Encrypt');
     fireEvent.click(dialog.getByRole('button', { name: 'Create grant' }));
 
     expect(await dialog.findByText(REFUSAL, { exact: false })).toBeVisible();
