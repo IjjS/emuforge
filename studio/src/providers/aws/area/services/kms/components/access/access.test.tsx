@@ -10,7 +10,7 @@ import {
 import Flashbar, { type FlashbarProps } from '@cloudscape-design/components/flashbar';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -42,14 +42,10 @@ function open() {
 
   function Page() {
     const [items, setItems] = useState<FlashbarProps.MessageDefinition[]>([]);
-    const [root] = useState(() => ({ current: null as HTMLDivElement | null }));
+    const rootRef = useRef<HTMLDivElement>(null);
     return (
-      <div
-        ref={(element) => {
-          root.current = element;
-        }}
-      >
-        <AreaRootContext.Provider value={root}>
+      <div ref={rootRef}>
+        <AreaRootContext.Provider value={rootRef}>
           <PageFlashContext.Provider value={{ show: (result) => setItems([...result]), handOver: vi.fn() }}>
             <Flashbar items={items} />
             <KeyDetails />
@@ -75,6 +71,14 @@ function fallback(command: unknown) {
   if (command instanceof ListGrantsCommand) return { Grants: [] };
   if (command instanceof DescribeKeyCommand) return { KeyMetadata: { KeyId: KEY_ID, Description: 'Key details' } };
   throw new Error('Unexpected command');
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
 }
 
 function refusal() {
@@ -138,7 +142,7 @@ describe('KMS key access', () => {
   });
 
   it('keeps the saved document and flash when the policy names finish after the document', async () => {
-    const names = Promise.withResolvers<{ PolicyNames: string[] }>();
+    const names = deferred<{ PolicyNames: string[] }>();
     let saved = false;
     send.mockImplementation(async (command: unknown) => {
       if (command instanceof PutKeyPolicyCommand) {
@@ -190,7 +194,7 @@ describe('KMS key access', () => {
   });
 
   it('keeps the revoke result when the refreshed grant list finishes before the key details', async () => {
-    const detail = Promise.withResolvers<{ KeyMetadata: { KeyId: string; Description: string } }>();
+    const detail = deferred<{ KeyMetadata: { KeyId: string; Description: string } }>();
     let revoked = false;
     send.mockImplementation(async (command: unknown) => {
       if (command instanceof RevokeGrantCommand) {

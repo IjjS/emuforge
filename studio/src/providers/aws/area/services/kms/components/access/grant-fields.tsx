@@ -40,11 +40,7 @@ export function GrantFields({
           filteringType="auto"
           filteringPlaceholder="Find an operation"
           selectedAriaLabel="Selected"
-          i18nStrings={{
-            tokenLabel: (option) => `Remove ${option.label ?? ''}`,
-            limitShowFewer: 'Show fewer operations',
-            limitShowMore: 'Show more operations',
-          }}
+          deselectAriaLabel={(option) => `Remove ${option.label ?? ''}`}
           onChange={({ detail }) => {
             const selected = new Set(detail.selectedOptions.map(({ value }) => value));
             onChange({ ...draft, operations: operations.filter((operation) => selected.has(operation)) });
