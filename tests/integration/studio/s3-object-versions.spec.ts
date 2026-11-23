@@ -37,11 +37,13 @@ test("studio.s3-edit-bucket-versioning", async ({ ctx, page }) => {
     await page.getByRole("button", { name: "Save changes" }).click();
     await expectBucketPage(page, f.bucket);
     await expect.poll(status, ACTION).toBe(mode);
-    await expectFlash(page, "success", "Bucket versioning updated.");
+    const successes = createWrapper().findFlashbar().findItemsByType("success");
+    await expect(
+      page
+        .locator(successes.toSelector())
+        .filter({ hasText: "Bucket versioning updated." }),
+    ).toBeVisible();
     if (mode === "Enabled") {
-      const successes = createWrapper()
-        .findFlashbar()
-        .findItemsByType("success");
       await page
         .locator(successes.get(1).findDismissButton().toSelector())
         .click();
@@ -192,10 +194,13 @@ test("studio.s3-remove-delete-marker", async ({ ctx, page }) => {
   await modal.submit.click();
   await expect(modal.dialog).toBeHidden();
   const after = await f.history();
-  expect(after.map((row) => row.versionId).sort()).toEqual(
-    [older, newer].sort(),
+  expect(after).toHaveLength(2);
+  expect(after).toEqual(
+    expect.arrayContaining([
+      { key: f.key, versionId: older, kind: "version", isLatest: false },
+      { key: f.key, versionId: newer, kind: "version", isLatest: true },
+    ]),
   );
-  expect(after.find((row) => row.isLatest)?.versionId).toBe(newer);
   await expectHistory(page, after);
   await expectFlash(page, "success", "Delete marker removed.");
   await expect(
@@ -218,8 +223,13 @@ test("studio.s3-version-download-refused", async ({ ctx, page }) => {
   if ("error" in removed) throw new Error(removed.error);
   expect(removed.status).toBe(204);
   await page.getByRole("button", { name: "Download", exact: true }).click();
-  await expectFlash(page, "error", "NoSuchVersion");
-  await expectFlash(page, "error", "The specified version does not exist.");
+  const refusal = page
+    .locator(
+      createWrapper().findFlashbar().findItemsByType("error").toSelector(),
+    )
+    .filter({ hasText: "NoSuchVersion" })
+    .filter({ hasText: "The specified version does not exist." });
+  await expect(refusal).toBeVisible();
   expect((await f.history()).find((row) => row.isLatest)?.versionId).toBe(
     newer,
   );
