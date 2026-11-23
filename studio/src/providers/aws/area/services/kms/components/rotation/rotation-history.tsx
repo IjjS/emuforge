@@ -43,7 +43,7 @@ export function RotationHistory({ connection, history, failure, onRetry }: Rotat
         {
           id: 'type',
           header: 'Rotation type',
-          cell: ({ RotationType }) => <ValueText kind="fixed" value={typeLabel(RotationType)} none="-" />,
+          cell: ({ RotationType }) => <ValueText kind="fixed" value={typeLabel(RotationType)} none="–" />,
         },
       ]}
       items={failure === undefined ? (history.items ?? []) : []}

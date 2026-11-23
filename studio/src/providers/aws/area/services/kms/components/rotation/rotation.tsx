@@ -1,3 +1,4 @@
+import type { KeyMetadata } from '@aws-sdk/client-kms';
 import Button from '@cloudscape-design/components/button';
 import Container from '@cloudscape-design/components/container';
 import Header from '@cloudscape-design/components/header';
@@ -8,7 +9,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 
 import type { AreaConnection } from '../../../../components/emulator-line';
-import { actionFailureItem, ReadFailure, readFailureState } from '../../../../components/failure-states';
+import { actionFailureItem, Code, ReadFailure, readFailureState } from '../../../../components/failure-states';
 import { creationDateText } from '../../../../components/format-date';
 import { usePageFlash } from '../../../../components/page-flash';
 import { failureOf, noEndpoint, usePageSignal, useTokenListing } from '../../../../components/use-token-listing';
@@ -32,11 +33,12 @@ const successMessage = {
 interface RotationProps {
   connection: AreaConnection;
   keyId: string;
+  keySpec?: KeyMetadata['KeySpec'];
 }
 
 let visits = 0;
 
-function RotationVisit({ connection, keyId }: RotationProps) {
+function RotationVisit({ connection, keyId, keySpec }: RotationProps) {
   const { engineOrigin } = connection;
   const flash = usePageFlash();
   const pageSignal = usePageSignal();
@@ -89,7 +91,18 @@ function RotationVisit({ connection, keyId }: RotationProps) {
       const operation = ROTATION_OPERATIONS[action];
       const failure = failureOf(error, operation);
       if (failure.kind === 'not-implemented') setUnavailable((current) => ({ ...current, [action]: true }));
-      flash.show([actionFailureItem(failure, operation, engineOrigin)]);
+      const item = actionFailureItem(failure, operation, engineOrigin);
+      if (failure.kind === 'other' && failure.code === 'UnsupportedOperationException' && keySpec !== undefined) {
+        item.content = (
+          <SpaceBetween size="xxs">
+            <div>{item.content}</div>
+            <div>
+              The emulator does not support this rotation operation on this <Code>{keySpec}</Code> key.
+            </div>
+          </SpaceBetween>
+        );
+      }
+      flash.show([item]);
     } finally {
       inFlight.current = false;
       if (!signal.aborted) setPending(undefined);
@@ -177,13 +190,14 @@ function RotationVisit({ connection, keyId }: RotationProps) {
   );
 }
 
-export function Rotation({ connection, keyId }: RotationProps) {
+export function Rotation({ connection, keyId, keySpec }: RotationProps) {
   const connected = connection.result === undefined || connection.result.kind === 'connected';
   return (
     <RotationVisit
       key={JSON.stringify([connection.engineOrigin, keyId, connected])}
       connection={connection}
       keyId={keyId}
+      keySpec={keySpec}
     />
   );
 }
