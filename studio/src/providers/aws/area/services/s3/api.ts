@@ -239,18 +239,31 @@ export interface StatusSetting {
 }
 
 /** "Bucket Versioning" (R5.3): "Disabled" when the answer has no `Status`. */
-export function getBucketVersioning(
+export async function getBucketVersioning(
   endpoint: string,
   bucket: string,
   signal: AbortSignal,
 ): Promise<StatusSetting | NoSuchBucket> {
-  return onBucket(
-    endpoint,
+  try {
+    return await readBucketVersioning(endpoint, bucket, signal);
+  } catch (error) {
+    if (answeredCode(error) === NO_SUCH_BUCKET_CODE) return NO_SUCH_BUCKET;
+    throw error;
+  }
+}
+
+/** The editor keeps the original refusal, including when the bucket has disappeared. */
+export async function readBucketVersioning(
+  endpoint: string,
+  bucket: string,
+  signal: AbortSignal,
+): Promise<StatusSetting> {
+  const output = await sendRequest(
     OPERATIONS.getBucketVersioning,
-    (client, abortSignal) => client.send(new GetBucketVersioningCommand({ Bucket: bucket }), { abortSignal }),
-    (output) => ({ status: text(output.Status) ?? 'Disabled' }),
+    (abortSignal) => s3Client(endpoint).send(new GetBucketVersioningCommand({ Bucket: bucket }), { abortSignal }),
     signal,
   );
+  return { status: text(output.Status) ?? 'Disabled' };
 }
 
 /** One tag of a bucket. */

@@ -8,6 +8,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { engineEndpoint } from '../../../../../../lib/aws/client-factory';
 import type { AreaConnection } from '../../../components/emulator-line';
 import AwsArea from '../../../index';
+import type { BucketVersioningChange } from '../api';
 
 const BUCKET = 'alpha';
 const EDIT = '/aws/s3/bucket/alpha/property/versioning/edit';
@@ -116,69 +117,114 @@ beforeEach(() => {
 
 afterEach(() => vi.unstubAllGlobals());
 
-const saveButton = () => screen.getByRole('button', { name: 'Save changes' });
+const page = () => createWrapper(screen.getByRole('main'));
+const form = () => page().findForm();
+const statusDescription = () => form()?.findFormField()?.findDescription()?.getElement();
+const successFlash = () => page().findFlashbar()?.findItemsByType('success')[0]?.findContent()?.getElement();
+
+function button(label: string) {
+  const found = page()
+    .findAllButtons()
+    .find((control) => control.findTextRegion()?.getElement().textContent === label);
+  if (found === undefined) throw new Error(`Could not find the "${label}" button`);
+  return found.getElement();
+}
+
+function statusOption(value: BucketVersioningChange, label: string) {
+  return waitFor(() => {
+    const group = form()?.findRadioGroup();
+    const option = group?.findInputByValue(value)?.getElement();
+    if (option === undefined) throw new Error(`Could not find versioning option ${value}`);
+    const radio = group?.findButtons().find((candidate) => candidate.findNativeInput().getElement() === option);
+    expect(radio?.findLabel().getElement()).toHaveTextContent(label);
+    return option;
+  });
+}
+
+const readState = (label: string) =>
+  page()
+    .findAllContainers()
+    .find((container) => container.findStatusIndicator()?.getElement().textContent === label);
 
 it('shows Disabled when Status is absent and lets the user choose Enable', async () => {
   open();
-  expect(screen.getByText('Loading bucket versioning')).toBeVisible();
-  const enable = await screen.findByRole('radio', { name: 'Enable' });
-  expect(screen.getByText('Disabled')).toBeVisible();
+  expect(readState('Loading bucket versioning')?.getElement()).toBeVisible();
+  const enable = await statusOption('Enabled', 'Enable');
+  expect(statusDescription()).toHaveTextContent('Current status: Disabled');
   expect(enable).toBeEnabled();
-  expect(saveButton()).toBeDisabled();
+  expect(button('Save changes')).toBeDisabled();
   fireEvent.click(enable);
   expect(enable).toBeChecked();
-  expect(saveButton()).toBeEnabled();
+  expect(button('Save changes')).toBeEnabled();
 });
 
 it('returns to Properties on Cancel without saving a selected Suspend', async () => {
   engine.readVersioning = () => versioning('Enabled');
   const router = open();
-  expect(await screen.findByRole('radio', { name: 'Enable' })).toBeChecked();
-  const suspend = screen.getByRole('radio', { name: 'Suspend' });
+  expect(await statusOption('Enabled', 'Enable')).toBeChecked();
+  const suspend = await statusOption('Suspended', 'Suspend');
   fireEvent.click(suspend);
   expect(suspend).toBeChecked();
-  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-  await screen.findByRole('tab', { name: 'Properties', selected: true });
+  fireEvent.click(button('Cancel'));
+  await waitFor(() => expect(page().findTabs()?.findActiveTab()?.getElement()).toHaveTextContent('Properties'));
   expect(router.state.location.pathname).toBe(PROPERTIES);
   expect(engine.writes).toEqual([]);
 });
 
-it('reads the actual status when Retry succeeds after a load failure', async () => {
-  engine.readVersioning = () => refusal(400, 'InvalidRequest', 'Versioning could not be read');
+it.each([
+  [400, 'InvalidRequest', 'Versioning could not be read', 'Bucket versioning could not be read'],
+  [403, 'AccessDenied', 'Versioning reads are denied', 'Access denied'],
+  [404, 'NoSuchBucket', 'The specified bucket does not exist', 'Bucket not found'],
+  [501, 'ReadNotImplemented', 'Versioning reads are unavailable', 'Not implemented by the emulator'],
+])('preserves the %s read refusal before reading the actual status on Retry', async (status, code, message, label) => {
+  engine.readVersioning = () => refusal(status, code, message);
   open();
-  expect(await screen.findByText('Versioning could not be read', { exact: false })).toBeVisible();
+  await waitFor(() => {
+    const state = readState(label)?.findContent().getElement();
+    expect(state).toBeVisible();
+    expect(state).toHaveTextContent(`${code}: ${message}`);
+    if (status === 501) expect(state).toHaveTextContent('501 Not Implemented for GetBucketVersioning');
+  });
+  expect(form()).toBeNull();
   engine.readVersioning = () => versioning('Suspended');
-  fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-  expect(await screen.findByText('Suspended')).toBeVisible();
-  expect(screen.getByRole('radio', { name: 'Suspend' })).toBeChecked();
+  fireEvent.click(button('Retry'));
+  expect(await statusOption('Suspended', 'Suspend')).toBeChecked();
+  expect(statusDescription()).toHaveTextContent('Current status: Suspended');
   expect(engine.reads).toEqual(['versioning', 'versioning']);
 });
 
 it('shows the refusal code and message on the editor without reporting success', async () => {
   engine.saveVersioning = () => refusal(403, 'AccessDenied', 'Versioning updates are denied');
   const router = open();
-  fireEvent.click(await screen.findByRole('radio', { name: 'Enable' }));
-  fireEvent.click(saveButton());
+  fireEvent.click(await statusOption('Enabled', 'Enable'));
+  fireEvent.click(button('Save changes'));
   await waitFor(() => {
-    const error = createWrapper(screen.getByRole('main')).findForm()?.findError()?.getElement();
+    const error = form()?.findError()?.getElement();
     expect(error).toBeVisible();
     expect(error).toHaveTextContent('AccessDenied');
     expect(error).toHaveTextContent('Versioning updates are denied');
   });
-  expect(screen.queryByText(SUCCESS)).toBeNull();
+  expect(successFlash()).toBeUndefined();
   expect(router.state.location.pathname).toBe(EDIT);
   expect(engine.writes).toHaveLength(1);
 });
 
-it('shows the emulator’s unavailable state for a 501 write', async () => {
-  engine.saveVersioning = () => refusal(501, 'NotImplemented', 'Versioning updates are unavailable');
+it('shows the emulator’s unavailable state and refusal details for a 501 write', async () => {
+  engine.saveVersioning = () => refusal(501, 'WriteNotImplemented', 'Versioning updates are unavailable');
   open();
-  fireEvent.click(await screen.findByRole('radio', { name: 'Enable' }));
-  fireEvent.click(saveButton());
-  expect(await screen.findByText('Not implemented by the emulator')).toBeVisible();
-  expect(screen.getByText(/501 Not Implemented for PutBucketVersioning/)).toBeVisible();
-  expect(saveButton()).toBeDisabled();
-  expect(screen.queryByText(SUCCESS)).toBeNull();
+  fireEvent.click(await statusOption('Enabled', 'Enable'));
+  fireEvent.click(button('Save changes'));
+  await waitFor(() => {
+    const unavailable = form()
+      ?.findAllAlerts()
+      .find((alert) => alert.findHeader()?.getElement().textContent === 'Not implemented by the emulator');
+    expect(unavailable?.getElement()).toBeVisible();
+    const content = unavailable?.findContent().getElement();
+    expect(content).toHaveTextContent('501 Not Implemented for PutBucketVersioning');
+    expect(content).toHaveTextContent('WriteNotImplemented: Versioning updates are unavailable');
+  });
+  expect(button('Save changes')).toBeDisabled();
+  expect(successFlash()).toBeUndefined();
 });
 
 it('keeps the success message and the state read from Properties after the parallel reads finish', async () => {
@@ -192,25 +238,27 @@ it('keeps the success message and the state read from Properties after the paral
   });
   const router = open(PROPERTIES);
   const versioningSection = () =>
-    createWrapper(screen.getByRole('main'))
+    page()
       .findAllContainers()
       .find(
-        (container) => container.findHeader()?.getElement().querySelector('h2')?.textContent === 'Bucket Versioning',
-      )
-      ?.findContent()
-      .getElement();
-  await waitFor(() => expect(versioningSection()).toHaveTextContent('Disabled'));
-  const edit = screen.getAllByRole('link', { name: 'Edit' }).find((link) => link.getAttribute('href') === EDIT);
+        (container) =>
+          container.findHeader()?.findHeader()?.findHeadingText().getElement().textContent === 'Bucket Versioning',
+      );
+  const versioningContent = () => versioningSection()?.findContent().getElement();
+  await waitFor(() => expect(versioningContent()).toHaveTextContent('Disabled'));
+  const edit = versioningSection()?.findHeader()?.findHeader()?.findActions()?.findButton()?.getElement();
   if (edit === undefined) throw new Error('Properties must link to versioning edit');
+  expect(edit).toHaveTextContent('Edit');
+  expect(edit).toHaveAttribute('href', EDIT);
   fireEvent.click(edit);
 
-  fireEvent.click(await screen.findByRole('radio', { name: 'Enable' }));
+  fireEvent.click(await statusOption('Enabled', 'Enable'));
   engine.saveVersioning = () => heldSave;
-  const save = saveButton();
-  const form = save.closest('form');
-  if (form === null) throw new Error('Save changes must submit the versioning form');
+  const save = button('Save changes');
+  const nativeForm = save.form;
+  if (nativeForm === null) throw new Error('Save changes must submit the versioning form');
   fireEvent.click(save);
-  fireEvent.submit(form);
+  fireEvent.submit(nativeForm);
   await waitFor(() => expect(engine.writes).toHaveLength(1));
   expect(engine.writes[0]).toContain('<Status>Enabled</Status>');
   const priorReads = engine.reads.length;
@@ -219,12 +267,17 @@ it('keeps the success message and the state read from Properties after the paral
   releaseSave(new Response(null, { status: 204 }));
 
   await waitFor(() => expect(router.state.location.pathname).toBe(PROPERTIES));
-  await waitFor(() => expect(versioningSection()).toHaveTextContent('Suspended'));
+  await waitFor(() => expect(versioningContent()).toHaveTextContent('Suspended'));
   expect(engine.reads[priorReads]).toBe('bucket');
   expect(engine.reads.slice(priorReads + 1)).toEqual(expect.arrayContaining(['versioning', 'tags']));
   releaseTags(new Response('<Tagging><TagSet><Tag><Key>team</Key><Value>storage</Value></Tag></TagSet></Tagging>'));
-  expect(await screen.findByText('storage')).toBeVisible();
-  expect(versioningSection()).toHaveTextContent('Suspended');
-  expect(await screen.findByText(SUCCESS)).toBeVisible();
+  await waitFor(() => {
+    const tags = page()
+      .findAllTables()
+      .find((table) => table.findHeaderSlot()?.findHeader()?.findHeadingText().getElement().textContent === 'Tags');
+    expect(tags?.findBodyCell(1, 2)?.getElement()).toHaveTextContent('storage');
+  });
+  expect(versioningContent()).toHaveTextContent('Suspended');
+  expect(successFlash()).toHaveTextContent(SUCCESS);
   expect(engine.writes).toHaveLength(1);
 });
