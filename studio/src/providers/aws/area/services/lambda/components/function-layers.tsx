@@ -8,7 +8,7 @@ import Select, { type SelectProps } from '@cloudscape-design/components/select';
 import SpaceBetween from '@cloudscape-design/components/space-between';
 import StatusIndicator from '@cloudscape-design/components/status-indicator';
 import Table from '@cloudscape-design/components/table';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import {
   reportedNotImplementedMessage,
@@ -30,11 +30,17 @@ const UNSUPPORTED = 'Not implemented by the emulator';
 
 type LayerChange = { kind: 'add'; arn: string } | { kind: 'remove'; index: number };
 
+type PickerOperation = 'listing' | 'versions';
+type UnsupportedPickerRead = Extract<RequestFailure, { kind: 'not-implemented' }>;
+export type LayerPickerRefusals = Partial<Record<PickerOperation, UnsupportedPickerRead>>;
+
 export interface FunctionLayerChanges {
   scope: string;
   reading: ReturnType<typeof useFunctionLayersReading>;
   pending: boolean;
   unsupported: boolean;
+  pickerRefusals: LayerPickerRefusals;
+  rememberPickerRefusal: (operation: PickerOperation, failure: UnsupportedPickerRead) => void;
   submit: (kind: LayerChange['kind'], layers: readonly string[]) => Promise<void>;
 }
 
@@ -156,7 +162,8 @@ function LayerSelect<T>({
 function AddLayerDialog({
   connection,
   scope,
-  visible,
+  pickerRefusals,
+  rememberPickerRefusal,
   disabled,
   pending,
   onClose,
@@ -164,7 +171,8 @@ function AddLayerDialog({
 }: {
   connection: AreaConnection;
   scope: string;
-  visible: boolean;
+  pickerRefusals: FunctionLayerChanges['pickerRefusals'];
+  rememberPickerRefusal: FunctionLayerChanges['rememberPickerRefusal'];
   disabled: boolean;
   pending: boolean;
   onClose: () => void;
@@ -172,26 +180,23 @@ function AddLayerDialog({
 }) {
   const [layer, setLayer] = useState<SelectProps.Option | null>(null);
   const [version, setVersion] = useState<SelectProps.Option | null>(null);
-  const [unsupported, setUnsupported] = useState<{
-    listing?: RequestFailure;
-    versions?: RequestFailure;
-  }>({});
-  const endpoint = visible ? connection.engineOrigin : undefined;
-  const listing = useLayerListing({ endpoint: unsupported.listing ? undefined : endpoint, scope });
-  const versionList = useLayerVersions({ endpoint: unsupported.versions ? undefined : endpoint, scope }, layer?.value);
-  const listingFailure = unsupported.listing ?? listing.failure;
-  const versionsFailure = unsupported.versions ?? versionList.failure;
-  if (
-    (listingFailure?.kind === 'not-implemented' && unsupported.listing === undefined) ||
-    (versionsFailure?.kind === 'not-implemented' && unsupported.versions === undefined)
-  ) {
-    setUnsupported({
-      ...(listingFailure?.kind === 'not-implemented' ? { listing: listingFailure } : {}),
-      ...(versionsFailure?.kind === 'not-implemented' ? { versions: versionsFailure } : {}),
-    });
-  }
-  const layers = { ...listing, failure: listingFailure };
-  const versions = { ...versionList, failure: layer === null ? undefined : versionsFailure };
+  const listing = useLayerListing({ endpoint: pickerRefusals.listing ? undefined : connection.engineOrigin, scope });
+  const versionList = useLayerVersions(
+    { endpoint: pickerRefusals.versions ? undefined : connection.engineOrigin, scope },
+    layer?.value,
+  );
+  const { failure: listingFailure } = listing;
+  const { failure: versionsFailure } = versionList;
+  useEffect(() => {
+    if (listingFailure?.kind === 'not-implemented') rememberPickerRefusal('listing', listingFailure);
+    if (versionsFailure?.kind === 'not-implemented') rememberPickerRefusal('versions', versionsFailure);
+  }, [listingFailure, versionsFailure, rememberPickerRefusal]);
+
+  const layers = { ...listing, failure: pickerRefusals.listing ?? listingFailure };
+  const versions = {
+    ...versionList,
+    failure: layer === null ? undefined : (pickerRefusals.versions ?? versionsFailure),
+  };
   const versionArn = version?.value;
   const canAdd =
     !disabled &&
@@ -202,24 +207,18 @@ function AddLayerDialog({
     versions.failure === undefined &&
     versionArn !== undefined;
 
-  function close() {
-    setLayer(null);
-    setVersion(null);
-    onClose();
-  }
-
   return (
     <AreaModal
-      visible={visible}
+      visible
       header={ADD}
       closeAriaLabel="Close"
       onDismiss={() => {
-        if (!pending) close();
+        if (!pending) onClose();
       }}
       footer={
         <Box float="right">
           <SpaceBetween direction="horizontal" size="xs">
-            <Button disabled={pending} onClick={close}>
+            <Button disabled={pending} onClick={onClose}>
               Cancel
             </Button>
             <Button
@@ -227,7 +226,7 @@ function AddLayerDialog({
               disabled={!canAdd}
               loading={pending}
               onClick={() => {
-                if (canAdd) void onAdd(versionArn).then(close);
+                if (canAdd) void onAdd(versionArn).then(onClose);
               }}
             >
               {ADD}
@@ -351,11 +350,12 @@ export function FunctionLayers({
           )
         }
       />
-      {changes && (
+      {adding && changes && (
         <AddLayerDialog
           connection={connection}
           scope={changes.scope}
-          visible={adding}
+          pickerRefusals={changes.pickerRefusals}
+          rememberPickerRefusal={changes.rememberPickerRefusal}
           disabled={disabled}
           pending={pending}
           onClose={() => setAdding(false)}

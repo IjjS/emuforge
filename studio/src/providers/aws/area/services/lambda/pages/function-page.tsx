@@ -27,7 +27,7 @@ import { DeleteFunctionsDialog } from '../components/delete-functions-dialog';
 import { EventSourcesTab } from '../components/event-sources-tab';
 import { readFailureState, useAnnouncer } from '../components/failure-states';
 import { ReadFailure } from '../components/failures';
-import { LayerFailureDetail, type FunctionLayerChanges } from '../components/function-layers';
+import { LayerFailureDetail, type FunctionLayerChanges, type LayerPickerRefusals } from '../components/function-layers';
 import { FunctionOverview, FunctionStatusLine } from '../components/function-sections';
 import type { FunctionUrlChanges } from '../components/function-url-actions';
 import { functionStatus } from '../components/function-status';
@@ -407,6 +407,24 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
   if (verification.scope !== verificationScope || verification.found !== verified) {
     setVerification({ scope: verificationScope, found: verified });
   }
+  // The Configuration tab can unmount while this connection still serves the function page.
+  const [pickerReads, setPickerReads] = useState<{ scope: string; refusals: LayerPickerRefusals }>({
+    scope: verificationScope,
+    refusals: {},
+  });
+  if (pickerReads.scope !== verificationScope) {
+    setPickerReads({ scope: verificationScope, refusals: {} });
+  }
+  const rememberPickerRefusal = useCallback<FunctionLayerChanges['rememberPickerRefusal']>(
+    (operation, failure) => {
+      setPickerReads((current) => {
+        if (current.scope !== verificationScope || current.refusals[operation] !== undefined) return current;
+        return { scope: verificationScope, refusals: { ...current.refusals, [operation]: failure } };
+      });
+    },
+    [verificationScope],
+  );
+
   const attachedLayers = useFunctionLayersReading(
     connection.engineOrigin,
     name,
@@ -740,6 +758,8 @@ export function FunctionPage({ connection, params }: ScreenPageProps) {
             reading: attachedLayers,
             pending: layerUpdate.pending,
             unsupported: layerUpdate.unsupported,
+            pickerRefusals: pickerReads.refusals,
+            rememberPickerRefusal,
             submit: submitLayers,
           }}
           testScope={verificationScope}

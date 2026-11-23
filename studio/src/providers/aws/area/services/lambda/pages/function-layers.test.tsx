@@ -343,8 +343,14 @@ it('shows loading and a retryable attached-layer error before showing a successf
 });
 
 it('keeps a concurrent-update refusal through both rereads', async () => {
-  engine.updateAnswer = () => error(409, 'ResourceConflictException', 'Another update is in progress.');
+  engine.attached = [FIRST];
+  engine.updateAnswer = () => {
+    engine.description = UPDATED_DESCRIPTION;
+    engine.attached = [];
+    return error(409, 'ResourceConflictException', 'Another update is in progress.');
+  };
   open();
+  await expectAttached([FIRST]);
   const dialog = await openAdd();
   await chooseOlderVersion(dialog);
 
@@ -353,6 +359,7 @@ it('keeps a concurrent-update refusal through both rereads', async () => {
   await waitFor(() => expectFlash('error', message, 'Could not add layer version.'));
   await waitFor(() => expect(engine.count(FUNCTION)).toBe(2));
   await waitFor(() => expect(engine.count(CONFIG)).toBe(2));
+  await expectUpdatedDescription();
   await expectEmpty();
   expectFlash('error', message, 'Could not add layer version.');
   expect(flashItems('success')).toHaveLength(0);
@@ -522,7 +529,7 @@ describe.each([
     expect(dialogSubmit(dialog)).toBeEnabled();
   });
 
-  it('keeps the affected selector, confirmation and retry visible and disabled after a 501', async () => {
+  it('keeps the 501 notice and disabled controls when Configuration unmounts and reopens', async () => {
     engine[mock] = () => error(501, 'NotImplemented');
     open();
     const dialog = await openAdd();
@@ -538,9 +545,16 @@ describe.each([
     fireEvent.click(retry);
     fireEvent.click(dialogSubmit(dialog));
     cancelDialog(dialog);
+    const tabs = required(page.findTabs(), 'function tabs');
+    fireEvent.click(required(tabs.findTabLinkById('code'), 'the Code tab').getElement());
+    await waitFor(() => expect(layersTable()).toBeUndefined());
+    fireEvent.click(required(tabs.findTabLinkById('configuration'), 'the Configuration tab').getElement());
     const reopened = await openAdd();
     if (path === VERSIONS) await chooseLayer(reopened);
-    await expectReadFailure(() => reopened.findContent(), header, message);
+    const reopenedRetry = await expectReadFailure(() => reopened.findContent(), header, message);
+    expect(picker(reopened, label).findTrigger().getElement()).toBeDisabled();
+    expect(dialogSubmit(reopened)).toBeDisabled();
+    expect(reopenedRetry).toBeDisabled();
     expect(engine.count(path)).toBe(attempts);
     expect(engine.updates).toEqual([]);
   });
